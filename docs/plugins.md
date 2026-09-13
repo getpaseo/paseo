@@ -24,9 +24,14 @@ provider support; unsupported provider/host combinations fail before spawning. Y
 the role profiles' provider, model, mode and effort in Agent profiles.
 
 The workflow uses the existing plan actions and an agent panel for executor selection and review
-status. Its persisted plugin settings retain plan IDs, choices and review limits across reloads.
-An interrupted permission closure whose acknowledgement was not recorded is not replayed
-speculatively: reopen the current plan before retrying.
+status. Its settings retain plan IDs, executor selection and review limits across reloads. Review
+creates the read-only reviewer before closing the planner's permission; failed creation leaves the
+plan actionable. Planner clarification is transported as a bounded transcript, not inferred constraints.
+
+Status reconciles pending review/audit operations against the expected prompt and the host's last
+completed turn marker. Missing completion evidence or canceled turns do not advance the workflow.
+Only that turn's canonical response and tool results count; previous turns never authorize a correction.
+An interrupted permission closure whose acknowledgement was not recorded is not replayed speculatively.
 
 Automatic corrections require a clean initial workspace and clean functional-commit boundary.
 Only the manager can write. Its final tool calls must show successful targeted checks; the host

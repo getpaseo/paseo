@@ -39,6 +39,14 @@ export const statusRpc = defineRpc({
     type: z.literal("workflow.status.get.response"),
     plan: planContext.nullable(),
     recommendation: executorSelection.nullable(),
+    handoff: z
+      .object({
+        selection: executorSelection,
+        phase: z.enum(["closing", "closed", "running"]),
+        agentId: z.string().optional(),
+      })
+      .nullable()
+      .optional(),
     reviews: z.array(
       z.object({
         planId: z.string(),

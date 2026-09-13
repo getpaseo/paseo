@@ -75,6 +75,8 @@ export function toStoredAgentRecord(
     cwd: agent.cwd,
     workspaceId: agent.workspaceId,
     launchProfileId: agent.launchProfileId,
+    launchPostApprovalModeId: agent.launchPostApprovalModeId,
+    lastCompletedTurnId: agent.lastCompletedTurnId,
     createdAt,
     updatedAt: agent.updatedAt.toISOString(),
     lastActivityAt: agent.updatedAt.toISOString(),
@@ -115,6 +117,12 @@ export function toAgentPayload(
     cwd: agent.cwd,
     ...(agent.workspaceId ? { workspaceId: agent.workspaceId } : {}),
     ...(agent.launchProfileId !== undefined ? { launchProfileId: agent.launchProfileId } : {}),
+    ...(agent.launchPostApprovalModeId !== undefined
+      ? { launchPostApprovalModeId: agent.launchPostApprovalModeId }
+      : {}),
+    ...(agent.lastCompletedTurnId !== undefined
+      ? { lastCompletedTurnId: agent.lastCompletedTurnId }
+      : {}),
     model: agent.config.model ?? null,
     thinkingOptionId,
     effectiveThinkingOptionId,
@@ -225,6 +233,8 @@ export function buildStoredAgentPayload(
     cwd: record.cwd,
     ...(record.workspaceId ? { workspaceId: record.workspaceId } : {}),
     ...(record.launchProfileId !== undefined ? { launchProfileId: record.launchProfileId } : {}),
+    launchPostApprovalModeId: record.launchPostApprovalModeId,
+    lastCompletedTurnId: record.lastCompletedTurnId,
     model: record.config?.model ?? null,
     thinkingOptionId: record.config?.thinkingOptionId ?? null,
     effectiveThinkingOptionId: resolveEffectiveThinkingOptionId({

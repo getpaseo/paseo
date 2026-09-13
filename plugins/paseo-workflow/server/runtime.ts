@@ -2,7 +2,6 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import type { PaseoApi } from "@getpaseo/client";
 import type { PluginSettingsHandle, PluginBeforeRequests } from "@getpaseo/plugin/server";
-import type { AgentTimelineItem } from "@getpaseo/protocol/agent-types";
 import { profileId, roles } from "../shared/profiles";
 import { WorkflowController, type WorkflowPort } from "./workflow";
 import { workflowSettings } from "./state";
@@ -17,6 +16,24 @@ export function runtime(
   settings: PluginSettingsHandle<typeof workflowSettings.schema>,
 ) {
   let revision: string | undefined;
+  const history = async (id: string) => {
+    const agent = paseo.agents.ref(id);
+    let page = await agent.timeline.refetch({ limit: 200, projection: "canonical" });
+    const pages = [];
+    for (;;) {
+      if (page.error || page.staleCursor || page.gap)
+        throw new Error("The original history is incomplete. Reopen the agent and retry.");
+      pages.push(page.entries);
+      if (!page.hasOlder || !page.startCursor) break;
+      page = await agent.timeline.refetch({
+        direction: "before",
+        cursor: page.startCursor,
+        limit: 200,
+        projection: "canonical",
+      });
+    }
+    return pages.toReversed().flat();
+  };
   const port: WorkflowPort = {
     profiles: async () => (await paseo.config.get()).config.agentProfiles ?? [],
     agent: async (id) => {
@@ -37,24 +54,35 @@ export function runtime(
       if (!snapshot?.workspaceDirectory) throw new Error(`Workspace '${id}' is unavailable.`);
       return { cwd: snapshot.workspaceDirectory, intent: snapshot.intent };
     },
-    timeline: async (id) => {
-      const agent = paseo.agents.ref(id);
-      let page = await agent.timeline.refetch({ limit: 200, projection: "canonical" });
-      if (page.error || page.staleCursor || page.gap)
-        throw new Error("The original history is incomplete. Reopen the agent and retry.");
-      const pages = [page.entries];
-      while (page.hasOlder && page.startCursor) {
-        page = await agent.timeline.refetch({
-          direction: "before",
-          cursor: page.startCursor,
-          limit: 200,
-          projection: "canonical",
-        });
-        if (page.error || page.staleCursor || page.gap)
-          throw new Error("The original history is incomplete. Reopen the agent and retry.");
-        pages.push(page.entries);
+    timeline: async (id) => (await history(id)).map((entry) => entry.item),
+    turn: async (id, turnId, expectedMessageId) => {
+      if (!turnId) {
+        const snapshot = (await paseo.agents.ref(id).refresh())?.agent;
+        if (
+          snapshot?.status !== "idle" ||
+          snapshot.activeTurn ||
+          snapshot.lastError ||
+          snapshot.pendingPermissions.length
+        )
+          return null;
+        turnId = snapshot.lastCompletedTurnId;
       }
-      return pages.toReversed().flatMap((entries) => entries.map((entry) => entry.item));
+      if (!turnId) return null;
+      const entries = await history(id);
+      const selected = entries.filter((entry) => entry.turnId === turnId);
+      if (!selected.length) return null;
+      const prompt = entries.findLast(
+        (entry) => entry.seqStart <= selected.at(-1)!.seqEnd && entry.item.type === "user_message",
+      )?.item;
+      if (
+        expectedMessageId &&
+        (prompt?.type !== "user_message" || prompt.clientMessageId !== expectedMessageId)
+      )
+        return null;
+      return {
+        key: `${turnId}:${selected.at(-1)!.seqEnd}`,
+        items: selected.map((entry) => entry.item),
+      };
     },
     git: async (cwd) => {
       const [base, branch, dirty] = await Promise.all([
@@ -141,11 +169,4 @@ export async function prepareAgent(request: PluginBeforeRequests["agent.create"]
         .join("\n\n"),
     },
   };
-}
-
-export function assistantOutput(timeline: readonly AgentTimelineItem[]): string {
-  return timeline
-    .filter((item) => item.type === "assistant_message")
-    .map((item) => item.text)
-    .join("\n");
 }

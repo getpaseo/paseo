@@ -41,6 +41,7 @@ function fixture() {
     },
     workspace: async () => ({ cwd: "/workspace", intent: "Keep the user in control" }),
     timeline: async () => [{ type: "user_message", text: "Build the requested feature" }],
+    turn: async () => null,
     git: async () => ({ base: "abc123", branch: "feature", dirty: " M existing.ts" }),
     diff: async () => ({
       head: "functional-commit",

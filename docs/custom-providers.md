@@ -261,10 +261,12 @@ You can create multiple entries that extend the same built-in provider. Each get
 
 "Profile" here means a provider alias, and it is not an **Agent profile** — that is a named bundle of provider, model, mode, thinking option and features, stored under `daemon.agentProfiles`. See [glossary.md](glossary.md) for all four senses of the word.
 
-An Agent profile may set `postApprovalModeId`. The daemon uses that mode only when approving a
-plan in an agent launched with that profile. It persists the mode before resuming the same
-provider conversation; provider, model and effort do not change. Applying a profile to an already
-active agent never applies this field. Omit it to retain the provider's native approval behavior.
+An Agent profile may set `postApprovalModeId`. Creation captures its value in the agent's immutable
+`launchPostApprovalModeId`; later profile edits or deletion cannot change that conversation.
+Approval persists the captured mode before resuming the same provider conversation; provider,
+model and effort do not change. A superseded permission rolls the transition back in the agent's
+foreground mutation lane. Applying a profile to an active agent never applies this field.
+Agents without a captured value retain the provider's native approval behavior.
 Editing this field requires the host's `agentProfileWorkflows` capability.
 
 Example: two different Anthropic accounts as separate profiles:

@@ -9044,9 +9044,17 @@ test("launch profile approval preserves the explicit mode through native provide
   await manager.closeAgent(agent.id);
 });
 
-test.each([false, true])(
+test.each([
+  "unchanged",
+  "replaced",
+  "removed",
+  "native-mode",
+  "queued-mode",
+  "removed-in-set",
+  "replaced-in-set",
+] as const)(
   "launch profile approval waits for durable mode and rejects replacement during persistence (%s)",
-  async (replacePending) => {
+  async (scenario) => {
     const workdir = mkdtempSync(join(tmpdir(), "approval-persistence-"));
     const entered = deferred<void>();
     const release = deferred<void>();
@@ -9068,6 +9076,10 @@ test.each([false, true])(
     class ApprovalSession extends TestAgentSession {
       override async setMode(value: string) {
         mode = value;
+        if (held && value === "full-access" && scenario.endsWith("-in-set")) {
+          entered.resolve();
+          await release.promise;
+        }
       }
       override async getCurrentMode() {
         return mode;
@@ -9117,15 +9129,29 @@ test.each([false, true])(
       await expect(
         manager.respondToPermission(agent.id, pending.id, { behavior: "allow" }),
       ).rejects.toThrow("already being submitted");
-      if (replacePending)
+      if (scenario !== "unchanged")
         agent.pendingPermissions.set(pending.id, { ...pending, sourcePlanCallId: "plan-2" });
+      if (scenario.startsWith("removed")) agent.pendingPermissions.delete(pending.id);
+      if (scenario === "native-mode") mode = "always-ask";
+      const newerMode =
+        scenario === "queued-mode"
+          ? manager.setAgentMode(agent.id, "always-ask")
+          : Promise.resolve();
       held = false;
       release.resolve();
       const error = await settled;
-      if (replacePending) {
+      await newerMode;
+      if (scenario !== "unchanged") {
         expect(error?.message).toContain("plan changed");
         expect(resumed).toBe(false);
-        expect(agent.pendingPermissions.get(pending.id)?.sourcePlanCallId).toBe("plan-2");
+        const expectedMode =
+          scenario === "native-mode" || scenario === "queued-mode" ? "always-ask" : "plan";
+        expect(mode).toBe(expectedMode);
+        await manager.flush();
+        expect((await registry.get(agent.id))?.config.modeId).toBe(expectedMode);
+        expect(agent.pendingPermissions.get(pending.id)?.sourcePlanCallId).toBe(
+          scenario.startsWith("removed") ? undefined : "plan-2",
+        );
       } else {
         expect(error).toBeNull();
         expect(resumed).toBe(true);
@@ -9141,7 +9167,7 @@ test.each([false, true])(
   },
 );
 
-test("launch profile approval rejects a missing profile without consuming its permission", async () => {
+test("historical agents without a captured approval mode keep native approval when the profile is missing", async () => {
   const manager = new AgentManager({
     clients: { codex: new TestAgentClient() },
     logger,
@@ -9158,12 +9184,89 @@ test("launch profile approval rejects a missing profile without consuming its pe
     sourcePlanCallId: "plan-1",
   };
   agent.pendingPermissions.set(pending.id, pending);
-  await expect(
-    manager.respondToPermission(agent.id, pending.id, { behavior: "allow" }),
-  ).rejects.toThrow("Restore it in Agent profiles");
-  expect(agent.pendingPermissions.get(pending.id)).toBe(pending);
+  await manager.respondToPermission(agent.id, pending.id, { behavior: "allow" });
+  expect(agent.pendingPermissions.has(pending.id)).toBe(false);
   await manager.closeAgent(agent.id);
 });
+
+test.each(["edited", "deleted", "historical", "historical-no-handle"])(
+  "launch approval mode is captured, persisted and independent from profile edits/deletion (%s)",
+  async (scenario) => {
+    const directory = mkdtempSync(join(tmpdir(), "approval-history-"));
+    const registry = new AgentStorage(join(directory, "agents"), logger);
+    let profile: import("@getpaseo/protocol/messages").AgentProfile | undefined = {
+      id: "planner",
+      name: "Planner",
+      provider: "codex",
+      postApprovalModeId: "full-access",
+    };
+    let mode = "plan";
+    class Session extends TestAgentSession {
+      override async setMode(next: string) {
+        mode = next;
+      }
+      override async getCurrentMode() {
+        return mode;
+      }
+      override async respondToPermission() {}
+    }
+    const client = new (class extends TestAgentClient {
+      override async createSession(config: AgentSessionConfig) {
+        return new Session(config);
+      }
+      override async resumeSession(
+        _handle: AgentPersistenceHandle,
+        config?: Partial<AgentSessionConfig>,
+      ) {
+        return new Session({ provider: "codex", cwd: directory, ...config });
+      }
+    })();
+    const manager = new AgentManager({
+      clients: { codex: client },
+      registry,
+      logger,
+      resolveLaunchProfile: () => profile,
+    });
+    try {
+      const agent = await manager.createAgent(
+        { provider: "codex", cwd: directory, modeId: "plan" },
+        undefined,
+        { workspaceId: undefined, launchProfileId: "planner" },
+      );
+      expect(toAgentPayload(agent).launchPostApprovalModeId).toBe("full-access");
+      const record = await registry.get(agent.id);
+      expect(record?.launchPostApprovalModeId).toBe("full-access");
+      profile =
+        scenario === "deleted" ? undefined : { ...profile!, postApprovalModeId: "always-ask" };
+      await manager.closeAgent(agent.id);
+      const historical = scenario.startsWith("historical");
+      if (historical)
+        await registry.upsert({
+          ...(await registry.get(agent.id))!,
+          launchPostApprovalModeId: undefined,
+          ...(scenario === "historical-no-handle" ? { persistence: null } : {}),
+        });
+      const reloaded = await ensureAgentLoaded(agent.id, {
+        agentManager: manager,
+        agentStorage: registry,
+        logger,
+      });
+      expect(reloaded.launchPostApprovalModeId).toBe(historical ? undefined : "full-access");
+      reloaded.pendingPermissions.set("approve", {
+        id: "approve",
+        provider: "codex",
+        kind: "plan",
+        sourcePlanCallId: "p",
+      });
+      await manager.respondToPermission(reloaded.id, "approve", { behavior: "allow" });
+      expect(mode).toBe(historical ? "plan" : "full-access");
+      await manager.closeAgent(agent.id);
+    } finally {
+      await manager.flush();
+      rmSync(directory, { recursive: true, force: true });
+    }
+  },
+);
 
 test("respondToPermission updates currentModeId after plan approval", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));

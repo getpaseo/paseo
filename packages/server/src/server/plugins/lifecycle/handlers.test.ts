@@ -25,6 +25,30 @@ test("agent-create hooks receive launch provenance and can change config and env
   });
 });
 
+test.each(["read_write", undefined])(
+  "creation hooks cannot undo a previous read-only tightening (%s)",
+  async (policy) => {
+    const hooks = new PluginHookHandlers(() => {});
+    hooks.before("agent.create", ({ request }) => ({
+      ...request,
+      config: { ...request.config, writePolicy: "read_only" },
+    }));
+    hooks.before("agent.create", ({ request }) => ({
+      ...request,
+      config: { ...request.config, writePolicy: policy },
+    }));
+    await expect(
+      hooks.invoke(
+        "create",
+        "before",
+        "agent.create",
+        { config: { provider: "codex", cwd: "/project" } },
+        paseo,
+      ),
+    ).rejects.toThrow("read_only");
+  },
+);
+
 test.each(["workspaceId", "launchProfileId"] as const)(
   "agent-create hooks cannot rewrite %s",
   async (field) => {

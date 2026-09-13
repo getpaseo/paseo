@@ -860,6 +860,8 @@ const AgentActiveTurnPayloadSchema = z.object({
 export const AgentSnapshotPayloadSchema = z.object({
   id: z.string(),
   launchProfileId: z.string().optional(),
+  // COMPAT(launch-approval-snapshot): added in v0.8.0, remove after 2027-09-13. Absent means native approval.
+  launchPostApprovalModeId: z.string().optional(),
   provider: AgentProviderSchema,
   cwd: z.string(),
   workspaceId: z.string().optional(),
@@ -872,6 +874,8 @@ export const AgentSnapshotPayloadSchema = z.object({
   lastUserMessageAt: z.string().nullable(),
   status: AgentStatusSchema,
   activeTurn: AgentActiveTurnPayloadSchema.nullable().optional(),
+  // COMPAT(completed-turn-snapshot): added in v0.8.0, remove after 2027-09-13. Absent is not completion evidence.
+  lastCompletedTurnId: z.string().optional(),
   capabilities: AgentCapabilityFlagsSchema,
   currentModeId: z.string().nullable(),
   availableModes: z.array(AgentModeSchema),

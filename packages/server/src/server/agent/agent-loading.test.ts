@@ -17,6 +17,49 @@ import type {
 } from "./agent-sdk-types.js";
 import { createTestAgentClients } from "../test-utils/fake-agent-client.js";
 import { AgentConfigSession } from "../session/agent-config/agent-config-session.js";
+import { toAgentPayload } from "./agent-projections.js";
+
+test("completion provenance survives storage reload and is cleared before a later failed turn", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "agent-completion-"));
+  const logger = createTestLogger();
+  const storage = new AgentStorage(path.join(root, "agents"), logger);
+  const manager = new AgentManager({
+    clients: createTestAgentClients(),
+    registry: storage,
+    logger,
+  });
+  let id: string | undefined;
+  try {
+    const agent = await manager.createAgent(
+      { provider: "codex", cwd: root, modeId: "full-access" },
+      undefined,
+      { workspaceId: undefined },
+    );
+    id = agent.id;
+    await manager.runAgent(id, "Respond with exactly: Completed");
+    const completed = manager.getAgent(id)!;
+    expect(completed.lastCompletedTurnId).toBeDefined();
+    expect(toAgentPayload(completed).lastCompletedTurnId).toBe(completed.lastCompletedTurnId);
+    await manager.closeAgent(id);
+    expect((await storage.get(id))?.lastCompletedTurnId).toBe(completed.lastCompletedTurnId);
+    const loaded = await ensureAgentLoaded(id, {
+      agentManager: manager,
+      agentStorage: storage,
+      logger,
+    });
+    expect(loaded.lastCompletedTurnId).toBe(completed.lastCompletedTurnId);
+    await expect(manager.runAgent(id, "Emit a turn failure")).rejects.toThrow(
+      "Requested fake provider failure",
+    );
+    expect(manager.getAgent(id)?.lastCompletedTurnId).toBeUndefined();
+    await manager.flush();
+    expect((await storage.get(id))?.lastCompletedTurnId).toBeUndefined();
+  } finally {
+    if (id) await manager.closeAgent(id);
+    await manager.flush();
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 test("loads archived records for history and active records with the interactive default", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "agent-loading-purpose-"));

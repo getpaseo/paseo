@@ -18,6 +18,7 @@ const finalReview = z.object({
   head: z.string(),
   diff: z.string(),
   dirtyFiles: z.array(z.string()),
+  ambiguousWorkingTree: z.boolean().optional(),
   classification: classification.optional(),
   audits: z.record(z.string(), z.object({ agentId: z.string(), result: auditDecision.optional() })),
   validationCommands: z.array(z.string()).optional(),
@@ -41,6 +42,10 @@ export const workflowSettings = defineSettings({
           routed: z.boolean().optional(),
           activePlanId: z.string().optional(),
           preparedPlanId: z.string().optional(),
+          handledTurns: z.record(z.string(), z.string()).optional(),
+          plannerTranscript: z
+            .array(z.object({ role: z.enum(["user", "assistant"]), text: z.string() }))
+            .optional(),
           intent: z.string(),
           request: z.string(),
           constraints: z.array(z.string()),

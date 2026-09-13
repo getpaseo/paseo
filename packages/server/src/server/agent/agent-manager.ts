@@ -283,6 +283,8 @@ type ProviderClientMap = Partial<Record<AgentProvider, AgentClient>>;
 
 export interface CreateAgentOptions {
   launchProfileId?: string;
+  launchPostApprovalModeId?: string;
+  lastCompletedTurnId?: string;
   labels?: Record<string, string>;
   initialPrompt?: string;
   env?: Record<string, string>;
@@ -379,6 +381,8 @@ interface HandleStreamEventOptions {
 interface ManagedAgentBase {
   id: string;
   readonly launchProfileId?: string;
+  readonly launchPostApprovalModeId?: string;
+  lastCompletedTurnId?: string;
   provider: AgentProvider;
   cwd: string;
   /**
@@ -1220,6 +1224,15 @@ export class AgentManager {
     agentId: string | undefined,
     options: CreateAgentOptions,
   ): Promise<ManagedAgent> {
+    // An own undefined preserves historical agents which never captured this value.
+    if (!Object.hasOwn(options, "launchPostApprovalModeId")) {
+      options = {
+        ...options,
+        launchPostApprovalModeId: options.launchProfileId
+          ? this.resolveLaunchProfile?.(options.launchProfileId)?.postApprovalModeId
+          : undefined,
+      };
+    }
     assertWritePolicySupported(config);
     this.assertAcceptingAgentRegistrations();
     const resolvedAgentId = validateAgentId(agentId ?? this.idFactory(), "createAgent");
@@ -1264,6 +1277,8 @@ export class AgentManager {
       initialTitle: options.initialTitle,
       workspaceId: options.workspaceId,
       launchProfileId: options.launchProfileId,
+      launchPostApprovalModeId: options.launchPostApprovalModeId,
+      lastCompletedTurnId: options.lastCompletedTurnId,
       owner: options.owner,
       historyPrimed: true,
     });
@@ -1296,6 +1311,8 @@ export class AgentManager {
       labels?: Record<string, string>;
       workspaceId?: string;
       launchProfileId?: string;
+      launchPostApprovalModeId?: string;
+      lastCompletedTurnId?: string;
       owner?: AgentOwner;
     },
     resumeOptions?: AgentResumeSessionOptions,
@@ -1334,6 +1351,8 @@ export class AgentManager {
       labels?: Record<string, string>;
       workspaceId?: string;
       launchProfileId?: string;
+      launchPostApprovalModeId?: string;
+      lastCompletedTurnId?: string;
       owner?: AgentOwner;
     },
     resumeOptions?: AgentResumeSessionOptions,
@@ -1574,6 +1593,8 @@ export class AgentManager {
         labels: existing.labels,
         workspaceId: existing.workspaceId,
         launchProfileId: existing.launchProfileId,
+        launchPostApprovalModeId: existing.launchPostApprovalModeId,
+        lastCompletedTurnId: existing.lastCompletedTurnId,
         owner: existing.owner,
         createdAt: existing.createdAt,
         updatedAt: existing.updatedAt,
@@ -1878,6 +1899,8 @@ export class AgentManager {
         cwd: record.cwd,
         workspaceId: record.workspaceId,
         launchProfileId: record.launchProfileId,
+        launchPostApprovalModeId: record.launchPostApprovalModeId,
+        lastCompletedTurnId: record.lastCompletedTurnId,
         owner: record.owner,
         session: null,
         capabilities: STORED_AGENT_CAPABILITIES,
@@ -1911,7 +1934,11 @@ export class AgentManager {
     });
   }
 
-  async setAgentMode(
+  async setAgentMode(agentId: string, modeId: string): Promise<AgentProviderNotice | null> {
+    return this.runForegroundMutation(agentId, () => this.setAgentModeNow(agentId, modeId));
+  }
+
+  private async setAgentModeNow(
     agentId: string,
     modeId: string,
     expectedPermission?: AgentPermissionRequest,
@@ -1919,8 +1946,9 @@ export class AgentManager {
     const agent = this.requireSessionAgent(agentId);
     const assertCurrentPermission = () => {
       if (
-        expectedPermission &&
-        agent.pendingPermissions.get(expectedPermission.id) !== expectedPermission
+        this.agents.get(agentId) !== agent ||
+        (expectedPermission &&
+          agent.pendingPermissions.get(expectedPermission.id) !== expectedPermission)
       ) {
         throw new Error(
           "The plan changed while applying its approval mode. Open the current plan and retry.",
@@ -2638,6 +2666,7 @@ export class AgentManager {
   }
 
   private openActiveTurn(agent: ActiveManagedAgent, turnId: string, startedAt: Date): void {
+    agent.lastCompletedTurnId = undefined;
     agent.activeTurnId = turnId;
     agent.activeTurnStartedAt = startedAt;
   }
@@ -2975,56 +3004,86 @@ export class AgentManager {
     agent.inFlightPermissionResponses.add(requestId);
 
     try {
-      const pending = agent.pendingPermissions.get(requestId);
-      let planApprovalMode: string | undefined;
-      if (pending?.kind === "plan" && response.behavior === "allow" && agent.launchProfileId) {
-        const profile = this.resolveLaunchProfile?.(agent.launchProfileId);
-        if (!profile)
-          throw new Error(
-            `Launch profile '${agent.launchProfileId}' is missing. Restore it in Agent profiles before approving.`,
-          );
-        const modeId = profile.postApprovalModeId?.trim();
-        if (modeId) {
-          await this.setAgentMode(agentId, modeId, pending);
-          if (agent.pendingPermissions.get(requestId) !== pending)
-            throw new Error(
-              "The plan changed while applying its approval mode. Open the current plan and retry.",
-            );
-          // The provider must not resume until its launch-profile transition is durable.
-          await this.persistSnapshot(agent);
-          if (agent.pendingPermissions.get(requestId) !== pending)
-            throw new Error(
-              "The plan changed while applying its approval mode. Open the current plan and retry.",
-            );
-          planApprovalMode = modeId;
+      return await this.runForegroundMutation(agentId, async () => {
+        const pending = agent.pendingPermissions.get(requestId);
+        let planApprovalMode: string | undefined;
+        if (pending?.kind === "plan" && response.behavior === "allow") {
+          const modeId = agent.launchPostApprovalModeId?.trim();
+          if (modeId) {
+            const assertPending = () => {
+              if (
+                this.agents.get(agentId) !== agent ||
+                agent.pendingPermissions.get(requestId) !== pending
+              )
+                throw new Error(
+                  "The plan changed while applying its approval mode. Open the current plan and retry.",
+                );
+            };
+            const previousMode = await agent.session.getCurrentMode();
+            assertPending();
+            if (!previousMode)
+              throw new Error(
+                "The current provider mode is unknown. Reload the agent before approving its plan.",
+              );
+            try {
+              await this.setAgentModeNow(agentId, modeId, pending);
+              assertPending();
+              await this.persistSnapshot(agent);
+              assertPending();
+            } catch (error) {
+              await this.restoreApprovalMode(agent, modeId, previousMode);
+              throw error;
+            }
+            planApprovalMode = modeId;
+          }
         }
-      }
-      const result = await agent.session.respondToPermission(requestId, response, {
-        planApprovalMode,
+        const result = await agent.session.respondToPermission(requestId, response, {
+          planApprovalMode,
+        });
+        agent.pendingPermissions.delete(requestId);
+
+        try {
+          await this.refreshSessionState(agent);
+        } catch {
+          // Ignore refresh errors - state sync after permission approval is best effort.
+        }
+
+        this.touchUpdatedAt(agent);
+        await this.persistSnapshot(agent);
+        this.emitState(agent);
+
+        const bufferedResolution = agent.bufferedPermissionResolutions.get(requestId);
+        if (bufferedResolution) {
+          agent.bufferedPermissionResolutions.delete(requestId);
+          this.dispatchStream(agent.id, bufferedResolution, {
+            timestamp: new Date().toISOString(),
+          });
+        }
+
+        return result;
       });
-      agent.pendingPermissions.delete(requestId);
-
-      try {
-        await this.refreshSessionState(agent);
-      } catch {
-        // Ignore refresh errors - state sync after permission approval is best effort.
-      }
-
-      this.touchUpdatedAt(agent);
-      await this.persistSnapshot(agent);
-      this.emitState(agent);
-
-      const bufferedResolution = agent.bufferedPermissionResolutions.get(requestId);
-      if (bufferedResolution) {
-        agent.bufferedPermissionResolutions.delete(requestId);
-        this.dispatchStream(agent.id, bufferedResolution, { timestamp: new Date().toISOString() });
-      }
-
-      return result;
     } finally {
       agent.inFlightPermissionResponses.delete(requestId);
       agent.bufferedPermissionResolutions.delete(requestId);
     }
+  }
+
+  private async restoreApprovalMode(
+    agent: LiveManagedAgent,
+    appliedMode: string,
+    previousMode: string,
+  ) {
+    // The shared foreground lane keeps newer host changes after this rollback, not underneath it.
+    if (this.agents.get(agent.id) !== agent) return;
+    const effective = await agent.session.getCurrentMode();
+    if (this.agents.get(agent.id) !== agent) return;
+    if (effective === appliedMode) await this.setAgentModeNow(agent.id, previousMode);
+    else {
+      agent.config.modeId = effective ?? undefined;
+      agent.currentModeId = effective;
+      if (agent.runtimeInfo) agent.runtimeInfo = { ...agent.runtimeInfo, modeId: effective };
+    }
+    if (this.agents.get(agent.id) === agent) await this.persistSnapshot(agent);
   }
 
   async cancelAgentRun(agentId: string): Promise<AgentRunCancellationResult> {
@@ -3472,6 +3531,8 @@ export class AgentManager {
       publishWhenReady?: boolean;
       workspaceId?: string;
       launchProfileId?: string;
+      launchPostApprovalModeId?: string;
+      lastCompletedTurnId?: string;
       owner?: AgentOwner;
     },
   ): Promise<ManagedAgent> {
@@ -3624,18 +3685,22 @@ export class AgentManager {
           persistence?: AgentPersistenceHandle;
           workspaceId?: string;
           launchProfileId?: string;
+          launchPostApprovalModeId?: string;
+          lastCompletedTurnId?: string;
           owner?: AgentOwner;
         }
       | undefined;
   }): ActiveManagedAgent {
-    const { resolvedAgentId, session, config, now, durableTimelineHasRows, options } = params;
+    const { resolvedAgentId, session, config, now, durableTimelineHasRows, options = {} } = params;
     return {
       id: resolvedAgentId,
       provider: config.provider,
       cwd: config.cwd,
-      workspaceId: options?.workspaceId,
-      launchProfileId: options?.launchProfileId,
-      owner: options?.owner,
+      workspaceId: options.workspaceId,
+      launchProfileId: options.launchProfileId,
+      launchPostApprovalModeId: options.launchPostApprovalModeId,
+      lastCompletedTurnId: options.lastCompletedTurnId,
+      owner: options.owner,
       session,
       capabilities: session.capabilities,
       config,
@@ -4432,6 +4497,7 @@ export class AgentManager {
     if (event.usage) {
       agent.lastUsage = { ...agent.lastUsage, ...event.usage };
     }
+    agent.lastCompletedTurnId = eventTurnId;
     // If no usage on turn_completed, keep lastUsage as-is so context window
     // data accumulated during streaming isn't lost when the provider omits
     // it from the completion event.

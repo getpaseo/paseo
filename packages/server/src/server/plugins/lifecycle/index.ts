@@ -159,6 +159,9 @@ export function validateBeforeResult<Name extends keyof PluginBeforeRequests>(
   if (name === "agent.create") {
     const previous = beforeSchemas["agent.create"].parse(input);
     const next = beforeSchemas["agent.create"].parse(result);
+    if (previous.config.writePolicy === "read_only" && next.config.writePolicy !== "read_only") {
+      throw new Error("agent.create hooks cannot relax read_only write policy");
+    }
     if (
       previous.workspaceId !== next.workspaceId ||
       previous.launchProfileId !== next.launchProfileId

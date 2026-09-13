@@ -25,26 +25,31 @@ function Handoff({
   data: RpcOutput<typeof statusRpc>;
   theme: PluginAgentPanelProps["theme"];
 }) {
-  const [selection, setSelection] = useState<string>(data.recommendation ?? "");
+  const [selection, setSelection] = useState<string>(
+    data.handoff?.selection ?? data.recommendation ?? "",
+  );
+  const effectiveSelection = data.handoff?.selection ?? selection;
+  const completed = data.handoff?.phase === "running";
   const execute = useRpc(handoffRpc);
   const mutation = useMutation({
     mutationFn: () => {
       if (!data.plan) throw new Error("Open Hand off on the current pending plan.");
-      return execute({ ...data.plan, selection: executorSelection.parse(selection) });
+      return execute({ ...data.plan, selection: executorSelection.parse(effectiveSelection) });
     },
   });
   const handoff = useCallback(() => mutation.mutate(), [mutation]);
   const textStyle = useMemo(() => ({ color: theme.colors.foreground }), [theme]);
+  const executorId = data.handoff?.agentId ?? mutation.data?.agentId;
   if (!data.plan) return null;
   return (
     <SettingsSection title="Hand off">
       <SettingsCard>
         <SettingsSelect
           label="Executor"
-          value={selection}
+          value={effectiveSelection}
           options={executorOptions}
           onValueChange={setSelection}
-          disabled={mutation.isPending || mutation.isSuccess}
+          disabled={Boolean(data.handoff) || mutation.isPending || mutation.isSuccess}
           hint={
             data.recommendation
               ? `Router recommendation: ${data.recommendation}`
@@ -56,13 +61,13 @@ function Handoff({
           actionLabel={mutation.isPending ? "Handing off..." : "Hand off"}
           hint="Closes this plan without executing in the planner. The new agent stays in this workspace."
           error={mutation.error?.message}
-          disabled={!selection || mutation.isPending || mutation.isSuccess}
+          disabled={!effectiveSelection || completed || mutation.isPending || mutation.isSuccess}
           onPress={handoff}
         />
-        {mutation.data ? (
+        {executorId ? (
           <SettingsRow label="Executor created">
             <Text selectable style={textStyle}>
-              {mutation.data.agentId}
+              {executorId}
             </Text>
           </SettingsRow>
         ) : null}

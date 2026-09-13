@@ -4,7 +4,7 @@ import { installRpc, reviewRpc, handoffRpc, prepareRpc, statusRpc } from "./shar
 import { profileId } from "./shared/profiles";
 import { installProfiles } from "./server/install";
 import { workflowSettings } from "./server/state";
-import { runtime, prepareAgent, assistantOutput } from "./server/runtime";
+import { runtime, prepareAgent } from "./server/runtime";
 
 export default function contribute(server: PluginServerContext) {
   const settings = server.registerSettings(workflowSettings);
@@ -55,17 +55,10 @@ export default function contribute(server: PluginServerContext) {
     if (agent.launchProfileId === profileId("planner") && resolution.behavior === "allow")
       await workflow(paseo).approved(agent.id, requestId);
   });
-  server.on("agent.turn_ended", async ({ agent, outcome, timeline }, { paseo }) => {
+  server.on("agent.turn_ended", async ({ agent, outcome, turnId }, { paseo }) => {
     if (outcome.kind !== "completed" || !agent.launchProfileId?.startsWith("paseo-workflow-"))
       return;
-    const text = assistantOutput(timeline);
-    if (
-      agent.launchProfileId === profileId("router") &&
-      !text.trim().startsWith("{") &&
-      !text.trim().startsWith("```")
-    )
-      return;
-    await workflow(paseo).finished(agent.id, text, timeline);
+    await workflow(paseo).turnEnded(agent.id, turnId);
   });
   return () => {};
 }

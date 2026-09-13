@@ -46,6 +46,8 @@ const PERSISTENCE_HANDLE_SCHEMA = z
 const STORED_AGENT_SCHEMA = z.object({
   id: z.string(),
   launchProfileId: z.string().optional(),
+  launchPostApprovalModeId: z.string().optional(),
+  lastCompletedTurnId: z.string().optional(),
   provider: z.string(),
   cwd: z.string(),
   workspaceId: z.string().optional(),

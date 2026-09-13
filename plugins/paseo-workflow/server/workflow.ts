@@ -58,6 +58,8 @@ export interface Workflow {
   routed?: boolean;
   activePlanId?: string;
   preparedPlanId?: string;
+  handledTurns?: Record<string, string>;
+  plannerTranscript?: Array<{ role: "user" | "assistant"; text: string }>;
   intent: string;
   request: string;
   constraints: string[];
@@ -83,6 +85,11 @@ export interface WorkflowPort {
   agent(id: string): Promise<WorkflowAgent>;
   workspace(id: string): Promise<{ cwd: string; intent?: string | null }>;
   timeline(id: string): Promise<AgentTimelineItem[]>;
+  turn(
+    id: string,
+    turnId?: string,
+    expectedMessageId?: string,
+  ): Promise<{ key: string; items: AgentTimelineItem[] } | null>;
   git(cwd: string): Promise<Workflow["git"]>;
   diff(
     cwd: string,
@@ -114,6 +121,7 @@ function briefing(workflow: Workflow, plan: string): string {
       plan,
       constraints: workflow.constraints,
       assumptions: workflow.assumptions,
+      plannerTranscript: workflow.plannerTranscript ?? [],
       git: workflow.git,
     },
     null,
@@ -189,12 +197,14 @@ export class WorkflowController {
         throw new Error("The agent belongs to another workspace.");
       const state = await this.port.read();
       const workflow = state.workflows[agent.labels["paseo.workflow.id"] ?? agent.id];
+      if (workflow) await this.reconcile(state, workflow);
       const prepared = workflow?.preparedPlanId
         ? workflow.plans[workflow.preparedPlanId]
         : undefined;
       return {
         plan: prepared?.context ?? null,
         recommendation: workflow?.recommendation ?? null,
+        handoff: prepared?.handoff ?? null,
         reviews: Object.values(workflow?.plans ?? {})
           .filter((plan) => plan.final)
           .map((plan) => ({
@@ -220,6 +230,7 @@ export class WorkflowController {
       const executor = await this.profile(
         selection === "advanced" ? "executor-advanced" : "executor-standard",
       );
+      await this.refreshPlannerTranscript(state, workflow);
       const plan = previous ?? (workflow.plans[context.callId] = { context });
       if (plan.handoff?.phase !== "closed") {
         await this.pending(context);
@@ -260,19 +271,119 @@ export class WorkflowController {
     return this.serial(async () => {
       const agent = await this.port.agent(agentId);
       const state = await this.port.read();
-      if (agent.launchProfileId === profileId("router"))
-        return this.routerFinished(agent, state, text);
-      const workflow = state.workflows[agent.labels["paseo.workflow.id"] ?? agent.id];
-      if (!workflow) return;
-      const plan =
-        workflow.plans[agent.labels["paseo.workflow.plan"] ?? workflow.activePlanId ?? ""];
-      if (!plan) return;
-      if (plan.handoff?.agentId === agentId || (workflow.plannerId === agentId && plan.approved))
-        return this.startFinal(state, workflow, plan);
-      if (plan.review?.agentId === agentId && plan.review.phase !== "complete")
-        return this.reviewFinished(state, workflow, plan, text);
-      await this.finalFinished(state, workflow, plan, agentId, text, timeline);
+      return this.finishNow(state, agent, text, timeline);
     });
+  }
+
+  private async finishNow(
+    state: WorkflowState,
+    agent: WorkflowAgent,
+    text: string,
+    timeline: readonly AgentTimelineItem[],
+  ) {
+    const agentId = agent.id;
+    if (agent.launchProfileId === profileId("router"))
+      return this.routerFinished(agent, state, text);
+    const workflow = state.workflows[agent.labels["paseo.workflow.id"] ?? agent.id];
+    if (!workflow) return;
+    const plan = workflow.plans[agent.labels["paseo.workflow.plan"] ?? workflow.activePlanId ?? ""];
+    if (!plan) return;
+    if (plan.handoff?.agentId === agentId || (workflow.plannerId === agentId && plan.approved))
+      return this.startFinal(state, workflow, plan);
+    if (plan.review?.agentId === agentId && plan.review.phase !== "complete")
+      return this.reviewFinished(state, workflow, plan, text);
+    await this.finalFinished(state, workflow, plan, agentId, text, timeline);
+  }
+
+  turnEnded(agentId: string, turnId: string | null) {
+    return this.serial(async () => {
+      if (!turnId) return;
+      const state = await this.port.read();
+      await this.consumeTurn(state, await this.port.agent(agentId), turnId);
+    });
+  }
+
+  private async consumeTurn(
+    state: WorkflowState,
+    agent: WorkflowAgent,
+    turnId?: string,
+    expectedMessageId?: string,
+  ) {
+    const workflow = state.workflows[agent.labels["paseo.workflow.id"] ?? agent.id];
+    const turn = await this.port.turn(
+      agent.id,
+      turnId,
+      expectedMessageId ?? (workflow ? this.expectedPrompt(workflow, agent.id) : undefined),
+    );
+    if (!turn) return;
+    if (workflow?.handledTurns?.[agent.id] === turn.key) return;
+    const text = turn.items
+      .filter((item) => item.type === "assistant_message")
+      .map((item) => item.text)
+      .join("");
+    if (
+      agent.launchProfileId === profileId("router") &&
+      !text.trim().startsWith("{") &&
+      !text.trim().startsWith("```")
+    )
+      return;
+    await this.finishNow(state, agent, text, turn.items);
+    const current = state.workflows[agent.labels["paseo.workflow.id"] ?? agent.id];
+    if (current) {
+      (current.handledTurns ??= {})[agent.id] = turn.key;
+      await this.port.write(state);
+    }
+  }
+
+  private expectedPrompt(workflow: Workflow, agentId: string): string | undefined {
+    for (const plan of Object.values(workflow.plans)) {
+      const prefix = `workflow:${workflow.id}`;
+      const callId = plan.context.callId;
+      if (plan.review?.agentId === agentId) return `${prefix}:review:${callId}:prompt`;
+      const final = plan.final;
+      if (!final) continue;
+      if (final.deltaId === agentId) return `${prefix}:${callId}:delta:prompt`;
+      for (const [role, audit] of Object.entries(final.audits)) {
+        if (audit.agentId === agentId) return `${prefix}:${callId}:${role}:prompt`;
+      }
+      if (final.managerId !== agentId) continue;
+      switch (final.phase) {
+        case "classifying":
+          return `${prefix}:final:${callId}:classify`;
+        case "deciding":
+          return `${prefix}:${callId}:correction-decision`;
+        case "correcting":
+          return `${prefix}:${callId}:correct`;
+        case "committing":
+          return `${prefix}:${callId}:correction-commit`;
+        default:
+          return undefined;
+      }
+    }
+    return undefined;
+  }
+
+  private async reconcile(state: WorkflowState, workflow: Workflow) {
+    // One bounded pass over existing operations, never replay arbitrary agent history.
+    const candidates = new Set<string>();
+    for (const plan of Object.values(workflow.plans)) {
+      if (plan.review?.phase === "running" && plan.review.agentId)
+        candidates.add(plan.review.agentId);
+      const final = plan.final;
+      if (!final) continue;
+      if (final.phase === "auditing")
+        for (const audit of Object.values(final.audits)) {
+          if (!audit.result) candidates.add(audit.agentId);
+        }
+      if (final.phase === "delta" && final.deltaId) candidates.add(final.deltaId);
+      if (["classifying", "deciding", "correcting", "committing"].includes(final.phase))
+        candidates.add(final.managerId);
+    }
+    for (const agentId of candidates) {
+      const expected = this.expectedPrompt(workflow, agentId);
+      if (expected)
+        await this.consumeTurn(state, await this.port.agent(agentId), undefined, expected);
+    }
   }
 
   private async finalFinished(
@@ -344,6 +455,7 @@ export class WorkflowController {
     const workspace = await this.port.workspace(workflow.workspaceId);
     const snapshot = await this.port.diff(workspace.cwd, workflow.git.base);
     if (snapshot.head === workflow.git.base) return;
+    await this.refreshPlannerTranscript(state, workflow);
     const managerId = await this.port.create({
       workspaceId: workflow.workspaceId,
       launchProfileId: manager.id,
@@ -366,6 +478,9 @@ export class WorkflowController {
       head: snapshot.head,
       diff: snapshot.text,
       dirtyFiles: snapshot.dirtyFiles,
+      ambiguousWorkingTree: Boolean(
+        workflow.git.dirty.trim() || snapshot.dirtyFiles.length || snapshot.untrackedFiles.length,
+      ),
       audits: {},
     };
     await this.port.write(state);
@@ -428,10 +543,24 @@ export class WorkflowController {
     if (Object.values(final.audits).every((entry) => entry.result)) {
       const findings = Object.values(final.audits).flatMap((entry) => entry.result!.findings);
       if (findings.length === 0) {
-        final.phase = "complete";
+        const workspace = await this.port.workspace(workflow.workspaceId);
+        const current = await this.port.diff(workspace.cwd, workflow.git.base);
+        const ambiguous =
+          final.ambiguousWorkingTree ||
+          workflow.git.dirty.trim() ||
+          current.dirtyFiles.length ||
+          current.untrackedFiles.length ||
+          current.head !== final.head ||
+          current.text !== final.diff;
+        final.phase = ambiguous ? "verification_required" : "complete";
+        if (ambiguous)
+          final.reason =
+            "The working tree cannot be attributed completely to this workflow (pre-existing changes, untracked files or a changed audited diff). Review it manually.";
         await this.port.send(
           final.managerId,
-          "The audits found no defects. Report the review outcome. Do not edit or create another commit.",
+          ambiguous
+            ? `Verification required: ${final.reason} Report this limit; do not edit or commit.`
+            : "The audits found no defects. Report the review outcome. Do not edit or create another commit.",
           `workflow:${workflow.id}:${plan.context.callId}:final-report`,
         );
       } else {
@@ -691,6 +820,20 @@ export class WorkflowController {
     return workflow;
   }
 
+  private async refreshPlannerTranscript(state: WorkflowState, workflow: Workflow) {
+    const timeline = await this.port.timeline(workflow.plannerId);
+    // Carry bounded verbatim exchanges, not inferred structured constraints. Omit our injected briefings.
+    const transcript: NonNullable<Workflow["plannerTranscript"]> = [];
+    for (const item of timeline) {
+      if (item.type === "user_message" && !item.clientMessageId?.startsWith("workflow:"))
+        transcript.push({ role: "user", text: item.text.slice(-8000) });
+      if (item.type === "assistant_message")
+        transcript.push({ role: "assistant", text: item.text.slice(-8000) });
+    }
+    workflow.plannerTranscript = transcript.slice(-20);
+    await this.port.write(state);
+  }
+
   review(context: PlanContext, source: "automatic" | "manual") {
     return this.serial(async () => {
       const state = await this.port.read();
@@ -702,6 +845,7 @@ export class WorkflowController {
       if (previous?.review?.phase === "running" || previous?.review?.phase === "complete")
         return { agentId: previous.review.agentId! };
       const reviewer = await this.profile("plan-reviewer");
+      await this.refreshPlannerTranscript(state, workflow);
       if (
         Object.values(workflow.plans).some(
           (plan) => plan !== previous && plan.review?.source === source,
@@ -709,10 +853,27 @@ export class WorkflowController {
       )
         throw new Error(`The ${source} plan review has already been used.`);
       const plan = previous ?? (workflow.plans[context.callId] = { context });
-      if (plan.review?.phase !== "closed") {
+      if (plan.review?.phase !== "closed") await this.pending(context);
+      plan.review ??= { source, phase: "closing" };
+      await this.port.write(state);
+      const childId =
+        plan.review.agentId ??
+        (await this.port.create({
+          workspaceId: workflow.workspaceId,
+          parent: context.agentId,
+          launchProfileId: reviewer.id,
+          idempotencyKey: `workflow:${workflow.id}:review:${context.callId}`,
+          config: profileConfig(reviewer, true),
+          labels: {
+            "paseo.workflow.id": workflow.id,
+            "paseo.workflow.plan": context.callId,
+            "paseo.workflow.role": "plan-reviewer",
+          },
+        }));
+      plan.review!.agentId = childId;
+      await this.port.write(state);
+      if (plan.review.phase !== "closed") {
         await this.pending(context);
-        plan.review = { source, phase: "closing" };
-        await this.port.write(state);
         await this.port.respond(context.agentId, context.permissionRequestId, {
           behavior: "deny",
           interrupt: true,
@@ -721,19 +882,6 @@ export class WorkflowController {
         plan.review.phase = "closed";
         await this.port.write(state);
       }
-      const childId = await this.port.create({
-        workspaceId: workflow.workspaceId,
-        parent: context.agentId,
-        launchProfileId: reviewer.id,
-        idempotencyKey: `workflow:${workflow.id}:review:${context.callId}`,
-        config: profileConfig(reviewer, true),
-        labels: {
-          "paseo.workflow.id": workflow.id,
-          "paseo.workflow.plan": context.callId,
-          "paseo.workflow.role": "plan-reviewer",
-        },
-      });
-      plan.review!.agentId = childId;
       await this.port.send(
         childId,
         `Review this plan. Report objections, omissions, contradictions and assumptions. Do not edit, execute, commit, or delegate.\n${briefing(workflow, context.text)}`,

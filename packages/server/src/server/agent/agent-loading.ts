@@ -109,7 +109,12 @@ export async function ensureAgentLoaded(
         handle,
         buildConfigOverrides(record),
         agentId,
-        { ...extractTimestamps(record), launchProfileId: record.launchProfileId },
+        {
+          ...extractTimestamps(record),
+          launchProfileId: record.launchProfileId,
+          launchPostApprovalModeId: record.launchPostApprovalModeId,
+          lastCompletedTurnId: record.lastCompletedTurnId,
+        },
         record.archivedAt ? { purpose: "history" } : undefined,
       );
       deps.logger.info({ agentId, provider: record.provider }, "Agent resumed from persistence");
@@ -124,6 +129,8 @@ export async function ensureAgentLoaded(
         labels: record.labels,
         workspaceId: record.workspaceId,
         launchProfileId: record.launchProfileId,
+        launchPostApprovalModeId: record.launchPostApprovalModeId,
+        lastCompletedTurnId: record.lastCompletedTurnId,
         owner: record.owner,
       });
       deps.logger.info({ agentId, provider: record.provider }, "Agent created from stored config");

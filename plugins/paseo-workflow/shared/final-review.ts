@@ -37,6 +37,7 @@ export interface FinalReview {
   head: string;
   diff: string;
   dirtyFiles: string[];
+  ambiguousWorkingTree?: boolean;
   classification?: Classification;
   audits: Record<string, { agentId: string; result?: AuditDecision }>;
   validationCommands?: string[];
