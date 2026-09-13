@@ -1110,6 +1110,24 @@ test("plan approval exposes a resume-bypass action and can return to bypassPermi
       throw new Error("Expected plan permission request");
     }
 
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "timeline",
+        item: expect.objectContaining({
+          callId: requestEvent.request.sourcePlanCallId,
+          detail: { type: "plan", text: "- Implement the approved plan" },
+        }),
+      }),
+    );
+    queryMock.setPermissionMode.mockRejectedValueOnce(new Error("Mode change failed"));
+    await expect(
+      session.respondToPermission(requestEvent.request.id, {
+        behavior: "allow",
+        selectedActionId: "implement_resume",
+      }),
+    ).rejects.toThrow("Mode change failed");
+    expect(session.getPendingPermissions()).toEqual([requestEvent.request]);
+
     await session.respondToPermission(requestEvent.request.id, {
       behavior: "allow",
       selectedActionId: "implement_resume",
@@ -1121,6 +1139,28 @@ test("plan approval exposes a resume-bypass action and can return to bypassPermi
     });
     expect(queryMock.setPermissionMode).toHaveBeenLastCalledWith("bypassPermissions");
     expect(await session.getCurrentMode()).toBe("bypassPermissions");
+    const internalSession = asInternals<{ claudeSessionId: string | null }>(session);
+    internalSession.claudeSessionId = "plan-persistence-test";
+    expect(session.describePersistence()?.metadata?.planResolutions).toEqual({
+      [requestEvent.request.sourcePlanCallId!]: {
+        behavior: "allow",
+        selectedActionId: "implement_resume",
+      },
+    });
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "timeline",
+        item: expect.objectContaining({
+          callId: requestEvent.request.sourcePlanCallId,
+          detail: { type: "plan", text: "- Implement the approved plan" },
+          metadata: {
+            approved: true,
+            actionId: "implement_resume",
+            resolution: { behavior: "allow", selectedActionId: "implement_resume" },
+          },
+        }),
+      }),
+    );
   } finally {
     await session.close();
   }

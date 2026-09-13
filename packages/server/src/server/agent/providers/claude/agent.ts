@@ -19,6 +19,8 @@ import {
   type SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
 import type { Logger } from "pino";
+import { z } from "zod";
+import { AgentPermissionResponseSchema } from "@getpaseo/protocol/messages";
 import {
   mapClaudeCanceledToolCall,
   mapClaudeCompletedToolCall,
@@ -2064,6 +2066,7 @@ class ClaudeAgentSession implements AgentSession {
   private toolUseIndexToId = new Map<number, string>();
   private toolUseInputBuffers = new Map<string, string>();
   private pendingPermissions = new Map<string, PendingPermission>();
+  private readonly planResolutions = new Map<string, AgentPermissionResponse>();
   private activeForegroundTurnId: string | null = null;
   private autonomousTurn: AutonomousTurnState | null = null;
   private readonly subscribers = new Set<(event: AgentStreamEvent) => void>();
@@ -2124,6 +2127,13 @@ class ClaudeAgentSession implements AgentSession {
       findClaudeModel(this.config.model)?.contextWindowMaxTokens,
     );
     const handle = options.handle;
+    const savedResolutions = z
+      .record(z.string(), AgentPermissionResponseSchema)
+      .safeParse(handle?.metadata?.planResolutions);
+    if (savedResolutions.success) {
+      for (const [callId, resolution] of Object.entries(savedResolutions.data))
+        this.planResolutions.set(callId, resolution);
+    }
 
     if (handle) {
       if (!handle.sessionId) {
@@ -2514,11 +2524,27 @@ class ClaudeAgentSession implements AgentSession {
     return Array.from(this.pendingPermissions.values()).map((entry) => entry.request);
   }
 
-  /**
-   * A denied request is the only record the transcript gets. Plans especially:
-   * the pending card is the only place the plan text lives, so losing it means
-   * the user can no longer read what they just declined.
-   */
+  private recordPlanPermissionTimeline(
+    request: AgentPermissionRequest,
+    resolution?: AgentPermissionResponse,
+  ): void {
+    const text = request.metadata?.planText ?? request.input?.plan;
+    if (typeof text !== "string") return;
+    const callId = request.sourcePlanCallId ?? request.id;
+    if (resolution) {
+      this.planResolutions.set(callId, resolution);
+      this.persistence = null;
+    }
+    this.pushToolCall({
+      type: "tool_call",
+      name: "plan_approval",
+      callId,
+      status: "completed",
+      error: null,
+      detail: { type: "plan", text },
+    });
+  }
+
   private recordDeniedPermissionTimeline(
     request: AgentPermissionRequest,
     response: Extract<AgentPermissionResponse, { behavior: "deny" }>,
@@ -2538,25 +2564,7 @@ class ClaudeAgentSession implements AgentSession {
       return;
     }
     if (request.kind === "plan") {
-      let planText: string | null = null;
-      if (typeof request.metadata?.planText === "string") {
-        planText = request.metadata.planText;
-      } else if (typeof request.input?.plan === "string") {
-        planText = request.input.plan;
-      }
-      if (!planText) return;
-      this.pushToolCall({
-        type: "tool_call",
-        name: "plan_approval",
-        callId: request.id,
-        status: "completed",
-        error: null,
-        detail: { type: "plan", text: planText },
-        metadata: {
-          approved: false,
-          actionId: response.selectedActionId ?? "reject",
-        },
-      });
+      this.recordPlanPermissionTimeline(request, response);
     }
   }
 
@@ -2596,9 +2604,6 @@ class ClaudeAgentSession implements AgentSession {
     if (!pending) {
       throw new Error(`No pending permission request with id '${requestId}'`);
     }
-    this.pendingPermissions.delete(requestId);
-    pending.cleanup?.();
-
     if (response.behavior === "allow") {
       if (pending.request.kind === "plan") {
         const selectedActionId = response.selectedActionId;
@@ -2608,17 +2613,7 @@ class ClaudeAgentSession implements AgentSession {
           ? "bypassPermissions"
           : "acceptEdits";
         await this.setMode(targetMode);
-        this.pushToolCall(
-          mapClaudeCompletedToolCall({
-            name: "plan_approval",
-            callId: pending.request.id,
-            input: pending.request.input ?? null,
-            output: {
-              approved: true,
-              actionId: selectedActionId ?? "implement",
-            },
-          }),
-        );
+        this.recordPlanPermissionTimeline(pending.request, response);
       }
       const updatedInput =
         pending.request.kind === "question"
@@ -2632,8 +2627,12 @@ class ClaudeAgentSession implements AgentSession {
         updatedInput,
         updatedPermissions: this.normalizePermissionUpdates(response.updatedPermissions),
       };
+      this.pendingPermissions.delete(requestId);
+      pending.cleanup?.();
       pending.resolve(result);
     } else {
+      this.pendingPermissions.delete(requestId);
+      pending.cleanup?.();
       pending.resolve(this.resolveDeniedPermission(pending.request, response));
       return;
     }
@@ -2657,7 +2656,7 @@ class ClaudeAgentSession implements AgentSession {
       provider: "claude",
       sessionId: this.claudeSessionId,
       nativeHandle: this.claudeSessionId,
-      metadata: { ...this.config },
+      metadata: { ...this.config, planResolutions: Object.fromEntries(this.planResolutions) },
     };
     return this.persistence;
   }
@@ -4651,6 +4650,7 @@ class ClaudeAgentSession implements AgentSession {
       provider: "claude",
       name: toolName,
       kind,
+      ...(kind === "plan" ? { sourcePlanCallId: options.toolUseID ?? requestId } : {}),
       ...buildClaudeQuestionPermissionSummary(toolName, input),
       input: requestInput,
       detail: toolDetail,
@@ -4660,6 +4660,21 @@ class ClaudeAgentSession implements AgentSession {
       actions: kind === "plan" ? buildClaudePlanPermissionActions(this.planResumeMode) : undefined,
       metadata: Object.keys(metadata).length ? metadata : undefined,
     };
+
+    if (kind === "plan") {
+      for (const [id, pending] of this.pendingPermissions) {
+        if (pending.request.kind !== "plan") continue;
+        this.pendingPermissions.delete(id);
+        pending.cleanup?.();
+        pending.resolve(
+          this.resolveDeniedPermission(pending.request, {
+            behavior: "deny",
+            message: "Superseded by a newer plan",
+          }),
+        );
+      }
+      this.recordPlanPermissionTimeline(request);
+    }
 
     this.pushEvent({
       type: "permission_requested",
@@ -4690,6 +4705,11 @@ class ClaudeAgentSession implements AgentSession {
       const abortHandler = () => {
         this.pendingPermissions.delete(requestId);
         cleanup();
+        if (kind === "plan")
+          this.recordPlanPermissionTimeline(request, {
+            behavior: "deny",
+            message: "Permission request canceled",
+          });
         this.pushEvent({
           type: "permission_resolved",
           provider: "claude",
@@ -4753,6 +4773,23 @@ class ClaudeAgentSession implements AgentSession {
   ) {
     if (!item) {
       return;
+    }
+    const planResolution =
+      item.detail.type === "plan" ? this.planResolutions.get(item.callId) : undefined;
+    if (planResolution) {
+      item = {
+        ...item,
+        status: "completed",
+        error: null,
+        metadata: {
+          ...item.metadata,
+          approved: planResolution.behavior === "allow",
+          actionId:
+            planResolution.selectedActionId ??
+            (planResolution.behavior === "allow" ? "implement" : "reject"),
+          resolution: planResolution,
+        },
+      };
     }
     if (target) {
       target.push(item);
@@ -4836,6 +4873,11 @@ class ClaudeAgentSession implements AgentSession {
       pending.cleanup?.();
       pending.reject(error);
       this.pendingPermissions.delete(id);
+      if (pending.request.kind === "plan")
+        this.recordPlanPermissionTimeline(pending.request, {
+          behavior: "deny",
+          message: error.message,
+        });
       this.pushEvent({
         type: "permission_resolved",
         provider: "claude",

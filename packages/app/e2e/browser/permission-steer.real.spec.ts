@@ -49,7 +49,7 @@ test.describe("composer steer supersedes plan approval", () => {
         await submitMessage(page, scenario.planPrompt);
         await waitForPermissionPrompt(page, 180_000);
 
-        const pendingPlan = page.getByTestId("permission-plan-card");
+        const pendingPlan = page.getByTestId("timeline-plan-card");
         await expect(pendingPlan).toContainText(scenario.planText);
         const pendingScreenshot = testInfo.outputPath(`${scenario.provider}-pending-plan.png`);
         await page.screenshot({ path: pendingScreenshot });
@@ -59,7 +59,10 @@ test.describe("composer steer supersedes plan approval", () => {
         });
 
         await submitMessage(page, scenario.steerPrompt);
-        await expect(pendingPlan).toHaveCount(0, { timeout: 30_000 });
+        await expect(page.getByTestId("permission-request-accept")).toHaveCount(0, {
+          timeout: 30_000,
+        });
+        await expect(pendingPlan).toHaveCount(1);
         const rejectedPlan = page.getByTestId("timeline-plan-card");
         await expect(rejectedPlan).toBeVisible({ timeout: 30_000 });
         await expect(rejectedPlan).toContainText(scenario.planText);

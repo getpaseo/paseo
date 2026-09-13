@@ -446,6 +446,7 @@ export interface AgentPermissionRequest {
   provider: AgentProvider;
   name: string;
   kind: AgentPermissionRequestKind;
+  sourcePlanCallId?: string;
   title?: string;
   description?: string;
   input?: AgentMetadata;

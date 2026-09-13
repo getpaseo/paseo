@@ -1,4 +1,5 @@
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
+import { Alert } from "@/components/ui/alert";
 import React, {
   forwardRef,
   memo,
@@ -763,6 +764,46 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       [autoExpandReasoning, setInlineDetailsExpanded],
     );
 
+    const pendingPermissionItems = useMemo(
+      () => Array.from(pendingPermissions.values()).filter((perm) => perm.agentId === agentId),
+      [pendingPermissions, agentId],
+    );
+    const timelinePlans = useMemo(
+      () =>
+        new Map(
+          effectiveStreamItems.flatMap((item) =>
+            item.kind === "tool_call" &&
+            item.payload.source === "agent" &&
+            item.payload.data.detail.type === "plan"
+              ? [[item.payload.data.callId, item.id] as const]
+              : [],
+          ),
+        ),
+      [effectiveStreamItems],
+    );
+    const planFootersByRowId = useMemo(() => {
+      const footers = new Map<string, ReactNode>();
+      for (const [callId, rowId] of timelinePlans) {
+        const permission = !readOnly
+          ? pendingPermissionItems.find(
+              (entry) => entry.request.kind === "plan" && entry.request.sourcePlanCallId === callId,
+            )
+          : undefined;
+        footers.set(
+          rowId,
+          permission ? (
+            <PermissionRequestCard
+              key={permission.key}
+              permission={permission}
+              client={client}
+              footerOnly
+            />
+          ) : undefined,
+        );
+      }
+      return footers;
+    }, [timelinePlans, pendingPermissionItems, readOnly, client]);
+
     const renderSingleToolCallItem = useCallback(
       (
         item: Extract<StreamItem, { kind: "tool_call" }>,
@@ -795,6 +836,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
               detail={data.detail}
               cwd={context.cwd}
               metadata={data.metadata}
+              planFooter={planFootersByRowId.get(item.id)}
               isLastInSequence={isLastInSequence}
               onOpenFilePath={handleToolCallOpenFile}
               maxDetailHeight={maxDetailHeight}
@@ -817,7 +859,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
           />
         );
       },
-      [context.cwd, setInlineDetailsExpanded, handleToolCallOpenFile],
+      [context.cwd, setInlineDetailsExpanded, handleToolCallOpenFile, planFootersByRowId],
     );
 
     // Read through a stable event so live group updates do not change the renderer identity
@@ -933,18 +975,18 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       ],
     );
 
-    const pendingPermissionItems = useMemo(
-      () => Array.from(pendingPermissions.values()).filter((perm) => perm.agentId === agentId),
-      [pendingPermissions, agentId],
-    );
-
     const pendingPermissionsNode = useMemo(
       () =>
         renderPendingPermissionsNode({
-          pendingPermissions: pendingPermissionItems,
+          pendingPermissions: pendingPermissionItems.filter(
+            (permission) =>
+              permission.request.kind !== "plan" ||
+              !permission.request.sourcePlanCallId ||
+              !timelinePlans.has(permission.request.sourcePlanCallId),
+          ),
           client,
         }),
-      [client, pendingPermissionItems],
+      [client, pendingPermissionItems, timelinePlans],
     );
     const turnFooterNode = useMemo(
       () =>
@@ -1080,11 +1122,19 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       expandedInlineToolCallIds.size === 0;
     const historyRowRevision = useMemo(
       () => ({
-        contentById: projectedToolCalls.historyGroupUpdatesByHostId,
+        contentById: {
+          has: (id: string) =>
+            projectedToolCalls.historyGroupUpdatesByHostId.has(id) || planFootersByRowId.has(id),
+        },
         displayStateById: expandedToolCallGroupIds,
         globalDisplayState: isMobile,
       }),
-      [expandedToolCallGroupIds, isMobile, projectedToolCalls.historyGroupUpdatesByHostId],
+      [
+        expandedToolCallGroupIds,
+        isMobile,
+        planFootersByRowId,
+        projectedToolCalls.historyGroupUpdatesByHostId,
+      ],
     );
 
     return (
@@ -1383,9 +1433,11 @@ function PermissionActionButton({
 function PermissionRequestCard({
   permission,
   client,
+  footerOnly = false,
 }: {
   permission: PendingPermission;
   client: DaemonClient | null;
+  footerOnly?: boolean;
 }) {
   const { t } = useTranslation();
   const isMobile = useIsCompactFormFactor();
@@ -1527,6 +1579,13 @@ function PermissionRequestCard({
 
   const footer = (
     <>
+      {permissionMutation.error ? (
+        <Alert
+          variant="error"
+          description={permissionMutation.error.message}
+          testID="permission-request-error"
+        />
+      ) : null}
       <Text testID="permission-request-question" style={permissionStyles.question}>
         {t("agentStream.permission.question")}
       </Text>
@@ -1558,6 +1617,8 @@ function PermissionRequestCard({
       </View>
     </>
   );
+
+  if (footerOnly) return footer;
 
   if (isPlanRequest && planMarkdown) {
     return (

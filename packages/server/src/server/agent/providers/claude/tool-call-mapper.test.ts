@@ -15,6 +15,28 @@ function expectMapped<T>(item: T | null): T {
 }
 
 describe("claude tool-call mapper", () => {
+  it("replays native plan tools with their original identity, text and decision", () => {
+    const input = { plan: 'Ship (c) with --name="my repo".\n\nKeep ---buzz.' };
+    expect(
+      mapClaudeCompletedToolCall({ name: "ExitPlanMode", callId: "plan-1", input }),
+    ).toMatchObject({
+      callId: "plan-1",
+      detail: { type: "plan", text: input.plan },
+      metadata: { approved: true },
+    });
+    expect(
+      mapClaudeFailedToolCall({
+        name: "ExitPlanMode",
+        callId: "plan-2",
+        input,
+        error: { message: "Denied" },
+      }),
+    ).toMatchObject({
+      callId: "plan-2",
+      detail: { type: "plan", text: input.plan },
+      metadata: { approved: false },
+    });
+  });
   it("maps running shell calls with canonical fields", () => {
     const item = expectMapped(
       mapClaudeRunningToolCall({

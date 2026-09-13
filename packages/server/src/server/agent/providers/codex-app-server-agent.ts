@@ -56,6 +56,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { z } from "zod";
+import { AgentTimelineItemPayloadSchema } from "@getpaseo/protocol/messages";
 import { renderPromptAttachmentAsText } from "../prompt-attachments.js";
 import { composeSystemPromptParts } from "../system-prompt.js";
 import { curateAgentActivity } from "../activity-curator.js";
@@ -3353,6 +3354,7 @@ export class CodexAppServerAgentSession implements AgentSession {
   private planModeEnabled = false;
   private historyPending = false;
   private persistedHistory: PersistedTimelineEntry[] = [];
+  private readonly planHistory = new Map<string, PersistedTimelineEntry>();
   private loadingPersistedHistory = false;
   private persistedProviderSubagentEvents: AgentStreamEvent[] = [];
   private pendingPermissions = new Map<string, AgentPermissionRequest>();
@@ -3437,6 +3439,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     this.providerOptions = CodexProviderOptionsSchema.parse(config.providerOptions ?? {});
     this.config = config;
     this.asyncQuestions = new CodexAsyncQuestions(resumeHandle?.metadata?.asyncQuestions);
+    this.restorePlanHistory(resumeHandle?.metadata?.planHistory);
     this.config.thinkingOptionId = normalizeCodexThinkingOptionId(this.config.thinkingOptionId);
     if (this.config.featureValues?.fast_mode && codexModelSupportsFastMode(this.config.model)) {
       this.serviceTier = "fast";
@@ -3753,7 +3756,27 @@ export class CodexAppServerAgentSession implements AgentSession {
     };
   }
 
-  private emitSyntheticPlanApprovalRequest(planText: string): void {
+  private restorePlanHistory(saved: unknown): void {
+    const parsed = z
+      .array(
+        z.object({
+          item: AgentTimelineItemPayloadSchema,
+          timestamp: z.string().optional(),
+          providerTurnId: z.string().optional(),
+        }),
+      )
+      .safeParse(saved);
+    if (!parsed.success) return;
+    for (const entry of parsed.data) {
+      if (entry.item.type === "tool_call" && entry.item.detail.type === "plan")
+        this.planHistory.set(entry.item.callId, entry);
+    }
+  }
+
+  private emitSyntheticPlanApprovalRequest(
+    planText: string,
+    callId = `plan:${randomUUID()}`,
+  ): void {
     this.dismissPendingPlanApprovals("Superseded by a newer plan");
 
     const requestId = `permission-${randomUUID()}`;
@@ -3762,12 +3785,14 @@ export class CodexAppServerAgentSession implements AgentSession {
       provider: CODEX_PROVIDER,
       name: "CodexPlanApproval",
       kind: "plan",
+      sourcePlanCallId: callId,
       title: "Plan",
       description: "Review the proposed plan before implementation starts.",
       input: { plan: planText },
       actions: buildPlanPermissionActions(),
       metadata: {
         planText,
+        planTurnId: this.activeForegroundTurnId,
         source: "codex_plan_approval",
       },
     };
@@ -3778,6 +3803,20 @@ export class CodexAppServerAgentSession implements AgentSession {
       kind: "plan",
       planText,
     });
+    const item: ToolCallTimelineItem = {
+      type: "tool_call",
+      callId,
+      name: "plan_approval",
+      status: "completed",
+      error: null,
+      detail: { type: "plan", text: planText },
+    };
+    this.planHistory.set(callId, {
+      item,
+      timestamp: new Date().toISOString(),
+      providerTurnId: this.currentTurnId ?? undefined,
+    });
+    this.emitEvent({ type: "timeline", provider: CODEX_PROVIDER, item });
     this.emitEvent({ type: "permission_requested", provider: CODEX_PROVIDER, request });
   }
 
@@ -3829,6 +3868,27 @@ export class CodexAppServerAgentSession implements AgentSession {
       },
     });
     const { timeline, subAgentRoutes } = history;
+    // ponytail: scan only on history load; index call/turn IDs if plan archives grow large.
+    for (const [callId, plan] of this.planHistory) {
+      const nativeIndex = timeline.findIndex(
+        (entry) => entry.item.type === "tool_call" && entry.item.callId === callId,
+      );
+      if (nativeIndex >= 0) {
+        timeline[nativeIndex]!.item = plan.item;
+        continue;
+      }
+      const turnIndex = timeline.findIndex(
+        (entry) => plan.providerTurnId && entry.providerTurnId === plan.providerTurnId,
+      );
+      if (turnIndex < 0) {
+        this.planHistory.delete(callId);
+        continue;
+      }
+      const nextTurnIndex = timeline.findIndex(
+        (entry, index) => index > turnIndex && entry.item.type === "user_message",
+      );
+      timeline.splice(nextTurnIndex < 0 ? timeline.length : nextTurnIndex, 0, plan);
+    }
     this.subAgentCallsByCallId.clear();
     this.subAgentCallIdByChildThreadId.clear();
     this.pendingSubAgentNotificationsByThreadId.clear();
@@ -4693,28 +4753,36 @@ export class CodexAppServerAgentSession implements AgentSession {
   }
 
   private resolvePlanPermission(requestId: string, resolution: AgentPermissionResponse): void {
-    if (resolution.behavior === "deny") {
-      // Every route into a denial lands here — the response handler, a new
-      // prompt, and an accepted steer — so the transcript record belongs here
-      // rather than in handlePlanPermissionResponse.
-      const planText =
-        this.pendingPermissionHandlers.get(requestId)?.planText ??
-        this.pendingPermissions.get(requestId)?.metadata?.planText;
-      if (typeof planText === "string") {
-        this.emitEvent({
-          type: "timeline",
-          provider: CODEX_PROVIDER,
-          item: {
-            type: "tool_call",
-            callId: requestId,
-            name: "plan_approval",
-            status: "completed",
-            error: null,
-            detail: { type: "plan", text: planText },
-            metadata: { approved: false },
-          },
-        });
-      }
+    const request = this.pendingPermissions.get(requestId);
+    const callId = request?.sourcePlanCallId ?? requestId;
+    const planText =
+      this.pendingPermissionHandlers.get(requestId)?.planText ?? request?.metadata?.planText;
+    if (typeof planText === "string") {
+      const item: ToolCallTimelineItem = {
+        type: "tool_call",
+        callId,
+        name: "plan_approval",
+        status: "completed",
+        error: null,
+        detail: { type: "plan", text: planText },
+        metadata: {
+          approved: resolution.behavior === "allow",
+          actionId:
+            resolution.selectedActionId ??
+            (resolution.behavior === "allow" ? "implement" : "dismiss"),
+          resolution,
+        },
+      };
+      this.planHistory.set(callId, { ...this.planHistory.get(callId), item });
+      this.emitEvent({
+        type: "timeline",
+        provider: CODEX_PROVIDER,
+        item,
+        turnId:
+          typeof request?.metadata?.planTurnId === "string"
+            ? request.metadata.planTurnId
+            : undefined,
+      });
     }
     this.pendingPermissionHandlers.delete(requestId);
     this.pendingPermissions.delete(requestId);
@@ -4790,6 +4858,7 @@ export class CodexAppServerAgentSession implements AgentSession {
         systemPrompt: this.config.systemPrompt,
         mcpServers: this.config.mcpServers,
         asyncQuestions: this.asyncQuestions.serialize(),
+        planHistory: Array.from(this.planHistory.values()),
       },
     };
   }
@@ -5273,7 +5342,7 @@ export class CodexAppServerAgentSession implements AgentSession {
   }
 
   private notifySubscribers(event: AgentStreamEvent): void {
-    const turnId = this.activeForegroundTurnId;
+    const turnId = getAgentStreamEventTurnId(event) ?? this.activeForegroundTurnId;
     const tagged = turnId ? { ...event, turnId } : event;
     this.logger.trace(
       {
@@ -6053,7 +6122,10 @@ export class CodexAppServerAgentSession implements AgentSession {
       this.emitEvent({ type: "turn_canceled", provider: CODEX_PROVIDER, reason: "interrupted" });
     } else {
       if (this.planModeEnabled && this.latestPlanResult?.text) {
-        this.emitSyntheticPlanApprovalRequest(this.latestPlanResult.text);
+        this.emitSyntheticPlanApprovalRequest(
+          this.latestPlanResult.text,
+          this.latestPlanResult.callId,
+        );
       }
       this.emitEvent({
         type: "turn_completed",
@@ -6505,8 +6577,8 @@ export class CodexAppServerAgentSession implements AgentSession {
     if (timelineItem.type === "tool_call") {
       if (timelineItem.detail.type === "plan") {
         this.rememberPlanResult(timelineItem);
-        // Codex can surface plans both as turn/plan updates and as completed
-        // thread items. In plan mode, approval owns the visible plan card.
+        // Publish the final proposal once at the approval boundary; intermediate
+        // turn/plan updates and native plan items can describe the same proposal.
         if (this.planModeEnabled) {
           return;
         }

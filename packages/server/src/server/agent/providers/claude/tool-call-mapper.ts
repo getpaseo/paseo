@@ -117,6 +117,27 @@ function mapClaudeToolCall(
   const name = toolKind === "speak" ? "speak" : trimmedName;
   const input = raw.input ?? null;
   const output = raw.output ?? null;
+  if (name === "ExitPlanMode") {
+    const plan = z.object({ plan: z.string() }).safeParse(input);
+    if (plan.success) {
+      return {
+        type: "tool_call",
+        callId,
+        name: "plan_approval",
+        status: raw.status,
+        detail: { type: "plan", text: plan.data.plan },
+        error: null,
+        ...(raw.status !== "running"
+          ? {
+              metadata: {
+                ...raw.metadata,
+                approved: raw.status === "completed",
+              },
+            }
+          : {}),
+      };
+    }
+  }
   const detail = deriveClaudeToolDetail(resolveDetailName(toolKind, name), input, output);
 
   if (raw.status === "failed") {

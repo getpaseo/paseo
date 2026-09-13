@@ -1354,6 +1354,219 @@ describe("normalizeClaudeAskUserQuestionUpdatedInput", () => {
     }
   });
 
+  test("keeps the canonical Claude plan through denial", async () => {
+    const behavior = "deny" as const;
+    const client = new ClaudeAgentClient({
+      logger: createTestLogger(),
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const session = await client.createSession({ provider: "claude", cwd: process.cwd() });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    const internal = session as unknown as {
+      handlePermissionRequest(
+        name: string,
+        input: Record<string, unknown>,
+        options: Record<string, unknown>,
+      ): Promise<PermissionResult>;
+    };
+    const text = 'Ship (c) with --name="my repo".\n\nKeep ---buzz.';
+    try {
+      const pending = internal.handlePermissionRequest(
+        "ExitPlanMode",
+        { plan: text },
+        { toolUseID: "claude-plan-1" },
+      );
+      void pending.catch(() => undefined);
+      const [request] = session.getPendingPermissions();
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: "timeline",
+          item: expect.objectContaining({
+            type: "tool_call",
+            callId: "claude-plan-1",
+            detail: { type: "plan", text },
+          }),
+        }),
+      );
+      expect(request).toMatchObject({ sourcePlanCallId: "claude-plan-1" });
+      const resolution = { behavior };
+      await session.respondToPermission(request.id, resolution);
+      await expect(pending).resolves.toMatchObject(resolution);
+      const plans = events.flatMap((event) =>
+        event.type === "timeline" &&
+        event.item.type === "tool_call" &&
+        event.item.detail.type === "plan"
+          ? [event.item]
+          : [],
+      );
+      expect(plans.map((plan) => plan.callId)).toEqual(["claude-plan-1", "claude-plan-1"]);
+      expect(plans.at(-1)).toMatchObject({
+        detail: { type: "plan", text },
+        metadata: { approved: behavior === "allow", resolution },
+      });
+      expect(session.getPendingPermissions()).toEqual([]);
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("revises a Claude plan without resolving unrelated tool permissions", async () => {
+    const client = new ClaudeAgentClient({
+      logger: createTestLogger(),
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const session = await client.createSession({ provider: "claude", cwd: process.cwd() });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    const internal = session as unknown as {
+      handlePermissionRequest(
+        name: string,
+        input: Record<string, unknown>,
+        options: Record<string, unknown>,
+      ): Promise<PermissionResult>;
+    };
+    try {
+      const tool = internal.handlePermissionRequest(
+        "Write",
+        { file_path: "/tmp/plan-revision.txt", content: "unchanged" },
+        { toolUseID: "unrelated-write" },
+      );
+      void tool.catch(() => undefined);
+      const first = internal.handlePermissionRequest(
+        "ExitPlanMode",
+        { plan: "Original --plan" },
+        { toolUseID: "plan-original" },
+      );
+      const revision = internal.handlePermissionRequest(
+        "ExitPlanMode",
+        { plan: "Revised --plan" },
+        { toolUseID: "plan-revised" },
+      );
+      void revision.catch(() => undefined);
+      await expect(first).resolves.toMatchObject({
+        behavior: "deny",
+        message: "Superseded by a newer plan",
+      });
+      expect(session.getPendingPermissions()).toEqual([
+        expect.objectContaining({ name: "Write", kind: "tool" }),
+        expect.objectContaining({ kind: "plan", sourcePlanCallId: "plan-revised" }),
+      ]);
+      const plans = events.flatMap((event) =>
+        event.type === "timeline" &&
+        event.item.type === "tool_call" &&
+        event.item.detail.type === "plan"
+          ? [event.item]
+          : [],
+      );
+      expect(plans).toEqual([
+        expect.objectContaining({
+          callId: "plan-original",
+          detail: { type: "plan", text: "Original --plan" },
+        }),
+        expect.objectContaining({
+          callId: "plan-original",
+          detail: { type: "plan", text: "Original --plan" },
+          metadata: expect.objectContaining({ approved: false }),
+        }),
+        expect.objectContaining({
+          callId: "plan-revised",
+          detail: { type: "plan", text: "Revised --plan" },
+        }),
+      ]);
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("records an aborted plan as a resolved canonical row", async () => {
+    const client = new ClaudeAgentClient({
+      logger: createTestLogger(),
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const session = await client.createSession({ provider: "claude", cwd: process.cwd() });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    const controller = new AbortController();
+    const internal = session as unknown as {
+      handlePermissionRequest(
+        name: string,
+        input: Record<string, unknown>,
+        options: Record<string, unknown>,
+      ): Promise<PermissionResult>;
+    };
+    try {
+      const pending = internal.handlePermissionRequest(
+        "ExitPlanMode",
+        { plan: "Keep this plan" },
+        { toolUseID: "aborted-plan", signal: controller.signal },
+      );
+      controller.abort();
+      await expect(pending).rejects.toThrow("Permission request aborted");
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: "timeline",
+          item: expect.objectContaining({
+            callId: "aborted-plan",
+            detail: { type: "plan", text: "Keep this plan" },
+            metadata: expect.objectContaining({
+              approved: false,
+              resolution: { behavior: "deny", message: "Permission request canceled" },
+            }),
+          }),
+        }),
+      );
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("restores the exact Claude plan decision when native tool history is replayed", async () => {
+    const client = new ClaudeAgentClient({
+      logger: createTestLogger(),
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const resolution = { behavior: "allow" as const, selectedActionId: "implement_resume" };
+    const session = await client.resumeSession({
+      provider: "claude",
+      sessionId: "nonexistent-plan-replay-test",
+      metadata: {
+        cwd: process.cwd(),
+        planResolutions: { "native-plan": resolution },
+      },
+    });
+    const internal = session as unknown as {
+      convertHistoryEntry(entry: Record<string, unknown>): AgentTimelineItem[];
+    };
+    const text = 'Exact (c) --name="my repo"\n---buzz';
+    try {
+      internal.convertHistoryEntry({
+        type: "assistant",
+        message: {
+          content: [
+            { type: "tool_use", name: "ExitPlanMode", id: "native-plan", input: { plan: text } },
+          ],
+        },
+      });
+      const result = internal.convertHistoryEntry({
+        type: "user",
+        message: {
+          content: [{ type: "tool_result", tool_use_id: "native-plan", content: "Plan accepted" }],
+        },
+      });
+      expect(result).toEqual([
+        expect.objectContaining({
+          callId: "native-plan",
+          detail: { type: "plan", text },
+          metadata: { approved: true, actionId: "implement_resume", resolution },
+        }),
+      ]);
+      expect(session.getPendingPermissions()).toEqual([]);
+    } finally {
+      await session.close();
+    }
+  });
+
   test("denying a plan leaves the plan readable in the timeline", async () => {
     const client = new ClaudeAgentClient({
       logger: createTestLogger(),

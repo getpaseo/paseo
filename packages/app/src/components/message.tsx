@@ -3004,6 +3004,7 @@ function areExpandableBadgePropsEqual(previous: ExpandableBadgeProps, next: Expa
 }
 
 interface ToolCallProps {
+  planFooter?: ReactNode;
   toolName: string;
   args?: unknown;
   result?: unknown;
@@ -3023,6 +3024,7 @@ interface ToolCallProps {
 }
 
 export const ToolCall = memo(function ToolCall({
+  planFooter,
   toolName,
   args,
   result,
@@ -3159,6 +3161,7 @@ export const ToolCall = memo(function ToolCall({
     return (
       <PlanCard
         text={effectiveDetail.text}
+        footer={planFooter}
         testID="timeline-plan-card"
         disableOuterSpacing={disableOuterSpacing}
       />
@@ -3185,6 +3188,7 @@ export const ToolCall = memo(function ToolCall({
 }, areToolCallPropsEqual);
 
 function areToolCallPropsEqual(previous: ToolCallProps, next: ToolCallProps) {
+  if (previous.planFooter !== next.planFooter) return false;
   if (previous.toolName !== next.toolName) return false;
   if (previous.args !== next.args) return false;
   if (previous.result !== next.result) return false;

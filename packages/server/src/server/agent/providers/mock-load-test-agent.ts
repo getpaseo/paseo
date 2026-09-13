@@ -732,6 +732,7 @@ export class MockLoadTestAgentSession implements AgentSession {
   private readonly rewindError: string | null;
   private remainingPromptRejections: number;
   private remainingSteerFailures: number;
+  private remainingPermissionResponseFailures: number;
 
   constructor(options: { config: AgentSessionConfig; sessionId: string; logger?: Logger }) {
     this.id = options.sessionId;
@@ -767,6 +768,9 @@ export class MockLoadTestAgentSession implements AgentSession {
         : 0;
     this.remainingSteerFailures = getPositiveFeatureInteger(
       options.config.featureValues?.mockSteerAmbiguousFailures,
+    );
+    this.remainingPermissionResponseFailures = getPositiveFeatureInteger(
+      options.config.featureValues?.mockPermissionResponseFailures,
     );
   }
 
@@ -965,9 +969,28 @@ export class MockLoadTestAgentSession implements AgentSession {
     if (!request) {
       return undefined;
     }
+    if (this.remainingPermissionResponseFailures > 0) {
+      this.remainingPermissionResponseFailures -= 1;
+      throw new Error("Requested mock permission response failure");
+    }
     this.pendingPermissions.delete(requestId);
 
     const turn = this.activeTurn;
+    if (turn && request.kind === "plan" && typeof request.input?.plan === "string") {
+      this.emitTimeline(turn.turnId, {
+        type: "tool_call",
+        name: "plan_approval",
+        callId: request.sourcePlanCallId ?? request.id,
+        status: "completed",
+        error: null,
+        detail: { type: "plan", text: request.input.plan },
+        metadata: {
+          approved: response.behavior === "allow",
+          actionId: response.selectedActionId,
+          resolution: response,
+        },
+      });
+    }
     this.emit({
       type: "permission_resolved",
       provider: this.provider,
@@ -1280,6 +1303,7 @@ export class MockLoadTestAgentSession implements AgentSession {
       provider: this.provider,
       name: "MockPlanApproval",
       kind: "plan",
+      sourcePlanCallId: `plan:${turn.turnId}`,
       title: "Plan",
       description: "Review the proposed plan before implementation starts.",
       input: {
@@ -1311,6 +1335,14 @@ export class MockLoadTestAgentSession implements AgentSession {
     };
 
     this.pendingPermissions.set(request.id, request);
+    this.emitTimeline(turn.turnId, {
+      type: "tool_call",
+      name: "plan_approval",
+      callId: request.sourcePlanCallId!,
+      status: "completed",
+      error: null,
+      detail: { type: "plan", text: String(request.input?.plan) },
+    });
     this.emit({
       type: "permission_requested",
       provider: this.provider,

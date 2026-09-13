@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { PassThrough } from "node:stream";
 import { fileURLToPath } from "node:url";
+import { projectTimelineRows } from "../timeline-projection.js";
 
 import type {
   AgentLaunchContext,
@@ -5030,7 +5031,7 @@ describe("Codex app-server provider", () => {
           event.item.type === "tool_call" &&
           event.item.detail.type === "plan",
       ),
-    ).toBe(false);
+    ).toBe(true);
     expect(events.at(-2)).toEqual({
       type: "permission_requested",
       provider: "codex",
@@ -5065,7 +5066,7 @@ describe("Codex app-server provider", () => {
     });
   });
 
-  test("does not emit Codex plan thread items as timeline cards while plan approval is pending", () => {
+  test("keeps the canonical Codex plan identity and text through approval", async () => {
     const session = createSession({
       featureValues: { plan_mode: true, fast_mode: true },
     });
@@ -5086,11 +5087,12 @@ describe("Codex app-server provider", () => {
       turn: { status: "completed", error: null },
     });
 
-    expect(events).not.toContainEqual(
+    expect(events).toContainEqual(
       expect.objectContaining({
         type: "timeline",
         item: expect.objectContaining({
           type: "tool_call",
+          callId: "plan-item-1",
           detail: expect.objectContaining({ type: "plan" }),
         }),
       }),
@@ -5103,17 +5105,54 @@ describe("Codex app-server provider", () => {
         provider: "codex",
         name: "CodexPlanApproval",
         kind: "plan",
+        sourcePlanCallId: "plan-item-1",
         input: {
           plan: "- Inspect README\n- Add a short note",
         },
       }),
     });
+    const [request] = session.getPendingPermissions();
+    await session.respondToPermission(request.id, {
+      behavior: "allow",
+      selectedActionId: "implement",
+    });
+    const plans = events.flatMap((event) =>
+      event.type === "timeline" &&
+      event.item.type === "tool_call" &&
+      event.item.detail.type === "plan"
+        ? [event.item]
+        : [],
+    );
+    expect(plans.map((plan) => plan.callId)).toEqual(["plan-item-1", "plan-item-1"]);
+    expect(plans.at(-1)).toMatchObject({
+      detail: { type: "plan", text: "- Inspect README\n- Add a short note" },
+      metadata: {
+        approved: true,
+        actionId: "implement",
+        resolution: { behavior: "allow", selectedActionId: "implement" },
+      },
+    });
+    expect(session.describePersistence()?.metadata?.planHistory).toEqual([
+      expect.objectContaining({ item: plans.at(-1), providerTurnId: "turn-plan-thread-item" }),
+    ]);
+    expect(
+      projectTimelineRows({
+        mode: "projected",
+        rows: events.flatMap((event, seq) =>
+          event.type === "timeline"
+            ? [{ seq, timestamp: "2026-09-13T12:00:00Z", turnId: event.turnId, item: event.item }]
+            : [],
+        ),
+      }),
+    ).toHaveLength(1);
   });
 
   test("replaces a pending synthetic plan approval when a later plan completes", () => {
     const session = createSession({
       featureValues: { plan_mode: true },
     });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
 
     asInternals(session).handleNotification("turn/started", {
       turn: { id: "turn-plan-first" },
@@ -5141,7 +5180,85 @@ describe("Codex app-server provider", () => {
         input: { plan: "- Implement the revised plan" },
       }),
     ]);
+    const plans = projectTimelineRows({
+      mode: "projected",
+      rows: events.flatMap((event, seq) =>
+        event.type === "timeline"
+          ? [{ seq, timestamp: "2026-09-13T12:00:00Z", turnId: event.turnId, item: event.item }]
+          : [],
+      ),
+    });
+    expect(plans.map((entry) => entry.item)).toEqual([
+      expect.objectContaining({
+        callId: "plan:turn-plan-first",
+        detail: { type: "plan", text: "- Implement the first plan" },
+        metadata: expect.objectContaining({ approved: false }),
+      }),
+      expect.objectContaining({
+        callId: "plan:turn-plan-second",
+        detail: { type: "plan", text: "- Implement the revised plan" },
+      }),
+    ]);
   });
+
+  test.each([true, false])(
+    "restores the persisted plan resolution and respects rewind (native=%s)",
+    async (native) => {
+      const item = {
+        type: "tool_call",
+        callId: "plan-original",
+        name: "plan_approval",
+        status: "completed",
+        error: null,
+        detail: { type: "plan", text: 'Exact (c) --name="my repo"\n---buzz' },
+        metadata: {
+          approved: true,
+          actionId: "implement",
+          resolution: { behavior: "allow", selectedActionId: "implement" },
+        },
+      };
+      const handle = JSON.parse(
+        JSON.stringify({
+          sessionId: "test-thread",
+          metadata: { planHistory: [{ item, providerTurnId: "turn-original" }] },
+        }),
+      );
+      const session = new CodexAppServerAgentSession(
+        createConfig(),
+        handle,
+        createTestLogger(),
+        () => {
+          throw new Error("No provider spawn");
+        },
+      ) as CodexTestSession;
+      let turns = [
+        {
+          id: "turn-original",
+          items: [
+            {
+              type: "userMessage",
+              id: "user-original",
+              content: [{ type: "text", text: "Plan this" }],
+            },
+            ...(native ? [{ type: "plan", id: "plan-original", text: item.detail.text }] : []),
+          ],
+        },
+      ];
+      session.client = { request: async () => ({ thread: { turns } }) };
+      await asInternals(session).loadPersistedHistory();
+      const events: AgentStreamEvent[] = [];
+      for await (const event of session.streamHistory()) events.push(event);
+      expect(
+        events.flatMap((event) =>
+          event.type === "timeline" && event.item.type === "tool_call" ? [event.item] : [],
+        ),
+      ).toEqual([item]);
+      expect(session.getPendingPermissions()).toEqual([]);
+      turns = [];
+      await asInternals(session).loadPersistedHistory();
+      expect(session.describePersistence()?.metadata?.planHistory).toEqual([]);
+    },
+  );
 
   test("dismisses a pending synthetic plan approval after a new prompt is accepted", async () => {
     const session = createSession({
@@ -6102,7 +6219,7 @@ describe("Codex denied plan approvals", () => {
       message: "The user answered with a message instead of approving.",
     });
 
-    const [row] = planApprovalRows(events);
+    const row = planApprovalRows(events).at(-1);
     expect(row).toBeDefined();
     expect((row as { item: { detail: unknown; metadata?: unknown } }).item).toMatchObject({
       detail: { type: "plan", text: "Ship the thing" },
@@ -6119,7 +6236,7 @@ describe("Codex denied plan approvals", () => {
 
     // dismissPendingPlanApprovals goes straight to resolvePlanPermission, so a
     // row emitted from the response handler would miss this route entirely.
-    const [row] = planApprovalRows(events);
+    const row = planApprovalRows(events).at(-1);
     expect(row).toBeDefined();
     expect((row as { item: { detail: unknown; metadata?: unknown } }).item).toMatchObject({
       detail: { type: "plan", text: "Ship the thing" },

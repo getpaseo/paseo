@@ -525,6 +525,7 @@ export const AgentPermissionRequestPayloadSchema: z.ZodType<AgentPermissionReque
     provider: AgentProviderSchema,
     name: z.string(),
     kind: z.enum(["tool", "plan", "question", "mode", "other"]),
+    sourcePlanCallId: z.string().optional(),
     title: z.string().optional(),
     description: z.string().optional(),
     input: z.record(z.string(), z.unknown()).optional(),
