@@ -15,6 +15,7 @@ interface OmpSubagentState {
   resolvedModel: string | null;
   toolCallId: string | null;
   status: "running" | "completed" | "failed" | "canceled";
+  announced: boolean;
   mapper: OmpHistoryMapper;
 }
 
@@ -42,11 +43,11 @@ export class OmpSubagentIndex {
     state.status = mapProgressStatus(payload.progress.status);
     return [this.upsert(id, state.status, state)];
   }
-
   handleEvent(parent: object, payload: OmpSubagentEventPayload): AgentStreamEvent[] {
     const state = this.stateFor(parent, payload.id, "OMP subagent");
+    const descriptor = state.announced ? [] : [this.upsert(payload.id, state.status, state)];
     const messages = messagesFromSessionEvent(payload.event);
-    return state.mapper.mapMessages(messages).flatMap((mapped) =>
+    const timeline = state.mapper.mapMessages(messages).flatMap((mapped) =>
       mapped.type === "timeline"
         ? [
             {
@@ -62,6 +63,7 @@ export class OmpSubagentIndex {
           ]
         : [],
     );
+    return [...descriptor, ...timeline];
   }
 
   terminalizeRunning(parent: object): AgentStreamEvent[] {
@@ -94,18 +96,19 @@ export class OmpSubagentIndex {
       resolvedModel: null,
       toolCallId: null,
       status: "running",
+      announced: false,
       mapper: new OmpHistoryMapper("omp", [], OMP_HISTORY_MAPPER_HOOKS),
     };
     states.set(id, state);
     this.statesByParent.set(parent, states);
     return state;
   }
-
   private upsert(
     id: string,
     status: "running" | "completed" | "failed" | "canceled",
     state: OmpSubagentState,
   ): AgentStreamEvent {
+    state.announced = true;
     return {
       type: "provider_subagent",
       provider: "omp",
