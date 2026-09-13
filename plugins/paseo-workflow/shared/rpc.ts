@@ -37,6 +37,15 @@ export const statusRpc = defineRpc({
   input: z.object({ workspaceId: z.string(), agentId: z.string() }),
   output: z.object({
     type: z.literal("workflow.status.get.response"),
+    verification: z
+      .array(
+        z.object({
+          planId: z.string(),
+          phase: z.literal("verification_required"),
+          reason: z.string(),
+        }),
+      )
+      .optional(),
     plan: planContext.nullable(),
     recommendation: executorSelection.nullable(),
     handoff: z

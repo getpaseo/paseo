@@ -48,6 +48,7 @@ import {
 import { ensureAgentLoaded, ensureUnarchivedAgentLoaded } from "./agent/agent-loading.js";
 import {
   sendPromptToAgent,
+  startAgentRun,
   waitForAgentRunStartWithTimeout,
   unarchiveAgentState,
 } from "./agent/agent-prompt.js";
@@ -2260,6 +2261,7 @@ export class Session {
       this.dispatchAgentTimelineMessage(msg, source) ??
       this.dispatchHubExecutionMessage(msg) ??
       this.dispatchAgentLifecycleMessage(msg) ??
+      this.dispatchAgentPlanMessage(msg) ??
       this.dispatchAgentConfigMessage(msg) ??
       this.dispatchCheckoutMessage(msg) ??
       this.dispatchWorkspaceLifecycleMessage(msg) ??
@@ -2678,6 +2680,26 @@ export class Session {
       default:
         return undefined;
     }
+  }
+
+  private dispatchAgentPlanMessage(msg: SessionInboundMessage): Promise<void> | undefined {
+    if (msg.type === "agent.plan.permission.ensure.request")
+      return this.agentManager.ensurePlanPermission(msg).then((permission) => {
+        this.delivery.reply({
+          type: "agent.plan.permission.ensure.response",
+          payload: { requestId: msg.requestId, permission },
+        });
+        return undefined;
+      });
+    if (msg.type === "agent.plan.review.claim.request")
+      return this.agentManager.setPlanReviewClaim(msg).then((active) => {
+        this.delivery.reply({
+          type: "agent.plan.review.claim.response",
+          payload: { requestId: msg.requestId, active },
+        });
+        return undefined;
+      });
+    return undefined;
   }
 
   private dispatchAgentConfigMessage(msg: SessionInboundMessage): Promise<void> | undefined {
@@ -3681,7 +3703,7 @@ export class Session {
 
     try {
       const trimmed = intent?.trim() ?? "";
-      const nextIntent = trimmed.length === 0 ? undefined : trimmed;
+      const nextIntent = trimmed.length === 0 ? undefined : intent!;
       const updatedAt = new Date().toISOString();
       const updated = await this.workspaceRegistry.update(workspaceId, (existing) => ({
         ...existing,
@@ -4756,6 +4778,23 @@ export class Session {
         requestId,
         response,
         logger: this.sessionLogger,
+        sendPlanFollowup: async (prompt, messageId) => {
+          await this.agentRequests.send({
+            agentId,
+            messageId,
+            request: { prompt, kind: "plan-approval" },
+            send: async () => {
+              await startAgentRun(this.agentManager, agentId, prompt, this.sessionLogger, {
+                runOptions: { clientMessageId: messageId },
+              });
+              await waitForAgentRunStartWithTimeout(
+                this.agentManager,
+                agentId,
+                this.delivery.requestSignal,
+              );
+            },
+          });
+        },
       });
       // COMPAT(ownedSubscriptions): added in v0.8.0, remove after 2027-03-09.
       // Legacy clients consume the single domain resolution; modern request outcomes

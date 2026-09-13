@@ -43,13 +43,16 @@ export default function contribute(server: PluginServerContext) {
       return;
     const text = request.input?.plan ?? request.metadata?.planText;
     if (typeof text !== "string") throw new Error("The pending plan has no canonical text.");
-    await workflow(paseo).planRequested({
-      workspaceId: agent.workspaceId,
-      agentId: agent.id,
-      permissionRequestId: request.id,
-      callId: request.sourcePlanCallId,
-      text,
-    });
+    await workflow(paseo).planRequested(
+      {
+        workspaceId: agent.workspaceId,
+        agentId: agent.id,
+        permissionRequestId: request.id,
+        callId: request.sourcePlanCallId,
+        text,
+      },
+      request.metadata?.syntheticPlan !== true,
+    );
   });
   server.on("agent.permission_resolved", async ({ agent, requestId, resolution }, { paseo }) => {
     if (agent.launchProfileId === profileId("planner") && resolution.behavior === "allow")

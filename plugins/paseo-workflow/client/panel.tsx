@@ -126,7 +126,10 @@ export function WorkflowPanel({
           <Handoff key={query.data.plan?.callId ?? "none"} data={query.data} theme={theme} />
           <SettingsSection title="Final review">
             <SettingsCard>
-              {query.data.reviews.length === 0 ? (
+              {query.data.verification?.map((item) => (
+                <SettingsRow key={item.planId} label="Verification required" hint={item.reason} />
+              ))}
+              {query.data.reviews.length === 0 && !query.data.verification?.length ? (
                 <SettingsRow label="No final review yet" />
               ) : (
                 query.data.reviews.map((review) => (

@@ -2906,6 +2906,38 @@ export class DaemonClient {
     return { intent: payload.intent };
   }
 
+  async ensurePlanPermission(input: {
+    agentId: string;
+    workspaceId: string;
+    callId: string;
+  }): Promise<AgentPermissionRequest> {
+    // COMPAT(structuredPlanApproval): added in v0.8.0, remove gate after 2027-03-13.
+    if (this.lastServerInfoMessage?.features?.structuredPlanApproval !== true)
+      throw new Error(
+        "Update the Paseo host to approve structured plans without native permissions.",
+      );
+    const payload =
+      await this.sendNamespacedCorrelatedSessionRequest<"agent.plan.permission.ensure.response">({
+        message: { type: "agent.plan.permission.ensure.request", ...input },
+      });
+    return payload.permission;
+  }
+
+  async setPlanReviewClaim(input: {
+    agentId: string;
+    workspaceId: string;
+    permissionRequestId: string;
+    callId: string;
+    active: boolean;
+  }): Promise<void> {
+    // COMPAT(planReviewClaims): added in v0.8.0, remove gate after 2027-03-13.
+    if (this.lastServerInfoMessage?.features?.planReviewClaims !== true)
+      throw new Error("Update the Paseo host to coordinate plan review and approval.");
+    await this.sendNamespacedCorrelatedSessionRequest<"agent.plan.review.claim.response">({
+      message: { type: "agent.plan.review.claim.request", ...input },
+    });
+  }
+
   async setWorkspacePinned(
     workspaceId: string,
     pinned: boolean,

@@ -16,7 +16,7 @@ import type {
 } from "../agent/agent-sdk-types.js";
 import { AgentTurnNotAcceptedError } from "../agent/agent-sdk-types.js";
 
-async function lifecycleFixture() {
+async function lifecycleFixture(options: { intent?: string; target?: boolean } = {}) {
   const directory = await mkdtemp(path.join(tmpdir(), "workflow-lifecycle-"));
   const git = (...args: string[]) =>
     execFileSync("git", args, { cwd: directory, encoding: "utf8" }).trim();
@@ -26,6 +26,10 @@ async function lifecycleFixture() {
   await writeFile(path.join(directory, "feature.txt"), "initial\n");
   git("add", "feature.txt");
   git("commit", "--quiet", "-m", "base");
+  if (options.target !== false) {
+    git("update-ref", "refs/remotes/origin/release", git("rev-parse", "HEAD"));
+    git("symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/release");
+  }
   const provider = createTestAgentClient("codex");
   const originalCreate = provider.createSession.bind(provider);
   const originalResume = provider.resumeSession.bind(provider);
@@ -147,7 +151,10 @@ async function lifecycleFixture() {
   });
   await client.installDirectoryPlugin(path.resolve("plugins/paseo-workflow"));
   const workspace = (
-    await client.createWorkspace({ source: { kind: "directory", path: directory } })
+    await client.createWorkspace({
+      source: { kind: "directory", path: directory },
+      intent: options.intent,
+    })
   ).workspace!;
   const rpc = settingsRpc("workflows");
   const read = async () => {
@@ -192,6 +199,62 @@ async function lifecycleFixture() {
     },
   };
 }
+
+test.each([undefined, "ordinary-profile", "paseo-workflow-planner"])(
+  "workspace intention reaches every new agent once (profile: %s)",
+  async (launchProfileId) => {
+    const intent = "  Preserve the exact user purpose.  ";
+    const f = await lifecycleFixture({ intent });
+    try {
+      const agent = await f.client.createAgent({
+        provider: "codex",
+        cwd: f.directory,
+        workspaceId: f.workspace.id,
+        launchProfileId,
+        systemPrompt: "Existing instruction",
+      });
+      const prompt = f.daemon.daemon.agentManager.getAgent(agent.id)!.config.systemPrompt!;
+      expect(prompt).toContain("Existing instruction");
+      expect(prompt.split(`Workspace intention:\n${intent}`)).toHaveLength(2);
+    } finally {
+      await f.close();
+    }
+  },
+  60_000,
+);
+
+test("ordinary workspace create captures the selected profile approval mode before later profile edits", async () => {
+  const f = await lifecycleFixture();
+  try {
+    await f.client.patchDaemonConfig({
+      agentProfiles: [
+        ...profiles,
+        {
+          id: "ordinary-profile",
+          name: "Ordinary",
+          provider: "codex",
+          postApprovalModeId: "auto",
+        },
+      ],
+    });
+    const agent = await f.client.createAgent({
+      provider: "codex",
+      cwd: f.directory,
+      workspaceId: f.workspace.id,
+      launchProfileId: "ordinary-profile",
+      systemPrompt: "No workspace intention",
+    });
+    expect(agent.launchPostApprovalModeId).toBe("auto");
+    await f.client.patchDaemonConfig({ agentProfiles: profiles });
+    await f.client.reloadPlugin("paseo-workflow");
+    const stored = f.daemon.daemon.agentManager.getAgent(agent.id)!;
+    expect(stored.launchProfileId).toBe("ordinary-profile");
+    expect(stored.launchPostApprovalModeId).toBe("auto");
+    expect(stored.config.systemPrompt).toBe("No workspace intention");
+  } finally {
+    await f.close();
+  }
+}, 60_000);
 
 async function pendingPlan(
   f: Awaited<ReturnType<typeof lifecycleFixture>>,
@@ -268,6 +331,132 @@ async function publishPlanApproval(
     .toBe(true);
 }
 
+test.each(["no-commit", "no-target"] as const)(
+  "implementation completion exposes verification required (%s)",
+  async (reason) => {
+    const f = await lifecycleFixture({ target: reason !== "no-target" });
+    try {
+      const plan = await pendingPlan(f);
+      const instruction = f.daemon.daemon.agentManager.getAgent(plan.agentId)!.config.systemPrompt!;
+      expect(instruction).toContain("After approval");
+      expect(instruction).toContain("functional commit");
+      await f.client.invokePluginRpc("paseo-workflow", "workflow.handoff.prepare.request", plan);
+      await publishPlanApproval(f, plan);
+      await writeFile(path.join(f.directory, "feature.txt"), "implemented\n");
+      if (reason !== "no-commit") f.git("commit", "--quiet", "-am", "functional");
+      await f.client.sendMessage(plan.agentId, "Implementation finished");
+      await expect
+        .poll(async () =>
+          f.client.invokePluginRpc("paseo-workflow", "workflow.status.get.request", {
+            agentId: plan.agentId,
+            workspaceId: plan.workspaceId,
+          }),
+        )
+        .toMatchObject({ verification: [{ planId: plan.callId, phase: "verification_required" }] });
+      expect(f.agents("final-review")).toHaveLength(0);
+      await f.client.reloadPlugin("paseo-workflow");
+      expect((await f.read()).values.workflows[plan.agentId]!.plans[plan.callId]).toHaveProperty(
+        "verification",
+      );
+    } finally {
+      await f.close();
+    }
+  },
+  60_000,
+);
+
+test("final diff uses the remote target merge base while commit progression uses workflow start HEAD", async () => {
+  const f = await lifecycleFixture();
+  f.canceled.add("final-review");
+  try {
+    const targetBase = f.git("rev-parse", "HEAD");
+    await writeFile(path.join(f.directory, "existing.txt"), "pre-existing branch commit\n");
+    f.git("add", "existing.txt");
+    f.git("commit", "--quiet", "-m", "pre-existing feature");
+    const startHead = f.git("rev-parse", "HEAD");
+    const plan = await pendingPlan(f);
+    await f.client.invokePluginRpc("paseo-workflow", "workflow.handoff.prepare.request", plan);
+    expect((await f.read()).values.workflows[plan.agentId]!.git).toMatchObject({
+      startHead,
+      targetBase,
+    });
+    await publishPlanApproval(f, plan);
+    await writeFile(path.join(f.directory, "feature.txt"), "functional\n");
+    f.git("commit", "--quiet", "-am", "functional");
+    await f.client.sendMessage(plan.agentId, "Implementation committed");
+    await expect
+      .poll(() => f.prompts.find((prompt) => prompt.role === "final-review")?.text)
+      .toContain("pre-existing branch commit");
+    expect(f.prompts.find((prompt) => prompt.role === "final-review")!.text).toContain(startHead);
+  } finally {
+    await f.close();
+  }
+}, 60_000);
+
+test.each(["router", "executor-standard"] as const)(
+  "status reconciles a completed %s during plugin downtime exactly once",
+  async (role) => {
+    const f = await lifecycleFixture();
+    let release!: () => void;
+    f.holds.set(
+      role,
+      new Promise<void>((resolve) => {
+        release = resolve;
+      }),
+    );
+    f.canceled.add("final-review");
+    f.replies.set("router", [
+      '{"ready":true,"recommendation":"standard","constraints":[],"assumptions":[]}',
+    ]);
+    try {
+      let ownerId: string;
+      if (role === "router") {
+        const router = await f.client.createAgent({
+          provider: "codex",
+          cwd: f.directory,
+          workspaceId: f.workspace.id,
+          launchProfileId: "paseo-workflow-router",
+          modeId: "full-access",
+        });
+        ownerId = router.id;
+        await f.client.sendMessage(router.id, "Build the feature");
+      } else {
+        const plan = await pendingPlan(f);
+        ownerId = plan.agentId;
+        f.effects.set(role, async () => {
+          await writeFile(path.join(f.directory, "feature.txt"), "functional\n");
+          f.git("commit", "--quiet", "-am", "functional");
+        });
+        await f.client.invokePluginRpc("paseo-workflow", "workflow.plan.handoff.request", {
+          ...plan,
+          selection: "standard",
+        });
+      }
+      await f.client.disablePlugin("paseo-workflow");
+      release();
+      await expect.poll(() => f.agents(role)[0]?.lifecycle).toBe("idle");
+      await f.client.enablePlugin("paseo-workflow");
+      const status = () =>
+        f.client.invokePluginRpc("paseo-workflow", "workflow.status.get.request", {
+          agentId: ownerId,
+          workspaceId: f.workspace.id,
+        });
+      await status();
+      const nextRole = role === "router" ? "planner" : "final-review";
+      expect(f.agents(nextRole)).toHaveLength(1);
+      await f.client.reloadPlugin("paseo-workflow");
+      await status();
+      await status();
+      expect(f.agents(nextRole)).toHaveLength(1);
+      expect(f.prompts.filter((prompt) => prompt.role === nextRole)).toHaveLength(1);
+    } finally {
+      release();
+      await f.close();
+    }
+  },
+  60_000,
+);
+
 test.each([false, true])(
   "real manager lifecycle separates classification, correction decision and validation evidence turns (reused turnId: %s)",
   async (reuse) => {
@@ -324,6 +513,49 @@ test.each([false, true])(
       const lastPrompt = history.findLast((row) => row.item.type === "user_message")!;
       expect(history.indexOf(evidence)).toBeLessThan(history.indexOf(lastPrompt));
       expect(evidence.turnId === history.at(-1)?.turnId).toBe(reuse);
+    } finally {
+      await f.close();
+    }
+  },
+  60_000,
+);
+
+test.each(["same-file", "head", "untracked", "staged"] as const)(
+  "concurrent %s changes after audit prevent the correction prompt",
+  async (change) => {
+    const f = await lifecycleFixture();
+    try {
+      f.replies.set("final-review", [
+        '{"classification":"SIMPLE"}',
+        '{"correct":true,"validationCommands":["npm run test:target"]}',
+      ]);
+      f.replies.set("audit-economic", [
+        '{"findings":[{"summary":"Certain local bug","files":["feature.txt"],"certain":true,"local":true,"verifiable":true,"externalEffects":false}]}',
+      ]);
+      f.effects.set("final-review", async (text) => {
+        if (!text.startsWith("Evaluate these findings")) return;
+        await writeFile(
+          path.join(f.directory, change === "untracked" ? "concurrent.txt" : "feature.txt"),
+          "concurrent owner edit\n",
+        );
+        if (change === "staged") f.git("add", "feature.txt");
+        if (change === "head") f.git("commit", "--quiet", "-am", "concurrent commit");
+      });
+      const plan = await pendingPlan(f);
+      await f.client.invokePluginRpc("paseo-workflow", "workflow.handoff.prepare.request", plan);
+      await publishPlanApproval(f, plan);
+      await writeFile(path.join(f.directory, "feature.txt"), "functional\n");
+      f.git("commit", "--quiet", "-am", "functional");
+      await f.client.sendMessage(plan.agentId, "Implementation committed");
+      await expect
+        .poll(
+          async () =>
+            (await f.read()).values.workflows[plan.agentId]?.plans[plan.callId]?.final?.phase,
+          { timeout: 10_000 },
+        )
+        .toBe("verification_required");
+      expect(f.prompts.filter((prompt) => prompt.role === "final-review")).toHaveLength(2);
+      expect(f.prompts.some((prompt) => prompt.text.startsWith("Correct only"))).toBe(false);
     } finally {
       await f.close();
     }
@@ -769,13 +1001,335 @@ test.each(["initial", "final"])(
           { timeout: 10_000 },
         )
         .toBe("verification_required");
-      expect(f.git("diff", state.workflows[plan.agentId]!.git.base)).not.toContain("untracked.txt");
+      expect(f.git("diff", state.workflows[plan.agentId]!.git.targetBase!)).not.toContain(
+        "untracked.txt",
+      );
     } finally {
       await f.close();
     }
   },
   60_000,
 );
+
+test("a completed structured proposal without native permission is ensured and approved once in the same conversation", async () => {
+  const f = await lifecycleFixture();
+  try {
+    const plan = await pendingPlan(f);
+    const manager = f.daemon.daemon.agentManager;
+    manager.getAgent(plan.agentId)!.pendingPermissions.clear();
+    await manager.appendTimelineItem(plan.agentId, {
+      type: "tool_call",
+      callId: plan.callId,
+      name: "propose_plan",
+      status: "completed",
+      error: null,
+      detail: { type: "plan", text: plan.text },
+    });
+    const ensure = () =>
+      f.client.ensurePlanPermission({
+        agentId: plan.agentId,
+        workspaceId: plan.workspaceId,
+        callId: plan.callId,
+      });
+    const permission = await ensure();
+    expect(await ensure()).toEqual(permission);
+    expect(permission).toMatchObject({
+      kind: "plan",
+      sourcePlanCallId: plan.callId,
+      input: { plan: plan.text },
+    });
+    const session = manager.getAgent(plan.agentId)!.session!;
+    session.respondToPermission = async () => {
+      throw new Error("Native permission API must not be used");
+    };
+    const before = f.prompts.length;
+    await f.client.respondToPermissionAndWait(plan.agentId, permission.id, { behavior: "allow" });
+    await expect.poll(() => f.prompts.length).toBe(before + 1);
+    expect(f.prompts.at(-1)!.text).toContain(plan.text);
+    expect(f.agents("planner")).toHaveLength(1);
+    const rows = manager.getTimeline(plan.agentId);
+    expect(
+      rows.find(
+        (item) =>
+          item.type === "tool_call" &&
+          item.callId === plan.callId &&
+          item.metadata?.approved === true,
+      ),
+    ).toBeDefined();
+    await expect.poll(() => manager.getAgent(plan.agentId)?.lifecycle).toBe("idle");
+    await expect(ensure()).rejects.toThrow("resolved");
+    await expect(
+      f.client.respondToPermissionAndWait(plan.agentId, permission.id, { behavior: "allow" }),
+    ).rejects.toThrow("resolved");
+    expect(f.prompts).toHaveLength(before + 1);
+    await f.client.invokePluginRpc("paseo-workflow", "workflow.status.get.request", {
+      workspaceId: plan.workspaceId,
+      agentId: plan.agentId,
+    });
+    expect(
+      (await f.read()).values.workflows[plan.agentId]!.plans[plan.callId]!.verification,
+    ).toContain("functional commit");
+  } finally {
+    await f.close();
+  }
+}, 60_000);
+
+test.each(["review", "handoff"] as const)(
+  "structured fallback %s uses the verified server permission without native response",
+  async (action) => {
+    const f = await lifecycleFixture();
+    try {
+      const plan = await pendingPlan(f);
+      const manager = f.daemon.daemon.agentManager;
+      manager.getAgent(plan.agentId)!.pendingPermissions.clear();
+      await manager.appendTimelineItem(plan.agentId, {
+        type: "tool_call",
+        callId: plan.callId,
+        name: "proposal",
+        status: "completed",
+        error: null,
+        detail: { type: "plan", text: plan.text },
+      });
+      const request = { agentId: plan.agentId, workspaceId: plan.workspaceId, callId: plan.callId };
+      const permission = await f.client.ensurePlanPermission(request);
+      manager.getAgent(plan.agentId)!.session!.respondToPermission = async () => {
+        throw new Error("Native API forbidden");
+      };
+      const context = { ...plan, permissionRequestId: permission.id };
+      const method =
+        action === "review" ? "workflow.plan.review.request" : "workflow.plan.handoff.request";
+      const input = action === "review" ? context : { ...context, selection: "advanced" };
+      const first = await f.client.invokePluginRpc("paseo-workflow", method, input);
+      expect(await f.client.invokePluginRpc("paseo-workflow", method, input)).toEqual(first);
+      expect(manager.getAgent(plan.agentId)!.pendingPermissions.size).toBe(0);
+      expect(f.agents(action === "review" ? "plan-reviewer" : "executor-advanced")).toHaveLength(1);
+      await expect(f.client.ensurePlanPermission(request)).rejects.toThrow();
+    } finally {
+      await f.close();
+    }
+  },
+  60_000,
+);
+
+test("structured ensure rejects forged/workspace/running/resolved plans and keeps its ID across reload", async () => {
+  const f = await lifecycleFixture();
+  try {
+    const plan = await pendingPlan(f);
+    const manager = f.daemon.daemon.agentManager;
+    manager.getAgent(plan.agentId)!.pendingPermissions.clear();
+    const input = { agentId: plan.agentId, workspaceId: plan.workspaceId, callId: plan.callId };
+    await expect(f.client.ensurePlanPermission(input)).rejects.toThrow("canonical");
+    await manager.appendTimelineItem(plan.agentId, {
+      type: "tool_call",
+      callId: plan.callId,
+      name: "proposal",
+      status: "completed",
+      error: null,
+      detail: { type: "plan", text: plan.text },
+    });
+    await expect(f.client.ensurePlanPermission({ ...input, workspaceId: "other" })).rejects.toThrow(
+      "workspace",
+    );
+    let release!: () => void;
+    f.holds.set(
+      "planner",
+      new Promise<void>((resolve) => {
+        release = resolve;
+      }),
+    );
+    await f.client.sendMessage(plan.agentId, "Clarify without executing");
+    try {
+      await expect(f.client.ensurePlanPermission(input)).rejects.toThrow("finish");
+    } finally {
+      release();
+      f.holds.delete("planner");
+    }
+    await expect.poll(() => manager.getAgent(plan.agentId)?.lifecycle).toBe("idle");
+    const permission = await f.client.ensurePlanPermission(input);
+    await manager.reloadAgentSession(plan.agentId);
+    expect((await f.client.ensurePlanPermission(input)).id).toBe(permission.id);
+    await f.client.respondToPermissionAndWait(plan.agentId, permission.id, { behavior: "deny" });
+    await expect(f.client.ensurePlanPermission(input)).rejects.toThrow("resolved");
+  } finally {
+    await f.close();
+  }
+}, 60_000);
+
+test("synthetic followup ACK unknown persists a closed outcome and never retries after reload", async () => {
+  const f = await lifecycleFixture();
+  try {
+    const plan = await pendingPlan(f);
+    const manager = f.daemon.daemon.agentManager;
+    manager.getAgent(plan.agentId)!.pendingPermissions.clear();
+    await manager.appendTimelineItem(plan.agentId, {
+      type: "tool_call",
+      callId: plan.callId,
+      name: "proposal",
+      status: "completed",
+      error: null,
+      detail: { type: "plan", text: plan.text },
+    });
+    const permission = await f.client.ensurePlanPermission({
+      agentId: plan.agentId,
+      workspaceId: plan.workspaceId,
+      callId: plan.callId,
+    });
+    f.sendFailures.set("planner", "unknown");
+    const count = f.prompts.length;
+    await expect(
+      f.client.respondToPermissionAndWait(plan.agentId, permission.id, { behavior: "allow" }),
+    ).rejects.toThrow("outcome_unknown");
+    expect(f.prompts).toHaveLength(count + 1);
+    await f.client.reloadPlugin("paseo-workflow");
+    await expect(
+      f.client.respondToPermissionAndWait(plan.agentId, permission.id, { behavior: "allow" }),
+    ).rejects.toThrow("resolved");
+    expect(f.prompts).toHaveLength(count + 1);
+    expect(
+      manager
+        .getTimeline(plan.agentId)
+        .some(
+          (item) =>
+            item.type === "tool_call" && item.metadata?.approvalOutcome === "outcome_unknown",
+        ),
+    ).toBe(true);
+    expect(f.agents("final-review")).toHaveLength(0);
+  } finally {
+    await f.close();
+  }
+}, 60_000);
+
+test("approval and implementation completed during plugin downtime reconcile once from canonical decisions", async () => {
+  const f = await lifecycleFixture();
+  f.canceled.add("final-review");
+  try {
+    const plan = await pendingPlan(f);
+    await f.client.invokePluginRpc("paseo-workflow", "workflow.handoff.prepare.request", plan);
+    await f.client.disablePlugin("paseo-workflow");
+    const manager = f.daemon.daemon.agentManager;
+    const session = manager.getAgent(plan.agentId)!.session!;
+    const emit = (
+      session as unknown as { notifySubscribers(event: AgentStreamEvent): void }
+    ).notifySubscribers.bind(session);
+    emit(approvedPlanEntry(plan));
+    emit({
+      type: "permission_resolved",
+      provider: "codex",
+      requestId: plan.permissionRequestId,
+      resolution: { behavior: "allow" },
+    });
+    await manager.flush();
+    await writeFile(path.join(f.directory, "feature.txt"), "functional\n");
+    f.git("commit", "--quiet", "-am", "functional");
+    await f.client.sendMessage(plan.agentId, "Implementation committed");
+    await expect.poll(() => manager.getAgent(plan.agentId)?.lifecycle).toBe("idle");
+    await f.client.enablePlugin("paseo-workflow");
+    const status = () =>
+      f.client.invokePluginRpc("paseo-workflow", "workflow.status.get.request", {
+        agentId: plan.agentId,
+        workspaceId: plan.workspaceId,
+      });
+    await status();
+    expect(f.agents("final-review")).toHaveLength(1);
+    await f.client.reloadPlugin("paseo-workflow");
+    await status();
+    expect(f.agents("final-review")).toHaveLength(1);
+    expect((await f.read()).values.workflows[plan.agentId]?.plans[plan.callId]?.final?.phase).toBe(
+      "classifying",
+    );
+  } finally {
+    await f.close();
+  }
+}, 60_000);
+
+test("review and approval racing on two clients cannot both acquire the plan", async () => {
+  const f = await lifecycleFixture();
+  const second = new DaemonClient({
+    url: `ws://127.0.0.1:${f.daemon.port}/ws`,
+    appVersion: "0.8.0",
+  });
+  let release!: () => void;
+  const barrier = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  f.effects.set("plan-reviewer", () => barrier);
+  try {
+    await second.connect();
+    const plan = await pendingPlan(f);
+    const review = f.client.invokePluginRpc("paseo-workflow", "workflow.plan.review.request", plan);
+    await expect.poll(() => f.prompts.some((prompt) => prompt.role === "plan-reviewer")).toBe(true);
+    await expect(
+      second.respondToPermissionAndWait(plan.agentId, plan.permissionRequestId, {
+        behavior: "allow",
+      }),
+    ).rejects.toThrow("review");
+    expect((await f.read()).values.workflows[plan.agentId]?.plans[plan.callId]).toMatchObject({
+      review: { phase: "closing" },
+    });
+    expect(
+      f.daemon.daemon.agentManager
+        .getAgent(plan.agentId)!
+        .pendingPermissions.has(plan.permissionRequestId),
+    ).toBe(true);
+    release();
+    await review;
+    await expect
+      .poll(
+        async () =>
+          (await f.read()).values.workflows[plan.agentId]?.plans[plan.callId]?.review?.phase,
+      )
+      .toBe("complete");
+    expect((await f.read()).values.workflows[plan.agentId]?.plans[plan.callId]?.approved).not.toBe(
+      true,
+    );
+    expect(f.agents("plan-reviewer")).toHaveLength(1);
+  } finally {
+    release();
+    await second.close();
+    await f.close();
+  }
+}, 60_000);
+
+test("a durable review claim blocks another client's approval even while the plugin is disabled", async () => {
+  const f = await lifecycleFixture();
+  const second = new DaemonClient({
+    url: `ws://127.0.0.1:${f.daemon.port}/ws`,
+    appVersion: "0.8.0",
+  });
+  try {
+    await second.connect();
+    const plan = await pendingPlan(f);
+    f.failures.set("plan-reviewer", 1);
+    await expect(
+      f.client.invokePluginRpc("paseo-workflow", "workflow.plan.review.request", plan),
+    ).rejects.toThrow("spawn failure");
+    await f.client.disablePlugin("paseo-workflow");
+    await expect(
+      second.respondToPermissionAndWait(plan.agentId, plan.permissionRequestId, {
+        behavior: "allow",
+      }),
+    ).rejects.toThrow("review");
+    expect(
+      f.daemon.daemon.agentManager
+        .getAgent(plan.agentId)!
+        .pendingPermissions.has(plan.permissionRequestId),
+    ).toBe(true);
+    await f.client.enablePlugin("paseo-workflow");
+    await f.client.invokePluginRpc("paseo-workflow", "workflow.plan.review.request", plan);
+    await expect
+      .poll(
+        async () =>
+          (await f.read()).values.workflows[plan.agentId]?.plans[plan.callId]?.review?.phase,
+      )
+      .toBe("complete");
+    expect((await f.read()).values.workflows[plan.agentId]?.plans[plan.callId]?.approved).not.toBe(
+      true,
+    );
+  } finally {
+    await second.close();
+    await f.close();
+  }
+}, 60_000);
 
 test("review RPC leaves the real permission retryable when reviewer creation fails", async () => {
   const f = await lifecycleFixture();

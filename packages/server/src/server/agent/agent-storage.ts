@@ -48,6 +48,7 @@ const STORED_AGENT_SCHEMA = z.object({
   launchProfileId: z.string().optional(),
   launchPostApprovalModeId: z.string().optional(),
   lastCompletedTurnId: z.string().optional(),
+  planReviewClaims: z.record(z.string(), z.string()).optional(),
   provider: z.string(),
   cwd: z.string(),
   workspaceId: z.string().optional(),

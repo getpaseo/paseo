@@ -42,7 +42,12 @@ function fixture() {
     workspace: async () => ({ cwd: "/workspace", intent: "Keep the user in control" }),
     timeline: async () => [{ type: "user_message", text: "Build the requested feature" }],
     turn: async () => null,
-    git: async () => ({ base: "abc123", branch: "feature", dirty: " M existing.ts" }),
+    git: async () => ({
+      startHead: "abc123",
+      targetBase: "target-base",
+      branch: "feature",
+      dirty: " M existing.ts",
+    }),
     diff: async () => ({
       head: "functional-commit",
       text: "diff --git a/feature.ts b/feature.ts",
@@ -69,6 +74,7 @@ function fixture() {
       decisions.push(requestId);
       agents.get(agentId)!.pendingPermissions = [];
     },
+    claimReview: async () => {},
     read: async () => structuredClone(stored),
     write: async (value) => {
       stored = structuredClone(value);
@@ -174,7 +180,12 @@ test.each([
 
 test("final review refuses unsafe corrections and treats manager assertions without tool evidence as verification_required", async () => {
   const f = fixture();
-  f.port.git = async () => ({ base: "abc123", branch: "feature", dirty: "" });
+  f.port.git = async () => ({
+    startHead: "abc123",
+    targetBase: "target",
+    branch: "feature",
+    dirty: "",
+  });
   f.port.diff = async () => ({
     head: "functional-commit",
     text: "functional diff",
@@ -258,7 +269,12 @@ test.each([
   "extra-commit",
 ])("correction evidence stays bounded (%s)", async (scenario) => {
   const f = fixture();
-  f.port.git = async () => ({ base: "abc123", branch: "feature", dirty: "" });
+  f.port.git = async () => ({
+    startHead: "abc123",
+    targetBase: "target",
+    branch: "feature",
+    dirty: "",
+  });
   f.port.diff = async () => ({
     head: "functional-commit",
     text: "functional diff",
@@ -440,6 +456,15 @@ test("handoff persists the selected executor and launches one root with the orig
     config: { writePolicy: "read_write" },
   });
   expect(f.prompts[0].text).toMatch(/^\/paseo-handoff/);
+  const marker = JSON.parse(
+    f.prompts[0].text.split("\n")[1]!.slice("PASEO_WORKFLOW_HANDOFF ".length),
+  );
+  expect(marker).toEqual({
+    mode: "receiver",
+    workflowId: f.launches[0]!.labels["paseo.workflow.id"],
+    planId: plan.callId,
+    role: f.launches[0]!.labels["paseo.workflow.role"],
+  });
   expect(f.prompts[0].text).toContain("abc123");
   expect(f.prompts[0].text).toContain(" M existing.ts");
   expect(f.prompts[0].text).toContain("Keep the user in control");

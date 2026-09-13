@@ -39,6 +39,24 @@ function input(overrides: Partial<PlanActionsInput> = {}): PlanActionsInput {
 }
 
 describe("plan actions", () => {
+  it("offers live undecided structured fallback plans and keeps old hosts/cache read-only", () => {
+    const fallback = input({ permissions: [], fallbackAvailable: true });
+    expect(resolvePlanActions(fallback).map((action) => action.id)).toEqual([
+      "copy",
+      "workflow/review",
+      "workflow/handoff",
+      "approve",
+    ]);
+    for (const patch of [
+      { live: false },
+      { fallbackAvailable: false },
+      { resolved: true },
+      { readOnly: true },
+    ])
+      expect(resolvePlanActions({ ...fallback, ...patch }).map((action) => action.id)).toEqual([
+        "copy",
+      ]);
+  });
   it("orders copy, matching plugin actions, then approval; only approval stays outside compact overflow", () => {
     const actions = resolvePlanActions(input());
     expect(actions.map((action) => action.id)).toEqual([

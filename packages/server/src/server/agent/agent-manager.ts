@@ -18,6 +18,7 @@ import {
 import type { Logger } from "pino";
 import { assertWritePolicySupported, assertWritePolicyUnchanged } from "./write-policy.js";
 import { removeReadOnlyCodexState } from "./providers/codex/read-only.js";
+import { findPlanProposal, hasPlanDecision, syntheticPlanPermissionId } from "./plan-permission.js";
 import type { ProviderOptions, ToolPolicy } from "@getpaseo/protocol/agent-types";
 import type { ProviderPaseoToolsPolicy } from "@getpaseo/protocol/provider-config";
 import { z } from "zod";
@@ -285,6 +286,7 @@ export interface CreateAgentOptions {
   launchProfileId?: string;
   launchPostApprovalModeId?: string;
   lastCompletedTurnId?: string;
+  planReviewClaims?: Record<string, string>;
   labels?: Record<string, string>;
   initialPrompt?: string;
   env?: Record<string, string>;
@@ -383,6 +385,7 @@ interface ManagedAgentBase {
   readonly launchProfileId?: string;
   readonly launchPostApprovalModeId?: string;
   lastCompletedTurnId?: string;
+  planReviewClaims?: Record<string, string>;
   provider: AgentProvider;
   cwd: string;
   /**
@@ -1279,6 +1282,7 @@ export class AgentManager {
       launchProfileId: options.launchProfileId,
       launchPostApprovalModeId: options.launchPostApprovalModeId,
       lastCompletedTurnId: options.lastCompletedTurnId,
+      planReviewClaims: options.planReviewClaims,
       owner: options.owner,
       historyPrimed: true,
     });
@@ -1313,6 +1317,7 @@ export class AgentManager {
       launchProfileId?: string;
       launchPostApprovalModeId?: string;
       lastCompletedTurnId?: string;
+      planReviewClaims?: Record<string, string>;
       owner?: AgentOwner;
     },
     resumeOptions?: AgentResumeSessionOptions,
@@ -1353,6 +1358,7 @@ export class AgentManager {
       launchProfileId?: string;
       launchPostApprovalModeId?: string;
       lastCompletedTurnId?: string;
+      planReviewClaims?: Record<string, string>;
       owner?: AgentOwner;
     },
     resumeOptions?: AgentResumeSessionOptions,
@@ -1595,6 +1601,7 @@ export class AgentManager {
         launchProfileId: existing.launchProfileId,
         launchPostApprovalModeId: existing.launchPostApprovalModeId,
         lastCompletedTurnId: existing.lastCompletedTurnId,
+        planReviewClaims: existing.planReviewClaims,
         owner: existing.owner,
         createdAt: existing.createdAt,
         updatedAt: existing.updatedAt,
@@ -1901,6 +1908,7 @@ export class AgentManager {
         launchProfileId: record.launchProfileId,
         launchPostApprovalModeId: record.launchPostApprovalModeId,
         lastCompletedTurnId: record.lastCompletedTurnId,
+        planReviewClaims: record.planReviewClaims,
         owner: record.owner,
         session: null,
         capabilities: STORED_AGENT_CAPABILITIES,
@@ -2992,10 +3000,194 @@ export class AgentManager {
     });
   }
 
+  async ensurePlanPermission(input: {
+    agentId: string;
+    workspaceId: string;
+    callId: string;
+  }): Promise<AgentPermissionRequest> {
+    return this.runForegroundMutation(input.agentId, async () => {
+      await this.drainSessionEvents(input.agentId);
+      const agent = this.requireAgent(input.agentId);
+      if (agent.workspaceId !== input.workspaceId)
+        throw new Error("This plan belongs to another workspace.");
+      if (agent.lifecycle !== "idle" || agent.activeTurnId || this.runs.hasRun(agent.id))
+        throw new Error("Wait for the current agent turn to finish before acting on this plan.");
+      if (agent.config.writePolicy === "read_only")
+        throw new Error("A read-only agent cannot execute a plan.");
+      const proposal = findPlanProposal(this.timelineStore.getRows(agent.id), input.callId);
+      const native = [...agent.pendingPermissions.values()].find(
+        (entry) => entry.kind === "plan" && entry.sourcePlanCallId === input.callId,
+      );
+      if (native) return native;
+      if (agent.pendingPermissions.size)
+        throw new Error("Resolve the current permission before acting on this plan.");
+      const request: AgentPermissionRequest = {
+        id: syntheticPlanPermissionId(
+          agent.id,
+          agent.persistence?.sessionId ?? agent.id,
+          input.callId,
+        ),
+        provider: agent.provider,
+        name: "plan_approval",
+        kind: "plan",
+        sourcePlanCallId: input.callId,
+        input: { plan: proposal.text },
+        detail: { type: "plan", text: proposal.text },
+        metadata: { syntheticPlan: true },
+        actions: [{ id: "implement", label: "Implement", behavior: "allow", variant: "primary" }],
+      };
+      await this.dispatchSessionEvent(agent, {
+        type: "permission_requested",
+        provider: agent.provider,
+        request,
+      });
+      await this.persistSnapshot(agent);
+      return request;
+    });
+  }
+
+  private async respondToSyntheticPlan(
+    agent: LiveManagedAgent,
+    pending: AgentPermissionRequest,
+    response: AgentPermissionResponse,
+    send: ((prompt: string, messageId: string) => Promise<void>) | undefined,
+  ): Promise<void> {
+    const proposal = findPlanProposal(
+      this.timelineStore.getRows(agent.id),
+      pending.sourcePlanCallId!,
+    );
+    const approved = response.behavior === "allow";
+    const decision: AgentTimelineItem = {
+      ...proposal.item,
+      status: "completed",
+      error: null,
+      metadata: {
+        ...proposal.item.metadata,
+        approved,
+        resolution: response,
+        syntheticPermissionId: pending.id,
+        approvalOutcome: approved ? "pending" : "completed",
+      },
+    };
+    const publish = async (item: AgentTimelineItem) => {
+      const row = this.timelineStore.append(agent.id, item, { turnId: proposal.turnId });
+      await this.durableTimelineStore?.bulkInsert(agent.id, [row]);
+      this.dispatchStream(
+        agent.id,
+        { type: "timeline", provider: agent.provider, item, turnId: proposal.turnId },
+        {
+          seq: row.seq,
+          epoch: this.timelineStore.getEpoch(agent.id),
+          timestamp: row.timestamp,
+        },
+      );
+    };
+    await publish(decision);
+    await this.dispatchSessionEvent(agent, {
+      type: "permission_resolved",
+      provider: agent.provider,
+      requestId: pending.id,
+      resolution: response,
+    });
+    if (!approved) return;
+    const prompt = `PASEO_PLAN_APPROVAL ${JSON.stringify({ callId: proposal.item.callId, permissionId: pending.id, approved: true, plan: proposal.text })}\nImplement this approved plan in this same conversation, preserving the user request, constraints, existing dirty files and concurrent changes. Run targeted checks, stage only your own files/hunks, and create a functional commit only after validation. Do not delegate, push, merge or deploy. Then wait for final review.`;
+    try {
+      await send!(prompt, `plan-approval:${pending.id}`);
+      await publish({
+        ...decision,
+        metadata: { ...decision.metadata, approvalOutcome: "completed" },
+      });
+    } catch (error) {
+      await publish({
+        ...decision,
+        metadata: { ...decision.metadata, approvalOutcome: "outcome_unknown" },
+      });
+      throw new Error(
+        `Plan approval outcome_unknown. Inspect this conversation before continuing; no automatic retry. ${error instanceof Error ? error.message : String(error)}`,
+        { cause: error },
+      );
+    }
+  }
+
+  async setPlanReviewClaim(input: {
+    agentId: string;
+    workspaceId: string;
+    permissionRequestId: string;
+    callId: string;
+    active: boolean;
+  }): Promise<boolean> {
+    return this.runForegroundMutation(input.agentId, async () => {
+      const agent = this.requireAgent(input.agentId);
+      if (agent.workspaceId !== input.workspaceId)
+        throw new Error("This plan belongs to another workspace.");
+      const claims = agent.planReviewClaims ?? {};
+      const existing = claims[input.callId];
+      if (existing && existing !== input.permissionRequestId)
+        throw new Error("The review claim belongs to another permission.");
+      if (input.active) {
+        const pending = agent.pendingPermissions.get(input.permissionRequestId);
+        if (pending?.kind !== "plan" || pending.sourcePlanCallId !== input.callId)
+          throw new Error("This plan is no longer pending. Open the current plan.");
+        agent.planReviewClaims = { ...claims, [input.callId]: input.permissionRequestId };
+        await this.persistSnapshot(agent);
+        if (agent.pendingPermissions.get(input.permissionRequestId) !== pending) {
+          delete agent.planReviewClaims[input.callId];
+          await this.persistSnapshot(agent);
+          throw new Error("This plan changed while claiming its review.");
+        }
+      } else {
+        if (!existing) return false;
+        delete claims[input.callId];
+        agent.planReviewClaims = claims;
+        await this.persistSnapshot(agent);
+      }
+      return input.active;
+    });
+  }
+
+  private validatePlanResponse(
+    agent: LiveManagedAgent,
+    requestId: string,
+    response: AgentPermissionResponse,
+    canSendPlan: boolean,
+  ): boolean {
+    const pending = agent.pendingPermissions.get(requestId);
+    const synthetic = pending?.metadata?.syntheticPlan === true;
+    if (
+      !pending &&
+      this.timelineStore
+        .getItems(agent.id)
+        .some(
+          (item) =>
+            item.type === "tool_call" &&
+            item.metadata?.syntheticPermissionId === requestId &&
+            hasPlanDecision(item),
+        )
+    )
+      throw new Error(
+        "This plan is already resolved. Inspect its approval outcome before continuing.",
+      );
+    if (synthetic) {
+      findPlanProposal(this.timelineStore.getRows(agent.id), pending!.sourcePlanCallId!);
+      if (response.behavior === "allow" && !canSendPlan)
+        throw new Error("Approve this structured plan from a connected Paseo client.");
+    }
+    if (
+      response.behavior === "allow" &&
+      Object.keys(agent.planReviewClaims ?? {}).length &&
+      (pending?.kind === "plan" || Object.values(agent.planReviewClaims!).includes(requestId))
+    )
+      throw new Error(
+        "A plan review is in progress. Complete or explicitly abandon the review before approving.",
+      );
+    return synthetic;
+  }
+
   async respondToPermission(
     agentId: string,
     requestId: string,
     response: AgentPermissionResponse,
+    sendPlanFollowup?: (prompt: string, messageId: string) => Promise<void>,
   ): Promise<AgentPermissionResult | void> {
     const agent = this.requireAgent(agentId);
     if (agent.inFlightPermissionResponses.has(requestId)) {
@@ -3006,6 +3198,12 @@ export class AgentManager {
     try {
       return await this.runForegroundMutation(agentId, async () => {
         const pending = agent.pendingPermissions.get(requestId);
+        const synthetic = this.validatePlanResponse(
+          agent,
+          requestId,
+          response,
+          Boolean(sendPlanFollowup),
+        );
         let planApprovalMode: string | undefined;
         let previousApprovalMode: string | undefined;
         if (pending?.kind === "plan" && response.behavior === "allow") {
@@ -3041,9 +3239,9 @@ export class AgentManager {
         }
         let result: AgentPermissionResult | void;
         try {
-          result = await agent.session.respondToPermission(requestId, response, {
-            planApprovalMode,
-          });
+          result = synthetic
+            ? await this.respondToSyntheticPlan(agent, pending!, response, sendPlanFollowup)
+            : await agent.session.respondToPermission(requestId, response, { planApprovalMode });
         } catch (error) {
           await this.drainSessionEvents(agentId);
           if (
@@ -3552,6 +3750,7 @@ export class AgentManager {
       launchProfileId?: string;
       launchPostApprovalModeId?: string;
       lastCompletedTurnId?: string;
+      planReviewClaims?: Record<string, string>;
       owner?: AgentOwner;
     },
   ): Promise<ManagedAgent> {
@@ -3706,6 +3905,7 @@ export class AgentManager {
           launchProfileId?: string;
           launchPostApprovalModeId?: string;
           lastCompletedTurnId?: string;
+          planReviewClaims?: Record<string, string>;
           owner?: AgentOwner;
         }
       | undefined;
@@ -3719,6 +3919,7 @@ export class AgentManager {
       launchProfileId: options.launchProfileId,
       launchPostApprovalModeId: options.launchPostApprovalModeId,
       lastCompletedTurnId: options.lastCompletedTurnId,
+      planReviewClaims: options.planReviewClaims,
       owner: options.owner,
       session,
       capabilities: session.capabilities,

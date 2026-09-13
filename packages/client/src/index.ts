@@ -359,6 +359,12 @@ export interface PaseoAgentHandle {
   refresh(requestId?: string): Promise<PaseoAgentRefetchResult | null>;
   send(text: string, options?: PaseoAgentSendOptions): Promise<void>;
   respondToPermission(options: PaseoAgentRespondToPermissionOptions): Promise<void>;
+  setPlanReviewClaim(options: {
+    workspaceId: string;
+    permissionRequestId: string;
+    callId: string;
+    active: boolean;
+  }): Promise<void>;
   /** Sends a prompt and resolves when that turn finishes or needs attention. */
   run(text: string, options?: PaseoAgentRunOptions): Promise<PaseoAgentRunResult>;
   /** Waits for the current turn, including one started with `prompt`. */
@@ -941,6 +947,8 @@ function createAgentHandleFactory(
       respondToPermission: async ({ requestId, response }) => {
         await daemonClient.respondToPermissionAndWait(id, requestId, response);
       },
+      setPlanReviewClaim: async (input) =>
+        daemonClient.setPlanReviewClaim({ ...input, agentId: id }),
       run: async (text, options) => {
         const { timeoutMs, ...sendOptions } = options ?? {};
         await daemonClient.sendAgentMessage(id, text, sendOptions);

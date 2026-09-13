@@ -6,6 +6,8 @@ export interface PlanActionsInput {
   launchProfileId?: string | null;
   live: boolean;
   readOnly: boolean;
+  fallbackAvailable?: boolean;
+  resolved?: boolean;
   compact?: boolean;
   permissions: readonly AgentPermissionRequest[];
   contributions: { pluginId: string; contribution: PluginPlanActionContribution }[];
@@ -31,7 +33,8 @@ export function resolvePlanActions(input: PlanActionsInput): PlanAction[] {
           (request) => request.kind === "plan" && request.sourcePlanCallId === input.callId,
         )
       : undefined;
-  if (!permission) return actions;
+  if (!input.live || input.readOnly || input.resolved || (!permission && !input.fallbackAvailable))
+    return actions;
   for (const { pluginId, contribution } of [...input.contributions].sort(
     (left, right) =>
       (left.contribution.order ?? 0) - (right.contribution.order ?? 0) ||
@@ -55,8 +58,8 @@ export function resolvePlanActions(input: PlanActionsInput): PlanAction[] {
       permission,
     });
   }
-  const approval = permission.actions?.find((action) => action.behavior === "allow");
-  if (!permission.actions?.length || approval)
+  const approval = permission?.actions?.find((action) => action.behavior === "allow");
+  if (!permission?.actions?.length || approval)
     actions.push({ id: "approve", overflow: false, permission });
   return actions;
 }

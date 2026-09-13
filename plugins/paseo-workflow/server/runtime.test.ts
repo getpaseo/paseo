@@ -54,6 +54,8 @@ test.each([
   ["blank-output", false],
   ["plan-only", false],
   ["running-tool", false],
+  ["synthetic-pending", false],
+  ["synthetic-unknown", false],
 ] as const)("canonical same-turn execution proof: %s", async (proof, accepted) => {
   const plan: AgentTimelineItem = {
     type: "tool_call",
@@ -62,7 +64,18 @@ test.each([
     detail: { type: "plan", text: "Plan" },
     status: "completed",
     error: null,
-    metadata: proof === "legacy" ? {} : { approved: proof !== "denied" },
+    metadata:
+      proof === "legacy"
+        ? {}
+        : {
+            approved: proof !== "denied",
+            ...(proof.startsWith("synthetic-")
+              ? {
+                  syntheticPermissionId: "permission",
+                  approvalOutcome: proof === "synthetic-pending" ? "pending" : "outcome_unknown",
+                }
+              : {}),
+          },
   };
   let output: AgentTimelineItem = {
     type: "assistant_message",
@@ -94,7 +107,7 @@ test.each([
         request: "Implement",
         constraints: [],
         assumptions: [],
-        git: { base, branch: "test", dirty: "" },
+        git: { startHead: base, targetBase: base, branch: "test", dirty: "" },
         recommendation: null,
         plans: {
           plan: {

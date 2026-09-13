@@ -309,6 +309,66 @@ test("retry-safe creation rejects older hosts before sending any request", async
   expect(transport.sent).toEqual([]);
 });
 
+test("plan workflow mutations require host capabilities and never queue disconnected actions", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "plan-workflow-gate",
+    transportFactory: () => mock.transport,
+    reconnect: { enabled: false },
+  });
+  clients.push(client);
+  const connecting = client.connect();
+  mock.triggerOpen();
+  await connecting;
+  const input = { agentId: "agent", workspaceId: "workspace", callId: "plan" };
+  await expect(client.ensurePlanPermission(input)).rejects.toThrow("Update the Paseo host");
+  await expect(
+    client.setPlanReviewClaim({ ...input, permissionRequestId: "permission", active: true }),
+  ).rejects.toThrow("Update the Paseo host");
+  expect(mock.sent).toEqual([]);
+  mock.triggerOpen({ features: { structuredPlanApproval: true, planReviewClaims: true } });
+  const ensuring = client.ensurePlanPermission(input);
+  const request = JSON.parse(assertStr(mock.sent[0])).message;
+  expect(request).toMatchObject({ ...input, type: "agent.plan.permission.ensure.request" });
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "agent.plan.permission.ensure.response",
+      payload: {
+        requestId: request.requestId,
+        permission: {
+          id: "server-derived",
+          provider: "codex",
+          name: "plan",
+          kind: "plan",
+          sourcePlanCallId: "plan",
+          input: {},
+        },
+      },
+    }),
+  );
+  await expect(ensuring).resolves.toMatchObject({ id: "server-derived" });
+  const claiming = client.setPlanReviewClaim({
+    ...input,
+    permissionRequestId: "server-derived",
+    active: true,
+  });
+  const claim = JSON.parse(assertStr(mock.sent[1])).message;
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "agent.plan.review.claim.response",
+      payload: { requestId: claim.requestId, active: true },
+    }),
+  );
+  await claiming;
+  mock.triggerClose();
+  await expect(client.ensurePlanPermission(input)).rejects.toThrow();
+  await expect(
+    client.setPlanReviewClaim({ ...input, permissionRequestId: "server-derived", active: true }),
+  ).rejects.toThrow();
+  expect(mock.sent).toHaveLength(2);
+});
+
 test("Hub management requires daemon support before dispatching requests", async () => {
   const mock = createMockTransport();
   const client = new DaemonClient({

@@ -785,6 +785,9 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
                         callId: item.payload.data.callId,
                         text: item.payload.data.detail.text,
                         turnId: item.turnId,
+                        resolved:
+                          typeof item.payload.data.metadata?.approved === "boolean" ||
+                          Boolean(item.payload.data.metadata?.resolution),
                       },
                     },
                   ] as const,

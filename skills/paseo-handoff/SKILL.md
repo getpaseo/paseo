@@ -10,6 +10,29 @@ Transfer the current task â€” context, decisions, failed attempts, constraints â
 
 **User's arguments:** $ARGUMENTS
 
+## Choose the role first
+
+You are the **receiver/executor** when your initial prompt contains
+`PASEO_WORKFLOW_HANDOFF` with `mode: "receiver"`, a `workflowId`, a `planId`, and
+`role: "executor-standard"` or `"executor-advanced"`; or your current agent labels
+contain the matching `paseo.workflow.id`, `paseo.workflow.plan`, and executor role.
+If both are available they must match; stop and report a mismatch.
+
+As receiver, execute the supplied plan **here**, in this agent and workspace:
+
+1. Read the intention, request, plan, git base and dirty-state rules.
+2. Implement the plan, preserving pre-existing and concurrent changes.
+3. Run targeted checks, review the resulting diff, and stage only your own files/hunks.
+4. Make the functional commit only after those checks succeed, then wait for final review.
+
+Do not create another agent, select a receiving profile, or perform the initiator
+steps below. The handoff has already happened. Deadline pressure does not change
+the receiver role. If implementation or validation is blocked, report the blocker
+in this conversation; do not delegate it away.
+
+Without that receiver payload or those labels, you are the **initiator**. Follow
+the remaining sections to transfer the task to a new agent.
+
 ## Prerequisites
 
 Read the **paseo** skill. Call `list_profiles` before choosing the receiving agent. Do not create it until you have read the configured profiles and their `notes`.

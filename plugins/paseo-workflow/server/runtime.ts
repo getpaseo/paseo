@@ -34,6 +34,26 @@ export function runtime(
     }
     return pages.toReversed().flat();
   };
+  const completedTurnId = async (id: string) => {
+    const snapshot = (await paseo.agents.ref(id).refresh())?.agent;
+    if (
+      snapshot?.status !== "idle" ||
+      snapshot.activeTurn ||
+      snapshot.lastError ||
+      snapshot.pendingPermissions.length
+    )
+      return undefined;
+    return snapshot.lastCompletedTurnId;
+  };
+  const unconfirmedPlan = (entries: Awaited<ReturnType<typeof history>>, callId: string) => {
+    const latest = entries.findLast(
+      ({ item }) =>
+        item.type === "tool_call" && item.callId === callId && item.metadata?.syntheticPermissionId,
+    );
+    return (
+      latest?.item.type === "tool_call" && latest.item.metadata?.approvalOutcome !== "completed"
+    );
+  };
   const port: WorkflowPort = {
     profiles: async () => (await paseo.config.get()).config.agentProfiles ?? [],
     agent: async (id) => {
@@ -55,18 +75,8 @@ export function runtime(
       return { cwd: snapshot.workspaceDirectory, intent: snapshot.intent };
     },
     timeline: async (id) => (await history(id)).map((entry) => entry.item),
-    turn: async (id, turnId, expectedMessageId, approvedPlanCallId) => {
-      if (!turnId) {
-        const snapshot = (await paseo.agents.ref(id).refresh())?.agent;
-        if (
-          snapshot?.status !== "idle" ||
-          snapshot.activeTurn ||
-          snapshot.lastError ||
-          snapshot.pendingPermissions.length
-        )
-          return null;
-        turnId = snapshot.lastCompletedTurnId;
-      }
+    turn: async (id, turnId, expectedMessageId, approvedPlanCallId, afterMessageId) => {
+      turnId ??= await completedTurnId(id);
       if (!turnId) return null;
       const entries = await history(id);
       const end = entries.findLastIndex((entry) => entry.turnId === turnId);
@@ -74,11 +84,18 @@ export function runtime(
         (entry, index) => index <= end && entry.item.type === "user_message",
       );
       if (promptIndex < 0) return null;
+      if (afterMessageId) {
+        const source = entries.findIndex(
+          ({ item }) => item.type === "user_message" && item.clientMessageId === afterMessageId,
+        );
+        if (source < 0 || source > promptIndex) return null;
+      }
       // Providers can reuse a turnId. The canonical prompt position owns this occurrence.
       let selected = entries
         .slice(promptIndex + 1, end + 1)
         .filter((entry) => entry.turnId === turnId);
       if (approvedPlanCallId) {
+        if (unconfirmedPlan(entries, approvedPlanCallId)) return null;
         const resolution = entries.find(
           ({ item }) =>
             item.type === "tool_call" &&
@@ -118,12 +135,26 @@ export function runtime(
       };
     },
     git: async (cwd) => {
-      const [base, branch, dirty] = await Promise.all([
+      const [startHead, branch, dirty] = await Promise.all([
         git(cwd, ["rev-parse", "HEAD"]),
         git(cwd, ["branch", "--show-current"]),
         git(cwd, ["status", "--porcelain=v1"]),
       ]);
-      return { base: base.trim(), branch: branch.trim(), dirty };
+      let targetRef: string | undefined;
+      let targetBase: string | undefined;
+      try {
+        targetRef = (await git(cwd, ["symbolic-ref", "refs/remotes/origin/HEAD"])).trim();
+        targetBase = (await git(cwd, ["merge-base", "HEAD", targetRef])).trim();
+      } catch {
+        // No guessed branch name: workflow completion will expose verification_required.
+      }
+      return {
+        startHead: startHead.trim(),
+        ...(targetRef ? { targetRef } : {}),
+        ...(targetBase ? { targetBase } : {}),
+        branch: branch.trim(),
+        dirty,
+      };
     },
     diff: async (cwd, base) => {
       const [head, text, dirty] = await Promise.all([
@@ -156,6 +187,11 @@ export function runtime(
       const agent = paseo.agents.ref(id);
       await agent.respondToPermission({ requestId, response });
     },
+    claimReview: async ({ agentId, workspaceId, permissionRequestId, callId }, active) => {
+      await paseo.agents
+        .ref(agentId)
+        .setPlanReviewClaim({ workspaceId, permissionRequestId, callId, active });
+    },
     read: async () => {
       const current = await settings.read();
       revision = current.revision;
@@ -172,22 +208,33 @@ export function runtime(
 
 export async function prepareAgent(request: PluginBeforeRequests["agent.create"], paseo: PaseoApi) {
   const role = roles.find((candidate) => profileId(candidate) === request.launchProfileId);
-  if (!role) return request;
-  const profile = (await paseo.config.get()).config.agentProfiles?.find(
-    (candidate) => candidate.id === request.launchProfileId,
-  );
-  if (!profile)
-    throw new Error(
-      `Profile '${request.launchProfileId}' is missing. Open Workflow settings and choose Install / repair profiles.`,
+  if (role) {
+    const profile = (await paseo.config.get()).config.agentProfiles?.find(
+      (candidate) => candidate.id === request.launchProfileId,
     );
-  if (!request.workspaceId) throw new Error("A workflow agent requires a workspace.");
+    if (!profile)
+      throw new Error(
+        `Profile '${request.launchProfileId}' is missing. Open Workflow settings and choose Install / repair profiles.`,
+      );
+  }
+  if (!request.workspaceId) {
+    if (role) throw new Error("A workflow agent requires a workspace.");
+    return request;
+  }
   const workspace = await paseo.workspaces.ref(request.workspaceId).refresh();
   if (!workspace) throw new Error("The workflow workspace is unavailable.");
-  const readOnly = role === "router" || role === "plan-reviewer" || role.startsWith("audit-");
-  const instruction =
-    role === "router"
-      ? 'Clarify the real user request interactively, expose tradeoffs and ask missing questions. Do not implement or delegate. Once ready, return only JSON {"ready":true,"recommendation":"standard|advanced","constraints":["..."],"assumptions":["..."]}. Until ready, ask the user questions; do not return the ready JSON.'
-      : `Your workflow role is ${role}. Follow the bounded workflow request. ${readOnly ? "Read only. Never edit, mutate, commit or delegate." : "Preserve pre-existing dirty files and concurrent changes. Never push, merge, deploy or cause external effects without explicit user authority."}`;
+  if (!role && !workspace.intent) return request;
+  const readOnly = role === "router" || role === "plan-reviewer" || role?.startsWith("audit-");
+  let instruction: string | undefined;
+  if (role === "router") {
+    instruction =
+      'Clarify the real user request interactively, expose tradeoffs and ask missing questions. Do not implement or delegate. Once ready, return only JSON {"ready":true,"recommendation":"standard|advanced","constraints":["..."],"assumptions":["..."]}. Until ready, ask the user questions; do not return the ready JSON.';
+  } else if (role) {
+    instruction = `Your workflow role is ${role}. Follow the bounded workflow request. ${readOnly ? "Read only. Never edit, mutate, commit or delegate." : "Preserve pre-existing dirty files and concurrent changes. Never push, merge, deploy or cause external effects without explicit user authority."}`;
+    if (role === "planner")
+      instruction +=
+        " Before approval, clarify and plan without implementing. After approval, implement the approved plan in this conversation, run targeted checks, stage only your own files/hunks, and create a functional commit after successful validation. Then wait for final review. If validation or attribution is blocked, report it instead of committing.";
+  }
   return {
     ...request,
     config: {
@@ -196,7 +243,7 @@ export async function prepareAgent(request: PluginBeforeRequests["agent.create"]
       systemPrompt: [
         request.config.systemPrompt,
         instruction,
-        `Workspace intention:\n${workspace.intent ?? ""}`,
+        workspace.intent ? `Workspace intention:\n${workspace.intent}` : undefined,
       ]
         .filter(Boolean)
         .join("\n\n"),

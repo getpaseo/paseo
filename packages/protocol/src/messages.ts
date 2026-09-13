@@ -1034,6 +1034,24 @@ export const WorkspaceIntentSetRequestSchema = z.object({
   requestId: z.string(),
 });
 
+export const AgentPlanReviewClaimRequestSchema = z.object({
+  type: z.literal("agent.plan.review.claim.request"),
+  requestId: z.string(),
+  agentId: z.string(),
+  workspaceId: z.string(),
+  permissionRequestId: z.string(),
+  callId: z.string(),
+  active: z.boolean(),
+});
+
+export const AgentPlanPermissionEnsureRequestSchema = z.object({
+  type: z.literal("agent.plan.permission.ensure.request"),
+  requestId: z.string(),
+  agentId: z.string(),
+  workspaceId: z.string(),
+  callId: z.string(),
+});
+
 export const WorkspacePinSetRequestSchema = z.object({
   type: z.literal("workspace.pin.set.request"),
   workspaceId: z.string(),
@@ -2052,6 +2070,16 @@ export const WorkspaceIntentSetResponsePayloadSchema = z.object({
 export const WorkspaceIntentSetResponseSchema = z.object({
   type: z.literal("workspace.intent.set.response"),
   payload: WorkspaceIntentSetResponsePayloadSchema,
+});
+
+export const AgentPlanReviewClaimResponseSchema = z.object({
+  type: z.literal("agent.plan.review.claim.response"),
+  payload: z.object({ requestId: z.string(), active: z.boolean() }),
+});
+
+export const AgentPlanPermissionEnsureResponseSchema = z.object({
+  type: z.literal("agent.plan.permission.ensure.response"),
+  payload: z.object({ requestId: z.string(), permission: AgentPermissionRequestPayloadSchema }),
 });
 
 export const WorkspacePinSetResponsePayloadSchema = z.object({
@@ -3166,6 +3194,8 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   ProjectRemoveRequestSchema,
   WorkspaceTitleSetRequestSchema,
   WorkspaceIntentSetRequestSchema,
+  AgentPlanReviewClaimRequestSchema,
+  AgentPlanPermissionEnsureRequestSchema,
   WorkspacePinSetRequestSchema,
   WorkspaceLabelListRequestSchema,
   WorkspaceLabelAssignmentSetRequestSchema,
@@ -3592,6 +3622,10 @@ export const ServerInfoStatusPayloadSchema = z
         workspaceMultiplicity: z.boolean().optional(),
         // COMPAT(workspaceIntent): added in v0.8.0, remove gate after 2027-03-13.
         workspaceIntent: z.boolean().optional(),
+        // COMPAT(planReviewClaims): added in v0.8.0, remove gate after 2027-03-13.
+        planReviewClaims: z.boolean().optional(),
+        // COMPAT(structuredPlanApproval): added in v0.8.0, remove gate after 2027-03-13.
+        structuredPlanApproval: z.boolean().optional(),
         // COMPAT(projectRemove): added in v0.1.97, drop the gate when floor >= v0.1.97.
         projectRemove: z.boolean().optional(),
         // COMPAT(projectAdd): added in v0.1.97, drop the gate when floor >= v0.1.97.
@@ -6706,6 +6740,8 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   ProjectRemoveResponseSchema,
   WorkspaceTitleSetResponseSchema,
   WorkspaceIntentSetResponseSchema,
+  AgentPlanReviewClaimResponseSchema,
+  AgentPlanPermissionEnsureResponseSchema,
   WorkspacePinSetResponseSchema,
   WorkspaceRecoveryInspectResponseSchema,
   WorkspaceRecoveryRestoreResponseSchema,

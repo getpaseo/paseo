@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { getHostRuntimeStore, useHostRuntimeSnapshot } from "@/runtime/host-runtime";
+import { useHostFeature } from "@/runtime/host-features";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import { writeMarkdownToRichClipboard } from "@/utils/rich-clipboard";
 import { getDefaultMarkdownClipboardEnvironment } from "@/utils/rich-clipboard-default-environment";
@@ -77,13 +78,14 @@ export function PlanActions({
   serverId: string;
   workspaceId?: string;
   agentId: string;
-  plan: { callId: string; text: string; turnId?: string };
+  plan: { callId: string; text: string; turnId?: string; resolved?: boolean };
   permissions: readonly AgentPermissionRequest[];
   readOnly: boolean;
 }) {
   const { t } = useTranslation();
   const compact = useIsCompactFormFactor();
   const host = useHostRuntimeSnapshot(serverId);
+  const supportsStructuredPlans = useHostFeature(serverId, "structuredPlanApproval");
   const installed = useInstalledPlugins();
   const source = useMemo(() => createPluginClientStateSource(serverId), [serverId]);
   const getAgent = useCallback(() => source.getAgent(agentId), [source, agentId]);
@@ -107,6 +109,8 @@ export function PlanActions({
     contributions,
     live: host?.connectionStatus === "online" && host.agentDirectoryStatus === "ready",
     readOnly,
+    resolved: plan.resolved,
+    fallbackAvailable: supportsStructuredPlans && Boolean(workspaceId) && agent?.status === "idle",
     compact,
   });
   const run = useStableEvent((id: string) => {
@@ -126,8 +130,10 @@ export function PlanActions({
       ) {
         throw new Error(t("common.errors.daemonClientDisconnected"));
       }
-      const permission = action.permission;
-      if (!permission) return;
+      if (!workspaceId) throw new Error("Open the current plan in its workspace.");
+      const permission =
+        action.permission ??
+        (await client.ensurePlanPermission({ agentId, workspaceId, callId: plan.callId }));
       if (id === "approve") {
         const nativeAction =
           permission.actions?.find(

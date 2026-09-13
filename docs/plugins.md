@@ -29,16 +29,29 @@ status. Its settings retain plan IDs, executor selection and review limits acros
 creates and sends the read-only reviewer before closing the planner's permission. A definitive
 pre-acceptance failure leaves the plan retryable; an uncertain delivery requires manual inspection
 without replay. Planner clarification is transported verbatim and without truncation, not inferred constraints.
+The host retains a review claim until the workflow concludes it; another client cannot approve
+the same plan while review is claimed, even when the plugin is unloaded.
 
-Lifecycle hooks are best-effort notifications, not durable delivery. Status reconciles pending
-review/audit operations against the expected prompt and the host's completed-turn evidence.
+A structured plan without a native permission remains actionable while its agent is idle and
+connected. The host validates the canonical plan before creating a stable plan-only permission.
+Approval records the decision and sends the implementation prompt in the same conversation;
+an uncertain prompt receipt blocks automatic continuation. Older hosts do not expose these actions.
+
+Lifecycle hooks are best-effort notifications, not durable delivery. Status reconciles routing,
+approved implementation, handoff and review/audit operations against the expected prompt and the
+host's completed-turn evidence.
 Only that turn's canonical response and tool results count; previous turns never authorize a
 correction. Reloading the plugin or repeating status must not create another child or resend an
 accepted prompt. `outcome_unknown` preserves an operation whose delivery or permission closure
 cannot be established; inspect the existing agent before retrying. A timeout is not proof that
 the operation failed before acceptance.
 
+Audits compare against the merge base of the remote default ref (`origin/HEAD`); a missing target
+requires verification instead of guessing a branch. Commit progression uses the separate launch
+HEAD. An approved turn without a functional commit exposes `verification_required`.
+
 Automatic corrections require a clean initial workspace and clean functional-commit boundary.
+The host rechecks the exact audited HEAD, diff and clean status before requesting any correction.
 Only the manager can write. Its final tool calls must show successful targeted checks; the host
 then checks the unchanged HEAD and agreed-file diff before one read-only delta review. Untracked
 files, later tools, concurrent changes or missing evidence produce `verification_required`, not

@@ -8364,7 +8364,7 @@ test("workspace.title.set.request returns accepted=false when workspace is not f
   expect(response?.payload.error).toBeTruthy();
 });
 
-test("workspace.intent.set.request trims, stores, clears, and reports missing workspaces", async () => {
+test("workspace.intent.set.request preserves raw text, clears whitespace, and reports missing workspaces", async () => {
   const emitted: SessionOutboundMessage[] = [];
   const session = asTestSession(
     createSessionForWorkspaceTests({ onMessage: (message) => emitted.push(message) }),
@@ -8391,23 +8391,23 @@ test("workspace.intent.set.request trims, stores, clears, and reports missing wo
   await session.handleMessage({
     type: "workspace.intent.set.request",
     workspaceId: workspace.workspaceId,
-    intent: "  goal  ",
+    intent: "  goal\n  exact wording  ",
     requestId: "req-intent-set",
   });
   expect(findByType(emitted, "workspace.intent.set.response").payload).toEqual({
     requestId: "req-intent-set",
     workspaceId: workspace.workspaceId,
     accepted: true,
-    intent: "goal",
+    intent: "  goal\n  exact wording  ",
     error: null,
   });
-  expect(workspaces.get(workspace.workspaceId)?.intent).toBe("goal");
+  expect(workspaces.get(workspace.workspaceId)?.intent).toBe("  goal\n  exact wording  ");
   emitted.length = 0;
 
   await session.handleMessage({
     type: "workspace.intent.set.request",
     workspaceId: workspace.workspaceId,
-    intent: null,
+    intent: " \n\t ",
     requestId: "req-intent-clear",
   });
   expect(findByType(emitted, "workspace.intent.set.response").payload).toEqual({
