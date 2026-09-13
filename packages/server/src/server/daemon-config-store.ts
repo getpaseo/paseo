@@ -347,7 +347,20 @@ export class DaemonConfigStore {
   }
 
   public patch(partial: MutableDaemonConfigPatch): MutableDaemonConfig {
-    const parsedPatch = pickSupportedPatchFields(MutableDaemonConfigPatchSchema.parse(partial));
+    const input = MutableDaemonConfigPatchSchema.parse(partial);
+    const parsedPatch = pickSupportedPatchFields(input);
+    if (input.addAgentProfilesIfMissing !== undefined) {
+      if (input.agentProfiles !== undefined)
+        throw new Error("Cannot replace and add agent profiles in the same patch.");
+      const profiles = [...(this.current.agentProfiles ?? [])];
+      const ids = new Set(profiles.map((profile) => profile.id));
+      for (const profile of input.addAgentProfilesIfMissing) {
+        if (ids.has(profile.id)) continue;
+        profiles.push(profile);
+        ids.add(profile.id);
+      }
+      parsedPatch.agentProfiles = profiles;
+    }
     return this.applySupportedPatch(parsedPatch);
   }
 

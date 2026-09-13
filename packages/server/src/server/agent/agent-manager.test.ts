@@ -8940,6 +8940,231 @@ test("permission request notifies once without forcing unread attention state", 
   expect(attentionReasons).toContain("permission");
 });
 
+test("launch profile approval sets only its post-approval mode before resolving the plan", async () => {
+  let mode = "plan";
+  const resumedModes: string[] = [];
+  class ApprovalSession extends TestAgentSession {
+    override async setMode(value: string) {
+      mode = value;
+    }
+    override async getCurrentMode() {
+      return mode;
+    }
+    override async respondToPermission() {
+      resumedModes.push(mode);
+    }
+  }
+  const client = new (class extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig) {
+      return new ApprovalSession(config);
+    }
+  })();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    logger,
+    resolveLaunchProfile: (id) =>
+      id === "planner"
+        ? { id, name: "Planner", provider: "codex", postApprovalModeId: "full-access" }
+        : undefined,
+  });
+  const snapshot = await manager.createAgent(
+    {
+      provider: "codex",
+      cwd: process.cwd(),
+      model: "gpt-5.4",
+      thinkingOptionId: "high",
+      modeId: "plan",
+    },
+    undefined,
+    { launchProfileId: "planner" },
+  );
+  const agent = manager.getAgent(snapshot.id)!;
+  agent.pendingPermissions.set("approve", {
+    id: "approve",
+    provider: "codex",
+    name: "Plan",
+    kind: "plan",
+    sourcePlanCallId: "plan-1",
+  });
+  const sessionId = agent.session.id;
+  await manager.respondToPermission(snapshot.id, "approve", { behavior: "allow" });
+  expect(resumedModes).toEqual(["full-access"]);
+  expect(agent.config).toMatchObject({
+    provider: "codex",
+    model: "gpt-5.4",
+    thinkingOptionId: "high",
+  });
+  expect(agent.session.id).toBe(sessionId);
+  await manager.closeAgent(snapshot.id);
+});
+
+test("launch profile approval preserves the explicit mode through native provider approval", async () => {
+  let mode = "plan";
+  class NativeApprovalSession extends TestAgentSession {
+    override async setMode(value: string) {
+      mode = value;
+    }
+    override async getCurrentMode() {
+      return mode;
+    }
+    override async respondToPermission(
+      _id?: string,
+      _response?: unknown,
+      options?: { planApprovalMode?: string },
+    ) {
+      mode = options?.planApprovalMode ?? "acceptEdits";
+    }
+  }
+  const client = new (class extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig) {
+      return new NativeApprovalSession(config);
+    }
+  })();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    logger,
+    resolveLaunchProfile: (id) => ({
+      id,
+      name: "Planner",
+      provider: "codex",
+      postApprovalModeId: "full-access",
+    }),
+  });
+  const agent = await manager.createAgent({ provider: "codex", cwd: process.cwd() }, undefined, {
+    launchProfileId: "planner",
+  });
+  agent.pendingPermissions.set("approve", {
+    id: "approve",
+    provider: "codex",
+    kind: "plan",
+    sourcePlanCallId: "plan-1",
+  });
+  await manager.respondToPermission(agent.id, "approve", { behavior: "allow" });
+  expect(mode).toBe("full-access");
+  await manager.closeAgent(agent.id);
+});
+
+test.each([false, true])(
+  "launch profile approval waits for durable mode and rejects replacement during persistence (%s)",
+  async (replacePending) => {
+    const workdir = mkdtempSync(join(tmpdir(), "approval-persistence-"));
+    const entered = deferred<void>();
+    const release = deferred<void>();
+    let held = true;
+    let mode = "plan";
+    let resumed = false;
+    class DelayedStorage extends AgentStorage {
+      override async applySnapshot(
+        agent: ManagedAgent,
+        options?: { title?: string | null; internal?: boolean },
+      ) {
+        if (held && agent.config.modeId === "full-access") {
+          entered.resolve();
+          await release.promise;
+        }
+        return super.applySnapshot(agent, options);
+      }
+    }
+    class ApprovalSession extends TestAgentSession {
+      override async setMode(value: string) {
+        mode = value;
+      }
+      override async getCurrentMode() {
+        return mode;
+      }
+      override async respondToPermission() {
+        resumed = true;
+      }
+    }
+    const registry = new DelayedStorage(join(workdir, "agents"), logger);
+    const client = new (class extends TestAgentClient {
+      override async createSession(config: AgentSessionConfig) {
+        return new ApprovalSession(config);
+      }
+    })();
+    const manager = new AgentManager({
+      clients: { codex: client },
+      registry,
+      logger,
+      resolveLaunchProfile: (id) => ({
+        id,
+        name: "Planner",
+        provider: "codex",
+        postApprovalModeId: "full-access",
+      }),
+    });
+    const agent = await manager.createAgent(
+      { provider: "codex", cwd: workdir, modeId: "plan" },
+      undefined,
+      { workspaceId: undefined, launchProfileId: "planner" },
+    );
+    const pending = {
+      id: "approve",
+      provider: "codex" as const,
+      kind: "plan" as const,
+      sourcePlanCallId: "plan-1",
+    };
+    agent.pendingPermissions.set(pending.id, pending);
+    const resolution = manager.respondToPermission(agent.id, pending.id, { behavior: "allow" });
+    const settled = resolution.then(
+      () => null,
+      (error) => error as Error,
+    );
+    try {
+      await entered.promise;
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(resumed).toBe(false);
+      await expect(
+        manager.respondToPermission(agent.id, pending.id, { behavior: "allow" }),
+      ).rejects.toThrow("already being submitted");
+      if (replacePending)
+        agent.pendingPermissions.set(pending.id, { ...pending, sourcePlanCallId: "plan-2" });
+      held = false;
+      release.resolve();
+      const error = await settled;
+      if (replacePending) {
+        expect(error?.message).toContain("plan changed");
+        expect(resumed).toBe(false);
+        expect(agent.pendingPermissions.get(pending.id)?.sourcePlanCallId).toBe("plan-2");
+      } else {
+        expect(error).toBeNull();
+        expect(resumed).toBe(true);
+        expect((await registry.get(agent.id))?.config.modeId).toBe("full-access");
+      }
+    } finally {
+      held = false;
+      release.resolve();
+      await settled;
+      await manager.closeAgent(agent.id);
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  },
+);
+
+test("launch profile approval rejects a missing profile without consuming its permission", async () => {
+  const manager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    logger,
+    resolveLaunchProfile: () => undefined,
+  });
+  const agent = await manager.createAgent({ provider: "codex", cwd: process.cwd() }, undefined, {
+    workspaceId: undefined,
+    launchProfileId: "missing",
+  });
+  const pending = {
+    id: "approve",
+    provider: "codex" as const,
+    kind: "plan" as const,
+    sourcePlanCallId: "plan-1",
+  };
+  agent.pendingPermissions.set(pending.id, pending);
+  await expect(
+    manager.respondToPermission(agent.id, pending.id, { behavior: "allow" }),
+  ).rejects.toThrow("Restore it in Agent profiles");
+  expect(agent.pendingPermissions.get(pending.id)).toBe(pending);
+  await manager.closeAgent(agent.id);
+});
+
 test("respondToPermission updates currentModeId after plan approval", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
   const storagePath = join(workdir, "agents");

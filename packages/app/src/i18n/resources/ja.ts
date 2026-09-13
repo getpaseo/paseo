@@ -2460,6 +2460,8 @@ export const ja: TranslationResources = {
         modelLabel: "モデル",
         noModels: "このプロバイダーには選択できるモデルがありません",
         modeLabel: "モード",
+        postApprovalModeLabel: "プラン承認後のモード",
+        nativeApprovalMode: "プロバイダーの承認動作",
         noModes: "このプロバイダーには選択できるモードがありません",
         thinkingLabel: "思考",
         noThinkingOptions: "このモデルには思考レベルがありません",

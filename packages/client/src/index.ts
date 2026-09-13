@@ -220,6 +220,7 @@ export type PaseoAgentProvider = PaseoAgentSessionConfig["provider"];
 export type PaseoProviderFeatureValues = Record<string, unknown>;
 
 export interface PaseoAgentConfig {
+  writePolicy?: PaseoAgentSessionConfig["writePolicy"];
   /** Provider and model in `provider/model` format. */
   provider: string;
   modeId?: PaseoAgentSessionConfig["modeId"];
@@ -233,6 +234,7 @@ export interface PaseoAgentConfig {
 }
 
 export interface PaseoAgentCreateOptions {
+  idempotencyKey?: string;
   launchProfileId?: string;
   config: PaseoAgentConfig;
   cwd: string;
@@ -937,7 +939,7 @@ function createAgentHandleFactory(
         await daemonClient.sendAgentMessage(id, text, options);
       },
       respondToPermission: async ({ requestId, response }) => {
-        await daemonClient.respondToPermission(id, requestId, response);
+        await daemonClient.respondToPermissionAndWait(id, requestId, response);
       },
       run: async (text, options) => {
         const { timeoutMs, ...sendOptions } = options ?? {};

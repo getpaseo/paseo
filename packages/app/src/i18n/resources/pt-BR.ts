@@ -2476,6 +2476,8 @@ export const ptBR: TranslationResources = {
         modelLabel: "Modelo",
         noModels: "Este provedor não tem modelos para escolher",
         modeLabel: "Modo",
+        postApprovalModeLabel: "Modo após aprovar o plano",
+        nativeApprovalMode: "Comportamento do provedor",
         noModes: "Este provedor não tem modos para escolher",
         thinkingLabel: "Raciocínio",
         noThinkingOptions: "Este modelo não tem níveis de raciocínio",

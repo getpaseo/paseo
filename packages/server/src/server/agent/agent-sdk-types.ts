@@ -677,6 +677,7 @@ export interface AgentSession {
   respondToPermission(
     requestId: string,
     response: AgentPermissionResponse,
+    options?: { planApprovalMode?: string },
   ): Promise<AgentPermissionResult | void>;
   describePersistence(): AgentPersistenceHandle | null;
   /**

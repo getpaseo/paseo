@@ -2599,7 +2599,11 @@ class ClaudeAgentSession implements AgentSession {
     }
   }
 
-  async respondToPermission(requestId: string, response: AgentPermissionResponse): Promise<void> {
+  async respondToPermission(
+    requestId: string,
+    response: AgentPermissionResponse,
+    options?: { planApprovalMode?: string },
+  ): Promise<void> {
     const pending = this.pendingPermissions.get(requestId);
     if (!pending) {
       throw new Error(`No pending permission request with id '${requestId}'`);
@@ -2612,7 +2616,7 @@ class ClaudeAgentSession implements AgentSession {
         const targetMode: PermissionMode = shouldResumePriorMode
           ? "bypassPermissions"
           : "acceptEdits";
-        await this.setMode(targetMode);
+        if (options?.planApprovalMode === undefined) await this.setMode(targetMode);
         // The SDK can cancel or supersede this request while changing modes.
         if (this.pendingPermissions.get(requestId) !== pending) return;
         this.recordPlanPermissionTimeline(pending.request, response);

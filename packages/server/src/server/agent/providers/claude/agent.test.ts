@@ -1354,6 +1354,49 @@ describe("normalizeClaudeAskUserQuestionUpdatedInput", () => {
     }
   });
 
+  test("preserves the host's launch-profile mode through native plan approval", async () => {
+    const client = new ClaudeAgentClient({
+      logger: createTestLogger(),
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const session = await client.createSession({
+      provider: "claude",
+      cwd: process.cwd(),
+      modeId: "bypassPermissions",
+    });
+    const internal = session as unknown as {
+      handlePermissionRequest(
+        name: string,
+        input: Record<string, unknown>,
+        options: Record<string, unknown>,
+      ): Promise<PermissionResult>;
+    };
+    try {
+      const pending = internal.handlePermissionRequest(
+        "ExitPlanMode",
+        { plan: "Exact plan" },
+        { toolUseID: "profile-plan" },
+      );
+      const [request] = session.getPendingPermissions();
+      const setMode = vi.spyOn(session, "setMode").mockImplementation(async () => {
+        throw new Error("Unexpected native mode override");
+      });
+      await session.respondToPermission(
+        request.id,
+        { behavior: "allow" },
+        { planApprovalMode: "bypassPermissions" },
+      );
+      await expect(pending).resolves.toMatchObject({
+        behavior: "allow",
+        updatedInput: { plan: "Exact plan" },
+      });
+      expect(setMode).not.toHaveBeenCalled();
+      await expect(session.getCurrentMode()).resolves.toBe("bypassPermissions");
+    } finally {
+      await session.close();
+    }
+  });
+
   test("keeps the canonical Claude plan through denial", async () => {
     const behavior = "deny" as const;
     const client = new ClaudeAgentClient({

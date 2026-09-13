@@ -12,5 +12,11 @@
     "noEmit": true,
     "types": ["node"]
   },
-  "include": ["../../plugin-examples/**/*.ts", "../../plugin-examples/**/*.tsx"]
+  "include": [
+    "../../plugin-examples/**/*.ts",
+    "../../plugin-examples/**/*.tsx",
+    "../../plugins/paseo-workflow/**/*.ts",
+    "../../plugins/paseo-workflow/**/*.tsx"
+  ],
+  "exclude": ["../../plugins/paseo-workflow/**/*.test.ts"]
 }

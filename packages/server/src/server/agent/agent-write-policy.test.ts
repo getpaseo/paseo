@@ -11,6 +11,81 @@ import { AgentStorage } from "./agent-storage.js";
 import { ensureAgentLoaded } from "./agent-loading.js";
 import { createPaseoToolCatalog } from "./tools/paseo-tools.js";
 import { assertWritePolicySupported, supportsWritePolicy } from "./write-policy.js";
+import type { PluginLifecycle } from "../plugins/lifecycle/index.js";
+
+test("a creation hook tightens a Router profile and rejects unsupported providers before startup", async () => {
+  const launches: AgentSessionConfig[] = [];
+  const policy = "read_only";
+  const hook: PluginLifecycle = {
+    emit() {},
+    async before(name, request) {
+      if (name !== "agent.create" || !("config" in request)) return request;
+      return { ...request, config: { ...request.config, writePolicy: policy } };
+    },
+  };
+  const clients = createTestAgentClients();
+  const originalCreate = clients.claude!.createSession.bind(clients.claude);
+  clients.claude!.createSession = async (config, ...args) => {
+    launches.push(config);
+    return originalCreate(config, ...args);
+  };
+  const manager = new AgentManager({ clients, pluginLifecycle: hook, logger: createTestLogger() });
+  try {
+    await expect(
+      manager.createAgent({ provider: "claude", cwd: process.cwd() }, undefined, {
+        launchProfileId: "paseo-workflow-router",
+      }),
+    ).rejects.toMatchObject({ code: "write_policy_unsupported" });
+    expect(launches).toEqual([]);
+  } finally {
+    await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id)));
+  }
+});
+
+test.skipIf(process.platform !== "darwin")(
+  "a Router hook persists read-only before spawn and cannot loosen an existing policy",
+  async () => {
+    let requested: "read_only" | "read_write" = "read_only";
+    const effective: Array<AgentSessionConfig["writePolicy"]> = [];
+    const clients = createTestAgentClients();
+    const create = clients.codex!.createSession.bind(clients.codex);
+    clients.codex!.createSession = async (config, ...args) => {
+      effective.push(config.writePolicy);
+      return create(config, ...args);
+    };
+    const hook: PluginLifecycle = {
+      emit() {},
+      async before(name, request) {
+        if (name !== "agent.create" || !("config" in request)) return request;
+        return { ...request, config: { ...request.config, writePolicy: requested } };
+      },
+    };
+    const manager = new AgentManager({
+      clients,
+      pluginLifecycle: hook,
+      logger: createTestLogger(),
+    });
+    try {
+      const agent = await manager.createAgent(
+        { provider: "codex", cwd: process.cwd() },
+        undefined,
+        { launchProfileId: "paseo-workflow-router" },
+      );
+      expect(agent.config.writePolicy).toBe("read_only");
+      requested = "read_write";
+      await expect(
+        manager.createAgent(
+          { provider: "codex", cwd: process.cwd(), writePolicy: "read_only" },
+          undefined,
+          {},
+        ),
+      ).rejects.toThrow("creation-only");
+      expect(effective).toEqual(["read_only"]);
+    } finally {
+      await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id)));
+    }
+  },
+);
 
 test.skipIf(process.platform !== "darwin")(
   "read-only resume without an ID retains its state owner and refuses duplicate or transferred ownership",

@@ -4949,6 +4949,16 @@ export class DaemonClient {
     config: MutableDaemonConfigPatch,
     requestId?: string,
   ): Promise<{ requestId: string; config: MutableDaemonConfig }> {
+    // COMPAT(agentProfileWorkflows): added in v0.8.0; remove gate after 2027-09-13.
+    if (
+      (config.addAgentProfilesIfMissing !== undefined ||
+        config.agentProfiles?.some((profile) => profile.postApprovalModeId !== undefined)) &&
+      this.getLastServerInfoMessage()?.features?.agentProfileWorkflows !== true
+    ) {
+      throw new Error(
+        "Update the host to install workflow profiles or configure post-approval modes.",
+      );
+    }
     return this.sendCorrelatedSessionRequest({
       requestId,
       message: {

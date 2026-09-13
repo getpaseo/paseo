@@ -2449,6 +2449,8 @@ export const ko: TranslationResources = {
         modelLabel: "모델",
         noModels: "이 프로바이더에는 선택할 수 있는 모델이 없습니다",
         modeLabel: "모드",
+        postApprovalModeLabel: "계획 승인 후 모드",
+        nativeApprovalMode: "제공자의 승인 동작",
         noModes: "이 프로바이더에는 선택할 수 있는 모드가 없습니다",
         thinkingLabel: "사고",
         noThinkingOptions: "이 모델에는 사고 수준이 없습니다",

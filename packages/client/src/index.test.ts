@@ -278,18 +278,28 @@ test("createPaseoApi borrows daemon capabilities without exposing connection own
   expect("skills" in paseo.agents).toBe(false);
 });
 
-test("agent handles send permission responses for their agent", async () => {
+test("agent handles await their correlated permission acknowledgement", async () => {
   const { client, ws } = await connectClient();
 
-  await client.agents.ref("agent_sdk").respondToPermission({
-    requestId: "permission-request",
-    response: {
-      behavior: "deny",
-      selectedActionId: "deny-once",
-      message: "Not approved",
-      interrupt: true,
-    },
-  });
+  let acknowledged = false;
+  const pending = client.agents
+    .ref("agent_sdk")
+    .respondToPermission({
+      requestId: "permission-request",
+      response: {
+        behavior: "deny",
+        selectedActionId: "deny-once",
+        message: "Not approved",
+        interrupt: true,
+      },
+    })
+    .then(() => {
+      acknowledged = true;
+      return undefined;
+    });
+  await Promise.resolve();
+  await Promise.resolve();
+  expect(acknowledged).toBe(false);
 
   expect(parseSentFrame(ws.sent.at(-1))).toEqual({
     type: "session",
@@ -305,6 +315,19 @@ test("agent handles send permission responses for their agent", async () => {
       },
     },
   });
+
+  ws.message(
+    sessionMessage({
+      type: "agent_permission_resolved",
+      payload: {
+        agentId: "agent_sdk",
+        requestId: "permission-request",
+        resolution: { behavior: "deny" },
+      },
+    }),
+  );
+  await pending;
+  expect(acknowledged).toBe(true);
 
   await client.close();
 });

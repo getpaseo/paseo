@@ -2498,6 +2498,8 @@ export const fr: TranslationResources = {
         modelLabel: "Modèle",
         noModels: "Ce fournisseur n'a aucun modèle à choisir",
         modeLabel: "Mode",
+        postApprovalModeLabel: "Mode après approbation du plan",
+        nativeApprovalMode: "Comportement natif du provider",
         noModes: "Ce fournisseur n'a aucun mode à choisir",
         thinkingLabel: "Pensée",
         noThinkingOptions: "Ce modèle n'a aucun niveau de pensée",

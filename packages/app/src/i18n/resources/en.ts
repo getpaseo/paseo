@@ -2561,6 +2561,8 @@ export const en = {
         modelLabel: "Model",
         noModels: "This provider has no models to choose from",
         modeLabel: "Mode",
+        postApprovalModeLabel: "Mode after plan approval",
+        nativeApprovalMode: "Provider approval behavior",
         noModes: "This provider has no modes to choose from",
         thinkingLabel: "Thinking",
         noThinkingOptions: "This model has no thinking levels",

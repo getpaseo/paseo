@@ -71,6 +71,30 @@ function optionValues(options: readonly { value: string }[]): string[] {
 }
 
 describe("openAgentProfileForm", () => {
+  it("preserves and edits the post-approval mode independently of the launch mode", () => {
+    const model = openWithCatalog({
+      mode: "edit",
+      profile: {
+        id: "planner",
+        name: "Planner",
+        provider: "claude",
+        modeId: "plan",
+        postApprovalModeId: "accept-edits",
+      },
+    });
+    expect(model.getState().submitValue?.postApprovalModeId).toBe("accept-edits");
+    model.setPostApprovalMode("bypassPermissions");
+    expect(model.getState().submitValue).toMatchObject({
+      modeId: "plan",
+      postApprovalModeId: "bypassPermissions",
+    });
+    model.setPostApprovalMode("");
+    expect(model.getState().submitValue).not.toHaveProperty("postApprovalModeId");
+    model.setPostApprovalMode("accept-edits");
+    model.setProvider("codex", { label: "Codex" });
+    expect(model.getState().submitValue).not.toHaveProperty("postApprovalModeId");
+  });
+
   it("starts a create form empty and cannot submit", () => {
     const model = openWithCatalog({ mode: "create" });
     const state = model.getState();

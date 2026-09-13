@@ -920,6 +920,8 @@ export async function createPaseoDaemon(
   });
   const initialAgentManagerState = providerSnapshotManager.getAgentManagerProviderState();
   const agentManager = new AgentManager({
+    resolveLaunchProfile: (id) =>
+      daemonConfigStore.get().agentProfiles?.find((profile) => profile.id === id),
     pluginLifecycle: pluginRuntime,
     clients: initialAgentManagerState.clients,
     providerDefinitions: initialAgentManagerState.providerDefinitions,

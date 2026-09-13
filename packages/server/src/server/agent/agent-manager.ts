@@ -294,6 +294,9 @@ export interface CreateAgentOptions {
 }
 
 export interface AgentManagerOptions {
+  resolveLaunchProfile?: (
+    id: string,
+  ) => import("@getpaseo/protocol/messages").AgentProfile | undefined;
   pluginLifecycle?: PluginLifecycle;
   clients?: ProviderClientMap;
   providerDefinitions?: ProviderEnabledMap;
@@ -695,6 +698,7 @@ function detachedAgentLabelPatch(labels: Record<string, string>): AgentLabelPatc
 }
 
 export class AgentManager {
+  private readonly resolveLaunchProfile: AgentManagerOptions["resolveLaunchProfile"];
   private readonly pluginLifecycle: PluginLifecycle | undefined;
   private readonly clients = new Map<AgentProvider, AgentClient>();
   private readonly providerEnabled = new Map<AgentProvider, boolean>();
@@ -736,6 +740,7 @@ export class AgentManager {
   private acceptingAgentRegistrations = true;
 
   constructor(options: AgentManagerOptions) {
+    this.resolveLaunchProfile = options.resolveLaunchProfile;
     this.pluginLifecycle = options.pluginLifecycle;
     this.idFactory = options?.idFactory ?? (() => randomUUID());
     this.registry = options?.registry;
@@ -1225,7 +1230,10 @@ export class AgentManager {
         workspaceId: options.workspaceId,
         launchProfileId: options.launchProfileId,
       });
-      config = { ...request.config, internal: config.internal, writePolicy: config.writePolicy };
+      const writePolicy = request.config.writePolicy ?? config.writePolicy;
+      if (config.writePolicy === "read_only") assertWritePolicyUnchanged(config, { writePolicy });
+      config = { ...request.config, internal: config.internal, writePolicy };
+      assertWritePolicySupported(config);
       options = { ...options, env: request.env };
     }
     await this.deleteAgentState(resolvedAgentId);
@@ -1903,11 +1911,28 @@ export class AgentManager {
     });
   }
 
-  async setAgentMode(agentId: string, modeId: string): Promise<AgentProviderNotice | null> {
+  async setAgentMode(
+    agentId: string,
+    modeId: string,
+    expectedPermission?: AgentPermissionRequest,
+  ): Promise<AgentProviderNotice | null> {
     const agent = this.requireSessionAgent(agentId);
+    const assertCurrentPermission = () => {
+      if (
+        expectedPermission &&
+        agent.pendingPermissions.get(expectedPermission.id) !== expectedPermission
+      ) {
+        throw new Error(
+          "The plan changed while applying its approval mode. Open the current plan and retry.",
+        );
+      }
+    };
     const notice = (await agent.session.setMode(modeId)) ?? null;
+    assertCurrentPermission();
     await this.drainSessionEvents(agentId);
+    assertCurrentPermission();
     const currentMode = (await agent.session.getCurrentMode()) ?? modeId;
+    assertCurrentPermission();
     agent.config.modeId = currentMode ?? undefined;
     agent.currentModeId = currentMode;
     // Update runtimeInfo to reflect the new mode
@@ -2950,7 +2975,33 @@ export class AgentManager {
     agent.inFlightPermissionResponses.add(requestId);
 
     try {
-      const result = await agent.session.respondToPermission(requestId, response);
+      const pending = agent.pendingPermissions.get(requestId);
+      let planApprovalMode: string | undefined;
+      if (pending?.kind === "plan" && response.behavior === "allow" && agent.launchProfileId) {
+        const profile = this.resolveLaunchProfile?.(agent.launchProfileId);
+        if (!profile)
+          throw new Error(
+            `Launch profile '${agent.launchProfileId}' is missing. Restore it in Agent profiles before approving.`,
+          );
+        const modeId = profile.postApprovalModeId?.trim();
+        if (modeId) {
+          await this.setAgentMode(agentId, modeId, pending);
+          if (agent.pendingPermissions.get(requestId) !== pending)
+            throw new Error(
+              "The plan changed while applying its approval mode. Open the current plan and retry.",
+            );
+          // The provider must not resume until its launch-profile transition is durable.
+          await this.persistSnapshot(agent);
+          if (agent.pendingPermissions.get(requestId) !== pending)
+            throw new Error(
+              "The plan changed while applying its approval mode. Open the current plan and retry.",
+            );
+          planApprovalMode = modeId;
+        }
+      }
+      const result = await agent.session.respondToPermission(requestId, response, {
+        planApprovalMode,
+      });
       agent.pendingPermissions.delete(requestId);
 
       try {

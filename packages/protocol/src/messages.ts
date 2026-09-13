@@ -172,6 +172,8 @@ export const AgentProfileSchema = z
     provider: z.string(),
     model: z.string().optional(),
     modeId: z.string().optional(),
+    /** Applied only when approving a plan from this agent's immutable launch profile. */
+    postApprovalModeId: z.string().optional(),
     thinkingOptionId: z.string().optional(),
     featureValues: z.record(z.string(), z.unknown()).optional(),
     /** Free text, surfaced to orchestrating agents by the `list_profiles` MCP tool. */
@@ -264,6 +266,7 @@ export const MutableDaemonConfigPatchSchema = z
       .record(z.string(), MutableDaemonProviderConfigSchema.partial().passthrough())
       .optional(),
     removeProviders: z.array(z.string().min(1)).optional(),
+    addAgentProfilesIfMissing: z.array(AgentProfileSchema).optional(),
     metadataGeneration: MutableMetadataGenerationConfigSchema.partial().optional(),
     autoArchiveAfterMerge: z.boolean().optional(),
     enableTerminalAgentHooks: z.boolean().optional(),
@@ -3506,6 +3509,8 @@ export const ServerInfoStatusPayloadSchema = z
       .object({
         // COMPAT(agentWritePolicy): added in v0.8.0; remove gate after 2027-09-13.
         agentWritePolicy: z.boolean().optional(),
+        // COMPAT(agentProfileWorkflows): added in v0.8.0; remove gate after 2027-09-13.
+        agentProfileWorkflows: z.boolean().optional(),
         // COMPAT(agentRequestReceipts): added in v0.8.0; remove gate after 2027-03-05.
         agentRequestReceipts: z.boolean().optional(),
         // COMPAT(hubAgentRpc): added in v0.8.0; remove gate after 2027-03-05.

@@ -2437,6 +2437,8 @@ export const ar: TranslationResources = {
         modelLabel: "النموذج",
         noModels: "لا توجد نماذج يمكن الاختيار من بينها لهذا المزود",
         modeLabel: "الوضع",
+        postApprovalModeLabel: "الوضع بعد الموافقة على الخطة",
+        nativeApprovalMode: "سلوك موافقة المزوّد",
         noModes: "لا توجد أوضاع يمكن الاختيار من بينها لهذا المزود",
         thinkingLabel: "التفكير",
         noThinkingOptions: "لا توجد مستويات تفكير لهذا النموذج",

@@ -33,6 +33,21 @@ function registerSettings(definition: SettingsDefinition) {
   register(handlers.reset.contract, (input) =>
     handlers.reset.handle(handlers.reset.contract.input.parse(input)),
   );
+  return {
+    async read() {
+      const result = await handlers.read.handle();
+      if (result.status !== "ready") throw new Error(result.error);
+      return {
+        values: await definition.schema.parseAsync(result.values),
+        revision: result.revision,
+      };
+    },
+    async write(values: unknown, revision: string) {
+      const input = handlers.write.contract.input.parse({ values, revision });
+      const result = await handlers.write.handle(input);
+      if (result.status !== "saved") throw new Error(result.error);
+    },
+  };
 }
 
 type RpcHandler = (input: unknown, context: PluginHandlerContext) => unknown | Promise<unknown>;

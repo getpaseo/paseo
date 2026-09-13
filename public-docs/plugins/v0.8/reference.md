@@ -483,15 +483,19 @@ type PluginTurnOutcome =
 
 **`agent.create.config`** uses `AgentSessionConfig`:
 
-| Fields                                        | Constraint                                                                 |
-| --------------------------------------------- | -------------------------------------------------------------------------- |
-| `provider`, `model`                           | Separate fields; changing provider may require changing model/mode/options |
-| `modeId`, `thinkingOptionId`, `featureValues` | Provider-specific selections                                               |
-| `title`, `systemPrompt`                       | Agent configuration                                                        |
-| `providerOptions`                             | Provider-specific validated options                                        |
-| `mcpServers`, `toolPolicy`                    | MCP configuration and exact-tool preapprovals                              |
-| `cwd`                                         | Cannot change                                                              |
-| `internal`                                    | Daemon-owned; cannot change through this hook                              |
+| Fields                                        | Constraint                                                                      |
+| --------------------------------------------- | ------------------------------------------------------------------------------- |
+| `provider`, `model`                           | Separate fields; changing provider may require changing model/mode/options      |
+| `modeId`, `thinkingOptionId`, `featureValues` | Provider-specific selections                                                    |
+| `title`, `systemPrompt`                       | Agent configuration                                                             |
+| `providerOptions`                             | Provider-specific validated options                                             |
+| `mcpServers`, `toolPolicy`                    | MCP configuration and exact-tool preapprovals                                   |
+| `cwd`                                         | Cannot change                                                                   |
+| `internal`                                    | Daemon-owned; cannot change through this hook                                   |
+| `writePolicy`                                 | Initial creation may tighten absent/`read_write` to `read_only`; never relax it |
+
+The host validates the effective write policy against the final provider before spawning and
+persists it with the agent. Session-open hooks cannot change it on resume.
 
 **`agent.session_open` request example:**
 
@@ -1094,6 +1098,11 @@ export const preferences = defineSettings({
 Register it with `server.registerSettings(preferences)` in `index.server.ts` before returning
 cleanup. This server entry is required for built-in persistence; a screen using its own data
 can remain client-only.
+
+The return value also supports server-owned state: `read()` returns `{ values, revision }`, and
+`write(values, revision)` validates and saves through the same atomic store. Both reject on
+invalid stored data or failed writes; a stale revision rejects without replacing newer values.
+Serialize a plugin's read/modify/write operations when they share one document.
 
 | Definition field               | Contract                                                                                                                             |
 | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------ |

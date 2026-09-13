@@ -2482,6 +2482,8 @@ export const ru: TranslationResources = {
         modelLabel: "Модель",
         noModels: "У этого провайдера нет моделей для выбора",
         modeLabel: "Режим",
+        postApprovalModeLabel: "Режим после одобрения плана",
+        nativeApprovalMode: "Поведение провайдера",
         noModes: "У этого провайдера нет режимов для выбора",
         thinkingLabel: "Рассуждения",
         noThinkingOptions: "У этой модели нет уровней рассуждений",

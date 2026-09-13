@@ -9,10 +9,15 @@ export interface PluginHandlerContext {
   paseo: PaseoApi;
 }
 
+export interface PluginSettingsHandle<Schema extends ZodType> {
+  read(): Promise<{ values: ZodOutput<Schema>; revision: string }>;
+  write(values: ZodInput<Schema>, revision: string): Promise<void>;
+}
+
 export interface PluginServerContext extends PluginLifecycleRegistration {
   registerSettings<Schema extends ZodType>(
     definition: import("../settings.js").SettingsDefinition<Schema>,
-  ): void;
+  ): PluginSettingsHandle<Schema>;
   handle<InputSchema extends ZodType, OutputSchema extends ZodType>(
     contract: PluginRpcContract<InputSchema, OutputSchema>,
     handler: (

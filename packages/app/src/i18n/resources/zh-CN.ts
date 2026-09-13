@@ -2411,6 +2411,8 @@ export const zhCN: TranslationResources = {
         modelLabel: "Model",
         noModels: "此 Provider 没有可选择的 Model",
         modeLabel: "Mode",
+        postApprovalModeLabel: "计划批准后的模式",
+        nativeApprovalMode: "提供商的批准行为",
         noModes: "此 Provider 没有可选择的 Mode",
         thinkingLabel: "Thinking",
         noThinkingOptions: "此 Model 没有 Thinking 级别",

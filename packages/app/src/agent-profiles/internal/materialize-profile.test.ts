@@ -53,6 +53,13 @@ describe("materializeAgentProfile", () => {
 });
 
 describe("toAgentConfigApply", () => {
+  it("never applies a launch profile's post-approval mode to an active agent", () => {
+    expect(
+      toAgentConfigApply(
+        materializeAgentProfile(profile({ modeId: "plan", postApprovalModeId: "acceptEdits" })),
+      ),
+    ).toEqual({ modeId: "plan" });
+  });
   it("sends every value the profile names", () => {
     expect(
       toAgentConfigApply(

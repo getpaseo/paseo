@@ -6,6 +6,35 @@ Paseo executes `index.server.ts` in a subprocess and `index.client.tsx` in every
 
 > **Trust every plugin you add.** `paseo plugin add` and `paseo plugin install` mean “I trust this codebase.” Plugins are unsandboxed: server code and Git preparation commands run with the daemon user's access on the daemon host, and client contributions run inside Paseo. The repository's dependencies and future updates are part of that trust decision. With `--host`, preparation runs on that remote daemon host.
 
+## First-party plan workflow
+
+`plugins/paseo-workflow` is an opt-in directory plugin. Install it explicitly on the intended
+host, then open **Settings → Plugins → paseo-workflow → Workflow profiles** and choose
+**Install / repair profiles**. Installing the plugin does not add profiles; repairing profiles
+only adds missing role IDs and preserves existing/customized profiles and unrelated entries.
+Nothing enables or trusts this plugin automatically.
+
+```bash
+paseo plugin install /absolute/path/to/paseo/plugins/paseo-workflow
+```
+
+Launch the Router or Planner profile in a workspace. The Router carries workspace intention
+and user follow-ups into planning. Reviewers and auditors require the host's enforced read-only
+provider support; unsupported provider/host combinations fail before spawning. You can edit
+the role profiles' provider, model, mode and effort in Agent profiles.
+
+The workflow uses the existing plan actions and an agent panel for executor selection and review
+status. Its persisted plugin settings retain plan IDs, choices and review limits across reloads.
+An interrupted permission closure whose acknowledgement was not recorded is not replayed
+speculatively: reopen the current plan before retrying.
+
+Automatic corrections require a clean initial workspace and clean functional-commit boundary.
+Only the manager can write. Its final tool calls must show successful targeted checks; the host
+then checks the unchanged HEAD and agreed-file diff before one read-only delta review. Untracked
+files, later tools, concurrent changes or missing evidence produce `verification_required`, not
+an automatic second commit. The plugin never runs validation commands outside the manager's
+normal agent permissions.
+
 ## Install a directory source
 
 Create a typecheckable plugin project, install its development dependencies, then install it into

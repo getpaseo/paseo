@@ -8,6 +8,49 @@ import { settingsRpc } from "@getpaseo/plugin";
 import { DaemonClient } from "../test-utils/daemon-client.js";
 import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
 
+test("a plugin server can persist workflow state through its registered settings handle", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "workflow-settings-"));
+  const daemon = await createTestPaseoDaemon();
+  const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws`, appVersion: "0.8.0" });
+  try {
+    await writeFile(
+      path.join(directory, "paseo-plugin.json"),
+      JSON.stringify({ id: "workflow-settings", requirements: { paseo: ">=0.8.0" } }),
+    );
+    await writeFile(
+      path.join(directory, "index.server.ts"),
+      `
+      import { defineSettings, defineRpc } from "@getpaseo/plugin";
+      import { z } from "zod";
+      export default function(server) {
+        const state = server.registerSettings(defineSettings({ id: "workflow", scope: "host", version: 1, schema: z.object({ count: z.number().default(0) }) }));
+        server.handle(defineRpc({ name: "workflow.increment.request", input: z.object({}), output: z.number() }), async () => {
+          if (!state) return -1;
+          const current = await state.read();
+          await state.write({ count: current.values.count + 1 }, current.revision);
+          return (await state.read()).values.count;
+        });
+        return () => {};
+      }
+    `,
+    );
+    await client.connect();
+    await client.patchDaemonConfig({ pluginsEnabled: true });
+    await client.installDirectoryPlugin(directory);
+    expect(
+      await client.invokePluginRpc("workflow-settings", "workflow.increment.request", {}),
+    ).toBe(1);
+    await client.reloadPlugin("workflow-settings");
+    expect(
+      await client.invokePluginRpc("workflow-settings", "workflow.increment.request", {}),
+    ).toBe(2);
+  } finally {
+    await client.close();
+    await daemon.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+}, 60_000);
+
 test("two clients share settings, observe changes, and preserve values through plugin lifecycle", async () => {
   const directory = await mkdtemp(path.join(tmpdir(), "settings-plugin-"));
   const daemon = await createTestPaseoDaemon();
