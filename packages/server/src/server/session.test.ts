@@ -1,4 +1,5 @@
 import { createAgentRequestsStub } from "./test-utils/session-stubs.js";
+import { AgentRequests } from "./agent/requests/index.js";
 import { execSync } from "child_process";
 import { existsSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
@@ -285,6 +286,7 @@ vi.mock("./worktree-bootstrap.js", async (importOriginal) => {
 });
 
 interface SessionForTestOptions {
+  agentRequests?: SessionOptions["agentRequests"];
   clientId?: string;
   permissions?: readonly DaemonPermission[];
   agentManager?: { [K in keyof SessionOptions["agentManager"]]?: unknown };
@@ -364,7 +366,7 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
   const messages = options.messages ?? [];
 
   const sessionOptions: SessionOptions = {
-    agentRequests: createAgentRequestsStub(),
+    agentRequests: options.agentRequests ?? createAgentRequestsStub(),
     clientId: options.clientId ?? "test-client",
     onMessage: (message) => messages.push(message),
     ...(options.targetedMessages
@@ -439,6 +441,64 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
   };
   return new Session(sessionOptions);
 }
+
+test.each([false, true, "unknown"] as const)(
+  "plan revision receipt replays its durable admission across sessions: %s",
+  async (outcome) => {
+    const directory = mkdtempSync(join(tmpdir(), "session-revision-receipt-"));
+    let admissions = 0,
+      prompts = 0;
+    const manager = {
+      getAgent: () => ({ id: "planner" }),
+      waitForAgentClose: async () => {},
+      sendPlanRevision: async () => {
+        admissions++;
+        if (outcome !== false) prompts++;
+        if (outcome === "unknown") throw new Error("SDK ACK lost");
+        return outcome;
+      },
+    };
+    const messages: SessionOutboundMessage[] = [];
+    const sessions: Session[] = [];
+    try {
+      for (const requestId of ["first-ack-lost", "reconnected"]) {
+        const session = createSessionForTest({
+          agentRequests: new AgentRequests(directory),
+          agentManager: manager,
+          messages,
+        });
+        sessions.push(session);
+        await session.handleMessage({
+          type: "agent.plan.revision.send.request",
+          requestId,
+          agentId: "planner",
+          workspaceId: "workspace",
+          callId: "source",
+          sourcePlanText: "Plan",
+          text: "Revise",
+          messageId: "stable-revision",
+        });
+      }
+      expect(admissions, JSON.stringify(messages)).toBe(1);
+      expect(prompts).toBe(outcome === false ? 0 : 1);
+      if (outcome === "unknown") {
+        expect(
+          messages.filter((message) => message.type === "agent.plan.revision.send.response"),
+        ).toHaveLength(0);
+        expect(messages.filter((message) => message.type === "rpc_error")).toHaveLength(2);
+        expect(JSON.stringify(messages)).toContain("agent_request_outcome_unknown");
+      } else
+        expect(
+          messages
+            .filter((message) => message.type === "agent.plan.revision.send.response")
+            .map((message) => message.payload.accepted),
+        ).toEqual([outcome, outcome]);
+    } finally {
+      for (const session of sessions) await session.cleanup();
+      rmSync(directory, { recursive: true, force: true });
+    }
+  },
+);
 
 test("routes host-scoped agent skills requests through the daemon owner", async () => {
   const messages: SessionOutboundMessage[] = [];

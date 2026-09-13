@@ -2,7 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, expect, test } from "vitest";
-import { AgentRequests } from "./index.js";
+import { AgentRequests, AgentRequestRejectedError } from "./index.js";
 import { AgentTurnNotAcceptedError } from "../agent-sdk-types.js";
 
 const directories: string[] = [];
@@ -83,6 +83,31 @@ test("message retries survive reconstruction without submitting twice", async ()
   expect(deliveries).toBe(1);
   await requests.send({ ...input, agentId: "another" });
   expect(deliveries).toBe(2);
+});
+
+test("a final admission refusal replays after concurrency and journal reconstruction without another callback", async () => {
+  const { requests, directory } = await fixture();
+  let admissions = 0;
+  const input = {
+    agentId: "planner",
+    messageId: "revision",
+    request: { plan: "source" },
+    send: async () => {
+      admissions++;
+      throw new AgentRequestRejectedError();
+    },
+  };
+  const results = await Promise.allSettled([requests.send(input), requests.send(input)]);
+  expect(
+    results.every(
+      (result) =>
+        result.status === "rejected" && result.reason instanceof AgentRequestRejectedError,
+    ),
+  ).toBe(true);
+  await expect(new AgentRequests(directory).send(input)).rejects.toBeInstanceOf(
+    AgentRequestRejectedError,
+  );
+  expect(admissions).toBe(1);
 });
 
 test("ambiguous provider delivery is never blindly replayed after restart", async () => {

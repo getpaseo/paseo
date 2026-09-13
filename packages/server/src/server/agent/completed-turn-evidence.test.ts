@@ -158,11 +158,18 @@ test("native origin UUID is required independently of the surviving last prompt;
   ]);
   const restored = restoreCompletedTurnEvidence(replaced, evidence);
   expect(restored[0]).not.toMatchObject({ item: { clientMessageId: "review-original" } });
-  expect(restored[2]).toMatchObject({ turnId: "last", item: { clientMessageId: "manual-retry" } });
+  expect(restored).toEqual(replaced);
   const legacy = {
     ...evidence,
     origin: { digest: evidence.origin!.digest, clientMessageId: "review-original" },
   };
+  expect(restoreCompletedTurnEvidence(history, legacy)).toEqual(history);
+  expect(
+    captureCompletedTurnEvidence(
+      rows.map((row) => Object.assign({}, row, { providerMessageId: undefined })),
+      "last",
+    ),
+  ).toBeUndefined();
   const ambiguous = await claudeNativeHistory([
     native[0],
     { ...native[0], uuid: "other-origin" },
@@ -177,6 +184,99 @@ test("native origin UUID is required independently of the surviving last prompt;
     ),
   ).toBe(false);
 });
+
+test.each(["claude", "codex"] as const)(
+  "old serialized evidence without native UUID never authorizes identical replacement history (%s)",
+  async (provider) => {
+    const directory = await mkdtemp(path.join(tmpdir(), "legacy-completed-evidence-"));
+    const logger = createTestLogger();
+    const storage = new AgentStorage(directory, logger);
+    const client = createTestAgentClient(provider);
+    const manager = new AgentManager({
+      registry: storage,
+      clients: { [provider]: client },
+      logger,
+    });
+    const next = new AgentManager({ registry: storage, clients: { [provider]: client }, logger });
+    const agent = await manager.createAgent({ provider, cwd: directory }, undefined, {});
+    try {
+      await manager.runAgent(agent.id, "Respond with exactly: Same answer", {
+        clientMessageId: "workflow:original",
+      });
+      const turnId = manager.getAgent(agent.id)!.lastCompletedTurnId!;
+      expect((await storage.get(agent.id))?.lastCompletedTurnEvidence).toBeUndefined();
+      // This is the original serialized round3 shape: host identity and digest, no native UUID.
+      const rows = await manager.getTimelineRows(agent.id);
+      const evidence = captureCompletedTurnEvidence(
+        rows.map((row) =>
+          Object.assign(
+            {},
+            row,
+            row.item.type === "user_message" ? { providerMessageId: "old-native-uuid" } : {},
+          ),
+        ),
+        turnId,
+      )!;
+      delete evidence.prompt.providerMessageId;
+      if (evidence.origin) delete evidence.origin.providerMessageId;
+      await manager.closeAgent(agent.id);
+      await storage.upsert({
+        ...(await storage.get(agent.id))!,
+        lastCompletedTurnEvidence: evidence,
+      });
+      const history =
+        provider === "claude"
+          ? await claudeNativeHistory([
+              {
+                type: "user",
+                uuid: "replacement",
+                message: { role: "user", content: "Respond with exactly: Same answer" },
+              },
+              {
+                type: "assistant",
+                uuid: "answer",
+                message: { role: "assistant", content: "Same answer" },
+              },
+            ])
+          : await codexNativeHistory([
+              {
+                id: turnId,
+                items: [
+                  {
+                    type: "userMessage",
+                    id: "replacement",
+                    content: [{ type: "text", text: "Respond with exactly: Same answer" }],
+                  },
+                  { type: "agentMessage", id: "answer", text: "Same answer" },
+                ],
+              },
+            ]);
+      const resume = client.resumeSession.bind(client);
+      client.resumeSession = async (...args) => {
+        const session = await resume(...args);
+        session.streamHistory = async function* () {
+          yield* history;
+        };
+        return session;
+      };
+      await ensureAgentLoaded(agent.id, {
+        agentManager: next,
+        agentStorage: new AgentStorage(directory, logger),
+        logger,
+      });
+      for (const force of [false, true]) {
+        if (force) await next.hydrateTimelineFromProvider(agent.id, { force });
+        const restored = await next.getTimelineRows(agent.id);
+        expect(restored[0]?.item).not.toHaveProperty("clientMessageId");
+        if (provider === "claude") expect(restored.every((row) => !row.turnId)).toBe(true);
+      }
+    } finally {
+      await manager.closeAgent(agent.id);
+      await next.closeAgent(agent.id);
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);
 
 test("real Codex restart does not attach a previous client receipt to a replacement provider prompt", async () => {
   const directory = await mkdtemp(path.join(tmpdir(), "completed-codex-evidence-"));

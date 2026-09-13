@@ -16,7 +16,7 @@ import type {
 } from "../agent/agent-sdk-types.js";
 import { AgentTurnNotAcceptedError } from "../agent/agent-sdk-types.js";
 import { workflowNativeHistory } from "../test-utils/native-provider-history.js";
-import { AgentRequests } from "../agent/requests/index.js";
+import { AgentRequests, AgentRequestRejectedError } from "../agent/requests/index.js";
 
 async function lifecycleFixture(
   options: {
@@ -140,14 +140,25 @@ async function lifecycleFixture(
       const submitted: Extract<AgentStreamEvent, { type: "timeline" }> = {
         type: "timeline",
         provider: "codex",
-        item: { type: "user_message", text, clientMessageId: runOptions?.clientMessageId },
+        item: {
+          type: "user_message",
+          text,
+          clientMessageId: runOptions?.clientMessageId,
+          ...(options.nativeHistory ? { messageId: `native-prompt-${history.length}` } : {}),
+        },
       };
-      if (options.providerHistory) history.push(submitted);
+      if (options.providerHistory && !options.nativeHistory) history.push(submitted);
       await effects.get(role)?.(text);
       const result = await start(
         `Respond with exactly: ${replies.get(role)?.shift() ?? "Which constraint matters?"}`,
       );
       submitted.turnId = mapTurnId(result.turnId);
+      if (options.nativeHistory) {
+        // Native replay UUIDs originate in the actual live echo, not a host digest.
+        (
+          session as unknown as { notifySubscribers(event: AgentStreamEvent): void }
+        ).notifySubscribers(submitted);
+      }
       if (failure === "unknown") throw new Error("Acknowledgement lost after provider acceptance");
       return { turnId: mapTurnId(result.turnId) };
     };
@@ -1872,6 +1883,59 @@ test("subprocess revision admission precedes a concurrent approval without a lat
     reviewer.resolve();
     readRelease.resolve();
     sendRelease.resolve();
+    await f.close();
+  }
+}, 60_000);
+
+test("subprocess replay of a refused revision after a lost reply supersedes the review and releases its claim", async () => {
+  const f = await lifecycleFixture();
+  const reviewer = Promise.withResolvers<void>(),
+    replyLost = Promise.withResolvers<void>();
+  f.holds.set("plan-reviewer", reviewer.promise);
+  const manager = f.daemon.daemon.agentManager;
+  // The host verdict is tested with real timeline races above; here lose that
+  // verdict after its journal write, before it can reach the plugin socket.
+  const admission = vi.spyOn(manager, "sendPlanRevision").mockResolvedValue(false);
+  const send = AgentRequests.prototype.send;
+  let loseReply = true;
+  const receipt = vi
+    .spyOn(AgentRequests.prototype, "send")
+    .mockImplementation(async function (input) {
+      try {
+        return await send.call(this, input);
+      } catch (error) {
+        if (error instanceof AgentRequestRejectedError && loseReply) {
+          loseReply = false;
+          replyLost.resolve();
+          throw new Error("Revision response lost after durable refusal", { cause: error });
+        }
+        throw error;
+      }
+    });
+  try {
+    const plan = await pendingPlan(f);
+    await f.client.invokePluginRpc("paseo-workflow", "workflow.plan.review.request", plan);
+    reviewer.resolve();
+    await replyLost.promise;
+    expect((await f.read()).values.workflows[plan.agentId]?.plans[plan.callId]?.review?.phase).toBe(
+      "running",
+    );
+    await f.client.reloadPlugin("paseo-workflow");
+    await f.client.invokePluginRpc("paseo-workflow", "workflow.status.get.request", {
+      agentId: plan.agentId,
+      workspaceId: plan.workspaceId,
+    });
+    await expect
+      .poll(async () => (await f.read()).values.workflows[plan.agentId]?.plans[plan.callId]?.review)
+      .toMatchObject({ phase: "complete", superseded: true });
+    expect(admission).toHaveBeenCalledOnce();
+    expect(f.prompts.filter(({ text }) => text.startsWith("Revise the plan"))).toHaveLength(0);
+    expect(manager.getAgent(plan.agentId)?.planReviewClaims).toEqual({});
+    expect(f.agents("plan-reviewer")).toHaveLength(1);
+  } finally {
+    reviewer.resolve();
+    receipt.mockRestore();
+    admission.mockRestore();
     await f.close();
   }
 }, 60_000);

@@ -35,9 +35,6 @@ function promptEvidence({ item, providerMessageId }: AgentTimelineRow): PromptEv
         digest: digest(item.text),
         ...(providerMessageId ? { providerMessageId } : {}),
         ...(item.clientMessageId ? { clientMessageId: item.clientMessageId } : {}),
-        ...(item.messageId && item.messageId !== item.clientMessageId
-          ? { messageId: item.messageId }
-          : {}),
       }
     : undefined;
 }
@@ -46,9 +43,8 @@ function matchesPrompt(item: AgentTimelineItem, prompt: PromptEvidence): boolean
   return (
     item.type === "user_message" &&
     digest(item.text) === prompt.digest &&
-    (prompt.providerMessageId
-      ? item.messageId === prompt.providerMessageId
-      : !prompt.messageId || item.messageId === prompt.messageId)
+    Boolean(prompt.providerMessageId) &&
+    item.messageId === prompt.providerMessageId
   );
 }
 
@@ -85,6 +81,7 @@ export function captureCompletedTurnEvidence(
   const selected = rows.slice(start, end + 1);
   if (selected.some((row) => row.turnId && row.turnId !== turnId)) return undefined;
   const origin = rows.find((row) => row.item.type === "user_message" && row.item.clientMessageId);
+  if (!rows[start]!.providerMessageId || (origin && !origin.providerMessageId)) return undefined;
   const evidence: CompletedTurnEvidence = {
     turnId,
     prompt: promptEvidence(rows[start]!)!,
@@ -102,7 +99,11 @@ export function restoreCompletedTurnEvidence(
   history: AgentStreamEvent[],
   evidence?: CompletedTurnEvidence,
 ): AgentStreamEvent[] {
-  if (!evidence) return history;
+  if (
+    !evidence?.prompt.providerMessageId ||
+    (evidence.origin && !evidence.origin.providerMessageId)
+  )
+    return history;
   const rows = history.flatMap((event, seq): AgentTimelineRow[] =>
     event.type === "timeline"
       ? [{ seq, timestamp: event.timestamp ?? "", turnId: event.turnId, item: event.item }]
@@ -124,6 +125,7 @@ export function restoreCompletedTurnEvidence(
   const origins =
     evidence.origin && rows.filter((row) => matchesPrompt(row.item, evidence.origin!));
   const source = origins?.length === 1 ? origins[0] : undefined;
+  if (evidence.origin && !source) return history;
   return history.map((event, index) => {
     if (event.type !== "timeline") return event;
     let prompt = index === source?.seq ? evidence.origin : undefined;

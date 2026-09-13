@@ -1,7 +1,7 @@
 import type { BrowserToolsBroker } from "./browser-tools/broker.js";
 import { BrowserAutomationHostCapabilitySchema } from "@getpaseo/protocol/browser-automation/capabilities";
 import type { SessionEventSubscription } from "@getpaseo/protocol/messages";
-import type { AgentRequests } from "./agent/requests/index.js";
+import { AgentRequestRejectedError, type AgentRequests } from "./agent/requests/index.js";
 import equal from "fast-deep-equal";
 import { SessionDelivery, type OwnedSubscription } from "./session/owned-subscriptions/index.js";
 import { v4 as uuidv4 } from "uuid";
@@ -2684,8 +2684,13 @@ export class Session {
 
   private dispatchAgentPlanMessage(msg: SessionInboundMessage): Promise<void> | undefined {
     if (msg.type === "agent.plan.revision.send.request") {
-      let accepted = true;
       const { requestId, type: _type, ...request } = msg;
+      const reply = (accepted: boolean): void => {
+        this.delivery.reply({
+          type: "agent.plan.revision.send.response",
+          payload: { requestId, accepted },
+        });
+      };
       return this.agentRequests
         .send({
           agentId: msg.agentId,
@@ -2699,16 +2704,17 @@ export class Session {
             });
           },
           send: async () => {
-            accepted = await this.agentManager.sendPlanRevision(msg);
+            if (!(await this.agentManager.sendPlanRevision(msg)))
+              throw new AgentRequestRejectedError();
           },
         })
-        .then(() => {
-          this.delivery.reply({
-            type: "agent.plan.revision.send.response",
-            payload: { requestId, accepted },
-          });
-          return undefined;
-        });
+        .then(
+          () => reply(true),
+          (error) => {
+            if (!(error instanceof AgentRequestRejectedError)) throw error;
+            return reply(false);
+          },
+        );
     }
     if (msg.type === "agent.plan.permission.ensure.request")
       return this.agentManager.ensurePlanPermission(msg).then((permission) => {

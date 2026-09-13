@@ -9,8 +9,16 @@ const ReceiptSchema = z.object({
   fingerprint: z.string(),
   agentId: z.string(),
   state: z.enum(["pending", "completed"]),
+  rejected: z.literal(true).optional(),
 });
 type Receipt = z.infer<typeof ReceiptSchema>;
+
+/** A final admission decision, not a transient provider failure or a retryable rejection. */
+export class AgentRequestRejectedError extends Error {
+  constructor() {
+    super("agent_request_rejected");
+  }
+}
 
 /** One daemon-owned request journal, shared by all of its socket sessions. */
 export class AgentRequests {
@@ -48,6 +56,7 @@ export class AgentRequests {
         try {
           await input.send();
         } catch (error) {
+          if (error instanceof AgentRequestRejectedError) throw error;
           if (error instanceof AgentTurnNotAcceptedError)
             throw new AgentTurnNotAcceptedError(`agent_request_not_accepted: ${error.message}`, {
               cause: error,
@@ -114,7 +123,10 @@ export class AgentRequests {
     const existing = await readReceipt(file);
     if (existing) {
       if (existing.fingerprint !== fingerprint) throw new Error("agent_request_key_conflict");
-      if (existing.state === "completed") return existing.agentId;
+      if (existing.state === "completed") {
+        if (existing.rejected) throw new AgentRequestRejectedError();
+        return existing.agentId;
+      }
       if (!(await operation.recover(existing.agentId))) {
         throw new Error("agent_request_outcome_unknown");
       }
@@ -127,6 +139,10 @@ export class AgentRequests {
     try {
       await operation.run(receipt.agentId);
     } catch (error) {
+      if (error instanceof AgentRequestRejectedError) {
+        await writeJsonFileAtomic(file, { ...receipt, state: "completed", rejected: true });
+        throw error;
+      }
       // Keyed creation has no initial prompt. Once its normal cleanup finished,
       // absence of an agent confirms that retrying cannot duplicate one.
       if (await operation.retrySafe?.(receipt.agentId, error)) await rm(file, { force: true });
