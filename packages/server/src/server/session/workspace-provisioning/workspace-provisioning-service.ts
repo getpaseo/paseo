@@ -46,6 +46,7 @@ export interface CreateWorktreeWorkspaceInput {
   branch: string | null;
   baseBranch: string | null;
   title: string | null;
+  intent?: string;
   expectsInitialAgent?: boolean;
   untrustedSource?: UntrustedWorkspaceSource;
 }
@@ -61,7 +62,7 @@ export interface WorkspaceProvisioningService {
     cwd: string,
     title?: string | null,
     projectId?: string,
-    context?: { expectsInitialAgent?: boolean },
+    context?: { expectsInitialAgent?: boolean; intent?: string },
   ): Promise<PersistedWorkspaceRecord>;
   createWorkspaceForWorktree(
     input: CreateWorktreeWorkspaceInput,
@@ -201,7 +202,7 @@ export function createWorkspaceProvisioningService(deps: {
     cwd: string,
     title?: string | null,
     projectId?: string,
-    context?: { expectsInitialAgent?: boolean },
+    context?: { expectsInitialAgent?: boolean; intent?: string },
   ): Promise<PersistedWorkspaceRecord> {
     const normalizedCwd = resolve(cwd);
     const checkout = await workspaceGitService.getCheckout(normalizedCwd);
@@ -215,6 +216,7 @@ export function createWorkspaceProvisioningService(deps: {
       projectId: project.projectId,
       ...initialWorkspacePlacement({ source: "checkout", cwd: normalizedCwd, checkout }),
       title: title?.trim() || null,
+      intent: context?.intent,
       createdAt: timestamp,
       updatedAt: timestamp,
     });
@@ -248,6 +250,7 @@ export function createWorkspaceProvisioningService(deps: {
         mainRepoRoot: repoRoot,
       }),
       title: input.title,
+      intent: input.intent,
       createdAt: timestamp,
       updatedAt: timestamp,
       ...(input.untrustedSource ? { untrustedSource: input.untrustedSource } : {}),

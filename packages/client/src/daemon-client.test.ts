@@ -3244,6 +3244,42 @@ test("sends project.remove.request", async () => {
   await expect(removePromise).resolves.toEqual({ removedWorkspaceIds: ["ws-main"] });
 });
 
+test("sends workspace.intent.set.request and returns the stored intention", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const setPromise = client.setWorkspaceIntent("ws-intent", "  goal  ", "req-set-intent");
+  expect(parseSentFrame(mock.sent[0])).toEqual({
+    type: "workspace.intent.set.request",
+    requestId: "req-set-intent",
+    workspaceId: "ws-intent",
+    intent: "  goal  ",
+  });
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "workspace.intent.set.response",
+      payload: {
+        requestId: "req-set-intent",
+        workspaceId: "ws-intent",
+        accepted: true,
+        intent: "goal",
+        error: null,
+      },
+    }),
+  );
+
+  await expect(setPromise).resolves.toEqual({ intent: "goal" });
+});
+
 test("sends worktree base-ref fields in create_paseo_worktree_request", async () => {
   const logger = createMockLogger();
   const mock = createMockTransport();

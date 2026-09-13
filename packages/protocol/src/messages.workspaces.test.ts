@@ -1233,6 +1233,60 @@ describe("workspace message schemas", () => {
     ).toBe("gitlab");
   });
 
+  test("workspace intention remains optional for legacy descriptors and round-trips when present", () => {
+    const baseWorkspace = {
+      id: "ws-intent",
+      projectId: "proj",
+      projectDisplayName: "repo",
+      projectRootPath: "/repo",
+      workspaceDirectory: "/repo",
+      projectKind: "git",
+      workspaceKind: "worktree",
+      name: "feature",
+      status: "done",
+      activityAt: null,
+      scripts: [],
+    } as const;
+
+    expect(WorkspaceDescriptorPayloadSchema.parse(baseWorkspace).intent).toBeUndefined();
+    expect(
+      WorkspaceDescriptorPayloadSchema.parse({ ...baseWorkspace, intent: "Ship the plan" }).intent,
+    ).toBe("Ship the plan");
+  });
+
+  test("parses workspace intention create and set messages", () => {
+    expect(
+      WorkspaceCreateRequestSchema.parse({
+        type: "workspace.create.request",
+        requestId: "req-create-intent",
+        intent: "  goal  ",
+        source: { kind: "directory", path: "/repo" },
+      }).intent,
+    ).toBe("  goal  ");
+
+    expect(
+      SessionInboundMessageSchema.parse({
+        type: "workspace.intent.set.request",
+        workspaceId: "ws-intent",
+        intent: null,
+        requestId: "req-set-intent",
+      }),
+    ).toMatchObject({ type: "workspace.intent.set.request", intent: null });
+
+    expect(
+      SessionOutboundMessageSchema.parse({
+        type: "workspace.intent.set.response",
+        payload: {
+          requestId: "req-set-intent",
+          workspaceId: "ws-intent",
+          accepted: true,
+          intent: null,
+          error: null,
+        },
+      }),
+    ).toMatchObject({ type: "workspace.intent.set.response", payload: { intent: null } });
+  });
+
   test("workspace.create.request rejects old flat backing shape and accepts new source envelope", () => {
     // Old flat shape with backing enum must be rejected.
     const oldFlat = WorkspaceCreateRequestSchema.safeParse({

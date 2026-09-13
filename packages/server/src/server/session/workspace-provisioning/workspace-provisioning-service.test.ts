@@ -506,6 +506,24 @@ test("directory creation persists the live branch and a trimmed title", async ()
   expect(workspace).toMatchObject({ branch: "main", title: "Focused work" });
 });
 
+test("directory creation preserves the exact non-empty workspace intention", async () => {
+  const repo = path.join(tmpDir, "repo");
+  const intent = "  goal\nwith exact spacing  ";
+
+  const workspace = await provisioning.createWorkspaceForDirectory(repo, undefined, undefined, {
+    intent,
+  });
+
+  expect(workspace.intent).toBe(intent);
+  expect((await workspaceRegistry.get(workspace.workspaceId))?.intent).toBe(intent);
+  const reloadedRegistry = new FileBackedWorkspaceRegistry(
+    path.join(tmpDir, "projects", "workspaces.json"),
+    logger,
+  );
+  await reloadedRegistry.initialize();
+  expect((await reloadedRegistry.get(workspace.workspaceId))?.intent).toBe(intent);
+});
+
 test("createWorkspaceForDirectory honors an explicit active project without cwd containment", async () => {
   const project = await projectRegistry.getOrCreateActiveByRoot({
     rootPath: path.join(tmpDir, "elsewhere"),

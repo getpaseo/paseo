@@ -2877,6 +2877,20 @@ export class DaemonClient {
     return { title: payload.title };
   }
 
+  async setWorkspaceIntent(
+    workspaceId: string,
+    intent: string | null,
+    requestId?: string,
+  ): Promise<{ intent: string | null }> {
+    const payload =
+      await this.sendNamespacedCorrelatedSessionRequest<"workspace.intent.set.response">({
+        requestId,
+        message: { type: "workspace.intent.set.request", workspaceId, intent },
+      });
+    if (!payload.accepted) throw new Error(payload.error ?? "setWorkspaceIntent rejected");
+    return { intent: payload.intent };
+  }
+
   async setWorkspacePinned(
     workspaceId: string,
     pinned: boolean,
@@ -4341,6 +4355,7 @@ export class DaemonClient {
     input: {
       source: WorkspaceCreateRequest["source"];
       title?: string;
+      intent?: WorkspaceCreateRequest["intent"];
       firstAgentContext?: WorkspaceCreateRequest["firstAgentContext"];
     },
     requestId?: string,
@@ -4351,6 +4366,7 @@ export class DaemonClient {
         type: "workspace.create.request",
         source: input.source,
         ...(input.title !== undefined ? { title: input.title } : {}),
+        ...(input.intent !== undefined ? { intent: input.intent } : {}),
         ...(input.firstAgentContext !== undefined
           ? { firstAgentContext: input.firstAgentContext }
           : {}),

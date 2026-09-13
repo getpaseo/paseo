@@ -59,6 +59,7 @@ test("creates a worktree and registers it in the source workspace project withou
       cwd: repoDir,
       worktreeSlug: "feature-one",
       title: "Feature One",
+      workspaceIntent: "  Preserve this exact intention  ",
       runSetup: false,
       paseoHome: path.join(tempDir, ".paseo"),
     },
@@ -73,6 +74,7 @@ test("creates a worktree and registers it in the source workspace project withou
   expect(result.workspace.displayName).toBe("feature-one");
   expect(result.workspace.baseBranch).toBe("main");
   expect(result.workspace.title).toBe("Feature One");
+  expect(result.workspace.intent).toBe("  Preserve this exact intention  ");
   expect(deps.workspaceGitService.getSnapshot).not.toHaveBeenCalled();
   expect(deps.projects.get(sourceProject.projectId)).toEqual({
     ...sourceProject,

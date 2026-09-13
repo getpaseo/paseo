@@ -8364,6 +8364,77 @@ test("workspace.title.set.request returns accepted=false when workspace is not f
   expect(response?.payload.error).toBeTruthy();
 });
 
+test("workspace.intent.set.request trims, stores, clears, and reports missing workspaces", async () => {
+  const emitted: SessionOutboundMessage[] = [];
+  const session = asTestSession(
+    createSessionForWorkspaceTests({ onMessage: (message) => emitted.push(message) }),
+  );
+  const workspace = createPersistedWorkspaceRecord({
+    workspaceId: "ws-intent",
+    projectId: "proj-intent",
+    cwd: REPO_CWD,
+    kind: "local_checkout",
+    displayName: "main",
+    intent: "old goal",
+    createdAt: "2026-03-01T12:00:00.000Z",
+    updatedAt: "2026-03-01T12:00:00.000Z",
+  });
+  const workspaces = new Map([[workspace.workspaceId, workspace]]);
+  session.workspaceRegistry.update = async (id, updater) => {
+    const existing = workspaces.get(id);
+    if (!existing) return null;
+    const updated = updater(existing);
+    workspaces.set(id, updated);
+    return updated;
+  };
+
+  await session.handleMessage({
+    type: "workspace.intent.set.request",
+    workspaceId: workspace.workspaceId,
+    intent: "  goal  ",
+    requestId: "req-intent-set",
+  });
+  expect(findByType(emitted, "workspace.intent.set.response").payload).toEqual({
+    requestId: "req-intent-set",
+    workspaceId: workspace.workspaceId,
+    accepted: true,
+    intent: "goal",
+    error: null,
+  });
+  expect(workspaces.get(workspace.workspaceId)?.intent).toBe("goal");
+  emitted.length = 0;
+
+  await session.handleMessage({
+    type: "workspace.intent.set.request",
+    workspaceId: workspace.workspaceId,
+    intent: null,
+    requestId: "req-intent-clear",
+  });
+  expect(findByType(emitted, "workspace.intent.set.response").payload).toEqual({
+    requestId: "req-intent-clear",
+    workspaceId: workspace.workspaceId,
+    accepted: true,
+    intent: null,
+    error: null,
+  });
+  expect(workspaces.get(workspace.workspaceId)?.intent).toBeUndefined();
+  emitted.length = 0;
+
+  await session.handleMessage({
+    type: "workspace.intent.set.request",
+    workspaceId: "does-not-exist",
+    intent: "goal",
+    requestId: "req-intent-missing",
+  });
+  expect(findByType(emitted, "workspace.intent.set.response").payload).toEqual({
+    requestId: "req-intent-missing",
+    workspaceId: "does-not-exist",
+    accepted: false,
+    intent: null,
+    error: "Workspace not found",
+  });
+});
+
 async function createSessionWithTerminalManager(options: {
   workspaces: PersistedWorkspaceRecord[];
   projects: PersistedProjectRecord[];
@@ -9368,6 +9439,7 @@ test("workspace.create.response persists the first prompt as the initial title",
     type: "workspace.create.request",
     requestId: "req-create-first-prompt",
     source: { kind: "directory", path: REPO_CWD },
+    intent: "  Preserve this exact intention\nincluding whitespace  ",
     firstAgentContext: {
       prompt: "Add retries to the payments flow\nwith exponential backoff",
     },
@@ -9377,11 +9449,15 @@ test("workspace.create.response persists the first prompt as the initial title",
   expect(response?.payload.error).toBeNull();
   expect(response?.payload.workspace?.title).toBe("Add retries to the payments flow");
   expect(response?.payload.workspace?.name).toBe("Add retries to the payments flow");
+  expect(response?.payload.workspace?.intent).toBe(
+    "  Preserve this exact intention\nincluding whitespace  ",
+  );
 
   const workspaceId = response?.payload.workspace?.id;
   expect(workspaceId).toBeDefined();
   const persisted = await session.workspaceRegistry.get(workspaceId as string);
   expect(persisted?.title).toBe("Add retries to the payments flow");
+  expect(persisted?.intent).toBe("  Preserve this exact intention\nincluding whitespace  ");
   expect(filterByType(emitted, "workspace_update")).toHaveLength(1);
 });
 

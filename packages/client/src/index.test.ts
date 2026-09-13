@@ -605,6 +605,27 @@ test("workspace handles keep identity and refresh snapshots through existing dri
   );
   await expect(titlePromise).resolves.toEqual({ title: "SDK review" });
 
+  const intentPromise = workspace.setIntent("  goal  ", "workspace-intent-request");
+  expect(parseSentSessionMessage(ws.sent.at(-1))).toMatchObject({
+    type: "workspace.intent.set.request",
+    requestId: "workspace-intent-request",
+    workspaceId: "workspace_sdk",
+    intent: "  goal  ",
+  });
+  ws.message(
+    sessionMessage({
+      type: "workspace.intent.set.response",
+      payload: {
+        requestId: "workspace-intent-request",
+        workspaceId: "workspace_sdk",
+        accepted: true,
+        intent: "goal",
+        error: null,
+      },
+    }),
+  );
+  await expect(intentPromise).resolves.toEqual({ intent: "goal" });
+
   unsubscribe();
   ws.message(
     sessionMessage({
@@ -633,6 +654,7 @@ test("plugin-shaped PR workspace create and agent create use the existing daemon
       checkoutSource: { kind: "change_request", forge: "github", number: 42 },
     },
     title: "Issue 42",
+    intent: "Implement the issue without unrelated changes",
   });
   const workspaceRequest = parseSentSessionMessage(ws.sent.at(-1));
   expect(workspaceRequest).toMatchObject({
@@ -644,6 +666,7 @@ test("plugin-shaped PR workspace create and agent create use the existing daemon
       checkoutSource: { kind: "change_request", forge: "github", number: 42 },
     },
     title: "Issue 42",
+    intent: "Implement the issue without unrelated changes",
   });
   ws.message(
     sessionMessage({

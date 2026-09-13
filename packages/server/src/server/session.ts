@@ -2836,6 +2836,8 @@ export class Session {
         return this.handleWorkspaceCreateRequest(msg);
       case "workspace.title.set.request":
         return this.handleWorkspaceTitleSetRequest(msg.workspaceId, msg.title, msg.requestId);
+      case "workspace.intent.set.request":
+        return this.handleWorkspaceIntentSetRequest(msg.workspaceId, msg.intent, msg.requestId);
       case "workspace.pin.set.request":
         return this.handleWorkspacePinSetRequest(msg.workspaceId, msg.pinned, msg.requestId);
       default:
@@ -3665,6 +3667,74 @@ export class Session {
           accepted: false,
           title: null,
           error: getErrorMessageOr(error, "Failed to set workspace title"),
+        },
+      });
+    }
+  }
+
+  private async handleWorkspaceIntentSetRequest(
+    workspaceId: string,
+    intent: string | null,
+    requestId: string,
+  ): Promise<void> {
+    this.sessionLogger.info({ workspaceId, requestId }, "session: workspace.intent.set.request");
+
+    try {
+      const trimmed = intent?.trim() ?? "";
+      const nextIntent = trimmed.length === 0 ? undefined : trimmed;
+      const updatedAt = new Date().toISOString();
+      const updated = await this.workspaceRegistry.update(workspaceId, (existing) => ({
+        ...existing,
+        intent: nextIntent,
+        updatedAt,
+      }));
+      if (!updated) {
+        this.emit({
+          type: "workspace.intent.set.response",
+          payload: {
+            requestId,
+            workspaceId,
+            accepted: false,
+            intent: null,
+            error: "Workspace not found",
+          },
+        });
+        return;
+      }
+
+      this.emit({
+        type: "workspace.intent.set.response",
+        payload: {
+          requestId,
+          workspaceId,
+          accepted: true,
+          intent: nextIntent ?? null,
+          error: null,
+        },
+      });
+      await this.emitWorkspaceUpdatesForWorkspaceIds([workspaceId]);
+    } catch (error) {
+      this.sessionLogger.error(
+        { err: error, workspaceId, requestId },
+        "session: workspace.intent.set.request error",
+      );
+      this.emit({
+        type: "activity_log",
+        payload: {
+          id: uuidv4(),
+          timestamp: new Date(),
+          type: "error",
+          content: `Failed to set workspace intention: ${getErrorMessage(error)}`,
+        },
+      });
+      this.emit({
+        type: "workspace.intent.set.response",
+        payload: {
+          requestId,
+          workspaceId,
+          accepted: false,
+          intent: null,
+          error: getErrorMessageOr(error, "Failed to set workspace intention"),
         },
       });
     }
@@ -5271,6 +5341,7 @@ export class Session {
       workspaceKind: workspace.kind,
       name: resolveWorkspaceDisplayName(workspace),
       title: workspace.title,
+      intent: workspace.intent,
       pinnedAt: workspace.pinnedAt,
       ...(workspace.labels && workspace.labels.length > 0 ? { labels: workspace.labels } : {}),
       archivingAt: null,
@@ -6405,7 +6476,7 @@ export class Session {
       cwd,
       explicitTitle ?? promptTitle,
       request.source.projectId,
-      { expectsInitialAgent: Boolean(request.firstAgentContext) },
+      { expectsInitialAgent: Boolean(request.firstAgentContext), intent: request.intent },
     );
     await this.syncWorkspaceGitObserverForWorkspace(workspace);
     const descriptor = await this.describeWorkspaceRecord(workspace);
@@ -6480,6 +6551,7 @@ export class Session {
         githubPrNumber: source.githubPrNumber,
         firstAgentContext: request.firstAgentContext,
         title: request.title,
+        workspaceIntent: request.intent,
       },
       source.baseBranch
         ? { resolveDefaultBranch: async () => source.baseBranch as string }

@@ -33,6 +33,7 @@ import { runWithGitCommandPriority } from "../utils/run-git-command.js";
 export interface CreatePaseoWorktreeInput extends CreateWorktreeCoreInput {
   projectId?: string;
   title?: string;
+  workspaceIntent?: string;
 }
 
 export interface CreatePaseoWorktreeResult {
@@ -99,6 +100,7 @@ async function createPaseoWorktreeWithPriority(
       branch: createdWorktree.worktree.branchName || null,
       baseBranch: resolveIntentBaseBranch(createdWorktree.intent),
       title: input.title?.trim() || resolveFirstAgentPromptTitle(input.firstAgentContext),
+      intent: input.workspaceIntent,
       expectsInitialAgent: Boolean(input.firstAgentContext),
       ...(createdWorktree.intent.kind === "checkout-change-request" &&
       createdWorktree.intent.headRepository
