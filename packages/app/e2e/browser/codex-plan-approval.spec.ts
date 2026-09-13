@@ -1,6 +1,53 @@
 import { expect, test } from "../support/fixtures";
 import { allowPermission, waitForPermissionPrompt } from "../support/helpers/permissions";
 import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-agent";
+import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
+import { connectDaemonClient } from "../support/helpers/daemon-client-loader";
+
+test("approval uses launch history after the profile is deleted", async ({ page }) => {
+  const client = await connectDaemonClient<DaemonClient>({ clientIdPrefix: "plan-launch-history" });
+  const previous = await client.getDaemonConfig();
+  await client.patchDaemonConfig({
+    agentProfiles: [
+      {
+        id: "qa-planner",
+        name: "QA Planner",
+        provider: "mock",
+        model: "e2e-fast-stream",
+        modeId: "load-test",
+        postApprovalModeId: "approved-mode",
+      },
+    ],
+  });
+  const session = await seedMockAgentWorkspace({
+    repoPrefix: "plan-launch-history-",
+    title: "Approval history",
+    launchProfileId: "qa-planner",
+    initialPrompt: "Emit synthetic plan approval.",
+  });
+  try {
+    await openAgentRoute(page, session);
+    const card = page.getByTestId("timeline-plan-card");
+    await expect(card).toHaveCount(1);
+    await expect(card.getByRole("button", { name: "Approve", exact: true })).toBeVisible();
+    await client.patchDaemonConfig({ agentProfiles: [] });
+    await page.reload();
+    await card.getByRole("button", { name: "Approve", exact: true }).click();
+    await expect
+      .poll(
+        async () => (await client.fetchAgent({ agentId: session.agentId }))?.agent.currentModeId,
+      )
+      .toBe("approved-mode");
+    await page.reload();
+    await expect(card).toHaveCount(1);
+    await expect(card).toContainText('--name="my repo"');
+    await expect(card.getByRole("button")).toHaveText(["Copy"]);
+  } finally {
+    await session.cleanup();
+    await client.patchDaemonConfig({ agentProfiles: previous.config.agentProfiles ?? [] });
+    await client.close();
+  }
+});
 
 test.describe("Codex plan approval", () => {
   test("keeps a failed plan action visible and retries", async ({ page }) => {

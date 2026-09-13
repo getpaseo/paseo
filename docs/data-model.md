@@ -104,6 +104,17 @@ Each agent is stored as a separate JSON file, grouped by project directory.
 | `internal`           | `boolean?`                               | Whether this is a system-internal agent                                                                                                                                                                                                                                                                                                                                             |
 | `archivedAt`         | `string?` (ISO 8601)                     | Soft-delete timestamp                                                                                                                                                                                                                                                                                                                                                               |
 
+### Launch history
+
+Launch history is stored with the agent: `launchProfileId` identifies the profile selected at
+creation, and `launchPostApprovalModeId` captures its then-current approval mode. Neither is
+recomputed from today's profile settings on reload. `writePolicy` also belongs to the durable
+launch contract; see [permissions](permissions.md#read-only-agent-launches).
+
+`lastCompletedTurnId` is completion evidence for the current turn, not an ever-increasing counter.
+Starting another turn clears it. Older records without it provide no successful-turn evidence to
+workflow reconciliation.
+
 ### Nested: SerializableConfig
 
 | Field              | Type                       | Description                  |
@@ -165,6 +176,22 @@ Each agent is stored as a separate JSON file, grouped by project directory.
 | `options`     | `AgentSelectOption[]` |
 
 ---
+
+## Plan persistence
+
+The daemon timeline is an in-memory projection; the provider transcript remains its resume
+authority. Plan revisions are append-only proposals, while settling a permission updates the
+resolution on that proposal's existing call ID. Never persist a second transcript to preserve a
+plan card.
+
+The provider persistence handle supplements facts absent from native history: Codex retains
+synthetic proposals and decisions in `metadata.planHistory`, anchored to native turns; Claude
+retains decisions in `metadata.planResolutions`, keyed by native tool-use ID. Rewind removes
+proposals whose native turn no longer exists. These records preserve reading and decision history,
+not live permission callbacks.
+
+The app replica cache may paint a plan before reconnection finishes. Only a fresh daemon agent
+snapshot can restore its correlated actions; cached permissions never authorize a new operation.
 
 ## Runtime-only Terminal Sessions
 
@@ -500,6 +527,13 @@ Array of workspace records. A workspace is a specific working directory within a
 | `untrustedSource`              | `{ kind: "change_request", forge, number, headRepository }?` | Provenance captured when a cross-repository change request creates the workspace. Missing means repository automation is allowed; explicit setup removes the field.                           |
 
 > **Opaque-ID invariant:** `workspaceId` is opaque identity, never a filesystem path. Filesystem and git operations take `cwd`/`workspaceDirectory` only — never the id. A compatibility-only first-materialization bootstrap still groups pre-registry agent records by path and Git remote so existing installs retain their legacy records. That grouping never runs against a live registry, and its keys are not runtime project or workspace identity.
+
+### Workspace intention
+
+`intent` is user-authored workspace context, independent of its name, branch, agents and composer
+drafts. Preserve its text verbatim, including whitespace. An explicit edit can clear it;
+reconciliation and agent creation must not infer or replace it from a prompt. The workspace
+registry and app replica cache retain it across reloads.
 
 ### Workspace label catalog
 

@@ -12,6 +12,26 @@ initializing → idle → running → idle (or error → closed)
 
 Each live agent in `AgentManager` carries a `lastStatus` of `initializing`, `idle`, `running`, or `error`. `closed` is the persisted, resumable state for an agent record that has no live provider runtime. State transitions persist to disk and stream to subscribed clients via WebSocket.
 
+## Plans and launch history
+
+Creating a workspace with an intention prepares an unsent Router draft. Sending that draft is
+the agent-creation boundary. Editing the workspace intention later does not rewrite the draft
+or an agent conversation; [data-model.md](data-model.md#workspace-intention) owns its persistence.
+
+A launch profile records provenance, not a live binding to settings. Applying another profile
+to an active agent does not change its launch history. The post-approval mode is captured at
+creation, so editing or removing the profile cannot change what approval of that agent means.
+Historical agents without that snapshot retain their provider's native approval behavior.
+
+A plan proposal has one canonical timeline identity, shared with its live permission. Approval,
+clarification, cancellation and handoff settle that proposal without deleting it. A revision
+adds a proposal; it must not overwrite the user's earlier decision. A restored timeline alone
+does not restore permission authority. See [plan persistence](data-model.md#plan-persistence).
+
+The [workflow plugin](plugins.md#first-party-plan-workflow) consumes lifecycle events and
+reconciles interrupted work. Idle or finished attention alone cannot prove successful completion:
+canceling a turn can produce both. Use the completed-turn marker and that turn's canonical output.
+
 ## Runtime residency
 
 An unarchived agent may be `closed` without being deleted or archived. Closing releases its provider

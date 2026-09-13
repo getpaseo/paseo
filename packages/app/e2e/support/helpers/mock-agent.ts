@@ -20,6 +20,7 @@ export interface MockAgentOptions {
   model?: string;
   modeId?: string;
   featureValues?: Record<string, unknown>;
+  launchProfileId?: string;
 }
 
 /**
@@ -45,6 +46,7 @@ export async function seedMockAgentWorkspace(
       model: options.model ?? "e2e-fast-stream",
       initialPrompt: options.initialPrompt,
       featureValues: options.featureValues,
+      launchProfileId: options.launchProfileId,
     });
     return {
       agentId: agent.id,

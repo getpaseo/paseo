@@ -41,7 +41,11 @@ Set `writePolicy: "read_only"` at creation when a role must not write the worksp
 
 Only Codex on macOS with `sandbox-exec` is supported. Other hosts and providers, including OMP, reject read-only creation before provider startup and remain available for read-write roles. A provider mode, permission prompt, or system prompt does not establish this boundary.
 
-Codex and its descendants run inside a write-denying OS boundary. Its native sandbox is disabled because macOS cannot nest it inside that boundary; native approvals remain disabled. Explicit Codex exec-policy allows cannot escape the outer restriction.
+The entire Codex process and its descendants run inside a write-denying OS boundary, not only
+shell tool calls. Its native sandbox is disabled because macOS cannot nest it inside that
+boundary; native approvals remain disabled. Explicit Codex exec-policy allows cannot escape the
+outer restriction. Workflow plugins run outside this boundary and remain trusted, unsandboxed
+code; a read-only child does not constrain its orchestrator.
 
 Read-only agents have no MCP servers or Paseo tools. Plugins orchestrate these roles from outside the agent. The isolated Codex home receives authentication only, not inherited user configuration, rules, hooks, or plugins. Other Paseo state, loopback connections, and local sockets are inaccessible except the system DNS resolver. Remote TCP port 443 remains available for model traffic; effects through remote APIs are outside this filesystem policy.
 

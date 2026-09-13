@@ -20,7 +20,8 @@ paseo plugin install /absolute/path/to/paseo/plugins/paseo-workflow
 
 Launch the Router or Planner profile in a workspace. The Router carries workspace intention
 and user follow-ups into planning. Reviewers and auditors require the host's enforced read-only
-provider support; unsupported provider/host combinations fail before spawning. You can edit
+provider support; [permissions](permissions.md#read-only-agent-launches) defines its host, process
+and network limits. Unsupported combinations fail before spawning. You can edit
 the role profiles' provider, model, mode and effort in Agent profiles.
 
 The workflow uses the existing plan actions and an agent panel for executor selection and review
@@ -29,17 +30,22 @@ creates and sends the read-only reviewer before closing the planner's permission
 pre-acceptance failure leaves the plan retryable; an uncertain delivery requires manual inspection
 without replay. Planner clarification is transported verbatim and without truncation, not inferred constraints.
 
-Status reconciles pending review/audit operations against the expected prompt and the host's last
-completed turn marker. Missing completion evidence or canceled turns do not advance the workflow.
-Only that turn's canonical response and tool results count; previous turns never authorize a correction.
-An interrupted permission closure whose acknowledgement was not recorded is not replayed speculatively.
+Lifecycle hooks are best-effort notifications, not durable delivery. Status reconciles pending
+review/audit operations against the expected prompt and the host's completed-turn evidence.
+Only that turn's canonical response and tool results count; previous turns never authorize a
+correction. Reloading the plugin or repeating status must not create another child or resend an
+accepted prompt. `outcome_unknown` preserves an operation whose delivery or permission closure
+cannot be established; inspect the existing agent before retrying. A timeout is not proof that
+the operation failed before acceptance.
 
 Automatic corrections require a clean initial workspace and clean functional-commit boundary.
 Only the manager can write. Its final tool calls must show successful targeted checks; the host
 then checks the unchanged HEAD and agreed-file diff before one read-only delta review. Untracked
 files, later tools, concurrent changes or missing evidence produce `verification_required`, not
 an automatic second commit. The plugin never runs validation commands outside the manager's
-normal agent permissions.
+normal agent permissions. An agent's classification, green local checks or an accepted RPC do
+not prove a remote write, delivery or deployment. Report external results only with evidence
+from the system that owns them.
 
 ## Install a directory source
 

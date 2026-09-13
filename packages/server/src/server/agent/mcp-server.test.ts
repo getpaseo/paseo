@@ -961,6 +961,7 @@ describe("browser MCP tools", () => {
       id: "agent-1",
       cwd: REPO_CWD,
       workspaceId: BROWSER_WORKSPACE_ID,
+      config: {},
     });
     const server = await createAgentMcpServer({
       agentManager,
@@ -1058,6 +1059,7 @@ describe("browser MCP tools", () => {
       id: "agent-1",
       cwd: REPO_CWD,
       workspaceId: BROWSER_WORKSPACE_ID,
+      config: {},
     });
     const execute = vi.fn().mockResolvedValue({
       requestId: "req-browser-tabs",
@@ -1098,7 +1100,7 @@ describe("browser MCP tools", () => {
 
   it("tells browser callers without a workspace how to proceed before broker execution", async () => {
     const { agentManager, agentStorage, spies } = createTestDeps();
-    spies.agentManager.getAgent.mockReturnValue({ id: "agent-1", cwd: REPO_CWD });
+    spies.agentManager.getAgent.mockReturnValue({ id: "agent-1", cwd: REPO_CWD, config: {} });
     const execute = vi.fn().mockResolvedValue({
       requestId: "req-browser-tabs",
       ok: true,
@@ -1378,6 +1380,7 @@ describe("create_agent MCP tool", () => {
       cwd: existingCwd,
       provider: "codex",
       currentModeId: "full-access",
+      config: {},
     } as ManagedAgent);
     const server = await createAgentMcpServer({
       agentManager,
@@ -3067,6 +3070,7 @@ describe("create_agent MCP tool", () => {
       workspaceId: "wks_voice",
       provider: "codex",
       currentModeId: "full-access",
+      config: {},
     } as ManagedAgent);
     spies.agentManager.createAgent.mockResolvedValue({
       id: "child-agent",
@@ -3121,6 +3125,7 @@ describe("create_agent MCP tool", () => {
       workspaceId: "wks_parent",
       provider: "codex",
       currentModeId: "full-access",
+      config: {},
     } as ManagedAgent);
 
     const server = await createAgentMcpServer({
@@ -3167,6 +3172,7 @@ describe("create_agent MCP tool", () => {
       workspaceId: "wks_parent",
       provider: "codex",
       currentModeId: "full-access",
+      config: {},
     } as ManagedAgent;
     const childAgent = {
       id: "child-agent",
@@ -3212,6 +3218,7 @@ describe("create_agent MCP tool", () => {
       workspaceId: "wks_parent",
       provider: "codex",
       currentModeId: "full-access",
+      config: {},
     } as ManagedAgent);
     spies.agentManager.createAgent.mockResolvedValue({
       id: "detached-agent",
@@ -3264,6 +3271,7 @@ describe("create_agent MCP tool", () => {
       workspaceId: "wks_parent",
       provider: "claude",
       currentModeId: "bypassPermissions",
+      config: {},
     } as ManagedAgent);
     spies.agentManager.createAgent.mockResolvedValue({
       id: "child-agent",
@@ -3578,6 +3586,7 @@ describe("create_agent MCP tool", () => {
       workspaceId: "wks_parent",
       provider: "claude",
       currentModeId: "bypassPermissions",
+      config: {},
     } as ManagedAgent;
     spies.agentManager.getAgent.mockReturnValue(parentAgent);
     spies.agentManager.createAgent.mockResolvedValue({
@@ -3630,6 +3639,7 @@ describe("create_agent MCP tool", () => {
       workspaceId: "wks_parent",
       provider: "claude",
       currentModeId: "bypassPermissions",
+      config: {},
     } as ManagedAgent);
     spies.agentManager.createAgent.mockResolvedValue({
       id: "child-agent",
@@ -3676,6 +3686,7 @@ describe("send_agent_prompt MCP tool", () => {
       workspaceId: "wks_parent",
       provider: "codex",
       currentModeId: "full-access",
+      config: {},
     } as ManagedAgent;
     const childAgent = {
       id: "child-agent",
@@ -3771,6 +3782,7 @@ describe("send_agent_prompt MCP tool", () => {
       workspaceId: "wks_parent",
       provider: "codex",
       currentModeId: "full-access",
+      config: {},
     } as ManagedAgent;
     const childAgent = {
       id: "child-agent",
