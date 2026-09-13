@@ -21,6 +21,13 @@ export interface AppUpdateInstallResult {
   message: string;
 }
 
+export type AppUpdateStartupInstallResult =
+  | { installed: true; version: string }
+  | {
+      installed: false;
+      reason: "unsupported" | "no-update" | "not-ready" | "timeout" | "error";
+    };
+
 export interface RuntimeUpdateInfo {
   version: string;
   releaseNotes?: unknown;
@@ -54,6 +61,17 @@ export interface AppUpdateRuntime {
   quitAndInstall(input: AppUpdateInstallRequest): void;
 }
 
+/**
+ * Records the version of an update that was downloaded but not installed, so the
+ * next launch knows a pending installer exists without having to inspect
+ * electron-updater's private update cache.
+ */
+export interface PendingUpdateStore {
+  read(): Promise<string | null>;
+  write(version: string): Promise<void>;
+  clear(): Promise<void>;
+}
+
 export interface AppUpdateService {
   checkForAppUpdate(input: {
     currentVersion: string;
@@ -65,13 +83,16 @@ export interface AppUpdateService {
       currentVersion: string;
       releaseChannel: AppReleaseChannel;
     },
-    onBeforeQuit?: () => Promise<void>,
+    onBeforeInstall?: () => Promise<void>,
   ): Promise<AppUpdateInstallResult>;
-  installUpdateOnQuit(input: {
-    currentVersion: string;
-    releaseChannel: AppReleaseChannel;
-    signal: AbortSignal;
-  }): Promise<boolean>;
+  installPendingUpdateOnStartup(
+    input: {
+      currentVersion: string;
+      releaseChannel: AppReleaseChannel;
+      signal: AbortSignal;
+    },
+    onBeforeInstall?: () => Promise<void>,
+  ): Promise<AppUpdateStartupInstallResult>;
 }
 
 export interface AppUpdateServiceDeps {
@@ -79,6 +100,7 @@ export interface AppUpdateServiceDeps {
   isPackaged(): boolean;
   now(): number;
   bucket(): Promise<number>;
+  pendingUpdateStore: PendingUpdateStore;
   reportCheckError?(error: unknown): void;
   reportRuntimeError?(error: unknown): void;
   reportInstallError?(message: string): void;
@@ -104,23 +126,25 @@ function buildCheckResult(input: {
   };
 }
 
-async function performQuitAndInstall(
+async function performInstall(
   runtime: AppUpdateRuntime,
   {
     targetVersion,
-    onBeforeQuit,
-    restart,
+    onBeforeInstall,
+    silent,
+    forceRunAfter,
   }: {
     targetVersion: string;
-    onBeforeQuit?: () => Promise<void>;
-    restart: boolean;
+    onBeforeInstall?: () => Promise<void>;
+    silent: boolean;
+    forceRunAfter: boolean;
   },
 ): Promise<void> {
-  if (onBeforeQuit) await onBeforeQuit();
+  if (onBeforeInstall) await onBeforeInstall();
   runtime.quitAndInstall({
     targetVersion,
-    isSilent: !restart,
-    isForceRunAfter: restart,
+    isSilent: silent,
+    isForceRunAfter: forceRunAfter,
   });
 }
 
@@ -146,9 +170,16 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
   let preparationError: { version: string; message: string } | null = null;
   let preparingUpdateVersion: string | null = null;
   let checkQueue: Promise<void> = Promise.resolve();
+  const readyWaiters = new Set<() => void>();
 
   function isReadyToInstallVersion(version: string): boolean {
     return downloadedUpdateVersion === version;
+  }
+
+  function signalReadyChange(): void {
+    for (const waiter of readyWaiters) {
+      waiter();
+    }
   }
 
   function clearUpdateState(): void {
@@ -156,6 +187,23 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
     downloadedUpdateVersion = null;
     preparationError = null;
     preparingUpdateVersion = null;
+    signalReadyChange();
+  }
+
+  function markUpdateDownloaded(version: string): void {
+    downloadedUpdateVersion = version;
+    signalReadyChange();
+    void deps.pendingUpdateStore.write(version).catch((error) => {
+      deps.reportInstallError?.(`Failed to record the pending update: ${getErrorMessage(error)}`);
+    });
+  }
+
+  async function clearPendingUpdate(): Promise<void> {
+    try {
+      await deps.pendingUpdateStore.clear();
+    } catch (error) {
+      deps.reportInstallError?.(`Failed to clear the pending update: ${getErrorMessage(error)}`);
+    }
   }
 
   function buildPreviouslyAdmittedUpdateResult(
@@ -207,7 +255,7 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
         // A superseded download can finish after a newer manifest check. Keep
         // the validated manifest as the install target in that case.
         cachedUpdateInfo ??= info;
-        downloadedUpdateVersion = info.version;
+        markUpdateDownloaded(info.version);
         if (preparingUpdateVersion === info.version) {
           preparingUpdateVersion = null;
         }
@@ -331,7 +379,7 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
       currentVersion: string;
       releaseChannel: AppReleaseChannel;
     },
-    onBeforeQuit?: () => Promise<void>,
+    onBeforeInstall?: () => Promise<void>,
   ): Promise<AppUpdateInstallResult> {
     if (!deps.isPackaged()) {
       return {
@@ -354,7 +402,11 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
       };
     }
 
-    return installCachedUpdate(currentVersion, { onBeforeQuit, restart: true });
+    return installCachedUpdate(currentVersion, {
+      onBeforeInstall,
+      silent: false,
+      forceRunAfter: true,
+    });
   }
 
   async function ensureUpdateDownloaded(
@@ -384,7 +436,7 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
       // event clears that version, then the next iteration starts the newly
       // validated release instead of treating the stale artifact as ready.
       if (attemptedVersion === readyVersion && !isReadyToInstallVersion(readyVersion)) {
-        downloadedUpdateVersion = readyVersion;
+        markUpdateDownloaded(readyVersion);
         preparingUpdateVersion = null;
       }
     }
@@ -392,16 +444,37 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
     return signal?.aborted ? "aborted" : "ready";
   }
 
+  async function waitForUpdateReady(version: string, signal: AbortSignal): Promise<boolean> {
+    while (!isReadyToInstallVersion(version)) {
+      if (signal.aborted) return false;
+      if (cachedUpdateInfo?.version !== version) return false;
+
+      await new Promise<void>((resolve) => {
+        const settle = () => {
+          readyWaiters.delete(settle);
+          signal.removeEventListener("abort", settle);
+          resolve();
+        };
+        readyWaiters.add(settle);
+        signal.addEventListener("abort", settle, { once: true });
+      });
+    }
+
+    return true;
+  }
+
   async function installCachedUpdate(
     currentVersion: string,
     {
-      onBeforeQuit,
+      onBeforeInstall,
       signal,
-      restart,
+      silent,
+      forceRunAfter,
     }: {
-      onBeforeQuit?: () => Promise<void>;
+      onBeforeInstall?: () => Promise<void>;
       signal?: AbortSignal;
-      restart: boolean;
+      silent: boolean;
+      forceRunAfter: boolean;
     },
   ): Promise<AppUpdateInstallResult> {
     if (!cachedUpdateInfo) {
@@ -418,10 +491,11 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
     }
 
     if (isReadyToInstallVersion(readyVersion)) {
-      await performQuitAndInstall(deps.runtime, {
+      await performInstall(deps.runtime, {
         targetVersion: readyVersion,
-        onBeforeQuit,
-        restart,
+        onBeforeInstall,
+        silent,
+        forceRunAfter,
       });
       return {
         installed: true,
@@ -442,10 +516,11 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
           message: "A newer update was found and will be installed later.",
         };
       }
-      await performQuitAndInstall(deps.runtime, {
+      await performInstall(deps.runtime, {
         targetVersion: readyVersion,
-        onBeforeQuit,
-        restart,
+        onBeforeInstall,
+        silent,
+        forceRunAfter,
       });
 
       return {
@@ -464,35 +539,80 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
     }
   }
 
-  async function installUpdateOnQuit({
-    currentVersion,
-    releaseChannel,
-    signal,
-  }: {
-    currentVersion: string;
-    releaseChannel: AppReleaseChannel;
-    signal: AbortSignal;
-  }): Promise<boolean> {
-    if (!deps.isPackaged() || !downloadedUpdateVersion) {
-      return false;
-    }
-
-    const check = await checkForAppUpdate({
+  async function installPendingUpdateOnStartup(
+    {
       currentVersion,
       releaseChannel,
-      intent: "automatic",
-    });
-    if (signal.aborted || !check.hasUpdate) {
-      return false;
+      signal,
+    }: {
+      currentVersion: string;
+      releaseChannel: AppReleaseChannel;
+      signal: AbortSignal;
+    },
+    onBeforeInstall?: () => Promise<void>,
+  ): Promise<AppUpdateStartupInstallResult> {
+    if (!deps.isPackaged()) {
+      return { installed: false, reason: "unsupported" };
     }
 
-    const result = await installCachedUpdate(currentVersion, { signal, restart: false });
-    return result.installed;
+    try {
+      // The pending-update record is the predicate. Only an update that was
+      // already downloaded is installed here, so a clean session never asks
+      // electron-updater to fetch anything at startup.
+      const pendingVersion = await deps.pendingUpdateStore.read();
+      if (!pendingVersion) {
+        return { installed: false, reason: "no-update" };
+      }
+
+      const check = await checkForAppUpdate({
+        currentVersion,
+        releaseChannel,
+        intent: "automatic",
+      });
+      if (signal.aborted) {
+        return { installed: false, reason: "timeout" };
+      }
+
+      if (!check.hasUpdate) {
+        if (check.errorMessage) {
+          // A failed check cannot disprove the pending update, so keep it for
+          // the next launch instead of dropping it.
+          return { installed: false, reason: "not-ready" };
+        }
+        await clearPendingUpdate();
+        return { installed: false, reason: "no-update" };
+      }
+
+      if (check.latestVersion !== pendingVersion) {
+        return { installed: false, reason: "no-update" };
+      }
+
+      const ready = check.readyToInstall || (await waitForUpdateReady(pendingVersion, signal));
+      if (!ready) {
+        return { installed: false, reason: signal.aborted ? "timeout" : "not-ready" };
+      }
+
+      const result = await installCachedUpdate(currentVersion, {
+        onBeforeInstall,
+        signal,
+        silent: true,
+        forceRunAfter: true,
+      });
+      if (!result.installed) {
+        return { installed: false, reason: "error" };
+      }
+
+      await clearPendingUpdate();
+      return { installed: true, version: result.version ?? pendingVersion };
+    } catch (error) {
+      deps.reportInstallError?.(getErrorMessage(error));
+      return { installed: false, reason: "error" };
+    }
   }
 
   return {
     checkForAppUpdate,
     downloadAndInstallUpdate,
-    installUpdateOnQuit,
+    installPendingUpdateOnStartup,
   };
 }

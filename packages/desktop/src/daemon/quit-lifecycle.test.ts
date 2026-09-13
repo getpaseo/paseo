@@ -111,9 +111,8 @@ describe("quit-lifecycle", () => {
     expect(events).toEqual(["feedback", "stop"]);
   });
 
-  it("revalidates updates after daemon shutdown before exiting", async () => {
+  it("stops the daemon before exiting and ignores a repeated quit", async () => {
     const stopDecision = deferred<boolean>();
-    const updateDecision = deferred<boolean>();
     const events: string[] = [];
 
     const quitLifecycle = createQuitLifecycle({
@@ -126,13 +125,8 @@ describe("quit-lifecycle", () => {
         events.push("close-transports");
       },
       stopDesktopManagedDaemonIfNeeded: () => stopDecision.promise,
-      installAppUpdateOnQuit: () => updateDecision.promise,
-      createUpdateDeadlineSignal: () => new AbortController().signal,
       onStopError: () => {
         events.push("stop-error");
-      },
-      onUpdateError: () => {
-        events.push("update-error");
       },
     });
 
@@ -148,17 +142,10 @@ describe("quit-lifecycle", () => {
     stopDecision.resolve(false);
     await waitForQuitLifecycle();
 
-    expect(events).toEqual(["close-transports", "prevent-default", "daemon-stopped"]);
-
-    events.push("update-checked");
-    updateDecision.resolve(false);
-    await waitForQuitLifecycle();
-
     expect(events).toEqual([
       "close-transports",
       "prevent-default",
       "daemon-stopped",
-      "update-checked",
       "exit:0",
     ]);
 
@@ -172,121 +159,22 @@ describe("quit-lifecycle", () => {
     expect(events).not.toContain("second-prevent-default");
   });
 
-  it("lets the updater own process exit when a validated update is installing", async () => {
-    const exits: number[] = [];
-    const quitLifecycle = createQuitLifecycle({
-      app: { exit: (code) => exits.push(code) },
-      closeTransportSessions: () => {},
-      stopDesktopManagedDaemonIfNeeded: async () => false,
-      installAppUpdateOnQuit: async () => true,
-      createUpdateDeadlineSignal: () => new AbortController().signal,
-      onStopError: () => {},
-      onUpdateError: () => {},
-    });
-
-    quitLifecycle.handleBeforeQuit({ preventDefault: () => {} });
-    await waitForQuitLifecycle();
-    quitLifecycle.handleBeforeQuitForUpdate();
-    await waitForQuitLifecycle();
-
-    expect(exits).toEqual([]);
-  });
-
-  it("recognizes a repeated quit as updater handoff", async () => {
-    const exits: number[] = [];
-    let preventedQuitCount = 0;
-    const quitLifecycle = createQuitLifecycle({
-      app: { exit: (code) => exits.push(code) },
-      closeTransportSessions: () => {},
-      stopDesktopManagedDaemonIfNeeded: async () => false,
-      installAppUpdateOnQuit: async () => true,
-      createUpdateDeadlineSignal: () => new AbortController().signal,
-      onStopError: () => {},
-      onUpdateError: () => {},
-    });
-
-    quitLifecycle.handleBeforeQuit({ preventDefault: () => preventedQuitCount++ });
-    await waitForQuitLifecycle();
-    quitLifecycle.handleBeforeQuit({ preventDefault: () => preventedQuitCount++ });
-    await waitForQuitLifecycle();
-
-    expect(preventedQuitCount).toBe(1);
-    expect(exits).toEqual([]);
-  });
-
-  it("exits when the updater does not take ownership before its deadline", async () => {
-    const revalidationDeadline = new AbortController();
-    const handoffDeadline = new AbortController();
-    let deadlineCount = 0;
-    const exits: number[] = [];
-    const quitLifecycle = createQuitLifecycle({
-      app: { exit: (code) => exits.push(code) },
-      closeTransportSessions: () => {},
-      stopDesktopManagedDaemonIfNeeded: async () => false,
-      installAppUpdateOnQuit: async () => true,
-      createUpdateDeadlineSignal: () =>
-        deadlineCount++ === 0 ? revalidationDeadline.signal : handoffDeadline.signal,
-      onStopError: () => {},
-      onUpdateError: () => {},
-    });
-
-    quitLifecycle.handleBeforeQuit({ preventDefault: () => {} });
-    await waitForQuitLifecycle();
-    handoffDeadline.abort();
-    await waitForQuitLifecycle();
-
-    expect(exits).toEqual([0]);
-  });
-
-  it("does not intercept a quit started by a manual update", () => {
+  it("still exits when stopping the daemon fails", async () => {
     const events: string[] = [];
     const quitLifecycle = createQuitLifecycle({
       app: { exit: (code) => events.push(`exit:${code}`) },
-      closeTransportSessions: () => events.push("close-transports"),
-      stopDesktopManagedDaemonIfNeeded: async () => {
-        events.push("stop-daemon");
-        return false;
-      },
-      installAppUpdateOnQuit: async () => {
-        events.push("revalidate-update");
-        return false;
-      },
-      createUpdateDeadlineSignal: () => new AbortController().signal,
-      onStopError: () => events.push("stop-error"),
-      onUpdateError: () => events.push("update-error"),
-    });
-
-    quitLifecycle.handleBeforeQuitForUpdate();
-    quitLifecycle.handleBeforeQuit({
-      preventDefault: () => events.push("prevent-default"),
-    });
-
-    expect(events).toEqual(["close-transports"]);
-  });
-
-  it("exits when update revalidation reaches its deadline", async () => {
-    const deadline = new AbortController();
-    const updateDecision = deferred<boolean>();
-    const exits: number[] = [];
-    const quitLifecycle = createQuitLifecycle({
-      app: { exit: (code) => exits.push(code) },
       closeTransportSessions: () => {},
-      stopDesktopManagedDaemonIfNeeded: async () => false,
-      installAppUpdateOnQuit: () => updateDecision.promise,
-      createUpdateDeadlineSignal: () => deadline.signal,
-      onStopError: () => {},
-      onUpdateError: () => {},
+      stopDesktopManagedDaemonIfNeeded: async () => {
+        throw new Error("daemon stop failed");
+      },
+      onStopError: () => {
+        events.push("stop-error");
+      },
     });
 
     quitLifecycle.handleBeforeQuit({ preventDefault: () => {} });
     await waitForQuitLifecycle();
-    deadline.abort();
-    await waitForQuitLifecycle();
 
-    expect(exits).toEqual([0]);
-
-    updateDecision.resolve(true);
-    await waitForQuitLifecycle();
-    expect(exits).toEqual([0]);
+    expect(events).toEqual(["stop-error", "exit:0"]);
   });
 });

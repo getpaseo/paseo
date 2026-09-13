@@ -12,7 +12,6 @@ import { existsSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import {
   app,
-  autoUpdater as electronAutoUpdater,
   BrowserWindow,
   ClipboardItem,
   clipboard,
@@ -90,6 +89,7 @@ import { clampWindowStateToWorkAreas, createWindowStateStore } from "./settings/
 import {
   isDesktopManagedDaemonRunningSync,
   stopDesktopDaemonViaCli,
+  stopDesktopManagedDaemonBeforeUpdate,
 } from "./daemon/daemon-manager.js";
 import {
   createQuitLifecycle,
@@ -99,7 +99,7 @@ import {
 import { runDesktopStartup } from "./desktop-startup.js";
 import { registerBrowserAutomationIpc } from "./features/browser-automation/ipc.js";
 import { BrowserKeyboard } from "./features/browser-keyboard/index.js";
-import { installAppUpdateOnQuit } from "./features/auto-updater.js";
+import { installPendingUpdateOnStartup } from "./features/auto-updater.js";
 import {
   buildAgentDeepLinkRoute,
   parseAgentDeepLink,
@@ -117,7 +117,7 @@ const DESKTOP_WINDOW_CHROME_MODE = resolveDesktopWindowChromeMode({
   override: process.env.PASEO_DESKTOP_WINDOW_CONTROLS,
   isPackaged: app.isPackaged,
 });
-const UPDATE_QUIT_DEADLINE_MS = 5_000;
+const STARTUP_UPDATE_INSTALL_DEADLINE_MS = 5_000;
 const pendingBrowserWindowOpenRequests = new PendingBrowserWindowOpenRequests();
 const agentNavigationInbox = new AgentNavigationInbox();
 
@@ -919,47 +919,43 @@ async function runCliPassthroughIfRequested(): Promise<boolean> {
 }
 
 /**
- * Check for and install any pending update before the app fully starts.
- * This runs before daemon/window/IPC initialization so no file handles are
- * held when the NSIS installer launches.
+ * Installs an update a previous session downloaded but did not install, before
+ * the daemon, windows, or IPC exist.
  *
- * This implements the "install on next launch" pattern for electron-updater
- * versions that don't have the `autoInstallEvent`/`installPendingUpdateIfAvailable`
- * APIs. When a previous session downloaded an update but didn't install it
- * (e.g. user closed the update prompt), we detect the installer and run it now
- * before any Paseo processes hold file handles.
+ * The installer replaces the installed application files, so it must run with
+ * no Paseo processes holding handles: a daemon left running by the previous
+ * session is stopped first, and startup returns as soon as the installer is
+ * handed off. A clean session (no pending update) never reaches
+ * electron-updater, so this adds no download and no delay to a normal boot.
  */
-function installPendingUpdateBeforeStartup(): boolean {
+async function installPendingUpdateBeforeStartup(): Promise<boolean> {
   if (!app.isPackaged) {
     return false;
   }
 
-  try {
-    const installerPath = (electronAutoUpdater as unknown as { installerPath: string | null }).installerPath;
-    if (!installerPath) {
-      return false;
-    }
+  const settings = await getDesktopSettingsStore().get();
+  const result = await installPendingUpdateOnStartup(
+    {
+      currentVersion: app.getVersion(),
+      releaseChannel: settings.releaseChannel,
+      signal: AbortSignal.timeout(STARTUP_UPDATE_INSTALL_DEADLINE_MS),
+    },
+    async () => {
+      await stopDesktopManagedDaemonBeforeUpdate();
+    },
+  );
 
-    log.info("[auto-updater] pending update installer found, installing before startup", {
-      installerPath,
+  if (result.installed) {
+    log.info("[auto-updater] installing pending update before startup", {
+      version: result.version,
     });
-
-    // Run installer (not silent) and force run the app after install.
-    // This call spawns the NSIS installer and exits the current process.
-    const installed = (
-      electronAutoUpdater as unknown as {
-        install: (isSilent: boolean, isForceRunAfter: boolean) => boolean;
-      }
-    ).install(false, true);
-
-    if (installed) {
-      log.info("[auto-updater] pending update installation started, app will restart");
-    }
-    return installed;
-  } catch (error) {
-    log.error("[auto-updater] failed to install pending update", error);
-    return false;
+    return true;
   }
+
+  if (result.reason === "error") {
+    log.error("[auto-updater] failed to install the pending update before startup");
+  }
+  return false;
 }
 
 async function bootstrap(): Promise<void> {
@@ -971,7 +967,13 @@ async function bootstrap(): Promise<void> {
 
   // Install any pending update before initializing the daemon, windows, or IPC.
   // This ensures the installer runs when no Paseo processes hold file handles.
-  if (installPendingUpdateBeforeStartup()) {
+  if (await installPendingUpdateBeforeStartup()) {
+    // The installer is already running detached. Release second-instance
+    // launches that are waiting on bootstrap, then exit without starting the
+    // daemon, windows, or IPC.
+    bootstrapIsComplete = true;
+    resolveBootstrapComplete();
+    app.exit(0);
     return;
   }
 
@@ -1079,38 +1081,18 @@ function showDaemonShutdownDialog(): void {
 const quitLifecycle = createQuitLifecycle({
   app,
   closeTransportSessions: closeAllTransportSessions,
-  stopDesktopManagedDaemonIfNeeded: (reason) =>
-    stopDesktopManagedDaemonOnQuitIfNeeded(
-      {
-        settingsStore: getDesktopSettingsStore(),
-        isDesktopManagedDaemonRunning: isDesktopManagedDaemonRunningSync,
-        stopDaemon: () => stopDesktopDaemonViaCli("quit"),
-        showShutdownFeedback: showDaemonShutdownDialog,
-      },
-      reason,
-    ),
-  installAppUpdateOnQuit: async (signal) => {
-    const settings = await getDesktopSettingsStore().get();
-    return installAppUpdateOnQuit({
-      currentVersion: app.getVersion(),
-      releaseChannel: settings.releaseChannel,
-      signal,
-    });
-  },
-  createUpdateDeadlineSignal: () => AbortSignal.timeout(UPDATE_QUIT_DEADLINE_MS),
+  stopDesktopManagedDaemonIfNeeded: () =>
+    stopDesktopManagedDaemonOnQuitIfNeeded({
+      settingsStore: getDesktopSettingsStore(),
+      isDesktopManagedDaemonRunning: isDesktopManagedDaemonRunningSync,
+      stopDaemon: () => stopDesktopDaemonViaCli("quit"),
+      showShutdownFeedback: showDaemonShutdownDialog,
+    }),
   onStopError: (error) => {
     log.error("[desktop daemon] failed to stop managed daemon on quit", error);
   },
-  onUpdateError: (error) => {
-    log.error("[auto-updater] failed to validate downloaded update on quit", error);
-  },
 });
 
-// electron-updater forwards this event through Electron's built-in autoUpdater.
-electronAutoUpdater.on("before-quit-for-update", () => {
-  log.info("[auto-updater] before-quit-for-update", { currentVersion: app.getVersion() });
-  quitLifecycle.handleBeforeQuitForUpdate();
-});
 app.on("before-quit", quitLifecycle.handleBeforeQuit);
 registerExternalQuitSignals({ signals: process, quit: () => app.quit() });
 

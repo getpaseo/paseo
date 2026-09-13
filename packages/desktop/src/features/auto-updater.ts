@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { app } from "electron";
 import { UUID } from "builder-util-runtime";
@@ -12,6 +12,8 @@ import {
   type AppUpdateInstallResult,
   type AppUpdateRuntime,
   type AppUpdateRuntimeConfiguration,
+  type AppUpdateStartupInstallResult,
+  type PendingUpdateStore,
   type RuntimeUpdateCheckResult,
   type RuntimeUpdateInfo,
 } from "./app-update-service.js";
@@ -31,6 +33,7 @@ export {
   type AppUpdateCheckIntent,
   type AppUpdateCheckResult,
   type AppUpdateInstallResult,
+  type AppUpdateStartupInstallResult,
 };
 
 let cachedStagingUserIdPromise: Promise<string> | null = null;
@@ -131,7 +134,38 @@ export function getStagingUserId(): Promise<string> {
   return cachedStagingUserIdPromise;
 }
 
-export function shouldInstallAppUpdateOnQuit(input: {
+const PENDING_UPDATE_FILE = ".pendingUpdate";
+
+function createPendingUpdateStore(): PendingUpdateStore {
+  const filePath = path.join(app.getPath("userData"), PENDING_UPDATE_FILE);
+  return {
+    async read() {
+      try {
+        const version = (await readFile(filePath, "utf8")).trim();
+        return version.length > 0 ? version : null;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+          return null;
+        }
+        throw error;
+      }
+    },
+    async write(version) {
+      await writeFile(filePath, version);
+    },
+    async clear() {
+      try {
+        await rm(filePath);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+          throw error;
+        }
+      }
+    },
+  };
+}
+
+export function canInstallAppUpdateOnStartup(input: {
   platform: NodeJS.Platform;
   isAppImage: boolean;
 }): boolean {
@@ -227,6 +261,7 @@ const appUpdateService = createAppUpdateService({
   isPackaged: () => app.isPackaged,
   now: () => Date.now(),
   bucket: async () => bucketFromStagingUserId(await getStagingUserId()),
+  pendingUpdateStore: createPendingUpdateStore(),
   reportCheckError: (error) => {
     console.error("[auto-updater] Failed to check for updates:", error);
   },
@@ -285,23 +320,29 @@ export async function downloadAndInstallUpdate(
   );
 }
 
-export async function installAppUpdateOnQuit({
-  currentVersion,
-  releaseChannel,
-  signal,
-}: {
-  currentVersion: string;
-  releaseChannel: AppReleaseChannel;
-  signal: AbortSignal;
-}): Promise<boolean> {
+export async function installPendingUpdateOnStartup(
+  {
+    currentVersion,
+    releaseChannel,
+    signal,
+  }: {
+    currentVersion: string;
+    releaseChannel: AppReleaseChannel;
+    signal: AbortSignal;
+  },
+  onBeforeInstall?: () => Promise<void>,
+): Promise<AppUpdateStartupInstallResult> {
   if (
-    !shouldInstallAppUpdateOnQuit({
+    !canInstallAppUpdateOnStartup({
       platform: process.platform,
       isAppImage: Boolean(process.env.APPIMAGE),
     })
   ) {
-    return false;
+    return { installed: false, reason: "unsupported" };
   }
 
-  return appUpdateService.installUpdateOnQuit({ currentVersion, releaseChannel, signal });
+  return appUpdateService.installPendingUpdateOnStartup(
+    { currentVersion, releaseChannel, signal },
+    onBeforeInstall,
+  );
 }

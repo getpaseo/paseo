@@ -5,6 +5,7 @@ import {
   type AppUpdateInstallRequest,
   type AppUpdateRuntime,
   type AppUpdateRuntimeConfiguration,
+  type PendingUpdateStore,
   type RuntimeUpdateInfo,
 } from "./app-update-service";
 
@@ -151,15 +152,37 @@ class FakeAppUpdateRuntime implements AppUpdateRuntime {
   }
 }
 
-function createService(input?: { now?: () => number; bucket?: () => Promise<number> }) {
+function createFakePendingUpdateStore(
+  initialVersion: string | null,
+): PendingUpdateStore & { current(): string | null } {
+  let version = initialVersion;
+  return {
+    read: async () => version,
+    write: async (next: string) => {
+      version = next;
+    },
+    clear: async () => {
+      version = null;
+    },
+    current: () => version,
+  };
+}
+
+function createService(input?: {
+  now?: () => number;
+  bucket?: () => Promise<number>;
+  pendingVersion?: string | null;
+}) {
   const runtime = new FakeAppUpdateRuntime();
+  const pendingUpdateStore = createFakePendingUpdateStore(input?.pendingVersion ?? null);
   const service = createAppUpdateService({
     runtime,
     isPackaged: () => true,
     now: input?.now ?? (() => Date.parse("2026-04-28T12:00:00.000Z")),
     bucket: input?.bucket ?? (async () => 0.99),
+    pendingUpdateStore,
   });
-  return { runtime, service };
+  return { runtime, service, pendingUpdateStore };
 }
 
 const rolledOutUpdate = {
@@ -369,8 +392,11 @@ describe("app update service", () => {
     });
   });
 
-  it("installs the newest admitted release when quitting with an older download", async () => {
-    const { runtime, service } = createService({ bucket: async () => 0 });
+  it("installs the recorded pending update silently and forces a relaunch", async () => {
+    const { runtime, service, pendingUpdateStore } = createService({
+      bucket: async () => 0,
+      pendingVersion: "1.2.4",
+    });
     runtime.nextCheck({ isUpdateAvailable: true, updateInfo: rolledOutUpdate });
 
     await service.checkForAppUpdate({
@@ -380,100 +406,117 @@ describe("app update service", () => {
     });
     runtime.finishUpdateDownload(rolledOutUpdate);
 
-    const newerUpdate = { ...rolledOutUpdate, version: "1.2.5" };
-    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: newerUpdate });
-    const installed = await service.installUpdateOnQuit({
-      currentVersion: "1.2.3",
-      releaseChannel: "stable",
-      signal: new AbortController().signal,
-    });
+    const events: string[] = [];
+    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: rolledOutUpdate });
+    const result = await service.installPendingUpdateOnStartup(
+      {
+        currentVersion: "1.2.3",
+        releaseChannel: "stable",
+        signal: new AbortController().signal,
+      },
+      async () => {
+        events.push("stop-daemon");
+      },
+    );
 
-    expect(installed).toBe(true);
-    expect(runtime.installedVersions).toEqual(["1.2.5"]);
+    expect(result).toEqual({ installed: true, version: "1.2.4" });
+    expect(events).toEqual(["stop-daemon"]);
+    expect(runtime.installedVersions).toEqual(["1.2.4"]);
     expect(runtime.installModes).toEqual([
-      { targetVersion: "1.2.5", isSilent: true, isForceRunAfter: false },
+      { targetVersion: "1.2.4", isSilent: true, isForceRunAfter: true },
     ]);
+    expect(pendingUpdateStore.current()).toBeNull();
   });
 
-  it("does not install an older download while its replacement is still rolling out", async () => {
-    const now = Date.parse("2026-04-28T12:00:00.000Z");
-    const { runtime, service } = createService({ now: () => now, bucket: async () => 0.4 });
-    const olderUpdate = {
-      ...rolledOutUpdate,
-      releaseDate: "2026-04-27T00:00:00.000Z",
-    };
-    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: olderUpdate });
+  it("never asks electron-updater anything when no pending update is recorded", async () => {
+    const { runtime, service } = createService({ bucket: async () => 0 });
 
-    await service.checkForAppUpdate({
-      currentVersion: "1.2.3",
-      releaseChannel: "stable",
-      intent: "automatic",
-    });
-    runtime.finishUpdateDownload(olderUpdate);
-
-    const newerUpdate = {
-      ...rolledOutUpdate,
-      version: "1.2.5",
-      releaseDate: "2026-04-28T12:00:00.000Z",
-    };
-    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: newerUpdate });
-    const installed = await service.installUpdateOnQuit({
+    const result = await service.installPendingUpdateOnStartup({
       currentVersion: "1.2.3",
       releaseChannel: "stable",
       signal: new AbortController().signal,
     });
 
-    expect(installed).toBe(false);
+    expect(result).toEqual({ installed: false, reason: "no-update" });
+    expect(runtime.checkCount).toBe(0);
     expect(runtime.installedVersions).toEqual([]);
   });
 
-  it("does not install after quit-time revalidation expires", async () => {
-    const { runtime, service } = createService({ bucket: async () => 0 });
+  it("does not install a pending update that is not ready before the deadline", async () => {
+    const { runtime, service, pendingUpdateStore } = createService({
+      bucket: async () => 0,
+      pendingVersion: "1.2.4",
+    });
     runtime.nextCheck({ isUpdateAvailable: true, updateInfo: rolledOutUpdate });
 
-    await service.checkForAppUpdate({
-      currentVersion: "1.2.3",
-      releaseChannel: "stable",
-      intent: "automatic",
-    });
-    runtime.finishUpdateDownload(rolledOutUpdate);
-
     const deadline = new AbortController();
-    deadline.abort();
-    runtime.nextCheck({
-      isUpdateAvailable: true,
-      updateInfo: { ...rolledOutUpdate, version: "1.2.5" },
-    });
-    const installed = await service.installUpdateOnQuit({
+    const pending = service.installPendingUpdateOnStartup({
       currentVersion: "1.2.3",
       releaseChannel: "stable",
       signal: deadline.signal,
     });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    deadline.abort();
 
-    expect(installed).toBe(false);
+    expect(await pending).toEqual({ installed: false, reason: "timeout" });
     expect(runtime.installedVersions).toEqual([]);
+    expect(pendingUpdateStore.current()).toBe("1.2.4");
   });
 
-  it("does not install an unvalidated download when the quit-time check fails", async () => {
-    const { runtime, service } = createService({ bucket: async () => 0 });
-    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: rolledOutUpdate });
-
-    await service.checkForAppUpdate({
-      currentVersion: "1.2.3",
-      releaseChannel: "stable",
-      intent: "automatic",
+  it("ignores a pending record that a newer release has superseded", async () => {
+    const { runtime, service, pendingUpdateStore } = createService({
+      bucket: async () => 0,
+      pendingVersion: "1.2.4",
     });
-    runtime.finishUpdateDownload(rolledOutUpdate);
+    runtime.nextCheck({
+      isUpdateAvailable: true,
+      updateInfo: { ...rolledOutUpdate, version: "1.2.5" },
+    });
 
-    runtime.failNextCheck(new Error("offline"));
-    const installed = await service.installUpdateOnQuit({
+    const result = await service.installPendingUpdateOnStartup({
       currentVersion: "1.2.3",
       releaseChannel: "stable",
       signal: new AbortController().signal,
     });
 
-    expect(installed).toBe(false);
+    expect(result).toEqual({ installed: false, reason: "no-update" });
     expect(runtime.installedVersions).toEqual([]);
+    expect(pendingUpdateStore.current()).toBe("1.2.4");
+  });
+
+  it("clears a stale pending record when the manifest no longer offers it", async () => {
+    const { runtime, service, pendingUpdateStore } = createService({
+      bucket: async () => 0,
+      pendingVersion: "1.2.4",
+    });
+    runtime.nextCheck(null);
+
+    const result = await service.installPendingUpdateOnStartup({
+      currentVersion: "1.2.4",
+      releaseChannel: "stable",
+      signal: new AbortController().signal,
+    });
+
+    expect(result).toEqual({ installed: false, reason: "no-update" });
+    expect(pendingUpdateStore.current()).toBeNull();
+  });
+
+  it("keeps the pending record when the startup check fails", async () => {
+    const { runtime, service, pendingUpdateStore } = createService({
+      bucket: async () => 0,
+      pendingVersion: "1.2.4",
+    });
+    runtime.failNextCheck(new Error("offline"));
+
+    const result = await service.installPendingUpdateOnStartup({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+      signal: new AbortController().signal,
+    });
+
+    expect(result).toEqual({ installed: false, reason: "not-ready" });
+    expect(runtime.installedVersions).toEqual([]);
+    expect(pendingUpdateStore.current()).toBe("1.2.4");
   });
 
   it("rechecks for the newest release before a manual install", async () => {

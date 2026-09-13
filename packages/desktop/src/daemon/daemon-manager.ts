@@ -353,6 +353,43 @@ export async function stopDesktopDaemon(
   return resolveDesktopDaemonStatus();
 }
 
+/**
+ * Stops the desktop-managed daemon before an update is installed.
+ *
+ * Unlike the quit path this cannot rely on `ownedLaunch`: a daemon can outlive a
+ * previous desktop session when `keepRunningAfterQuit` is enabled, so the
+ * process installing the update never started it. The daemon's own report marks
+ * it as desktop-managed, which is what separates it from a daemon the user
+ * started manually; those are left alone.
+ */
+export async function stopDesktopManagedDaemonBeforeUpdate(): Promise<boolean> {
+  const status = await resolveDesktopDaemonStatus();
+  const running = status.status === "running" || status.status === "starting";
+  if (!status.desktopManaged || !running) {
+    return false;
+  }
+
+  const home = getPaseoHome();
+  const instance = await readDaemonInstance(home);
+  logDesktopDaemonLifecycle("stopping managed daemon before update", { pid: status.pid });
+  await stopDaemonInstance(home, {
+    instance: instance ?? undefined,
+    timeoutMs: 15_000,
+    requestShutdown: async (ready) => {
+      await runExternalCliJsonCommand(["daemon", "stop", "--host", ready.listen, "--json"]);
+    },
+  });
+  if (
+    ownedLaunch &&
+    ownedLaunch.home === home &&
+    instance &&
+    isSameDaemonInstance(instance, ownedLaunch.instance)
+  ) {
+    ownedLaunch = null;
+  }
+  return true;
+}
+
 async function restartDaemon(): Promise<DesktopDaemonStatus> {
   await runExternalCliJsonCommand(["daemon", "restart", "--home", getPaseoHome(), "--json"]);
   return resolveDesktopDaemonStatus();
