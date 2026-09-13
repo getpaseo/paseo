@@ -741,6 +741,7 @@ Every entry under `agents.providers` accepts these fields:
 | `extends`          | `string`                  | Yes (custom only) | Built-in provider ID to inherit from, or `"acp"`                   |
 | `label`            | `string`                  | Yes (custom only) | Display name in the UI                                             |
 | `description`      | `string`                  | No                | Short description shown in the UI                                  |
+| `icon`             | `string`                  | No                | SVG path, absolute or relative to the Paseo home directory         |
 | `command`          | `string[]`                | Yes (ACP only)    | Command to spawn the agent process                                 |
 | `env`              | `Record<string, string>`  | No                | Environment variables to set for the agent process                 |
 | `options`          | `Record<string, unknown>` | No                | Provider-specific options such as `supportsMcpServers: false`      |
@@ -749,6 +750,27 @@ Every entry under `agents.providers` accepts these fields:
 | `disallowedTools`  | `string[]`                | No                | Tool names to disable for this provider (e.g. `["WebSearch"]`)     |
 | `enabled`          | `boolean`                 | No                | Set to `false` to hide the provider (default: `true`)              |
 | `order`            | `number`                  | No                | Sort order in the provider list                                    |
+
+To use a custom icon, set `icon` to an SVG file path. Relative paths resolve within
+`PASEO_HOME`; absolute paths may point elsewhere. The file must be a self-contained SVG
+of at most 64 KiB and use the same validation rules as plugin icons. The daemon loads it
+asynchronously and publishes the icon when ready; an invalid file is logged and the
+existing provider icon remains visible. Changing or removing the path updates the icon
+on configuration reload.
+
+```json
+{
+  "agents": {
+    "providers": {
+      "codex-deepseek": {
+        "extends": "codex",
+        "label": "Codex · DeepSeek",
+        "icon": "icons/deepseek.svg"
+      }
+    }
+  }
+}
+```
 
 ### Model definition
 
