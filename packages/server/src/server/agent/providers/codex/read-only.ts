@@ -1,7 +1,7 @@
 import { constants } from "node:fs";
-import { copyFile, mkdir, realpath, rm } from "node:fs/promises";
+import { copyFile, lstat, mkdir, mkdtemp, realpath, rename, rm } from "node:fs/promises";
 import { homedir } from "node:os";
-import { isAbsolute, join, relative, sep } from "node:path";
+import { dirname, isAbsolute, join, relative, sep } from "node:path";
 import { resolvePaseoHome } from "../../../paseo-home.js";
 import { assertWritePolicySupported } from "../../write-policy.js";
 
@@ -34,11 +34,46 @@ function readOnlyStatePath(agentId: string, stateRoot?: string): string {
 }
 
 export async function removeReadOnlyCodexState(agentId: string, stateRoot?: string): Promise<void> {
-  await rm(readOnlyStatePath(agentId, stateRoot), { recursive: true, force: true });
+  await removeReadOnlyStateEntry(agentId, stateRoot, false);
 }
 
 export async function cleanupReadOnlyCodexTemp(agentId: string, stateRoot?: string): Promise<void> {
-  await rm(join(readOnlyStatePath(agentId, stateRoot), "tmp"), { recursive: true, force: true });
+  await removeReadOnlyStateEntry(agentId, stateRoot, true);
+}
+
+async function readOnlyDirectoryExists(directory: string): Promise<boolean> {
+  try {
+    const info = await lstat(directory);
+    if (!info.isDirectory() || info.isSymbolicLink()) {
+      throw new Error("Unsafe read-only state directory");
+    }
+    return true;
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return false;
+    throw error;
+  }
+}
+
+async function removeReadOnlyStateEntry(
+  agentId: string,
+  stateRoot: string | undefined,
+  temporary: boolean,
+): Promise<void> {
+  const rootPath = dirname(readOnlyStatePath(agentId, stateRoot));
+  if (!(await readOnlyDirectoryExists(rootPath))) return;
+  const root = await realpath(rootPath);
+  const owner = join(root, agentId);
+  if (!(await readOnlyDirectoryExists(owner))) return;
+  // The OS policy freezes owner itself. Move mutable contents out of every
+  // provider's writable boundary before recursive traversal, including on crash.
+  const quarantine = await mkdtemp(join(root, ".cleanup-"));
+  try {
+    await rename(temporary ? join(owner, "tmp") : owner, join(quarantine, "removed"));
+  } catch (error) {
+    if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
+  } finally {
+    await rm(quarantine, { recursive: true, force: true });
+  }
 }
 
 export async function prepareReadOnlyCodexRuntime(input: {
@@ -53,6 +88,7 @@ export async function prepareReadOnlyCodexRuntime(input: {
   }
   const stateRoot = input.stateRoot ?? join(resolvePaseoHome(), "codex-read-only");
   await mkdir(stateRoot, { recursive: true, mode: 0o700 });
+  await readOnlyDirectoryExists(stateRoot);
   const root = await realpath(stateRoot);
   const statePath = join(root, input.agentId);
   await mkdir(statePath, { mode: 0o700, recursive: true });
@@ -111,6 +147,7 @@ export async function prepareReadOnlyCodexRuntime(input: {
 (allow process-info* (target same-sandbox))
 (allow sysctl-read)
 (allow file-write* (subpath ${JSON.stringify(stateDir)}))
+(deny file-write* (literal ${JSON.stringify(stateDir)}))
 (deny file-write* (literal ${JSON.stringify(join(stateDir, "config.toml"))}))
 (allow file-write-data (literal "/dev/null"))
 (allow network-outbound (remote tcp "*:443"))

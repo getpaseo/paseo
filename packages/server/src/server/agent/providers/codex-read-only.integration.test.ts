@@ -17,6 +17,9 @@ import { CodexAppServerAgentClient } from "./codex-app-server-agent.js";
 import { CodexAppServerClient } from "./codex/app-server-transport.js";
 import { prepareReadOnlyCodexRuntime, READ_ONLY_CODEX_FLAGS } from "./codex/read-only.js";
 import { findExecutable } from "../../../executable-resolution/executable-resolution.js";
+import { resolveProviderLaunch } from "../provider-launch-config.js";
+import { asInternals } from "../../test-utils/class-mocks.js";
+import { AgentManager } from "../agent-manager.js";
 
 test.skipIf(process.platform !== "darwin")(
   "isolated native Codex persists, resumes, archives and restores its own conversation",
@@ -44,30 +47,48 @@ test.skipIf(process.platform !== "darwin")(
         JSON.stringify(writer) +
         "]\n",
     );
-    const client = new CodexAppServerAgentClient(
-      createTestLogger(),
-      {
-        command: {
-          mode: "append",
-          argv: [
-            "-c",
-            'model_provider="offline_probe"',
-            "-c",
-            'model_providers.offline_probe={name="Offline persistence probe",base_url="http://127.0.0.1:1/v1",wire_api="responses",requires_openai_auth=false}',
-            "-c",
-            "mcp_servers.inherited_writer={command=" +
-              JSON.stringify(process.execPath) +
-              ",args=[" +
-              JSON.stringify(writer) +
-              "]}",
-          ],
-        },
-        env: { CODEX_HOME: sourceHome },
+    const runtimeSettings = {
+      command: {
+        mode: "append" as const,
+        args: [
+          "-c",
+          'model_provider="offline_probe"',
+          "-c",
+          'model_providers.offline_probe={name="Offline persistence probe",base_url="http://127.0.0.1:1/v1",wire_api="responses",requires_openai_auth=false,request_max_retries=0,stream_max_retries=0}',
+          "-c",
+          "mcp_servers.inherited_writer={command=" +
+            JSON.stringify(process.execPath) +
+            ",args=[" +
+            JSON.stringify(writer) +
+            "]}",
+          "-c",
+          'mcp_servers.remote_writer={url="http://127.0.0.1:1/mcp"}',
+        ],
       },
-      { readOnlyStateRoot: stateRoot },
-    );
+      env: { CODEX_HOME: sourceHome },
+    };
+    const client = new CodexAppServerAgentClient(createTestLogger(), runtimeSettings, {
+      readOnlyStateRoot: stateRoot,
+    });
+    const manager = new AgentManager({
+      clients: { codex: client },
+      logger: createTestLogger(),
+      idFactory: () => "45439bcd-1ef1-40e3-82f0-33e8c981ddc6",
+    });
     let session;
     try {
+      const launch = await resolveProviderLaunch({
+        commandConfig: runtimeSettings.command,
+        defaultBinary: "codex",
+      });
+      expect(launch.args).toContain('model_provider="offline_probe"');
+      expect(launch.args).toContain(
+        "mcp_servers.inherited_writer={command=" +
+          JSON.stringify(process.execPath) +
+          ",args=[" +
+          JSON.stringify(writer) +
+          "]}",
+      );
       session = await client.createSession(
         {
           provider: "codex",
@@ -78,10 +99,50 @@ test.skipIf(process.platform !== "darwin")(
         },
         { agentId },
       );
-      await session.startTurn(
-        "Offline fixture: retain this user message without contacting a model.",
-      );
+      const native = asInternals<{ client: CodexAppServerClient }>(session).client;
+      expect(await native.request("config/read", { cwd })).toMatchObject({
+        config: {
+          model_provider: "offline_probe",
+          model_providers: {
+            offline_probe: { base_url: "http://127.0.0.1:1/v1", requires_openai_auth: false },
+          },
+          mcp_servers: {
+            inherited_writer: { command: process.execPath },
+            remote_writer: { url: "http://127.0.0.1:1/mcp" },
+          },
+        },
+      });
+      let timeout: ReturnType<typeof setTimeout> | undefined;
+      const originalHandler = asInternals<{
+        notificationHandler: (method: string, params: unknown) => void;
+      }>(native).notificationHandler;
+      const connectionFailure = new Promise<unknown>((resolve, reject) => {
+        timeout = setTimeout(() => reject(new Error("Offline fixture did not fail locally")), 5000);
+        native.setNotificationHandler((method, params) => {
+          originalHandler(method, params);
+          if (method === "error") resolve(params);
+        });
+      });
+      try {
+        await session.startTurn(
+          "Offline fixture: retain this user message without contacting a model.",
+        );
+        await expect(connectionFailure).resolves.toMatchObject({
+          error: { additionalDetails: expect.stringContaining("Connection failed") },
+        });
+      } finally {
+        clearTimeout(timeout);
+        native.setNotificationHandler(originalHandler);
+      }
       const handle = session.describePersistence();
+      expect(
+        await native.request("mcpServerStatus/list", { threadId: handle?.sessionId }),
+      ).toMatchObject({
+        data: [
+          { name: "inherited_writer", runtimeStatus: "disabled", tools: {} },
+          { name: "remote_writer", runtimeStatus: "disabled", tools: {} },
+        ],
+      });
       expect(handle?.sessionId).toMatch(
         /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
       );
@@ -105,6 +166,11 @@ test.skipIf(process.platform !== "darwin")(
         ),
       ).rejects.toThrow();
       await expect(access(join(stateDir, "tmp"))).rejects.toMatchObject({ code: "ENOENT" });
+      // resume_agent_request reaches this entry point without a Paseo agent ID.
+      const restored = await manager.resumeAgentFromPersistence(handle!);
+      expect(restored.id).toBe(agentId);
+      expect(restored.persistence?.sessionId).toBe(handle?.sessionId);
+      await manager.closeAgent(restored.id);
       session = await client.resumeSession(handle!, undefined, { agentId });
       expect(session.describePersistence()?.sessionId).toBe(handle?.sessionId);
       await expect(access(marker)).rejects.toMatchObject({ code: "ENOENT" });
@@ -120,6 +186,9 @@ test.skipIf(process.platform !== "darwin")(
       expect(session.describePersistence()?.sessionId).toBe(handle?.sessionId);
     } finally {
       await session?.close();
+      manager.prepareForShutdown();
+      await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id)));
+      await manager.flushForShutdown();
       await rm(root, { recursive: true, force: true });
     }
   },

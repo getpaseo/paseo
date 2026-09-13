@@ -45,7 +45,7 @@ Codex and its descendants run inside a write-denying OS boundary. Its native san
 
 Read-only agents have no MCP servers or Paseo tools. Plugins orchestrate these roles from outside the agent. The isolated Codex home receives authentication only, not inherited user configuration, rules, hooks, or plugins. Other Paseo state, loopback connections, and local sockets are inaccessible except the system DNS resolver. Remote TCP port 443 remains available for model traffic; effects through remote APIs are outside this filesystem policy.
 
-Each agent keeps its native conversation in `PASEO_HOME/codex-read-only/<agent-id>`, outside the workspace. Private temporary files are removed on close; durable state remains through archive and is removed when the agent is deleted. Do not put that state directory inside the workspace you want to protect.
+Each agent keeps its native conversation in `PASEO_HOME/codex-read-only/<agent-id>`, outside the workspace. A read-only resume restores that owning agent; it does not duplicate the conversation into another agent. Private temporary files are removed on close; durable state remains through archive and is removed when the agent is deleted. Do not put that state directory inside the workspace you want to protect.
 
 ## Resources
 

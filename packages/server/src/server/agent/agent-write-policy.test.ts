@@ -12,6 +12,66 @@ import { ensureAgentLoaded } from "./agent-loading.js";
 import { createPaseoToolCatalog } from "./tools/paseo-tools.js";
 import { assertWritePolicySupported, supportsWritePolicy } from "./write-policy.js";
 
+test.skipIf(process.platform !== "darwin")(
+  "read-only resume without an ID retains its state owner and refuses duplicate or transferred ownership",
+  async () => {
+    const root = await mkdtemp(join(tmpdir(), "paseo-readonly-resume-owner-"));
+    const owner = "9e544738-c218-4f58-b882-9e553c62de36";
+    const anotherId = "d747a891-d25f-456e-b7c6-e0732e87ef74";
+    const clients = createTestAgentClients();
+    const resume = clients.codex!.resumeSession.bind(clients.codex);
+    const launches: Array<string | undefined> = [];
+    clients.codex!.resumeSession = async (handle, config, context, options) => {
+      launches.push(context?.agentId);
+      return resume(handle, config, context, options);
+    };
+    const manager = new AgentManager({
+      clients,
+      logger: createTestLogger(),
+      idFactory: () => anotherId,
+    });
+    const handle = {
+      provider: "codex",
+      sessionId: "native-thread",
+      metadata: {
+        provider: "codex",
+        cwd: root,
+        model: "fixture",
+        writePolicy: "read_only",
+        agentId: owner,
+      },
+    };
+    try {
+      const results = await Promise.allSettled([
+        manager.resumeAgentFromPersistence(handle),
+        manager.resumeAgentFromPersistence(handle),
+      ]);
+      expect(results[0]).toMatchObject({ status: "fulfilled", value: { id: owner } });
+      expect(results[1]).toMatchObject({
+        status: "rejected",
+        reason: new Error(`Agent with id ${owner} already exists`),
+      });
+      expect(launches).toEqual([owner]);
+      await expect(manager.resumeAgentFromPersistence(handle)).rejects.toThrow("already exists");
+      await expect(
+        manager.resumeAgentFromPersistence(handle, undefined, anotherId),
+      ).rejects.toThrow("state owner");
+      await expect(
+        manager.resumeAgentFromPersistence({
+          ...handle,
+          metadata: { ...handle.metadata, agentId: undefined },
+        }),
+      ).rejects.toThrow("state owner");
+      expect(launches).toEqual([owner]);
+    } finally {
+      manager.prepareForShutdown();
+      await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id)));
+      await manager.flushForShutdown();
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);
+
 test.each(["omp", "claude", "opencode", "copilot", "pi", "acp", "custom-codex"])(
   "read-only rejects %s before availability checks or startup",
   async (provider) => {
@@ -163,7 +223,9 @@ test.skipIf(process.platform !== "darwin")(
       const describe = session.describePersistence.bind(session);
       session.describePersistence = () => {
         const handle = describe();
-        return handle ? { ...handle, metadata: { ...handle.metadata, ...config } } : null;
+        return handle
+          ? { ...handle, metadata: { ...handle.metadata, ...config, agentId: args[0]?.agentId } }
+          : null;
       };
       return session;
     };
@@ -172,7 +234,12 @@ test.skipIf(process.platform !== "darwin")(
       const describe = session.describePersistence.bind(session);
       session.describePersistence = () => {
         const next = describe();
-        return next ? { ...next, metadata: { ...next.metadata, ...config } } : null;
+        return next
+          ? {
+              ...next,
+              metadata: { ...next.metadata, ...config, agentId: handle.metadata?.agentId },
+            }
+          : null;
       };
       return session;
     };

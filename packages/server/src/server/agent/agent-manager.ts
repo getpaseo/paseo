@@ -1292,6 +1292,24 @@ export class AgentManager {
     },
     resumeOptions?: AgentResumeSessionOptions,
   ): Promise<ManagedAgent> {
+    if (handle.metadata?.writePolicy === "read_only") {
+      const stateOwner = handle.metadata.agentId;
+      if (typeof stateOwner !== "string" || (agentId !== undefined && agentId !== stateOwner)) {
+        return Promise.reject(new Error("read_only resume must retain its persisted state owner"));
+      }
+      // The native home belongs to this Paseo record, not to a new import ID.
+      return this.trackAgentRegistrationOperation(
+        this.runLifecycleMutation(stateOwner, () =>
+          this.resumeAgentFromPersistenceInternal(
+            handle,
+            overrides,
+            stateOwner,
+            options,
+            resumeOptions,
+          ),
+        ),
+      );
+    }
     return this.trackAgentRegistrationOperation(
       this.resumeAgentFromPersistenceInternal(handle, overrides, agentId, options, resumeOptions),
     );
@@ -1319,6 +1337,9 @@ export class AgentManager {
     );
     const metadata = (handle.metadata ?? {}) as Partial<AgentSessionConfig>;
     assertWritePolicyUnchanged(metadata, overrides);
+    if (metadata.writePolicy === "read_only" && this.agents.has(resolvedAgentId)) {
+      throw new Error(`Agent with id ${resolvedAgentId} already exists`);
+    }
     const mergedConfig = {
       ...metadata,
       ...overrides,

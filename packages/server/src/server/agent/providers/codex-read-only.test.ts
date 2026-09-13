@@ -1,4 +1,18 @@
-import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import {
+  access,
+  mkdtemp,
+  mkdir,
+  readFile,
+  readdir,
+  realpath,
+  rename,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
+import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { once } from "node:events";
+import { createInterface } from "node:readline";
 import { tmpdir } from "node:os";
 import { createServer } from "node:net";
 import { join } from "node:path";
@@ -6,6 +20,157 @@ import { expect, test, vi } from "vitest";
 import { createTestLogger } from "../../../test-utils/test-logger.js";
 import { CodexAppServerAgentClient, CodexAppServerAgentSession } from "./codex-app-server-agent.js";
 import { createFakeCodexAppServer } from "./codex/test-utils/fake-app-server.js";
+import {
+  cleanupReadOnlyCodexTemp,
+  prepareReadOnlyCodexRuntime,
+  removeReadOnlyCodexState,
+} from "./codex/read-only.js";
+
+test.skipIf(process.platform !== "darwin")(
+  "a live descendant cannot mutate a quarantined directory through its old cwd",
+  async () => {
+    const root = await realpath(await mkdtemp(join(tmpdir(), "paseo-quarantine-boundary-")));
+    const cwd = join(root, "workspace");
+    const stateRoot = join(root, "state");
+    await mkdir(cwd);
+    let child: ChildProcessWithoutNullStreams | undefined;
+    let exited: Promise<unknown> | undefined;
+    try {
+      const runtime = await prepareReadOnlyCodexRuntime({
+        agentId: "owner",
+        cwd,
+        stateRoot,
+        env: { ...process.env, CODEX_HOME: cwd },
+      });
+      child = spawn(
+        "/usr/bin/sandbox-exec",
+        [
+          "-p",
+          runtime.profile,
+          process.execPath,
+          "-e",
+          "const fs=require('fs');process.chdir(process.env.TMPDIR);console.log('ready');process.stdin.once('data',()=>{let error=null;try{fs.writeFileSync('escape','changed');}catch(e){error=e.code;}console.log(JSON.stringify({error}));});",
+        ],
+        { cwd, env: runtime.env, stdio: "pipe" },
+      );
+      exited = once(child, "exit");
+      const lines = createInterface({ input: child.stdout });
+      const output = lines[Symbol.asyncIterator]();
+      expect(await output.next()).toMatchObject({ value: "ready", done: false });
+      const quarantine = join(stateRoot, ".cleanup-fixture");
+      await mkdir(quarantine);
+      const removed = join(quarantine, "removed");
+      await rename(runtime.env.TMPDIR!, removed);
+      child.stdin.end("continue");
+      expect(await output.next()).toMatchObject({ value: '{"error":"EPERM"}', done: false });
+      await exited;
+      lines.close();
+      expect(await readdir(removed)).toEqual([]);
+    } finally {
+      child?.kill();
+      await exited;
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);
+
+test.each([
+  { operation: cleanupReadOnlyCodexTemp, remaining: ["neighbor", "owner"] },
+  { operation: removeReadOnlyCodexState, remaining: ["neighbor"] },
+])(
+  "$operation.name preserves neighbors and symlink targets without quarantine leaks",
+  async ({ operation, remaining }) => {
+    const root = await realpath(await mkdtemp(join(tmpdir(), "paseo-cleanup-scope-")));
+    const stateRoot = join(root, "state");
+    const external = join(root, "external");
+    await mkdir(join(stateRoot, "owner"), { recursive: true });
+    await mkdir(join(stateRoot, "neighbor"));
+    await mkdir(external);
+    await writeFile(join(external, "keep"), "external");
+    await writeFile(join(stateRoot, "neighbor", "keep"), "neighbor");
+    await symlink(external, join(stateRoot, "owner", "tmp"));
+    try {
+      await operation("owner", stateRoot);
+      expect(await readFile(join(external, "keep"), "utf8")).toBe("external");
+      expect(await readFile(join(stateRoot, "neighbor", "keep"), "utf8")).toBe("neighbor");
+      expect((await readdir(stateRoot)).sort()).toEqual(remaining);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);
+
+test.skipIf(process.platform !== "darwin")(
+  "provider cannot replace its state root to redirect daemon cleanup",
+  async () => {
+    const root = await realpath(await mkdtemp(join(tmpdir(), "paseo-state-root-")));
+    const cwd = join(root, "workspace");
+    const stateRoot = join(root, "state");
+    const external = join(root, "external");
+    await mkdir(cwd);
+    await mkdir(join(external, "tmp"), { recursive: true });
+    const sentinel = join(external, "tmp", "keep");
+    await writeFile(sentinel, "original");
+    try {
+      const runtime = await prepareReadOnlyCodexRuntime({
+        agentId: "owner",
+        cwd,
+        stateRoot,
+        env: { ...process.env, CODEX_HOME: cwd },
+      });
+      const child = spawnSync(
+        "/usr/bin/sandbox-exec",
+        [
+          "-p",
+          runtime.profile,
+          process.execPath,
+          "-e",
+          "const fs=require('fs');let error=null;try{fs.rmSync(process.env.CODEX_HOME,{recursive:true});fs.symlinkSync(" +
+            JSON.stringify(external) +
+            ",process.env.CODEX_HOME);}catch(e){error=e.code;}console.log(JSON.stringify({error}));",
+        ],
+        { env: runtime.env, cwd, encoding: "utf8", timeout: 5000 },
+      );
+      expect(child.status).toBe(0);
+      await cleanupReadOnlyCodexTemp("owner", stateRoot);
+      expect(await readFile(sentinel, "utf8")).toBe("original");
+      expect(JSON.parse(child.stdout)).toEqual({ error: "EPERM" });
+      await removeReadOnlyCodexState("owner", stateRoot);
+      await expect(access(runtime.stateDir)).rejects.toMatchObject({ code: "ENOENT" });
+      expect(await readFile(sentinel, "utf8")).toBe("original");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);
+
+test.each([
+  { ancestor: "owner", operation: cleanupReadOnlyCodexTemp },
+  { ancestor: "owner", operation: removeReadOnlyCodexState },
+  { ancestor: "root", operation: cleanupReadOnlyCodexTemp },
+  { ancestor: "root", operation: removeReadOnlyCodexState },
+])(
+  "cleanup refuses a symlinked $ancestor ancestor ($operation.name)",
+  async ({ ancestor, operation }) => {
+    const root = await realpath(await mkdtemp(join(tmpdir(), "paseo-state-cleanup-")));
+    const stateRoot = join(root, "state");
+    const external = join(root, "external");
+    const target = ancestor === "owner" ? external : join(external, "owner");
+    await mkdir(join(target, "tmp"), { recursive: true });
+    const sentinel = join(target, "tmp", "keep");
+    await writeFile(sentinel, "original");
+    if (ancestor === "owner") {
+      await mkdir(stateRoot);
+      await symlink(external, join(stateRoot, "owner"));
+    } else await symlink(external, stateRoot);
+    try {
+      await expect(operation("owner", stateRoot)).rejects.toThrow("Unsafe read-only state");
+      expect(await readFile(sentinel, "utf8")).toBe("original");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);
 
 test.each([
   { name: "unexamined page", status: { data: [], nextCursor: "more" } },

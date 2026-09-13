@@ -130,6 +130,21 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value != null && typeof value === "object" && !Array.isArray(value);
 }
 
+function disabledCodexMcpServer(value: unknown): {
+  enabled: false;
+  command?: string;
+  url?: string;
+} {
+  const server = toObjectRecord(value);
+  // CLI table overrides replace transport fields; config/read's nullable defaults
+  // cannot round-trip through TOML. Retain only the transport discriminator.
+  return {
+    ...(typeof server?.command === "string" ? { command: server.command } : {}),
+    ...(typeof server?.url === "string" ? { url: server.url } : {}),
+    enabled: false,
+  };
+}
+
 function isArchivedCodexThreadResumeError(error: unknown, threadId: string): boolean {
   if (!(error instanceof Error)) return false;
   const expectedMessage =
@@ -3536,9 +3551,9 @@ export class CodexAppServerAgentSession implements AgentSession {
       if (this.config.writePolicy === "read_only") {
         if (!config) throw new Error("Cannot inspect inherited Codex MCP configuration");
         this.readOnlyMcpServers = Object.fromEntries(
-          Object.keys(toObjectRecord(config.mcp_servers) ?? {}).map((name) => [
+          Object.entries(toObjectRecord(config.mcp_servers) ?? {}).map(([name, server]) => [
             name,
-            { enabled: false },
+            disabledCodexMcpServer(server),
           ]),
         );
       }
@@ -5210,9 +5225,9 @@ export class CodexAppServerAgentSession implements AgentSession {
         mcp_servers: {
           ...this.readOnlyMcpServers,
           ...Object.fromEntries(
-            Object.keys(toObjectRecord(innerConfig.mcp_servers) ?? {}).map((name) => [
+            Object.entries(toObjectRecord(innerConfig.mcp_servers) ?? {}).map(([name, server]) => [
               name,
-              { enabled: false },
+              disabledCodexMcpServer(server),
             ]),
           ),
         },
@@ -7119,7 +7134,16 @@ export class CodexAppServerAgentClient implements AgentClient {
       });
       const child = spawnProcess(
         "/usr/bin/sandbox-exec",
-        ["-p", runtime.profile, launchPrefix.command, ...args, ...READ_ONLY_CODEX_FLAGS],
+        // Keep overrides at the same CLI scope: app-server-level -c flags
+        // replace the root-level list instead of merging its inherited entries.
+        [
+          "-p",
+          runtime.profile,
+          launchPrefix.command,
+          ...launchPrefix.args,
+          ...READ_ONLY_CODEX_FLAGS,
+          "app-server",
+        ],
         {
           cwd: runtime.stateDir,
           detached: true,
