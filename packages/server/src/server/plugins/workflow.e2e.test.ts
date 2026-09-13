@@ -230,6 +230,44 @@ async function pendingPlan(
   return context;
 }
 
+function approvedPlanEntry(plan: { callId: string; text: string }): AgentStreamEvent {
+  return {
+    type: "timeline",
+    provider: "codex",
+    item: {
+      type: "tool_call",
+      callId: plan.callId,
+      name: "plan_approval",
+      status: "completed",
+      error: null,
+      detail: { type: "plan", text: plan.text },
+      metadata: { approved: true, actionId: "implement", resolution: { behavior: "allow" } },
+    },
+  };
+}
+
+async function publishPlanApproval(
+  f: Awaited<ReturnType<typeof lifecycleFixture>>,
+  plan: Awaited<ReturnType<typeof pendingPlan>>,
+) {
+  const manager = f.daemon.daemon.agentManager;
+  const session = manager.getAgent(plan.agentId)!.session!;
+  const emit = (
+    session as unknown as { notifySubscribers(event: AgentStreamEvent): void }
+  ).notifySubscribers.bind(session);
+  emit(approvedPlanEntry(plan));
+  emit({
+    type: "permission_resolved",
+    provider: "codex",
+    requestId: plan.permissionRequestId,
+    resolution: { behavior: "allow" },
+  });
+  await manager.flush();
+  await expect
+    .poll(async () => (await f.read()).values.workflows[plan.agentId]?.plans[plan.callId]?.approved)
+    .toBe(true);
+}
+
 test.each([false, true])(
   "real manager lifecycle separates classification, correction decision and validation evidence turns (reused turnId: %s)",
   async (reuse) => {
@@ -265,11 +303,7 @@ test.each([false, true])(
       ]);
       const plan = await pendingPlan(f);
       await f.client.invokePluginRpc("paseo-workflow", "workflow.handoff.prepare.request", plan);
-      const state = (await f.read()).values;
-      state.workflows[plan.agentId]!.activePlanId = plan.callId;
-      state.workflows[plan.agentId]!.plans[plan.callId]!.approved = true;
-      await f.write(state);
-      f.daemon.daemon.agentManager.getAgent(plan.agentId)!.pendingPermissions.clear();
+      await publishPlanApproval(f, plan);
       await writeFile(path.join(f.directory, "feature.txt"), "functional\n");
       f.git("add", "feature.txt");
       f.git("commit", "--quiet", "-m", "functional");
@@ -297,8 +331,16 @@ test.each([false, true])(
   60_000,
 );
 
-test("consumed approval with rejected ACK reaches the workflow hook once and survives reload", async () => {
+test("approval preserves the hook without reviewing an old planning turn when HEAD advanced before followup", async () => {
   const f = await lifecycleFixture();
+  let release!: () => void;
+  f.holds.set(
+    "final-review",
+    new Promise<void>((resolve) => {
+      release = resolve;
+    }),
+  );
+  f.canceled.add("final-review");
   try {
     const plan = await pendingPlan(f);
     await f.client.invokePluginRpc("paseo-workflow", "workflow.handoff.prepare.request", plan);
@@ -310,13 +352,13 @@ test("consumed approval with rejected ACK reaches the workflow hook once and sur
     const emit = (
       session as unknown as { notifySubscribers(event: AgentStreamEvent): void }
     ).notifySubscribers.bind(session);
+    const planningTurn = manager.getAgent(plan.agentId)!.lastCompletedTurnId;
+    await writeFile(path.join(f.directory, "feature.txt"), "concurrent change\n");
+    f.git("add", "feature.txt");
+    f.git("commit", "--quiet", "-m", "concurrent change before implementation");
     session.respondToPermission = async (...args) => {
       await respond(...args);
-      emit({
-        type: "timeline",
-        provider: "codex",
-        item: { type: "assistant_message", text: "Resumed" },
-      });
+      emit({ ...approvedPlanEntry(plan), turnId: planningTurn });
       emit({
         type: "permission_resolved",
         provider: "codex",
@@ -345,12 +387,22 @@ test("consumed approval with rejected ACK reaches the workflow hook once and sur
     const state = (await f.read()).values.workflows[plan.agentId]!;
     expect(state.plans[plan.callId]?.approved).toBe(true);
     expect(state.activePlanId).toBe(plan.callId);
+    await f.client.invokePluginRpc("paseo-workflow", "workflow.status.get.request", {
+      agentId: plan.agentId,
+      workspaceId: plan.workspaceId,
+    });
+    expect(f.agents("final-review")).toHaveLength(0);
+    expect(
+      (await f.read()).values.workflows[plan.agentId]!.plans[plan.callId]!.final,
+    ).toBeUndefined();
+    expect(manager.getAgent(plan.agentId)!.lastCompletedTurnId).toBe(planningTurn);
     expect(resolutions).toEqual([plan.permissionRequestId]);
     expect(await session.getCurrentMode()).toBe("auto");
     expect(manager.getAgent(plan.agentId)!.pendingPermissions.has(plan.permissionRequestId)).toBe(
       false,
     );
   } finally {
+    release();
     await f.close();
   }
 }, 60_000);
@@ -385,20 +437,7 @@ test.each(["reversed", "normal", "reload"] as const)(
         turnId,
       };
       const completed: AgentStreamEvent = { type: "turn_completed", provider: "codex", turnId };
-      const finish = () => {
-        emit({
-          type: "timeline",
-          provider: "codex",
-          turnId,
-          item: { type: "assistant_message", text: "Functional change committed" },
-        });
-        emit(completed);
-      };
-      session.respondToPermission = async (...args) => {
-        await respond(...args);
-        await writeFile(path.join(f.directory, "feature.txt"), "functional\n");
-        f.git("add", "feature.txt");
-        f.git("commit", "--quiet", "-m", "functional");
+      const begin = () => {
         emit({ type: "turn_started", provider: "codex", turnId });
         emit({
           type: "timeline",
@@ -410,11 +449,29 @@ test.each(["reversed", "normal", "reload"] as const)(
             clientMessageId: "approved-prompt",
           },
         });
+      };
+      const finish = async () => {
+        await writeFile(path.join(f.directory, "feature.txt"), "functional\n");
+        f.git("add", "feature.txt");
+        f.git("commit", "--quiet", "-m", "functional");
+        emit({
+          type: "timeline",
+          provider: "codex",
+          turnId,
+          item: { type: "assistant_message", text: "Functional change committed" },
+        });
+        emit(completed);
+      };
+      session.respondToPermission = async (...args) => {
+        await respond(...args);
+        emit(approvedPlanEntry(plan));
         emit(resolution);
         if (order === "reversed") {
-          finish();
+          begin();
+          await finish();
           throw new Error("Approval ACK rejected after completion");
         }
+        return { followUpPrompt: "Implement the approved plan" };
       };
       const delivered: string[] = [];
       manager.subscribe(
@@ -438,7 +495,10 @@ test.each(["reversed", "normal", "reload"] as const)(
         )
         .toBe(true);
       if (order === "reload") await f.client.disablePlugin("paseo-workflow");
-      if (order !== "reversed") finish();
+      if (order !== "reversed") {
+        begin();
+        await finish();
+      }
       await manager.flush();
       expect(delivered).toEqual(
         order === "reversed"
@@ -612,7 +672,7 @@ test("Planner clarification after routing is transported in review, handoff and 
     await f.client.sendMessage(router.id, "Build a compatible feature");
     await expect.poll(() => f.agents("planner").length).toBe(1);
     const planner = f.agents("planner")[0]!;
-    await expect.poll(() => planner.lifecycle).toBe("idle");
+    await expect.poll(() => f.agents("planner")[0]?.lifecycle).toBe("idle");
     const clarification = (
       "Clarification: retain the CSV export without adding dependencies. " +
       "Detailed requirement. ".repeat(500)
@@ -636,7 +696,7 @@ test("Planner clarification after routing is transported in review, handoff and 
           (await f.read()).values.workflows[router.id]?.plans[reviewPlan.callId]?.review?.phase,
       )
       .toBe("complete");
-    await expect.poll(() => planner.lifecycle).toBe("idle");
+    await expect.poll(() => f.agents("planner")[0]?.lifecycle).toBe("idle");
     const plan = await pendingPlan(f, planner.id, "plan-2");
     await f.client.invokePluginRpc("paseo-workflow", "workflow.handoff.prepare.request", plan);
     await f.client.invokePluginRpc("paseo-workflow", "workflow.plan.handoff.request", {
@@ -644,7 +704,7 @@ test("Planner clarification after routing is transported in review, handoff and 
       selection: "advanced",
     });
     const executor = f.agents("executor-advanced")[0]!;
-    await expect.poll(() => executor.lifecycle).toBe("idle");
+    await expect.poll(() => f.agents("executor-advanced")[0]?.lifecycle).toBe("idle");
     await writeFile(path.join(f.directory, "feature.txt"), "functional\n");
     f.git("add", "feature.txt");
     f.git("commit", "--quiet", "-m", "functional");
@@ -680,11 +740,8 @@ test.each(["initial", "final"])(
       if (when === "initial")
         await writeFile(path.join(f.directory, "untracked.txt"), "not in git diff\n");
       await f.client.invokePluginRpc("paseo-workflow", "workflow.handoff.prepare.request", plan);
+      await publishPlanApproval(f, plan);
       const state = (await f.read()).values;
-      state.workflows[plan.agentId]!.activePlanId = plan.callId;
-      state.workflows[plan.agentId]!.plans[plan.callId]!.approved = true;
-      await f.write(state);
-      f.daemon.daemon.agentManager.getAgent(plan.agentId)!.pendingPermissions.clear();
       await writeFile(path.join(f.directory, "feature.txt"), "functional\n");
       f.git("add", "feature.txt");
       f.git("commit", "--quiet", "-m", "functional");
@@ -869,11 +926,7 @@ test("two audits finished during downtime reconcile once, with no repeated manag
     f.replies.set("audit-security", ['{"findings":[]}']);
     const plan = await pendingPlan(f);
     await f.client.invokePluginRpc("paseo-workflow", "workflow.handoff.prepare.request", plan);
-    const state = (await f.read()).values;
-    state.workflows[plan.agentId]!.activePlanId = plan.callId;
-    state.workflows[plan.agentId]!.plans[plan.callId]!.approved = true;
-    await f.write(state);
-    f.daemon.daemon.agentManager.getAgent(plan.agentId)!.pendingPermissions.clear();
+    await publishPlanApproval(f, plan);
     await writeFile(path.join(f.directory, "feature.txt"), "functional\n");
     f.git("add", "feature.txt");
     f.git("commit", "--quiet", "-m", "functional");

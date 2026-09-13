@@ -55,7 +55,7 @@ export function runtime(
       return { cwd: snapshot.workspaceDirectory, intent: snapshot.intent };
     },
     timeline: async (id) => (await history(id)).map((entry) => entry.item),
-    turn: async (id, turnId, expectedMessageId) => {
+    turn: async (id, turnId, expectedMessageId, approvedPlanCallId) => {
       if (!turnId) {
         const snapshot = (await paseo.agents.ref(id).refresh())?.agent;
         if (
@@ -74,6 +74,19 @@ export function runtime(
         (entry, index) => index <= end && entry.item.type === "user_message",
       );
       if (promptIndex < 0) return null;
+      if (approvedPlanCallId) {
+        const resolution = entries.find(
+          ({ item }) =>
+            item.type === "tool_call" &&
+            item.callId === approvedPlanCallId &&
+            item.detail.type === "plan" &&
+            item.status === "completed" &&
+            !item.error &&
+            item.metadata?.approved === true,
+        );
+        // Codex publishes plan approval before scheduling its implementation follow-up.
+        if (!resolution || entries[promptIndex]!.seqStart <= resolution.seqEnd) return null;
+      }
       const prompt = entries[promptIndex]!.item;
       if (
         expectedMessageId &&

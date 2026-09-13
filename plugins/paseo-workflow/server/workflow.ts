@@ -90,6 +90,7 @@ export interface WorkflowPort {
     id: string,
     turnId?: string,
     expectedMessageId?: string,
+    approvedPlanCallId?: string,
   ): Promise<{ key: string; items: AgentTimelineItem[] } | null>;
   git(cwd: string): Promise<Workflow["git"]>;
   diff(
@@ -315,10 +316,13 @@ export class WorkflowController {
     expectedMessageId?: string,
   ) {
     const workflow = state.workflows[agent.labels["paseo.workflow.id"] ?? agent.id];
+    const implementationPlan =
+      workflow?.plannerId === agent.id ? workflow.plans[workflow.activePlanId ?? ""] : undefined;
     const turn = await this.port.turn(
       agent.id,
       turnId,
       expectedMessageId ?? (workflow ? this.expectedPrompt(workflow, agent.id) : undefined),
+      implementationPlan?.approved ? implementationPlan.context.callId : undefined,
     );
     if (!turn) return;
     if (workflow?.handledTurns?.[agent.id] === turn.key) return;
