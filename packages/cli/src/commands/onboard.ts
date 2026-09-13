@@ -1,8 +1,8 @@
 import { addLocalDaemonOptions } from "../utils/command-options.js";
 import { cancel, confirm, intro, isCancel, log, note, outro } from "@clack/prompts";
 import { Command, Option } from "commander";
-import path from "node:path";
 import {
+  daemonLogPath,
   readPersistedConfig as loadPersistedConfig,
   savePersistedConfig,
   readDaemonInstance,
@@ -113,7 +113,7 @@ async function resolveVoiceSelection(mode: OnboardOptions["voice"]): Promise<boo
 }
 
 function printNextSteps(pairingUrl: string | null, paseoHome: string, richUi: boolean): void {
-  const daemonLogPath = path.join(paseoHome, "daemon.log");
+  const configuredDaemonLogPath = daemonLogPath(paseoHome);
   const nextStepsLines = [
     pairingUrl
       ? "1. Open Paseo and scan the QR code above, or paste the pairing link."
@@ -128,7 +128,7 @@ function printNextSteps(pairingUrl: string | null, paseoHome: string, richUi: bo
     `2. paseo ls --home ${JSON.stringify(paseoHome)}`,
     `3. paseo run --home ${JSON.stringify(paseoHome)} "your prompt"`,
     `4. paseo status --home ${JSON.stringify(paseoHome)}`,
-    `5. Daemon logs: ${daemonLogPath}`,
+    `5. Daemon logs: ${configuredDaemonLogPath}`,
   ];
 
   if (!richUi) {
