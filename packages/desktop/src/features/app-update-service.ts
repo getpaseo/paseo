@@ -72,6 +72,12 @@ export interface PendingUpdateStore {
   clear(): Promise<void>;
 }
 
+export interface InstallPendingUpdateOnStartupInput {
+  currentVersion: string;
+  releaseChannel: AppReleaseChannel;
+  signal: AbortSignal;
+}
+
 export interface AppUpdateService {
   checkForAppUpdate(input: {
     currentVersion: string;
@@ -86,13 +92,15 @@ export interface AppUpdateService {
     onBeforeInstall?: () => Promise<void>,
   ): Promise<AppUpdateInstallResult>;
   installPendingUpdateOnStartup(
-    input: {
-      currentVersion: string;
-      releaseChannel: AppReleaseChannel;
-      signal: AbortSignal;
-    },
-    onBeforeInstall?: () => Promise<void>,
+    input: InstallPendingUpdateOnStartupInput,
+    onBeforeInstall?: (signal: AbortSignal) => Promise<void>,
   ): Promise<AppUpdateStartupInstallResult>;
+  /**
+   * Waits for any in-flight pending-update marker write to settle. The quit path
+   * calls this before exiting so a marker recorded just before quit is not lost.
+   * Never rejects: a failed write is reported, not surfaced.
+   */
+  flushPendingUpdate(): Promise<void>;
 }
 
 export interface AppUpdateServiceDeps {
@@ -131,21 +139,28 @@ async function performInstall(
   {
     targetVersion,
     onBeforeInstall,
+    signal,
     silent,
     forceRunAfter,
   }: {
     targetVersion: string;
-    onBeforeInstall?: () => Promise<void>;
+    onBeforeInstall?: (signal: AbortSignal) => Promise<void>;
+    signal: AbortSignal;
     silent: boolean;
     forceRunAfter: boolean;
   },
-): Promise<void> {
-  if (onBeforeInstall) await onBeforeInstall();
+): Promise<boolean> {
+  if (onBeforeInstall) await onBeforeInstall(signal);
+  // The pre-install hook (e.g. stopping the daemon) can outlast the startup
+  // deadline. Abandon the install rather than spawning an installer that would
+  // run against a still-running daemon holding file handles.
+  if (signal.aborted) return false;
   runtime.quitAndInstall({
     targetVersion,
     isSilent: silent,
     isForceRunAfter: forceRunAfter,
   });
+  return true;
 }
 
 function getErrorMessage(error: unknown): string {
@@ -171,6 +186,7 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
   let preparingUpdateVersion: string | null = null;
   let checkQueue: Promise<void> = Promise.resolve();
   const readyWaiters = new Set<() => void>();
+  let pendingUpdateWrite: Promise<void> = Promise.resolve();
 
   function isReadyToInstallVersion(version: string): boolean {
     return downloadedUpdateVersion === version;
@@ -193,9 +209,17 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
   function markUpdateDownloaded(version: string): void {
     downloadedUpdateVersion = version;
     signalReadyChange();
-    void deps.pendingUpdateStore.write(version).catch((error) => {
+    // Track the write so the quit path can wait for the marker to reach disk.
+    // The download event (and therefore `downloadUpdate()`) resolves before this
+    // async write settles, so exiting without flushing could drop the marker and
+    // bypass the next-launch install entirely.
+    pendingUpdateWrite = deps.pendingUpdateStore.write(version).catch((error) => {
       deps.reportInstallError?.(`Failed to record the pending update: ${getErrorMessage(error)}`);
     });
+  }
+
+  function flushPendingUpdate(): Promise<void> {
+    return pendingUpdateWrite;
   }
 
   async function clearPendingUpdate(): Promise<void> {
@@ -471,7 +495,7 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
       silent,
       forceRunAfter,
     }: {
-      onBeforeInstall?: () => Promise<void>;
+      onBeforeInstall?: (signal: AbortSignal) => Promise<void>;
       signal?: AbortSignal;
       silent: boolean;
       forceRunAfter: boolean;
@@ -486,17 +510,22 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
     }
 
     const readyVersion = cachedUpdateInfo.version;
+    const installSignal = signal ?? new AbortController().signal;
     if (signal?.aborted) {
       return buildDeferredInstallResult(currentVersion);
     }
 
     if (isReadyToInstallVersion(readyVersion)) {
-      await performInstall(deps.runtime, {
+      const installed = await performInstall(deps.runtime, {
         targetVersion: readyVersion,
         onBeforeInstall,
+        signal: installSignal,
         silent,
         forceRunAfter,
       });
+      if (!installed) {
+        return buildDeferredInstallResult(currentVersion);
+      }
       return {
         installed: true,
         version: readyVersion,
@@ -516,12 +545,16 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
           message: "A newer update was found and will be installed later.",
         };
       }
-      await performInstall(deps.runtime, {
+      const installed = await performInstall(deps.runtime, {
         targetVersion: readyVersion,
         onBeforeInstall,
+        signal: installSignal,
         silent,
         forceRunAfter,
       });
+      if (!installed) {
+        return buildDeferredInstallResult(currentVersion);
+      }
 
       return {
         installed: true,
@@ -540,16 +573,8 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
   }
 
   async function installPendingUpdateOnStartup(
-    {
-      currentVersion,
-      releaseChannel,
-      signal,
-    }: {
-      currentVersion: string;
-      releaseChannel: AppReleaseChannel;
-      signal: AbortSignal;
-    },
-    onBeforeInstall?: () => Promise<void>,
+    { currentVersion, releaseChannel, signal }: InstallPendingUpdateOnStartupInput,
+    onBeforeInstall?: (signal: AbortSignal) => Promise<void>,
   ): Promise<AppUpdateStartupInstallResult> {
     if (!deps.isPackaged()) {
       return { installed: false, reason: "unsupported" };
@@ -599,14 +624,17 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
         forceRunAfter: true,
       });
       if (!result.installed) {
-        return { installed: false, reason: "error" };
+        // The startup deadline also bounds the daemon stop that runs before the
+        // install. When it fires mid-stop the install is abandoned, not failed:
+        // report a timeout so the next launch retries instead of logging an error.
+        return { installed: false, reason: signal.aborted ? "timeout" : "error" };
       }
 
       await clearPendingUpdate();
       return { installed: true, version: result.version ?? pendingVersion };
     } catch (error) {
       deps.reportInstallError?.(getErrorMessage(error));
-      return { installed: false, reason: "error" };
+      return { installed: false, reason: signal.aborted ? "timeout" : "error" };
     }
   }
 
@@ -614,5 +642,6 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
     checkForAppUpdate,
     downloadAndInstallUpdate,
     installPendingUpdateOnStartup,
+    flushPendingUpdate,
   };
 }

@@ -177,4 +177,53 @@ describe("quit-lifecycle", () => {
 
     expect(events).toEqual(["stop-error", "exit:0"]);
   });
+
+  it("waits for the pending update flush before exiting", async () => {
+    const events: string[] = [];
+    let releaseFlush!: () => void;
+    const flushPendingUpdate = () =>
+      new Promise<void>((resolve) => {
+        releaseFlush = () => {
+          events.push("flushed");
+          resolve();
+        };
+      });
+
+    const quitLifecycle = createQuitLifecycle({
+      app: { exit: (code) => events.push(`exit:${code}`) },
+      closeTransportSessions: () => {},
+      stopDesktopManagedDaemonIfNeeded: async () => false,
+      onStopError: () => {},
+      flushPendingUpdate,
+    });
+
+    quitLifecycle.handleBeforeQuit({ preventDefault: () => {} });
+    await waitForQuitLifecycle();
+
+    // Exit must not happen while the marker write is still in flight.
+    expect(events).toEqual([]);
+
+    releaseFlush();
+    await waitForQuitLifecycle();
+
+    expect(events).toEqual(["flushed", "exit:0"]);
+  });
+
+  it("exits even when the pending update flush rejects", async () => {
+    const events: string[] = [];
+    const quitLifecycle = createQuitLifecycle({
+      app: { exit: (code) => events.push(`exit:${code}`) },
+      closeTransportSessions: () => {},
+      stopDesktopManagedDaemonIfNeeded: async () => false,
+      onStopError: () => {},
+      flushPendingUpdate: async () => {
+        throw new Error("disk full");
+      },
+    });
+
+    quitLifecycle.handleBeforeQuit({ preventDefault: () => {} });
+    await waitForQuitLifecycle();
+
+    expect(events).toEqual(["exit:0"]);
+  });
 });

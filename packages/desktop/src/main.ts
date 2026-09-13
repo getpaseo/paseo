@@ -99,7 +99,7 @@ import {
 import { runDesktopStartup } from "./desktop-startup.js";
 import { registerBrowserAutomationIpc } from "./features/browser-automation/ipc.js";
 import { BrowserKeyboard } from "./features/browser-keyboard/index.js";
-import { installPendingUpdateOnStartup } from "./features/auto-updater.js";
+import { flushPendingUpdate, installPendingUpdateOnStartup } from "./features/auto-updater.js";
 import {
   buildAgentDeepLinkRoute,
   parseAgentDeepLink,
@@ -940,8 +940,8 @@ async function installPendingUpdateBeforeStartup(): Promise<boolean> {
       releaseChannel: settings.releaseChannel,
       signal: AbortSignal.timeout(STARTUP_UPDATE_INSTALL_DEADLINE_MS),
     },
-    async () => {
-      await stopDesktopManagedDaemonBeforeUpdate();
+    async (signal) => {
+      await stopDesktopManagedDaemonBeforeUpdate({ signal });
     },
   );
 
@@ -1088,7 +1088,7 @@ const quitLifecycle = createQuitLifecycle({
       stopDaemon: () => stopDesktopDaemonViaCli("quit"),
       showShutdownFeedback: showDaemonShutdownDialog,
     }),
-  onStopError: (error) => {
+  flushPendingUpdate: () => flushPendingUpdate(),  onStopError: (error) => {
     log.error("[desktop daemon] failed to stop managed daemon on quit", error);
   },
 });

@@ -71,11 +71,18 @@ export function createQuitLifecycle({
   app,
   closeTransportSessions,
   stopDesktopManagedDaemonIfNeeded,
+  flushPendingUpdate,
   onStopError,
 }: {
   app: BeforeQuitApp;
   closeTransportSessions: () => void;
   stopDesktopManagedDaemonIfNeeded: () => Promise<boolean>;
+  /**
+   * Waits for an in-flight pending-update marker write to settle. Injected so
+   * this module stays unaware of the updater; the quit path must not drop a
+   * marker recorded just before exit.
+   */
+  flushPendingUpdate?: () => Promise<void>;
   onStopError: (error: unknown) => void;
 }): QuitLifecycle {
   // The first quit waits for daemon shutdown; app.exit(0) then bypasses
@@ -93,6 +100,12 @@ export function createQuitLifecycle({
         await stopDesktopManagedDaemonIfNeeded();
       } catch (error) {
         onStopError(error);
+      }
+
+      try {
+        await flushPendingUpdate?.();
+      } catch {
+        // A failed marker write must never block quitting.
       }
 
       app.exit(0);

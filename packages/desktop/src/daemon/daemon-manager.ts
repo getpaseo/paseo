@@ -362,7 +362,9 @@ export async function stopDesktopDaemon(
  * it as desktop-managed, which is what separates it from a daemon the user
  * started manually; those are left alone.
  */
-export async function stopDesktopManagedDaemonBeforeUpdate(): Promise<boolean> {
+export async function stopDesktopManagedDaemonBeforeUpdate(deps?: {
+  signal?: AbortSignal;
+}): Promise<boolean> {
   const status = await resolveDesktopDaemonStatus();
   const running = status.status === "running" || status.status === "starting";
   if (!status.desktopManaged || !running) {
@@ -372,13 +374,20 @@ export async function stopDesktopManagedDaemonBeforeUpdate(): Promise<boolean> {
   const home = getPaseoHome();
   const instance = await readDaemonInstance(home);
   logDesktopDaemonLifecycle("stopping managed daemon before update", { pid: status.pid });
-  await stopDaemonInstance(home, {
+  const result = await stopDaemonInstance(home, {
     instance: instance ?? undefined,
     timeoutMs: 15_000,
+    signal: deps?.signal,
     requestShutdown: async (ready) => {
       await runExternalCliJsonCommand(["daemon", "stop", "--host", ready.listen, "--json"]);
     },
   });
+  if (result.action === "cancelled") {
+    // The startup deadline fired mid-stop. Report "not stopped" so the caller
+    // abandons the install and boots normally instead of spawning an installer
+    // against a daemon that still holds file handles.
+    return false;
+  }
   if (
     ownedLaunch &&
     ownedLaunch.home === home &&

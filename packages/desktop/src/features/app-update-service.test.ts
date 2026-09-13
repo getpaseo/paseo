@@ -152,19 +152,62 @@ class FakeAppUpdateRuntime implements AppUpdateRuntime {
   }
 }
 
-function createFakePendingUpdateStore(
-  initialVersion: string | null,
-): PendingUpdateStore & { current(): string | null } {
+interface FakePendingUpdateStore extends PendingUpdateStore {
+  current(): string | null;
+  /** Resolves once the most recent in-flight write settles. */
+  flushWrite(): Promise<void>;
+  /** Makes the next write hang until released, or reject with the given error. */
+  deferNextWrite(): { release(): void; fail(error: Error): void };
+}
+
+function createFakePendingUpdateStore(initialVersion: string | null): FakePendingUpdateStore {
   let version = initialVersion;
+  let lastWrite: Promise<void> = Promise.resolve();
+  let pending: {
+    promise: Promise<void>;
+    release(): void;
+    fail(error: Error): void;
+  } | null = null;
   return {
     read: async () => version,
-    write: async (next: string) => {
+    write: (next: string) => {
+      const inFlight = pending ? pending.promise : null;
+      if (inFlight) {
+        // Keep the rejection observable to the caller while recording the
+        // version only when the write actually succeeds.
+        const writePromise = inFlight.then(() => {
+          version = next;
+        });
+        lastWrite = writePromise.catch(() => undefined);
+        return writePromise;
+      }
       version = next;
+      lastWrite = Promise.resolve();
+      return lastWrite;
     },
     clear: async () => {
       version = null;
     },
     current: () => version,
+    flushWrite: () => lastWrite,
+    deferNextWrite() {
+      let release!: () => void;
+      let fail!: (error: Error) => void;
+      const promise = new Promise<void>((resolve, reject) => {
+        release = () => {
+          pending = null;
+          resolve();
+        };
+        fail = (error) => {
+          pending = null;
+          reject(error);
+        };
+      });
+      promise.catch(() => undefined);
+      pending = { promise, release, fail };
+      lastWrite = promise;
+      return { release, fail };
+    },
   };
 }
 
@@ -175,14 +218,18 @@ function createService(input?: {
 }) {
   const runtime = new FakeAppUpdateRuntime();
   const pendingUpdateStore = createFakePendingUpdateStore(input?.pendingVersion ?? null);
+  const installErrors: string[] = [];
   const service = createAppUpdateService({
     runtime,
     isPackaged: () => true,
     now: input?.now ?? (() => Date.parse("2026-04-28T12:00:00.000Z")),
     bucket: input?.bucket ?? (async () => 0.99),
     pendingUpdateStore,
+    reportInstallError: (message) => {
+      installErrors.push(message);
+    },
   });
-  return { runtime, service, pendingUpdateStore };
+  return { runtime, service, pendingUpdateStore, installErrors };
 }
 
 const rolledOutUpdate = {
@@ -425,6 +472,80 @@ describe("app update service", () => {
     expect(runtime.installModes).toEqual([
       { targetVersion: "1.2.4", isSilent: true, isForceRunAfter: true },
     ]);
+    expect(pendingUpdateStore.current()).toBeNull();
+  });
+
+  it("abandons the startup install when the deadline aborts during daemon stop", async () => {
+    const { runtime, service, pendingUpdateStore } = createService({
+      bucket: async () => 0,
+      pendingVersion: "1.2.4",
+    });
+    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: rolledOutUpdate });
+    await service.checkForAppUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+      intent: "automatic",
+    });
+    runtime.finishUpdateDownload(rolledOutUpdate);
+
+    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: rolledOutUpdate });
+    const deadline = new AbortController();
+    let stopObservedAbort = false;
+    const pending = service.installPendingUpdateOnStartup(
+      {
+        currentVersion: "1.2.3",
+        releaseChannel: "stable",
+        signal: deadline.signal,
+      },
+      async (signal: AbortSignal) => {
+        await new Promise<void>((resolve) => {
+          signal.addEventListener(
+            "abort",
+            () => {
+              stopObservedAbort = true;
+              resolve();
+            },
+            { once: true },
+          );
+        });
+      },
+    );
+
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    deadline.abort();
+    const result = await pending;
+
+    expect(stopObservedAbort).toBe(true);
+    expect(result).toEqual({ installed: false, reason: "timeout" });
+    expect(runtime.installedVersions).toEqual([]);
+    expect(pendingUpdateStore.current()).toBe("1.2.4");
+  });
+
+  it("installs once the daemon stops before the deadline", async () => {
+    const { runtime, service, pendingUpdateStore } = createService({
+      bucket: async () => 0,
+      pendingVersion: "1.2.4",
+    });
+    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: rolledOutUpdate });
+    await service.checkForAppUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+      intent: "automatic",
+    });
+    runtime.finishUpdateDownload(rolledOutUpdate);
+
+    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: rolledOutUpdate });
+    const result = await service.installPendingUpdateOnStartup(
+      {
+        currentVersion: "1.2.3",
+        releaseChannel: "stable",
+        signal: new AbortController().signal,
+      },
+      async () => {},
+    );
+
+    expect(result).toEqual({ installed: true, version: "1.2.4" });
+    expect(runtime.installedVersions).toEqual(["1.2.4"]);
     expect(pendingUpdateStore.current()).toBeNull();
   });
 
@@ -883,5 +1004,77 @@ describe("app update service", () => {
       date: "2026-04-28T00:00:00.000Z",
       errorMessage: null,
     });
+  });
+});
+
+describe("pending update persistence", () => {
+  it("keeps a pending write observable until it settles", async () => {
+    const { runtime, service, pendingUpdateStore } = createService({ bucket: async () => 0 });
+    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: rolledOutUpdate });
+    await service.checkForAppUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+      intent: "automatic",
+    });
+
+    const write = pendingUpdateStore.deferNextWrite();
+    runtime.finishUpdateDownload(rolledOutUpdate);
+
+    // The download event has fired, but the marker write has not settled.
+    expect(pendingUpdateStore.current()).toBeNull();
+    let flushed = false;
+    const flush = service.flushPendingUpdate().then(() => {
+      flushed = true;
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(flushed).toBe(false);
+
+    write.release();
+    await flush;
+
+    expect(flushed).toBe(true);
+    expect(pendingUpdateStore.current()).toBe("1.2.4");
+  });
+
+  it("resolves flush after a failed write without throwing", async () => {
+    const { runtime, service, pendingUpdateStore, installErrors } = createService({
+      bucket: async () => 0,
+    });
+    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: rolledOutUpdate });
+    await service.checkForAppUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+      intent: "automatic",
+    });
+
+    const write = pendingUpdateStore.deferNextWrite();
+    runtime.finishUpdateDownload(rolledOutUpdate);
+    write.fail(new Error("disk full"));
+
+    await expect(service.flushPendingUpdate()).resolves.toBeUndefined();
+    expect(pendingUpdateStore.current()).toBeNull();
+    expect(installErrors.some((message) => message.includes("disk full"))).toBe(true);
+  });
+
+  it("does not consider the download settled until the marker write completes", async () => {
+    const { runtime, service, pendingUpdateStore } = createService({ bucket: async () => 0 });
+    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: rolledOutUpdate });
+    await service.checkForAppUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+      intent: "automatic",
+    });
+
+    const write = pendingUpdateStore.deferNextWrite();
+    const download = runtime.beginUpdateDownload(rolledOutUpdate);
+    download.resolve();
+    // electron-updater resolves downloadUpdate() as soon as the download event
+    // dispatches, so the caller must flush the marker before exiting.
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(pendingUpdateStore.current()).toBeNull();
+
+    write.release();
+    await service.flushPendingUpdate();
+    expect(pendingUpdateStore.current()).toBe("1.2.4");
   });
 });

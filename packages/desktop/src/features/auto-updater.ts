@@ -13,6 +13,7 @@ import {
   type AppUpdateRuntime,
   type AppUpdateRuntimeConfiguration,
   type AppUpdateStartupInstallResult,
+  type InstallPendingUpdateOnStartupInput,
   type PendingUpdateStore,
   type RuntimeUpdateCheckResult,
   type RuntimeUpdateInfo,
@@ -321,16 +322,8 @@ export async function downloadAndInstallUpdate(
 }
 
 export async function installPendingUpdateOnStartup(
-  {
-    currentVersion,
-    releaseChannel,
-    signal,
-  }: {
-    currentVersion: string;
-    releaseChannel: AppReleaseChannel;
-    signal: AbortSignal;
-  },
-  onBeforeInstall?: () => Promise<void>,
+  input: InstallPendingUpdateOnStartupInput,
+  onBeforeInstall?: (signal: AbortSignal) => Promise<void>,
 ): Promise<AppUpdateStartupInstallResult> {
   if (
     !canInstallAppUpdateOnStartup({
@@ -341,8 +334,9 @@ export async function installPendingUpdateOnStartup(
     return { installed: false, reason: "unsupported" };
   }
 
-  return appUpdateService.installPendingUpdateOnStartup(
-    { currentVersion, releaseChannel, signal },
-    onBeforeInstall,
-  );
+  return appUpdateService.installPendingUpdateOnStartup(input, onBeforeInstall);
+}
+
+export function flushPendingUpdate(): Promise<void> {
+  return appUpdateService.flushPendingUpdate();
 }

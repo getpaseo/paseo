@@ -139,15 +139,16 @@ export async function stopDaemonInstance(
     force?: boolean;
     timeoutMs?: number;
     killTimeoutMs?: number;
+    signal?: AbortSignal;
     requestShutdown?: (instance: PidLockInfo & { listen: string }) => Promise<void>;
   } = {},
 ): Promise<{
-  action: "stopped" | "not_running";
+  action: "stopped" | "not_running" | "cancelled";
   pid: number | null;
   forced: boolean;
   usedLifecycleRpc: boolean;
 }> {
-  const { timeoutMs = 15_000, killTimeoutMs = 3_000 } = options;
+  const { timeoutMs = 15_000, killTimeoutMs = 3_000, signal } = options;
   const deadline = Date.now() + timeoutMs;
   const instance = await getPidLockInfo(home);
   if (options.instance && instance && !isSamePidLock(instance, options.instance)) {
@@ -169,7 +170,7 @@ export async function stopDaemonInstance(
   if (instance.pid <= 1 || instance.pid === process.pid)
     throw new Error("Refusing to stop invalid supervisor PID");
   let { forced, usedLifecycleRpc } = await requestInstanceStop(home, instance, options);
-  const waitForExit = async (waitMs: number) => {
+  const waitForExit = async (waitMs: number): Promise<boolean | "cancelled"> => {
     const exitDeadline = Date.now() + waitMs;
     while (isPidRunning(instance.pid)) {
       const current = await getPidLockInfo(home);
@@ -179,16 +180,29 @@ export async function stopDaemonInstance(
           `Supervisor changed for ${home}; stop of PID ${instance.pid} was not confirmed.`,
         );
       if (Date.now() >= exitDeadline) return false;
-      await delay(100);
+      try {
+        // An abort cancels the wait without forcing a kill: the caller abandons
+        // this stop and leaves daemon lifecycle semantics untouched.
+        await delay(100, undefined, { signal });
+      } catch (error) {
+        if (signal?.aborted) return "cancelled";
+        throw error;
+      }
     }
     return true;
   };
-  let stopped = await waitForExit(forced ? killTimeoutMs : Math.max(0, deadline - Date.now()));
+  let stopped: boolean | "cancelled" = await waitForExit(
+    forced ? killTimeoutMs : Math.max(0, deadline - Date.now()),
+  );
+  if (stopped === "cancelled")
+    return { action: "cancelled", pid: instance.pid, forced, usedLifecycleRpc };
   if (!stopped && options.force && !forced) {
     await killTree(instance.pid, "SIGKILL");
     forced = true;
     stopped = await waitForExit(killTimeoutMs);
   }
+  if (stopped === "cancelled")
+    return { action: "cancelled", pid: instance.pid, forced, usedLifecycleRpc };
   if (!stopped)
     throw new DaemonInstanceError(
       "STOP_NOT_CONFIRMED",
