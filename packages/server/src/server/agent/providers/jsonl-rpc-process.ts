@@ -13,6 +13,8 @@ export const JSONL_RPC_DEFAULT_TIMEOUT_MS = 30_000;
  * Use for long-running blocking RPCs (e.g. LLM-backed compact).
  */
 export const JSONL_RPC_NO_TIMEOUT = null;
+/** Abort must settle quickly; a child that cannot acknowledge it is not reusable. */
+export const JSONL_RPC_ABORT_TIMEOUT_MS = 5_000;
 
 const STDERR_BUFFER_LIMIT = 8192;
 const GRACEFUL_SHUTDOWN_TIMEOUT_MS = 2_000;
@@ -39,6 +41,15 @@ interface PendingRequest {
   resolve: (value: unknown) => void;
   reject: (error: Error) => void;
   timer: NodeJS.Timeout | null;
+}
+
+export interface JsonlRpcRequestOptions {
+  /**
+   * Close the entire transport when this request times out. This is reserved for
+   * control operations whose timeout means the child can no longer be trusted
+   * (for example, abort acknowledgements).
+   */
+  closeOnTimeout?: boolean;
 }
 
 export interface JsonlRpcExit {
@@ -140,6 +151,7 @@ export class JsonlRpcProcess {
   startRequest(
     command: { type: string; [key: string]: unknown },
     timeoutMs?: number | null,
+    requestOptions?: JsonlRpcRequestOptions,
   ): { id: string; promise: Promise<unknown> } {
     if (this.disposed) {
       return {
@@ -157,11 +169,13 @@ export class JsonlRpcProcess {
     const promise = new Promise<unknown>((resolve, reject) => {
       const timer = createRequestTimeout(requestTimeoutMs, () => {
         this.pending.delete(id);
-        reject(
-          new Error(
-            `${this.diagnosticName} request timed out phase=${command.type} elapsedMs=${Date.now() - startedAt} timeoutMs=${requestTimeoutMs}\n${this.stderrBuffer}`.trim(),
-          ),
+        const timeoutError = new Error(
+          `${this.diagnosticName} request timed out phase=${command.type} elapsedMs=${Date.now() - startedAt} timeoutMs=${requestTimeoutMs}\n${this.stderrBuffer}`.trim(),
         );
+        reject(timeoutError);
+        if (requestOptions?.closeOnTimeout) {
+          void this.close(timeoutError).catch(() => undefined);
+        }
       });
       this.pending.set(id, { resolve, reject, timer });
       this.send({ ...command, id });
@@ -172,8 +186,9 @@ export class JsonlRpcProcess {
   request(
     command: { type: string; [key: string]: unknown },
     timeoutMs?: number | null,
+    requestOptions?: JsonlRpcRequestOptions,
   ): Promise<unknown> {
-    return this.startRequest(command, timeoutMs).promise;
+    return this.startRequest(command, timeoutMs, requestOptions).promise;
   }
 
   send(message: Record<string, unknown>): void {

@@ -3,6 +3,7 @@ import type { Logger } from "pino";
 
 import type { ProviderRuntimeSettings } from "../../provider-launch-config.js";
 import {
+  JSONL_RPC_ABORT_TIMEOUT_MS,
   JSONL_RPC_NO_TIMEOUT,
   JsonlRpcProcess,
   type JsonlRpcLaunch,
@@ -148,7 +149,9 @@ class PiCliRuntimeSession implements PiRuntimeSession {
   }
 
   async abort(): Promise<void> {
-    await this.request({ type: "abort" });
+    await this.process.request({ type: "abort" }, JSONL_RPC_ABORT_TIMEOUT_MS, {
+      closeOnTimeout: true,
+    });
   }
 
   async getState(): Promise<PiSessionState> {

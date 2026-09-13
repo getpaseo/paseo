@@ -180,6 +180,19 @@ describe("JsonlRpcProcess", () => {
       await transport.close();
     }
   });
+  test("closes the transport when a control request times out", async () => {
+    const transport = startProcess();
+    const exit = nextExit(transport);
+    const request = transport.request({ type: "hang" }, 50, { closeOnTimeout: true });
+
+    await expect(request).rejects.toThrow(
+      /JSONL RPC request timed out phase=hang elapsedMs=\d+ timeoutMs=50/,
+    );
+    await expect(exit).resolves.toMatchObject({ error: expect.any(Error) });
+    await expect(transport.request({ type: "echo", value: "after" })).rejects.toThrow(
+      "JSONL RPC process is closed",
+    );
+  });
 
   test("null timeout waits past short wall-clock limits until the response arrives", async () => {
     const transport = startProcess();
