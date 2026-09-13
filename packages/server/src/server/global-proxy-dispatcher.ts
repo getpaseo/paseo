@@ -2,6 +2,10 @@ import { EnvHttpProxyAgent, setGlobalDispatcher } from "undici";
 
 let installed = false;
 
+export interface InstallGlobalProxyDispatcherOptions {
+  enabled?: boolean;
+}
+
 /**
  * Node's built-in fetch (undici) never reads HTTP_PROXY/HTTPS_PROXY/NO_PROXY on its own;
  * without an explicit dispatcher every daemon-issued fetch (provider usage lookups, Hub
@@ -15,7 +19,9 @@ let installed = false;
  * alongside its own fetch consumers should pass `globalProxyDispatcher: false` and manage
  * proxying itself rather than have it installed underneath it.
  */
-export function installGlobalProxyDispatcher(enabled = true): void {
+export function installGlobalProxyDispatcher({
+  enabled = true,
+}: InstallGlobalProxyDispatcherOptions = {}): void {
   if (!enabled || installed) return;
   installed = true;
   setGlobalDispatcher(new EnvHttpProxyAgent());

@@ -578,7 +578,7 @@ export async function createPaseoDaemon(
   rootLogger: Logger,
   dependencies: PaseoDaemonDependencies = {},
 ): Promise<PaseoDaemon> {
-  installGlobalProxyDispatcher(config.globalProxyDispatcher);
+  installGlobalProxyDispatcher({ enabled: config.globalProxyDispatcher });
   configureGitProcessPolicy(config.git ?? resolveGitProcessPolicy({ env: process.env }));
   const logger = rootLogger.child({ module: "bootstrap" });
   const obsoleteTimelineDirectory = path.join(config.paseoHome, "agent-timelines");

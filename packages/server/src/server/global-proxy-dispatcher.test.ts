@@ -50,8 +50,8 @@ async function runIsolatedFetch({ proxyUrl, enabled }: IsolatedFetchOptions) {
   const dispatcherModule = new URL("./global-proxy-dispatcher.ts", import.meta.url).href;
   const script = `
     const { installGlobalProxyDispatcher } = await import(${JSON.stringify(dispatcherModule)});
-    installGlobalProxyDispatcher(${enabled});
-    installGlobalProxyDispatcher(${enabled});
+    installGlobalProxyDispatcher({ enabled: ${enabled} });
+    installGlobalProxyDispatcher({ enabled: ${enabled} });
     const response = await fetch("http://example.invalid/some-path");
     process.stdout.write(await response.text());
   `;
@@ -74,12 +74,20 @@ async function runIsolatedFetch({ proxyUrl, enabled }: IsolatedFetchOptions) {
   );
 }
 
+function listenOnLoopback(server: Server): Promise<void> {
+  return new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+}
+
+function closeServer(server: Server): Promise<void> {
+  return new Promise<void>((resolve) => server.close(() => resolve()));
+}
+
 describe("installGlobalProxyDispatcher", () => {
   test("only routes daemon-issued fetch() through HTTP_PROXY once enabled", async () => {
     const tunneledRequests: string[] = [];
     const proxy = createServer();
     proxy.on("connect", (req, socket) => handleTunneledRequest({ req, socket, tunneledRequests }));
-    await new Promise<void>((resolve) => proxy.listen(0, "127.0.0.1", () => resolve()));
+    await listenOnLoopback(proxy);
     const port = getListeningPort(proxy);
 
     try {
@@ -97,7 +105,7 @@ describe("installGlobalProxyDispatcher", () => {
       expect(stdout).toBe("ok-from-proxy");
       expect(tunneledRequests).toEqual(["example.invalid:80 :: GET /some-path HTTP/1.1"]);
     } finally {
-      await new Promise<void>((resolve) => proxy.close(() => resolve()));
+      await closeServer(proxy);
     }
   });
 });
