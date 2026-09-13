@@ -113,6 +113,15 @@ it("projects the daemon-owned active turn identity", () => {
   });
 });
 
+it("projects immutable launch provenance in live and stored snapshots", () => {
+  const agent = createManagedAgent({ launchProfileId: "planner" });
+  const record = toStoredAgentRecord(agent);
+  expect(record.launchProfileId).toBe("planner");
+  expect(toAgentPayload(agent).launchProfileId).toBe("planner");
+  expect(buildStoredAgentPayload(record, ["claude"]).launchProfileId).toBe("planner");
+  expect(record.config).not.toHaveProperty("launchProfileId");
+});
+
 function createPermission(overrides: Partial<AgentPermissionRequest> = {}): AgentPermissionRequest {
   const base: AgentPermissionRequest = {
     id: "perm-1",

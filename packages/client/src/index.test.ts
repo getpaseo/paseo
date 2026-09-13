@@ -714,12 +714,13 @@ test("plugin-shaped PR workspace create and agent create use the existing daemon
 
 test("agent handles delegate create, send, timeline refetch, archive, and local updates", async () => {
   const { client, ws } = await connectClient();
-  const createdAgent = createAgent();
+  const createdAgent = createAgent({ launchProfileId: "planner" });
 
   const createPromise = client.agents.create({
     config: { provider: "codex/gpt-5.4" },
     cwd: "/repo/sdk",
     prompt: "ship it",
+    launchProfileId: "planner",
   });
   const createRequest = parseSentSessionMessage(ws.sent.at(-1));
   expect(createRequest).toMatchObject({
@@ -730,6 +731,7 @@ test("agent handles delegate create, send, timeline refetch, archive, and local 
       cwd: "/repo/sdk",
     },
     initialPrompt: "ship it",
+    launchProfileId: "planner",
   });
 
   ws.message(
@@ -747,6 +749,8 @@ test("agent handles delegate create, send, timeline refetch, archive, and local 
   const agent = await createPromise;
   expect(agent.id).toBe("agent_sdk");
   expect(agent.current()).toEqual(createdAgent);
+  expect(agent.launchProfileId).toBe("planner");
+  expect(createRequest.config).not.toHaveProperty("launchProfileId");
 
   await observeAgents(client, ws);
   const updatedAgents: string[] = [];

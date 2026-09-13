@@ -109,7 +109,7 @@ export async function ensureAgentLoaded(
         handle,
         buildConfigOverrides(record),
         agentId,
-        extractTimestamps(record),
+        { ...extractTimestamps(record), launchProfileId: record.launchProfileId },
         record.archivedAt ? { purpose: "history" } : undefined,
       );
       deps.logger.info({ agentId, provider: record.provider }, "Agent resumed from persistence");
@@ -123,6 +123,7 @@ export async function ensureAgentLoaded(
       snapshot = await deps.agentManager.createAgent(config, agentId, {
         labels: record.labels,
         workspaceId: record.workspaceId,
+        launchProfileId: record.launchProfileId,
         owner: record.owner,
       });
       deps.logger.info({ agentId, provider: record.provider }, "Agent created from stored config");

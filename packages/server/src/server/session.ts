@@ -4020,6 +4020,7 @@ export class Session {
           agentId,
           config: resolvedIntent.config,
           workspaceId: resolvedIntent.intent.workspaceId,
+          launchProfileId: resolvedIntent.intent.launchProfileId,
           worktreeName,
           initialPrompt,
           clientMessageId,
@@ -4082,6 +4083,7 @@ export class Session {
     let config = request.config;
 
     const intent = await resolveCreateAgentIntent({
+      launchProfileId: request.launchProfileId,
       explicitWorkspaceId: createdWorktree?.workspace.workspaceId ?? request.workspaceId,
       caller: callerAgent
         ? { id: callerAgent.id, cwd: callerAgent.cwd, workspaceId: callerAgent.workspaceId }

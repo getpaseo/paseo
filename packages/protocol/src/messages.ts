@@ -854,6 +854,7 @@ const AgentActiveTurnPayloadSchema = z.object({
 
 export const AgentSnapshotPayloadSchema = z.object({
   id: z.string(),
+  launchProfileId: z.string().optional(),
   provider: AgentProviderSchema,
   cwd: z.string(),
   workspaceId: z.string().optional(),
@@ -1688,6 +1689,7 @@ export type CreateAgentWorktreeTarget = z.infer<typeof CreateAgentWorktreeTarget
 
 export const CreateAgentRequestMessageSchema = z.object({
   type: z.literal("create_agent_request"),
+  launchProfileId: z.string().optional(),
   // A creation key requires initialPrompt to be sent separately with a stable messageId.
   idempotencyKey: z.string().min(1).max(512).optional(),
   config: AgentSessionConfigSchema,
@@ -3661,6 +3663,8 @@ export const ServerInfoStatusPayloadSchema = z
         agentProfiles: z.boolean().optional(),
         // COMPAT(agentConfigApply): added in v0.3.2, remove gate after 2027-02-11.
         agentConfigApply: z.boolean().optional(),
+        // COMPAT(agentLaunchProfile): added in v0.8.0, remove gate after 2027-03-13.
+        agentLaunchProfile: z.boolean().optional(),
       })
       .optional(),
   })

@@ -233,6 +233,7 @@ export interface PaseoAgentConfig {
 }
 
 export interface PaseoAgentCreateOptions {
+  launchProfileId?: string;
   config: PaseoAgentConfig;
   cwd: string;
   parent?: string | PaseoAgentHandle;
@@ -339,6 +340,7 @@ export interface PaseoAgentHandle {
    * `null`; use `current()` when you need to distinguish those states.
    */
   readonly workspaceId: string | null;
+  readonly launchProfileId: string | null;
   readonly cwd: string | null;
   readonly status: PaseoAgent["status"] | null;
   readonly capabilities: PaseoAgent["capabilities"] | null;
@@ -888,6 +890,9 @@ function createAgentHandleFactory(
       },
       get workspaceId() {
         return current?.workspaceId ?? null;
+      },
+      get launchProfileId() {
+        return current?.launchProfileId ?? null;
       },
       get cwd() {
         return current?.cwd ?? null;

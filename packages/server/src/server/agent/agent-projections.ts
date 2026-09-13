@@ -74,6 +74,7 @@ export function toStoredAgentRecord(
     provider: agent.provider,
     cwd: agent.cwd,
     workspaceId: agent.workspaceId,
+    launchProfileId: agent.launchProfileId,
     createdAt,
     updatedAt: agent.updatedAt.toISOString(),
     lastActivityAt: agent.updatedAt.toISOString(),
@@ -113,6 +114,7 @@ export function toAgentPayload(
     provider: agent.provider,
     cwd: agent.cwd,
     ...(agent.workspaceId ? { workspaceId: agent.workspaceId } : {}),
+    ...(agent.launchProfileId !== undefined ? { launchProfileId: agent.launchProfileId } : {}),
     model: agent.config.model ?? null,
     thinkingOptionId,
     effectiveThinkingOptionId,
@@ -222,6 +224,7 @@ export function buildStoredAgentPayload(
     provider: record.provider,
     cwd: record.cwd,
     ...(record.workspaceId ? { workspaceId: record.workspaceId } : {}),
+    ...(record.launchProfileId !== undefined ? { launchProfileId: record.launchProfileId } : {}),
     model: record.config?.model ?? null,
     thinkingOptionId: record.config?.thinkingOptionId ?? null,
     effectiveThinkingOptionId: resolveEffectiveThinkingOptionId({

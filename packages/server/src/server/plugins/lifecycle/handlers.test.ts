@@ -7,6 +7,45 @@ const paseo = createPaseoApi(
   new DaemonClient({ url: "ws://127.0.0.1:1/ws", clientId: "lifecycle-unit" }),
 );
 
+test("agent-create hooks receive launch provenance and can change config and env", async () => {
+  const hooks = new PluginHookHandlers(() => {});
+  const input = {
+    config: { provider: "codex", cwd: "/project" },
+    workspaceId: "workspace",
+    launchProfileId: "planner",
+  };
+  hooks.before("agent.create", ({ request }) => {
+    expect(request).toEqual(input);
+    return { ...request, config: { ...request.config, model: "gpt-5.4" }, env: { PLAN: "1" } };
+  });
+  expect(await hooks.invoke("create", "before", "agent.create", input, paseo)).toEqual({
+    ...input,
+    config: { ...input.config, model: "gpt-5.4" },
+    env: { PLAN: "1" },
+  });
+});
+
+test.each(["workspaceId", "launchProfileId"] as const)(
+  "agent-create hooks cannot rewrite %s",
+  async (field) => {
+    const hooks = new PluginHookHandlers(() => {});
+    hooks.before("agent.create", ({ request }) => ({ ...request, [field]: "rewritten" }));
+    await expect(
+      hooks.invoke(
+        "create",
+        "before",
+        "agent.create",
+        {
+          config: { provider: "codex", cwd: "/project" },
+          workspaceId: "workspace",
+          launchProfileId: "planner",
+        },
+        paseo,
+      ),
+    ).rejects.toThrow("agent.create hooks cannot change workspaceId or launchProfileId");
+  },
+);
+
 test("removing an old registration twice preserves a newer registration for the same hook", async () => {
   const hooks = new PluginHookHandlers(() => {});
   const remove = hooks.before("workspace.create", ({ request }) => {

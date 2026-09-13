@@ -22,6 +22,7 @@ export interface PluginHookWorkspace {
 
 export interface PluginHookAgent {
   id: string;
+  readonly launchProfileId?: string;
   workspaceId: string | null;
   parentAgentId: string | null;
   provider: string;
@@ -65,7 +66,12 @@ export interface PluginLifecycleEvents {
 }
 
 export interface PluginBeforeRequests {
-  "agent.create": { config: AgentSessionConfig; env?: Record<string, string> };
+  "agent.create": {
+    config: AgentSessionConfig;
+    env?: Record<string, string>;
+    readonly workspaceId?: string;
+    readonly launchProfileId?: string;
+  };
   "agent.session_open": PluginSessionOpenRequest;
   "workspace.create": Omit<WorkspaceCreateRequest, "type" | "requestId">;
 }

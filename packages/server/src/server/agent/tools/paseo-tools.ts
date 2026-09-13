@@ -979,6 +979,10 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       .describe("Create a new workspace for the agent."),
   ]);
   const commonCreateAgentFields = {
+    launchProfileId: z
+      .string()
+      .optional()
+      .describe("Historical launch profile id; does not resolve or apply profile settings."),
     title: z
       .string()
       .trim()
@@ -1463,6 +1467,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
           config: inheritedConfig,
           cwd: resolvedArgs.cwd,
           workspaceId: resolvedArgs.workspaceId,
+          launchProfileId: parsedArgs.launchProfileId,
           thinking: parsedArgs.settings?.thinkingOptionId,
           features: parsedArgs.settings?.features,
           labels: parsedArgs.labels,

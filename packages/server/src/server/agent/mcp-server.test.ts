@@ -1304,6 +1304,7 @@ describe("create_agent MCP tool", () => {
 
     await registeredTool(server, "create_agent").handler({
       title: "Top-level agent",
+      launchProfileId: "planner",
       provider: "codex/gpt-5.4",
       initialPrompt: "Do work",
       background: true,
@@ -1313,7 +1314,7 @@ describe("create_agent MCP tool", () => {
     expect(spies.agentManager.createAgent).toHaveBeenCalledWith(
       expect.objectContaining({ cwd: existingCwd }),
       undefined,
-      { workspaceId: "workspace-created" },
+      { workspaceId: "workspace-created", launchProfileId: "planner" },
     );
   });
 

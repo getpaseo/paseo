@@ -54,6 +54,7 @@ export type EnsureWorkspaceForCreate = (
 ) => Promise<string>;
 
 export interface CreateAgentFromSessionInput {
+  launchProfileId?: string;
   kind: "session";
   agentId?: string;
   config: AgentSessionConfig;
@@ -78,6 +79,7 @@ export interface CreateAgentFromSessionInput {
 }
 
 export interface CreateAgentFromMcpInput {
+  launchProfileId?: string;
   kind: "mcp";
   provider: string;
   title: string;
@@ -288,6 +290,7 @@ async function resolveSessionCreateAgent(
       // agent belongs to that workspace, not the source one. createdWorkspaceId
       // is the freshly created worktree's workspace.
       workspaceId: requireResolvedWorkspaceId(workspaceId),
+      launchProfileId: input.launchProfileId,
     },
     prompt: hasPromptContent ? prompt : undefined,
     runOptions,
@@ -320,6 +323,7 @@ async function resolveMcpCreateAgent(
   if (createdWorktree) input.onWorktreeCreated?.(createdWorktree);
 
   const intent = await resolveCreateAgentIntent({
+    launchProfileId: input.launchProfileId,
     explicitWorkspaceId: setupContinuation ? createdWorkspaceId : input.workspaceId,
     caller: parentAgent
       ? { id: parentAgent.id, cwd: parentAgent.cwd, workspaceId: parentAgent.workspaceId }
@@ -357,6 +361,7 @@ async function resolveMcpCreateAgent(
     createOptions: {
       ...(Object.keys(intent.labels).length > 0 ? { labels: intent.labels } : {}),
       workspaceId: intent.workspaceId,
+      ...(intent.launchProfileId !== undefined ? { launchProfileId: intent.launchProfileId } : {}),
       owner: input.owner,
       env: input.env,
     },

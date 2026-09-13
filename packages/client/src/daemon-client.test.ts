@@ -2578,6 +2578,7 @@ test("sends create_agent_request with workspace and caller identity", async () =
 
   const createPromise = client.createAgent({
     idempotencyKey: "one-creation",
+    launchProfileId: "planner",
     provider: "codex",
     cwd: "/tmp/project/.paseo/worktrees/feature-a",
     workspaceId: "ws-feature-a",
@@ -2592,6 +2593,7 @@ test("sends create_agent_request with workspace and caller identity", async () =
     expect.objectContaining({
       type: "create_agent_request",
       idempotencyKey: "one-creation",
+      launchProfileId: "planner",
       workspaceId: "ws-feature-a",
       callerAgentId: "parent-agent",
     }),

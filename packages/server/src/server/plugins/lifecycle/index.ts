@@ -28,7 +28,12 @@ export const lifecycleEventNames = [
 export const beforeHookNames = ["agent.create", "agent.session_open", "workspace.create"] as const;
 
 const beforeSchemas = {
-  "agent.create": CreateAgentRequestMessageSchema.pick({ config: true, env: true }).strict(),
+  "agent.create": CreateAgentRequestMessageSchema.pick({
+    config: true,
+    env: true,
+    workspaceId: true,
+    launchProfileId: true,
+  }).strict(),
   "agent.session_open": z
     .object({
       agentId: z.string(),
@@ -73,6 +78,7 @@ export function describeHookWorkspace(workspace: PersistedWorkspaceRecord): Plug
 
 export function describeHookAgent(agent: {
   id: string;
+  launchProfileId?: string;
   workspaceId?: string;
   provider: string;
   cwd: string;
@@ -81,6 +87,7 @@ export function describeHookAgent(agent: {
 }): PluginHookAgent {
   return {
     id: agent.id,
+    launchProfileId: agent.launchProfileId,
     workspaceId: agent.workspaceId ?? null,
     parentAgentId: agent.labels[PARENT_AGENT_ID_LABEL] ?? null,
     provider: agent.provider,
@@ -152,6 +159,12 @@ export function validateBeforeResult<Name extends keyof PluginBeforeRequests>(
   if (name === "agent.create") {
     const previous = beforeSchemas["agent.create"].parse(input);
     const next = beforeSchemas["agent.create"].parse(result);
+    if (
+      previous.workspaceId !== next.workspaceId ||
+      previous.launchProfileId !== next.launchProfileId
+    ) {
+      throw new Error("agent.create hooks cannot change workspaceId or launchProfileId");
+    }
     if (previous.config.cwd !== next.config.cwd) {
       throw new Error("agent.create hooks cannot change the workspace directory");
     }

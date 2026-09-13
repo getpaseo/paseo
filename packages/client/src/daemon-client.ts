@@ -370,6 +370,7 @@ export interface AgentAttentionRequiredNotification {
 type AgentConfigOverrides = Partial<Omit<AgentSessionConfig, "provider" | "cwd">>;
 
 export interface CreateAgentRequestOptions extends AgentConfigOverrides {
+  launchProfileId?: string;
   config?: AgentSessionConfig;
   provider?: AgentProvider;
   cwd?: string;
@@ -2665,6 +2666,9 @@ export class DaemonClient {
       config,
       ...(options.env ? { env: options.env } : {}),
       ...(options.workspaceId !== undefined ? { workspaceId: options.workspaceId } : {}),
+      ...(options.launchProfileId !== undefined
+        ? { launchProfileId: options.launchProfileId }
+        : {}),
       ...(options.callerAgentId !== undefined ? { callerAgentId: options.callerAgentId } : {}),
       ...(options.initialPrompt ? { initialPrompt: options.initialPrompt } : {}),
       idempotencyKey: options.idempotencyKey,
@@ -6505,6 +6509,7 @@ function resolveAgentConfig(options: CreateAgentRequestOptions): AgentSessionCon
     cwd,
     env: _env,
     workspaceId: _workspaceId,
+    launchProfileId: _launchProfileId,
     initialPrompt: _initialPrompt,
     images: _images,
     git: _git,

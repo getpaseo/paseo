@@ -279,6 +279,7 @@ type ProviderEnabledMap = Partial<Record<AgentProvider, ProviderEnabledFlag>>;
 type ProviderClientMap = Partial<Record<AgentProvider, AgentClient>>;
 
 export interface CreateAgentOptions {
+  launchProfileId?: string;
   labels?: Record<string, string>;
   initialPrompt?: string;
   env?: Record<string, string>;
@@ -371,6 +372,7 @@ interface HandleStreamEventOptions {
 
 interface ManagedAgentBase {
   id: string;
+  readonly launchProfileId?: string;
   provider: AgentProvider;
   cwd: string;
   /**
@@ -1216,6 +1218,8 @@ export class AgentManager {
       const request = await this.pluginLifecycle.before("agent.create", {
         config,
         env: options.env,
+        workspaceId: options.workspaceId,
+        launchProfileId: options.launchProfileId,
       });
       config = { ...request.config, internal: config.internal };
       options = { ...options, env: request.env };
@@ -1247,6 +1251,7 @@ export class AgentManager {
       labels: options.labels,
       initialTitle: options.initialTitle,
       workspaceId: options.workspaceId,
+      launchProfileId: options.launchProfileId,
       owner: options.owner,
       historyPrimed: true,
     });
@@ -1278,6 +1283,7 @@ export class AgentManager {
       lastUserMessageAt?: Date | null;
       labels?: Record<string, string>;
       workspaceId?: string;
+      launchProfileId?: string;
       owner?: AgentOwner;
     },
     resumeOptions?: AgentResumeSessionOptions,
@@ -1297,6 +1303,7 @@ export class AgentManager {
       lastUserMessageAt?: Date | null;
       labels?: Record<string, string>;
       workspaceId?: string;
+      launchProfileId?: string;
       owner?: AgentOwner;
     },
     resumeOptions?: AgentResumeSessionOptions,
@@ -1529,6 +1536,7 @@ export class AgentManager {
       return this.registerSession(session, storedConfig, agentId, {
         labels: existing.labels,
         workspaceId: existing.workspaceId,
+        launchProfileId: existing.launchProfileId,
         owner: existing.owner,
         createdAt: existing.createdAt,
         updatedAt: existing.updatedAt,
@@ -1832,6 +1840,7 @@ export class AgentManager {
         provider: record.provider,
         cwd: record.cwd,
         workspaceId: record.workspaceId,
+        launchProfileId: record.launchProfileId,
         owner: record.owner,
         session: null,
         capabilities: STORED_AGENT_CAPABILITIES,
@@ -3381,6 +3390,7 @@ export class AgentManager {
       initialTitle?: string | null;
       publishWhenReady?: boolean;
       workspaceId?: string;
+      launchProfileId?: string;
       owner?: AgentOwner;
     },
   ): Promise<ManagedAgent> {
@@ -3532,6 +3542,7 @@ export class AgentManager {
           attention?: AttentionState;
           persistence?: AgentPersistenceHandle;
           workspaceId?: string;
+          launchProfileId?: string;
           owner?: AgentOwner;
         }
       | undefined;
@@ -3542,6 +3553,7 @@ export class AgentManager {
       provider: config.provider,
       cwd: config.cwd,
       workspaceId: options?.workspaceId,
+      launchProfileId: options?.launchProfileId,
       owner: options?.owner,
       session,
       capabilities: session.capabilities,

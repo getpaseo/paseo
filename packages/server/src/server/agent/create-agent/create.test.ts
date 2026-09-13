@@ -84,6 +84,7 @@ test("session create forwards clientMessageId to the initial prompt run options"
     workspaceId: "ws-create-test",
     initialPrompt: "hello from create",
     clientMessageId: "msg-create-1",
+    launchProfileId: "planner",
     labels: {},
     provisionalTitle: null,
     firstAgentContext: { attachments: [] },
@@ -93,6 +94,11 @@ test("session create forwards clientMessageId to the initial prompt run options"
   expect(streamAgent).toHaveBeenCalledWith("agent-1", "hello from create", {
     clientMessageId: "msg-create-1",
   });
+  expect(dependencies.agentManager.createAgent).toHaveBeenCalledWith(
+    expect.not.objectContaining({ launchProfileId: "planner" }),
+    undefined,
+    expect.objectContaining({ launchProfileId: "planner" }),
+  );
 });
 
 test("session create validates the requested mode against the provider's modes", async () => {

@@ -103,6 +103,7 @@ function createManagedAgent(overrides: ManagedAgentOverrides = {}): ManagedAgent
     provider: core.provider,
     cwd: core.cwd,
     workspaceId: overrides.workspaceId,
+    launchProfileId: overrides.launchProfileId,
     session: core.session,
     capabilities: overrides.capabilities ?? buildDefaultCapabilities(),
     config: core.config,
@@ -152,6 +153,7 @@ describe("AgentStorage", () => {
     await storage.applySnapshot(
       createManagedAgent({
         id: "agent-1",
+        launchProfileId: "planner",
         cwd: "/tmp/project",
         currentModeId: "coding",
         lifecycle: "idle",
@@ -176,6 +178,7 @@ describe("AgentStorage", () => {
     expect(records).toHaveLength(1);
     const [record] = records;
     expect(record.provider).toBe("claude");
+    expect(record.launchProfileId).toBe("planner");
     expect(record.config?.modeId).toBe("coding");
     expect(record.config?.model).toBe("gpt-5.1");
     expect(record.config?.systemPrompt).toBe("Be terse and explicit.");
@@ -192,6 +195,8 @@ describe("AgentStorage", () => {
     const reloaded = new AgentStorage(storagePath, logger);
     const [persisted] = await reloaded.list();
     expect(persisted.cwd).toBe("/tmp/project");
+    expect(persisted.launchProfileId).toBe("planner");
+    expect(persisted.config).not.toHaveProperty("launchProfileId");
     expect(persisted.config?.providerOptions).toEqual({ allowedTools: ["Read"] });
   });
 
