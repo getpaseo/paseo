@@ -2492,9 +2492,11 @@ function ProjectModeList({
 const styles = StyleSheet.create((theme) => ({
   container: {
     flex: 1,
+    minHeight: 0,
   },
   list: {
     flex: 1,
+    minHeight: 0,
   },
   listContent: {
     paddingHorizontal: theme.spacing[2],

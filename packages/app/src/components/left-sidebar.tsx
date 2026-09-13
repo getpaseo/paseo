@@ -872,6 +872,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   sidebarContent: {
     flex: 1,
+    flexDirection: "column",
     minHeight: 0,
   },
   mobileCloseButtonRow: {
@@ -895,12 +896,15 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: theme.colors.surfaceSidebar,
   },
   desktopSidebarBorder: {
+    flexDirection: "column",
+    minHeight: 0,
     borderRightWidth: 1,
     borderRightColor: theme.colors.border,
     backgroundColor: theme.colors.surfaceSidebar,
   },
   sidebarDragArea: {
     position: "relative",
+    flexShrink: 0,
   },
   desktopChromeRow: {
     position: "relative",
@@ -930,8 +934,12 @@ const styles = StyleSheet.create((theme) => ({
     fontWeight: theme.fontWeight.medium,
   },
   sidebarFooter: {
+    position: "relative",
+    zIndex: 2,
+    elevation: 2,
     flexDirection: "row",
     alignItems: "center",
+    flexShrink: 0,
     gap: theme.spacing[2],
     paddingHorizontal: theme.spacing[2],
     paddingVertical: theme.spacing[3],
