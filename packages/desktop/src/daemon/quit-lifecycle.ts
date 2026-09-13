@@ -18,6 +18,8 @@ interface ExternalQuitSignalSource {
   on(signal: NodeJS.Signals, listener: () => void): unknown;
 }
 
+type QuitReason = "normal" | "update";
+
 interface QuitLifecycle {
   handleBeforeQuit(event: BeforeQuitEvent): void;
   handleBeforeQuitForUpdate(): void;
@@ -52,15 +54,29 @@ export function registerExternalQuitSignals({
   }
 }
 
-export function shouldStopDesktopManagedDaemonOnQuit(settings: QuitLifecycleSettings): boolean {
+/**
+ * Determines whether the daemon should be stopped on quit.
+ *
+ * During an update quit, the daemon is always stopped (regardless of user
+ * setting) to release file handles before the installer runs. During a
+ * normal quit, the user's `keepRunningAfterQuit` preference is respected.
+ */
+export function shouldStopDesktopManagedDaemonOnQuit(
+  settings: QuitLifecycleSettings,
+  reason: QuitReason,
+): boolean {
+  if (reason === "update") {
+    return true;
+  }
   return !settings.daemon.keepRunningAfterQuit;
 }
 
 export async function stopDesktopManagedDaemonOnQuitIfNeeded(
   deps: StopOnQuitDeps,
+  reason: QuitReason = "normal",
 ): Promise<boolean> {
   const settings = await deps.settingsStore.get();
-  if (!shouldStopDesktopManagedDaemonOnQuit(settings)) {
+  if (!shouldStopDesktopManagedDaemonOnQuit(settings, reason)) {
     return false;
   }
 
@@ -102,7 +118,7 @@ export function createQuitLifecycle({
 }: {
   app: BeforeQuitApp;
   closeTransportSessions: () => void;
-  stopDesktopManagedDaemonIfNeeded: () => Promise<boolean>;
+  stopDesktopManagedDaemonIfNeeded: (reason: QuitReason) => Promise<boolean>;
   installAppUpdateOnQuit: (signal: AbortSignal) => Promise<boolean>;
   createUpdateDeadlineSignal: () => AbortSignal;
   onStopError: (error: unknown) => void;
@@ -112,12 +128,11 @@ export function createQuitLifecycle({
   // update re-fires app.quit(); otherwise app.exit(0) bypasses Electron's macOS
   // window-all-closed handler, which would veto that second quit.
   let quitting = false;
-  let quittingForUpdate = false;
+  let quitReason: QuitReason = "normal";
   const updateQuit = createDeferredUpdateQuit();
 
   function handleBeforeQuit(event: BeforeQuitEvent): void {
     closeTransportSessions();
-    if (quittingForUpdate) return;
     if (quitting) {
       // MacUpdater's no-relaunch path calls app.quit() without emitting
       // before-quit-for-update. A second quit is equivalent handoff evidence.
@@ -129,7 +144,7 @@ export function createQuitLifecycle({
 
     void (async () => {
       try {
-        await stopDesktopManagedDaemonIfNeeded();
+        await stopDesktopManagedDaemonIfNeeded(quitReason);
       } catch (error) {
         onStopError(error);
       }
@@ -160,7 +175,7 @@ export function createQuitLifecycle({
   return {
     handleBeforeQuit,
     handleBeforeQuitForUpdate() {
-      quittingForUpdate = true;
+      quitReason = "update";
       updateQuit.resolve();
     },
   };

@@ -918,12 +918,62 @@ async function runCliPassthroughIfRequested(): Promise<boolean> {
   return true;
 }
 
+/**
+ * Check for and install any pending update before the app fully starts.
+ * This runs before daemon/window/IPC initialization so no file handles are
+ * held when the NSIS installer launches.
+ *
+ * This implements the "install on next launch" pattern for electron-updater
+ * versions that don't have the `autoInstallEvent`/`installPendingUpdateIfAvailable`
+ * APIs. When a previous session downloaded an update but didn't install it
+ * (e.g. user closed the update prompt), we detect the installer and run it now
+ * before any Paseo processes hold file handles.
+ */
+function installPendingUpdateBeforeStartup(): boolean {
+  if (!app.isPackaged) {
+    return false;
+  }
+
+  try {
+    const installerPath = (electronAutoUpdater as unknown as { installerPath: string | null }).installerPath;
+    if (!installerPath) {
+      return false;
+    }
+
+    log.info("[auto-updater] pending update installer found, installing before startup", {
+      installerPath,
+    });
+
+    // Run installer (not silent) and force run the app after install.
+    // This call spawns the NSIS installer and exits the current process.
+    const installed = (
+      electronAutoUpdater as unknown as {
+        install: (isSilent: boolean, isForceRunAfter: boolean) => boolean;
+      }
+    ).install(false, true);
+
+    if (installed) {
+      log.info("[auto-updater] pending update installation started, app will restart");
+    }
+    return installed;
+  } catch (error) {
+    log.error("[auto-updater] failed to install pending update", error);
+    return false;
+  }
+}
+
 async function bootstrap(): Promise<void> {
   if (!setupSingleInstanceLock()) {
     return;
   }
 
   await app.whenReady();
+
+  // Install any pending update before initializing the daemon, windows, or IPC.
+  // This ensures the installer runs when no Paseo processes hold file handles.
+  if (installPendingUpdateBeforeStartup()) {
+    return;
+  }
 
   const appDistDir = getAppDistDir();
   protocol.handle(APP_SCHEME, (request) => {
@@ -1029,13 +1079,16 @@ function showDaemonShutdownDialog(): void {
 const quitLifecycle = createQuitLifecycle({
   app,
   closeTransportSessions: closeAllTransportSessions,
-  stopDesktopManagedDaemonIfNeeded: () =>
-    stopDesktopManagedDaemonOnQuitIfNeeded({
-      settingsStore: getDesktopSettingsStore(),
-      isDesktopManagedDaemonRunning: isDesktopManagedDaemonRunningSync,
-      stopDaemon: () => stopDesktopDaemonViaCli("quit"),
-      showShutdownFeedback: showDaemonShutdownDialog,
-    }),
+  stopDesktopManagedDaemonIfNeeded: (reason) =>
+    stopDesktopManagedDaemonOnQuitIfNeeded(
+      {
+        settingsStore: getDesktopSettingsStore(),
+        isDesktopManagedDaemonRunning: isDesktopManagedDaemonRunningSync,
+        stopDaemon: () => stopDesktopDaemonViaCli("quit"),
+        showShutdownFeedback: showDaemonShutdownDialog,
+      },
+      reason,
+    ),
   installAppUpdateOnQuit: async (signal) => {
     const settings = await getDesktopSettingsStore().get();
     return installAppUpdateOnQuit({
