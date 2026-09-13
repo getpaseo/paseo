@@ -34,6 +34,28 @@ test("plan actions keep exact context, isolate errors, lock remotely, and overfl
     await expect(bar.getByRole("button")).toHaveText(["Copy", "Revue", "Hand off", "Approve"]);
     await review.click();
     await expect(bar.getByRole("alert")).toContainText("Review unavailable; retry");
+    const reviewError = await bar.getByRole("alert").innerText();
+    const clipboardSupports = await page.evaluateHandle(() => ClipboardItem.supports);
+    try {
+      for (const [message, expected] of [
+        ["Clipboard unavailable", `${reviewError} · Clipboard unavailable`],
+        [reviewError, reviewError],
+      ]) {
+        // Fail at the browser clipboard boundary; keep the host action and state real.
+        await page.evaluate((reason) => {
+          ClipboardItem.supports = () => {
+            throw new Error(reason);
+          };
+        }, message);
+        await bar.getByRole("button", { name: "Copy", exact: true }).click();
+        await expect(bar.getByRole("alert")).toHaveText(expected);
+      }
+    } finally {
+      await page.evaluate((supports) => {
+        ClipboardItem.supports = supports;
+      }, clipboardSupports);
+      await clipboardSupports.dispose();
+    }
     await expect(approve).toBeEnabled();
     await review.click();
     await expect(review).toHaveAttribute("aria-busy", "true");

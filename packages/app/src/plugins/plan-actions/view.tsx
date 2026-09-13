@@ -181,8 +181,7 @@ export function PlanActions({
     Boolean(action.disabled) || (action.id === "copy" ? state.copying : state.pending !== null);
   const overflow = actions.filter((action) => action.overflow);
   const status =
-    state.error ??
-    state.copyError ??
+    [...new Set([state.error, state.copyError].filter(Boolean))].join(" · ") ||
     actions
       .filter((action) => action.disabledReason)
       .map((action) => action.disabledReason)
