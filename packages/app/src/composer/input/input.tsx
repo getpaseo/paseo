@@ -929,6 +929,7 @@ function sendMessageImpl(ctx: SendMessageContext): void {
   }
   ctx.onSubmit({
     text: trimmed,
+    rawText: ctx.value,
     attachments: ctx.attachments,
     cwd: ctx.cwd,
     forceSend: ctx.isAgentRunning || undefined,

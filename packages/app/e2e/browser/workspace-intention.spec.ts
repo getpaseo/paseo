@@ -71,7 +71,7 @@ test("intention creates an empty workspace, persists an unsent Router draft and 
     await openNewWorkspaceComposer(page, project);
     await selectWorkspaceIsolation(page, "local");
     await selectLaunchOption(page, "intention");
-    const intention = "Build a calendar\nwith holidays";
+    const intention = "  Build a calendar\n  ";
     await fillNewWorkspaceDraft(page, intention);
     await page.getByTestId("workspace-create-submit").click();
     await page.waitForURL((url) => url.pathname.includes("/workspace/"));
@@ -120,7 +120,7 @@ test("intention creates an empty workspace, persists an unsent Router draft and 
       .toBe(1);
     expect(requests.find((request) => request.type === "create_agent_request")).toMatchObject({
       launchProfileId: "paseo-workflow-router",
-      initialPrompt: intention,
+      initialPrompt: intention.trim(),
       config: { provider: "mock", model: "ten-second-stream" },
     });
     await expect

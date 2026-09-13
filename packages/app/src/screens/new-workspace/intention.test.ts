@@ -19,7 +19,12 @@ describe("workspace intention", () => {
     const saveDraft = vi.fn();
     const openDraft = vi.fn();
     await runCreateIntentionWorkspace({
-      payload: { cwd: "/repo", text: "  Build a calendar\nwith holidays  ", attachments: [] },
+      payload: {
+        cwd: "/repo",
+        text: "Build a calendar",
+        rawText: "  Build a calendar\n  ",
+        attachments: [],
+      },
       ensureWorkspace,
       draftId: "draft-router",
       profile: {
@@ -38,10 +43,10 @@ describe("workspace intention", () => {
       prompt: "",
       attachments: [],
       withInitialAgent: false,
-      intent: "  Build a calendar\nwith holidays  ",
+      intent: "  Build a calendar\n  ",
     });
     expect(saveDraft).toHaveBeenCalledExactlyOnceWith({
-      text: "  Build a calendar\nwith holidays  ",
+      text: "  Build a calendar\n  ",
       attachments: [],
     });
     const target = {

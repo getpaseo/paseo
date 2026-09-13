@@ -1442,10 +1442,10 @@ function ComposerContentImpl({
   }, [focusInput, onFocusInput]);
 
   const submitMessage = useCallback(
-    async (text: string, submitAttachments: ComposerAttachment[]) => {
+    async (text: string, submitAttachments: ComposerAttachment[], rawText?: string) => {
       onMessageSent?.();
       if (onSubmitMessageRef.current) {
-        await onSubmitMessageRef.current({ text, attachments: submitAttachments, cwd });
+        await onSubmitMessageRef.current({ text, rawText, attachments: submitAttachments, cwd });
         return;
       }
       if (!sendAgentMessageRef.current) {
@@ -1582,7 +1582,7 @@ function ComposerContentImpl({
           if (submitBehavior !== "preserve-and-lock") {
             beginSubmit(submitAttachments);
           }
-          await submitMessage(submitText, submitAttachments);
+          await submitMessage(submitText, submitAttachments, outgoingMessage);
         },
         clearDraft,
         setUserInput: replaceUserInput,
@@ -1637,7 +1637,11 @@ function ComposerContentImpl({
       if (blurOnSubmit) {
         messageInputRef.current?.blur();
       }
-      void sendMessageWithContent(payload.text, outgoingAttachments, payload.forceSend);
+      void sendMessageWithContent(
+        payload.rawText ?? payload.text,
+        outgoingAttachments,
+        payload.forceSend,
+      );
     },
     [
       attachments,

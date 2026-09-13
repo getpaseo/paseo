@@ -36,17 +36,18 @@ export async function runCreateIntentionWorkspace(input: {
   if (!input.profile || input.profile.id !== ROUTER_LAUNCH_PROFILE_ID) {
     throw new Error("Router profile is unavailable");
   }
-  if (!input.payload.text.trim()) throw new Error("Intention is required");
+  const intention = input.payload.rawText ?? input.payload.text;
+  if (!intention.trim()) throw new Error("Intention is required");
   const profile = input.profile;
   const workspace = await input.ensureWorkspace({
     cwd: input.payload.cwd,
     prompt: "",
     attachments: [],
     withInitialAgent: false,
-    intent: input.payload.text,
+    intent: intention,
   });
   input.saveDraft({
-    text: input.payload.text,
+    text: intention,
     attachments: composerWorkspaceAttachment.userAttachmentsOnly(input.payload.attachments),
   });
   input.openDraft(workspace.id, {
