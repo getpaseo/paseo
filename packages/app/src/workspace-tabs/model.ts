@@ -3,6 +3,7 @@ import type { JsonValue } from "@getpaseo/protocol/agent-types";
 import type { WorkspaceFileTabTarget } from "@/workspace/file-open";
 
 export interface WorkspaceDraftTabSetup {
+  launchProfileId?: string;
   provider: AgentProvider;
   cwd: string;
   modeId: string | null;

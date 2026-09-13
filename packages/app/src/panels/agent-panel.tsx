@@ -70,6 +70,8 @@ import { definePanel, type PanelDescriptor } from "@/panels/panel-registry";
 import { RenderProfile } from "@/utils/render-profiler";
 import { useHasPluginComposerPills } from "@/plugins";
 import { buildDraftPanelDescriptor } from "@/panels/draft-panel-descriptor";
+import { useAgentProfiles } from "@/agent-profiles";
+import type { WorkspaceDraftTabSetup } from "@/workspace-tabs/model";
 import {
   type HostRuntimeConnectionStatus,
   getHostRuntimeConnectionStatusSince,
@@ -449,9 +451,10 @@ export const agentPanelRegistration = definePanel("agent", {
 });
 
 export function useDraftPanelDescriptor(
-  target: { kind: "draft"; draftId: string },
+  target: { kind: "draft"; draftId: string; setup?: WorkspaceDraftTabSetup },
   context: { serverId: string },
 ) {
+  const { profiles } = useAgentProfiles(context.serverId);
   const createDescriptorState = useCreateFlowStore(
     useShallow((state) => {
       const pending = state.pendingByDraftId[target.draftId];
@@ -469,6 +472,7 @@ export function useDraftPanelDescriptor(
   );
 
   return buildDraftPanelDescriptor({
+    profileName: profiles?.find((profile) => profile.id === target.setup?.launchProfileId)?.name,
     ...createDescriptorState,
     icon: SquarePen,
   });

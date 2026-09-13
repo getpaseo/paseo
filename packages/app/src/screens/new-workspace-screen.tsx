@@ -56,7 +56,14 @@ import {
 } from "@/stores/navigation-active-workspace-store";
 import { normalizeWorkspaceDescriptor, type WorkspaceDescriptor } from "@/stores/session-store";
 import { useWorkspace } from "@/stores/session-store-hooks";
-import { buildNewWorkspaceDraftKey, generateDraftId } from "@/stores/draft-keys";
+import {
+  buildDraftStoreKey,
+  buildNewWorkspaceDraftKey,
+  generateDraftId,
+} from "@/stores/draft-keys";
+import { useDraftStore, flushDraftPersistStorage } from "@/stores/draft-store";
+import { materializeAgentProfile } from "@/agent-profiles";
+import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 import { useOpenAddProject } from "@/hooks/use-open-add-project";
 import { isActiveCreateFlowForDraft, useCreateFlowStore } from "@/stores/create-flow-store";
 import {
@@ -96,7 +103,12 @@ import type {
 } from "@getpaseo/client/internal/daemon-client";
 import type { AgentProvider } from "@getpaseo/protocol/agent-types";
 import type { WorkspaceDraftTabSetup, WorkspaceTabTarget } from "@/workspace-tabs/model";
-import { isEmptyWorkspaceSubmission, runCreateEmptyWorkspace } from "./new-workspace-empty";
+import {
+  isEmptyWorkspaceSubmission,
+  runCreateEmptyWorkspace,
+  runCreateIntentionWorkspace,
+  ROUTER_LAUNCH_PROFILE_ID,
+} from "./new-workspace-empty";
 import {
   getWorkspaceNamingAttachments,
   remapDraftCwdToWorkspace,
@@ -821,6 +833,7 @@ async function createAndMergeWorkspace(input: {
 }
 
 async function createMultiplicityWorkspace(input: {
+  intent?: string;
   client: NonNullable<ReturnType<typeof useHostRuntimeClient>>;
   isolation: "local" | "worktree";
   project: HostProjectListItem;
@@ -844,6 +857,7 @@ async function createMultiplicityWorkspace(input: {
     attachments: input.attachments,
   });
   const payload = await input.client.createWorkspace({
+    ...(input.intent !== undefined ? { intent: input.intent } : {}),
     source: isWorktree
       ? {
           kind: "worktree",
@@ -1388,6 +1402,7 @@ interface NewWorkspaceFormStackInput {
     showRefPicker: boolean;
   };
   launch: {
+    supportsWorkspaceIntent: boolean;
     serverId: string;
     target: LaunchTarget;
     onChange: (target: LaunchTarget) => void;
@@ -1567,6 +1582,7 @@ function useNewWorkspaceFormStack(input: NewWorkspaceFormStackInput): ReactEleme
       target={launch.target}
       onChange={launch.onChange}
       profiles={launch.profiles}
+      supportsWorkspaceIntent={launch.supportsWorkspaceIntent}
       disabled={launch.disabled}
       badgePressableStyle={badgePressableStyle}
     />
@@ -1633,6 +1649,7 @@ export function NewWorkspaceScreen({
   });
   // COMPAT(workspaceMultiplicity): added in v0.1.97, drop the gate when floor >= v0.1.97
   const supportsWorkspaceMultiplicity = useHostFeature(selectedServerId, "workspaceMultiplicity");
+  const supportsWorkspaceIntent = useHostFeature(selectedServerId, "workspaceIntent");
   const supportsForgeSearch = useHostFeature(selectedServerId, "forgeSearch");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [createdWorkspace, setCreatedWorkspace] = useState<ReturnType<
@@ -1670,8 +1687,13 @@ export function NewWorkspaceScreen({
   // daemon-side falls back to chat rather than leaving a dead selection.
   const [manualLaunchTarget, setManualLaunchTarget] = useState<LaunchTarget | null>(null);
   const launchTarget = useMemo(
-    () => resolveLaunchTarget(manualLaunchTarget ?? formPreferences.launchTarget, terminalProfiles),
-    [manualLaunchTarget, formPreferences.launchTarget, terminalProfiles],
+    () =>
+      resolveLaunchTarget(
+        manualLaunchTarget ?? formPreferences.launchTarget,
+        terminalProfiles,
+        supportsWorkspaceIntent,
+      ),
+    [manualLaunchTarget, formPreferences.launchTarget, terminalProfiles, supportsWorkspaceIntent],
   );
   const [terminalPromptText, setTerminalPromptText] = useState("");
   const {
@@ -2027,6 +2049,7 @@ export function NewWorkspaceScreen({
 
   const ensureWorkspace = useCallback(
     async (input: {
+      intent?: string;
       cwd: string;
       prompt: string;
       attachments: AgentAttachment[];
@@ -2064,6 +2087,7 @@ export function NewWorkspaceScreen({
             sourceDirectory: selectedSourceDirectory,
             checkoutRequest,
             withInitialAgent: input.withInitialAgent,
+            intent: input.intent,
             prompt: input.prompt,
             attachments: input.attachments,
             mergeWorkspaces,
@@ -2096,12 +2120,57 @@ export function NewWorkspaceScreen({
     ],
   );
 
+  const clearChatDraft = chatDraft.clear;
   const handleSubmitNewWorkspace = useCallback(
     async (payload: MessagePayload) => {
       try {
         setErrorMessage(null);
         await composerState?.persistFormPreferences();
         await updateFormPreferences({ launchTarget });
+        if (launchTarget.kind === "intention") {
+          if (!supportsWorkspaceIntent) throw new Error(t("newWorkspace.intention.unavailable"));
+          const profile = daemonConfig?.agentProfiles?.find(
+            (candidate) => candidate.id === ROUTER_LAUNCH_PROFILE_ID,
+          );
+          if (!profile) throw new Error(t("newWorkspace.intention.profileUnavailable"));
+          if (!payload.text.trim()) throw new Error(t("newWorkspace.intention.required"));
+          const clearConsumedDraft = captureWorkspaceDraftCleanup({
+            draftId,
+            draftKey,
+            draftContextScopeKey,
+            clearDraft: clearChatDraft,
+          });
+          setPendingAction("empty");
+          const routerDraftId = generateDraftId();
+          await runCreateIntentionWorkspace({
+            payload,
+            ensureWorkspace,
+            draftId: routerDraftId,
+            profile: { ...materializeAgentProfile(profile), id: profile.id },
+            saveDraft: (draft) =>
+              useDraftStore.getState().saveDraftInput({
+                draftKey: buildDraftStoreKey({
+                  serverId: selectedServerId,
+                  agentId: routerDraftId,
+                  draftId: routerDraftId,
+                }),
+                draft,
+              }),
+            openDraft: (workspaceId, target) => {
+              useWorkspaceLayoutStore.getState().openTab({
+                workspaceKey: `${selectedServerId}:${workspaceId}`,
+                target,
+                intent: "background",
+              });
+              if (isStillOnCreateScreen())
+                navigateToWorkspace({ serverId: selectedServerId, workspaceId, target });
+            },
+          });
+          await flushDraftPersistStorage();
+          clearConsumedDraft();
+          setPendingAction(null);
+          return;
+        }
         if (isEmptyWorkspaceSubmission(payload)) {
           setPendingAction("empty");
           let outcome: SubmitOutcome = "background";
@@ -2156,9 +2225,12 @@ export function NewWorkspaceScreen({
     },
     [
       composerState,
+      daemonConfig,
+      supportsWorkspaceIntent,
       draftContextScopeKey,
       draftId,
       chatDraft.clear,
+      clearChatDraft,
       draftKey,
       ensureWorkspace,
       forkDraftSetup,
@@ -2289,13 +2361,13 @@ export function NewWorkspaceScreen({
 
   const agentControlsWithDisabled = useMemo(
     () =>
-      composerState
+      composerState && launchTarget.kind !== "intention"
         ? {
             ...composerState.agentControls,
             disabled: isPending,
           }
         : undefined,
-    [composerState, isPending],
+    [composerState, isPending, launchTarget.kind],
   );
 
   const pickerEmptyText =
@@ -2357,6 +2429,7 @@ export function NewWorkspaceScreen({
       showRefPicker,
     },
     launch: {
+      supportsWorkspaceIntent,
       serverId: selectedServerId,
       target: launchTarget,
       onChange: setManualLaunchTarget,
@@ -2413,7 +2486,7 @@ export function NewWorkspaceScreen({
               serverId={selectedServerId}
               isPaneFocused={true}
               onSubmitMessage={handleSubmitNewWorkspace}
-              allowEmptySubmit={true}
+              allowEmptySubmit={launchTarget.kind !== "intention"}
               submitButtonAccessibilityLabel={t("newWorkspace.create")}
               submitButtonTestID="workspace-create-submit"
               submitIcon="return"

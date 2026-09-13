@@ -1225,6 +1225,14 @@ export const ko: TranslationResources = {
     },
   },
   newWorkspace: {
+    intention: {
+      save: "저장",
+      label: "의도",
+      edit: "의도 편집",
+      required: "의도를 입력하세요.",
+      unavailable: "의도를 사용하려면 호스트를 업데이트하세요.",
+      profileUnavailable: "이 호스트에서 Router 프로필을 설정하세요.",
+    },
     title: "새 워크스페이스",
     create: "생성",
     isolation: {

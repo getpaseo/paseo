@@ -4,11 +4,12 @@ import type { PanelDescriptor, PanelIconProps } from "@/panels/panel-registry";
 
 export function buildDraftPanelDescriptor(input: {
   isCreating: boolean;
+  profileName?: string;
   pendingPrompt?: string | null;
   icon: ComponentType<PanelIconProps>;
 }): PanelDescriptor {
   const { icon, isCreating, pendingPrompt } = input;
-  const newAgentLabel = i18n.t("panels.draft.newAgent");
+  const newAgentLabel = input.profileName || i18n.t("panels.draft.newAgent");
   const creatingLabel = pendingPrompt?.trim() || newAgentLabel;
   if (isCreating) {
     return {

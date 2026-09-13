@@ -6,6 +6,7 @@ import type { UserMessageImageAttachment } from "@/types/stream";
 
 export interface WorkspaceDraftAgentRequest {
   workspaceId: string;
+  launchProfileId?: string;
   config: AgentSessionConfig;
   text: string;
   clientMessageId: string;
@@ -25,6 +26,7 @@ export async function requestWorkspaceDraftAgent(
   return await client.createAgent({
     config: request.config,
     workspaceId: request.workspaceId,
+    ...(request.launchProfileId ? { launchProfileId: request.launchProfileId } : {}),
     clientMessageId: request.clientMessageId,
     ...(request.text ? { initialPrompt: request.text } : {}),
     ...(images && images.length > 0 ? { images } : {}),

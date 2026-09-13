@@ -41,7 +41,7 @@ export interface ResolveTerminalComposerStateInput {
 }
 
 function launchKey(target: LaunchTarget): string {
-  return target.kind === "chat" ? "chat" : `terminal:${target.profileId}`;
+  return target.kind === "terminal" ? `terminal:${target.profileId}` : target.kind;
 }
 
 export function resolveTerminalComposerState(

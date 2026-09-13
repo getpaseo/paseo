@@ -1252,6 +1252,14 @@ export const fr: TranslationResources = {
     },
   },
   newWorkspace: {
+    intention: {
+      save: "Enregistrer",
+      label: "Intention",
+      edit: "Modifier l’intention",
+      required: "Saisissez une intention.",
+      unavailable: "Mettez l’hôte à jour pour utiliser les intentions.",
+      profileUnavailable: "Configurez le profil Routeur sur cet hôte.",
+    },
     title: "Nouvel espace de travail",
     create: "Créer",
     isolation: {

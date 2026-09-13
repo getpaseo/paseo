@@ -83,6 +83,7 @@ export interface LaunchControlProps {
   onChange: (target: LaunchTarget) => void;
   profiles: readonly TerminalProfile[];
   disabled?: boolean;
+  supportsWorkspaceIntent?: boolean;
   /**
    * The meta row's shared badge style. Passed in rather than redeclared so this
    * trigger stays pixel-identical to the project, host, and branch triggers it
@@ -98,7 +99,7 @@ function TriggerIcon({
   target: LaunchTarget;
   profile: TerminalProfile | null;
 }): ReactElement {
-  if (target.kind === "chat") {
+  if (target.kind !== "terminal") {
     return <ThemedMessageCircle size={ICON_SIZE.sm} uniProps={mutedColorMapping} />;
   }
   if (profile) {
@@ -119,6 +120,7 @@ export function LaunchControl({
   onChange,
   profiles,
   disabled = false,
+  supportsWorkspaceIntent = false,
   badgePressableStyle,
 }: LaunchControlProps) {
   const { t } = useTranslation();
@@ -131,10 +133,16 @@ export function LaunchControl({
   // reading "(openai logo) Codex" is indistinguishable from a chat Codex agent.
   // Leading with the noun fixes that, and de-emphasising the profile name keeps
   // "Terminal" the thing you read first.
-  const triggerLabel =
-    target.kind === "chat" ? t("newWorkspace.launch.chat") : t("newWorkspace.launch.terminal");
+  const triggerLabel = t(
+    {
+      intention: "newWorkspace.intention.label",
+      chat: "newWorkspace.launch.chat",
+      terminal: "newWorkspace.launch.terminal",
+    }[target.kind],
+  );
 
   const selectChat = useCallback(() => onChange(CHAT_LAUNCH_TARGET), [onChange]);
+  const selectIntention = useCallback(() => onChange({ kind: "intention" }), [onChange]);
   const selectBlankTerminal = useCallback(
     () => onChange(terminalLaunchTarget(BLANK_TERMINAL_PROFILE_ID)),
     [onChange],
@@ -201,6 +209,16 @@ export function LaunchControl({
         >
           {t("newWorkspace.launch.chat")}
         </DropdownMenuItem>
+        {supportsWorkspaceIntent ? (
+          <DropdownMenuItem
+            testID="new-workspace-launch-option-intention"
+            onSelect={selectIntention}
+            selected={target.kind === "intention"}
+            leading={chatIcon}
+          >
+            {t("newWorkspace.intention.label")}
+          </DropdownMenuItem>
+        ) : null}
         <DropdownMenuLabel>{t("newWorkspace.launch.terminal")}</DropdownMenuLabel>
         <DropdownMenuItem
           testID="new-workspace-launch-option-blank"

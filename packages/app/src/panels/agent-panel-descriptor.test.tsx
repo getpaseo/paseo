@@ -7,6 +7,11 @@ function TestIcon() {
 }
 
 describe("buildDraftPanelDescriptor", () => {
+  it("labels an unsent profile draft with the selected profile", () => {
+    expect(
+      buildDraftPanelDescriptor({ isCreating: false, icon: TestIcon, profileName: "Router" }).label,
+    ).toBe("Router");
+  });
   it("uses the initial prompt title and running loader bucket during create", () => {
     const descriptor = buildDraftPanelDescriptor({
       isCreating: true,

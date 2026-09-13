@@ -70,6 +70,7 @@ const COMPACT_HEADER_BUTTON_HIT_SLOP = { top: 8, bottom: 8 } as const;
  * from the same callbacks, so the two surfaces can't drift.
  */
 export interface WorkspaceHeaderWorkspaceActions {
+  onEditIntention?: () => void;
   currentBranchName: string | null;
   showWorkspaceSetup: boolean;
   importAgentDisabled: boolean;
@@ -81,6 +82,7 @@ export interface WorkspaceHeaderWorkspaceActions {
 }
 
 function WorkspaceHeaderWorkspaceActionItems({
+  onEditIntention,
   currentBranchName,
   showWorkspaceSetup,
   importAgentDisabled,
@@ -93,6 +95,15 @@ function WorkspaceHeaderWorkspaceActionItems({
   const { t } = useTranslation();
   return (
     <>
+      {onEditIntention ? (
+        <DropdownMenuItem
+          testID="workspace-header-edit-intention"
+          leading={MENU_NEW_AGENT_ICON}
+          onSelect={onEditIntention}
+        >
+          {t("newWorkspace.intention.edit")}
+        </DropdownMenuItem>
+      ) : null}
       <DropdownMenuItem
         testID="workspace-header-copy-path"
         leading={MENU_COPY_ICON}

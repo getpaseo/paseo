@@ -1207,6 +1207,14 @@ export const zhCN: TranslationResources = {
     },
   },
   newWorkspace: {
+    intention: {
+      save: "保存",
+      label: "意图",
+      edit: "编辑意图",
+      required: "请输入意图。",
+      unavailable: "更新主机以使用意图。",
+      profileUnavailable: "请在此主机上配置 Router 配置文件。",
+    },
     title: "新建 workspace",
     create: "创建",
     isolation: {

@@ -1230,6 +1230,14 @@ export const ja: TranslationResources = {
     },
   },
   newWorkspace: {
+    intention: {
+      save: "保存",
+      label: "意図",
+      edit: "意図を編集",
+      required: "意図を入力してください。",
+      unavailable: "意図を使うにはホストを更新してください。",
+      profileUnavailable: "このホストで Router プロファイルを設定してください。",
+    },
     title: "新しいワークスペース",
     create: "作成",
     isolation: {

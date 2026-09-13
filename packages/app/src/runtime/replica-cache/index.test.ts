@@ -269,6 +269,20 @@ describe("ReplicaCache", () => {
     expect(restoredTimeline).toEqual(timeline());
   });
 
+  it("round-trips workspace intention across reload", async () => {
+    const storage = new MemoryStorage();
+    const writer = createCache(storage);
+    const snapshot = directory();
+    snapshot.workspaces.set(
+      "workspace-1",
+      normalizeWorkspaceDescriptor({ ...workspacePayload(), intent: "Calendar for the team" }),
+    );
+    commitDirectory(writer, SERVER_ID, snapshot);
+    await writer.flush();
+    const restored = await createCache(storage).readWorkspace(SERVER_ID, "workspace-1");
+    expect(restored?.workspace.intent).toBe("Calendar for the team");
+  });
+
   it("preserves pending timeline updates across directory baseline replacement", async () => {
     const storage = new MemoryStorage();
     const writer = createCache(storage);

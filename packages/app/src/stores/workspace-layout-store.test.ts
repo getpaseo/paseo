@@ -43,6 +43,33 @@ import {
 const SERVER_ID = "server-1";
 const WORKSPACE_ID = "ws-main";
 
+it("round-trips the Router draft launch profile across reload", async () => {
+  const writer = createWorkspaceLayoutStore(createDeterministicWorkspaceLayoutIds());
+  await writer.persist.rehydrate();
+  const workspaceKey = "router:workspace";
+  const target = {
+    kind: "draft",
+    draftId: "router-draft",
+    setup: {
+      provider: "mock",
+      cwd: "/repo",
+      modeId: null,
+      model: "ten-second-stream",
+      thinkingOptionId: null,
+      featureValues: {},
+      launchProfileId: "paseo-workflow-router",
+    },
+  } as const;
+  writer.getState().openTab({ workspaceKey, target, intent: "new" });
+  await vi.waitFor(async () =>
+    expect(await AsyncStorage.getItem("workspace-layout-state")).toContain("paseo-workflow-router"),
+  );
+  const reader = createWorkspaceLayoutStore(createDeterministicWorkspaceLayoutIds());
+  await reader.persist.rehydrate();
+  const layout = reader.getState().layoutByWorkspace[workspaceKey];
+  expect(layout && collectAllTabs(layout.root).map((tab) => tab.target)).toContainEqual(target);
+});
+
 function createDeterministicWorkspaceLayoutIds() {
   let values: string[] = [];
   let fallbackIndex = 0;

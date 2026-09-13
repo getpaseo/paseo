@@ -1243,6 +1243,14 @@ export const ptBR: TranslationResources = {
     },
   },
   newWorkspace: {
+    intention: {
+      save: "Salvar",
+      label: "Intenção",
+      edit: "Editar intenção",
+      required: "Insira uma intenção.",
+      unavailable: "Atualize o host para usar intenções.",
+      profileUnavailable: "Configure o perfil Router neste host.",
+    },
     title: "Novo workspace",
     create: "Criar",
     isolation: {

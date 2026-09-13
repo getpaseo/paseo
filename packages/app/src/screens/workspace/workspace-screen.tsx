@@ -1,4 +1,6 @@
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
+import { WorkspaceIntentionEditor } from "./workspace-intention-editor";
+import { useHostFeature } from "@/runtime/host-features";
 import type { JsonValue } from "@getpaseo/protocol/agent-types";
 import { getOpenAgentTabLabel } from "@getpaseo/protocol/agent-labels";
 import {
@@ -1004,8 +1006,19 @@ function WorkspaceHeaderTitleBar({
   onViewScriptTerminal,
   onOpenUrlInBrowserTab,
 }: WorkspaceHeaderTitleBarProps) {
+  const supportsWorkspaceIntent = useHostFeature(normalizedServerId, "workspaceIntent");
+  const [editingIntention, setEditingIntention] = useState(false);
+  const editIntention = useCallback(() => setEditingIntention(true), []);
+  const closeIntention = useCallback(() => setEditingIntention(false), []);
   return (
     <View style={styles.headerTitleContainer}>
+      {editingIntention && supportsWorkspaceIntent ? (
+        <WorkspaceIntentionEditor
+          serverId={normalizedServerId}
+          workspaceId={normalizedWorkspaceId}
+          onClose={closeIntention}
+        />
+      ) : null}
       {isLoading ? (
         <View style={styles.headerTitleTextGroup}>
           <View style={styles.headerTitleSkeleton} />
@@ -1023,6 +1036,7 @@ function WorkspaceHeaderTitleBar({
       <View style={styles.compactHeaderMenuCluster}>
         {isMobile ? (
           <WorkspaceHeaderMenuMobile
+            onEditIntention={supportsWorkspaceIntent ? editIntention : undefined}
             normalizedServerId={normalizedServerId}
             currentBranchName={currentBranchName}
             showWorkspaceSetup={showWorkspaceSetup}
@@ -1041,6 +1055,7 @@ function WorkspaceHeaderTitleBar({
           />
         ) : (
           <WorkspaceHeaderMenuDesktop
+            onEditIntention={supportsWorkspaceIntent ? editIntention : undefined}
             currentBranchName={currentBranchName}
             showWorkspaceSetup={showWorkspaceSetup}
             importAgentDisabled={importAgentDisabled}

@@ -1227,6 +1227,14 @@ export const en = {
     },
   },
   newWorkspace: {
+    intention: {
+      save: "Save",
+      label: "Intention",
+      edit: "Edit intention",
+      required: "Enter an intention.",
+      unavailable: "Update the host to use intentions.",
+      profileUnavailable: "Configure the Router profile on this host.",
+    },
     title: "New workspace",
     create: "Create",
     isolation: {

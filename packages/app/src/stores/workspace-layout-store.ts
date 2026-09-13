@@ -177,6 +177,7 @@ interface WorkspaceFocusRestorationState {
 const MAX_TREE_DEPTH = 5;
 
 const WorkspaceDraftTabSetupStorageSchema = z.strictObject({
+  launchProfileId: z.string().optional(),
   provider: z.string(),
   cwd: z.string(),
   modeId: z.string().nullable(),

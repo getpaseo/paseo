@@ -1218,6 +1218,14 @@ export const ar: TranslationResources = {
     },
   },
   newWorkspace: {
+    intention: {
+      save: "حفظ",
+      label: "النية",
+      edit: "تعديل النية",
+      required: "أدخل نية.",
+      unavailable: "حدّث المضيف لاستخدام النوايا.",
+      profileUnavailable: "اضبط ملف Router على هذا المضيف.",
+    },
     title: "مساحة عمل جديدة",
     create: "يخلق",
     isolation: {

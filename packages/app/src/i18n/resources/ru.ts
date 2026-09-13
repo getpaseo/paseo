@@ -1234,6 +1234,14 @@ export const ru: TranslationResources = {
     },
   },
   newWorkspace: {
+    intention: {
+      save: "Сохранить",
+      label: "Намерение",
+      edit: "Изменить намерение",
+      required: "Введите намерение.",
+      unavailable: "Обновите хост для использования намерений.",
+      profileUnavailable: "Настройте профиль Router на этом хосте.",
+    },
     title: "Новое рабочее пространство",
     create: "Создать",
     isolation: {

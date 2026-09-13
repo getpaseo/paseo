@@ -136,6 +136,7 @@ function resolveDraftModeId(input: {
 }
 
 async function submitDraftCreateRequest(input: {
+  launchProfileId?: string;
   attempt: { clientMessageId: string };
   text: string;
   images?: UserMessageImageAttachment[];
@@ -196,6 +197,7 @@ async function submitDraftCreateRequest(input: {
 
   const attachmentsArray = Array.isArray(attachments) ? attachments : undefined;
   const result = await requestWorkspaceDraftAgent(client, {
+    launchProfileId: input.launchProfileId,
     config,
     workspaceId,
     text,
@@ -488,6 +490,7 @@ export function WorkspaceDraftAgentTab({
       }),
     createRequest: async ({ attempt, text, images, attachments, cwd }) =>
       submitDraftCreateRequest({
+        launchProfileId: draftSetup?.launchProfileId,
         attempt,
         text,
         images,
