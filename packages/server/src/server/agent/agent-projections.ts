@@ -78,6 +78,7 @@ export function toStoredAgentRecord(
     launchPostApprovalModeId: agent.launchPostApprovalModeId,
     lastCompletedTurnId: agent.lastCompletedTurnId,
     planReviewClaims: agent.planReviewClaims,
+    syntheticPlanDecisions: agent.syntheticPlanDecisions,
     createdAt,
     updatedAt: agent.updatedAt.toISOString(),
     lastActivityAt: agent.updatedAt.toISOString(),

@@ -64,3 +64,39 @@ test("plan review claims survive storage/reload and release only for the exact p
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test("a review claim protects its own plan but does not block a later plan", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "plan-review-scope-"));
+  const logger = createTestLogger();
+  const manager = new AgentManager({ clients: { codex: createTestAgentClient("codex") }, logger });
+  const agent = await manager.createAgent({ provider: "codex", cwd: directory }, undefined, {
+    workspaceId: "workspace",
+  });
+  try {
+    for (const callId of ["old", "new"])
+      agent.pendingPermissions.set(callId, {
+        id: callId,
+        provider: "codex",
+        name: "Plan",
+        kind: "plan",
+        sourcePlanCallId: callId,
+      });
+    await manager.setPlanReviewClaim({
+      agentId: agent.id,
+      workspaceId: "workspace",
+      callId: "old",
+      permissionRequestId: "old",
+      active: true,
+    });
+    await expect(
+      manager.respondToPermission(agent.id, "new", { behavior: "allow" }),
+    ).resolves.toBeUndefined();
+    await expect(
+      manager.respondToPermission(agent.id, "old", { behavior: "allow" }),
+    ).rejects.toThrow("review");
+    expect(manager.getAgent(agent.id)!.planReviewClaims).toEqual({ old: "old" });
+  } finally {
+    await manager.closeAgent(agent.id);
+    await rm(directory, { recursive: true, force: true });
+  }
+});

@@ -161,6 +161,14 @@ function handoffPrompt(workflow: Workflow | undefined, agentId: string) {
   return plan ? `workflow:${workflow.id}:handoff:${plan.context.callId}:prompt` : undefined;
 }
 
+function reviewerPrompt(workflow: Workflow | undefined, agentId: string) {
+  if (!workflow) return undefined;
+  const plan = Object.values(workflow.plans).find(
+    (entry) => entry.review?.agentId === agentId && entry.review.phase === "running",
+  );
+  return plan ? `workflow:${workflow.id}:review:${plan.context.callId}:prompt` : undefined;
+}
+
 function finalCandidates(final: FinalReview): string[] {
   if (final.phase === "auditing")
     return Object.values(final.audits)
@@ -372,21 +380,17 @@ export class WorkflowController {
     });
   }
 
-  private async consumeTurn(
-    state: WorkflowState,
-    agent: WorkflowAgent,
-    turnId?: string,
-    expectedMessageId?: string,
-  ) {
+  private async consumeTurn(state: WorkflowState, agent: WorkflowAgent, turnId?: string) {
     const workflow = state.workflows[agent.labels["paseo.workflow.id"] ?? agent.id];
     const implementationPlan =
       workflow?.plannerId === agent.id ? workflow.plans[workflow.activePlanId ?? ""] : undefined;
+    const reviewSource = reviewerPrompt(workflow, agent.id);
     const turn = await this.port.turn(
       agent.id,
       turnId,
-      expectedMessageId ?? (workflow ? this.expectedPrompt(workflow, agent.id) : undefined),
+      this.expectedPrompt(workflow, agent.id),
       implementationPlan?.approved ? implementationPlan.context.callId : undefined,
-      handoffPrompt(workflow, agent.id),
+      reviewSource ?? handoffPrompt(workflow, agent.id),
     );
     if (!turn) return;
     if (workflow?.handledTurns?.[agent.id] === turn.key) return;
@@ -408,11 +412,12 @@ export class WorkflowController {
     }
   }
 
-  private expectedPrompt(workflow: Workflow, agentId: string): string | undefined {
+  private expectedPrompt(workflow: Workflow | undefined, agentId: string): string | undefined {
+    if (!workflow) return undefined;
     for (const plan of Object.values(workflow.plans)) {
       const prefix = `workflow:${workflow.id}`;
       const callId = plan.context.callId;
-      if (plan.review?.agentId === agentId) return `${prefix}:review:${callId}:prompt`;
+      if (plan.review?.agentId === agentId) return undefined;
       const final = plan.final;
       if (!final) continue;
       if (final.deltaId === agentId) return `${prefix}:${callId}:delta:prompt`;
@@ -486,8 +491,7 @@ export class WorkflowController {
       for (const id of planCandidates(plan)) candidates.add(id);
     }
     for (const agentId of candidates) {
-      const expected = this.expectedPrompt(workflow, agentId);
-      await this.consumeTurn(state, await this.port.agent(agentId), undefined, expected);
+      await this.consumeTurn(state, await this.port.agent(agentId));
     }
   }
 

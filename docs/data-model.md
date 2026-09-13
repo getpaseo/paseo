@@ -190,6 +190,17 @@ retains decisions in `metadata.planResolutions`, keyed by native tool-use ID. Re
 proposals whose native turn no longer exists. These records preserve reading and decision history,
 not live permission callbacks.
 
+Host-created plan permissions use the agent record's optional private `syntheticPlanDecisions`,
+because a provider cannot persist a decision made outside its permission API. Record the exact
+proposal, source turn when available, resolution and delivery outcome before changing mode or
+resuming. Hydration only restores that decision next to the matching surviving proposal; it never
+recreates a removed plan. A reused call ID with different content is stale, not a new permission.
+An unresolved delivery outcome stays closed across restart. This record supplements plan decisions,
+not provider conversation history.
+
+Keep provider `turnId` on hydrated timeline rows. A stored completed-turn ID without matching
+canonical rows cannot authorize workflow continuation.
+
 The app replica cache may paint a plan before reconnection finishes. Only a fresh daemon agent
 snapshot can restore its correlated actions; cached permissions never authorize a new operation.
 

@@ -4,7 +4,11 @@ import { z } from "zod";
 import type { Logger } from "pino";
 
 import { writeJsonFileAtomic } from "../atomic-file.js";
-import { AgentFeatureSchema, AgentStatusSchema } from "../messages.js";
+import {
+  AgentFeatureSchema,
+  AgentStatusSchema,
+  AgentPermissionResponseSchema,
+} from "../messages.js";
 import { toStoredAgentRecord } from "./agent-projections.js";
 import type { ManagedAgent } from "./agent-manager.js";
 import type { AgentSessionConfig } from "./agent-sdk-types.js";
@@ -49,6 +53,18 @@ const STORED_AGENT_SCHEMA = z.object({
   launchPostApprovalModeId: z.string().optional(),
   lastCompletedTurnId: z.string().optional(),
   planReviewClaims: z.record(z.string(), z.string()).optional(),
+  syntheticPlanDecisions: z
+    .record(
+      z.string(),
+      z.object({
+        text: z.string(),
+        permissionId: z.string(),
+        sourceTurnId: z.string().optional(),
+        resolution: AgentPermissionResponseSchema,
+        outcome: z.enum(["pending", "completed", "outcome_unknown"]),
+      }),
+    )
+    .optional(),
   provider: z.string(),
   cwd: z.string(),
   workspaceId: z.string().optional(),

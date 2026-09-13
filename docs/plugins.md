@@ -30,16 +30,23 @@ creates and sends the read-only reviewer before closing the planner's permission
 pre-acceptance failure leaves the plan retryable; an uncertain delivery requires manual inspection
 without replay. Planner clarification is transported verbatim and without truncation, not inferred constraints.
 The host retains a review claim until the workflow concludes it; another client cannot approve
-the same plan while review is claimed, even when the plugin is unloaded.
+the same plan while review is claimed, even when the plugin is unloaded. The claim is scoped to
+that call ID, not later plans. If the dedicated reviewer fails, is canceled or returns no conclusion,
+open that reviewer and send a retry. A subsequent completed turn must follow its original review
+prompt; old turns or another agent's output cannot release the claim.
 
 A structured plan without a native permission remains actionable while its agent is idle and
 connected. The host validates the canonical plan before creating a stable plan-only permission.
 Approval records the decision and sends the implementation prompt in the same conversation;
 an uncertain prompt receipt blocks automatic continuation. Older hosts do not expose these actions.
+The exact captured proposal is revalidated before approval. The host's private decision record
+survives provider-history refresh and daemon restart; see [plan persistence](data-model.md#plan-persistence).
 
 Lifecycle hooks are best-effort notifications, not durable delivery. Status reconciles routing,
 approved implementation, handoff and review/audit operations against the expected prompt and the
 host's completed-turn evidence.
+Stored closed agents can supply that evidence after history hydration; legacy rows without turn
+IDs cannot. Loading a snapshot alone never proves a completed implementation.
 Only that turn's canonical response and tool results count; previous turns never authorize a
 correction. Reloading the plugin or repeating status must not create another child or resend an
 accepted prompt. `outcome_unknown` preserves an operation whose delivery or permission closure

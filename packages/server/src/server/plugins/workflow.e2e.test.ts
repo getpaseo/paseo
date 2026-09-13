@@ -16,7 +16,9 @@ import type {
 } from "../agent/agent-sdk-types.js";
 import { AgentTurnNotAcceptedError } from "../agent/agent-sdk-types.js";
 
-async function lifecycleFixture(options: { intent?: string; target?: boolean } = {}) {
+async function lifecycleFixture(
+  options: { intent?: string; target?: boolean; providerHistory?: boolean } = {},
+) {
   const directory = await mkdtemp(path.join(tmpdir(), "workflow-lifecycle-"));
   const git = (...args: string[]) =>
     execFileSync("git", args, { cwd: directory, encoding: "utf8" }).trim();
@@ -43,6 +45,7 @@ async function lifecycleFixture(options: { intent?: string; target?: boolean } =
   const effects = new Map<string, (text: string) => Promise<void>>();
   const toolEvidence = new Map<string, string>();
   const reusedTurnIds = new Set<string>();
+  const providerHistory = new Map<string, AgentStreamEvent[]>();
   const roleFor = (config: Partial<AgentSessionConfig>) =>
     /Your workflow role is ([\w-]+)/.exec(config.systemPrompt ?? "")?.[1] ?? "router";
   const wrapSession = (
@@ -52,6 +55,12 @@ async function lifecycleFixture(options: { intent?: string; target?: boolean } =
     resumed = false,
   ) => {
     const role = roleFor(config);
+    const history = providerHistory.get(owner!) ?? [];
+    providerHistory.set(owner!, history);
+    if (options.providerHistory)
+      session.streamHistory = async function* () {
+        yield* history;
+      };
     const describe = session.describePersistence.bind(session);
     session.describePersistence = () => {
       const handle = describe();
@@ -80,6 +89,7 @@ async function lifecycleFixture(options: { intent?: string; target?: boolean } =
       subscribe((event) => {
         if ("turnId" in event && event.turnId)
           event = { ...event, turnId: mapTurnId(event.turnId) };
+        if (options.providerHistory && event.type === "timeline") history.push(event);
         if (event.type === "turn_started" && toolEvidence.has(role)) {
           const command = toolEvidence.get(role)!;
           toolEvidence.delete(role);
@@ -111,17 +121,24 @@ async function lifecycleFixture(options: { intent?: string; target?: boolean } =
         else subscriber(result);
       });
     const start = session.startTurn.bind(session);
-    session.startTurn = async (input) => {
+    session.startTurn = async (input, runOptions) => {
       const text = typeof input === "string" ? input : JSON.stringify(input);
       const failure = sendFailures.get(role);
       sendFailures.delete(role);
       if (failure === "not-accepted")
         throw new AgentTurnNotAcceptedError("Requested prompt rejection before acceptance");
       prompts.push({ role, text });
+      const submitted: Extract<AgentStreamEvent, { type: "timeline" }> = {
+        type: "timeline",
+        provider: "codex",
+        item: { type: "user_message", text, clientMessageId: runOptions?.clientMessageId },
+      };
+      if (options.providerHistory) history.push(submitted);
       await effects.get(role)?.(text);
       const result = await start(
         `Respond with exactly: ${replies.get(role)?.shift() ?? "Which constraint matters?"}`,
       );
+      submitted.turnId = mapTurnId(result.turnId);
       if (failure === "unknown") throw new Error("Acknowledgement lost after provider acceptance");
       return { turnId: mapTurnId(result.turnId) };
     };
@@ -142,8 +159,11 @@ async function lifecycleFixture(options: { intent?: string; target?: boolean } =
       context?.agentId,
       true,
     );
-  const daemon = await createTestPaseoDaemon({ agentClients: { codex: provider } });
-  const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws`, appVersion: "0.8.0" });
+  let daemon = await createTestPaseoDaemon({
+    agentClients: { codex: provider },
+    cleanup: !options.providerHistory,
+  });
+  let client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws`, appVersion: "0.8.0" });
   await client.connect();
   await client.patchDaemonConfig({
     pluginsEnabled: true,
@@ -170,8 +190,12 @@ async function lifecycleFixture(options: { intent?: string; target?: boolean } =
   return {
     directory,
     git,
-    daemon,
-    client,
+    get daemon() {
+      return daemon;
+    },
+    get client() {
+      return client;
+    },
     workspace,
     read,
     agents,
@@ -185,6 +209,24 @@ async function lifecycleFixture(options: { intent?: string; target?: boolean } =
     effects,
     toolEvidence,
     reusedTurnIds,
+    providerHistory,
+    restart: async () => {
+      if (!options.providerHistory) throw new Error("Restart fixture requires provider history");
+      const persisted = (await client.getDaemonConfig()).config;
+      await client.close();
+      await daemon.close();
+      daemon = await createTestPaseoDaemon({
+        agentClients: { codex: provider },
+        paseoHomeRoot: path.dirname(daemon.paseoHome),
+        staticDir: daemon.staticDir,
+        cleanup: false,
+        pluginsEnabled: persisted.pluginsEnabled,
+        plugins: persisted.plugins,
+        agentProfiles: persisted.agentProfiles,
+      });
+      client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws`, appVersion: "0.8.0" });
+      await client.connect();
+    },
     write: async (values: ReturnType<typeof workflowSettings.schema.parse>) => {
       const state = await read();
       await client.invokePluginRpc("paseo-workflow", rpc.write.name, {
@@ -195,6 +237,10 @@ async function lifecycleFixture(options: { intent?: string; target?: boolean } =
     close: async () => {
       await client.close();
       await daemon.close();
+      if (options.providerHistory) {
+        await rm(path.dirname(daemon.paseoHome), { recursive: true, force: true });
+        await rm(daemon.staticDir, { recursive: true, force: true });
+      }
       await rm(directory, { recursive: true, force: true });
     },
   };
@@ -1566,6 +1612,207 @@ test("a canceled reviewer is not reconciled as completed after reload", async ()
     await f.close();
   }
 }, 60_000);
+
+test.each(["empty", "canceled"] as const)(
+  "a %s reviewer can be retried manually with a new prompt ID",
+  async (terminal) => {
+    const f = await lifecycleFixture();
+    f.replies.set("plan-reviewer", [
+      terminal === "empty" ? "" : "Do not consume this canceled result",
+      "A missing validation must be added",
+    ]);
+    if (terminal === "canceled") f.canceled.add("plan-reviewer");
+    try {
+      const plan = await pendingPlan(f);
+      await f.client.invokePluginRpc("paseo-workflow", "workflow.plan.review.request", plan);
+      await expect.poll(() => f.agents("plan-reviewer")[0]?.lifecycle).toBe("idle");
+      expect(f.prompts.filter((prompt) => prompt.text.startsWith("Revise the plan"))).toHaveLength(
+        0,
+      );
+      const next = await pendingPlan(f, plan.agentId, "plan-2");
+      await expect(
+        f.client.respondToPermissionAndWait(next.agentId, next.permissionRequestId, {
+          behavior: "allow",
+        }),
+      ).resolves.toMatchObject({ resolution: { behavior: "allow" } });
+      await expect(
+        f.client.respondToPermissionAndWait(plan.agentId, plan.permissionRequestId, {
+          behavior: "allow",
+        }),
+      ).rejects.toThrow("review");
+      await expect(
+        f.client.invokePluginRpc("paseo-workflow", "workflow.status.get.request", {
+          agentId: plan.agentId,
+          workspaceId: plan.workspaceId,
+        }),
+      ).resolves.toMatchObject({ type: "workflow.status.get.response" });
+      f.canceled.delete("plan-reviewer");
+      const reviewer = f.agents("plan-reviewer")[0]!;
+      await f.client.sendMessage(
+        reviewer.id,
+        "Retry the review of the original plan and conclude",
+        { messageId: "manual-review-retry" },
+      );
+      await expect
+        .poll(
+          async () =>
+            (await f.read()).values.workflows[plan.agentId]?.plans[plan.callId]?.review?.phase,
+        )
+        .toBe("complete");
+      expect(f.prompts.filter((prompt) => prompt.text.startsWith("Revise the plan"))).toHaveLength(
+        1,
+      );
+      expect(f.daemon.daemon.agentManager.getAgent(plan.agentId)!.planReviewClaims).toEqual({});
+      await f.client.reloadPlugin("paseo-workflow");
+      await f.client.invokePluginRpc("paseo-workflow", "workflow.status.get.request", {
+        agentId: plan.agentId,
+        workspaceId: plan.workspaceId,
+      });
+      expect(f.prompts.filter((prompt) => prompt.text.startsWith("Revise the plan"))).toHaveLength(
+        1,
+      );
+      expect(f.agents("plan-reviewer")).toHaveLength(1);
+    } finally {
+      await f.close();
+    }
+  },
+  60_000,
+);
+
+test.each([
+  ["router", true],
+  ["executor-standard", true],
+  ["planner", true],
+  ["router", false],
+] as const)(
+  "daemon restart hydrates completed %s evidence and reconciles once (turn IDs: %s)",
+  async (role, hasTurnIds) => {
+    const f = await lifecycleFixture({ providerHistory: true });
+    let releaseFinal!: () => void;
+    f.holds.set(
+      "final-review",
+      new Promise<void>((resolve) => {
+        releaseFinal = resolve;
+      }),
+    );
+    try {
+      let ownerId: string;
+      let planId: string | undefined;
+      if (role === "router") {
+        const router = await f.client.createAgent({
+          provider: "codex",
+          cwd: f.directory,
+          workspaceId: f.workspace.id,
+          launchProfileId: "paseo-workflow-router",
+          modeId: "full-access",
+        });
+        ownerId = router.id;
+        f.replies.set("router", [
+          '{"ready":true,"recommendation":"standard","constraints":[],"assumptions":[]}',
+        ]);
+        await f.client.disablePlugin("paseo-workflow");
+        await f.client.sendMessage(ownerId, "Build the feature");
+      } else {
+        const plan = await pendingPlan(f);
+        ownerId = plan.agentId;
+        planId = plan.callId;
+        if (role === "planner") {
+          const manager = f.daemon.daemon.agentManager;
+          manager.getAgent(ownerId)!.pendingPermissions.clear();
+          const source: AgentStreamEvent = {
+            type: "timeline",
+            provider: "codex",
+            turnId: manager.getAgent(ownerId)!.lastCompletedTurnId,
+            item: {
+              type: "tool_call",
+              callId: plan.callId,
+              name: "proposal",
+              status: "completed",
+              error: null,
+              detail: { type: "plan", text: plan.text },
+            },
+          };
+          f.providerHistory.get(ownerId)!.push(source);
+          await manager.hydrateTimelineFromProvider(ownerId, { force: true });
+          const permission = await f.client.ensurePlanPermission({
+            agentId: ownerId,
+            workspaceId: f.workspace.id,
+            callId: plan.callId,
+          });
+          await f.client.invokePluginRpc("paseo-workflow", "workflow.status.get.request", {
+            agentId: ownerId,
+            workspaceId: f.workspace.id,
+          });
+          await f.client.disablePlugin("paseo-workflow");
+          f.effects.set("planner", async () => {
+            await writeFile(path.join(f.directory, "feature.txt"), "implemented\n");
+            f.git("commit", "--quiet", "-am", "functional");
+          });
+          await f.client.respondToPermissionAndWait(ownerId, permission.id, { behavior: "allow" });
+        } else {
+          let release!: () => void;
+          f.holds.set(
+            role,
+            new Promise<void>((resolve) => {
+              release = resolve;
+            }),
+          );
+          f.effects.set(role, async () => {
+            await writeFile(path.join(f.directory, "feature.txt"), "implemented\n");
+            f.git("commit", "--quiet", "-am", "functional");
+          });
+          await f.client.invokePluginRpc("paseo-workflow", "workflow.plan.handoff.request", {
+            ...plan,
+            selection: "standard",
+          });
+          await f.client.disablePlugin("paseo-workflow");
+          release();
+          f.holds.delete(role);
+        }
+      }
+      await expect.poll(() => f.agents(role)[0]?.lifecycle).toBe("idle");
+      await f.daemon.daemon.agentManager.flush();
+      const completed = f.agents(role)[0]!.lastCompletedTurnId;
+      expect(completed).toBeTruthy();
+      if (!hasTurnIds)
+        for (const event of [...f.providerHistory.values()].flat()) {
+          if (event.type === "timeline") delete event.turnId;
+        }
+      await f.restart();
+      await f.client.enablePlugin("paseo-workflow");
+      const status = () =>
+        f.client.invokePluginRpc("paseo-workflow", "workflow.status.get.request", {
+          agentId: ownerId,
+          workspaceId: f.workspace.id,
+        });
+      await status();
+      await f.client.reloadPlugin("paseo-workflow");
+      await status();
+      if (role === "router") {
+        expect(f.agents("planner")).toHaveLength(hasTurnIds ? 1 : 0);
+        expect(
+          f.prompts.filter((entry) => entry.text.startsWith("Plan the request interactively")),
+        ).toHaveLength(hasTurnIds ? 1 : 0);
+      } else {
+        expect(
+          (await f.read()).values.workflows[ownerId]?.plans[planId!]?.final?.managerId,
+          JSON.stringify(
+            f.agents(role).map((agent) => ({
+              lifecycle: agent.lifecycle,
+              completed: agent.lastCompletedTurnId,
+            })),
+          ),
+        ).toBeTruthy();
+        expect(f.agents("final-review")).toHaveLength(1);
+        expect(f.prompts.filter((entry) => entry.role === "final-review")).toHaveLength(1);
+      }
+    } finally {
+      releaseFinal();
+      await f.close();
+    }
+  },
+  60_000,
+);
 
 test("the first-party workflow compiles in a real subprocess and installs profiles only by explicit RPC", async () => {
   const daemon = await createTestPaseoDaemon();

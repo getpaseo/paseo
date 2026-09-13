@@ -37,7 +37,7 @@ export function runtime(
   const completedTurnId = async (id: string) => {
     const snapshot = (await paseo.agents.ref(id).refresh())?.agent;
     if (
-      snapshot?.status !== "idle" ||
+      (snapshot?.status !== "idle" && snapshot?.status !== "closed") ||
       snapshot.activeTurn ||
       snapshot.lastError ||
       snapshot.pendingPermissions.length

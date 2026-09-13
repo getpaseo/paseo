@@ -18,7 +18,15 @@ import {
 import type { Logger } from "pino";
 import { assertWritePolicySupported, assertWritePolicyUnchanged } from "./write-policy.js";
 import { removeReadOnlyCodexState } from "./providers/codex/read-only.js";
-import { findPlanProposal, hasPlanDecision, syntheticPlanPermissionId } from "./plan-permission.js";
+import {
+  findPlanProposal,
+  findCapturedPlan,
+  hasPlanDecision,
+  syntheticPlanPermissionId,
+  syntheticPlanResolution,
+  restoreSyntheticPlanDecisions,
+  type SyntheticPlanDecision,
+} from "./plan-permission.js";
 import type { ProviderOptions, ToolPolicy } from "@getpaseo/protocol/agent-types";
 import type { ProviderPaseoToolsPolicy } from "@getpaseo/protocol/provider-config";
 import { z } from "zod";
@@ -287,6 +295,7 @@ export interface CreateAgentOptions {
   launchPostApprovalModeId?: string;
   lastCompletedTurnId?: string;
   planReviewClaims?: Record<string, string>;
+  syntheticPlanDecisions?: Record<string, SyntheticPlanDecision>;
   labels?: Record<string, string>;
   initialPrompt?: string;
   env?: Record<string, string>;
@@ -386,6 +395,7 @@ interface ManagedAgentBase {
   readonly launchPostApprovalModeId?: string;
   lastCompletedTurnId?: string;
   planReviewClaims?: Record<string, string>;
+  syntheticPlanDecisions?: Record<string, SyntheticPlanDecision>;
   provider: AgentProvider;
   cwd: string;
   /**
@@ -1283,6 +1293,7 @@ export class AgentManager {
       launchPostApprovalModeId: options.launchPostApprovalModeId,
       lastCompletedTurnId: options.lastCompletedTurnId,
       planReviewClaims: options.planReviewClaims,
+      syntheticPlanDecisions: options.syntheticPlanDecisions,
       owner: options.owner,
       historyPrimed: true,
     });
@@ -1318,6 +1329,7 @@ export class AgentManager {
       launchPostApprovalModeId?: string;
       lastCompletedTurnId?: string;
       planReviewClaims?: Record<string, string>;
+      syntheticPlanDecisions?: Record<string, SyntheticPlanDecision>;
       owner?: AgentOwner;
     },
     resumeOptions?: AgentResumeSessionOptions,
@@ -1359,6 +1371,7 @@ export class AgentManager {
       launchPostApprovalModeId?: string;
       lastCompletedTurnId?: string;
       planReviewClaims?: Record<string, string>;
+      syntheticPlanDecisions?: Record<string, SyntheticPlanDecision>;
       owner?: AgentOwner;
     },
     resumeOptions?: AgentResumeSessionOptions,
@@ -1602,6 +1615,7 @@ export class AgentManager {
         launchPostApprovalModeId: existing.launchPostApprovalModeId,
         lastCompletedTurnId: existing.lastCompletedTurnId,
         planReviewClaims: existing.planReviewClaims,
+        syntheticPlanDecisions: existing.syntheticPlanDecisions,
         owner: existing.owner,
         createdAt: existing.createdAt,
         updatedAt: existing.updatedAt,
@@ -1909,6 +1923,7 @@ export class AgentManager {
         launchPostApprovalModeId: record.launchPostApprovalModeId,
         lastCompletedTurnId: record.lastCompletedTurnId,
         planReviewClaims: record.planReviewClaims,
+        syntheticPlanDecisions: record.syntheticPlanDecisions,
         owner: record.owner,
         session: null,
         capabilities: STORED_AGENT_CAPABILITIES,
@@ -3014,6 +3029,24 @@ export class AgentManager {
         throw new Error("Wait for the current agent turn to finish before acting on this plan.");
       if (agent.config.writePolicy === "read_only")
         throw new Error("A read-only agent cannot execute a plan.");
+      const saved = agent.syntheticPlanDecisions?.[input.callId];
+      if (saved) {
+        const current = this.timelineStore
+          .getRows(agent.id)
+          .findLast(({ item }) => item.type === "tool_call" && item.callId === input.callId);
+        if (
+          current?.item.type === "tool_call" &&
+          (current.item.detail.type !== "plan" ||
+            current.item.detail.text !== saved.text ||
+            (saved.sourceTurnId !== undefined && current.turnId !== saved.sourceTurnId))
+        )
+          throw new Error(
+            "This plan changed after a durable decision. Open a new plan call; the old call cannot be reopened.",
+          );
+        throw new Error(
+          "This plan is already resolved. Inspect its durable approval outcome before continuing.",
+        );
+      }
       const proposal = findPlanProposal(this.timelineStore.getRows(agent.id), input.callId);
       const native = [...agent.pendingPermissions.values()].find(
         (entry) => entry.kind === "plan" && entry.sourcePlanCallId === input.callId,
@@ -3033,7 +3066,10 @@ export class AgentManager {
         sourcePlanCallId: input.callId,
         input: { plan: proposal.text },
         detail: { type: "plan", text: proposal.text },
-        metadata: { syntheticPlan: true },
+        metadata: {
+          syntheticPlan: true,
+          ...(proposal.turnId ? { sourcePlanTurnId: proposal.turnId } : {}),
+        },
         actions: [{ id: "implement", label: "Implement", behavior: "allow", variant: "primary" }],
       };
       await this.dispatchSessionEvent(agent, {
@@ -3052,23 +3088,10 @@ export class AgentManager {
     response: AgentPermissionResponse,
     send: ((prompt: string, messageId: string) => Promise<void>) | undefined,
   ): Promise<void> {
-    const proposal = findPlanProposal(
-      this.timelineStore.getRows(agent.id),
-      pending.sourcePlanCallId!,
-    );
+    const proposal = findCapturedPlan(this.timelineStore.getRows(agent.id), pending);
     const approved = response.behavior === "allow";
-    const decision: AgentTimelineItem = {
-      ...proposal.item,
-      status: "completed",
-      error: null,
-      metadata: {
-        ...proposal.item.metadata,
-        approved,
-        resolution: response,
-        syntheticPermissionId: pending.id,
-        approvalOutcome: approved ? "pending" : "completed",
-      },
-    };
+    const saved = agent.syntheticPlanDecisions![proposal.item.callId]!;
+    const decision = syntheticPlanResolution(proposal.item, saved);
     const publish = async (item: AgentTimelineItem) => {
       const row = this.timelineStore.append(agent.id, item, { turnId: proposal.turnId });
       await this.durableTimelineStore?.bulkInsert(agent.id, [row]);
@@ -3093,15 +3116,13 @@ export class AgentManager {
     const prompt = `PASEO_PLAN_APPROVAL ${JSON.stringify({ callId: proposal.item.callId, permissionId: pending.id, approved: true, plan: proposal.text })}\nImplement this approved plan in this same conversation, preserving the user request, constraints, existing dirty files and concurrent changes. Run targeted checks, stage only your own files/hunks, and create a functional commit only after validation. Do not delegate, push, merge or deploy. Then wait for final review.`;
     try {
       await send!(prompt, `plan-approval:${pending.id}`);
-      await publish({
-        ...decision,
-        metadata: { ...decision.metadata, approvalOutcome: "completed" },
-      });
+      saved.outcome = "completed";
+      await this.persistSnapshot(agent);
+      await publish(syntheticPlanResolution(proposal.item, saved));
     } catch (error) {
-      await publish({
-        ...decision,
-        metadata: { ...decision.metadata, approvalOutcome: "outcome_unknown" },
-      });
+      saved.outcome = "outcome_unknown";
+      await this.persistSnapshot(agent);
+      await publish(syntheticPlanResolution(proposal.item, saved));
       throw new Error(
         `Plan approval outcome_unknown. Inspect this conversation before continuing; no automatic retry. ${error instanceof Error ? error.message : String(error)}`,
         { cause: error },
@@ -3154,6 +3175,14 @@ export class AgentManager {
     const pending = agent.pendingPermissions.get(requestId);
     const synthetic = pending?.metadata?.syntheticPlan === true;
     if (
+      Object.values(agent.syntheticPlanDecisions ?? {}).some(
+        (decision) => decision.permissionId === requestId,
+      )
+    )
+      throw new Error(
+        "This plan is already resolved. Inspect its durable approval outcome before continuing.",
+      );
+    if (
       !pending &&
       this.timelineStore
         .getItems(agent.id)
@@ -3168,14 +3197,16 @@ export class AgentManager {
         "This plan is already resolved. Inspect its approval outcome before continuing.",
       );
     if (synthetic) {
-      findPlanProposal(this.timelineStore.getRows(agent.id), pending!.sourcePlanCallId!);
+      findCapturedPlan(this.timelineStore.getRows(agent.id), pending!);
       if (response.behavior === "allow" && !canSendPlan)
         throw new Error("Approve this structured plan from a connected Paseo client.");
     }
     if (
       response.behavior === "allow" &&
-      Object.keys(agent.planReviewClaims ?? {}).length &&
-      (pending?.kind === "plan" || Object.values(agent.planReviewClaims!).includes(requestId))
+      ((pending?.kind === "plan" &&
+        pending.sourcePlanCallId &&
+        agent.planReviewClaims?.[pending.sourcePlanCallId]) ||
+        Object.values(agent.planReviewClaims ?? {}).includes(requestId))
     )
       throw new Error(
         "A plan review is in progress. Complete or explicitly abandon the review before approving.",
@@ -3204,6 +3235,22 @@ export class AgentManager {
           response,
           Boolean(sendPlanFollowup),
         );
+        if (synthetic) {
+          const proposal = findCapturedPlan(this.timelineStore.getRows(agentId), pending!);
+          (agent.syntheticPlanDecisions ??= {})[proposal.item.callId] = {
+            text: proposal.text,
+            permissionId: pending!.id,
+            sourceTurnId: proposal.turnId,
+            resolution: response,
+            outcome: response.behavior === "allow" ? "pending" : "completed",
+          };
+          await this.persistSnapshot(agent);
+          findCapturedPlan(this.timelineStore.getRows(agentId), pending!);
+          if (agent.pendingPermissions.get(requestId) !== pending)
+            throw new Error(
+              "The plan changed while recording its decision. Inspect the current plan.",
+            );
+        }
         let planApprovalMode: string | undefined;
         let previousApprovalMode: string | undefined;
         if (pending?.kind === "plan" && response.behavior === "allow") {
@@ -3217,6 +3264,7 @@ export class AgentManager {
                 throw new Error(
                   "The plan changed while applying its approval mode. Open the current plan and retry.",
                 );
+              if (synthetic) findCapturedPlan(this.timelineStore.getRows(agentId), pending);
             };
             const previousMode = await agent.session.getCurrentMode();
             assertPending();
@@ -3751,6 +3799,7 @@ export class AgentManager {
       launchPostApprovalModeId?: string;
       lastCompletedTurnId?: string;
       planReviewClaims?: Record<string, string>;
+      syntheticPlanDecisions?: Record<string, SyntheticPlanDecision>;
       owner?: AgentOwner;
     },
   ): Promise<ManagedAgent> {
@@ -3906,6 +3955,7 @@ export class AgentManager {
           launchPostApprovalModeId?: string;
           lastCompletedTurnId?: string;
           planReviewClaims?: Record<string, string>;
+          syntheticPlanDecisions?: Record<string, SyntheticPlanDecision>;
           owner?: AgentOwner;
         }
       | undefined;
@@ -3920,6 +3970,7 @@ export class AgentManager {
       launchPostApprovalModeId: options.launchPostApprovalModeId,
       lastCompletedTurnId: options.lastCompletedTurnId,
       planReviewClaims: options.planReviewClaims,
+      syntheticPlanDecisions: options.syntheticPlanDecisions,
       owner: options.owner,
       session,
       capabilities: session.capabilities,
@@ -4271,7 +4322,7 @@ export class AgentManager {
   ): Promise<void> {
     const historyEvents: Extract<AgentStreamEvent, { type: "timeline" }>[] = [];
     const providerSubagentEvents: Extract<AgentStreamEvent, { type: "provider_subagent" }>[] = [];
-    for await (const rawEvent of agent.session.streamHistory()) {
+    for await (const rawEvent of this.historyWithSyntheticPlanDecisions(agent)) {
       const event = limitAgentStreamEventContent(rawEvent);
       if (event.type === "timeline") {
         if (event.item.type === "user_message" && isSystemInjectedEnvelope(event.item.text)) {
@@ -4301,11 +4352,10 @@ export class AgentManager {
       }
     }
     for (const event of historyEvents) {
-      const row = this.recordTimeline(
-        agent.id,
-        event.item,
-        event.timestamp ? { timestamp: event.timestamp } : undefined,
-      );
+      const row = this.recordTimeline(agent.id, event.item, {
+        timestamp: event.timestamp,
+        turnId: event.turnId,
+      });
       if (broadcastTimeline) {
         this.dispatchStream(agent.id, event, {
           seq: row.seq,
@@ -4330,7 +4380,7 @@ export class AgentManager {
     const providerSubagentEvents: AgentManagerEvent[] = [];
     agent.historyPrimed = false;
     try {
-      for await (const rawEvent of agent.session.streamHistory()) {
+      for await (const rawEvent of this.historyWithSyntheticPlanDecisions(agent)) {
         const event = limitAgentStreamEventContent(rawEvent);
         if (event.type === "provider_subagent") {
           const update = this.providerSubagents.apply(agent.id, event.provider, event.event);
@@ -4348,11 +4398,10 @@ export class AgentManager {
         if (event.item.type === "user_message" && isSystemInjectedEnvelope(event.item.text)) {
           continue;
         }
-        const row = this.recordTimeline(
-          agent.id,
-          event.item,
-          event.timestamp ? { timestamp: event.timestamp } : undefined,
-        );
+        const row = this.recordTimeline(agent.id, event.item, {
+          timestamp: event.timestamp,
+          turnId: event.turnId,
+        });
         if (deferredBroadcast) {
           timelineEvents.push({ event, row });
         } else if (broadcast) {
@@ -4382,6 +4431,18 @@ export class AgentManager {
         timestamp: row.timestamp,
       });
     }
+  }
+
+  private async *historyWithSyntheticPlanDecisions(
+    agent: ActiveManagedAgent,
+  ): AsyncGenerator<AgentStreamEvent> {
+    if (!agent.syntheticPlanDecisions || !Object.keys(agent.syntheticPlanDecisions).length) {
+      yield* agent.session.streamHistory();
+      return;
+    }
+    const history: AgentStreamEvent[] = [];
+    for await (const event of agent.session.streamHistory()) history.push(event);
+    yield* restoreSyntheticPlanDecisions(history, agent.syntheticPlanDecisions);
   }
 
   private notifyForegroundTurnWaiters(agentId: string, event: AgentStreamEvent): void {

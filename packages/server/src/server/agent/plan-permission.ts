@@ -1,6 +1,65 @@
 import { createHash } from "node:crypto";
 import type { AgentTimelineRow } from "./agent-timeline-store-types.js";
-import type { AgentTimelineItem } from "./agent-sdk-types.js";
+import type {
+  AgentPermissionRequest,
+  AgentPermissionResponse,
+  AgentStreamEvent,
+  AgentTimelineItem,
+} from "./agent-sdk-types.js";
+
+export interface SyntheticPlanDecision {
+  text: string;
+  permissionId: string;
+  sourceTurnId?: string;
+  resolution: AgentPermissionResponse;
+  outcome: "pending" | "completed" | "outcome_unknown";
+}
+
+export function syntheticPlanResolution(
+  item: Extract<AgentTimelineItem, { type: "tool_call" }>,
+  decision: SyntheticPlanDecision,
+): AgentTimelineItem {
+  return {
+    ...item,
+    status: "completed",
+    error: null,
+    metadata: {
+      ...item.metadata,
+      approved: decision.resolution.behavior === "allow",
+      resolution: decision.resolution,
+      syntheticPermissionId: decision.permissionId,
+      approvalOutcome: decision.outcome,
+    },
+  };
+}
+
+export function restoreSyntheticPlanDecisions(
+  history: AgentStreamEvent[],
+  decisions: Record<string, SyntheticPlanDecision>,
+): AgentStreamEvent[] {
+  const latest = new Map<string, number>();
+  history.forEach((event, index) => {
+    if (event.type === "timeline" && event.item.type === "tool_call")
+      latest.set(event.item.callId, index);
+  });
+  return history.flatMap((event, index) => {
+    if (
+      event.type !== "timeline" ||
+      event.item.type !== "tool_call" ||
+      event.item.detail.type !== "plan"
+    )
+      return [event];
+    const decision = decisions[event.item.callId];
+    if (
+      !decision ||
+      latest.get(event.item.callId) !== index ||
+      event.item.detail.text !== decision.text ||
+      (decision.sourceTurnId !== undefined && event.turnId !== decision.sourceTurnId)
+    )
+      return [event];
+    return [event, { ...event, item: syntheticPlanResolution(event.item, decision) }];
+  });
+}
 
 export function hasPlanDecision(item: AgentTimelineItem): boolean {
   if (item.type !== "tool_call") return false;
@@ -38,4 +97,21 @@ export function syntheticPlanPermissionId(agentId: string, sessionId: string, ca
   return `paseo-plan-${createHash("sha256")
     .update(JSON.stringify([agentId, sessionId, callId]))
     .digest("hex")}`;
+}
+
+export function findCapturedPlan(rows: AgentTimelineRow[], pending: AgentPermissionRequest) {
+  const proposal = findPlanProposal(rows, pending.sourcePlanCallId ?? "");
+  const captured = pending.input;
+  if (
+    !captured ||
+    typeof captured !== "object" ||
+    !("plan" in captured) ||
+    captured.plan !== proposal.text ||
+    (pending.metadata?.sourcePlanTurnId !== undefined &&
+      pending.metadata.sourcePlanTurnId !== proposal.turnId)
+  )
+    throw new Error(
+      "This plan changed after its permission was captured. Reopen the current plan; this stale approval cannot execute it.",
+    );
+  return proposal;
 }

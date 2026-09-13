@@ -115,6 +115,7 @@ export async function ensureAgentLoaded(
           launchPostApprovalModeId: record.launchPostApprovalModeId,
           lastCompletedTurnId: record.lastCompletedTurnId,
           planReviewClaims: record.planReviewClaims,
+          syntheticPlanDecisions: record.syntheticPlanDecisions,
         },
         record.archivedAt ? { purpose: "history" } : undefined,
       );
@@ -133,6 +134,7 @@ export async function ensureAgentLoaded(
         launchPostApprovalModeId: record.launchPostApprovalModeId,
         lastCompletedTurnId: record.lastCompletedTurnId,
         planReviewClaims: record.planReviewClaims,
+        syntheticPlanDecisions: record.syntheticPlanDecisions,
         owner: record.owner,
       });
       deps.logger.info({ agentId, provider: record.provider }, "Agent created from stored config");
