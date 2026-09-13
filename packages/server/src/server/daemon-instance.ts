@@ -38,6 +38,35 @@ export class DaemonInstanceError extends Error {
   }
 }
 
+/**
+ * Environment edges `stopDaemonInstance` touches, injected so tests can drive it
+ * with a typed in-memory fake instead of mocking modules. Production passes the
+ * real implementations through `defaultStopDaemonPorts`.
+ */
+export interface StopDaemonPorts {
+  readInstance(home: string): Promise<PidLockInfo | null>;
+  isRunning(pid: number): boolean;
+  isSameInstance(left: PidLockInfo, right: PidLockInfo): boolean;
+  releaseLock(home: string, owner: { ownerPid: number; startedAt: string }): Promise<void>;
+  signalTerm(pid: number): Promise<void>;
+  killTree(pid: number, signal: NodeJS.Signals): Promise<void>;
+  /** Waits `ms`, rejecting with an AbortError once `signal` aborts. */
+  wait(ms: number, signal?: AbortSignal): Promise<void>;
+}
+
+export const defaultStopDaemonPorts: StopDaemonPorts = {
+  readInstance: (home) => getPidLockInfo(home),
+  isRunning: (pid) => isPidRunning(pid),
+  isSameInstance: (left, right) => isSamePidLock(left, right),
+  releaseLock: (home, owner) => releasePidLock(home, owner),
+  signalTerm: (pid) => {
+    process.kill(pid, "SIGTERM");
+    return Promise.resolve();
+  },
+  killTree: (pid, signal) => killTree(pid, signal),
+  wait: (ms, signal) => delay(ms, undefined, { signal }),
+};
+
 export async function readDaemonInstance(home: string): Promise<PidLockInfo | null> {
   const lock = await getPidLockInfo(home);
   return lock && isPidRunning(lock.pid) ? lock : null;
@@ -92,9 +121,11 @@ async function requestInstanceStop(
   instance: PidLockInfo,
   options: {
     force?: boolean;
+    ports: StopDaemonPorts;
     requestShutdown?: (instance: PidLockInfo & { listen: string }) => Promise<void>;
   },
 ) {
+  const { ports } = options;
   let forced = false;
   let usedLifecycleRpc = false;
   if (process.platform === "win32") {
@@ -104,13 +135,13 @@ async function requestInstanceStop(
         usedLifecycleRpc = true;
       } catch (error) {
         if (!options.force) throw error;
-        const current = await getPidLockInfo(home);
-        if (current && !isSamePidLock(instance, current))
+        const current = await ports.readInstance(home);
+        if (current && !ports.isSameInstance(instance, current))
           throw new DaemonInstanceError(
             "DAEMON_REPLACED",
             `Supervisor changed for ${home}; refusing forced cleanup.`,
           );
-        await killTree(instance.pid, "SIGKILL");
+        await ports.killTree(instance.pid, "SIGKILL");
         forced = true;
       }
     } else if (!options.force) {
@@ -119,17 +150,75 @@ async function requestInstanceStop(
         `PID ${instance.pid} for ${home} has no graceful shutdown channel. Use --force explicitly to terminate it.`,
       );
     } else {
-      await killTree(instance.pid, "SIGKILL");
+      await ports.killTree(instance.pid, "SIGKILL");
       forced = true;
     }
   } else {
     try {
-      process.kill(instance.pid, "SIGTERM");
+      await ports.signalTerm(instance.pid);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
     }
   }
   return { forced, usedLifecycleRpc };
+}
+
+async function resolveNotRunningLock(
+  ports: StopDaemonPorts,
+  home: string,
+  instance: PidLockInfo | null,
+): Promise<{
+  action: "not_running";
+  pid: number | null;
+  forced: boolean;
+  usedLifecycleRpc: boolean;
+}> {
+  if (instance)
+    await ports.releaseLock(home, { ownerPid: instance.pid, startedAt: instance.startedAt });
+  return {
+    action: "not_running",
+    pid: instance?.pid ?? null,
+    forced: false,
+    usedLifecycleRpc: false,
+  };
+}
+
+function assertStoppableInstance(instance: PidLockInfo): void {
+  if (instance.pid <= 1 || instance.pid === process.pid)
+    throw new Error("Refusing to stop invalid supervisor PID");
+}
+
+/**
+ * Polls until the captured supervisor process exits, the caller's deadline
+ * passes, or `signal` aborts. An abort returns "cancelled" without forcing a
+ * kill, so the caller can abandon the stop and leave daemon termination
+ * semantics untouched.
+ */
+async function waitForInstanceExit(input: {
+  home: string;
+  instance: PidLockInfo;
+  ports: StopDaemonPorts;
+  signal?: AbortSignal;
+  waitMs: number;
+}): Promise<boolean | "cancelled"> {
+  const { home, instance, ports, signal } = input;
+  const exitDeadline = Date.now() + input.waitMs;
+  while (ports.isRunning(instance.pid)) {
+    const current = await ports.readInstance(home);
+    if (current && !ports.isSameInstance(instance, current))
+      throw new DaemonInstanceError(
+        "DAEMON_REPLACED",
+        `Supervisor changed for ${home}; stop of PID ${instance.pid} was not confirmed.`,
+      );
+    if (Date.now() >= exitDeadline) return false;
+    try {
+      await ports.wait(100, signal);
+    } catch (error) {
+      if (signal?.aborted) return "cancelled";
+      throw error;
+    }
+  }
+  return true;
 }
 
 export async function stopDaemonInstance(
@@ -140,6 +229,7 @@ export async function stopDaemonInstance(
     timeoutMs?: number;
     killTimeoutMs?: number;
     signal?: AbortSignal;
+    ports?: StopDaemonPorts;
     requestShutdown?: (instance: PidLockInfo & { listen: string }) => Promise<void>;
   } = {},
 ): Promise<{
@@ -148,67 +238,46 @@ export async function stopDaemonInstance(
   forced: boolean;
   usedLifecycleRpc: boolean;
 }> {
+  const ports = options.ports ?? defaultStopDaemonPorts;
   const { timeoutMs = 15_000, killTimeoutMs = 3_000, signal } = options;
   const deadline = Date.now() + timeoutMs;
-  const instance = await getPidLockInfo(home);
-  if (options.instance && instance && !isSamePidLock(instance, options.instance)) {
+  const instance = await ports.readInstance(home);
+  if (options.instance && instance && !ports.isSameInstance(instance, options.instance)) {
     throw new DaemonInstanceError(
       "DAEMON_REPLACED",
       `Supervisor changed for ${home}; refusing to stop PID ${instance.pid}.`,
     );
   }
-  if (!instance || !isPidRunning(instance.pid)) {
-    if (instance)
-      await releasePidLock(home, { ownerPid: instance.pid, startedAt: instance.startedAt });
-    return {
-      action: "not_running",
-      pid: instance?.pid ?? null,
-      forced: false,
-      usedLifecycleRpc: false,
-    };
+  if (!instance || !ports.isRunning(instance.pid)) {
+    return resolveNotRunningLock(ports, home, instance);
   }
-  if (instance.pid <= 1 || instance.pid === process.pid)
-    throw new Error("Refusing to stop invalid supervisor PID");
-  let { forced, usedLifecycleRpc } = await requestInstanceStop(home, instance, options);
-  const waitForExit = async (waitMs: number): Promise<boolean | "cancelled"> => {
-    const exitDeadline = Date.now() + waitMs;
-    while (isPidRunning(instance.pid)) {
-      const current = await getPidLockInfo(home);
-      if (current && !isSamePidLock(instance, current))
-        throw new DaemonInstanceError(
-          "DAEMON_REPLACED",
-          `Supervisor changed for ${home}; stop of PID ${instance.pid} was not confirmed.`,
-        );
-      if (Date.now() >= exitDeadline) return false;
-      try {
-        // An abort cancels the wait without forcing a kill: the caller abandons
-        // this stop and leaves daemon lifecycle semantics untouched.
-        await delay(100, undefined, { signal });
-      } catch (error) {
-        if (signal?.aborted) return "cancelled";
-        throw error;
-      }
-    }
-    return true;
-  };
-  let stopped: boolean | "cancelled" = await waitForExit(
-    forced ? killTimeoutMs : Math.max(0, deadline - Date.now()),
-  );
-  if (stopped === "cancelled")
-    return { action: "cancelled", pid: instance.pid, forced, usedLifecycleRpc };
+  assertStoppableInstance(instance);
+  let { forced, usedLifecycleRpc } = await requestInstanceStop(home, instance, {
+    ...options,
+    ports,
+  });
+  const cancelled = () =>
+    ({ action: "cancelled", pid: instance.pid, forced, usedLifecycleRpc }) as const;
+  let stopped = await waitForInstanceExit({
+    home,
+    instance,
+    ports,
+    signal,
+    waitMs: forced ? killTimeoutMs : Math.max(0, deadline - Date.now()),
+  });
+  if (stopped === "cancelled") return cancelled();
   if (!stopped && options.force && !forced) {
-    await killTree(instance.pid, "SIGKILL");
+    await ports.killTree(instance.pid, "SIGKILL");
     forced = true;
-    stopped = await waitForExit(killTimeoutMs);
+    stopped = await waitForInstanceExit({ home, instance, ports, signal, waitMs: killTimeoutMs });
+    if (stopped === "cancelled") return cancelled();
   }
-  if (stopped === "cancelled")
-    return { action: "cancelled", pid: instance.pid, forced, usedLifecycleRpc };
   if (!stopped)
     throw new DaemonInstanceError(
       "STOP_NOT_CONFIRMED",
       `Timed out waiting for supervisor PID ${instance.pid} in ${home} to exit${options.force ? "" : "; use --force to permit forced cleanup"}.`,
     );
-  await releasePidLock(home, { ownerPid: instance.pid, startedAt: instance.startedAt });
+  await ports.releaseLock(home, { ownerPid: instance.pid, startedAt: instance.startedAt });
   return { action: "stopped", pid: instance.pid, forced, usedLifecycleRpc };
 }
 

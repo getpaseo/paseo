@@ -209,13 +209,18 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
   function markUpdateDownloaded(version: string): void {
     downloadedUpdateVersion = version;
     signalReadyChange();
-    // Track the write so the quit path can wait for the marker to reach disk.
+    // Chain onto the previous write so successive download events cannot start
+    // overlapping writes to the same marker: each write begins only after the
+    // prior one settles, and the newest version is written last. `pendingUpdateWrite`
+    // always tracks the tail, so the quit path's flush covers every queued write.
     // The download event (and therefore `downloadUpdate()`) resolves before this
     // async write settles, so exiting without flushing could drop the marker and
     // bypass the next-launch install entirely.
-    pendingUpdateWrite = deps.pendingUpdateStore.write(version).catch((error) => {
-      deps.reportInstallError?.(`Failed to record the pending update: ${getErrorMessage(error)}`);
-    });
+    pendingUpdateWrite = pendingUpdateWrite
+      .then(() => deps.pendingUpdateStore.write(version))
+      .catch((error) => {
+        deps.reportInstallError?.(`Failed to record the pending update: ${getErrorMessage(error)}`);
+      });
   }
 
   function flushPendingUpdate(): Promise<void> {

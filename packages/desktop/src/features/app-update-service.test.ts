@@ -154,61 +154,85 @@ class FakeAppUpdateRuntime implements AppUpdateRuntime {
 
 interface FakePendingUpdateStore extends PendingUpdateStore {
   current(): string | null;
-  /** Resolves once the most recent in-flight write settles. */
-  flushWrite(): Promise<void>;
-  /** Makes the next write hang until released, or reject with the given error. */
-  deferNextWrite(): { release(): void; fail(error: Error): void };
+  /** Every write() call, in the order it was issued. */
+  writes(): string[];
+  /** Number of writes that have finished. */
+  completedWrites(): number;
+  /** Number of writes whose store call is still outstanding. */
+  inFlightWrites(): number;
+  /** Holds every subsequent write until released. One gate for all calls. */
+  gateWrites(): { release(): void; fail(error: Error): void };
 }
 
 function createFakePendingUpdateStore(initialVersion: string | null): FakePendingUpdateStore {
   let version = initialVersion;
-  let lastWrite: Promise<void> = Promise.resolve();
-  let pending: {
+  const issued: string[] = [];
+  let completed = 0;
+  let inFlight = 0;
+  let gate: {
     promise: Promise<void>;
     release(): void;
     fail(error: Error): void;
   } | null = null;
   return {
     read: async () => version,
-    write: (next: string) => {
-      const inFlight = pending ? pending.promise : null;
-      if (inFlight) {
-        // Keep the rejection observable to the caller while recording the
-        // version only when the write actually succeeds.
-        const writePromise = inFlight.then(() => {
-          version = next;
-        });
-        lastWrite = writePromise.catch(() => undefined);
-        return writePromise;
+    write: async (next: string) => {
+      issued.push(next);
+      inFlight += 1;
+      try {
+        if (gate) await gate.promise;
+        version = next;
+      } finally {
+        inFlight -= 1;
       }
-      version = next;
-      lastWrite = Promise.resolve();
-      return lastWrite;
+      completed += 1;
     },
     clear: async () => {
       version = null;
     },
     current: () => version,
-    flushWrite: () => lastWrite,
-    deferNextWrite() {
+    writes: () => [...issued],
+    completedWrites: () => completed,
+    inFlightWrites: () => inFlight,
+    gateWrites() {
       let release!: () => void;
       let fail!: (error: Error) => void;
       const promise = new Promise<void>((resolve, reject) => {
         release = () => {
-          pending = null;
+          gate = null;
           resolve();
         };
         fail = (error) => {
-          pending = null;
+          gate = null;
           reject(error);
         };
       });
       promise.catch(() => undefined);
-      pending = { promise, release, fail };
-      lastWrite = promise;
+      gate = { promise, release, fail };
       return { release, fail };
     },
   };
+}
+
+/** Drains pending microtasks so chained promise work has run. */
+function settleMicrotasks(): Promise<void> {
+  return new Promise<void>((resolve) => setImmediate(resolve));
+}
+
+function createDeferred<T>(): { promise: Promise<T>; resolve(value: T): void } {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((res) => {
+    resolve = res;
+  });
+  return { promise, resolve };
+}
+
+/** Resolves when `signal` aborts, so tests pick the exact abort point. */
+function waitForAbort(signal: AbortSignal): Promise<void> {
+  if (signal.aborted) return Promise.resolve();
+  return new Promise<void>((resolve) => {
+    signal.addEventListener("abort", () => resolve(), { once: true });
+  });
 }
 
 function createService(input?: {
@@ -490,7 +514,7 @@ describe("app update service", () => {
 
     runtime.nextCheck({ isUpdateAvailable: true, updateInfo: rolledOutUpdate });
     const deadline = new AbortController();
-    let stopObservedAbort = false;
+    const stopEntered = createDeferred<void>();
     const pending = service.installPendingUpdateOnStartup(
       {
         currentVersion: "1.2.3",
@@ -498,24 +522,15 @@ describe("app update service", () => {
         signal: deadline.signal,
       },
       async (signal: AbortSignal) => {
-        await new Promise<void>((resolve) => {
-          signal.addEventListener(
-            "abort",
-            () => {
-              stopObservedAbort = true;
-              resolve();
-            },
-            { once: true },
-          );
-        });
+        stopEntered.resolve();
+        await waitForAbort(signal);
       },
     );
 
-    await new Promise<void>((resolve) => setImmediate(resolve));
+    await stopEntered.promise;
     deadline.abort();
     const result = await pending;
 
-    expect(stopObservedAbort).toBe(true);
     expect(result).toEqual({ installed: false, reason: "timeout" });
     expect(runtime.installedVersions).toEqual([]);
     expect(pendingUpdateStore.current()).toBe("1.2.4");
@@ -576,7 +591,7 @@ describe("app update service", () => {
       releaseChannel: "stable",
       signal: deadline.signal,
     });
-    await new Promise<void>((resolve) => setImmediate(resolve));
+    await settleMicrotasks();
     deadline.abort();
 
     expect(await pending).toEqual({ installed: false, reason: "timeout" });
@@ -709,7 +724,7 @@ describe("app update service", () => {
       currentVersion: "1.2.3",
       releaseChannel: "stable",
     });
-    await new Promise<void>((resolve) => setImmediate(resolve));
+    await settleMicrotasks();
     expect(runtime.downloadCallCount).toBe(1);
 
     staleDownload.reject(new Error("old download failed"));
@@ -1017,23 +1032,55 @@ describe("pending update persistence", () => {
       intent: "automatic",
     });
 
-    const write = pendingUpdateStore.deferNextWrite();
+    const gate = pendingUpdateStore.gateWrites();
     runtime.finishUpdateDownload(rolledOutUpdate);
+    await settleMicrotasks();
 
-    // The download event has fired, but the marker write has not settled.
+    // The download event has fired, but the marker write is parked on the gate.
     expect(pendingUpdateStore.current()).toBeNull();
+    expect(pendingUpdateStore.inFlightWrites()).toBe(1);
     let flushed = false;
     const flush = service.flushPendingUpdate().then(() => {
       flushed = true;
+      return undefined;
     });
-    await new Promise<void>((resolve) => setImmediate(resolve));
+    await settleMicrotasks();
     expect(flushed).toBe(false);
 
-    write.release();
+    gate.release();
     await flush;
 
     expect(flushed).toBe(true);
     expect(pendingUpdateStore.current()).toBe("1.2.4");
+  });
+
+  it("chains consecutive downloads so the flush covers every write and the newest wins", async () => {
+    const { runtime, service, pendingUpdateStore } = createService({ bucket: async () => 0 });
+    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: rolledOutUpdate });
+    await service.checkForAppUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+      intent: "automatic",
+    });
+
+    const gate = pendingUpdateStore.gateWrites();
+    const newerUpdate = { ...rolledOutUpdate, version: "1.2.5" };
+    runtime.finishUpdateDownload(rolledOutUpdate);
+    runtime.finishUpdateDownload(newerUpdate);
+    await settleMicrotasks();
+
+    // The newest download is chained behind the in-flight one, so only the first
+    // marker has reached the store and the writes never overlap.
+    expect(pendingUpdateStore.writes()).toEqual(["1.2.4"]);
+    expect(pendingUpdateStore.inFlightWrites()).toBe(1);
+
+    const flush = service.flushPendingUpdate();
+    gate.release();
+    await flush;
+
+    expect(pendingUpdateStore.writes()).toEqual(["1.2.4", "1.2.5"]);
+    expect(pendingUpdateStore.completedWrites()).toBe(2);
+    expect(pendingUpdateStore.current()).toBe("1.2.5");
   });
 
   it("resolves flush after a failed write without throwing", async () => {
@@ -1047,9 +1094,11 @@ describe("pending update persistence", () => {
       intent: "automatic",
     });
 
-    const write = pendingUpdateStore.deferNextWrite();
+    const gate = pendingUpdateStore.gateWrites();
     runtime.finishUpdateDownload(rolledOutUpdate);
-    write.fail(new Error("disk full"));
+    await settleMicrotasks();
+    expect(pendingUpdateStore.inFlightWrites()).toBe(1);
+    gate.fail(new Error("disk full"));
 
     await expect(service.flushPendingUpdate()).resolves.toBeUndefined();
     expect(pendingUpdateStore.current()).toBeNull();
@@ -1065,15 +1114,15 @@ describe("pending update persistence", () => {
       intent: "automatic",
     });
 
-    const write = pendingUpdateStore.deferNextWrite();
+    const gate = pendingUpdateStore.gateWrites();
     const download = runtime.beginUpdateDownload(rolledOutUpdate);
     download.resolve();
     // electron-updater resolves downloadUpdate() as soon as the download event
     // dispatches, so the caller must flush the marker before exiting.
-    await new Promise<void>((resolve) => setImmediate(resolve));
+    await settleMicrotasks();
     expect(pendingUpdateStore.current()).toBeNull();
 
-    write.release();
+    gate.release();
     await service.flushPendingUpdate();
     expect(pendingUpdateStore.current()).toBe("1.2.4");
   });
