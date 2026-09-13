@@ -2613,6 +2613,8 @@ class ClaudeAgentSession implements AgentSession {
           ? "bypassPermissions"
           : "acceptEdits";
         await this.setMode(targetMode);
+        // The SDK can cancel or supersede this request while changing modes.
+        if (this.pendingPermissions.get(requestId) !== pending) return;
         this.recordPlanPermissionTimeline(pending.request, response);
       }
       const updatedInput =

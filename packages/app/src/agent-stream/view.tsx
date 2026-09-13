@@ -1534,9 +1534,11 @@ function PermissionRequestCard({
         agentId: permission.agentId,
         requestId: permission.request.id,
         response,
-      }).catch((error) => {
-        console.error("[PermissionRequestCard] Failed to respond to permission:", error);
-      });
+      })
+        .catch((error) => {
+          console.error("[PermissionRequestCard] Failed to respond to permission:", error);
+        })
+        .finally(() => setRespondingActionId(null));
     },
     [permission.agentId, permission.request.id, respondToPermission],
   );

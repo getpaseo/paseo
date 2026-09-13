@@ -17,6 +17,8 @@ test.describe("Codex plan approval", () => {
       await page.getByTestId("permission-request-accept").click();
       await expect(page.getByTestId("permission-request-error")).toBeVisible({ timeout: 25_000 });
       await expect(page.getByTestId("timeline-plan-card")).toHaveCount(1);
+      await expect(page.getByTestId("permission-request-accept")).toHaveText("Implement");
+      await expect(page.getByTestId("permission-request-accept")).toBeEnabled();
       await page.getByTestId("permission-request-accept").click();
       await expect(page.getByTestId("permission-request-accept")).toHaveCount(0, {
         timeout: 30_000,

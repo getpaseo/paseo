@@ -1166,6 +1166,82 @@ test("plan approval exposes a resume-bypass action and can return to bypassPermi
   }
 });
 
+test("does not approve a plan canceled while its mode change is pending", async () => {
+  const queryMock = createBaseQueryMock(vi.fn(async () => ({ done: true, value: undefined })));
+  sdkQueryFactory.mockImplementation(() => queryMock);
+  const session = await createSession();
+  const events: AgentStreamEvent[] = [];
+  session.subscribe((event) => events.push(event));
+  const controller = new AbortController();
+  let finishModeChange!: () => void;
+  const modeChange = new Promise<void>((resolve) => {
+    finishModeChange = resolve;
+  });
+  let signalModeChangeStarted!: () => void;
+  const modeChangeStarted = new Promise<void>((resolve) => {
+    signalModeChangeStarted = resolve;
+  });
+  const internal = asInternals<{
+    claudeSessionId: string | null;
+    handlePermissionRequest(
+      name: string,
+      input: Record<string, unknown>,
+      options: Record<string, unknown>,
+    ): Promise<unknown>;
+  }>(session);
+  internal.claudeSessionId = "canceled-plan-race";
+  try {
+    queryMock.setPermissionMode.mockImplementationOnce(() => {
+      signalModeChangeStarted();
+      return modeChange;
+    });
+    const pending = internal.handlePermissionRequest(
+      "ExitPlanMode",
+      { plan: "Preserve the canceled plan" },
+      { toolUseID: "canceled-plan", signal: controller.signal },
+    );
+    const [request] = session.getPendingPermissions();
+    const approval = session.respondToPermission(request!.id, {
+      behavior: "allow",
+      selectedActionId: "implement",
+    });
+    await modeChangeStarted;
+    controller.abort();
+    await expect(pending).rejects.toThrow("Permission request aborted");
+    finishModeChange();
+    await approval;
+
+    const resolution = { behavior: "deny", message: "Permission request canceled" };
+    expect(events.filter((event) => event.type === "permission_resolved")).toEqual([
+      expect.objectContaining({ requestId: request!.id, resolution }),
+    ]);
+    expect(session.describePersistence()?.metadata?.planResolutions).toEqual({
+      "canceled-plan": resolution,
+    });
+    const plans = events.flatMap((event) =>
+      event.type === "timeline" &&
+      event.item.type === "tool_call" &&
+      event.item.detail.type === "plan"
+        ? [event.item]
+        : [],
+    );
+    expect(plans).toEqual([
+      expect.objectContaining({
+        callId: "canceled-plan",
+        detail: { type: "plan", text: "Preserve the canceled plan" },
+      }),
+      expect.objectContaining({
+        callId: "canceled-plan",
+        metadata: expect.objectContaining({ approved: false, resolution }),
+      }),
+    ]);
+    expect(session.getPendingPermissions()).toEqual([]);
+  } finally {
+    finishModeChange();
+    await session.close();
+  }
+});
+
 test("reuses one autonomous run for unbound stream_event bursts with no foreground run", async () => {
   const session = await createSession();
   const internal: {
