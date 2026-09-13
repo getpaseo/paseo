@@ -173,6 +173,7 @@ export class WorkflowController {
       plan.approved = true;
       workflow.activePlanId = plan.context.callId;
       await this.port.write(state);
+      await this.reconcile(state, workflow);
     });
   }
 
@@ -370,6 +371,8 @@ export class WorkflowController {
   private async reconcile(state: WorkflowState, workflow: Workflow) {
     // One bounded pass over existing operations, never replay arbitrary agent history.
     const candidates = new Set<string>();
+    const activePlan = workflow.plans[workflow.activePlanId ?? ""];
+    if (activePlan?.approved && !activePlan.final) candidates.add(workflow.plannerId);
     for (const plan of Object.values(workflow.plans)) {
       if (plan.review?.phase === "running" && plan.review.agentId)
         candidates.add(plan.review.agentId);
@@ -385,7 +388,7 @@ export class WorkflowController {
     }
     for (const agentId of candidates) {
       const expected = this.expectedPrompt(workflow, agentId);
-      if (expected)
+      if (expected || agentId === workflow.plannerId)
         await this.consumeTurn(state, await this.port.agent(agentId), undefined, expected);
     }
   }

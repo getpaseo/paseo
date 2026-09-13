@@ -355,6 +355,132 @@ test("consumed approval with rejected ACK reaches the workflow hook once and sur
   }
 }, 60_000);
 
+test.each(["reversed", "normal", "reload"] as const)(
+  "approved planner completion starts one final review (%s order)",
+  async (order) => {
+    const f = await lifecycleFixture();
+    let release!: () => void;
+    f.holds.set(
+      "final-review",
+      new Promise<void>((resolve) => {
+        release = resolve;
+      }),
+    );
+    f.canceled.add("final-review");
+    try {
+      const plan = await pendingPlan(f);
+      await f.client.invokePluginRpc("paseo-workflow", "workflow.handoff.prepare.request", plan);
+      const manager = f.daemon.daemon.agentManager;
+      const session = manager.getAgent(plan.agentId)!.session!;
+      const respond = session.respondToPermission.bind(session);
+      const emit = (
+        session as unknown as { notifySubscribers(event: AgentStreamEvent): void }
+      ).notifySubscribers.bind(session);
+      const turnId = "approved-implementation";
+      const resolution: AgentStreamEvent = {
+        type: "permission_resolved",
+        provider: "codex",
+        requestId: plan.permissionRequestId,
+        resolution: { behavior: "allow" },
+        turnId,
+      };
+      const completed: AgentStreamEvent = { type: "turn_completed", provider: "codex", turnId };
+      const finish = () => {
+        emit({
+          type: "timeline",
+          provider: "codex",
+          turnId,
+          item: { type: "assistant_message", text: "Functional change committed" },
+        });
+        emit(completed);
+      };
+      session.respondToPermission = async (...args) => {
+        await respond(...args);
+        await writeFile(path.join(f.directory, "feature.txt"), "functional\n");
+        f.git("add", "feature.txt");
+        f.git("commit", "--quiet", "-m", "functional");
+        emit({ type: "turn_started", provider: "codex", turnId });
+        emit({
+          type: "timeline",
+          provider: "codex",
+          turnId,
+          item: {
+            type: "user_message",
+            text: "Implement the approved plan",
+            clientMessageId: "approved-prompt",
+          },
+        });
+        emit(resolution);
+        if (order === "reversed") {
+          finish();
+          throw new Error("Approval ACK rejected after completion");
+        }
+      };
+      const delivered: string[] = [];
+      manager.subscribe(
+        (event) => {
+          if (
+            event.type === "agent_stream" &&
+            ["permission_resolved", "turn_completed"].includes(event.event.type)
+          )
+            delivered.push(event.event.type);
+        },
+        { agentId: plan.agentId, replayState: false },
+      );
+      const approval = manager.respondToPermission(plan.agentId, plan.permissionRequestId, {
+        behavior: "allow",
+      });
+      if (order === "reversed") await expect(approval).rejects.toThrow("ACK rejected");
+      else await approval;
+      await expect
+        .poll(
+          async () => (await f.read()).values.workflows[plan.agentId]?.plans[plan.callId]?.approved,
+        )
+        .toBe(true);
+      if (order === "reload") await f.client.disablePlugin("paseo-workflow");
+      if (order !== "reversed") finish();
+      await manager.flush();
+      expect(delivered).toEqual(
+        order === "reversed"
+          ? ["turn_completed", "permission_resolved"]
+          : ["permission_resolved", "turn_completed"],
+      );
+      const status = () =>
+        f.client.invokePluginRpc("paseo-workflow", "workflow.status.get.request", {
+          agentId: plan.agentId,
+          workspaceId: plan.workspaceId,
+        });
+      if (order === "reload") {
+        await f.client.enablePlugin("paseo-workflow");
+        await f.client.reloadPlugin("paseo-workflow");
+        await status();
+      }
+      await expect
+        .poll(
+          async () =>
+            (await f.read()).values.workflows[plan.agentId]?.plans[plan.callId]?.final?.phase,
+        )
+        .toBe("classifying");
+      const finalId = f.agents("final-review")[0]!.id;
+      emit(resolution);
+      emit(completed);
+      await manager.flush();
+      await f.client.reloadPlugin("paseo-workflow");
+      await status();
+      await status();
+      expect(f.agents("final-review").map((agent) => agent.id)).toEqual([finalId]);
+      expect(f.prompts.filter((prompt) => prompt.role === "final-review")).toHaveLength(1);
+      expect(
+        (await f.read()).values.workflows[plan.agentId]?.plans[plan.callId]?.final?.phase,
+      ).toBe("classifying");
+    } finally {
+      release();
+      await f.close();
+    }
+  },
+  60_000,
+);
+
 test("review finishing during failed permission close is consumed once after retry and reload", async () => {
   const f = await lifecycleFixture();
   let release!: () => void;
