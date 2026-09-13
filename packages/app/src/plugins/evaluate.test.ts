@@ -28,6 +28,49 @@ function bundle(body: string): string {
 }
 
 describe("evaluatePluginClientBundle", () => {
+  it("collects plan actions and removes them when the plugin stops", async () => {
+    const plugin = evaluatePluginClientBundle(
+      "workflow",
+      bundle(`
+      plugin.addPlanAction({ id: "review", title: "Revue", order: 10,
+        query: { launchProfileId: "planner" }, onPress() {} });
+    `),
+    );
+    expect(plugin.planActions.map(({ id, title }) => ({ id, title }))).toEqual([
+      { id: "review", title: "Revue" },
+    ]);
+    await plugin.cleanup();
+    expect(plugin.planActions).toEqual([]);
+  });
+
+  it.each([
+    ['id: "INVALID", title: "Review", onPress() {}', "Invalid plan action id"],
+    ['id: "review", title: " ", onPress() {}', "has no title"],
+    ['id: "review", title: "Review"', "has no callback"],
+    ['id: "review", title: "Review", order: NaN, onPress() {}', "invalid order"],
+    [
+      'id: "review", title: "Review", query: { launchProfileId: "" }, onPress() {}',
+      "invalid launch profile",
+    ],
+    ['id: "review", title: "Review", disabledReason: " ", onPress() {}', "invalid disabled reason"],
+  ])("rejects malformed plan actions: %s", (definition, message) => {
+    expect(() =>
+      evaluatePluginClientBundle("workflow", bundle(`plugin.addPlanAction({ ${definition} });`)),
+    ).toThrow(message);
+  });
+
+  it("rejects duplicate plan action ids", () => {
+    expect(() =>
+      evaluatePluginClientBundle(
+        "workflow",
+        bundle(`
+      plugin.addPlanAction({ id: "review", title: "Revue", onPress() {} });
+      plugin.addPlanAction({ id: "review", title: "Review again", onPress() {} });
+    `),
+      ),
+    ).toThrow("Duplicate plan action: review");
+  });
+
   it("releases button registrations when client setup throws", () => {
     let active = 0;
     function addButton() {

@@ -71,6 +71,7 @@ export interface AgentRuntimeInfo {
 
 export interface Agent {
   serverId: string;
+  launchProfileId?: string;
   id: string;
   provider: AgentProvider;
   status: AgentLifecycleStatus;

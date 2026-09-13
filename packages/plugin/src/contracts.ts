@@ -34,6 +34,7 @@ export interface PluginWorkspaceSnapshot {
 }
 
 export interface PluginAgentSnapshot {
+  readonly launchProfileId?: string;
   readonly id: string;
   readonly workspaceId: string;
   readonly provider: string;

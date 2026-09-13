@@ -95,6 +95,7 @@ export class PluginRegistry {
           themes: [],
           timelineTransformers: [],
           timelineRenderers: [],
+          planActions: [],
         };
         runtime = this.dependencies.createRuntime(installation, options.client);
         const evaluated = runPluginClientBundle(entry.id, entry.clientBundle, runtime, () =>

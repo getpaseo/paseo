@@ -807,6 +807,53 @@ Showing another toast replaces the currently visible toast. An empty message is 
 | `size`  | `number` | No       | Icon width and height.                          |
 | `color` | `string` | No       | Icon color. Use a plugin theme token.           |
 
+## Plan actions
+
+`client.addPlanAction(contribution)` adds a business action to Paseo's plan card and returns an
+idempotent cleanup function. Paseo owns the card, clipboard, approval, menu, loading state, and
+visible errors. Contributions never replace the timeline entry.
+
+```ts
+client.addPlanAction({
+  id: "review",
+  title: "Review",
+  order: 10,
+  query: { launchProfileId: "planner" },
+  async onPress(context) {
+    await context.rpc(reviewPlanRpc, {
+      agentId: context.agent.id,
+      workspaceId: context.workspace.id,
+      ...context.plan,
+    });
+  },
+});
+```
+
+| Field                    | Contract                                                                              |
+| ------------------------ | ------------------------------------------------------------------------------------- |
+| `id`                     | Plugin-local contribution ID, unique until removed                                    |
+| `title`                  | Nonempty action label                                                                 |
+| `order?`                 | Finite number, ascending; defaults to `0`. Ties sort by plugin ID and action ID       |
+| `query.launchProfileId?` | Exact match against the agent's immutable launch profile; omitted matches any profile |
+| `disabledReason?`        | Nonempty reason shown by the host while the action is unavailable                     |
+| `onPress(context)`       | Synchronous or async business callback; reject or throw to show a retryable error     |
+
+`PluginPlanActionContext` extends `PluginAgentCommandContext`. Its `plan` contains the exact
+`callId`, full Markdown `text`, optional `turnId`, and correlated `permissionRequestId`. The agent
+snapshot exposes optional `launchProfileId`. Use these IDs directly; do not look up the latest plan
+by text or position.
+
+Paseo shows Copy first, matching contributions next, and Approve last. Compact layouts put the
+secondary actions in the existing menu and keep Approve visible. Business actions and approval
+share one lock per mounted plan card; Copy stays independent. Errors release the lock, and pressing
+the same action retries. Changing the plan's `callId` clears local action state.
+
+Remote actions require a live permission whose `sourcePlanCallId` matches the card. Cached and
+read-only plans retain Copy; reconnecting alone does not restore actions before live directory
+reconciliation. The host submits approval through the correlated native or synthetic permission.
+A provider with no pending plan permission does not gain approval from a timeline entry alone.
+Reloading or removing a plugin removes its contributions. No callback or pending action is persisted.
+
 ## Timeline items
 
 A plugin can replace an agent timeline entry with its own data and React Native renderer. Both

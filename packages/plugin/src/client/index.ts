@@ -20,6 +20,8 @@ export type {
   PluginGlobalCommandContext,
   PluginWorkspaceCommandContext,
   PluginAgentCommandContext,
+  PluginPlanActionContext,
+  PluginPlanActionContribution,
   PluginCommandCenterItemContribution,
   PluginClientSlashCommandContribution,
   SettingsState,

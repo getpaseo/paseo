@@ -97,6 +97,7 @@ export function runPluginClientBundle(
     themes: [],
     timelineTransformers: [],
     timelineRenderers: [],
+    planActions: [],
   };
   const surfaceIds = new Set<string>();
   const settingsScreenIds = new Set<string>();
@@ -108,6 +109,7 @@ export function runPluginClientBundle(
   const themeIds = new Set<string>();
   const timelineTransformerIds = new Set<string>();
   const timelineRendererIds = new Set<string>();
+  const planActionIds = new Set<string>();
   const removals = new Set<PluginCleanup>();
   let setupComplete = false;
   let stopped = false;
@@ -148,6 +150,27 @@ export function runPluginClientBundle(
   }
   const pluginContext: PluginClientContext = {
     ...runtime,
+    addPlanAction(contribution) {
+      if (stopped) throw new Error("Plugin has stopped");
+      const actionId = requireId(contribution.id, "plan action id");
+      if (planActionIds.has(actionId)) throw new Error(`Duplicate plan action: ${actionId}`);
+      const title = contribution.title.trim();
+      if (!title) throw new Error(`Plan action ${actionId} has no title`);
+      if (typeof contribution.onPress !== "function")
+        throw new Error(`Plan action ${actionId} has no callback`);
+      if (contribution.order !== undefined && !Number.isFinite(contribution.order))
+        throw new Error(`Plan action ${actionId} has invalid order`);
+      const profileId = contribution.query?.launchProfileId;
+      if (profileId !== undefined && (typeof profileId !== "string" || !profileId.trim()))
+        throw new Error(`Plan action ${actionId} has invalid launch profile`);
+      const reason = contribution.disabledReason;
+      if (reason !== undefined && (typeof reason !== "string" || !reason.trim()))
+        throw new Error(`Plan action ${actionId} has invalid disabled reason`);
+      planActionIds.add(actionId);
+      return register(collector.planActions, { ...contribution, id: actionId, title }, () =>
+        planActionIds.delete(actionId),
+      );
+    },
     addSettingsScreen(contribution) {
       const screenId = requireId(contribution.id, "settings screen id");
       if (settingsScreenIds.has(screenId))
@@ -441,5 +464,6 @@ export function runPluginClientBundle(
     themes: collector.themes,
     timelineTransformers: collector.timelineTransformers,
     timelineRenderers: collector.timelineRenderers,
+    planActions: collector.planActions,
   };
 }

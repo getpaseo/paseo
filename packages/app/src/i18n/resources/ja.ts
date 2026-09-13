@@ -209,6 +209,7 @@ export const ja: TranslationResources = {
     historyLoadFailed: "エージェントの履歴を読み込めませんでした",
     messageCapped: "このメッセージは上限で切り詰められました（{{bytes}}バイト）。",
     permission: {
+      approve: "承認",
       plan: "プラン",
       required: "権限が必要です",
       deny: "拒否",

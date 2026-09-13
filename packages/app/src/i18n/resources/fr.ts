@@ -9,7 +9,7 @@ export const fr: TranslationResources = {
       back: "Dos",
       cancel: "Annuler",
       close: "Fermer",
-      copy: "Copie",
+      copy: "Copier",
       copyLine: "Copier la ligne",
       dismiss: "Rejeter",
       reload: "Recharger",
@@ -211,6 +211,7 @@ export const fr: TranslationResources = {
     historyLoadFailed: "Impossible de charger l’historique de l’agent",
     messageCapped: "Ce message a été tronqué ({{bytes}} octets).",
     permission: {
+      approve: "Approuver",
       plan: "Plan",
       required: "Autorisation requise",
       deny: "Refuser",
@@ -751,7 +752,7 @@ export const fr: TranslationResources = {
     git: {
       actions: {
         moreOptions: "Plus d'options",
-        moreActions: "Plus de propositions",
+        moreActions: "Plus d’actions",
         commit: {
           label: "Commettre",
           pending: "S'engager...",

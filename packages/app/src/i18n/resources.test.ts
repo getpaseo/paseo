@@ -104,6 +104,12 @@ function findUntranslatedConnectionErrors(): string[] {
 }
 
 describe("translation resources", () => {
+  it("uses action labels for the French plan toolbar and its overflow", () => {
+    expect(fr.common.actions.copy).toBe("Copier");
+    expect(fr.agentStream.permission.approve).toBe("Approuver");
+    expect(fr.workspace.git.actions.moreActions).toBe("Plus d’actions");
+  });
+
   it("keeps all supported language keys in sync with English", () => {
     const englishKeys = flattenKeys(en).sort();
     expect(flattenKeys(ar).sort()).toEqual(englishKeys);

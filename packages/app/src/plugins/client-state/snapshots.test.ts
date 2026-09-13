@@ -54,6 +54,12 @@ const agent: Agent = {
 };
 
 describe("plugin context snapshots", () => {
+  it("preserves launch provenance for exact plan-action matching", () => {
+    expect(
+      createPluginAgentSnapshot({ ...agent, launchProfileId: "planner" }, workspace.id)
+        .launchProfileId,
+    ).toBe("planner");
+  });
   it("commits a deeply immutable normalized workspace snapshot synchronously", () => {
     const snapshot = createPluginWorkspaceSnapshot(workspace);
     expect(createPluginWorkspaceSnapshot(workspace)).toBe(snapshot);

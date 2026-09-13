@@ -41,6 +41,7 @@ import {
   type InlinePathTarget,
 } from "@/components/message";
 import { PlanCard } from "@/components/plan-card";
+import { PlanActions } from "@/plugins/plan-actions/view";
 import type { StreamItem } from "@/types/stream";
 import type { PendingMessageSubmission } from "@/composer/submission/model";
 import type { TurnPresentation } from "@/timeline/turn-liveness";
@@ -775,7 +776,19 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
             item.kind === "tool_call" &&
             item.payload.source === "agent" &&
             item.payload.data.detail.type === "plan"
-              ? [[item.payload.data.callId, item.id] as const]
+              ? [
+                  [
+                    item.payload.data.callId,
+                    {
+                      rowId: item.id,
+                      plan: {
+                        callId: item.payload.data.callId,
+                        text: item.payload.data.detail.text,
+                        turnId: item.turnId,
+                      },
+                    },
+                  ] as const,
+                ]
               : [],
           ),
         ),
@@ -783,26 +796,30 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     );
     const planFootersByRowId = useMemo(() => {
       const footers = new Map<string, ReactNode>();
-      for (const [callId, rowId] of timelinePlans) {
-        const permission = !readOnly
-          ? pendingPermissionItems.find(
-              (entry) => entry.request.kind === "plan" && entry.request.sourcePlanCallId === callId,
-            )
-          : undefined;
+      const requests = pendingPermissionItems.map((entry) => entry.request);
+      for (const [callId, plan] of timelinePlans) {
         footers.set(
-          rowId,
-          permission ? (
-            <PermissionRequestCard
-              key={permission.key}
-              permission={permission}
-              client={client}
-              footerOnly
-            />
-          ) : undefined,
+          plan.rowId,
+          <PlanActions
+            key={callId}
+            serverId={resolvedServerId}
+            workspaceId={context.workspaceId}
+            agentId={agentId}
+            plan={plan.plan}
+            permissions={requests}
+            readOnly={readOnly}
+          />,
         );
       }
       return footers;
-    }, [timelinePlans, pendingPermissionItems, readOnly, client]);
+    }, [
+      timelinePlans,
+      pendingPermissionItems,
+      readOnly,
+      resolvedServerId,
+      context.workspaceId,
+      agentId,
+    ]);
 
     const renderSingleToolCallItem = useCallback(
       (
@@ -836,7 +853,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
               detail={data.detail}
               cwd={context.cwd}
               metadata={data.metadata}
-              planFooter={planFootersByRowId.get(item.id)}
+              planActions={planFootersByRowId.get(item.id)}
               isLastInSequence={isLastInSequence}
               onOpenFilePath={handleToolCallOpenFile}
               maxDetailHeight={maxDetailHeight}
@@ -1433,11 +1450,9 @@ function PermissionActionButton({
 function PermissionRequestCard({
   permission,
   client,
-  footerOnly = false,
 }: {
   permission: PendingPermission;
   client: DaemonClient | null;
-  footerOnly?: boolean;
 }) {
   const { t } = useTranslation();
   const isMobile = useIsCompactFormFactor();
@@ -1619,8 +1634,6 @@ function PermissionRequestCard({
       </View>
     </>
   );
-
-  if (footerOnly) return footer;
 
   if (isPlanRequest && planMarkdown) {
     return (

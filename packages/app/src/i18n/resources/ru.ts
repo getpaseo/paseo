@@ -209,6 +209,7 @@ export const ru: TranslationResources = {
     historyLoadFailed: "Не удалось загрузить историю агента",
     messageCapped: "Это сообщение было обрезано ({{bytes}} байт).",
     permission: {
+      approve: "Одобрить",
       plan: "План",
       required: "Требуется разрешение",
       deny: "Отклонить",

@@ -209,6 +209,7 @@ export const es: TranslationResources = {
     historyLoadFailed: "No se pudo cargar el historial del agente",
     messageCapped: "Este mensaje fue truncado ({{bytes}} bytes).",
     permission: {
+      approve: "Aprobar",
       plan: "Plan",
       required: "Permiso requerido",
       deny: "Denegar",

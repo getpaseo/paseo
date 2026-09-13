@@ -209,6 +209,7 @@ export const zhCN: TranslationResources = {
     historyLoadFailed: "无法加载智能体历史记录",
     messageCapped: "此消息已被截断（{{bytes}} 字节）。",
     permission: {
+      approve: "批准",
       plan: "Plan",
       required: "需要权限",
       deny: "拒绝",

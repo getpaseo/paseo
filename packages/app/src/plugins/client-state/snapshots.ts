@@ -34,6 +34,7 @@ export function createPluginAgentSnapshot(agent: Agent, workspaceId: string): Pl
   if (cached) return cached;
   const snapshot = Object.freeze({
     id: agent.id,
+    launchProfileId: agent.launchProfileId,
     workspaceId,
     provider: agent.provider,
     status: agent.status,

@@ -1,7 +1,8 @@
-import { useMemo, type ReactNode } from "react";
+import { useMemo, type ComponentProps, type ReactNode } from "react";
 import { Text, View, type StyleProp, type TextStyle, type ViewStyle } from "react-native";
 import Markdown, { type ASTNode } from "react-native-markdown-display";
-import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { StyleSheet, withUnistyles } from "react-native-unistyles";
+import type { Theme } from "@/styles/theme";
 import { useTranslation } from "react-i18next";
 import { createMarkdownStyles } from "@/styles/markdown-styles";
 import { getMarkdownListMarker } from "@/utils/markdown-list";
@@ -11,6 +12,19 @@ import { createMarkdownParser } from "@/utils/markdown-parser";
 // `typographer: true`, which would render a plan's literal `(c)` as ©. Its
 // default also leaves linkify off, so this one keeps bare URLs as plain text.
 const planMarkdownParser = createMarkdownParser({ linkify: false });
+const PlanMarkdown = withUnistyles(function PlanMarkdownBody({
+  theme,
+  children,
+  rules,
+  markdownit,
+}: ComponentProps<typeof Markdown> & { theme: Theme }) {
+  return (
+    <Markdown rules={rules} markdownit={markdownit} style={createMarkdownStyles(theme)}>
+      {children}
+    </Markdown>
+  );
+});
+const markdownMapping = (theme: Theme) => ({ theme });
 
 type MarkdownRuleStyles = Record<string, TextStyle & ViewStyle & { [key: string]: unknown }>;
 
@@ -195,39 +209,26 @@ export function PlanCard({
   disableOuterSpacing?: boolean;
   testID?: string;
 }) {
-  const { theme } = useUnistyles();
   const { t } = useTranslation();
-  const markdownStyles = createMarkdownStyles(theme);
   const markdownRules = createPlanMarkdownRules();
   const resolvedTitle = title ?? t("agentStream.permission.plan");
 
   const containerStyle = useMemo(
-    () => [
-      styles.container,
-      disableOuterSpacing && styles.containerCompact,
-      {
-        backgroundColor: theme.colors.surface1,
-        borderColor: theme.colors.border,
-      },
-    ],
-    [disableOuterSpacing, theme.colors.surface1, theme.colors.border],
-  );
-  const titleStyle = useMemo(
-    () => [styles.title, { color: theme.colors.foreground }],
-    [theme.colors.foreground],
-  );
-  const descriptionStyle = useMemo(
-    () => [styles.description, { color: theme.colors.foregroundMuted }],
-    [theme.colors.foregroundMuted],
+    () => [styles.container, disableOuterSpacing && styles.containerCompact],
+    [disableOuterSpacing],
   );
 
   return (
     <View testID={testID} style={containerStyle}>
-      <Text style={titleStyle}>{resolvedTitle}</Text>
-      {description ? <Text style={descriptionStyle}>{description}</Text> : null}
-      <Markdown style={markdownStyles} rules={markdownRules} markdownit={planMarkdownParser}>
+      <Text style={styles.title}>{resolvedTitle}</Text>
+      {description ? <Text style={styles.description}>{description}</Text> : null}
+      <PlanMarkdown
+        uniProps={markdownMapping}
+        rules={markdownRules}
+        markdownit={planMarkdownParser}
+      >
         {text}
-      </Markdown>
+      </PlanMarkdown>
       {footer ? <View style={styles.footer}>{footer}</View> : null}
     </View>
   );
@@ -235,6 +236,8 @@ export function PlanCard({
 
 const styles = StyleSheet.create((theme) => ({
   container: {
+    backgroundColor: theme.colors.surface1,
+    borderColor: theme.colors.border,
     marginVertical: theme.spacing[3],
     padding: theme.spacing[3],
     borderRadius: theme.spacing[2],
@@ -245,10 +248,12 @@ const styles = StyleSheet.create((theme) => ({
     marginVertical: 0,
   },
   title: {
+    color: theme.colors.foreground,
     fontSize: theme.fontSize.base,
     lineHeight: 22,
   },
   description: {
+    color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.base,
     lineHeight: 20,
   },

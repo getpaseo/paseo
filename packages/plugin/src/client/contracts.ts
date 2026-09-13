@@ -84,6 +84,7 @@ export interface PluginClientContext extends PluginCommandCapabilities {
   addSlashCommand(contribution: PluginClientSlashCommandContribution): PluginCleanup;
   addHeaderButton(contribution: PluginHeaderButtonContribution): PluginButtonRegistration;
   addComposerPill(contribution: PluginComposerPillContribution): PluginButtonRegistration;
+  addPlanAction(contribution: PluginPlanActionContribution): PluginCleanup;
   addAttachmentSource(contribution: PluginAttachmentSourceContribution): PluginCleanup;
   addTheme(contribution: PluginThemeContribution): PluginCleanup;
   addTimelineTransformer<ItemType extends AgentTimelineItem["type"]>(
@@ -184,6 +185,25 @@ export interface PluginAgentCommandContext extends PluginCommandCapabilities {
   workspace: PluginWorkspaceSnapshot;
   agent: PluginAgentSnapshot;
   openPanel(id: string, options?: PluginOpenPanelOptions): void;
+}
+
+export interface PluginPlanActionContext extends PluginAgentCommandContext {
+  plan: {
+    callId: string;
+    text: string;
+    turnId?: string;
+    permissionRequestId: string;
+  };
+}
+
+/** Business actions on a live, pending plan. The host owns rendering and approval. */
+export interface PluginPlanActionContribution {
+  id: string;
+  title: string;
+  order?: number;
+  query?: { launchProfileId?: string };
+  disabledReason?: string;
+  onPress(context: PluginPlanActionContext): void | Promise<void>;
 }
 
 interface PluginCommandCenterItemBase {

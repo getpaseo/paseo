@@ -15,9 +15,12 @@ test.describe("Codex plan approval", () => {
       await openAgentRoute(page, session);
       await waitForPermissionPrompt(page);
       await page.getByTestId("permission-request-accept").click();
-      await expect(page.getByTestId("permission-request-error")).toBeVisible({ timeout: 25_000 });
+      await expect(page.getByTestId("plan-action-status")).toContainText(
+        "Requested mock permission response failure",
+        { timeout: 25_000 },
+      );
       await expect(page.getByTestId("timeline-plan-card")).toHaveCount(1);
-      await expect(page.getByTestId("permission-request-accept")).toHaveText("Implement");
+      await expect(page.getByTestId("permission-request-accept")).toHaveText("Approve");
       await expect(page.getByTestId("permission-request-accept")).toBeEnabled();
       await page.getByTestId("permission-request-accept").click();
       await expect(page.getByTestId("permission-request-accept")).toHaveCount(0, {
@@ -28,7 +31,7 @@ test.describe("Codex plan approval", () => {
       await session.cleanup();
     }
   });
-  for (const behavior of ["allow", "deny"] as const) {
+  for (const behavior of ["allow", "follow-up"] as const) {
     test(`keeps one canonical plan after ${behavior} and reload`, async ({ page }) => {
       test.setTimeout(180_000);
 
@@ -49,7 +52,11 @@ test.describe("Codex plan approval", () => {
         expect(planText).toContain('--name="my repo"');
 
         if (behavior === "allow") await allowPermission(page);
-        else await page.getByTestId("permission-request-deny").click();
+        else
+          await session.client.sendAgentMessage(
+            session.agentId,
+            "Revise this plan with a smaller scope.",
+          );
 
         await expect(page.getByTestId("permission-plan-card")).toHaveCount(0, {
           timeout: 30_000,
