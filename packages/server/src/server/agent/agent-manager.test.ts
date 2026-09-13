@@ -9167,12 +9167,13 @@ test.each([
   },
 );
 
-test.each(["pending", "consumed", "replaced", "newer-mode"] as const)(
+test.each(["pending", "consumed", "replaced", "newer-mode", "queued-resolution"] as const)(
   "launch profile approval restores only an unconsumed provider rejection (%s)",
   async (scenario) => {
     const directory = mkdtempSync(join(tmpdir(), "approval-rejection-"));
     const registry = new AgentStorage(join(directory, "agents"), logger);
     let mode = "plan";
+    let resumed = false;
     let rejectPermission = () => {};
     class RejectionSession extends TestAgentSession {
       override async setMode(value: string) {
@@ -9183,6 +9184,20 @@ test.each(["pending", "consumed", "replaced", "newer-mode"] as const)(
       }
       override async respondToPermission() {
         rejectPermission();
+        if (scenario === "queued-resolution") {
+          resumed = true;
+          this.pushEvent({
+            type: "timeline",
+            provider: "codex",
+            item: { type: "assistant_message", text: "Implementation resumed" },
+          });
+          this.pushEvent({
+            type: "permission_resolved",
+            provider: "codex",
+            requestId: "approve",
+            resolution: { behavior: "allow" },
+          });
+        }
         throw new Error("Provider rejected approval");
       }
     }
@@ -9231,14 +9246,20 @@ test.each(["pending", "consumed", "replaced", "newer-mode"] as const)(
         consumed: "full-access",
         replaced: "full-access",
         "newer-mode": "always-ask",
+        "queued-resolution": "full-access",
       }[scenario];
+      expect(resumed).toBe(scenario === "queued-resolution");
       expect(mode).toBe(expected);
       await manager.flush();
       expect((await registry.get(agent.id))?.config.modeId).toBe(expected);
       expect(agent.pendingPermissions.get(pending.id)?.sourcePlanCallId).toBe(
-        { pending: "plan-1", consumed: undefined, replaced: "plan-2", "newer-mode": "plan-1" }[
-          scenario
-        ],
+        {
+          pending: "plan-1",
+          consumed: undefined,
+          replaced: "plan-2",
+          "newer-mode": "plan-1",
+          "queued-resolution": undefined,
+        }[scenario],
       );
     } finally {
       await manager.closeAgent(agent.id);

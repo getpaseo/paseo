@@ -281,19 +281,22 @@ export class WorkflowController {
     agent: WorkflowAgent,
     text: string,
     timeline: readonly AgentTimelineItem[],
-  ) {
+  ): Promise<boolean> {
     const agentId = agent.id;
     if (agent.launchProfileId === profileId("router"))
       return this.routerFinished(agent, state, text);
     const workflow = state.workflows[agent.labels["paseo.workflow.id"] ?? agent.id];
-    if (!workflow) return;
+    if (!workflow) return false;
     const plan = workflow.plans[agent.labels["paseo.workflow.plan"] ?? workflow.activePlanId ?? ""];
-    if (!plan) return;
+    if (!plan) return false;
     if (plan.handoff?.agentId === agentId || (workflow.plannerId === agentId && plan.approved))
       return this.startFinal(state, workflow, plan);
-    if (plan.review?.agentId === agentId && plan.review.phase === "running")
-      return this.reviewFinished(state, workflow, plan, text);
-    await this.finalFinished(state, workflow, plan, agentId, text, timeline);
+    if (plan.review?.agentId === agentId) {
+      if (plan.review.phase !== "running") return false;
+      await this.reviewFinished(state, workflow, plan, text);
+      return true;
+    }
+    return this.finalFinished(state, workflow, plan, agentId, text, timeline);
   }
 
   turnEnded(agentId: string, turnId: string | null) {
@@ -328,7 +331,7 @@ export class WorkflowController {
       !text.trim().startsWith("```")
     )
       return;
-    await this.finishNow(state, agent, text, turn.items);
+    if (!(await this.finishNow(state, agent, text, turn.items))) return;
     const current = state.workflows[agent.labels["paseo.workflow.id"] ?? agent.id];
     if (current) {
       (current.handledTurns ??= {})[agent.id] = turn.key;
@@ -394,34 +397,41 @@ export class WorkflowController {
     agentId: string,
     text: string,
     timeline: readonly AgentTimelineItem[],
-  ) {
+  ): Promise<boolean> {
     const final = plan.final;
-    if (!final) return;
+    if (!final) return false;
     if (final.phase === "auditing")
       return this.auditFinished(state, workflow, plan, agentId, text, final);
-    if (final.phase === "delta" && final.deltaId === agentId)
-      return this.deltaFinished(state, workflow, plan, text, final);
-    if (final.managerId !== agentId) return;
+    if (final.phase === "delta" && final.deltaId === agentId) {
+      await this.deltaFinished(state, workflow, plan, text, final);
+      return true;
+    }
+    if (final.managerId !== agentId) return false;
     switch (final.phase) {
       case "classifying":
-        return this.classifyFinal(state, workflow, plan, agentId, text);
+        await this.classifyFinal(state, workflow, plan, agentId, text);
+        break;
       case "deciding":
-        return this.decideCorrection(state, workflow, plan, agentId, text, final);
+        await this.decideCorrection(state, workflow, plan, agentId, text, final);
+        break;
       case "correcting":
-        return this.correctionFinished(state, workflow, plan, agentId, final, timeline);
+        await this.correctionFinished(state, workflow, plan, agentId, final, timeline);
+        break;
       case "committing":
-        return this.commitFinished(state, workflow, final);
+        await this.commitFinished(state, workflow, final);
+        break;
       default:
-        return;
+        return false;
     }
+    return true;
   }
 
   private async routerFinished(agent: WorkflowAgent, state: WorkflowState, text: string) {
     const workflow = await this.workflow(state, agent);
-    if (workflow.routed) return;
+    if (workflow.routed) return false;
     await this.profile("router");
     const decision = routerDecision.parse(decisionJson(text));
-    if (!decision.ready) return;
+    if (!decision.ready) return false;
     const planner = await this.profile("planner");
     workflow.routerId = agent.id;
     workflow.recommendation = decision.recommendation;
@@ -443,7 +453,7 @@ export class WorkflowController {
     workflow.plannerId = plannerId;
     workflow.routed = true;
     await this.port.write(state);
-    return;
+    return true;
   }
 
   private async startFinal(
@@ -451,11 +461,11 @@ export class WorkflowController {
     workflow: Workflow,
     plan: Workflow["plans"][string],
   ) {
-    if (plan.final) return;
+    if (plan.final) return false;
     const manager = await this.profile("final-review");
     const workspace = await this.port.workspace(workflow.workspaceId);
     const snapshot = await this.port.diff(workspace.cwd, workflow.git.base);
-    if (snapshot.head === workflow.git.base) return;
+    if (snapshot.head === workflow.git.base) return false;
     await this.refreshPlannerTranscript(state, workflow);
     const managerId = await this.port.create({
       workspaceId: workflow.workspaceId,
@@ -485,7 +495,7 @@ export class WorkflowController {
       audits: {},
     };
     await this.port.write(state);
-    return;
+    return true;
   }
 
   private async classifyFinal(
@@ -539,7 +549,7 @@ export class WorkflowController {
     final: FinalReview,
   ) {
     const audit = Object.values(final.audits).find((entry) => entry.agentId === agentId);
-    if (!audit || audit.result) return;
+    if (!audit || audit.result) return false;
     audit.result = auditDecision.parse(decisionJson(text));
     if (Object.values(final.audits).every((entry) => entry.result)) {
       const findings = Object.values(final.audits).flatMap((entry) => entry.result!.findings);
@@ -574,7 +584,7 @@ export class WorkflowController {
       }
     }
     await this.port.write(state);
-    return;
+    return true;
   }
 
   private async decideCorrection(

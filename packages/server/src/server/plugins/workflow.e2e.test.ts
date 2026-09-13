@@ -293,10 +293,18 @@ test.each([false, true])(
   60_000,
 );
 
-test("review retries a failed permission close without creating a second reviewer", async () => {
+test("review finishing during failed permission close is consumed once after retry and reload", async () => {
   const f = await lifecycleFixture();
+  let release!: () => void;
+  f.holds.set(
+    "plan-reviewer",
+    new Promise<void>((resolve) => {
+      release = resolve;
+    }),
+  );
   try {
     const plan = await pendingPlan(f);
+    f.replies.set("plan-reviewer", ["Preserve the existing CSV export"]);
     f.permissionFailures.set("planner", 1);
     await expect(
       f.client.invokePluginRpc("paseo-workflow", "workflow.plan.review.request", plan),
@@ -307,12 +315,36 @@ test("review retries a failed permission close without creating a second reviewe
         .pendingPermissions.has(plan.permissionRequestId),
     ).toBe(true);
     expect(f.agents("plan-reviewer")).toHaveLength(1);
+    const childId = f.agents("plan-reviewer")[0]!.id;
     expect(f.prompts.filter((prompt) => prompt.role === "plan-reviewer")).toHaveLength(1);
+    release();
+    await expect.poll(() => f.agents("plan-reviewer")[0]?.lifecycle).toBe("idle");
+    await f.daemon.daemon.agentManager.flush();
+    const status = () =>
+      f.client.invokePluginRpc("paseo-workflow", "workflow.status.get.request", {
+        agentId: plan.agentId,
+        workspaceId: plan.workspaceId,
+      });
+    await status();
+    expect((await f.read()).values.workflows[plan.agentId]?.plans[plan.callId]?.review?.phase).toBe(
+      "closing",
+    );
+    expect(f.prompts.filter((prompt) => prompt.text.startsWith("Revise the plan"))).toHaveLength(0);
     await f.client.reloadPlugin("paseo-workflow");
     await f.client.invokePluginRpc("paseo-workflow", "workflow.plan.review.request", plan);
-    expect(f.agents("plan-reviewer")).toHaveLength(1);
+    await status();
+    expect((await f.read()).values.workflows[plan.agentId]?.plans[plan.callId]?.review?.phase).toBe(
+      "complete",
+    );
+    await f.client.reloadPlugin("paseo-workflow");
+    await status();
+    expect(f.agents("plan-reviewer").map((agent) => agent.id)).toEqual([childId]);
     expect(f.prompts.filter((prompt) => prompt.role === "plan-reviewer")).toHaveLength(1);
+    const revisions = f.prompts.filter((prompt) => prompt.text.startsWith("Revise the plan"));
+    expect(revisions).toHaveLength(1);
+    expect(revisions[0]!.text).toContain("Preserve the existing CSV export");
   } finally {
+    release();
     await f.close();
   }
 }, 60_000);

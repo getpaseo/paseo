@@ -3045,6 +3045,7 @@ export class AgentManager {
             planApprovalMode,
           });
         } catch (error) {
+          await this.drainSessionEvents(agentId);
           if (
             planApprovalMode &&
             previousApprovalMode &&
