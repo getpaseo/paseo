@@ -2,7 +2,12 @@ import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import type { Logger } from "pino";
 
 import type { ProviderRuntimeSettings } from "../../provider-launch-config.js";
-import { JsonlRpcProcess, type JsonlRpcLaunch } from "../jsonl-rpc-process.js";
+import {
+  JSONL_RPC_ABORT_TIMEOUT_MS,
+  type JsonlRpcRequestOptions,
+  JsonlRpcProcess,
+  type JsonlRpcLaunch,
+} from "../jsonl-rpc-process.js";
 import { establishOmpProtocol } from "./protocol-session.js";
 import {
   buildOmpLaunch,
@@ -158,7 +163,9 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
   }
 
   async abort(): Promise<void> {
-    await this.requestStopWork({ type: "abort" });
+    await this.requestStopWork({ type: "abort" }, JSONL_RPC_ABORT_TIMEOUT_MS, {
+      closeOnTimeout: true,
+    });
   }
 
   async getState(): Promise<OmpSessionState> {
@@ -332,8 +339,16 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
     return this.process.request(OmpRpcCommandSchema.parse(command), timeoutMs);
   }
 
-  private requestStopWork(command: OmpRpcCommand): Promise<void> {
-    return this.process.requestStopWork(OmpRpcCommandSchema.parse(command));
+  private requestStopWork(
+    command: OmpRpcCommand,
+    timeoutMs?: number | null,
+    requestOptions?: JsonlRpcRequestOptions,
+  ): Promise<void> {
+    return this.process.requestStopWork(
+      OmpRpcCommandSchema.parse(command),
+      timeoutMs,
+      requestOptions,
+    );
   }
 
   private emit(event: OmpRuntimeEvent): void {

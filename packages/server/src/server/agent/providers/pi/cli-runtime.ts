@@ -3,6 +3,8 @@ import type { Logger } from "pino";
 
 import type { ProviderRuntimeSettings } from "../../provider-launch-config.js";
 import {
+  JSONL_RPC_ABORT_TIMEOUT_MS,
+  type JsonlRpcRequestOptions,
   JSONL_RPC_NO_TIMEOUT,
   JsonlRpcProcess,
   type JsonlRpcLaunch,
@@ -148,7 +150,9 @@ class PiCliRuntimeSession implements PiRuntimeSession {
   }
 
   async abort(): Promise<void> {
-    await this.requestStopWork({ type: "abort" });
+    await this.requestStopWork({ type: "abort" }, JSONL_RPC_ABORT_TIMEOUT_MS, {
+      closeOnTimeout: true,
+    });
   }
 
   async getState(): Promise<PiSessionState> {
@@ -237,8 +241,12 @@ class PiCliRuntimeSession implements PiRuntimeSession {
     return this.process.request(command, timeoutMs);
   }
 
-  private requestStopWork(command: PiRpcCommand): Promise<void> {
-    return this.process.requestStopWork(command);
+  private requestStopWork(
+    command: PiRpcCommand,
+    timeoutMs?: number | null,
+    requestOptions?: JsonlRpcRequestOptions,
+  ): Promise<void> {
+    return this.process.requestStopWork(command, timeoutMs, requestOptions);
   }
 
   private async waitForCompletion(command: PiRpcCommand): Promise<void> {
