@@ -866,3 +866,119 @@ describe("OMP agent client and session", () => {
     expect(omp.eventTypes()).toContain("model_changed");
   });
 });
+
+describe("OmpAgentSession steering", () => {
+  async function startActiveTurn(clientMessageId: string | null = "client-prompt-1") {
+    const omp = new OmpHarness();
+    await omp.start();
+    const runtime = omp.runtime();
+    const promptStarted = runtime.nextPrompt();
+    const { turnId } = await omp
+      .agentSession()
+      .startTurn("fix the tests", clientMessageId ? { clientMessageId } : undefined);
+    await promptStarted;
+    runtime.beginTurn();
+    runtime.acceptPrompt("fix the tests", "user-1");
+    return { omp, runtime, turnId };
+  }
+
+  test("steers the active OMP turn and correlates the echoed user message", async () => {
+    const { omp, runtime, turnId } = await startActiveTurn();
+
+    const result = await omp.agentSession().steerActiveTurn("steer this turn", {
+      expectedTurnId: turnId,
+      clientMessageId: "client-steer-1",
+    });
+
+    expect(result).toEqual({ status: "accepted" });
+    expect(omp.steerRequests()).toEqual([{ message: "steer this turn", imageCount: 0 }]);
+
+    runtime.acceptPrompt("steer this turn", "entry-steer-1");
+    await waitForImmediate();
+
+    expect(omp.timeline().filter((item) => item.type === "user_message")).toEqual([
+      {
+        type: "user_message",
+        text: "fix the tests",
+        messageId: "user-1",
+        clientMessageId: "client-prompt-1",
+      },
+      {
+        type: "user_message",
+        text: "steer this turn",
+        messageId: "entry-steer-1",
+        clientMessageId: "client-steer-1",
+      },
+    ]);
+  });
+
+  test("reports steering unavailable without an active turn", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+
+    const result = await omp.agentSession().steerActiveTurn("steer this turn", {
+      expectedTurnId: "turn-that-ended",
+    });
+
+    expect(result).toEqual({ status: "unavailable" });
+    expect(omp.steerRequests()).toEqual([]);
+  });
+
+  test("reports steering unavailable for a stale turn", async () => {
+    const { omp, turnId } = await startActiveTurn();
+    expect(turnId).not.toBe("turn-that-ended");
+
+    const result = await omp.agentSession().steerActiveTurn("steer this turn", {
+      expectedTurnId: "turn-that-ended",
+    });
+
+    expect(result).toEqual({ status: "unavailable" });
+    expect(omp.steerRequests()).toEqual([]);
+  });
+
+  test("keeps slash inputs on the interrupt-and-replace path", async () => {
+    const { omp, turnId } = await startActiveTurn();
+
+    const result = await omp.agentSession().steerActiveTurn("/model", { expectedTurnId: turnId });
+
+    expect(result).toEqual({ status: "unavailable" });
+    expect(omp.steerRequests()).toEqual([]);
+  });
+
+  test("does not attach a client ID to a steer without one", async () => {
+    const { omp, runtime, turnId } = await startActiveTurn();
+
+    const result = await omp.agentSession().steerActiveTurn("steer without a client ID", {
+      expectedTurnId: turnId,
+    });
+
+    expect(result).toEqual({ status: "accepted" });
+    runtime.acceptPrompt("steer without a client ID", "entry-steer-1");
+    await waitForImmediate();
+
+    expect(omp.timeline().filter((item) => item.type === "user_message")).toEqual([
+      {
+        type: "user_message",
+        text: "fix the tests",
+        messageId: "user-1",
+        clientMessageId: "client-prompt-1",
+      },
+      { type: "user_message", text: "steer without a client ID", messageId: "entry-steer-1" },
+    ]);
+  });
+
+  test("denies pending permissions when steering with clearPendingPermissions", async () => {
+    const { omp, turnId } = await startActiveTurn();
+    omp.requestToolApproval({ id: "perm-1", tool: "bash", detail: "ls" });
+    expect(omp.pendingPermissions()).toHaveLength(1);
+
+    const result = await omp.agentSession().steerActiveTurn("steer instead", {
+      expectedTurnId: turnId,
+      clearPendingPermissions: true,
+    });
+
+    expect(result).toEqual({ status: "accepted" });
+    expect(omp.pendingPermissions()).toHaveLength(0);
+    expect(omp.extensionUiResponses()).toHaveLength(1);
+  });
+});
