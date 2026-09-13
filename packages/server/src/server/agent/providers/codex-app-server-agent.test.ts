@@ -184,6 +184,52 @@ function createProviderWithFakeAppServer(appServer: FakeCodexAppServer): CodexAp
   return provider;
 }
 
+describe("native turn diff", () => {
+  test.each(["completed", "failed", "interrupted"])(
+    "retains only the latest diff on a %s turn without creating a tool call",
+    (status) => {
+      const session = createSession();
+      const events: AgentStreamEvent[] = [];
+      session.subscribe((event) => events.push(event));
+      const notifications = asInternals(session);
+      notifications.handleNotification("turn/started", {
+        threadId: "test-thread",
+        turn: { id: "provider-turn-1", status: "inProgress" },
+      });
+      notifications.handleNotification("turn/diff/updated", {
+        threadId: "test-thread",
+        turnId: "provider-turn-1",
+        diff: "first diff",
+      });
+      notifications.handleNotification("turn/diff/updated", {
+        threadId: "test-thread",
+        turnId: "provider-turn-1",
+        diff: "final diff",
+      });
+      notifications.handleNotification("turn/diff/updated", {
+        threadId: "test-thread",
+        turnId: "older-turn",
+        diff: "stale diff",
+      });
+      notifications.handleNotification("turn/completed", {
+        threadId: "test-thread",
+        turn: { id: "provider-turn-1", status },
+      });
+      expect(events.filter((event) => event.type === "timeline")).toEqual([]);
+      expect(events.at(-1)).toMatchObject({ nativeDiff: "final diff" });
+      notifications.handleNotification("turn/started", {
+        threadId: "test-thread",
+        turn: { id: "provider-turn-2", status: "inProgress" },
+      });
+      notifications.handleNotification("turn/completed", {
+        threadId: "test-thread",
+        turn: { id: "provider-turn-2", status: "completed" },
+      });
+      expect(events.at(-1)).toMatchObject({ nativeDiff: null });
+    },
+  );
+});
+
 async function startPublicSteeringSession(
   appServer: FakeCodexAppServer,
   resolveSlashCommandInvocation?: (prompt: AgentPromptInput) => Promise<{
@@ -5069,6 +5115,7 @@ describe("Codex app-server provider", () => {
       type: "turn_completed",
       provider: "codex",
       turnId: "test-turn",
+      nativeDiff: null,
       usage: undefined,
     });
   });
@@ -5564,6 +5611,7 @@ describe("Codex app-server provider", () => {
         type: "turn_completed",
         provider: "codex",
         turnId: "test-turn",
+        nativeDiff: null,
         usage: undefined,
       },
     ]);
@@ -5605,6 +5653,7 @@ describe("Codex app-server provider", () => {
       type: "turn_completed",
       provider: "codex",
       turnId: "test-turn",
+      nativeDiff: null,
       usage: {
         inputTokens: 30000,
         cachedInputTokens: 5000,
