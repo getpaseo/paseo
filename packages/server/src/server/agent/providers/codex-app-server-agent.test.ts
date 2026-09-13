@@ -3966,7 +3966,7 @@ describe("Codex app-server provider", () => {
     ]);
   });
 
-  test("retains native turn ids from persisted user messages", async () => {
+  test("retains native turn ids on every persisted timeline entry", async () => {
     const session = createSession();
     session.client = {
       request: vi.fn(async () => ({
@@ -3979,6 +3979,15 @@ describe("Codex app-server provider", () => {
                   type: "userMessage",
                   id: "message-history",
                   content: [{ type: "text", text: "History prompt" }],
+                },
+                { type: "agentMessage", id: "answer-history", text: "History answer" },
+                {
+                  type: "commandExecution",
+                  id: "command-history",
+                  status: "completed",
+                  command: "npm test",
+                  aggregatedOutput: "passed",
+                  exitCode: 0,
                 },
               ],
             },
@@ -3993,6 +4002,13 @@ describe("Codex app-server provider", () => {
       index: 0,
       turnId: "native-turn-1",
     });
+    const history = [];
+    for await (const event of session.streamHistory()) history.push(event);
+    expect(history.map((event) => event.turnId)).toEqual([
+      "native-turn-1",
+      "native-turn-1",
+      "native-turn-1",
+    ]);
   });
 
   test("loads mixed legacy and MultiAgentV2 sub-agent history", async () => {

@@ -40,7 +40,17 @@ function fixture() {
       return value;
     },
     workspace: async () => ({ cwd: "/workspace", intent: "Keep the user in control" }),
-    timeline: async () => [{ type: "user_message", text: "Build the requested feature" }],
+    timeline: async () => [
+      { type: "user_message", text: "Build the requested feature" },
+      {
+        type: "tool_call",
+        callId: "plan-1",
+        name: "Plan",
+        status: "running",
+        error: null,
+        detail: { type: "plan", text: "Exact (c) plan" },
+      },
+    ],
     turn: async () => null,
     git: async () => ({
       startHead: "abc123",
@@ -546,6 +556,17 @@ test("review objections request a new append-only plan and allow only one furthe
     },
   ];
   await expect(controller.review(nextPlan, "automatic")).rejects.toThrow("already been used");
+  f.port.timeline = async () => [
+    { type: "user_message", text: "Build the requested feature" },
+    {
+      type: "tool_call",
+      callId: "plan-2",
+      name: "Plan",
+      status: "running",
+      error: null,
+      detail: { type: "plan", text: "Revised plan" },
+    },
+  ];
   await controller.review(nextPlan, "manual");
   await controller.finished("child-2", "Looks good");
   const lastPlan = { ...plan, callId: "plan-3", permissionRequestId: "permission-3" };

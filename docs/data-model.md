@@ -195,11 +195,17 @@ because a provider cannot persist a decision made outside its permission API. Re
 proposal, source turn when available, resolution and delivery outcome before changing mode or
 resuming. Hydration only restores that decision next to the matching surviving proposal; it never
 recreates a removed plan. A reused call ID with different content is stale, not a new permission.
-An unresolved delivery outcome stays closed across restart. This record supplements plan decisions,
-not provider conversation history.
+The prepared boundary is recorded before any effect. A known mode failure can retry the same
+permission, or reject it, using the original prompt receipt ID. Before delivery can begin, persist
+an unconfirmed outcome; that outcome and older ambiguous pending records stay closed across
+restart. This record supplements plan decisions, not provider conversation history.
 
-Keep provider `turnId` on hydrated timeline rows. A stored completed-turn ID without matching
-canonical rows cannot authorize workflow continuation.
+Keep provider `turnId` on hydrated timeline rows. Codex supplies native turn IDs; Claude supplies
+message IDs but no host turn ID. The optional private `lastCompletedTurnEvidence` holds only a
+digest of the last completed canonical turn and two prompt correlations, never its content.
+Hydration restores that turn identity only when the surviving native prompt and result match;
+missing, changed or ambiguous history cannot authorize continuation. This bounded record is
+replaced at completion and cleared on a new run. A stored completed-turn ID alone is insufficient.
 
 The app replica cache may paint a plan before reconnection finishes. Only a fresh daemon agent
 snapshot can restore its correlated actions; cached permissions never authorize a new operation.

@@ -33,7 +33,8 @@ The host retains a review claim until the workflow concludes it; another client 
 the same plan while review is claimed, even when the plugin is unloaded. The claim is scoped to
 that call ID, not later plans. If the dedicated reviewer fails, is canceled or returns no conclusion,
 open that reviewer and send a retry. A subsequent completed turn must follow its original review
-prompt; old turns or another agent's output cannot release the claim.
+prompt. If a newer plan is current or the reviewed plan was approved, its late review concludes
+and releases its claim without sending a revision or interrupting the planner.
 
 A structured plan without a native permission remains actionable while its agent is idle and
 connected. The host validates the canonical plan before creating a stable plan-only permission.
@@ -45,8 +46,9 @@ survives provider-history refresh and daemon restart; see [plan persistence](dat
 Lifecycle hooks are best-effort notifications, not durable delivery. Status reconciles routing,
 approved implementation, handoff and review/audit operations against the expected prompt and the
 host's completed-turn evidence.
-Stored closed agents can supply that evidence after history hydration; legacy rows without turn
-IDs cannot. Loading a snapshot alone never proves a completed implementation.
+Stored closed agents can supply that evidence after history hydration. Native turn IDs or the
+host's [bounded completion evidence](data-model.md#plan-persistence) must match surviving history;
+legacy rows without either cannot continue. Loading a snapshot alone never proves a completed implementation.
 Only that turn's canonical response and tool results count; previous turns never authorize a
 correction. Reloading the plugin or repeating status must not create another child or resend an
 accepted prompt. `outcome_unknown` preserves an operation whose delivery or permission closure

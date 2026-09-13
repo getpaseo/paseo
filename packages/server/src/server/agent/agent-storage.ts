@@ -52,6 +52,24 @@ const STORED_AGENT_SCHEMA = z.object({
   launchProfileId: z.string().optional(),
   launchPostApprovalModeId: z.string().optional(),
   lastCompletedTurnId: z.string().optional(),
+  lastCompletedTurnEvidence: z
+    .object({
+      turnId: z.string(),
+      signature: z.string(),
+      prompt: z.object({
+        digest: z.string(),
+        clientMessageId: z.string().optional(),
+        messageId: z.string().optional(),
+      }),
+      origin: z
+        .object({
+          digest: z.string(),
+          clientMessageId: z.string().optional(),
+          messageId: z.string().optional(),
+        })
+        .optional(),
+    })
+    .optional(),
   planReviewClaims: z.record(z.string(), z.string()).optional(),
   syntheticPlanDecisions: z
     .record(
@@ -60,6 +78,8 @@ const STORED_AGENT_SCHEMA = z.object({
         text: z.string(),
         permissionId: z.string(),
         sourceTurnId: z.string().optional(),
+        previousModeId: z.string().optional(),
+        prepared: z.literal(true).optional(),
         resolution: AgentPermissionResponseSchema,
         outcome: z.enum(["pending", "completed", "outcome_unknown"]),
       }),

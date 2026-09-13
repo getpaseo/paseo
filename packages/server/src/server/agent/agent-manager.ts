@@ -16,6 +16,11 @@ import {
   PARENT_AGENT_ID_LABEL,
 } from "@getpaseo/protocol/agent-labels";
 import type { Logger } from "pino";
+import {
+  captureCompletedTurnEvidence,
+  restoreCompletedTurnEvidence,
+  type CompletedTurnEvidence,
+} from "./completed-turn-evidence.js";
 import { assertWritePolicySupported, assertWritePolicyUnchanged } from "./write-policy.js";
 import { removeReadOnlyCodexState } from "./providers/codex/read-only.js";
 import {
@@ -25,6 +30,8 @@ import {
   syntheticPlanPermissionId,
   syntheticPlanResolution,
   restoreSyntheticPlanDecisions,
+  assertSyntheticPlanRetry,
+  assertSyntheticPlanOutcome,
   type SyntheticPlanDecision,
 } from "./plan-permission.js";
 import type { ProviderOptions, ToolPolicy } from "@getpaseo/protocol/agent-types";
@@ -294,6 +301,7 @@ export interface CreateAgentOptions {
   launchProfileId?: string;
   launchPostApprovalModeId?: string;
   lastCompletedTurnId?: string;
+  lastCompletedTurnEvidence?: CompletedTurnEvidence;
   planReviewClaims?: Record<string, string>;
   syntheticPlanDecisions?: Record<string, SyntheticPlanDecision>;
   labels?: Record<string, string>;
@@ -394,6 +402,7 @@ interface ManagedAgentBase {
   readonly launchProfileId?: string;
   readonly launchPostApprovalModeId?: string;
   lastCompletedTurnId?: string;
+  lastCompletedTurnEvidence?: CompletedTurnEvidence;
   planReviewClaims?: Record<string, string>;
   syntheticPlanDecisions?: Record<string, SyntheticPlanDecision>;
   provider: AgentProvider;
@@ -1292,6 +1301,7 @@ export class AgentManager {
       launchProfileId: options.launchProfileId,
       launchPostApprovalModeId: options.launchPostApprovalModeId,
       lastCompletedTurnId: options.lastCompletedTurnId,
+      lastCompletedTurnEvidence: options.lastCompletedTurnEvidence,
       planReviewClaims: options.planReviewClaims,
       syntheticPlanDecisions: options.syntheticPlanDecisions,
       owner: options.owner,
@@ -1328,6 +1338,7 @@ export class AgentManager {
       launchProfileId?: string;
       launchPostApprovalModeId?: string;
       lastCompletedTurnId?: string;
+      lastCompletedTurnEvidence?: CompletedTurnEvidence;
       planReviewClaims?: Record<string, string>;
       syntheticPlanDecisions?: Record<string, SyntheticPlanDecision>;
       owner?: AgentOwner;
@@ -1370,6 +1381,7 @@ export class AgentManager {
       launchProfileId?: string;
       launchPostApprovalModeId?: string;
       lastCompletedTurnId?: string;
+      lastCompletedTurnEvidence?: CompletedTurnEvidence;
       planReviewClaims?: Record<string, string>;
       syntheticPlanDecisions?: Record<string, SyntheticPlanDecision>;
       owner?: AgentOwner;
@@ -1614,6 +1626,7 @@ export class AgentManager {
         launchProfileId: existing.launchProfileId,
         launchPostApprovalModeId: existing.launchPostApprovalModeId,
         lastCompletedTurnId: existing.lastCompletedTurnId,
+        lastCompletedTurnEvidence: existing.lastCompletedTurnEvidence,
         planReviewClaims: existing.planReviewClaims,
         syntheticPlanDecisions: existing.syntheticPlanDecisions,
         owner: existing.owner,
@@ -1922,6 +1935,7 @@ export class AgentManager {
         launchProfileId: record.launchProfileId,
         launchPostApprovalModeId: record.launchPostApprovalModeId,
         lastCompletedTurnId: record.lastCompletedTurnId,
+        lastCompletedTurnEvidence: record.lastCompletedTurnEvidence,
         planReviewClaims: record.planReviewClaims,
         syntheticPlanDecisions: record.syntheticPlanDecisions,
         owner: record.owner,
@@ -2690,6 +2704,7 @@ export class AgentManager {
 
   private openActiveTurn(agent: ActiveManagedAgent, turnId: string, startedAt: Date): void {
     agent.lastCompletedTurnId = undefined;
+    agent.lastCompletedTurnEvidence = undefined;
     agent.activeTurnId = turnId;
     agent.activeTurnStartedAt = startedAt;
   }
@@ -3030,23 +3045,7 @@ export class AgentManager {
       if (agent.config.writePolicy === "read_only")
         throw new Error("A read-only agent cannot execute a plan.");
       const saved = agent.syntheticPlanDecisions?.[input.callId];
-      if (saved) {
-        const current = this.timelineStore
-          .getRows(agent.id)
-          .findLast(({ item }) => item.type === "tool_call" && item.callId === input.callId);
-        if (
-          current?.item.type === "tool_call" &&
-          (current.item.detail.type !== "plan" ||
-            current.item.detail.text !== saved.text ||
-            (saved.sourceTurnId !== undefined && current.turnId !== saved.sourceTurnId))
-        )
-          throw new Error(
-            "This plan changed after a durable decision. Open a new plan call; the old call cannot be reopened.",
-          );
-        throw new Error(
-          "This plan is already resolved. Inspect its durable approval outcome before continuing.",
-        );
-      }
+      assertSyntheticPlanRetry(this.timelineStore.getRows(agent.id), input.callId, saved);
       const proposal = findPlanProposal(this.timelineStore.getRows(agent.id), input.callId);
       const native = [...agent.pendingPermissions.values()].find(
         (entry) => entry.kind === "plan" && entry.sourcePlanCallId === input.callId,
@@ -3055,11 +3054,13 @@ export class AgentManager {
       if (agent.pendingPermissions.size)
         throw new Error("Resolve the current permission before acting on this plan.");
       const request: AgentPermissionRequest = {
-        id: syntheticPlanPermissionId(
-          agent.id,
-          agent.persistence?.sessionId ?? agent.id,
-          input.callId,
-        ),
+        id:
+          saved?.permissionId ??
+          syntheticPlanPermissionId(
+            agent.id,
+            agent.persistence?.sessionId ?? agent.id,
+            input.callId,
+          ),
         provider: agent.provider,
         name: "plan_approval",
         kind: "plan",
@@ -3082,6 +3083,27 @@ export class AgentManager {
     });
   }
 
+  private async prepareSyntheticPlanResponse(
+    agent: LiveManagedAgent,
+    pending: AgentPermissionRequest,
+    response: AgentPermissionResponse,
+  ) {
+    const proposal = findCapturedPlan(this.timelineStore.getRows(agent.id), pending);
+    (agent.syntheticPlanDecisions ??= {})[proposal.item.callId] = {
+      ...agent.syntheticPlanDecisions?.[proposal.item.callId],
+      text: proposal.text,
+      permissionId: pending.id,
+      sourceTurnId: proposal.turnId,
+      resolution: response,
+      outcome: "pending",
+      prepared: true,
+    };
+    await this.persistSnapshot(agent);
+    findCapturedPlan(this.timelineStore.getRows(agent.id), pending);
+    if (agent.pendingPermissions.get(pending.id) !== pending)
+      throw new Error("The plan changed while recording its decision. Inspect the current plan.");
+  }
+
   private async respondToSyntheticPlan(
     agent: LiveManagedAgent,
     pending: AgentPermissionRequest,
@@ -3091,6 +3113,19 @@ export class AgentManager {
     const proposal = findCapturedPlan(this.timelineStore.getRows(agent.id), pending);
     const approved = response.behavior === "allow";
     const saved = agent.syntheticPlanDecisions![proposal.item.callId]!;
+    if (!approved && saved.previousModeId && agent.launchPostApprovalModeId) {
+      await this.restoreApprovalMode(agent, agent.launchPostApprovalModeId, saved.previousModeId);
+      findCapturedPlan(this.timelineStore.getRows(agent.id), pending);
+      if (agent.pendingPermissions.get(pending.id) !== pending)
+        throw new Error("The pending plan changed while restoring its mode.");
+    }
+    // Prepared is retryable only before any possible delivery. Crossing this boundary
+    // is fail-closed after a crash; the existing receipt prevents prompt duplication.
+    saved.outcome = approved ? "outcome_unknown" : "completed";
+    await this.persistSnapshot(agent);
+    findCapturedPlan(this.timelineStore.getRows(agent.id), pending);
+    if (this.agents.get(agent.id) !== agent || agent.pendingPermissions.get(pending.id) !== pending)
+      throw new Error("The pending plan changed while recording its delivery boundary.");
     const decision = syntheticPlanResolution(proposal.item, saved);
     const publish = async (item: AgentTimelineItem) => {
       const row = this.timelineStore.append(agent.id, item, { turnId: proposal.turnId });
@@ -3174,14 +3209,10 @@ export class AgentManager {
   ): boolean {
     const pending = agent.pendingPermissions.get(requestId);
     const synthetic = pending?.metadata?.syntheticPlan === true;
-    if (
-      Object.values(agent.syntheticPlanDecisions ?? {}).some(
-        (decision) => decision.permissionId === requestId,
-      )
-    )
-      throw new Error(
-        "This plan is already resolved. Inspect its durable approval outcome before continuing.",
-      );
+    const saved = Object.values(agent.syntheticPlanDecisions ?? {}).find(
+      (decision) => decision.permissionId === requestId,
+    );
+    if (saved) assertSyntheticPlanOutcome(saved);
     if (
       !pending &&
       this.timelineStore
@@ -3236,20 +3267,7 @@ export class AgentManager {
           Boolean(sendPlanFollowup),
         );
         if (synthetic) {
-          const proposal = findCapturedPlan(this.timelineStore.getRows(agentId), pending!);
-          (agent.syntheticPlanDecisions ??= {})[proposal.item.callId] = {
-            text: proposal.text,
-            permissionId: pending!.id,
-            sourceTurnId: proposal.turnId,
-            resolution: response,
-            outcome: response.behavior === "allow" ? "pending" : "completed",
-          };
-          await this.persistSnapshot(agent);
-          findCapturedPlan(this.timelineStore.getRows(agentId), pending!);
-          if (agent.pendingPermissions.get(requestId) !== pending)
-            throw new Error(
-              "The plan changed while recording its decision. Inspect the current plan.",
-            );
+          await this.prepareSyntheticPlanResponse(agent, pending!, response);
         }
         let planApprovalMode: string | undefined;
         let previousApprovalMode: string | undefined;
@@ -3272,6 +3290,12 @@ export class AgentManager {
               throw new Error(
                 "The current provider mode is unknown. Reload the agent before approving its plan.",
               );
+            if (synthetic) {
+              const decision = agent.syntheticPlanDecisions![pending.sourcePlanCallId!]!;
+              decision.previousModeId ??= previousMode;
+              await this.persistSnapshot(agent);
+              assertPending();
+            }
             try {
               await this.setAgentModeNow(agentId, modeId, pending);
               assertPending();
@@ -3798,6 +3822,7 @@ export class AgentManager {
       launchProfileId?: string;
       launchPostApprovalModeId?: string;
       lastCompletedTurnId?: string;
+      lastCompletedTurnEvidence?: CompletedTurnEvidence;
       planReviewClaims?: Record<string, string>;
       syntheticPlanDecisions?: Record<string, SyntheticPlanDecision>;
       owner?: AgentOwner;
@@ -3954,6 +3979,7 @@ export class AgentManager {
           launchProfileId?: string;
           launchPostApprovalModeId?: string;
           lastCompletedTurnId?: string;
+          lastCompletedTurnEvidence?: CompletedTurnEvidence;
           planReviewClaims?: Record<string, string>;
           syntheticPlanDecisions?: Record<string, SyntheticPlanDecision>;
           owner?: AgentOwner;
@@ -3969,6 +3995,7 @@ export class AgentManager {
       launchProfileId: options.launchProfileId,
       launchPostApprovalModeId: options.launchPostApprovalModeId,
       lastCompletedTurnId: options.lastCompletedTurnId,
+      lastCompletedTurnEvidence: options.lastCompletedTurnEvidence,
       planReviewClaims: options.planReviewClaims,
       syntheticPlanDecisions: options.syntheticPlanDecisions,
       owner: options.owner,
@@ -4436,13 +4463,20 @@ export class AgentManager {
   private async *historyWithSyntheticPlanDecisions(
     agent: ActiveManagedAgent,
   ): AsyncGenerator<AgentStreamEvent> {
-    if (!agent.syntheticPlanDecisions || !Object.keys(agent.syntheticPlanDecisions).length) {
+    if (
+      !agent.lastCompletedTurnEvidence &&
+      (!agent.syntheticPlanDecisions || !Object.keys(agent.syntheticPlanDecisions).length)
+    ) {
       yield* agent.session.streamHistory();
       return;
     }
     const history: AgentStreamEvent[] = [];
-    for await (const event of agent.session.streamHistory()) history.push(event);
-    yield* restoreSyntheticPlanDecisions(history, agent.syntheticPlanDecisions);
+    for await (const event of agent.session.streamHistory())
+      history.push(limitAgentStreamEventContent(event));
+    yield* restoreCompletedTurnEvidence(
+      restoreSyntheticPlanDecisions(history, agent.syntheticPlanDecisions ?? {}),
+      agent.lastCompletedTurnEvidence,
+    );
   }
 
   private notifyForegroundTurnWaiters(agentId: string, event: AgentStreamEvent): void {
@@ -4654,14 +4688,13 @@ export class AgentManager {
       case "timeline":
         return this.onStreamTimelineEvent({ agent, event, options, flags });
       case "turn_completed":
-        this.onStreamTurnCompleted({
+        return this.onStreamTurnCompleted({
           agent,
           event,
           eventTurnId,
           isForegroundEvent,
           terminalDisposition,
         });
-        return undefined;
       case "turn_failed":
         return this.onStreamTurnFailed({
           agent,
@@ -4755,13 +4788,13 @@ export class AgentManager {
     flags.shouldNotifyWaiters = true;
   }
 
-  private onStreamTurnCompleted(params: {
+  private async onStreamTurnCompleted(params: {
     agent: ActiveManagedAgent;
     event: Extract<AgentStreamEvent, { type: "turn_completed" }>;
     eventTurnId: string | undefined;
     isForegroundEvent: boolean;
     terminalDisposition: ActiveTurnTerminalDisposition;
-  }): void {
+  }): Promise<void> {
     const { agent, event, eventTurnId, isForegroundEvent, terminalDisposition } = params;
     this.logger.trace(
       {
@@ -4779,6 +4812,10 @@ export class AgentManager {
       agent.lastUsage = { ...agent.lastUsage, ...event.usage };
     }
     agent.lastCompletedTurnId = eventTurnId;
+    agent.lastCompletedTurnEvidence = captureCompletedTurnEvidence(
+      this.timelineStore.getRows(agent.id),
+      eventTurnId,
+    );
     // If no usage on turn_completed, keep lastUsage as-is so context window
     // data accumulated during streaming isn't lost when the provider omits
     // it from the completion event.
@@ -4793,6 +4830,7 @@ export class AgentManager {
       this.emitState(agent);
     }
     void this.refreshRuntimeInfo(agent);
+    await this.persistSnapshot(agent);
   }
 
   private async onStreamTurnFailed(params: {

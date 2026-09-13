@@ -15,9 +15,15 @@ import type {
   AgentStreamEvent,
 } from "../agent/agent-sdk-types.js";
 import { AgentTurnNotAcceptedError } from "../agent/agent-sdk-types.js";
+import { workflowNativeHistory } from "../test-utils/native-provider-history.js";
 
 async function lifecycleFixture(
-  options: { intent?: string; target?: boolean; providerHistory?: boolean } = {},
+  options: {
+    intent?: string;
+    target?: boolean;
+    providerHistory?: boolean;
+    nativeHistory?: "claude" | "codex";
+  } = {},
 ) {
   const directory = await mkdtemp(path.join(tmpdir(), "workflow-lifecycle-"));
   const git = (...args: string[]) =>
@@ -59,7 +65,9 @@ async function lifecycleFixture(
     providerHistory.set(owner!, history);
     if (options.providerHistory)
       session.streamHistory = async function* () {
-        yield* history;
+        yield* options.nativeHistory
+          ? await workflowNativeHistory(history, options.nativeHistory)
+          : history;
       };
     const describe = session.describePersistence.bind(session);
     session.describePersistence = () => {
@@ -210,11 +218,18 @@ async function lifecycleFixture(
     toolEvidence,
     reusedTurnIds,
     providerHistory,
-    restart: async () => {
+    restart: async (legacyAgentId?: string) => {
       if (!options.providerHistory) throw new Error("Restart fixture requires provider history");
       const persisted = (await client.getDaemonConfig()).config;
       await client.close();
       await daemon.close();
+      if (legacyAgentId) {
+        const record = (await daemon.daemon.agentStorage.get(legacyAgentId))!;
+        await daemon.daemon.agentStorage.upsert({
+          ...record,
+          lastCompletedTurnEvidence: undefined,
+        });
+      }
       daemon = await createTestPaseoDaemon({
         agentClients: { codex: provider },
         paseoHomeRoot: path.dirname(daemon.paseoHome),
@@ -328,6 +343,14 @@ async function pendingPlan(
     callId,
     text: `Exact ${callId}`,
   };
+  await manager.appendTimelineItem(planner.id, {
+    type: "tool_call",
+    callId,
+    name: "plan_approval",
+    status: "running",
+    error: null,
+    detail: { type: "plan", text: context.text },
+  });
   manager.getAgent(planner.id)!.pendingPermissions.set(context.permissionRequestId, {
     id: context.permissionRequestId,
     provider: "codex",
@@ -1164,7 +1187,9 @@ test("structured ensure rejects forged/workspace/running/resolved plans and keep
     const manager = f.daemon.daemon.agentManager;
     manager.getAgent(plan.agentId)!.pendingPermissions.clear();
     const input = { agentId: plan.agentId, workspaceId: plan.workspaceId, callId: plan.callId };
-    await expect(f.client.ensurePlanPermission(input)).rejects.toThrow("canonical");
+    await expect(
+      f.client.ensurePlanPermission({ ...input, callId: "forged-plan" }),
+    ).rejects.toThrow("canonical");
     await manager.appendTimelineItem(plan.agentId, {
       type: "tool_call",
       callId: plan.callId,
@@ -1629,12 +1654,6 @@ test.each(["empty", "canceled"] as const)(
       expect(f.prompts.filter((prompt) => prompt.text.startsWith("Revise the plan"))).toHaveLength(
         0,
       );
-      const next = await pendingPlan(f, plan.agentId, "plan-2");
-      await expect(
-        f.client.respondToPermissionAndWait(next.agentId, next.permissionRequestId, {
-          behavior: "allow",
-        }),
-      ).resolves.toMatchObject({ resolution: { behavior: "allow" } });
       await expect(
         f.client.respondToPermissionAndWait(plan.agentId, plan.permissionRequestId, {
           behavior: "allow",
@@ -1679,15 +1698,80 @@ test.each(["empty", "canceled"] as const)(
   60_000,
 );
 
+test("a stale reviewer releases its claim without touching the next implementation turn", async () => {
+  const f = await lifecycleFixture();
+  let release!: () => void;
+  f.holds.set(
+    "plan-reviewer",
+    new Promise<void>((resolve) => {
+      release = resolve;
+    }),
+  );
+  try {
+    const plan = await pendingPlan(f);
+    await f.client.invokePluginRpc("paseo-workflow", "workflow.plan.review.request", plan);
+    const next = await pendingPlan(f, plan.agentId, "plan-2");
+    await f.client.respondToPermissionAndWait(next.agentId, next.permissionRequestId, {
+      behavior: "allow",
+    });
+    const manager = f.daemon.daemon.agentManager;
+    const planner = manager.getAgent(plan.agentId)!;
+    const emit = (
+      planner.session as unknown as { notifySubscribers(event: AgentStreamEvent): void }
+    ).notifySubscribers.bind(planner.session);
+    emit(approvedPlanEntry(next));
+    emit({ type: "turn_started", provider: "codex", turnId: "next-implementation" });
+    emit({
+      type: "timeline",
+      provider: "codex",
+      turnId: "next-implementation",
+      item: { type: "user_message", text: "Implement plan 2", clientMessageId: "implement-next" },
+    });
+    await manager.flush();
+    release();
+    await expect
+      .poll(
+        async () =>
+          (await f.read()).values.workflows[plan.agentId]?.plans[plan.callId]?.review?.phase,
+      )
+      .toBe("complete");
+    expect(f.prompts.filter((prompt) => prompt.text.startsWith("Revise the plan"))).toHaveLength(0);
+    expect(manager.getAgent(plan.agentId)?.activeTurnId).toBe("next-implementation");
+    expect(manager.getAgent(plan.agentId)?.planReviewClaims).toEqual({});
+    await f.client.reloadPlugin("paseo-workflow");
+    await f.client.invokePluginRpc("paseo-workflow", "workflow.status.get.request", {
+      agentId: plan.agentId,
+      workspaceId: plan.workspaceId,
+    });
+    expect(manager.getAgent(plan.agentId)?.activeTurnId).toBe("next-implementation");
+    expect(f.prompts.filter((prompt) => prompt.text.startsWith("Revise the plan"))).toHaveLength(0);
+    emit({
+      type: "timeline",
+      provider: "codex",
+      turnId: "next-implementation",
+      item: { type: "assistant_message", text: "Plan 2 implementation continues" },
+    });
+    emit({ type: "turn_completed", provider: "codex", turnId: "next-implementation" });
+    await manager.flush();
+    expect(manager.getAgent(plan.agentId)?.lastCompletedTurnId).toBe("next-implementation");
+  } finally {
+    release();
+    await f.close();
+  }
+}, 60_000);
+
 test.each([
-  ["router", true],
-  ["executor-standard", true],
-  ["planner", true],
-  ["router", false],
+  ["router", true, "claude"],
+  ["executor-standard", true, "claude"],
+  ["planner", true, "claude"],
+  ["router", true, "codex"],
+  ["executor-standard", true, "codex"],
+  ["planner", true, "codex"],
+  ["router", false, "claude"],
 ] as const)(
-  "daemon restart hydrates completed %s evidence and reconciles once (turn IDs: %s)",
-  async (role, hasTurnIds) => {
-    const f = await lifecycleFixture({ providerHistory: true });
+  "daemon restart hydrates completed %s evidence and reconciles once (evidence: %s, native: %s)",
+  async (role, hasTurnIds, nativeHistory) => {
+    const f = await lifecycleFixture({ providerHistory: true, nativeHistory });
     let releaseFinal!: () => void;
     f.holds.set(
       "final-review",
@@ -1774,11 +1858,12 @@ test.each([
       await f.daemon.daemon.agentManager.flush();
       const completed = f.agents(role)[0]!.lastCompletedTurnId;
       expect(completed).toBeTruthy();
-      if (!hasTurnIds)
+      if (!hasTurnIds) {
         for (const event of [...f.providerHistory.values()].flat()) {
           if (event.type === "timeline") delete event.turnId;
         }
-      await f.restart();
+      }
+      await f.restart(hasTurnIds ? undefined : ownerId);
       await f.client.enablePlugin("paseo-workflow");
       const status = () =>
         f.client.invokePluginRpc("paseo-workflow", "workflow.status.get.request", {

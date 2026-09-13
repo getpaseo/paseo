@@ -11,8 +11,44 @@ export interface SyntheticPlanDecision {
   text: string;
   permissionId: string;
   sourceTurnId?: string;
+  previousModeId?: string;
+  prepared?: true;
   resolution: AgentPermissionResponse;
   outcome: "pending" | "completed" | "outcome_unknown";
+}
+
+export function assertSyntheticPlanOutcome(saved: SyntheticPlanDecision): void {
+  // COMPAT(synthetic-prepared-boundary): added in v0.8.0, remove after 2027-09-14.
+  // Older pending snapshots may already have delivered a prompt.
+  if (saved.outcome === "pending" && !saved.prepared)
+    throw new Error(
+      "Plan approval outcome_unknown. This older pending decision cannot be replayed automatically.",
+    );
+  if (saved.outcome !== "pending")
+    throw new Error(
+      "This plan is already resolved. Inspect its durable approval outcome before continuing.",
+    );
+}
+
+export function assertSyntheticPlanRetry(
+  rows: AgentTimelineRow[],
+  callId: string,
+  saved: SyntheticPlanDecision | undefined,
+): void {
+  if (!saved) return;
+  const current = rows.findLast(({ item }) => item.type === "tool_call" && item.callId === callId);
+  if (
+    current?.item.type === "tool_call" &&
+    (current.item.detail.type !== "plan" ||
+      current.item.detail.text !== saved.text ||
+      (saved.sourceTurnId !== undefined &&
+        current.turnId !== undefined &&
+        current.turnId !== saved.sourceTurnId))
+  )
+    throw new Error(
+      "This plan changed after a durable decision. Open a new plan call; the old call cannot be reopened.",
+    );
+  assertSyntheticPlanOutcome(saved);
 }
 
 export function syntheticPlanResolution(
@@ -54,10 +90,19 @@ export function restoreSyntheticPlanDecisions(
       !decision ||
       latest.get(event.item.callId) !== index ||
       event.item.detail.text !== decision.text ||
-      (decision.sourceTurnId !== undefined && event.turnId !== decision.sourceTurnId)
+      (decision.sourceTurnId !== undefined &&
+        event.turnId !== undefined &&
+        event.turnId !== decision.sourceTurnId)
     )
       return [event];
-    return [event, { ...event, item: syntheticPlanResolution(event.item, decision) }];
+    const source = { ...event, turnId: event.turnId ?? decision.sourceTurnId };
+    if (decision.outcome === "pending" && decision.prepared) return [source];
+    // COMPAT(synthetic-prepared-boundary): added in v0.8.0, remove after 2027-09-14.
+    const settled =
+      decision.outcome === "pending"
+        ? { ...decision, outcome: "outcome_unknown" as const }
+        : decision;
+    return [source, { ...source, item: syntheticPlanResolution(event.item, settled) }];
   });
 }
 

@@ -902,6 +902,21 @@ export class WorkflowController {
     plan: Workflow["plans"][string],
     text: string,
   ) {
+    const current = (await this.port.timeline(workflow.plannerId)).findLast(
+      (item) => item.type === "tool_call" && item.detail.type === "plan",
+    );
+    if (
+      plan.approved ||
+      current?.type !== "tool_call" ||
+      current.callId !== plan.context.callId ||
+      current.metadata?.approved === true ||
+      (current.detail.type === "plan" && current.detail.text !== plan.context.text)
+    ) {
+      plan.review!.phase = "complete";
+      await this.port.write(state);
+      await this.port.claimReview(plan.context, false);
+      return;
+    }
     if (!text.trim())
       throw new Error(
         "The review returned no objections or conclusion. Open the reviewer and retry.",

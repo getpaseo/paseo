@@ -2026,9 +2026,7 @@ async function loadCodexThreadHistoryTimeline(params: {
         timeline.push({
           item: settledTimelineItem,
           timestamp: timestamp ?? undefined,
-          ...(timelineItem.type === "user_message" && typeof turn.id === "string"
-            ? { providerTurnId: turn.id }
-            : {}),
+          ...(typeof turn.id === "string" ? { providerTurnId: turn.id } : {}),
         });
         for (const childThreadId of readCodexHistoricalSubAgentThreadIds(item)) {
           subAgentTimelineIndexByThreadId.set(childThreadId, timeline.length - 1);
@@ -4510,6 +4508,7 @@ export class CodexAppServerAgentSession implements AgentSession {
         provider: CODEX_PROVIDER,
         item: entry.item,
         timestamp: entry.timestamp,
+        ...(entry.providerTurnId ? { turnId: entry.providerTurnId } : {}),
       };
     }
   }
