@@ -41,22 +41,28 @@ function createFakePorts(input?: { instance?: PidLockInfo | null }) {
     pendingWait: null as { resolve(): void; reject(error: Error): void } | null,
   };
   const ports: StopDaemonPorts = {
-    readInstance: async () => fake.instance,
-    isRunning: () => fake.running,
-    isSameInstance: (left, right) => left.pid === right.pid && left.startedAt === right.startedAt,
-    releaseLock: async () => {
+    async readInstance() {
+      return fake.instance;
+    },
+    isRunning() {
+      return fake.running;
+    },
+    isSameInstance(left, right) {
+      return left.pid === right.pid && left.startedAt === right.startedAt;
+    },
+    async releaseLock() {
       fake.events.push("release-lock");
       fake.instance = null;
     },
-    signalTerm: async () => {
+    async signalTerm() {
       // Platform-dependent environment call; not part of the behavior asserted here.
     },
-    killTree: async () => {
+    async killTree() {
       fake.events.push("kill-tree");
       fake.running = false;
     },
-    wait: (_ms, signal) =>
-      new Promise<void>((resolve, reject) => {
+    wait(_ms, signal) {
+      return new Promise<void>((resolve, reject) => {
         const settle = (fn: () => void) => {
           fake.pendingWait = null;
           signal?.removeEventListener("abort", onAbort);
@@ -69,7 +75,8 @@ function createFakePorts(input?: { instance?: PidLockInfo | null }) {
         };
         signal?.addEventListener("abort", onAbort, { once: true });
         fake.enteredWait.resolve();
-      }),
+      });
+    },
   };
   return {
     ports,

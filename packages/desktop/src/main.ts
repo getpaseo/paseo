@@ -1088,7 +1088,8 @@ const quitLifecycle = createQuitLifecycle({
       stopDaemon: () => stopDesktopDaemonViaCli("quit"),
       showShutdownFeedback: showDaemonShutdownDialog,
     }),
-  flushPendingUpdate: () => flushPendingUpdate(),  onStopError: (error) => {
+  flushPendingUpdate: () => flushPendingUpdate(),
+  onStopError: (error) => {
     log.error("[desktop daemon] failed to stop managed daemon on quit", error);
   },
 });

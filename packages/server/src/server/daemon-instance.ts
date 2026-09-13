@@ -55,16 +55,28 @@ export interface StopDaemonPorts {
 }
 
 export const defaultStopDaemonPorts: StopDaemonPorts = {
-  readInstance: (home) => getPidLockInfo(home),
-  isRunning: (pid) => isPidRunning(pid),
-  isSameInstance: (left, right) => isSamePidLock(left, right),
-  releaseLock: (home, owner) => releasePidLock(home, owner),
-  signalTerm: (pid) => {
+  readInstance(home) {
+    return getPidLockInfo(home);
+  },
+  isRunning(pid) {
+    return isPidRunning(pid);
+  },
+  isSameInstance(left, right) {
+    return isSamePidLock(left, right);
+  },
+  releaseLock(home, owner) {
+    return releasePidLock(home, owner);
+  },
+  signalTerm(pid) {
     process.kill(pid, "SIGTERM");
     return Promise.resolve();
   },
-  killTree: (pid, signal) => killTree(pid, signal),
-  wait: (ms, signal) => delay(ms, undefined, { signal }),
+  killTree(pid, signal) {
+    return killTree(pid, signal);
+  },
+  wait(ms, signal) {
+    return delay(ms, undefined, { signal });
+  },
 };
 
 export async function readDaemonInstance(home: string): Promise<PidLockInfo | null> {
