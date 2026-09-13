@@ -579,7 +579,10 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Tool handlers are schema-validated at registration boundaries.
     handler: (input: any, context: PaseoToolExecutionContext) => Promise<PaseoToolResult>,
   ) => {
-    if (!isPaseoToolEnabled(options.paseoToolPolicy, name)) {
+    if (
+      (callerAgentId && agentManager.getAgent(callerAgentId)?.config.writePolicy === "read_only") ||
+      !isPaseoToolEnabled(options.paseoToolPolicy, name)
+    ) {
       return;
     }
     tools.set(name, {
@@ -979,6 +982,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       .describe("Create a new workspace for the agent."),
   ]);
   const commonCreateAgentFields = {
+    writePolicy: z.enum(["read_write", "read_only"]).optional(),
     launchProfileId: z
       .string()
       .optional()
@@ -1468,6 +1472,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
           cwd: resolvedArgs.cwd,
           workspaceId: resolvedArgs.workspaceId,
           launchProfileId: parsedArgs.launchProfileId,
+          writePolicy: parsedArgs.writePolicy,
           thinking: parsedArgs.settings?.thinkingOptionId,
           features: parsedArgs.settings?.features,
           labels: parsedArgs.labels,

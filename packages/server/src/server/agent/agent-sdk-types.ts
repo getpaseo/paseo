@@ -600,6 +600,7 @@ export interface ImportedProviderSession {
 export interface AgentSessionConfig {
   provider: AgentProvider;
   cwd: string;
+  writePolicy?: "read_write" | "read_only";
   /**
    * Provider-agnostic system/developer instruction string.
    * Mapped by each provider to its native instruction field.

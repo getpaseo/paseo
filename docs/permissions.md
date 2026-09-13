@@ -29,11 +29,23 @@ A pairing invitation is neither. It is an expiring, single-use exchange that cre
 | `automation.manage` | Schedules, heartbeats, and loops                                           |
 | `hub.execute`       | Agent lifecycle, agent/workspace observation, and workspace recovery       |
 
-Agents and terminals use workspace authority. Both can execute code and mutate the workspace, so separate write permissions would claim an isolation boundary the daemon cannot enforce.
+Agents and terminals use workspace authority. Launching or controlling an agent still requires workspace write authority, including a read-only agent: its launch policy does not attenuate the caller's daemon permissions.
 
 Owner, operator, and viewer are UI presets expanded into explicit permissions. Do not persist them as roles. Adding a permission must not silently widen an existing principal.
 
 Permissions are additive allows. Missing authority denies the operation. Do not add deny precedence.
+
+## Read-only agent launches
+
+Set `writePolicy: "read_only"` at creation when a role must not write the workspace or other local files. Omission means `read_write`. The policy survives close, reload, archive, and daemon restart; changing it requires a new agent. Clients must require `server_info.features.agentWritePolicy` before creating or resuming a read-only agent on a daemon.
+
+Only Codex on macOS with `sandbox-exec` is supported. Other hosts and providers, including OMP, reject read-only creation before provider startup and remain available for read-write roles. A provider mode, permission prompt, or system prompt does not establish this boundary.
+
+Codex and its descendants run inside a write-denying OS boundary. Its native sandbox is disabled because macOS cannot nest it inside that boundary; native approvals remain disabled. Explicit Codex exec-policy allows cannot escape the outer restriction.
+
+Read-only agents have no MCP servers or Paseo tools. Plugins orchestrate these roles from outside the agent. The isolated Codex home receives authentication only, not inherited user configuration, rules, hooks, or plugins. Other Paseo state, loopback connections, and local sockets are inaccessible except the system DNS resolver. Remote TCP port 443 remains available for model traffic; effects through remote APIs are outside this filesystem policy.
+
+Each agent keeps its native conversation in `PASEO_HOME/codex-read-only/<agent-id>`, outside the workspace. Private temporary files are removed on close; durable state remains through archive and is removed when the agent is deleted. Do not put that state directory inside the workspace you want to protect.
 
 ## Resources
 

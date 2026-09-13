@@ -64,6 +64,7 @@ export function attachAgentStoragePersistence(
 
 export function buildConfigOverrides(record: StoredAgentRecord): Partial<AgentSessionConfig> {
   return stripInternalPaseoMcpServer({
+    writePolicy: record.config?.writePolicy,
     provider: record.provider,
     cwd: record.cwd,
     modeId: record.config?.modeId ?? undefined,
@@ -96,6 +97,7 @@ export function buildSessionConfig(
     toolPolicy: overrides.toolPolicy,
     systemPrompt: overrides.systemPrompt,
     mcpServers: overrides.mcpServers,
+    writePolicy: overrides.writePolicy,
   });
 }
 

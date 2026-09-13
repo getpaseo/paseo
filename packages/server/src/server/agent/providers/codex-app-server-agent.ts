@@ -39,6 +39,13 @@ import {
   type ResolveAgentDefaultModeInput,
 } from "../agent-sdk-types.js";
 import { importSessionFromPersistence } from "../provider-session-import.js";
+import { assertWritePolicySupported, assertWritePolicyUnchanged } from "../write-policy.js";
+import {
+  prepareReadOnlyCodexRuntime,
+  READ_ONLY_CODEX_FLAGS,
+  cleanupReadOnlyCodexTemp,
+  removeReadOnlyCodexState,
+} from "./codex/read-only.js";
 import { runProviderRefreshActivity } from "../provider-refresh-deadline.js";
 import type { Logger } from "pino";
 
@@ -253,6 +260,7 @@ interface CodexAppServerClientLike {
 }
 
 interface CodexAppServerAgentDeps {
+  readOnlyStateRoot?: string;
   workspaceGitService?: Pick<WorkspaceGitService, "resolveRepoRoot">;
   customProvider?: {
     id: string;
@@ -3325,6 +3333,7 @@ export class CodexAppServerAgentSession implements AgentSession {
   private activeForegroundTurnId: string | null = null;
   private activeClientMessageId: string | null = null;
   private cachedRuntimeInfo: AgentRuntimeInfo | null = null;
+  private readOnlyMcpServers: Record<string, { enabled: false }> = {};
   private serviceTier: "fast" | null = null;
   private planModeEnabled = false;
   private historyPending = false;
@@ -3524,8 +3533,18 @@ export class CodexAppServerAgentSession implements AgentSession {
         await this.client.request("config/read", { cwd: this.config.cwd ?? null }),
       );
       const config = toObjectRecord(response?.config);
+      if (this.config.writePolicy === "read_only") {
+        if (!config) throw new Error("Cannot inspect inherited Codex MCP configuration");
+        this.readOnlyMcpServers = Object.fromEntries(
+          Object.keys(toObjectRecord(config.mcp_servers) ?? {}).map((name) => [
+            name,
+            { enabled: false },
+          ]),
+        );
+      }
       this.resolvedWorkspaceWrite = readSandboxWorkspaceWrite(config?.sandbox_workspace_write);
     } catch (error) {
+      if (this.config.writePolicy === "read_only") throw error;
       this.logger.debug({ error }, "Failed to read resolved Codex workspace-write config");
     }
   }
@@ -3870,6 +3889,10 @@ export class CodexAppServerAgentSession implements AgentSession {
   ): Promise<void> {
     if (!this.client || !this.currentThreadId) return;
     const params: Record<string, unknown> = { threadId: this.currentThreadId };
+    if (this.config.writePolicy === "read_only") {
+      params.approvalPolicy = "never";
+      params.sandbox = "danger-full-access";
+    }
     const developerInstructions = composeSystemPromptParts(
       this.config.systemPrompt,
       this.config.daemonAppendSystemPrompt,
@@ -3885,10 +3908,12 @@ export class CodexAppServerAgentSession implements AgentSession {
       const loaded = toObjectRecord(await this.client.request("thread/loaded/list", {}));
       const ids = Array.isArray(loaded?.data) ? loaded.data : [];
       if (ids.includes(this.currentThreadId)) {
+        await this.assertReadOnlyMcpDisabled(this.currentThreadId);
         return;
       }
       const response = await this.client.request("thread/resume", params);
       this.rememberResolvedSandboxPolicy(response);
+      await this.assertReadOnlyMcpDisabled(this.currentThreadId);
     } catch (error) {
       const threadId = this.currentThreadId;
       const message = error instanceof Error ? error.message : String(error);
@@ -3912,6 +3937,7 @@ export class CodexAppServerAgentSession implements AgentSession {
         }
         const response = await this.client.request("thread/resume", params);
         this.rememberResolvedSandboxPolicy(response);
+        await this.assertReadOnlyMcpDisabled(threadId);
         this.logger.info({ threadId }, "Unarchived Codex thread to restore active Paseo agent");
         return;
       }
@@ -4063,6 +4089,11 @@ export class CodexAppServerAgentSession implements AgentSession {
     params: Record<string, unknown>,
     preset: CodexModePreset,
   ): { approvalPolicy?: string; sandboxPolicyType?: string } {
+    if (this.config.writePolicy === "read_only") {
+      params.approvalPolicy = "never";
+      params.sandboxPolicy = { type: "dangerFullAccess" };
+      return { approvalPolicy: "never", sandboxPolicyType: "danger-full-access" };
+    }
     const approvalPolicy = this.hasWorkflowModeOverride ? preset.approvalPolicy : undefined;
     const sandboxPolicyType =
       this.providerOptions.sandbox_mode ??
@@ -4732,6 +4763,8 @@ export class CodexAppServerAgentSession implements AgentSession {
       metadata: {
         provider: CODEX_PROVIDER,
         cwd: this.config.cwd,
+        writePolicy: this.config.writePolicy,
+        ...(this.config.writePolicy === "read_only" ? { agentId: this.agentId } : {}),
         title: this.config.title ?? null,
         threadId: this.currentThreadId,
         modeId: this.config.modeId,
@@ -4841,6 +4874,9 @@ export class CodexAppServerAgentSession implements AgentSession {
     this.pendingForegroundTurnIdentification?.resolve(null);
     this.pendingForegroundTurnIdentification = null;
     await this.disposeClient();
+    if (this.config.writePolicy === "read_only" && this.agentId) {
+      await cleanupReadOnlyCodexTemp(this.agentId, this.deps.readOnlyStateRoot);
+    }
     this.currentThreadId = null;
   }
 
@@ -5092,6 +5128,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     if (!threadId) {
       throw new Error("Codex app-server did not return thread id");
     }
+    await this.assertReadOnlyMcpDisabled(threadId);
     const responseApprovalsReviewer =
       typeof response?.approvalsReviewer === "string" ? response.approvalsReviewer : undefined;
     if (
@@ -5134,6 +5171,10 @@ export class CodexAppServerAgentSession implements AgentSession {
     if (this.hasWorkflowModeOverride) {
       applyApprovalsReviewerParam(params, preset);
     }
+    if (this.config.writePolicy === "read_only") {
+      params.approvalPolicy = "never";
+      params.sandbox = "danger-full-access";
+    }
     return { params, approvalPolicy, sandbox };
   }
 
@@ -5150,8 +5191,55 @@ export class CodexAppServerAgentSession implements AgentSession {
       }
       innerConfig.mcp_servers = mcpServers;
     }
+    if (this.config.writePolicy === "read_only") {
+      return {
+        ...innerConfig,
+        approval_policy: "never",
+        sandbox_mode: "danger-full-access",
+        cli_auth_credentials_store: "file",
+        features: {
+          ...toObjectRecord(innerConfig.features),
+          apps: false,
+          enable_mcp_apps: false,
+          plugins: false,
+          hooks: false,
+          skill_mcp_dependency_install: false,
+          multi_agent: false,
+          multi_agent_v2: false,
+        },
+        mcp_servers: {
+          ...this.readOnlyMcpServers,
+          ...Object.fromEntries(
+            Object.keys(toObjectRecord(innerConfig.mcp_servers) ?? {}).map((name) => [
+              name,
+              { enabled: false },
+            ]),
+          ),
+        },
+      };
+    }
     const configured = applyCodexToolPolicy(innerConfig, this.config.toolPolicy);
     return Object.keys(configured).length > 0 ? configured : null;
+  }
+
+  private async assertReadOnlyMcpDisabled(threadId: string): Promise<void> {
+    if (this.config.writePolicy !== "read_only") return;
+    const response = toObjectRecord(
+      await this.client!.request("mcpServerStatus/list", { threadId }),
+    );
+    if (
+      response?.nextCursor != null ||
+      !Array.isArray(response?.data) ||
+      response.data.some((value) => {
+        const server = toObjectRecord(value);
+        return (
+          server?.runtimeStatus !== "disabled" ||
+          Object.keys(toObjectRecord(server?.tools) ?? {}).length !== 0
+        );
+      })
+    ) {
+      throw new Error("read_only requires all Codex MCP servers to be disabled");
+    }
   }
 
   private async buildUserInput(prompt: CodexPromptInput): Promise<CodexAppServerUserInput[]> {
@@ -7015,12 +7103,32 @@ export class CodexAppServerAgentClient implements AgentClient {
 
   private async spawnAppServer(
     launchEnv?: Record<string, string>,
-    options?: { goalsEnabled?: boolean; agentId?: string },
+    options?: { goalsEnabled?: boolean; agentId?: string; readOnlyCwd?: string },
   ): Promise<ChildProcessWithoutNullStreams> {
     const launchPrefix = await resolveCodexLaunchPrefix(this.runtimeSettings);
     const args = [...launchPrefix.args, "app-server"];
     if (options?.goalsEnabled) {
       args.push("--enable", "goals");
+    }
+    if (options?.readOnlyCwd !== undefined) {
+      const runtime = await prepareReadOnlyCodexRuntime({
+        agentId: options.agentId,
+        cwd: options.readOnlyCwd,
+        env: createProviderEnv({ runtimeSettings: this.runtimeSettings, overlays: [launchEnv] }),
+        stateRoot: this.deps.readOnlyStateRoot,
+      });
+      const child = spawnProcess(
+        "/usr/bin/sandbox-exec",
+        ["-p", runtime.profile, launchPrefix.command, ...args, ...READ_ONLY_CODEX_FLAGS],
+        {
+          cwd: runtime.stateDir,
+          detached: true,
+          stdio: ["pipe", "pipe", "pipe"],
+          env: runtime.env,
+        },
+      );
+      assertChildWithPipes(child);
+      return child;
     }
     this.logger.trace(
       {
@@ -7056,22 +7164,37 @@ export class CodexAppServerAgentClient implements AgentClient {
       // utility generations through `codex exec --ephemeral` in a larger change.
     }
     const sessionConfig: AgentSessionConfig = { ...config, provider: CODEX_PROVIDER };
-    const goalsEnabled = await this.resolveGoalsEnabled();
-    const autoReviewEnabled = await this.resolveAutoReviewEnabled();
+    assertWritePolicySupported(sessionConfig);
+    const readOnlyCwd = config.writePolicy === "read_only" ? config.cwd : undefined;
+    const goalsEnabled =
+      config.writePolicy === "read_only" ? false : await this.resolveGoalsEnabled();
+    const autoReviewEnabled =
+      config.writePolicy === "read_only" ? false : await this.resolveAutoReviewEnabled();
     const session = new CodexAppServerAgentSession(
       sessionConfig,
       null,
       this.logger,
       () =>
-        this.spawnAppServer(launchContext?.env, { goalsEnabled, agentId: launchContext?.agentId }),
+        this.spawnAppServer(launchContext?.env, {
+          goalsEnabled,
+          agentId: launchContext?.agentId,
+          readOnlyCwd,
+        }),
       this.sessionDeps(),
       options?.persistSession === false,
       goalsEnabled,
       autoReviewEnabled,
       launchContext?.agentId,
     );
-    await session.connect();
-    return session;
+    try {
+      await session.connect();
+      return session;
+    } catch (error) {
+      if (config.writePolicy === "read_only" && launchContext?.agentId) {
+        await removeReadOnlyCodexState(launchContext.agentId, this.deps.readOnlyStateRoot);
+      }
+      throw error;
+    }
   }
 
   async resumeSession(
@@ -7086,15 +7209,25 @@ export class CodexAppServerAgentClient implements AgentClient {
       ...overrides,
       provider: CODEX_PROVIDER,
       cwd: overrides?.cwd ?? storedConfig.cwd ?? process.cwd(),
+      writePolicy: storedConfig.writePolicy,
     };
-    const goalsEnabled = await this.resolveGoalsEnabled();
-    const autoReviewEnabled = await this.resolveAutoReviewEnabled();
+    assertWritePolicyUnchanged(storedConfig, overrides);
+    assertWritePolicySupported(merged);
+    const readOnlyCwd = merged.writePolicy === "read_only" ? merged.cwd : undefined;
+    const goalsEnabled =
+      merged.writePolicy === "read_only" ? false : await this.resolveGoalsEnabled();
+    const autoReviewEnabled =
+      merged.writePolicy === "read_only" ? false : await this.resolveAutoReviewEnabled();
     const session = new CodexAppServerAgentSession(
       merged,
       handle,
       this.logger,
       () =>
-        this.spawnAppServer(launchContext?.env, { goalsEnabled, agentId: launchContext?.agentId }),
+        this.spawnAppServer(launchContext?.env, {
+          goalsEnabled,
+          agentId: launchContext?.agentId,
+          readOnlyCwd,
+        }),
       this.sessionDeps(),
       false,
       goalsEnabled,
@@ -7102,8 +7235,15 @@ export class CodexAppServerAgentClient implements AgentClient {
       launchContext?.agentId,
       options?.purpose ?? "interactive",
     );
-    await session.connect();
-    return session;
+    try {
+      await session.connect();
+      return session;
+    } catch (error) {
+      if (merged.writePolicy === "read_only" && launchContext?.agentId) {
+        await cleanupReadOnlyCodexTemp(launchContext.agentId, this.deps.readOnlyStateRoot);
+      }
+      throw error;
+    }
   }
 
   async listImportableSessions(
@@ -7263,7 +7403,17 @@ export class CodexAppServerAgentClient implements AgentClient {
     const threadId = handle.nativeHandle ?? handle.sessionId;
     if (!threadId) return;
 
-    const child = await this.spawnAppServer();
+    const readOnly = handle.metadata?.writePolicy === "read_only";
+    const child = await this.spawnAppServer(
+      undefined,
+      readOnly
+        ? {
+            readOnlyCwd: typeof handle.metadata?.cwd === "string" ? handle.metadata.cwd : "",
+            agentId:
+              typeof handle.metadata?.agentId === "string" ? handle.metadata.agentId : undefined,
+          }
+        : undefined,
+    );
     const client = new CodexAppServerClient(child, this.logger);
 
     try {
@@ -7285,6 +7435,9 @@ export class CodexAppServerAgentClient implements AgentClient {
       }
     } finally {
       await client.dispose();
+      if (readOnly && typeof handle.metadata?.agentId === "string") {
+        await cleanupReadOnlyCodexTemp(handle.metadata.agentId, this.deps.readOnlyStateRoot);
+      }
     }
   }
 

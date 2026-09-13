@@ -1645,6 +1645,8 @@ export class VoiceAssistantWebSocketServer {
       ...(this.serverCapabilities ? { capabilities: this.serverCapabilities } : {}),
       features: {
         ownedSubscriptions: true,
+        // COMPAT(agentWritePolicy): added in v0.8.0; remove gate after 2027-09-13.
+        agentWritePolicy: true,
         agentRequestReceipts: true,
         hubAgentRpc: true,
         // COMPAT(directorySync): added in v0.3.x, remove gate after 2027-02-12.

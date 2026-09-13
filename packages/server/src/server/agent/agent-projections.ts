@@ -309,6 +309,7 @@ export function resolveStoredAgentPayloadUpdatedAt(record: StoredAgentRecord): s
 
 function buildSerializableConfig(config: AgentSessionConfig): SerializableAgentConfig | null {
   const serializable: SerializableAgentConfig = {};
+  if (config.writePolicy !== undefined) serializable.writePolicy = config.writePolicy;
   if (config.modeId) {
     serializable.modeId = config.modeId;
   }

@@ -26,6 +26,7 @@ import {
   emitLiveTimelineItemIfAgentKnown,
 } from "../timeline-append.js";
 import { resolveCreateAgentIntent } from "./intent.js";
+import { assertWritePolicySupported } from "../write-policy.js";
 
 export interface CreateAgentSessionWorktreeResult {
   sessionConfig: AgentSessionConfig;
@@ -79,6 +80,7 @@ export interface CreateAgentFromSessionInput {
 }
 
 export interface CreateAgentFromMcpInput {
+  writePolicy?: AgentSessionConfig["writePolicy"];
   launchProfileId?: string;
   kind: "mcp";
   provider: string;
@@ -177,6 +179,14 @@ export async function createAgentCommand(
   dependencies: CreateAgentCommandDependencies,
   input: CreateAgentCommandInput,
 ): Promise<CreateAgentCommandResult> {
+  assertWritePolicySupported(
+    input.kind === "session"
+      ? input.config
+      : {
+          provider: resolveProviderModel(input.provider).provider,
+          writePolicy: input.writePolicy ?? input.config?.writePolicy,
+        },
+  );
   const resolved =
     input.kind === "session"
       ? await resolveSessionCreateAgent(dependencies, input)
@@ -254,14 +264,20 @@ async function resolveSessionCreateAgent(
   // this for the worktree path via cleanupCreatedWorktreeAfterFailedAgentCreate;
   // this is a pre-existing gap for directory-only workspace creates, not
   // introduced by this validation).
-  const resolvedCreateConfig = await dependencies.providerSnapshotManager.resolveCreateConfig({
-    cwd: builtSessionConfig.cwd,
-    provider: builtSessionConfig.provider,
-    requestedMode: builtSessionConfig.modeId,
-    featureValues: builtSessionConfig.featureValues,
-    parent: null,
-    unattended: false,
-  });
+  const resolvedCreateConfig =
+    builtSessionConfig.writePolicy === "read_only"
+      ? {
+          modeId: builtSessionConfig.modeId,
+          featureValues: builtSessionConfig.featureValues,
+        }
+      : await dependencies.providerSnapshotManager.resolveCreateConfig({
+          cwd: builtSessionConfig.cwd,
+          provider: builtSessionConfig.provider,
+          requestedMode: builtSessionConfig.modeId,
+          featureValues: builtSessionConfig.featureValues,
+          parent: null,
+          unattended: false,
+        });
   const sessionConfig: AgentSessionConfig = {
     ...builtSessionConfig,
     modeId: resolvedCreateConfig.modeId,
@@ -396,6 +412,12 @@ async function resolveMcpProviderCreateConfig(params: {
   parentAgent: ManagedAgent | null;
 }): Promise<{ modeId?: string; featureValues?: Record<string, unknown> }> {
   const passthroughConfig = params.input.config;
+  if ((params.input.writePolicy ?? passthroughConfig?.writePolicy) === "read_only") {
+    return {
+      modeId: params.input.mode ?? passthroughConfig?.modeId,
+      featureValues: params.input.features ?? passthroughConfig?.featureValues,
+    };
+  }
   return params.dependencies.providerSnapshotManager.resolveCreateConfig({
     cwd: params.resolvedCwd,
     provider: params.provider,
@@ -425,6 +447,7 @@ function buildMcpSessionConfig(params: {
     ...passthroughConfig,
     provider: params.provider,
     cwd: params.resolvedCwd,
+    writePolicy: params.input.writePolicy ?? passthroughConfig?.writePolicy,
     modeId: params.resolvedMode ?? passthroughConfig?.modeId,
     model: params.resolvedProviderModel.model ?? passthroughConfig?.model,
     thinkingOptionId: params.input.thinking ?? passthroughConfig?.thinkingOptionId,

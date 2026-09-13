@@ -16,6 +16,8 @@ import {
   PARENT_AGENT_ID_LABEL,
 } from "@getpaseo/protocol/agent-labels";
 import type { Logger } from "pino";
+import { assertWritePolicySupported, assertWritePolicyUnchanged } from "./write-policy.js";
+import { removeReadOnlyCodexState } from "./providers/codex/read-only.js";
 import type { ProviderOptions, ToolPolicy } from "@getpaseo/protocol/agent-types";
 import type { ProviderPaseoToolsPolicy } from "@getpaseo/protocol/provider-config";
 import { z } from "zod";
@@ -178,6 +180,7 @@ function buildStoredAgentConfig(record: StoredAgentRecord): AgentSessionConfig {
     config.providerOptions = record.config.providerOptions;
   }
   if (record.config.toolPolicy != null) config.toolPolicy = record.config.toolPolicy;
+  if (record.config.writePolicy != null) config.writePolicy = record.config.writePolicy;
   if (record.config.systemPrompt != null) {
     config.systemPrompt = record.config.systemPrompt;
   }
@@ -1212,6 +1215,7 @@ export class AgentManager {
     agentId: string | undefined,
     options: CreateAgentOptions,
   ): Promise<ManagedAgent> {
+    assertWritePolicySupported(config);
     this.assertAcceptingAgentRegistrations();
     const resolvedAgentId = validateAgentId(agentId ?? this.idFactory(), "createAgent");
     if (this.pluginLifecycle && !config.internal) {
@@ -1221,7 +1225,7 @@ export class AgentManager {
         workspaceId: options.workspaceId,
         launchProfileId: options.launchProfileId,
       });
-      config = { ...request.config, internal: config.internal };
+      config = { ...request.config, internal: config.internal, writePolicy: config.writePolicy };
       options = { ...options, env: request.env };
     }
     await this.deleteAgentState(resolvedAgentId);
@@ -1314,10 +1318,12 @@ export class AgentManager {
       "resumeAgentFromPersistence",
     );
     const metadata = (handle.metadata ?? {}) as Partial<AgentSessionConfig>;
+    assertWritePolicyUnchanged(metadata, overrides);
     const mergedConfig = {
       ...metadata,
       ...overrides,
       provider: handle.provider,
+      writePolicy: metadata.writePolicy,
     } as AgentSessionConfig;
     const { storedConfig, launchConfig, paseoToolPolicy } = await this.prepareSessionConfig(
       mergedConfig,
@@ -1464,6 +1470,7 @@ export class AgentManager {
   ): Promise<ManagedAgent> {
     this.assertAcceptingAgentRegistrations();
     let existing = this.requireSessionAgent(agentId);
+    assertWritePolicyUnchanged(existing.config, overrides);
     if (this.hasInFlightRun(agentId)) {
       await this.cancelAgentRunBefore(agentId, "reload");
       existing = this.requireSessionAgent(agentId);
@@ -1480,6 +1487,7 @@ export class AgentManager {
       ...existing.config,
       ...overrides,
       provider,
+      writePolicy: existing.config.writePolicy,
     } as AgentSessionConfig;
     const { storedConfig, launchConfig, paseoToolPolicy } = await this.prepareSessionConfig(
       refreshConfig,
@@ -3135,6 +3143,7 @@ export class AgentManager {
   async deleteAgentState(agentId: string): Promise<void> {
     this.discardRetainedAgentState(agentId);
     await this.deleteCommittedTimeline(agentId);
+    await removeReadOnlyCodexState(agentId);
   }
 
   async deleteCommittedTimeline(agentId: string): Promise<void> {
@@ -4986,7 +4995,7 @@ export class AgentManager {
     }
 
     const shouldResolveDefaultModel = options.resolveDefaultModel ?? true;
-    if (shouldResolveDefaultModel && !normalized.model) {
+    if (shouldResolveDefaultModel && !normalized.model && normalized.writePolicy !== "read_only") {
       const defaultModelId = await this.resolveDefaultModelId(normalized);
       if (defaultModelId) {
         normalized.model = defaultModelId;
@@ -5051,10 +5060,19 @@ export class AgentManager {
     agentId: string,
     env?: Record<string, string>,
   ): Promise<PreparedSessionConfig> {
-    const storedConfig = await this.normalizeConfig(stripInternalPaseoMcpServer(config), { env });
-    const paseoToolPolicy = this.paseoToolsEnabled
-      ? this.resolvePaseoToolPolicy(storedConfig.provider)
-      : { enabled: false };
+    assertWritePolicySupported(config);
+    const storedConfig = await this.normalizeConfig(
+      stripInternalPaseoMcpServer(
+        config.writePolicy === "read_only"
+          ? { ...config, mcpServers: {}, toolPolicy: undefined }
+          : config,
+      ),
+      { env },
+    );
+    const paseoToolPolicy =
+      this.paseoToolsEnabled && config.writePolicy !== "read_only"
+        ? this.resolvePaseoToolPolicy(storedConfig.provider)
+        : { enabled: false };
     const launchConfig = this.applyDaemonAppendSystemPrompt(
       withRuntimePaseoMcpServer({
         config: storedConfig,

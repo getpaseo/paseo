@@ -482,6 +482,7 @@ const ToolPolicySchema = z
 const AgentSessionConfigSchema = z.object({
   provider: AgentProviderSchema,
   cwd: z.string(),
+  writePolicy: z.enum(["read_write", "read_only"]).optional(),
   modeId: z.string().optional(),
   model: z.string().optional(),
   thinkingOptionId: z.string().optional(),
@@ -1759,7 +1760,7 @@ export const ProviderUsageListRequestMessageSchema = z.object({
 export const ResumeAgentRequestMessageSchema = z.object({
   type: z.literal("resume_agent_request"),
   handle: AgentPersistenceHandleSchema,
-  overrides: AgentSessionConfigSchema.partial().optional(),
+  overrides: AgentSessionConfigSchema.omit({ writePolicy: true }).partial().optional(),
   requestId: z.string(),
 });
 
@@ -3502,6 +3503,8 @@ export const ServerInfoStatusPayloadSchema = z
     // COMPAT(providersSnapshot): added in v0.1.48, remove gating when all clients use snapshot
     features: z
       .object({
+        // COMPAT(agentWritePolicy): added in v0.8.0; remove gate after 2027-09-13.
+        agentWritePolicy: z.boolean().optional(),
         // COMPAT(agentRequestReceipts): added in v0.8.0; remove gate after 2027-03-05.
         agentRequestReceipts: z.boolean().optional(),
         // COMPAT(hubAgentRpc): added in v0.8.0; remove gate after 2027-03-05.

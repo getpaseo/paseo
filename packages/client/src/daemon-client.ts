@@ -2659,6 +2659,7 @@ export class DaemonClient {
     if (options.idempotencyKey !== undefined) this.requireAgentRequestReceipts();
     const requestId = this.createRequestId(options.requestId);
     const config = resolveAgentConfig(options);
+    this.requireWritePolicySupport(config.writePolicy);
 
     const message = SessionInboundMessageSchema.parse({
       type: "create_agent_request",
@@ -2711,6 +2712,16 @@ export class DaemonClient {
     }
 
     return status.agent;
+  }
+
+  private requireWritePolicySupport(writePolicy: unknown): void {
+    // COMPAT(agentWritePolicy): added in v0.8.0; remove gate after 2027-09-13.
+    if (
+      writePolicy === "read_only" &&
+      this.lastServerInfoMessage?.features?.agentWritePolicy !== true
+    ) {
+      throw new Error("Update the host to launch read-only agents");
+    }
   }
 
   private requireAgentRequestReceipts(): void {
@@ -2947,8 +2958,9 @@ export class DaemonClient {
 
   async resumeAgent(
     handle: AgentPersistenceHandle,
-    overrides?: Partial<AgentSessionConfig>,
+    overrides?: Partial<Omit<AgentSessionConfig, "writePolicy">>,
   ): Promise<AgentSnapshotPayload> {
+    this.requireWritePolicySupport(handle.metadata?.writePolicy);
     const requestId = this.createRequestId();
     const message = SessionInboundMessageSchema.parse({
       type: "resume_agent_request",

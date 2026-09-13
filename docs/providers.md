@@ -37,6 +37,9 @@ Each provider definition owns its option schema and exact MCP preapproval mappin
 must fail closed for Hub unattended execution until it can approve one exact injected MCP server
 and tool identity without approving native tools.
 
+The creation-only `writePolicy` is a separate [read-only launch contract](permissions.md#read-only-agent-launches).
+Do not infer support from a provider's planning mode or native permission settings.
+
 ## Two Integration Patterns
 
 ### ACP (Agent Client Protocol) -- recommended
