@@ -20,6 +20,7 @@ import {
   captureCompletedTurnEvidence,
   restoreCompletedTurnEvidence,
   type CompletedTurnEvidence,
+  type CompletedTurnHistoryEvent,
 } from "./completed-turn-evidence.js";
 import { assertWritePolicySupported, assertWritePolicyUnchanged } from "./write-policy.js";
 import { removeReadOnlyCodexState } from "./providers/codex/read-only.js";
@@ -4395,15 +4396,21 @@ export class AgentManager {
     broadcast: boolean,
     broadcastTimeline: boolean,
   ): Promise<void> {
-    const historyEvents: Extract<AgentStreamEvent, { type: "timeline" }>[] = [];
+    const historyEvents: Array<{
+      event: Extract<AgentStreamEvent, { type: "timeline" }>;
+      providerMessageId?: string;
+    }> = [];
     const providerSubagentEvents: Extract<AgentStreamEvent, { type: "provider_subagent" }>[] = [];
-    for await (const rawEvent of this.historyWithSyntheticPlanDecisions(agent)) {
+    for await (const {
+      restoredProviderMessageId,
+      ...rawEvent
+    } of this.historyWithSyntheticPlanDecisions(agent)) {
       const event = limitAgentStreamEventContent(rawEvent);
       if (event.type === "timeline") {
         if (event.item.type === "user_message" && isSystemInjectedEnvelope(event.item.text)) {
           continue;
         }
-        historyEvents.push(event);
+        historyEvents.push({ event, providerMessageId: restoredProviderMessageId });
       } else if (event.type === "provider_subagent") {
         providerSubagentEvents.push(event);
       }
@@ -4426,10 +4433,11 @@ export class AgentManager {
         this.dispatch({ type: "provider_subagent", event: update });
       }
     }
-    for (const event of historyEvents) {
+    for (const { event, providerMessageId } of historyEvents) {
       const row = this.recordTimeline(agent.id, event.item, {
         timestamp: event.timestamp,
         turnId: event.turnId,
+        providerMessageId,
       });
       if (broadcastTimeline) {
         this.dispatchStream(agent.id, event, {
@@ -4455,7 +4463,10 @@ export class AgentManager {
     const providerSubagentEvents: AgentManagerEvent[] = [];
     agent.historyPrimed = false;
     try {
-      for await (const rawEvent of this.historyWithSyntheticPlanDecisions(agent)) {
+      for await (const {
+        restoredProviderMessageId,
+        ...rawEvent
+      } of this.historyWithSyntheticPlanDecisions(agent)) {
         const event = limitAgentStreamEventContent(rawEvent);
         if (event.type === "provider_subagent") {
           const update = this.providerSubagents.apply(agent.id, event.provider, event.event);
@@ -4476,6 +4487,7 @@ export class AgentManager {
         const row = this.recordTimeline(agent.id, event.item, {
           timestamp: event.timestamp,
           turnId: event.turnId,
+          providerMessageId: restoredProviderMessageId,
         });
         if (deferredBroadcast) {
           timelineEvents.push({ event, row });
@@ -4510,7 +4522,7 @@ export class AgentManager {
 
   private async *historyWithSyntheticPlanDecisions(
     agent: ActiveManagedAgent,
-  ): AsyncGenerator<AgentStreamEvent> {
+  ): AsyncGenerator<CompletedTurnHistoryEvent> {
     if (
       !agent.lastCompletedTurnEvidence &&
       (!agent.syntheticPlanDecisions || !Object.keys(agent.syntheticPlanDecisions).length)

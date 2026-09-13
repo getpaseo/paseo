@@ -17,6 +17,9 @@ export interface CompletedTurnEvidence {
   origin?: PromptEvidence;
 }
 
+// Host-private provenance, consumed before hydrated events are broadcast.
+export type CompletedTurnHistoryEvent = AgentStreamEvent & { restoredProviderMessageId?: string };
+
 function digest(value: unknown): string {
   return createHash("sha256")
     .update(
@@ -98,7 +101,7 @@ export function captureCompletedTurnEvidence(
 export function restoreCompletedTurnEvidence(
   history: AgentStreamEvent[],
   evidence?: CompletedTurnEvidence,
-): AgentStreamEvent[] {
+): CompletedTurnHistoryEvent[] {
   if (
     !evidence?.prompt.providerMessageId ||
     (evidence.origin && !evidence.origin.providerMessageId)
@@ -132,6 +135,7 @@ export function restoreCompletedTurnEvidence(
     if (index === rows[start]!.seq) prompt = evidence.prompt;
     return {
       ...event,
+      ...(prompt ? { restoredProviderMessageId: prompt.providerMessageId } : {}),
       ...(index >= rows[start]!.seq ? { turnId: evidence.turnId } : {}),
       ...(event.item.type === "user_message" && prompt?.clientMessageId
         ? { item: { ...event.item, clientMessageId: prompt.clientMessageId } }

@@ -6,7 +6,11 @@ import { AgentManager } from "./agent-manager.js";
 import { AgentStorage } from "./agent-storage.js";
 import { ensureAgentLoaded } from "./agent-loading.js";
 import { createTestAgentClient } from "../test-utils/fake-agent-client.js";
-import { claudeNativeHistory, codexNativeHistory } from "../test-utils/native-provider-history.js";
+import {
+  claudeNativeHistory,
+  codexNativeHistory,
+  workflowNativeHistory,
+} from "../test-utils/native-provider-history.js";
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import type { AgentSession, AgentStreamEvent } from "./agent-sdk-types.js";
 import {
@@ -14,6 +18,122 @@ import {
   restoreCompletedTurnEvidence,
 } from "./completed-turn-evidence.js";
 import type { AgentTimelineRow } from "./agent-timeline-store-types.js";
+
+test.each(["claude", "codex"] as const)(
+  "native prompt provenance survives restart, followup completion, and a second restart (%s)",
+  async (provider) => {
+    const directory = await mkdtemp(path.join(tmpdir(), "chained-completed-evidence-"));
+    const logger = createTestLogger();
+    const client = createTestAgentClient(provider);
+    const history: AgentStreamEvent[] = [];
+    let ordinal = 0;
+    const wrap = (session: AgentSession) => {
+      Object.assign(session, { nextTurnOrdinal: ordinal });
+      const subscribe = session.subscribe.bind(session);
+      session.subscribe = (listener) =>
+        subscribe((event) => {
+          if (event.type === "timeline") history.push(structuredClone(event));
+          listener(event);
+        });
+      const start = session.startTurn.bind(session);
+      session.startTurn = async (prompt, options) => {
+        const providerMessageId = `native-prompt-${++ordinal}`;
+        const result = await start(prompt, options);
+        (
+          session as unknown as { notifySubscribers(event: AgentStreamEvent): void }
+        ).notifySubscribers({
+          type: "timeline",
+          provider,
+          turnId: result.turnId,
+          item: {
+            type: "user_message",
+            text: String(prompt),
+            messageId: providerMessageId,
+            clientMessageId: options?.clientMessageId,
+          },
+        });
+        return result;
+      };
+      session.streamHistory = async function* () {
+        yield* await workflowNativeHistory(history, provider);
+      };
+      return session;
+    };
+    const create = client.createSession.bind(client),
+      resume = client.resumeSession.bind(client);
+    client.createSession = async (...args) => wrap(await create(...args));
+    client.resumeSession = async (...args) => wrap(await resume(...args));
+    const stores = Array.from({ length: 3 }, () => new AgentStorage(directory, logger));
+    const managers = stores.map(
+      (registry) => new AgentManager({ registry, clients: { [provider]: client }, logger }),
+    );
+    const [first, second, third] = managers;
+    const agent = await first!.createAgent({ provider, cwd: directory }, undefined, {});
+    try {
+      await first!.runAgent(agent.id, "Respond with exactly: Original conclusion", {
+        clientMessageId: "workflow:origin",
+      });
+      await first!.closeAgent(agent.id);
+      await ensureAgentLoaded(agent.id, {
+        agentManager: second!,
+        agentStorage: stores[1]!,
+        logger,
+      });
+      for (const force of [false, true]) {
+        if (force) await second!.hydrateTimelineFromProvider(agent.id, { force });
+        expect((await second!.getTimelineRows(agent.id))[0]).toMatchObject({
+          providerMessageId: "native-prompt-1",
+          item: { clientMessageId: "workflow:origin" },
+        });
+      }
+      await second!.runAgent(agent.id, "Respond with exactly: Followup conclusion", {
+        clientMessageId: "workflow:followup",
+      });
+      const completed = second!.getAgent(agent.id)!;
+      const newTurnId = completed.lastCompletedTurnId!;
+      expect((await stores[1]!.get(agent.id))?.lastCompletedTurnEvidence).toMatchObject({
+        turnId: newTurnId,
+        prompt: { providerMessageId: "native-prompt-2", clientMessageId: "workflow:followup" },
+        origin: { providerMessageId: "native-prompt-1", clientMessageId: "workflow:origin" },
+      });
+      await second!.closeAgent(agent.id);
+      await ensureAgentLoaded(agent.id, { agentManager: third!, agentStorage: stores[2]!, logger });
+      for (const force of [false, true]) {
+        if (force) await third!.hydrateTimelineFromProvider(agent.id, { force });
+        const rows = await third!.getTimelineRows(agent.id);
+        expect(rows[0]).toMatchObject({
+          providerMessageId: "native-prompt-1",
+          item: { clientMessageId: "workflow:origin" },
+        });
+        const prompt = rows.findLastIndex((row) => row.item.type === "user_message");
+        expect(rows[prompt]).toMatchObject({
+          providerMessageId: "native-prompt-2",
+          item: { clientMessageId: "workflow:followup" },
+        });
+        expect(rows.slice(prompt).every((row) => row.turnId === newTurnId)).toBe(true);
+      }
+      const origin = history.find(
+        (event) => event.type === "timeline" && event.item.type === "user_message",
+      )!;
+      if (origin.type !== "timeline" || origin.item.type !== "user_message")
+        throw new Error("missing native prompt");
+      origin.item.messageId = "replacement-origin";
+      await third!.hydrateTimelineFromProvider(agent.id, { force: true });
+      const replaced = await third!.getTimelineRows(agent.id);
+      expect(
+        replaced.every(
+          (row) =>
+            !row.providerMessageId &&
+            (row.item.type !== "user_message" || !row.item.clientMessageId),
+        ),
+      ).toBe(true);
+      if (provider === "claude") expect(replaced.every((row) => !row.turnId)).toBe(true);
+    } finally {
+      for (const manager of managers) await manager.closeAgent(agent.id);
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);
 
 test("real Claude history restores only the surviving last completed turn after prime, force and new manager", async () => {
   const directory = await mkdtemp(path.join(tmpdir(), "completed-evidence-"));
