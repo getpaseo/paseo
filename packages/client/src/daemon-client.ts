@@ -1,7 +1,7 @@
 import { subscribeTimeline, type TimelineMessage } from "./timeline-subscription/index.js";
 import { ProviderSnapshotUpdates } from "./provider-snapshots/index.js";
 import {
-  OwnedSubscriptions,
+  ConnectionSubscriptions,
   type OwnedSubscription,
   DEFAULT_CLIENT_CAPABILITIES,
   type TimelineSubscription,
@@ -1094,7 +1094,11 @@ export class DaemonClient {
     emit: (message) => this.deliverSessionMessage(message),
     failed: (error) => this.logger.error({ err: error }, "Failed to resolve provider snapshot"),
   });
-  private readonly owned = new OwnedSubscriptions({
+  private readonly owned = new ConnectionSubscriptions({
+    send: (message) =>
+      this.sendSessionMessageOrThrow(
+        SessionInboundMessageSchema.parse({ ...message, requestId: this.createRequestId() }),
+      ),
     release: async (subscriptionId) => {
       if (!this.isConnected) return;
       try {
@@ -1731,6 +1735,7 @@ export class DaemonClient {
     select: (msg: SessionOutboundMessage) => T | null;
     options?: { skipQueue?: boolean };
   }): Promise<T> {
+    const wire = this.owned.prepareRequest(params.message);
     const timeout = params.timeout ?? DEFAULT_SESSION_RPC_TIMEOUT_MS;
     const { promise, cancel } = this.waitForWithCancel<RpcWaitResult<T>>(
       (msg) => {
@@ -1745,7 +1750,7 @@ export class DaemonClient {
             }),
           };
         }
-        const value = params.select(msg);
+        const value = params.select(wire.receive(msg));
         if (value === null) {
           return null;
         }
@@ -1756,7 +1761,7 @@ export class DaemonClient {
     );
 
     try {
-      await this.sendSessionMessageOrThrow(params.message);
+      await this.sendSessionMessageOrThrow(wire.message);
     } catch (error) {
       const err = error instanceof Error ? error : new Error(String(error));
       cancel(err);
@@ -1764,11 +1769,13 @@ export class DaemonClient {
       throw err;
     }
 
-    const result = await promise;
-    if (result.kind === "error") {
-      throw result.error;
+    try {
+      const result = await promise;
+      if (result.kind === "error") throw result.error;
+      return result.value;
+    } finally {
+      await wire.finish();
     }
-    return result.value;
   }
 
   private async sendCorrelatedRequest<
@@ -2098,23 +2105,18 @@ export class DaemonClient {
   // Agent RPCs (requestId-correlated)
   // ============================================================================
 
-  private requireOwnedSubscriptions(): void {
-    if (this.lastServerInfoMessage?.features?.ownedSubscriptions !== true)
-      throw new Error("Update the host to use independent subscriptions.");
-  }
-
   private observe<T extends CorrelatedResponseType>(
     responseType: T,
     message: { type: SessionInboundMessage["type"] } & Record<string, unknown>,
     options?: { requestId?: string; timeout?: number; signal?: AbortSignal },
   ): OwnedSubscription<CorrelatedResponsePayload<T>> {
     let resetSource = false;
-    return this.owned.observe<CorrelatedResponsePayload<T>>(
-      async (accept) => {
+    return this.owned.observeRequest<CorrelatedResponsePayload<T>>(
+      message,
+      async (query, accept) => {
         resetSource = false;
-        this.requireOwnedSubscriptions();
         const requestId = this.createRequestId(options?.requestId);
-        const request = SessionInboundMessageSchema.parse({ ...message, requestId });
+        const request = SessionInboundMessageSchema.parse({ ...query, requestId });
         try {
           return await this.sendCorrelatedRequest<T, CorrelatedResponsePayload<T>>({
             message: request,
@@ -3177,17 +3179,8 @@ export class DaemonClient {
     agentId: string,
     handler: (message: TimelineMessage) => void,
   ): TimelineSubscription {
-    return subscribeTimeline(
-      agentId,
-      this.observeTimeline([agentId]),
-      () =>
-        this.fetchAgentTimeline(agentId, {
-          direction: "before",
-          limit: 100,
-          projection: "projected",
-        }),
-      handler,
-      (error) => this.logger.error({ err: error }, "Timeline observation failed"),
+    return subscribeTimeline(agentId, this.observeTimeline([agentId]), handler, (error) =>
+      this.logger.error({ err: error }, "Timeline observation failed"),
     );
   }
 
@@ -3900,7 +3893,6 @@ export class DaemonClient {
     compare: { mode: "uncommitted" | "base"; baseRef?: string; ignoreWhitespace?: boolean },
     requestId?: string,
   ): Promise<CheckoutDiffPayload> {
-    this.requireOwnedSubscriptions();
     return this.sendCorrelatedSessionRequest({
       message: {
         type: "checkout.diff.get.request",
@@ -4550,8 +4542,13 @@ export class DaemonClient {
     unsubscribe: () => Promise<void>;
   }> {
     const subscription = this.observeFile(input);
+    let initial = true;
     subscription.subscribe({
-      snapshot: (snapshot) => onUpdate(snapshot.initial),
+      snapshot: (snapshot) => {
+        // The initial version is returned below. Subsequent snapshots repair reconnects.
+        if (!initial) onUpdate(snapshot.initial);
+        initial = false;
+      },
       update: (message) => {
         if (message.type === "fs.file.update") onUpdate(message.payload.version);
       },
@@ -6142,6 +6139,7 @@ export class DaemonClient {
       this.lastErrorValue = reason.trim();
     }
 
+    this.owned.disconnected();
     this.providerSnapshotUpdates.clear();
 
     // Clear all pending waiters and queued sends since the connection was lost
@@ -6242,6 +6240,7 @@ export class DaemonClient {
   }
 
   private handleSessionMessage(msg: SessionOutboundMessage): void {
+    msg = this.owned.normalize(msg);
     if (
       msg.type === "providers_snapshot_update" &&
       this.config.providerSnapshots !== "wire" &&
@@ -6269,7 +6268,10 @@ export class DaemonClient {
           this.reconnectAttempt = 0;
           this.updateConnectionState({ status: "connected" }, { event: "HELLO_SERVER_INFO" });
           this.startLivenessHeartbeat();
-          this.owned.restore();
+          this.owned.restore(serverInfo, {
+            ...DEFAULT_CLIENT_CAPABILITIES,
+            ...this.config.capabilities,
+          });
           this.flushPendingSendQueue();
           this.resolveConnect();
         }

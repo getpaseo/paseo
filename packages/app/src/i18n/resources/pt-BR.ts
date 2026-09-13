@@ -154,7 +154,7 @@ export const ptBR: TranslationResources = {
       initialPromptRequired: "O prompt inicial é obrigatório",
       alreadyLoading: "Já está carregando",
       uploadFailed: "Falha ao enviar arquivo",
-      noClipboardImage: "Não há imagem na área de transferência",
+      noClipboardImage: "Não há imagem na área de transferência atual. Tente colar pelo teclado.",
       pasteImageFailed: "Falha ao colar a imagem",
       fileTooLarge: "{{fileName}} é grande demais (máximo {{size}})",
     },
@@ -209,6 +209,10 @@ export const ptBR: TranslationResources = {
     historyLoadFailed: "Não foi possível carregar o histórico do agente",
     messageCapped: "Esta mensagem foi truncada ({{bytes}} bytes).",
     permission: {
+      rejectedPlan: "Plano rejeitado",
+      approvedPlan: "Plano aprovado",
+      canceledPlan: "Plano cancelado",
+
       plan: "Plano",
       required: "Permissão necessária",
       deny: "Negar",

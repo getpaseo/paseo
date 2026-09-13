@@ -18,23 +18,8 @@ interface KimiACPAgentClientOptions {
   providerParams?: unknown;
 }
 
-/**
- * Kimi reports different thinking-effort levels per model (a boolean on/off toggle for one
- * model, a multi-level select for another), but only exposes the *currently selected*
- * model's levels through `configOptions` — the model list itself carries no per-model
- * effort metadata. `deriveModelDefinitionsFromACP` can only see whichever model the probe
- * session defaulted to, so every other model would otherwise inherit that one model's
- * thinking options.
- *
- * Reuse the single catalog probe session to switch through each candidate model in turn and
- * read back its real thinking options, rather than spawning a probe per model. Skipped
- * entirely when the provider reports one model or no thinking picker, so a misbehaving ACP
- * that only advertises a single model pays no extra round trips.
- *
- * This lives on the Kimi client, not the base ACP adapter: only Kimi needs the extra
- * `setSessionConfigOption` round trips, so no other ACP provider risks a slow or
- * nonconforming agent stalling its catalog probe on model switching.
- */
+// Kimi exposes thinking options only for the selected model. Keep its model-switching
+// discovery here: other providers can supply a read-only catalog instead.
 export async function resolveKimiCatalogModels({
   connection,
   sessionId,
@@ -49,7 +34,7 @@ export async function resolveKimiCatalogModels({
     return models;
   }
   const modelOption = findSelectConfigOption({ configOptions, category: "model" });
-  if (!modelOption || !findSelectConfigOption({ configOptions, category: "thought_level" })) {
+  if (!modelOption) {
     return models;
   }
 
@@ -72,11 +57,24 @@ export async function resolveKimiCatalogModels({
           thinkingOptions.find((option) => option.isDefault)?.id ?? undefined,
       });
     } catch (error) {
+      const errorMessage = toDiagnosticErrorMessage(error);
+      if (model.isDefault) {
+        logger.warn(
+          { modelId: model.id, error: errorMessage },
+          `${provider} catalog probe could not refresh thinking options for current model "${model.id}"; keeping session options`,
+        );
+        resolved.push(model);
+        continue;
+      }
       logger.warn(
-        { modelId: model.id, error: toDiagnosticErrorMessage(error) },
-        `${provider} catalog probe could not resolve thinking options for model "${model.id}"; keeping its default options`,
+        { modelId: model.id, error: errorMessage },
+        `${provider} catalog probe could not resolve thinking options for model "${model.id}"; omitting thinking options`,
       );
-      resolved.push(model);
+      resolved.push({
+        ...model,
+        thinkingOptions: undefined,
+        defaultThinkingOptionId: undefined,
+      });
     }
   }
   return resolved;

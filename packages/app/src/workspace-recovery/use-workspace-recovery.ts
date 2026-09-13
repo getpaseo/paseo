@@ -4,11 +4,7 @@ import { useFetchQuery } from "@/data/query";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { useSessionStore } from "@/stores/session-store";
 import { toErrorMessage } from "@/utils/error-messages";
-import {
-  recoverWorkspaceSelection,
-  resolveWorkspaceRecoveryModel,
-  type WorkspaceRecoveryController,
-} from "./model";
+import { resolveWorkspaceRecoveryModel, type WorkspaceRecoveryController } from "./model";
 
 export type { WorkspaceRecoveryController, WorkspaceRecoveryModel } from "./model";
 
@@ -32,7 +28,6 @@ function waitForMinimumRecoveryLoadingTime(): Promise<void> {
 export function useWorkspaceRecovery(input: {
   serverId: string;
   workspaceId: string;
-  agentId?: string | null;
   enabled: boolean;
 }): WorkspaceRecoveryController {
   const client = useHostRuntimeClient(input.serverId);
@@ -61,11 +56,7 @@ export function useWorkspaceRecovery(input: {
       }
       await waitForRecoveryLoadingPresentation();
       await waitForMinimumRecoveryLoadingTime();
-      await recoverWorkspaceSelection({
-        client,
-        workspaceId: input.workspaceId,
-        agentId: input.agentId,
-      });
+      await client.restoreWorkspace(input.workspaceId);
     },
   });
 

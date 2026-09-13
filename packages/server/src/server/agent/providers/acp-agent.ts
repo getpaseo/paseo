@@ -393,7 +393,7 @@ export type ACPExtensionCommandsParser = (
  * the catalog plumbing.
  */
 export interface ACPCatalogModelResolverContext {
-  connection: ClientSideConnection;
+  connection: Pick<ClientSideConnection, "setSessionConfigOption" | "extMethod">;
   sessionId: string;
   models: AgentModelDefinition[];
   configOptions: SessionConfigOption[] | null | undefined;
@@ -404,10 +404,9 @@ export interface ACPCatalogModelResolverContext {
 }
 
 /**
- * Optional hook that refines the catalog's model list using the live probe session.
- * The base client ships no resolver — catalog discovery derives models from the initial
- * session response and never mutates the probe. Providers that need per-model data (Kimi)
- * inject a resolver so the extra round trips stay off every other ACP.
+ * Providers own model discovery through this hook, including extension RPCs. Without a
+ * resolver, the base client derives models from the initial session response. The client
+ * owns the probe lifetime and refresh deadline; resolvers return the complete model list.
  */
 export type ACPCatalogModelResolver = (
   context: ACPCatalogModelResolverContext,
