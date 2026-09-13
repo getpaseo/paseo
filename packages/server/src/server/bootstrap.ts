@@ -7,9 +7,47 @@ import { randomUUID } from "node:crypto";
 import { hostname as getHostname } from "node:os";
 import path from "node:path";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { SUPPORTED_PROTOCOL_VERSIONS } from "@modelcontextprotocol/sdk/types.js";
 import type { Logger } from "pino";
 import { z } from "zod";
 import { createBranchChangeRouteHandler } from "./script-route-branch-handler.js";
+
+// A seat CLI can bundle an MCP client that negotiates a protocol version newer
+// than the bundled @modelcontextprotocol/sdk server supports (e.g. 2026-07-28
+// or DRAFT-2026-v1). The streamable-HTTP transport hard-gates every
+// non-initialize request on the `mcp-protocol-version` header (see
+// `if (!isInitializationRequest)` in the SDK's webStandardStreamableHttp.js)
+// and rejects unknown versions before the JSON-RPC body is handled, so the
+// agent's first post-initialize request fails the mount. Normalize the header
+// to the server's newest supported version. Initialize is exempt from the gate
+// and its body-param negotiation already falls back gracefully, so the
+// response stays honest. Node preserves wire case in `req.rawHeaders` (it
+// lowercases only `req.headers`), @hono/node-server builds the Web Request
+// from `incoming.rawHeaders`, and it joins same-name raw pairs into one
+// comma-separated value the SDK rejects — so both representations are
+// rewritten and duplicates collapse to one effective value.
+function clipMcpProtocolVersionHeader(req: express.Request): void {
+  const current = req.header("mcp-protocol-version");
+  if (!current || SUPPORTED_PROTOCOL_VERSIONS.includes(current)) {
+    return;
+  }
+  const clipped = SUPPORTED_PROTOCOL_VERSIONS[0];
+  req.headers["mcp-protocol-version"] = clipped;
+  let replaced = false;
+  for (let i = 0; i < req.rawHeaders.length - 1; ) {
+    if (req.rawHeaders[i].toLowerCase() === "mcp-protocol-version") {
+      if (replaced) {
+        req.rawHeaders.splice(i, 2);
+      } else {
+        req.rawHeaders[i + 1] = clipped;
+        replaced = true;
+        i += 2;
+      }
+    } else {
+      i += 2;
+    }
+  }
+}
 
 export type ListenTarget =
   | { type: "tcp"; host: string; port: number }
@@ -1518,6 +1556,7 @@ export async function createPaseoDaemon(
           });
           return;
         }
+        clipMcpProtocolVersionHeader(req);
         const callerAgentIdRaw = req.query.callerAgentId;
         let callerAgentId: string | undefined;
         if (typeof callerAgentIdRaw === "string") {
