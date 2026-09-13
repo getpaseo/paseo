@@ -1719,6 +1719,7 @@ export class VoiceAssistantWebSocketServer {
         // COMPAT(workspaceIntent): added in v0.8.0, remove gate after 2027-03-13.
         workspaceIntent: true,
         planReviewClaims: true,
+        conditionalPlanRevision: true,
         structuredPlanApproval: true,
         // COMPAT(projectRemove): added in v0.1.97, drop the gate when floor >= v0.1.97.
         projectRemove: true,

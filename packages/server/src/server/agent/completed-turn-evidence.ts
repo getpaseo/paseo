@@ -8,6 +8,7 @@ interface PromptEvidence {
   digest: string;
   clientMessageId?: string;
   messageId?: string;
+  providerMessageId?: string;
 }
 export interface CompletedTurnEvidence {
   turnId: string;
@@ -28,10 +29,11 @@ function digest(value: unknown): string {
     .digest("hex");
 }
 
-function promptEvidence(item: AgentTimelineItem): PromptEvidence | undefined {
+function promptEvidence({ item, providerMessageId }: AgentTimelineRow): PromptEvidence | undefined {
   return item.type === "user_message"
     ? {
         digest: digest(item.text),
+        ...(providerMessageId ? { providerMessageId } : {}),
         ...(item.clientMessageId ? { clientMessageId: item.clientMessageId } : {}),
         ...(item.messageId && item.messageId !== item.clientMessageId
           ? { messageId: item.messageId }
@@ -44,7 +46,9 @@ function matchesPrompt(item: AgentTimelineItem, prompt: PromptEvidence): boolean
   return (
     item.type === "user_message" &&
     digest(item.text) === prompt.digest &&
-    (!prompt.messageId || item.messageId === prompt.messageId)
+    (prompt.providerMessageId
+      ? item.messageId === prompt.providerMessageId
+      : !prompt.messageId || item.messageId === prompt.messageId)
   );
 }
 
@@ -83,9 +87,9 @@ export function captureCompletedTurnEvidence(
   const origin = rows.find((row) => row.item.type === "user_message" && row.item.clientMessageId);
   const evidence: CompletedTurnEvidence = {
     turnId,
-    prompt: promptEvidence(rows[start]!.item)!,
+    prompt: promptEvidence(rows[start]!)!,
     signature: signature(selected),
-    ...(origin ? { origin: promptEvidence(origin.item) } : {}),
+    ...(origin ? { origin: promptEvidence(origin) } : {}),
   };
   // Only two prompt correlations and one digest, never a saved conversation. Refuse
   // oversized IDs rather than truncating the causal witness.
@@ -117,7 +121,9 @@ export function restoreCompletedTurnEvidence(
     signature(selected) !== evidence.signature
   )
     return history;
-  const source = evidence.origin && rows.find((row) => matchesPrompt(row.item, evidence.origin!));
+  const origins =
+    evidence.origin && rows.filter((row) => matchesPrompt(row.item, evidence.origin!));
+  const source = origins?.length === 1 ? origins[0] : undefined;
   return history.map((event, index) => {
     if (event.type !== "timeline") return event;
     let prompt = index === source?.seq ? evidence.origin : undefined;

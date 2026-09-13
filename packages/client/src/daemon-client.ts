@@ -2938,6 +2938,24 @@ export class DaemonClient {
     });
   }
 
+  async sendPlanRevision(input: {
+    agentId: string;
+    workspaceId: string;
+    callId: string;
+    sourcePlanText: string;
+    text: string;
+    messageId: string;
+  }): Promise<boolean> {
+    // COMPAT(conditionalPlanRevision): added in v0.8.0, remove gate after 2027-03-14.
+    if (this.lastServerInfoMessage?.features?.conditionalPlanRevision !== true)
+      throw new Error("Update the Paseo host to deliver plan reviews safely.");
+    const result =
+      await this.sendNamespacedCorrelatedSessionRequest<"agent.plan.revision.send.response">({
+        message: { type: "agent.plan.revision.send.request", ...input },
+      });
+    return result.accepted;
+  }
+
   async setWorkspacePinned(
     workspaceId: string,
     pinned: boolean,

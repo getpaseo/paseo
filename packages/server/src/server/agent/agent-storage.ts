@@ -60,12 +60,14 @@ const STORED_AGENT_SCHEMA = z.object({
         digest: z.string(),
         clientMessageId: z.string().optional(),
         messageId: z.string().optional(),
+        providerMessageId: z.string().optional(),
       }),
       origin: z
         .object({
           digest: z.string(),
           clientMessageId: z.string().optional(),
           messageId: z.string().optional(),
+          providerMessageId: z.string().optional(),
         })
         .optional(),
     })

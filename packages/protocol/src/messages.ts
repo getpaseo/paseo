@@ -1044,6 +1044,17 @@ export const AgentPlanReviewClaimRequestSchema = z.object({
   active: z.boolean(),
 });
 
+export const AgentPlanRevisionSendRequestSchema = z.object({
+  type: z.literal("agent.plan.revision.send.request"),
+  requestId: z.string(),
+  agentId: z.string(),
+  workspaceId: z.string(),
+  callId: z.string(),
+  sourcePlanText: z.string(),
+  text: z.string(),
+  messageId: z.string(),
+});
+
 export const AgentPlanPermissionEnsureRequestSchema = z.object({
   type: z.literal("agent.plan.permission.ensure.request"),
   requestId: z.string(),
@@ -2075,6 +2086,11 @@ export const WorkspaceIntentSetResponseSchema = z.object({
 export const AgentPlanReviewClaimResponseSchema = z.object({
   type: z.literal("agent.plan.review.claim.response"),
   payload: z.object({ requestId: z.string(), active: z.boolean() }),
+});
+
+export const AgentPlanRevisionSendResponseSchema = z.object({
+  type: z.literal("agent.plan.revision.send.response"),
+  payload: z.object({ requestId: z.string(), accepted: z.boolean() }),
 });
 
 export const AgentPlanPermissionEnsureResponseSchema = z.object({
@@ -3195,6 +3211,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   WorkspaceTitleSetRequestSchema,
   WorkspaceIntentSetRequestSchema,
   AgentPlanReviewClaimRequestSchema,
+  AgentPlanRevisionSendRequestSchema,
   AgentPlanPermissionEnsureRequestSchema,
   WorkspacePinSetRequestSchema,
   WorkspaceLabelListRequestSchema,
@@ -3624,6 +3641,8 @@ export const ServerInfoStatusPayloadSchema = z
         workspaceIntent: z.boolean().optional(),
         // COMPAT(planReviewClaims): added in v0.8.0, remove gate after 2027-03-13.
         planReviewClaims: z.boolean().optional(),
+        // COMPAT(conditionalPlanRevision): added in v0.8.0, remove gate after 2027-03-14.
+        conditionalPlanRevision: z.boolean().optional(),
         // COMPAT(structuredPlanApproval): added in v0.8.0, remove gate after 2027-03-13.
         structuredPlanApproval: z.boolean().optional(),
         // COMPAT(projectRemove): added in v0.1.97, drop the gate when floor >= v0.1.97.
@@ -6741,6 +6760,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   WorkspaceTitleSetResponseSchema,
   WorkspaceIntentSetResponseSchema,
   AgentPlanReviewClaimResponseSchema,
+  AgentPlanRevisionSendResponseSchema,
   AgentPlanPermissionEnsureResponseSchema,
   WorkspacePinSetResponseSchema,
   WorkspaceRecoveryInspectResponseSchema,

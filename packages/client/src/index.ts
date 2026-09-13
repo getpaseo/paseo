@@ -365,6 +365,13 @@ export interface PaseoAgentHandle {
     callId: string;
     active: boolean;
   }): Promise<void>;
+  sendPlanRevision(options: {
+    workspaceId: string;
+    callId: string;
+    sourcePlanText: string;
+    text: string;
+    messageId: string;
+  }): Promise<boolean>;
   /** Sends a prompt and resolves when that turn finishes or needs attention. */
   run(text: string, options?: PaseoAgentRunOptions): Promise<PaseoAgentRunResult>;
   /** Waits for the current turn, including one started with `prompt`. */
@@ -949,6 +956,7 @@ function createAgentHandleFactory(
       },
       setPlanReviewClaim: async (input) =>
         daemonClient.setPlanReviewClaim({ ...input, agentId: id }),
+      sendPlanRevision: async (input) => daemonClient.sendPlanRevision({ ...input, agentId: id }),
       run: async (text, options) => {
         const { timeoutMs, ...sendOptions } = options ?? {};
         await daemonClient.sendAgentMessage(id, text, sendOptions);

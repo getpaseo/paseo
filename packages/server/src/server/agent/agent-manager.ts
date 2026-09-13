@@ -41,6 +41,7 @@ import type { TerminalManager } from "../../terminal/terminal-manager.js";
 
 import {
   getAgentStreamEventTurnId,
+  AgentTurnNotAcceptedError,
   type AgentCapabilityFlags,
   type AgentClient,
   type AgentCreateSessionOptions,
@@ -3163,6 +3164,53 @@ export class AgentManager {
         { cause: error },
       );
     }
+  }
+
+  async sendPlanRevision(input: {
+    agentId: string;
+    workspaceId: string;
+    callId: string;
+    sourcePlanText: string;
+    text: string;
+    messageId: string;
+  }): Promise<boolean> {
+    return this.runForegroundMutation(input.agentId, async () => {
+      await this.getTimelineRows(input.agentId);
+      await this.drainSessionEvents(input.agentId);
+      const agent = this.requireSessionAgent(input.agentId);
+      if (agent.workspaceId !== input.workspaceId)
+        throw new Error("This plan belongs to another workspace.");
+      // Hydration and queued provider events can supersede the source. Read the
+      // live canonical tail after both awaits, then reserve admission synchronously.
+      const current = this.timelineStore
+        .getItems(input.agentId)
+        .findLast((item) => item.type === "tool_call" && item.detail.type === "plan");
+      if (
+        current?.type !== "tool_call" ||
+        current.detail.type !== "plan" ||
+        current.callId !== input.callId ||
+        current.detail.text !== input.sourcePlanText ||
+        current.metadata?.approved === true
+      )
+        return false;
+      if (agent.activeTurnId || this.hasInFlightRun(input.agentId))
+        throw new AgentTurnNotAcceptedError(
+          "The planner has an active turn. Finish it before retrying this review.",
+        );
+      const iterator = this.streamAgent(input.agentId, input.text, {
+        clientMessageId: input.messageId,
+      });
+      // Release the approval lane only after the provider accepts the prompt.
+      await iterator.next();
+      void (async () => {
+        for await (const _event of iterator) {
+          /* Timeline delivery is owned by AgentManager. */
+        }
+      })().catch((error) =>
+        this.logger.error({ err: error, agentId: input.agentId }, "Plan revision failed"),
+      );
+      return true;
+    });
   }
 
   async setPlanReviewClaim(input: {

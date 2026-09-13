@@ -2683,6 +2683,33 @@ export class Session {
   }
 
   private dispatchAgentPlanMessage(msg: SessionInboundMessage): Promise<void> | undefined {
+    if (msg.type === "agent.plan.revision.send.request") {
+      let accepted = true;
+      const { requestId, type: _type, ...request } = msg;
+      return this.agentRequests
+        .send({
+          agentId: msg.agentId,
+          messageId: msg.messageId,
+          request,
+          prepare: async () => {
+            await ensureAgentLoaded(msg.agentId, {
+              agentManager: this.agentManager,
+              agentStorage: this.agentStorage,
+              logger: this.sessionLogger,
+            });
+          },
+          send: async () => {
+            accepted = await this.agentManager.sendPlanRevision(msg);
+          },
+        })
+        .then(() => {
+          this.delivery.reply({
+            type: "agent.plan.revision.send.response",
+            payload: { requestId, accepted },
+          });
+          return undefined;
+        });
+    }
     if (msg.type === "agent.plan.permission.ensure.request")
       return this.agentManager.ensurePlanPermission(msg).then((permission) => {
         this.delivery.reply({

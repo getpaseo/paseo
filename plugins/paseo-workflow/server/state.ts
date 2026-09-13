@@ -73,6 +73,7 @@ export const workflowSettings = defineSettings({
                   phase: z.enum(["closing", "closed", "running", "complete", "outcome_unknown"]),
                   agentId: z.string().optional(),
                   promptSent: z.boolean().optional(),
+                  superseded: z.boolean().optional(),
                 })
                 .optional(),
               handoff: z

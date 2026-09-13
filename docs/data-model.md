@@ -204,7 +204,10 @@ Keep provider `turnId` on hydrated timeline rows. Codex supplies native turn IDs
 message IDs but no host turn ID. The optional private `lastCompletedTurnEvidence` holds only a
 digest of the last completed canonical turn and two prompt correlations, never its content.
 Hydration restores that turn identity only when the surviving native prompt and result match;
-missing, changed or ambiguous history cannot authorize continuation. This bounded record is
+when captured, the native provider message ID must also match for both the prompt and origin.
+A replacement UUID is a different prompt even if its text is identical. Evidence without
+that ID uses the unique matching prompt and result; ambiguous matches get no restored correlation.
+Missing or changed history cannot authorize continuation. This bounded record is
 replaced at completion and cleared on a new run. A stored completed-turn ID alone is insufficient.
 
 The app replica cache may paint a plan before reconnection finishes. Only a fresh daemon agent

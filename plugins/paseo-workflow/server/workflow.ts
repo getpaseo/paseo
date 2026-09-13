@@ -45,6 +45,7 @@ interface Review {
   phase: "closing" | "closed" | "running" | "complete" | "outcome_unknown";
   agentId?: string;
   promptSent?: boolean;
+  superseded?: boolean;
 }
 interface Handoff {
   selection: "standard" | "advanced";
@@ -111,6 +112,7 @@ export interface WorkflowPort {
   commitCount(cwd: string, base: string): Promise<number>;
   create(input: WorkflowLaunch): Promise<string>;
   send(agentId: string, text: string, messageId: string): Promise<void>;
+  revise(context: PlanContext, text: string, messageId: string): Promise<boolean>;
   respond(agentId: string, requestId: string, response: AgentPermissionResponse): Promise<void>;
   claimReview(context: PlanContext, active: boolean): Promise<void>;
   read(): Promise<WorkflowState>;
@@ -913,6 +915,7 @@ export class WorkflowController {
       (current.detail.type === "plan" && current.detail.text !== plan.context.text)
     ) {
       plan.review!.phase = "complete";
+      plan.review!.superseded = true;
       await this.port.write(state);
       await this.port.claimReview(plan.context, false);
       return;
@@ -921,12 +924,13 @@ export class WorkflowController {
       throw new Error(
         "The review returned no objections or conclusion. Open the reviewer and retry.",
       );
-    await this.port.send(
-      workflow.plannerId,
+    const accepted = await this.port.revise(
+      plan.context,
       `Revise the plan using these objections. Produce a new plan call; never rewrite the previous plan. Stay in planning, do not implement.\n${briefing(workflow, plan.context.text)}\nReview:\n${text}`,
       `workflow:${workflow.id}:revision:${plan.context.callId}`,
     );
     plan.review!.phase = "complete";
+    if (!accepted) plan.review!.superseded = true;
     await this.port.write(state);
     await this.port.claimReview(plan.context, false);
   }

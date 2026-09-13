@@ -322,12 +322,25 @@ test("plan workflow mutations require host capabilities and never queue disconne
   mock.triggerOpen();
   await connecting;
   const input = { agentId: "agent", workspaceId: "workspace", callId: "plan" };
+  const revision = {
+    ...input,
+    sourcePlanText: "Exact plan",
+    text: "Revise",
+    messageId: "revision",
+  };
+  await expect(client.sendPlanRevision(revision)).rejects.toThrow("Update the Paseo host");
   await expect(client.ensurePlanPermission(input)).rejects.toThrow("Update the Paseo host");
   await expect(
     client.setPlanReviewClaim({ ...input, permissionRequestId: "permission", active: true }),
   ).rejects.toThrow("Update the Paseo host");
   expect(mock.sent).toEqual([]);
-  mock.triggerOpen({ features: { structuredPlanApproval: true, planReviewClaims: true } });
+  mock.triggerOpen({
+    features: {
+      structuredPlanApproval: true,
+      planReviewClaims: true,
+      conditionalPlanRevision: true,
+    },
+  });
   const ensuring = client.ensurePlanPermission(input);
   const request = JSON.parse(assertStr(mock.sent[0])).message;
   expect(request).toMatchObject({ ...input, type: "agent.plan.permission.ensure.request" });
@@ -361,12 +374,23 @@ test("plan workflow mutations require host capabilities and never queue disconne
     }),
   );
   await claiming;
+  const revising = client.sendPlanRevision(revision);
+  const revise = JSON.parse(assertStr(mock.sent[2])).message;
+  expect(revise).toMatchObject({ ...revision, type: "agent.plan.revision.send.request" });
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "agent.plan.revision.send.response",
+      payload: { requestId: revise.requestId, accepted: false },
+    }),
+  );
+  await expect(revising).resolves.toBe(false);
   mock.triggerClose();
   await expect(client.ensurePlanPermission(input)).rejects.toThrow();
   await expect(
     client.setPlanReviewClaim({ ...input, permissionRequestId: "server-derived", active: true }),
   ).rejects.toThrow();
-  expect(mock.sent).toHaveLength(2);
+  await expect(client.sendPlanRevision(revision)).rejects.toThrow();
+  expect(mock.sent).toHaveLength(3);
 });
 
 test("Hub management requires daemon support before dispatching requests", async () => {

@@ -5,6 +5,38 @@ import {
   SessionOutboundMessageSchema,
 } from "./messages.js";
 
+test("conditional plan revision is optional on old hosts and has a correlated dotted response", () => {
+  expect(
+    ServerInfoStatusPayloadSchema.parse({ status: "server_info", serverId: "old", features: {} })
+      .features.conditionalPlanRevision,
+  ).toBeUndefined();
+  expect(
+    ServerInfoStatusPayloadSchema.parse({
+      status: "server_info",
+      serverId: "new",
+      features: { conditionalPlanRevision: true },
+    }).features.conditionalPlanRevision,
+  ).toBe(true);
+  expect(
+    SessionInboundMessageSchema.parse({
+      type: "agent.plan.revision.send.request",
+      requestId: "rpc",
+      agentId: "agent",
+      workspaceId: "workspace",
+      callId: "source",
+      sourcePlanText: "Exact plan",
+      text: "Revise",
+      messageId: "revision",
+    }),
+  ).toMatchObject({ sourcePlanText: "Exact plan" });
+  expect(
+    SessionOutboundMessageSchema.parse({
+      type: "agent.plan.revision.send.response",
+      payload: { requestId: "rpc", accepted: false },
+    }),
+  ).toMatchObject({ payload: { accepted: false } });
+});
+
 test("plan review claims are a gated dotted RPC without changing old server info", () => {
   expect(
     ServerInfoStatusPayloadSchema.parse({ status: "server_info", serverId: "old", features: {} })

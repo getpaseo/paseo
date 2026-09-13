@@ -80,6 +80,10 @@ function fixture() {
     send: async (agentId, text, messageId) => {
       prompts.push({ agentId, text, messageId });
     },
+    revise: async (context, text, messageId) => {
+      prompts.push({ agentId: context.agentId, text, messageId });
+      return true;
+    },
     respond: async (agentId, requestId) => {
       decisions.push(requestId);
       agents.get(agentId)!.pendingPermissions = [];

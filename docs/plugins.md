@@ -35,6 +35,9 @@ that call ID, not later plans. If the dedicated reviewer fails, is canceled or r
 open that reviewer and send a retry. A subsequent completed turn must follow its original review
 prompt. If a newer plan is current or the reviewed plan was approved, its late review concludes
 and releases its claim without sending a revision or interrupting the planner.
+Revision delivery requires the host's `conditionalPlanRevision` capability. The host rechecks the
+exact current plan in the approval admission lane and reserves the prompt before releasing it.
+An already running planner is not interrupted; finish that turn before retrying the review.
 
 A structured plan without a native permission remains actionable while its agent is idle and
 connected. The host validates the canonical plan before creating a stable plan-only permission.

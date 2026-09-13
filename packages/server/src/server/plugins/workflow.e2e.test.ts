@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { execFileSync } from "node:child_process";
 import { settingsRpc } from "@getpaseo/plugin";
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
 import { profiles } from "../../../../../plugins/paseo-workflow/shared/profiles.js";
 import { workflowSettings } from "../../../../../plugins/paseo-workflow/server/state.js";
 import { createTestAgentClient } from "../test-utils/fake-agent-client.js";
@@ -16,6 +16,7 @@ import type {
 } from "../agent/agent-sdk-types.js";
 import { AgentTurnNotAcceptedError } from "../agent/agent-sdk-types.js";
 import { workflowNativeHistory } from "../test-utils/native-provider-history.js";
+import { AgentRequests } from "../agent/requests/index.js";
 
 async function lifecycleFixture(
   options: {
@@ -1697,6 +1698,183 @@ test.each(["empty", "canceled"] as const)(
   },
   60_000,
 );
+
+test.each([false, true])(
+  "revision admission rechecks after its receipt waits (superseded: %s)",
+  async (superseded) => {
+    const f = await lifecycleFixture();
+    const entered = Promise.withResolvers<void>(),
+      release = Promise.withResolvers<void>();
+    const reviewer = Promise.withResolvers<void>();
+    f.holds.set("plan-reviewer", reviewer.promise);
+    const send = AgentRequests.prototype.send;
+    const intercept = vi
+      .spyOn(AgentRequests.prototype, "send")
+      .mockImplementation(async function (input) {
+        const request = input.request as { text?: string; prompt?: string };
+        if ((request.text ?? request.prompt ?? "").startsWith("Revise the plan")) {
+          entered.resolve();
+          await release.promise;
+        }
+        return send.call(this, input);
+      });
+    try {
+      const plan = await pendingPlan(f);
+      await f.client.invokePluginRpc("paseo-workflow", "workflow.plan.review.request", plan);
+      reviewer.resolve();
+      await entered.promise;
+      const manager = f.daemon.daemon.agentManager;
+      let emit: ((event: AgentStreamEvent) => void) | undefined;
+      if (superseded) {
+        const next = await pendingPlan(f, plan.agentId, "plan-2");
+        await f.client.respondToPermissionAndWait(next.agentId, next.permissionRequestId, {
+          behavior: "allow",
+        });
+        const planner = manager.getAgent(plan.agentId)!;
+        emit = (
+          planner.session as unknown as { notifySubscribers(event: AgentStreamEvent): void }
+        ).notifySubscribers.bind(planner.session);
+        emit(approvedPlanEntry(next));
+        emit({ type: "turn_started", provider: "codex", turnId: "next-implementation" });
+        emit({
+          type: "timeline",
+          provider: "codex",
+          turnId: "next-implementation",
+          item: { type: "user_message", text: "Implement next plan" },
+        });
+        await manager.flush();
+      }
+      release.resolve();
+      await expect
+        .poll(
+          async () =>
+            (await f.read()).values.workflows[plan.agentId]?.plans[plan.callId]?.review?.phase,
+        )
+        .toBe("complete");
+      expect(f.prompts.filter(({ text }) => text.startsWith("Revise the plan"))).toHaveLength(
+        superseded ? 0 : 1,
+      );
+      expect(manager.getAgent(plan.agentId)?.planReviewClaims).toEqual({});
+      if (superseded)
+        expect(manager.getAgent(plan.agentId)?.activeTurnId).toBe("next-implementation");
+      await f.client.reloadPlugin("paseo-workflow");
+      await f.client.invokePluginRpc("paseo-workflow", "workflow.status.get.request", {
+        agentId: plan.agentId,
+        workspaceId: plan.workspaceId,
+      });
+      if (!superseded)
+        await expect(
+          f.client.sendPlanRevision({
+            agentId: plan.agentId,
+            workspaceId: plan.workspaceId,
+            callId: plan.callId,
+            sourcePlanText: plan.text,
+            text: f.prompts.find(({ text }) => text.startsWith("Revise the plan"))!.text,
+            messageId: `workflow:${plan.agentId}:revision:${plan.callId}`,
+          }),
+        ).resolves.toBe(true);
+      expect(f.prompts.filter(({ text }) => text.startsWith("Revise the plan"))).toHaveLength(
+        superseded ? 0 : 1,
+      );
+      emit?.({ type: "turn_completed", provider: "codex", turnId: "next-implementation" });
+    } finally {
+      reviewer.resolve();
+      release.resolve();
+      intercept.mockRestore();
+      await f.close();
+    }
+  },
+  60_000,
+);
+
+test("subprocess revision admission precedes a concurrent approval without a later interrupt", async () => {
+  const f = await lifecycleFixture();
+  const reviewer = Promise.withResolvers<void>(),
+    readEntered = Promise.withResolvers<void>(),
+    readRelease = Promise.withResolvers<void>();
+  const sendEntered = Promise.withResolvers<void>(),
+    sendRelease = Promise.withResolvers<void>();
+  f.holds.set("plan-reviewer", reviewer.promise);
+  try {
+    const plan = await pendingPlan(f);
+    await f.client.invokePluginRpc("paseo-workflow", "workflow.plan.review.request", plan);
+    const manager = f.daemon.daemon.agentManager;
+    const getRows = manager.getTimelineRows.bind(manager);
+    const read = vi.spyOn(manager, "getTimelineRows").mockImplementation(async (...args) => {
+      const rows = await getRows(...args);
+      if (args[0] === plan.agentId) {
+        readEntered.resolve();
+        await readRelease.promise;
+      }
+      return rows;
+    });
+    const planner = manager.getAgent(plan.agentId)!;
+    const start = planner.session.startTurn.bind(planner.session);
+    planner.session.startTurn = async (...args) => {
+      const result = await start(...args);
+      sendEntered.resolve();
+      await sendRelease.promise;
+      return result;
+    };
+    const respond = vi.spyOn(planner.session, "respondToPermission");
+    const interrupt = vi.spyOn(planner.session, "interrupt");
+    reviewer.resolve();
+    await readEntered.promise;
+    expect(f.prompts.filter(({ text }) => text.startsWith("Revise the plan"))).toHaveLength(0);
+    readRelease.resolve();
+    await sendEntered.promise;
+    const next = {
+      ...plan,
+      callId: "next-plan",
+      permissionRequestId: "next-permission",
+      text: "Next plan",
+    };
+    await manager.appendTimelineItem(planner.id, {
+      type: "tool_call",
+      callId: next.callId,
+      name: "Plan",
+      status: "completed",
+      error: null,
+      detail: { type: "plan", text: next.text },
+    });
+    planner.pendingPermissions.set(next.permissionRequestId, {
+      id: next.permissionRequestId,
+      provider: "codex",
+      name: "Plan",
+      kind: "plan",
+      sourcePlanCallId: next.callId,
+      input: { plan: next.text },
+    });
+    const approving = f.client.respondToPermissionAndWait(planner.id, next.permissionRequestId, {
+      behavior: "allow",
+    });
+    expect(respond).not.toHaveBeenCalled();
+    sendRelease.resolve();
+    await approving;
+    await expect
+      .poll(
+        async () =>
+          (await f.read()).values.workflows[plan.agentId]?.plans[plan.callId]?.review?.phase,
+      )
+      .toBe("complete");
+    expect(respond).toHaveBeenCalledOnce();
+    expect(interrupt).not.toHaveBeenCalled();
+    expect(f.prompts.filter(({ text }) => text.startsWith("Revise the plan"))).toHaveLength(1);
+    expect(planner.planReviewClaims).toEqual({});
+    read.mockRestore();
+    await f.client.reloadPlugin("paseo-workflow");
+    await f.client.invokePluginRpc("paseo-workflow", "workflow.status.get.request", {
+      agentId: plan.agentId,
+      workspaceId: plan.workspaceId,
+    });
+    expect(f.prompts.filter(({ text }) => text.startsWith("Revise the plan"))).toHaveLength(1);
+  } finally {
+    reviewer.resolve();
+    readRelease.resolve();
+    sendRelease.resolve();
+    await f.close();
+  }
+}, 60_000);
 
 test("a stale reviewer releases its claim without touching the next implementation turn", async () => {
   const f = await lifecycleFixture();

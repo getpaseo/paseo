@@ -183,6 +183,14 @@ export function runtime(
       const agent = paseo.agents.ref(id);
       await agent.send(text, { messageId });
     },
+    revise: async (context, text, messageId) =>
+      paseo.agents.ref(context.agentId).sendPlanRevision({
+        workspaceId: context.workspaceId,
+        callId: context.callId,
+        sourcePlanText: context.text,
+        text,
+        messageId,
+      }),
     respond: async (id, requestId, response) => {
       const agent = paseo.agents.ref(id);
       await agent.respondToPermission({ requestId, response });
