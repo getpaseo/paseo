@@ -29,6 +29,7 @@ describe("workspace intention", () => {
       draftId: "draft-router",
       profile: {
         id: "paseo-workflow-router",
+        launchProfileId: "paseo-workflow-router",
         provider: "codex",
         modelId: "gpt-5",
         modeId: "plan",

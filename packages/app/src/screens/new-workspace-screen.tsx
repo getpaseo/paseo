@@ -799,6 +799,7 @@ type NewWorkspaceComposerState = NonNullable<
 >;
 
 interface WorkspaceDraftSubmissionConfig {
+  launchProfileId?: string;
   cwd: string;
   provider: AgentProvider;
   modeId: string | null;
@@ -948,6 +949,7 @@ function buildComposerInitialValues(input: {
 }): CreateAgentInitialValues | undefined {
   if (input.initialSetup) {
     return {
+      launchProfileId: input.initialSetup.launchProfileId,
       provider: input.initialSetup.provider,
       modeId: input.initialSetup.modeId,
       model: input.initialSetup.model,
@@ -1044,8 +1046,9 @@ function resolveWorkspaceDraftSubmissionConfig(input: {
   initialSetup?: WorkspaceDraftTabSetup;
 }): WorkspaceDraftSubmissionConfig {
   const { draftId, workspaceDirectory, provider, composerState, initialSetup } = input;
-  if (initialSetup) {
+  if (initialSetup && composerState.selectedLaunchProfileId === initialSetup.launchProfileId) {
     return {
+      launchProfileId: initialSetup.launchProfileId,
       cwd: initialSetup.cwd,
       provider: initialSetup.provider,
       modeId: initialSetup.modeId,
@@ -1056,6 +1059,7 @@ function resolveWorkspaceDraftSubmissionConfig(input: {
     };
   }
   return {
+    launchProfileId: composerState.selectedLaunchProfileId,
     cwd: workspaceDirectory,
     provider,
     modeId: composerState.selectedMode || null,
@@ -1102,6 +1106,7 @@ async function submitWorkspaceDraft(input: SubmitDraftInput): Promise<SubmitOutc
       createAgent: () =>
         requestWorkspaceDraftAgent(input.resolveClient(), {
           workspaceId,
+          launchProfileId: submission.launchProfileId,
           config: buildWorkspaceDraftAgentConfig({
             provider: submission.provider,
             cwd: submission.cwd,
@@ -1133,6 +1138,7 @@ async function submitWorkspaceDraft(input: SubmitDraftInput): Promise<SubmitOutc
     ...(wirePayload.attachments.length > 0 ? { attachments: wirePayload.attachments } : {}),
   });
   useWorkspaceDraftSubmissionStore.getState().setPending({
+    launchProfileId: submission.launchProfileId,
     serverId,
     workspaceId,
     draftId,

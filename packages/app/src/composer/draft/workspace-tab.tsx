@@ -65,6 +65,7 @@ const DRAFT_CAPABILITIES: AgentCapabilityFlags = {
 };
 
 interface AutoSubmitConfig {
+  launchProfileId?: string;
   provider: string;
   modeId: string | null;
   model: string | null;
@@ -74,6 +75,7 @@ interface AutoSubmitConfig {
 
 function resolveAutoSubmitConfig(
   pending: {
+    launchProfileId?: string;
     provider: string;
     modeId?: string | null;
     model?: string | null;
@@ -83,6 +85,7 @@ function resolveAutoSubmitConfig(
 ): AutoSubmitConfig | null {
   if (!pending) return null;
   return {
+    launchProfileId: pending.launchProfileId,
     provider: pending.provider,
     modeId: pending.modeId ?? null,
     model: pending.model ?? null,
@@ -274,6 +277,7 @@ function buildDraftInitialValues(input: {
 }): CreateAgentInitialValues | undefined {
   if (!input.initialSetup) return undefined;
   return {
+    launchProfileId: input.initialSetup.launchProfileId,
     provider: input.initialSetup.provider,
     modeId: input.initialSetup.modeId,
     model: input.initialSetup.model,
@@ -490,7 +494,7 @@ export function WorkspaceDraftAgentTab({
       }),
     createRequest: async ({ attempt, text, images, attachments, cwd }) =>
       submitDraftCreateRequest({
-        launchProfileId: draftSetup?.launchProfileId,
+        launchProfileId: autoSubmitConfig?.launchProfileId ?? composerState.selectedLaunchProfileId,
         attempt,
         text,
         images,

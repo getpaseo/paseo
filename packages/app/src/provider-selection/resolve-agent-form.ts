@@ -12,6 +12,7 @@ import {
 import { findModelByReference } from "./model-catalog";
 
 export interface FormInitialValues {
+  launchProfileId?: string;
   provider?: AgentProvider;
   modeId?: string | null;
   model?: string | null;
@@ -19,6 +20,7 @@ export interface FormInitialValues {
 }
 
 export interface FormState {
+  launchProfileId?: string;
   provider: AgentProvider | null;
   modeId: string;
   model: string;
@@ -98,6 +100,7 @@ export type AgentFormAction =
     }
   | {
       type: "APPLY_PROFILE_FROM_USER";
+      launchProfileId?: string;
       provider: AgentProvider;
       modelId: string;
       modeId: string;
@@ -224,6 +227,7 @@ export function mergeSelectedComposerPreferences(args: {
 
 export function hasFormStateChanged(prev: FormState, next: FormState): boolean {
   return (
+    prev.launchProfileId !== next.launchProfileId ||
     prev.provider !== next.provider ||
     prev.modeId !== next.modeId ||
     prev.model !== next.model ||
@@ -367,6 +371,7 @@ export function resolveFormState(
   allowedProviderMap: Map<AgentProvider, AgentProviderDefinition>,
 ): FormState {
   const result = { ...currentState };
+  if (!userModified.provider) result.launchProfileId = initialValues?.launchProfileId;
 
   result.provider = resolveProvider({
     currentProvider: result.provider,
@@ -561,6 +566,7 @@ function applyProfile(state: AgentFormReducerState, action: ApplyProfileAction) 
     ...state,
     form: {
       ...state.form,
+      launchProfileId: action.launchProfileId,
       provider: action.provider,
       model: nextModelId,
       modeId: nextModeId,
@@ -578,6 +584,7 @@ function applyProfile(state: AgentFormReducerState, action: ApplyProfileAction) 
 
 function sameInitialValues(left: FormInitialValues = {}, right: FormInitialValues = {}): boolean {
   return (
+    left.launchProfileId === right.launchProfileId &&
     left.provider === right.provider &&
     left.model === right.model &&
     left.modeId === right.modeId &&

@@ -49,6 +49,7 @@ export interface UseAgentFormStateOptions {
 }
 
 export interface UseAgentFormStateResult {
+  selectedLaunchProfileId?: string;
   selectedServerId: string | null;
   selectedProvider: AgentProvider | null;
   selectedMode: string;
@@ -324,6 +325,7 @@ export function useAgentFormState(options: UseAgentFormStateOptions): UseAgentFo
       const providerPrefs = preferenceOverlayRef.current.current().providerPreferences?.[provider];
       const action = {
         type: "APPLY_PROFILE_FROM_USER" as const,
+        launchProfileId: profile.launchProfileId,
         provider,
         modelId: profile.modelId,
         modeId: profile.modeId,
@@ -477,6 +479,7 @@ export function useAgentFormState(options: UseAgentFormStateOptions): UseAgentFo
       selectedProvider: formState.provider,
       selectedMode: formState.modeId,
       setModeFromUser,
+      selectedLaunchProfileId: formState.launchProfileId,
       selectedModel: formState.model,
       setModelFromUser,
       selectedThinkingOptionId: formState.thinkingOptionId,
@@ -505,6 +508,7 @@ export function useAgentFormState(options: UseAgentFormStateOptions): UseAgentFo
     }),
     [
       serverId,
+      formState.launchProfileId,
       formState.provider,
       formState.modeId,
       formState.model,
