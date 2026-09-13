@@ -100,6 +100,7 @@ interface MobileSidebarProps extends SidebarSharedProps {
 
 interface DesktopSidebarProps extends SidebarSharedProps {
   insetsTop: number;
+  insetsBottom: number;
   active: boolean;
 }
 
@@ -248,6 +249,7 @@ export const LeftSidebar = memo(function LeftSidebar({ active }: { active: boole
         <DesktopSidebar
           {...sharedProps}
           insetsTop={insets.top}
+          insetsBottom={insets.bottom}
           active={active}
           handleOpenProject={handleOpenProjectDesktop}
           handleImportSession={openImportSession}
@@ -640,6 +642,7 @@ function DesktopSidebar({
   handleAddHost,
   handleOpenHostSettings,
   insetsTop,
+  insetsBottom,
   active,
 }: DesktopSidebarProps) {
   const ownsTopLeft = useOwnsWindowChromeCorner("top-left");
@@ -715,8 +718,11 @@ function DesktopSidebar({
     [active, resizeAnimatedStyle],
   );
   const desktopSidebarBorderStyle = useMemo(
-    () => [styles.desktopSidebarBorder, { flex: 1, paddingTop: insetsTop }],
-    [insetsTop],
+    () => [
+      styles.desktopSidebarBorder,
+      { flex: 1, paddingTop: insetsTop, paddingBottom: insetsBottom },
+    ],
+    [insetsBottom, insetsTop],
   );
   const sidebarHeaderGroupStyle = useMemo(
     () => [styles.sidebarHeaderGroup, ownsTopLeft && styles.sidebarHeaderGroupBelowChrome],
