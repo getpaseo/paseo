@@ -2466,7 +2466,7 @@ export class AgentManager {
         throw error;
       }
       if (isStaleProviderSessionError(error)) {
-        pendingRun.start = { status: "failed", error: error.message };
+        pendingRun.start = { status: "failed", error };
         agent.pendingReplacement = false;
         if (!agent.activeForegroundTurnId) agent.lifecycle = "idle";
         this.runs.settleForegroundRun(agentId, pendingRun.token);
@@ -2474,7 +2474,7 @@ export class AgentManager {
       }
       agent.pendingReplacement = false;
       const errorMsg = error instanceof Error ? error.message : "Failed to start turn";
-      pendingRun.start = { status: "failed", error: errorMsg };
+      pendingRun.start = { status: "failed", error };
       await this.handleStreamEvent(agent, {
         type: "turn_failed",
         provider: agent.provider,
@@ -2961,7 +2961,7 @@ export class AgentManager {
         }
 
         if (currentPendingRun?.start.status === "failed") {
-          finishErr(new Error(currentPendingRun.start.error));
+          finishErr(currentPendingRun.start.error);
           return true;
         }
 
@@ -3007,6 +3007,7 @@ export class AgentManager {
       return await this.runForegroundMutation(agentId, async () => {
         const pending = agent.pendingPermissions.get(requestId);
         let planApprovalMode: string | undefined;
+        let previousApprovalMode: string | undefined;
         if (pending?.kind === "plan" && response.behavior === "allow") {
           const modeId = agent.launchPostApprovalModeId?.trim();
           if (modeId) {
@@ -3035,11 +3036,23 @@ export class AgentManager {
               throw error;
             }
             planApprovalMode = modeId;
+            previousApprovalMode = previousMode;
           }
         }
-        const result = await agent.session.respondToPermission(requestId, response, {
-          planApprovalMode,
-        });
+        let result: AgentPermissionResult | void;
+        try {
+          result = await agent.session.respondToPermission(requestId, response, {
+            planApprovalMode,
+          });
+        } catch (error) {
+          if (
+            planApprovalMode &&
+            previousApprovalMode &&
+            agent.pendingPermissions.get(requestId) === pending
+          )
+            await this.restoreApprovalMode(agent, planApprovalMode, previousApprovalMode);
+          throw error;
+        }
         agent.pendingPermissions.delete(requestId);
 
         try {

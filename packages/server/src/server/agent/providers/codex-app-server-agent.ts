@@ -1,4 +1,5 @@
 import {
+  AgentTurnNotAcceptedError,
   getAgentStreamEventTurnId,
   type AgentPermissionAction,
   type AgentCapabilityFlags,
@@ -3342,6 +3343,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     promise: Promise<void>;
     resolve: () => void;
     cancelRequested: boolean;
+    observedStart: boolean;
   } | null = null;
   private client: CodexAppServerClient | null = null;
   private readonly subscribers = new Set<(event: AgentStreamEvent) => void>();
@@ -4279,7 +4281,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     options?: AgentRunOptions,
   ): Promise<{ turnId: string }> {
     if (this.activeForegroundTurnId || this.pendingForegroundStart) {
-      throw new Error("A foreground turn is already active");
+      throw new AgentTurnNotAcceptedError("A foreground turn is already active");
     }
 
     let resolveStart!: () => void;
@@ -4289,11 +4291,13 @@ export class CodexAppServerAgentSession implements AgentSession {
       }),
       resolve: () => resolveStart(),
       cancelRequested: false,
+      observedStart: false,
     };
     this.pendingForegroundStart = pendingStart;
 
     this.dismissPendingPlanApprovals("Dismissed by a new prompt");
 
+    let promptSubmitted = false;
     try {
       await this.connect();
       if (!this.client) {
@@ -4339,6 +4343,7 @@ export class CodexAppServerAgentSession implements AgentSession {
       if (pendingStart.cancelRequested) {
         throw new Error("Codex turn start was interrupted before reaching Codex");
       }
+      promptSubmitted = true;
       await this.client.request("turn/start", turnStart.params, TURN_START_TIMEOUT_MS);
       return { turnId };
     } catch (error) {
@@ -4346,6 +4351,14 @@ export class CodexAppServerAgentSession implements AgentSession {
       this.pendingForegroundTurnIdentification = null;
       this.activeForegroundTurnId = null;
       this.activeClientMessageId = null;
+      if (
+        !pendingStart.observedStart &&
+        (!promptSubmitted || (error instanceof CodexAppServerRpcError && error.code === -32602))
+      )
+        throw new AgentTurnNotAcceptedError(
+          error instanceof Error ? error.message : String(error),
+          { cause: error },
+        );
       throw error;
     } finally {
       if (this.pendingForegroundStart === pendingStart) {
@@ -6084,6 +6097,7 @@ export class CodexAppServerAgentSession implements AgentSession {
       return;
     }
     this.currentTurnId = parsed.turnId;
+    if (this.pendingForegroundStart) this.pendingForegroundStart.observedStart = true;
     const pendingIdentification = this.pendingForegroundTurnIdentification;
     if (
       pendingIdentification &&

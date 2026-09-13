@@ -25,8 +25,9 @@ the role profiles' provider, model, mode and effort in Agent profiles.
 
 The workflow uses the existing plan actions and an agent panel for executor selection and review
 status. Its settings retain plan IDs, executor selection and review limits across reloads. Review
-creates the read-only reviewer before closing the planner's permission; failed creation leaves the
-plan actionable. Planner clarification is transported as a bounded transcript, not inferred constraints.
+creates and sends the read-only reviewer before closing the planner's permission. A definitive
+pre-acceptance failure leaves the plan retryable; an uncertain delivery requires manual inspection
+without replay. Planner clarification is transported verbatim and without truncation, not inferred constraints.
 
 Status reconciles pending review/audit operations against the expected prompt and the host's last
 completed turn marker. Missing completion evidence or canceled turns do not advance the workflow.

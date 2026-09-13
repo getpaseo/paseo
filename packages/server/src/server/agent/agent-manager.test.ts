@@ -9167,6 +9167,86 @@ test.each([
   },
 );
 
+test.each(["pending", "consumed", "replaced", "newer-mode"] as const)(
+  "launch profile approval restores only an unconsumed provider rejection (%s)",
+  async (scenario) => {
+    const directory = mkdtempSync(join(tmpdir(), "approval-rejection-"));
+    const registry = new AgentStorage(join(directory, "agents"), logger);
+    let mode = "plan";
+    let rejectPermission = () => {};
+    class RejectionSession extends TestAgentSession {
+      override async setMode(value: string) {
+        mode = value;
+      }
+      override async getCurrentMode() {
+        return mode;
+      }
+      override async respondToPermission() {
+        rejectPermission();
+        throw new Error("Provider rejected approval");
+      }
+    }
+    const manager = new AgentManager({
+      clients: {
+        codex: new (class extends TestAgentClient {
+          override async createSession(config: AgentSessionConfig) {
+            return new RejectionSession(config);
+          }
+        })(),
+      },
+      registry,
+      logger,
+      resolveLaunchProfile: (id) => ({
+        id,
+        name: "Planner",
+        provider: "codex",
+        postApprovalModeId: "full-access",
+      }),
+    });
+    const agent = await manager.createAgent(
+      { provider: "codex", cwd: directory, modeId: "plan" },
+      undefined,
+      { launchProfileId: "planner" },
+    );
+    const pending = {
+      id: "approve",
+      provider: "codex" as const,
+      name: "Plan",
+      kind: "plan" as const,
+      sourcePlanCallId: "plan-1",
+    };
+    agent.pendingPermissions.set(pending.id, pending);
+    rejectPermission = () => {
+      if (scenario === "consumed") agent.pendingPermissions.delete(pending.id);
+      if (scenario === "replaced")
+        agent.pendingPermissions.set(pending.id, { ...pending, sourcePlanCallId: "plan-2" });
+      if (scenario === "newer-mode") mode = "always-ask";
+    };
+    try {
+      await expect(
+        manager.respondToPermission(agent.id, pending.id, { behavior: "allow" }),
+      ).rejects.toThrow("Provider rejected approval");
+      const expected = {
+        pending: "plan",
+        consumed: "full-access",
+        replaced: "full-access",
+        "newer-mode": "always-ask",
+      }[scenario];
+      expect(mode).toBe(expected);
+      await manager.flush();
+      expect((await registry.get(agent.id))?.config.modeId).toBe(expected);
+      expect(agent.pendingPermissions.get(pending.id)?.sourcePlanCallId).toBe(
+        { pending: "plan-1", consumed: undefined, replaced: "plan-2", "newer-mode": "plan-1" }[
+          scenario
+        ],
+      );
+    } finally {
+      await manager.closeAgent(agent.id);
+      rmSync(directory, { recursive: true, force: true });
+    }
+  },
+);
+
 test("historical agents without a captured approval mode keep native approval when the profile is missing", async () => {
   const manager = new AgentManager({
     clients: { codex: new TestAgentClient() },

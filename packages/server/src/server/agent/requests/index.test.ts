@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, expect, test } from "vitest";
 import { AgentRequests } from "./index.js";
+import { AgentTurnNotAcceptedError } from "../agent-sdk-types.js";
 
 const directories: string[] = [];
 afterEach(async () => {
@@ -101,6 +102,26 @@ test("ambiguous provider delivery is never blindly replayed after restart", asyn
     "agent_request_outcome_unknown",
   );
   expect(deliveries).toBe(1);
+});
+
+test("definitive non-acceptance permits the same message after journal reconstruction", async () => {
+  const { requests, directory } = await fixture();
+  let reject = true;
+  const delivered: string[] = [];
+  const input = {
+    agentId: "agent",
+    messageId: "review-prompt",
+    request: { text: "Review the plan" },
+    send: async () => {
+      if (reject) throw new AgentTurnNotAcceptedError("Prompt rejected");
+      delivered.push("Review the plan");
+    },
+  };
+  await expect(requests.send(input)).rejects.toThrow("agent_request_not_accepted");
+  reject = false;
+  await new AgentRequests(directory).send(input);
+  await requests.send(input);
+  expect(delivered).toEqual(["Review the plan"]);
 });
 
 test("a creation failure with no stored agent can be retried", async () => {

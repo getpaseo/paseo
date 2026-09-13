@@ -69,16 +69,22 @@ export function runtime(
       }
       if (!turnId) return null;
       const entries = await history(id);
-      const selected = entries.filter((entry) => entry.turnId === turnId);
-      if (!selected.length) return null;
-      const prompt = entries.findLast(
-        (entry) => entry.seqStart <= selected.at(-1)!.seqEnd && entry.item.type === "user_message",
-      )?.item;
+      const end = entries.findLastIndex((entry) => entry.turnId === turnId);
+      const promptIndex = entries.findLastIndex(
+        (entry, index) => index <= end && entry.item.type === "user_message",
+      );
+      if (promptIndex < 0) return null;
+      const prompt = entries[promptIndex]!.item;
       if (
         expectedMessageId &&
         (prompt?.type !== "user_message" || prompt.clientMessageId !== expectedMessageId)
       )
         return null;
+      // Providers can reuse a turnId. The canonical prompt position owns this occurrence.
+      const selected = entries
+        .slice(promptIndex + 1, end + 1)
+        .filter((entry) => entry.turnId === turnId);
+      if (!selected.length) return null;
       return {
         key: `${turnId}:${selected.at(-1)!.seqEnd}`,
         items: selected.map((entry) => entry.item),

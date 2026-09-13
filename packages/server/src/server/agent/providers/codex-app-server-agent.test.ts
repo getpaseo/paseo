@@ -83,7 +83,8 @@ describe("Codex executable discovery", () => {
   });
 });
 
-import { CodexAppServerClient } from "./codex/app-server-transport.js";
+import { CodexAppServerClient, CodexAppServerRpcError } from "./codex/app-server-transport.js";
+import { AgentTurnNotAcceptedError } from "../agent-sdk-types.js";
 import {
   createFakeCodexAppServer,
   type FakeCodexAppServer,
@@ -5405,6 +5406,57 @@ describe("Codex app-server provider", () => {
       expect.objectContaining({ input: { plan: "- Implement the newer plan" } }),
     ]);
   });
+
+  test.each([
+    "before-request",
+    "rpc-rejection",
+    "rpc-after-start",
+    "rpc-internal-error",
+    "lost-ack",
+  ] as const)(
+    "distinguishes definitive prompt rejection from unknown delivery (%s)",
+    async (failure) => {
+      const session = createSession({ featureValues: { plan_mode: true } });
+      session.activeForegroundTurnId = null;
+      session.client = createStub<CodexClientLike>({
+        request: async (method) => {
+          if (method === "thread/loaded/list") {
+            if (failure === "before-request") throw new Error("Preparation unavailable");
+            return { data: ["test-thread"] };
+          }
+          if (method === "turn/start") {
+            if (failure === "rpc-after-start") {
+              asInternals(session).handleNotification("turn/started", {
+                turn: { id: "accepted-turn" },
+              });
+              throw new CodexAppServerRpcError("Started then rejected", -32602, null);
+            }
+            if (failure === "rpc-internal-error")
+              throw new CodexAppServerRpcError("Internal failure", -32603, null);
+            if (failure === "rpc-rejection")
+              throw new CodexAppServerRpcError("Prompt rejected", -32602, null);
+            throw new Error("Acknowledgement lost");
+          }
+          throw new Error(`Unexpected request: ${method}`);
+        },
+      });
+      const error = await session.startTurn("Review the plan").catch((value: unknown) => value);
+      expect(error).toMatchObject({
+        message: expect.stringContaining(
+          {
+            "before-request": "Preparation unavailable",
+            "rpc-rejection": "Prompt rejected",
+            "rpc-after-start": "Started then rejected",
+            "rpc-internal-error": "Internal failure",
+            "lost-ack": "Acknowledgement lost",
+          }[failure],
+        ),
+      });
+      expect(error instanceof AgentTurnNotAcceptedError).toBe(
+        failure === "before-request" || failure === "rpc-rejection",
+      );
+    },
+  );
 
   test("keeps a synthetic plan dismissed when a new prompt is rejected", async () => {
     const session = createSession({

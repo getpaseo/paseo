@@ -42,8 +42,9 @@ export interface WorkflowLaunch {
 }
 interface Review {
   source: "automatic" | "manual";
-  phase: "closing" | "closed" | "running" | "complete";
+  phase: "closing" | "closed" | "running" | "complete" | "outcome_unknown";
   agentId?: string;
+  promptSent?: boolean;
 }
 interface Handoff {
   selection: "standard" | "advanced";
@@ -290,7 +291,7 @@ export class WorkflowController {
     if (!plan) return;
     if (plan.handoff?.agentId === agentId || (workflow.plannerId === agentId && plan.approved))
       return this.startFinal(state, workflow, plan);
-    if (plan.review?.agentId === agentId && plan.review.phase !== "complete")
+    if (plan.review?.agentId === agentId && plan.review.phase === "running")
       return this.reviewFinished(state, workflow, plan, text);
     await this.finalFinished(state, workflow, plan, agentId, text, timeline);
   }
@@ -822,15 +823,15 @@ export class WorkflowController {
 
   private async refreshPlannerTranscript(state: WorkflowState, workflow: Workflow) {
     const timeline = await this.port.timeline(workflow.plannerId);
-    // Carry bounded verbatim exchanges, not inferred structured constraints. Omit our injected briefings.
+    // Carry all verbatim exchanges, not inferred structured constraints. Omit our injected briefings.
     const transcript: NonNullable<Workflow["plannerTranscript"]> = [];
     for (const item of timeline) {
       if (item.type === "user_message" && !item.clientMessageId?.startsWith("workflow:"))
-        transcript.push({ role: "user", text: item.text.slice(-8000) });
+        transcript.push({ role: "user", text: item.text });
       if (item.type === "assistant_message")
-        transcript.push({ role: "assistant", text: item.text.slice(-8000) });
+        transcript.push({ role: "assistant", text: item.text });
     }
-    workflow.plannerTranscript = transcript.slice(-20);
+    workflow.plannerTranscript = transcript;
     await this.port.write(state);
   }
 
@@ -844,6 +845,10 @@ export class WorkflowController {
         throw new Error("This plan context does not match the recorded plan.");
       if (previous?.review?.phase === "running" || previous?.review?.phase === "complete")
         return { agentId: previous.review.agentId! };
+      if (previous?.review?.phase === "outcome_unknown")
+        throw new Error(
+          "Reviewer delivery outcome_unknown. Open the reviewer to inspect it; automatic retry is disabled.",
+        );
       const reviewer = await this.profile("plan-reviewer");
       await this.refreshPlannerTranscript(state, workflow);
       if (
@@ -872,6 +877,7 @@ export class WorkflowController {
         }));
       plan.review!.agentId = childId;
       await this.port.write(state);
+      await this.sendReviewPrompt(state, workflow, plan);
       if (plan.review.phase !== "closed") {
         await this.pending(context);
         await this.port.respond(context.agentId, context.permissionRequestId, {
@@ -882,14 +888,38 @@ export class WorkflowController {
         plan.review.phase = "closed";
         await this.port.write(state);
       }
-      await this.port.send(
-        childId,
-        `Review this plan. Report objections, omissions, contradictions and assumptions. Do not edit, execute, commit, or delegate.\n${briefing(workflow, context.text)}`,
-        `workflow:${workflow.id}:review:${context.callId}:prompt`,
-      );
       plan.review!.phase = "running";
       await this.port.write(state);
+      await this.consumeTurn(state, await this.port.agent(childId));
       return { agentId: childId };
     });
+  }
+
+  private async sendReviewPrompt(
+    state: WorkflowState,
+    workflow: Workflow,
+    plan: Workflow["plans"][string],
+  ) {
+    const review = plan.review!;
+    if (review.promptSent) return;
+    const childId = review.agentId!;
+    try {
+      await this.port.send(
+        childId,
+        `Review this plan. Report objections, omissions, contradictions and assumptions. Do not edit, execute, commit, or delegate.\n${briefing(workflow, plan.context.text)}`,
+        `workflow:${workflow.id}:review:${plan.context.callId}:prompt`,
+      );
+    } catch (error) {
+      if (error instanceof Error && error.message.includes("agent_request_not_accepted"))
+        throw error;
+      review.phase = "outcome_unknown";
+      await this.port.write(state);
+      throw new Error(
+        `Reviewer delivery outcome_unknown. Open reviewer ${childId} to inspect it; automatic retry is disabled.`,
+        { cause: error },
+      );
+    }
+    review.promptSent = true;
+    await this.port.write(state);
   }
 }

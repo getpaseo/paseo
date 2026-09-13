@@ -61,8 +61,9 @@ export const workflowSettings = defineSettings({
               review: z
                 .object({
                   source: z.enum(["automatic", "manual"]),
-                  phase: z.enum(["closing", "closed", "running", "complete"]),
+                  phase: z.enum(["closing", "closed", "running", "complete", "outcome_unknown"]),
                   agentId: z.string().optional(),
+                  promptSent: z.boolean().optional(),
                 })
                 .optional(),
               handoff: z

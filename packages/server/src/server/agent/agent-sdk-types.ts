@@ -12,6 +12,11 @@ export type { AgentProviderNotice, AgentTaskItem };
 
 export type AgentProvider = string;
 
+/** A definitive rejection before prompt acceptance; timeouts and lost acknowledgements are not this error. */
+export class AgentTurnNotAcceptedError extends Error {
+  readonly code = "AGENT_TURN_NOT_ACCEPTED";
+}
+
 export interface AgentMetadata {
   [key: string]: unknown;
 }
