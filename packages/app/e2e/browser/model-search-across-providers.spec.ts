@@ -247,6 +247,7 @@ catalogTest(
     await test.step("open a draft with a one-row runtime catalog", async () => {
       await setRuntimeCatalog(client, 1, workspace.repoPath);
       await gotoWorkspace(page, workspace.workspaceId);
+      await clickNewChat(page);
       await expectComposerVisible(page);
     });
     await test.step("open New Agent after the provider publishes repeated model rows", async () => {
