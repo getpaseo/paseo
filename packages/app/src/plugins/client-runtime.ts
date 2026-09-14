@@ -16,7 +16,7 @@ export function createPluginClientRuntime(
   installation: InstalledPlugin,
   daemonClient: DaemonClient,
 ): PluginClientRuntime {
-  const runtime = createPluginSurfaceRuntime(daemonClient, installation.id);
+  const runtime = createPluginSurfaceRuntime(daemonClient, installation);
   if (!runtime) throw new Error("Plugin host is offline");
   const state = createPluginClientStateSource(installation.serverId);
   const capabilities = createPluginCapabilities(

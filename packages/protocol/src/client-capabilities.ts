@@ -1,4 +1,6 @@
 export const CLIENT_CAPS = {
+  // COMPAT(ownedSubscriptions): added in v0.8.0, remove legacy ownership after 2027-03-09.
+  ownedSubscriptions: "owned_subscriptions",
   // Clients outside the Paseo app version series can explicitly accept provider IDs.
   // COMPAT(explicitEventSubscriptions): added in v0.8.0, remove legacy broadcasts after 2027-03-08.
   explicitEventSubscriptions: "explicit_event_subscriptions",
@@ -22,6 +24,8 @@ export const CLIENT_CAPS = {
   // COMPAT(providerSubagents): added in v0.1.107. The daemon emits provider-owned
   // child descriptors and timelines only to clients that understand the new messages.
   providerSubagents: "provider_subagents",
+  // COMPAT(projectedSubagentTimeline): added after v0.8.0, remove gates after 2027-03-14; retain wire capability.
+  projectedSubagentTimeline: "projected_subagent_timeline",
   // COMPAT(projectUpdates): added in v0.1.109, remove gate after 2027-01-15.
   projectUpdates: "project_updates",
   // COMPAT(compactProviderSnapshots): added in v0.2.X. Capable clients receive

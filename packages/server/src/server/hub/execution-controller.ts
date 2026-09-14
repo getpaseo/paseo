@@ -26,7 +26,7 @@ export class HubExecutionController {
   private readonly agents: HubExecutionAgents;
   private readonly send: (message: SessionOutboundMessage) => void;
   private readonly validateAgentConfiguration: HubExecutionControllerOptions["validateAgentConfiguration"];
-  private readonly unsubscribe: () => void;
+  private unsubscribe: (() => void) | null = null;
   private readonly pendingCreates = new Set<Promise<void>>();
   private readonly pendingControls = new Set<Promise<void>>();
   private readonly pendingValidations = new Set<Promise<void>>();
@@ -37,7 +37,19 @@ export class HubExecutionController {
     this.agents = options.agents;
     this.validateAgentConfiguration = options.validateAgentConfiguration;
     this.send = options.send;
-    this.unsubscribe = this.agents.subscribe((event) => this.sendOwnedEvent(event));
+  }
+
+  get isObserving(): boolean {
+    return this.unsubscribe !== null;
+  }
+
+  setObserving(observing: boolean): void {
+    if (observing && !this.closed)
+      this.unsubscribe ??= this.agents.subscribe((event) => this.sendOwnedEvent(event));
+    else {
+      this.unsubscribe?.();
+      this.unsubscribe = null;
+    }
   }
 
   cleanup(): Promise<void> {
@@ -47,7 +59,7 @@ export class HubExecutionController {
 
   private async cleanupOnce(): Promise<void> {
     this.closed = true;
-    this.unsubscribe();
+    this.setObserving(false);
     await Promise.allSettled([
       ...this.pendingCreates,
       ...this.pendingControls,

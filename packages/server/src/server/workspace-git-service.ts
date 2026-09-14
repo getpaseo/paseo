@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import { LRUCache } from "lru-cache";
+import { CheckoutDiffCache } from "./checkout-diff-cache.js";
 import pLimit from "p-limit";
 import type pino from "pino";
 import type { ProjectCheckoutLitePayload } from "@getpaseo/protocol/messages";
@@ -94,8 +95,6 @@ const WATCH_RECOVERY_MAX_ATTEMPTS = 3;
 const WORKSPACE_GIT_AUXILIARY_READ_TTL_MS = 15_000;
 // Non-forced refresh triggers share this minimum gap to absorb watcher/self-heal bursts; force bypasses it.
 const WORKSPACE_GIT_INTERNAL_MIN_GAP_MS = 2_000;
-// Heavy values (multi-MB highlighted diffs); cap aggressively. Ephemeral worktree cwds would otherwise pile up forever.
-const WORKSPACE_GIT_CHECKOUT_DIFF_CACHE_MAX = 64;
 // Small values (booleans, short strings, small arrays); generous cap.
 const WORKSPACE_GIT_AUXILIARY_CACHE_MAX = 256;
 
@@ -566,10 +565,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     string,
     WorkspaceGitAuxiliaryReadCacheEntry<string>
   >({ max: WORKSPACE_GIT_AUXILIARY_CACHE_MAX });
-  private readonly checkoutDiffCache = new LRUCache<
-    string,
-    WorkspaceGitAuxiliaryReadCacheEntry<CheckoutDiffResult>
-  >({ max: WORKSPACE_GIT_CHECKOUT_DIFF_CACHE_MAX });
+  private readonly checkoutDiffCache = new CheckoutDiffCache(() => this.deps.now().getTime());
   private watcherErrorCallbackCount = 0;
   constructor(options: WorkspaceGitServiceOptions) {
     this.logger = options.logger.child({ module: "workspace-git-service" });
@@ -726,7 +722,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     return this.workspaceTargets.get(cwd)?.latestSnapshot ?? null;
   }
 
-  getCheckoutDiff(
+  async getCheckoutDiff(
     cwd: string,
     options: CheckoutDiffCompare,
     readOptions?: WorkspaceGitReadOptions,
@@ -734,13 +730,20 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     this.assertNotDisposed();
     const normalizedCwd = resolve(cwd);
     const normalizedOptions = this.normalizeCheckoutDiffOptions(options);
-    const key = this.buildCheckoutDiffCacheKey(normalizedCwd, normalizedOptions);
-    return this.readAuxiliaryCache(this.checkoutDiffCache, key, readOptions, () =>
-      this.deps.getCheckoutDiff(normalizedCwd, normalizedOptions, {
-        paseoHome: this.paseoHome,
-        worktreesRoot: this.worktreesRoot,
-      }),
-    );
+    // Initial inventory events cover the watcher setup gap. Process them before
+    // starting a cold diff, rather than invalidating that build halfway through.
+    await this.workspaceTargets.get(normalizedCwd)?.observationSetupPromise;
+    this.assertNotDisposed();
+    return this.checkoutDiffCache.read({
+      cwd: normalizedCwd,
+      compare: normalizedOptions,
+      ...readOptions,
+      load: () =>
+        this.deps.getCheckoutDiff(normalizedCwd, normalizedOptions, {
+          paseoHome: this.paseoHome,
+          worktreesRoot: this.worktreesRoot,
+        }),
+    });
   }
 
   private normalizeCheckoutDiffOptions(options: CheckoutDiffCompare): CheckoutDiffCompare {
@@ -754,26 +757,8 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     };
   }
 
-  private buildCheckoutDiffCacheKey(cwd: string, options: CheckoutDiffCompare): string {
-    // Diff content varies by compare signature. Keep the cache per exact diff read shape so
-    // hot diff panes coalesce while base refs and rendering options never share stale patches.
-    return JSON.stringify([
-      "checkout-diff",
-      cwd,
-      options.mode,
-      options.mode === "base" ? (options.baseRef ?? null) : null,
-      options.ignoreWhitespace === true,
-      options.includeStructured === true,
-    ]);
-  }
-
   private invalidateCheckoutDiffCache(cwd: string, mode: CheckoutDiffCompare["mode"]): void {
-    for (const key of this.checkoutDiffCache.keys()) {
-      const [kind, cachedCwd, cachedMode] = JSON.parse(key) as unknown[];
-      if (kind === "checkout-diff" && cachedCwd === cwd && cachedMode === mode) {
-        this.checkoutDiffCache.delete(key);
-      }
-    }
+    this.checkoutDiffCache.invalidate(cwd, mode);
   }
 
   validateBranchRef(

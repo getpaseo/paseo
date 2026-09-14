@@ -1,12 +1,11 @@
 import { expect, test } from "../support/fixtures";
 import { gotoAppShell } from "../support/helpers/app";
 import {
-  addFakeScheduleHostAndReload,
-  buildFakeScheduleHostWorkspace,
-  FAKE_HOST_MODEL_ID,
-  FAKE_HOST_MODEL_LABEL,
-  installFakeScheduleHost,
-} from "../support/helpers/schedule-fake-host";
+  addScheduleHostAndReload,
+  createScheduleHost,
+  SECONDARY_MODEL_ID,
+  SECONDARY_MODEL_LABEL,
+} from "../support/helpers/schedule-host";
 import { seedWorkspace, type SeededWorkspace } from "../support/helpers/seed-client";
 import { expectSettled, expectStableHeight } from "../support/helpers/settled";
 import { waitForSidebarHydration } from "../support/helpers/workspace-ui";
@@ -32,7 +31,11 @@ interface ScheduleSeedClient {
   scheduleDelete(input: { id: string }): Promise<{ error: string | null }>;
 }
 
-async function seedMockSchedule(workspace: SeededWorkspace, name: string): Promise<string> {
+async function seedMockSchedule(
+  workspace: SeededWorkspace,
+  name: string,
+  model = "ten-second-stream",
+): Promise<string> {
   const client = workspace.client as unknown as ScheduleSeedClient;
   const result = await client.scheduleCreate({
     prompt: "Say hello from the scheduled agent.",
@@ -43,7 +46,7 @@ async function seedMockSchedule(workspace: SeededWorkspace, name: string): Promi
       config: {
         provider: "mock",
         cwd: workspace.repoPath,
-        model: "ten-second-stream",
+        model,
         modeId: "load-test",
         title: name,
       },
@@ -64,42 +67,6 @@ async function deleteSeededSchedule(workspace: SeededWorkspace, id: string): Pro
   await (workspace.client as unknown as ScheduleSeedClient)
     .scheduleDelete({ id })
     .catch(ignoreScheduleDeleteError);
-}
-
-type FakeScheduleHostSchedule = NonNullable<
-  Parameters<typeof installFakeScheduleHost>[0]["schedules"]
->[number];
-
-function buildFakeHostSchedule(input: {
-  id: string;
-  name: string;
-  cwd: string;
-}): FakeScheduleHostSchedule {
-  const now = "2026-07-01T00:00:00.000Z";
-  return {
-    id: input.id,
-    name: input.name,
-    prompt: "Run on the secondary host.",
-    cadence: { type: "cron", expression: "0 9 * * *" },
-    target: {
-      type: "new-agent",
-      config: {
-        provider: "mock",
-        cwd: input.cwd,
-        model: FAKE_HOST_MODEL_ID,
-        modeId: "load-test",
-        title: input.name,
-      },
-    },
-    status: "active",
-    createdAt: now,
-    updatedAt: now,
-    nextRunAt: now,
-    lastRunAt: null,
-    pausedAt: null,
-    expiresAt: null,
-    maxRuns: null,
-  };
 }
 
 test.describe("Schedules", () => {
@@ -154,34 +121,23 @@ test.describe("Schedules", () => {
   test("edit form hydrates a non-default host schedule after reload", async ({ page }) => {
     const workspace = await seedWorkspace({ repoPrefix: "schedule-host-b-hydration-" });
     cleanupTasks.push(() => workspace.cleanup());
-    const fakeHost = await buildFakeScheduleHostWorkspace(workspace);
-    const fakePort = String(59_000 + Math.floor(Math.random() * 900));
-    const scheduleId = "fake-host-schedule";
-    const scheduleName = "Secondary host schedule";
-
-    await installFakeScheduleHost({
-      page,
-      port: fakePort,
-      serverId: fakeHost.serverId,
-      workspace: fakeHost.workspace,
-      project: fakeHost,
-      schedules: [
-        buildFakeHostSchedule({
-          id: scheduleId,
-          name: scheduleName,
-          cwd: String(fakeHost.workspace.workspaceDirectory),
-        }),
-      ],
-    });
+    const secondary = await createScheduleHost();
+    cleanupTasks.push(() => secondary.cleanup());
+    const scheduleId = await seedMockSchedule(
+      secondary,
+      "Secondary host schedule",
+      SECONDARY_MODEL_ID,
+    );
+    cleanupTasks.push(() => deleteSeededSchedule(secondary, scheduleId));
 
     await gotoAppShell(page);
     await waitForSidebarHydration(page);
     await page.goto(buildSchedulesRoute());
-    await addFakeScheduleHostAndReload({
+    await addScheduleHostAndReload({
       page,
-      serverId: fakeHost.serverId,
-      label: "Fake host",
-      port: fakePort,
+      serverId: secondary.serverId,
+      label: secondary.label,
+      port: secondary.port,
     });
     await page.reload();
 
@@ -197,14 +153,14 @@ test.describe("Schedules", () => {
     const modelTrigger = page.getByTestId("schedule-model-trigger");
     const modeTrigger = page.getByTestId("schedule-mode-trigger");
 
-    await expect(hostTrigger).toContainText("Fake host", { timeout: 30_000 });
+    await expect(hostTrigger).toContainText(secondary.label, { timeout: 30_000 });
     await expect(hostTrigger).toBeDisabled();
     await expectSettled(hostTrigger);
-    await expect(projectTrigger).toContainText(fakeHost.projectDisplayName, { timeout: 30_000 });
+    await expect(projectTrigger).toContainText(secondary.projectDisplayName, { timeout: 30_000 });
     await expectSettled(projectTrigger);
-    await expect(modelTrigger).toContainText(FAKE_HOST_MODEL_LABEL, { timeout: 30_000 });
+    await expect(modelTrigger).toContainText(SECONDARY_MODEL_LABEL, { timeout: 30_000 });
     await expectSettled(modelTrigger);
-    await expect(modeTrigger).toContainText("Load test", { timeout: 30_000 });
+    await expect(modeTrigger).toContainText("Load Test", { timeout: 30_000 });
     await expectSettled(modeTrigger);
     await expect(page.getByTestId("cadence-mode")).toHaveCount(0);
     await expect(page.getByTestId("schedule-cadence-preset-trigger")).toContainText("Daily 9:00");

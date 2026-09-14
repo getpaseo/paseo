@@ -66,7 +66,7 @@ describe("daemon E2E (real opencode) - slow plugin readiness", () => {
     });
     const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
     await client.connect();
-    await client.fetchAgents({ subscribe: { subscriptionId: "opencode-slow-plugin" } });
+    await client.fetchAgents({ subscribe: {} });
 
     try {
       const agent = await client.createAgent({

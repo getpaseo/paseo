@@ -33,6 +33,13 @@ describe("CursorACPAgentClient model discovery", () => {
         child: { kill: vi.fn(), exitCode: 0, signalCode: null, once: vi.fn() },
         connection: {
           newSession: vi.fn().mockResolvedValue(this.response),
+          extMethod: async () => ({
+            models: (this.response.models?.availableModels ?? []).map((model) => ({
+              value: model.modelId,
+              name: model.name,
+              configOptions: [],
+            })),
+          }),
         },
         initialize: { agentCapabilities: {} },
       } as SpawnedACPProcess;

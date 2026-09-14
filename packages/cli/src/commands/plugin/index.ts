@@ -90,7 +90,9 @@ export async function runPluginListCommand(
   options: PluginOptions,
   _command: Command,
 ): Promise<ListResult<PluginListItem>> {
-  const plugins = await withPluginManagementClient(options.host, (client) => client.listPlugins());
+  const plugins = await withPluginManagementClient(options.daemonTarget, (client) =>
+    client.listPlugins(),
+  );
   const data = pluginId ? plugins.filter((plugin) => plugin.id === pluginId) : plugins;
   if (pluginId && data.length === 0) throw new Error(`Plugin is not configured: ${pluginId}`);
   return { type: "list", data, schema: pluginSchema };
@@ -101,7 +103,9 @@ export async function runPluginLogsCommand(
   options: PluginOptions,
   _command: Command,
 ): Promise<ListResult<PluginLogEntry>> {
-  const data = await withPluginLogsClient(options.host, (client) => client.getPluginLogs(pluginId));
+  const data = await withPluginLogsClient(options.daemonTarget, (client) =>
+    client.getPluginLogs(pluginId),
+  );
   return { type: "list", data, schema: pluginLogsSchema };
 }
 
@@ -126,10 +130,10 @@ async function install(
     isExplicitPath && !hasPluginPathSuffix && !options.ref && !options.path;
   const sourceReference = formatPluginSourceReference(source, options.path);
   const data = canUseLegacyDirectoryInstall
-    ? await withPluginManagementClient(options.host, (client) =>
+    ? await withPluginManagementClient(options.daemonTarget, (client) =>
         client.installDirectoryPlugin(source, options.id),
       )
-    : await withPluginSourceClient(options.host, (client) =>
+    : await withPluginSourceClient(options.daemonTarget, (client) =>
         client.installPluginSource({
           source: sourceReference,
           ...(options.id ? { id: options.id } : {}),
@@ -147,7 +151,7 @@ async function update(
   if ((pluginId === undefined) === (options.all !== true)) {
     throw new Error("Choose one plugin ID or pass --all");
   }
-  const data = await withPluginSourceClient(options.host, (client) =>
+  const data = await withPluginSourceClient(options.daemonTarget, (client) =>
     client.updatePluginSources(pluginId),
   );
   return { type: "list", data, schema: pluginUpdateSchema };
@@ -158,7 +162,7 @@ async function act(
   pluginId: string,
   options: PluginOptions,
 ): Promise<SingleResult<PluginListItem>> {
-  const data = await withPluginManagementClient(options.host, (client) =>
+  const data = await withPluginManagementClient(options.daemonTarget, (client) =>
     client[`${action}Plugin`](pluginId),
   );
   return { type: "single", data, schema: pluginSchema };
@@ -169,7 +173,7 @@ async function remove(
   options: PluginOptions,
   _command: Command,
 ): Promise<SingleResult<PluginListItem>> {
-  const data = await withPluginManagementClient(options.host, async (client) => {
+  const data = await withPluginManagementClient(options.daemonTarget, async (client) => {
     const current = (await client.listPlugins()).find((plugin) => plugin.id === pluginId);
     if (!current) throw new Error(`Plugin is not configured: ${pluginId}`);
     await client.removePlugin(pluginId);

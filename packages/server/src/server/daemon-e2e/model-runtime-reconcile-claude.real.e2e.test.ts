@@ -37,7 +37,7 @@ describe("daemon E2E (real claude) - runtime model reconciliation", () => {
     try {
       await client.connect();
       await client.fetchAgents({
-        subscribe: { subscriptionId: "claude-runtime-model-reconcile" },
+        subscribe: {},
       });
 
       const modelsResult = await client.listProviderModels("claude", { cwd });

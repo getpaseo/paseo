@@ -150,7 +150,7 @@ describe("daemon E2E (claude live usage)", () => {
 
     try {
       await client.connect();
-      await client.fetchAgents({ subscribe: { subscriptionId: "claude-live-usage" } });
+      await client.fetchAgents({ subscribe: {} });
 
       const agent = await client.createAgent({
         provider: "claude",

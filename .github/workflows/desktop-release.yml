@@ -261,7 +261,7 @@ jobs:
           NODE
 
       - name: Install Linux smoke display
-        run: sudo apt-get update && sudo apt-get install -y xvfb xauth
+        run: sudo apt-get update && sudo apt-get install -y xvfb xauth rpm
 
       - name: Build desktop release
         shell: bash
@@ -278,7 +278,7 @@ jobs:
           npm run build:desktop "${build_args[@]}"
 
       - name: Upload packaged smoke diagnostics
-        if: failure()
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: desktop-smoke-linux-x64

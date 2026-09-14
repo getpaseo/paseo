@@ -151,7 +151,7 @@ async function main(): Promise<void> {
 
     await client.connect();
     await client.fetchAgents({
-      subscribe: { subscriptionId: "mcp-inject-real-claude" },
+      subscribe: {},
     });
 
     const results: ProviderRunResult[] = [];

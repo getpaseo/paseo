@@ -19,6 +19,7 @@ import {
   type BottomSheetBackgroundProps,
 } from "@gorhom/bottom-sheet";
 import Animated, { useAnimatedStyle } from "react-native-reanimated";
+import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { ArrowLeft, Search, X } from "lucide-react-native";
 import {
   IsolatedBottomSheetModal,
@@ -71,6 +72,9 @@ const SCROLL_CONTENT_GROW = { flexGrow: 1 };
 const ABSOLUTE_FILL_STYLE = { ...StyleSheet.absoluteFillObject };
 
 const styles = StyleSheet.create((theme) => ({
+  nativeModalRoot: {
+    flex: 1,
+  },
   desktopOverlay: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: "rgba(0,0,0,0.55)",
@@ -724,7 +728,10 @@ export function AdaptiveModalSheet({
       onDismiss={notifyNativeModalDismiss}
       hardwareAccelerated
     >
-      {desktopContent}
+      {/* Android Modal opens a separate window outside the app's gesture root. */}
+      <GestureHandlerRootView style={styles.nativeModalRoot}>
+        {desktopContent}
+      </GestureHandlerRootView>
     </Modal>
   );
 }

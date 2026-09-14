@@ -51,7 +51,10 @@ try {
     const config = JSON.parse(await readFile(join(paseoHome, "config.json"), "utf-8"));
 
     assert.strictEqual(result.configPath, join(paseoHome, "config.json"));
-    assert.strictEqual(result.restartCommand, "paseo daemon restart");
+    assert.strictEqual(
+      result.restartCommand,
+      `paseo daemon restart --home ${JSON.stringify(paseoHome)}`,
+    );
     assert.strictEqual(config.daemon.listen, "127.0.0.1:9999");
     assert.strictEqual(config.daemon.relay.enabled, false);
     assert.notStrictEqual(config.daemon.auth.password, "shared-secret");
@@ -68,6 +71,7 @@ try {
     const result = await runSetPasswordCommand(
       {
         home: paseoHome,
+        daemonTarget: { kind: "instance", home: paseoHome },
         promptPassword: promptSequence(["new-secret", "new-secret"]),
       },
       {} as Command,
@@ -88,6 +92,7 @@ try {
       runSetPasswordCommand(
         {
           home: paseoHome,
+          daemonTarget: { kind: "instance", home: paseoHome },
           promptPassword: promptSequence(["first-secret", "second-secret"]),
         },
         {} as Command,

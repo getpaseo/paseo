@@ -1,4 +1,5 @@
 import type { Page } from "@playwright/test";
+import { loadSessionMessageReaders } from "./new-workspace";
 import { daemonWsRoutePattern, wsRoutePatternForPort } from "./daemon-port";
 
 type WebSocketMessage = string | Buffer;
@@ -292,11 +293,14 @@ export async function holdRewindCompletion(
       }
       if (
         !released &&
-        sessionMessage?.type === "agent.rewind.response" &&
+        (sessionMessage?.type === "agent.rewind.response" ||
+          sessionMessage?.type === "agent.timeline.replacement") &&
         payload?.agentId === agentId
       ) {
+        // The replacement also signals completion and removes the rewound row/menu.
+        // Hold it with the response so the pending-state assertion observes a pending rewind.
         delayedForwards.push(() => ws.send(message));
-        resolveDelayedResponse?.();
+        if (sessionMessage.type === "agent.rewind.response") resolveDelayedResponse?.();
         return;
       }
       ws.send(message);
@@ -321,6 +325,7 @@ export async function holdRewindCompletion(
 export async function delayCreatedAgentInitialTailResponse(
   page: Page,
 ): Promise<CreatedAgentTimelineGate> {
+  const frames = await loadSessionMessageReaders();
   let createdAgentId: string | null = null;
   let releaseRequested = false;
   let delayedResponseSeen = false;
@@ -350,19 +355,24 @@ export async function delayCreatedAgentInitialTailResponse(
     });
 
     server.onMessage((message) => {
-      const sessionMessage = getSessionMessage(message);
-      const payload = sessionMessage ? getPayload(sessionMessage) : null;
-      if (sessionMessage?.type === "status" && payload?.status === "agent_created") {
-        const agentId = payload.agentId;
-        if (typeof agentId === "string") {
-          createdAgentId = agentId;
-          resolveCreatedAgent?.(agentId);
-        }
+      const sessionMessage = frames.server(message);
+      let createdId: unknown;
+      if (sessionMessage?.type === "agent.create.response") {
+        createdId = sessionMessage.payload.agent?.id;
+      } else if (
+        sessionMessage?.type === "status" &&
+        sessionMessage.payload.status === "agent_created"
+      ) {
+        createdId = sessionMessage.payload.agentId;
+      }
+      if (typeof createdId === "string") {
+        createdAgentId = createdId;
+        resolveCreatedAgent?.(createdId);
       }
 
       if (sessionMessage?.type === "fetch_agent_timeline_response") {
-        const agentId = payload?.agentId;
-        const direction = payload?.direction;
+        const agentId = sessionMessage.payload.agentId;
+        const direction = sessionMessage.payload.direction;
         if (
           !delayedResponseSeen &&
           typeof agentId === "string" &&

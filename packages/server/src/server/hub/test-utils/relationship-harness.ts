@@ -1582,7 +1582,7 @@ export class HubRelationshipHarness {
       appVersion: "0.1.106",
     });
     await client.connect();
-    await client.fetchAgents({ subscribe: { subscriptionId: "hub-relationship-trusted" } });
+    await client.observeAgents().ready;
     return client;
   }
 

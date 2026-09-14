@@ -121,7 +121,7 @@ test("createAgent without an initial prompt returns an idle snapshot", async () 
 
   try {
     await client.connect();
-    await client.fetchAgents({ subscribe: { subscriptionId: "create-no-prompt" } });
+    await client.fetchAgents({ subscribe: {} });
 
     const agent = await client.createAgent({
       provider: "codex",
@@ -185,7 +185,7 @@ test("createAgent with background initialPrompt returns a running snapshot befor
 
   try {
     await client.connect();
-    await client.fetchAgents({ subscribe: { subscriptionId: "create-background-prompt" } });
+    await client.fetchAgents({ subscribe: {} });
 
     const agent = await client.createAgent({
       provider: "codex",
@@ -415,7 +415,7 @@ test("createAgent fails when the initial turn cannot start", async () => {
 
   try {
     await client.connect();
-    await client.fetchAgents({ subscribe: { subscriptionId: "create-start-failure" } });
+    await client.fetchAgents({ subscribe: {} });
 
     await expect(
       client.createAgent({
@@ -1325,7 +1325,7 @@ test("creates agent and exercises lifecycle", async () => {
   const cwd = tmpCwd();
 
   await ctx.client.fetchAgents({
-    subscribe: { subscriptionId: "daemon-client-lifecycle" },
+    subscribe: {},
   });
 
   const agentUpdatePromise = waitForSignal(15000, (resolve) => {

@@ -36,7 +36,10 @@ async function runSupervisorFixture(options: {
   const workerPath = path.join(tempDir, "worker.mjs");
   const runnerPath = path.join(tempDir, "runner.mjs");
 
-  await writeFile(workerPath, options.workerSource);
+  await writeFile(
+    workerPath,
+    `process.send?.({ type: "paseo:ready", listen: "fixture" });\n${options.workerSource}`,
+  );
   await writeFile(
     runnerPath,
     `
