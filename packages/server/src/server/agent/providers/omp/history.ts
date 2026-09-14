@@ -350,9 +350,11 @@ function mapCustomMessageEntry(entry: OmpSessionEntry): OmpAgentMessage | null {
   return {
     role: "custom",
     content,
+    id: entry.id,
     customType: entry.customType,
     display: entry.display,
     details: entry.details,
+    attribution: entry.attribution,
   } as OmpAgentMessage;
 }
 

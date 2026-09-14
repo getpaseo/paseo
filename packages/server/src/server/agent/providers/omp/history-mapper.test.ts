@@ -223,12 +223,20 @@ describe("OMP history mapper", () => {
       {
         type: "timeline",
         provider: "omp",
-        item: { type: "assistant_message", text: "visible explicit custom" },
+        item: {
+          type: "assistant_message",
+          text: "visible explicit custom",
+          messageId: "omp-custom-1",
+        },
       },
       {
         type: "timeline",
         provider: "omp",
-        item: { type: "assistant_message", text: "visible legacy custom" },
+        item: {
+          type: "assistant_message",
+          text: "visible legacy custom",
+          messageId: "omp-custom-2",
+        },
       },
       {
         type: "timeline",
@@ -447,8 +455,12 @@ describe("OMP history mapper", () => {
     }
     expect(events.map((event) => event.item)).toEqual([
       { type: "user_message", text: "active branch", messageId: "user-active" },
-      { type: "assistant_message", text: "[future_control] Unsupported history record" },
-      { type: "assistant_message", text: "[developer] developer note" },
+      {
+        type: "assistant_message",
+        text: "[future_control] Unsupported history record",
+        messageId: "omp-custom-1",
+      },
+      { type: "assistant_message", text: "[developer] developer note", messageId: "omp-custom-2" },
     ]);
 
     const omp = new FakeOmp();
@@ -486,9 +498,13 @@ describe("OMP history mapper", () => {
         { type: "session", id: "root", parentId: null },
         {
           type: "message",
-          id: "user-1",
+          id: "answer-1",
           parentId: "root",
-          message: { role: "user", content: "/skill:commit" },
+          message: {
+            role: "assistant",
+            content: [{ type: "text", text: "Done." }],
+            responseId: "resp-1",
+          },
         },
         {
           type: "custom_message",
@@ -502,7 +518,7 @@ describe("OMP history mapper", () => {
           },
           attribution: "user",
           id: "skill-1",
-          parentId: "user-1",
+          parentId: "answer-1",
           timestamp: "2026-09-13T13:11:35.811Z",
         },
         {
@@ -545,10 +561,95 @@ describe("OMP history mapper", () => {
       events.push(event);
     }
     expect(events.map((event) => event.item)).toEqual([
-      { type: "user_message", text: "/skill:commit", messageId: "user-1" },
-      { type: "assistant_message", text: skillPrompt },
-      { type: "assistant_message", text: ircMessage },
-      { type: "assistant_message", text: "visible without display flag" },
+      { type: "assistant_message", text: "Done.", messageId: "resp-1" },
+      { type: "user_message", text: "/skill:commit", messageId: "omp-custom-skill-1-user" },
+      { type: "assistant_message", text: skillPrompt, messageId: "omp-custom-skill-1" },
+      { type: "assistant_message", text: ircMessage, messageId: "omp-custom-irc-1" },
+      {
+        type: "assistant_message",
+        text: "visible without display flag",
+        messageId: "omp-custom-legacy-1",
+      },
+    ]);
+  });
+
+  test("synthesises the typed /skill bubble only for user-attributed skill prompts", async () => {
+    await expect(
+      collectHistory([
+        {
+          role: "custom",
+          content: '[IMPORTANT: User invoked the "improve" skill; follow its instructions.]',
+          customType: "skill-prompt",
+          display: true,
+          details: {
+            name: "improve",
+            path: "/home/me/.agents/skills/improve/SKILL.md",
+            lineCount: 9,
+            args: "tests",
+          },
+          attribution: "user",
+          id: "skill-args",
+        },
+        {
+          role: "custom",
+          content: '[IMPORTANT: Agent invoked the "improve" skill.]',
+          customType: "skill-prompt",
+          display: true,
+          details: {
+            name: "improve",
+            path: "/home/me/.agents/skills/improve/SKILL.md",
+            lineCount: 9,
+          },
+          attribution: "agent",
+          id: "skill-agent",
+        },
+        {
+          role: "custom",
+          content: "<irc>\n<from>worker-1</from>\n<message>hi</message>\n</irc>",
+          customType: "irc:incoming",
+          display: true,
+          details: { from: "worker-1", message: "hi" },
+          attribution: "user",
+          id: "irc-user",
+        },
+      ]),
+    ).resolves.toEqual([
+      {
+        type: "timeline",
+        provider: "omp",
+        item: {
+          type: "user_message",
+          text: "/skill:improve tests",
+          messageId: "omp-custom-skill-args-user",
+        },
+      },
+      {
+        type: "timeline",
+        provider: "omp",
+        item: {
+          type: "assistant_message",
+          text: '[IMPORTANT: User invoked the "improve" skill; follow its instructions.]',
+          messageId: "omp-custom-skill-args",
+        },
+      },
+      {
+        type: "timeline",
+        provider: "omp",
+        item: {
+          type: "assistant_message",
+          text: '[IMPORTANT: Agent invoked the "improve" skill.]',
+          messageId: "omp-custom-skill-agent",
+        },
+      },
+      {
+        type: "timeline",
+        provider: "omp",
+        item: {
+          type: "assistant_message",
+          text: "<irc>\n<from>worker-1</from>\n<message>hi</message>\n</irc>",
+          messageId: "omp-custom-irc-user",
+        },
+      },
     ]);
   });
 
