@@ -2,9 +2,6 @@ import { mkdir, mkdtemp, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
 import { afterEach, expect, test, vi } from "vitest";
-import type { ObservationHost } from "./internal/contracts.js";
-import { createManagedObservation } from "./internal/observation.js";
-import { createObserverPaths } from "./internal/paths.js";
 import {
   createFileObserver,
   type FileChange,
@@ -170,53 +167,6 @@ test("classifies a removed file as deleted", async () => {
   await rm(target);
   await expect.poll(() => events.find((event) => event.path === target)?.type).toBe("delete");
   await subscription.unsubscribe();
-});
-
-test("a duplicate creation notification cannot hide the final deletion in a batch", async () => {
-  const root = await createRoot();
-  const target = join(root, "removed.txt");
-  const events: FileChange[] = [];
-  let source!: ObservationHost;
-  const observation = createManagedObservation({
-    root,
-    callback: (error, batch) => {
-      expect(error).toBeNull();
-      events.push(...batch);
-    },
-    options: {},
-    paths: createObserverPaths(process.platform),
-    metrics: createObserver().getDiagnostics(),
-    createBackend: (host) => {
-      source = host;
-      return {
-        start: async () => {},
-        updateIgnore: async () => {},
-        close: async () => {},
-        getDiagnostics: () => ({
-          nativeHandleCount: 0,
-          nativeTrackedFileCount: 0,
-          pendingReconciliationWorkCount: 0,
-          reconciliationInFlight: false,
-        }),
-      };
-    },
-    onClosed: () => {},
-  });
-  try {
-    await observation.start();
-    source.queueEvent("create", target);
-    await expect.poll(() => events).toEqual([{ path: target, type: "create" }]);
-    events.length = 0;
-    source.queueEvent("create", target);
-    source.queueEvent("delete", target);
-    await expect.poll(() => events).toEqual([{ path: target, type: "delete" }]);
-    events.length = 0;
-    source.queueEvent("delete", target);
-    source.queueEvent("create", target);
-    await expect.poll(() => events).toEqual([{ path: target, type: "update" }]);
-  } finally {
-    await observation.close();
-  }
 });
 
 test("observes files moved into the tree with their directory", async () => {

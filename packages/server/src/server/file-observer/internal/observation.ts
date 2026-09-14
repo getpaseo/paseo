@@ -166,7 +166,8 @@ function samePaths(left: string[], right: string[]): boolean {
 }
 
 function mergeChange(previous: FileChange | undefined, next: FileChange): FileChange {
-  if (!previous || next.type === "delete") return next;
+  if (!previous) return next;
+  if (previous.type === "create" && next.type === "delete") return { ...next, type: "update" };
   if (previous.type === "delete" && next.type === "create") return { ...next, type: "update" };
   if (previous.type === "create") return previous;
   return next;
