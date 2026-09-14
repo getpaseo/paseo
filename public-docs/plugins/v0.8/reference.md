@@ -561,6 +561,83 @@ saved; environment overrides are not persisted with it.
 
 Read logger output with `paseo plugin logs lifecycle-logger` or the host's `daemon.log`.
 
+## Report externally owned subagents
+
+This API requires a daemon build with the subagent reporter API; the original v0.8.0 release does
+not include it. It is server-only. No client entry or replacement provider is required.
+
+Use `server.subagents.open({ parentAgentId })` to report external child executions beneath an
+existing managed agent, including a built-in Pi agent. It returns a `Promise<PluginSubagentReporter>`.
+Import `PluginSubagentApi`, `PluginSubagentOpenInput`, `PluginSubagentReporter`, and
+`PluginSubagentEvent` from `@getpaseo/plugin/server`. That entry also exports
+`PluginSubagentEventSchema` and `PLUGIN_SUBAGENT_MAX_EVENT_BYTES`. Reporting belongs to server
+code; these exports are not available from the shared SDK entry.
+
+```ts
+const reporter = await server.subagents.open({ parentAgentId });
+await reporter.report({ type: "upsert", id: "worker-1", title: "Review", status: "running" });
+await reporter.report({
+  type: "timeline",
+  id: "worker-1",
+  item: { type: "assistant_message", text: "Review complete." },
+});
+await reporter.report({ type: "upsert", id: "worker-1", status: "completed" });
+
+// Keep the reporter open while its history must remain available.
+// Release it when the source is no longer needed:
+await reporter.close();
+```
+
+`open()` does not start, resume, or change the parent. Unknown, internal, and closed parents are
+rejected, as are parents undergoing a lifecycle mutation. Wait until parent registration completes;
+opening a reporter from `before("agent.session_open")` is too early. A companion process can use
+`PASEO_AGENT_ID` to identify its managed parent. Do not infer parentage from cwd or a provider session
+ID. Opening during plugin initialization, before the plugin is ready, is also rejected.
+
+### Reporter events
+
+`report(event): Promise<void>` accepts these events:
+
+| Type       | Fields                                                                                                                     | Behavior                                                                                                                                        |
+| ---------- | -------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `upsert`   | Required `id`; optional `title`, `description`, `status`, `toolCallId`, `cwd`, `subtitle`, `parentSubagentId`, `timestamp` | Creates or updates the descriptor. Omitted fields retain their values; `null` clears nullable fields. The initial status defaults to `running`. |
+| `timeline` | Required `id` and `item`; optional `timestamp`                                                                             | Appends one structural protocol timeline item to a declared child.                                                                              |
+| `remove`   | Required `id`                                                                                                              | Removes the child and its descendants, including their timelines. An absent child is a no-op.                                                   |
+
+Status is `running`, `completed`, `failed`, or `canceled`. Report only worker states the source knows.
+Child IDs are non-empty strings, at most 256 characters, local to that reporter. Declare a nested
+parent before using its local ID as `parentSubagentId`. Omission retains the existing relationship;
+`null` makes the child a direct child of the managed agent. Cycles and cross-reporter relationships
+are rejected. Timestamps are ISO date-time strings with a timezone; omission uses daemon time.
+
+The daemon assigns public child IDs, the parent ID, and the parent's provider. It also assigns timeline
+sequences and epochs. A plugin timeline item's `pluginId` is stamped with the calling installation ID.
+Do not parse the public child ID or use it as a managed agent ID. Children use the existing read-only
+subagent tabs. They do not change the parent's literal agent status; running children contribute to
+its workspace activity.
+
+### Limits, retries, and cleanup
+
+Each event must serialize to at most 64 KiB of UTF-8 JSON, including its fields and timeline payload.
+Larger events reject instead of being truncated. This limit is exported as
+`PLUGIN_SUBAGENT_MAX_EVENT_BYTES`. There are at most 128 open reporters per plugin process and
+32 queued reports per reporter. Await reports to apply backpressure.
+
+Calls on one reporter are ordered. The SDK retries one lost report acknowledgement with the same
+sequence; the daemon does not apply it twice. Calling `report()` again yourself creates a new event,
+not a retry. Validation and application errors reject the promise. If the transport still fails after
+the retry, the SDK closes that reporter. Resolve the transport failure before opening a new source.
+There is no persistence or automatic replay across reporter, plugin, or daemon restarts.
+
+`close(): Promise<void>` removes that reporter's descriptors and timelines. It is idempotent,
+including after parent invalidation. New and queued reports reject after closure. Reload, disable,
+removal, process crash, and daemon shutdown remove that process's sources. Parent runtime closure,
+refresh, and archive also invalidate its reporters. Later writes cannot restore those rows.
+Native-provider history refresh does not delete plugin-owned rows.
+
+Removing reports does not kill, cancel, or archive an external worker. The external owner must stop
+its own processes and resources. Paseo does not manufacture a canceled worker status during cleanup.
+
 ## Surfaces and sidebar items
 
 Register a component, then point a sidebar item at its surface ID:

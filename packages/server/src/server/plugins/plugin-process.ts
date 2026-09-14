@@ -6,6 +6,7 @@ import {
 } from "./plugin-process-protocol.js";
 import { createRequire } from "node:module";
 import * as pluginSharedRuntime from "@getpaseo/plugin";
+import * as pluginServerRuntime from "@getpaseo/plugin/server";
 import * as pluginProviderRuntime from "@getpaseo/plugin/server/provider";
 import * as pluginAcpRuntime from "@getpaseo/plugin/server/acp";
 import type { SettingsDefinition, PluginRpcContract } from "@getpaseo/plugin";
@@ -20,6 +21,25 @@ import { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { createPluginDaemonTransportFactory } from "./daemon-transport.js";
 import { isPluginClientOnlySdkSpecifier } from "./plugin-sdk-specifiers.js";
 import { createPluginClientId } from "./plugin-session-identity.js";
+import { PluginSubagentClient } from "./subagents/client.js";
+
+const subagents = new PluginSubagentClient(
+  (request) =>
+    new Promise((resolve, reject) => {
+      if (!process.connected || !process.send) {
+        reject(new Error("Plugin IPC is closed"));
+        return;
+      }
+      process.send(request, (error: Error | null) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        resolve();
+      });
+    }),
+);
+process.on("disconnect", () => subagents.stop());
 
 import { PluginSettingsStore } from "./settings/index.js";
 let settingsStore: PluginSettingsStore | null = null;
@@ -213,7 +233,7 @@ function runtimeRequire(name: string): unknown {
     throw new Error(`${name} is available only in plugin client code`);
   }
   if (name === "@getpaseo/plugin") return pluginSharedRuntime;
-  if (name === "@getpaseo/plugin/server") return {};
+  if (name === "@getpaseo/plugin/server") return pluginServerRuntime;
   if (name === "@getpaseo/plugin/server/provider") return pluginProviderRuntime;
   if (name === "@getpaseo/plugin/server/acp") return pluginAcpRuntime;
   if (name === "@getpaseo/plugin/client/host")
@@ -232,6 +252,7 @@ function evaluateBundle(bundle: string): void {
     throw new Error("Plugin server bundle must default export a function");
   }
   const contributedCleanup = setup({
+    subagents: { open: subagents.open },
     handle: register,
     registerProvider,
     registerSettings,
@@ -282,6 +303,7 @@ async function initialize(message: Extract<PluginProcessRequest, { type: "initia
 async function shutdown(): Promise<void> {
   if (stopping) return;
   stopping = true;
+  subagents.stop();
   const releaseApi = paseo
     ?.dispose()
     .catch((error) => console.error("Plugin API cleanup failed", error));
@@ -322,6 +344,10 @@ process.on("message", (rawMessage: unknown) => {
     return;
   }
   const message = parsed.data;
+  if (message.type === "subagents.response") {
+    subagents.receive(message);
+    return;
+  }
   if (message.type === "initialize") {
     void initialize(message).catch(async (error) => {
       send({ type: "fatal", error: describeError(error) });
@@ -337,24 +363,7 @@ process.on("message", (rawMessage: unknown) => {
     return;
   }
   if (stopping) {
-    if (message.type === "provider.catalog_key") {
-      send({ type: "error", requestId: message.requestId, error: "Plugin is stopping" });
-    } else if (message.type === "provider.connect") {
-      send({
-        type: "provider.connect_failed",
-        connectionId: message.connectionId,
-        error: "Plugin is stopping",
-      });
-    } else if (message.type === "provider.send") {
-      send({
-        type: "provider.rejected",
-        connectionId: message.connectionId,
-        acceptanceId: message.acceptanceId,
-        error: "Plugin is stopping",
-      });
-    } else if (message.type === "provider.close") {
-      send({ type: "provider.closed", connectionId: message.connectionId });
-    }
+    rejectWhileStopping(message);
     return;
   }
   if (message.type === "provider.catalog_key") {
@@ -429,6 +438,27 @@ process.on("message", (rawMessage: unknown) => {
       (error) => send({ type: "error", requestId: message.requestId, error: describeError(error) }),
     );
 });
+
+function rejectWhileStopping(message: PluginProcessRequest): void {
+  if (message.type === "provider.catalog_key") {
+    send({ type: "error", requestId: message.requestId, error: "Plugin is stopping" });
+  } else if (message.type === "provider.connect") {
+    send({
+      type: "provider.connect_failed",
+      connectionId: message.connectionId,
+      error: "Plugin is stopping",
+    });
+  } else if (message.type === "provider.send") {
+    send({
+      type: "provider.rejected",
+      connectionId: message.connectionId,
+      acceptanceId: message.acceptanceId,
+      error: "Plugin is stopping",
+    });
+  } else if (message.type === "provider.close") {
+    send({ type: "provider.closed", connectionId: message.connectionId });
+  }
+}
 
 function handleHookMessage(
   message: Extract<PluginProcessRequest, { type: "hook" | "hook.cancel" }>,

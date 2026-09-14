@@ -294,6 +294,24 @@ Emit from the operation owner, not a client subscription. Provider history repla
 live hooks. Observers must not be awaited inside agent mutations: a callback can send a prompt or
 answer a permission through its own daemon session. Awaiting it there deadlocks that command.
 
+## Report externally owned subagents
+
+A server plugin can report child executions beneath an existing managed agent with
+`server.subagents.open({ parentAgentId })`. This does not register a provider or create managed
+agents. The [reporter reference](../public-docs/plugins/v0.8/reference.md#report-externally-owned-subagents)
+owns the event shapes, limits, and cleanup contract.
+
+The daemon owns reporting state. Each reporter has a private source in the provider-subagent store;
+native history refresh and native cancellation must select only native sources. Parent runtime
+closure invalidates reporters and removes their rows, without claiming that external workers stopped.
+Plugin stop and process failure do the same for that process's sources. Do not implement cleanup
+through client subscriptions or best-effort plugin lifecycle observers.
+
+The subprocess uses acknowledged private IPC, not a public WebSocket write RPC. Keep its modules
+compatible with Node's strip-only TypeScript loader; constructor parameter properties cannot run
+in the source subprocess. Report retries reuse their sequence and receipt; another `report()` call
+is a new event. The state is in memory and must be rebuilt by the external source after restart.
+
 ## Contribute a provider
 
 Register a provider from `index.server.ts`. The provider connection is callback-based and owns all
