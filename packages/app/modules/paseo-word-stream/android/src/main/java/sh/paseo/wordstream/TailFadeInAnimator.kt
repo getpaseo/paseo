@@ -18,7 +18,7 @@ import java.text.Bidi
  */
 internal class TailFadeInAnimator(
   textView: TextView,
-  private val currentTimeMillis: () -> Long = System::currentTimeMillis,
+  private val frameClock: WordFadeFrameClock,
 ) {
   private data class SpanRange(val span: FadeInSpan, val start: Int, val end: Int)
   private class ActiveFade(val spans: List<SpanRange>, val endsAt: Long)
@@ -30,7 +30,7 @@ internal class TailFadeInAnimator(
   private val frame = Choreographer.FrameCallback { tick() }
   private var buffer: Spannable? = null
   private var ranges: List<WordRange>? = null
-  val isIdle: Boolean get() = activeAnimations.isEmpty()
+  private val isIdle: Boolean get() = activeAnimations.isEmpty()
 
   fun receive(next: List<WordRange>) {
     val text = viewRef.get()?.text as? Spannable ?: return
@@ -41,7 +41,7 @@ internal class TailFadeInAnimator(
     // RN may copy CharacterStyles while replacing its read-only buffer.
     text.getSpans(0, text.length, FadeInSpan::class.java).forEach { text.removeSpan(it) }
     if (!ValueAnimator.areAnimatorsEnabled()) return
-    val now = currentTimeMillis()
+    val now = frameClock.currentTimeMillis()
     clock.now = now
     for (range in next) {
       if (range.start < 0 || range.end > text.length || range.end <= range.start) continue
@@ -84,7 +84,7 @@ internal class TailFadeInAnimator(
   private fun schedule() {
     if (scheduled) return
     scheduled = true
-    Choreographer.getInstance().postFrameCallback(frame)
+    frameClock.postFrameCallback(frame)
   }
 
   private fun tick() {
@@ -95,13 +95,13 @@ internal class TailFadeInAnimator(
       cancelAll()
       return
     }
-    paint(currentTimeMillis())
+    paint(frameClock.currentTimeMillis())
     view.invalidate()
     if (activeAnimations.isNotEmpty()) schedule()
   }
 
   /** Advance the shared clock, keep spans bound to the current text, and drop settled runs. */
-  fun paint(now: Long) {
+  private fun paint(now: Long) {
     clock.now = now
     val current = buffer ?: return
     for (fade in activeAnimations.toList()) {
@@ -120,7 +120,7 @@ internal class TailFadeInAnimator(
     ranges = null
     activeAnimations.toList().forEach { cleanup(it, current) }
     if (scheduled) {
-      Choreographer.getInstance().removeFrameCallback(frame)
+      frameClock.removeFrameCallback(frame)
       scheduled = false
     }
   }

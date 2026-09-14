@@ -78,7 +78,7 @@ tests in the module check pixels, append/replacement behavior, and cleanup.
 - **Smoothness (user-perceived):** `packages/app/e2e/browser/agent-stream-smoothness.spec.ts`, gated behind `PASEO_AGENT_STREAM_PERF_E2E=1`. Drives the mock provider's `bursty-stream` model and reports coefficient of variation of characters painted per frame (smoothness) plus p95 gap between visible updates (stalls). Both numbers are needed: a stalled stream is perfectly smooth.
 - **Reproducing bursty arrival:** the `bursty-stream` model in `mock-load-test-agent.ts` emits uneven runs of tokens separated by idle gaps. Burst sizes come from a seeded generator, so a run repeats exactly.
 - **Rate policy in isolation:** `packages/app/src/word-stream/internal/model.test.ts` checks the shared word scheduler without a renderer.
-- **Fade behavior:** `word-stream-fade.spec.ts` checks web direction, layout stability, selection, and tail cleanup. Native tests in `modules/paseo-word-stream` check actual text attributes and animation completion on Android and iOS.
+- **Fade behavior:** `word-stream-fade.spec.ts` checks web direction, layout stability, selection, and tail cleanup. Native tests in `modules/paseo-word-stream` drive the host view React mounts with the same range props the bridge sends, advance frame time through the host's injected frame clock, and check rendered pixels and animation completion on Android and iOS.
 
 Historical character-reveal baseline (2026-08, Expo web against a local dev daemon, real Claude Haiku agent, ~8.5s samples during active streaming). The paint-on-arrival column disabled the former reveal horizon:
 

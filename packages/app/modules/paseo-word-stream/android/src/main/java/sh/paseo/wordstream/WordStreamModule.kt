@@ -28,7 +28,10 @@ class WordStreamModule : Module() {
 }
 
 /** Fabric owns child layout and commits the text and ranges before pre-draw. */
-class WordFadeHost(context: Context) : ViewGroup(context) {
+class WordFadeHost @JvmOverloads constructor(
+  context: Context,
+  private val frameClock: WordFadeFrameClock = AndroidWordFadeFrameClock,
+) : ViewGroup(context) {
   override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {}
 
   private var animator: TailFadeInAnimator? = null
@@ -48,7 +51,7 @@ class WordFadeHost(context: Context) : ViewGroup(context) {
     super.onViewAdded(child)
     require(child is TextView) { "WordFadeHost requires a single root TextView" }
     require(childCount == 1) { "WordFadeHost requires a single child" }
-    animator = TailFadeInAnimator(child)
+    animator = TailFadeInAnimator(child, frameClock)
     applyRanges()
   }
 
