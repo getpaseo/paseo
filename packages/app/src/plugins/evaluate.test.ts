@@ -514,6 +514,26 @@ describe("evaluatePluginClientBundle", () => {
     expect(plugin.surfaces.map((surface) => surface.id)).toEqual(["main"]);
   });
 
+  it("provides SvgXml through @getpaseo/plugin/client/react-native", () => {
+    const plugin = evaluatePluginClientBundle(
+      "example",
+      `(function(require) {
+        const { SvgXml } = require("@getpaseo/plugin/client/react-native");
+        const module = { exports: {} };
+        module.exports.default = function(plugin) {
+          if (typeof SvgXml !== "function" && typeof SvgXml !== "object") {
+            throw new Error("SvgXml is not provided");
+          }
+          plugin.addSurface("main", function Surface() { return null; });
+          return function() {};
+        };
+        return module.exports;
+      })`,
+    );
+
+    expect(plugin.surfaces.map((surface) => surface.id)).toEqual(["main"]);
+  });
+
   it("keeps shared and client runtime exports separate", () => {
     expect(() =>
       evaluatePluginClientBundle(
