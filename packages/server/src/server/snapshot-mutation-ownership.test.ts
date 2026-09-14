@@ -1,6 +1,6 @@
 import {
-  createRequestReceiptsStub,
-  createCreationServiceStub,
+  createMessageReceiptsStub,
+  createTestCreationService,
 } from "./test-utils/session-stubs.js";
 import os from "node:os";
 import path from "node:path";
@@ -103,8 +103,8 @@ describe("snapshot mutation ownership boundary", () => {
 
     const session = asInternals<SessionInternals>(
       new Session({
-        requestReceipts: createRequestReceiptsStub(),
-        creationService: createCreationServiceStub(),
+        messageReceipts: createMessageReceiptsStub(),
+        creationService: createTestCreationService(),
         clientId: "test-client",
         permissions: OWNER_PERMISSIONS,
         onMessage,

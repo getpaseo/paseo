@@ -797,6 +797,11 @@ interface WorkspaceDraftSubmissionConfig {
   target: WorkspaceTabTarget;
 }
 
+interface WorkspaceCreationResult {
+  workspace: ReturnType<typeof normalizeWorkspaceDescriptor>;
+  agent?: AgentSnapshotPayload;
+}
+
 async function createMultiplicityWorkspace(input: {
   idempotencyKey: string;
   worktreeSlug: string;
@@ -808,7 +813,6 @@ async function createMultiplicityWorkspace(input: {
   withInitialAgent: boolean;
   agent?: CreateWorkspaceRequestOptions["agent"];
   onEvent?: (snapshot: CreationSnapshot) => void;
-  onAgentCreated?: (agent: AgentSnapshotPayload) => void;
   prompt: string;
   attachments: AgentAttachment[];
   mergeWorkspaces: (
@@ -817,7 +821,7 @@ async function createMultiplicityWorkspace(input: {
   ) => void;
   serverId: string;
   createFailedMessage: string;
-}): Promise<ReturnType<typeof normalizeWorkspaceDescriptor>> {
+}): Promise<WorkspaceCreationResult> {
   const projectId = getHostProjectId(input.project, input.serverId);
   if (!projectId) throw new Error("Project is not available on the selected host");
   const isWorktree = input.isolation === "worktree";
@@ -847,13 +851,12 @@ async function createMultiplicityWorkspace(input: {
   if (payload.error || !payload.workspace) {
     throw new Error(payload.error ?? input.createFailedMessage);
   }
-  if (payload.agent) input.onAgentCreated?.(payload.agent);
   const normalizedWorkspace = normalizeWorkspaceDescriptor(payload.workspace);
   const workspaceForInitialMerge = input.withInitialAgent
     ? { ...normalizedWorkspace, status: "running" as const, statusEnteredAt: new Date() }
     : normalizedWorkspace;
   input.mergeWorkspaces(input.serverId, [workspaceForInitialMerge]);
-  return normalizedWorkspace;
+  return { workspace: normalizedWorkspace, agent: payload.agent };
 }
 
 interface CreateChatAgentInput {
@@ -867,8 +870,7 @@ interface CreateChatAgentInput {
     withInitialAgent: boolean;
     agent?: CreateWorkspaceRequestOptions["agent"];
     onEvent?: (snapshot: CreationSnapshot) => void;
-    onAgentCreated?: (agent: AgentSnapshotPayload) => void;
-  }) => Promise<ReturnType<typeof normalizeWorkspaceDescriptor>>;
+  }) => Promise<WorkspaceCreationResult>;
   serverId: string;
   draftKey: string;
   clearDraft: (lifecycle: "sent" | "abandoned") => void;
@@ -965,14 +967,6 @@ async function createWorkspaceChatAgent(input: CreateChatAgentInput): Promise<Su
     format: attachmentSubmitFormat,
   });
   const images = await encodeImages(wirePayload.images);
-  let resolveAgent!: (agent: AgentSnapshotPayload) => void;
-  let rejectAgent!: (error: unknown) => void;
-  const result = new Promise<AgentSnapshotPayload>((resolve, reject) => {
-    resolveAgent = resolve;
-    rejectAgent = reject;
-  });
-  // The destination may mount after creation finishes or fails.
-  void result.catch(() => undefined);
   let navigated = false;
   let outcome: SubmitOutcome = "background";
   const initialAgent: NonNullable<CreateWorkspaceRequestOptions["agent"]> = {
@@ -990,16 +984,12 @@ async function createWorkspaceChatAgent(input: CreateChatAgentInput): Promise<Su
     attachments: wirePayload.attachments?.length ? wirePayload.attachments : undefined,
   };
   const execute = async (requestedAgent = initialAgent): Promise<AgentSnapshotPayload> => {
-    let createdAgent: AgentSnapshotPayload | undefined;
-    await ensureWorkspace({
+    const { agent } = await ensureWorkspace({
       cwd,
       prompt: text,
       attachments: workspaceNamingAttachments,
       withInitialAgent: true,
       agent: requestedAgent,
-      onAgentCreated: (agent) => {
-        createdAgent = agent;
-      },
       onEvent: (snapshot) => {
         if (!snapshot.workspace || navigated) return;
         navigated = true;
@@ -1035,11 +1025,11 @@ async function createWorkspaceChatAgent(input: CreateChatAgentInput): Promise<Su
         });
       },
     });
-    if (!createdAgent) throw new Error("Workspace creation returned no agent");
-    return createdAgent;
+    if (!agent) throw new Error("Workspace creation returned no agent");
+    return agent;
   };
   const agentCreation = {
-    result,
+    result: Promise.resolve().then(() => execute()),
     retry: (request: CreateAgentRequestOptions) =>
       execute({
         ...initialAgent,
@@ -1050,14 +1040,9 @@ async function createWorkspaceChatAgent(input: CreateChatAgentInput): Promise<Su
         attachments: request.attachments,
       }),
   };
-  try {
-    resolveAgent(await execute());
-    if (outcome === "background") clearConsumedDraft();
-    return outcome;
-  } catch (error) {
-    rejectAgent(error);
-    throw error;
-  }
+  await agentCreation.result;
+  if (outcome === "background") clearConsumedDraft();
+  return outcome;
 }
 
 function buildComposerConfig(input: {
@@ -1681,9 +1666,9 @@ export function NewWorkspaceScreen({
     worktreeSlug: createNameId(),
   }));
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [createdWorkspace, setCreatedWorkspace] = useState<ReturnType<
-    typeof normalizeWorkspaceDescriptor
-  > | null>(null);
+  const [creationResult, setCreationResult] = useState<
+    WorkspaceCreationResult | { workspace: null }
+  >({ workspace: null });
   const [pendingAction, setPendingAction] = useState<"chat" | "empty" | "terminal" | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [projectPickerOpen, setProjectPickerOpen] = useState(false);
@@ -1740,7 +1725,7 @@ export function NewWorkspaceScreen({
     return () => clearTimeout(timer);
   }, [pickerSearchQuery]);
 
-  const workspace = createdWorkspace;
+  const { workspace } = creationResult;
   const client = useHostRuntimeClient(selectedServerId);
   const isConnected = useHostRuntimeIsConnected(selectedServerId);
   const {
@@ -2049,10 +2034,9 @@ export function NewWorkspaceScreen({
       withInitialAgent: boolean;
       agent?: CreateWorkspaceRequestOptions["agent"];
       onEvent?: (snapshot: CreationSnapshot) => void;
-      onAgentCreated?: (agent: AgentSnapshotPayload) => void;
     }) => {
-      if (createdWorkspace) {
-        return createdWorkspace;
+      if (creationResult.workspace) {
+        return creationResult;
       }
       if (!selectedProject) {
         throw new Error("Choose a project");
@@ -2088,17 +2072,16 @@ export function NewWorkspaceScreen({
         attachments: input.attachments,
         agent: input.agent,
         onEvent: input.onEvent,
-        onAgentCreated: input.onAgentCreated,
         mergeWorkspaces,
         serverId: selectedServerId,
         createFailedMessage: t("newWorkspace.errors.createWorktreeFailed"),
       });
-      setCreatedWorkspace(normalizedWorkspace);
+      setCreationResult(normalizedWorkspace);
       return normalizedWorkspace;
     },
     [
       creationIdentity,
-      createdWorkspace,
+      creationResult,
       effectiveIsolation,
       mergeWorkspaces,
       queryClient,
@@ -2123,7 +2106,7 @@ export function NewWorkspaceScreen({
           let outcome: SubmitOutcome = "background";
           await runCreateEmptyWorkspace({
             payload,
-            ensureWorkspace,
+            ensureWorkspace: async (request) => (await ensureWorkspace(request)).workspace,
             serverId: selectedServerId,
             navigate: (targetServerId, workspaceId) => {
               if (!isStillOnCreateScreen()) {
@@ -2200,7 +2183,7 @@ export function NewWorkspaceScreen({
         prompt: terminalPromptText,
         profile: selectedTerminalProfile,
         profileName: selectedTerminalProfile?.name,
-        ensureWorkspace,
+        ensureWorkspace: async (request) => (await ensureWorkspace(request)).workspace,
         createTerminal: async (input) => {
           const connectedClient = withConnectedClient();
           const createdTerminal = await connectedClient.createTerminal(

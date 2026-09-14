@@ -1,5 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { vi } from "vitest";
+import { afterEach, vi } from "vitest";
+import { rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { CreationService } from "../creation/index.js";
 
 import { getAgentProviderDefinition } from "@getpaseo/protocol/provider-manifest";
 
@@ -281,18 +285,9 @@ export function createProviderSnapshotManagerStub(): {
   };
 }
 
-export function createRequestReceiptsStub(): SessionOptions["requestReceipts"] {
+export function createMessageReceiptsStub(): SessionOptions["messageReceipts"] {
   return {
-    async createAgent(input) {
-      const agentId = randomUUID();
-      await input.create(agentId);
-      return agentId;
-    },
-    async createWorkspace(input) {
-      await input.create(input.workspaceId);
-      return input.workspaceId;
-    },
-    sendMessage: (input) => input.send(),
+    send: (input) => input.send(),
   };
 }
 
@@ -309,13 +304,16 @@ export function createProviderSnapshot(
   };
 }
 
-export function createCreationServiceStub(): SessionOptions["creationService"] {
-  return {
-    create: async () => {
-      throw new Error("Unexpected creation in legacy session fixture");
-    },
-    subscribe: async () => {
-      throw new Error("Unexpected creation subscription in legacy session fixture");
-    },
-  };
+const creationDirectories: string[] = [];
+afterEach(async () => {
+  await Promise.all(
+    creationDirectories
+      .splice(0)
+      .map((directory) => rm(directory, { recursive: true, force: true })),
+  );
+});
+export function createTestCreationService(): SessionOptions["creationService"] {
+  const directory = join(tmpdir(), `session-creation-${randomUUID()}`);
+  creationDirectories.push(directory);
+  return new CreationService(directory);
 }

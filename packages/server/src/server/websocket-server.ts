@@ -1,7 +1,7 @@
 import { stat } from "node:fs/promises";
 import type { CreationSnapshot } from "@getpaseo/protocol/messages";
 import { CreationService } from "./creation/index.js";
-import { RequestReceipts } from "./request-receipts/index.js";
+import { MessageReceipts } from "./message-receipts/index.js";
 import { WebSocket, WebSocketServer } from "ws";
 import type { IncomingMessage, Server as HTTPServer } from "http";
 import { join } from "path";
@@ -532,7 +532,7 @@ export class VoiceAssistantWebSocketServer {
   private readonly daemonRuntimeConfig: DaemonRuntimeConfig | undefined;
   private readonly agentManager: AgentManager;
   private readonly agentStorage: AgentStorage;
-  private readonly requestReceipts: RequestReceipts;
+  private readonly messageReceipts: MessageReceipts;
   private readonly creationService: CreationService;
   private readonly projectRegistry: ProjectRegistry;
   private readonly workspaceRegistry: WorkspaceRegistry;
@@ -672,9 +672,11 @@ export class VoiceAssistantWebSocketServer {
     this.orchestrationSkills = orchestrationSkills;
     this.agentManager = agentManager;
     this.agentStorage = agentStorage;
-    this.requestReceipts = new RequestReceipts(join(paseoHome, "agent-requests"));
-    this.creationService = new CreationService(join(paseoHome, "creations"), (snapshot) =>
-      this.validateCompletedCreation(snapshot),
+    this.messageReceipts = new MessageReceipts(join(paseoHome, "agent-requests"));
+    this.creationService = new CreationService(
+      join(paseoHome, "creations"),
+      (snapshot) => this.validateCompletedCreation(snapshot),
+      join(paseoHome, "agent-requests"),
     );
     this.projectRegistry = projectRegistry ?? createNoopProjectRegistry();
     this.workspaceRegistry = workspaceRegistry ?? createNoopWorkspaceRegistry();
@@ -1451,7 +1453,7 @@ export class VoiceAssistantWebSocketServer {
       worktreesRoot: this.worktreesRoot,
       agentManager: this.agentManager,
       agentStorage: this.agentStorage,
-      requestReceipts: this.requestReceipts,
+      messageReceipts: this.messageReceipts,
       creationService: this.creationService,
       projectRegistry: this.projectRegistry,
       workspaceRegistry: this.workspaceRegistry,

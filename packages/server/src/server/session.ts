@@ -5,7 +5,7 @@ import { relative } from "node:path";
 import { isAbsolute } from "node:path";
 import { CreationService } from "./creation/index.js";
 import type { CreationSnapshot, AgentCreateRequest } from "@getpaseo/protocol/messages";
-import type { RequestReceipts } from "./request-receipts/index.js";
+import type { MessageReceipts } from "./message-receipts/index.js";
 import equal from "fast-deep-equal";
 import { SessionDelivery, type OwnedSubscription } from "./session/owned-subscriptions/index.js";
 import { v4 as uuidv4 } from "uuid";
@@ -151,7 +151,6 @@ import {
   checkoutLiteFromGitSnapshot,
   checkoutFromPersistedWorkspacePlacement,
   deriveWorkspaceDisplayName,
-  generateWorkspaceId,
 } from "./workspace-registry-model.js";
 import { resolveWorkspaceIdForPath } from "./resolve-workspace-id-for-path.js";
 import {
@@ -206,7 +205,6 @@ import {
 } from "./session/git-mutation/git-mutation-service.js";
 import {
   createWorkspaceProvisioningService,
-  WorkspaceProvisioningError,
   type WorkspaceProvisioningService,
 } from "./session/workspace-provisioning/workspace-provisioning-service.js";
 import {
@@ -463,7 +461,7 @@ export interface SessionOptions {
   worktreesRoot?: string;
   agentManager: AgentManager;
   agentStorage: AgentStorage;
-  requestReceipts: Pick<RequestReceipts, "createAgent" | "createWorkspace" | "sendMessage">;
+  messageReceipts: Pick<MessageReceipts, "send">;
   creationService: Pick<CreationService, "create" | "subscribe">;
   projectRegistry: ProjectRegistry;
   workspaceRegistry: WorkspaceRegistry;
@@ -796,10 +794,7 @@ export class Session {
   private readonly daemonSession: DaemonSession;
   private readonly hubExecutionController: HubExecutionController | null;
   private readonly workspaceScripts: WorkspaceScriptsService;
-  private readonly requestReceipts: Pick<
-    RequestReceipts,
-    "createAgent" | "createWorkspace" | "sendMessage"
-  >;
+  private readonly messageReceipts: Pick<MessageReceipts, "send">;
   private readonly createAgentLifecycleDispatch: CreateAgentLifecycleDispatch;
   private readonly creationService: Pick<CreationService, "create" | "subscribe">;
 
@@ -875,7 +870,7 @@ export class Session {
     this.onWorkspaceRecovered = onWorkspaceRecovered ?? null;
     this.pushNotifications = pushNotifications;
     this.paseoHome = paseoHome;
-    this.requestReceipts = options.requestReceipts;
+    this.messageReceipts = options.messageReceipts;
     this.creationService = options.creationService;
     this.projectIcons = new ProjectIconReader(paseoHome);
     this.worktreesRoot = worktreesRoot;
@@ -2667,9 +2662,7 @@ export class Session {
       case "creation.subscribe.request":
         return this.handleCreationSubscription(msg, source);
       case "workspace.create.request":
-        if (msg.subscribe || msg.agent || msg.workspaceId)
-          return this.handleWorkspaceCreation(msg, source);
-        return undefined;
+        return this.handleWorkspaceCreation(msg, source);
       default:
         return undefined;
     }
@@ -2872,8 +2865,6 @@ export class Session {
         return this.handleArchiveWorkspaceRequest(msg);
       case "project.remove.request":
         return this.handleProjectRemoveRequest(msg);
-      case "workspace.create.request":
-        return this.handleWorkspaceCreateRequest(msg);
       case "workspace.title.set.request":
         return this.handleWorkspaceTitleSetRequest(msg.workspaceId, msg.title, msg.requestId);
       case "workspace.pin.set.request":
@@ -3923,8 +3914,43 @@ export class Session {
       ? (await this.workspaceRegistry.get(id)) !== null
       : this.agentManager.getAgent(id) != null || (await this.agentStorage.get(id)) !== null;
 
+  private createRequestedAgent(
+    request: AgentCreateRequest,
+    observer?: (snapshot: CreationSnapshot) => void,
+  ): Promise<CreationSnapshot> {
+    const { requestId, type: _type, subscribe: _subscribe, idempotencyKey, ...intent } = request;
+    return this.creationService.create(
+      {
+        kind: "agent",
+        key: idempotencyKey ?? requestId,
+        request: intent,
+        workspaceId: request.workspaceId,
+        agentId: request.agentId,
+        hasAgent: true,
+        hasPrompt: hasInitialCreationPrompt(request),
+        exists: this.creationResourceExists,
+        readAgent: async (id) => {
+          const record = await this.agentStorage.get(id);
+          return record ? this.buildStoredAgentPayload(record) : null;
+        },
+        createAgent: async (id, _workspace, onReady) => {
+          try {
+            return await this.createSessionAgent(
+              { ...request, type: "create_agent_request" },
+              id,
+              onReady,
+            );
+          } catch (error) {
+            throw new WorktreeRequestError(toWorktreeWireError(error));
+          }
+        },
+      },
+      observer,
+    );
+  }
+
   private async handleAgentCreation(request: AgentCreateRequest, source?: object): Promise<void> {
-    const { requestId, subscribe, type: _type, idempotencyKey, ...intent } = request;
+    const { requestId, subscribe } = request;
     const progress = subscribe
       ? this.delivery.operation(
           (message) =>
@@ -3933,19 +3959,8 @@ export class Session {
         )
       : undefined;
     try {
-      const creation = await this.creationService.create(
-        {
-          kind: "agent",
-          key: idempotencyKey ?? requestId,
-          request: intent,
-          workspaceId: request.workspaceId,
-          agentId: request.agentId,
-          hasAgent: true,
-          hasPrompt: hasInitialCreationPrompt(request),
-          exists: this.creationResourceExists,
-          createAgent: (id, _workspace, onReady) =>
-            this.createSessionAgent({ ...request, type: "create_agent_request" }, id, onReady),
-        },
+      const creation = await this.createRequestedAgent(
+        request,
         progress ? (snapshot) => progress.emit(this.creationUpdate(snapshot)) : undefined,
       );
       this.emitForSource(
@@ -4100,18 +4115,13 @@ export class Session {
         if (msg.initialPrompt !== undefined) {
           throw new Error("Idempotent creation requires sending the initial prompt separately");
         }
-        const { requestId: _requestId, idempotencyKey, ...request } = msg;
-        const id = await this.requestReceipts.createAgent({
-          key: idempotencyKey,
-          request,
-          findAgent: async (agentId) =>
-            this.agentManager.getAgent(agentId) != null ||
-            (await this.agentStorage.get(agentId)) !== null,
-          create: async (agentId) => {
-            await this.createSessionAgent(msg, agentId);
-          },
-        });
-        const record = await this.agentStorage.get(id);
+        const creation = await this.createRequestedAgent({ ...msg, type: "agent.create.request" });
+        if (creation.error || !creation.agent)
+          throw new SessionRequestError(
+            creation.errorCode ?? "unknown",
+            creation.error ?? "Agent creation failed",
+          );
+        const record = await this.agentStorage.get(creation.agent.id);
         if (!record) throw new Error("Previously created agent no longer exists");
         agent = this.buildStoredAgentPayload(record);
       } else {
@@ -4127,7 +4137,7 @@ export class Session {
         },
       });
     } catch (error) {
-      const wireError = toWorktreeWireError(error);
+      const wireError = error instanceof SessionRequestError ? error : toWorktreeWireError(error);
       this.sessionLogger.error({ err: error }, "Failed to create agent");
       this.emit({
         type: "status",
@@ -6622,78 +6632,6 @@ export class Session {
     }
   }
 
-  private async handleWorkspaceCreateRequest(
-    request: Extract<SessionInboundMessage, { type: "workspace.create.request" }>,
-  ): Promise<void> {
-    try {
-      let descriptor: WorkspaceDescriptorPayload | undefined;
-      if (request.idempotencyKey !== undefined) {
-        const { requestId: _requestId, idempotencyKey, ...payload } = request;
-        const workspaceId = await this.requestReceipts.createWorkspace({
-          key: idempotencyKey,
-          request: payload,
-          workspaceId: generateWorkspaceId(),
-          findWorkspace: async (id) => (await this.workspaceRegistry.get(id)) !== null,
-          create: async (id) => {
-            descriptor = await this.createRequestedWorkspace(request, id);
-          },
-        });
-        if (!descriptor) {
-          const workspace = await this.workspaceRegistry.get(workspaceId);
-          if (!workspace) throw new Error("Previously created workspace no longer exists");
-          if (!(await this.filesystem.isDirectory(workspace.cwd))) {
-            throw new SessionRequestError(
-              "directory_not_found",
-              `Directory not found: ${workspace.cwd}`,
-            );
-          }
-          await this.syncWorkspaceGitObserverForWorkspace(workspace);
-          descriptor = await this.describeWorkspaceRecordWithGitData(workspace);
-          await this.emitCreatedWorkspaceUpdate(descriptor);
-        }
-      } else {
-        descriptor = await this.createRequestedWorkspace(request);
-      }
-      const workspace = await this.workspaceRegistry.get(descriptor.id);
-      this.emit({
-        type: "workspace.create.response",
-        payload: {
-          requestId: request.requestId,
-          workspace: descriptor,
-          setupTerminalId: null,
-          ...(workspace?.untrustedSource
-            ? {
-                setupSkippedReason: formatWorkspaceAutomationBlockedMessage(
-                  workspace.untrustedSource,
-                ),
-              }
-            : {}),
-          error: null,
-        },
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Failed to create workspace";
-      this.sessionLogger.error(
-        { err: error, sourceKind: request.source.kind, requestId: request.requestId },
-        "Failed to create workspace",
-      );
-      const errorCode =
-        error instanceof WorkspaceProvisioningError || error instanceof SessionRequestError
-          ? error.code
-          : undefined;
-      this.emit({
-        type: "workspace.create.response",
-        payload: {
-          requestId: request.requestId,
-          workspace: null,
-          setupTerminalId: null,
-          error: message,
-          errorCode,
-        },
-      });
-    }
-  }
-
   private async createRequestedWorkspace(
     request: Extract<SessionInboundMessage, { type: "workspace.create.request" }>,
     workspaceId?: string,
@@ -8198,7 +8136,7 @@ export class Session {
         }
       };
       if (msg.messageId) {
-        await this.requestReceipts.sendMessage({
+        await this.messageReceipts.send({
           agentId,
           messageId: msg.messageId,
           request: { prompt, activeTurnBehavior: msg.activeTurnBehavior ?? "interrupt" },

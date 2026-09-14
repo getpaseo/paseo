@@ -1,3 +1,7 @@
+import { execFileSync } from "node:child_process";
+import type { z } from "zod";
+import { WebSocket } from "ws";
+import { SessionInboundMessageSchema, WSOutboundMessageSchema } from "@getpaseo/protocol/messages";
 import { randomUUID } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -117,6 +121,165 @@ test("creation progresses before agent readiness and continues after the disconn
     unsubscribe();
     await client.close();
     await observer.close();
+    await daemon.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+}, 60000);
+
+async function connectCreationPeer(port: number) {
+  const socket = new WebSocket(`ws://127.0.0.1:${port}/ws`);
+  const frames: SessionOutboundMessage[] = [];
+  socket.on("message", (data) => {
+    const frame = WSOutboundMessageSchema.parse(JSON.parse(data.toString()));
+    if (frame.type === "session") frames.push(frame.message);
+  });
+  await new Promise<void>((resolve, reject) => {
+    socket.once("open", resolve);
+    socket.once("error", reject);
+  });
+  socket.send(
+    JSON.stringify({
+      type: "hello",
+      clientType: "browser",
+      clientId: randomUUID(),
+      protocolVersion: 1,
+      appVersion: "0.8.0",
+    }),
+  );
+  await expect
+    .poll(() => frames.some((m) => m.type === "status" && m.payload.status === "server_info"))
+    .toBe(true);
+  return {
+    close: () => socket.close(),
+    request: async (
+      message: z.input<typeof SessionInboundMessageSchema> & { requestId: string },
+    ) => {
+      socket.send(JSON.stringify({ type: "session", message }));
+      const response = () =>
+        frames.find(
+          (m) =>
+            "payload" in m && "requestId" in m.payload && m.payload.requestId === message.requestId,
+        );
+      await expect.poll(response).toBeDefined();
+      return response()!;
+    },
+  };
+}
+
+test.each([false, true])(
+  "workspace identity does not depend on subscribing (first subscribe=%s)",
+  async (subscribe) => {
+    const directory = await mkdtemp(join(tmpdir(), "creation-identity-"));
+    const daemon = await createTestPaseoDaemon();
+    const peer = await connectCreationPeer(daemon.port);
+    try {
+      const request = {
+        type: "workspace.create.request" as const,
+        source: { kind: "directory" as const, path: directory },
+        idempotencyKey: "same-workspace",
+      };
+      const first = await peer.request({ ...request, requestId: "first", subscribe });
+      const replay = await peer.request({ ...request, requestId: "replay", subscribe: !subscribe });
+      if (first.type !== "workspace.create.response" || replay.type !== "workspace.create.response")
+        throw new Error("Expected workspace responses");
+      expect(first.payload.error).toBeNull();
+      expect(replay.payload.error).toBeNull();
+      expect(replay.payload.workspace?.id).toBe(first.payload.workspace?.id);
+    } finally {
+      peer.close();
+      await daemon.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+  60000,
+);
+
+test.each(["create_agent_request", "agent.create.request"] as const)(
+  "legacy and modern agent RPCs share one creation identity (first %s)",
+  async (type) => {
+    const directory = await mkdtemp(join(tmpdir(), "creation-agent-identity-"));
+    let creations = 0;
+    const daemon = await createTestPaseoDaemon({
+      agentClients: createTestAgentClients({
+        beforeCreateSession: async () => {
+          creations++;
+        },
+      }),
+    });
+    const peer = await connectCreationPeer(daemon.port);
+    try {
+      const request = {
+        config: { provider: "codex", cwd: directory },
+        idempotencyKey: "same-agent",
+      };
+      const first = await peer.request({ ...request, type, requestId: "first" });
+      const replay = await peer.request({
+        ...request,
+        type: type === "agent.create.request" ? "create_agent_request" : "agent.create.request",
+        requestId: "replay",
+      });
+      const createdAgent = (message: SessionOutboundMessage) => {
+        if (message.type === "agent.create.response") {
+          expect(message.payload.error).toBeNull();
+          return message.payload.agent;
+        }
+        if (message.type === "status" && message.payload.status === "agent_created")
+          return message.payload.agent;
+        throw new Error(`Unexpected creation result ${JSON.stringify(message)}`);
+      };
+      expect(createdAgent(replay)?.id).toBe(createdAgent(first)?.id);
+      const agentId = createdAgent(first)!.id;
+      await daemon.daemon.agentManager.setTitle(agentId, "Updated after creation");
+      await daemon.daemon.agentManager.flush();
+      const legacyReplay = await peer.request({
+        ...request,
+        type: "create_agent_request",
+        requestId: "legacy-after-update",
+      });
+      expect(createdAgent(legacyReplay)?.title).toBe("Updated after creation");
+      expect(creations).toBe(1);
+    } finally {
+      peer.close();
+      await daemon.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+  60000,
+);
+
+test("legacy keyed creation preserves checkout error codes", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "creation-checkout-error-"));
+  execFileSync("git", ["init", "-b", "main", directory], { stdio: "pipe" });
+  execFileSync(
+    "git",
+    [
+      "-c",
+      "user.name=Test",
+      "-c",
+      "user.email=test@example.com",
+      "commit",
+      "--allow-empty",
+      "-m",
+      "initial",
+    ],
+    { cwd: directory, stdio: "pipe" },
+  );
+  const daemon = await createTestPaseoDaemon({ agentClients: createTestAgentClients() });
+  const peer = await connectCreationPeer(daemon.port);
+  try {
+    const result = await peer.request({
+      type: "create_agent_request",
+      requestId: "missing-branch",
+      idempotencyKey: "missing-branch",
+      config: { provider: "codex", cwd: directory },
+      worktree: { mode: "checkout-branch", branch: "does-not-exist" },
+    });
+    expect(result).toMatchObject({
+      type: "status",
+      payload: { status: "agent_create_failed", errorCode: "unknown_branch" },
+    });
+  } finally {
+    peer.close();
     await daemon.close();
     await rm(directory, { recursive: true, force: true });
   }

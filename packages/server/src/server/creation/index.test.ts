@@ -1,4 +1,5 @@
-import { cp, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { cp, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, test } from "vitest";
@@ -249,3 +250,44 @@ test("partial provisioning without a registered workspace is not repeated", asyn
   expect(await new CreationService(f.directory).create(f.input)).toEqual(result);
   expect(provisions).toBe(1);
 });
+
+test.each(["pending", "completed"])(
+  "imports a %s legacy agent receipt without creating another agent",
+  async (state) => {
+    const f = await fixture();
+    const legacyDirectory = join(f.directory, "legacy");
+    await mkdir(legacyDirectory);
+    const request = { config: { cwd: "/project", provider: "codex" } };
+    const hash = (value: unknown) =>
+      createHash("sha256").update(JSON.stringify(value)).digest("hex");
+    await writeFile(
+      join(legacyDirectory, `${hash(["create", "old-key"])}.json`),
+      JSON.stringify({
+        fingerprint: hash({ ...request, type: "create_agent_request" }),
+        state,
+        agentId: agent.id,
+      }),
+    );
+    const input: CreationInput = {
+      kind: "agent",
+      key: "old-key",
+      request,
+      hasAgent: true,
+      hasPrompt: false,
+      exists: async () => true,
+      readAgent: async () => agent,
+      createAgent: async () => {
+        throw new Error("Must not create again");
+      },
+    };
+    const service = new CreationService(f.directory, undefined, legacyDirectory);
+    await expect(
+      service.create({ ...input, request: { config: { ...request.config, cwd: "/changed" } } }),
+    ).rejects.toThrow("agent_request_key_conflict");
+    expect(await service.create(input)).toMatchObject({ phase: "completed", agent });
+    expect(await new CreationService(f.directory).create(input)).toMatchObject({
+      phase: "completed",
+      agent,
+    });
+  },
+);

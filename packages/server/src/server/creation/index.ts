@@ -12,10 +12,9 @@ import { writeJsonFileAtomic } from "../atomic-file.js";
 import { generateWorkspaceId } from "../workspace-registry-model.js";
 
 type Observer = (snapshot: CreationSnapshot) => void;
-export interface CreationInput {
-  kind: "workspace" | "agent";
+interface CreationRequest {
   key: string;
-  request: unknown;
+  request: { [key: string]: unknown };
   workspaceId?: string;
   agentId?: string;
   hasAgent: boolean;
@@ -30,6 +29,11 @@ export interface CreationInput {
     onReady: (agent: AgentSnapshotPayload) => Promise<void>,
   ) => Promise<AgentSnapshotPayload>;
 }
+export type CreationInput = CreationRequest &
+  (
+    | { kind: "workspace" }
+    | { kind: "agent"; readAgent: (id: string) => Promise<AgentSnapshotPayload | null> }
+  );
 const RecordSchema = z.object({
   fingerprint: z.string(),
   snapshot: CreationSnapshotSchema,
@@ -47,14 +51,16 @@ export class CreationService {
     private readonly validateCompleted: (
       snapshot: CreationSnapshot,
     ) => Promise<void> = async () => {},
+    private readonly legacyDirectory?: string,
   ) {}
 
   async create(input: CreationInput, observer?: Observer): Promise<CreationSnapshot> {
     const identity = identityFor(input.kind, input.key);
     const admitted = this.admission.then(async () => {
       await mkdir(this.directory, { recursive: true });
-      let record = await this.read(identity);
       const fingerprint = digest(input.request);
+      let record = await this.read(identity);
+      if (!record) record = await this.readLegacyAgent(input, fingerprint);
       if (record && record.fingerprint !== fingerprint)
         throw new Error(`${input.kind}_request_key_conflict`);
       const running = this.active.get(identity);
@@ -202,6 +208,39 @@ export class CreationService {
       });
     }
     return record.snapshot;
+  }
+
+  // COMPAT(agentRequestReceipts): added in v0.8.0, remove after 2027-03-11 once old creation receipts can expire.
+  // Import the previous receipt format; it is never a second execution path.
+  private async readLegacyAgent(input: CreationInput, fingerprint: string): Promise<Record | null> {
+    if (input.kind !== "agent" || !this.legacyDirectory) return null;
+    const text = await readOptional(
+      join(this.legacyDirectory, `${digest(["create", input.key])}.json`),
+    );
+    if (text === null) return null;
+    const receipt = z
+      .object({
+        fingerprint: z.string(),
+        state: z.enum(["pending", "completed"]),
+        agentId: z.string(),
+      })
+      .parse(JSON.parse(text));
+    if (receipt.fingerprint !== digest({ type: "create_agent_request", ...input.request }))
+      throw new Error("agent_request_key_conflict");
+    const agent = await input.readAgent(receipt.agentId);
+    if (!agent && receipt.state === "completed")
+      throw new Error("Previously created agent no longer exists");
+    const record = initialRecord({ ...input, agentId: receipt.agentId }, fingerprint);
+    record.snapshot = {
+      ...record.snapshot,
+      phase: agent ? "completed" : "failed",
+      agent: agent ?? undefined,
+      workspaceId: agent?.workspaceId ?? record.snapshot.workspaceId,
+      error: agent ? null : "agent_request_outcome_unknown",
+      ...(agent ? {} : { failedStage: "agent", outcomeUnknown: true }),
+    };
+    await this.write(identityFor(input.kind, input.key), record);
+    return record;
   }
 
   private async claimResources(

@@ -327,8 +327,11 @@ the app keeps its existing disk-ready navigation and observes the remaining crea
 Callbacks do not advance the workflow. Resource reservations in acknowledgement are
 identities, not ready workspace records.
 
-The creation journal (`server/creation/`) keeps cumulative milestones and permanent IDs
-under an operation kind and idempotency key. Reconnect subscribes to that key; retries
+The creation journal (`server/creation/`) owns identity and execution for both legacy and
+modern creation RPCs. Requesting progress never selects a different journal. Existing
+agent receipts are imported at this boundary; message delivery receipts remain separate.
+It keeps cumulative milestones and permanent IDs under an operation kind and idempotency
+key. Reconnect subscribes to that key; retries
 join active work or reuse committed stages. A persisted resource alone cannot prove
 that a provider accepted its initial prompt. Interrupted side effects with no conclusive
 receipt return an unknown outcome instead of being repeated.
