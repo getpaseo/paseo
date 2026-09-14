@@ -1,3 +1,4 @@
+import { EventEmitter } from "node:events";
 import { mkdir, mkdtemp, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
@@ -10,6 +11,9 @@ import {
   type FileObserverOptions,
   type FileObserverSubscription,
 } from "./index.js";
+
+import { createNativeRecursiveBackend } from "./internal/native-recursive.js";
+import { createObserverPaths } from "./internal/paths.js";
 
 const roots = new Set<string>();
 const observers = new Set<FileObserver>();
@@ -212,52 +216,41 @@ test("observes a thousand concurrent writes and remains healthy after delete and
   const root = await createRoot();
   const directories = Array.from({ length: 20 }, (_, index) => join(root, `dir-${index}`));
   await Promise.all(directories.map((directory) => mkdir(directory)));
-  const observed = new Map<string, Set<FileChange["type"]>>();
-  const observer = createObserver();
-  const subscription = await observer.subscribe(root, (error, events) => {
-    expect(error).toBeNull();
-    for (const event of events) {
-      const types = observed.get(event.path) ?? new Set();
-      types.add(event.type);
-      observed.set(event.path, types);
-    }
-  });
   const paths = Array.from({ length: 1_000 }, (_, index) =>
     join(directories[index % directories.length], `file-${index}.txt`),
   );
-
   const populatedDirectory = join(root, "populated", "nested");
-  await mkdir(populatedDirectory, { recursive: true });
   const populatedPaths = Array.from({ length: 200 }, (_, index) =>
     join(populatedDirectory, `nested-${index}.txt`),
   );
+  const removedPaths = paths.slice(0, 100);
+  const sentinel = join(directories[15], "still-observed.txt");
+  const population = expectFileChanges(populatedPaths);
+  const writes = expectFileChanges(paths);
+  const deletions = expectFileChanges(removedPaths, "delete");
+  const recovery = expectFileChanges([sentinel]);
+  const subscription = await subscribeToFileChanges(root, (error, events) => {
+    expect(error).toBeNull();
+    for (const event of events) {
+      population.record(event);
+      writes.record(event);
+      deletions.record(event);
+      recovery.record(event);
+    }
+  });
+
+  await mkdir(populatedDirectory, { recursive: true });
   await Promise.all(populatedPaths.map((path, index) => writeFile(path, `${index}`)));
-  await expect
-    .poll(() => populatedPaths.filter((path) => !observed.has(path)), { timeout: 10_000 })
-    .toEqual([]);
+  await population.complete;
 
   await Promise.all(paths.map((path, index) => writeFile(path, `${index}`)));
-  await expect
-    .poll(() => paths.filter((path) => !observed.has(path)), { timeout: 60_000 })
-    .toEqual([]);
+  await writes.complete;
 
-  // Native notifications arrive before reconciliation finishes. Drain that work
-  // so pending creates cannot coalesce with this test's separate deletion phase.
-  await expect
-    .poll(() => observer.getDiagnostics(), { timeout: 10_000 })
-    .toMatchObject({
-      pendingEventCount: 0,
-      pendingReconciliationWorkCount: 0,
-      reconciliationInFlightCount: 0,
-    });
-
-  const removedPaths = paths.slice(0, 100);
+  // A native watcher may recover coalesced paths through its safety audit.
+  // Completion comes from the delivered deletions, not an idle diagnostic or
+  // a deadline shorter than that recovery cycle.
   await Promise.all(removedPaths.map((path) => rm(path)));
-  await expect
-    .poll(() => removedPaths.filter((path) => !observed.get(path)?.has("delete")), {
-      timeout: 10_000,
-    })
-    .toEqual([]);
+  await deletions.complete;
 
   for (let index = 0; index < 10; index += 1) {
     const from = directories[index];
@@ -265,11 +258,81 @@ test("observes a thousand concurrent writes and remains healthy after delete and
     await rename(from, to);
     await rm(to, { recursive: true, force: true });
   }
-  const sentinel = join(directories[15], "still-observed.txt");
   await writeFile(sentinel, "alive");
-  await expect.poll(() => observed.has(sentinel)).toBe(true);
+  await recovery.complete;
   await subscription.unsubscribe();
 }, 90_000);
+
+test("burst completion waits for coalesced deletions recovered by the native safety audit", async () => {
+  const root = await createRoot();
+  const directories = Array.from({ length: 20 }, (_, i) => join(root, `dir-${i}`));
+  await Promise.all(directories.map((path) => mkdir(path)));
+  const files = Array.from({ length: 1_000 }, (_, i) => join(directories[i % 20], `file-${i}.txt`));
+  await Promise.all(files.map((path) => writeFile(path, "before")));
+  const removed = files.slice(0, 100);
+  const pending = new Set(removed);
+  const firstDirectory = expectFileChanges(
+    removed.filter((_, i) => i % 20 === 0),
+    "delete",
+  );
+  const deletions = expectFileChanges(removed, "delete");
+  let completed = false;
+  void deletions.complete.then(() => {
+    completed = true;
+    return undefined;
+  });
+  const notifications = new EventEmitter();
+  const paths = createObserverPaths(process.platform);
+  const observer = createObserver();
+  let active = true;
+  const backend = createNativeRecursiveBackend(
+    {
+      root,
+      metrics: observer.getDiagnostics(),
+      isActive: () => active,
+      isIgnored: () => false,
+      isPathInside: paths.isInside,
+      queueEvent: (type, path) => {
+        firstDirectory.record({ type, path });
+        deletions.record({ type, path });
+        if (type === "delete") pending.delete(path);
+      },
+      fail: (error) => {
+        throw error;
+      },
+    },
+    paths,
+    (_root, listener) => {
+      notifications.on("change", listener);
+      return {
+        close: () => notifications.removeAllListeners(),
+        on: (event, onError) => notifications.on(event, onError),
+      };
+    },
+  );
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
+  try {
+    await backend.start();
+    await Promise.all(removed.map((path) => rm(path)));
+    // Deliver the surviving named notifications; the rest were coalesced.
+    for (const path of removed.filter((_, i) => i % 20 === 0))
+      notifications.emit("change", "change", path);
+    await vi.advanceTimersByTimeAsync(10_000);
+    await firstDirectory.complete;
+    expect(pending.size).toBe(95);
+    expect(completed).toBe(false);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(backend.getDiagnostics().reconciliationInFlight).toBe(false);
+    // Drive the safety-audit deadline and its bounded reconciliation debounce.
+    await vi.advanceTimersByTimeAsync(25_000);
+    await deletions.complete;
+    expect([...pending]).toEqual([]);
+  } finally {
+    active = false;
+    await backend.close();
+    vi.useRealTimers();
+  }
+});
 
 test("unsubscribe cancels reconciliation queued by a write burst", async () => {
   const root = await createRoot();
@@ -370,4 +433,17 @@ async function createRoot(): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "paseo-file-observer-"));
   roots.add(root);
   return root;
+}
+
+function expectFileChanges(paths: string[], type?: FileChange["type"]) {
+  const pending = new Set(paths);
+  const { promise: complete, resolve } = Promise.withResolvers<void>();
+  return {
+    complete,
+    record(event: FileChange) {
+      if (type && event.type !== type) return;
+      pending.delete(event.path);
+      if (pending.size === 0) resolve();
+    },
+  };
 }
