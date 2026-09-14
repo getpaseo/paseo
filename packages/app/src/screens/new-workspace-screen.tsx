@@ -12,6 +12,8 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, Folder, FolderPlus, GitBranch, GitPullRequest } from "lucide-react-native";
 import { Composer } from "@/composer";
 import { KeyboardTranslateView } from "@/components/keyboard-translate-view";
+import { ComposerViewport, ComposerViewportContent } from "@/composer/viewport";
+import { ScrollView } from "@/components/ui/scroll-view";
 import { FileDropZone } from "@/components/file-drop/file-drop-zone";
 import {
   resolveComposerAttachmentSubmitFormat,
@@ -745,7 +747,7 @@ function getContentStyle(input: { isCompact: boolean; insetBottom: number }) {
   if (input.isCompact) {
     return [styles.content, styles.contentCompact, { paddingBottom: input.insetBottom }];
   }
-  return [styles.content, styles.contentCentered];
+  return [styles.content, styles.contentCentered, { paddingBottom: input.insetBottom }];
 }
 
 function normalizeBranchDetails(
@@ -2282,9 +2284,13 @@ export function NewWorkspaceScreen({
     ],
   );
 
+  const contentBottomInset = useMemo(
+    () => (isCompact ? insets.bottom : HEADER_INNER_HEIGHT + theme.spacing[6]),
+    [isCompact, insets.bottom, theme.spacing],
+  );
   const contentStyle = useMemo(
-    () => getContentStyle({ isCompact, insetBottom: insets.bottom }),
-    [isCompact, insets.bottom],
+    () => getContentStyle({ isCompact, insetBottom: contentBottomInset }),
+    [isCompact, contentBottomInset],
   );
 
   const agentControlsWithDisabled = useMemo(
@@ -2370,84 +2376,96 @@ export function NewWorkspaceScreen({
   return (
     <FileDropZone style={styles.container}>
       <ScreenHeader left={screenHeaderLeft} borderless />
-      <View style={contentStyle}>
+      <ComposerViewport style={contentStyle} bottomInset={contentBottomInset} centered={!isCompact}>
         <TitlebarDragRegion />
         <KeyboardTranslateView style={animatedStaticStyles.centered}>
-          <View style={styles.composerTitleContainer}>
-            <Text style={styles.composerTitle}>{t("newWorkspace.title")}</Text>
-          </View>
-          {formStack}
-          {isTerminalLaunch ? (
-            <Composer
-              key="terminal"
-              externalKeyboardShift
-              inputMode="terminal"
-              readOnly={!terminalTakesPrompt}
-              placeholder={terminalPlaceholder}
-              submitLabel={terminalSubmitLabel}
-              agentId={draftKey}
-              serverId={selectedServerId}
-              isPaneFocused={true}
-              onSubmitMessage={handleSubmitTerminalLaunch}
-              allowEmptySubmit={true}
-              submitButtonAccessibilityLabel={t("newWorkspace.launch.submit")}
-              submitButtonTestID="new-workspace-launch-submit"
-              isSubmitLoading={isPending}
-              submitBehavior="preserve-and-lock"
-              blurOnSubmit={true}
-              value={terminalComposerValue}
-              onChangeText={setTerminalPromptText}
-              textReplacement={terminalTextReplacement}
-              attachments={NO_TERMINAL_ATTACHMENTS}
-              onChangeAttachments={noopChangeAttachments}
-              cwd={selectedSourceDirectory ?? ""}
-              clearDraft={noopClearDraft}
-              autoFocus={terminalTakesPrompt}
-              autoFocusKey={launchFocusKey}
-            />
-          ) : (
-            <Composer
-              key="chat"
-              externalKeyboardShift
-              agentId={draftKey}
-              serverId={selectedServerId}
-              isPaneFocused={true}
-              onSubmitMessage={handleSubmitNewWorkspace}
-              allowEmptySubmit={true}
-              submitButtonAccessibilityLabel={t("newWorkspace.create")}
-              submitButtonTestID="workspace-create-submit"
-              submitIcon="return"
-              isSubmitLoading={isPending}
-              waitForForgeAutoAttachOnSubmit
-              submitBehavior="preserve-and-lock"
-              blurOnSubmit={true}
-              value={chatDraft.text}
-              onChangeText={chatDraft.editText}
-              textReplacement={chatDraft.textReplacement}
-              attachments={chatDraft.attachments}
-              attachmentScopeKeys={visibleDraftContextScopeKeys}
-              onChangeAttachments={chatDraft.setAttachments}
-              onForgeChangeRequestDetected={handleForgeChangeRequestDetected}
-              onForgeChangeRequestAutoAttach={handleForgeChangeRequestAutoAttach}
-              cwd={selectedSourceDirectory ?? ""}
-              clearDraft={handleClearDraft}
-              autoFocus
-              autoFocusKey={launchFocusKey}
-              commandDraftConfig={composerState?.commandDraftConfig}
-              agentControls={agentControlsWithDisabled}
-            />
-          )}
-          {errorMessage ? <Text style={styles.errorText}>{errorMessage}</Text> : null}
+          <ComposerViewportContent style={animatedStaticStyles.form}>
+            <ScrollView style={animatedStaticStyles.setup} keyboardShouldPersistTaps="handled">
+              <View style={styles.composerTitleContainer}>
+                <Text style={styles.composerTitle}>{t("newWorkspace.title")}</Text>
+              </View>
+              {formStack}
+            </ScrollView>
+            {isTerminalLaunch ? (
+              <Composer
+                key="terminal"
+                externalKeyboardShift
+                inputMode="terminal"
+                readOnly={!terminalTakesPrompt}
+                placeholder={terminalPlaceholder}
+                submitLabel={terminalSubmitLabel}
+                agentId={draftKey}
+                serverId={selectedServerId}
+                isPaneFocused={true}
+                onSubmitMessage={handleSubmitTerminalLaunch}
+                allowEmptySubmit={true}
+                submitButtonAccessibilityLabel={t("newWorkspace.launch.submit")}
+                submitButtonTestID="new-workspace-launch-submit"
+                isSubmitLoading={isPending}
+                submitBehavior="preserve-and-lock"
+                blurOnSubmit={true}
+                value={terminalComposerValue}
+                onChangeText={setTerminalPromptText}
+                textReplacement={terminalTextReplacement}
+                attachments={NO_TERMINAL_ATTACHMENTS}
+                onChangeAttachments={noopChangeAttachments}
+                cwd={selectedSourceDirectory ?? ""}
+                clearDraft={noopClearDraft}
+                autoFocus={terminalTakesPrompt}
+                autoFocusKey={launchFocusKey}
+              />
+            ) : (
+              <Composer
+                key="chat"
+                externalKeyboardShift
+                agentId={draftKey}
+                serverId={selectedServerId}
+                isPaneFocused={true}
+                onSubmitMessage={handleSubmitNewWorkspace}
+                allowEmptySubmit={true}
+                submitButtonAccessibilityLabel={t("newWorkspace.create")}
+                submitButtonTestID="workspace-create-submit"
+                submitIcon="return"
+                isSubmitLoading={isPending}
+                waitForForgeAutoAttachOnSubmit
+                submitBehavior="preserve-and-lock"
+                blurOnSubmit={true}
+                value={chatDraft.text}
+                onChangeText={chatDraft.editText}
+                textReplacement={chatDraft.textReplacement}
+                attachments={chatDraft.attachments}
+                attachmentScopeKeys={visibleDraftContextScopeKeys}
+                onChangeAttachments={chatDraft.setAttachments}
+                onForgeChangeRequestDetected={handleForgeChangeRequestDetected}
+                onForgeChangeRequestAutoAttach={handleForgeChangeRequestAutoAttach}
+                cwd={selectedSourceDirectory ?? ""}
+                clearDraft={handleClearDraft}
+                autoFocus
+                autoFocusKey={launchFocusKey}
+                commandDraftConfig={composerState?.commandDraftConfig}
+                agentControls={agentControlsWithDisabled}
+              />
+            )}
+            {errorMessage ? <Text style={styles.errorText}>{errorMessage}</Text> : null}
+          </ComposerViewportContent>
         </KeyboardTranslateView>
-      </View>
+      </ComposerViewport>
     </FileDropZone>
   );
 }
 
 const animatedStaticStyles = RNStyleSheet.create({
   centered: {
+    flexShrink: 1,
     width: "100%",
     maxWidth: MAX_CONTENT_WIDTH,
+  },
+  form: {
+    flexShrink: 1,
+  },
+  setup: {
+    flexGrow: 0,
+    flexShrink: 1,
   },
 });
 
@@ -2464,7 +2482,6 @@ const styles = StyleSheet.create((theme) => ({
   },
   contentCentered: {
     justifyContent: "center",
-    paddingBottom: HEADER_INNER_HEIGHT + theme.spacing[6],
   },
   contentCompact: {
     justifyContent: "flex-end",

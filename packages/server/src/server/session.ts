@@ -119,12 +119,6 @@ import {
 } from "./agent/timeline-append.js";
 import { assertPluginTimelineDataSize } from "./agent/agent-timeline-content.js";
 import { parsePluginClientId } from "./plugins/plugin-session-identity.js";
-import {
-  projectTimelineRows,
-  selectProjectedTimelinePage,
-  type TimelineProjectionEntry,
-  type TimelineProjectionMode,
-} from "./agent/timeline-projection.js";
 import { buildAgentForkContextAttachment } from "./agent/activity-curator.js";
 import { buildAgentPrompt } from "./agent/prompt-attachments.js";
 import type { StructuredGenerationDaemonConfig } from "./agent/structured-generation-providers.js";
@@ -592,15 +586,6 @@ function sessionRequestId(message: SessionInboundMessage): string | null {
     return message.payload.requestId;
   }
   return null;
-}
-
-interface AgentTimelineProjectionSelection {
-  timeline: AgentTimelineFetchResult;
-  entries: TimelineProjectionEntry[];
-  startSeq: number | null;
-  endSeq: number | null;
-  hasOlder: boolean;
-  hasNewer: boolean;
 }
 
 type RegistryTransition = "created" | "unarchived" | "existing";
@@ -1798,6 +1783,17 @@ export class Session {
     }
   }
 
+  private supportsSubagentTimelineItem(
+    item: AgentTimelineFetchResult["rows"][number]["item"],
+    source?: object,
+  ): boolean {
+    // COMPAT(projectedSubagentTimeline): added after v0.8.0, remove gate after 2027-03-14.
+    const supportsProjection = source
+      ? this.supportsForSource(CLIENT_CAPS.projectedSubagentTimeline, source)
+      : this.supports(CLIENT_CAPS.projectedSubagentTimeline);
+    return supportsProjection && this.supportsTimelineItem(item, source);
+  }
+
   private forwardProviderSubagentUpdate(
     update: Extract<AgentManagerEvent, { type: "provider_subagent" }>["event"],
   ): void {
@@ -1837,7 +1833,7 @@ export class Session {
       if (!subscription.events.has("agent.provider_subagents.update")) continue;
       if (
         update.type === "timeline" &&
-        !this.supportsTimelineItem(update.row.item, subscription.owner.source)
+        !this.supportsSubagentTimelineItem(update.row.item, subscription.owner.source)
       )
         continue;
       subscription.owner.emit(message);
@@ -1846,7 +1842,7 @@ export class Session {
     if (this.clientSources.size === 0 || !this.onMessageToSource) {
       if (
         this.supports(CLIENT_CAPS.providerSubagents) &&
-        (update.type !== "timeline" || this.supportsTimelineItem(update.row.item))
+        (update.type !== "timeline" || this.supportsSubagentTimelineItem(update.row.item))
       ) {
         this.emit(message);
       }
@@ -1859,7 +1855,7 @@ export class Session {
         !capabilities.has(CLIENT_CAPS.providerSubagents)
       )
         continue;
-      if (update.type === "timeline" && !this.supportsTimelineItem(update.row.item, source))
+      if (update.type === "timeline" && !this.supportsSubagentTimelineItem(update.row.item, source))
         continue;
       this.onMessageToSource(source, message);
     }
@@ -7390,105 +7386,12 @@ export class Session {
     });
   }
 
-  private shouldUseFullTimelineForProjectedPage(input: {
-    timeline: AgentTimelineFetchResult;
-    pageLimit: number;
-  }): boolean {
-    const { timeline } = input;
-    if (timeline.rows.length === 0) return false;
-
-    if (timeline.rows.some((row) => row.item.type === "tool_call")) return true;
-
-    const firstRow = timeline.rows[0];
-    if (
-      timeline.hasOlder &&
-      (firstRow?.item.type === "assistant_message" || firstRow?.item.type === "reasoning")
-    ) {
-      return true;
-    }
-
-    const lastRow = timeline.rows.at(-1);
-    if (
-      timeline.hasNewer &&
-      (lastRow?.item.type === "assistant_message" || lastRow?.item.type === "reasoning")
-    ) {
-      return true;
-    }
-
-    if (!timeline.hasNewer || input.pageLimit === 0) return false;
-    return projectTimelineRows({ rows: timeline.rows, mode: "projected" }).length < input.pageLimit;
-  }
-
-  private selectCanonicalTimelineProjection(input: {
-    timeline: AgentTimelineFetchResult;
-  }): AgentTimelineProjectionSelection {
-    const entries = projectTimelineRows({ rows: input.timeline.rows, mode: "canonical" });
-    return {
-      timeline: input.timeline,
-      entries,
-      startSeq: entries[0]?.seqStart ?? null,
-      endSeq: entries[entries.length - 1]?.seqEnd ?? null,
-      hasOlder: input.timeline.hasOlder,
-      hasNewer: input.timeline.hasNewer,
-    };
-  }
-
-  private selectProjectedTimelineProjection(input: {
-    agentId: string;
-    controlTimeline: AgentTimelineFetchResult;
-    direction: AgentTimelineFetchDirection;
-    cursor?: AgentTimelineCursor;
-    pageLimit: number;
-    fullTimeline?: AgentTimelineFetchResult;
-  }): AgentTimelineProjectionSelection {
-    const selectedTimeline = this.shouldUseFullTimelineForProjectedPage({
-      timeline: input.controlTimeline,
-      pageLimit: input.pageLimit,
-    })
-      ? (input.fullTimeline ??
-        this.agentManager.fetchTimeline(input.agentId, { direction: "tail", limit: 0 }))
-      : input.controlTimeline;
-    const page = selectProjectedTimelinePage({
-      rows: selectedTimeline.rows,
-      bounds: selectedTimeline.window,
-      direction: input.controlTimeline.reset ? "tail" : input.direction,
-      ...(input.cursor ? { cursorSeq: input.cursor.seq } : {}),
-      limit: input.pageLimit,
-    });
-
-    return {
-      timeline: selectedTimeline,
-      entries: page.entries,
-      startSeq: page.startSeq,
-      endSeq: page.endSeq,
-      hasOlder:
-        page.hasOlder || (page.startSeq !== null && page.startSeq > selectedTimeline.window.minSeq),
-      hasNewer: page.hasNewer,
-    };
-  }
-
-  private selectTimelineProjection(input: {
-    agentId: string;
-    projection: TimelineProjectionMode;
-    controlTimeline: AgentTimelineFetchResult;
-    direction: AgentTimelineFetchDirection;
-    cursor?: AgentTimelineCursor;
-    pageLimit: number;
-    fullTimeline?: AgentTimelineFetchResult;
-  }): AgentTimelineProjectionSelection {
-    if (input.projection === "canonical") {
-      return this.selectCanonicalTimelineProjection({ timeline: input.controlTimeline });
-    }
-
-    return this.selectProjectedTimelineProjection(input);
-  }
-
   private async handleFetchAgentTimelineRequest(
     msg: Extract<SessionInboundMessage, { type: "fetch_agent_timeline_request" }>,
     source?: object,
   ): Promise<void> {
     const direction: AgentTimelineFetchDirection = msg.direction ?? (msg.cursor ? "after" : "tail");
-    const projection: TimelineProjectionMode = msg.projection ?? "projected";
+    const projection = "projected" as const;
     const requestedLimit = msg.limit;
     const pageLimit = requestedLimit ?? (direction === "after" ? 0 : 200);
     const cursor: AgentTimelineCursor | undefined = msg.cursor
@@ -7511,14 +7414,14 @@ export class Session {
         cursor,
         limit: pageLimit,
       });
-      const selectedTimeline = this.selectTimelineProjection({
-        agentId: msg.agentId,
-        projection,
-        controlTimeline: fetchedControlTimeline,
-        direction,
-        ...(cursor ? { cursor } : {}),
-        pageLimit,
-      });
+      const selectedTimeline = {
+        timeline: fetchedControlTimeline,
+        entries: fetchedControlTimeline.rows,
+        startSeq: fetchedControlTimeline.startSeq,
+        endSeq: fetchedControlTimeline.endSeq,
+        hasOlder: fetchedControlTimeline.hasOlder,
+        hasNewer: fetchedControlTimeline.hasNewer,
+      };
       const startCursor =
         selectedTimeline.startSeq !== null
           ? { epoch: selectedTimeline.timeline.epoch, seq: selectedTimeline.startSeq }
@@ -7719,6 +7622,10 @@ export class Session {
       if (!descriptor) {
         throw new Error("Provider subagent not found");
       }
+      // COMPAT(projectedSubagentTimeline): added after v0.8.0, remove after 2027-03-14.
+      const supportsProjection = source
+        ? this.supportsForSource(CLIENT_CAPS.projectedSubagentTimeline, source)
+        : this.supports(CLIENT_CAPS.projectedSubagentTimeline);
       const timeline = this.agentManager.fetchProviderSubagentTimeline(
         msg.parentAgentId,
         msg.subagentId,
@@ -7739,17 +7646,36 @@ export class Session {
             provider: descriptor.provider,
             direction,
             epoch: timeline.epoch,
+            projection: "projected",
+            startCursor:
+              timeline.startSeq === null ? null : { epoch: timeline.epoch, seq: timeline.startSeq },
+            endCursor:
+              timeline.endSeq === null ? null : { epoch: timeline.epoch, seq: timeline.endSeq },
             reset: timeline.reset,
             staleCursor: timeline.staleCursor,
             gap: timeline.gap,
             window: timeline.window,
-            hasOlder: timeline.hasOlder,
-            hasNewer: timeline.hasNewer,
-            rows: rows.map((row) => ({
-              item: row.item,
-              timestamp: row.timestamp,
-              seq: row.seq,
-            })),
+            hasOlder: supportsProjection && timeline.hasOlder,
+            hasNewer: supportsProjection && timeline.hasNewer,
+            rows: supportsProjection
+              ? rows.map((row) => ({
+                  item: row.item,
+                  timestamp: row.timestamp,
+                  seq: row.seqEnd,
+                  seqStart: row.seqStart,
+                  seqEnd: row.seqEnd,
+                  sourceSeqRanges: row.sourceSeqRanges,
+                }))
+              : [
+                  {
+                    seq: timeline.window.maxSeq,
+                    timestamp: new Date().toISOString(),
+                    item: {
+                      type: "assistant_message",
+                      text: "Please upgrade the Paseo app to view this subagent conversation.",
+                    },
+                  },
+                ],
             error: null,
           },
         },

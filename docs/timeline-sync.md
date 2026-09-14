@@ -5,8 +5,10 @@ Agent chat delivery has two paths:
 1. **Live stream** — `agent_stream` WebSocket messages for immediacy. These may be delta-shaped lifecycle updates.
 2. **Authoritative history** — `fetch_agent_timeline_request` for correctness. This always returns full projected timeline items, never lifecycle deltas.
 
-The daemon keeps canonical rows only for its runtime. Provider history is the durable transcript
-authority and repopulates those rows when an agent resumes.
+The daemon retains projected items in memory. Each source event advances the stream sequence,
+then replaces the previous tool state or merges into the current text item. Intermediate payloads
+are never retained for history or catch-up. Provider history is the durable transcript authority
+and rebuilds the projection when an agent resumes.
 
 The invariants are:
 
@@ -67,7 +69,10 @@ Provider message IDs are not guaranteed for every displayed item. Paseo-generate
 
 Actions that address a point in chat history, such as Fork, use the daemon timeline `epoch` plus the projected item's `seqEnd`. The app carries that position on the rendered assistant item for both live and fetched history. When adjacent projected chunks merge, the merged item retains the newer chunk's position.
 
-The daemon validates that the epoch is current and the exact source sequence still exists before slicing rows. It slices before projection so later lifecycle updates cannot leak into the selected context.
+The daemon validates the epoch and locates the projected item at the selected position. A fork
+includes projected items through that checkpoint. If an item spans the checkpoint and changed
+afterward, the daemon refuses that fork with an actionable error: discarded historical payloads
+cannot be reconstructed from sequence metadata. Forking the current context remains available.
 
 ## Resume behavior
 
@@ -92,6 +97,20 @@ A plan approval keeps the original proposal's tool-call identity through resolut
 history replay. The pending approval UI can hide that tool from presentation, but the client model
 must retain its position. Creating a new history card on rejection places it after the prompt that
 rejected it; changing steer-event ordering would also put new assistant output before that prompt.
+
+## Provider child history
+
+Child transcripts use the same projected-page reconciliation as the main conversation. The client
+retains rendered items and sequence cursors, never a second cache of source events. Pagination
+uses the projected display anchor; live updates advance the source cursor without moving tools.
+
+Clients advertising `projected_subagent_timeline` receive child streams and projected fetches.
+Updated clients require `features.projectedSubagentTimeline` for child history; older hosts show
+an update-host notice for that pane.
+Older clients retain child names/status and receive an upgrade message when opening a child
+conversation. This gate affects only the child transcript; it does not gate the connection,
+main conversation, or current-context forks. A legacy `canonical` root request still receives
+projected items.
 
 ## Client replica lifetime
 

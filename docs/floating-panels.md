@@ -154,6 +154,17 @@ layout. Preserve the translated dock's history scroll range with a far-end
 content inset on the inverted stream list. Update that inset only when keyboard
 motion settles; never drive it per frame.
 
+The translated dock's height is not the composer's available height. Bound the
+composer against the stationary space below the header through
+`composer/viewport`, including its controls and attachments. Reserve the
+keyboard destination at move start and release space at move end on the UI
+thread. Waiting for a settled JS update lets a long draft disappear behind the
+header during opening. This is a boundary-time layout change, not an animated
+layout prop. Keep the input's native intrinsic sizing and internal scrolling.
+New workspace also needs its setup fields to scroll when the form exceeds this
+space. The Android regression must check both the header and IME boundaries;
+checking only the bottom controls allowed this regression through previously.
+
 Move the stream and composer together through `KeyboardDock`. Do not translate
 them independently.
 

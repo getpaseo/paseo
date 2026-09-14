@@ -3579,6 +3579,8 @@ export const ServerInfoStatusPayloadSchema = z
         agentForkContextCursor: z.boolean().optional(),
         // COMPAT(providerSubagents): added in v0.1.107, remove gate after 2027-01-12.
         providerSubagents: z.boolean().optional(),
+        // COMPAT(projectedSubagentTimeline): added after v0.8.0, remove gates after 2027-03-14; retain wire field.
+        projectedSubagentTimeline: z.boolean().optional(),
         // COMPAT(providerSubagentNesting): added in v0.7, remove gate after 2027-03-04.
         providerSubagentNesting: z.boolean().optional(),
         // COMPAT(workspacePinning): added in v0.1.107, remove gate after 2027-01-12.
@@ -4608,6 +4610,9 @@ export const ProviderSubagentTimelineResponseMessageSchema = z.object({
     provider: AgentProviderSchema.nullable(),
     direction: z.enum(["tail", "before", "after"]),
     epoch: z.string(),
+    projection: z.literal("projected").optional(),
+    startCursor: AgentTimelineCursorSchema.nullable().optional(),
+    endCursor: AgentTimelineCursorSchema.nullable().optional(),
     reset: z.boolean(),
     staleCursor: z.boolean(),
     gap: z.boolean(),
@@ -4623,6 +4628,16 @@ export const ProviderSubagentTimelineResponseMessageSchema = z.object({
         item: AgentTimelineItemPayloadSchema,
         timestamp: z.string(),
         seq: z.number().int().nonnegative(),
+        seqStart: z.number().int().nonnegative().optional(),
+        seqEnd: z.number().int().nonnegative().optional(),
+        sourceSeqRanges: z
+          .array(
+            z.object({
+              startSeq: z.number().int().nonnegative(),
+              endSeq: z.number().int().nonnegative(),
+            }),
+          )
+          .optional(),
       }),
     ),
     error: z.string().nullable(),

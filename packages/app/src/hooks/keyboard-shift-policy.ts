@@ -1,5 +1,15 @@
 export const DEFAULT_IOS_KEYBOARD_INSET_MIN_HEIGHT = 120;
 
+/** Reserve both endpoints during motion so content cannot grow into a closing IME. */
+export function reserveKeyboardLayoutShift(input: {
+  current: number;
+  target: number;
+  phase: "start" | "end";
+}): number {
+  "worklet";
+  return input.phase === "start" ? Math.max(input.current, input.target) : input.target;
+}
+
 export function resolveStreamKeyboardInset(input: {
   platform: "android" | "ios";
   settledShift: number;
