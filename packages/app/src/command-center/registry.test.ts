@@ -53,7 +53,7 @@ describe("Command Center registry", () => {
     expect(registry.getSnapshot().contributions).toEqual([]);
   });
 
-  it("orders independently of registration order and rejects duplicate active ids", () => {
+  it("orders independently of registration order and skips duplicate active ids", () => {
     const registry = createCommandCenterRegistry();
     registry.replace({ owner: owner("later"), contributions: [action("z", 2)] });
     registry.replace({ owner: owner("earlier"), contributions: [action("a", 1)] });
@@ -63,11 +63,14 @@ describe("Command Center registry", () => {
     ]);
 
     const duplicateOwner = owner("duplicate");
-    expect(() =>
-      registry.replace({
-        owner: duplicateOwner,
-        contributions: [action("same", 0), action("same", 1)],
-      }),
-    ).toThrow("Duplicate Command Center contribution id: duplicate:same");
+    registry.replace({
+      owner: duplicateOwner,
+      contributions: [action("same", 0), action("same", 1)],
+    });
+    const duplicates = registry
+      .getSnapshot()
+      .contributions.filter((item) => item.id === "duplicate:same");
+    expect(duplicates).toHaveLength(1);
+    expect(duplicates[0].rank).toBe(0);
   });
 });

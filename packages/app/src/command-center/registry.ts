@@ -82,12 +82,6 @@ export function createCommandCenterRegistry(): CommandCenterRegistry {
       ) {
         return;
       }
-      const ids = new Set<string>();
-      for (const contribution of registration.contributions) {
-        const id = contributionId(registration.owner.sourceId, contribution.id);
-        if (ids.has(id)) { console.warn(`[CommandCenter] Skipping duplicate contribution id: ${id}`); continue; }
-        ids.add(id);
-      }
       registrations.set(registration.owner.sourceId, registration);
       publish();
     },
