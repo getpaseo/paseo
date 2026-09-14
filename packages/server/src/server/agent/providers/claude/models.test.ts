@@ -201,6 +201,7 @@ describe("ClaudeAgentClient.fetchCatalog", () => {
       env: {
         ANTHROPIC_MODEL: "openrouter/anthropic/claude-sonnet-4.5",
         ANTHROPIC_SMALL_FAST_MODEL: "ollama/qwen3-coder",
+        ANTHROPIC_DEFAULT_FABLE_MODEL: "claude-fable-5-1[1M]",
         ANTHROPIC_DEFAULT_OPUS_MODEL: "bedrock-opus-from-env",
         ANTHROPIC_DEFAULT_SONNET_MODEL: "glm-5.1",
         ANTHROPIC_DEFAULT_HAIKU_MODEL: "glm-5",
@@ -237,6 +238,12 @@ describe("ClaudeAgentClient.fetchCatalog", () => {
       },
       {
         provider: "claude",
+        id: "claude-fable-5-1[1M]",
+        label: "claude-fable-5-1[1M]",
+        description: "From Claude settings.json env.ANTHROPIC_DEFAULT_FABLE_MODEL",
+      },
+      {
+        provider: "claude",
         id: "bedrock-opus-from-env",
         label: "bedrock-opus-from-env",
         description: "From Claude settings.json env.ANTHROPIC_DEFAULT_OPUS_MODEL",
@@ -254,6 +261,8 @@ describe("ClaudeAgentClient.fetchCatalog", () => {
         description: "From Claude settings.json env.ANTHROPIC_DEFAULT_HAIKU_MODEL",
       },
     ]);
+    expect(models.filter((model) => model.id === "claude-fable-5-1[1M]")).toHaveLength(1);
+    expect(getClaudeModels().some((model) => model.id === "claude-fable-5-1")).toBe(true);
   });
 
   it("falls back to hardcoded models when settings.json is missing", async () => {
