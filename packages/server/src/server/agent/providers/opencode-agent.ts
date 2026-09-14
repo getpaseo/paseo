@@ -142,7 +142,6 @@ const OPENCODE_CAPABILITIES: AgentCapabilityFlags = {
 const OPENCODE_BUILD_MODE_ID = "build";
 const OPENCODE_LEGACY_FULL_ACCESS_MODE_ID = "full-access";
 const OPENCODE_DEFAULT_VARIANT_ID = "default";
-const OPENCODE_NAMED_VARIANT_PREFIX = "variant:";
 const EMPTY_OPENCODE_EVENT_SOURCE: OpenCodeEventSource = {
   ready: async () => undefined,
   subscribe: () => () => undefined,
@@ -347,7 +346,6 @@ function resolveOpenCodePermissionReply(
 type OpenCodeAgentConfig = Omit<AgentSessionConfig, "providerOptions"> & {
   provider: "opencode";
   providerOptions: OpenCodeProviderOptions;
-  thinkingOptionEncoding: "literal" | "choice-v1";
 };
 
 const OPENCODE_SESSION_ENV_KEYS = new Set(["PASEO_AGENT_ID", "PASEO_AGENT_CWD"]);
@@ -653,23 +651,6 @@ function normalizeOpenCodeModeId(modeId: string | null | undefined): string | nu
   return trimmed;
 }
 
-// Preserve existing ordinary IDs and the saved base choice. Escape the reserved
-// base ID and the escape prefix so every explicit upstream variant stays addressable.
-function openCodeVariantChoiceId(variant: string): string {
-  return variant === OPENCODE_DEFAULT_VARIANT_ID ||
-    variant.startsWith(OPENCODE_NAMED_VARIANT_PREFIX)
-    ? `${OPENCODE_NAMED_VARIANT_PREFIX}${variant}`
-    : variant;
-}
-
-function resolveOpenCodeRuntimeVariantId(config: OpenCodeAgentConfig): string | undefined {
-  const choiceId = config.thinkingOptionId;
-  return config.thinkingOptionEncoding === "choice-v1" &&
-    choiceId?.startsWith(OPENCODE_NAMED_VARIANT_PREFIX)
-    ? choiceId.slice(OPENCODE_NAMED_VARIANT_PREFIX.length)
-    : choiceId;
-}
-
 function normalizeOpenCodeVariantId(variantId: string | null | undefined): string | null {
   const trimmed = typeof variantId === "string" ? variantId.trim() : "";
   if (!trimmed || trimmed === OPENCODE_DEFAULT_VARIANT_ID) {
@@ -825,15 +806,14 @@ function buildOpenCodeModelDefinition(
   },
 ): AgentModelDefinition {
   const rawVariants = model.variants ? Object.keys(model.variants) : [];
-  // OpenCode lists only overrides; its base model behavior is selected by omitting `variant`.
+  // Like OpenCode's web UI, Default omits `variant` and lets OpenCode resolve it.
+  // Reserve that choice instead of exposing a second upstream `default` entry.
   const thinkingOptions = rawVariants.length
     ? [
-        {
-          id: OPENCODE_DEFAULT_VARIANT_ID,
-          label: rawVariants.includes(OPENCODE_DEFAULT_VARIANT_ID) ? "Model default" : "Default",
-          isDefault: true,
-        },
-        ...rawVariants.map((id) => ({ id: openCodeVariantChoiceId(id), label: id })),
+        { id: OPENCODE_DEFAULT_VARIANT_ID, label: "Default", isDefault: true },
+        ...rawVariants
+          .filter((id) => id !== OPENCODE_DEFAULT_VARIANT_ID)
+          .map((id) => ({ id, label: id })),
       ]
     : [];
 
@@ -1534,11 +1514,6 @@ export class OpenCodeAgentClient implements AgentClient {
       cwd,
     };
     const openCodeConfig = this.assertConfig(config);
-    // COMPAT(openCodeVariantIds): added in v0.8.1; remove after 2027-03-14 once
-    // pre-v0.8.1 persisted sessions have been migrated. Their IDs are literal,
-    // including names beginning with the new choice prefix.
-    openCodeConfig.thinkingOptionEncoding =
-      handle.metadata?.thinkingOptionEncoding === "choice-v1" ? "choice-v1" : "literal";
     const registeredServerUrl = getOpenCodeChildSessionServerUrl(handle.sessionId);
     const registeredAcquisition = registeredServerUrl
       ? this.serverManager.acquireExisting(registeredServerUrl)
@@ -1908,12 +1883,7 @@ export class OpenCodeAgentClient implements AgentClient {
       throw new Error(`OpenCodeAgentClient received config for provider '${config.provider}'`);
     }
     const providerOptions = OpenCodeProviderOptionsSchema.parse(config.providerOptions ?? {});
-    return normalizeOpenCodeConfig({
-      ...config,
-      provider: "opencode",
-      providerOptions,
-      thinkingOptionEncoding: "choice-v1",
-    });
+    return normalizeOpenCodeConfig({ ...config, provider: "opencode", providerOptions });
   }
 
   private async populateModelContextWindowCache(
@@ -3456,10 +3426,6 @@ class OpenCodeAgentSession implements AgentSession {
       sessionId: this.sessionId,
       model: this.config.model ?? null,
       modeId: this.currentMode,
-      thinkingOptionId:
-        this.config.thinkingOptionEncoding === "literal" && this.config.thinkingOptionId
-          ? openCodeVariantChoiceId(this.config.thinkingOptionId)
-          : (this.config.thinkingOptionId ?? null),
     };
   }
 
@@ -3475,7 +3441,6 @@ class OpenCodeAgentSession implements AgentSession {
   async setThinkingOption(thinkingOptionId: string | null): Promise<void> {
     const normalizedThinkingOptionId = normalizeOpenCodeVariantId(thinkingOptionId);
     this.config.thinkingOptionId = normalizedThinkingOptionId ?? undefined;
-    this.config.thinkingOptionEncoding = "choice-v1";
   }
 
   async run(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<AgentRunResult> {
@@ -3551,7 +3516,7 @@ class OpenCodeAgentSession implements AgentSession {
     );
     const model = this.parseModel(this.config.model);
     const effectiveMode = resolveOpenCodeRuntimeAgentId(this.currentMode);
-    const effectiveVariant = resolveOpenCodeRuntimeVariantId(this.config);
+    const effectiveVariant = this.config.thinkingOptionId ?? undefined;
 
     try {
       const response = await this.client.session.promptAsync({
@@ -3763,7 +3728,8 @@ class OpenCodeAgentSession implements AgentSession {
     this.pendingClientMessageId = options?.clientMessageId ?? null;
     this.suppressAssistantMessagesUntilIdle.active = false;
     const model = this.parseModel(this.config.model);
-    const effectiveVariant = resolveOpenCodeRuntimeVariantId(this.config);
+    const thinkingOptionId = this.config.thinkingOptionId;
+    const effectiveVariant = thinkingOptionId ?? undefined;
     const effectiveMode = resolveOpenCodeRuntimeAgentId(this.currentMode);
 
     await this.awaitEventStreamReady(turnAbortController);
@@ -4917,7 +4883,6 @@ class OpenCodeAgentSession implements AgentSession {
       sessionId: this.sessionId,
       nativeHandle: this.sessionId,
       metadata: {
-        thinkingOptionEncoding: this.config.thinkingOptionEncoding,
         cwd: this.config.cwd,
         ...(this.config.modeId ? { modeId: this.config.modeId } : {}),
         ...(this.config.model ? { model: this.config.model } : {}),

@@ -4685,23 +4685,9 @@ test("persists live mode, model, and thinking changes without an external snapsh
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-live-persist-"));
   const storagePath = join(workdir, "agents");
   const storage = new AgentStorage(storagePath, logger);
-  class PersistentSelectionSession extends TestAgentSession {
-    private selectedOption: string | null = "low";
-    async setThinkingOption(id: string | null): Promise<void> {
-      this.selectedOption = id;
-    }
-    override describePersistence() {
-      return { ...super.describePersistence(), metadata: { selectedOption: this.selectedOption } };
-    }
-  }
-  class PersistentSelectionClient extends TestAgentClient {
-    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
-      return new PersistentSelectionSession(config);
-    }
-  }
   const manager = new AgentManager({
     clients: {
-      codex: new PersistentSelectionClient(),
+      codex: new TestAgentClient(),
     },
     registry: storage,
     logger,
@@ -4730,7 +4716,6 @@ test("persists live mode, model, and thinking changes without an external snapsh
   expect(persisted?.lastModeId).toBe("build");
   expect(persisted?.config?.model).toBe("gpt-5.4");
   expect(persisted?.config?.thinkingOptionId).toBe("high");
-  expect(persisted?.persistence?.metadata?.selectedOption).toBe("high");
   expect(persisted?.runtimeInfo?.modeId).toBe("build");
   expect(persisted?.runtimeInfo?.model).toBe("gpt-5.4");
 });

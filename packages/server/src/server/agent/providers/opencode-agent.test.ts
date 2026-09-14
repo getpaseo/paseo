@@ -20,7 +20,6 @@ import {
 } from "./opencode/test-utils/test-opencode-harness.js";
 import type {
   AgentSessionConfig,
-  AgentPersistenceHandle,
   AgentStreamEvent,
   ToolCallTimelineItem,
   AssistantMessageTimelineItem,
@@ -613,7 +612,11 @@ describe("OpenCodeAgentClient adapter smoke tests", () => {
     rmSync(cwd, { recursive: true, force: true });
   }, 120_000);
 
-  test("catalog distinguishes the base model from a named default variant", async () => {
+  test.each([
+    { name: "absent", variants: {} },
+    { name: "empty", variants: { default: {} } },
+    { name: "configured", variants: { default: { reasoningEffort: "low" } } },
+  ])("catalog exposes one Default when upstream default is $name", async ({ variants }) => {
     const runtime = new TestOpenCodeHarness();
     const openCodeClient = new TestOpenCodeClient();
     openCodeClient.providerListResponse = {
@@ -627,7 +630,7 @@ describe("OpenCodeAgentClient adapter smoke tests", () => {
             models: {
               model: {
                 name: "Variant model",
-                variants: { default: {}, high: {}, "variant:default": {} },
+                variants: { ...variants, high: {}, "variant:default": {} },
               },
             },
           },
@@ -644,14 +647,12 @@ describe("OpenCodeAgentClient adapter smoke tests", () => {
       });
       const catalog = await client.fetchCatalog({ scope: "global", force: false });
       const options = catalog.models[0].thinkingOptions ?? [];
-      expect(options).toHaveLength(4);
-      expect(new Set(options.map((option) => option.id)).size).toBe(options.length);
-      const base = options.find((option) => option.isDefault)!;
-      const namedDefault = options.find((option) => option.label === "default")!;
-      const escapedName = options.find((option) => option.label === "variant:default")!;
-      expect(base.label).not.toBe(namedDefault.label);
-      expect(base.id).toBe("default");
-      expect(options.find((option) => option.label === "high")?.id).toBe("high");
+      expect(options).toEqual([
+        { id: "default", label: "Default", isDefault: true },
+        { id: "high", label: "high" },
+        { id: "variant:default", label: "variant:default" },
+      ]);
+      expect(catalog.models[0].defaultThinkingOptionId).toBe("default");
       const execution = new TestOpenCodeClient();
       execution.sessionCreateResponse = { data: { id: "ses_catalog_variants" } };
       execution.sessionPromptAsyncEvents = [
@@ -662,18 +663,21 @@ describe("OpenCodeAgentClient adapter smoke tests", () => {
         provider: "opencode",
         cwd,
         model: "catalog-provider/model",
-        thinkingOptionId: namedDefault.id,
+        thinkingOptionId: "default",
       });
       try {
-        await collectTurnEvents(streamSession(session, "Use the named default"));
-        await session.setThinkingOption!(base.id);
-        await collectTurnEvents(streamSession(session, "Use the base model"));
-        await session.setThinkingOption!(escapedName.id);
-        await collectTurnEvents(streamSession(session, "Use the name containing the prefix"));
+        await collectTurnEvents(streamSession(session, "Use OpenCode's default"));
+        await session.setThinkingOption!("high");
+        await collectTurnEvents(streamSession(session, "Use high"));
+        await session.setThinkingOption!("variant:default");
+        await collectTurnEvents(streamSession(session, "Use the literal variant name"));
+        await session.setThinkingOption!("default");
+        await collectTurnEvents(streamSession(session, "Return to OpenCode's default"));
         expect(execution.calls.sessionPromptAsync).toEqual([
-          expect.objectContaining({ variant: "default" }),
           expect.not.objectContaining({ variant: expect.anything() }),
+          expect.objectContaining({ variant: "high" }),
           expect.objectContaining({ variant: "variant:default" }),
+          expect.not.objectContaining({ variant: expect.anything() }),
         ]);
       } finally {
         await session.close();
@@ -683,63 +687,39 @@ describe("OpenCodeAgentClient adapter smoke tests", () => {
     }
   });
 
-  test.each(["variant:foo", "variant:default", "max"])(
-    "resume preserves legacy variant %s across repeated persistence and new selections",
-    async (legacyVariant) => {
-      const runtime = new TestOpenCodeHarness();
-      const client = new OpenCodeAgentClient(logger, undefined, {
-        serverManager: runtime,
-        createClient: runtime.createClient,
-      });
-      const cwd = tmpCwd();
-      let handle: AgentPersistenceHandle = {
-        provider: "opencode",
-        sessionId: "ses_legacy_variant",
-        metadata: { cwd },
-      };
+  test.each([
+    { saved: "default", variant: undefined },
+    { saved: "high", variant: "high" },
+    { saved: "variant:default", variant: "variant:default" },
+  ])("resume preserves saved thinking choice $saved", async ({ saved, variant }) => {
+    const runtime = new TestOpenCodeHarness();
+    const execution = new TestOpenCodeClient();
+    execution.sessionPromptAsyncEvents = [
+      { type: "session.idle", properties: { sessionID: "ses_saved_variant" } },
+    ];
+    runtime.enqueueClient(execution);
+    const client = new OpenCodeAgentClient(logger, undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+    });
+    const cwd = tmpCwd();
+    try {
+      const session = await client.resumeSession(
+        { provider: "opencode", sessionId: "ses_saved_variant", metadata: { cwd } },
+        { thinkingOptionId: saved },
+      );
       try {
-        for (let restart = 0; restart < 2; restart++) {
-          const execution = new TestOpenCodeClient();
-          execution.sessionPromptAsyncEvents = [
-            { type: "session.idle", properties: { sessionID: handle.sessionId } },
-          ];
-          runtime.enqueueClient(execution);
-          const session = await client.resumeSession(handle, { thinkingOptionId: legacyVariant });
-          try {
-            await collectTurnEvents(streamSession(session, "Keep my saved variant"));
-            expect(execution.calls.sessionPromptAsync).toEqual([
-              expect.objectContaining({ variant: legacyVariant }),
-            ]);
-            handle = session.describePersistence()!;
-            await session.setThinkingOption!("variant:default");
-            const changed = session.describePersistence()!;
-            const resumedClient = new TestOpenCodeClient();
-            resumedClient.sessionPromptAsyncEvents = [
-              { type: "session.idle", properties: { sessionID: handle.sessionId } },
-            ];
-            runtime.enqueueClient(resumedClient);
-            const resumed = await client.resumeSession(changed, {
-              thinkingOptionId: "variant:default",
-            });
-            try {
-              await collectTurnEvents(
-                streamSession(resumed, "Use the newly selected named default"),
-              );
-              expect(resumedClient.calls.sessionPromptAsync).toEqual([
-                expect.objectContaining({ variant: "default" }),
-              ]);
-            } finally {
-              await resumed.close();
-            }
-          } finally {
-            await session.close();
-          }
-        }
+        await collectTurnEvents(streamSession(session, "Keep my saved choice"));
+        expect(execution.calls.sessionPromptAsync.map((request) => request.variant)).toEqual([
+          variant,
+        ]);
       } finally {
-        rmSync(cwd, { recursive: true, force: true });
+        await session.close();
       }
-    },
-  );
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
 
   test("fetchCatalog returns models with required fields", async () => {
     const runtime = new TestOpenCodeHarness();
