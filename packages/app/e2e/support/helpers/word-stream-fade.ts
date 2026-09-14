@@ -1,4 +1,36 @@
-import { expect, type Page } from "@playwright/test";
+import { expect, type Page, type TestInfo } from "@playwright/test";
+import { test as base } from "../fixtures";
+import { startRunningMockAgent } from "./composer";
+import { awaitAssistantMessage } from "./agent-stream";
+
+export const test = base.extend<{ streamingReply: Page }>({
+  streamingReply: async ({ page }, provide) => {
+    const agent = await startRunningMockAgent(page, {
+      prefix: "word-fade-",
+      model: "bursty-stream",
+      prompt: "Stream bursty output for word fade verification.",
+    });
+    try {
+      await awaitAssistantMessage(page);
+      await provide(page);
+    } finally {
+      await agent.cleanup();
+    }
+  },
+});
+
+export async function expectContinuousWordFade(page: Page, testInfo: TestInfo): Promise<void> {
+  const report = await sampleWordFades(page);
+  await testInfo.attach("word-fade-observations", {
+    body: JSON.stringify(report),
+    contentType: "application/json",
+  });
+  expect(report.directionalFades).toBeGreaterThan(10);
+  expect(report.reverseFades).toBe(0);
+  expect(report.boundaryReversals).toBe(0);
+  expect(report.maxWidthDelta).toBeLessThan(0.5);
+  expect(report.maxActiveLetters).toBeLessThan(500);
+}
 
 export async function sampleWordFades(page: Page) {
   return page.evaluate(async () => {
