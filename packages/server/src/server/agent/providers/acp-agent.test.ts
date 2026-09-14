@@ -2382,6 +2382,7 @@ describe("ACPAgentSession slash commands", () => {
         {
           name: "research_codebase",
           description: "Search the workspace for relevant files",
+          input: { hint: "query" },
         },
         {
           name: "create_plan",
@@ -2394,7 +2395,7 @@ describe("ACPAgentSession slash commands", () => {
       {
         name: "research_codebase",
         description: "Search the workspace for relevant files",
-        argumentHint: "",
+        argumentHint: "query",
         kind: "command",
       },
       {
@@ -2409,7 +2410,7 @@ describe("ACPAgentSession slash commands", () => {
       {
         name: "research_codebase",
         description: "Search the workspace for relevant files",
-        argumentHint: "",
+        argumentHint: "query",
         kind: "command",
       },
       {
