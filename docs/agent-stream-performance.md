@@ -43,50 +43,26 @@ So arrival sets a _target_ and the reveal rate is derived from the backlog inste
 
 ## Measuring
 
-Word reveal lives in `packages/app/src/word-stream`. The shared scheduler buffers
-arrival and reveals complete words. Callers use one interface.
+Word reveal lives in `packages/app/src/word-stream`. Native attribution and pinned
+upstream revisions are in `packages/app/modules/paseo-word-stream/UPSTREAM.md`.
 
-The fade is one front, not a fade per word. Every character has a start time,
-start times never decrease in reading order, and every character uses the same
-150 ms envelope. That is the whole rule: with it, opacity along a line is
-non-increasing left to right on every frame, whatever the release unit is.
-A released word owns the front for the scheduler's interval to the next word
-(`WordStream.spanMs`); its characters start evenly across that interval and the
-next word starts where it ends. Per-word envelopes with an internal stagger
-looked right in 100 ms frame strips and wrong at the real frame rate: the next
-word's first letter reached full opacity before the previous word's last letter
-had started, so letters appeared with holes and the line read as flashing words.
-Verify at the recording's native frame rate, and check ordering across word
-boundaries, not only inside a word.
+Judge the visible front across word boundaries at the recording's native frame
+rate. No character should become more opaque than text before it in reading
+order, and the front should not visibly change speed at word boundaries.
+Sampling at 100 ms hid the previous defect: later letters appeared before earlier
+letters, leaving holes that read as flashing words during playback.
 
-Fade identity belongs to source text, not a React key or native view. The message
-keeps the original start time for its active words. Markdown source positions map
-those words onto text surfaces, so a table forming, inline formatting closing,
-or a recycled view resumes the current opacity and cannot restart settled text.
-Native root text is wrapped by `WordFadeHost`: its `ranges` prop and child text
-arrive in the same Fabric mount transaction. Before drawing, the host applies
-only those ranges to the current child buffer. Native views never infer newness
-or manufacture start times. Prop replacement and recycling discard old spans;
-absolute message times determine the opacity when a surface remounts.
+Exercise provisional Markdown and recycled views when checking fade-once behavior.
+A table forming or inline formatting closing can change the rendered structure
+without making previously visible text new again.
 
-The host delegates child layout to Fabric. Parent-facing text geometry (margins,
-flex and dimensions) moves to the host; typography and padding stay on the text.
-Nested text stays inline. Do not use `display: contents` to remove the wrapper's
-layout box: RN forcibly flattens it and removes the native animation owner.
-
-Native text animation adapts Software Mansion's `enriched-markdown`; attribution
-and pinned revisions are in `packages/app/modules/paseo-word-stream/UPSTREAM.md`.
-Android uses alpha spans that read one clock per surface, ticked by
-`Choreographer` until the tail settles. iOS snapshots
-foreground colors in the existing `UITextView` and updates active ranges with
-`CADisplayLink`. Both preserve native text layout, selection, and inline styles;
-frame ticks require no JS callbacks or per-character native views. Clocks stop
-when the active tail settles. iOS table cells retain their existing plain text
-surface, so they receive word pacing without the opacity animation.
-
-Web uses CSS opacity animations on grapheme spans in the active tail, with elapsed time preserved across remounts. Memoized
-word subtrees avoid rebuilding active spans for each arriving word. Settled
-words collapse back into ordinary text; history has no animation spans.
+On native, text and its fade metadata must become visible together. An earlier
+implementation sent metadata asynchronously and flashed new text fully opaque
+for one frame before dimming it. Preserve native layout, selection, and inline
+styles, and keep animation ticks off the JS thread. Do not remove the animation
+host's layout box with `display: contents`: RN forcibly flattens it and removes
+the native animation owner. iOS table cells receive pacing without opacity
+animation; include that limit in platform QA reports.
 
 Compare release APKs on the same Android device with the mock `bursty-stream`
 provider, identical prompts, fresh conversations, and equal sampling windows.
