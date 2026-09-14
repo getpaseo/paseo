@@ -325,6 +325,25 @@ export function selectAgentTimelineState(
   return items.length > 0 ? { status: "painted", items } : { status: "cold" };
 }
 
+/**
+ * Whether this pane can be asked for a prompt-index outline at all.
+ *
+ * Two conditions, answered together: the daemon supports the index, and `agentId` names an agent
+ * it can load. The agent-stream view also renders panes whose id is a placeholder — an empty tab
+ * (`tab_*`), an unsent draft (`draft_msg_*`), or a provider subagent's synthetic stream key
+ * (`provider:<parent>:<child>`, which addresses a child through its parent instead). Asking the
+ * index about one of those is not an empty answer; the daemon resolves the id through
+ * `ensureAgentLoaded` and logs the throw as a failed request. The lookup is reactive, so a pane
+ * that starts as a draft picks the outline up as soon as its agent exists.
+ */
+export function selectCanShowChatOutline(
+  session: SessionState | undefined,
+  agentId: string,
+): boolean {
+  if (session?.serverInfo?.features?.agentTimelinePromptIndex !== true) return false;
+  return session.agents.has(agentId) || session.agentDetails.has(agentId);
+}
+
 export function selectAgentTurnPresentation(
   session: SessionState | undefined,
   agentId: string,
