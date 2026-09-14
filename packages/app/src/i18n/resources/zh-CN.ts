@@ -2567,6 +2567,7 @@ export const zhCN: TranslationResources = {
         name: "名称",
         nameLabel: "Project 名称",
         icon: "图标",
+        emoji: "表情符号",
         chooseImage: "选择图片",
         useAutomatic: "使用自动",
         imageUrl: "图片或网站 URL",

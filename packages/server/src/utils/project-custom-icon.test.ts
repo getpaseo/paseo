@@ -64,8 +64,10 @@ async function project() {
     read: () => readProjectIcon({ paseoHome, project: record }),
     snapshot: () => readProjectIconSnapshot({ paseoHome, project: record }),
     advertisedSnapshot: () => reader.snapshot(record),
+    advertisedPresentation: () => reader.presentation(record),
     readAdvertised: () => reader.read(record),
     revision: () => record.customIconRevision,
+    emoji: () => record.customIconEmoji,
     remove: () => removeProjectCustomIcon({ paseoHome, projectId: "project-a" }),
   };
 }
@@ -84,6 +86,59 @@ describe("project custom icon", () => {
 
     expect(target.revision()).toEqual(expect.any(String));
     await expect(target.read()).resolves.toEqual(PNG_1X1_ICON);
+  });
+
+  it.each(["🦊", "👨‍👩‍👧‍👦", "👍🏽", "🇫🇷"])("stores one emoji grapheme: %s", async (emoji) => {
+    const target = await project();
+
+    await target.set({ type: "emoji", emoji });
+
+    expect(target.emoji()).toBe(emoji);
+    expect(target.revision()).toEqual(expect.any(String));
+    await expect(target.advertisedPresentation()).resolves.toMatchObject({ icon: null, emoji });
+  });
+
+  it.each([
+    ["empty input", ""],
+    ["plain text", "fox"],
+    ["a standalone keycap mark", "\u20e3"],
+    ["a keycap mark on a letter", "a\u20e3"],
+    ["one regional indicator", "🇫"],
+    ["multiple emojis", "🦊🐻"],
+    ["more than 64 UTF-8 bytes", `🦊${"\u0301".repeat(61)}`],
+  ])("rejects %s as an emoji icon", async (_name, emoji) => {
+    const target = await project();
+
+    await expect(target.set({ type: "emoji", emoji })).rejects.toThrow("one emoji");
+    expect(target.revision()).toBeNull();
+  });
+
+  it("replaces image and emoji customizations instead of retaining both", async () => {
+    const target = await project();
+
+    await target.set({ type: "upload", data: PNG_1X1.toString("base64") });
+    await target.set({ type: "emoji", emoji: "🦊" });
+    expect(target.emoji()).toBe("🦊");
+    await expect(target.read()).resolves.toBeNull();
+
+    await target.set({ type: "upload", data: PNG_1X1.toString("base64") });
+    expect(target.emoji()).toBeNull();
+    await expect(target.read()).resolves.toEqual(PNG_1X1_ICON);
+  });
+
+  it("includes the automatic fallback in an emoji revision", async () => {
+    const target = await project();
+    await target.set({ type: "emoji", emoji: "🦊" });
+    await mkdir(join(target.rootPath, "public"));
+    await writeFile(join(target.rootPath, "public", "favicon.png"), PNG_1X1);
+    const first = await target.snapshot();
+
+    await writeFile(
+      join(target.rootPath, "public", "favicon.png"),
+      Buffer.concat([PNG_1X1, Buffer.from([1])]),
+    );
+
+    expect((await target.snapshot()).revision).not.toBe(first.revision);
   });
 
   it("scans the project directory when no custom icon is stored", async () => {
@@ -135,6 +190,7 @@ describe("project custom icon", () => {
     await target.set({ type: "automatic" });
 
     expect(target.revision()).toBeNull();
+    expect(target.emoji()).toBeNull();
     await expect(target.read()).resolves.toBeNull();
   });
 

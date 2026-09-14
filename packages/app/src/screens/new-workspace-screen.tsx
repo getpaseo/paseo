@@ -88,7 +88,7 @@ import {
   useHostProjects,
   type HostProjectListItem,
 } from "@/projects/host-projects";
-import { useProjectIcons } from "@/projects/icons";
+import { useProjectIcons, type ProjectIconRenderData } from "@/projects/icons";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
 import type { ComposerAttachment } from "@/attachments/types";
 import { useDraftWorkspaceAttachmentScopeKey } from "@/attachments/workspace-attachments-store";
@@ -321,7 +321,7 @@ function ProjectPickerTrigger({
   label,
   tooltipLabel,
   projectViewKey,
-  iconDataUri,
+  icon,
   iconColor,
   iconSize,
 }: {
@@ -332,7 +332,7 @@ function ProjectPickerTrigger({
   label: string;
   tooltipLabel: string;
   projectViewKey: string | null;
-  iconDataUri: string | null;
+  icon?: ProjectIconRenderData;
   iconColor: string;
   iconSize: number;
 }) {
@@ -354,7 +354,8 @@ function ProjectPickerTrigger({
           <View style={styles.badgeIconBox}>
             {projectViewKey ? (
               <ProjectIconView
-                iconDataUri={iconDataUri}
+                iconDataUri={icon?.dataUri ?? null}
+                emoji={icon?.emoji}
                 initial={placeholderInitial}
                 projectViewKey={projectViewKey}
                 size={ICON_SIZE.md}
@@ -483,7 +484,7 @@ function IsolationOptionItem({
 function ProjectOptionItem({
   testID,
   projectViewKey,
-  iconDataUri,
+  icon,
   label,
   description,
   selected,
@@ -493,7 +494,7 @@ function ProjectOptionItem({
 }: {
   testID: string;
   projectViewKey: string;
-  iconDataUri: string | null;
+  icon?: ProjectIconRenderData;
   label: string;
   description: string | undefined;
   selected: boolean;
@@ -507,7 +508,8 @@ function ProjectOptionItem({
     () => (
       <View style={styles.rowIconBox}>
         <ProjectIconView
-          iconDataUri={iconDataUri}
+          iconDataUri={icon?.dataUri ?? null}
+          emoji={icon?.emoji}
           initial={placeholderInitial}
           projectViewKey={projectViewKey}
           size={ICON_SIZE.md}
@@ -515,7 +517,7 @@ function ProjectOptionItem({
         />
       </View>
     ),
-    [iconDataUri, placeholderInitial, projectViewKey],
+    [icon, placeholderInitial, projectViewKey],
   );
 
   return (
@@ -595,7 +597,7 @@ function NewWorkspaceProjectPickerOption({
   active: boolean;
   onPress: () => void;
   projectByOptionId: Map<string, HostProjectListItem>;
-  projectIconDataByProjectViewKey: Map<string, string | null>;
+  projectIconDataByProjectViewKey: Map<string, ProjectIconRenderData>;
   selectedServerId: string;
   isPending: boolean;
   supportsWorkspaceMultiplicity: boolean;
@@ -609,7 +611,7 @@ function NewWorkspaceProjectPickerOption({
     <ProjectOptionItem
       testID={`new-workspace-project-picker-option-${project.viewKey}`}
       projectViewKey={project.viewKey}
-      iconDataUri={projectIconDataByProjectViewKey.get(project.viewKey) ?? null}
+      icon={projectIconDataByProjectViewKey.get(project.viewKey)}
       label={project.projectName}
       description={sourceDirectory}
       selected={selected}
@@ -1377,7 +1379,7 @@ interface NewWorkspaceFormStackInput {
     options: ComboboxOptionType[];
     triggerLabel: string;
     selectedProject: HostProjectListItem | null;
-    iconDataByProjectViewKey: Map<string, string | null>;
+    iconDataByProjectViewKey: Map<string, ProjectIconRenderData>;
     selectedOptionId: string;
     onSelect: (id: string) => void;
     onAddProject: () => void;
@@ -1453,10 +1455,10 @@ function useNewWorkspaceFormStack(input: NewWorkspaceFormStackInput): ReactEleme
         label={project.triggerLabel}
         tooltipLabel={t("newWorkspace.tooltips.project")}
         projectViewKey={project.selectedProject?.viewKey ?? null}
-        iconDataUri={
+        icon={
           project.selectedProject
-            ? (project.iconDataByProjectViewKey.get(project.selectedProject.viewKey) ?? null)
-            : null
+            ? project.iconDataByProjectViewKey.get(project.selectedProject.viewKey)
+            : undefined
         }
         iconColor={theme.colors.foregroundMuted}
         iconSize={theme.iconSize.sm}

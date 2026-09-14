@@ -2623,6 +2623,7 @@ export const ja: TranslationResources = {
         name: "名前",
         nameLabel: "プロジェクト名",
         icon: "アイコン",
+        emoji: "絵文字",
         chooseImage: "画像を選択",
         useAutomatic: "自動を使う",
         imageUrl: "画像またはサイトのURL",

@@ -2598,6 +2598,7 @@ export const ar: TranslationResources = {
         name: "الاسم",
         nameLabel: "اسم المشروع",
         icon: "الأيقونة",
+        emoji: "رمز تعبيري",
         chooseImage: "اختيار صورة",
         useAutomatic: "استخدام التلقائي",
         imageUrl: "رابط صورة أو موقع",

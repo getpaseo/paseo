@@ -2646,6 +2646,7 @@ export const ru: TranslationResources = {
         name: "Название",
         nameLabel: "Название проекта",
         icon: "Значок",
+        emoji: "Эмодзи",
         chooseImage: "Выбрать изображение",
         useAutomatic: "Использовать автоматический значок",
         imageUrl: "URL изображения или сайта",

@@ -29,6 +29,7 @@ import { StatusRing } from "@/components/status-ring";
 import { resolveSidebarWorkspacePrimaryLabel } from "@/components/sidebar/sidebar-workspace-title";
 import { TrailingActionScrim } from "@/components/ui/trailing-action-scrim";
 import { useWorkspaceLabelDefinitions } from "@/workspace-labels";
+import type { ProjectIconRenderData } from "@/projects/icons";
 
 const foregroundMutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 const needsInputColorMapping = (theme: Theme) => ({
@@ -91,7 +92,7 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
   workspace,
   hostBadge,
   leadingProjectName = null,
-  leadingProjectIconDataUri = null,
+  leadingProjectIcon,
   serviceSummary = null,
   backdrop,
   isHovered,
@@ -106,7 +107,7 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
   hostBadge?: HostBadgeModel | null;
   /** Hoisted rows use their project icon as the leading visual because no project row contains them. */
   leadingProjectName?: string | null;
-  leadingProjectIconDataUri?: string | null;
+  leadingProjectIcon?: ProjectIconRenderData;
   serviceSummary?: WorkspaceServiceSummary | null;
   /** The row's current background, so the project status badge can knock out of it. */
   backdrop: SidebarSurfaceBackdrop;
@@ -140,7 +141,8 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
       <View style={styles.workspaceRowMain}>
         {leadingProjectName ? (
           <ProjectStatusIndicator
-            iconDataUri={leadingProjectIconDataUri}
+            iconDataUri={leadingProjectIcon?.dataUri ?? null}
+            emoji={leadingProjectIcon?.emoji}
             displayName={leadingProjectName}
             projectViewKey={workspace.projectViewKey}
             statusBucket={workspace.statusBucket}

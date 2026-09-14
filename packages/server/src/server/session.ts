@@ -3543,10 +3543,10 @@ export class Session {
       const project = await this.projectRegistry.get(projectId);
       if (!project) throw new Error("Project not found");
 
-      const icon = await this.projectIcons.read(project);
+      const { icon, emoji } = await this.projectIcons.presentation(project);
       this.emit({
         type: "project.icon.get.response",
-        payload: { projectId, icon, error: null, requestId },
+        payload: { projectId, icon, ...(emoji ? { emoji } : {}), error: null, requestId },
       });
     } catch (error) {
       this.emit({

@@ -495,24 +495,25 @@ One file per schedule. ID is 8 hex characters.
 
 Array of project records.
 
-| Field                | Type                        | Description                                                                                                                                |
-| -------------------- | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| `projectId`          | `string`                    | Host-local primary key; new records use opaque `prj_<16 hex>` IDs                                                                          |
-| `projectKey`         | `string \| null`            | Persisted opaque cross-host grouping key; reconciliation backfills absent values                                                           |
-| `rootPath`           | `string`                    | Exact lexically normalized selected root; never realpathed                                                                                 |
-| `kind`               | `"git" \| "non_git"`        | Mutable Git observation about `rootPath`, never a membership key                                                                           |
-| `displayName`        | `string`                    | Selected-root basename, stable across remote and Git changes                                                                               |
-| `customName`         | `string \| null`            | User-set override layered over `displayName`. Null means "use the derived name".                                                           |
-| `customIconRevision` | `string \| null`            | Identifies the host-local custom icon stored under `projects/icons/`. Null means the icon is discovered by scanning the project directory. |
-| `createdAt`          | `string` (ISO 8601)         |                                                                                                                                            |
-| `updatedAt`          | `string` (ISO 8601)         |                                                                                                                                            |
-| `archivedAt`         | `string \| null` (ISO 8601) | Soft-delete timestamp; required nullable                                                                                                   |
+| Field                | Type                        | Description                                                                                                           |
+| -------------------- | --------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| `projectId`          | `string`                    | Host-local primary key; new records use opaque `prj_<16 hex>` IDs                                                     |
+| `projectKey`         | `string \| null`            | Persisted opaque cross-host grouping key; reconciliation backfills absent values                                      |
+| `rootPath`           | `string`                    | Exact lexically normalized selected root; never realpathed                                                            |
+| `kind`               | `"git" \| "non_git"`        | Mutable Git observation about `rootPath`, never a membership key                                                      |
+| `displayName`        | `string`                    | Selected-root basename, stable across remote and Git changes                                                          |
+| `customName`         | `string \| null`            | User-set override layered over `displayName`. Null means "use the derived name".                                      |
+| `customIconRevision` | `string \| null`            | Identifies the host-local custom icon selection. Null means the icon is discovered by scanning the project directory. |
+| `customIconEmoji`    | `string \| null`            | The selected emoji, when the custom icon is text rather than an uploaded image.                                       |
+| `createdAt`          | `string` (ISO 8601)         |                                                                                                                       |
+| `updatedAt`          | `string` (ISO 8601)         |                                                                                                                       |
+| `archivedAt`         | `string \| null` (ISO 8601) | Soft-delete timestamp; required nullable                                                                              |
 
 Uploading a file and pasting a website or image URL are two ways of _acquiring_ the same custom
-icon. The client fetches URL imports and sends their bytes through the upload RPC. The daemon never
-receives or fetches the URL; it validates the uploaded bytes, stores them, and records a new
-`customIconRevision`. Going back to automatic deletes the stored image, as does removing the
-project.
+image. The client fetches URL imports and sends their bytes through the upload RPC. The daemon never
+receives or fetches the URL. An emoji is stored directly in the project record. Each custom choice
+gets a new `customIconRevision`; choosing an image, emoji, or automatic icon clears the other modes.
+Removing the project also deletes its stored image.
 
 Active exact roots are idempotent using lexical platform-equivalence semantics. Existing legacy
 remote-shaped and path-shaped IDs remain readable, including duplicate roots; reconciliation never

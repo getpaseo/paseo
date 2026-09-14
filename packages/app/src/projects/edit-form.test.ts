@@ -6,6 +6,7 @@ const derivedName: ProjectEditFormSnapshot = {
   projectCustomName: null,
   hasCustomIcon: false,
   currentIconDataUri: "data:image/png;base64,ZGVyaXZlZA==",
+  currentIconEmoji: null,
 };
 
 const customIcon: ProjectEditFormSnapshot = {
@@ -13,6 +14,15 @@ const customIcon: ProjectEditFormSnapshot = {
   projectCustomName: "Turtle",
   hasCustomIcon: true,
   currentIconDataUri: "data:image/png;base64,Y3VzdG9t",
+  currentIconEmoji: null,
+};
+
+const customEmoji: ProjectEditFormSnapshot = {
+  projectName: "Fox",
+  projectCustomName: null,
+  hasCustomIcon: true,
+  currentIconDataUri: null,
+  currentIconEmoji: "🦊",
 };
 
 describe("project edit form model", () => {
@@ -65,6 +75,60 @@ describe("project edit form model", () => {
     });
   });
 
+  it("previews and submits an emoji", () => {
+    const model = openProjectEditForm(derivedName);
+
+    model.setEmoji("🦊");
+
+    expect(model.getState()).toMatchObject({
+      previewEmoji: "🦊",
+      previewDataUri: derivedName.currentIconDataUri,
+      canUseAutomatic: true,
+      submission: { rename: null, icon: { type: "emoji", emoji: "🦊" } },
+    });
+  });
+
+  it("clears a stored emoji back to automatic", () => {
+    const model = openProjectEditForm(customEmoji);
+
+    model.setEmoji("");
+
+    expect(model.getState()).toMatchObject({
+      previewEmoji: null,
+      canUseAutomatic: false,
+      submission: { rename: null, icon: { type: "automatic" } },
+    });
+  });
+
+  it("treats a retyped identical emoji as no change", () => {
+    const model = openProjectEditForm(customEmoji);
+
+    model.setEmoji("🦊");
+
+    expect(model.getState()).toMatchObject({
+      canSubmit: false,
+      submission: { rename: null, icon: null },
+    });
+  });
+
+  it("keeps image, URL, and emoji choices mutually exclusive", () => {
+    const model = openProjectEditForm(derivedName);
+    model.setPickedImage({ fileName: "logo.png", mimeType: "image/png", data: "aW1hZ2U=" });
+    model.setImageUrl("https://example.com/icon.png");
+    expect(model.getState()).toMatchObject({
+      pickedFileName: null,
+      emoji: "",
+      submission: { icon: { type: "url" } },
+    });
+
+    model.setEmoji("🦊");
+    expect(model.getState()).toMatchObject({
+      pickedFileName: null,
+      emoji: "🦊",
+      submission: { icon: { type: "emoji", emoji: "🦊" } },
+    });
+  });
+
   it("keeps a URL client-side and leaves the preview on the current icon", () => {
     const model = openProjectEditForm(derivedName);
 
@@ -77,7 +141,7 @@ describe("project edit form model", () => {
     });
   });
 
-  it("falls back to the earlier pick when the URL box is emptied", () => {
+  it("does not restore a stale image when the URL box is emptied", () => {
     const model = openProjectEditForm(derivedName);
     model.setPickedImage({ fileName: "logo.png", mimeType: "image/png", data: "aW1hZ2U=" });
 
@@ -88,7 +152,7 @@ describe("project edit form model", () => {
     });
 
     model.setImageUrl("");
-    expect(model.getState().submission.icon).toEqual({ type: "upload", data: "aW1hZ2U=" });
+    expect(model.getState().submission.icon).toBeNull();
   });
 
   it("resets a stored custom icon back to automatic", () => {

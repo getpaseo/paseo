@@ -104,6 +104,52 @@ function findUntranslatedConnectionErrors(): string[] {
 }
 
 describe("translation resources", () => {
+  it("uses reviewed French navigation, Git, and developer action labels", () => {
+    expect(fr.common.back).toBe("Retour");
+    expect(fr.common.actions.back).toBe("Retour");
+    expect(fr.shell.commandCenter.home).toBe("Accueil");
+    expect(fr.workspace.header.toasts.branchNameCopiedLabel).toBe("Nom de la branche");
+    expect(fr.workspace.git.actions.commit.label).toBe("Créer un commit");
+    expect(fr.workspace.git.pr.sections.checks).toBe("Vérifications");
+    expect(fr.panels.pullRequest.label).toBe("PR");
+    expect(fr.composer.attachments.addFile).toBe("Joindre un fichier");
+    expect(fr.composer.input.interruptAgent).toBe("Interrompre l’agent");
+    expect(fr.contextWindow.title).toBe("Fenêtre de contexte");
+    expect(fr.settings.appearance.theme.options.ghostty).toBe("Ghostty");
+    expect(fr.agentControls.provider.select).toBe("Sélectionner le fournisseur d’agent");
+    expect(fr.agentControls.mode.selectWithValue).toBe(
+      "Sélectionner le mode de l’agent ({{value}})",
+    );
+    expect(fr.panels.files.chooseFile).toBe("Choisir un fichier");
+    expect(fr.message.speak.header).toBe("Lu à voix haute");
+    expect(fr.settings.general.autoExpandReasoning.description).toBe(
+      "Afficher entièrement les blocs de réflexion et de chaîne de raisonnement de l’agent par défaut",
+    );
+  });
+
+  it("keeps French interpolation boundaries readable", () => {
+    const joinedWords = Object.entries(flattenStrings(fr)).filter(([, value]) =>
+      /\p{L}\{\{|\}\}\p{L}/u.test(value),
+    );
+    expect(joinedWords).toEqual([]);
+  });
+
+  it("translates French labels that previously used English fallbacks", () => {
+    expect(fr.importSession.chooseHostTitle).toBe("Importer depuis un hôte");
+    expect(fr.desktop.daemon.lifecycle.stopTitle).toBe("Arrêter le daemon local ?");
+    expect(fr.settings.sections.layout).toBe("Disposition");
+    expect(fr.settings.layout.openInSidePane.destinations.main).toBe("Panneau principal");
+    expect(fr.settings.host.skills.openDocs).toBe("Ouvrir la documentation des compétences");
+  });
+
+  it("keeps French bulk confirmations readable without parenthesized plural forms", () => {
+    const messages = [
+      fr.workspace.tabs.confirmations.bulkUnsaved,
+      ...Object.values(fr.workspace.tabs.confirmations.bulk),
+    ];
+    expect(messages.filter((value) => /\((?:s|aux)\)/.test(value))).toEqual([]);
+  });
+
   it("uses action labels for the French plan toolbar and its overflow", () => {
     expect(fr.common.actions.copy).toBe("Copier");
     expect(fr.agentStream.permission.approve).toBe("Approuver");

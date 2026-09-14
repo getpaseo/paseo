@@ -9,7 +9,15 @@ import type { PersistedProjectRecord, ProjectRegistry } from "../server/workspac
 import { getImageDimensions, getProjectIcon, type ProjectIcon } from "./project-icon.js";
 
 const MAX_ICON_BYTES = 512 * 1024;
+const MAX_EMOJI_BYTES = 64;
 const ICON_TOO_LARGE_ERROR = "Icon must be 512 KB or smaller";
+const EMOJI_ERROR = "Icon must contain exactly one emoji";
+const emojiSegmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+const pictograph = String.raw`(?:\p{Emoji_Modifier_Base}\uFE0F?\p{Emoji_Modifier}|\p{Extended_Pictographic}\uFE0F?)`;
+const emojiSequence = new RegExp(
+  String.raw`^(?:\p{Regional_Indicator}{2}|[#*0-9]\uFE0F?\u20E3|\u{1F3F4}[\u{E0020}-\u{E007E}]+\u{E007F}|${pictograph}(?:\u200D${pictograph})*)$`,
+  "u",
+);
 
 // A save validates, writes bytes, and updates the registry. Two concurrent
 // saves for one project would interleave those steps.
@@ -29,18 +37,24 @@ export async function setProjectCustomIcon(input: {
     if (!(await input.projects.get(input.projectId))) throw new Error("Project not found");
 
     let customIconRevision: string | null = null;
+    let customIconEmoji: string | null = null;
     if (input.source.type === "automatic") {
       await removeProjectCustomIcon(input);
-    } else {
+    } else if (input.source.type === "upload") {
       const bytes = Buffer.from(input.source.data, "base64");
       validateIcon(bytes);
       await writeFileAtomic(cachePath(input.paseoHome, input.projectId), bytes);
+      customIconRevision = randomUUID();
+    } else {
+      customIconEmoji = validateEmoji(input.source.emoji);
+      await removeProjectCustomIcon(input);
       customIconRevision = randomUUID();
     }
 
     const updated = await input.projects.update(input.projectId, (current) => ({
       ...current,
       customIconRevision,
+      customIconEmoji,
       updatedAt: new Date().toISOString(),
     }));
     if (!updated) {
@@ -62,6 +76,7 @@ export async function readProjectIcon(input: {
 
 export interface ProjectIconSnapshot {
   icon: ProjectIcon | null;
+  emoji?: string;
   revision: string;
 }
 
@@ -78,7 +93,11 @@ export class ProjectIconReader {
   }
 
   async read(project: PersistedProjectRecord): Promise<ProjectIcon | null> {
-    return (this.snapshots.get(project.projectId) ?? (await this.snapshot(project))).icon;
+    return (await this.presentation(project)).icon;
+  }
+
+  async presentation(project: PersistedProjectRecord): Promise<ProjectIconSnapshot> {
+    return this.snapshots.get(project.projectId) ?? this.snapshot(project);
   }
 }
 
@@ -87,6 +106,15 @@ export async function readProjectIconSnapshot(input: {
   paseoHome: string;
   project: PersistedProjectRecord;
 }): Promise<ProjectIconSnapshot> {
+  if (input.project.customIconEmoji) {
+    const icon = await getProjectIcon(input.project.rootPath);
+    const fallbackRevision = icon ? iconRevision("automatic", icon) : "automatic:none:v1";
+    return {
+      icon,
+      emoji: input.project.customIconEmoji,
+      revision: `custom:emoji:${createHash("sha256").update(input.project.customIconEmoji).digest("hex")}:${fallbackRevision}`,
+    };
+  }
   if (input.project.customIconRevision) {
     let icon: ProjectIcon | null = null;
     try {
@@ -105,6 +133,18 @@ export async function readProjectIconSnapshot(input: {
   const icon = await getProjectIcon(input.project.rootPath);
   if (!icon) return { icon: null, revision: "automatic:none:v1" };
   return { icon, revision: iconRevision("automatic", icon) };
+}
+
+function validateEmoji(value: string): string {
+  if (
+    Buffer.byteLength(value, "utf8") === 0 ||
+    Buffer.byteLength(value, "utf8") > MAX_EMOJI_BYTES ||
+    [...emojiSegmenter.segment(value)].length !== 1 ||
+    !emojiSequence.test(value)
+  ) {
+    throw new Error(EMOJI_ERROR);
+  }
+  return value;
 }
 
 function iconRevision(source: "automatic" | "custom", icon: ProjectIcon): string {

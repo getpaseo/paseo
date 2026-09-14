@@ -115,6 +115,10 @@ export async function fillProjectIconUrl(page: Page, url: string): Promise<void>
   await page.getByRole("textbox", { name: "Image or website URL" }).fill(url);
 }
 
+export async function fillProjectIconEmoji(page: Page, emoji: string): Promise<void> {
+  await page.getByRole("textbox", { name: "Emoji" }).fill(emoji);
+}
+
 export async function useAutomaticProjectIcon(page: Page): Promise<void> {
   await page.getByRole("button", { name: "Use automatic" }).click();
 }
