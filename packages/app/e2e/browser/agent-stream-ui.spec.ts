@@ -92,11 +92,21 @@ test.describe("Agent stream UI", () => {
           addedNodes: 0,
           characterDataMutations: 0,
           removedNodes: 0,
+          replacedElements: 0,
         };
+        // The word fade wraps each arriving word in a `data-word-fade` span and
+        // collapses it back into plain text once it settles, so text nodes and
+        // those spans come and go at the tail by design. Any other element
+        // leaving the block means Markdown re-created a mounted descendant.
         const observer = new MutationObserver((records) => {
           for (const record of records) {
             evidence.addedNodes += record.addedNodes.length;
             evidence.removedNodes += record.removedNodes.length;
+            for (const node of record.removedNodes) {
+              if (node instanceof Element && !node.hasAttribute("data-word-fade")) {
+                evidence.replacedElements += 1;
+              }
+            }
             if (record.type === "characterData") {
               evidence.characterDataMutations += 1;
             }
@@ -119,6 +129,7 @@ test.describe("Agent stream UI", () => {
             addedNodes: number;
             characterDataMutations: number;
             removedNodes: number;
+            replacedElements: number;
           };
           __markdownRootObserver?: MutationObserver;
         };
@@ -140,7 +151,7 @@ test.describe("Agent stream UI", () => {
       expect(evidence.connected).toBe(true);
       expect(evidence.sameRoot).toBe(true);
       expect(
-        evidence.removedNodes,
+        evidence.replacedElements,
         `Streaming Markdown replaced mounted descendants: ${JSON.stringify(evidence)}`,
       ).toBe(0);
     } finally {
