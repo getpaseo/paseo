@@ -142,6 +142,7 @@ const OPENCODE_CAPABILITIES: AgentCapabilityFlags = {
 const OPENCODE_BUILD_MODE_ID = "build";
 const OPENCODE_LEGACY_FULL_ACCESS_MODE_ID = "full-access";
 const OPENCODE_DEFAULT_VARIANT_ID = "default";
+const OPENCODE_NAMED_VARIANT_PREFIX = "variant:";
 const EMPTY_OPENCODE_EVENT_SOURCE: OpenCodeEventSource = {
   ready: async () => undefined,
   subscribe: () => () => undefined,
@@ -651,6 +652,21 @@ function normalizeOpenCodeModeId(modeId: string | null | undefined): string | nu
   return trimmed;
 }
 
+// Preserve existing ordinary IDs and the saved base choice. Escape the reserved
+// base ID and the escape prefix so every explicit upstream variant stays addressable.
+function openCodeVariantChoiceId(variant: string): string {
+  return variant === OPENCODE_DEFAULT_VARIANT_ID ||
+    variant.startsWith(OPENCODE_NAMED_VARIANT_PREFIX)
+    ? `${OPENCODE_NAMED_VARIANT_PREFIX}${variant}`
+    : variant;
+}
+
+function resolveOpenCodeRuntimeVariantId(choiceId: string | undefined): string | undefined {
+  return choiceId?.startsWith(OPENCODE_NAMED_VARIANT_PREFIX)
+    ? choiceId.slice(OPENCODE_NAMED_VARIANT_PREFIX.length)
+    : choiceId;
+}
+
 function normalizeOpenCodeVariantId(variantId: string | null | undefined): string | null {
   const trimmed = typeof variantId === "string" ? variantId.trim() : "";
   if (!trimmed || trimmed === OPENCODE_DEFAULT_VARIANT_ID) {
@@ -809,8 +825,12 @@ function buildOpenCodeModelDefinition(
   // OpenCode lists only overrides; its base model behavior is selected by omitting `variant`.
   const thinkingOptions = rawVariants.length
     ? [
-        { id: OPENCODE_DEFAULT_VARIANT_ID, label: "Default", isDefault: true },
-        ...rawVariants.map((id) => ({ id, label: id })),
+        {
+          id: OPENCODE_DEFAULT_VARIANT_ID,
+          label: rawVariants.includes(OPENCODE_DEFAULT_VARIANT_ID) ? "Model default" : "Default",
+          isDefault: true,
+        },
+        ...rawVariants.map((id) => ({ id: openCodeVariantChoiceId(id), label: id })),
       ]
     : [];
 
@@ -3513,7 +3533,7 @@ class OpenCodeAgentSession implements AgentSession {
     );
     const model = this.parseModel(this.config.model);
     const effectiveMode = resolveOpenCodeRuntimeAgentId(this.currentMode);
-    const effectiveVariant = this.config.thinkingOptionId ?? undefined;
+    const effectiveVariant = resolveOpenCodeRuntimeVariantId(this.config.thinkingOptionId);
 
     try {
       const response = await this.client.session.promptAsync({
@@ -3726,7 +3746,7 @@ class OpenCodeAgentSession implements AgentSession {
     this.suppressAssistantMessagesUntilIdle.active = false;
     const model = this.parseModel(this.config.model);
     const thinkingOptionId = this.config.thinkingOptionId;
-    const effectiveVariant = thinkingOptionId ?? undefined;
+    const effectiveVariant = resolveOpenCodeRuntimeVariantId(thinkingOptionId);
     const effectiveMode = resolveOpenCodeRuntimeAgentId(this.currentMode);
 
     await this.awaitEventStreamReady(turnAbortController);
