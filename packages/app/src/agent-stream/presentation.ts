@@ -42,14 +42,17 @@ export function createStreamPresentation() {
     const cached = blocksBySource.get(item);
     if (cached) return cached;
     const previousSource = liveSources.get(item.id);
-    const previous = previousSource ? blocksBySource.get(previousSource) : undefined;
+    const previous = previousSource && blocksBySource.get(previousSource);
     // Parse only the growing last block on append, as the old live reducer did.
     // Canonical text replacements are parsed afresh instead of joining fragments.
     const isAppend = previousSource && previous && item.text.startsWith(previousSource.text);
-    const prefix = isAppend ? previous.slice(0, -1) : [];
-    const growingText = isAppend
-      ? previous[previous.length - 1]!.text + item.text.slice(previousSource.text.length)
-      : item.text;
+    let prefix: AssistantMessageItem[] = [];
+    let growingText = item.text;
+    if (isAppend) {
+      prefix = previous.slice(0, -1);
+      growingText =
+        previous[previous.length - 1]!.text + item.text.slice(previousSource.text.length);
+    }
     const textBlocks = splitMarkdownBlocks(growingText);
     if (prefix.length + textBlocks.length < 2) {
       blocksBySource.set(item, [item]);
@@ -59,8 +62,11 @@ export function createStreamPresentation() {
     const blocks = [...prefix];
     for (const [offset, text] of textBlocks.entries()) {
       const index = prefix.length + offset;
-      const blockText =
-        offset === textBlocks.length - 1 ? text + (/\n+$/.exec(item.text)?.[0] ?? "") : text;
+      let blockText = text;
+      if (offset === textBlocks.length - 1) {
+        const trailingNewlines = /\n+$/.exec(item.text)?.[0] ?? "";
+        blockText += trailingNewlines;
+      }
       const existing = previous?.[index];
       const id = `${item.id}:block:${index}`;
       // Completed display blocks keep their first cursor and object identity while
@@ -85,10 +91,12 @@ export function createStreamPresentation() {
     // Retained history is not reprojected or regrouped on each live text update.
     if (historySource !== input.tail || historyTransform !== input.transform) {
       historyRows = projectPluginTimelineItems(input.tail, input.transform).flatMap<StreamItem>(
-        (item) =>
+        (item) => {
           // Preserve live block identities at completion; fetched native Markdown
           // stays whole so links and other cross-block constructs keep their context.
-          item.kind === "assistant_message" ? (blocksBySource.get(item) ?? [item]) : [item],
+          if (item.kind === "assistant_message") return blocksBySource.get(item) ?? [item];
+          return [item];
+        },
       );
       historySource = input.tail;
       historyTransform = input.transform;
@@ -109,7 +117,8 @@ export function createStreamPresentation() {
     liveSources = nextLiveSources;
     const nextPromoted = retainItems(promotedRows, promoted);
     if (displayHistory !== historyRows || nextPromoted !== promotedRows) {
-      displayTail = nextPromoted.length === 0 ? historyRows : [...historyRows, ...nextPromoted];
+      displayTail = historyRows;
+      if (nextPromoted.length > 0) displayTail = [...historyRows, ...nextPromoted];
       displayHistory = historyRows;
       promotedRows = nextPromoted;
     }

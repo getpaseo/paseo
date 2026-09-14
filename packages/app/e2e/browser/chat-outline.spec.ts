@@ -20,7 +20,7 @@ import {
   pointAtChatOutlineRowEdge,
   pressEnterOnFocusedPrompt,
   splitCurrentPanelRight,
-  seedStreamingMarkdownOutline,
+  withStreamingMarkdownOutline,
   expectReadingStreamedMarkdown,
 } from "../support/helpers/chat-outline";
 import {
@@ -47,9 +47,8 @@ test.describe("desktop chat outline", () => {
     page,
   }) => {
     test.setTimeout(120_000);
-    const agent = await seedStreamingMarkdownOutline();
     const prompt = "Explain in several paragraphs.";
-    try {
+    await withStreamingMarkdownOutline(async (agent) => {
       await agent.client.sendAgentMessage(agent.agentId, "Earlier prompt.");
       await agent.client.waitForFinish(agent.agentId, 30_000);
       await page.setViewportSize(WIDE_VIEWPORT);
@@ -66,9 +65,7 @@ test.describe("desktop chat outline", () => {
       await expectActiveChatOutlinePrompt(page, 2);
       await clickChatOutlineRowEdge(page, 2);
       await expectTimelinePromptLandedBelowTop(page, prompt);
-    } finally {
-      await agent.cleanup();
-    }
+    });
   });
 
   test("indexes unloaded prompts and jumps with one bounded merged page", async ({ page }) => {

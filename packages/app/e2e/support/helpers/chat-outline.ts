@@ -2,10 +2,12 @@ import { expect, type Locator, type Page } from "@playwright/test";
 import { openSettings } from "./app";
 import { openSettingsSection } from "./settings";
 import { runWorkspaceActionFromCommandCenter } from "./command-center-workspace-actions";
-import { seedMockAgentWorkspace } from "./mock-agent";
+import { seedMockAgentWorkspace, type MockAgentWorkspace } from "./mock-agent";
 
-export function seedStreamingMarkdownOutline() {
-  return seedMockAgentWorkspace({
+export async function withStreamingMarkdownOutline(
+  run: (agent: MockAgentWorkspace) => Promise<void>,
+): Promise<void> {
+  const agent = await seedMockAgentWorkspace({
     repoPrefix: "chat-outline-markdown-",
     title: "Streaming Markdown outline",
     featureValues: {
@@ -16,6 +18,11 @@ export function seedStreamingMarkdownOutline() {
       mockStreamingAssistantIntervalMs: 80,
     },
   });
+  try {
+    await run(agent);
+  } finally {
+    await agent.cleanup();
+  }
 }
 
 export async function expectReadingStreamedMarkdown(page: Page, prompt: string): Promise<void> {
