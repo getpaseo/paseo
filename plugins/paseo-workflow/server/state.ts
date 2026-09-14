@@ -3,6 +3,10 @@ import { z } from "zod";
 import { planContext, executorSelection } from "../shared/rpc";
 import { classification, auditDecision } from "../shared/final-review";
 
+const storedPlanContext = planContext.omit({ permissionRequestId: true }).extend({
+  permissionRequestId: z.string().optional(),
+});
+
 const finalReview = z.object({
   phase: z.enum([
     "classifying",
@@ -63,7 +67,7 @@ export const workflowSettings = defineSettings({
           plans: z.record(
             z.string(),
             z.object({
-              context: planContext,
+              context: storedPlanContext,
               approved: z.boolean().optional(),
               verification: z.string().optional(),
               final: finalReview.optional(),

@@ -433,6 +433,146 @@ test("Router consumes persisted intent and request, persists its recommendation,
   expect((await f.port.read()).workflows.router.recommendation).toBe("advanced");
 });
 
+test("Router refreshes clarifications after an early status read without recapturing git", async () => {
+  const f = fixture();
+  f.agents.set("router", {
+    id: "router",
+    workspaceId: "workspace",
+    launchProfileId: "paseo-workflow-router",
+    labels: {},
+    pendingPermissions: [],
+  });
+  let timeline = [{ type: "user_message" as const, text: "Build a dashboard" }];
+  f.port.timeline = async () => timeline;
+  let gitReads = 0;
+  f.port.git = async () => ({
+    startHead: `base-${++gitReads}`,
+    targetBase: "target-base",
+    branch: "feature",
+    dirty: "",
+  });
+  const controller = new WorkflowController(f.port);
+  await controller.status("router", "workspace");
+  timeline = [
+    ...timeline,
+    { type: "assistant_message" as const, text: "Which storage?" },
+    {
+      type: "user_message" as const,
+      text: "Use SQLite and preserve the existing settings screen.",
+    },
+  ];
+  await controller.finished(
+    "router",
+    JSON.stringify({ ready: true, recommendation: "standard", constraints: [], assumptions: [] }),
+  );
+  expect(f.prompts[0]?.text).toContain("Build a dashboard");
+  expect(f.prompts[0]?.text).toContain("Use SQLite and preserve the existing settings screen.");
+  expect((await f.port.read()).workflows.router.git.startHead).toBe("base-1");
+  expect(gitReads).toBe(1);
+});
+
+test("reconcile recovers the latest canonically approved planner plan missed during reload", async () => {
+  const f = fixture();
+  f.agents.set("router", {
+    id: "router",
+    workspaceId: "workspace",
+    launchProfileId: "paseo-workflow-router",
+    labels: {},
+    pendingPermissions: [],
+  });
+  let plannerTimeline: Awaited<ReturnType<WorkflowPort["timeline"]>> = [];
+  f.port.timeline = async (id) =>
+    id === "router" ? [{ type: "user_message", text: "Build the dashboard" }] : plannerTimeline;
+  const controller = new WorkflowController(f.port);
+  await controller.finished(
+    "router",
+    JSON.stringify({ ready: true, recommendation: "standard", constraints: [], assumptions: [] }),
+  );
+  plannerTimeline = [
+    { type: "user_message", text: "Plan the request" },
+    {
+      type: "tool_call",
+      callId: "late-plan",
+      name: "Plan",
+      status: "completed",
+      error: null,
+      detail: { type: "plan", text: "Late approved plan" },
+      metadata: { approved: false, resolution: { behavior: "deny" } },
+    },
+  ];
+  await new WorkflowController(f.port).status("router", "workspace");
+  expect((await f.port.read()).workflows.router.plans).toEqual({});
+  plannerTimeline = [
+    { type: "user_message", text: "Plan the request" },
+    {
+      type: "tool_call",
+      callId: "late-plan",
+      name: "Plan",
+      status: "completed",
+      error: null,
+      detail: { type: "plan", text: "Late approved plan" },
+      metadata: { approved: true, resolution: { behavior: "allow" } },
+    },
+  ];
+  f.port.turn = async (_id, _turnId, _expectedMessageId, approvedPlanCallId) =>
+    approvedPlanCallId === "late-plan"
+      ? {
+          key: "late-implementation",
+          items: [{ type: "assistant_message", text: "Implemented and committed" }],
+        }
+      : null;
+  await new WorkflowController(f.port).status("router", "workspace");
+  await new WorkflowController(f.port).status("router", "workspace");
+  const recovered = (await f.port.read()).workflows.router;
+  expect(recovered.git.startHead).toBe("abc123");
+  expect(recovered.activePlanId).toBe("late-plan");
+  expect(recovered.plans["late-plan"]).toMatchObject({
+    approved: true,
+    context: {
+      workspaceId: "workspace",
+      agentId: "child-1",
+      callId: "late-plan",
+      text: "Late approved plan",
+    },
+  });
+  expect(recovered.plans["late-plan"]?.context.permissionRequestId).toBeUndefined();
+  expect(recovered.plans["late-plan"]?.final?.phase).toBe("classifying");
+  expect(
+    f.launches.filter((launch) => launch.launchProfileId.endsWith("final-review")),
+  ).toHaveLength(1);
+});
+
+test("handoff does not recover closing from a non-workflow denial", async () => {
+  const f = fixture();
+  let timeline = await f.port.timeline("planner");
+  f.port.timeline = async () => timeline;
+  f.port.respond = async (_agentId, _requestId, response) => {
+    f.agents.get("planner")!.pendingPermissions = [];
+    timeline = [
+      {
+        type: "tool_call",
+        callId: plan.callId,
+        name: "Plan",
+        status: "completed",
+        error: null,
+        detail: { type: "plan", text: plan.text },
+        metadata: {
+          approved: false,
+          resolution: { ...response, message: "Different denial" },
+        },
+      },
+    ];
+    throw new Error("ACK lost after consumption");
+  };
+  await expect(new WorkflowController(f.port).handoff(plan, "standard")).rejects.toThrow(
+    "ACK lost",
+  );
+  await expect(new WorkflowController(f.port).handoff(plan, "standard")).rejects.toThrow(
+    "no longer pending",
+  );
+  expect(f.launches).toEqual([]);
+});
+
 test.each(["review", "handoff"] as const)(
   "%s resumes a persisted closed operation without answering the permission twice",
   async (action) => {
@@ -450,6 +590,44 @@ test.each(["review", "handoff"] as const)(
     expect(await invoke(new WorkflowController(f.port))).toEqual({ agentId: "child-1" });
     expect(f.decisions).toEqual(["permission-1"]);
     expect(f.launches).toHaveLength(1);
+  },
+);
+
+test.each(["review", "handoff"] as const)(
+  "%s resumes after the exact workflow denial was consumed but its acknowledgement was lost",
+  async (action) => {
+    const f = fixture();
+    let timeline = await f.port.timeline("planner");
+    f.port.timeline = async () => timeline;
+    f.port.respond = async (_agentId, requestId, response) => {
+      f.decisions.push(requestId);
+      f.agents.get("planner")!.pendingPermissions = [];
+      timeline = [
+        { type: "user_message", text: "Build the requested feature" },
+        {
+          type: "tool_call",
+          callId: plan.callId,
+          name: "Plan",
+          status: "completed",
+          error: null,
+          detail: { type: "plan", text: plan.text },
+          metadata: { approved: false, resolution: response },
+        },
+      ];
+      throw new Error("ACK lost after consumption");
+    };
+    const invoke = (controller: WorkflowController) =>
+      action === "review"
+        ? controller.review(plan, "manual")
+        : controller.handoff(plan, "standard");
+    await expect(invoke(new WorkflowController(f.port))).rejects.toThrow("ACK lost");
+    f.port.respond = async () => {
+      throw new Error("The denial must not be replayed");
+    };
+    await expect(invoke(new WorkflowController(f.port))).resolves.toEqual({ agentId: "child-1" });
+    expect(f.decisions).toEqual(["permission-1"]);
+    expect(f.launches).toHaveLength(1);
+    expect(f.prompts).toHaveLength(1);
   },
 );
 

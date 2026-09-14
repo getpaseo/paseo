@@ -22,6 +22,9 @@ export interface PlanContext {
   callId: string;
   text: string;
 }
+type StoredPlanContext = Omit<PlanContext, "permissionRequestId"> & {
+  permissionRequestId?: string;
+};
 export interface WorkflowAgent {
   id: string;
   workspaceId?: string;
@@ -78,7 +81,7 @@ export interface Workflow {
   plans: Record<
     string,
     {
-      context: PlanContext;
+      context: StoredPlanContext;
       review?: Review;
       handoff?: Handoff;
       approved?: boolean;
@@ -145,7 +148,17 @@ function briefing(workflow: Workflow, plan: string): string {
   );
 }
 
-function samePlan(left: PlanContext, right: PlanContext): boolean {
+function requestFrom(timeline: readonly AgentTimelineItem[]): string {
+  return timeline
+    .flatMap((item) =>
+      item.type === "user_message" && !item.clientMessageId?.startsWith("workflow:")
+        ? [item.text]
+        : [],
+    )
+    .join("\n\nUser follow-up:\n");
+}
+
+function samePlan(left: StoredPlanContext, right: PlanContext): boolean {
   return (
     left.agentId === right.agentId &&
     left.workspaceId === right.workspaceId &&
@@ -153,6 +166,123 @@ function samePlan(left: PlanContext, right: PlanContext): boolean {
     left.permissionRequestId === right.permissionRequestId &&
     left.text === right.text
   );
+}
+
+function planResolution(
+  item: Extract<AgentTimelineItem, { type: "tool_call" }>,
+): AgentPermissionResponse | undefined {
+  const resolution = item.metadata?.resolution;
+  if (typeof resolution !== "object" || resolution === null || !("behavior" in resolution))
+    return undefined;
+  return resolution.behavior === "allow" || resolution.behavior === "deny"
+    ? (resolution as AgentPermissionResponse)
+    : undefined;
+}
+
+function closureMessage(workflow: Workflow, plan: StoredPlanContext, action: "review" | "handoff") {
+  return `Workflow ${workflow.id}: ${action} ${plan.callId}; stop without implementation.`;
+}
+
+function actionContext(context: StoredPlanContext): PlanContext {
+  if (!context.permissionRequestId)
+    throw new Error("This recovered plan is already resolved and cannot accept plan actions.");
+  return { ...context, permissionRequestId: context.permissionRequestId };
+}
+
+type PlanItem = Extract<AgentTimelineItem, { type: "tool_call" }>;
+
+function canonicalPlanItems(timeline: readonly AgentTimelineItem[]): PlanItem[] {
+  return timeline.filter(
+    (item): item is PlanItem =>
+      item.type === "tool_call" &&
+      item.detail.type === "plan" &&
+      item.status === "completed" &&
+      !item.error &&
+      (item.metadata?.approved === true || Boolean(planResolution(item))),
+  );
+}
+
+function recoverApprovedPlan(workflow: Workflow, latest: PlanItem | undefined): boolean {
+  if (
+    !latest ||
+    latest.detail.type !== "plan" ||
+    latest.metadata?.approved !== true ||
+    planResolution(latest)?.behavior !== "allow" ||
+    workflow.plans[latest.callId]
+  )
+    return false;
+  const syntheticPermissionId = latest.metadata?.syntheticPermissionId;
+  const synthetic = typeof syntheticPermissionId === "string";
+  if (synthetic && latest.metadata?.approvalOutcome !== "completed") return false;
+  workflow.plans[latest.callId] = {
+    context: {
+      workspaceId: workflow.workspaceId,
+      agentId: workflow.plannerId,
+      ...(synthetic ? { permissionRequestId: syntheticPermissionId } : {}),
+      callId: latest.callId,
+      text: latest.detail.text,
+    },
+    approved: true,
+  };
+  workflow.activePlanId = latest.callId;
+  return true;
+}
+
+function closeConsumedOperations(
+  workflow: Workflow,
+  plan: Workflow["plans"][string],
+  item: PlanItem,
+  latest: PlanItem | undefined,
+): boolean {
+  const resolution = planResolution(item);
+  if (
+    item !== latest ||
+    resolution?.behavior !== "deny" ||
+    item.metadata?.approved !== false ||
+    resolution.interrupt !== true
+  )
+    return false;
+  let changed = false;
+  for (const [action, operation] of [
+    ["review", plan.review],
+    ["handoff", plan.handoff],
+  ] as const) {
+    if (
+      operation?.phase === "closing" &&
+      resolution.message === closureMessage(workflow, plan.context, action) &&
+      (typeof item.metadata?.syntheticPermissionId !== "string" ||
+        (item.metadata.syntheticPermissionId === plan.context.permissionRequestId &&
+          item.metadata?.approvalOutcome === "completed"))
+    ) {
+      operation.phase = "closed";
+      changed = true;
+    }
+  }
+  return changed;
+}
+
+function applyPlanDecision(
+  workflow: Workflow,
+  plan: Workflow["plans"][string],
+  item: PlanItem,
+  latest: PlanItem | undefined,
+): boolean {
+  let changed = closeConsumedOperations(workflow, plan, item, latest);
+  if (item.metadata?.approved === true && !plan.approved) {
+    plan.approved = true;
+    workflow.activePlanId = item.callId;
+    changed = true;
+  }
+  if (item.metadata?.syntheticPermissionId && item.metadata.approvalOutcome !== "completed") {
+    if (plan.verification !== UNCONFIRMED_APPROVAL) {
+      plan.verification = UNCONFIRMED_APPROVAL;
+      changed = true;
+    }
+  } else if (plan.verification === UNCONFIRMED_APPROVAL) {
+    delete plan.verification;
+    changed = true;
+  }
+  return changed;
 }
 
 function handoffPrompt(workflow: Workflow | undefined, agentId: string) {
@@ -268,7 +398,7 @@ export class WorkflowController {
         ? workflow.plans[workflow.preparedPlanId]
         : undefined;
       return {
-        plan: prepared?.context ?? null,
+        plan: prepared?.context.permissionRequestId ? actionContext(prepared.context) : null,
         recommendation: workflow?.recommendation ?? null,
         handoff: prepared?.handoff ?? null,
         verification: Object.values(workflow?.plans ?? {})
@@ -294,6 +424,7 @@ export class WorkflowController {
       const state = await this.port.read();
       const agent = await this.port.agent(context.agentId);
       const workflow = await this.workflow(state, agent);
+      await this.reconcilePlanTimeline(state, workflow);
       const previous = workflow.plans[context.callId];
       if (previous && !samePlan(previous.context, context))
         throw new Error("This plan context does not match the recorded plan.");
@@ -312,7 +443,7 @@ export class WorkflowController {
         await this.port.respond(context.agentId, context.permissionRequestId, {
           behavior: "deny",
           interrupt: true,
-          message: `Workflow ${workflow.id}: handoff ${context.callId}; stop without implementation.`,
+          message: closureMessage(workflow, context, "handoff"),
         });
         plan.handoff.phase = "closed";
         await this.port.write(state);
@@ -443,42 +574,22 @@ export class WorkflowController {
     return undefined;
   }
 
-  private async reconcileApprovals(state: WorkflowState, workflow: Workflow) {
-    if (!Object.keys(workflow.plans).length) return;
-    let changed = false;
-    const decisions = new Map<string, Extract<AgentTimelineItem, { type: "tool_call" }>>();
-    for (const item of await this.port.timeline(workflow.plannerId)) {
-      if (
-        item.type !== "tool_call" ||
-        item.detail.type !== "plan" ||
-        item.metadata?.approved !== true
-      )
-        continue;
-      decisions.set(item.callId, item);
-    }
+  private async reconcilePlanTimeline(state: WorkflowState, workflow: Workflow) {
+    const planItems = canonicalPlanItems(await this.port.timeline(workflow.plannerId));
+    const decisions = new Map(planItems.map((item) => [item.callId, item]));
+    const latest = planItems.at(-1);
+    let changed = recoverApprovedPlan(workflow, latest);
     for (const item of decisions.values()) {
       const plan = workflow.plans[item.callId];
       if (!plan || item.detail.type !== "plan" || plan.context.text !== item.detail.text) continue;
-      if (!plan.approved) {
-        plan.approved = true;
-        workflow.activePlanId = item.callId;
-        changed = true;
-      }
-      if (item.metadata?.syntheticPermissionId && item.metadata.approvalOutcome !== "completed") {
-        if (plan.verification === UNCONFIRMED_APPROVAL) continue;
-        plan.verification = UNCONFIRMED_APPROVAL;
-        changed = true;
-      } else if (plan.verification === UNCONFIRMED_APPROVAL) {
-        delete plan.verification;
-        changed = true;
-      }
+      changed = applyPlanDecision(workflow, plan, item, latest) || changed;
     }
     if (changed) await this.port.write(state);
   }
 
   private async reconcile(state: WorkflowState, workflow: Workflow) {
     // One bounded pass over existing operations, never replay arbitrary agent history.
-    await this.reconcileApprovals(state, workflow);
+    await this.reconcilePlanTimeline(state, workflow);
     const candidates = new Set<string>();
     if (
       !workflow.routed &&
@@ -489,7 +600,8 @@ export class WorkflowController {
     const activePlan = workflow.plans[workflow.activePlanId ?? ""];
     if (activePlan?.approved && !activePlan.final) candidates.add(workflow.plannerId);
     for (const plan of Object.values(workflow.plans)) {
-      if (plan.review?.phase === "complete") await this.port.claimReview(plan.context, false);
+      if (plan.review?.phase === "complete")
+        await this.port.claimReview(actionContext(plan.context), false);
       for (const id of planCandidates(plan)) candidates.add(id);
     }
     for (const agentId of candidates) {
@@ -546,8 +658,12 @@ export class WorkflowController {
     await this.profile("router");
     const decision = routerDecision.parse(decisionJson(text));
     if (!decision.ready) return false;
+    const request = requestFrom(await this.port.timeline(agent.id));
+    if (!request)
+      throw new Error("The original request is unavailable. Reopen the agent history and retry.");
     const planner = await this.profile("planner");
     workflow.routerId = agent.id;
+    workflow.request = request;
     workflow.recommendation = decision.recommendation;
     workflow.constraints = decision.constraints;
     workflow.assumptions = decision.assumptions;
@@ -917,7 +1033,7 @@ export class WorkflowController {
       plan.review!.phase = "complete";
       plan.review!.superseded = true;
       await this.port.write(state);
-      await this.port.claimReview(plan.context, false);
+      await this.port.claimReview(actionContext(plan.context), false);
       return;
     }
     if (!text.trim())
@@ -925,14 +1041,14 @@ export class WorkflowController {
         "The review returned no objections or conclusion. Open the reviewer and retry.",
       );
     const accepted = await this.port.revise(
-      plan.context,
+      actionContext(plan.context),
       `Revise the plan using these objections. Produce a new plan call; never rewrite the previous plan. Stay in planning, do not implement.\n${briefing(workflow, plan.context.text)}\nReview:\n${text}`,
       `workflow:${workflow.id}:revision:${plan.context.callId}`,
     );
     plan.review!.phase = "complete";
     if (!accepted) plan.review!.superseded = true;
     await this.port.write(state);
-    await this.port.claimReview(plan.context, false);
+    await this.port.claimReview(actionContext(plan.context), false);
   }
   private serial<T>(operation: () => Promise<T>): Promise<T> {
     // ponytail: one queue per plugin; split by workflow if concurrent launches become a bottleneck.
@@ -977,15 +1093,15 @@ export class WorkflowController {
     if (!agent.workspaceId) throw new Error("The agent has no workspace.");
     const workspace = await this.port.workspace(agent.workspaceId);
     const timeline = await this.port.timeline(agent.id);
-    const requests = timeline.filter((item) => item.type === "user_message");
-    if (requests.length === 0)
+    const request = requestFrom(timeline);
+    if (!request)
       throw new Error("The original request is unavailable. Reopen the agent history and retry.");
     const workflow: Workflow = {
       id,
       workspaceId: agent.workspaceId,
       plannerId: agent.id,
       intent: workspace.intent ?? "",
-      request: requests.map((item) => item.text).join("\n\nUser follow-up:\n"),
+      request,
       constraints: [],
       assumptions: [],
       git: await this.port.git(workspace.cwd),
@@ -1015,6 +1131,7 @@ export class WorkflowController {
       const state = await this.port.read();
       const agent = await this.port.agent(context.agentId);
       const workflow = await this.workflow(state, agent);
+      await this.reconcilePlanTimeline(state, workflow);
       const previous = workflow.plans[context.callId];
       if (previous && !samePlan(previous.context, context))
         throw new Error("This plan context does not match the recorded plan.");
@@ -1061,7 +1178,7 @@ export class WorkflowController {
         await this.port.respond(context.agentId, context.permissionRequestId, {
           behavior: "deny",
           interrupt: true,
-          message: `Workflow ${workflow.id}: review ${context.callId}; stop without implementation.`,
+          message: closureMessage(workflow, context, "review"),
         });
         plan.review.phase = "closed";
         await this.port.write(state);
