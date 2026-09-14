@@ -12,6 +12,8 @@ import {
 } from "@/workspace-tabs/identity";
 import { createNewWorkspaceTab } from "@/workspace-tabs/new-tab";
 import { generateDraftId } from "@/stores/draft-keys";
+import { queryClient as appQueryClient } from "@/data/query-client";
+import { APP_SETTINGS_QUERY_KEY, type AppSettings } from "@/hooks/use-settings/storage";
 
 export interface SplitPane {
   id: string;
@@ -1200,7 +1202,13 @@ function createDefaultExplorerSidebarTabs(): WorkspaceTab[] {
 }
 
 /** The desktop companion pane exists before it is first shown. */
-export function createWorkspaceLayoutWithExplorerSidebar(): WorkspaceLayout {
+export function createWorkspaceLayoutWithExplorerSidebar(options?: {
+  alwaysOpen?: boolean;
+}): WorkspaceLayout {
+  const alwaysOpen =
+    options?.alwaysOpen ??
+    appQueryClient.getQueryData<AppSettings>(APP_SETTINGS_QUERY_KEY)?.alwaysOpenExplorerSidebar ??
+    false;
   return {
     root: createGroupNode({
       id: DEFAULT_LAYOUT_GROUP_ID,
@@ -1210,7 +1218,7 @@ export function createWorkspaceLayoutWithExplorerSidebar(): WorkspaceLayout {
         createPaneNode({
           id: EXPLORER_SIDEBAR_PANE_ID,
           tabs: createDefaultExplorerSidebarTabs(),
-          hidden: true,
+          hidden: !alwaysOpen,
         }),
       ],
       sizes: [0.78, 0.22],

@@ -1959,6 +1959,13 @@ export const en = {
       about: "About",
     },
     layout: {
+      explorerSidebar: {
+        title: "Explorer sidebar",
+        alwaysOpen: {
+          label: "Always open for new workspaces",
+          hint: "New workspaces start with the Explorer sidebar open.",
+        },
+      },
       openInSidePane: {
         title: "Open location",
         destinations: {

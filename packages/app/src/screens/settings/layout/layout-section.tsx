@@ -1,6 +1,11 @@
 import { useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
-import { SettingsSection, SettingsCard, SettingsSelect } from "@/components/settings";
+import {
+  SettingsSection,
+  SettingsCard,
+  SettingsSelect,
+  SettingsSwitch,
+} from "@/components/settings";
 import {
   useAppSettings,
   type OpenInSidePanePreferences,
@@ -67,24 +72,40 @@ export function LayoutSection() {
     },
     [settings.openInSidePane, updateSettings],
   );
+  const handleAlwaysOpenExplorerSidebarChange = useCallback(
+    (alwaysOpenExplorerSidebar: boolean) => void updateSettings({ alwaysOpenExplorerSidebar }),
+    [updateSettings],
+  );
   return (
-    <SettingsSection title={t("settings.layout.openInSidePane.title")}>
-      <SettingsCard>
-        {SOURCES.map((source) => (
+    <>
+      <SettingsSection title={t("settings.layout.explorerSidebar.title")}>
+        <SettingsCard>
+          <SettingsSwitch
+            label={t("settings.layout.explorerSidebar.alwaysOpen.label")}
+            hint={t("settings.layout.explorerSidebar.alwaysOpen.hint")}
+            value={settings.alwaysOpenExplorerSidebar}
+            onValueChange={handleAlwaysOpenExplorerSidebarChange}
+          />
+        </SettingsCard>
+      </SettingsSection>
+      <SettingsSection title={t("settings.layout.openInSidePane.title")}>
+        <SettingsCard>
+          {SOURCES.map((source) => (
+            <LayoutPreferenceRow
+              key={source}
+              source={source}
+              destination={settings.openInSidePane[source] ? "side" : "main"}
+              onDestinationChange={handleDestinationChange}
+            />
+          ))}
           <LayoutPreferenceRow
-            key={source}
-            source={source}
-            destination={settings.openInSidePane[source] ? "side" : "main"}
+            source="pullRequests"
+            destination={settings.pullRequestOpenLocation}
+            allowExplorer
             onDestinationChange={handleDestinationChange}
           />
-        ))}
-        <LayoutPreferenceRow
-          source="pullRequests"
-          destination={settings.pullRequestOpenLocation}
-          allowExplorer
-          onDestinationChange={handleDestinationChange}
-        />
-      </SettingsCard>
-    </SettingsSection>
+        </SettingsCard>
+      </SettingsSection>
+    </>
   );
 }

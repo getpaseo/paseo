@@ -319,7 +319,10 @@ function visiblePane<TPane extends SplitPane>(pane: TPane): Omit<TPane, "hidden"
 }
 
 function createExplorerSidebarNode(): SplitNode {
-  const layout = createWorkspaceLayoutWithExplorerSidebar();
+  // Migrating an existing user's layout, not creating a new workspace — keep the
+  // pre-existing closed default regardless of the "always open" preference, since
+  // this runs during store rehydration before settings can have loaded.
+  const layout = createWorkspaceLayoutWithExplorerSidebar({ alwaysOpen: false });
   const pane = findPaneById(layout.root, EXPLORER_SIDEBAR_PANE_ID);
   if (!pane) {
     throw new Error("Default Explorer pane is missing");

@@ -159,6 +159,16 @@ describe("workspace-layout-store helpers", () => {
     );
   });
 
+  it("hides the Explorer sidebar by default", () => {
+    const layout = createWorkspaceLayoutWithExplorerSidebar();
+    expect(findPaneById(layout.root, "explorer")?.hidden).toBe(true);
+  });
+
+  it("opens the Explorer sidebar when alwaysOpen is requested", () => {
+    const layout = createWorkspaceLayoutWithExplorerSidebar({ alwaysOpen: true });
+    expect(findPaneById(layout.root, "explorer")?.hidden).toBeUndefined();
+  });
+
   it("discards persisted New tabs and restores each empty pane with a fresh identity", async () => {
     const persisted = createWorkspaceLayoutWithExplorerSidebar();
     const persistedIds = new Set(collectAllTabs(persisted.root).map((tab) => tab.tabId));
