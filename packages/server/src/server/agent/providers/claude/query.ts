@@ -10,7 +10,7 @@ import {
   type ProviderRuntimeSettings,
 } from "../../provider-launch-config.js";
 import { buildSelfNodeCommand } from "../../../paseo-env.js";
-import { spawnProcess } from "../../../../utils/spawn.js";
+import { spawnProcess as defaultSpawnProcess } from "../../../../utils/spawn.js";
 
 // Keep the raw SDK query import in this module only. Claude process launch behavior
 // must stay shared between production and tests so Windows .cmd/.bat handling cannot
@@ -24,6 +24,7 @@ export interface ClaudeQueryContext {
   runtimeSettings?: ProviderRuntimeSettings;
   launchEnv?: Record<string, string>;
   queryFactory?: ClaudeQueryFactory;
+  spawnProcess?: typeof defaultSpawnProcess;
   /** Called with the spawned child process so the caller can tree-kill it on close. */
   onChildProcess?: (child: ChildProcess) => void;
 }
@@ -83,7 +84,12 @@ function applyRuntimeSettingsToClaudeOptions(
   options: ClaudeOptions,
   context: ClaudeQueryContext,
 ): ClaudeOptions {
-  const { runtimeSettings, launchEnv, onChildProcess } = context;
+  const {
+    runtimeSettings,
+    launchEnv,
+    onChildProcess,
+    spawnProcess = defaultSpawnProcess,
+  } = context;
   return {
     ...options,
     spawnClaudeCodeProcess: (spawnOptions) => {
