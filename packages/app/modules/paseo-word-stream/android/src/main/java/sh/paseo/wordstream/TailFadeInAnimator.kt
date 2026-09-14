@@ -16,7 +16,10 @@ import java.text.Bidi
  * follows; the next word starts where this one ends. All spans read the same
  * clock, so a frame paints one monotone front instead of a fade per word.
  */
-internal class TailFadeInAnimator(textView: TextView) {
+internal class TailFadeInAnimator(
+  textView: TextView,
+  private val currentTimeMillis: () -> Long = System::currentTimeMillis,
+) {
   private data class SpanRange(val span: FadeInSpan, val start: Int, val end: Int)
   private class ActiveFade(val spans: List<SpanRange>, val endsAt: Long)
   private val viewRef = WeakReference(textView)
@@ -38,7 +41,7 @@ internal class TailFadeInAnimator(textView: TextView) {
     // RN may copy CharacterStyles while replacing its read-only buffer.
     text.getSpans(0, text.length, FadeInSpan::class.java).forEach { text.removeSpan(it) }
     if (!ValueAnimator.areAnimatorsEnabled()) return
-    val now = System.currentTimeMillis()
+    val now = currentTimeMillis()
     clock.now = now
     for (range in next) {
       if (range.start < 0 || range.end > text.length || range.end <= range.start) continue
@@ -92,7 +95,7 @@ internal class TailFadeInAnimator(textView: TextView) {
       cancelAll()
       return
     }
-    paint(System.currentTimeMillis())
+    paint(currentTimeMillis())
     view.invalidate()
     if (activeAnimations.isNotEmpty()) schedule()
   }

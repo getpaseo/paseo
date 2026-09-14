@@ -67,25 +67,22 @@ class WordFadeTest {
     surface.reset()
   }
 
-  @Test fun inlineCodeBackgroundNeverFlashesBrighterDuringFade() {
-    lateinit var view: TextView
-    lateinit var surface: WordFadeHost
-    lateinit var before: Bitmap
-    onMain {
-      view = textView("MMMMMM")
-      (view.text as Spannable).setSpan(BackgroundColorSpan(Color.DKGRAY), 0, 6, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
-      before = bitmap(view)
-      surface = host(view)
-      receive(surface, view, 0)
-      surface.viewTreeObserver.dispatchOnPreDraw()
-    }
-    Thread.sleep(70)
-    onMain {
+  @Test fun inlineCodeBackgroundNeverFlashesBrighterDuringFade() = onMain {
+    val view = textView("MMMMMM")
+    (view.text as Spannable).setSpan(BackgroundColorSpan(Color.DKGRAY), 0, 6, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+    val before = bitmap(view)
+    val animator = TailFadeInAnimator(view) { 0L }
+    try {
+      animator.receive(listOf(WordRange().apply { start = 0; end = 6; startedAt = 0.0; spanMs = 40.0 }))
+      animator.paint(70L)
       val during = bitmap(view)
-      surface.reset()
+      assertFalse("sample must still be mid-fade", animator.isIdle)
+      assertFalse("mid-fade text must differ from its settled baseline", before.sameAs(during))
       for (y in 0 until before.height) for (x in 0 until before.width) {
         assertTrue("fade must not brighten inline-code background at $x,$y", Color.red(during.getPixel(x, y)) <= Color.red(before.getPixel(x, y)))
       }
+    } finally {
+      animator.cancelAll()
     }
   }
 
@@ -208,22 +205,24 @@ class WordFadeTest {
     surface.reset()
   }
 
-  @Test fun settledHostRemovesSpansAndMatchesItsBaseline() {
-    lateinit var view: TextView
-    lateinit var surface: WordFadeHost
-    lateinit var baseline: Bitmap
-    onMain {
-      view = textView("settled word")
-      baseline = bitmap(view)
-      surface = host(view)
-      receive(surface, view, 0)
+  @Test fun settledAnimatorRemovesSpansAndMatchesItsBaseline() = onMain {
+    val view = textView("settled word")
+    val baseline = bitmap(view)
+    val animator = TailFadeInAnimator(view) { 0L }
+    try {
+      animator.receive(listOf(
+        WordRange().apply { start = 0; end = 7; startedAt = 0.0; spanMs = 40.0 },
+        WordRange().apply { start = 8; end = 12; startedAt = 0.0; spanMs = 40.0 },
+      ))
+      animator.paint(189L)
       assertEquals(11, spans(view).size)
-    }
-    Thread.sleep(350)
-    onMain {
+      assertFalse(animator.isIdle)
+      animator.paint(190L)
       assertEquals(0, spans(view).size)
+      assertTrue(animator.isIdle)
       assertTrue(baseline.sameAs(bitmap(view)))
-      surface.reset()
+    } finally {
+      animator.cancelAll()
     }
   }
 
