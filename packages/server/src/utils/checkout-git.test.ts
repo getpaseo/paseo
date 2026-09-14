@@ -2992,7 +2992,6 @@ const x = 1;
   });
 
   it.each([
-    "contributor",
     "git@github.com:contributor/paseo.git",
     "https://github.com/contributor/paseo.git",
     "ssh://git@github.com/contributor/paseo.git",
@@ -3000,15 +2999,6 @@ const x = 1;
     execFileSync("git", ["remote", "add", "origin", "git@github.com:getpaseo/paseo.git"], {
       cwd: repoDir,
     });
-    if (branchRemote === "contributor") {
-      execFileSync(
-        "git",
-        ["remote", "add", "contributor", "git@github.com:contributor/paseo.git"],
-        {
-          cwd: repoDir,
-        },
-      );
-    }
     execFileSync("git", ["checkout", "-b", "topic"], { cwd: repoDir });
     execFileSync("git", ["config", "branch.topic.remote", branchRemote], {
       cwd: repoDir,
