@@ -28,6 +28,7 @@ interface SeedProjectDescriptor {
  * prefer those wrappers over reaching for this client directly.
  */
 export interface SeedDaemonClient {
+  readonly isConnected: boolean;
   connect(): Promise<void>;
   close(): Promise<void>;
   addProject(cwd: string): Promise<{

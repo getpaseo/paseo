@@ -113,6 +113,8 @@ test("does not repeat an assistant block when the current app paginates a publis
         page,
         "compatibility-after-reconnect: emit 1 coalesced agent stream updates",
       );
+      // The seed client reconnects independently of the browser's connection.
+      await expect.poll(() => agent.client.isConnected, { timeout: 30_000 }).toBe(true);
       await agent.client.waitForFinish(agent.agentId, 20_000);
       await page.screenshot({ path: test.info().outputPath("old-daemon-live-reconnect.png") });
     });
