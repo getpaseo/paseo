@@ -1,0 +1,11 @@
+extends: ./electron-builder.yml
+appId: sh.paseo.desktop.local
+productName: Paseo Local
+protocols: []
+directories:
+  output: .dev/release-local
+extraMetadata:
+  paseoLocalBuild: true
+publish: null
+mac:
+  notarize: false
