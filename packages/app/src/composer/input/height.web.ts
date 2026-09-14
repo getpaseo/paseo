@@ -42,6 +42,7 @@ export function useComposerHeight({
   const paramsRef = useRef({ value, minHeight, maxHeight });
   paramsRef.current = { value, minHeight, maxHeight };
   const mirrorRef = useRef<HTMLTextAreaElement | null>(null);
+  const mirrorStyledRef = useRef(false);
 
   const setBoundedHeight = useCallback((nextHeight: number) => {
     const { minHeight: currentMin, maxHeight: currentMax } = paramsRef.current;
@@ -51,23 +52,34 @@ export function useComposerHeight({
     setHeight(bounded);
   }, []);
 
+  // Reading computed style and rewriting the mirror's typography forces a style recalc and a
+  // layout. Those inputs only change with the textarea's width or a remount (appearance
+  // changes remount the composer), so they are copied outside the per-keystroke path.
+  const syncMirrorStyles = useCallback((): boolean => {
+    const mirror = mirrorRef.current;
+    const source = textareaRef.current;
+    if (!mirror || !source || typeof window === "undefined") return false;
+    const sourceWidth = source.clientWidth;
+    if (sourceWidth <= 0) return false;
+
+    const computedStyle = window.getComputedStyle(source);
+    for (const property of COPIED_STYLES) {
+      mirror.style[property] = computedStyle[property];
+    }
+    mirror.style.width = `${sourceWidth}px`;
+    mirrorStyledRef.current = true;
+    return true;
+  }, [textareaRef]);
+
   const measure = useCallback(
     (text: string) => {
       const mirror = mirrorRef.current;
-      const source = textareaRef.current;
-      if (!mirror || !source || typeof window === "undefined") return;
-      const sourceWidth = source.clientWidth;
-      if (sourceWidth <= 0) return;
-
-      const computedStyle = window.getComputedStyle(source);
-      for (const property of COPIED_STYLES) {
-        mirror.style[property] = computedStyle[property];
-      }
-      mirror.style.width = `${sourceWidth}px`;
+      if (!mirror) return;
+      if (!mirrorStyledRef.current && !syncMirrorStyles()) return;
       mirror.value = text.endsWith("\n") ? `${text} ` : text;
       setBoundedHeight(mirror.scrollHeight);
     },
-    [setBoundedHeight, textareaRef],
+    [setBoundedHeight, syncMirrorStyles],
   );
 
   useEffect(() => {
@@ -92,10 +104,12 @@ export function useComposerHeight({
     });
     document.body.appendChild(mirror);
     mirrorRef.current = mirror;
+    mirrorStyledRef.current = false;
     measure(paramsRef.current.value);
     return () => {
       mirror.remove();
       mirrorRef.current = null;
+      mirrorStyledRef.current = false;
     };
   }, [measure]);
 
@@ -111,11 +125,12 @@ export function useComposerHeight({
       const nextWidth = source.clientWidth;
       if (Math.abs(nextWidth - previousWidth) < 1) return;
       previousWidth = nextWidth;
+      if (!syncMirrorStyles()) return;
       measure(paramsRef.current.value);
     });
     observer.observe(source);
     return () => observer.disconnect();
-  }, [measure, textareaRef]);
+  }, [measure, syncMirrorStyles, textareaRef]);
 
   const onTextChange = useCallback(
     (_previousText: string, nextText: string) => measure(nextText),
