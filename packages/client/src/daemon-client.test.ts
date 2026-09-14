@@ -740,6 +740,7 @@ test("advertises client capabilities in hello", async () => {
       custom_mode_icons: true,
       project_updates: true,
       provider_subagents: true,
+      projected_subagent_timeline: true,
       reasoning_merge_enum: true,
       terminal_reflowable_snapshot: true,
       timeline_notifications: true,
@@ -6321,4 +6322,170 @@ test("wire snapshot callers own expansion and receive hash references unchanged"
     wrapSessionMessage({ type: "get_providers_snapshot_response", payload: body }),
   );
   expect(await request).toEqual(body);
+});
+
+test("creation lifecycle sends the keyed agent and initial prompt as one intent", async () => {
+  const transport = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "creation-contract",
+    transportFactory: () => transport.transport,
+    reconnect: { enabled: false },
+  });
+  clients.push(client);
+  const connected = client.connect();
+  transport.triggerOpen({ features: { creationLifecycle: true, agentRequestReceipts: true } });
+  await connected;
+  const creation = client.createAgent({
+    idempotencyKey: "draft-one",
+    provider: "codex",
+    cwd: "/project",
+    workspaceId: "wks_0123456789abcdef",
+    initialPrompt: "Start once",
+    clientMessageId: "first-message",
+  });
+  void creation.catch(() => undefined);
+  const request = parseSentFrame(transport.sent[0]);
+  expect(request).toMatchObject({
+    type: "agent.create.request",
+    idempotencyKey: "draft-one",
+    initialPrompt: "Start once",
+    clientMessageId: "first-message",
+  });
+  transport.triggerMessage(
+    wrapSessionMessage({
+      type: "agent.create.response",
+      payload: { requestId: request.requestId, agent: null, error: "provider unavailable" },
+    }),
+  );
+  await expect(creation).rejects.toThrow("provider unavailable");
+  expect(transport.sent).toHaveLength(1);
+});
+
+test("creation lifecycle acknowledgement reaches the observer before the final response", async () => {
+  const transport = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "creation-progress",
+    transportFactory: () => transport.transport,
+    reconnect: { enabled: false },
+  });
+  clients.push(client);
+  const connected = client.connect();
+  transport.triggerOpen({ features: { creationLifecycle: true } });
+  await connected;
+  const phases: string[] = [];
+  const creation = client.createAgent({
+    provider: "codex",
+    cwd: "/project",
+    idempotencyKey: "observe-one",
+    onEvent: (snapshot) => phases.push(snapshot.phase),
+  });
+  void creation.catch(() => undefined);
+  const request = parseSentFrame(transport.sent[0]);
+  transport.triggerMessage(
+    wrapSessionMessage({
+      type: "agent.create.update",
+      payload: {
+        kind: "agent",
+        idempotencyKey: "observe-one",
+        revision: 0,
+        phase: "accepted",
+        workspaceId: null,
+        agentId: "00000000-0000-4000-8000-000000000001",
+        error: null,
+      },
+    }),
+  );
+  expect(phases).toEqual(["accepted"]);
+  transport.triggerMessage(
+    wrapSessionMessage({
+      type: "agent.create.response",
+      payload: { requestId: request.requestId, agent: null, error: "provider unavailable" },
+    }),
+  );
+  await expect(creation).rejects.toThrow("provider unavailable");
+});
+
+test("creation reconnect observation uses connection-owned subscriptions and releases on completion", async () => {
+  const transport = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "creation-reconnect",
+    transportFactory: () => transport.transport,
+    reconnect: { enabled: false },
+  });
+  clients.push(client);
+  const features = { creationLifecycle: true, ownedSubscriptions: true };
+  const connect = client.connect();
+  transport.triggerOpen({ features });
+  await connect;
+  const phases: string[] = [];
+  const creation = client.createWorkspace({
+    idempotencyKey: "reconnect-one",
+    source: { kind: "directory", path: "/project" },
+    onEvent: (snapshot) => phases.push(snapshot.phase),
+  });
+  void creation.catch(() => undefined);
+  const snapshot = {
+    kind: "workspace",
+    idempotencyKey: "reconnect-one",
+    phase: "accepted",
+    revision: 0,
+    workspaceId: "wks_0123456789abcdef",
+    agentId: null,
+    error: null,
+  };
+  for (const subscriptionId of ["first-connection", "second-connection"]) {
+    transport.triggerClose();
+    const reconnected = client.connect();
+    transport.triggerOpen({ features });
+    await reconnected;
+    await expect.poll(() => transport.sent.length).toBe(1);
+    const request = parseSentFrame(transport.sent[0]);
+    expect(request).toMatchObject({
+      type: "creation.subscribe.request",
+      idempotencyKey: "reconnect-one",
+    });
+    transport.triggerMessage(
+      wrapSessionMessage({
+        type: "creation.subscribe.response",
+        payload: {
+          requestId: request.requestId,
+          subscriptionId,
+          snapshot,
+          error: null,
+        },
+      }),
+    );
+  }
+  transport.triggerMessage(
+    wrapSessionMessage({
+      type: "workspace.create.update",
+      payload: {
+        ...snapshot,
+        subscriptionId: "second-connection",
+        revision: 1,
+        phase: "failed",
+        error: "Provisioning failed",
+      },
+    }),
+  );
+  expect(await creation).toMatchObject({ error: "Provisioning failed" });
+  await expect.poll(() => transport.sent.length).toBe(2);
+  const release = parseSentFrame(transport.sent.at(-1));
+  expect(release).toMatchObject({
+    type: "subscription.release.request",
+    subscriptionId: "second-connection",
+  });
+  transport.triggerMessage(
+    wrapSessionMessage({
+      type: "subscription.release.response",
+      payload: {
+        requestId: release.requestId,
+        subscriptionId: "second-connection",
+      },
+    }),
+  );
+  expect(phases).toEqual(["accepted", "failed"]);
 });

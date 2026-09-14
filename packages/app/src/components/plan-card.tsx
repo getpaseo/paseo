@@ -1,9 +1,19 @@
-import { useMemo, type ReactNode } from "react";
-import { Text, View, type StyleProp, type TextStyle, type ViewStyle } from "react-native";
-import Markdown, { type ASTNode } from "react-native-markdown-display";
-import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { useCallback, useMemo, useState, type ReactNode } from "react";
+import {
+  Pressable,
+  Text,
+  View,
+  type StyleProp,
+  type TextStyle,
+  type ViewStyle,
+} from "react-native";
+import { type ASTNode } from "react-native-markdown-display";
+import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
-import { createMarkdownStyles } from "@/styles/markdown-styles";
+import { MarkdownRenderer } from "@/components/markdown/renderer";
+import { ChevronRight } from "lucide-react-native";
+import { isWeb } from "@/constants/platform";
+import type { Theme } from "@/styles/theme";
 import { getMarkdownListMarker } from "@/utils/markdown-list";
 import { createMarkdownParser } from "@/utils/markdown-parser";
 
@@ -180,54 +190,81 @@ function createPlanMarkdownRules() {
   };
 }
 
-export function PlanCard({
-  title,
-  description,
-  text,
-  footer,
-  disableOuterSpacing = false,
-  testID,
-}: {
+export type PlanOutcome = "pending" | "approved" | "rejected" | "canceled";
+
+interface PlanCardProps {
   title?: string;
   description?: string;
   text: string;
+  outcome?: PlanOutcome;
   footer?: ReactNode;
   disableOuterSpacing?: boolean;
   testID?: string;
-}) {
-  const { theme } = useUnistyles();
-  const { t } = useTranslation();
-  const markdownStyles = createMarkdownStyles(theme);
-  const markdownRules = createPlanMarkdownRules();
-  const resolvedTitle = title ?? t("agentStream.permission.plan");
+}
 
+const ThemedChevron = withUnistyles(ChevronRight);
+const chevronColor = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
+const markdownRules = createPlanMarkdownRules();
+
+export function PlanCard(props: PlanCardProps) {
+  // A resolution starts its own presentation state; subsequent taps stay local.
+  return <PlanCardContent key={props.outcome ?? "proposed"} {...props} />;
+}
+
+function PlanCardContent({
+  title,
+  description,
+  text,
+  outcome,
+  footer,
+  disableOuterSpacing = false,
+  testID,
+}: PlanCardProps) {
+  const { t } = useTranslation();
+  const [expanded, setExpanded] = useState(outcome !== "rejected" && outcome !== "canceled");
+  const labels = {
+    pending: title ?? t("agentStream.permission.plan"),
+    rejected: t("agentStream.permission.rejectedPlan"),
+    approved: t("agentStream.permission.approvedPlan"),
+    canceled: t("agentStream.permission.canceledPlan"),
+  };
+  const resolvedTitle = labels[outcome ?? "pending"];
+  const accessibilityState = useMemo(() => ({ expanded }), [expanded]);
+  const webExpandedState = useMemo(
+    () => (isWeb ? ({ "aria-expanded": expanded } as const) : null),
+    [expanded],
+  );
+  const toggleExpanded = useCallback(() => setExpanded((value) => !value), []);
   const containerStyle = useMemo(
-    () => [
-      styles.container,
-      disableOuterSpacing && styles.containerCompact,
-      {
-        backgroundColor: theme.colors.surface1,
-        borderColor: theme.colors.border,
-      },
-    ],
-    [disableOuterSpacing, theme.colors.surface1, theme.colors.border],
+    () => [styles.container, disableOuterSpacing && styles.containerCompact],
+    [disableOuterSpacing],
   );
-  const titleStyle = useMemo(
-    () => [styles.title, { color: theme.colors.foreground }],
-    [theme.colors.foreground],
-  );
-  const descriptionStyle = useMemo(
-    () => [styles.description, { color: theme.colors.foregroundMuted }],
-    [theme.colors.foregroundMuted],
+  const chevronStyle = useMemo(
+    () => [styles.chevron, expanded && styles.chevronExpanded],
+    [expanded],
   );
 
   return (
     <View testID={testID} style={containerStyle}>
-      <Text style={titleStyle}>{resolvedTitle}</Text>
-      {description ? <Text style={descriptionStyle}>{description}</Text> : null}
-      <Markdown style={markdownStyles} rules={markdownRules} markdownit={planMarkdownParser}>
-        {text}
-      </Markdown>
+      <Pressable
+        {...webExpandedState}
+        accessibilityRole="button"
+        accessibilityLabel={resolvedTitle}
+        accessibilityState={accessibilityState}
+        onPress={toggleExpanded}
+        style={styles.header}
+      >
+        <View style={chevronStyle}>
+          <ThemedChevron size={16} uniProps={chevronColor} />
+        </View>
+        <Text style={styles.title}>{resolvedTitle}</Text>
+      </Pressable>
+      {expanded ? (
+        <View style={styles.body}>
+          {description ? <Text style={styles.description}>{description}</Text> : null}
+          <MarkdownRenderer text={text} rules={markdownRules} markdownit={planMarkdownParser} />
+        </View>
+      ) : null}
       {footer ? <View style={styles.footer}>{footer}</View> : null}
     </View>
   );
@@ -239,16 +276,30 @@ const styles = StyleSheet.create((theme) => ({
     padding: theme.spacing[3],
     borderRadius: theme.spacing[2],
     borderWidth: 1,
+    backgroundColor: theme.colors.surface1,
+    borderColor: theme.colors.border,
     gap: theme.spacing[2],
   },
   containerCompact: {
     marginVertical: 0,
   },
+  header: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+    minHeight: 24,
+  },
+  chevron: {},
+  chevronExpanded: { transform: [{ rotate: "90deg" }] },
+  body: { gap: theme.spacing[2] },
   title: {
+    color: theme.colors.foreground,
+    flexShrink: 1,
     fontSize: theme.fontSize.base,
     lineHeight: 22,
   },
   description: {
+    color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.base,
     lineHeight: 20,
   },

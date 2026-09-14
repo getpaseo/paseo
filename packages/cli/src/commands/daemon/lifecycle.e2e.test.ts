@@ -76,11 +76,12 @@ async function fixture() {
       .poll(
         async () => {
           status = await ok(["status", "--home", home], overrides);
-          return status.connectedDaemon;
+          return status;
         },
         { timeout: 30_000 },
       )
-      .toBe("reachable");
+      // A connected socket can outlive a status RPC timeout without reporting the worker.
+      .toMatchObject({ connectedDaemon: "reachable", workerPid: expect.any(Number) });
     return status;
   }
   async function configure(home: string, listen: string) {
@@ -132,7 +133,7 @@ test("managed two-home restart retains its supervisor and never routes ordinary 
     expect(launchA.listen).toBe(`127.0.0.1:${portA}`);
     expect(launchB.listen).toBe(`127.0.0.1:${portB}`);
     const beforeA = await f.liveStatus(a);
-    const beforeB = await f.ok(["--home", b, "daemon", "status"], poisoned);
+    const beforeB = await f.liveStatus(b, poisoned);
     if (process.platform !== "win32") {
       for (const home of [a, b, path.join(f.root, ".paseo")])
         expect((await stat(home)).mode & 0o777).toBe(0o700);

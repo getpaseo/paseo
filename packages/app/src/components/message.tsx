@@ -3178,6 +3178,7 @@ export const ToolCall = memo(function ToolCall({
     return (
       <PlanCard
         text={effectiveDetail.text}
+        outcome={presentation.planOutcome}
         testID="timeline-plan-card"
         disableOuterSpacing={disableOuterSpacing}
       />
