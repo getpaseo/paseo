@@ -1,4 +1,7 @@
 import { type ChildProcess, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { query, type Options, type Query, type SpawnOptions } from "@anthropic-ai/claude-agent-sdk";
 
 import {
@@ -54,6 +57,28 @@ function resolveClaudeSpawnCommand(
   };
 }
 
+function materializeInlineMcpConfig(args: string[]): { args: string[]; cleanup?: () => void } {
+  const configFlagIndex = args.findIndex(
+    (arg, index) => arg === "--mcp-config" && args[index + 1]?.trimStart().startsWith("{"),
+  );
+  if (configFlagIndex === -1) {
+    return { args };
+  }
+
+  const dir = mkdtempSync(join(tmpdir(), "paseo-claude-mcp-"));
+  const configPath = join(dir, "mcp.json");
+  const cleanup = () => rmSync(dir, { recursive: true, force: true });
+  try {
+    writeFileSync(configPath, args[configFlagIndex + 1]!, { encoding: "utf8", mode: 0o600 });
+  } catch (error) {
+    cleanup();
+    throw error;
+  }
+  const nextArgs = [...args];
+  nextArgs[configFlagIndex + 1] = configPath;
+  return { args: nextArgs, cleanup };
+}
+
 function applyRuntimeSettingsToClaudeOptions(
   options: ClaudeOptions,
   context: ClaudeQueryContext,
@@ -83,19 +108,30 @@ function applyRuntimeSettingsToClaudeOptions(
         ? buildSelfNodeCommand(resolved.args, providerEnv)
         : null;
       const command = selfNodeCommand?.command ?? resolved.command;
-      const args = selfNodeCommand?.args ?? resolved.args;
-      const child = spawnProcess(command, args, {
-        cwd: spawnOptions.cwd,
-        ...(selfNodeCommand
-          ? { env: selfNodeCommand.env, envMode: "internal" as const }
-          : providerEnvSpec),
-        signal: spawnOptions.signal,
-        stdio: ["pipe", "pipe", "pipe"],
-        // Bypass cmd.exe on Windows: the SDK passes --mcp-config with inline JSON
-        // containing double quotes, which cmd.exe mangles (strips quotes, breaks parsing).
-        // The command is always a resolved binary path, so shell routing is unnecessary.
-        shell: false,
-      });
+      // The SDK serializes MCP config inline. Use a file so headers never enter process argv.
+      const mcpConfig = materializeInlineMcpConfig(selfNodeCommand?.args ?? resolved.args);
+      const args = mcpConfig.args;
+      let child: ChildProcess;
+      try {
+        child = spawnProcess(command, args, {
+          cwd: spawnOptions.cwd,
+          ...(selfNodeCommand
+            ? { env: selfNodeCommand.env, envMode: "internal" as const }
+            : providerEnvSpec),
+          signal: spawnOptions.signal,
+          stdio: ["pipe", "pipe", "pipe"],
+          // The command is always a resolved binary path, so shell routing is unnecessary.
+          shell: false,
+        });
+      } catch (error) {
+        mcpConfig.cleanup?.();
+        throw error;
+      }
+      if (mcpConfig.cleanup) {
+        child.once("exit", mcpConfig.cleanup);
+        child.once("error", mcpConfig.cleanup);
+        spawnOptions.signal.addEventListener("abort", mcpConfig.cleanup, { once: true });
+      }
       onChildProcess?.(child);
       if (typeof options.stderr === "function") {
         child.stderr?.on("data", (chunk: Buffer | string) => {
