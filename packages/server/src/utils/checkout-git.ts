@@ -1369,6 +1369,19 @@ async function getGitConfigValue(
   }
 }
 
+async function resolveGitRemoteUrl(
+  cwd: string,
+  remote: string,
+  context?: CheckoutContext,
+): Promise<string | null> {
+  const configuredUrl = await getGitConfigValue(cwd, `remote.${remote}.url`, context);
+  if (configuredUrl) {
+    return configuredUrl;
+  }
+  // Branch remote settings accept repository URLs as well as configured remote names.
+  return parseGitRemoteLocation(remote) ? remote : null;
+}
+
 async function getGitRemotePushUrl(
   cwd: string,
   remoteName: string,
@@ -1433,7 +1446,7 @@ async function resolvePullRequestStatusLookupTarget(
   }
 
   const [branchRemoteUrl, originRemoteUrl, resolvedBaseRef] = await Promise.all([
-    branchRemoteName ? getGitConfigValue(cwd, `remote.${branchRemoteName}.url`, context) : null,
+    branchRemoteName ? resolveGitRemoteUrl(cwd, branchRemoteName, context) : null,
     getGitConfigValue(cwd, "remote.origin.url", context),
     getResolvedBaseRefForCwd(cwd, context),
   ]);
@@ -1950,7 +1963,7 @@ async function resolvePullRequestLookupTargetFromPushConfig(
 
   const [pushRefspec, pushRemoteUrl, originRemoteUrl, resolvedBaseRef] = await Promise.all([
     getGitConfigValue(cwd, `remote.${pushRemoteName}.push`, context),
-    getGitConfigValue(cwd, `remote.${pushRemoteName}.url`, context),
+    resolveGitRemoteUrl(cwd, pushRemoteName, context),
     knownOriginRemoteUrl === null ? getGitConfigValue(cwd, "remote.origin.url", context) : null,
     knownResolvedBaseRef === null ? getResolvedBaseRefForCwd(cwd, context) : null,
   ]);
@@ -2058,7 +2071,7 @@ export async function getCheckoutSnapshotFacts(
         getGitConfigValue(cwd, `branch.${inspected.currentBranch}.merge`, context),
         branchRemoteName === "origin"
           ? inspected.remoteUrl
-          : getGitConfigValue(cwd, `remote.${branchRemoteName}.url`, context),
+          : resolveGitRemoteUrl(cwd, branchRemoteName, context),
       ]);
     }
   }
