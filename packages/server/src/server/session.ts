@@ -1787,6 +1787,7 @@ export class Session {
     item: AgentTimelineFetchResult["rows"][number]["item"],
     source?: object,
   ): boolean {
+    // COMPAT(projectedSubagentTimeline): added after v0.8.0, remove gate after 2027-03-14.
     const supportsProjection = source
       ? this.supportsForSource(CLIENT_CAPS.projectedSubagentTimeline, source)
       : this.supports(CLIENT_CAPS.projectedSubagentTimeline);
