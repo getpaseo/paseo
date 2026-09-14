@@ -331,10 +331,29 @@ function mapEntryMessage(entry: OmpSessionEntry): OmpAgentMessage | null {
     }
     return visibleFallback(message.role, message);
   }
+  if (entry.type === "custom_message") {
+    return mapCustomMessageEntry(entry);
+  }
   if (!entry.type || isControlEntryType(entry.type)) {
     return null;
   }
   return visibleFallback(entry.type, entry);
+}
+
+// omp 18.1+ persists injected rows (skill prompts, hub messages, job notices) as top-level
+// custom_message entries without a message object; replay them as live custom messages
+function mapCustomMessageEntry(entry: OmpSessionEntry): OmpAgentMessage | null {
+  const content = entry.content;
+  if (typeof content !== "string" && !Array.isArray(content)) {
+    return null;
+  }
+  return {
+    role: "custom",
+    content,
+    customType: entry.customType,
+    display: entry.display,
+    details: entry.details,
+  } as OmpAgentMessage;
 }
 
 function isControlEntryType(type: string): boolean {

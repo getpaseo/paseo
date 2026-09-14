@@ -474,6 +474,84 @@ describe("OMP history mapper", () => {
     ]);
   });
 
+  test("maps omp 18.1 custom_message entries like live custom messages", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "omp-custom-message-history-"));
+    const sessionFile = join(dir, "session.jsonl");
+    const skillPrompt =
+      '[IMPORTANT: User invoked the "commit" skill; follow its instructions. Full skill below.]\n\n# Commit';
+    const ircMessage = "<irc>\n<from>worker-1</from>\n<message>ready for review</message>\n</irc>";
+    writeFileSync(
+      sessionFile,
+      [
+        { type: "session", id: "root", parentId: null },
+        {
+          type: "message",
+          id: "user-1",
+          parentId: "root",
+          message: { role: "user", content: "/skill:commit" },
+        },
+        {
+          type: "custom_message",
+          customType: "skill-prompt",
+          content: skillPrompt,
+          display: true,
+          details: {
+            name: "commit",
+            path: "/home/me/.agents/skills/commit/SKILL.md",
+            lineCount: 12,
+          },
+          attribution: "user",
+          id: "skill-1",
+          parentId: "user-1",
+          timestamp: "2026-09-13T13:11:35.811Z",
+        },
+        {
+          type: "custom_message",
+          customType: "irc:incoming",
+          content: ircMessage,
+          display: true,
+          details: { from: "worker-1", message: "ready for review" },
+          attribution: "user",
+          id: "irc-1",
+          parentId: "skill-1",
+          timestamp: "2026-09-13T13:11:36.811Z",
+        },
+        {
+          type: "custom_message",
+          customType: "hidden-reminder",
+          content: "must stay hidden",
+          display: false,
+          attribution: "user",
+          id: "hidden-1",
+          parentId: "irc-1",
+          timestamp: "2026-09-13T13:11:37.811Z",
+        },
+        {
+          type: "custom_message",
+          customType: "legacy-no-display",
+          content: "visible without display flag",
+          attribution: "user",
+          id: "legacy-1",
+          parentId: "hidden-1",
+          timestamp: "2026-09-13T13:11:38.811Z",
+        },
+      ]
+        .map((entry) => JSON.stringify(entry))
+        .join("\n"),
+    );
+
+    const events: AgentStreamEvent[] = [];
+    for await (const event of streamOmpHistory({ sessionFile, provider: "omp" })) {
+      events.push(event);
+    }
+    expect(events.map((event) => event.item)).toEqual([
+      { type: "user_message", text: "/skill:commit", messageId: "user-1" },
+      { type: "assistant_message", text: skillPrompt },
+      { type: "assistant_message", text: ircMessage },
+      { type: "assistant_message", text: "visible without display flag" },
+    ]);
+  });
+
   test("rehydrates structured batch and nested task transcripts with stable status and time", async () => {
     const dir = mkdtempSync(join(tmpdir(), "omp-subagent-history-"));
     const parentFile = join(dir, "parent.jsonl");
