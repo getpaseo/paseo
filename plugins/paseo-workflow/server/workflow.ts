@@ -206,6 +206,8 @@ function recoverApprovedPlan(workflow: Workflow, latest: PlanItem | undefined): 
   if (
     !latest ||
     latest.detail.type !== "plan" ||
+    latest.status !== "completed" ||
+    latest.error ||
     latest.metadata?.approved !== true ||
     planResolution(latest)?.behavior !== "allow" ||
     workflow.plans[latest.callId]
@@ -270,7 +272,7 @@ function applyPlanDecision(
   let changed = closeConsumedOperations(workflow, plan, item, latest);
   if (item.metadata?.approved === true && !plan.approved) {
     plan.approved = true;
-    workflow.activePlanId = item.callId;
+    if (item === latest) workflow.activePlanId = item.callId;
     changed = true;
   }
   if (item.metadata?.syntheticPermissionId && item.metadata.approvalOutcome !== "completed") {
@@ -448,28 +450,44 @@ export class WorkflowController {
         plan.handoff.phase = "closed";
         await this.port.write(state);
       }
-      const executorId = await this.port.create({
+      return { agentId: await this.startHandoff(state, workflow, plan, executor) };
+    });
+  }
+
+  private async startHandoff(
+    state: WorkflowState,
+    workflow: Workflow,
+    plan: Workflow["plans"][string],
+    selectedExecutor?: AgentProfile,
+  ) {
+    const handoff = plan.handoff!;
+    const selection = handoff.selection;
+    const executor =
+      selectedExecutor ??
+      (await this.profile(selection === "advanced" ? "executor-advanced" : "executor-standard"));
+    const executorId =
+      handoff.agentId ??
+      (await this.port.create({
         workspaceId: workflow.workspaceId,
         launchProfileId: executor.id,
-        idempotencyKey: `workflow:${workflow.id}:handoff:${context.callId}`,
+        idempotencyKey: `workflow:${workflow.id}:handoff:${plan.context.callId}`,
         config: profileConfig(executor, false),
         labels: {
           "paseo.workflow.id": workflow.id,
-          "paseo.workflow.plan": context.callId,
+          "paseo.workflow.plan": plan.context.callId,
           "paseo.workflow.role":
             selection === "advanced" ? "executor-advanced" : "executor-standard",
         },
-      });
-      plan.handoff!.agentId = executorId;
-      await this.port.send(
-        executorId,
-        `/paseo-handoff\nPASEO_WORKFLOW_HANDOFF ${JSON.stringify({ mode: "receiver", workflowId: workflow.id, planId: context.callId, role: `executor-${selection}` })}\nExecute the approved plan in this workspace without creating another agent. Preserve every pre-existing dirty file and concurrent edit; stage only your own files/hunks. Run targeted validation before the functional commit. Never push, merge, deploy, delete unrelated data, or cause external effects.\n${briefing(workflow, context.text)}`,
-        `workflow:${workflow.id}:handoff:${context.callId}:prompt`,
-      );
-      plan.handoff!.phase = "running";
-      await this.port.write(state);
-      return { agentId: executorId };
-    });
+      }));
+    handoff.agentId = executorId;
+    await this.port.send(
+      executorId,
+      `/paseo-handoff\nPASEO_WORKFLOW_HANDOFF ${JSON.stringify({ mode: "receiver", workflowId: workflow.id, planId: plan.context.callId, role: `executor-${selection}` })}\nExecute the approved plan in this workspace without creating another agent. Preserve every pre-existing dirty file and concurrent edit; stage only your own files/hunks. Run targeted validation before the functional commit. Never push, merge, deploy, delete unrelated data, or cause external effects.\n${briefing(workflow, plan.context.text)}`,
+      `workflow:${workflow.id}:handoff:${plan.context.callId}:prompt`,
+    );
+    handoff.phase = "running";
+    await this.port.write(state);
+    return executorId;
   }
   finished(agentId: string, text: string, timeline: readonly AgentTimelineItem[] = []) {
     return this.serial(async () => {
@@ -575,9 +593,11 @@ export class WorkflowController {
   }
 
   private async reconcilePlanTimeline(state: WorkflowState, workflow: Workflow) {
-    const planItems = canonicalPlanItems(await this.port.timeline(workflow.plannerId));
-    const decisions = new Map(planItems.map((item) => [item.callId, item]));
-    const latest = planItems.at(-1);
+    const timeline = await this.port.timeline(workflow.plannerId);
+    const latest = timeline.findLast(
+      (item): item is PlanItem => item.type === "tool_call" && item.detail.type === "plan",
+    );
+    const decisions = new Map(canonicalPlanItems(timeline).map((item) => [item.callId, item]));
     let changed = recoverApprovedPlan(workflow, latest);
     for (const item of decisions.values()) {
       const plan = workflow.plans[item.callId];
@@ -600,13 +620,27 @@ export class WorkflowController {
     const activePlan = workflow.plans[workflow.activePlanId ?? ""];
     if (activePlan?.approved && !activePlan.final) candidates.add(workflow.plannerId);
     for (const plan of Object.values(workflow.plans)) {
-      if (plan.review?.phase === "complete")
-        await this.port.claimReview(actionContext(plan.context), false);
+      await this.resumePlan(state, workflow, plan);
       for (const id of planCandidates(plan)) candidates.add(id);
     }
     for (const agentId of candidates) {
       await this.consumeTurn(state, await this.port.agent(agentId));
     }
+  }
+
+  private async resumePlan(
+    state: WorkflowState,
+    workflow: Workflow,
+    plan: Workflow["plans"][string],
+  ) {
+    if (plan.review?.phase === "closed" && plan.review.agentId && plan.review.promptSent) {
+      plan.review.phase = "running";
+      await this.port.write(state);
+    }
+    if (plan.handoff?.phase === "closed" && !plan.handoff.agentId)
+      await this.startHandoff(state, workflow, plan);
+    if (plan.review?.phase === "complete")
+      await this.port.claimReview(actionContext(plan.context), false);
   }
 
   private async finalFinished(

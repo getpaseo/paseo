@@ -488,6 +488,22 @@ test("reconcile recovers the latest canonically approved planner plan missed dur
     "router",
     JSON.stringify({ ready: true, recommendation: "standard", constraints: [], assumptions: [] }),
   );
+  const knownPlan = {
+    workspaceId: "workspace",
+    agentId: "child-1",
+    permissionRequestId: "known-permission",
+    callId: "known-plan",
+    text: "Earlier plan",
+  };
+  f.agents.get("child-1")!.pendingPermissions = [
+    {
+      id: knownPlan.permissionRequestId,
+      kind: "plan",
+      sourcePlanCallId: knownPlan.callId,
+      input: { plan: knownPlan.text },
+    },
+  ];
+  await controller.prepareHandoff(knownPlan);
   plannerTimeline = [
     { type: "user_message", text: "Plan the request" },
     {
@@ -501,9 +517,18 @@ test("reconcile recovers the latest canonically approved planner plan missed dur
     },
   ];
   await new WorkflowController(f.port).status("router", "workspace");
-  expect((await f.port.read()).workflows.router.plans).toEqual({});
+  expect((await f.port.read()).workflows.router.plans["late-plan"]).toBeUndefined();
   plannerTimeline = [
     { type: "user_message", text: "Plan the request" },
+    {
+      type: "tool_call",
+      callId: knownPlan.callId,
+      name: "Plan",
+      status: "completed",
+      error: null,
+      detail: { type: "plan", text: knownPlan.text },
+      metadata: { approved: true, resolution: { behavior: "allow" } },
+    },
     {
       type: "tool_call",
       callId: "late-plan",
@@ -526,6 +551,7 @@ test("reconcile recovers the latest canonically approved planner plan missed dur
   const recovered = (await f.port.read()).workflows.router;
   expect(recovered.git.startHead).toBe("abc123");
   expect(recovered.activePlanId).toBe("late-plan");
+  expect(recovered.plans["known-plan"]?.approved).toBe(true);
   expect(recovered.plans["late-plan"]).toMatchObject({
     approved: true,
     context: {
@@ -570,6 +596,40 @@ test("handoff does not recover closing from a non-workflow denial", async () => 
   await expect(new WorkflowController(f.port).handoff(plan, "standard")).rejects.toThrow(
     "no longer pending",
   );
+  expect(f.launches).toEqual([]);
+});
+
+test("handoff does not resume an old denial after a newer unresolved plan", async () => {
+  const f = fixture();
+  let timeline = await f.port.timeline("planner");
+  f.port.timeline = async () => timeline;
+  f.port.respond = async (_agentId, _requestId, response) => {
+    f.agents.get("planner")!.pendingPermissions = [];
+    timeline = [
+      {
+        type: "tool_call",
+        callId: plan.callId,
+        name: "Plan",
+        status: "completed",
+        error: null,
+        detail: { type: "plan", text: plan.text },
+        metadata: { approved: false, resolution: response },
+      },
+      {
+        type: "tool_call",
+        callId: "plan-2",
+        name: "Plan",
+        status: "running",
+        error: null,
+        detail: { type: "plan", text: "Newer plan" },
+      },
+    ];
+    throw new Error("ACK lost after consumption");
+  };
+  await expect(new WorkflowController(f.port).handoff(plan, "standard")).rejects.toThrow(
+    "ACK lost",
+  );
+  await new WorkflowController(f.port).status("planner", "workspace");
   expect(f.launches).toEqual([]);
 });
 
@@ -624,10 +684,21 @@ test.each(["review", "handoff"] as const)(
     f.port.respond = async () => {
       throw new Error("The denial must not be replayed");
     };
+    if (action === "review") {
+      f.port.turn = async (id) =>
+        id === "child-1"
+          ? { key: "review-finished", items: [{ type: "assistant_message", text: "Revise this" }] }
+          : null;
+    }
+    await new WorkflowController(f.port).status("planner", "workspace");
     await expect(invoke(new WorkflowController(f.port))).resolves.toEqual({ agentId: "child-1" });
     expect(f.decisions).toEqual(["permission-1"]);
     expect(f.launches).toHaveLength(1);
-    expect(f.prompts).toHaveLength(1);
+    expect(f.prompts).toHaveLength(action === "review" ? 2 : 1);
+    const saved = (await f.port.read()).workflows.planner.plans[plan.callId];
+    expect(action === "review" ? saved.review?.phase : saved.handoff?.phase).toBe(
+      action === "review" ? "complete" : "running",
+    );
   },
 );
 
