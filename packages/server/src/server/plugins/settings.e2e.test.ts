@@ -1,12 +1,85 @@
 import { resolveDaemonVersion } from "../daemon-version.js";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { expect, test } from "vitest";
+import { expect, onTestFinished, test } from "vitest";
 import { z } from "zod";
 import { defineRpc, settingsRpc } from "@getpaseo/plugin";
 import { DaemonClient } from "../test-utils/daemon-client.js";
 import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
+
+test("server reads saved settings after daemon restart before any client connects", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "settings-restart-"));
+  onTestFinished(() => rm(root, { recursive: true, force: true }));
+  const directory = path.join(root, "plugin");
+  const startupReport = path.join(root, "startup.json");
+  await mkdir(path.join(directory, "server"), { recursive: true });
+  await writeFile(
+    path.join(directory, "paseo-plugin.json"),
+    JSON.stringify({
+      id: "settings-startup",
+      requirements: { paseo: `>=${resolveDaemonVersion(import.meta.url)}` },
+    }),
+  );
+  await writeFile(
+    path.join(directory, "server", "report.ts"),
+    `import { writeFile } from "node:fs/promises";
+export async function reportStartup(settings) {
+  const state = await settings.read();
+  await writeFile(${JSON.stringify(startupReport)}, JSON.stringify(state));
+}`,
+  );
+  await writeFile(
+    path.join(directory, "index.server.ts"),
+    `import { defineSettings } from "@getpaseo/plugin";
+import { z } from "zod";
+import { reportStartup } from "./server/report";
+export default function(server) {
+  const settings = server.registerSettings(defineSettings({ id: "display", scope: "host", version: 1, schema: z.object({ enabled: z.boolean().default(true) }) }));
+  const startup = reportStartup(settings);
+  return async () => { await startup; };
+}`,
+  );
+  const options = {
+    paseoHomeRoot: path.join(root, "daemon"),
+    staticDir: path.join(root, "static"),
+    cleanup: false,
+    pluginsEnabled: true,
+    plugins: {
+      "settings-startup": { source: "directory" as const, path: directory, enabled: true },
+    },
+  };
+  const first = await createTestPaseoDaemon(options);
+  onTestFinished(() => first.close());
+  const rpc = settingsRpc("display");
+  const readStartup = async () =>
+    rpc.read.output.parse(JSON.parse(await readFile(startupReport, "utf8")));
+  await expect
+    .poll(readStartup)
+    .toEqual({ status: "ready", revision: "missing", values: { enabled: true } });
+
+  const client = new DaemonClient({ url: `ws://127.0.0.1:${first.port}/ws`, appVersion: "0.8.0" });
+  onTestFinished(() => client.close());
+  await client.connect();
+  const saved = rpc.write.output.parse(
+    await client.invokePluginRpc("settings-startup", rpc.write.name, {
+      revision: "missing",
+      values: { enabled: false },
+    }),
+  );
+  expect(saved).toMatchObject({ status: "saved", values: { enabled: false } });
+  const persisted = rpc.read.output.parse(
+    await client.invokePluginRpc("settings-startup", rpc.read.name, {}),
+  );
+  await client.close();
+  await first.close();
+  await rm(startupReport);
+
+  const restarted = await createTestPaseoDaemon(options);
+  onTestFinished(() => restarted.close());
+  // No client is created for this daemon: the report comes from server startup alone.
+  await expect.poll(readStartup).toEqual(persisted);
+}, 60_000);
 
 test("two clients share settings, observe changes, and preserve values through plugin lifecycle", async () => {
   const directory = await mkdtemp(path.join(tmpdir(), "settings-plugin-"));
