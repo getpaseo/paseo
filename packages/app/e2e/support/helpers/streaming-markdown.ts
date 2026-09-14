@@ -39,8 +39,11 @@ export async function expectUnfinishedBold(page: Page): Promise<void> {
 
 export async function expectUnfinishedLink(page: Page, testInfo: TestInfo): Promise<void> {
   const message = page.getByTestId("assistant-message").last();
-  await expect(message).toContainText("Paseo docs");
-  await expect(message.getByRole("link", { name: "Paseo docs" })).toHaveCount(0);
+  // The next word includes the closing label and URL, so word pacing releases
+  // it only when the link is complete. Observe the first complete label word.
+  await expect(message).toContainText("Paseo");
+  await expect(message).not.toContainText("docs");
+  await expect(message.getByRole("link")).toHaveCount(0);
   await expect(message).not.toContainText("[");
   await expect(message).not.toContainText("https:");
   await captureMarkdown(page, testInfo, "unfinished-link");

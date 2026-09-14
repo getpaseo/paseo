@@ -492,7 +492,9 @@ function tokenize(text: string): string[] {
 
 function buildIntroParagraph(cycle: number): string {
   return [
-    `## Cycle ${cycle}`,
+    // Cycles share one assistant message; without a blank line the heading
+    // would continue the previous cycle's closing paragraph.
+    cycle > 1 ? `\n\n## Cycle ${cycle}` : `## Cycle ${cycle}`,
     "",
     "I'll take a look at the scroll anchor behavior you described. Let me start by walking through how the conversation list currently handles streaming updates and where the auto-scroll logic actually lives. My instinct is that the anchor is supposed to pin to the bottom only when the user is already there, but I want to confirm that against the code rather than guess. This kind of behavior is usually a thin layout effect over a ref, and the bugs tend to come from event ordering rather than the math itself, so the first useful step is to read the relevant files.",
   ].join("\n");
