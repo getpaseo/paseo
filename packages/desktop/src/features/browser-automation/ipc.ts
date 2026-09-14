@@ -1,4 +1,3 @@
-import type { Rectangle } from "electron";
 import { ipcMain } from "electron";
 import { BrowserAutomationExecuteRequestSchema } from "@getpaseo/protocol/browser-automation/rpc-schemas";
 import type {
@@ -105,7 +104,8 @@ interface BrowserAutomationWebContents extends ConsoleMessageEmitter {
   goBack(): void;
   goForward(): void;
   reload(): void;
-  capturePage(rect?: Rectangle, options?: { stayHidden?: boolean }): Promise<TabImage>;
+  beginFrameSubscription(onlyDirty: boolean, callback: (image: TabImage) => void): void;
+  endFrameSubscription(): void;
   invalidate(): void;
   getBackgroundThrottling(): boolean;
   setBackgroundThrottling(allowed: boolean): void;
@@ -130,7 +130,7 @@ export function adaptWebContents(contents: BrowserAutomationWebContents): TabCon
     goBack: () => contents.goBack(),
     goForward: () => contents.goForward(),
     reload: () => contents.reload(),
-    capturePage: (captureOptions) => contents.capturePage(undefined, captureOptions),
+    captureFrame: (signal) => captureViewportFrame(contents, signal),
     invalidate: () => contents.invalidate(),
     withFrameProduction: async (capture) => {
       const previous = contents.getBackgroundThrottling();
@@ -152,6 +152,35 @@ export function adaptWebContents(contents: BrowserAutomationWebContents): TabCon
         return contents.debugger.sendCommand(command, params ?? {});
       }),
   };
+}
+
+function captureViewportFrame(
+  contents: BrowserAutomationWebContents,
+  signal: AbortSignal,
+): Promise<TabImage> {
+  signal.throwIfAborted();
+  return new Promise((resolve, reject) => {
+    const stop = () => {
+      signal.removeEventListener("abort", abort);
+      if (!contents.isDestroyed()) contents.endFrameSubscription();
+    };
+    const abort = () => {
+      stop();
+      reject(signal.reason);
+    };
+    signal.addEventListener("abort", abort, { once: true });
+    try {
+      // A resized resident guest can paint while capturePage's surface-copy
+      // request remains pending. Subscribe to its rendered frames instead.
+      contents.beginFrameSubscription(false, (image) => {
+        stop();
+        resolve(image);
+      });
+    } catch (error) {
+      stop();
+      reject(error);
+    }
+  });
 }
 
 function getCdpQueue(contentsId: number): CdpSessionQueue {

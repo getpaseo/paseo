@@ -1,4 +1,3 @@
-import type { Rectangle } from "electron";
 import { describe, expect, test, vi } from "vitest";
 import type { TabImage } from "./service.js";
 import { adaptWebContents, HostSnapshotEngineRegistry } from "./ipc.js";
@@ -119,10 +118,8 @@ class FakeWebContents {
   public readonly debugger = new FakeDebugger();
   public readonly inputEvents: IsolatedKeyboardInputEvent[] = [];
   public readonly loadedUrls: string[] = [];
-  public readonly captures: Array<{
-    rect: Rectangle | undefined;
-    options: { stayHidden?: boolean } | undefined;
-  }> = [];
+  public frameListener: ((image: TabImage) => void) | null = null;
+  public endedFrameSubscriptions = 0;
   public readonly invalidations: string[] = [];
   private consoleMessageListener: ConsoleMessageListener | null = null;
   private destroyedListener: (() => void) | null = null;
@@ -175,12 +172,14 @@ class FakeWebContents {
 
   public reload(): void {}
 
-  public async capturePage(
-    rect?: Rectangle,
-    options?: { stayHidden?: boolean },
-  ): Promise<TabImage> {
-    this.captures.push({ rect, options });
-    return new FakeImage();
+  public beginFrameSubscription(onlyDirty: boolean, callback: (image: TabImage) => void): void {
+    expect(onlyDirty).toBe(false);
+    this.frameListener = callback;
+  }
+
+  public endFrameSubscription(): void {
+    this.frameListener = null;
+    this.endedFrameSubscriptions += 1;
   }
 
   public invalidate(): void {
@@ -245,16 +244,30 @@ describe("browser automation IPC adapter", () => {
     ]);
   });
 
-  test("delegates viewport capture to the guest without a renderer prep bridge", async () => {
+  test("captures one rendered frame and releases the subscription", async () => {
     const contents = new FakeWebContents(20);
     const tab = adaptWebContents(contents);
+    const controller = new AbortController();
+    const capture = tab.captureFrame(controller.signal);
+    contents.frameListener?.(new FakeImage());
 
-    const image = await tab.capturePage({ stayHidden: false });
-    tab.invalidate();
+    expect((await capture).getSize()).toEqual({ width: 640, height: 480 });
+    expect(contents.frameListener).toBeNull();
+    controller.abort();
+    expect(contents.endedFrameSubscriptions).toBe(1);
+  });
 
-    expect(image.getSize()).toEqual({ width: 640, height: 480 });
-    expect(contents.captures).toEqual([{ rect: undefined, options: { stayHidden: false } }]);
-    expect(contents.invalidations).toEqual(["invalidate"]);
+  test("cancels a pending frame subscription when the capture budget expires", async () => {
+    const contents = new FakeWebContents(2001);
+    const tab = adaptWebContents(contents);
+    const controller = new AbortController();
+    const capture = tab.captureFrame(controller.signal);
+    const failure = expect(capture).rejects.toThrow("capture deadline");
+    controller.abort(new Error("capture deadline"));
+
+    await failure;
+    expect(contents.frameListener).toBeNull();
+    expect(contents.endedFrameSubscriptions).toBe(1);
   });
 
   test("collects console messages until the guest is destroyed", () => {
