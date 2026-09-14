@@ -38,7 +38,23 @@ function navigateDeps(): NavigateToWorkspaceDeps {
     getSessionAgents: (serverId) =>
       useSessionStore.getState().sessions[serverId]?.agents.values() ?? [],
     isWorkspaceLayoutHydrated: () => useWorkspaceLayoutStore.persist.hasHydrated(),
+    onWorkspaceLayoutHydrated: (callback) => {
+      if (useWorkspaceLayoutStore.persist.hasHydrated()) {
+        callback();
+        return;
+      }
+      useWorkspaceLayoutStore.persist.onFinishHydration(callback);
+    },
     openTab: (input) => useWorkspaceLayoutStore.getState().openTab(input),
+    revealEphemeralTab: (input) =>
+      useWorkspaceLayoutStore.getState().revealEphemeralTab(input.workspaceKey, input.target),
+    holdEphemeralTab: (input) =>
+      useWorkspaceLayoutStore.getState().holdEphemeralFocusTab(input.workspaceKey, input.target),
+    settleHeldEphemeralTab: (input) =>
+      useWorkspaceLayoutStore
+        .getState()
+        .settleHeldEphemeralFocusTab(input.workspaceKey, input.target, input.reveal),
+    getLastWorkspaceSelection: () => lastWorkspaceSelectionStore.getSelection(),
     rememberLastWorkspace: (selection) => lastWorkspaceSelectionStore.remember(selection),
     navigateToRoute: (route) => {
       navigateToHostWorkspaceRoute(route);
@@ -64,10 +80,7 @@ export function navigateToWorkspace(input: NavigateToWorkspaceInput): string {
 }
 
 export function navigateToLastWorkspace(): boolean {
-  return navigateToLastWorkspacePure({
-    ...navigateDeps(),
-    getLastWorkspaceSelection: () => lastWorkspaceSelectionStore.getSelection(),
-  });
+  return navigateToLastWorkspacePure(navigateDeps());
 }
 
 export function useActiveWorkspaceSelection(): ActiveWorkspaceSelection | null {
