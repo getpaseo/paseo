@@ -1,10 +1,14 @@
 import type { Page } from "@playwright/test";
 import { z } from "zod";
 import { WorkspaceLayoutPersistedStateSchema } from "../../../src/stores/workspace-layout-storage";
-import type { WorkspaceTab } from "../../../src/workspace-tabs/model";
+import {
+  buildWorkspaceTabPersistenceKey,
+  type WorkspaceTab,
+} from "../../../src/workspace-tabs/model";
+import { getServerId } from "./server-id";
 
 /** Seed the reported hidden Explorer-only layout with 2,250 saved agent draft tabs. */
-export async function seedCorruptedWorkspaceLayout(page: Page): Promise<void> {
+export async function seedCorruptedWorkspaceLayout(page: Page, workspaceId: string): Promise<void> {
   const raw = await page.evaluate(() => localStorage.getItem("workspace-layout-state"));
   if (raw === null) throw new Error("Explorer fixture: workspace layout was not persisted");
   const stored = z
@@ -15,8 +19,10 @@ export async function seedCorruptedWorkspaceLayout(page: Page): Promise<void> {
     .parse(JSON.parse(raw), {
       error: () => "Explorer fixture: invalid persisted workspace layout",
     });
-  const [key] = Object.keys(stored.state.layoutByWorkspace);
-  if (!key) throw new Error("Explorer fixture: persisted layout contains no workspace");
+  const key = buildWorkspaceTabPersistenceKey({ serverId: getServerId(), workspaceId });
+  if (!key || !Object.hasOwn(stored.state.layoutByWorkspace, key)) {
+    throw new Error(`Explorer fixture: no persisted layout for workspace ${workspaceId}`);
+  }
   const tabs: WorkspaceTab[] = [
     { tabId: "files", target: { kind: "files" }, createdAt: 1 },
     { tabId: "changes_tree", target: { kind: "changes_tree" }, createdAt: 1 },

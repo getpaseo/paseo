@@ -298,10 +298,16 @@ test("reloading a saved hidden generated Explorer recovers a usable workspace", 
   page,
   withWorkspace,
 }) => {
+  const otherWorkspace = await withWorkspace({ prefix: "uncorrupted-explorer-" });
+  await gotoWorkspace(page, otherWorkspace.workspaceId);
+  await openAgentDraftFromLauncher(page);
+
   const workspace = await withWorkspace({ prefix: "saved-hidden-explorer-" });
   await gotoWorkspace(page, workspace.workspaceId);
   await expectNewLauncher(page);
-  await seedCorruptedWorkspaceLayout(page);
+  await seedCorruptedWorkspaceLayout(page, workspace.workspaceId);
   await page.reload();
   await expectNewLauncher(page);
+  await gotoWorkspace(page, otherWorkspace.workspaceId);
+  await expect(draftTabChip(page)).toHaveCount(1);
 });
