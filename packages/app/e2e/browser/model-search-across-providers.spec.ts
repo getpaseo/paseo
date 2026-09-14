@@ -224,12 +224,26 @@ async function configureModelOverride(client: DaemonClient, cwd: string) {
     .toMatchObject([{ id: "gemini-3.5-flash", label: "Configured model", isDefault: true }]);
 }
 
-test("New Agent and saved drafts stay usable with repeated runtime model rows", async ({
-  page,
-}, testInfo) => {
-  const workspace = await seedWorkspace({ repoPrefix: "catalog-models-" });
-  const client = await connectDaemonClient<DaemonClient>({ clientIdPrefix: "catalog-models" });
-  try {
+const catalogTest = test.extend<{ catalogClient: DaemonClient }>({
+  catalogClient: async ({ e2eWorker }, provide) => {
+    void e2eWorker;
+    const client = await connectDaemonClient<DaemonClient>({ clientIdPrefix: "catalog-models" });
+    try {
+      await provide(client);
+    } finally {
+      try {
+        await client.patchDaemonConfig({ removeProviders: ["gemini"] });
+      } finally {
+        await client.close();
+      }
+    }
+  },
+});
+
+catalogTest(
+  "New Agent and saved drafts stay usable with repeated runtime model rows",
+  async ({ page, withWorkspace, catalogClient: client }, testInfo) => {
+    const workspace = await withWorkspace({ prefix: "catalog-models-" });
     await test.step("open a draft with a one-row runtime catalog", async () => {
       await setRuntimeCatalog(client, 1, workspace.repoPath);
       await gotoWorkspace(page, workspace.workspaceId);
@@ -252,9 +266,5 @@ test("New Agent and saved drafts stay usable with repeated runtime model rows", 
       await reloadSavedDraft(page);
       await expectOneCatalogChoice(page, "Configured model");
     });
-  } finally {
-    await client.patchDaemonConfig({ removeProviders: ["gemini"] });
-    await client.close();
-    await workspace.cleanup();
-  }
-});
+  },
+);
