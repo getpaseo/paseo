@@ -99,7 +99,14 @@ export default {
     name: variant.name,
     slug: "voice-mobile",
     version: nativeReleaseVersion.appVersion,
-    orientation: "portrait",
+    // No static orientation lock: `android:screenOrientation` has no
+    // screen-size qualifier, so a fixed value would pin tablets to portrait and
+    // pillarbox them on Android 15 and below. The phone/tablet split is applied
+    // at runtime by useAdaptiveOrientation.
+    //
+    // iOS is pinned explicitly below. Without it, a non-portrait `orientation`
+    // rewrites the iPhone key to all four orientations.
+    orientation: "default",
     icon: "./assets/images/icon.png",
     scheme: "paseo",
     userInterfaceStyle: "automatic",
@@ -107,6 +114,14 @@ export default {
     ios: {
       supportsTablet: true,
       infoPlist: {
+        // Keep the iPhone portrait-only. Expo's iOS plugin writes all four
+        // orientations for a non-"portrait" `orientation`, and an explicit
+        // value here wins, so this preserves the previous behavior. The
+        // `~ipad` key is written separately and stays all-four.
+        UISupportedInterfaceOrientations: [
+          "UIInterfaceOrientationPortrait",
+          "UIInterfaceOrientationPortraitUpsideDown",
+        ],
         NSMicrophoneUsageDescription: "This app needs access to the microphone for voice commands.",
         ITSAppUsesNonExemptEncryption: false,
       },

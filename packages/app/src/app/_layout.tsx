@@ -89,6 +89,7 @@ import { useFaviconStatus } from "@/hooks/use-favicon-status";
 import { useKeyboardShortcuts } from "@/hooks/use-keyboard-shortcuts";
 import { resolveExplorerSidebarPresentation } from "@/workspace-tabs/explorer-sidebar";
 import { KeyboardShiftProvider } from "@/hooks/use-keyboard-shift-style";
+import { useAdaptiveOrientation } from "@/hooks/use-adaptive-orientation";
 import { useCompactWebViewportZoomLock } from "@/hooks/use-compact-web-viewport-zoom-lock";
 import { useOpenProject } from "@/hooks/use-open-project";
 import { useAppSettings } from "@/hooks/use-settings";
@@ -473,6 +474,7 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
     void updateSettings({ theme: getNextThemePreference(settings.theme) });
   }, [settings.theme, updateSettings]);
 
+  useAdaptiveOrientation();
   const isCompactLayout = useIsCompactFormFactor();
   const explorerSidebarPresentation = resolveExplorerSidebarPresentation({
     isCompact: isCompactLayout,
