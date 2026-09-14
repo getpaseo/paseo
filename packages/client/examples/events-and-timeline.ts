@@ -30,8 +30,8 @@ export async function subscribeToEvents(
   });
 
   const unsubscribeTimeline = client.agents.ref(agentId).timeline.subscribe((event) => {
-    if (event.event.type === "snapshot") {
-      console.log("Replace recent history", event.event.page.epoch, event.event.page.entries);
+    if (event.event.type === "subscription_restored") {
+      console.log("Live subscription restored; request any missed history explicitly.");
     } else if (event.event.type === "error") {
       console.error(event.event.error);
     }

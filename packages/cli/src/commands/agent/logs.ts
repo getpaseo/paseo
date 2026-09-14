@@ -203,12 +203,8 @@ async function runFollowMode(
       console.error(`Timeline observation stopped: ${message.payload.error}`);
       return;
     }
-    if (message.type === "agent.timeline.snapshot") {
-      console.log("\n[Reconnected; current recent history follows]");
-      const items = message.payload.page.entries
-        .map((entry) => entry.item)
-        .filter((item) => !options.filter || matchesFilter(item, options.filter));
-      console.log(formatAgentActivityTranscript(items, tailCount));
+    if (message.type === "agent.timeline.subscription_restored") {
+      console.log("\n[Reconnected; live output resumed. Events may have been missed.]");
       return;
     }
     if (message.payload.event.type === "timeline") {

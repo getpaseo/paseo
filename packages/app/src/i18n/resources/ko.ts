@@ -154,7 +154,7 @@ export const ko: TranslationResources = {
       initialPromptRequired: "초기 프롬프트가 필요합니다",
       alreadyLoading: "이미 불러오는 중입니다",
       uploadFailed: "파일을 업로드하지 못했습니다",
-      noClipboardImage: "클립보드에 이미지가 없습니다.",
+      noClipboardImage: "현재 클립보드에 이미지가 없습니다. 키보드에서 붙여넣기를 시도해 보세요.",
       pasteImageFailed: "이미지를 붙여넣지 못했습니다.",
       fileTooLarge: "{{fileName}}이(가) 너무 큽니다 (최대 {{size}})",
     },
@@ -209,6 +209,10 @@ export const ko: TranslationResources = {
     historyLoadFailed: "에이전트 기록을 로드할 수 없습니다.",
     messageCapped: "이 메시지는 길이 제한으로 잘렸습니다({{bytes}}바이트).",
     permission: {
+      rejectedPlan: "거부된 계획",
+      approvedPlan: "승인된 계획",
+      canceledPlan: "취소된 계획",
+
       plan: "계획",
       required: "권한 필요",
       deny: "거부",
