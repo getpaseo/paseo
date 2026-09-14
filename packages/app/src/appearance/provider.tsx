@@ -1,4 +1,5 @@
 import { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo } from "react";
+import { SystemBars } from "react-native-edge-to-edge";
 import { UnistylesRuntime } from "react-native-unistyles";
 import { DEFAULT_THEME_PREFERENCE, useAppSettings, type AppSettings } from "@/hooks/use-settings";
 import {
@@ -6,7 +7,12 @@ import {
   usePluginThemeCatalog,
   type PluginThemeOption,
 } from "@/plugins/themes";
-import { PLUGIN_THEME_NAMES, PLUGIN_THEME_PREFERENCE, THEME_TO_UNISTYLES } from "@/styles/theme";
+import {
+  PLUGIN_THEME_NAMES,
+  PLUGIN_THEME_PREFERENCE,
+  REGISTERED_THEMES,
+  THEME_TO_UNISTYLES,
+} from "@/styles/theme";
 import { applyAppearance } from "./apply";
 
 interface ContributedThemes {
@@ -22,12 +28,24 @@ interface ApplyThemeInput {
 
 const ContributedThemesContext = createContext<ContributedThemes | null>(null);
 
+// Edge-to-edge draws the app under the Android system bars, and the bars keep
+// their default light icon style unless told otherwise — invisible on light
+// backgrounds (status bar clock/battery unreadable). Track the app theme.
+function applySystemBarStyle(colorScheme: "light" | "dark" | "auto"): void {
+  if (colorScheme === "auto") {
+    SystemBars.setStyle("auto");
+    return;
+  }
+  SystemBars.setStyle(colorScheme === "dark" ? "light" : "dark");
+}
+
 function applyTheme({ preference, contributedTheme }: ApplyThemeInput): void {
   if (contributedTheme) {
     const themeName = PLUGIN_THEME_NAMES[contributedTheme.theme.colorScheme];
     UnistylesRuntime.updateTheme(themeName, () => contributedTheme.theme);
     UnistylesRuntime.setAdaptiveThemes(false);
     UnistylesRuntime.setTheme(themeName);
+    applySystemBarStyle(contributedTheme.theme.colorScheme);
     return;
   }
 
@@ -35,11 +53,14 @@ function applyTheme({ preference, contributedTheme }: ApplyThemeInput): void {
     preference === PLUGIN_THEME_PREFERENCE ? DEFAULT_THEME_PREFERENCE : preference;
   if (builtInPreference === "auto") {
     UnistylesRuntime.setAdaptiveThemes(true);
+    applySystemBarStyle("auto");
     return;
   }
 
+  const unistylesName = THEME_TO_UNISTYLES[builtInPreference];
   UnistylesRuntime.setAdaptiveThemes(false);
-  UnistylesRuntime.setTheme(THEME_TO_UNISTYLES[builtInPreference]);
+  UnistylesRuntime.setTheme(unistylesName);
+  applySystemBarStyle(REGISTERED_THEMES[unistylesName].colorScheme);
 }
 
 export function AppearanceProvider({ children }: { children: ReactNode }) {
