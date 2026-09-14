@@ -1,10 +1,3 @@
-import type { AgentProfile } from "@getpaseo/protocol/messages";
-import type {
-  AgentPermissionRequest,
-  AgentPermissionResponse,
-  AgentTimelineItem,
-} from "@getpaseo/protocol/agent-types";
-import type { PaseoAgentConfig } from "@getpaseo/client";
 import { profileId, type Role } from "../shared/profiles";
 import { decisionJson, routerDecision } from "../shared/decisions";
 import {
@@ -14,6 +7,13 @@ import {
   correctionDecision,
   type FinalReview,
 } from "../shared/final-review";
+import type {
+  AgentPermissionRequest,
+  AgentPermissionResponse,
+  AgentProfile,
+  AgentTimelineItem,
+  PaseoAgentConfig,
+} from "./types";
 
 export interface PlanContext {
   workspaceId: string;

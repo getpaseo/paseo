@@ -1,10 +1,10 @@
 import type { PluginServerContext } from "@getpaseo/plugin/server";
-import type { PaseoApi } from "@getpaseo/client";
 import { installRpc, reviewRpc, handoffRpc, prepareRpc, statusRpc } from "./shared/rpc";
 import { profileId } from "./shared/profiles";
 import { installProfiles } from "./server/install";
 import { workflowSettings } from "./server/state";
 import { runtime, prepareAgent } from "./server/runtime";
+import type { PaseoApi } from "./server/types";
 
 export default function contribute(server: PluginServerContext) {
   const settings = server.registerSettings(workflowSettings);

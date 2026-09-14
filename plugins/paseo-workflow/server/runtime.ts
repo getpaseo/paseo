@@ -1,10 +1,10 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import type { PaseoApi } from "@getpaseo/client";
 import type { PluginSettingsHandle, PluginBeforeRequests } from "@getpaseo/plugin/server";
 import { profileId, roles } from "../shared/profiles";
 import { WorkflowController, type WorkflowPort } from "./workflow";
 import { workflowSettings } from "./state";
+import type { PaseoApi } from "./types";
 
 const execute = promisify(execFile);
 async function git(cwd: string, args: string[]): Promise<string> {
