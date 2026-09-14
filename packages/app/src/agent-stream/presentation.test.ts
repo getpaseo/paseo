@@ -269,58 +269,56 @@ describe("stream presentation through installed plugins", () => {
     ]);
   });
 
-  it.each(["completed", "failed", "canceled"] as const)(
-    "keeps a tool card's identity and full payload through %s",
-    (status) => {
-      const harness = streamHarness(installedTransform(installProbe("tool_call")));
-      const source = {
-        type: "tool_call" as const,
-        callId: "call-1",
-        name: "bash",
-        detail: { type: "shell" as const, command: "pwd", cwd: "/repo" },
-        metadata: { sequence: 1 },
-      };
-      const running = rows(
-        harness.send({
-          type: "timeline",
-          provider: "claude",
-          item: {
-            ...source,
-            status: "running",
-            error: null,
-          },
-        }),
-      );
-      const terminalItem =
-        status === "failed"
-          ? { ...source, status, error: { message: "Command failed" } }
-          : { ...source, status, error: null };
-      const terminal = rows(
-        harness.send({
-          type: "timeline",
-          provider: "claude",
-          item: {
-            ...terminalItem,
-          },
-        }),
-      );
-      expect(pluginData(running)).toMatchObject([
-        { callId: "call-1", status: "running", phase: "streaming" },
-      ]);
-      expect(pluginData(terminal)).toEqual([
-        {
-          callId: source.callId,
-          name: source.name,
-          detail: source.detail,
-          metadata: source.metadata,
-          phase: "complete",
-          status,
-          error: terminalItem.error,
+  it.each([
+    { status: "completed", error: null },
+    { status: "failed", error: { message: "Command failed" } },
+    { status: "canceled", error: null },
+  ] as const)("keeps a tool card's identity and full payload through $status", (completion) => {
+    const harness = streamHarness(installedTransform(installProbe("tool_call")));
+    const source = {
+      type: "tool_call" as const,
+      callId: "call-1",
+      name: "bash",
+      detail: { type: "shell" as const, command: "pwd", cwd: "/repo" },
+      metadata: { sequence: 1 },
+    };
+    const running = rows(
+      harness.send({
+        type: "timeline",
+        provider: "claude",
+        item: {
+          ...source,
+          status: "running",
+          error: null,
         },
-      ]);
-      expect(terminal.map((item) => item.id)).toEqual(running.map((item) => item.id));
-    },
-  );
+      }),
+    );
+    const terminalItem = { ...source, ...completion };
+    const terminal = rows(
+      harness.send({
+        type: "timeline",
+        provider: "claude",
+        item: {
+          ...terminalItem,
+        },
+      }),
+    );
+    expect(pluginData(running)).toMatchObject([
+      { callId: "call-1", status: "running", phase: "streaming" },
+    ]);
+    expect(pluginData(terminal)).toEqual([
+      {
+        callId: source.callId,
+        name: source.name,
+        detail: source.detail,
+        metadata: source.metadata,
+        phase: "complete",
+        status: completion.status,
+        error: terminalItem.error,
+      },
+    ]);
+    expect(terminal.map((item) => item.id)).toEqual(running.map((item) => item.id));
+  });
 
   it("offers one complete live source assistant message to an installed transformer", () => {
     const sourceText =
