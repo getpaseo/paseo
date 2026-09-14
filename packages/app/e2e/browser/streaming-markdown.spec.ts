@@ -14,7 +14,7 @@ test("formats unfinished Markdown while streaming and preserves the completed re
   await withStreamingMarkdown(page, testInfo, async (agent) => {
     await requestStreamingMarkdown(agent);
     await expectUnfinishedBold(page);
-    await expectUnfinishedLink(page, testInfo);
+    await expectUnfinishedLink(page, agent, testInfo);
     await expectFinishedMarkdown(page, agent, testInfo);
     await expectReloadedMarkdown(page);
   });

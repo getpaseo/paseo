@@ -176,7 +176,7 @@ test("conflicting intents and resource IDs cannot start more work", async () => 
     "workspace_id_conflict",
   );
   f.provider.resolve();
-  await first;
+  expect(await first).toMatchObject({ phase: "completed", error: null });
   expect(f.calls).toEqual(["workspace", "agent", "prompt"]);
 });
 
