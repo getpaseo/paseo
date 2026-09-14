@@ -58,7 +58,10 @@ Android touches sailed straight through to the chat scroll view behind it.
 Two escape hatches in the codebase:
 
 - **`Modal`** (combobox, dropdown menu and tooltip on native) — opens a new Android window, so
-  hit-testing starts fresh in that window. Side effect: a Modal opening on
+  hit-testing starts fresh in that window. If its children use gesture-handler,
+  the Modal owner must wrap its content in a full-height `GestureHandlerRootView`:
+  the app's root does not span Android windows. React context alone does not
+  establish a native gesture root. Side effect: a Modal opening on
   Android can detach the IME from an underlying TextInput. Fine for combobox
   (it has its own input) and tooltip (no input). **Not** fine for autocomplete
   (the composer's input must stay focused so the user keeps typing).
