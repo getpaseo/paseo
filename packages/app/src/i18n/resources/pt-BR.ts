@@ -1248,7 +1248,9 @@ export const ptBR: TranslationResources = {
   },
   newWorkspace: {
     title: "Novo workspace",
+    chatTitle: "Novo chat",
     create: "Criar",
+    startChat: "Iniciar chat",
     isolation: {
       local: "Local",
       worktree: "Novo worktree",

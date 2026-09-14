@@ -1212,7 +1212,9 @@ export const zhCN: TranslationResources = {
   },
   newWorkspace: {
     title: "新建 workspace",
+    chatTitle: "新建对话",
     create: "创建",
+    startChat: "开始对话",
     isolation: {
       local: "本地",
       worktree: "新建 worktree",

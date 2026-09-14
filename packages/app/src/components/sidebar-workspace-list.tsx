@@ -1924,7 +1924,6 @@ function SidebarChatsSection({
   const allHosts = useHosts();
   const activeSelection = useActiveWorkspaceSelection();
   const [collapsed, setCollapsed] = useState(false);
-  const [isCreating, setIsCreating] = useState(false);
 
   const chatEntries = useMemo(() => {
     return Array.from(workspaceEntriesByKey.values()).filter(
@@ -1950,30 +1949,16 @@ function SidebarChatsSection({
     (supportsChatByServerId ? supportsChatByServerId.get(targetServerId) === true : true),
   );
 
-  const handleCreateChat = useCallback(async () => {
-    if (isCreating) return;
+  const handleCreateChat = useCallback(() => {
     const targetId = activeSelection?.serverId ?? allHosts[0]?.serverId;
-    if (!targetId) return;
-    if (supportsChatByServerId && supportsChatByServerId.get(targetId) !== true) return;
-    const client = getHostRuntimeStore().getClient(targetId);
-    if (!client) return;
-    setIsCreating(true);
-    try {
-      const payload = await client.createWorkspace({
-        source: { kind: "chat" },
-      });
-      if (payload.workspace) {
-        navigateToWorkspace({
-          serverId: targetId,
-          workspaceId: payload.workspace.id,
-        });
-      }
-    } catch (error) {
-      console.error("Failed to create chat", error);
-    } finally {
-      setIsCreating(false);
-    }
-  }, [activeSelection, allHosts, isCreating, supportsChatByServerId]);
+    onWorkspacePress?.();
+    router.navigate(
+      buildNewWorkspaceRoute({
+        serverId: targetId,
+        kind: "chat",
+      }) as Href,
+    );
+  }, [activeSelection, allHosts, onWorkspacePress]);
 
   const toggleCollapsed = useCallback(() => setCollapsed((prev) => !prev), []);
 
@@ -1991,7 +1976,6 @@ function SidebarChatsSection({
       icon={Plus}
       label="New chat"
       onPress={handleCreateChat}
-      disabled={isCreating}
       testID="sidebar-chats-empty-start"
       variant="compact"
       containerStyle={styles.chatsEmptyContainer}
@@ -2024,7 +2008,6 @@ function SidebarChatsSection({
               <TooltipTrigger asChild>
                 <Pressable
                   onPress={handleCreateChat}
-                  disabled={isCreating}
                   hitSlop={4}
                   style={newChatButtonStyle}
                   testID="sidebar-chats-new-button"

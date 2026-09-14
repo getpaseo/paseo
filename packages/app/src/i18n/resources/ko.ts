@@ -1230,7 +1230,9 @@ export const ko: TranslationResources = {
   },
   newWorkspace: {
     title: "새 워크스페이스",
+    chatTitle: "새 채팅",
     create: "생성",
+    startChat: "채팅 시작",
     isolation: {
       local: "로컬",
       worktree: "새 워크트리",

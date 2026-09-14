@@ -1236,7 +1236,9 @@ export const ja: TranslationResources = {
   },
   newWorkspace: {
     title: "新しいワークスペース",
+    chatTitle: "新しいチャット",
     create: "作成",
+    startChat: "チャットを開始",
     isolation: {
       local: "ローカル",
       worktree: "新しいワークツリー",

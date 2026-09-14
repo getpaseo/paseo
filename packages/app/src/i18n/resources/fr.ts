@@ -1258,7 +1258,9 @@ export const fr: TranslationResources = {
   },
   newWorkspace: {
     title: "Nouvel espace de travail",
+    chatTitle: "Nouvelle discussion",
     create: "Créer",
+    startChat: "Démarrer la discussion",
     isolation: {
       local: "Local",
       worktree: "Nouveau worktree",

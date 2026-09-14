@@ -1232,7 +1232,9 @@ export const en = {
   },
   newWorkspace: {
     title: "New workspace",
+    chatTitle: "New chat",
     create: "Create",
+    startChat: "Start chat",
     isolation: {
       local: "Local",
       worktree: "New worktree",
