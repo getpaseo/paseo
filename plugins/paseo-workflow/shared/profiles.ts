@@ -1,5 +1,3 @@
-import type { AgentProfile } from "@getpaseo/protocol/messages";
-
 export const roles = [
   "router",
   "planner",
@@ -14,6 +12,18 @@ export const roles = [
 export type Role = (typeof roles)[number];
 export const profileId = (role: Role) => `paseo-workflow-${role}`;
 
+interface WorkflowProfile {
+  [key: string]: unknown;
+  id: string;
+  name: string;
+  provider: string;
+  model: string;
+  modeId: string;
+  thinkingOptionId: string;
+  featureValues?: Record<string, unknown>;
+  postApprovalModeId?: string;
+}
+
 const defaults: Record<Role, { model: string; thinkingOptionId: string }> = {
   router: { model: "gpt-5.6-luna", thinkingOptionId: "low" },
   planner: { model: "gpt-6-astra", thinkingOptionId: "high" },
@@ -26,9 +36,9 @@ const defaults: Record<Role, { model: string; thinkingOptionId: string }> = {
   "audit-security": { model: "gpt-6-astra", thinkingOptionId: "xhigh" },
 };
 
-export const profiles: AgentProfile[] = roles.map((role) => {
+export const profiles: WorkflowProfile[] = roles.map((role) => {
   const { model, thinkingOptionId } = defaults[role];
-  const profile: AgentProfile = {
+  const profile: WorkflowProfile = {
     id: profileId(role),
     name: `Workflow · ${role}`,
     provider: "codex",
