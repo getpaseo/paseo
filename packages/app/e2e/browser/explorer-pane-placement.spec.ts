@@ -269,7 +269,9 @@ async function persistHiddenGeneratedExplorer(page: Page): Promise<void> {
       state: WorkspaceLayoutPersistedStateSchema,
       version: z.number().int().nonnegative().optional(),
     })
-    .parse(JSON.parse(raw), { error: "Explorer fixture: invalid persisted workspace layout" });
+    .parse(JSON.parse(raw), {
+      error: () => "Explorer fixture: invalid persisted workspace layout",
+    });
   const [key] = Object.keys(stored.state.layoutByWorkspace);
   if (!key) throw new Error("Explorer fixture: persisted layout contains no workspace");
   const tabs: WorkspaceTab[] = [
@@ -284,7 +286,7 @@ async function persistHiddenGeneratedExplorer(page: Page): Promise<void> {
       }),
     ),
   ];
-  stored.state.layoutByWorkspace[key] = {
+  const corruptedLayout = {
     root: {
       kind: "pane",
       pane: {
@@ -297,10 +299,14 @@ async function persistHiddenGeneratedExplorer(page: Page): Promise<void> {
     },
     focusedPaneId: null,
   };
-  stored.state.explorerPaneIdByWorkspace = {
-    ...stored.state.explorerPaneIdByWorkspace,
-    [key]: "pane_generated_report_equivalent",
-  };
+  stored.state = WorkspaceLayoutPersistedStateSchema.parse({
+    ...stored.state,
+    layoutByWorkspace: { ...stored.state.layoutByWorkspace, [key]: corruptedLayout },
+    explorerPaneIdByWorkspace: {
+      ...stored.state.explorerPaneIdByWorkspace,
+      [key]: "pane_generated_report_equivalent",
+    },
+  });
   await page.evaluate(
     (value) => localStorage.setItem("workspace-layout-state", value),
     JSON.stringify(stored),

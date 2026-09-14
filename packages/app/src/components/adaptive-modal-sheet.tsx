@@ -43,6 +43,11 @@ export { AdaptiveTextInput, type AdaptiveTextInputProps } from "@/components/ada
 // match this padding.
 export const SHEET_HORIZONTAL_PADDING_SCALE = 6;
 
+// The header's close button grows outward from its glyph, so the glyph's
+// trailing rail is the content inset plus this padding. Rows whose trailing
+// glyph should line up with the X must reach the same rail.
+export const SHEET_HEADER_CLOSE_PADDING_SCALE = 2;
+
 export interface SheetHeaderSearch {
   onChange: (value: string) => void;
   onFocus?: () => void;
@@ -128,7 +133,7 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.spacing[2],
   },
   closeButton: {
-    padding: theme.spacing[2],
+    padding: theme.spacing[SHEET_HEADER_CLOSE_PADDING_SCALE],
     borderRadius: theme.borderRadius.lg,
   },
   searchRow: {
