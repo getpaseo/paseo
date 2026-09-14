@@ -2,7 +2,8 @@ import { randomUUID } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
+import pino from "pino";
 import type { CreationSnapshot, SessionOutboundMessage } from "@getpaseo/protocol/messages";
 import { DaemonClient } from "../test-utils/daemon-client.js";
 import { createTestAgentClients } from "../test-utils/fake-agent-client.js";
@@ -16,13 +17,25 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-test("the daemon continues the combined intent after its initiating client closes", async () => {
+test("creation progresses before agent readiness and continues after the disconnected Session is cleaned up", async () => {
   const provider = deferred<void>();
   const ready = deferred<CreationSnapshot>();
+  const disconnected = deferred<void>();
+  const cleaned = deferred<void>();
   const directory = await mkdtemp(join(tmpdir(), "creation-wire-"));
   let agents = 0;
   let prompts = 0;
   const daemon = await createTestPaseoDaemon({
+    logger: pino(
+      { level: "trace" },
+      {
+        write(line) {
+          const { msg } = JSON.parse(line);
+          if (msg === "Client disconnected; waiting for reconnect") disconnected.resolve();
+          if (msg === "agent.session.lifecycle.cleanup") cleaned.resolve();
+        },
+      },
+    ),
     agentClients: createTestAgentClients({
       beforeCreateSession: async () => {
         agents++;
@@ -41,7 +54,7 @@ test("the daemon continues the combined intent after its initiating client close
   const observer = new DaemonClient({
     url: `ws://127.0.0.1:${daemon.port}/ws`,
     appVersion: "0.7.2",
-    clientId: "creation-subscriber",
+    clientId: "creation-independent-observer",
   });
   const observerMessages: SessionOutboundMessage[] = [];
   const unsubscribe = observer.subscribeRawMessages((message) => observerMessages.push(message));
@@ -75,7 +88,12 @@ test("the daemon continues the combined intent after its initiating client close
     expect(
       observerMessages.filter((message) => message.type === "workspace.create.update"),
     ).toHaveLength(0);
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     await client.close();
+    await disconnected.promise;
+    await vi.advanceTimersByTimeAsync(90_000);
+    await cleaned.promise;
+    vi.useRealTimers();
     await expect(first).rejects.toThrow("closed");
     // A disconnected form cannot prevent the provider or initial prompt from starting.
     provider.resolve();
@@ -94,6 +112,7 @@ test("the daemon continues the combined intent after its initiating client close
     expect(conflict.error).toBe("workspace_id_conflict");
     expect(agents).toBe(1);
   } finally {
+    vi.useRealTimers();
     provider.resolve();
     unsubscribe();
     await client.close();

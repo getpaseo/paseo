@@ -4788,7 +4788,7 @@ export type WorkspaceInitialAgent = z.infer<typeof WorkspaceInitialAgentSchema>;
 
 export const WorkspaceCreationUpdateSchema = z.object({
   type: z.literal("workspace.create.update"),
-  payload: CreationSnapshotSchema,
+  payload: CreationSnapshotSchema.extend({ subscriptionId: z.string().optional() }),
 });
 export const AgentCreationUpdateSchema = WorkspaceCreationUpdateSchema.extend({
   type: z.literal("agent.create.update"),
@@ -4797,6 +4797,7 @@ export const CreationSubscribeResponseSchema = z.object({
   type: z.literal("creation.subscribe.response"),
   payload: z.object({
     requestId: z.string(),
+    subscriptionId: z.string().optional(),
     snapshot: CreationSnapshotSchema.nullable(),
     error: z.string().nullable(),
   }),

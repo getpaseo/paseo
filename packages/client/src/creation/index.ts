@@ -19,10 +19,14 @@ export interface CreationResult {
 }
 interface Dependencies {
   supports: () => boolean;
-  connected: () => boolean;
   requestId: () => string;
   request: (kind: Kind, input: Record<string, unknown>) => Promise<CreationResult>;
-  subscribe: (kind: Kind, key: string, enabled?: boolean) => Promise<CreationSnapshot | null>;
+  observe: (
+    kind: Kind,
+    key: string,
+    next: (snapshot: CreationSnapshot | null) => void,
+    error: (error: unknown) => void,
+  ) => () => void;
   legacyAgent: (input: CreateAgentRequestOptions) => Promise<AgentSnapshotPayload>;
   legacyWorkspace: (
     input: CreateWorkspaceRequestOptions,
@@ -50,6 +54,7 @@ interface Operation {
   settled: boolean;
   modern: boolean;
   recovering: boolean;
+  stopObserving?: () => void;
 }
 
 /** Client-owned observation and compatibility. UI callbacks never advance creation. */
@@ -67,6 +72,10 @@ export class CreationClient {
       if (request.workspaceId || request.agent?.agentId)
         throw new Error("Update the host to use caller-selected creation IDs.");
       const { agent, ...workspaceInput } = request;
+      const sourceCwd =
+        request.source.kind === "directory" ? request.source.path : request.source.cwd;
+      const relativeCwd =
+        agent && sourceCwd ? relativeDirectory(agent.config!.cwd, sourceCwd) : undefined;
       const workspace = await this.deps.legacyWorkspace(workspaceInput);
       if (workspace.error || !workspace.workspace) return workspace;
       this.receive({
@@ -81,11 +90,9 @@ export class CreationClient {
         error: null,
       });
       if (!agent) return workspace;
-      const sourceCwd =
-        request.source.kind === "directory" ? request.source.path : request.source.cwd;
-      const cwd = sourceCwd
-        ? remapDirectory(agent.config!.cwd, sourceCwd, workspace.workspace.workspaceDirectory!)
-        : workspace.workspace.workspaceDirectory!;
+      const cwd = `${workspace.workspace.workspaceDirectory!.replace(/[\\/]+$/, "")}${
+        relativeCwd ?? relativeDirectory(agent.config!.cwd, workspace.workspace.projectRootPath)
+      }`;
       const created = await this.legacyAgent({
         ...agent,
         config: { ...agent.config!, cwd },
@@ -180,16 +187,22 @@ export class CreationClient {
       if (result.creation) this.receive(result.creation);
       this.finish(operation, result);
     } catch (error) {
-      if (operation.settled || !this.deps.connected()) return;
+      if (
+        operation.settled ||
+        (error instanceof Error && "code" in error && error.code === "DAEMON_CONNECTION_LOST")
+      )
+        return;
       this.fail(operation, error);
     }
   }
   receive(snapshot: CreationSnapshot): void {
     const operation = this.operations.get(JSON.stringify([snapshot.kind, snapshot.idempotencyKey]));
-    if (!operation || (operation.snapshot && operation.snapshot.revision >= snapshot.revision))
+    if (!operation || (operation.snapshot && operation.snapshot.revision > snapshot.revision))
       return;
-    operation.snapshot = snapshot;
-    for (const observer of operation.observers) this.notify(observer, snapshot);
+    if (operation.snapshot?.revision !== snapshot.revision) {
+      operation.snapshot = snapshot;
+      for (const observer of operation.observers) this.notify(observer, snapshot);
+    }
     if (operation.recovering && (snapshot.phase === "completed" || snapshot.phase === "failed")) {
       this.finish(operation, {
         agent: snapshot.agent,
@@ -201,32 +214,22 @@ export class CreationClient {
       });
     }
   }
-  private async recover(operation: Operation): Promise<void> {
-    operation.recovering = true;
-    const snapshot = await this.deps.subscribe(operation.kind, operation.key);
-    if (!snapshot) {
-      await this.submit(operation);
-      return;
-    }
-    this.receive(snapshot);
-    if (snapshot.phase === "completed" || snapshot.phase === "failed") {
-      this.finish(operation, {
-        agent: snapshot.agent,
-        workspace: snapshot.workspace,
-        creation: snapshot,
-        setupSkippedReason: snapshot.setupSkippedReason,
-        error: snapshot.error,
-        errorCode: snapshot.errorCode,
-      });
-    }
-  }
-
   reconnect(): void {
     for (const operation of this.operations.values()) {
-      if (operation.settled || !operation.modern) continue;
-      void this.recover(operation).catch((error) => {
-        if (this.deps.connected()) this.fail(operation, error);
-      });
+      if (operation.settled || !operation.modern || operation.recovering) continue;
+      operation.recovering = true;
+      operation.stopObserving = this.deps.observe(
+        operation.kind,
+        operation.key,
+        (snapshot) => {
+          if (!snapshot) void this.submit(operation);
+          else {
+            // Re-subscription is authoritative even if its revision matches the last live event.
+            this.receive(snapshot);
+          }
+        },
+        (error) => this.fail(operation, error),
+      );
     }
   }
   close(): void {
@@ -237,8 +240,7 @@ export class CreationClient {
   private finish(operation: Operation, result: CreationResult): void {
     if (operation.settled) return;
     operation.settled = true;
-    if (operation.recovering)
-      void this.deps.subscribe(operation.kind, operation.key, false).catch(() => undefined);
+    operation.stopObserving?.();
     operation.resolve(result);
     operation.observers.clear();
     this.operations.delete(JSON.stringify([operation.kind, operation.key]));
@@ -246,6 +248,7 @@ export class CreationClient {
   private fail(operation: Operation, error: unknown): void {
     if (operation.settled) return;
     operation.settled = true;
+    operation.stopObserving?.();
     operation.reject(error instanceof Error ? error : new Error(String(error)));
     operation.observers.clear();
     this.operations.delete(JSON.stringify([operation.kind, operation.key]));
@@ -259,12 +262,15 @@ export class CreationClient {
   }
 }
 
-function remapDirectory(cwd: string, source: string, target: string): string {
-  const normalize = (value: string) => value.replace(/\\/g, "/").replace(/\/$/, "");
+function relativeDirectory(cwd: string, source: string): string {
+  const normalize = (value: string) => value.replace(/\\/g, "/").replace(/\/+$/, "");
   const normalized = normalize(cwd),
     root = normalize(source);
-  if (normalized === root) return target;
+  // Parent traversal must never survive mapping into the newly created checkout.
+  if ([normalized, root].some((path) => path.split("/").includes("..")))
+    throw new Error("Agent directory must be inside the workspace source");
+  if (normalized === root) return "";
   if (!normalized.startsWith(`${root}/`))
     throw new Error("Agent directory must be inside the workspace source");
-  return `${normalize(target)}${normalized.slice(root.length)}`;
+  return normalized.slice(root.length);
 }

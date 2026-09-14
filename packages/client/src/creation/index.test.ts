@@ -59,13 +59,12 @@ function fixture(modern: boolean) {
   });
   const client = new CreationClient({
     supports: () => modern,
-    connected: () => true,
     requestId: () => "generated-key",
     request: async (kind, input) => {
       requests.push({ kind, input });
       return result;
     },
-    subscribe: async () => null,
+    observe: () => () => {},
     legacyWorkspace: async (input) => {
       legacy.push({ kind: "workspace", input });
       return { requestId: "legacy-workspace", workspace, error: null, setupTerminalId: null };
@@ -197,5 +196,39 @@ test("keyed creation with an empty prompt works on legacy daemons without sendin
   expect(f.legacy).toEqual([
     { kind: "agent", input: { idempotencyKey: "empty-agent", config: f.input.agent.config } },
   ]);
+  f.client.close();
+});
+
+test.each([
+  ["/repo/project", "/repo/project/../outside"],
+  ["C:\\repo\\project", "C:\\repo\\project\\..\\outside"],
+])("legacy creation rejects escaping %s before creating a workspace", async (source, cwd) => {
+  const f = fixture(false);
+  await expect(
+    f.client.createWorkspace({
+      ...f.input,
+      source: { kind: "directory", path: source },
+      agent: { ...f.input.agent, config: { provider: "codex", cwd } },
+    }),
+  ).rejects.toThrow("inside the workspace source");
+  expect(f.legacy).toEqual([]);
+  f.client.close();
+});
+
+test.each([
+  { source: { kind: "directory" as const, path: "/project" }, cwd: "/project/src" },
+  { source: { kind: "directory" as const, path: "C:\\project" }, cwd: "C:\\project\\src" },
+  { source: { kind: "worktree" as const, projectId: "project" }, cwd: "/project/src" },
+])("legacy creation preserves the agent subdirectory for $source", async ({ source, cwd }) => {
+  const f = fixture(false);
+  await f.client.createWorkspace({
+    ...f.input,
+    source,
+    agent: { config: { provider: "codex", cwd } },
+  });
+  expect(f.legacy[1]).toMatchObject({
+    kind: "agent",
+    input: { workspaceId: workspace.id, config: { cwd: "/project/worktree/src" } },
+  });
   f.client.close();
 });

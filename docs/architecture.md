@@ -340,8 +340,11 @@ sequence after the client process disappears. Explicitly requested IDs or receip
 that an old host cannot honor produce an unsupported error. Keep these adapters inside
 the client package, as an exception to the default no-fallback feature policy.
 
-Creation updates require an explicit subscription and go only to the requesting socket.
-Legacy consumers, including Hub, keep their existing response contract.
+Creation executes through the existing Session capabilities. Connection-owned delivery
+controls observation only: detaching a socket or cleaning up its Session does not cancel
+accepted creation. Updates require an explicit subscription and go only to that socket;
+reconnect uses the shared subscription owner. Legacy consumers, including Hub, keep their
+existing response contract.
 
 ## Agent lifecycle
 

@@ -2677,7 +2677,6 @@ export class DaemonClient {
 
   private readonly creations = new CreationClient({
     supports: () => this.lastServerInfoMessage?.features?.creationLifecycle === true,
-    connected: () => this.connectionState.status === "connected",
     requestId: () => this.createRequestId(),
     request: (kind, input) =>
       kind === "workspace"
@@ -2693,13 +2692,23 @@ export class DaemonClient {
             responseType: "agent.create.response",
             timeout: 0,
           }),
-    subscribe: async (kind, idempotencyKey, subscribe = true) => {
-      const result = await this.sendCorrelatedSessionRequest({
-        message: { type: "creation.subscribe.request", kind, idempotencyKey, subscribe },
-        responseType: "creation.subscribe.response",
+    observe: (kind, idempotencyKey, next, error) => {
+      const observation = this.observe("creation.subscribe.response", {
+        type: "creation.subscribe.request",
+        kind,
+        idempotencyKey,
       });
-      if (result.error) throw new Error(result.error);
-      return result.snapshot;
+      observation.subscribe({
+        snapshot: (result) => next(result.snapshot),
+        update: (message) => {
+          if (message.type === "workspace.create.update" || message.type === "agent.create.update")
+            next(message.payload);
+        },
+        error,
+      });
+      return () => {
+        void observation.release().catch(error);
+      };
     },
     legacyAgent: (input) => this.createLegacyAgent(input),
     legacyWorkspace: (input) => this.createLegacyWorkspace(input, input.requestId),
@@ -6396,8 +6405,9 @@ export class DaemonClient {
     if (
       consumerMessage.type === "workspace.create.update" ||
       consumerMessage.type === "agent.create.update"
-    )
-      this.creations.receive(consumerMessage.payload);
+    ) {
+      if (!consumerMessage.payload.subscriptionId) this.creations.receive(consumerMessage.payload);
+    }
     this.resolveWaiters(consumerMessage);
     this.owned.receive(consumerMessage);
   }

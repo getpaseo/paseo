@@ -6405,3 +6405,86 @@ test("creation lifecycle acknowledgement reaches the observer before the final r
   );
   await expect(creation).rejects.toThrow("provider unavailable");
 });
+
+test("creation reconnect observation uses connection-owned subscriptions and releases on completion", async () => {
+  const transport = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "creation-reconnect",
+    transportFactory: () => transport.transport,
+    reconnect: { enabled: false },
+  });
+  clients.push(client);
+  const features = { creationLifecycle: true, ownedSubscriptions: true };
+  const connect = client.connect();
+  transport.triggerOpen({ features });
+  await connect;
+  const phases: string[] = [];
+  const creation = client.createWorkspace({
+    idempotencyKey: "reconnect-one",
+    source: { kind: "directory", path: "/project" },
+    onEvent: (snapshot) => phases.push(snapshot.phase),
+  });
+  void creation.catch(() => undefined);
+  const snapshot = {
+    kind: "workspace",
+    idempotencyKey: "reconnect-one",
+    phase: "accepted",
+    revision: 0,
+    workspaceId: "wks_0123456789abcdef",
+    agentId: null,
+    error: null,
+  };
+  for (const subscriptionId of ["first-connection", "second-connection"]) {
+    transport.triggerClose();
+    const reconnected = client.connect();
+    transport.triggerOpen({ features });
+    await reconnected;
+    await expect.poll(() => transport.sent.length).toBe(1);
+    const request = parseSentFrame(transport.sent[0]);
+    expect(request).toMatchObject({
+      type: "creation.subscribe.request",
+      idempotencyKey: "reconnect-one",
+    });
+    transport.triggerMessage(
+      wrapSessionMessage({
+        type: "creation.subscribe.response",
+        payload: {
+          requestId: request.requestId,
+          subscriptionId,
+          snapshot,
+          error: null,
+        },
+      }),
+    );
+  }
+  transport.triggerMessage(
+    wrapSessionMessage({
+      type: "workspace.create.update",
+      payload: {
+        ...snapshot,
+        subscriptionId: "second-connection",
+        revision: 1,
+        phase: "failed",
+        error: "Provisioning failed",
+      },
+    }),
+  );
+  expect(await creation).toMatchObject({ error: "Provisioning failed" });
+  await expect.poll(() => transport.sent.length).toBe(2);
+  const release = parseSentFrame(transport.sent.at(-1));
+  expect(release).toMatchObject({
+    type: "subscription.release.request",
+    subscriptionId: "second-connection",
+  });
+  transport.triggerMessage(
+    wrapSessionMessage({
+      type: "subscription.release.response",
+      payload: {
+        requestId: release.requestId,
+        subscriptionId: "second-connection",
+      },
+    }),
+  );
+  expect(phases).toEqual(["accepted", "failed"]);
+});

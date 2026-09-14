@@ -1,11 +1,14 @@
 import { expect, type Page } from "@playwright/test";
-import type { SessionInboundMessage, SessionOutboundMessage } from "@getpaseo/protocol/messages";
 import { daemonWsRoutePattern } from "./daemon-port";
 import { gotoAppShell } from "./app";
 import { gotoWorkspace } from "./launcher";
 import { fillComposerDraft } from "./composer";
 import { createAgentTabFromMenu } from "./workspace-tabs";
-import { openNewWorkspaceComposer, selectWorkspaceIsolation } from "./new-workspace";
+import {
+  openNewWorkspaceComposer,
+  selectWorkspaceIsolation,
+  loadSessionMessageReaders,
+} from "./new-workspace";
 import { seedWorkspace } from "./seed-client";
 import {
   waitForSidebarHydration,
@@ -28,12 +31,12 @@ export async function pressSubmitBeforeTheNextRender(page: Page, name: string): 
   });
 }
 
-export function observeCreationRequests(page: Page) {
+export async function observeCreationRequests(page: Page) {
+  const frames = await loadSessionMessageReaders();
   const pending = new Set<string>();
   page.on("websocket", (socket) => {
     socket.on("framesent", ({ payload }) => {
-      const envelope = JSON.parse(payload.toString()) as { message?: SessionInboundMessage };
-      const request = envelope.message;
+      const request = frames.client(payload);
       if (
         request?.type === "workspace.create.request" ||
         request?.type === "agent.create.request"
@@ -42,8 +45,7 @@ export function observeCreationRequests(page: Page) {
       }
     });
     socket.on("framereceived", ({ payload }) => {
-      const envelope = JSON.parse(payload.toString()) as { message?: SessionOutboundMessage };
-      const response = envelope.message;
+      const response = frames.server(payload);
       if (
         response?.type === "workspace.create.response" ||
         response?.type === "agent.create.response" ||
@@ -64,29 +66,28 @@ export function observeCreationRequests(page: Page) {
 }
 
 export async function retryNextAgentCreation(page: Page) {
+  const frames = await loadSessionMessageReaders();
   const retryIds = new Set<string>();
   const results: Array<{ status: string; agentId?: string }> = [];
   let repeated = false;
   await page.routeWebSocket(daemonWsRoutePattern(), (browser) => {
     const server = browser.connectToServer();
     browser.onMessage((frame) => {
-      const envelope = JSON.parse(frame.toString()) as { message?: SessionInboundMessage };
-      const request = envelope.message;
+      const request = frames.client(frame);
       if (!repeated && request?.type === "agent.create.request") {
         repeated = true;
         for (let attempt = 1; attempt <= 3; attempt++) {
           const requestId = attempt === 1 ? request.requestId : `${request.requestId}-${attempt}`;
           retryIds.add(requestId);
           // Keep the app's operation key and payload; only RPC correlation changes.
-          server.send(JSON.stringify({ ...envelope, message: { ...request, requestId } }));
+          server.send(JSON.stringify({ type: "session", message: { ...request, requestId } }));
         }
         return;
       }
       server.send(frame);
     });
     server.onMessage((frame) => {
-      const envelope = JSON.parse(frame.toString()) as { message?: SessionOutboundMessage };
-      const response = envelope.message;
+      const response = frames.server(frame);
       if (
         response?.type === "agent.create.response" &&
         retryIds.delete(response.payload.requestId)
@@ -113,7 +114,7 @@ export async function retryNextAgentCreation(page: Page) {
 }
 
 export async function createCreationScenario(page: Page) {
-  const requests = observeCreationRequests(page);
+  const requests = await observeCreationRequests(page);
   const project = await seedWorkspace({ repoPrefix: "creation-idempotency-" });
   let workspaceId = project.workspaceId;
   return {
@@ -151,6 +152,13 @@ export async function createCreationScenario(page: Page) {
           .locator('[data-testid^="workspace-tab-draft_"][aria-selected="true"]')
           .filter({ visible: true }),
       ).toBeVisible();
+    },
+    async expectAgentStillStarting() {
+      await this.expectWorkspaceReadyBeforeAgentCompletion();
+      expect((await project.client.fetchAgents()).entries).toHaveLength(0);
+    },
+    async expectStartupFailure() {
+      await expect(page.getByText(/Creation startup failed for test/).first()).toBeVisible();
     },
     async expectOneCreatedWorkspace() {
       await expect(page).toHaveURL(/\/workspace\//);

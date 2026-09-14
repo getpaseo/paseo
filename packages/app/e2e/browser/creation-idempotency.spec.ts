@@ -1,3 +1,4 @@
+import type { createCreationScenario } from "../support/helpers/creation";
 import { expect } from "../support/fixtures";
 import { test } from "../support/creation-fixtures";
 
@@ -89,30 +90,41 @@ test("separate drafts can intentionally create two agents in the same workspace"
   await creation.expectAgentCount(2);
 });
 
-test("new workspace navigation and optimistic prompt precede agent completion", async ({
+test("new workspace navigation and optimistic prompt precede agent initialization", async ({
   creation,
+  startup,
   delayedCreation,
 }) => {
   await creation.openWorkspaceForm("worktree");
   await creation.submitPrompt("Show this prompt while the agent is starting.", "Create");
-  await delayedCreation.waitForDelayedCreatedStatus();
-  await creation.expectWorkspaceReadyBeforeAgentCompletion();
+  await creation.expectAgentStillStarting();
   delayedCreation.expectSingleWorkspaceIntent();
   delayedCreation.release();
+  await startup.release();
   await creation.expectOneCreatedWorkspace();
   await creation.expectAgentCount(1);
 });
 
-test("retrying a failed combined result keeps the workspace and original creation intent", async ({
-  creation,
-  delayedCreation,
-}) => {
-  await creation.openWorkspaceForm("local");
-  await creation.submitPrompt("Retry this workspace and agent together.", "Create");
-  await delayedCreation.waitForDelayedCreatedStatus();
-  await creation.expectWorkspaceReadyBeforeAgentCompletion();
-  delayedCreation.fail("Creation response was lost");
-  await creation.submitPrompt("Retry this workspace and agent together.");
-  await creation.expectOneCreatedWorkspace();
-  await creation.expectAgentCount(1);
-});
+for (const scenario of [
+  { suffix: "", prepare: async () => {} },
+  {
+    suffix: " after remount",
+    prepare: async (creation: Awaited<ReturnType<typeof createCreationScenario>>) =>
+      creation.evictAndReturnToDraft(),
+  },
+]) {
+  test(`retrying failed agent initialization preserves its workspace${scenario.suffix}`, async ({
+    creation,
+    startup,
+  }) => {
+    await creation.openWorkspaceForm("local");
+    await creation.submitPrompt("Retry this workspace and agent together.", "Create");
+    await creation.expectAgentStillStarting();
+    await startup.fail();
+    await creation.expectStartupFailure();
+    await creation.expectOneCreatedWorkspace();
+    await scenario.prepare(creation);
+    await creation.submitPrompt("Retry this workspace and agent together.");
+    await creation.expectAgentCount(1);
+  });
+}

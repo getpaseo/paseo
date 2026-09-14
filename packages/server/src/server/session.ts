@@ -802,8 +802,6 @@ export class Session {
   >;
   private readonly createAgentLifecycleDispatch: CreateAgentLifecycleDispatch;
   private readonly creationService: Pick<CreationService, "create" | "subscribe">;
-  private readonly defaultCreationSource = {};
-  private readonly creationSubscriptions = new Map<object, Map<string, () => void>>();
 
   constructor(options: SessionOptions) {
     const {
@@ -1261,8 +1259,6 @@ export class Session {
       .catch((err) => this.sessionLogger.error({ err }, "Failed to release source subscriptions"));
     this.clientSources.delete(source);
     this.refreshObservationProducers();
-    for (const unsubscribe of this.creationSubscriptions.get(source)?.values() ?? []) unsubscribe();
-    this.creationSubscriptions.delete(source);
   }
 
   private subscribeAgentTimelines(agentIds: string[]): OwnedSubscription {
@@ -3862,39 +3858,61 @@ export class Session {
   /**
    * Handle create agent request
    */
-  private creationObserver(snapshot: CreationSnapshot, source?: object): void {
-    if (this.isCleanedUp) return;
-    const message: SessionOutboundMessage = {
+  private creationUpdate(snapshot: CreationSnapshot): SessionOutboundMessage {
+    return {
       type: snapshot.kind === "workspace" ? "workspace.create.update" : "agent.create.update",
       payload: snapshot,
     };
-    this.emitForSource(message, source);
   }
 
   private async handleCreationSubscription(
     request: Extract<SessionInboundMessage, { type: "creation.subscribe.request" }>,
     source?: object,
   ): Promise<void> {
-    const key = JSON.stringify([request.kind, request.idempotencyKey]);
-    const owner = source ?? this.defaultCreationSource;
-    const subscriptions = this.creationSubscriptions.get(owner) ?? new Map<string, () => void>();
-    subscriptions.get(key)?.();
-    subscriptions.delete(key);
-    this.creationSubscriptions.set(owner, subscriptions);
-    const observation = await this.creationService.subscribe(
-      request.kind,
-      request.idempotencyKey,
-      (snapshot) => this.creationObserver(snapshot, source),
-    );
-    if (request.subscribe === false || this.isCleanedUp) observation.unsubscribe();
-    else subscriptions.set(key, observation.unsubscribe);
-    this.emitForSource(
-      {
-        type: "creation.subscribe.response",
-        payload: { requestId: request.requestId, snapshot: observation.snapshot, error: null },
-      },
-      source,
-    );
+    let unsubscribe = () => {};
+    const owner =
+      request.subscribe === false
+        ? undefined
+        : this.delivery.begin(
+            "creation",
+            undefined,
+            () => unsubscribe(),
+            JSON.stringify([request.kind, request.idempotencyKey]),
+          );
+    try {
+      const observation = await this.creationService.subscribe(
+        request.kind,
+        request.idempotencyKey,
+        (snapshot) => owner?.emit(this.creationUpdate(snapshot)),
+      );
+      unsubscribe = observation.unsubscribe;
+      if (!owner || owner.signal.aborted) unsubscribe();
+      this.emitForSource(
+        {
+          type: "creation.subscribe.response",
+          payload: {
+            requestId: request.requestId,
+            subscriptionId: owner?.responseId,
+            snapshot: observation.snapshot,
+            error: null,
+          },
+        },
+        source,
+      );
+    } catch (error) {
+      await owner?.release();
+      this.emitForSource(
+        {
+          type: "creation.subscribe.response",
+          payload: {
+            requestId: request.requestId,
+            snapshot: null,
+            error: error instanceof Error ? error.message : String(error),
+          },
+        },
+        source,
+      );
+    }
   }
 
   private creationResourceExists = async (
@@ -3907,6 +3925,13 @@ export class Session {
 
   private async handleAgentCreation(request: AgentCreateRequest, source?: object): Promise<void> {
     const { requestId, subscribe, type: _type, idempotencyKey, ...intent } = request;
+    const progress = subscribe
+      ? this.delivery.operation(
+          (message) =>
+            message.type === "workspace.create.update" || message.type === "agent.create.update",
+          () => {},
+        )
+      : undefined;
     try {
       const creation = await this.creationService.create(
         {
@@ -3921,7 +3946,7 @@ export class Session {
           createAgent: (id, _workspace, onReady) =>
             this.createSessionAgent({ ...request, type: "create_agent_request" }, id, onReady),
         },
-        subscribe ? (snapshot) => this.creationObserver(snapshot, source) : undefined,
+        progress ? (snapshot) => progress.emit(this.creationUpdate(snapshot)) : undefined,
       );
       this.emitForSource(
         {
@@ -3942,6 +3967,8 @@ export class Session {
         },
         source,
       );
+    } finally {
+      await progress?.release();
     }
   }
 
@@ -3950,6 +3977,13 @@ export class Session {
     source?: object,
   ): Promise<void> {
     const { requestId, subscribe, type: _type, idempotencyKey, ...intent } = request;
+    const progress = subscribe
+      ? this.delivery.operation(
+          (message) =>
+            message.type === "workspace.create.update" || message.type === "agent.create.update",
+          () => {},
+        )
+      : undefined;
     try {
       if (
         request.agent &&
@@ -4019,7 +4053,7 @@ export class Session {
               }
             : undefined,
         },
-        subscribe ? (snapshot) => this.creationObserver(snapshot, source) : undefined,
+        progress ? (snapshot) => progress.emit(this.creationUpdate(snapshot)) : undefined,
       );
       this.emitForSource(
         {
@@ -4054,6 +4088,8 @@ export class Session {
         },
         source,
       );
+    } finally {
+      await progress?.release();
     }
   }
 
@@ -8490,9 +8526,6 @@ export class Session {
     this.sessionLogger.trace({}, "agent.session.lifecycle.cleanup");
     this.isCleanedUp = true;
     await this.delivery.close();
-    for (const subscriptions of this.creationSubscriptions.values())
-      for (const unsubscribe of subscriptions.values()) unsubscribe();
-    this.creationSubscriptions.clear();
 
     if (this.unsubscribeAgentEvents) {
       this.unsubscribeAgentEvents();
