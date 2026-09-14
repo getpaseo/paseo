@@ -121,6 +121,7 @@ import {
   SidebarFilterEmptyState,
   SidebarProjectEmptyState,
 } from "@/components/sidebar/empty-states";
+import { SidebarHeaderRow } from "@/components/sidebar/sidebar-header-row";
 import { selectWorkspaceServiceSummary } from "@/components/sidebar/workspace-meta-row";
 import {
   SidebarWorkspaceTrailingContent,
@@ -1985,31 +1986,17 @@ function SidebarChatsSection({
     [],
   );
 
-  const emptyRowStyle = useCallback(
-    ({ hovered = false }: PressableStateCallbackType & { hovered?: boolean }) => [
-      styles.chatsEmptyRow,
-      hovered && styles.chatsEmptyRowHovered,
-    ],
-    [],
-  );
-
   const emptyChatRow = targetHostSupportsChat ? (
-    <Pressable
+    <SidebarHeaderRow
+      icon={Plus}
+      label="New chat"
       onPress={handleCreateChat}
       disabled={isCreating}
-      style={emptyRowStyle}
       testID="sidebar-chats-empty-start"
-      accessibilityRole="button"
-      accessibilityLabel="Start a chat"
-    >
-      <ThemedPlus size={12} uniProps={foregroundMutedColorMapping} />
-      <Text style={styles.chatsEmptyText}>No chats yet. Start a chat</Text>
-    </Pressable>
-  ) : (
-    <View style={styles.chatsEmptyRow}>
-      <Text style={styles.chatsEmptyText}>No chats yet</Text>
-    </View>
-  );
+      variant="compact"
+      containerStyle={styles.chatsEmptyContainer}
+    />
+  ) : null;
   if (chatEntries.length === 0 && !anyHostSupportsChat) {
     return null;
   }
@@ -2819,25 +2806,8 @@ const styles = StyleSheet.create((theme) => ({
     paddingTop: theme.spacing[1],
     gap: 2,
   },
-  chatsEmptyRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[2],
-    paddingVertical: theme.spacing[2],
-    paddingHorizontal: theme.spacing[2],
-    borderRadius: theme.borderRadius.md,
-    borderWidth: 1,
-    borderStyle: "dashed",
-    borderColor: theme.colors.border,
-    marginVertical: 4,
-  },
-  chatsEmptyRowHovered: {
-    backgroundColor: theme.colors.surfaceSidebarHover,
-    borderColor: theme.colors.foregroundMuted,
-  },
-  chatsEmptyText: {
-    fontSize: theme.fontSize.sm,
-    color: theme.colors.foregroundMuted,
+  chatsEmptyContainer: {
+    paddingHorizontal: 0,
   },
   list: {
     flex: 1,
