@@ -768,9 +768,13 @@ export function DiffSurface(props: DiffSurfaceProps) {
     () => ({ ...ROOT_STYLE, background: props.palette.surface }),
     [props.palette.surface],
   );
+  const contentInsetBottom = props.contentInsetBottom ?? 0;
   const contentStyle = useMemo<React.CSSProperties>(
-    () => ({ ...CONTENT_STYLE, height: Math.max(model.height, viewport.height) }),
-    [model.height, viewport.height],
+    () => ({
+      ...CONTENT_STYLE,
+      height: Math.max(model.height, viewport.height) + contentInsetBottom,
+    }),
+    [contentInsetBottom, model.height, viewport.height],
   );
   const affordanceStyle = useMemo<ViewStyle>(
     () => ({

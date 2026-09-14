@@ -1,3 +1,9 @@
+/**
+ * Outer inset of an Explorer tab rail. With each tab's own horizontal padding it puts
+ * the tab label on the pane's shared leading rail (`treeRowPaddingLeft(0)`).
+ */
+export const EXPLORER_TAB_RAIL_INSET = 4;
+
 const DEFAULT_EXPLORER_SIDEBAR_WIDTH = 320;
 const MIN_EXPLORER_SIDEBAR_WIDTH = 240;
 const MIN_WORKSPACE_BODY_WIDTH = 400;

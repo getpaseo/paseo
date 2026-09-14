@@ -4,7 +4,7 @@ import { Gesture } from "react-native-gesture-handler";
 import Animated, { runOnJS, useAnimatedStyle, useSharedValue } from "react-native-reanimated";
 import { scheduleOnRN } from "react-native-worklets";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { StyleSheet, useUnistyles, withUnistyles } from "react-native-unistyles";
 import { X } from "lucide-react-native";
 import { useTranslation } from "react-i18next";
 import { formatPrTabLabel, PullRequestTabIcon } from "@/git/pull-request-panel";
@@ -20,6 +20,7 @@ import {
   HEADER_INNER_HEIGHT,
   HEADER_INNER_HEIGHT_MOBILE,
   HEADER_TOP_PADDING_MOBILE,
+  useIsCompactFormFactor,
 } from "@/constants/layout";
 import { ChangesSurface } from "@/git/diff-pane";
 import { changesStateSchema, defaultChangesState, type ChangesState } from "@/panels/changes/state";
@@ -38,8 +39,19 @@ import {
   SIDEBAR_RESIZE_ACTIVATION_OFFSET,
   SIDEBAR_RESIZE_FAIL_OFFSET,
 } from "@/components/sidebar-resize-handle-layout";
-import { resolveExplorerSidebarWidth } from "@/components/explorer-sidebar-layout";
+import {
+  EXPLORER_TAB_RAIL_INSET,
+  resolveExplorerSidebarWidth,
+} from "@/components/explorer-sidebar-layout";
+import {
+  paneContentToolbarIconSize,
+  paneContentToolbarTrailingPadding,
+  ToolbarButton,
+} from "@/components/ui/pane-content-toolbar";
+import { mutedIconColorMapping } from "@/components/ui/icon-button-chrome";
 import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
+
+const ThemedX = withUnistyles(X);
 
 function logExplorerSidebar(_event: string, _details: Record<string, unknown>): void {}
 
@@ -315,6 +327,15 @@ function ExplorerSidebarContent({
 }: SidebarContentProps) {
   const { theme } = useUnistyles();
   const { t } = useTranslation();
+  const isCompact = useIsCompactFormFactor();
+  // The close glyph shares the trailing rail with the toolbar rows below it.
+  const headerRightSectionStyle = useMemo(
+    () => [
+      styles.headerRightSection,
+      { paddingRight: paneContentToolbarTrailingPadding(isCompact, "glyph") },
+    ],
+    [isCompact],
+  );
   const { prPane, showPullRequest: showPrTab } = usePullRequestPanelAvailability({
     serverId,
     cwd: workspaceRoot,
@@ -341,12 +362,7 @@ function ExplorerSidebarContent({
   return (
     <View style={styles.sidebarContent} pointerEvents="auto">
       {/* Header with tabs and close button */}
-      <WindowChromeSafeArea
-        placement="inline"
-        horizontalPadding={theme.spacing[2]}
-        style={styles.header}
-        testID="explorer-header"
-      >
+      <WindowChromeSafeArea placement="inline" style={styles.header} testID="explorer-header">
         <TitlebarDragRegion />
         <View style={styles.tabsContainer}>
           {isGit && (
@@ -383,24 +399,19 @@ function ExplorerSidebarContent({
             </ExplorerTabButton>
           )}
         </View>
-        <View style={styles.headerRightSection}>
-          <Pressable
+        <View style={headerRightSectionStyle}>
+          <ToolbarButton
+            compact={isCompact}
+            label={t("workspace.tabs.explorerSidebar.close")}
             onPress={onClose}
-            style={styles.closeButton}
             testID="explorer-close"
             nativeID="explorer-close"
-            accessible
-            accessibilityRole="button"
-            accessibilityLabel={t("workspace.tabs.explorerSidebar.close")}
-            hitSlop={8}
           >
-            {({ hovered, pressed }) => (
-              <X
-                size={18}
-                color={hovered || pressed ? theme.colors.foreground : theme.colors.foregroundMuted}
-              />
-            )}
-          </Pressable>
+            <ThemedX
+              size={paneContentToolbarIconSize(isCompact)}
+              uniProps={mutedIconColorMapping}
+            />
+          </ToolbarButton>
         </View>
       </WindowChromeSafeArea>
 
@@ -523,13 +534,16 @@ const styles = StyleSheet.create((theme) => ({
   tabsContainer: {
     flexDirection: "row",
     gap: theme.spacing[1],
+    // With the tab's own horizontal padding this puts the label on the pane's
+    // leading rail, the same way the desktop tab rail does.
+    paddingLeft: EXPLORER_TAB_RAIL_INSET,
   },
   tab: {
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[2],
     paddingVertical: theme.spacing[2],
-    paddingHorizontal: theme.spacing[3],
+    paddingHorizontal: theme.spacing[2],
     borderRadius: theme.borderRadius.md,
   },
   tabActive: {
@@ -550,10 +564,6 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[2],
-  },
-  closeButton: {
-    padding: theme.spacing[2],
-    borderRadius: theme.borderRadius.md,
   },
   contentArea: {
     flex: 1,

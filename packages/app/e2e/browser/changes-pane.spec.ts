@@ -8,7 +8,11 @@ import { daemonWsRoutePattern } from "../support/helpers/daemon-port";
 import { getServerId } from "../support/helpers/server-id";
 import { connectSeedClient } from "../support/helpers/seed-client";
 import { createTempGitRepo } from "../support/helpers/workspace";
-import { openChangesPanel, waitForWorkspaceTabsVisible } from "../support/helpers/workspace-tabs";
+import {
+  ensureExplorerSidebar,
+  openChangesPanel,
+  waitForWorkspaceTabsVisible,
+} from "../support/helpers/workspace-tabs";
 
 interface DirtyWorkspace {
   id: string;
@@ -876,6 +880,40 @@ test("compact Changes keeps its actions compact and menu-only", async ({ page })
   ).toContainText("Scroll long lines");
 });
 
+test("compact Changes jumps to a file from the changed-files sheet", async ({ page }) => {
+  const workspace = await createWorkspaceWithMountedTabDiff({ includeNestedFolders: true });
+  await useUnwrappedDiffLines(page);
+  const explorer = await openCompactChanges(page, workspace);
+
+  const jumpToFile = explorer.getByTestId("changes-jump-to-file");
+  await expect(jumpToFile).toBeVisible();
+  await jumpToFile.click();
+
+  const sheet = page.getByTestId("changes-jump-to-file-sheet");
+  await expect(sheet).toContainText("Jump to file");
+  await expect(page.getByTestId("diff-folder-src/zz-folder")).toBeVisible();
+  const deepFile = page.getByTestId("changes-file-tree").getByText("changed.ts", { exact: true });
+  await expect(deepFile).toBeVisible();
+  await deepFile.click();
+
+  await expect(page.getByTestId("changes-jump-to-file-sheet")).toHaveCount(0);
+  await expect(diffHeaderForPath(explorer, "src/zz-folder/nested/changed.ts")).toBeInViewport();
+});
+
+test("Jump to file stays out of the desktop diff and of an empty comparison", async ({ page }) => {
+  const committed = await createWorkspaceWithCommittedDiff();
+  await openWorkspaceChangesSurface(page, committed, 90_000);
+  await expect(page.getByTestId("changes-jump-to-file")).toHaveCount(0);
+
+  const explorer = await openCompactChanges(page, committed);
+  await expect(explorer.getByTestId("changes-jump-to-file")).toBeVisible();
+
+  await explorer.getByTestId("changes-diff-status-trigger").click();
+  await page.getByTestId("changes-diff-mode-uncommitted").click();
+  await expect(explorer.getByText("No changes to display", { exact: true })).toBeVisible();
+  await expect(page.getByTestId("changes-jump-to-file")).toHaveCount(0);
+});
+
 test("canvas diff stays sharp while its workspace pane is resized", async ({ page }) => {
   const workspace = await createWorkspaceWithMountedTabDiff();
   await useUnwrappedDiffLines(page);
@@ -1665,6 +1703,27 @@ async function openWorkspaceChanges(page: Page, workspace: DirtyWorkspace): Prom
   await page.getByTestId("workspace-explorer-toggle").first().click();
   await openChangesInVisibleExplorer(page);
   await expectExpandedMountedTabDiff(page);
+}
+
+/** The Explorer overlay a phone-sized viewport shows, with its Changes tab selected. */
+async function openCompactChanges(page: Page, workspace: DirtyWorkspace): Promise<Locator> {
+  await page.setViewportSize({ width: 1400, height: 900 });
+  await page.goto(buildHostWorkspaceRoute(getServerId(), workspace.id));
+  await waitForWorkspaceTabsVisible(page);
+  await ensureExplorerSidebar(page);
+  await page.setViewportSize({ width: 390, height: 844 });
+
+  // The compact Explorer is an overlay panel, not the desktop sidebar: reopen it
+  // from the header toggle when shrinking the viewport dismissed it.
+  const changesTab = page.getByTestId("explorer-tab-changes").filter({ visible: true });
+  if (!(await changesTab.isVisible().catch(() => false))) {
+    await page.getByTestId("workspace-explorer-toggle").first().click();
+  }
+  await expect(changesTab).toBeVisible({ timeout: 30_000 });
+  await changesTab.click();
+  const explorer = page.getByTestId("explorer-content-area").filter({ visible: true });
+  await expect(explorer.getByTestId("changes-header")).toBeVisible({ timeout: 30_000 });
+  return explorer;
 }
 
 async function openWorkspaceChangesSurface(
