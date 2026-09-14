@@ -1,7 +1,7 @@
 extends: ./electron-builder.yml
 appId: sh.paseo.desktop.local
 productName: Paseo Local
-protocols: []
+afterPack: ./scripts/after-pack-local.js
 directories:
   output: .dev/release-local
 extraMetadata:
