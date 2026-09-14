@@ -5,6 +5,28 @@ import { expect, test } from "vitest";
 import { MutableDaemonConfigSchema } from "@getpaseo/protocol/messages";
 import { DaemonConfigStore } from "../../../packages/server/src/server/daemon-config-store";
 import { installProfiles } from "./install";
+import { profiles } from "../shared/profiles";
+
+test("workflow roles use available models sized to their work", () => {
+  expect(
+    Object.fromEntries(
+      profiles.map(({ id, model, thinkingOptionId }) => [id, { model, thinkingOptionId }]),
+    ),
+  ).toEqual({
+    "paseo-workflow-router": { model: "gpt-5.6-luna", thinkingOptionId: "low" },
+    "paseo-workflow-planner": { model: "gpt-6-astra", thinkingOptionId: "high" },
+    "paseo-workflow-plan-reviewer": { model: "gpt-6-astra", thinkingOptionId: "high" },
+    "paseo-workflow-executor-standard": {
+      model: "gpt-5.6-sol",
+      thinkingOptionId: "medium",
+    },
+    "paseo-workflow-executor-advanced": { model: "gpt-6-astra", thinkingOptionId: "high" },
+    "paseo-workflow-final-review": { model: "gpt-6-astra", thinkingOptionId: "high" },
+    "paseo-workflow-audit-economic": { model: "gpt-5.6-luna", thinkingOptionId: "low" },
+    "paseo-workflow-audit-deep": { model: "gpt-6-astra", thinkingOptionId: "high" },
+    "paseo-workflow-audit-security": { model: "gpt-6-astra", thinkingOptionId: "xhigh" },
+  });
+});
 
 test("install preserves an edit committed while its config read is in flight", async () => {
   const home = mkdtempSync(path.join(tmpdir(), "workflow-install-"));

@@ -14,15 +14,25 @@ export const roles = [
 export type Role = (typeof roles)[number];
 export const profileId = (role: Role) => `paseo-workflow-${role}`;
 
+const defaults: Record<Role, { model: string; thinkingOptionId: string }> = {
+  router: { model: "gpt-5.6-luna", thinkingOptionId: "low" },
+  planner: { model: "gpt-6-astra", thinkingOptionId: "high" },
+  "plan-reviewer": { model: "gpt-6-astra", thinkingOptionId: "high" },
+  "executor-standard": { model: "gpt-5.6-sol", thinkingOptionId: "medium" },
+  "executor-advanced": { model: "gpt-6-astra", thinkingOptionId: "high" },
+  "final-review": { model: "gpt-6-astra", thinkingOptionId: "high" },
+  "audit-economic": { model: "gpt-5.6-luna", thinkingOptionId: "low" },
+  "audit-deep": { model: "gpt-6-astra", thinkingOptionId: "high" },
+  "audit-security": { model: "gpt-6-astra", thinkingOptionId: "xhigh" },
+};
+
 export const profiles: AgentProfile[] = roles.map((role) => {
-  let thinkingOptionId = "high";
-  if (role === "router" || role === "audit-economic") thinkingOptionId = "low";
-  if (role === "executor-standard") thinkingOptionId = "medium";
+  const { model, thinkingOptionId } = defaults[role];
   const profile: AgentProfile = {
     id: profileId(role),
     name: `Workflow · ${role}`,
     provider: "codex",
-    model: "gpt-5.4",
+    model,
     modeId: "auto",
     thinkingOptionId,
   };
