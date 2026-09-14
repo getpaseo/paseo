@@ -42,6 +42,19 @@ Linux produces the `paseo-desktop` launcher and desktop entry. macOS produces
 Electron runtime and the checkout's built daemon, client, and renderer rather
 than downloading a published desktop release.
 
+## Local macOS app
+
+On an Apple Silicon Mac, build and install a repository-local desktop app with:
+
+```bash
+npm run build:desktop:local
+```
+
+The command replaces `~/Applications/Paseo Local.app`. Close and reopen that app after each
+build to run the new bundle. It uses the production `~/.paseo` home and daemon port 6767, but
+keeps separate Electron preferences and never downloads published Paseo updates. Do not run it
+at the same time as another Paseo app that manages port 6767.
+
 ### PASEO_HOME
 
 `PASEO_HOME` is the directory that holds runtime state (agents, worktrees, workspace config, sockets, daemon log). Resolution rules:

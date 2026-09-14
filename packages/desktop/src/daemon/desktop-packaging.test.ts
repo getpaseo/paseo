@@ -20,12 +20,13 @@ function writeExecutable(filePath: string, contents: string): void {
   chmodSync(filePath, 0o755);
 }
 
-function createFakeMacBundle(options: { includeHelper: boolean }): {
+function createFakeMacBundle(options: { includeHelper: boolean; productName?: string }): {
   root: string;
   shimPath: string;
 } {
   const root = mkdtempSync(join(tmpdir(), "paseo-cli-shim-test-"));
-  const appPath = join(root, "Paseo.app");
+  const productName = options.productName ?? "Paseo";
+  const appPath = join(root, `${productName}.app`);
   const contentsPath = join(appPath, "Contents");
   const resourcesPath = join(contentsPath, "Resources");
   const shimPath = join(resourcesPath, "bin", "paseo");
@@ -33,10 +34,10 @@ function createFakeMacBundle(options: { includeHelper: boolean }): {
   const helperPath = join(
     contentsPath,
     "Frameworks",
-    "Paseo Helper.app",
+    `${productName} Helper.app`,
     "Contents",
     "MacOS",
-    "Paseo Helper",
+    `${productName} Helper`,
   );
 
   mkdirSync(dirname(shimPath), { recursive: true });
@@ -126,6 +127,15 @@ describe("desktop packaging", () => {
     expect(config).toContain("- paseo");
   });
 
+  it("does not claim Paseo agent links for the local macOS app", () => {
+    const config = readFileSync(join(packageRoot, "electron-builder.local.yml"), "utf8");
+    const afterPack = readFileSync(join(packageRoot, "scripts", "after-pack-local.js"), "utf8");
+
+    expect(config).toContain("afterPack: ./scripts/after-pack-local.js");
+    expect(afterPack).toContain('"-remove"');
+    expect(afterPack).toContain('"CFBundleURLTypes"');
+  });
+
   // electron-builder packs production dependencies declared in package.json into
   // app.asar. Runtime code in runtime-paths.ts and bin/paseo dynamically resolves
   // these workspace packages by string, so static analysis (TypeScript, Knip) cannot
@@ -172,6 +182,20 @@ describe("desktop packaging", () => {
       expect(result.status).toBe(1);
       expect(result.stderr).toContain("Bundled Paseo Helper executable not found");
       expect(result.stdout).not.toContain("main-executable");
+    } finally {
+      rmSync(bundle.root, { recursive: true, force: true });
+    }
+  });
+
+  it("launches the CLI through the Helper of a renamed desktop app", () => {
+    if (process.platform === "win32") return;
+
+    const bundle = createFakeMacBundle({ includeHelper: true, productName: "Paseo Local" });
+    try {
+      const result = spawnSync(bundle.shimPath, ["--version"], { encoding: "utf8" });
+
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain(`helper env=1/production cli=${bundle.shimPath}`);
     } finally {
       rmSync(bundle.root, { recursive: true, force: true });
     }

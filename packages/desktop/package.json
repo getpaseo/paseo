@@ -16,6 +16,7 @@
   "main": "dist/main.js",
   "scripts": {
     "build": "npm --prefix ../.. run build:server:clean && npm run build:main && electron-builder --config electron-builder.yml",
+    "build:local": "npm --prefix ../.. run build:server:clean && npm run build:main && electron-builder --config electron-builder.local.yml --dir --arm64 --publish never && node ./scripts/install-local-app.mjs",
     "build:main": "tsc -p tsconfig.json",
     "capture-harness": "npm run build:main && ./capture-harness/run.sh",
     "dev": "./scripts/dev.sh",
