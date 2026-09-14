@@ -1,3 +1,4 @@
+import { DaemonConnectionError } from "@getpaseo/client/internal/daemon-client";
 import { afterEach, describe, expect, test } from "vitest";
 import {
   observeProviderSubagentTimeline,
@@ -585,7 +586,17 @@ describe("projected child history", () => {
         return calls === 1 ? response("A", 1, 1) : response("ABC", 1, 3);
       },
     };
-    const stop = observeProviderSubagentTimeline(client, SERVER_ID, PARENT_ID, SUBAGENT_ID, 100);
+    const errors: unknown[] = [];
+    const stop = observeProviderSubagentTimeline({
+      client,
+      serverId: SERVER_ID,
+      parentAgentId: PARENT_ID,
+      subagentId: SUBAGENT_ID,
+      limit: 100,
+      reportError: (error) => {
+        errors.push(error);
+      },
+    });
     try {
       await expect.poll(() => current()?.cursor?.endSeq).toBe(1);
       stream(3, "C");
@@ -598,6 +609,62 @@ describe("projected child history", () => {
     stream(5, "E");
     await Promise.resolve();
     expect(calls).toBe(2);
+    expect(errors).toEqual([]);
+  });
+  test("retries a disconnected history read on the next stream update", async () => {
+    let calls = 0;
+    const errors: unknown[] = [];
+    const stop = observeProviderSubagentTimeline({
+      client: {
+        async fetchProviderSubagentTimeline() {
+          calls++;
+          if (calls === 2) throw new DaemonConnectionError("Connection lost");
+          return calls === 1 ? response("A", 1, 1) : response("ABCD", 1, 4);
+        },
+      },
+      serverId: SERVER_ID,
+      parentAgentId: PARENT_ID,
+      subagentId: SUBAGENT_ID,
+      limit: 100,
+      reportError: (error) => {
+        errors.push(error);
+      },
+    });
+    try {
+      await expect.poll(() => current()?.cursor?.endSeq).toBe(1);
+      stream(3, "C");
+      await expect.poll(() => calls).toBe(2);
+      expect(current().needsRefresh).toBe(true);
+      stream(4, "D");
+      await expect.poll(text).toBe("ABCD");
+      expect(current().needsRefresh).toBe(false);
+      expect(errors).toEqual([]);
+    } finally {
+      stop();
+    }
+  });
+  test("reports unexpected child history failures", async () => {
+    const failure = new TypeError("Invalid child timeline response");
+    const errors: unknown[] = [];
+    const stop = observeProviderSubagentTimeline({
+      client: {
+        async fetchProviderSubagentTimeline() {
+          throw failure;
+        },
+      },
+      serverId: SERVER_ID,
+      parentAgentId: PARENT_ID,
+      subagentId: SUBAGENT_ID,
+      limit: 100,
+      reportError: (error) => {
+        errors.push(error);
+      },
+    });
+    try {
+      await expect.poll(() => errors).toEqual([failure]);
+    } finally {
+      stop();
+    }
   });
   test("keeps a completed tool at its original position after fetching its latest update", () => {
     const payload = response("Answer", 1, 5);

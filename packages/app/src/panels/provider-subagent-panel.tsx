@@ -151,13 +151,21 @@ function ProviderSubagentPanel() {
 
   useEffect(() => {
     if (!client || !supported) return;
-    return observeProviderSubagentTimeline(
+    return observeProviderSubagentTimeline({
       client,
       serverId,
-      target.parentAgentId,
-      target.subagentId,
-      TIMELINE_FETCH_PAGE_SIZE,
-    );
+      parentAgentId: target.parentAgentId,
+      subagentId: target.subagentId,
+      limit: TIMELINE_FETCH_PAGE_SIZE,
+      reportError: (error) => {
+        console.error("[ProviderSubagentTimeline] Failed to refresh child history", {
+          error,
+          serverId,
+          parentAgentId: target.parentAgentId,
+          subagentId: target.subagentId,
+        });
+      },
+    });
   }, [client, supported, serverId, target.parentAgentId, target.subagentId]);
 
   const loadOlder = useCallback((): boolean => {

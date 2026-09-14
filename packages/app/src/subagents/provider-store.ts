@@ -3,7 +3,7 @@ import type {
   ProviderSubagentDescriptorPayload,
   SessionOutboundMessage,
 } from "@getpaseo/protocol/messages";
-import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
+import { DaemonConnectionError, type DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { create } from "zustand";
 import { applyStreamEvent } from "@/types/stream";
 import {
@@ -322,13 +322,21 @@ export const useProviderSubagentStore = create<ProviderSubagentState>((set) => (
 }));
 
 /** Owns child history bootstrap and recovery while a pane observes the child. */
-export function observeProviderSubagentTimeline(
-  client: Pick<DaemonClient, "fetchProviderSubagentTimeline">,
-  serverId: string,
-  parentAgentId: string,
-  subagentId: string,
-  limit: number,
-): () => void {
+export function observeProviderSubagentTimeline({
+  client,
+  serverId,
+  parentAgentId,
+  subagentId,
+  limit,
+  reportError,
+}: {
+  client: Pick<DaemonClient, "fetchProviderSubagentTimeline">;
+  serverId: string;
+  parentAgentId: string;
+  subagentId: string;
+  limit: number;
+  reportError: (error: unknown) => void;
+}): () => void {
   const key = providerSubagentKey(serverId, parentAgentId, subagentId);
   let active = true;
   let fetching = false;
@@ -343,8 +351,9 @@ export function observeProviderSubagentTimeline(
       });
       if (active) useProviderSubagentStore.getState().replaceTimeline(serverId, payload);
       succeeded = true;
-    } catch {
-      // A later stream update or reopening the pane retries a failed read.
+    } catch (error) {
+      // A later stream update or reopening the pane retries a disconnected read.
+      if (!(error instanceof DaemonConnectionError)) throw error;
     } finally {
       fetching = false;
       if (
@@ -352,13 +361,16 @@ export function observeProviderSubagentTimeline(
         active &&
         useProviderSubagentStore.getState().timelines.get(key)?.needsRefresh
       )
-        void refresh();
+        requestRefresh();
     }
   };
+  const requestRefresh = () => {
+    void refresh().catch(reportError);
+  };
   const unsubscribe = useProviderSubagentStore.subscribe((state) => {
-    if (state.timelines.get(key)?.needsRefresh) void refresh();
+    if (state.timelines.get(key)?.needsRefresh) requestRefresh();
   });
-  void refresh();
+  requestRefresh();
   return () => {
     active = false;
     unsubscribe();
