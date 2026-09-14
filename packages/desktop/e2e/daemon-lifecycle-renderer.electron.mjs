@@ -1,3 +1,5 @@
+import { openSync, closeSync } from "node:fs";
+import { warmMetro } from "../../app/e2e/support/metro-warmup.mjs";
 import { spawn, execFileSync } from "node:child_process";
 import { once } from "node:events";
 import { writeFile } from "node:fs/promises";
@@ -15,6 +17,7 @@ export async function verifyAttachedDaemonControls({ repo, root, env, home, port
   await new Promise((resolve) => listener.listen(0, "127.0.0.1", resolve));
   const metroPort = listener.address().port;
   await new Promise((resolve) => listener.close(resolve));
+  const metroLog = openSync(path.join(root, "metro.log"), "w");
   const metro = spawn(
     process.execPath,
     [
@@ -28,7 +31,7 @@ export async function verifyAttachedDaemonControls({ repo, root, env, home, port
     {
       cwd: path.join(repo, "packages/app"),
       detached: true,
-      stdio: "ignore",
+      stdio: ["ignore", metroLog, metroLog],
       env: {
         ...env,
         EXPO_NO_DOTENV: "1",
@@ -38,6 +41,7 @@ export async function verifyAttachedDaemonControls({ repo, root, env, home, port
       },
     },
   );
+  closeSync(metroLog);
   let desktop;
   let page;
   try {
@@ -53,6 +57,8 @@ export async function verifyAttachedDaemonControls({ repo, root, env, home, port
         { timeout: 60_000 },
       )
       .toBe(true);
+    // /status means Metro is listening; the app bundle may still need a cold compile.
+    await warmMetro(metroPort);
     desktop = await electron.launch({
       args: [path.join(repo, "packages/desktop/dist/main.js"), "--no-sandbox"],
       env: {
