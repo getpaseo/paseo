@@ -881,26 +881,13 @@ test("compact Changes jumps to a file from the changed-files sheet", async ({ pa
   await useUnwrappedDiffLines(page);
   const explorer = await openCompactChanges(page, workspace);
 
-  const jumpToFile = explorer.getByRole("button", { name: "Jump to file" });
-  await expect(jumpToFile).toBeVisible();
-  await jumpToFile.click();
-
-  const sheet = page.getByTestId("changes-jump-to-file-sheet");
-  await expect(sheet).toContainText("Jump to file");
-  await expect(page.getByTestId("diff-folder-src/zz-folder")).toBeVisible();
-  const deepFile = page.getByTestId("changes-file-tree").getByText("changed.ts", { exact: true });
-  await expect(deepFile).toBeVisible();
+  await openChangedFilesOverview(page);
   await test.step("reopening the overview expands folders again", async () => {
-    await page.getByRole("button", { name: /^zz-folder / }).click();
-    await expect(deepFile).toHaveCount(0);
-    await sheet.getByRole("button", { name: "Close", exact: true }).click();
-    await jumpToFile.click();
-    await expect(deepFile).toBeVisible();
+    await expectOverviewReopensExpanded(page, "zz-folder", "changed.ts");
   });
-  await deepFile.click();
-
-  await expect(page.getByTestId("changes-jump-to-file-sheet")).toHaveCount(0);
-  await expect(diffHeaderForPath(explorer, "src/zz-folder/nested/changed.ts")).toBeInViewport();
+  await test.step("jumping to a nested file closes the overview and scrolls to its diff", async () => {
+    await jumpToOverviewFile(page, explorer, "src/zz-folder/nested/changed.ts");
+  });
 });
 
 test("Jump to file stays out of the desktop diff and of an empty comparison", async ({ page }) => {
@@ -911,9 +898,7 @@ test("Jump to file stays out of the desktop diff and of an empty comparison", as
   const explorer = await openCompactChanges(page, committed);
   await expect(explorer.getByRole("button", { name: "Jump to file" })).toBeVisible();
 
-  await explorer.getByTestId("changes-diff-status-trigger").click();
-  await page.getByTestId("changes-diff-mode-uncommitted").click();
-  await expect(explorer.getByText("No changes to display", { exact: true })).toBeVisible();
+  await selectEmptyUncommittedComparison(page, explorer);
   await expect(page.getByRole("button", { name: "Jump to file" })).toHaveCount(0);
 });
 
@@ -1727,6 +1712,46 @@ async function openCompactChanges(page: Page, workspace: DirtyWorkspace): Promis
   const explorer = page.getByTestId("explorer-content-area").filter({ visible: true });
   await expect(explorer.getByTestId("changes-header")).toBeVisible({ timeout: 30_000 });
   return explorer;
+}
+
+async function openChangedFilesOverview(page: Page): Promise<void> {
+  const jumpToFile = page.getByRole("button", { name: "Jump to file" });
+  await expect(jumpToFile).toBeVisible();
+  await jumpToFile.click();
+  await expect(page.getByTestId("changes-jump-to-file-sheet")).toContainText("Jump to file");
+}
+
+async function expectOverviewReopensExpanded(
+  page: Page,
+  folderName: string,
+  childFileName: string,
+): Promise<void> {
+  const sheet = page.getByTestId("changes-jump-to-file-sheet");
+  const tree = changesTree(page);
+  const folder = tree
+    .getByRole("button")
+    .filter({ has: page.getByText(folderName, { exact: true }) });
+  const child = tree.getByText(childFileName, { exact: true });
+  await expect(folder).toBeVisible();
+  await expect(child).toBeVisible();
+  await folder.click();
+  await expect(child).toHaveCount(0);
+  await sheet.getByRole("button", { name: "Close", exact: true }).click();
+  await openChangedFilesOverview(page);
+  await expect(child).toBeVisible();
+}
+
+async function jumpToOverviewFile(page: Page, explorer: Locator, filePath: string): Promise<void> {
+  const sheet = page.getByTestId("changes-jump-to-file-sheet");
+  await changesTree(page).getByText(path.basename(filePath), { exact: true }).click();
+  await expect(sheet).toHaveCount(0);
+  await expect(diffHeaderForPath(explorer, filePath)).toBeInViewport();
+}
+
+async function selectEmptyUncommittedComparison(page: Page, explorer: Locator): Promise<void> {
+  await explorer.getByRole("button", { name: "Diff mode", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Uncommitted", exact: true }).click();
+  await expect(explorer.getByText("No changes to display", { exact: true })).toBeVisible();
 }
 
 async function openWorkspaceChangesSurface(
