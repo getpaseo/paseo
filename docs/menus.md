@@ -187,6 +187,10 @@ its own.
   [floating-panels.md](floating-panels.md).
 - **One overlay per menu.** Submenus render inside their parent's layer and paint no second
   backdrop, so there is exactly one `Modal` on native no matter how deep the menu goes.
+- **Retained panels own visibility.** The shared menu surface unmounts when its panel becomes
+  inactive. An async action can navigate before its menu closes; freezing that panel must not
+  leave a portal backdrop blocking the destination. The inactive commit before chat freeze
+  gives the surface its opportunity to unmount.
 - Anchoring, flipping, and edge clamping live in `menu-anchor.ts` and are unit-tested. Fix
   positioning bugs there, not at a call site.
 - Everything else about floating surfaces on Android — Portal/Modal escape, lifecycle gates,
