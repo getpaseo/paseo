@@ -9,6 +9,7 @@ import { expectWorkspaceTabVisible, openSessions } from "../support/helpers/arch
 import { daemonWsRoutePattern } from "../support/helpers/daemon-port";
 import { getServerId } from "../support/helpers/server-id";
 import { switchWorkspaceViaSidebar } from "../support/helpers/workspace-ui";
+import { expectMobileAgentSidebarVisible } from "../support/helpers/sidebar";
 
 const TEST_COMMANDS = [
   {
@@ -671,7 +672,7 @@ test.describe("Composer autocomplete", () => {
         });
 
         await page.getByRole("button", { name: "Open menu" }).click();
-        await expect(page.getByTestId("sidebar-sessions")).toBeInViewport({ timeout: 5_000 });
+        await expectMobileAgentSidebarVisible(page);
 
         const popoverBox = await popover.boundingBox();
         expect(popoverBox).not.toBeNull();
