@@ -1,3 +1,4 @@
+import type { Logger } from "pino";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -48,6 +49,7 @@ export class CreationService {
   private readonly observers = new Map<string, Set<Observer>>();
   constructor(
     private readonly directory: string,
+    private readonly logger: Logger,
     private readonly validateCompleted: (
       snapshot: CreationSnapshot,
     ) => Promise<void> = async () => {},
@@ -280,8 +282,16 @@ export class CreationService {
   private notify(observer: Observer, snapshot: CreationSnapshot): void {
     try {
       observer(snapshot);
-    } catch {
-      /* A disconnected observer cannot cancel accepted work. */
+    } catch (err) {
+      this.logger.warn(
+        {
+          err,
+          kind: snapshot.kind,
+          idempotencyKey: snapshot.idempotencyKey,
+          phase: snapshot.phase,
+        },
+        "Creation observer failed",
+      );
     }
   }
   private async publish(

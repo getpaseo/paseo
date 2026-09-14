@@ -675,6 +675,7 @@ export class VoiceAssistantWebSocketServer {
     this.messageReceipts = new MessageReceipts(join(paseoHome, "agent-requests"));
     this.creationService = new CreationService(
       join(paseoHome, "creations"),
+      this.logger.child({ module: "creation" }),
       (snapshot) => this.validateCompletedCreation(snapshot),
       join(paseoHome, "agent-requests"),
     );

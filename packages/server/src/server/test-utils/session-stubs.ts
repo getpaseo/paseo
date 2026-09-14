@@ -1,3 +1,4 @@
+import pino from "pino";
 import { randomUUID } from "node:crypto";
 import { afterEach, vi } from "vitest";
 import { rm } from "node:fs/promises";
@@ -315,5 +316,5 @@ afterEach(async () => {
 export function createTestCreationService(): SessionOptions["creationService"] {
   const directory = join(tmpdir(), `session-creation-${randomUUID()}`);
   creationDirectories.push(directory);
-  return new CreationService(directory);
+  return new CreationService(directory, pino({ level: "silent" }));
 }

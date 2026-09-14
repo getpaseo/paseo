@@ -1,3 +1,4 @@
+import pino from "pino";
 import { createHash } from "node:crypto";
 import { cp, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -10,6 +11,7 @@ import type {
 } from "@getpaseo/protocol/messages";
 import { CreationService, type CreationInput } from "./index.js";
 
+const silentLogger = pino({ level: "silent" });
 const directories: string[] = [];
 afterEach(async () => {
   await Promise.all(
@@ -69,7 +71,7 @@ const agent: AgentSnapshotPayload = {
 async function fixture() {
   const directory = await mkdtemp(join(tmpdir(), "creation-lifecycle-"));
   directories.push(directory);
-  const service = new CreationService(directory);
+  const service = new CreationService(directory, silentLogger);
   const provider = deferred();
   const ready = deferred();
   const calls: string[] = [];
@@ -114,7 +116,7 @@ test("workspace readiness is observable before provider startup and duplicate re
   expect(await first).toMatchObject({ phase: "completed", workspace, agent });
   expect(await duplicate).toEqual(await first);
   expect(f.calls).toEqual(["workspace", "agent", "prompt"]);
-  expect(await new CreationService(f.directory).create(f.input)).toEqual(await first);
+  expect(await new CreationService(f.directory, silentLogger).create(f.input)).toEqual(await first);
   expect(f.calls).toEqual(["workspace", "agent", "prompt"]);
 });
 
@@ -135,7 +137,7 @@ test("a failed agent startup retries only that stage with the reserved IDs", asy
     outcomeUnknown: false,
     workspace,
   });
-  expect(await new CreationService(f.directory).create(f.input)).toMatchObject({
+  expect(await new CreationService(f.directory, silentLogger).create(f.input)).toMatchObject({
     phase: "completed",
     agent,
   });
@@ -159,7 +161,7 @@ test("an uncertain prompt outcome never resends or removes its workspace and age
     workspace,
     agent,
   });
-  expect(await new CreationService(f.directory).create(f.input)).toEqual(result);
+  expect(await new CreationService(f.directory, silentLogger).create(f.input)).toEqual(result);
   expect(prompts).toBe(1);
 });
 
@@ -191,7 +193,7 @@ test("late subscribers recover readiness and removing an observer cannot stop cr
   f.provider.resolve();
   await first;
   expect(updates).toEqual([]);
-  const completed = await new CreationService(f.directory).subscribe(
+  const completed = await new CreationService(f.directory, silentLogger).subscribe(
     "workspace",
     f.input.key,
     () => {},
@@ -215,7 +217,7 @@ test("omitted resource IDs are generated once and preserved on replay", async ()
   expect(result.agentId).toMatch(
     /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/,
   );
-  expect(await new CreationService(f.directory).create(f.input)).toEqual(result);
+  expect(await new CreationService(f.directory, silentLogger).create(f.input)).toEqual(result);
 });
 
 test("restart after a committed agent without a prompt completes without recreating the agent", async () => {
@@ -232,7 +234,7 @@ test("restart after a committed agent without a prompt completes without recreat
     return agent;
   };
   await f.service.create(f.input);
-  const recovered = await new CreationService(recoveredDirectory).create(f.input);
+  const recovered = await new CreationService(recoveredDirectory, silentLogger).create(f.input);
   expect(recovered).toMatchObject({ phase: "completed", workspace, agent });
   expect(starts).toBe(1);
 });
@@ -247,7 +249,7 @@ test("partial provisioning without a registered workspace is not repeated", asyn
   };
   const result = await f.service.create(f.input);
   expect(result).toMatchObject({ phase: "failed", failedStage: "workspace", outcomeUnknown: true });
-  expect(await new CreationService(f.directory).create(f.input)).toEqual(result);
+  expect(await new CreationService(f.directory, silentLogger).create(f.input)).toEqual(result);
   expect(provisions).toBe(1);
 });
 
@@ -280,14 +282,43 @@ test.each(["pending", "completed"])(
         throw new Error("Must not create again");
       },
     };
-    const service = new CreationService(f.directory, undefined, legacyDirectory);
+    const service = new CreationService(f.directory, silentLogger, undefined, legacyDirectory);
     await expect(
       service.create({ ...input, request: { config: { ...request.config, cwd: "/changed" } } }),
     ).rejects.toThrow("agent_request_key_conflict");
     expect(await service.create(input)).toMatchObject({ phase: "completed", agent });
-    expect(await new CreationService(f.directory).create(input)).toMatchObject({
+    expect(await new CreationService(f.directory, silentLogger).create(input)).toMatchObject({
       phase: "completed",
       agent,
     });
   },
 );
+
+test("observer failures are logged without failing creation", async () => {
+  const f = await fixture();
+  const logs: unknown[] = [];
+  const logger = pino(
+    { level: "warn" },
+    {
+      write: (line) => {
+        logs.push(JSON.parse(line));
+      },
+    },
+  );
+  const service = new CreationService(f.directory, logger);
+  f.provider.resolve();
+  const result = await service.create(f.input, () => {
+    throw new Error("delivery failed");
+  });
+  expect(result.phase).toBe("completed");
+  expect(f.calls).toEqual(["workspace", "agent", "prompt"]);
+  expect(logs).toContainEqual(
+    expect.objectContaining({
+      level: 40,
+      kind: "workspace",
+      idempotencyKey: f.input.key,
+      phase: "workspace_ready",
+      err: expect.objectContaining({ message: "delivery failed" }),
+    }),
+  );
+});
