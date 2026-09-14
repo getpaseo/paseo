@@ -178,7 +178,7 @@ jobs:
     name: desktop-tests (ubuntu-latest)
     needs: changes
     if: ${{ !cancelled() && (needs.changes.outputs.full != 'false' || needs.changes.outputs.desktop != 'false') }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
       contents: read
@@ -201,11 +201,34 @@ jobs:
 
       - name: Install virtual display
         if: ${{ runner.os == 'Linux' }}
-        run: sudo apt-get update && sudo apt-get install -y xvfb xauth
+        run: sudo apt-get update && sudo apt-get install -y xvfb xauth rpm xdotool
 
       - name: Install Playwright browser
         if: ${{ runner.os == 'Linux' }}
         run: npx playwright install chromium
+
+      - name: Verify Windows daemon process control
+        if: ${{ runner.os == 'Windows' }}
+        run: npx vitest run packages/cli/src/commands/daemon/lifecycle.e2e.test.ts --bail=1 --maxWorkers=1 -t "Windows unbound|managed two-home"
+
+      - name: Run desktop lifecycle E2E (Linux)
+        if: ${{ runner.os == 'Linux' }}
+        run: xvfb-run -a --server-args="-screen 0 1280x800x24" npm run test:e2e:lifecycle --workspace=@getpaseo/desktop
+        env:
+          PASEO_DESKTOP_LIFECYCLE_ARTIFACT_DIR: ${{ runner.temp }}/desktop-lifecycle
+
+      - name: Upload desktop lifecycle screenshots
+        uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && runner.os == 'Linux' }}
+        with:
+          name: desktop-lifecycle
+          path: ${{ runner.temp }}/desktop-lifecycle
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Run desktop lifecycle E2E (Windows)
+        if: ${{ runner.os == 'Windows' }}
+        run: npm run test:e2e:lifecycle --workspace=@getpaseo/desktop
 
       - name: Run desktop renderer E2E
         if: ${{ runner.os == 'Linux' }}
@@ -226,17 +249,50 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
-      - name: Build and smoke unpacked desktop app
+      - name: Build Linux desktop artifacts
         if: ${{ runner.os == 'Linux' }}
-        run: npm run build:desktop -- --publish never --linux --x64 --dir
+        run: npm run build:desktop -- --publish never --linux --x64
         env:
           EP_GH_IGNORE_TIME: true
-          PASEO_DESKTOP_SMOKE: "1"
           PASEO_DESKTOP_SMOKE_ARTIFACT_DIR: ${{ runner.temp }}/desktop-smoke
+
+      - name: Smoke installed artifacts with restricted user namespaces
+        if: ${{ runner.os == 'Linux' }}
+        run: |
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=1
+          if unshare --user --map-root-user --net true; then
+            echo "Expected the launching user's namespace probe to be denied"
+            exit 1
+          fi
+          sudo apt-get install -y ./packages/desktop/release/*.deb
+          node packages/desktop/e2e/linux-artifact-smoke.js packages/desktop/release disabled
+        env:
+          PASEO_DESKTOP_SMOKE_ARTIFACT_DIR: ${{ runner.temp }}/desktop-smoke/restricted
+
+      - name: Smoke sandbox-preserving portable launches
+        if: ${{ runner.os == 'Linux' }}
+        run: |
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          unshare --user --map-root-user --net true
+          node packages/desktop/e2e/linux-artifact-smoke.js packages/desktop/release enabled
+        env:
+          PASEO_DESKTOP_SMOKE_ARTIFACT_DIR: ${{ runner.temp }}/desktop-smoke/userns
+
+      - name: Smoke installed RPM with restricted user namespaces
+        if: ${{ runner.os == 'Linux' }}
+        run: |
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=1
+          sudo dpkg --remove paseo
+          # Ubuntu supplies the runtime libraries under Debian package names.
+          # RPM still performs the real payload installation and postinstall.
+          sudo rpm --install --nodeps packages/desktop/release/*.rpm
+          node packages/desktop/e2e/linux-artifact-smoke.js packages/desktop/release disabled --installed-only
+        env:
+          PASEO_DESKTOP_SMOKE_ARTIFACT_DIR: ${{ runner.temp }}/desktop-smoke/rpm
 
       - name: Upload packaged smoke diagnostics
         uses: actions/upload-artifact@v4
-        if: ${{ failure() && runner.os == 'Linux' }}
+        if: ${{ !cancelled() && runner.os == 'Linux' }}
         with:
           name: desktop-packaged-smoke-linux-x64
           path: ${{ runner.temp }}/desktop-smoke
@@ -296,7 +352,7 @@ jobs:
         run: node scripts/npm-retry.mjs ci
 
       - name: Build client dependencies
-        run: npm run build:client
+        run: npm run build:relay && npm run build:client
 
       - name: Build plugin SDK
         run: npm run build:plugin

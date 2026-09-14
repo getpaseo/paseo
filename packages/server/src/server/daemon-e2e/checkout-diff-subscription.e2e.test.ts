@@ -77,12 +77,9 @@ test("pushes file-level checkout diff updates with deterministic path order", as
     initGitRepo(cwd);
     commitFile(cwd, "base.txt", "base\n");
 
-    const subscriptionId = "checkout-diff-e2e-subscription";
-    const initial = await ctx.client.subscribeCheckoutDiff(
-      cwd,
-      { mode: "uncommitted" },
-      { subscriptionId },
-    );
+    const subscription = ctx.client.observeCheckoutDiff(cwd, { mode: "uncommitted" });
+    const initial = await subscription.ready;
+    const subscriptionId = initial.subscriptionId;
 
     expect(initial.error).toBeNull();
     expect(initial.files).toEqual([]);
@@ -98,7 +95,7 @@ test("pushes file-level checkout diff updates with deterministic path order", as
     expect(update.error).toBeNull();
     expect(update.files.map((file) => file.path)).toEqual(["alpha.txt", "zeta.txt"]);
 
-    ctx.client.unsubscribeCheckoutDiff(subscriptionId);
+    await subscription.release();
   } finally {
     rmSync(cwd, { recursive: true, force: true });
   }
@@ -114,12 +111,9 @@ test("pushes updates when subscribed from a subdirectory and files change outsid
     const nestedDir = path.join(cwd, "nested", "dir");
     mkdirSync(nestedDir, { recursive: true });
 
-    const subscriptionId = "checkout-diff-subdir-e2e-subscription";
-    const initial = await ctx.client.subscribeCheckoutDiff(
-      nestedDir,
-      { mode: "uncommitted" },
-      { subscriptionId },
-    );
+    const subscription = ctx.client.observeCheckoutDiff(nestedDir, { mode: "uncommitted" });
+    const initial = await subscription.ready;
+    const subscriptionId = initial.subscriptionId;
 
     expect(initial.error).toBeNull();
     expect(initial.files).toEqual([]);
@@ -133,7 +127,7 @@ test("pushes updates when subscribed from a subdirectory and files change outsid
     expect(update.error).toBeNull();
     expect(update.files.some((file) => file.path === "outside-subdir.txt")).toBe(true);
 
-    ctx.client.unsubscribeCheckoutDiff(subscriptionId);
+    await subscription.release();
   } finally {
     rmSync(cwd, { recursive: true, force: true });
   }
@@ -146,15 +140,14 @@ test("keeps the socket usable after rejecting an oversized structured diff", asy
     initGitRepo(cwd);
     commitFile(cwd, "large-a.js", "const value = 0;\n");
     commitFile(cwd, "large-b.js", "const value = 0;\n");
-    const denseExpression = `const value = ${"a+".repeat(450_000)}a;\n`;
+    // Short lines stay eligible for highlighting; a giant single line is skipped
+    // before token expansion and cannot exercise the structured-payload limit.
+    const denseExpression = `const value = ${"a+".repeat(100)}a;\n`.repeat(4_000);
     writeFileSync(path.join(cwd, "large-a.js"), denseExpression);
     writeFileSync(path.join(cwd, "large-b.js"), denseExpression);
 
-    const initial = await ctx.client.subscribeCheckoutDiff(
-      cwd,
-      { mode: "uncommitted" },
-      { subscriptionId: "oversized-checkout-diff" },
-    );
+    const subscription = ctx.client.observeCheckoutDiff(cwd, { mode: "uncommitted" });
+    const initial = await subscription.ready;
 
     expect(initial).toMatchObject({
       cwd,
@@ -165,6 +158,7 @@ test("keeps the socket usable after rejecting an oversized structured diff", asy
 
     const status = await ctx.client.getCheckoutStatus(cwd);
     expect(status).toMatchObject({ cwd, isGit: true });
+    await subscription.release();
   } finally {
     rmSync(cwd, { recursive: true, force: true });
   }

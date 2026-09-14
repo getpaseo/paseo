@@ -23,6 +23,51 @@ import { timelineItemIdentity } from "@getpaseo/protocol/timeline-identity";
 
 type CanonicalToolStatus = "running" | "completed" | "failed" | "canceled";
 
+it("updates a resolved Claude plan at its proposal position across a follow-up", () => {
+  const proposal = {
+    type: "timeline",
+    provider: "claude",
+    turnId: "turn-1",
+    item: {
+      type: "tool_call",
+      callId: "plan-1",
+      name: "ExitPlanMode",
+      status: "running",
+      error: null,
+      detail: { type: "plan", text: "Ship it" },
+    },
+  } satisfies AgentStreamEventPayload;
+  const pending = reduceStreamUpdate([], proposal, new Date(1));
+  const steered = reduceStreamUpdate(
+    pending,
+    {
+      type: "timeline",
+      provider: "claude",
+      turnId: "turn-1",
+      item: { type: "user_message", text: "What about tests?", messageId: "question" },
+    },
+    new Date(2),
+  );
+  const resolved = reduceStreamUpdate(
+    steered,
+    {
+      ...proposal,
+      item: {
+        ...proposal.item,
+        name: "plan_approval",
+        status: "completed",
+        metadata: { approved: false },
+      },
+    },
+    new Date(3),
+  );
+  expect(resolved.map((item) => item.kind)).toEqual(["tool_call", "user_message"]);
+  expect(resolved[0]?.id).toBe(pending[0]?.id);
+  expect(resolved[0]).toMatchObject({
+    payload: { data: { name: "plan_approval", metadata: { approved: false } } },
+  });
+});
+
 describe("plugin timeline rows", () => {
   it("uses the protocol identity format for stream tool and plugin rows", () => {
     const tool = {

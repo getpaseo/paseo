@@ -139,10 +139,11 @@ describe("WebSocketServer browser tools wiring", () => {
   it("keeps browser automation registered when a browser host client resumes", async () => {
     const harness = await startBrowserToolsDaemonHarness();
     const clientId = "browser-host-client-1";
-    await harness.connectBrowserHostClient({
+    const originalBrowserHost = await harness.connectBrowserHostClient({
       clientId,
       capabilities: browserHostCapabilities(),
     });
+    await originalBrowserHost.disconnect();
 
     const resumedBrowserHost = await harness.connectBrowserHostClient({
       clientId,
@@ -182,6 +183,7 @@ describe("WebSocketServer browser tools wiring", () => {
     await browserHost.nextBrowserRequest();
     expect(harness.broker.getPendingRequestCount()).toBe(1);
 
+    await browserHost.disconnect();
     await harness.connectBrowserHostClient({
       clientId,
       capabilities: browserHostCapabilities(["list_tabs"]),
@@ -225,6 +227,11 @@ async function startBrowserToolsDaemonHarness(): Promise<BrowserToolsDaemonHarne
       });
 
       await client.connect();
+      const capability = (options.capabilities ?? browserHostCapabilities())[
+        CLIENT_CAPS.browserHost
+      ] as { hostKind: "desktop app"; supportedCommands: BrowserAutomationCommandName[] };
+      const observation = client.registerBrowserHost(capability);
+      await observation.ready;
 
       return {
         clientId: clientId ?? "",
@@ -232,6 +239,7 @@ async function startBrowserToolsDaemonHarness(): Promise<BrowserToolsDaemonHarne
         respondToBrowserRequest: (response) =>
           client.sendBrowserAutomationExecuteResponse(response),
         async disconnect() {
+          await observation.release();
           requests.close();
           clients.delete(client);
           await client.close();

@@ -107,14 +107,18 @@ When a test is labeled end-to-end, it calls the real service. No environment var
 
 The packaged desktop smoke is an external observer of the production launch path. It must not add a smoke-only branch to Electron main or start the daemon itself.
 
-The harness launches the unpacked packaged app with isolated user data and daemon state, connects to the real renderer over Chromium's debugging protocol, and requires all of these outcomes:
+The harness launches the packaged app with isolated user data and daemon state, connects to the real renderer over Chromium's debugging protocol, and requires all of these outcomes:
 
 - the `paseo://app/` renderer mounts into `#root`;
 - the sandboxed preload exposes the desktop bridge;
 - the renderer starts a fresh desktop-managed daemon through the normal startup bootstrap;
 - the bundled CLI can query that daemon and run a terminal command.
 
-Pull-request CI runs the Linux x64 smoke under Xvfb when the cumulative PR diff changes `packages/desktop/**`. The desktop release matrix runs the harness against each host-native packaged app before publishing. All smoke jobs upload renderer, desktop, and daemon diagnostics on failure.
+Pull-request CI runs the Linux x64 smoke under Xvfb when the cumulative PR diff selects desktop coverage. The Linux job is pinned to Ubuntu 24.04 and runs twice: with AppArmor user namespace restrictions enabled, then with user namespaces available. It installs the real `.deb`, launches the real AppImage via `--appimage-extract-and-run`, and launches the extracted tar archive. It also replaces the Debian installation with the generated RPM through `rpm --install --nodeps` and checks its sandboxed launch under restrictions. Ubuntu supplies the runtime libraries under Debian package names, so this verifies the RPM payload and postinstall rather than Fedora dependency resolution. Each launch verifies the reported sandbox decision; enabled renderers must also have `NoNewPrivs: 1` and `Seccomp: 2` in `/proc`. The desktop release matrix retains its host-native smokes. Linux release builds stay on Ubuntu 22.04 to preserve their native-library baseline; the restricted-host regression runs on Ubuntu 24.04 in PR CI.
+
+Never repair `chrome-sandbox` in the smoke harness. The old unpacked smoke set its mode to 4755 and concealed a broken package installer. Run installer tests as root and launch tests as an ordinary user: a root-run namespace probe does not reproduce Ubuntu's AppArmor policy for desktop users. Preserve both restricted and unrestricted cases; either one alone permits another sandbox regression.
+
+Smoke jobs upload renderer screenshots and desktop/daemon diagnostics, including successful Linux sandbox evidence.
 
 To exercise the smoke locally on Linux:
 

@@ -46,9 +46,31 @@ The app, CLI, and plugins inherit those defaults; they supply only host resource
 automation, or explicit overrides. A schema accepting a message does not establish support for
 its delivery semantics.
 
-Connecting creates no timeline or event demand. Client subscriptions own their network membership,
+On capable daemons, connecting creates no timeline or event demand. Client subscriptions own their network membership,
 release it on unsubscribe, and restore it after reconnect. Raw message observers inspect traffic
 without requesting streams. Application caches and which agents are visible remain caller-owned.
+
+## Owned observations
+
+`owned_subscriptions` and `server_info.features.ownedSubscriptions` negotiate the source-owned
+contract described in [architecture](architecture.md#websocket-protocol). The client selects delivery
+behavior once at its connection boundary. App workflows use the same observation interface on both.
+
+With an older daemon, the client uses the existing connection and legacy RPCs. Directory subscriptions
+remain shared and last-query-wins. Local handle IDs identify listeners; they do not promise independent
+server filters. Timeline and event membership retain their existing shared behavior. Releasing a handle
+detaches its listener and uses the old unsubscribe operation where one exists. Broadcast-only hosts keep
+broadcasting; readiness there means local attachment, not a daemon acknowledgement. No extra sockets
+or multiplexing emulation are introduced.
+
+Preserve established workflows when changing delivery internals. Independent filters and quiet
+connections require a capable daemon; opening the app, reading history and using terminals do not.
+Pre-registry workspace grouping and legacy event normalization belong inside the client boundary.
+
+Old clients keep their existing wire shapes and slot behavior at the daemon's source boundary.
+The adapter keys legacy slots by physical socket, so an old connection cannot replace a modern
+sibling's observation even when both use the same logical client ID. Optional wire IDs stay accepted
+for parsing compatibility; modern requests cannot select their subscription ID.
 
 ## Every shim is tagged and dated
 

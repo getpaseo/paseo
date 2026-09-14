@@ -227,11 +227,21 @@ export function HostPluginsPage({ serverId }: { serverId: string }) {
     await refreshQueue.current;
   }, [client, refetchPlugins]);
   useEffect(() => {
-    if (!client) return;
-    return client.on("status", (message) => {
-      if (message.payload.status === "plugin_catalog_changed") void refresh();
+    if (!client || !connected || !supported) return;
+    const observation = client.observeEvents(["status.plugin_catalog_changed"]);
+    observation.subscribe({
+      snapshot: () => {},
+      update: (message) => {
+        if (message.type === "status" && message.payload.status === "plugin_catalog_changed")
+          void refresh();
+      },
     });
-  }, [client, refresh]);
+    return () => {
+      void observation
+        .release()
+        .catch((error) => console.warn("[Plugins] Failed to release settings feed", error));
+    };
+  }, [client, connected, supported, refresh]);
   const mutation = useMutation({
     mutationFn: async (operation: {
       action: string;

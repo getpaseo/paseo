@@ -12,6 +12,7 @@ export const zhCN: TranslationResources = {
       copy: "复制",
       copyLine: "复制行",
       dismiss: "关闭",
+      reload: "重新加载",
       retry: "重试",
       search: "搜索",
       select: "选择",
@@ -153,7 +154,7 @@ export const zhCN: TranslationResources = {
       initialPromptRequired: "初始 prompt 必填",
       alreadyLoading: "正在加载",
       uploadFailed: "Failed to upload file",
-      noClipboardImage: "剪贴板中没有图片",
+      noClipboardImage: "当前剪贴板中没有图片。请尝试通过键盘粘贴。",
       pasteImageFailed: "无法粘贴图片",
       fileTooLarge: "{{fileName}} is too large (max {{size}})",
     },
@@ -208,6 +209,10 @@ export const zhCN: TranslationResources = {
     historyLoadFailed: "无法加载智能体历史记录",
     messageCapped: "此消息已被截断（{{bytes}} 字节）。",
     permission: {
+      rejectedPlan: "已拒绝的计划",
+      approvedPlan: "已批准的计划",
+      canceledPlan: "已取消的计划",
+
       plan: "Plan",
       required: "需要权限",
       deny: "拒绝",
@@ -1034,6 +1039,16 @@ export const zhCN: TranslationResources = {
       updateHost: "请更新此主机以管理标签。",
     },
   },
+  changelog: {
+    title: "新功能",
+    installed: "已安装",
+    showMore: "显示更多",
+    openWebsite: "完整更新日志",
+    error: {
+      title: "无法加载更新日志",
+      description: "请检查网络连接后重试。",
+    },
+  },
   sidebar: {
     display: {
       trigger: "显示偏好",
@@ -1252,6 +1267,7 @@ export const zhCN: TranslationResources = {
       detail: "正在停止本地 daemon。",
     },
     daemon: {
+      lifecycle: en.desktop.daemon.lifecycle,
       title: "Daemon",
       status: {
         title: "状态",
@@ -2043,6 +2059,7 @@ export const zhCN: TranslationResources = {
     about: {
       title: "关于",
       appVersion: "应用版本",
+      whatsNewHint: "每个版本的发布说明",
       thisDevice: "此设备",
       connectedHosts: "已连接的 Host",
       offline: "离线",

@@ -17,7 +17,7 @@ test("the configuration example adds MCP servers and overrides Codex options whi
   const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws`, appVersion: "0.8.0" });
   try {
     await client.connect();
-    await client.fetchAgents({ subscribe: { subscriptionId: "configuration-example" } });
+    await client.fetchAgents({ subscribe: {} });
     await client.patchDaemonConfig({ pluginsEnabled: true });
     await client.installDirectoryPlugin(
       fileURLToPath(new URL("../../../../../plugin-examples/agent-configuration", import.meta.url)),

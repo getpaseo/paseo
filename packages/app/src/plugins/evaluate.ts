@@ -23,6 +23,7 @@ import {
   type PluginTimelineRendererContribution,
   type PluginTimelineTransformerContribution,
   type PluginWorkspacePanelContribution,
+  type PluginButtonRegistration,
 } from "@getpaseo/plugin/client";
 import type { EvaluatedPlugin } from "./types";
 import type { ComponentType } from "react";
@@ -70,7 +71,13 @@ function requireId(value: string, label: string): string {
 
 export type PluginClientRuntime = Pick<
   PluginClientContext,
-  "paseo" | "rpc" | "openSettings" | "openSurface" | "openPanel" | "addComposerPill"
+  | "paseo"
+  | "rpc"
+  | "openSettings"
+  | "openSurface"
+  | "openPanel"
+  | "addComposerPill"
+  | "addHeaderButton"
 >;
 
 export function runPluginClientBundle(
@@ -103,6 +110,23 @@ export function runPluginClientBundle(
   const timelineRendererIds = new Set<string>();
   const removals = new Set<PluginCleanup>();
   let setupComplete = false;
+  let stopped = false;
+  function trackButton(registration: PluginButtonRegistration): PluginButtonRegistration {
+    let active = true;
+    const remove = () => {
+      if (!active) return;
+      active = false;
+      registration.remove();
+      removals.delete(remove);
+    };
+    removals.add(remove);
+    return {
+      update: (patch) => {
+        if (active && !stopped) registration.update(patch);
+      },
+      remove,
+    };
+  }
   const notifyChange = () => {
     if (setupComplete) onChange();
   };
@@ -336,16 +360,12 @@ export function runPluginClientBundle(
       );
     },
     addComposerPill(contribution) {
-      const removePill = runtime.addComposerPill(contribution);
-      let active = true;
-      const remove = () => {
-        if (!active) return;
-        active = false;
-        removePill();
-        removals.delete(remove);
-      };
-      removals.add(remove);
-      return remove;
+      if (stopped) throw new Error("Plugin has stopped");
+      return trackButton(runtime.addComposerPill(contribution));
+    },
+    addHeaderButton(contribution) {
+      if (stopped) throw new Error("Plugin has stopped");
+      return trackButton(runtime.addHeaderButton(contribution));
     },
   };
   const runtimeRequire = (name: string): unknown => {
@@ -372,34 +392,38 @@ export function runPluginClientBundle(
   if (typeof setup !== "function") {
     throw new Error(`Plugin ${id} must default export a function`);
   }
-  const entryCleanup = setup(pluginContext);
-  if (typeof entryCleanup !== "function") {
-    throw new Error(`Plugin ${id} contribution must return a cleanup function`);
-  }
-
+  let entryCleanup: PluginCleanup | undefined;
   try {
+    entryCleanup = setup(pluginContext);
+    if (typeof entryCleanup !== "function")
+      throw new Error(`Plugin ${id} contribution must return a cleanup function`);
     for (const item of collector.sidebarItems) {
       if (!surfaceIds.has(item.surface)) {
         throw new Error(`Sidebar item ${item.id} references missing surface ${item.surface}`);
       }
     }
   } catch (error) {
+    stopped = true;
     try {
-      void Promise.resolve(entryCleanup()).catch((cleanupError) => {
+      void Promise.resolve(
+        typeof entryCleanup === "function" ? entryCleanup() : entryCleanup,
+      ).catch((cleanupError) => {
         console.warn(`[Plugins] Cleanup failed after setup error for ${id}`, cleanupError);
       });
     } catch (cleanupError) {
       console.warn(`[Plugins] Cleanup failed after setup error for ${id}`, cleanupError);
+    } finally {
+      for (const remove of removals) remove();
     }
     throw error;
   }
   setupComplete = true;
-  let stopped = false;
+  const cleanupEntry = entryCleanup;
   const cleanup = async () => {
     if (stopped) return;
     stopped = true;
     try {
-      await entryCleanup();
+      await cleanupEntry();
     } finally {
       for (const remove of removals) remove();
     }

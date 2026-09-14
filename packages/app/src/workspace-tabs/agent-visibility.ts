@@ -6,7 +6,6 @@ import { normalizeWorkspaceOpaqueId } from "@/utils/workspace-identity";
 export interface WorkspaceAgentVisibility {
   activeAgentIds: Set<string>;
   autoOpenAgentIds: Set<string>;
-  knownAgentIds: Set<string>;
 }
 
 function agentBelongsToWorkspace(agent: Agent, workspaceId: string): boolean {
@@ -24,13 +23,11 @@ export function deriveWorkspaceAgentVisibility(input: {
     return {
       activeAgentIds: new Set<string>(),
       autoOpenAgentIds: new Set<string>(),
-      knownAgentIds: new Set<string>(),
     };
   }
 
   const activeAgentIds = new Set<string>();
   const autoOpenAgentIds = new Set<string>();
-  const knownAgentIds = new Set<string>();
   const agentsById = new Map<string, Agent>([
     ...(agentDetails?.entries() ?? []),
     ...(sessionAgents?.entries() ?? []),
@@ -39,7 +36,6 @@ export function deriveWorkspaceAgentVisibility(input: {
     if (!agentBelongsToWorkspace(agent, workspaceId)) {
       continue;
     }
-    knownAgentIds.add(agent.id);
     if (!agent.archivedAt) {
       activeAgentIds.add(agent.id);
       const parentAgent = agent.parentAgentId ? agentsById.get(agent.parentAgentId) : undefined;
@@ -48,14 +44,7 @@ export function deriveWorkspaceAgentVisibility(input: {
       }
     }
   }
-  for (const agent of agentDetails?.values() ?? []) {
-    if (!agentBelongsToWorkspace(agent, workspaceId)) {
-      continue;
-    }
-    knownAgentIds.add(agent.id);
-  }
-
-  return { activeAgentIds, autoOpenAgentIds, knownAgentIds };
+  return { activeAgentIds, autoOpenAgentIds };
 }
 
 export function buildWorkspaceTabSnapshot(input: {
@@ -72,7 +61,6 @@ export function buildWorkspaceTabSnapshot(input: {
     terminalsHydrated: input.terminalsHydrated,
     activeAgentIds: input.agentVisibility.activeAgentIds,
     autoOpenAgentIds: input.agentVisibility.autoOpenAgentIds,
-    knownAgentIds: input.agentVisibility.knownAgentIds,
     knownTerminalIds: input.knownTerminalIds,
     standaloneTerminalIds: input.standaloneTerminalIds,
     hasActivePendingTerminalCreate: input.hasActivePendingTerminalCreate,
@@ -86,8 +74,7 @@ export function workspaceAgentVisibilityEqual(
 ): boolean {
   return (
     setsEqual(a.activeAgentIds, b.activeAgentIds) &&
-    setsEqual(a.autoOpenAgentIds, b.autoOpenAgentIds) &&
-    setsEqual(a.knownAgentIds, b.knownAgentIds)
+    setsEqual(a.autoOpenAgentIds, b.autoOpenAgentIds)
   );
 }
 

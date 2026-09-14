@@ -142,7 +142,7 @@ export async function inspectConfig(
         `import React from "react";
 import { Text } from "react-native";
 import { Icon, Modal, useToast } from "@getpaseo/plugin/client/react-native";
-import { type PluginAgentPanelProps, type PluginClientContext, type PluginComposerPillProps, type PluginSurfaceProps, useAgent, usePaseo, useWorkspace } from "@getpaseo/plugin/client";
+import { type PluginAgentPanelProps, type PluginClientContext, type PluginSurfaceProps, useAgent, usePaseo, useWorkspace } from "@getpaseo/plugin/client";
 import { inspect } from "../shared/inspect";
 
 export function Surface({ navigation }: PluginSurfaceProps) {
@@ -171,22 +171,41 @@ export function AgentPanel({ workspaceId, agentId }: PluginAgentPanelProps) {
   return <Text>{workspaceName}: {agentTitle}</Text>;
 }
 
-export function ComposerPill({ workspaceId, agentId }: PluginComposerPillProps) {
-  return <Text>{workspaceId}: {agentId}</Text>;
-}
-
 export function contributeClient(client: PluginClientContext) {
-  return client.addComposerPill({
-    id: "open-review",
-    title: "Open review",
+  const header = client.addHeaderButton({
+    id: "review-tools",
     workspaceId: "workspace-a",
-    agentId: "agent-a",
-    Component: ComposerPill,
-    async onPress() {
-      await client.rpc(inspect, {});
-      client.openPanel("review", { workspaceId: "workspace-a", agentId: "agent-a" });
+    button: {
+      title: "Review tools",
+      icon: "Scan",
+      label: "Review",
+      behavior: {
+        kind: "menu",
+        items: [{ kind: "item", id: "refresh", title: "Refresh review", behavior: {
+          kind: "action", async onPress() { await client.rpc(inspect, {}); },
+        } }],
+      },
     },
   });
+  const pill = client.addComposerPill({
+    id: "open-review",
+    workspaceId: "workspace-a",
+    agentId: "agent-a",
+    button: {
+      title: "Open review",
+      icon: "Scan",
+      behavior: {
+        kind: "action",
+        async onPress() {
+          await client.rpc(inspect, {});
+          client.openPanel("review", { workspaceId: "workspace-a", agentId: "agent-a" });
+        },
+      },
+    },
+  });
+  header.update({ visible: false });
+  pill.update({ disabled: true });
+  return () => { header.remove(); pill.remove(); };
 }
 `,
       ),
@@ -235,6 +254,37 @@ export default function contribute(server: PluginServerContext) {
     ]);
 
     await expect(typecheckPlugin(directory)).resolves.toBeUndefined();
+  }, 20_000);
+
+  it("reports TypeScript errors for the old composer pill shape and cleanup", async () => {
+    const parent = await mkdtemp(path.join(process.cwd(), ".plugin-scaffold-"));
+    directories.push(parent);
+    const directory = path.join(parent, "old-composer-pill");
+    await scaffoldPluginDirectory(directory);
+    await writeFile(
+      path.join(directory, "index.client.tsx"),
+      `
+import type { PluginClientContext, PluginComposerPillProps } from "@getpaseo/plugin/client";
+
+export default function contribute(client: PluginClientContext) {
+  const oldPill = {
+    id: "review", workspaceId: "workspace-a", agentId: "agent-a",
+    title: "Review", Component: () => null, onPress() {},
+  };
+  client.addComposerPill(oldPill);
+  const pill = client.addComposerPill({
+    id: "review", workspaceId: "workspace-a", agentId: "agent-a",
+    button: { title: "Review", icon: "Scan", behavior: { kind: "action", onPress() {} } },
+  });
+  pill();
+  return () => pill.remove();
+}
+`,
+    );
+    const check = typecheckPlugin(directory);
+    await expect(check).rejects.toThrow("has no exported member 'PluginComposerPillProps'");
+    await expect(check).rejects.toThrow("Property 'button' is missing");
+    await expect(check).rejects.toThrow("has no call signatures");
   }, 20_000);
 
   it("refuses to write into a non-empty directory", async () => {

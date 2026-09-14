@@ -12,6 +12,7 @@ export const ko: TranslationResources = {
       copy: "복사",
       copyLine: "줄 복사",
       dismiss: "닫기",
+      reload: "다시 로드",
       retry: "다시 시도",
       search: "검색",
       select: "선택",
@@ -153,7 +154,7 @@ export const ko: TranslationResources = {
       initialPromptRequired: "초기 프롬프트가 필요합니다",
       alreadyLoading: "이미 불러오는 중입니다",
       uploadFailed: "파일을 업로드하지 못했습니다",
-      noClipboardImage: "클립보드에 이미지가 없습니다.",
+      noClipboardImage: "현재 클립보드에 이미지가 없습니다. 키보드에서 붙여넣기를 시도해 보세요.",
       pasteImageFailed: "이미지를 붙여넣지 못했습니다.",
       fileTooLarge: "{{fileName}}이(가) 너무 큽니다 (최대 {{size}})",
     },
@@ -208,6 +209,10 @@ export const ko: TranslationResources = {
     historyLoadFailed: "에이전트 기록을 로드할 수 없습니다.",
     messageCapped: "이 메시지는 길이 제한으로 잘렸습니다({{bytes}}바이트).",
     permission: {
+      rejectedPlan: "거부된 계획",
+      approvedPlan: "승인된 계획",
+      canceledPlan: "취소된 계획",
+
       plan: "계획",
       required: "권한 필요",
       deny: "거부",
@@ -1049,6 +1054,16 @@ export const ko: TranslationResources = {
       updateHost: "레이블을 관리하려면 호스트를 업데이트하세요.",
     },
   },
+  changelog: {
+    title: "새로운 소식",
+    installed: "설치됨",
+    showMore: "더 보기",
+    openWebsite: "전체 변경 내역",
+    error: {
+      title: "변경 내역을 불러오지 못했습니다",
+      description: "연결을 확인한 후 다시 시도하세요.",
+    },
+  },
   sidebar: {
     display: {
       trigger: "표시 설정",
@@ -1270,6 +1285,7 @@ export const ko: TranslationResources = {
       detail: "로컬 데몬을 중지하는 중입니다.",
     },
     daemon: {
+      lifecycle: en.desktop.daemon.lifecycle,
       title: "데몬",
       status: {
         title: "상태",
@@ -2078,6 +2094,7 @@ export const ko: TranslationResources = {
     about: {
       title: "정보",
       appVersion: "앱 버전",
+      whatsNewHint: "모든 버전의 릴리스 노트",
       thisDevice: "이 기기",
       connectedHosts: "연결된 호스트",
       offline: "오프라인",

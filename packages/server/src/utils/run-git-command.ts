@@ -46,6 +46,7 @@ export function configureGitProcessPolicy(policy: GitProcessPolicy): void {
 
 export interface GitCommandOptions {
   cwd: string;
+  input?: string | Buffer;
   env?: ProcessEnvRecord;
   envOverlay?: ProcessEnvRecord;
   logger?: Pick<Logger, "trace">;
@@ -54,8 +55,8 @@ export interface GitCommandOptions {
   acceptExitCodes?: number[];
 }
 
-export interface GitCommandResult {
-  stdout: string;
+export interface GitCommandResult<Output = string> {
+  stdout: Output;
   stderr: string;
   truncated: boolean;
   exitCode: number | null;
@@ -263,6 +264,23 @@ function runGitCommandWithProvenance(
   options: GitCommandOptions,
   provenance?: string,
 ): Promise<GitCommandResult> {
+  return executeGitCommand(args, options, (output) => output.toString("utf8"), provenance);
+}
+
+/** Binary stdout preserves cat-file byte framing before text decoding. */
+export function runGitCommandBytes(
+  args: string[],
+  options: GitCommandOptions,
+): Promise<GitCommandResult<Buffer>> {
+  return executeGitCommand(args, options, (output) => output);
+}
+
+function executeGitCommand<Output>(
+  args: string[],
+  options: GitCommandOptions,
+  decode: (output: Buffer) => Output,
+  provenance?: string,
+): Promise<GitCommandResult<Output>> {
   const metricsState = submitGitCommandMetric(args, options.cwd);
   const commandTrace = submitGitCommandTrace(args, options.cwd, {
     active: gitProcessScheduler.activeCount,
@@ -274,7 +292,7 @@ function runGitCommandWithProvenance(
     const exited = new Promise<void>((resolve) => {
       releaseProcessSlot = resolve;
     });
-    const resultPromise = new Promise<GitCommandResult>((resolve, reject) => {
+    const resultPromise = new Promise<GitCommandResult<Output>>((resolve, reject) => {
       startGitCommandTrace(commandTrace, {
         active: gitProcessScheduler.activeCount,
         pending: gitProcessScheduler.pendingCount,
@@ -385,7 +403,7 @@ function runGitCommandWithProvenance(
             cwd: options.cwd,
             envOverlay,
             shell: false,
-            stdio: ["ignore", "pipe", "pipe"],
+            stdio: [options.input === undefined ? "ignore" : "pipe", "pipe", "pipe"],
           },
         );
         spawnGitCommandTrace(commandTrace, child.pid);
@@ -465,12 +483,23 @@ function runGitCommandWithProvenance(
         }
       });
 
+      if (options.input !== undefined) {
+        child.stdin!.on("error", (error: NodeJS.ErrnoException) => {
+          // A command may close stdin when it exits or reaches the output limit.
+          if (error.code !== "EPIPE") {
+            processError = error;
+            child.kill("SIGKILL");
+          }
+        });
+        child.stdin!.end(options.input);
+      }
+
       child.on("exit", markProcessExited);
 
       child.on("close", (exitCode, signal) => {
         markProcessExited(exitCode, signal);
-        const result: GitCommandResult = {
-          stdout: Buffer.concat(stdoutChunks).toString("utf8"),
+        const result: GitCommandResult<Output> = {
+          stdout: decode(Buffer.concat(stdoutChunks)),
           stderr: Buffer.concat(stderrChunks).toString("utf8"),
           truncated,
           exitCode,

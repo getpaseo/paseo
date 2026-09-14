@@ -534,3 +534,54 @@ describe("DictationStreamManager (provider-agnostic provider)", () => {
     }
   });
 });
+
+it("cancellation during STT bootstrap closes the producer and never acknowledges a late connection", async () => {
+  let connected!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    connected = resolve;
+  });
+  class ConnectingSession extends FakeRealtimeSession {
+    override async connect(): Promise<void> {
+      await gate;
+    }
+  }
+  const session = new ConnectingSession();
+  const messages: Array<{ type: string }> = [];
+  const manager = new DictationStreamManager({
+    logger: pino({ level: "silent" }),
+    emit: (message) => messages.push(message),
+    sessionId: "cancel-bootstrap",
+    stt: new FakeSttProvider(session),
+  });
+  const starting = manager.handleStart("dictation", "audio/pcm;rate=24000;bits=16");
+  manager.handleCancel("dictation");
+  expect(session.closed).toBe(true);
+  connected();
+  await starting;
+  expect(messages).toEqual([]);
+  manager.cleanupAll();
+});
+
+it("closes every dictation stream when one provider cleanup fails", async () => {
+  class FailingCloseSession extends FakeRealtimeSession {
+    override close(): void {
+      super.close();
+      throw new Error("provider cleanup failed");
+    }
+  }
+  const first = new FailingCloseSession();
+  const second = new FakeRealtimeSession();
+  const sessions = [first, second];
+  const manager = new DictationStreamManager({
+    logger: pino({ level: "silent" }),
+    sessionId: "cleanup-failure",
+    emit: () => {},
+    stt: { id: "controlled", createSession: () => sessions.shift()! },
+  });
+  await manager.handleStart("first", "audio/pcm;rate=24000;bits=16");
+  await manager.handleStart("second", "audio/pcm;rate=24000;bits=16");
+  expect(() => manager.cleanupAll()).toThrow();
+  expect(first.closed).toBe(true);
+  expect(second.closed).toBe(true);
+  expect(manager.hasDemand).toBe(false);
+});

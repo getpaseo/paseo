@@ -47,7 +47,11 @@ export function HostBadge({ badge }: { badge: HostBadgeModel }) {
       testID={`host-badge-${badge.serverId}`}
       accessibilityLabel={badge.label}
     >
-      <ThemedServer size={HOST_BADGE_ICON_SIZE} uniProps={HOST_ICON_MAPPINGS[badge.color]} />
+      <ThemedServer
+        size={HOST_BADGE_ICON_SIZE}
+        style={styles.icon}
+        uniProps={HOST_ICON_MAPPINGS[badge.color]}
+      />
       {badge.showLabel ? (
         <Text style={[styles.label, labelColorStyle(badge.color)]} numberOfLines={1}>
           {badge.label}
@@ -92,12 +96,15 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: "row",
     alignItems: "center",
     gap: 3,
-    minWidth: 0,
+    minWidth: HOST_BADGE_ICON_SIZE,
     // Outweighs a sibling's `flexShrink: 1` by enough that the badge is effectively fully
     // squeezed before that sibling gives up its first pixel. An equal factor would split the
     // loss in proportion to length, which hands the most space to the longest hostname —
     // exactly backwards. The icon has a fixed width, so the badge never disappears outright.
     flexShrink: 100,
+  },
+  icon: {
+    flexShrink: 0,
   },
   label: {
     color: theme.colors.foregroundMuted,

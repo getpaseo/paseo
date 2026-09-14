@@ -72,7 +72,7 @@ describe("daemon E2E (real claude) - thinking effort memory", () => {
     try {
       await client.connect();
       await client.fetchAgents({
-        subscribe: { subscriptionId: "claude-thinking-memory-real" },
+        subscribe: {},
       });
 
       const modelList = await client.listProviderModels("claude", { cwd });

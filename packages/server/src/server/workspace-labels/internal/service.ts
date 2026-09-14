@@ -55,6 +55,12 @@ export class WorkspaceLabelService {
     await this.catalog.initialize();
   }
 
+  async list(
+    cursor?: WorkspaceLabelCursor,
+  ): Promise<ReturnType<WorkspaceLabelSequence["synchronize"]>> {
+    return this.exclusive(async () => this.sequence.synchronize(await this.catalog.list(), cursor));
+  }
+
   async subscribe(input: {
     cursor?: WorkspaceLabelCursor;
     onChange: (change: WorkspaceLabelChange & { generation: string; seq: number }) => void;

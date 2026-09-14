@@ -7,8 +7,11 @@ const runtime = {
   openSettings() {},
   openSurface() {},
   openPanel() {},
+  addHeaderButton() {
+    return { update() {}, remove() {} };
+  },
   addComposerPill() {
-    return () => undefined;
+    return { update() {}, remove() {} };
   },
 } as unknown as PluginClientRuntime;
 
@@ -25,6 +28,31 @@ function bundle(body: string): string {
 }
 
 describe("evaluatePluginClientBundle", () => {
+  it("releases button registrations when client setup throws", () => {
+    let active = 0;
+    function addButton() {
+      active++;
+      return {
+        update() {},
+        remove() {
+          active--;
+        },
+      };
+    }
+    expect(() =>
+      runPluginClientBundle(
+        "failed-buttons",
+        bundle(`
+      plugin.addHeaderButton({ id: "header", workspaceId: "workspace", button: { title: "Header", icon: "Scan", behavior: { kind: "action", onPress() {} } } });
+      plugin.addComposerPill({ id: "pill", workspaceId: "workspace", agentId: "agent", button: { title: "Pill", icon: "Scan", behavior: { kind: "action", onPress() {} } } });
+      throw new Error("Setup failed");
+    `),
+        { ...runtime, addHeaderButton: addButton, addComposerPill: addButton },
+      ),
+    ).toThrow("Setup failed");
+    expect(active).toBe(0);
+  });
+
   it("accepts memoized settings screens", () => {
     const plugin = evaluatePluginClientBundle(
       "settings",
@@ -50,7 +78,7 @@ describe("evaluatePluginClientBundle", () => {
           plugin.addWorkspacePanel({ id: "panel", title: "Panel", icon: "Blocks", context: "workspace", Component }),
           plugin.addCommandCenterItem({ id: "command", title: "Command", icon: "Blocks", context: "global", onSelect() {} }),
           plugin.addSlashCommand({ name: "review", description: "Review", argumentHint: "", context: "workspace", onSubmit() {} }),
-          plugin.addComposerPill({ id: "pill", title: "Pill", workspaceId: "workspace", agentId: "agent", Component, onPress() {} }),
+          plugin.addComposerPill({ id: "pill", workspaceId: "workspace", agentId: "agent", button: { title: "Pill", icon: "Scan", behavior: { kind: "action", onPress() {} } } }).remove,
           plugin.addAttachmentSource({ id: "issues", title: "Issues", icon: "Blocks", pickerTitle: "Attach issue", searchPlaceholder: "Search", search: { name: "issues.search", input: {}, output: {} } }),
           plugin.addTheme({ id: "night", name: "Night", appearance: "dark", colors: { background: "#000", foreground: "#fff", raised: "#111", control: "#222", border: "#333", mutedForeground: "#aaa", ring: "#555" } }),
           plugin.addTimelineTransformer({ id: "transformer", query: { itemType: "tool_call" }, transform() { return { items: [] }; } }),
@@ -61,8 +89,11 @@ describe("evaluatePluginClientBundle", () => {
         ...runtime,
         addComposerPill() {
           pillCount += 1;
-          return () => {
-            pillCount -= 1;
+          return {
+            update() {},
+            remove() {
+              pillCount -= 1;
+            },
           };
         },
       },

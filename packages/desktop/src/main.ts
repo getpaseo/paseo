@@ -330,13 +330,6 @@ if (forcedUserDataDir) {
   }
 }
 
-// AppImage runtimes mount the app from /tmp under the user's UID, so the SUID
-// chrome-sandbox helper we ship in .deb/.rpm cannot work there. Disable the
-// sandbox only in that case; .deb/.rpm keep the sandbox on, matching VS Code.
-if (process.platform === "linux" && process.env.APPIMAGE) {
-  app.commandLine.appendSwitch("no-sandbox");
-}
-
 // Allow users to pass Chromium flags via PASEO_ELECTRON_FLAGS for debugging
 // rendering issues (e.g. "--disable-gpu --ozone-platform=x11").
 // Must run before app.whenReady().
@@ -347,6 +340,16 @@ if (electronFlags) {
     app.commandLine.appendSwitch(key, rest.join("=") || undefined);
   }
   log.info("[electron-flags]", electronFlags);
+}
+
+if (process.platform === "linux") {
+  // Keep the desktop/dock identity independent of the wrapped Electron filename.
+  app.setDesktopName("Paseo.desktop");
+  if (!app.commandLine.hasSwitch("class")) app.commandLine.appendSwitch("class", "Paseo");
+  log.info("[linux-sandbox]", {
+    enabled: !app.commandLine.hasSwitch("no-sandbox"),
+    reason: process.env.PASEO_DESKTOP_SANDBOX_REASON ?? "Chromium default",
+  });
 }
 
 let pendingOpenProjectPath = parseOpenProjectPathFromArgv({

@@ -24,7 +24,6 @@ import { toPluginTheme } from "../theme";
 import { resolvePluginIcon } from "../icons";
 import { useInstalledPlugin } from "../registry";
 import { PluginRuntimeBoundary } from "../runtime-boundary";
-import { createPluginSurfaceRuntime } from "../surface-runtime";
 import { SurfaceErrorBoundary } from "../surface-error-boundary";
 import { resolvePluginWorkspacePanel } from "./resolution";
 
@@ -54,10 +53,6 @@ function PluginPanelBody({ theme }: { theme: PluginTheme }) {
     );
   });
   const client = useHostRuntimeClient(serverId);
-  const runtime = useMemo(
-    () => createPluginSurfaceRuntime(client, target.pluginId),
-    [client, target.pluginId],
-  );
   const compact = useIsCompactFormFactor();
   const hosts = useHosts();
   const hostLabel = hosts.find((host) => host.serverId === serverId)?.label ?? serverId;
@@ -69,7 +64,7 @@ function PluginPanelBody({ theme }: { theme: PluginTheme }) {
   if (!plugin || !contribution || !workspaceExists) {
     return <PluginPanelUnavailable />;
   }
-  if (!runtime) {
+  if (!client) {
     return <PluginPanelUnavailable message="Plugin host is offline." />;
   }
 
@@ -110,7 +105,7 @@ function PluginPanelBody({ theme }: { theme: PluginTheme }) {
       Surface={Surface}
       key={`${serverId}/${target.pluginId}/${target.panelId}/${target.context}`}
     >
-      <PluginRuntimeBoundary plugin={plugin} runtime={runtime}>
+      <PluginRuntimeBoundary plugin={plugin} client={client}>
         <PluginClientStateProvider source={stateSource}>{panel}</PluginClientStateProvider>
       </PluginRuntimeBoundary>
     </SurfaceErrorBoundary>

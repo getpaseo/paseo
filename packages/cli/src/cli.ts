@@ -1,3 +1,4 @@
+import { pairCommand } from "./commands/daemon/pair.js";
 import { Command, Option } from "commander";
 import { createAgentCommand } from "./commands/agent/index.js";
 import { createDaemonCommand } from "./commands/daemon/index.js";
@@ -15,9 +16,9 @@ import { createHeartbeatCommand } from "./commands/heartbeat/index.js";
 import { createHubCommand } from "./commands/hub/index.js";
 import { createHooksCommand } from "./commands/hooks.js";
 import { startCommand as daemonStartCommand } from "./commands/daemon/start.js";
-import { runStatusCommand as runDaemonStatusCommand } from "./commands/daemon/status.js";
-import { runRestartCommand as runDaemonRestartCommand } from "./commands/daemon/restart.js";
-import { runDaemonReloadCommand } from "./commands/daemon/reload.js";
+import { daemonStatusCommand } from "./commands/daemon/status.js";
+import { daemonRestartCommand } from "./commands/daemon/restart.js";
+import { daemonReloadCommand } from "./commands/daemon/reload.js";
 import { addLsOptions, runLsCommand } from "./commands/agent/ls.js";
 import { addRunOptions, runRunCommand } from "./commands/agent/run.js";
 import { addLogsOptions, runLogsCommand } from "./commands/agent/logs.js";
@@ -35,18 +36,11 @@ import { onboardCommand } from "./commands/onboard.js";
 import {
   addDaemonHostOption,
   addJsonAndDaemonHostOptions,
-  addJsonOption,
   withGlobalOptions,
 } from "./utils/command-options.js";
 import { resolveCliVersion } from "./version.js";
 
 const VERSION = resolveCliVersion();
-
-function resolveHostnamesOption(hostnames: unknown, allowedHosts: unknown): string | undefined {
-  if (typeof hostnames === "string") return hostnames;
-  if (typeof allowedHosts === "string") return allowedHosts;
-  return undefined;
-}
 
 export function createCli(): Command {
   const program = new Command();
@@ -125,51 +119,10 @@ export function createCli(): Command {
   program.addCommand(daemonStartCommand());
   program.addCommand(createHooksCommand());
 
-  addJsonOption(
-    program
-      .command("status")
-      .description('Show local daemon status (alias for "paseo daemon status")'),
-  )
-    .option("--home <path>", "Paseo home directory (default: ~/.paseo)")
-    .action(withOutput(runDaemonStatusCommand));
-
-  addJsonAndDaemonHostOptions(
-    program.command("reload").description('Reload daemon config (alias for "paseo daemon reload")'),
-  ).action(withOutput(runDaemonReloadCommand));
-
-  addJsonOption(
-    program
-      .command("restart")
-      .description('Restart local daemon (alias for "paseo daemon restart")'),
-  )
-    .option("--home <path>", "Paseo home directory (default: ~/.paseo)")
-    .option("--timeout <seconds>", "Wait timeout before force step (default: 15)")
-    .option("--force", "Send SIGKILL if graceful stop times out")
-    .option(
-      "--listen <listen>",
-      "Listen target for restarted daemon (host:port, port, or unix socket)",
-    )
-    .option("--port <port>", "Port for restarted daemon listen target")
-    .option("--relay", "Enable relay on restarted daemon")
-    .option("--no-relay", "Disable relay on restarted daemon")
-    .option("--no-mcp", "Disable Agent MCP on restarted daemon")
-    .option(
-      "--hostnames <hosts>",
-      'Daemon hostnames (comma-separated, e.g. "myhost,.example.com" or "true" for any)',
-    )
-    .addOption(new Option("--allowed-hosts <hosts>").hideHelp())
-    .action(
-      withOutput((...args) => {
-        const [options, command] = args.slice(-2) as [(typeof args)[number], Command];
-        return runDaemonRestartCommand(
-          {
-            ...options,
-            hostnames: resolveHostnamesOption(options.hostnames, options.allowedHosts),
-          },
-          command,
-        );
-      }),
-    );
+  program.addCommand(daemonStatusCommand());
+  program.addCommand(daemonRestartCommand());
+  program.addCommand(daemonReloadCommand());
+  program.addCommand(pairCommand());
 
   // Advanced agent commands (less common operations)
   program.addCommand(createAgentCommand());
@@ -207,5 +160,20 @@ export function createCli(): Command {
   // Added in v0.2.0; remove after 2027-01-17.
   program.addCommand(createWorktreeCommand(), { hidden: true });
 
+  const enforceSelectorDuplicates = (command: Command) => {
+    for (const option of command.options) {
+      if (option.long !== "--home" && option.long !== "--host") continue;
+      option.argParser((value: string, previous: string | undefined) => {
+        if (previous !== undefined && previous !== value)
+          throw {
+            code: "TARGET_AMBIGUOUS",
+            message: `Conflicting duplicate ${option.long} selectors.`,
+          };
+        return value;
+      });
+    }
+    command.commands.forEach(enforceSelectorDuplicates);
+  };
+  enforceSelectorDuplicates(program);
   return program;
 }

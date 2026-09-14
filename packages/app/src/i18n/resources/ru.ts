@@ -12,6 +12,7 @@ export const ru: TranslationResources = {
       copy: "Копировать",
       copyLine: "Копировать строку",
       dismiss: "Отклонить",
+      reload: "Перезагрузить",
       retry: "Повторить",
       search: "Поиск",
       select: "Выбрать",
@@ -153,7 +154,8 @@ export const ru: TranslationResources = {
       initialPromptRequired: "Необходим инициализирующий промпт",
       alreadyLoading: "Уже загружается",
       uploadFailed: "Ошибка загрузки файла",
-      noClipboardImage: "В буфере обмена нет изображения",
+      noClipboardImage:
+        "В текущем буфере обмена нет изображения. Попробуйте вставить его с клавиатуры.",
       pasteImageFailed: "Не удалось вставить изображение",
       fileTooLarge: "Файл {{fileName}} слишком большой (максимальный размер: {{size}})",
     },
@@ -208,6 +210,10 @@ export const ru: TranslationResources = {
     historyLoadFailed: "Не удалось загрузить историю агента",
     messageCapped: "Это сообщение было обрезано ({{bytes}} байт).",
     permission: {
+      rejectedPlan: "Отклонённый план",
+      approvedPlan: "Одобренный план",
+      canceledPlan: "Отменённый план",
+
       plan: "План",
       required: "Требуется разрешение",
       deny: "Отклонить",
@@ -1057,6 +1063,16 @@ export const ru: TranslationResources = {
       updateHost: "Обновите этот хост для управления метками.",
     },
   },
+  changelog: {
+    title: "Что нового",
+    installed: "Установлена",
+    showMore: "Показать ещё",
+    openWebsite: "Полный список изменений",
+    error: {
+      title: "Не удалось загрузить список изменений",
+      description: "Проверьте подключение и попробуйте снова.",
+    },
+  },
   sidebar: {
     display: {
       trigger: "Настройки отображения",
@@ -1280,6 +1296,7 @@ export const ru: TranslationResources = {
       detail: "Остановка локального демона.",
     },
     daemon: {
+      lifecycle: en.desktop.daemon.lifecycle,
       title: "Демон",
       status: {
         title: "Статус",
@@ -2102,6 +2119,7 @@ export const ru: TranslationResources = {
     about: {
       title: "О приложении",
       appVersion: "Версия приложения",
+      whatsNewHint: "Заметки о выпуске для каждой версии",
       thisDevice: "Это устройство",
       connectedHosts: "Подключенные хосты",
       offline: "Оффлайн",

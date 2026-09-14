@@ -110,7 +110,6 @@ export function DiffSurface(props: DiffSurfaceProps) {
   const reviewActions = props.mode.kind === "working" ? props.mode.reviewActions : undefined;
   const model = useMemo(() => {
     const dependencies = [
-      props.files,
       props.displayPreferences.layout,
       props.displayPreferences.wrapLines,
       viewport.width,
@@ -172,8 +171,13 @@ export function DiffSurface(props: DiffSurfaceProps) {
     [family, props.palette, typography.lineHeight, typography.size],
   );
   const textLayout = useMemo(
-    () => prepareNativeTextLayout(textLayoutStore, model),
-    [model, textLayoutStore],
+    () =>
+      prepareNativeTextLayout(
+        textLayoutStore,
+        model,
+        diffMaterializationWindow(fileWindowTop, viewport.height),
+      ),
+    [model, textLayoutStore, fileWindowTop, viewport.height],
   );
   useEffect(() => () => disposeNativeTextLayout(textLayoutStore), [textLayoutStore]);
   const headerTextLayout = useMemo(
@@ -386,11 +390,12 @@ function NativeCanvasFileHeader({
     () => recordNativeHeaderPicture({ file, viewportWidth, textLayout, paints }),
     [file, paints, textLayout, viewportWidth],
   );
+  const { top, bottom, headerHeight } = file;
   const stickyStyle = useAnimatedStyle(() => {
-    const pinOffset = Math.max(0, scrollTop.value - file.top);
-    const maximumPinOffset = Math.max(0, file.bottom - file.headerHeight - file.top);
+    const pinOffset = Math.max(0, scrollTop.value - top);
+    const maximumPinOffset = Math.max(0, bottom - headerHeight - top);
     return { transform: [{ translateY: Math.min(pinOffset, maximumPinOffset) }] };
-  }, [file.bottom, file.headerHeight, file.top, scrollTop]);
+  }, [bottom, headerHeight, top, scrollTop]);
   const style = useMemo<ViewStyle>(
     () => ({
       position: "absolute",

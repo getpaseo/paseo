@@ -69,3 +69,54 @@ test("shallow parent scans retain nested change scopes", async () => {
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("a file announced only as changed remains visible to coalesced deletion scans", async () => {
+  const root = await mkdtemp(join(tmpdir(), "native-change-only-"));
+  const directory = join(root, "nested");
+  await mkdir(directory);
+  const paths = createObserverPaths(process.platform);
+  const events: FileChange[] = [];
+  const notifications = new EventEmitter();
+  let active = true;
+  const observer = createFileObserver();
+  const backend = createNativeRecursiveBackend(
+    {
+      root,
+      metrics: observer.getDiagnostics(),
+      isActive: () => active,
+      isIgnored: () => false,
+      isPathInside: paths.isInside,
+      queueEvent: (type, path) => events.push({ type, path }),
+      fail: (error) => {
+        throw error;
+      },
+    },
+    paths,
+    (_root, listener) => {
+      notifications.on("change", listener);
+      return {
+        close: () => notifications.removeAllListeners(),
+        on: (event, onError) => notifications.on(event, onError),
+      };
+    },
+  );
+  try {
+    await backend.start();
+    const path = join(directory, "changed.txt");
+    await writeFile(path, "created");
+    notifications.emit("change", "change", path);
+    await expect.poll(() => backend.getDiagnostics().nativeTrackedFileCount).toBe(1);
+
+    await rm(path);
+    notifications.emit("change", "change", directory);
+    await expect
+      .poll(() => events.filter((event) => event.type === "delete"), { timeout: 10_000 })
+      .toEqual([{ path, type: "delete" }]);
+  } finally {
+    vi.useRealTimers();
+    active = false;
+    await backend.close();
+    await observer.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});

@@ -41,6 +41,8 @@ The image:
 
 The image does not bundle agent CLIs such as Claude Code, Codex, OpenCode, Copilot, or Pi. Add the agents you use with a small child image.
 
+Host-side CLI commands select the container explicitly, for example `paseo project ls --host 127.0.0.1:6767`. Without an endpoint selector the CLI looks for a local home’s supervisor. Container environment settings are deployment overrides; worker restart preserves them. Your container manager owns full supervisor replacement.
+
 ## Docker Compose
 
 ```yaml
