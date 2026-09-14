@@ -20,6 +20,7 @@ import {
 } from "./opencode/test-utils/test-opencode-harness.js";
 import type {
   AgentSessionConfig,
+  AgentPersistenceHandle,
   AgentStreamEvent,
   ToolCallTimelineItem,
   AssistantMessageTimelineItem,
@@ -681,6 +682,64 @@ describe("OpenCodeAgentClient adapter smoke tests", () => {
       rmSync(cwd, { recursive: true, force: true });
     }
   });
+
+  test.each(["variant:foo", "variant:default", "max"])(
+    "resume preserves legacy variant %s across repeated persistence and new selections",
+    async (legacyVariant) => {
+      const runtime = new TestOpenCodeHarness();
+      const client = new OpenCodeAgentClient(logger, undefined, {
+        serverManager: runtime,
+        createClient: runtime.createClient,
+      });
+      const cwd = tmpCwd();
+      let handle: AgentPersistenceHandle = {
+        provider: "opencode",
+        sessionId: "ses_legacy_variant",
+        metadata: { cwd },
+      };
+      try {
+        for (let restart = 0; restart < 2; restart++) {
+          const execution = new TestOpenCodeClient();
+          execution.sessionPromptAsyncEvents = [
+            { type: "session.idle", properties: { sessionID: handle.sessionId } },
+          ];
+          runtime.enqueueClient(execution);
+          const session = await client.resumeSession(handle, { thinkingOptionId: legacyVariant });
+          try {
+            await collectTurnEvents(streamSession(session, "Keep my saved variant"));
+            expect(execution.calls.sessionPromptAsync).toEqual([
+              expect.objectContaining({ variant: legacyVariant }),
+            ]);
+            handle = session.describePersistence()!;
+            await session.setThinkingOption!("variant:default");
+            const changed = session.describePersistence()!;
+            const resumedClient = new TestOpenCodeClient();
+            resumedClient.sessionPromptAsyncEvents = [
+              { type: "session.idle", properties: { sessionID: handle.sessionId } },
+            ];
+            runtime.enqueueClient(resumedClient);
+            const resumed = await client.resumeSession(changed, {
+              thinkingOptionId: "variant:default",
+            });
+            try {
+              await collectTurnEvents(
+                streamSession(resumed, "Use the newly selected named default"),
+              );
+              expect(resumedClient.calls.sessionPromptAsync).toEqual([
+                expect.objectContaining({ variant: "default" }),
+              ]);
+            } finally {
+              await resumed.close();
+            }
+          } finally {
+            await session.close();
+          }
+        }
+      } finally {
+        rmSync(cwd, { recursive: true, force: true });
+      }
+    },
+  );
 
   test("fetchCatalog returns models with required fields", async () => {
     const runtime = new TestOpenCodeHarness();

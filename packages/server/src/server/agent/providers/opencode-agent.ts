@@ -347,6 +347,7 @@ function resolveOpenCodePermissionReply(
 type OpenCodeAgentConfig = Omit<AgentSessionConfig, "providerOptions"> & {
   provider: "opencode";
   providerOptions: OpenCodeProviderOptions;
+  thinkingOptionEncoding: "literal" | "choice-v1";
 };
 
 const OPENCODE_SESSION_ENV_KEYS = new Set(["PASEO_AGENT_ID", "PASEO_AGENT_CWD"]);
@@ -661,8 +662,10 @@ function openCodeVariantChoiceId(variant: string): string {
     : variant;
 }
 
-function resolveOpenCodeRuntimeVariantId(choiceId: string | undefined): string | undefined {
-  return choiceId?.startsWith(OPENCODE_NAMED_VARIANT_PREFIX)
+function resolveOpenCodeRuntimeVariantId(config: OpenCodeAgentConfig): string | undefined {
+  const choiceId = config.thinkingOptionId;
+  return config.thinkingOptionEncoding === "choice-v1" &&
+    choiceId?.startsWith(OPENCODE_NAMED_VARIANT_PREFIX)
     ? choiceId.slice(OPENCODE_NAMED_VARIANT_PREFIX.length)
     : choiceId;
 }
@@ -1531,6 +1534,11 @@ export class OpenCodeAgentClient implements AgentClient {
       cwd,
     };
     const openCodeConfig = this.assertConfig(config);
+    // COMPAT(openCodeVariantIds): added in v0.8.1; remove after 2027-03-14 once
+    // pre-v0.8.1 persisted sessions have been migrated. Their IDs are literal,
+    // including names beginning with the new choice prefix.
+    openCodeConfig.thinkingOptionEncoding =
+      handle.metadata?.thinkingOptionEncoding === "choice-v1" ? "choice-v1" : "literal";
     const registeredServerUrl = getOpenCodeChildSessionServerUrl(handle.sessionId);
     const registeredAcquisition = registeredServerUrl
       ? this.serverManager.acquireExisting(registeredServerUrl)
@@ -1900,7 +1908,12 @@ export class OpenCodeAgentClient implements AgentClient {
       throw new Error(`OpenCodeAgentClient received config for provider '${config.provider}'`);
     }
     const providerOptions = OpenCodeProviderOptionsSchema.parse(config.providerOptions ?? {});
-    return normalizeOpenCodeConfig({ ...config, provider: "opencode", providerOptions });
+    return normalizeOpenCodeConfig({
+      ...config,
+      provider: "opencode",
+      providerOptions,
+      thinkingOptionEncoding: "choice-v1",
+    });
   }
 
   private async populateModelContextWindowCache(
@@ -3443,6 +3456,10 @@ class OpenCodeAgentSession implements AgentSession {
       sessionId: this.sessionId,
       model: this.config.model ?? null,
       modeId: this.currentMode,
+      thinkingOptionId:
+        this.config.thinkingOptionEncoding === "literal" && this.config.thinkingOptionId
+          ? openCodeVariantChoiceId(this.config.thinkingOptionId)
+          : (this.config.thinkingOptionId ?? null),
     };
   }
 
@@ -3458,6 +3475,7 @@ class OpenCodeAgentSession implements AgentSession {
   async setThinkingOption(thinkingOptionId: string | null): Promise<void> {
     const normalizedThinkingOptionId = normalizeOpenCodeVariantId(thinkingOptionId);
     this.config.thinkingOptionId = normalizedThinkingOptionId ?? undefined;
+    this.config.thinkingOptionEncoding = "choice-v1";
   }
 
   async run(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<AgentRunResult> {
@@ -3533,7 +3551,7 @@ class OpenCodeAgentSession implements AgentSession {
     );
     const model = this.parseModel(this.config.model);
     const effectiveMode = resolveOpenCodeRuntimeAgentId(this.currentMode);
-    const effectiveVariant = resolveOpenCodeRuntimeVariantId(this.config.thinkingOptionId);
+    const effectiveVariant = resolveOpenCodeRuntimeVariantId(this.config);
 
     try {
       const response = await this.client.session.promptAsync({
@@ -3745,8 +3763,7 @@ class OpenCodeAgentSession implements AgentSession {
     this.pendingClientMessageId = options?.clientMessageId ?? null;
     this.suppressAssistantMessagesUntilIdle.active = false;
     const model = this.parseModel(this.config.model);
-    const thinkingOptionId = this.config.thinkingOptionId;
-    const effectiveVariant = resolveOpenCodeRuntimeVariantId(thinkingOptionId);
+    const effectiveVariant = resolveOpenCodeRuntimeVariantId(this.config);
     const effectiveMode = resolveOpenCodeRuntimeAgentId(this.currentMode);
 
     await this.awaitEventStreamReady(turnAbortController);
@@ -4900,6 +4917,7 @@ class OpenCodeAgentSession implements AgentSession {
       sessionId: this.sessionId,
       nativeHandle: this.sessionId,
       metadata: {
+        thinkingOptionEncoding: this.config.thinkingOptionEncoding,
         cwd: this.config.cwd,
         ...(this.config.modeId ? { modeId: this.config.modeId } : {}),
         ...(this.config.model ? { model: this.config.model } : {}),

@@ -1943,6 +1943,7 @@ export class AgentManager {
         thinkingOptionId: normalizedThinkingOptionId,
       };
     }
+    this.refreshSessionPersistence(agent);
     this.touchUpdatedAt(agent);
     this.emitState(agent);
     return notice;
