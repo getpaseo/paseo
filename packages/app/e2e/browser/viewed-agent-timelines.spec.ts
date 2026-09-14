@@ -53,8 +53,14 @@ async function seedViewedTimelineScenario(
   };
 }
 
-async function openAgent(page: Page, scenario: ViewedTimelineScenario, agentId: string) {
-  await page.goto(buildHostAgentDetailRoute(getServerId(), agentId, scenario.workspaceId));
+async function openAgent(
+  page: Page,
+  scenario: ViewedTimelineScenario,
+  agentId: string,
+  options: { recordRenders?: boolean } = {},
+) {
+  const route = buildHostAgentDetailRoute(getServerId(), agentId, scenario.workspaceId);
+  await page.goto(options.recordRenders ? `${route}&renderProfile=1` : route);
   await page.waitForURL(
     (url) => url.pathname.includes("/workspace/") && !url.searchParams.has("open"),
   );
@@ -65,10 +71,14 @@ async function selectAgent(page: Page, title: string) {
   await page.getByRole("button", { name: title, exact: true }).click();
 }
 
-async function enableChatRenderRecording(page: Page) {
-  await page.addInitScript(() => {
-    globalThis.__PASEO_RENDER_PROFILE_ENABLED__ = true;
-  });
+async function expectForkFailureWithoutOverlappingStatus(page: Page) {
+  await page.getByRole("button", { name: "Fork chat from here" }).last().click();
+  await page.getByRole("menuitem", { name: "Fork in a new tab", exact: true }).click();
+  await expect(
+    page.getByRole("alert").filter({ hasText: "Transport not connected" }),
+  ).toBeVisible();
+  await expectReconnectingToastGone(page, { timeout: 100 });
+  await expectReconnectingToastVisible(page);
 }
 
 async function countChatCommits(page: Page, agentId: string) {
@@ -115,43 +125,57 @@ async function expectAgentConsistentlyIdle(page: Page, title: string): Promise<v
   await expectTurnCopyButton(page);
 }
 
+async function withViewedTimelineScenario(
+  run: (scenario: ViewedTimelineScenario) => Promise<void>,
+) {
+  const scenario = await seedViewedTimelineScenario();
+  try {
+    await run(scenario);
+  } finally {
+    await scenario.cleanup();
+  }
+}
+
+async function openSevenChats(page: Page, scenario: ViewedTimelineScenario) {
+  const subscriptions = observeTimelineSubscriptions(page);
+  const additional = [];
+  for (let index = 0; index < 5; index += 1) {
+    additional.push(
+      await scenario.client.createAgent({
+        provider: "mock",
+        cwd: scenario.repoPath,
+        workspaceId: scenario.workspaceId,
+        title: `Additional chat ${index + 1}`,
+        modeId: "load-test",
+        model: "ten-second-stream",
+      }),
+    );
+  }
+  await openAgent(page, scenario, scenario.firstAgentId);
+  await selectAgent(page, "Second viewed chat");
+  for (let index = 0; index < additional.length; index += 1) {
+    await selectAgent(page, `Additional chat ${index + 1}`);
+  }
+  await subscriptions.waitForSubscribedAgents([
+    scenario.firstAgentId,
+    scenario.secondAgentId,
+    ...additional.map((agent) => agent.id),
+  ]);
+}
+
+async function expectCurrentChatWithoutCatchUp(page: Page, message: string) {
+  await expect(page.getByText(message, { exact: true })).toBeVisible();
+  await expect(page.getByRole("alert").filter({ hasText: "Updating messages" })).toHaveCount(0);
+}
+
 test.describe("Viewed agent timelines", () => {
   test("open chats stay current after switching beyond five agents", async ({ page }) => {
-    const subscriptions = observeTimelineSubscriptions(page);
-    const scenario = await seedViewedTimelineScenario();
-    try {
-      const additional = [];
-      for (let index = 0; index < 5; index += 1) {
-        additional.push(
-          await scenario.client.createAgent({
-            provider: "mock",
-            cwd: scenario.repoPath,
-            workspaceId: scenario.workspaceId,
-            title: `Additional chat ${index + 1}`,
-            modeId: "load-test",
-            model: "ten-second-stream",
-          }),
-        );
-      }
-      await openAgent(page, scenario, scenario.firstAgentId);
-      await selectAgent(page, "Second viewed chat");
-      for (let index = 0; index < additional.length; index += 1) {
-        await selectAgent(page, `Additional chat ${index + 1}`);
-      }
-      await subscriptions.waitForSubscribedAgents([
-        scenario.firstAgentId,
-        scenario.secondAgentId,
-        ...additional.map((agent) => agent.id),
-      ]);
+    await withViewedTimelineScenario(async (scenario) => {
+      await openSevenChats(page, scenario);
       await commitMessage(scenario, scenario.firstAgentId, "Current after seven open chats.");
       await selectAgent(page, "First viewed chat");
-      await expect(
-        page.getByText("Current after seven open chats.", { exact: true }),
-      ).toBeVisible();
-      await expect(page.getByRole("alert").filter({ hasText: "Updating messages" })).toHaveCount(0);
-    } finally {
-      await scenario.cleanup();
-    }
+      await expectCurrentChatWithoutCatchUp(page, "Current after seven open chats.");
+    });
   });
 
   test("a turn that finishes while hidden reopens with consistently idle chrome", async ({
@@ -177,11 +201,12 @@ test.describe("Viewed agent timelines", () => {
 
   test("a hidden retained chat stays current without rendering", async ({ page }) => {
     test.setTimeout(60_000);
-    await enableChatRenderRecording(page);
     const subscriptions = observeTimelineSubscriptions(page);
     const scenario = await seedViewedTimelineScenario();
     try {
-      await openAgent(page, scenario, scenario.firstAgentId);
+      await openAgent(page, scenario, scenario.firstAgentId, { recordRenders: true });
+      const composer = page.getByRole("textbox", { name: "Message agent..." });
+      await composer.fill("Unsent draft survives hidden streaming");
       await selectAgent(page, "Second viewed chat");
       await subscriptions.waitForSubscribedAgents([scenario.firstAgentId, scenario.secondAgentId]);
       const hiddenCommits = await countChatCommits(page, scenario.firstAgentId);
@@ -200,6 +225,9 @@ test.describe("Viewed agent timelines", () => {
         page.getByText("Committed while the first chat is hidden.", { exact: true }),
       ).toBeVisible();
       await expect(page.getByText("(end of synthetic stream)", { exact: true })).toBeVisible();
+      await expect(composer).toHaveValue("Unsent draft survives hidden streaming");
+      await composer.fill("Draft edited after returning");
+      await expect(composer).toHaveValue("Draft edited after returning");
     } finally {
       await scenario.cleanup();
     }
@@ -251,6 +279,7 @@ test.describe("Viewed agent timelines", () => {
       await expectReconnectingToastVisible(page);
       await expect(page.getByTestId("agent-reconnecting-toast")).toHaveCSS("opacity", "1");
       await page.screenshot({ path: testInfo.outputPath("reconnecting-chat.png") });
+      await expectForkFailureWithoutOverlappingStatus(page);
       await commitMessage(scenario, scenario.firstAgentId, "Committed while the chat reconnects.");
       await expect(
         page.getByText("Committed while the chat reconnects.", { exact: true }),

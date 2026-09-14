@@ -37,12 +37,7 @@ import {
 import { getActiveMessageSubmissions } from "@/composer/submission/model";
 import { RewindComposerRestoreProvider } from "@/components/rewind/composer-restore";
 import { getProviderIcon } from "@/components/provider-icons";
-import {
-  ToastViewport,
-  useToastHost,
-  type ToastApi,
-  type ToastState,
-} from "@/components/toast-host";
+import { useToastHost, type ToastApi, type ToastState } from "@/components/toast-host";
 import type { WorkspaceComposerAttachment } from "@/attachments/types";
 import { useWorkspaceAttachmentScopeKey } from "@/attachments/workspace-attachments-store";
 import {
@@ -1322,8 +1317,7 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
             </View>
           ) : null}
 
-          <TimelineSyncStatus sync={timelineSync} />
-          <ToastViewport toast={toast} onDismiss={dismiss} placement="panel" />
+          <TimelineSyncStatus sync={timelineSync} toast={toast} onDismiss={dismiss} />
         </DockedChatSurface>
 
         {isArchivingCurrentAgent ? (
