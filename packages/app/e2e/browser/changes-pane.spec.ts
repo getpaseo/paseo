@@ -1201,28 +1201,24 @@ test("canvas diff copies a dragged character selection without opening a review"
 });
 
 test("canvas diff preserves selection through a repaint and copies selections and source lines", async ({
-  context,
   page,
 }) => {
-  const workspace = await createWorkspaceWithExactSelectionDiff("ABCDEFGHIJ");
-  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
-  await useUnwrappedDiffLines(page);
-  await openSelectionWorkspaceChanges(page, workspace);
-
+  await openCopyableSelectionDiff(page, "ABCDEFGHIJ");
   await dragExactAddedText(page, { startOffset: 2, endOffset: 8 });
-  await page.keyboard.press("ControlOrMeta+C");
-  await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe("CDEFGH");
-  await page.evaluate(() => navigator.clipboard.writeText(""));
-  await resizeDiffViewportHeight(page, 960);
-  await rightClickFirstChangedLine(page);
-  const copySelection = page.getByRole("menuitem", { name: "Copy", exact: true });
-  await expect(copySelection).toBeEnabled();
-  await copySelection.click();
-  await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe("CDEFGH");
 
-  await rightClickFirstChangedLine(page);
-  await page.getByRole("menuitem", { name: "Copy line", exact: true }).click();
-  await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe("ABCDEFGHIJ");
+  await test.step("copy the selection before resizing", async () => {
+    await copyDiffSelectionWithKeyboard(page);
+    await expectClipboardText(page, "CDEFGH");
+  });
+  await test.step("copy the preserved selection after resizing", async () => {
+    await resizeDiffViewportHeight(page, 960);
+    await copyFromChangedLineMenu(page, "Copy");
+    await expectClipboardText(page, "CDEFGH");
+  });
+  await test.step("copy the complete source line", async () => {
+    await copyFromChangedLineMenu(page, "Copy line");
+    await expectClipboardText(page, "ABCDEFGHIJ");
+  });
 });
 
 test("canvas diff clears a selection when collapsing an earlier file", async ({ page }) => {
@@ -1884,6 +1880,30 @@ async function clickFirstChangedLine(page: Page): Promise<void> {
   if (!bodyBounds) throw new Error("Expanded diff body has no bounds");
   const lineHeight = Math.round(fontSize * 1.5);
   await page.mouse.click(bodyBounds.x + 120, bodyBounds.y + lineHeight * 1.5);
+}
+
+async function openCopyableSelectionDiff(page: Page, content: string): Promise<void> {
+  const workspace = await createWorkspaceWithExactSelectionDiff(content);
+  await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+  await configureDiffPresentation(page, { layout: "unified", wrapLines: false });
+  await openSelectionWorkspaceChanges(page, workspace);
+}
+
+async function copyDiffSelectionWithKeyboard(page: Page): Promise<void> {
+  await page.evaluate(() => navigator.clipboard.writeText(""));
+  await page.keyboard.press("ControlOrMeta+C");
+}
+
+async function copyFromChangedLineMenu(page: Page, action: "Copy" | "Copy line"): Promise<void> {
+  await page.evaluate(() => navigator.clipboard.writeText(""));
+  await rightClickFirstChangedLine(page);
+  const item = page.getByRole("menuitem", { name: action, exact: true });
+  await expect(item).toBeEnabled();
+  await item.click();
+}
+
+async function expectClipboardText(page: Page, text: string): Promise<void> {
+  await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(text);
 }
 
 async function resizeDiffViewportHeight(page: Page, height: number): Promise<void> {
