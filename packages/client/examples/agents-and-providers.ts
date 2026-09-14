@@ -68,7 +68,13 @@ export async function runFollowUp(url: string, agentId: string): Promise<string 
   }
 }
 
-export async function steerAgent(url: string, agentId: string, prompt: string): Promise<void> {
+export interface SteerAgentOptions {
+  url: string;
+  agentId: string;
+  prompt: string;
+}
+
+export async function steerAgent({ url, agentId, prompt }: SteerAgentOptions): Promise<void> {
   const client = createClient(url);
 
   try {
