@@ -107,9 +107,10 @@ test.describe("explorer pane tab placement", () => {
     let agentId = "";
 
     try {
-      await test.step("empty workspace seeds a draft in the main pane", async () => {
+      await test.step("choose Agent from the empty workspace launcher", async () => {
         await gotoWorkspace(page, workspace.workspaceId);
         await waitForWorkspaceTabsVisible(page);
+        await openAgentDraftFromLauncher(page);
         await expect(draftTabChip(page).first()).toBeVisible({ timeout: 30_000 });
       });
 
@@ -221,4 +222,121 @@ test.describe("explorer pane tab placement", () => {
       await workspace.cleanup();
     }
   });
+});
+
+async function closeOnlyDraft(page: Page): Promise<void> {
+  await draftTabChip(page).hover();
+  await page.getByRole("button", { name: "Close", exact: true }).click();
+}
+
+async function moveOnlyDraftIntoRightSplit(page: Page): Promise<void> {
+  await page.getByRole("button", { name: "More actions", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Split pane right", exact: true }).click();
+  const target = await emptyPaneBox(page);
+  await dragChipTo(page, draftTabChip(page), {
+    x: target.x + target.width / 2,
+    y: target.y + target.height / 2,
+  });
+  await expect(visible(page, "workspace-tabs-row")).toHaveCount(1);
+}
+
+async function expectNewLauncher(page: Page): Promise<void> {
+  await expect(
+    page.getByTestId("workspace-new-tab-panel").getByRole("button", { name: "Agent", exact: true }),
+  ).toBeVisible();
+  await expect(draftTabChip(page)).toHaveCount(0);
+  await expect(page.getByRole("textbox", { name: "Message agent..." })).toHaveCount(0);
+  await expect(page.getByText("Paseo ran into a problem.", { exact: true })).toHaveCount(0);
+}
+
+async function openAgentDraftFromLauncher(page: Page): Promise<void> {
+  await expectNewLauncher(page);
+  await page
+    .getByTestId("workspace-new-tab-panel")
+    .getByRole("button", { name: "Agent", exact: true })
+    .click();
+  await expect(page.getByRole("textbox", { name: "Message agent..." })).toBeVisible();
+}
+
+async function persistHiddenGeneratedExplorer(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const stored = JSON.parse(localStorage.getItem("workspace-layout-state")!);
+    const key = Object.keys(stored.state.layoutByWorkspace)[0];
+    const tabs = [
+      { tabId: "files", target: { kind: "files" }, createdAt: 1 },
+      { tabId: "changes_tree", target: { kind: "changes_tree" }, createdAt: 1 },
+      ...Array.from({ length: 2250 }, (_, index) => ({
+        tabId: `draft_saved_${index}`,
+        target: { kind: "draft", draftId: `draft_saved_${index}` },
+        createdAt: index + 2,
+      })),
+    ];
+    stored.state.layoutByWorkspace[key] = {
+      root: {
+        kind: "pane",
+        pane: {
+          id: "pane_generated_report_equivalent",
+          hidden: true,
+          tabIds: tabs.map((tab) => tab.tabId),
+          tabs,
+          focusedTabId: tabs[tabs.length - 1].tabId,
+        },
+      },
+      focusedPaneId: null,
+    };
+    stored.state.explorerPaneIdByWorkspace[key] = "pane_generated_report_equivalent";
+    localStorage.setItem("workspace-layout-state", JSON.stringify(stored));
+  });
+}
+
+// Explorer cannot replace the ordinary workspace canvas, including on restore.
+test("closing the last split-born tab with hidden Explorer keeps a usable workspace", async ({
+  page,
+}) => {
+  const workspace = await seedWorkspace({ repoPrefix: "last-pane-hidden-explorer-" });
+  try {
+    await gotoWorkspace(page, workspace.workspaceId);
+    await openAgentDraftFromLauncher(page);
+    await closeOnlyDraft(page);
+    await expectNewLauncher(page);
+    await openAgentDraftFromLauncher(page);
+    await moveOnlyDraftIntoRightSplit(page);
+    await closeOnlyDraft(page);
+    await expectNewLauncher(page);
+    await page.reload();
+    await expectNewLauncher(page);
+  } finally {
+    await workspace.cleanup();
+  }
+});
+
+test("visible Explorer does not replace the last ordinary workspace pane", async ({ page }) => {
+  const workspace = await seedWorkspace({ repoPrefix: "last-pane-visible-explorer-" });
+  try {
+    await gotoWorkspace(page, workspace.workspaceId);
+    await page.getByRole("button", { name: "Open Explorer sidebar", exact: true }).click();
+    await openAgentDraftFromLauncher(page);
+    await moveOnlyDraftIntoRightSplit(page);
+    await closeOnlyDraft(page);
+    await expectNewLauncher(page);
+    await page.reload();
+    await expectNewLauncher(page);
+  } finally {
+    await workspace.cleanup();
+  }
+});
+
+test("reloading a saved hidden generated Explorer recovers a usable workspace", async ({
+  page,
+}) => {
+  const workspace = await seedWorkspace({ repoPrefix: "saved-hidden-explorer-" });
+  try {
+    await gotoWorkspace(page, workspace.workspaceId);
+    await expectNewLauncher(page);
+    await persistHiddenGeneratedExplorer(page);
+    await page.reload();
+    await expectNewLauncher(page);
+  } finally {
+    await workspace.cleanup();
+  }
 });

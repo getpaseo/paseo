@@ -36,7 +36,7 @@ import {
   openTabInLayoutBackground,
   replaceTabTargetInLayout,
   revealTargetInLayout,
-  restoreEmptyPanesInLayout,
+  restoreWorkspaceLayout,
   reconcileWorkspaceTabs,
   removePaneFromTree,
   removeTabFromTree,
@@ -634,7 +634,7 @@ function ensurePersistedExplorerSidebarPane(input: {
     paneId: split.paneId,
     hidden: true,
   });
-  const seededLayout = restoreEmptyPanesInLayout(
+  const seededLayout = restoreWorkspaceLayout(
     stripEphemeralTabsFromLayout(hiddenLayout ?? split.layout),
     split.paneId,
   );
@@ -991,14 +991,10 @@ export function createWorkspaceLayoutStore(
                 },
               };
             }
-            const preserveEmptyPaneId =
-              closingPane?.id === "main" || closingPane?.id === explorerSidebarPaneId
-                ? closingPane.id
-                : null;
             const closedLayout = closeTabInLayout({
               layout,
               tabId: normalizedTabId,
-              preserveEmptyPaneId,
+              explorerSidebarPaneId,
             });
             const nextLayoutBeforeFocusNormalization =
               closedLayout &&
@@ -1156,8 +1152,13 @@ export function createWorkspaceLayoutStore(
             return null;
           }
 
+          const layout = getWorkspaceLayout(get().layoutByWorkspace, normalizedWorkspaceKey);
           const result = convertDraftToAgentInLayout({
-            layout: getWorkspaceLayout(get().layoutByWorkspace, normalizedWorkspaceKey),
+            layout,
+            explorerSidebarPaneId: resolveExplorerSidebarPaneId(
+              layout,
+              get().explorerSidebarPaneIdByWorkspace[normalizedWorkspaceKey],
+            ),
             tabId: normalizedTabId,
             agentId: normalizedAgentId,
           });
@@ -1224,6 +1225,7 @@ export function createWorkspaceLayoutStore(
               }
             }
             if (
+              state.layoutByWorkspace[normalizedWorkspaceKey] &&
               nextLayout === rawLayout &&
               pinnedAgentIdsByWorkspace === state.pinnedAgentIdsByWorkspace
             ) {
@@ -1400,7 +1402,7 @@ export function createWorkspaceLayoutStore(
             }
             const restoredLayout =
               normalizedToPaneId === explorerSidebarPaneId
-                ? restoreEmptyPanesInLayout(nextLayout, explorerSidebarPaneId)
+                ? restoreWorkspaceLayout(nextLayout, explorerSidebarPaneId)
                 : nextLayout;
             const normalizedNextLayout = keepWorkspaceFocusOutOfExplorerSidebar(
               restoredLayout,
@@ -1813,21 +1815,23 @@ export function createWorkspaceLayoutStore(
           for (const [workspaceKey, persistedLayout] of Object.entries(
             result.data.layoutByWorkspace,
           )) {
-            const strippedLayout = stripEphemeralTabsFromLayout(persistedLayout);
+            const restoredLayout = restoreWorkspaceLayout(
+              stripEphemeralTabsFromLayout(persistedLayout),
+              resolveExplorerSidebarPaneId(
+                persistedLayout,
+                explorerSidebarPaneIdByWorkspace[workspaceKey],
+              ),
+              ids.createNodeId,
+            );
             const explorerSidebar = ensurePersistedExplorerSidebarPane({
-              layout: strippedLayout,
+              layout: restoredLayout,
               registeredPaneId: explorerSidebarPaneIdByWorkspace[workspaceKey],
               ids,
             });
-            if (!explorerSidebar) {
-              layoutByWorkspace[workspaceKey] = restoreEmptyPanesInLayout(strippedLayout);
-              continue;
+            layoutByWorkspace[workspaceKey] = explorerSidebar?.layout ?? restoredLayout;
+            if (explorerSidebar) {
+              explorerSidebarPaneIdByWorkspace[workspaceKey] = explorerSidebar.paneId;
             }
-            layoutByWorkspace[workspaceKey] = restoreEmptyPanesInLayout(
-              explorerSidebar.layout,
-              explorerSidebar.paneId,
-            );
-            explorerSidebarPaneIdByWorkspace[workspaceKey] = explorerSidebar.paneId;
           }
           return {
             ...currentState,
