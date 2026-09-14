@@ -1,4 +1,4 @@
-import { rm, writeFile } from "node:fs/promises";
+import { writeFile } from "node:fs/promises";
 import path from "node:path";
 import { expect, test, type Page } from "../support/fixtures";
 import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-agent";
@@ -30,10 +30,13 @@ async function seedChangedAgent(repoPrefix: string) {
   const workspace = await seedMockAgentWorkspace({
     repoPrefix,
     title: "Composer diff stat",
-    repo: { withRemote: true },
+    repo: {
+      withRemote: true,
+      // Exclude the local remote before the daemon starts observing this checkout.
+      files: [{ path: ".gitignore", content: "/remote.git/\n" }],
+    },
   });
   try {
-    await rm(path.join(workspace.cwd, "remote.git"), { recursive: true });
     await writeFile(
       path.join(workspace.cwd, "README.md"),
       "# Temp Repo\nexport const one = 1;\nexport const two = 2;\n",

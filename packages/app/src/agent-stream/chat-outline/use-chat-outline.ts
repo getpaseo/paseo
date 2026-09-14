@@ -65,12 +65,23 @@ export function useChatOutline({
   const loadedItems = useMemo(() => [...tail, ...(head ?? NO_STREAM_ITEMS)], [head, tail]);
   const prompts = enabled ? (index?.prompts ?? NO_PROMPTS) : NO_PROMPTS;
 
+  // The viewed timeline already owns live delivery and reconnect catch-up. Its complete
+  // loaded items (including rows outside the mounted window) invalidate the prompt index.
+  const latestPromptSeq = loadedItems.reduce(
+    (latest, item) =>
+      item.kind === "user_message" && item.timelineCursor?.epoch === timelineEpoch
+        ? Math.max(latest, item.timelineCursor.seq)
+        : latest,
+    -1,
+  );
+
+  useEffect(() => setIndex(null), [agentId, enabled, serverId, timelineEpoch]);
+
   useEffect(() => {
     if (!isWeb || !enabled) {
       setIndex(null);
       return;
     }
-    setIndex(null);
     const client = getHostRuntimeStore().getClient(serverId);
     if (!client) return;
     let active = true;
@@ -91,21 +102,10 @@ export function useChatOutline({
         .catch(() => undefined);
     };
     refresh();
-    const unsubscribe = client.on("agent_stream", (message) => {
-      if (
-        message.type === "agent_stream" &&
-        message.payload.agentId === agentId &&
-        message.payload.event.type === "timeline" &&
-        message.payload.event.item.type === "user_message"
-      ) {
-        refresh();
-      }
-    });
     return () => {
       active = false;
-      unsubscribe();
     };
-  }, [agentId, enabled, serverId, timelineEpoch]);
+  }, [agentId, enabled, serverId, timelineEpoch, latestPromptSeq]);
 
   // The transcript names the row it is showing; the outline turns that into a prompt using the
   // complete index, so unloaded rows never have to exist in the DOM to be marked.

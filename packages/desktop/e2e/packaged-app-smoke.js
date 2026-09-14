@@ -5,6 +5,7 @@ const os = require("node:os");
 const path = require("node:path");
 const { setTimeout: delay } = require("node:timers/promises");
 const { chromium } = require("playwright");
+const { extractFile } = require("@electron/asar");
 
 const EXECUTABLE_NAME = "Paseo";
 const SMOKE_TIMEOUT_MS = 60_000;
@@ -67,52 +68,17 @@ function getMacMainExecutablePath(appPath) {
   return path.join(appPath, "Contents", "MacOS", EXECUTABLE_NAME);
 }
 
-function ensureLinuxSandboxPermissions(appPath) {
-  if (process.platform !== "linux") {
-    return;
-  }
-
-  const sandboxPath = path.join(appPath, "chrome-sandbox");
-  if (!fs.existsSync(sandboxPath)) {
-    throw new Error(`Chromium sandbox helper does not exist: ${sandboxPath}`);
-  }
-
-  const hasRequiredPermissions = () => {
-    const stat = fs.statSync(sandboxPath);
-    return stat.uid === 0 && (stat.mode & 0o7777) === 0o4755;
-  };
-  if (hasRequiredPermissions()) {
-    return;
-  }
-
-  const chown = spawnSync("sudo", ["-n", "chown", "root:root", sandboxPath], {
-    encoding: "utf8",
-  });
-  const chmod =
-    chown.status === 0
-      ? spawnSync("sudo", ["-n", "chmod", "4755", sandboxPath], { encoding: "utf8" })
-      : null;
-  if (chown.error || chown.status !== 0 || chmod?.error || chmod?.status !== 0) {
-    throw new Error(
-      `Failed to configure Chromium sandbox helper ${sandboxPath}. Run: sudo chown root:root ${sandboxPath} && sudo chmod 4755 ${sandboxPath}.\n${chown.stderr?.trim() || chmod?.stderr?.trim() || chown.error || chmod?.error || "Permissions remained incorrect."}`,
-    );
-  }
-  if (!hasRequiredPermissions()) {
-    throw new Error(`Chromium sandbox helper permissions remained incorrect: ${sandboxPath}`);
-  }
-}
-
-function getLaunchCommand(executablePath) {
+function getLaunchCommand(executablePath, args) {
   if (process.platform !== "linux") {
     return {
       command: executablePath,
-      args: [],
+      args,
     };
   }
 
   return {
     command: "xvfb-run",
-    args: ["-a", "--server-args=-screen 0 1280x800x24", executablePath],
+    args: ["-a", "--server-args=-screen 0 1280x800x24", executablePath, ...args],
   };
 }
 
@@ -157,19 +123,15 @@ function getShellCommand(script) {
 }
 
 function createDefaultDaemonEnv(extraEnv) {
-  const env = {
-    ...process.env,
+  return {
+    ...Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith("PASEO_"))),
     ...extraEnv,
   };
-
-  delete env.PASEO_HOME;
-  delete env.PASEO_LISTEN;
-  return env;
 }
 
 function createIsolatedDesktopEnv({ home, listen, userData, cdpPort }) {
   return {
-    ...process.env,
+    ...createDefaultDaemonEnv({ HOME: home, USERPROFILE: home }),
     PASEO_HOME: home,
     PASEO_LISTEN: listen,
     PASEO_ELECTRON_USER_DATA_DIR: userData,
@@ -315,7 +277,7 @@ function formatLogs({ stdout, stderr, userData, daemonHome }) {
   ].join("\n\n");
 }
 
-async function writeFailureArtifacts({ page, stdout, stderr, userData, daemonHome, error }) {
+async function writeSmokeArtifacts({ page, stdout, stderr, userData, daemonHome, error }) {
   const artifactDir = process.env.PASEO_DESKTOP_SMOKE_ARTIFACT_DIR?.trim();
   if (!artifactDir) {
     return;
@@ -323,13 +285,15 @@ async function writeFailureArtifacts({ page, stdout, stderr, userData, daemonHom
 
   fs.mkdirSync(artifactDir, { recursive: true });
   fs.writeFileSync(
-    path.join(artifactDir, "failure.txt"),
-    `${error instanceof Error ? (error.stack ?? error.message) : String(error)}\n\n${formatLogs({
-      stdout,
-      stderr,
-      userData,
-      daemonHome,
-    })}\n`,
+    path.join(artifactDir, error ? "failure.txt" : "success.txt"),
+    `${error instanceof Error ? (error.stack ?? error.message) : String(error ?? "Packaged desktop smoke passed")}\n\n${formatLogs(
+      {
+        stdout,
+        stderr,
+        userData,
+        daemonHome,
+      },
+    )}\n`,
   );
 
   const desktopLog = readIfExists(path.join(userData, "logs", "main.log"));
@@ -656,24 +620,15 @@ async function smokeColdCliDaemonStart({ appPath }) {
   const pidPath = path.join(home, "paseo.pid");
   const port = await reserveLocalTcpPort();
   const listen = `127.0.0.1:${port}`;
-  const env = createDefaultDaemonEnv();
+  const env = createDefaultDaemonEnv({ HOME: home, USERPROFILE: home });
+  configureIsolatedDaemonHome(home, listen);
 
   try {
     console.log("Packaged desktop smoke: cold-starting daemon through bundled CLI shim");
     await runCliShimCommand({
       appPath,
       env,
-      args: [
-        "daemon",
-        "start",
-        "--home",
-        home,
-        "--listen",
-        listen,
-        "--no-relay",
-        "--no-mcp",
-        "--no-inject-mcp",
-      ],
+      args: ["daemon", "start", "--home", home],
       label: "Bundled CLI shim cold daemon start",
     });
 
@@ -805,10 +760,87 @@ async function stopCliDaemon({ appPath, env }) {
   });
 }
 
-async function smokePackagedDesktopApp({ appPath }) {
-  const executablePath = getExecutablePath(appPath);
+async function openSmokeWorkspace({ appPath, env, page, daemonHome }) {
+  const projectPath = path.join(daemonHome, "sandbox-smoke-project");
+  fs.mkdirSync(projectPath);
+  fs.writeFileSync(path.join(projectPath, "README.md"), "Packaged Linux sandbox smoke\n");
+  const workspace = await runCliShimJsonCommand({
+    appPath,
+    env,
+    args: [
+      "workspace",
+      "create",
+      "--isolation",
+      "local",
+      "--path",
+      projectPath,
+      "--title",
+      "Sandbox smoke workspace",
+    ],
+    label: "Create packaged smoke workspace",
+  });
+  await page.getByRole("button", { name: "Sandbox smoke workspace", exact: true }).click();
+  await page.waitForURL((url) => url.pathname.endsWith(`/workspace/${workspace.workspaceId}`));
+  await page.getByRole("textbox", { name: "Message agent..." }).click();
+  console.log(`Packaged desktop smoke: renderer opened workspace ${workspace.workspaceId}`);
+}
+
+async function assertSandboxState({ browser, page, expectedSandbox, stdout, stderr }) {
+  const diagnostics = await page.evaluate(() =>
+    window.paseoDesktop.invoke("desktop_sandbox_diagnostics"),
+  );
+  if (diagnostics.enabled !== expectedSandbox) {
+    throw new Error(
+      `Unexpected sandbox decision: ${JSON.stringify(diagnostics)}; expected enabled=${expectedSandbox}`,
+    );
+  }
+  if (!stdout.join("").includes("[desktop] app startup")) {
+    throw new Error("Missing production app startup log");
+  }
+  const session = await browser.newBrowserCDPSession();
+  const { processInfo } = await session.send("SystemInfo.getProcessInfo");
+  await session.detach();
+  const renderers = processInfo.filter((info) => info.type === "renderer");
+  if (renderers.length === 0) throw new Error("No renderer process found");
+  for (const renderer of renderers) {
+    const status = fs.readFileSync(`/proc/${renderer.id}/status`, "utf8");
+    const security = status
+      .split("\n")
+      .filter((line) => /^(NoNewPrivs|Seccomp|Uid|Gid):/.test(line))
+      .join("; ");
+    const report = `Sandbox evidence: enabled=${expectedSandbox}; ${diagnostics.reason}; renderer ${renderer.id}: ${security}`;
+    console.log(report);
+    stdout.push(`${report}\n`);
+    if (
+      expectedSandbox &&
+      (!/^NoNewPrivs:\s+1$/m.test(status) || !/^Seccomp:\s+2$/m.test(status))
+    ) {
+      throw new Error(`Renderer lacks OS sandbox: ${report}\n${stderr.join("")}`);
+    }
+  }
+}
+
+function assertLinuxDesktopIdentity(appPath) {
+  if (process.platform === "linux") {
+    const metadata = JSON.parse(
+      extractFile(path.join(appPath, "resources", "app.asar"), "package.json").toString(),
+    );
+    if (metadata.desktopName !== `${EXECUTABLE_NAME}.desktop`) {
+      throw new Error(
+        `Packaged Linux desktop identity ${JSON.stringify(metadata.desktopName)} does not match ${EXECUTABLE_NAME}.desktop`,
+      );
+    }
+  }
+}
+
+async function smokePackagedDesktopApp({
+  appPath,
+  executablePath = getExecutablePath(appPath),
+  launchArgs = [],
+  expectedSandbox,
+}) {
   assertExecutable(executablePath, "Packaged app executable");
-  ensureLinuxSandboxPermissions(appPath);
+  assertLinuxDesktopIdentity(appPath);
   await smokeColdCliDaemonStart({ appPath });
 
   const userData = createTempDir("paseo-smoke-user-data-");
@@ -832,7 +864,7 @@ async function smokePackagedDesktopApp({ appPath }) {
 
   const stdout = [];
   const stderr = [];
-  const launch = getLaunchCommand(executablePath);
+  const launch = getLaunchCommand(executablePath, launchArgs);
   console.log(`Packaged desktop smoke: launching ${launch.command} ${launch.args.join(" ")}`);
   const child = spawn(launch.command, launch.args, {
     detached: process.platform !== "win32",
@@ -884,12 +916,17 @@ async function smokePackagedDesktopApp({ appPath }) {
     console.log("Packaged desktop smoke: renderer-started desktop daemon reported running");
     await smokeCliShim({ appPath, env });
     await smokeCliTerminal({ appPath, env });
+    if (expectedSandbox !== undefined) {
+      await assertSandboxState({ browser, page, expectedSandbox, stdout, stderr });
+      await openSmokeWorkspace({ appPath, env, page, daemonHome });
+    }
+    await writeSmokeArtifacts({ page, stdout, stderr, userData, daemonHome });
     await stopDaemonForCleanup();
     console.log(
       `Packaged desktop smoke passed: real renderer and preload loaded; renderer-started desktop daemon pid ${status.pid}, listen ${status.listen}; CLI shim daemon status and terminal smoke succeeded`,
     );
   } catch (error) {
-    await writeFailureArtifacts({ page, stdout, stderr, userData, daemonHome, error }).catch(
+    await writeSmokeArtifacts({ page, stdout, stderr, userData, daemonHome, error }).catch(
       (artifactError) => {
         console.warn(`Packaged desktop smoke: failed to write failure artifacts: ${artifactError}`);
       },

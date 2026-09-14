@@ -1,3 +1,4 @@
+import { renderError, toCommandError, defaultOutputOptions } from "./output/render.js";
 import { createCli } from "./cli.js";
 import { classifyInvocation } from "./classify.js";
 import { openDesktopWithProject } from "./commands/open.js";
@@ -48,6 +49,16 @@ export async function runCli(argv: string[], options: RunCliOptions = {}): Promi
   }
 
   const program = createCli();
-  await program.parseAsync(parseArgv, { from: "node" });
+  try {
+    await program.parseAsync(parseArgv, { from: "node" });
+  } catch (error) {
+    process.stderr.write(
+      renderError(toCommandError(error), {
+        ...defaultOutputOptions,
+        format: argv.includes("--json") ? "json" : "table",
+      }) + "\n",
+    );
+    return 1;
+  }
   return typeof process.exitCode === "number" ? process.exitCode : 0;
 }

@@ -17,7 +17,7 @@ export async function runLsCommand(
   options: TerminalLsOptions,
   _command: Command,
 ): Promise<ListResult<TerminalRow>> {
-  const { client, close } = await connectTerminalClient(options.host);
+  const { client, close } = await connectTerminalClient(options.daemonTarget);
   const cwd = options.all || options.workspace ? undefined : (options.cwd ?? process.cwd());
 
   try {

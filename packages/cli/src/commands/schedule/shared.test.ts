@@ -1,4 +1,6 @@
-import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { describe, expect, test, vi } from "vitest";
+
+import { selectDaemonTarget } from "../../utils/daemon-target.js";
 
 import {
   compileEveryPresetToCron,
@@ -7,32 +9,25 @@ import {
 } from "./shared.js";
 
 const baseOptions = {
+  daemonTarget: selectDaemonTarget({ home: process.cwd() }, {}),
   prompt: "do the thing",
   every: "5m",
   provider: "claude",
 };
 
 const baseCron = {
+  daemonTarget: selectDaemonTarget({ home: process.cwd() }, {}),
   prompt: "do the thing",
   cron: "0 9 * * *",
   provider: "claude",
 };
 
 describe("parseScheduleCreateInput cwd/host validation", () => {
-  beforeEach(() => {
-    vi.spyOn(process, "cwd").mockReturnValue("/local/project");
-  });
-
-  afterEach(() => {
-    vi.restoreAllMocks();
-    vi.unstubAllEnvs();
-  });
-
   test("no host, no cwd → defaults to process.cwd()", () => {
     const input = parseScheduleCreateInput(baseOptions);
     expect(input.target).toEqual({
       type: "new-agent",
-      config: { provider: "claude", cwd: "/local/project" },
+      config: { provider: "claude", cwd: process.cwd() },
     });
   });
 
@@ -47,7 +42,7 @@ describe("parseScheduleCreateInput cwd/host validation", () => {
   test("host with cwd → uses provided cwd", () => {
     const input = parseScheduleCreateInput({
       ...baseOptions,
-      host: "dev:6767",
+      daemonTarget: selectDaemonTarget({ host: "dev:12345" }, {}),
       cwd: "/remote/project",
     });
     expect(input.target).toEqual({
@@ -57,7 +52,12 @@ describe("parseScheduleCreateInput cwd/host validation", () => {
   });
 
   test("host without cwd → throws MISSING_CWD", () => {
-    expect(() => parseScheduleCreateInput({ ...baseOptions, host: "dev:6767" })).toThrow(
+    expect(() =>
+      parseScheduleCreateInput({
+        ...baseOptions,
+        daemonTarget: selectDaemonTarget({ host: "dev:12345" }, {}),
+      }),
+    ).toThrow(
       expect.objectContaining({
         code: "MISSING_CWD",
         message: expect.stringContaining("--cwd is required when --host is specified"),
@@ -66,9 +66,9 @@ describe("parseScheduleCreateInput cwd/host validation", () => {
   });
 
   test("PASEO_HOST without cwd → throws MISSING_CWD", () => {
-    vi.stubEnv("PASEO_HOST", "dev:6767");
+    const daemonTarget = selectDaemonTarget({}, { PASEO_HOST: "dev:12345" });
 
-    expect(() => parseScheduleCreateInput(baseOptions)).toThrow(
+    expect(() => parseScheduleCreateInput({ ...baseOptions, daemonTarget })).toThrow(
       expect.objectContaining({
         code: "MISSING_CWD",
         message: expect.stringContaining("--cwd is required"),
@@ -76,9 +76,21 @@ describe("parseScheduleCreateInput cwd/host validation", () => {
     );
   });
 
+  test("explicit home beats PASEO_HOST and defaults cwd locally", () => {
+    const daemonTarget = selectDaemonTarget({ home: process.cwd() }, { PASEO_HOST: "dev:12345" });
+    expect(parseScheduleCreateInput({ ...baseOptions, daemonTarget }).target).toEqual({
+      type: "new-agent",
+      config: { provider: "claude", cwd: process.cwd() },
+    });
+  });
+
   test("host with whitespace-only cwd → throws MISSING_CWD", () => {
     expect(() =>
-      parseScheduleCreateInput({ ...baseOptions, host: "dev:6767", cwd: "   " }),
+      parseScheduleCreateInput({
+        ...baseOptions,
+        daemonTarget: selectDaemonTarget({ host: "dev:12345" }, {}),
+        cwd: "   ",
+      }),
     ).toThrow(expect.objectContaining({ code: "MISSING_CWD" }));
   });
 });

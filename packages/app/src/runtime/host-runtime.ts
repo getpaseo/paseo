@@ -1244,56 +1244,51 @@ export class HostRuntimeController {
     }
 
     this.activeClient = client;
-    this.unsubscribeClientHandlers =
-      this.deps.mountClientHandlers?.({ client, host: this.host, connection }) ?? null;
     this.applyConnectionEvent({
       type: "select_connection",
       connectionId: connection.id,
       connection: toActiveConnection(connection),
     });
-    this.snapshot = {
-      ...this.snapshot,
-      serverId: this.host.serverId,
+    this.snapshot = { ...this.snapshot, clientGeneration: nextGeneration };
+    this.updateSnapshot({
       ...toSnapshotConnectionPatch(this.connectionMachineState, this.connectionEpoch),
-      client,
-      clientGeneration: nextGeneration,
-    };
-    for (const listener of this.listeners) {
-      listener();
-    }
-
-    this.unsubscribeClientStatus = client.subscribeConnectionStatus((state) => {
-      if (!this.isCurrentSwitchRequest(requestVersion) || this.activeClient !== client) {
-        return;
-      }
-      this.applyConnectionEvent({
-        type: "client_state",
-        state,
-        lastError: client.lastError,
-      });
-      const patch: HostRuntimeSnapshotPatch = {
-        ...toSnapshotConnectionPatch(this.connectionMachineState, this.connectionEpoch),
-        ...this.buildAgentDirectoryStatusPatch(),
-      };
-      this.updateSnapshot(patch);
+      client: null,
     });
 
-    try {
-      if (!existingClient) {
-        await client.connect();
-      }
-    } catch (error) {
-      if (!this.isCurrentSwitchRequest(requestVersion) || this.activeClient !== client) {
-        return;
-      }
-      const message = toErrorMessage(error);
-      this.applyConnectionEvent({
-        type: "connect_failed",
-        message,
-      });
+    const failConnection = async (error: unknown) => {
+      if (!this.isCurrentSwitchRequest(requestVersion) || this.activeClient !== client) return;
+      this.unsubscribeClientStatus?.();
+      this.unsubscribeClientStatus = null;
+      this.unsubscribeClientHandlers?.();
+      this.unsubscribeClientHandlers = null;
+      client.setReconnectEnabled(false);
+      this.applyConnectionEvent({ type: "connect_failed", message: toErrorMessage(error) });
       this.updateSnapshot({
         ...toSnapshotConnectionPatch(this.connectionMachineState, this.connectionEpoch),
+        client: null,
       });
+      try {
+        await client.close();
+      } catch {
+        /* Preserve the compatibility/connection error. */
+      }
+    };
+    try {
+      if (!existingClient) await client.connect();
+      if (!this.isCurrentSwitchRequest(requestVersion) || this.activeClient !== client) return;
+      this.unsubscribeClientHandlers =
+        this.deps.mountClientHandlers?.({ client, host: this.host, connection }) ?? null;
+      this.unsubscribeClientStatus = client.subscribeConnectionStatus((state) => {
+        if (!this.isCurrentSwitchRequest(requestVersion) || this.activeClient !== client) return;
+        this.applyConnectionEvent({ type: "client_state", state, lastError: client.lastError });
+        this.updateSnapshot({
+          ...toSnapshotConnectionPatch(this.connectionMachineState, this.connectionEpoch),
+          ...this.buildAgentDirectoryStatusPatch(),
+          client,
+        });
+      });
+    } catch (error) {
+      await failConnection(error);
     }
   }
 
@@ -2397,14 +2392,20 @@ export class HostRuntimeStore {
     await replica.prepare(agentId);
   }
 
-  fetchAgentTimeline(
+  async fetchAgentTimeline(
     serverId: string,
     agentId: string,
     request: Parameters<DaemonClient["fetchAgentTimeline"]>[1],
   ): Promise<Awaited<ReturnType<DaemonClient["fetchAgentTimeline"]>>> {
     const directory = this.directorySyncByServer.get(serverId);
     if (!directory) throw new Error(`Unknown host runtime for serverId ${serverId}`);
-    return directory.fetchTimeline(agentId, request);
+    const owner = useSessionStore.getState().sessions[serverId]?.viewedTimelineSync;
+    const page = await directory.fetchTimeline(agentId, request);
+    if (owner && useSessionStore.getState().sessions[serverId]?.viewedTimelineSync === owner) {
+      owner.flushStreamAgent(agentId);
+      owner.applyTimelineResponse(page);
+    }
+    return page;
   }
 
   createViewedTimelineOwner(

@@ -36,7 +36,6 @@ import type { Theme } from "@/styles/theme";
 import { createPluginClientStateSource } from "../client-state/source";
 import { Icon } from "../icons";
 import { PluginRuntimeBoundary } from "../runtime-boundary";
-import { createPluginSurfaceRuntime, type PluginSurfaceRuntime } from "../surface-runtime";
 import { SurfaceErrorBoundary } from "../surface-error-boundary";
 import { toPluginTheme } from "../theme";
 import { buttonMatches, type RegisteredPluginButton } from "./model";
@@ -45,7 +44,7 @@ import { pluginButtonStore } from "./store";
 interface ButtonView {
   entry: RegisteredPluginButton;
   props: PluginHostProps & RegisteredPluginButton["context"];
-  runtime: PluginSurfaceRuntime;
+  client: NonNullable<ReturnType<typeof useHostRuntimeClient>>;
   state: ReturnType<typeof createPluginClientStateSource>;
   toast: ReturnType<typeof useToast>;
 }
@@ -79,7 +78,7 @@ function resolvePlatform(): PluginHostProps["layout"]["platform"] {
 function ButtonEnvironment({ view, children }: { view: ButtonView; children: ReactNode }) {
   return (
     <ToastApiProvider api={view.toast}>
-      <PluginRuntimeBoundary plugin={view.entry.installation} runtime={view.runtime}>
+      <PluginRuntimeBoundary plugin={view.entry.installation} client={view.client}>
         <PluginClientStateProvider source={view.state}>{children}</PluginClientStateProvider>
       </PluginRuntimeBoundary>
     </ToastApiProvider>
@@ -219,11 +218,11 @@ function ButtonSurfaceBody({
   path: readonly string[];
 }) {
   return (
-    <ButtonEnvironment view={view}>
-      <SurfaceErrorBoundary installation={view.entry.installation} Surface={behavior}>
+    <SurfaceErrorBoundary installation={view.entry.installation} Surface={behavior}>
+      <ButtonEnvironment view={view}>
         <ButtonBody view={view} behavior={behavior} path={path} />
-      </SurfaceErrorBoundary>
-    </ButtonEnvironment>
+      </ButtonEnvironment>
+    </SurfaceErrorBoundary>
   );
 }
 
@@ -396,11 +395,10 @@ function createButtonView({
   hostLabel: string;
   theme: PluginTheme;
 }): ButtonView | null {
-  const runtime = createPluginSurfaceRuntime(client, entry.installation.id);
-  if (!runtime) return null;
+  if (!client) return null;
   return {
     entry,
-    runtime,
+    client,
     toast,
     state: createPluginClientStateSource(entry.installation.serverId),
     props: {
@@ -486,11 +484,15 @@ function OverflowPages({
       const view = createButtonView({ entry, client, toast, compact, hostLabel, theme });
       if (!view) continue;
       rows.push(
-        <ButtonEnvironment key={entry.key} view={view}>
-          <SurfaceErrorBoundary installation={entry.installation} Surface={entry.button.icon}>
+        <SurfaceErrorBoundary
+          key={entry.key}
+          installation={entry.installation}
+          Surface={entry.button.icon}
+        >
+          <ButtonEnvironment view={view}>
             <OverflowButton view={view} />
-          </SurfaceErrorBoundary>
-        </ButtonEnvironment>,
+          </ButtonEnvironment>
+        </SurfaceErrorBoundary>,
       );
       if (entry.button.behavior.kind === "action") continue;
       pages.push(

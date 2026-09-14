@@ -645,3 +645,52 @@ describe("WorkspaceDirectory empty projects", () => {
     expect(result.emptyProjects.map((p) => p.projectId)).toEqual(["empty"]);
   });
 });
+
+test("Git observation targets exclude archived records without hydrating app descriptors", async () => {
+  const workspace = (
+    id: string,
+    projectId: string,
+    archivedAt: string | null = null,
+  ): PersistedWorkspaceRecord => ({
+    workspaceId: id,
+    projectId,
+    cwd: `/workspace/${id}`,
+    kind: "local_checkout",
+    displayName: id,
+    createdAt: NOW,
+    updatedAt: NOW,
+    archivedAt,
+  });
+  const project = (id: string, archivedAt: string | null = null): PersistedProjectRecord => ({
+    projectId: id,
+    rootPath: `/workspace/${id}`,
+    kind: "git",
+    displayName: id,
+    customName: null,
+    createdAt: NOW,
+    updatedAt: NOW,
+    archivedAt,
+  });
+  const unexpectedHydration = async (): Promise<never> => {
+    throw new Error("Watcher reconciliation hydrated app data");
+  };
+  const directory = new WorkspaceDirectory({
+    logger: createTestLogger(),
+    projectRegistry: { list: async () => [project("active"), project("archived", NOW)] },
+    workspaceRegistry: {
+      list: async () => [
+        workspace("observed", "active"),
+        workspace("hidden", "active", NOW),
+        workspace("hidden-project", "archived"),
+      ],
+    },
+    listAgentPayloads: unexpectedHydration,
+    listProviderSubagentActivity: unexpectedHydration,
+    listTerminalActivityContributions: unexpectedHydration,
+    buildWorkspaceDescriptor: unexpectedHydration,
+    isProviderVisibleToClient: () => true,
+  });
+  expect(await directory.listObservationTargets()).toEqual([
+    { id: "observed", workspaceDirectory: "/workspace/observed", workspaceKind: "local_checkout" },
+  ]);
+});

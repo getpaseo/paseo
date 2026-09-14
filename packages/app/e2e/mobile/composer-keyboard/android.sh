@@ -275,6 +275,11 @@ node "${ASSERT}" xml-above-y \
   "${ARTIFACTS_DIR}/long-draft-keyboard-open.xml" \
   "Add attachment" \
   "$(read_ime_top)"
+display_density="$(adb shell wm density | awk '/density:/ { density = $NF } END { print density }')"
+node "${ASSERT}" xml-composer-contained \
+  "${ARTIFACTS_DIR}/long-draft-keyboard-open.xml" \
+  "$(read_ime_top)" \
+  "${display_density}"
 adb shell ime set "${HELPER_IME}" >/dev/null
 ad fill 'editable=true' "${MESSAGE}" --settle
 open_gboard "${input_x}" "${input_y}"
@@ -336,5 +341,25 @@ node "${ASSERT}" same-region \
   "${ARTIFACTS_DIR}/hidden-after-js-stall.png" \
   1400 \
   430
+
+ad press 'id="menu-button"' --settle
+ad press 'id="sidebar-global-new-workspace"' --settle
+ad wait 'id="workspace-create-submit"' 10000
+adb shell ime set "${HELPER_IME}" >/dev/null
+ad fill 'editable=true' "${LONG_MESSAGE}" --settle
+snapshot_json "${ARTIFACTS_DIR}/new-workspace-long-draft.json"
+read -r new_input_x new_input_y new_input_height < <(
+  node "${ASSERT}" rect "${ARTIFACTS_DIR}/new-workspace-long-draft.json" "editable"
+)
+# The editor shrinks when the keyboard opens. Its bottom stays anchored, while
+# its old center can move into the setup fields after the height constraint.
+new_input_y="$((new_input_y + new_input_height / 2 - 8))"
+open_gboard "${new_input_x}" "${new_input_y}"
+capture_ui_xml "${ARTIFACTS_DIR}/new-workspace-long-draft-keyboard-open.xml"
+capture_screen "${ARTIFACTS_DIR}/new-workspace-long-draft-keyboard-open.png"
+node "${ASSERT}" xml-composer-contained \
+  "${ARTIFACTS_DIR}/new-workspace-long-draft-keyboard-open.xml" \
+  "$(read_ime_top)" \
+  "${display_density}"
 
 echo "Composer keyboard invariants passed"

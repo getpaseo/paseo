@@ -3,8 +3,31 @@ import {
   resolveStreamKeyboardInset,
   shouldReconcileHiddenKeyboardEnd,
   resolveKeyboardShift,
+  reserveKeyboardLayoutShift,
   shouldUseCompactExplorerKeyboardPadding,
 } from "./keyboard-shift-policy";
+
+describe("keyboard layout reservation", () => {
+  it("reserves the opening destination before motion and releases it only after closing", () => {
+    const opened = reserveKeyboardLayoutShift({ current: 0, target: 308, phase: "start" });
+    expect(opened).toBe(308);
+    const closing = reserveKeyboardLayoutShift({ current: opened, target: 0, phase: "start" });
+    expect(closing).toBe(308);
+    expect(reserveKeyboardLayoutShift({ current: closing, target: 0, phase: "end" })).toBe(0);
+  });
+
+  it("keeps enough space when a resize or reversal interrupts keyboard motion", () => {
+    const resizing = reserveKeyboardLayoutShift({ current: 308, target: 250, phase: "start" });
+    expect(resizing).toBe(308);
+    const reversing = reserveKeyboardLayoutShift({
+      current: resizing,
+      target: 340,
+      phase: "start",
+    });
+    expect(reversing).toBe(340);
+    expect(reserveKeyboardLayoutShift({ current: reversing, target: 340, phase: "end" })).toBe(340);
+  });
+});
 
 describe("resolveStreamKeyboardInset", () => {
   it("uses the native scroll inset on iOS without changing content size", () => {

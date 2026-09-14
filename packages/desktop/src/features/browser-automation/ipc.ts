@@ -107,6 +107,8 @@ interface BrowserAutomationWebContents extends ConsoleMessageEmitter {
   reload(): void;
   capturePage(rect?: Rectangle, options?: { stayHidden?: boolean }): Promise<TabImage>;
   invalidate(): void;
+  getBackgroundThrottling(): boolean;
+  setBackgroundThrottling(allowed: boolean): void;
   sendInputEvent(event: IsolatedKeyboardInputEvent): void;
 }
 
@@ -130,6 +132,15 @@ export function adaptWebContents(contents: BrowserAutomationWebContents): TabCon
     reload: () => contents.reload(),
     capturePage: (captureOptions) => contents.capturePage(undefined, captureOptions),
     invalidate: () => contents.invalidate(),
+    withFrameProduction: async (capture) => {
+      const previous = contents.getBackgroundThrottling();
+      contents.setBackgroundThrottling(false);
+      try {
+        return await capture();
+      } finally {
+        if (!contents.isDestroyed()) contents.setBackgroundThrottling(previous);
+      }
+    },
     sendInputEvent: (event) => contents.sendInputEvent(event),
     getConsoleMessages: () => consoleMessagesByContentsId.get(contentsId) ?? [],
     captureDialogs: (task) => dialogMonitor.capture(task),

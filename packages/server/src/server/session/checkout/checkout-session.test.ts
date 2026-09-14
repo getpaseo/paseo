@@ -1,3 +1,4 @@
+import { SessionDelivery } from "../owned-subscriptions/index.js";
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -48,6 +49,7 @@ function createFakeDiffSubscriber(initial: CheckoutDiffSnapshotPayload) {
   const subscriptions: FakeDiffSubscription[] = [];
   const refreshedCwds: string[] = [];
   const subscriber: CheckoutDiffSubscriber = {
+    read: async (params) => ({ ...initial, cwd: params.cwd }),
     subscribe: async (params, listener) => {
       let isSubscribed = true;
       const subscription: FakeDiffSubscription = {
@@ -173,7 +175,23 @@ function makeCheckoutSession(options?: {
     worktreesRoot: undefined,
     logger: pino({ level: "silent" }),
   });
-  return { checkout, emitted, hostCalls, gitMutationCalls, generatorCalls };
+  const delivery = new SessionDelivery((_source, message) => emitted.push(message));
+  return {
+    checkout,
+    emitted,
+    hostCalls,
+    gitMutationCalls,
+    generatorCalls,
+    subscribe: (request: Parameters<CheckoutSession["handleSubscribeDiffRequest"]>[0]) =>
+      delivery.request(undefined, request, () =>
+        checkout.handleSubscribeDiffRequest(request, delivery),
+      ),
+    unsubscribe: (request: Parameters<CheckoutSession["handleUnsubscribeDiffRequest"]>[0]) =>
+      delivery.request(undefined, request, () =>
+        checkout.handleUnsubscribeDiffRequest(request, delivery),
+      ),
+    close: () => delivery.close(),
+  };
 }
 
 function createGitSnapshot(
@@ -532,9 +550,9 @@ describe("CheckoutSession", () => {
         files: [],
         error: null,
       });
-      const { checkout, emitted } = makeCheckoutSession({ diff: subscriber });
+      const { subscribe, unsubscribe, emitted } = makeCheckoutSession({ diff: subscriber });
 
-      await checkout.handleSubscribeDiffRequest({
+      await subscribe({
         type: "subscribe_checkout_diff_request",
         subscriptionId: "s1",
         cwd: "/repo",
@@ -566,7 +584,7 @@ describe("CheckoutSession", () => {
         },
       });
 
-      checkout.handleUnsubscribeDiffRequest({
+      await unsubscribe({
         type: "unsubscribe_checkout_diff_request",
         subscriptionId: "s1",
       });
@@ -574,22 +592,22 @@ describe("CheckoutSession", () => {
       expect(subscriptions[0].unsubscribeCalls).toBe(1);
     });
 
-    it("replaces an existing subscription when the same id subscribes again", async () => {
+    it("preserves legacy replacement when an existing id when the same id subscribes again", async () => {
       const { subscriber, subscriptions } = createFakeDiffSubscriber({
         cwd: "/repo",
         files: [],
         error: null,
       });
-      const { checkout } = makeCheckoutSession({ diff: subscriber });
+      const { subscribe } = makeCheckoutSession({ diff: subscriber });
 
-      await checkout.handleSubscribeDiffRequest({
+      await subscribe({
         type: "subscribe_checkout_diff_request",
         subscriptionId: "s1",
         cwd: "/repo",
         compare: { mode: "uncommitted" },
         requestId: "first",
       });
-      await checkout.handleSubscribeDiffRequest({
+      await subscribe({
         type: "subscribe_checkout_diff_request",
         subscriptionId: "s1",
         cwd: "/repo",
@@ -608,16 +626,16 @@ describe("CheckoutSession", () => {
         files: [],
         error: null,
       });
-      const { checkout } = makeCheckoutSession({ diff: subscriber });
+      const { subscribe, close } = makeCheckoutSession({ diff: subscriber });
 
-      await checkout.handleSubscribeDiffRequest({
+      await subscribe({
         type: "subscribe_checkout_diff_request",
         subscriptionId: "s1",
         cwd: "/repo",
         compare: { mode: "uncommitted" },
         requestId: "r",
       });
-      await checkout.handleSubscribeDiffRequest({
+      await subscribe({
         type: "subscribe_checkout_diff_request",
         subscriptionId: "s2",
         cwd: "/repo",
@@ -625,7 +643,7 @@ describe("CheckoutSession", () => {
         requestId: "r",
       });
 
-      checkout.cleanup();
+      await close();
 
       expect(subscriptions[0].unsubscribeCalls).toBe(1);
       expect(subscriptions[1].unsubscribeCalls).toBe(1);
