@@ -1253,7 +1253,10 @@ function ComposerContentImpl({
     onChangeRequestDetected: onForgeChangeRequestDetected,
     onChangeRequestAdded: onForgeChangeRequestAutoAttach,
   });
-  const [cursorIndex, setCursorIndex] = useState(0);
+  const [rawCursorIndex, setCursorIndex] = useState(0);
+  // Text and cursor publish separately, so the cursor can briefly point past the end of the
+  // text the store has seen; clamp in render rather than chasing it with an effect.
+  const cursorIndex = Math.min(rawCursorIndex, userInput.length);
   const cursorPublication = useMemo(() => new AfterPaintPublication<number>(setCursorIndex), []);
   const [isProcessing, setIsProcessing] = useState(false);
   const [isUploadingFile, setIsUploadingFile] = useState(false);
@@ -1372,11 +1375,6 @@ function ComposerContentImpl({
       selectAutocompleteOption(option, messageInputRef.current?.getInputSnapshot()),
     [selectAutocompleteOption],
   );
-
-  // Clear send error when user edits the input
-  useEffect(() => {
-    setCursorIndex((current) => Math.min(current, userInput.length));
-  }, [userInput.length]);
 
   useEffect(() => () => cursorPublication.cancel(), [cursorPublication]);
 

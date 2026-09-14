@@ -56,9 +56,17 @@ export function useComposerForgeAutoAttach(
   );
 
   latestRef.current = params;
-  const lookupCandidateKey = getLookupCandidateKey(params, removedRefKeysRef.current);
-  const lookupRelevanceKey = getLookupRelevanceKey(params, removedRefKeysRef.current);
-  const presentChangeRequestKey = getPresentChangeRequestKey(params);
+  const forgeRefs = useMemo(
+    () => extractForgeRefs(params.text, params.remoteUrl),
+    [params.remoteUrl, params.text],
+  );
+  const lookupCandidateKey = getLookupCandidateKey(
+    forgeRefs,
+    params.attachments,
+    removedRefKeysRef.current,
+  );
+  const lookupRelevanceKey = getLookupRelevanceKey(forgeRefs, removedRefKeysRef.current);
+  const presentChangeRequestKey = getPresentChangeRequestKey(forgeRefs);
   const hasClient = params.client !== null;
 
   useEffect(() => {
@@ -164,19 +172,21 @@ export function useComposerForgeAutoAttach(
 }
 
 function getLookupCandidateKey(
-  params: ComposerForgeAutoAttachInput,
+  refs: readonly ForgeRef[],
+  attachments: UserComposerAttachment[],
   removedRefKeys: ReadonlySet<string>,
 ): string {
-  return getLookupCandidateRefs(params, removedRefKeys).map(forgeRefKey).join("|");
+  return getLookupCandidateRefs(refs, attachments, removedRefKeys).map(forgeRefKey).join("|");
 }
 
 function getLookupCandidateRefs(
-  params: ComposerForgeAutoAttachInput,
+  refs: readonly ForgeRef[],
+  attachments: UserComposerAttachment[],
   removedRefKeys: ReadonlySet<string>,
 ): ForgeRef[] {
-  return extractForgeRefs(params.text, params.remoteUrl).filter((ref) => {
+  return refs.filter((ref) => {
     const key = forgeRefKey(ref);
-    return !removedRefKeys.has(key) && !hasForgeAttachment(params.attachments, ref);
+    return !removedRefKeys.has(key) && !hasForgeAttachment(attachments, ref);
   });
 }
 
@@ -185,25 +195,29 @@ function didLookupSourceOrderChange(
   current: ComposerForgeAutoAttachInput,
   removedRefKeys: ReadonlySet<string>,
 ): boolean {
-  const currentKeys = getLookupCandidateRefs(current, removedRefKeys).map(forgeRefKey);
+  const currentKeys = getLookupCandidateRefs(
+    extractForgeRefs(current.text, current.remoteUrl),
+    current.attachments,
+    removedRefKeys,
+  ).map(forgeRefKey);
   const currentKeySet = new Set(currentKeys);
   const retainedOriginalKeys = originalKeys.filter((key) => currentKeySet.has(key));
   return currentKeys.join("|") !== retainedOriginalKeys.join("|");
 }
 
 function getLookupRelevanceKey(
-  params: ComposerForgeAutoAttachInput,
+  refs: readonly ForgeRef[],
   removedRefKeys: ReadonlySet<string>,
 ): string {
-  return extractForgeRefs(params.text, params.remoteUrl)
+  return refs
     .map(forgeRefKey)
     .filter((key) => !removedRefKeys.has(key))
     .sort()
     .join("|");
 }
 
-function getPresentChangeRequestKey(params: ComposerForgeAutoAttachInput): string {
-  return extractForgeRefs(params.text, params.remoteUrl)
+function getPresentChangeRequestKey(refs: readonly ForgeRef[]): string {
+  return refs
     .filter((ref) => ref.kind === "change_request")
     .map(forgeRefKey)
     .sort()

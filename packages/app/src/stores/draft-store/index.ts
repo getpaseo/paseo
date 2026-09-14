@@ -214,6 +214,19 @@ function collectStreamUserImageIds(
   }
 }
 
+function referencedAttachmentIdsKey(input: DraftInput | undefined): string {
+  if (!input) {
+    return "";
+  }
+  const ids: string[] = [];
+  for (const attachment of input.attachments) {
+    if (attachment.kind === "image") {
+      ids.push(attachment.metadata.id);
+    }
+  }
+  return ids.sort().join("\n");
+}
+
 function scheduleAttachmentGc(): void {
   if (gcScheduled) {
     return;
@@ -300,20 +313,23 @@ export const useDraftStore = create<DraftStore>()(
       },
 
       saveDraftInput: ({ draftKey, draft }) => {
-        set((state) => {
-          const existing = state.drafts[draftKey];
-          return {
-            drafts: {
-              ...state.drafts,
-              [draftKey]: createDraftRecord({
-                draft,
-                lifecycle: "active",
-                previousVersion: existing?.version,
-              }),
-            },
-          };
-        });
-        scheduleAttachmentGc();
+        const existing = get().drafts[draftKey];
+        set((state) => ({
+          drafts: {
+            ...state.drafts,
+            [draftKey]: createDraftRecord({
+              draft,
+              lifecycle: "active",
+              previousVersion: existing?.version,
+            }),
+          },
+        }));
+        // Text edits arrive per keystroke and cannot orphan a stored attachment, so only a
+        // change in the referenced attachment ids earns a collection pass.
+        const existingInput = toDraftInputIfReady(existing);
+        if (referencedAttachmentIdsKey(existingInput) !== referencedAttachmentIdsKey(draft)) {
+          scheduleAttachmentGc();
+        }
       },
 
       markDraftLifecycle: ({ draftKey, lifecycle }) => {

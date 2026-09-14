@@ -341,9 +341,10 @@ export function WorkspaceDraftAgentTab({
     workspaceDirectory,
     initialSetup: draftSetup,
   });
-  const draftInitialValues = buildDraftInitialValues({
-    initialSetup: draftSetup,
-  });
+  const draftInitialValues = useMemo(
+    () => buildDraftInitialValues({ initialSetup: draftSetup }),
+    [draftSetup],
+  );
   const draftStoreKey = useMemo(
     () =>
       buildDraftStoreKey({
@@ -353,15 +354,22 @@ export function WorkspaceDraftAgentTab({
       }),
     [draftId, serverId, tabId],
   );
-  const draftInput = useAgentInputDraft({
-    draftKey: draftStoreKey,
-    composer: {
+  const draftInitialFeatureValues = draftSetup?.featureValues;
+  // useAgentFormState dispatches INPUTS_CHANGED whenever these inputs change identity, so the
+  // options object must survive re-renders that do not change any of them.
+  const draftComposerOptions = useMemo(
+    () => ({
       initialServerId: serverId,
       initialValues: draftInitialValues,
-      initialFeatureValues: draftSetup?.featureValues,
+      initialFeatureValues: draftInitialFeatureValues,
       isVisible: true,
       lockedWorkingDir: draftWorkingDirectory ?? undefined,
-    },
+    }),
+    [draftInitialFeatureValues, draftInitialValues, draftWorkingDirectory, serverId],
+  );
+  const draftInput = useAgentInputDraft({
+    draftKey: draftStoreKey,
+    composer: draftComposerOptions,
   });
   const composerState = draftInput.composerState;
   if (!composerState) {
