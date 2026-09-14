@@ -996,6 +996,7 @@ export const UpdateAgentRequestMessageSchema = z.object({
 export const ProjectIconSourceSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("automatic") }),
   z.object({ type: z.literal("upload"), data: z.string() }),
+  z.object({ type: z.literal("emoji"), emoji: z.string() }),
 ]);
 
 export const ProjectRenameRequestSchema = z.object({
@@ -3716,6 +3717,8 @@ export const ServerInfoStatusPayloadSchema = z
         workspaceScriptManagement: z.boolean().optional(),
         // COMPAT(projectCustomIcon): added in v0.2.0, remove after 2027-01-20.
         projectCustomIcon: z.boolean().optional(),
+        // COMPAT(projectEmojiIcon): added in v0.8.1, remove after 2027-03-14.
+        projectEmojiIcon: z.boolean().optional(),
         // COMPAT(fsEntryOps): added in v0.3.0, remove gate after 2027-02-08.
         fsEntryOps: z.boolean().optional(),
         // COMPAT(fsEntryDuplicate): added in v0.3.0, remove gate after 2027-02-09.
@@ -6005,6 +6008,8 @@ export const ProjectIconGetResponseSchema = z.object({
   payload: z.object({
     projectId: z.string(),
     icon: ProjectIconSchema.nullable(),
+    // COMPAT(projectEmojiIcon): added in v0.8.1, remove after 2027-03-14.
+    emoji: z.string().nullable().optional(),
     error: z.string().nullable(),
     requestId: z.string(),
   }),

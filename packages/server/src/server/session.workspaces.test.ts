@@ -7981,6 +7981,29 @@ test("project.icon.set.request publishes a custom icon that project.icon.get ser
     error: null,
   });
 
+  emitted.length = 0;
+  await session.handleMessage({
+    type: "project.icon.set.request",
+    projectId: project.projectId,
+    source: { type: "emoji", emoji: "🦊" },
+    requestId: "req-icon-emoji-set",
+  });
+  expect(findByType(emitted, "project.icon.set.response")?.payload).toMatchObject({
+    accepted: true,
+  });
+
+  emitted.length = 0;
+  await session.handleMessage({
+    type: "project.icon.get.request",
+    projectId: project.projectId,
+    requestId: "req-icon-emoji-get",
+  });
+  expect(findByType(emitted, "project.icon.get.response")?.payload).toMatchObject({
+    icon: null,
+    emoji: "🦊",
+    error: null,
+  });
+
   rmSync(tempDir, { recursive: true, force: true });
 });
 

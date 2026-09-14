@@ -40,7 +40,7 @@ import { isWeb } from "@/constants/platform";
 import { useHosts } from "@/runtime/host-runtime";
 import { useSidebarModel } from "@/components/sidebar/sidebar-model";
 import { ProjectIconView } from "@/components/project-icon-view";
-import { useProjectIcons } from "@/projects/icons";
+import { useProjectIcons, type ProjectIconRenderData } from "@/projects/icons";
 import { resolveSidebarProjectIconTargets } from "@/utils/sidebar-project-row-model";
 import { projectIconPlaceholderLabelFromDisplayName } from "@/utils/project-display-name";
 import type { SidebarProjectEntry } from "@/hooks/use-sidebar-workspaces-list";
@@ -638,7 +638,7 @@ function ProjectFilterPage({
           key={project.viewKey}
           viewKey={project.viewKey}
           label={project.projectName}
-          iconDataUri={iconByProjectViewKey.get(project.viewKey) ?? null}
+          icon={iconByProjectViewKey.get(project.viewKey)}
           selected={resolvedProjectFilters.includes(project.viewKey)}
           onToggle={preferences.toggleProjectFilter}
         />
@@ -650,13 +650,13 @@ function ProjectFilterPage({
 function ProjectFilterItem({
   viewKey,
   label,
-  iconDataUri,
+  icon,
   selected,
   onToggle,
 }: {
   viewKey: string;
   label: string;
-  iconDataUri: string | null;
+  icon?: ProjectIconRenderData;
   selected: boolean;
   onToggle: (viewKey: string) => void;
 }): ReactElement {
@@ -664,14 +664,15 @@ function ProjectFilterItem({
   const leading = useMemo(
     () => (
       <ProjectIconView
-        iconDataUri={iconDataUri}
+        iconDataUri={icon?.dataUri ?? null}
+        emoji={icon?.emoji}
         initial={projectIconPlaceholderLabelFromDisplayName(label).charAt(0).toUpperCase()}
         projectViewKey={viewKey}
         size={OPTION_ICON_SIZE}
         textStyle={styles.projectIconText}
       />
     ),
-    [iconDataUri, label, viewKey],
+    [icon, label, viewKey],
   );
 
   return (

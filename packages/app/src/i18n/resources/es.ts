@@ -2655,6 +2655,7 @@ export const es: TranslationResources = {
         name: "Nombre",
         nameLabel: "Nombre del proyecto",
         icon: "Icono",
+        emoji: "Emoji",
         chooseImage: "Elegir imagen",
         useAutomatic: "Usar automático",
         imageUrl: "URL de imagen o sitio web",

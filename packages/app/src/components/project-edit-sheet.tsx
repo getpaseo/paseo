@@ -33,6 +33,8 @@ export interface ProjectEditSheetProps {
   client: DaemonClient;
   /** False on hosts that predate custom project icons — the icon field is hidden. */
   supportsCustomIcon: boolean;
+  /** False on hosts that predate emoji project icons. */
+  supportsEmojiIcon: boolean;
   snapshot: ProjectEditFormSnapshot;
 }
 
@@ -44,6 +46,7 @@ export function ProjectEditSheet({
   projectViewKey,
   client,
   supportsCustomIcon,
+  supportsEmojiIcon,
   snapshot,
 }: ProjectEditSheetProps) {
   const { t } = useTranslation();
@@ -158,6 +161,7 @@ export function ProjectEditSheet({
             <View style={styles.iconRow}>
               <ProjectIconView
                 iconDataUri={state.previewDataUri}
+                emoji={state.previewEmoji}
                 initial={projectInitial(snapshot.projectName)}
                 projectViewKey={projectViewKey}
                 size={40}
@@ -184,6 +188,20 @@ export function ProjectEditSheet({
                 </Button>
               ) : null}
             </View>
+            {supportsEmojiIcon ? (
+              <FormTextInput
+                size={size}
+                testID="project-edit-emoji"
+                accessibilityLabel={t("settings.project.edit.emoji")}
+                initialValue={state.emoji}
+                resetKey={state.emojiResetKey}
+                onChangeText={form.setEmoji}
+                placeholder={t("settings.project.edit.emoji")}
+                editable={!isSaving}
+                autoCapitalize="none"
+                autoCorrect={false}
+              />
+            ) : null}
             <FormTextInput
               size={size}
               testID="project-edit-image-url"

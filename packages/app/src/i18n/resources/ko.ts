@@ -2613,6 +2613,7 @@ export const ko: TranslationResources = {
         name: "이름",
         nameLabel: "프로젝트 이름",
         icon: "아이콘",
+        emoji: "이모지",
         chooseImage: "이미지 선택",
         useAutomatic: "자동 사용",
         imageUrl: "이미지 또는 웹사이트 URL",

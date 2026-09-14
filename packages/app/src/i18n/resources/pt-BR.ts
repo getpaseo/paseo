@@ -2639,6 +2639,7 @@ export const ptBR: TranslationResources = {
         name: "Nome",
         nameLabel: "Nome do projeto",
         icon: "Ícone",
+        emoji: "Emoji",
         chooseImage: "Escolher imagem",
         useAutomatic: "Usar automático",
         imageUrl: "URL de imagem ou site",

@@ -230,6 +230,7 @@ function ProjectSettingsBody({
 
   const data = readQuery.data;
   const supportsCustomIcon = useHostFeature(selectedHost.serverId, "projectCustomIcon");
+  const supportsEmojiIcon = useHostFeature(selectedHost.serverId, "projectEmojiIcon");
   const customIconRevision = selectedHost.customIconRevision ?? null;
   const projectIconTargets = useMemo(() => {
     const target = createProjectIconTarget({
@@ -239,20 +240,16 @@ function ProjectSettingsBody({
     return target ? [target] : [];
   }, [project.viewKey, selectedHost]);
   const projectIcons = useProjectIcons({ projects: projectIconTargets });
-  const projectIconDataUri = projectIcons.get(project.viewKey) ?? null;
+  const projectIcon = projectIcons.get(project.viewKey);
   const editSnapshot = useMemo<ProjectEditFormSnapshot>(
     () => ({
       projectName: selectedHost.projectName,
       projectCustomName: selectedHost.projectCustomName,
       hasCustomIcon: customIconRevision !== null,
-      currentIconDataUri: projectIconDataUri,
+      currentIconDataUri: projectIcon?.dataUri ?? null,
+      currentIconEmoji: projectIcon?.emoji ?? null,
     }),
-    [
-      customIconRevision,
-      projectIconDataUri,
-      selectedHost.projectCustomName,
-      selectedHost.projectName,
-    ],
+    [customIconRevision, projectIcon, selectedHost.projectCustomName, selectedHost.projectName],
   );
   const loadedConfig: PaseoConfigRaw | null = data?.ok ? (data.config ?? {}) : null;
   const loadedRevision: PaseoConfigRevision | null = data?.ok ? data.revision : null;
@@ -269,9 +266,10 @@ function ProjectSettingsBody({
       {showBackToProjects ? <BackToProjectsButton onPress={onBackToProjects} /> : null}
 
       <View style={styles.headerBlock}>
-        <View style={styles.titleRow}>
+        <View style={styles.titleRow} testID="project-settings-header">
           <ProjectTitleIcon
-            iconDataUri={projectIconDataUri}
+            iconDataUri={projectIcon?.dataUri ?? null}
+            emoji={projectIcon?.emoji}
             projectName={selectedHost.projectName}
             projectViewKey={project.viewKey}
           />
@@ -301,6 +299,7 @@ function ProjectSettingsBody({
         projectViewKey={project.viewKey}
         client={client}
         supportsCustomIcon={supportsCustomIcon}
+        supportsEmojiIcon={supportsEmojiIcon}
         snapshot={editSnapshot}
       />
 
@@ -855,10 +854,12 @@ function ResolveSpinnerColor(): string {
 
 function ProjectTitleIcon({
   iconDataUri,
+  emoji,
   projectName,
   projectViewKey,
 }: {
   iconDataUri: string | null;
+  emoji?: string | null;
   projectName: string;
   projectViewKey: string;
 }) {
@@ -866,6 +867,7 @@ function ProjectTitleIcon({
   return (
     <ProjectIconView
       iconDataUri={iconDataUri}
+      emoji={emoji}
       initial={initial}
       projectViewKey={projectViewKey}
       size={28}

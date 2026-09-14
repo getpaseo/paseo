@@ -56,6 +56,7 @@ const needsInputColorMapping = (theme: Theme) => ({
 export function ProjectLeadingVisual({
   displayName,
   iconDataUri,
+  emoji,
   statusBucket,
   projectViewKey,
   backdrop,
@@ -65,6 +66,7 @@ export function ProjectLeadingVisual({
 }: {
   displayName: string;
   iconDataUri: string | null;
+  emoji?: string | null;
   /** Aggregate status of the project's workspaces; null when it shouldn't be surfaced. */
   statusBucket: SidebarStateBucket | null;
   projectViewKey: string;
@@ -93,6 +95,7 @@ export function ProjectLeadingVisual({
   return (
     <ProjectStatusIndicator
       iconDataUri={iconDataUri}
+      emoji={emoji}
       displayName={displayName}
       projectViewKey={projectViewKey}
       statusBucket={statusBucket}
@@ -108,6 +111,7 @@ export function ProjectLeadingVisual({
 // only its contents change.
 export function ProjectStatusIndicator({
   iconDataUri,
+  emoji,
   displayName,
   projectViewKey,
   statusBucket,
@@ -116,6 +120,7 @@ export function ProjectStatusIndicator({
   testID,
 }: {
   iconDataUri: string | null;
+  emoji?: string | null;
   displayName: string;
   projectViewKey: string;
   statusBucket: SidebarStateBucket | null;
@@ -146,6 +151,7 @@ export function ProjectStatusIndicator({
       <View style={styles.projectIconBox}>
         <ProjectIcon
           iconDataUri={iconDataUri}
+          emoji={emoji}
           placeholderInitial={placeholderInitial}
           projectViewKey={projectViewKey}
         />
@@ -220,16 +226,19 @@ function ProjectStatusDot({ bucket }: { bucket: ProjectStatusBadgeDotBucket }) {
 
 function ProjectIcon({
   iconDataUri,
+  emoji,
   placeholderInitial,
   projectViewKey,
 }: {
   iconDataUri: string | null;
+  emoji?: string | null;
   placeholderInitial: string;
   projectViewKey: string;
 }) {
   return (
     <ProjectIconView
       iconDataUri={iconDataUri}
+      emoji={emoji}
       initial={placeholderInitial}
       projectViewKey={projectViewKey}
       size={ICON_SIZE.md}

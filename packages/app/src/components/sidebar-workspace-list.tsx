@@ -49,7 +49,7 @@ import {
 import { useSidebarCollapsedSectionsStore } from "@/stores/sidebar-collapsed-sections-store";
 import { useHostFeatureMap } from "@/runtime/host-features";
 import { useIsCompactFormFactor } from "@/constants/layout";
-import { useProjectIcons } from "@/projects/icons";
+import { useProjectIcons, type ProjectIconRenderData } from "@/projects/icons";
 import {
   buildNewWorkspaceRoute,
   buildProjectSettingsRoute,
@@ -241,7 +241,7 @@ interface SidebarWorkspaceListProps {
 interface ProjectHeaderRowProps {
   project: SidebarProjectEntry;
   displayName: string;
-  iconDataUri: string | null;
+  icon?: ProjectIconRenderData;
   statusBucket: SidebarStateBucket | null;
   selected?: boolean;
   chevron: "expand" | "collapse" | null;
@@ -261,11 +261,13 @@ interface ProjectHeaderRowProps {
   dragHandleProps?: DraggableListDragHandleProps;
 }
 
+const EMPTY_PROJECT_ICON: ProjectIconRenderData = { dataUri: null, emoji: null };
+
 interface WorkspaceRowInnerProps {
   workspace: SidebarWorkspaceEntry;
   hostBadge?: HostBadgeModel | null;
   leadingProjectName?: string | null;
-  leadingProjectIconDataUri?: string | null;
+  leadingProjectIcon?: ProjectIconRenderData;
   selected: boolean;
   shortcutNumber: number | null;
   showShortcutBadge: boolean;
@@ -850,7 +852,7 @@ function NewWorkspaceGhostRow({
 function ProjectHeaderRow({
   project,
   displayName,
-  iconDataUri,
+  icon = EMPTY_PROJECT_ICON,
   statusBucket,
   selected = false,
   chevron,
@@ -945,7 +947,8 @@ function ProjectHeaderRow({
       <View style={styles.projectRowLeft}>
         <ProjectLeadingVisual
           displayName={displayName}
-          iconDataUri={iconDataUri}
+          iconDataUri={icon.dataUri}
+          emoji={icon.emoji}
           statusBucket={statusBucket}
           projectViewKey={project.viewKey}
           backdrop={getSidebarRowBackdrop({ isDragging, isPressed, selected, isHovered })}
@@ -1051,7 +1054,7 @@ function WorkspaceRowInner({
   workspace,
   hostBadge,
   leadingProjectName,
-  leadingProjectIconDataUri,
+  leadingProjectIcon,
   selected,
   shortcutNumber,
   showShortcutBadge,
@@ -1167,7 +1170,7 @@ function WorkspaceRowInner({
                 workspace={workspace}
                 hostBadge={hostBadge}
                 leadingProjectName={leadingProjectName}
-                leadingProjectIconDataUri={leadingProjectIconDataUri}
+                leadingProjectIcon={leadingProjectIcon}
                 serviceSummary={serviceSummary}
                 backdrop={backdrop}
                 isHovered={isHovered}
@@ -1211,7 +1214,7 @@ function WorkspaceRowWithMenu({
   workspace,
   hostBadge,
   leadingProjectName,
-  leadingProjectIconDataUri,
+  leadingProjectIcon,
   selected,
   shortcutNumber,
   showShortcutBadge,
@@ -1228,7 +1231,7 @@ function WorkspaceRowWithMenu({
   workspace: SidebarWorkspaceEntry;
   hostBadge?: HostBadgeModel | null;
   leadingProjectName?: string | null;
-  leadingProjectIconDataUri?: string | null;
+  leadingProjectIcon?: ProjectIconRenderData;
   selected: boolean;
   shortcutNumber: number | null;
   showShortcutBadge: boolean;
@@ -1329,7 +1332,7 @@ function WorkspaceRowWithMenu({
         workspace={workspace}
         hostBadge={hostBadge}
         leadingProjectName={leadingProjectName}
-        leadingProjectIconDataUri={leadingProjectIconDataUri}
+        leadingProjectIcon={leadingProjectIcon}
         selected={selected}
         shortcutNumber={shortcutNumber}
         showShortcutBadge={showShortcutBadge}
@@ -1369,7 +1372,7 @@ interface WorkspaceRowItemProps {
   workspaceEntry: SidebarWorkspaceEntry | null;
   hostBadge?: HostBadgeModel | null;
   leadingProjectName?: string | null;
-  leadingProjectIconDataUri?: string | null;
+  leadingProjectIcon?: ProjectIconRenderData;
   shortcutNumber: number | null;
   showShortcutBadge: boolean;
   canCopyBranchName: boolean;
@@ -1390,7 +1393,7 @@ function WorkspaceRowItem({
   workspaceEntry,
   hostBadge,
   leadingProjectName,
-  leadingProjectIconDataUri,
+  leadingProjectIcon,
   shortcutNumber,
   showShortcutBadge,
   canCopyBranchName,
@@ -1418,7 +1421,7 @@ function WorkspaceRowItem({
       workspaceEntry={workspaceEntry}
       hostBadge={hostBadge}
       leadingProjectName={leadingProjectName}
-      leadingProjectIconDataUri={leadingProjectIconDataUri}
+      leadingProjectIcon={leadingProjectIcon}
       shortcutNumber={shortcutNumber}
       showShortcutBadge={showShortcutBadge}
       canCopyBranchName={canCopyBranchName}
@@ -1461,7 +1464,7 @@ function areWorkspaceRowItemPropsEqual(
     previous.workspaceEntry === next.workspaceEntry &&
     previous.hostBadge === next.hostBadge &&
     previous.leadingProjectName === next.leadingProjectName &&
-    previous.leadingProjectIconDataUri === next.leadingProjectIconDataUri &&
+    previous.leadingProjectIcon === next.leadingProjectIcon &&
     previous.shortcutNumber === next.shortcutNumber &&
     previous.showShortcutBadge === next.showShortcutBadge &&
     previous.canCopyBranchName === next.canCopyBranchName &&
@@ -1483,7 +1486,7 @@ function WorkspaceRow({
   workspaceEntry,
   hostBadge,
   leadingProjectName,
-  leadingProjectIconDataUri,
+  leadingProjectIcon,
   shortcutNumber,
   showShortcutBadge,
   onPress,
@@ -1500,7 +1503,7 @@ function WorkspaceRow({
   workspaceEntry: SidebarWorkspaceEntry | null;
   hostBadge?: HostBadgeModel | null;
   leadingProjectName?: string | null;
-  leadingProjectIconDataUri?: string | null;
+  leadingProjectIcon?: ProjectIconRenderData;
   shortcutNumber: number | null;
   showShortcutBadge: boolean;
   onPress: () => void;
@@ -1523,7 +1526,7 @@ function WorkspaceRow({
       workspace={workspaceEntry}
       hostBadge={hostBadge}
       leadingProjectName={leadingProjectName}
-      leadingProjectIconDataUri={leadingProjectIconDataUri}
+      leadingProjectIcon={leadingProjectIcon}
       selected={selected}
       shortcutNumber={shortcutNumber}
       showShortcutBadge={showShortcutBadge}
@@ -1545,7 +1548,7 @@ function ProjectBlock({
   workspaceEntriesByKey,
   collapsed,
   displayName,
-  iconDataUri,
+  icon,
   selectionEnabled,
   showShortcutBadges,
   shortcutIndexByWorkspaceKey,
@@ -1570,7 +1573,7 @@ function ProjectBlock({
   workspaceEntriesByKey: ReadonlyMap<string, SidebarWorkspaceEntry>;
   collapsed: boolean;
   displayName: string;
-  iconDataUri: string | null;
+  icon?: ProjectIconRenderData;
   selectionEnabled: boolean;
   showShortcutBadges: boolean;
   shortcutIndexByWorkspaceKey: Map<string, number>;
@@ -1796,7 +1799,7 @@ function ProjectBlock({
       <ProjectHeaderRow
         project={project}
         displayName={displayName}
-        iconDataUri={iconDataUri}
+        icon={icon}
         statusBucket={aggregateStatusBucket}
         selected={false}
         chevron={rowModel.chevron}
@@ -1830,7 +1833,7 @@ function areProjectBlockPropsEqual(previous: ProjectBlockProps, next: ProjectBlo
     previous.workspaceEntriesByKey === next.workspaceEntriesByKey &&
     previous.collapsed === next.collapsed &&
     previous.displayName === next.displayName &&
-    previous.iconDataUri === next.iconDataUri &&
+    previous.icon === next.icon &&
     previous.selectionEnabled === next.selectionEnabled &&
     previous.showShortcutBadges === next.showShortcutBadges &&
     previous.shortcutIndexByWorkspaceKey === next.shortcutIndexByWorkspaceKey &&
@@ -2035,7 +2038,7 @@ function SidebarGroupedModeList({
   workspaceGroups: SidebarWorkspaceGroup[];
   pinnedGroups: PinnedSidebarGroups;
   workspaceEntriesByKey: ReadonlyMap<string, SidebarWorkspaceEntry>;
-  projectIconByProjectViewKey: ReadonlyMap<string, string | null>;
+  projectIconByProjectViewKey: ReadonlyMap<string, ProjectIconRenderData>;
   shortcutIndexByWorkspaceKey: Map<string, number>;
   onWorkspacePress?: () => void;
   hostBadgeByServerId: ReadonlyMap<string, HostBadgeModel>;
@@ -2111,7 +2114,7 @@ function ProjectModeList({
 > & {
   /** Swaps the list body for the label filter's empty state. Never the header above it. */
   sidebarFilterEmpty: boolean;
-  projectIconByProjectViewKey: ReadonlyMap<string, string | null>;
+  projectIconByProjectViewKey: ReadonlyMap<string, ProjectIconRenderData>;
   pathname: string;
   hostBadgeByServerId: ReadonlyMap<string, HostBadgeModel>;
   supportsMultiplicityByServerId: ReadonlyMap<string, boolean>;
@@ -2297,7 +2300,7 @@ function ProjectModeList({
           workspaceEntriesByKey={workspaceEntriesByKey}
           collapsed={collapsedProjectKeys.has(item.viewKey)}
           displayName={item.projectName}
-          iconDataUri={projectIconByProjectViewKey.get(item.viewKey) ?? null}
+          icon={projectIconByProjectViewKey.get(item.viewKey)}
           selectionEnabled={selectionEnabled}
           showShortcutBadges={showShortcutBadges}
           shortcutIndexByWorkspaceKey={shortcutIndexByWorkspaceKey}
@@ -2361,9 +2364,7 @@ function ProjectModeList({
           workspaceEntry={workspaceEntriesByKey.get(workspace.workspaceKey) ?? null}
           hostBadge={hostBadgeByServerId.get(workspace.serverId) ?? null}
           leadingProjectName={workspace.projectName}
-          leadingProjectIconDataUri={
-            projectIconByProjectViewKey.get(workspace.projectViewKey) ?? null
-          }
+          leadingProjectIcon={projectIconByProjectViewKey.get(workspace.projectViewKey)}
           shortcutNumber={shortcutIndexByWorkspaceKey.get(workspace.workspaceKey) ?? null}
           showShortcutBadge={showShortcutBadges}
           canCopyBranchName={workspace.projectKind === "git"}

@@ -31,6 +31,7 @@ import {
   expectWriteFailedCalloutActions,
   expectUncommittedSetupWarning,
   fillProjectIconUrl,
+  fillProjectIconEmoji,
   fillProjectName,
   installDaemonConnectionGate,
   installReadTransportFailure,
@@ -299,6 +300,25 @@ test.describe("Projects settings", () => {
     await saveProjectEdits(page);
 
     await expectProjectEditSaved(page);
+  });
+
+  test("user sets and reopens a project emoji", async ({ page, editableProject }) => {
+    await openProjects(page);
+    await openProjectSettings(page, editableProject.name);
+    await openProjectEditSheet(page);
+    await fillProjectIconEmoji(page, "🦊");
+    await expect(
+      page.getByTestId("project-edit-sheet").getByTestId("project-icon-emoji").getByText("🦊"),
+    ).toBeVisible();
+    await saveProjectEdits(page);
+
+    await expectProjectEditSaved(page);
+    await expect(
+      page.getByTestId("project-settings-header").getByTestId("project-icon-emoji").getByText("🦊"),
+    ).toBeVisible();
+
+    await openProjectEditSheet(page);
+    await expect(page.getByRole("textbox", { name: "Emoji" })).toHaveValue("🦊");
   });
 
   test("user sets a project name and icon in one save", async ({ page, editableProject }) => {

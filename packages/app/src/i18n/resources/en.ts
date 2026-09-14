@@ -2723,6 +2723,7 @@ export const en = {
         name: "Name",
         nameLabel: "Project name",
         icon: "Icon",
+        emoji: "Emoji",
         chooseImage: "Choose image",
         useAutomatic: "Use automatic",
         imageUrl: "Image or website URL",
