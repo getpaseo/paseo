@@ -41,13 +41,10 @@ import {
 } from "@/components/sidebar-resize-handle-layout";
 import {
   EXPLORER_TAB_RAIL_INSET,
+  explorerSidebarCloseButtonLayout,
   resolveExplorerSidebarWidth,
 } from "@/components/explorer-sidebar-layout";
-import {
-  paneContentToolbarIconSize,
-  paneContentToolbarTrailingPadding,
-  ToolbarButton,
-} from "@/components/ui/pane-content-toolbar";
+import { ToolbarButton } from "@/components/ui/pane-content-toolbar";
 import { mutedIconColorMapping } from "@/components/ui/icon-button-chrome";
 import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 
@@ -291,8 +288,12 @@ function ExplorerTabButton({
   testID,
   children,
 }: ExplorerTabButtonProps) {
+  const isCompact = useIsCompactFormFactor();
   const handlePress = useCallback(() => onTabPress(tab), [onTabPress, tab]);
-  const tabStyle = useMemo(() => [styles.tab, active && styles.tabActive], [active]);
+  const tabStyle = useMemo(
+    () => [styles.tab(isCompact), active && styles.tabActive],
+    [active, isCompact],
+  );
   const tabTextStyle = useMemo(() => [styles.tabText, active && styles.tabTextActive], [active]);
   return (
     <Pressable testID={testID} style={tabStyle} onPress={handlePress}>
@@ -328,13 +329,15 @@ function ExplorerSidebarContent({
   const { theme } = useUnistyles();
   const { t } = useTranslation();
   const isCompact = useIsCompactFormFactor();
+  const closeButtonLayout = explorerSidebarCloseButtonLayout(isCompact);
+  const closeButtonStyle = useMemo(
+    () => ({ width: closeButtonLayout.size, height: closeButtonLayout.size }),
+    [closeButtonLayout.size],
+  );
   // The close glyph shares the trailing rail with the toolbar rows below it.
   const headerRightSectionStyle = useMemo(
-    () => [
-      styles.headerRightSection,
-      { paddingRight: paneContentToolbarTrailingPadding(isCompact, "glyph") },
-    ],
-    [isCompact],
+    () => [styles.headerRightSection, { paddingRight: closeButtonLayout.trailingPadding }],
+    [closeButtonLayout.trailingPadding],
   );
   const { prPane, showPullRequest: showPrTab } = usePullRequestPanelAvailability({
     serverId,
@@ -364,7 +367,7 @@ function ExplorerSidebarContent({
       {/* Header with tabs and close button */}
       <WindowChromeSafeArea placement="inline" style={styles.header} testID="explorer-header">
         <TitlebarDragRegion />
-        <View style={styles.tabsContainer}>
+        <View style={styles.tabsContainer(isCompact)}>
           {isGit && (
             <ExplorerTabButton
               tab="changes"
@@ -402,15 +405,14 @@ function ExplorerSidebarContent({
         <View style={headerRightSectionStyle}>
           <ToolbarButton
             compact={isCompact}
+            style={closeButtonStyle}
+            hitSlop={closeButtonLayout.hitSlop}
             label={t("workspace.tabs.explorerSidebar.close")}
             onPress={onClose}
             testID="explorer-close"
             nativeID="explorer-close"
           >
-            <ThemedX
-              size={paneContentToolbarIconSize(isCompact)}
-              uniProps={mutedIconColorMapping}
-            />
+            <ThemedX size={closeButtonLayout.iconSize} uniProps={mutedIconColorMapping} />
           </ToolbarButton>
         </View>
       </WindowChromeSafeArea>
@@ -531,21 +533,21 @@ const styles = StyleSheet.create((theme) => ({
     borderBottomWidth: 1,
     borderBottomColor: theme.colors.border,
   },
-  tabsContainer: {
+  tabsContainer: (isCompact: boolean) => ({
     flexDirection: "row",
     gap: theme.spacing[1],
     // With the tab's own horizontal padding this puts the label on the pane's
     // leading rail, the same way the desktop tab rail does.
-    paddingLeft: EXPLORER_TAB_RAIL_INSET,
-  },
-  tab: {
+    paddingLeft: isCompact ? EXPLORER_TAB_RAIL_INSET : theme.spacing[2],
+  }),
+  tab: (isCompact: boolean) => ({
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[2],
     paddingVertical: theme.spacing[2],
-    paddingHorizontal: theme.spacing[2],
+    paddingHorizontal: isCompact ? theme.spacing[2] : theme.spacing[3],
     borderRadius: theme.borderRadius.md,
-  },
+  }),
   tabActive: {
     backgroundColor: theme.colors.surfaceSidebarHover,
   },

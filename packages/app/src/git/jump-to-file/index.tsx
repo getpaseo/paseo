@@ -66,7 +66,10 @@ export function JumpToFile({ files, mode, onSelectFile }: JumpToFileProps) {
     [title],
   );
 
-  const open = useCallback(() => setIsOpen(true), []);
+  const open = useCallback(() => {
+    setCollapsedFolderPaths([]);
+    setIsOpen(true);
+  }, []);
   const close = useCallback(() => setIsOpen(false), []);
   const handleSelectFile = useCallback(
     (path: string) => {
