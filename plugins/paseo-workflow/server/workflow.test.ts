@@ -633,6 +633,50 @@ test("handoff does not resume an old denial after a newer unresolved plan", asyn
   expect(f.launches).toEqual([]);
 });
 
+test("handoff does not resume a persisted closed operation after a newer plan", async () => {
+  const f = fixture();
+  let timeline = await f.port.timeline("planner");
+  f.port.timeline = async () => timeline;
+  f.port.respond = async (_agentId, _requestId, response) => {
+    f.agents.get("planner")!.pendingPermissions = [];
+    timeline = [
+      {
+        type: "tool_call",
+        callId: plan.callId,
+        name: "Plan",
+        status: "completed",
+        error: null,
+        detail: { type: "plan", text: plan.text },
+        metadata: { approved: false, resolution: response },
+      },
+    ];
+  };
+  const create = f.port.create;
+  f.port.create = async () => {
+    throw new Error("Spawn unavailable after closing");
+  };
+  await expect(new WorkflowController(f.port).handoff(plan, "standard")).rejects.toThrow(
+    "Spawn unavailable",
+  );
+  timeline = [
+    ...timeline,
+    {
+      type: "tool_call",
+      callId: "plan-2",
+      name: "Plan",
+      status: "running",
+      error: null,
+      detail: { type: "plan", text: "Newer plan" },
+    },
+  ];
+  f.port.create = create;
+  await new WorkflowController(f.port).status("planner", "workspace");
+  await expect(new WorkflowController(f.port).handoff(plan, "standard")).rejects.toThrow(
+    "superseded",
+  );
+  expect(f.launches).toEqual([]);
+});
+
 test.each(["review", "handoff"] as const)(
   "%s resumes a persisted closed operation without answering the permission twice",
   async (action) => {

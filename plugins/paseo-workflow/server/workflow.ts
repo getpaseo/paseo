@@ -426,13 +426,15 @@ export class WorkflowController {
       const state = await this.port.read();
       const agent = await this.port.agent(context.agentId);
       const workflow = await this.workflow(state, agent);
-      await this.reconcilePlanTimeline(state, workflow);
+      const latestPlanCallId = await this.reconcilePlanTimeline(state, workflow);
       const previous = workflow.plans[context.callId];
       if (previous && !samePlan(previous.context, context))
         throw new Error("This plan context does not match the recorded plan.");
       if (previous?.handoff?.phase === "running") return { agentId: previous.handoff.agentId! };
       const selection = previous?.handoff?.selection ?? selected ?? workflow.recommendation;
       if (!selection) throw new Error("Choose the standard or advanced executor in Hand off.");
+      if (previous?.handoff?.phase === "closed" && latestPlanCallId !== context.callId)
+        throw new Error("This handoff was superseded by a newer plan.");
       const executor = await this.profile(
         selection === "advanced" ? "executor-advanced" : "executor-standard",
       );
@@ -605,11 +607,12 @@ export class WorkflowController {
       changed = applyPlanDecision(workflow, plan, item, latest) || changed;
     }
     if (changed) await this.port.write(state);
+    return latest?.callId;
   }
 
   private async reconcile(state: WorkflowState, workflow: Workflow) {
     // One bounded pass over existing operations, never replay arbitrary agent history.
-    await this.reconcilePlanTimeline(state, workflow);
+    const latestPlanCallId = await this.reconcilePlanTimeline(state, workflow);
     const candidates = new Set<string>();
     if (
       !workflow.routed &&
@@ -620,7 +623,7 @@ export class WorkflowController {
     const activePlan = workflow.plans[workflow.activePlanId ?? ""];
     if (activePlan?.approved && !activePlan.final) candidates.add(workflow.plannerId);
     for (const plan of Object.values(workflow.plans)) {
-      await this.resumePlan(state, workflow, plan);
+      await this.resumePlan(state, workflow, plan, latestPlanCallId);
       for (const id of planCandidates(plan)) candidates.add(id);
     }
     for (const agentId of candidates) {
@@ -632,12 +635,17 @@ export class WorkflowController {
     state: WorkflowState,
     workflow: Workflow,
     plan: Workflow["plans"][string],
+    latestPlanCallId: string | undefined,
   ) {
     if (plan.review?.phase === "closed" && plan.review.agentId && plan.review.promptSent) {
       plan.review.phase = "running";
       await this.port.write(state);
     }
-    if (plan.handoff?.phase === "closed" && !plan.handoff.agentId)
+    if (
+      plan.handoff?.phase === "closed" &&
+      !plan.handoff.agentId &&
+      latestPlanCallId === plan.context.callId
+    )
       await this.startHandoff(state, workflow, plan);
     if (plan.review?.phase === "complete")
       await this.port.claimReview(actionContext(plan.context), false);
