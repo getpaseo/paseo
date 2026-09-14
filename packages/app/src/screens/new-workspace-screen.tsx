@@ -83,24 +83,24 @@ import {
 } from "@/projects/host-projects";
 import { useProjectIcons } from "@/projects/icons";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
-import type { ComposerAttachment } from "@/attachments/types";
 import { useDraftWorkspaceAttachmentScopeKey } from "@/attachments/workspace-attachments-store";
 import { requestWorkspaceDraftAgent } from "@/composer/draft/create-agent-request";
 import { buildWorkspaceDraftAgentConfig } from "@/screens/workspace/workspace-draft-agent-config";
 import type { MessagePayload } from "@/composer/types";
 import type { UserComposerAttachment } from "@/attachments/types";
 import type { AgentAttachment, ForgeSearchItem } from "@getpaseo/protocol/messages";
-import type {
-  CreatePaseoWorktreeInput,
-  DaemonClient,
-} from "@getpaseo/client/internal/daemon-client";
+import type { CreatePaseoWorktreeInput } from "@getpaseo/client/internal/daemon-client";
 import type { AgentProvider } from "@getpaseo/protocol/agent-types";
 import type { WorkspaceDraftTabSetup, WorkspaceTabTarget } from "@/workspace-tabs/model";
 import { isEmptyWorkspaceSubmission, runCreateEmptyWorkspace } from "./new-workspace-empty";
 import {
-  getWorkspaceNamingAttachments,
-  remapDraftCwdToWorkspace,
-} from "./new-workspace-fork-context";
+  runCreateChatAgent,
+  ModelSelectionValidationError,
+  resolveNewWorkspaceSubmissionError,
+  type NewWorkspaceComposerState,
+  type SubmitDraftInput,
+  type SubmitOutcome,
+} from "./new-workspace-chat";
 import {
   buildPickerOptionData,
   defaultBasePickerItem,
@@ -128,10 +128,7 @@ import {
   type ListTerminalsPayload,
   upsertCreatedTerminalPayload,
 } from "./workspace/terminals/state";
-import {
-  captureWorkspaceDraftCleanup,
-  createWorkspaceAgentInBackground,
-} from "./new-workspace/background-handoff";
+import { createWorkspaceAgentInBackground } from "./new-workspace/background-handoff";
 import { useNewWorkspaceScreenPresence } from "./new-workspace/screen-presence";
 
 const ThemedFolderPlus = withUnistyles(FolderPlus);
@@ -757,35 +754,6 @@ function normalizeBranchDetails(
   return names.map((name) => ({ name, committerDate: 0 }));
 }
 
-/**
- * "background" means the user left the New workspace screen mid-creation, so nothing navigated
- * and the screen — if still mounted under another route — has to drop its pending state itself.
- */
-type SubmitOutcome = "navigated" | "background";
-
-interface SubmitDraftInput {
-  clearConsumedDraft: () => void;
-  serverId: string;
-  draftKey: string;
-  clearDraft: (lifecycle: "sent" | "abandoned") => void;
-  draftId?: string;
-  draftContextScopeKey: string | null;
-  initialSetup?: WorkspaceDraftTabSetup;
-  workspaceId: string;
-  workspaceDirectory: string;
-  text: string;
-  attachments: ComposerAttachment[];
-  provider: AgentProvider;
-  composerState: NewWorkspaceComposerState;
-  supportsForgeSearch: boolean;
-  resolveClient: () => DaemonClient;
-  isStillOnCreateScreen: () => boolean;
-}
-
-type NewWorkspaceComposerState = NonNullable<
-  ReturnType<typeof useAgentInputDraft>["composerState"]
->;
-
 interface WorkspaceDraftSubmissionConfig {
   cwd: string;
   provider: AgentProvider;
@@ -870,65 +838,6 @@ async function createMultiplicityWorkspace(input: {
   return normalizedWorkspace;
 }
 
-interface CreateChatAgentInput {
-  payload: MessagePayload;
-  composerState: ReturnType<typeof useAgentInputDraft>["composerState"];
-  forkDraftSetup?: PendingWorkspaceDraftSetup | null;
-  ensureWorkspace: (input: {
-    cwd: string;
-    prompt: string;
-    attachments: AgentAttachment[];
-    withInitialAgent: boolean;
-  }) => Promise<ReturnType<typeof normalizeWorkspaceDescriptor>>;
-  serverId: string;
-  draftKey: string;
-  clearDraft: (lifecycle: "sent" | "abandoned") => void;
-  draftId?: string;
-  draftContextScopeKey: string | null;
-  supportsForgeSearch: boolean;
-  resolveClient: () => DaemonClient;
-  isStillOnCreateScreen: () => boolean;
-  labels: {
-    composerStateRequired: string;
-    selectModel: string;
-  };
-}
-
-function buildWorkspaceDraftSetupFromComposer(input: {
-  cwd: string;
-  provider: AgentProvider;
-  composerState: NewWorkspaceComposerState;
-}): WorkspaceDraftTabSetup {
-  return {
-    provider: input.provider,
-    cwd: input.cwd,
-    modeId: input.composerState.selectedMode || null,
-    model: input.composerState.effectiveModelId || null,
-    thinkingOptionId: input.composerState.effectiveThinkingOptionId || null,
-    featureValues: input.composerState.featureValues ?? {},
-  };
-}
-
-function buildWorkspaceDraftSetupForCreatedWorkspace(input: {
-  forkDraftSetup: PendingWorkspaceDraftSetup | null | undefined;
-  workspaceDirectory: string;
-  provider: AgentProvider;
-  composerState: NewWorkspaceComposerState;
-}): WorkspaceDraftTabSetup | undefined {
-  if (!input.forkDraftSetup) {
-    return undefined;
-  }
-  return buildWorkspaceDraftSetupFromComposer({
-    cwd: remapDraftCwdToWorkspace({
-      cwd: input.forkDraftSetup.setup.cwd,
-      sourceDirectory: input.forkDraftSetup.sourceDirectory,
-      workspaceDirectory: input.workspaceDirectory,
-    }),
-    provider: input.provider,
-    composerState: input.composerState,
-  });
-}
-
 function buildComposerInitialValues(input: {
   initialSetup?: WorkspaceDraftTabSetup | null;
 }): CreateAgentInitialValues | undefined {
@@ -941,56 +850,6 @@ function buildComposerInitialValues(input: {
     };
   }
   return undefined;
-}
-
-async function runCreateChatAgent(input: CreateChatAgentInput): Promise<SubmitOutcome> {
-  const { payload, composerState, ensureWorkspace, serverId, clearDraft } = input;
-  const clearConsumedDraft = captureWorkspaceDraftCleanup(input);
-  const { text, attachments, cwd } = payload;
-  if (!composerState) {
-    throw new Error(input.labels.composerStateRequired);
-  }
-  const provider = composerState.selectedProvider;
-  if (!provider) {
-    throw new Error(input.labels.selectModel);
-  }
-  const attachmentSubmitFormat = resolveComposerAttachmentSubmitFormat({
-    supportsForgeAttachments: input.supportsForgeSearch,
-  });
-  const { attachments: reviewAttachments } = splitComposerAttachmentsForSubmit(attachments, {
-    format: attachmentSubmitFormat,
-  });
-  const workspaceNamingAttachments = getWorkspaceNamingAttachments(reviewAttachments);
-  const ensuredWorkspace = await ensureWorkspace({
-    cwd,
-    prompt: text,
-    attachments: workspaceNamingAttachments,
-    withInitialAgent: true,
-  });
-  const initialSetup = buildWorkspaceDraftSetupForCreatedWorkspace({
-    forkDraftSetup: input.forkDraftSetup,
-    workspaceDirectory: ensuredWorkspace.workspaceDirectory,
-    provider,
-    composerState,
-  });
-  return await submitWorkspaceDraft({
-    clearConsumedDraft,
-    serverId,
-    clearDraft,
-    draftKey: input.draftKey,
-    draftId: input.draftId,
-    draftContextScopeKey: input.draftContextScopeKey,
-    initialSetup,
-    workspaceId: ensuredWorkspace.id,
-    workspaceDirectory: ensuredWorkspace.workspaceDirectory,
-    text,
-    attachments,
-    provider,
-    composerState,
-    supportsForgeSearch: input.supportsForgeSearch,
-    resolveClient: input.resolveClient,
-    isStillOnCreateScreen: input.isStillOnCreateScreen,
-  });
 }
 
 function buildComposerConfig(input: {
@@ -1634,7 +1493,9 @@ export function NewWorkspaceScreen({
   // COMPAT(workspaceMultiplicity): added in v0.1.97, drop the gate when floor >= v0.1.97
   const supportsWorkspaceMultiplicity = useHostFeature(selectedServerId, "workspaceMultiplicity");
   const supportsForgeSearch = useHostFeature(selectedServerId, "forgeSearch");
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [submissionError, setErrorMessage] = useState<
+    string | ModelSelectionValidationError | null
+  >(null);
   const [createdWorkspace, setCreatedWorkspace] = useState<ReturnType<
     typeof normalizeWorkspaceDescriptor
   > | null>(null);
@@ -1738,6 +1599,7 @@ export function NewWorkspaceScreen({
     }),
   });
   const composerState = chatDraft.composerState;
+  const errorMessage = resolveNewWorkspaceSubmissionError(submissionError, composerState);
   const [pickerSelection, dispatchPickerSelection] = useReducer(
     reducePickerSelection,
     initialPickerSelectionState,
@@ -2127,6 +1989,7 @@ export function NewWorkspaceScreen({
 
         setPendingAction("chat");
         const outcome = await runCreateChatAgent({
+          submitWorkspaceDraft,
           payload,
           composerState,
           forkDraftSetup,
@@ -2150,7 +2013,7 @@ export function NewWorkspaceScreen({
       } catch (error) {
         const message = toErrorMessage(error);
         setPendingAction(null);
-        setErrorMessage(message);
+        setErrorMessage(error instanceof ModelSelectionValidationError ? error : message);
         toast.error(message);
       }
     },
@@ -2437,7 +2300,11 @@ export function NewWorkspaceScreen({
               agentControls={agentControlsWithDisabled}
             />
           )}
-          {errorMessage ? <Text style={styles.errorText}>{errorMessage}</Text> : null}
+          {errorMessage ? (
+            <Text testID="new-workspace-submit-error" style={styles.errorText}>
+              {errorMessage}
+            </Text>
+          ) : null}
         </KeyboardTranslateView>
       </View>
     </FileDropZone>

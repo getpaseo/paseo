@@ -221,10 +221,12 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
       modeId: formState.selectedMode,
       thinkingOptionId: formState.selectedThinkingOptionId,
       availableModels: formState.availableModels,
+      visibleModels: formState.visibleModels,
       modeOptions: formState.modeOptions,
     }),
     [
       formState.availableModels,
+      formState.visibleModels,
       formState.modeOptions,
       formState.selectedMode,
       formState.selectedModel,

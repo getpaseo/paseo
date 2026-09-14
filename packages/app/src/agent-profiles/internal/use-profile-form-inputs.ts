@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { useFetchQuery } from "@/data/query";
 import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
+import { useModelVisibility, type ModelVisibilityStatus } from "@/hooks/use-model-visibility";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import type { AgentProfileFormModel, AgentProfileFormState } from "./profile-form-model";
 
@@ -13,11 +14,18 @@ import type { AgentProfileFormModel, AgentProfileFormState } from "./profile-for
  */
 const HOME_SCOPE_CWD = "~";
 
+export interface AgentProfileFormCatalogState {
+  modelVisibilityStatus: ModelVisibilityStatus;
+  retryModelVisibility: () => void;
+  refreshProviderCatalog: () => void;
+}
+
 export function useAgentProfileFormCatalog(input: {
   serverId: string;
   model: AgentProfileFormModel;
-}): void {
-  const { entries } = useProvidersSnapshot(input.serverId, { cwd: null });
+}): AgentProfileFormCatalogState {
+  const { entries, refresh } = useProvidersSnapshot(input.serverId, { cwd: null });
+  const modelVisibility = useModelVisibility(input.serverId);
 
   useEffect(() => {
     if (!entries) {
@@ -25,6 +33,17 @@ export function useAgentProfileFormCatalog(input: {
     }
     input.model.applyProviderCatalog(entries);
   }, [entries, input.model]);
+
+  useEffect(() => {
+    input.model.applyModelVisibility(modelVisibility);
+  }, [modelVisibility, input.model]);
+
+  // The modal owns the Retry affordance, so it needs both halves.
+  return {
+    modelVisibilityStatus: modelVisibility.status,
+    retryModelVisibility: modelVisibility.retry,
+    refreshProviderCatalog: () => void refresh(),
+  };
 }
 
 export function useAgentProfileFormFeatures(input: {
