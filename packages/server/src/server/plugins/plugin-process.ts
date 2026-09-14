@@ -10,6 +10,7 @@ import * as pluginProviderRuntime from "@getpaseo/plugin/server/provider";
 import * as pluginAcpRuntime from "@getpaseo/plugin/server/acp";
 import type { SettingsDefinition, PluginRpcContract } from "@getpaseo/plugin";
 import type { PluginHandlerContext } from "@getpaseo/plugin/server";
+import type { ZodType } from "zod";
 import {
   ProviderEventSchema,
   type ProviderConnection,
@@ -23,7 +24,7 @@ import { createPluginClientId } from "./plugin-session-identity.js";
 
 import { PluginSettingsStore } from "./settings/index.js";
 let settingsStore: PluginSettingsStore | null = null;
-function registerSettings(definition: SettingsDefinition) {
+function registerSettings<Schema extends ZodType>(definition: SettingsDefinition<Schema>) {
   if (!settingsStore) throw new Error("Plugin settings storage is unavailable");
   const handlers = settingsStore.register(definition);
   register(handlers.read.contract, handlers.read.handle);
@@ -33,6 +34,7 @@ function registerSettings(definition: SettingsDefinition) {
   register(handlers.reset.contract, (input) =>
     handlers.reset.handle(handlers.reset.contract.input.parse(input)),
   );
+  return handlers.settings;
 }
 
 type RpcHandler = (input: unknown, context: PluginHandlerContext) => unknown | Promise<unknown>;
