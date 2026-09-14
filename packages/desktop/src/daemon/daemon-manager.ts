@@ -3,6 +3,9 @@ import path from "node:path";
 import { app, ipcMain, powerMonitor } from "electron";
 import log from "electron-log/main";
 import {
+  DEFAULT_DAEMON_LOG_FILENAME,
+  loadPersistedConfig,
+  resolveDaemonLogPath,
   resolvePaseoHome,
   startDaemonInstance,
   DaemonInstanceError,
@@ -53,7 +56,6 @@ import {
 } from "../integrations/legacy-skill-selection.js";
 import { tailFile } from "../diagnostics/tail-file.js";
 
-const DAEMON_LOG_FILENAME = "daemon.log";
 let ownedLaunch: { home: string; instance: DaemonInstance } | null = null;
 
 type DesktopDaemonState = "starting" | "running" | "stopped" | "errored";
@@ -127,7 +129,13 @@ function getPaseoHome(): string {
 }
 
 function logFilePath(): string {
-  return path.join(getPaseoHome(), DAEMON_LOG_FILENAME);
+  const paseoHome = getPaseoHome();
+  try {
+    return resolveDaemonLogPath(paseoHome, loadPersistedConfig(paseoHome));
+  } catch (err) {
+    log.warn("[desktop daemon]", "Failed to read config for log path; using default", { err });
+    return path.join(paseoHome, DEFAULT_DAEMON_LOG_FILENAME);
+  }
 }
 
 export function isDesktopManagedDaemonRunningSync(): boolean {
