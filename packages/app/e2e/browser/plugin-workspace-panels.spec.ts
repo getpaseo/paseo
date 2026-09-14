@@ -74,7 +74,7 @@ function contributeClient(client) {
     }
     const agent = update.agent;
     if (agent.title !== "Plugin panel context agent" || !agent.workspaceId) return;
-    if (pills.has(agent.id)) return;
+    remove(agent.id);
     const pill = client.addComposerPill({
       id: "review",
       workspaceId: agent.workspaceId,
@@ -353,11 +353,11 @@ test.describe("plugin workspace panels and Command Center", () => {
         await expect(page.getByText("Layout compact", { exact: true })).toBeVisible();
         await capture(page, testInfo, "plugin-agent-panel-compact");
 
-        // Return within this plugin lifetime; reloading registers a new contribution.
-        await page.setViewportSize(WIDE_VIEWPORT);
-        await page.getByRole("button", { name: "Plugin panel context agent", exact: true }).click();
-        await expect(page.getByRole("button", { name: "Open composer review" })).toHaveCount(0);
-        await page.setViewportSize(COMPACT_VIEWPORT);
+        await page.goto(buildAgentRoute(primary.workspaceId, agent.id));
+        await page.waitForURL(isSettledWorkspaceUrl, { timeout: 60_000 });
+        // Pressing removed the pill from that page only. The reloaded page evaluates
+        // the plugin again, and its agents snapshot contributes the pill afresh.
+        await expect(page.getByRole("button", { name: "Open composer review" })).toBeVisible();
         await openCompactSidebar(page);
         // The sidebar's Search row dismisses the compact sidebar on its way to the
         // command center, so nothing has to close it after the command runs.
