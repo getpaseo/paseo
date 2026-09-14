@@ -1200,19 +1200,28 @@ test("canvas diff copies a dragged character selection without opening a review"
   await expect(page.getByTestId("inline-review-editor")).toHaveCount(0);
 });
 
-test("canvas diff context menu copies selections and source lines", async ({ context, page }) => {
+test("canvas diff preserves selection through a repaint and copies selections and source lines", async ({
+  context,
+  page,
+}) => {
   const workspace = await createWorkspaceWithExactSelectionDiff("ABCDEFGHIJ");
   await context.grantPermissions(["clipboard-read", "clipboard-write"]);
   await useUnwrappedDiffLines(page);
   await openSelectionWorkspaceChanges(page, workspace);
 
   await dragExactAddedText(page, { startOffset: 2, endOffset: 8 });
+  await page.keyboard.press("ControlOrMeta+C");
+  await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe("CDEFGH");
+  await page.evaluate(() => navigator.clipboard.writeText(""));
+  await resizeDiffViewportHeight(page, 960);
   await rightClickFirstChangedLine(page);
-  await page.getByTestId("diff-source-copy-selection").click();
+  const copySelection = page.getByRole("menuitem", { name: "Copy", exact: true });
+  await expect(copySelection).toBeEnabled();
+  await copySelection.click();
   await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe("CDEFGH");
 
   await rightClickFirstChangedLine(page);
-  await page.getByTestId("diff-source-copy-line").click();
+  await page.getByRole("menuitem", { name: "Copy line", exact: true }).click();
   await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe("ABCDEFGHIJ");
 });
 
@@ -1875,6 +1884,17 @@ async function clickFirstChangedLine(page: Page): Promise<void> {
   if (!bodyBounds) throw new Error("Expanded diff body has no bounds");
   const lineHeight = Math.round(fontSize * 1.5);
   await page.mouse.click(bodyBounds.x + 120, bodyBounds.y + lineHeight * 1.5);
+}
+
+async function resizeDiffViewportHeight(page: Page, height: number): Promise<void> {
+  const canvas = page.getByTestId("git-diff-canvas");
+  const previousViewport = page.viewportSize()!;
+  const previousHeight = await canvas.evaluate((element) => element.getBoundingClientRect().height);
+  await page.setViewportSize({ width: previousViewport.width, height });
+  await expect(canvas).toHaveCSS(
+    "height",
+    `${previousHeight + height - previousViewport.height}px`,
+  );
 }
 
 async function rightClickFirstChangedLine(page: Page, fileIndex = 0): Promise<void> {
