@@ -1,3 +1,4 @@
+import type { WorkspaceCreateRequest } from "@getpaseo/protocol/messages";
 import { expect, type Page } from "@playwright/test";
 import { daemonWsRoutePattern } from "./daemon-port";
 import { gotoAppShell } from "./app";
@@ -18,6 +19,29 @@ import {
 import { getServerId } from "./server-id";
 import { WORKSPACE_DECK_MAX_MOUNTED_WORKSPACES } from "@/screens/workspace/workspace-deck-retention";
 import type { installDaemonWebSocketGate } from "./daemon-websocket-gate";
+
+/** Capture the submitted agent options; optionally stop provisioning for wire-only assertions. */
+export async function captureWorkspaceAgentRequest(page: Page, options: { block: boolean }) {
+  const frames = await loadSessionMessageReaders();
+  type AgentIntent = NonNullable<WorkspaceCreateRequest["agent"]>;
+  let resolveRequest!: (agent: AgentIntent) => void;
+  const request = new Promise<AgentIntent>((resolve) => {
+    resolveRequest = resolve;
+  });
+  await page.routeWebSocket(daemonWsRoutePattern(), (ws) => {
+    const server = ws.connectToServer();
+    ws.onMessage((frame) => {
+      const message = frames.client(frame);
+      if (message?.type === "workspace.create.request" && message.agent) {
+        resolveRequest(message.agent);
+        if (options.block) return;
+      }
+      server.send(frame);
+    });
+    server.onMessage((frame) => ws.send(frame));
+  });
+  return { waitForRequest: () => request };
+}
 
 export async function pressSubmitBeforeTheNextRender(page: Page, name: string): Promise<void> {
   const create = page.getByRole("button", { name, exact: true });
