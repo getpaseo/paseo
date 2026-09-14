@@ -706,7 +706,7 @@ function FormRow({ children }: { children: React.ReactNode }) {
 
 interface WorkspaceIsolationState {
   isolation: "local" | "worktree" | "chat";
-  setIsolation: (value: "local" | "worktree" | "chat") => void;
+  setIsolation: (value: "local" | "worktree") => void;
   effectiveIsolation: "local" | "worktree" | "chat";
   canCreateWorktree: boolean;
   showRefPicker: boolean;
@@ -717,34 +717,23 @@ interface WorkspaceIsolationState {
 function useWorkspaceIsolation(input: {
   supportsMultiplicity: boolean;
   worktreeSupport: "supported" | "unsupported" | "unknown";
-  supportsChatWorkspaces?: boolean;
   forcedIsolation?: "local" | "worktree" | "chat";
 }): WorkspaceIsolationState {
-  const {
-    supportsMultiplicity,
-    worktreeSupport,
-    supportsChatWorkspaces = true,
-    forcedIsolation,
-  } = input;
+  const { supportsMultiplicity, worktreeSupport, forcedIsolation } = input;
   // The last isolation choice is remembered alongside the other New Workspace
   // form preferences (provider, model, mode). A manual in-screen pick overrides
   // the remembered default until the screen remounts.
   const { preferences, updatePreferences } = useFormPreferences();
-  const [manualIsolation, setManualIsolation] = useState<"local" | "worktree" | "chat" | null>(
-    null,
-  );
-  const isolation =
-    forcedIsolation ??
-    manualIsolation ??
-    (preferences.isolation as "local" | "worktree" | "chat") ??
-    "local";
+  const [manualIsolation, setManualIsolation] = useState<"local" | "worktree" | null>(null);
+  const preferredIsolation = preferences.isolation === "worktree" ? "worktree" : "local";
+  const isolation = forcedIsolation ?? manualIsolation ?? preferredIsolation;
   const canCreateWorktree =
     !forcedIsolation && supportsMultiplicity && worktreeSupport !== "unsupported";
   const isWorktree = isolation === "worktree" && canCreateWorktree;
-  const isChat = isolation === "chat" && (forcedIsolation === "chat" || supportsChatWorkspaces);
+  const isChat = isolation === "chat";
 
   const setIsolation = useCallback(
-    (value: "local" | "worktree" | "chat") => {
+    (value: "local" | "worktree") => {
       if (forcedIsolation) return;
       setManualIsolation(value);
       void updatePreferences({ isolation: value });
@@ -1315,7 +1304,14 @@ function useNewWorkspaceInitialContext({
 }: NewWorkspaceScreenProps): NewWorkspaceInitialContextState {
   const allHosts = useHosts();
   const allServerIds = useMemo(() => allHosts.map((h) => h.serverId), [allHosts]);
-  const projects = useHostProjects(allServerIds);
+  const rawProjects = useHostProjects(allServerIds);
+  const projects = useMemo(
+    () =>
+      rawProjects.filter(
+        (project) => project.projectName !== "Chats" && project.projectKey !== "__chats__",
+      ),
+    [rawProjects],
+  );
   const routeDisplayName = displayNameProp?.trim() ?? "";
   const routePlacement = useMemo(
     () =>
@@ -1842,12 +1838,10 @@ export function NewWorkspaceScreen({
     ? getWorktreeSupportForHostProject({ project: selectedProject, serverId: selectedServerId })
     : "unsupported";
   const isPending = isNewWorkspacePending({ pendingAction, isDraftHandoffActive });
-  const supportsChatWorkspaces = useHostFeature(selectedServerId, "chatWorkspaces");
   const { effectiveIsolation, setIsolation, canCreateWorktree, showRefPicker } =
     useWorkspaceIsolation({
       supportsMultiplicity: supportsWorkspaceMultiplicity,
       worktreeSupport,
-      supportsChatWorkspaces,
       forcedIsolation: isChatKind ? "chat" : undefined,
     });
 
@@ -2009,25 +2003,16 @@ export function NewWorkspaceScreen({
   // git checkout, since worktree isolation is impossible there.
   const isolationOptions = useMemo<ComboboxOptionType[]>(() => {
     const localOption = { id: "local", label: isolationLabel(t, "local") };
-    const chatOption = { id: "chat", label: isolationLabel(t, "chat") };
     const opts: ComboboxOptionType[] = [localOption];
     if (canCreateWorktree) {
       opts.push({ id: "worktree", label: isolationLabel(t, "worktree") });
     }
-    if (supportsChatWorkspaces) {
-      opts.push(chatOption);
-    }
     return opts;
-  }, [canCreateWorktree, supportsChatWorkspaces, t]);
+  }, [canCreateWorktree, t]);
 
   const handleSelectIsolationOption = useCallback(
     (id: string) => {
-      let nextIsolation: "local" | "worktree" | "chat" = "local";
-      if (id === "chat") {
-        nextIsolation = "chat";
-      } else if (id === "worktree") {
-        nextIsolation = "worktree";
-      }
+      const nextIsolation: "local" | "worktree" = id === "worktree" ? "worktree" : "local";
       setIsolation(nextIsolation);
       setIsolationPickerOpen(false);
     },
