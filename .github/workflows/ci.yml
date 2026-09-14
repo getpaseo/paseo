@@ -251,7 +251,10 @@ jobs:
 
       - name: Build Linux desktop artifacts
         if: ${{ runner.os == 'Linux' }}
-        run: npm run build:desktop -- --publish never --linux --x64
+        # Smoke package contents and installation without spending minutes on xz compression.
+        run: |
+          printf '{"extends":"%s/packages/desktop/electron-builder.yml","deb":{"compression":"gz"},"rpm":{"fpm":["--rpm-compression=gzip"]}}' "$GITHUB_WORKSPACE" > "$RUNNER_TEMP/desktop-smoke-builder.json"
+          npm run build:desktop -- --publish never --linux --x64 --config "$RUNNER_TEMP/desktop-smoke-builder.json"
         env:
           EP_GH_IGNORE_TIME: true
           PASEO_DESKTOP_SMOKE_ARTIFACT_DIR: ${{ runner.temp }}/desktop-smoke

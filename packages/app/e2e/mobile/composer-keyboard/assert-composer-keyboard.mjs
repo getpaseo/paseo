@@ -4,11 +4,44 @@ import sharp from "sharp";
 
 const [, , command, ...args] = process.argv;
 
-if (command === "rect") {
+if (command === "xml-composer-contained") {
+  const [snapshotPath, imeTopArgument, densityArgument] = args;
+  const snapshot = await fs.readFile(snapshotPath, "utf8");
+  const boundsFor = (id) => {
+    const node = snapshot.match(new RegExp(`<node[^>]*resource-id="${id}"[^>]*>`));
+    if (!node) throw new Error(`Missing node: ${id}`);
+    const bounds = node[0].match(/bounds="\[(-?\d+),(-?\d+)\]\[(-?\d+),(-?\d+)\]"/);
+    if (!bounds) throw new Error(`Missing bounds: ${id}`);
+    return { top: Number(bounds[2]), bottom: Number(bounds[4]) };
+  };
+  const viewport = boundsFor("composer-viewport");
+  const content = boundsFor("composer-viewport-content");
+  const composer = boundsFor("message-input-root");
+  const controls = boundsFor("message-input-attach-button");
+  const clearance = (5 * Number(densityArgument)) / 160;
+  const minimumTop = viewport.top + clearance;
+  // Android rounds layout units to physical pixels; allow one pixel of rounding.
+  if (content.top < minimumTop - 1 || composer.top < minimumTop - 1) {
+    throw new Error(
+      `Composer overlaps header: content=${content.top}, editor=${composer.top}, minimum=${minimumTop}`,
+    );
+  }
+  if (composer.bottom > Number(imeTopArgument) || controls.bottom > Number(imeTopArgument)) {
+    throw new Error(
+      `Composer extends behind keyboard: editor=${composer.bottom}, controls=${controls.bottom}, keyboard=${imeTopArgument}`,
+    );
+  }
+  process.stdout.write(
+    `Composer contained: top=${composer.top}, header=${viewport.top}, bottom=${composer.bottom}, keyboard=${imeTopArgument}\n`,
+  );
+} else if (command === "rect") {
   const [snapshotPath, identifier] = args;
   const snapshot = JSON.parse(await fs.readFile(snapshotPath, "utf8"));
   const node = snapshot.data.nodes.find(
-    (candidate) => candidate.identifier === identifier || candidate.label === identifier,
+    (candidate) =>
+      candidate.identifier === identifier ||
+      candidate.label === identifier ||
+      (identifier === "editable" && candidate.type.endsWith("EditText")),
   );
   if (!node) throw new Error(`Missing node: ${identifier}`);
   const { x, y, width, height } = node.rect;

@@ -5386,14 +5386,17 @@ test("fetchTimeline returns a bounded reset window when cursor epoch is stale", 
 
   await manager.appendTimelineItem(snapshot.id, {
     type: "assistant_message",
+    messageId: "one",
     text: "one",
   });
   await manager.appendTimelineItem(snapshot.id, {
     type: "assistant_message",
+    messageId: "two",
     text: "two",
   });
   await manager.appendTimelineItem(snapshot.id, {
     type: "assistant_message",
+    messageId: "three",
     text: "three",
   });
 
@@ -5468,20 +5471,13 @@ test("getTimelineRows falls back to the in-memory timeline when no durable store
 
   await expect(manager.getTimelineRows(snapshot.id)).resolves.toEqual([
     {
-      seq: 1,
-      timestamp: expect.any(String),
-      item: {
-        type: "assistant_message",
-        text: "row one",
-      },
-    },
-    {
       seq: 2,
+      seqStart: 1,
+      seqEnd: 2,
+      sourceSeqRanges: [{ startSeq: 1, endSeq: 2 }],
+      collapsed: ["assistant_merge"],
       timestamp: expect.any(String),
-      item: {
-        type: "assistant_message",
-        text: "row two",
-      },
+      item: { type: "assistant_message", text: "row onerow two" },
     },
   ]);
 });
@@ -5543,7 +5539,7 @@ test("getAgent does not expose committed history internals once manager owns the
   expect(fetched.rows.map((row) => row.seq)).toEqual([1, 2]);
 });
 
-test("coalesces assistant chunks and persists the canonical row", async () => {
+test("streams coalesced assistant chunks and retains the projected message", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-provisional-timeline-"));
   const storagePath = join(workdir, "agents");
   const storage = new AgentStorage(storagePath, logger);
@@ -5600,8 +5596,8 @@ test("coalesces assistant chunks and persists the canonical row", async () => {
   }
 
   // The coalescer flushes the first chunk on the leading edge, so "final " ships
-  // as its own row and "reply" follows on the trailing window. Clients read the
-  // projected timeline, which merges the two back into one assistant message.
+  // as its own event and "reply" follows on the trailing window. History retains
+  // their complete projected assistant message.
   const assistantTimelineEvents = streamEvents.filter(
     (event) => event.itemType === "assistant_message",
   );
@@ -5624,18 +5620,15 @@ test("coalesces assistant chunks and persists the canonical row", async () => {
   expect(manager.getTimeline(snapshot.id)).toEqual([
     {
       type: "assistant_message",
-      text: "final ",
-    },
-    {
-      type: "assistant_message",
-      text: "reply",
+      text: "final reply",
     },
   ]);
   const fetched = await manager.fetchTimeline(snapshot.id, {
     direction: "tail",
     limit: 0,
   });
-  expect(fetched.rows).toHaveLength(2);
+  expect(fetched.rows).toHaveLength(1);
+  expect(fetched.rows[0]).toMatchObject({ seqStart: 1, seqEnd: 2 });
   expect(assistantTimelineEvents[0]?.epoch).toBe(fetched.epoch);
   expect(projectTimelineRows({ rows: fetched.rows, mode: "projected" }).map((e) => e.item)).toEqual(
     [
@@ -5671,28 +5664,34 @@ test("fetchTimeline supports older-history pagination with before seq", async ()
 
   await manager.appendTimelineItem(snapshot.id, {
     type: "assistant_message",
+    messageId: "first",
     text: "first",
   });
   await manager.appendTimelineItem(snapshot.id, {
     type: "assistant_message",
+    messageId: "second",
     text: "second",
   });
   await manager.appendTimelineItem(snapshot.id, {
     type: "assistant_message",
+    messageId: "third",
     text: "third",
   });
   await manager.appendTimelineItem(snapshot.id, {
     type: "assistant_message",
+    messageId: "fourth",
     text: "fourth",
   });
   await manager.appendTimelineItem(snapshot.id, {
     type: "assistant_message",
+    messageId: "fifth",
     text: "fifth",
   });
 
   const result = await manager.fetchTimeline(snapshot.id, {
     direction: "before",
     cursor: {
+      epoch: manager.fetchTimeline(snapshot.id).epoch,
       seq: 5,
     },
     limit: 2,
@@ -5729,14 +5728,17 @@ test("does not trim committed history", async () => {
 
   await manager.appendTimelineItem(snapshot.id, {
     type: "assistant_message",
+    messageId: "first",
     text: "first",
   });
   await manager.appendTimelineItem(snapshot.id, {
     type: "assistant_message",
+    messageId: "second",
     text: "second",
   });
   await manager.appendTimelineItem(snapshot.id, {
     type: "assistant_message",
+    messageId: "third",
     text: "third",
   });
 
@@ -5834,8 +5836,7 @@ test("hydrateTimeline preserves assistant chunk, reasoning, and tool timeline hi
   await manager.hydrateTimelineFromProvider(snapshot.id, { force: true });
 
   expect(manager.getTimeline(snapshot.id)).toEqual([
-    { type: "assistant_message", text: "chunk one " },
-    { type: "assistant_message", text: "chunk two" },
+    { type: "assistant_message", text: "chunk one chunk two" },
     { type: "reasoning", text: "internal" },
     {
       type: "tool_call",
@@ -10305,7 +10306,7 @@ test("canonical submitted prompt keeps wire identity while rewind resolves provi
     ]);
 
     const timeline = manager.fetchTimeline(snapshot.id, { direction: "tail", limit: 20 }).rows;
-    expect(timeline).toEqual([
+    expect(timeline).toMatchObject([
       {
         seq: 1,
         timestamp: expect.any(String),

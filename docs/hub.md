@@ -49,6 +49,10 @@ Provider controls remain provider-native; see [providers.md](providers.md).
 `send_agent_message_request` with a stable `messageId`. Request IDs correlate individual attempts;
 creation keys and message IDs identify the operation across attempts. A creation key is daemon-wide;
 a message ID is scoped to its agent. Reusing either with different arguments is a conflict.
+`workspace.create.request.idempotencyKey` provides the same creation guarantee for directory and
+worktree workspaces; check `server_info.features.workspaceRequestReceipts` before using it.
+Workspace creation keys and agent creation keys have separate namespaces. The app keeps these keys
+for the lifetime of a draft and reuses the first message ID after failures.
 
 The daemon journals the assigned agent ID before creation. Concurrent retries share one operation,
 and a retry after a lost acknowledgement or restart returns the durable agent without creating a
