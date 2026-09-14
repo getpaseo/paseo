@@ -96,7 +96,10 @@ import {
   useHostRuntimeSnapshot,
   useHosts,
 } from "@/runtime/host-runtime";
-import { prefetchProvidersSnapshot } from "@/hooks/use-providers-snapshot";
+import {
+  ensureProvidersSnapshotEntries,
+  prefetchProvidersSnapshot,
+} from "@/hooks/use-providers-snapshot";
 import {
   shouldSeedWorkspaceSetupTab,
   shouldShowWorkspaceSetup,
@@ -111,7 +114,10 @@ import { useStableEvent } from "@/hooks/use-stable-event";
 import { removeResidentBrowserWebview } from "@/desktop/browser/resident-webviews";
 import { createWorkspaceBrowser, useBrowserStore } from "@/desktop/browser/store";
 import { getDesktopHost } from "@/desktop/host";
-import { buildProviderCommand } from "@/utils/provider-command-templates";
+import {
+  ProviderResumeCommandUnavailableError,
+  resolveProviderResumeCommandOutcome,
+} from "@/utils/provider-command-templates";
 import { generateDraftId } from "@/stores/draft-keys";
 import { resolveWorkspaceRouteId } from "@/utils/workspace-identity";
 import { useOpenAgentTabLabels } from "@/subagents/use-open-agent-tab-labels";
@@ -1572,6 +1578,7 @@ function WorkspaceScreenContent({
   useWorkspaceTerminalSessionRetention({
     scopeKey: workspaceTerminalScopeKey,
   });
+  const queryClient = useQueryClient();
 
   const client = useHostRuntimeClient(normalizedServerId);
   const isConnected = useHostRuntimeIsConnected(normalizedServerId);
@@ -1694,7 +1701,6 @@ function WorkspaceScreenContent({
     },
     toast,
   });
-  const queryClient = useQueryClient();
   const {
     createMutation: createTerminalMutation,
     createTerminal,
@@ -2707,9 +2713,10 @@ function WorkspaceScreenContent({
     [toast, t],
   );
 
+  const resumeCopyPendingRef = useRef(new Set<string>());
+
   const handleCopyResumeCommand = useCallback(
     async (agentId: string) => {
-      if (!agentId) return;
       const agent =
         useSessionStore.getState().sessions[normalizedServerId]?.agents?.get(agentId) ?? null;
       const providerSessionId =
@@ -2718,25 +2725,53 @@ function WorkspaceScreenContent({
         toast.error(t("workspace.tabs.toasts.resumeIdUnavailable"));
         return;
       }
-
-      const command =
-        buildProviderCommand({
-          provider: agent.provider,
-          id: "resume",
-          sessionId: providerSessionId,
-        }) ?? null;
-      if (!command) {
-        toast.error(t("workspace.tabs.toasts.resumeCommandUnavailable"));
+      if (resumeCopyPendingRef.current.has(agentId)) {
         return;
       }
+      resumeCopyPendingRef.current.add(agentId);
       try {
-        await Clipboard.setStringAsync(command);
-        toast.copied(t("workspace.tabs.toasts.resumeCommandCopiedLabel"));
-      } catch {
-        toast.error(t("workspace.tabs.toasts.copyFailed"));
+        const supportsProviderAncestry =
+          useSessionStore.getState().sessions[normalizedServerId]?.serverInfo?.features
+            ?.providerAncestry === true;
+
+        const outcome = await resolveProviderResumeCommandOutcome({
+          provider: agent.provider,
+          sessionId: providerSessionId,
+          supportsProviderAncestry,
+          getProviderSnapshot: async () => {
+            if (!client) {
+              throw new ProviderResumeCommandUnavailableError();
+            }
+            return ensureProvidersSnapshotEntries({
+              queryClient,
+              client,
+              serverId: normalizedServerId,
+              cwd: workspaceDirectory,
+            });
+          },
+        });
+        if (outcome.status === "unavailable") {
+          toast.error(t("workspace.tabs.toasts.resumeCommandUnavailable"));
+          return;
+        }
+        if (outcome.status === "failed") {
+          console.error("[WorkspaceScreen] Failed to resolve resume command", {
+            error: outcome.error,
+          });
+          toast.error(t("workspace.tabs.toasts.copyFailed"));
+          return;
+        }
+        try {
+          await Clipboard.setStringAsync(outcome.command);
+          toast.copied(t("workspace.tabs.toasts.resumeCommandCopiedLabel"));
+        } catch {
+          toast.error(t("workspace.tabs.toasts.copyFailed"));
+        }
+      } finally {
+        resumeCopyPendingRef.current.delete(agentId);
       }
     },
-    [normalizedServerId, toast, t],
+    [client, normalizedServerId, workspaceDirectory, queryClient, toast, t],
   );
 
   const handleReloadAgent = useCallback(
