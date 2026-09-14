@@ -10,6 +10,7 @@ export interface SidebarShortcutWorkspaceTarget {
 }
 
 export interface SidebarShortcutModel {
+  workspaceTargets: SidebarShortcutWorkspaceTarget[];
   shortcutTargets: SidebarShortcutWorkspaceTarget[];
   shortcutIndexByWorkspaceKey: Map<string, number>;
 }
@@ -61,6 +62,7 @@ export function buildSidebarShortcutSections(input: {
   shortcutLimit?: number;
 }): SidebarShortcutModel {
   const maxShortcuts = Math.max(0, Math.floor(input.shortcutLimit ?? 9));
+  const workspaceTargets: SidebarShortcutWorkspaceTarget[] = [];
   const shortcutTargets: SidebarShortcutWorkspaceTarget[] = [];
   const shortcutIndexByWorkspaceKey = new Map<string, number>();
 
@@ -70,8 +72,9 @@ export function buildSidebarShortcutSections(input: {
     }
 
     for (const workspace of section.workspaces) {
+      workspaceTargets.push(createShortcutTarget(workspace));
       if (shortcutTargets.length >= maxShortcuts) {
-        break;
+        continue;
       }
 
       const shortcutNumber = shortcutTargets.length + 1;
@@ -80,7 +83,7 @@ export function buildSidebarShortcutSections(input: {
     }
   }
 
-  return { shortcutTargets, shortcutIndexByWorkspaceKey };
+  return { workspaceTargets, shortcutTargets, shortcutIndexByWorkspaceKey };
 }
 
 export function getRelativeSidebarShortcutTarget(input: {
