@@ -61,10 +61,7 @@ import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { ToolCallDetailsContent } from "@/components/tool-call-details";
 import { QuestionFormCard } from "@/components/question-form-card";
 import { ToolCallSheetProvider } from "@/components/tool-call-sheet";
-import {
-  prepareToolCallHistory,
-  projectToolCallDetailLevel,
-} from "@/tool-calls/detail-level/projection";
+import { createStreamPresentation } from "./presentation";
 import { OverviewToolCallGroupView } from "@/tool-calls/detail-level/overview/view";
 import { type AgentStreamRenderModel, buildAgentStreamRenderModel } from "./model";
 import { resolveStreamRenderStrategy } from "./strategy-resolver";
@@ -108,11 +105,6 @@ import { recordRenderProfileReasons } from "@/utils/render-profiler";
 import { useRetainedPanelActive } from "@/components/retained-panel";
 import { useStreamHistoryWindow } from "./use-stream-history-window";
 import { PluginTimelineItemView, useInstalledTimelineTransform } from "@/plugins/timeline";
-import {
-  projectPluginNonToolItems,
-  projectPluginToolCallItems,
-  removeOverlappingToolCallItems,
-} from "@/plugins/timeline/projection";
 
 function renderLiveAuxiliaryNode(input: {
   pendingPermissions: ReactNode;
@@ -315,7 +307,6 @@ const AGENT_CAPABILITY_FLAG_KEYS: (keyof AgentCapabilityFlags)[] = [
 ];
 
 const EMPTY_STREAM_HEAD: StreamItem[] = [];
-const EMPTY_TOOL_CALL_SOURCE_IDS = new Set<string>();
 
 function useRetainedValue<T>(value: T, active: boolean): T {
   const retainedRef = useRef(value);
@@ -542,62 +533,24 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     const effectiveStreamHead = useRetainedValue(streamHead, isActive);
     const effectiveTurnPresentation = useRetainedValue(turnPresentation, isActive);
     const isTurnActive = effectiveTurnPresentation.isActive;
-    const toolCallHeadIdsKey = useMemo(
+    const presentStream = useMemo(() => createStreamPresentation(), []);
+    const presentation = useMemo(
       () =>
-        JSON.stringify(
-          (effectiveStreamHead ?? EMPTY_STREAM_HEAD)
-            .filter((item) => item.kind === "tool_call")
-            .map((item) => item.id),
-        ),
-      [effectiveStreamHead],
-    );
-    const toolCallHeadIds = useMemo(() => {
-      const ids = JSON.parse(toolCallHeadIdsKey) as string[];
-      return ids.length === 0 ? EMPTY_TOOL_CALL_SOURCE_IDS : new Set(ids);
-    }, [toolCallHeadIdsKey]);
-    // Transform individual tool calls before Overview can synthesize a host row. The second pass
-    // handles other source types without sending grouped tool-call hosts back through plugins.
-    const projectedToolCallTail = useMemo(
-      () =>
-        projectPluginToolCallItems(
-          removeOverlappingToolCallItems(effectiveStreamItems, toolCallHeadIds),
-          transformTimelineItem,
-        ),
-      [effectiveStreamItems, toolCallHeadIds, transformTimelineItem],
-    );
-    const projectedToolCallHead = useMemo(
-      () =>
-        projectPluginToolCallItems(effectiveStreamHead ?? EMPTY_STREAM_HEAD, transformTimelineItem),
-      [effectiveStreamHead, transformTimelineItem],
-    );
-    // Keep retained history outside the 48ms live-head flush path.
-    const preparedToolCallHistory = useMemo(
-      () => prepareToolCallHistory(toolCallDetailLevel, projectedToolCallTail),
-      [projectedToolCallTail, toolCallDetailLevel],
-    );
-    const projectedToolCalls = useMemo(
-      () =>
-        projectToolCallDetailLevel({
+        presentStream({
+          tail: effectiveStreamItems,
+          head: effectiveStreamHead ?? EMPTY_STREAM_HEAD,
+          transform: transformTimelineItem,
           level: toolCallDetailLevel,
-          tail: projectedToolCallTail,
-          head: projectedToolCallHead,
-          preparedHistory: preparedToolCallHistory,
           isTurnActive,
         }),
       [
-        isTurnActive,
-        preparedToolCallHistory,
-        projectedToolCallHead,
-        projectedToolCallTail,
+        presentStream,
+        effectiveStreamItems,
+        effectiveStreamHead,
+        transformTimelineItem,
         toolCallDetailLevel,
+        isTurnActive,
       ],
-    );
-    const projectedPlugins = useMemo(
-      () => ({
-        tail: projectPluginNonToolItems(projectedToolCalls.tail, transformTimelineItem),
-        head: projectPluginNonToolItems(projectedToolCalls.head, transformTimelineItem),
-      }),
-      [projectedToolCalls.head, projectedToolCalls.tail, transformTimelineItem],
     );
     const {
       start: historyWindowStart,
@@ -606,7 +559,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       loadOlder,
     } = useStreamHistoryWindow({
       agentId,
-      items: projectedPlugins.tail,
+      items: presentation.tail,
       loadRemoteOlder,
     });
     const isLoadingOlder = remoteIsLoadingOlder;
@@ -617,8 +570,8 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       return buildAgentStreamRenderModel({
         isTurnActive,
         activeTurnStartedAt: effectiveTurnPresentation.startedAt,
-        tail: projectedPlugins.tail,
-        head: projectedPlugins.head,
+        tail: presentation.tail,
+        head: presentation.head,
         platform: isWeb ? "web" : "native",
         isMobileBreakpoint: isMobile,
         historyStart: historyWindowStart,
@@ -626,8 +579,8 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     }, [
       isMobile,
       isTurnActive,
-      projectedPlugins.head,
-      projectedPlugins.tail,
+      presentation.head,
+      presentation.tail,
       effectiveTurnPresentation.startedAt,
       historyWindowStart,
     ]);
@@ -856,7 +809,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     // Read through a stable event so live group updates do not change the renderer identity
     // every tick; history hosts whose group changed are revised through `historyRowRevision`.
     const getToolCallGroup = useStableEvent((hostId: string) =>
-      projectedToolCalls.groupsByHostId.get(hostId),
+      presentation.groupsByHostId.get(hostId),
     );
     const renderToolCallItem = useCallback(
       (layoutItem: StreamLayoutItem, item: Extract<StreamItem, { kind: "tool_call" }>) => {
@@ -1113,11 +1066,11 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       expandedInlineToolCallIds.size === 0;
     const historyRowRevision = useMemo(
       () => ({
-        contentById: projectedToolCalls.historyGroupUpdatesByHostId,
+        contentById: presentation.historyGroupUpdatesByHostId,
         displayStateById: expandedToolCallGroupIds,
         globalDisplayState: isMobile,
       }),
-      [expandedToolCallGroupIds, isMobile, projectedToolCalls.historyGroupUpdatesByHostId],
+      [expandedToolCallGroupIds, isMobile, presentation.historyGroupUpdatesByHostId],
     );
 
     return (

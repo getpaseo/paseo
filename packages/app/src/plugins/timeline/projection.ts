@@ -2,11 +2,11 @@ import type { AgentTimelineItem, ToolCallTimelineItem } from "@getpaseo/protocol
 import type { AgentToolCallData, PluginTimelineStreamItem, StreamItem } from "@/types/stream";
 import type { TimelineItemTransform } from "./model";
 
-type TimelineProjectionScope = "all" | "tool_call" | "non_tool_call";
+type AssistantPhase = "streaming" | "complete";
 
 const projectionCache = new WeakMap<
   TimelineItemTransform,
-  Map<TimelineProjectionScope, WeakMap<StreamItem, StreamItem[]>>
+  WeakMap<StreamItem, Partial<Record<AssistantPhase, StreamItem[]>>>
 >();
 
 function cloneAndFreeze<T>(value: T): T {
@@ -82,6 +82,7 @@ function sourceTimelineItem(item: StreamItem): AgentTimelineItem | null {
 function transformSourceItem(
   item: StreamItem,
   transformTimelineItem: TimelineItemTransform,
+  assistantPhase: AssistantPhase,
 ): StreamItem[] {
   const source = sourceTimelineItem(item);
   if (!source) return [item];
@@ -90,7 +91,9 @@ function transformSourceItem(
     item.kind === "tool_call" &&
     item.payload.source === "agent" &&
     item.payload.data.status === "running";
-  const phase = isStreamingThought || isStreamingToolCall ? "streaming" : "complete";
+  const isStreamingAssistant = item.kind === "assistant_message" && assistantPhase === "streaming";
+  const phase =
+    isStreamingAssistant || isStreamingThought || isStreamingToolCall ? "streaming" : "complete";
   const transformed = transformTimelineItem({
     item: cloneAndFreeze(source),
     phase,
@@ -117,61 +120,25 @@ function transformSourceItem(
 export function projectPluginTimelineItems(
   items: StreamItem[],
   transformTimelineItem: TimelineItemTransform | undefined,
-  scope: TimelineProjectionScope = "all",
+  assistantPhase: AssistantPhase = "complete",
 ): StreamItem[] {
   if (!transformTimelineItem) return items;
-  let byScope = projectionCache.get(transformTimelineItem);
-  if (!byScope) {
-    byScope = new Map();
-    projectionCache.set(transformTimelineItem, byScope);
-  }
-  let bySource = byScope.get(scope);
+  let bySource = projectionCache.get(transformTimelineItem);
   if (!bySource) {
     bySource = new WeakMap();
-    byScope.set(scope, bySource);
+    projectionCache.set(transformTimelineItem, bySource);
   }
   let changed = false;
   const projected = items.flatMap((item) => {
-    const shouldProject =
-      scope === "all" ||
-      (scope === "tool_call" && item.kind === "tool_call") ||
-      (scope === "non_tool_call" && item.kind !== "tool_call" && item.kind !== "plugin");
-    if (!shouldProject) {
-      return [item];
-    }
-
-    const cached = bySource.get(item);
+    const cached = bySource.get(item)?.[assistantPhase];
     if (cached) {
       changed = changed || cached.length !== 1 || cached[0] !== item;
       return cached;
     }
-    const output = transformSourceItem(item, transformTimelineItem);
-    bySource.set(item, output);
+    const output = transformSourceItem(item, transformTimelineItem, assistantPhase);
+    bySource.set(item, { ...bySource.get(item), [assistantPhase]: output });
     changed = changed || output.length !== 1 || output[0] !== item;
     return output;
   });
   return changed ? projected : items;
-}
-
-export function projectPluginToolCallItems(
-  items: StreamItem[],
-  transformTimelineItem: TimelineItemTransform | undefined,
-): StreamItem[] {
-  return projectPluginTimelineItems(items, transformTimelineItem, "tool_call");
-}
-
-export function projectPluginNonToolItems(
-  items: StreamItem[],
-  transformTimelineItem: TimelineItemTransform | undefined,
-): StreamItem[] {
-  return projectPluginTimelineItems(items, transformTimelineItem, "non_tool_call");
-}
-
-export function removeOverlappingToolCallItems(
-  items: StreamItem[],
-  sourceIds: ReadonlySet<string>,
-): StreamItem[] {
-  if (sourceIds.size === 0) return items;
-  const filtered = items.filter((item) => item.kind !== "tool_call" || !sourceIds.has(item.id));
-  return filtered.length === items.length ? items : filtered;
 }

@@ -854,7 +854,12 @@ export default function contribute(client: PluginClientContext) {
 `query.itemType` is the stable, coarse selector. Inspect the selected item inside `transform` for
 provider- or tool-specific recognition. Returning `undefined` keeps the original entry. Returning
 `items` replaces it; an empty array removes it. Item `data` must be JSON-compatible. The `phase`
-input is `"streaming"` for running tool calls and loading reasoning, and `"complete"` otherwise.
+input is `"streaming"` for the live assistant message, running tool calls, and loading reasoning;
+it is `"complete"` for committed or fetched messages and finished tools or reasoning.
+Assistant and reasoning callbacks receive the full accumulated text on each update, including
+paragraph separators. Paseo invokes transformers before splitting native Markdown or grouping
+tools in Overview. A claimed assistant message remains one source item throughout streaming;
+return `undefined` until recognizable if the first text is insufficient to identify it.
 Each replacement may set an optional plugin-local `id`; otherwise Paseo uses its index within that
 source item's output.
 
