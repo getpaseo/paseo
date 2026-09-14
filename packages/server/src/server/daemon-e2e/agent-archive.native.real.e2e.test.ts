@@ -41,7 +41,7 @@ async function expectContextAfterWorkspaceRestore(legacyNativeArchive: boolean):
     });
     client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws`, appVersion: "0.8.0" });
     await client.connect();
-    await client.fetchAgents({ subscribe: { subscriptionId: "archive-qa" } });
+    await client.fetchAgents({ subscribe: {} });
     const agent = await client.createAgent({
       config: {
         provider: "codex",

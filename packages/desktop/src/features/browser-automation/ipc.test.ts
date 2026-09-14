@@ -108,6 +108,14 @@ type ConsoleMessageListener = (
 ) => void;
 
 class FakeWebContents {
+  public backgroundThrottling = true;
+  public getBackgroundThrottling(): boolean {
+    return this.backgroundThrottling;
+  }
+  public setBackgroundThrottling(allowed: boolean): void {
+    if (this.destroyed) throw new Error("Object has been destroyed");
+    this.backgroundThrottling = allowed;
+  }
   public readonly debugger = new FakeDebugger();
   public readonly inputEvents: IsolatedKeyboardInputEvent[] = [];
   public readonly loadedUrls: string[] = [];
@@ -672,3 +680,38 @@ function deferred<T>() {
   });
   return { promise, resolve };
 }
+
+describe("pixel capture frame production", () => {
+  test.each([true, false])(
+    "restores the prior throttling policy (%s) after capture or failure",
+    async (previous) => {
+      const contents = new FakeWebContents(8001);
+      contents.backgroundThrottling = previous;
+      const tab = adaptWebContents(contents);
+      expect(
+        await tab.withFrameProduction(async () => {
+          expect(contents.backgroundThrottling).toBe(false);
+          return "pixels";
+        }),
+      ).toBe("pixels");
+      expect(contents.backgroundThrottling).toBe(previous);
+      await expect(
+        tab.withFrameProduction(async () => {
+          throw new Error("capture failed");
+        }),
+      ).rejects.toThrow("capture failed");
+      expect(contents.backgroundThrottling).toBe(previous);
+    },
+  );
+
+  test("does not touch a guest destroyed during capture", async () => {
+    const contents = new FakeWebContents(8002);
+    const tab = adaptWebContents(contents);
+    await expect(
+      tab.withFrameProduction(async () => {
+        contents.destroyed = true;
+        throw new Error("capture closed");
+      }),
+    ).rejects.toThrow("capture closed");
+  });
+});

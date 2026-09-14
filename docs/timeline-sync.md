@@ -88,12 +88,22 @@ The installed tail carries `hasOlder`, so history skipped by a replacement remai
 ordinary backward pagination. A backward page is accepted only when it is adjacent to the current
 history start; a response requested from a pre-replacement range is stale and is discarded.
 
+A plan approval keeps the original proposal's tool-call identity through resolution and provider
+history replay. The pending approval UI can hide that tool from presentation, but the client model
+must retain its position. Creating a new history card on rejection places it after the prompt that
+rejected it; changing steer-event ordering would also put new assistant output before that prompt.
+
 ## Client replica lifetime
 
 The session projection remains host-scoped for as long as the host is registered. The viewed-timeline
 owner wraps cached preparation, network catch-up, accepted timeline application, and persistence
 behind one interface. React supplies transport and projection operations without selecting a cache
 path or issuing a separate persistence notification.
+
+Active-agent list reconciliation does not own transcript lifetime. An archived agent's fresh
+history response can arrive before the active-list response that omits it. Clearing history there
+would discard accepted rows while the viewed owner still considers them synchronized. Entity
+deletion clears the transcript; list membership changes do not.
 
 Removing the host from the registry is the destructive boundary: it stops the runtime and clears the
 session and host-scoped setup state together.

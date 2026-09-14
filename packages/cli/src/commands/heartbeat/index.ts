@@ -64,7 +64,7 @@ async function runCreateHeartbeat(
   if (!cron) {
     throw new Error("--cron is required");
   }
-  const { client } = await connectScheduleClient(options.host);
+  const { client } = await connectScheduleClient(options.daemonTarget);
   try {
     const maxRuns = options.maxRuns ? Number.parseInt(options.maxRuns, 10) : undefined;
     if (maxRuns !== undefined && (!Number.isSafeInteger(maxRuns) || maxRuns <= 0)) {
@@ -105,7 +105,7 @@ async function runUpdateHeartbeat(
   if (!cron) {
     throw new Error("--cron is required");
   }
-  const { client } = await connectScheduleClient(options.host);
+  const { client } = await connectScheduleClient(options.daemonTarget);
   try {
     await requireOwnedHeartbeat(client, id, agentId);
     const payload = await client.scheduleUpdate({
@@ -133,7 +133,7 @@ async function runDeleteHeartbeat(
   _command: Command,
 ): Promise<SingleResult<HeartbeatDeleteRow>> {
   const agentId = requireCallerAgentId();
-  const { client } = await connectScheduleClient(options.host);
+  const { client } = await connectScheduleClient(options.daemonTarget);
   try {
     await requireOwnedHeartbeat(client, id, agentId);
     const payload = await client.scheduleDelete({ id });

@@ -34,6 +34,7 @@ function deferred<T>(): Deferred<T> {
 }
 
 class ControlledHubExecutionAgents implements HubExecutionAgents {
+  observerCount = 0;
   private readonly createObserved = deferred<void>();
   private readonly createGate = deferred<OwnedAgentSnapshot>();
 
@@ -45,7 +46,10 @@ class ControlledHubExecutionAgents implements HubExecutionAgents {
   async control(): Promise<void> {}
 
   subscribe(_listener: (event: OwnedAgentEvent) => void): () => void {
-    return () => undefined;
+    this.observerCount++;
+    return () => {
+      this.observerCount--;
+    };
   }
 
   async invalidateAuthority(): Promise<void> {}
@@ -223,4 +227,29 @@ describe("HubExecutionController", () => {
       }),
     ]);
   });
+});
+
+test("Hub observation is acquired and released explicitly without closing its RPC controller", async () => {
+  const agents = new ControlledHubExecutionAgents();
+  const messages: SessionOutboundMessage[] = [];
+  const controller = new HubExecutionController({
+    agents,
+    validateAgentConfiguration: async () => [],
+    send: (message) => messages.push(message),
+  });
+  expect(agents.observerCount).toBe(0);
+  controller.setObserving(true);
+  expect(agents.observerCount).toBe(1);
+  controller.setObserving(true);
+  expect(agents.observerCount).toBe(1);
+  controller.setObserving(false);
+  expect(agents.observerCount).toBe(0);
+  await controller.validateAgent({
+    type: "hub.execution.agent.validate.request",
+    requestId: "plain-validation",
+    provider: "codex",
+  });
+  expect(messages).toHaveLength(1);
+  expect(agents.observerCount).toBe(0);
+  await controller.cleanup();
 });

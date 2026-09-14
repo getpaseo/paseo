@@ -1,5 +1,12 @@
 import { randomUUID } from "node:crypto";
-import { metroTest as test } from "../support/fixtures";
+import { submitMessage, expectComposerEditable } from "../support/helpers/composer";
+import {
+  focusTerminalSurface,
+  typeInTerminal,
+  getTerminalBufferText,
+} from "../support/helpers/terminal-perf";
+import { buildHostWorkspaceRoute } from "../../src/utils/host-routes";
+import { metroTest as test, expect } from "../support/fixtures";
 import { buildCreateAgentPreferences, buildSeededHost } from "../support/helpers/daemon-registry";
 import { startIsolatedHostDaemon } from "../support/helpers/isolated-host-daemon";
 import type { MockAgentWorkspace } from "../support/helpers/mock-agent";
@@ -17,6 +24,19 @@ test("does not repeat an assistant block when the current app paginates a publis
   test.setTimeout(120_000);
   const serverId = `srv_old_pagination_${randomUUID().replaceAll("-", "").slice(0, 12)}`;
   const daemon = await startIsolatedHostDaemon(serverId, { publishedVersion: "0.2.5" });
+  const observationSockets = new Set<unknown>();
+  page.on("websocket", (socket) => {
+    socket.on("framesent", ({ payload }) => {
+      if (typeof payload !== "string") return;
+      const frame = JSON.parse(payload);
+      if (
+        frame.type === "session" &&
+        frame.message.type === "fetch_agents_request" &&
+        frame.message.subscribe
+      )
+        observationSockets.add(socket);
+    });
+  });
   const workspace = await seedWorkspace({
     repoPrefix: "timeline-old-daemon-pagination-",
     port: daemon.port,
@@ -79,6 +99,38 @@ test("does not repeat an assistant block when the current app paginates a publis
 
     history.expectRepeatedEntries();
     await history.expectOwnedTextRendered("Now I have a clearer picture.");
+    expect(observationSockets.size).toBe(1);
+
+    await test.step("send a live turn after reconnecting the old daemon", async () => {
+      await daemon.restart();
+      await expect.poll(() => observationSockets.size, { timeout: 30_000 }).toBe(2);
+      await expectComposerEditable(page);
+      await submitMessage(
+        page,
+        "compatibility-after-reconnect: emit 1 coalesced agent stream updates",
+      );
+      await expectTimelinePromptVisible(
+        page,
+        "compatibility-after-reconnect: emit 1 coalesced agent stream updates",
+      );
+      await agent.client.waitForFinish(agent.agentId, 20_000);
+      await page.screenshot({ path: test.info().outputPath("old-daemon-live-reconnect.png") });
+    });
+
+    await test.step("open a terminal and receive its output", async () => {
+      const terminal = await agent.client.createTerminal(agent.cwd, "Compatibility terminal");
+      expect(terminal.error).toBeNull();
+      const terminalId = terminal.terminal!.id;
+      const route = buildHostWorkspaceRoute(serverId, workspace.workspaceId);
+      await page.goto(`${route}?open=${encodeURIComponent(`terminal:${terminalId}`)}`);
+      await focusTerminalSurface(page);
+      await typeInTerminal(page, "printf 'compatibility-%s\\n' terminal-output\n");
+      await expect
+        .poll(() => getTerminalBufferText(page), { timeout: 15_000 })
+        .toContain("compatibility-terminal-output");
+      await page.screenshot({ path: test.info().outputPath("old-daemon-terminal.png") });
+      await agent.client.killTerminal(terminalId);
+    });
   } finally {
     await agent.cleanup();
     await daemon.close();

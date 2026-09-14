@@ -18,7 +18,7 @@ const COMPACT = { width: 390, height: 844 };
 function clientSource(workspaceId: string, agentId: string): string {
   return `import React from "react";
 import { Text, View, Pressable } from "react-native";
-import { useWorkspace, useRpc } from "@getpaseo/plugin/client";
+import { useWorkspace, useRpc, usePaseo } from "@getpaseo/plugin/client";
 import { useQuery } from "@tanstack/react-query";
 import { summary } from "./shared/rpc";
 
@@ -28,9 +28,22 @@ function StatusIcon({ size, theme }) {
 
 function Details({ workspaceId, theme, layout, close }) {
   const workspace = useWorkspace(workspaceId, (workspace) => workspace.name);
+  const paseo = usePaseo();
+  const [ownerId, setOwnerId] = React.useState("");
+  const [updates, setUpdates] = React.useState(0);
+  const [failed, setFailed] = React.useState(false);
+  React.useEffect(() => {
+    const owner = paseo.observeEvents(["project.update"]);
+    owner.subscribe({ snapshot(value) { setOwnerId(value.subscriptionId); }, update() { setUpdates((n) => n + 1); } });
+    // Deliberately leave this observation to the mounted host scope.
+  }, [paseo]);
   const rpc = useRpc(summary);
   const query = useQuery({ queryKey: ["summary"], queryFn: () => rpc({}) });
+  if (failed) throw new Error("Button content failed");
   return <View style={{ gap: 12 }}>
+    <Text accessibilityLabel="Content observation" style={{ color: theme.colors.foreground }}>{ownerId}</Text>
+    <Text style={{ color: theme.colors.foreground }}>Observed updates: {updates}</Text>
+    <Pressable accessibilityRole="button" accessibilityLabel="Fail button content" onPress={() => setFailed(true)}><Text style={{ color: theme.colors.foreground }}>Fail content</Text></Pressable>
     <Text style={{ color: theme.colors.foreground, fontSize: 18 }}>Deployment status</Text>
     <Text style={{ color: theme.colors.foregroundMuted }}>{workspace}</Text>
     <Text style={{ color: theme.colors.statusSuccess }}>{query.data?.message ?? "Loading deployment..."}</Text>
@@ -83,12 +96,19 @@ export default function contribute(client) {
   command("icon-only", "Use icon-only header", () => deploy.update({ label: undefined }));
   command("hide-menu", "Hide composer menu", () => pillMenu.update({ visible: false }));
   command("show-menu", "Show composer menu", () => pillMenu.update({ visible: true }));
-  const unsubscribe = client.paseo.workspaces.ref(workspaceId).subscribe((update) => {
-    if (update.kind !== "upsert") return;
-    deploy.update({ visible: update.workspace.name !== "Compact checks" });
-    pillMenu.update({ visible: update.workspace.name !== "Hide composer menu" });
-  });
-  return () => { unsubscribe(); finish(); finishReview(); for (const registration of registrations) registration.remove(); };
+  const lifetime = new AbortController();
+  const applyWorkspace = (workspace) => {
+    if (workspace.id !== workspaceId) return;
+    deploy.update({ visible: workspace.name !== "Compact checks" });
+    pillMenu.update({ visible: workspace.name !== "Hide composer menu" });
+  };
+  void client.paseo.workspaces.list({ subscribe: {}, signal: lifetime.signal }).then(({ subscription }) => {
+    subscription.subscribe({
+      snapshot({ entries }) { for (const workspace of entries) applyWorkspace(workspace); },
+      update(message) { if (message.type === "workspace_update" && message.payload.kind === "upsert") applyWorkspace(message.payload.workspace); },
+    });
+  }).catch((error) => { if (!lifetime.signal.aborted) console.error(error); });
+  return () => { lifetime.abort(); finish(); finishReview(); for (const registration of registrations) registration.remove(); };
 }`;
 }
 
@@ -222,8 +242,18 @@ export async function withButtonShowcase(
     runAndUpdateActions(): Promise<void>;
     openCompactSheets(): Promise<void>;
     hideAndUnloadOpenButtons(): Promise<void>;
+    verifyObservationLifetime(): Promise<void>;
   }) => Promise<void>,
 ) {
+  const released = new Set<string>();
+  page.on("websocket", (socket) =>
+    socket.on("framereceived", ({ payload }) => {
+      if (typeof payload !== "string") return;
+      const frame = JSON.parse(payload);
+      if (frame.message?.type === "subscription.release.response")
+        released.add(frame.message.payload.subscriptionId);
+    }),
+  );
   const workspace = await seedWorkspace({ repoPrefix: "plugin-buttons-" });
   const agent = await workspace.client.createAgent({
     provider: "mock",
@@ -241,6 +271,45 @@ export async function withButtonShowcase(
     await expect(page.getByRole("button", { name: "Run review", exact: true })).toBeVisible();
 
     await run({
+      verifyObservationLifetime: () =>
+        test.step("closing and crashing content release its owner while sibling buttons and app remain live", async () => {
+          await press(page, "Header status");
+          await expectDetails(page);
+          const observation = page.getByLabel("Content observation", { exact: true });
+          await expect(observation).not.toHaveText("");
+          const first = (await observation.textContent())!;
+          await press(page, "Close deployment details");
+          await expect.poll(() => released.has(first)).toBe(true);
+          await press(page, "Composer status");
+          await expectDetails(page);
+          const second = (await observation.textContent())!;
+          expect(second).not.toBe(first);
+          await workspace.client.renameProject(workspace.projectId, "Observer control");
+          await expect(page.getByText("Observed updates: 1", { exact: true })).toBeVisible();
+          await press(page, "Fail button content");
+          await expect(
+            page.getByText("Plugin failed: Button content failed", { exact: true }),
+          ).toBeVisible();
+          await expect.poll(() => released.has(second)).toBe(true);
+          await page.keyboard.press("Escape");
+          await press(page, "Header status");
+          await expectDetails(page);
+          const recovered = (await observation.textContent())!;
+          expect([first, second]).not.toContain(recovered);
+          await showcase.setTitle("Healthy app after button failure");
+          await expect(page.getByTestId("workspace-header-title")).toHaveText(
+            "Healthy app after button failure",
+          );
+          await showcase.disable();
+          await expect.poll(() => released.has(recovered)).toBe(true);
+          await expect(page.getByRole("button", { name: "Run review", exact: true })).toHaveCount(
+            0,
+          );
+          await showcase.setTitle("Healthy app after plugin unload");
+          await expect(page.getByTestId("workspace-header-title")).toHaveText(
+            "Healthy app after plugin unload",
+          );
+        }),
       openWideMenusAndPopovers: () =>
         test.step("wide buttons have placement-owned labels and chevrons", async () => {
           await expect(

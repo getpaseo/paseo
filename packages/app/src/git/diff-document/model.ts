@@ -8,7 +8,7 @@ import {
 } from "@/utils/diff-layout";
 import { compactHighlightTokens } from "@/utils/diff-rendering";
 import { getInlineReviewThreadState, getSplitInlineReviewThreadState } from "@/review/geometry";
-import { advancesFor } from "./text-measurement";
+import { advancesFor, requiresShaping } from "./text-measurement";
 import type {
   BuildDiffDocumentModelInput,
   DiffCell,
@@ -571,14 +571,31 @@ export function measureFragments(input: {
     return [createFragment(graphemes, 0, graphemes.length, 0, input.lineHeight, input.measureText)];
   }
   const fragments: DiffFragment[] = [];
+  const displayGraphemes = graphemes.map((grapheme) => grapheme.text);
+  const measureWidth =
+    input.measureText.measureWidth?.bind(input.measureText) ??
+    ((slice: readonly string[]) => advancesFor(input.measureText)(slice).at(-1) ?? 0);
+  // Joining/ligatures can make a longer prefix narrower. Preserve the existing
+  // search order for those runs; changing the probes can change their breaks.
+  const canBoundSearch = !requiresShaping(input.text);
   let graphemeIndex = 0;
   while (graphemeIndex < graphemes.length) {
     let low = graphemeIndex + 1;
-    let high = graphemes.length;
+    // A small first probe finishes short lines in one query. Grow it only when
+    // it fits, so narrow wrapping never repeatedly measures a huge line's tail.
+    let high = canBoundSearch ? Math.min(graphemes.length, graphemeIndex + 64) : graphemes.length;
     let fitting = low;
+    if (canBoundSearch) {
+      while (measureWidth(displayGraphemes.slice(graphemeIndex, high)) <= input.availableWidth) {
+        fitting = high;
+        low = high + 1;
+        if (high === graphemes.length) break;
+        high = Math.min(graphemes.length, graphemeIndex + (high - graphemeIndex) * 2);
+      }
+    }
     while (low <= high) {
       const middle = (low + high) >>> 1;
-      const width = measureGraphemeSlice(graphemes, graphemeIndex, middle, input.measureText).width;
+      const width = measureWidth(displayGraphemes.slice(graphemeIndex, middle));
       if (width <= input.availableWidth || middle === graphemeIndex + 1) {
         fitting = middle;
         low = middle + 1;

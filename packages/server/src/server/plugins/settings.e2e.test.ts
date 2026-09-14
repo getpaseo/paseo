@@ -33,6 +33,7 @@ export default function(server) { server.registerSettings(defineSettings({ id: "
     );
     await first.connect();
     await second.connect();
+    await second.observeEvents(["status.plugin_settings_changed"]).ready;
     second.on("status", (message) => {
       if (message.payload.status === "plugin_settings_changed")
         changed.push(z.string().parse(message.payload.settingsId));

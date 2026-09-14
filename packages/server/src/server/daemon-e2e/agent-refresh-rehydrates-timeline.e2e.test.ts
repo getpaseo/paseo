@@ -113,7 +113,7 @@ describe("daemon E2E - refresh rehydrates timeline from on-disk session", () => 
     client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
     await client.connect();
     await client.fetchAgents({
-      subscribe: { subscriptionId: "refresh-rehydrate-test" },
+      subscribe: {},
     });
 
     const imported = await client.importAgent({ provider: "claude", sessionId, cwd });

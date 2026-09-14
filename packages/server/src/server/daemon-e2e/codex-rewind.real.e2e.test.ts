@@ -164,7 +164,7 @@ describe("daemon E2E (real codex) - rewind", () => {
     });
 
     await client.connect();
-    await client.fetchAgents({ subscribe: { subscriptionId: "codex-rewind-real" } });
+    await client.fetchAgents({ subscribe: {} });
     harness = { client, daemon };
   }, 30_000);
 

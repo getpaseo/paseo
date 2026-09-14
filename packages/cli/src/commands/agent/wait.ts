@@ -1,5 +1,5 @@
 import { Command } from "commander";
-import { connectToDaemon, getDaemonHost } from "../../utils/client.js";
+import { connectToDaemon } from "../../utils/client.js";
 import type {
   CommandOptions,
   SingleResult,
@@ -72,6 +72,7 @@ function parseWaitTimeout(timeout: string | undefined): {
       timeoutLabel: `${timeoutSeconds} second${timeoutSeconds === 1 ? "" : "s"}`,
     };
   } catch (err) {
+    if (err && typeof err === "object" && "code" in err) throw err;
     const message = err instanceof Error ? err.message : String(err);
     throw {
       code: "INVALID_TIMEOUT",
@@ -142,8 +143,6 @@ export async function runWaitCommand(
   options: AgentWaitOptions,
   _command: Command,
 ): Promise<SingleResult<AgentWaitResult>> {
-  const host = getDaemonHost({ host: options.host });
-
   if (!agentIdArg || agentIdArg.trim().length === 0) {
     throw {
       code: "MISSING_AGENT_ID",
@@ -154,18 +153,7 @@ export async function runWaitCommand(
 
   const { timeoutMs, timeoutLabel } = parseWaitTimeout(options.timeout);
 
-  let client;
-  try {
-    client = await connectToDaemon({ host: options.host });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    const error: CommandError = {
-      code: "DAEMON_NOT_RUNNING",
-      message: `Cannot connect to daemon at ${host}: ${message}`,
-      details: "Start the daemon with: paseo daemon start",
-    };
-    throw error;
-  }
+  const client = await connectToDaemon({ target: options.daemonTarget });
 
   try {
     try {

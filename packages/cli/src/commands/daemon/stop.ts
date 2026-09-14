@@ -1,94 +1,67 @@
-import type { Command } from "commander";
-import {
-  stopLocalDaemon,
-  DEFAULT_STOP_TIMEOUT_MS,
-  DEFAULT_KILL_TIMEOUT_MS,
-} from "./local-daemon.js";
-import type {
-  CommandOptions,
-  SingleResult,
-  OutputSchema,
-  CommandError,
-} from "../../output/index.js";
+import { Command } from "commander";
+import { stopDaemonInstance, type DaemonInstance } from "@getpaseo/server";
+import { connectToDaemon } from "../../utils/client.js";
+import { withOutput, type CommandOptions } from "../../output/index.js";
+import { addJsonAndDaemonHostOptions } from "../../utils/command-options.js";
+import { describeDaemonTarget } from "../../utils/daemon-target.js";
+import { parseTimeoutMs } from "./local-daemon.js";
 
-interface StopResult {
-  action: "stopped" | "not_running";
-  home: string;
-  pid: string;
-  forced: boolean;
-  usedLifecycleRpc: boolean;
-  reason: "not_running" | "lifecycle_shutdown_rpc" | "owner_pid_signal" | "owner_pid_sigkill";
-  message: string;
+export function daemonStopCommand(): Command {
+  return addJsonAndDaemonHostOptions(new Command("stop").description("Stop the selected daemon"))
+    .option("--timeout <seconds>", "Graceful exit deadline (default: 15)")
+    .option("--force", "Permit forced local process cleanup")
+    .option("--kill-timeout <seconds>", "Forced exit deadline (default: 3)")
+    .action(withOutput(runStopCommand));
 }
 
-const stopResultSchema: OutputSchema<StopResult> = {
-  idField: "action",
-  columns: [
-    {
-      header: "STATUS",
-      field: "action",
-      color: (value) => (value === "stopped" ? "green" : "yellow"),
+export async function runStopCommand(options: CommandOptions, _command: Command) {
+  const target = options.daemonTarget;
+  const timeoutMs = parseTimeoutMs(options.timeout, 15_000);
+  const deadline = Date.now() + timeoutMs;
+  const remaining = () => Math.max(1, deadline - Date.now());
+  const requestShutdown = async (instance?: DaemonInstance) => {
+    const client = await connectToDaemon({ target, timeout: remaining(), instance });
+    try {
+      await client.shutdownServer({ timeout: remaining() });
+    } finally {
+      await client.close();
+    }
+  };
+  if (target.kind === "endpoint" && options.force)
+    throw {
+      code: "INVALID_OPTIONS",
+      message: "--force requires a local --home; an endpoint gives no remote process authority.",
+    };
+  const result: {
+    action: string;
+    home?: string;
+    host?: string;
+    pid?: number | null;
+    forced?: boolean;
+    usedLifecycleRpc?: boolean;
+  } =
+    target.kind === "instance"
+      ? {
+          ...(await stopDaemonInstance(target.home, {
+            force: options.force === true,
+            timeoutMs,
+            killTimeoutMs: parseTimeoutMs(options.killTimeout, 3_000),
+            requestShutdown,
+          })),
+          home: target.home,
+        }
+      : (await requestShutdown(),
+        { action: "shutdown_requested", host: describeDaemonTarget(target) });
+  return {
+    type: "single" as const,
+    data: result,
+    schema: {
+      idField: "action" as const,
+      columns: [],
+      renderHuman: () =>
+        target.kind === "endpoint"
+          ? "Shutdown requested; remote process exit was not verified."
+          : `${result.action.replaceAll("_", " ")}: ${target.home}`,
     },
-    { header: "HOME", field: "home" },
-    { header: "PID", field: "pid" },
-    { header: "MESSAGE", field: "message" },
-  ],
-};
-
-export type StopCommandResult = SingleResult<StopResult>;
-
-function parseSecondsOption(raw: unknown, fallbackMs: number, label: string): number {
-  if (typeof raw !== "string" || raw.trim().length === 0) {
-    return fallbackMs;
-  }
-
-  const seconds = Number(raw);
-  if (!Number.isFinite(seconds) || seconds <= 0) {
-    const error: CommandError = {
-      code: "INVALID_TIMEOUT",
-      message: `Invalid ${label} value: ${raw}`,
-      details: `${label} must be a positive number of seconds`,
-    };
-    throw error;
-  }
-
-  return Math.ceil(seconds * 1000);
-}
-
-export async function runStopCommand(
-  options: CommandOptions,
-  _command: Command,
-): Promise<StopCommandResult> {
-  const home = typeof options.home === "string" ? options.home : undefined;
-  const force = options.force === true;
-  const timeoutMs = parseSecondsOption(options.timeout, DEFAULT_STOP_TIMEOUT_MS, "timeout");
-  const killTimeoutMs = parseSecondsOption(
-    options.killTimeout,
-    DEFAULT_KILL_TIMEOUT_MS,
-    "kill-timeout",
-  );
-
-  try {
-    const result = await stopLocalDaemon({ home, force, timeoutMs, killTimeoutMs });
-    return {
-      type: "single",
-      data: {
-        action: result.action,
-        home: result.home,
-        pid: result.pid === null ? "-" : String(result.pid),
-        forced: result.forced,
-        usedLifecycleRpc: result.usedLifecycleRpc,
-        reason: result.reason,
-        message: result.message,
-      },
-      schema: stopResultSchema,
-    };
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    const error: CommandError = {
-      code: "STOP_FAILED",
-      message: `Failed to stop local daemon: ${message}`,
-    };
-    throw error;
-  }
+  };
 }

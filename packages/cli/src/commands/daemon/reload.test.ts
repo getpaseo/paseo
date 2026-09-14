@@ -2,6 +2,8 @@ import { describe, expect, test } from "vitest";
 import { render } from "../../output/render.js";
 import { daemonReloadSchema, type DaemonReloadResult } from "./reload.js";
 
+const restartCommand = 'paseo daemon restart --home "/selected home"';
+
 function result(data: DaemonReloadResult) {
   return { type: "single" as const, data, schema: daemonReloadSchema };
 }
@@ -11,6 +13,7 @@ describe("daemon reload output", () => {
     expect(
       render(
         result({
+          restartCommand,
           appliedPaths: ["daemon.browserTools.enabled"],
           restartRequiredPaths: ["daemon.listen"],
           overrideControlledPaths: ["app.baseUrl"],
@@ -23,7 +26,7 @@ describe("daemon reload output", () => {
         "Warning: These changes require a daemon restart:",
         "  daemon.listen",
         "",
-        "Run: paseo daemon restart",
+        `Run: ${restartCommand}`,
         "",
         "Warning: These settings are controlled by daemon launch overrides:",
         "  app.baseUrl",
@@ -34,6 +37,7 @@ describe("daemon reload output", () => {
   test("human output omits restart guidance for a live-only reload", () => {
     const output = render(
       result({
+        restartCommand,
         appliedPaths: ["daemon.browserTools.enabled"],
         restartRequiredPaths: [],
         overrideControlledPaths: [],
@@ -45,6 +49,7 @@ describe("daemon reload output", () => {
 
   test("structured output preserves the daemon result", () => {
     const data = {
+      restartCommand,
       appliedPaths: ["daemon.browserTools.enabled"],
       restartRequiredPaths: ["daemon.listen"],
       overrideControlledPaths: [],

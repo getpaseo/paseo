@@ -256,7 +256,7 @@ async function createHarness(): Promise<{
   });
   const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
   await client.connect();
-  await client.fetchAgents({ subscribe: { subscriptionId: "opencode-send-interrupt-real" } });
+  await client.fetchAgents({ subscribe: {} });
   return { client, daemon };
 }
 

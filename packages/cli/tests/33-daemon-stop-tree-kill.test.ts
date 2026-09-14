@@ -118,6 +118,8 @@ try {
     join(paseoHome, "paseo.pid"),
     JSON.stringify({
       pid: ownerProcess.pid,
+      hostname: "test",
+      uid: process.getuid?.() ?? -1,
       listen: "127.0.0.1:1",
       startedAt: new Date().toISOString(),
     }),
@@ -153,15 +155,11 @@ try {
       action: parsed.action,
       forced: parsed.forced,
       usedLifecycleRpc: parsed.usedLifecycleRpc,
-      reason: parsed.reason,
-      message: parsed.message,
     },
     {
       action: "stopped",
       forced: true,
       usedLifecycleRpc: false,
-      reason: "owner_pid_sigkill",
-      message: "Daemon owner process was force-stopped",
     },
     `stop should report forced tree cleanup: ${stopResult.stdout}`,
   );
