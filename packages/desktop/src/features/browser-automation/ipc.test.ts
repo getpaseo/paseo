@@ -1,5 +1,5 @@
 import { describe, expect, test, vi } from "vitest";
-import type { TabImage } from "./service.js";
+import { executeAutomationCommand, type BrowserRegistry, type TabImage } from "./service.js";
 import { adaptWebContents, HostSnapshotEngineRegistry } from "./ipc.js";
 import type { IsolatedKeyboardInputEvent } from "./trusted-input.js";
 
@@ -122,7 +122,7 @@ class FakeWebContents {
   public endedFrameSubscriptions = 0;
   public readonly invalidations: string[] = [];
   private consoleMessageListener: ConsoleMessageListener | null = null;
-  private destroyedListener: (() => void) | null = null;
+  public readonly destroyedListeners = new Set<() => void>();
   public destroyed = false;
 
   public constructor(private readonly webContentsId: number) {}
@@ -197,7 +197,12 @@ class FakeWebContents {
 
   public once(event: "destroyed", listener: () => void): void {
     expect(event).toBe("destroyed");
-    this.destroyedListener = listener;
+    this.destroyedListeners.add(listener);
+  }
+
+  public removeListener(event: "destroyed", listener: () => void): void {
+    expect(event).toBe("destroyed");
+    this.destroyedListeners.delete(listener);
   }
 
   public emitConsoleMessage(input: {
@@ -215,7 +220,11 @@ class FakeWebContents {
   public destroy(): void {
     this.destroyed = true;
     this.debugger.emitDetach();
-    this.destroyedListener?.();
+    this.frameListener = null;
+    for (const listener of this.destroyedListeners) {
+      this.destroyedListeners.delete(listener);
+      listener();
+    }
   }
 }
 
@@ -268,6 +277,62 @@ describe("browser automation IPC adapter", () => {
     await failure;
     expect(contents.frameListener).toBeNull();
     expect(contents.endedFrameSubscriptions).toBe(1);
+  });
+
+  test("closing a guest settles its screenshot and releases the next queued capture", async () => {
+    vi.useFakeTimers();
+    try {
+      const closing = new FakeWebContents(2002);
+      const next = new FakeWebContents(2003);
+      const tabs = new Map([
+        ["closing", adaptWebContents(closing)],
+        ["next", adaptWebContents(next)],
+      ]);
+      const registry: BrowserRegistry = {
+        listRegisteredBrowserIds: () => [...tabs.keys()],
+        listRegisteredBrowserIdsForWorkspace: () => [...tabs.keys()],
+        getTabContents: (id) => tabs.get(id) ?? null,
+        getBrowserWorkspaceId: () => null,
+        getWorkspaceActiveBrowserId: () => null,
+      };
+      const capture = (browserId: string) =>
+        executeAutomationCommand(
+          {
+            type: "browser.automation.execute.request",
+            requestId: browserId,
+            command: { command: "screenshot", args: { browserId, fullPage: false } },
+          },
+          registry,
+        );
+      let closedResult: unknown;
+      const closedCapture = Promise.resolve(capture("closing")).then((result) => {
+        closedResult = result;
+        return result;
+      });
+      const nextCapture = capture("next");
+      await vi.advanceTimersByTimeAsync(0);
+      expect(closing.frameListener).not.toBeNull();
+      closing.destroy();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(closedResult).toEqual({
+        requestId: "closing",
+        ok: false,
+        error: {
+          code: "browser_tab_closed",
+          message: "Browser tab closing has been closed",
+          retryable: false,
+        },
+      });
+      expect(closing.destroyedListeners.size).toBe(0);
+      expect(next.frameListener).not.toBeNull();
+      next.frameListener?.(new FakeImage());
+      await expect(nextCapture).resolves.toMatchObject({ ok: true });
+      await closedCapture;
+      expect(next.destroyedListeners.size).toBe(1);
+    } finally {
+      await vi.runAllTimersAsync();
+      vi.useRealTimers();
+    }
   });
 
   test("collects console messages until the guest is destroyed", () => {

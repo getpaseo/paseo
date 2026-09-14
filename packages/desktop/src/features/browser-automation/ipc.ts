@@ -15,7 +15,7 @@ import {
   promptShimInstallScript,
   promptShimRestoreScript,
 } from "./dialog-handling.js";
-import { executeAutomationCommand } from "./service.js";
+import { BrowserTabClosedError, executeAutomationCommand } from "./service.js";
 import { BrowserSnapshotEngine } from "./snapshot-engine.js";
 import {
   listRegisteredPaseoBrowserIds,
@@ -91,6 +91,7 @@ interface ConsoleMessageEmitter {
 }
 
 interface BrowserAutomationWebContents extends ConsoleMessageEmitter {
+  removeListener(event: "destroyed", listener: () => void): void;
   readonly id: number;
   readonly debugger: WebContentsDebugger;
   getURL(): string;
@@ -162,13 +163,19 @@ function captureViewportFrame(
   return new Promise((resolve, reject) => {
     const stop = () => {
       signal.removeEventListener("abort", abort);
+      contents.removeListener("destroyed", destroyed);
       if (!contents.isDestroyed()) contents.endFrameSubscription();
     };
     const abort = () => {
       stop();
       reject(signal.reason);
     };
+    const destroyed = () => {
+      stop();
+      reject(new BrowserTabClosedError());
+    };
     signal.addEventListener("abort", abort, { once: true });
+    contents.once("destroyed", destroyed);
     try {
       // A resized resident guest can paint while capturePage's surface-copy
       // request remains pending. Subscribe to its rendered frames instead.

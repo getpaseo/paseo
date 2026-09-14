@@ -94,6 +94,13 @@ async function withDialogCapture(
   return dialogs.length > 0 ? { ...result, dialogs } : result;
 }
 
+export class BrowserTabClosedError extends Error {
+  public constructor() {
+    super("Browser tab has been closed");
+    this.name = "BrowserTabClosedError";
+  }
+}
+
 class ScreenshotNoFrameError extends Error {
   public constructor(message = SCREENSHOT_NO_FRAME_MESSAGE) {
     super(message);
@@ -1228,6 +1235,9 @@ async function executeScreenshot(
     try {
       image = await capturePaintedViewport(target.contents);
     } catch (error) {
+      if (error instanceof BrowserTabClosedError) {
+        return fail(requestId, "browser_tab_closed", `Browser tab ${browserId} has been closed`);
+      }
       if (isScreenshotNoFrameError(error)) {
         return screenshotNoFrameFailure(requestId, error);
       }

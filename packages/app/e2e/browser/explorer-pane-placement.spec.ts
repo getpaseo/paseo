@@ -6,6 +6,9 @@
 //    interactive in the [agent | New | explorer] state.
 import { expect, type Locator, type Page } from "@playwright/test";
 import { test } from "../support/fixtures";
+import { z } from "zod";
+import { WorkspaceLayoutPersistedStateSchema } from "../../src/stores/workspace-layout-storage";
+import type { WorkspaceTab } from "../../src/workspace-tabs/model";
 import { gotoWorkspace } from "../support/helpers/launcher";
 import { seedWorkspace } from "../support/helpers/seed-client";
 import {
@@ -259,34 +262,49 @@ async function openAgentDraftFromLauncher(page: Page): Promise<void> {
 }
 
 async function persistHiddenGeneratedExplorer(page: Page): Promise<void> {
-  await page.evaluate(() => {
-    const stored = JSON.parse(localStorage.getItem("workspace-layout-state")!);
-    const key = Object.keys(stored.state.layoutByWorkspace)[0];
-    const tabs = [
-      { tabId: "files", target: { kind: "files" }, createdAt: 1 },
-      { tabId: "changes_tree", target: { kind: "changes_tree" }, createdAt: 1 },
-      ...Array.from({ length: 2250 }, (_, index) => ({
+  const raw = await page.evaluate(() => localStorage.getItem("workspace-layout-state"));
+  if (raw === null) throw new Error("Explorer fixture: workspace layout was not persisted");
+  const stored = z
+    .strictObject({
+      state: WorkspaceLayoutPersistedStateSchema,
+      version: z.number().int().nonnegative().optional(),
+    })
+    .parse(JSON.parse(raw), { error: "Explorer fixture: invalid persisted workspace layout" });
+  const [key] = Object.keys(stored.state.layoutByWorkspace);
+  if (!key) throw new Error("Explorer fixture: persisted layout contains no workspace");
+  const tabs: WorkspaceTab[] = [
+    { tabId: "files", target: { kind: "files" }, createdAt: 1 },
+    { tabId: "changes_tree", target: { kind: "changes_tree" }, createdAt: 1 },
+    ...Array.from(
+      { length: 2250 },
+      (_, index): WorkspaceTab => ({
         tabId: `draft_saved_${index}`,
         target: { kind: "draft", draftId: `draft_saved_${index}` },
         createdAt: index + 2,
-      })),
-    ];
-    stored.state.layoutByWorkspace[key] = {
-      root: {
-        kind: "pane",
-        pane: {
-          id: "pane_generated_report_equivalent",
-          hidden: true,
-          tabIds: tabs.map((tab) => tab.tabId),
-          tabs,
-          focusedTabId: tabs[tabs.length - 1].tabId,
-        },
+      }),
+    ),
+  ];
+  stored.state.layoutByWorkspace[key] = {
+    root: {
+      kind: "pane",
+      pane: {
+        id: "pane_generated_report_equivalent",
+        hidden: true,
+        tabIds: tabs.map((tab) => tab.tabId),
+        tabs,
+        focusedTabId: tabs[tabs.length - 1].tabId,
       },
-      focusedPaneId: null,
-    };
-    stored.state.explorerPaneIdByWorkspace[key] = "pane_generated_report_equivalent";
-    localStorage.setItem("workspace-layout-state", JSON.stringify(stored));
-  });
+    },
+    focusedPaneId: null,
+  };
+  stored.state.explorerPaneIdByWorkspace = {
+    ...stored.state.explorerPaneIdByWorkspace,
+    [key]: "pane_generated_report_equivalent",
+  };
+  await page.evaluate(
+    (value) => localStorage.setItem("workspace-layout-state", value),
+    JSON.stringify(stored),
+  );
 }
 
 // Explorer cannot replace the ordinary workspace canvas, including on restore.
