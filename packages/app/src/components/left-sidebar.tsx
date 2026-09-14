@@ -870,6 +870,19 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     gap: theme.spacing[1],
   },
+  workspacesActionTrigger: {
+    width: 28,
+    height: 28,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: theme.borderRadius.md,
+  },
+  workspacesActionTriggerHovered: {
+    backgroundColor: theme.colors.surfaceSidebarHover,
+  },
+  workspacesActionTriggerPressed: {
+    backgroundColor: theme.colors.surfaceSidebarHover,
+  },
   sidebarContent: {
     flex: 1,
     minHeight: 0,

@@ -21,7 +21,10 @@ export function createWorkspaceCommand(): Command {
     workspace
       .command("create")
       .description("Create a workspace")
-      .requiredOption("--isolation <local|worktree>", "Workspace isolation")
+      .option("--isolation <local|worktree|chat>", "Workspace isolation")
+      .option("--chat", "Create an isolated chat workspace (no worktree)")
+      .option("--chats-dir <path>", "Directory where chat sessions are created")
+      .option("--session-id <id>", "Specific session folder ID")
       .option("--path <path>", "Local directory or source checkout (default: current)")
       .option("--project <id>", "Existing project id")
       .option("--title <title>", "Workspace title")

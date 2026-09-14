@@ -103,13 +103,18 @@ export function buildWorkspaceStructureProjects(input: {
         .sort(compareWorkspaceStructureItems)
         .map((workspace) => workspace.workspaceKey),
     }))
-    .sort(
-      (left, right) =>
+    .sort((left, right) => {
+      const isLeftChats = left.projectKey === "__chats__" || left.projectName === "Chats";
+      const isRightChats = right.projectKey === "__chats__" || right.projectName === "Chats";
+      if (isLeftChats && !isRightChats) return -1;
+      if (!isLeftChats && isRightChats) return 1;
+      return (
         left.projectName.localeCompare(right.projectName, undefined, {
           numeric: true,
           sensitivity: "base",
-        }) || left.viewKey.localeCompare(right.viewKey),
-    );
+        }) || left.viewKey.localeCompare(right.viewKey)
+      );
+    });
 }
 
 export function createProjectViewKey(

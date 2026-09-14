@@ -1223,7 +1223,9 @@ export const ar: TranslationResources = {
   },
   newWorkspace: {
     title: "مساحة عمل جديدة",
+    chatTitle: "دردشة جديدة",
     create: "يخلق",
+    startChat: "بدء الدردشة",
     isolation: {
       local: "محلي",
       worktree: "شجرة عمل جديدة",

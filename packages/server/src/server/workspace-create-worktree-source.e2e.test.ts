@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { expect, test } from "vitest";
@@ -252,6 +252,39 @@ test("workspace.create suffixes an occupied checkout branch", async () => {
     expect(second.error).toBeNull();
     expect(path.basename(second.workspace?.workspaceDirectory ?? "")).toBe("existing-branch-1");
     expect(second.workspace?.gitRuntime?.currentBranch).toBe("feature/existing-branch-1");
+  } finally {
+    await client.close().catch(() => undefined);
+    await daemon.close();
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
+}, 180000);
+
+test("workspace.create chat source creates non-worktree workspace in custom or default directory", async () => {
+  const daemon = await createTestPaseoDaemon();
+  const tempRoot = mkdtempSync(path.join(tmpdir(), "workspace-create-chat-"));
+  const client = new DaemonClient({
+    url: `ws://127.0.0.1:${daemon.port}/ws`,
+    appVersion: "0.1.82",
+  });
+
+  try {
+    await client.connect();
+
+    const result = await client.createWorkspace({
+      source: {
+        kind: "chat",
+        chatsDirectory: tempRoot,
+        sessionId: "custom-chat-session",
+      },
+      title: "My Chat Session",
+    });
+
+    expect(result.error).toBeNull();
+    expect(result.workspace?.workspaceKind).toBe("chat");
+    expect(result.workspace?.projectDisplayName).toBe("Chats");
+    expect(result.workspace?.title).toBe("My Chat Session");
+    expect(result.workspace?.workspaceDirectory).toBe(path.join(tempRoot, "custom-chat-session"));
+    expect(existsSync(path.join(tempRoot, "custom-chat-session", "session.json"))).toBe(true);
   } finally {
     await client.close().catch(() => undefined);
     await daemon.close();

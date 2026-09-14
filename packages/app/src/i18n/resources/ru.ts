@@ -1240,7 +1240,9 @@ export const ru: TranslationResources = {
   },
   newWorkspace: {
     title: "Новое рабочее пространство",
+    chatTitle: "Новый чат",
     create: "Создать",
+    startChat: "Начать чат",
     isolation: {
       local: "Локально",
       worktree: "Новый worktree",

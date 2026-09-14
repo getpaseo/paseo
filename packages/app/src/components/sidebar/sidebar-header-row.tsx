@@ -1,5 +1,12 @@
 import { useCallback, useMemo } from "react";
-import { Pressable, Text, View, type PressableStateCallbackType } from "react-native";
+import {
+  Pressable,
+  Text,
+  View,
+  type PressableStateCallbackType,
+  type StyleProp,
+  type ViewStyle,
+} from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import type { LucideIcon } from "lucide-react-native";
 import { HEADER_INNER_HEIGHT, HEADER_INNER_HEIGHT_MOBILE } from "@/constants/layout";
@@ -29,6 +36,8 @@ interface SidebarHeaderRowProps {
    */
   variant?: SidebarHeaderRowVariant;
   shortcutKeys?: ShortcutKey[][] | null;
+  containerStyle?: StyleProp<ViewStyle>;
+  disabled?: boolean;
 }
 
 export function SidebarHeaderRow({
@@ -41,12 +50,17 @@ export function SidebarHeaderRow({
   accessibilityLabel,
   variant = "header",
   shortcutKeys = null,
+  containerStyle: customContainerStyle,
+  disabled = false,
 }: SidebarHeaderRowProps) {
   const ThemedIcon = useMemo(() => withUnistyles(Icon), [Icon]);
 
   const containerStyle = useMemo(
-    () => (variant === "compact" ? styles.containerCompact : styles.container),
-    [variant],
+    () => [
+      variant === "compact" ? styles.containerCompact : styles.container,
+      customContainerStyle,
+    ],
+    [customContainerStyle, variant],
   );
 
   const buttonStyle = useCallback(
@@ -81,6 +95,7 @@ export function SidebarHeaderRow({
     <View style={containerStyle}>
       <Pressable
         onPress={onPress}
+        disabled={disabled}
         testID={testID}
         nativeID={nativeID}
         accessible

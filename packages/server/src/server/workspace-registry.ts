@@ -52,7 +52,7 @@ const PersistedWorkspaceRecordSchema = z.object({
   workspaceId: z.string(),
   projectId: z.string(),
   cwd: z.string(),
-  kind: z.enum(["local_checkout", "worktree", "directory"]),
+  kind: z.enum(["local_checkout", "worktree", "directory", "chat"]),
   displayName: z.string(),
   // User-set title layered over the derived displayName. In Model B the title is
   // the workspace identity; branch/directory are backing metadata. Reconciliation

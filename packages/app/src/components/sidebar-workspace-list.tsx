@@ -36,7 +36,15 @@ import { getSidebarRowBackdrop } from "@/components/sidebar/sidebar-row-backdrop
 import { type GestureType } from "react-native-gesture-handler";
 import { WorkspaceRenameModal } from "@/components/workspace-rename-modal";
 import { useWorkspaceClipboardActions } from "@/hooks/use-workspace-clipboard-actions";
-import { ExternalLink, Settings, MoreVertical, Plus, Trash2 } from "lucide-react-native";
+import {
+  ChevronDown,
+  ChevronRight,
+  ExternalLink,
+  MoreVertical,
+  Plus,
+  Settings,
+  Trash2,
+} from "lucide-react-native";
 import { NestableScrollContainer } from "react-native-draggable-flatlist";
 import { DraggableList, type DraggableRenderItemInfo } from "./draggable-list";
 import type { DraggableListDragHandleProps } from "./draggable-list.types";
@@ -113,6 +121,7 @@ import {
   SidebarFilterEmptyState,
   SidebarProjectEmptyState,
 } from "@/components/sidebar/empty-states";
+import { SidebarHeaderRow } from "@/components/sidebar/sidebar-header-row";
 import { selectWorkspaceServiceSummary } from "@/components/sidebar/workspace-meta-row";
 import {
   SidebarWorkspaceTrailingContent,
@@ -163,6 +172,8 @@ const ThemedPlus = withUnistyles(Plus);
 const ThemedMoreVertical = withUnistyles(MoreVertical);
 const ThemedTrash2 = withUnistyles(Trash2);
 const ThemedSettings = withUnistyles(Settings);
+const ThemedChevronDown = withUnistyles(ChevronDown);
+const ThemedChevronRight = withUnistyles(ChevronRight);
 
 const foregroundColorMapping = (theme: Theme) => ({
   color: theme.colors.foreground,
@@ -1881,6 +1892,167 @@ function areProjectBlockSelectionsEqual(
 
 const MemoProjectBlock = memo(ProjectBlock, areProjectBlockPropsEqual);
 
+interface SidebarChatsSectionProps {
+  workspaceEntriesByKey: ReadonlyMap<string, SidebarWorkspaceEntry>;
+  pinnedWorkspaceKeys?: ReadonlySet<string>;
+  supportsChatByServerId?: ReadonlyMap<string, boolean>;
+  onWorkspacePress?: () => void;
+  activeWorkspaceSelection: ActiveWorkspaceSelection | null;
+  creatingWorkspaceIds: ReadonlySet<string>;
+  hostBadgeByServerId: ReadonlyMap<string, HostBadgeModel>;
+  supportsPinningByServerId: ReadonlyMap<string, boolean>;
+  onToggleWorkspacePin: ToggleSidebarWorkspacePin;
+  showShortcutBadges: boolean;
+  shortcutIndexByWorkspaceKey: Map<string, number>;
+  selectionEnabled: boolean;
+}
+
+function SidebarChatsSection({
+  workspaceEntriesByKey,
+  pinnedWorkspaceKeys,
+  supportsChatByServerId,
+  onWorkspacePress,
+  activeWorkspaceSelection,
+  creatingWorkspaceIds,
+  hostBadgeByServerId,
+  supportsPinningByServerId,
+  onToggleWorkspacePin,
+  showShortcutBadges,
+  shortcutIndexByWorkspaceKey,
+  selectionEnabled,
+}: SidebarChatsSectionProps) {
+  const allHosts = useHosts();
+  const activeSelection = useActiveWorkspaceSelection();
+  const [collapsed, setCollapsed] = useState(false);
+
+  const chatEntries = useMemo(() => {
+    return Array.from(workspaceEntriesByKey.values()).filter(
+      (workspace) =>
+        !pinnedWorkspaceKeys?.has(workspace.workspaceKey) &&
+        (workspace.workspaceKind === "chat" ||
+          workspace.projectName === "Chats" ||
+          workspace.projectViewKey === "__chats__"),
+    );
+  }, [pinnedWorkspaceKeys, workspaceEntriesByKey]);
+
+  const anyHostSupportsChat = useMemo(() => {
+    if (!supportsChatByServerId || supportsChatByServerId.size === 0) return true;
+    for (const supports of supportsChatByServerId.values()) {
+      if (supports) return true;
+    }
+    return false;
+  }, [supportsChatByServerId]);
+
+  const targetServerId = activeSelection?.serverId ?? allHosts[0]?.serverId;
+  const targetHostSupportsChat = Boolean(
+    targetServerId &&
+    (supportsChatByServerId ? supportsChatByServerId.get(targetServerId) === true : true),
+  );
+
+  const handleCreateChat = useCallback(() => {
+    const targetId = activeSelection?.serverId ?? allHosts[0]?.serverId;
+    onWorkspacePress?.();
+    router.navigate(
+      buildNewWorkspaceRoute({
+        serverId: targetId,
+        kind: "chat",
+      }) as Href,
+    );
+  }, [activeSelection, allHosts, onWorkspacePress]);
+
+  const toggleCollapsed = useCallback(() => setCollapsed((prev) => !prev), []);
+
+  const newChatButtonStyle = useCallback(
+    ({ hovered = false, pressed = false }: PressableStateCallbackType & { hovered?: boolean }) => [
+      styles.chatsNewButton,
+      hovered && styles.chatsNewButtonHovered,
+      pressed && styles.chatsNewButtonPressed,
+    ],
+    [],
+  );
+
+  const emptyChatRow = targetHostSupportsChat ? (
+    <SidebarHeaderRow
+      icon={Plus}
+      label="New chat"
+      onPress={handleCreateChat}
+      testID="sidebar-chats-empty-start"
+      variant="compact"
+      containerStyle={styles.chatsEmptyContainer}
+    />
+  ) : null;
+  if (chatEntries.length === 0 && !anyHostSupportsChat) {
+    return null;
+  }
+
+  return (
+    <View style={styles.chatsSectionContainer} testID="sidebar-chats-section">
+      <View style={styles.chatsSectionDivider} />
+      <View style={styles.chatsSectionHeader}>
+        <Pressable
+          onPress={toggleCollapsed}
+          style={styles.chatsSectionHeaderLeft}
+          accessibilityRole="button"
+          accessibilityLabel="Toggle chats"
+        >
+          <Text style={styles.chatsSectionTitle}>Chats</Text>
+          {collapsed ? (
+            <ThemedChevronRight size={12} uniProps={foregroundMutedColorMapping} />
+          ) : (
+            <ThemedChevronDown size={12} uniProps={foregroundMutedColorMapping} />
+          )}
+        </Pressable>
+        <View style={styles.chatsSectionHeaderRight}>
+          {targetHostSupportsChat && (
+            <Tooltip delayDuration={300}>
+              <TooltipTrigger asChild>
+                <Pressable
+                  onPress={handleCreateChat}
+                  hitSlop={4}
+                  style={newChatButtonStyle}
+                  testID="sidebar-chats-new-button"
+                  accessibilityRole="button"
+                  accessibilityLabel="New chat"
+                >
+                  <ThemedPlus size={14} uniProps={foregroundMutedColorMapping} />
+                </Pressable>
+              </TooltipTrigger>
+              <TooltipContent side="bottom" align="center" offset={8}>
+                <Text style={styles.projectActionTooltipText}>New chat</Text>
+              </TooltipContent>
+            </Tooltip>
+          )}
+        </View>
+      </View>
+      {!collapsed && (
+        <View style={styles.chatsSectionBody}>
+          {chatEntries.length === 0
+            ? emptyChatRow
+            : chatEntries.map((entry) => (
+                <MemoWorkspaceRowItem
+                  key={entry.workspaceKey}
+                  workspace={entry}
+                  workspaceEntry={entry}
+                  hostBadge={hostBadgeByServerId.get(entry.serverId) ?? null}
+                  leadingProjectName="Chats"
+                  leadingProjectIconDataUri={null}
+                  shortcutNumber={shortcutIndexByWorkspaceKey.get(entry.workspaceKey) ?? null}
+                  showShortcutBadge={showShortcutBadges}
+                  canCopyBranchName={false}
+                  canPin={supportsPinningByServerId.get(entry.serverId) === true}
+                  onToggleWorkspacePin={onToggleWorkspacePin}
+                  isCreating={creatingWorkspaceIds.has(entry.workspaceId)}
+                  selectionEnabled={selectionEnabled}
+                  activeWorkspaceSelection={activeWorkspaceSelection}
+                  onWorkspacePress={onWorkspacePress}
+                />
+              ))}
+        </View>
+      )}
+    </View>
+  );
+}
+
 export function SidebarWorkspaceList({
   workspaceGroups,
   projectIconTargets,
@@ -1916,6 +2088,7 @@ export function SidebarWorkspaceList({
   const serverIds = useMemo(() => hosts.map((host) => host.serverId), [hosts]);
   const supportsMultiplicityByServerId = useHostFeatureMap(serverIds, "workspaceMultiplicity");
   const supportsPinningByServerId = useHostFeatureMap(serverIds, "workspacePinning");
+  const supportsChatByServerId = useHostFeatureMap(serverIds, "chatWorkspaces");
   const onToggleWorkspacePin = useSidebarWorkspacePinController();
   const getPinnedWorkspaceOrder = useSidebarOrderStore((state) => state.getPinnedWorkspaceOrder);
   const setPinnedWorkspaceOrder = useSidebarOrderStore((state) => state.setPinnedWorkspaceOrder);
@@ -1973,6 +2146,7 @@ export function SidebarWorkspaceList({
         onWorkspacePress={onWorkspacePress}
         hostBadgeByServerId={hostBadgeByServerId}
         supportsPinningByServerId={supportsPinningByServerId}
+        supportsChatByServerId={supportsChatByServerId}
         onToggleWorkspacePin={onToggleWorkspacePin}
         onPinnedWorkspaceReorder={handlePinnedWorkspaceReorder}
         listHeaderComponent={listHeaderComponent}
@@ -2002,6 +2176,7 @@ export function SidebarWorkspaceList({
         hostBadgeByServerId={hostBadgeByServerId}
         supportsMultiplicityByServerId={supportsMultiplicityByServerId}
         supportsPinningByServerId={supportsPinningByServerId}
+        supportsChatByServerId={supportsChatByServerId}
         onToggleWorkspacePin={onToggleWorkspacePin}
         onPinnedWorkspaceReorder={handlePinnedWorkspaceReorder}
       />
@@ -2016,6 +2191,8 @@ export function SidebarWorkspaceList({
  * that needed it — `SidebarStatusModeWrapper` is what made a label-mode reader believe the data
  * above it was status-only.
  */
+const EMPTY_CREATING_SET: ReadonlySet<string> = new Set();
+
 function SidebarGroupedModeList({
   workspaceGroups,
   pinnedGroups,
@@ -2025,6 +2202,7 @@ function SidebarGroupedModeList({
   onWorkspacePress,
   hostBadgeByServerId,
   supportsPinningByServerId,
+  supportsChatByServerId,
   onToggleWorkspacePin,
   onPinnedWorkspaceReorder,
   listHeaderComponent,
@@ -2040,6 +2218,7 @@ function SidebarGroupedModeList({
   onWorkspacePress?: () => void;
   hostBadgeByServerId: ReadonlyMap<string, HostBadgeModel>;
   supportsPinningByServerId: ReadonlyMap<string, boolean>;
+  supportsChatByServerId?: ReadonlyMap<string, boolean>;
   onToggleWorkspacePin: ToggleSidebarWorkspacePin;
   onPinnedWorkspaceReorder: (workspaces: SidebarWorkspacePlacement[]) => void;
   listHeaderComponent?: ReactElement | null;
@@ -2047,6 +2226,7 @@ function SidebarGroupedModeList({
   parentGestureRef?: MutableRefObject<GestureType | undefined>;
   dragGestureHostActive?: boolean;
 }) {
+  const activeWorkspaceSelection = useActiveWorkspaceSelection();
   const showShortcutBadges = useShowShortcutBadges();
   const pinnedWorkspaces = useMemo(
     () =>
@@ -2055,6 +2235,42 @@ function SidebarGroupedModeList({
         return entry ? [entry] : [];
       }),
     [pinnedGroups.pinnedChats, workspaceEntriesByKey],
+  );
+
+  const pinnedWorkspaceKeys = useMemo(
+    () => new Set(pinnedGroups.pinnedChats.map((workspace) => workspace.workspaceKey)),
+    [pinnedGroups.pinnedChats],
+  );
+
+  const footerComponent = useMemo(
+    () => (
+      <SidebarChatsSection
+        workspaceEntriesByKey={workspaceEntriesByKey}
+        pinnedWorkspaceKeys={pinnedWorkspaceKeys}
+        supportsChatByServerId={supportsChatByServerId}
+        onWorkspacePress={onWorkspacePress}
+        activeWorkspaceSelection={activeWorkspaceSelection}
+        creatingWorkspaceIds={EMPTY_CREATING_SET}
+        hostBadgeByServerId={hostBadgeByServerId}
+        supportsPinningByServerId={supportsPinningByServerId}
+        onToggleWorkspacePin={onToggleWorkspacePin}
+        showShortcutBadges={showShortcutBadges}
+        shortcutIndexByWorkspaceKey={_projectShortcutIndex}
+        selectionEnabled={true}
+      />
+    ),
+    [
+      workspaceEntriesByKey,
+      pinnedWorkspaceKeys,
+      supportsChatByServerId,
+      onWorkspacePress,
+      activeWorkspaceSelection,
+      hostBadgeByServerId,
+      supportsPinningByServerId,
+      onToggleWorkspacePin,
+      showShortcutBadges,
+      _projectShortcutIndex,
+    ],
   );
 
   return (
@@ -2073,6 +2289,7 @@ function SidebarGroupedModeList({
       sidebarFilterEmpty={sidebarFilterEmpty}
       parentGestureRef={parentGestureRef}
       dragGestureHostActive={dragGestureHostActive}
+      footerComponent={footerComponent}
     />
   );
 }
@@ -2098,6 +2315,7 @@ function ProjectModeList({
   hostBadgeByServerId,
   supportsMultiplicityByServerId,
   supportsPinningByServerId,
+  supportsChatByServerId,
   onToggleWorkspacePin,
   onPinnedWorkspaceReorder,
 }: Omit<
@@ -2116,6 +2334,7 @@ function ProjectModeList({
   hostBadgeByServerId: ReadonlyMap<string, HostBadgeModel>;
   supportsMultiplicityByServerId: ReadonlyMap<string, boolean>;
   supportsPinningByServerId: ReadonlyMap<string, boolean>;
+  supportsChatByServerId?: ReadonlyMap<string, boolean>;
   onToggleWorkspacePin: ToggleSidebarWorkspacePin;
   onPinnedWorkspaceReorder: (workspaces: SidebarWorkspacePlacement[]) => void;
 }) {
@@ -2400,7 +2619,9 @@ function ProjectModeList({
     ) : (
       <DraggableList
         testID="sidebar-project-list"
-        data={unpinnedProjects}
+        data={unpinnedProjects.filter(
+          (project) => project.projectName !== "Chats" && project.viewKey !== "__chats__",
+        )}
         keyExtractor={projectViewKeyExtractor}
         renderItem={renderProject}
         onDragEnd={handleProjectDragEnd}
@@ -2459,6 +2680,20 @@ function ProjectModeList({
         ? listHeaderComponent
         : null}
       {sidebarFilterEmpty ? <SidebarFilterEmptyState /> : projectBody}
+      <SidebarChatsSection
+        workspaceEntriesByKey={workspaceEntriesByKey}
+        pinnedWorkspaceKeys={new Set(pinnedChats.map((w) => w.workspaceKey))}
+        supportsChatByServerId={supportsChatByServerId}
+        onWorkspacePress={onWorkspacePress}
+        activeWorkspaceSelection={activeWorkspaceSelection}
+        creatingWorkspaceIds={creatingWorkspaceIds}
+        hostBadgeByServerId={hostBadgeByServerId}
+        supportsPinningByServerId={supportsPinningByServerId}
+        onToggleWorkspacePin={onToggleWorkspacePin}
+        showShortcutBadges={showShortcutBadges}
+        shortcutIndexByWorkspaceKey={shortcutIndexByWorkspaceKey}
+        selectionEnabled={selectionEnabled}
+      />
       {listFooterComponent}
     </>
   );
@@ -2490,8 +2725,72 @@ function ProjectModeList({
 }
 
 const styles = StyleSheet.create((theme) => ({
+  chatsSectionDivider: {
+    height: 1,
+    backgroundColor: theme.colors.border,
+    marginVertical: theme.spacing[2],
+    marginHorizontal: theme.spacing[1],
+  },
   container: {
     flex: 1,
+  },
+  chatsSectionContainer: {
+    marginBottom: theme.spacing[2],
+  },
+  chatsSectionHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    minHeight: 32,
+    paddingHorizontal: theme.spacing[2],
+    borderRadius: theme.borderRadius.md,
+  },
+  chatsSectionHeaderLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+    flex: 1,
+    paddingVertical: 4,
+  },
+  chatsSectionTitle: {
+    fontSize: theme.fontSize.sm,
+    fontWeight: theme.fontWeight.medium,
+    color: theme.colors.foreground,
+  },
+  chatsCountBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 10,
+    backgroundColor: theme.colors.surface2 ?? theme.colors.border,
+  },
+  chatsCountBadgeText: {
+    fontSize: 11,
+    color: theme.colors.foregroundMuted,
+  },
+  chatsSectionHeaderRight: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+  },
+  chatsNewButton: {
+    width: 24,
+    height: 24,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: theme.borderRadius.sm,
+  },
+  chatsNewButtonHovered: {
+    backgroundColor: theme.colors.surfaceSidebarHover,
+  },
+  chatsNewButtonPressed: {
+    backgroundColor: theme.colors.surfaceSidebarHover,
+  },
+  chatsSectionBody: {
+    paddingTop: theme.spacing[1],
+    gap: 2,
+  },
+  chatsEmptyContainer: {
+    paddingHorizontal: 0,
   },
   list: {
     flex: 1,
