@@ -187,7 +187,7 @@ describe("git-actions-policy", () => {
       }),
     );
 
-    expect(actions.primary).toMatchObject({ id: "pull", label: "Pull" });
+    expect(actions.primary).toMatchObject({ id: "pull", label: "Pull", count: 2 });
   });
 
   it("keeps push clickable with a clearer message when the branch diverged", () => {
@@ -204,7 +204,41 @@ describe("git-actions-policy", () => {
       disabled: false,
       unavailableMessage:
         "Push isn't available yet because there are newer changes to bring in first",
+      count: 1,
     });
+  });
+
+  it("shows the behind/ahead counts on the pull and push actions", () => {
+    const actions = buildGitActions(
+      createInput({ hasRemote: true, behindOfOrigin: 3, aheadOfOrigin: 2 }),
+    );
+
+    expect(actions.secondary.find((action) => action.id === "pull")).toMatchObject({ count: 3 });
+    expect(actions.secondary.find((action) => action.id === "push")).toMatchObject({ count: 2 });
+  });
+
+  it("omits the count when the branch is in sync with its remote", () => {
+    const actions = buildGitActions(
+      createInput({ hasRemote: true, behindOfOrigin: 0, aheadOfOrigin: 0 }),
+    );
+
+    expect(actions.secondary.find((action) => action.id === "pull")?.count).toBeUndefined();
+    expect(actions.secondary.find((action) => action.id === "push")?.count).toBeUndefined();
+  });
+
+  it("counts the local commits of a no-upstream Paseo worktree as pushable", () => {
+    const actions = buildGitActions(
+      createInput({
+        hasRemote: true,
+        isPaseoOwnedWorktree: true,
+        isOnBaseBranch: false,
+        aheadCount: 1,
+        aheadOfOrigin: null,
+        behindOfOrigin: null,
+      }),
+    );
+
+    expect(actions.secondary.find((action) => action.id === "push")).toMatchObject({ count: 1 });
   });
 
   it("keeps push available for a no-upstream Paseo worktree with local commits", () => {
@@ -242,7 +276,7 @@ describe("git-actions-policy", () => {
       }),
     );
 
-    expect(actions.primary).toMatchObject({ id: "push", label: "Push" });
+    expect(actions.primary).toMatchObject({ id: "push", label: "Push", count: 2 });
   });
 
   it("shows update-from-base only on feature branches that are behind the base branch", () => {
@@ -257,6 +291,7 @@ describe("git-actions-policy", () => {
 
     expect(updateAction).toMatchObject({
       label: "Update from main",
+      count: 3,
       disabled: false,
       unavailableMessage: undefined,
     });
@@ -739,7 +774,18 @@ describe("git-actions-policy", () => {
     );
     const action = actions.secondary.find((entry) => entry.id === "merge-branch");
 
-    expect(action).toMatchObject({ label: "Merge locally" });
+    expect(action).toMatchObject({ label: "Merge locally", count: 2 });
+  });
+
+  it("omits the count on base-branch actions when nothing diverges from the base", () => {
+    const actions = buildGitActions(
+      createInput({ isOnBaseBranch: false, aheadCount: 0, behindBaseCount: 0 }),
+    );
+
+    expect(actions.secondary.find((entry) => entry.id === "merge-branch")?.count).toBeUndefined();
+    expect(
+      actions.secondary.find((entry) => entry.id === "merge-from-base")?.count,
+    ).toBeUndefined();
   });
 
   it("uses the active language for policy-owned action labels and unavailable messages", async () => {
