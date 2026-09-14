@@ -202,6 +202,12 @@ function canonicalPlanItems(timeline: readonly AgentTimelineItem[]): PlanItem[] 
   );
 }
 
+function latestPlanItem(timeline: readonly AgentTimelineItem[]): PlanItem | undefined {
+  return timeline.findLast(
+    (item): item is PlanItem => item.type === "tool_call" && item.detail.type === "plan",
+  );
+}
+
 function recoverApprovedPlan(workflow: Workflow, latest: PlanItem | undefined): boolean {
   if (
     !latest ||
@@ -236,31 +242,51 @@ function closeConsumedOperations(
   item: PlanItem,
   latest: PlanItem | undefined,
 ): boolean {
-  const resolution = planResolution(item);
-  if (
-    item !== latest ||
-    resolution?.behavior !== "deny" ||
-    item.metadata?.approved !== false ||
-    resolution.interrupt !== true
-  )
-    return false;
+  if (item !== latest) return false;
   let changed = false;
   for (const [action, operation] of [
     ["review", plan.review],
     ["handoff", plan.handoff],
   ] as const) {
-    if (
-      operation?.phase === "closing" &&
-      resolution.message === closureMessage(workflow, plan.context, action) &&
-      (typeof item.metadata?.syntheticPermissionId !== "string" ||
-        (item.metadata.syntheticPermissionId === plan.context.permissionRequestId &&
-          item.metadata?.approvalOutcome === "completed"))
-    ) {
+    if (operation?.phase === "closing" && isClosureDecision(workflow, plan, item, action)) {
       operation.phase = "closed";
       changed = true;
     }
   }
   return changed;
+}
+
+function isClosureDecision(
+  workflow: Workflow,
+  plan: Workflow["plans"][string],
+  item: PlanItem | undefined,
+  action: "review" | "handoff",
+): boolean {
+  if (!item || item.callId !== plan.context.callId || item.detail.type !== "plan") return false;
+  const resolution = planResolution(item);
+  return (
+    item.status === "completed" &&
+    !item.error &&
+    item.detail.text === plan.context.text &&
+    item.metadata?.approved === false &&
+    resolution?.behavior === "deny" &&
+    resolution.interrupt === true &&
+    resolution.message === closureMessage(workflow, plan.context, action) &&
+    (typeof item.metadata?.syntheticPermissionId !== "string" ||
+      (item.metadata.syntheticPermissionId === plan.context.permissionRequestId &&
+        item.metadata?.approvalOutcome === "completed"))
+  );
+}
+
+function isResumingClosedHandoff(
+  workflow: Workflow,
+  plan: Workflow["plans"][string] | undefined,
+  latest: PlanItem | undefined,
+): boolean {
+  const closed = plan?.handoff?.phase === "closed";
+  if (closed && plan && !isClosureDecision(workflow, plan, latest, "handoff"))
+    throw new Error("This handoff was superseded by a newer plan.");
+  return closed;
 }
 
 function applyPlanDecision(
@@ -426,15 +452,14 @@ export class WorkflowController {
       const state = await this.port.read();
       const agent = await this.port.agent(context.agentId);
       const workflow = await this.workflow(state, agent);
-      const latestPlanCallId = await this.reconcilePlanTimeline(state, workflow);
+      const latestPlan = await this.reconcilePlanTimeline(state, workflow);
       const previous = workflow.plans[context.callId];
       if (previous && !samePlan(previous.context, context))
         throw new Error("This plan context does not match the recorded plan.");
       if (previous?.handoff?.phase === "running") return { agentId: previous.handoff.agentId! };
       const selection = previous?.handoff?.selection ?? selected ?? workflow.recommendation;
       if (!selection) throw new Error("Choose the standard or advanced executor in Hand off.");
-      if (previous?.handoff?.phase === "closed" && latestPlanCallId !== context.callId)
-        throw new Error("This handoff was superseded by a newer plan.");
+      const resumingClosed = isResumingClosedHandoff(workflow, previous, latestPlan);
       const executor = await this.profile(
         selection === "advanced" ? "executor-advanced" : "executor-standard",
       );
@@ -452,7 +477,14 @@ export class WorkflowController {
         plan.handoff.phase = "closed";
         await this.port.write(state);
       }
-      return { agentId: await this.startHandoff(state, workflow, plan, executor) };
+      return {
+        agentId: await this.startHandoff(
+          state,
+          workflow,
+          plan,
+          resumingClosed ? undefined : executor,
+        ),
+      };
     });
   }
 
@@ -467,6 +499,17 @@ export class WorkflowController {
     const executor =
       selectedExecutor ??
       (await this.profile(selection === "advanced" ? "executor-advanced" : "executor-standard"));
+    if (
+      !selectedExecutor &&
+      !handoff.agentId &&
+      !isClosureDecision(
+        workflow,
+        plan,
+        latestPlanItem(await this.port.timeline(workflow.plannerId)),
+        "handoff",
+      )
+    )
+      throw new Error("This handoff was superseded by a newer plan.");
     const executorId =
       handoff.agentId ??
       (await this.port.create({
@@ -596,9 +639,7 @@ export class WorkflowController {
 
   private async reconcilePlanTimeline(state: WorkflowState, workflow: Workflow) {
     const timeline = await this.port.timeline(workflow.plannerId);
-    const latest = timeline.findLast(
-      (item): item is PlanItem => item.type === "tool_call" && item.detail.type === "plan",
-    );
+    const latest = latestPlanItem(timeline);
     const decisions = new Map(canonicalPlanItems(timeline).map((item) => [item.callId, item]));
     let changed = recoverApprovedPlan(workflow, latest);
     for (const item of decisions.values()) {
@@ -607,12 +648,12 @@ export class WorkflowController {
       changed = applyPlanDecision(workflow, plan, item, latest) || changed;
     }
     if (changed) await this.port.write(state);
-    return latest?.callId;
+    return latest;
   }
 
   private async reconcile(state: WorkflowState, workflow: Workflow) {
     // One bounded pass over existing operations, never replay arbitrary agent history.
-    const latestPlanCallId = await this.reconcilePlanTimeline(state, workflow);
+    const latestPlan = await this.reconcilePlanTimeline(state, workflow);
     const candidates = new Set<string>();
     if (
       !workflow.routed &&
@@ -623,7 +664,7 @@ export class WorkflowController {
     const activePlan = workflow.plans[workflow.activePlanId ?? ""];
     if (activePlan?.approved && !activePlan.final) candidates.add(workflow.plannerId);
     for (const plan of Object.values(workflow.plans)) {
-      await this.resumePlan(state, workflow, plan, latestPlanCallId);
+      await this.resumePlan(state, workflow, plan, latestPlan);
       for (const id of planCandidates(plan)) candidates.add(id);
     }
     for (const agentId of candidates) {
@@ -635,7 +676,7 @@ export class WorkflowController {
     state: WorkflowState,
     workflow: Workflow,
     plan: Workflow["plans"][string],
-    latestPlanCallId: string | undefined,
+    latestPlan: PlanItem | undefined,
   ) {
     if (plan.review?.phase === "closed" && plan.review.agentId && plan.review.promptSent) {
       plan.review.phase = "running";
@@ -644,7 +685,7 @@ export class WorkflowController {
     if (
       plan.handoff?.phase === "closed" &&
       !plan.handoff.agentId &&
-      latestPlanCallId === plan.context.callId
+      isClosureDecision(workflow, plan, latestPlan, "handoff")
     )
       await this.startHandoff(state, workflow, plan);
     if (plan.review?.phase === "complete")
