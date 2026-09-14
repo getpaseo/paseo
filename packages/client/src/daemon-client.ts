@@ -3137,6 +3137,10 @@ export class DaemonClient {
     subagentId: string,
     options: FetchProviderSubagentTimelineOptions = {},
   ): Promise<ProviderSubagentTimelinePayload> {
+    // COMPAT(projectedSubagentTimeline): added after v0.8.0, remove after 2027-03-14.
+    if (this.lastServerInfoMessage?.features?.projectedSubagentTimeline !== true) {
+      throw new Error("Update the host to view subagent conversations.");
+    }
     const requestId = this.createRequestId(options.requestId);
     const message = SessionInboundMessageSchema.parse({
       type: "agent.provider_subagents.timeline.get.request",
