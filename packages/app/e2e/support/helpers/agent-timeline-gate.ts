@@ -293,11 +293,14 @@ export async function holdRewindCompletion(
       }
       if (
         !released &&
-        sessionMessage?.type === "agent.rewind.response" &&
+        (sessionMessage?.type === "agent.rewind.response" ||
+          sessionMessage?.type === "agent.timeline.replacement") &&
         payload?.agentId === agentId
       ) {
+        // The replacement also signals completion and removes the rewound row/menu.
+        // Hold it with the response so the pending-state assertion observes a pending rewind.
         delayedForwards.push(() => ws.send(message));
-        resolveDelayedResponse?.();
+        if (sessionMessage.type === "agent.rewind.response") resolveDelayedResponse?.();
         return;
       }
       ws.send(message);
