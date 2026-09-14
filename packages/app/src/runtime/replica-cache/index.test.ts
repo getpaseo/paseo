@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { WorkspaceDescriptorPayload } from "@getpaseo/protocol/messages";
 import {
   normalizeProjectDescriptor,
@@ -32,6 +32,7 @@ class MemoryStorage implements ReplicaRowStore {
   writes = 0;
   cleanups = 0;
   nextWriteFailure: Error | null = null;
+  alwaysFail: Error | null = null;
   readGate: Promise<void> | null = null;
   onRead: (() => void) | null = null;
 
@@ -71,6 +72,7 @@ class MemoryStorage implements ReplicaRowStore {
 
   async apply(changes: ReplicaRowChanges): Promise<void> {
     this.writes += 1;
+    if (this.alwaysFail) throw this.alwaysFail;
     if (this.nextWriteFailure) {
       const error = this.nextWriteFailure;
       this.nextWriteFailure = null;
@@ -459,6 +461,7 @@ describe("ReplicaCache", () => {
     cache.commitTimeline(SERVER_ID, "agent-1", timeline("New"));
 
     expect((await cache.readTimeline(SERVER_ID, "agent-1"))?.items).toEqual([timelineItem("New")]);
+    expect(storage.writes).toBe(1);
   });
 
   it("round-trips plugin timeline items", async () => {
@@ -785,5 +788,75 @@ describe("ReplicaCache", () => {
     await cache.flush();
 
     expect(storage.cleanups).toBe(1);
+  });
+
+  it("reads one agent while another agent on the host streams without forcing persists", async () => {
+    const storage = new MemoryStorage();
+    const cache = createCache(storage);
+    commitDirectory(cache, SERVER_ID, directory());
+    await cache.flush();
+    const writesBefore = storage.writes;
+    const readsBefore = storage.reads.length;
+    let streamCommits = 0;
+    storage.onRead = () => {
+      if (streamCommits >= 200) return;
+      streamCommits += 1;
+      cache.commitTimeline(SERVER_ID, "agent-2", {
+        ...timeline(`chunk ${streamCommits}`),
+        agentId: "agent-2",
+      });
+    };
+
+    const result = await cache.readAgent(SERVER_ID, "agent-1");
+
+    expect(result?.title).toBe("Cached agent");
+    expect(streamCommits).toBe(1);
+    expect(storage.reads.length - readsBefore).toBe(1);
+    expect(storage.writes - writesBefore).toBe(0);
+  });
+
+  it("reads the directory across a pending baseline replacement without persisting it", async () => {
+    const storage = new MemoryStorage();
+    const cache = createCache(storage);
+    commitDirectory(cache, SERVER_ID, directory());
+    cache.commitTimeline(SERVER_ID, "agent-1", timeline());
+    await cache.flush();
+    const replacement = directory({ agents: { generation: "g2", afterSeq: 1 } });
+    replacement.projects.clear();
+    replacement.agents.set("agent-2", agent("agent-2"));
+    cache.replaceDirectoryBaseline(SERVER_ID, replacement);
+
+    const read = await cache.readDirectory(SERVER_ID);
+
+    expect([...read.agents.keys()].sort()).toEqual(["agent-1", "agent-2"]);
+    expect(read.projects.size).toBe(0);
+    expect(read.checkpoint).toEqual({ agents: { generation: "g2", afterSeq: 1 } });
+    expect(await cache.readTimeline(SERVER_ID, "agent-1")).toEqual(timeline());
+    expect(storage.writes).toBe(1);
+  });
+
+  describe("persist retry", () => {
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it("backs off exponentially while storage keeps failing", async () => {
+      vi.useFakeTimers();
+      const storage = new MemoryStorage();
+      storage.alwaysFail = new Error("quota exceeded");
+      const cache = createCache(storage);
+      cache.commitTimeline(SERVER_ID, "agent-1", timeline());
+      const writeSeconds: number[] = [];
+      for (let second = 1; second <= 30; second += 1) {
+        await vi.advanceTimersByTimeAsync(1_000);
+        if (storage.writes > writeSeconds.length) writeSeconds.push(second);
+      }
+
+      expect(writeSeconds).toEqual([1, 2, 4, 8, 16]);
+      storage.alwaysFail = null;
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(storage.writes).toBe(6);
+      expect(storage.rows.size).toBe(1);
+    });
   });
 });
