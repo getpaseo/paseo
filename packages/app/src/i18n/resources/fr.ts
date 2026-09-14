@@ -229,7 +229,8 @@ export const fr: TranslationResources = {
     states: {
       notFound: "Agentintrouvable",
       failedToLoad: "Échec du chargement de l'agent",
-      reconnecting: "Reconnexion",
+      reconnecting: "Reconnexion à l’hôte",
+      updating: "Mise à jour des messages",
       timelineSyncFailed: "Impossible d’actualiser l’historique de l’agent.",
       timelineSyncRetrying: "Nouvelle tentative…",
       archivingTitle: "Agent d'archivage...",

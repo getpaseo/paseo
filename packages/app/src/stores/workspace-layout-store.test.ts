@@ -24,6 +24,7 @@ import {
   collectAllPanes,
   collectAllTabs,
   createWorkspaceLayoutStore,
+  observeOpenWorkspaceAgentIds,
   createDefaultLayout,
   createWorkspaceLayoutWithExplorerSidebar,
   findPaneById,
@@ -72,6 +73,39 @@ function createDeterministicWorkspaceLayoutIds() {
 
 const workspaceLayoutIds = createDeterministicWorkspaceLayoutIds();
 const workspaceLayoutStore = createWorkspaceLayoutStore(workspaceLayoutIds);
+
+it("observes open chats across unmounted workspaces until their tabs close", () => {
+  const store = createWorkspaceLayoutStore(workspaceLayoutIds);
+  store.setState({ layoutByWorkspace: {} });
+  const received: string[][] = [];
+  const stop = observeOpenWorkspaceAgentIds("server-1", (ids) => received.push(ids), store);
+  const first = store.getState().openTab({
+    workspaceKey: "server-1:workspace-a",
+    target: { kind: "agent", agentId: "agent-a" },
+    intent: "reveal",
+  });
+  store.getState().openTab({
+    workspaceKey: "server-1:workspace-b",
+    target: { kind: "agent", agentId: "agent-b" },
+    intent: "background",
+  });
+  store.getState().openTab({
+    workspaceKey: "server-2:workspace-a",
+    target: { kind: "agent", agentId: "other-host-agent" },
+    intent: "reveal",
+  });
+  expect(received).toEqual([[], ["agent-a"], ["agent-a", "agent-b"]]);
+  if (!first) throw new Error("Expected an open agent tab");
+  store.getState().closeTab("server-1:workspace-a", first);
+  expect(received.at(-1)).toEqual(["agent-b"]);
+  stop();
+  store.getState().openTab({
+    workspaceKey: "server-1:workspace-a",
+    target: { kind: "agent", agentId: "after-dispose" },
+    intent: "reveal",
+  });
+  expect(received).toEqual([[], ["agent-a"], ["agent-a", "agent-b"], ["agent-b"]]);
+});
 
 function useWorkspaceLayoutIds(...values: string[]) {
   workspaceLayoutIds.useValues(values);

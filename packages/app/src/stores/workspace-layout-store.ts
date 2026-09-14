@@ -1857,6 +1857,34 @@ export function createWorkspaceLayoutStore(
 
 export const useWorkspaceLayoutStore = createWorkspaceLayoutStore();
 
+/** Observe open chats independently of which workspace views are mounted. */
+export function observeOpenWorkspaceAgentIds(
+  serverId: string,
+  listener: (agentIds: string[]) => void,
+  store = useWorkspaceLayoutStore,
+): () => void {
+  let previous: string[] | undefined;
+  const publish = (state: Pick<WorkspaceLayoutStore, "layoutByWorkspace">) => {
+    const ids = new Set<string>();
+    for (const [workspaceKey, layout] of Object.entries(state.layoutByWorkspace)) {
+      if (!workspaceKey.startsWith(`${serverId}:`)) continue;
+      for (const tab of collectAllTabs(layout.root)) {
+        if (tab.target.kind === "agent") ids.add(tab.target.agentId);
+      }
+    }
+    const next = [...ids].sort();
+    if (previous?.length === next.length && previous.every((id, index) => id === next[index]))
+      return;
+    previous = next;
+    listener(next);
+  };
+  const unsubscribe = store.subscribe((state, before) => {
+    if (state.layoutByWorkspace !== before.layoutByWorkspace) publish(state);
+  });
+  publish(store.getState());
+  return unsubscribe;
+}
+
 export function useWorkspaceLayoutStoreHydrated(): boolean {
   const [hasHydrated, setHasHydrated] = useState(() =>
     useWorkspaceLayoutStore.persist.hasHydrated(),

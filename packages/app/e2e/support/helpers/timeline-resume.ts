@@ -71,6 +71,8 @@ export async function restoreViewedTimelineWithHeldResponse(
   gate.holdNextServerMessage("fetch_agent_timeline_response");
   gate.restore();
   await gate.waitForHeldServerMessage();
-  gate.releaseHeldServerMessage();
   await expectReconnectingToastGone(page);
+  await expect(page.getByRole("alert").filter({ hasText: "Updating messages" })).toBeVisible();
+  gate.releaseHeldServerMessage();
+  await expect(page.getByRole("alert").filter({ hasText: "Updating messages" })).toHaveCount(0);
 }

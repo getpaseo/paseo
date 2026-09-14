@@ -113,9 +113,12 @@ definition, no longer eligible to begin.
 - `useIsMobilePanelActive` follows the settled target, not the requested target. Position at the
   canonical target's anchor is the settlement signal; animation duration and completion callbacks
   do not own activity. Cancellation publishes nothing.
-- Do not suspend retained native subtrees with `Suspense`/`react-freeze`. Suspension changes native
-  ownership and can detach descendants. Keep the tree mounted, stabilize its subscriptions/selectors,
-  and use the retained-panel active signal to stop timers, polling, and other genuine background work.
+- Keep retained native roots and gesture hosts outside `Suspense`/`react-freeze`. Suspension cleans up
+  layout effects and detaches refs; it is not a substitute for the retained-panel activity signal.
+  Chat content uses the narrower `AgentPanelFreeze` boundary after activity-gated work has stopped.
+  Its hidden-stream, scroll, draft, and keyboard-return behavior was verified on web, Android, and
+  iOS simulators. Keep that exception inside the chat; other native subtrees need their own ownership
+  and interaction checks before suspension is safe to introduce.
 
 ## Tests
 
