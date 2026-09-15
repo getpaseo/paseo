@@ -496,12 +496,24 @@ function resolveAuthConfig(
   persisted: ReturnType<typeof loadPersistedConfig>,
 ): PaseoDaemonConfig["auth"] {
   const envPassword = env.PASEO_PASSWORD?.trim();
-  if (envPassword) {
-    return { password: hashDaemonPassword(envPassword) };
+  const password = envPassword ? hashDaemonPassword(envPassword) : persisted.daemon?.auth?.password;
+  const deckCredential = env.PASEO_FIRSTMATE_DECK_CREDENTIAL?.trim();
+  if (!password && !deckCredential) return undefined;
+  return {
+    ...(password ? { password } : {}),
+    ...(deckCredential ? { firstmateDeckCredential: hashDaemonPassword(deckCredential) } : {}),
+  };
+}
+
+function resolveFleetCommitmentControls(
+  env: NodeJS.ProcessEnv,
+): PaseoDaemonConfig["fleetCommitmentControls"] {
+  const ledgerPath = env.PASEO_FLEET_COMMITMENT_LEDGER_PATH?.trim();
+  const credential = env.PASEO_FIRSTMATE_DECK_CREDENTIAL?.trim();
+  if (Boolean(ledgerPath) !== Boolean(credential)) {
+    throw new Error("Fleet controls require both ledger path and Deck credential");
   }
-  return persisted.daemon?.auth?.password
-    ? { password: persisted.daemon.auth.password }
-    : undefined;
+  return ledgerPath ? { ledgerPath: path.resolve(expandTilde(ledgerPath)) } : undefined;
 }
 
 function resolveWorktreesRoot(
@@ -622,6 +634,7 @@ export function resolveConfigFromPersisted(
   });
   const { openai, speech } = resolveSpeechConfig({ paseoHome, env, persisted });
   const voiceLlm = resolveVoiceLlmConfig(env, persisted);
+  const fleetCommitmentControls = resolveFleetCommitmentControls(env);
   return {
     ...settings,
     listen: resolveListenAddress(env, cli, persisted),
@@ -643,6 +656,7 @@ export function resolveConfigFromPersisted(
     serviceProxy: resolveServiceProxyConfig(env, persisted),
     webUi: resolveWebUiConfig(paseoHome, env, cli, persisted),
     auth: resolveAuthConfig(env, persisted),
+    fleetCommitmentControls,
     openai,
     speech,
     voiceLlmProvider: voiceLlm.provider,
