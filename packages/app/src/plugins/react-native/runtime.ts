@@ -5,8 +5,10 @@ import { TextInput } from "./text-input";
 import { copyText } from "./clipboard";
 import { useToast } from "./toast";
 import { useRevealedText } from "@/hooks/use-revealed-text";
+import { MarkdownRenderer } from "@/components/markdown/renderer";
 
 export const pluginReactNativeRuntime = {
+  Markdown: MarkdownRenderer,
   Icon,
   Modal,
   ScrollView,
@@ -15,4 +17,4 @@ export const pluginReactNativeRuntime = {
   copyText,
   useRevealedText,
   useToast,
-};
+} satisfies typeof import("@getpaseo/plugin/client/react-native");

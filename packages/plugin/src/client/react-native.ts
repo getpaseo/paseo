@@ -53,6 +53,14 @@ export interface ToastApi {
   error(message: string): void;
 }
 
+export interface MarkdownProps {
+  text: string;
+  compact?: boolean;
+  /** Return false to handle the link yourself; true lets Paseo open it. */
+  onLinkPress?: (url: string) => boolean;
+}
+
+export declare const Markdown: ComponentType<MarkdownProps>;
 export declare const Icon: ComponentType<PluginIconProps>;
 export declare const Modal: ModalComponent;
 export declare function useToast(): ToastApi;

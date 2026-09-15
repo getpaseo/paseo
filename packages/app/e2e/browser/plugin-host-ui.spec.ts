@@ -12,11 +12,14 @@ import {
 
 const PLUGIN_ID = "plugin-host-ui-e2e";
 
-const PLUGIN_SOURCE = `import { usePaseo } from "@getpaseo/plugin/client";
-import { Icon, Modal, useToast } from "@getpaseo/plugin/client/react-native";
+function createPluginSource(linkUrl: string): string {
+  return `import { usePaseo } from "@getpaseo/plugin/client";
+import { Icon, Markdown, Modal, useToast } from "@getpaseo/plugin/client/react-native";
 import { useQueryClient } from "@tanstack/react-query";
 import React, { useState } from "react";
 import { Pressable, Text, View } from "react-native";
+
+const LINK_URL = ${JSON.stringify(linkUrl)};
 
 function ModalBody({ onSaved }) {
   usePaseo();
@@ -36,9 +39,20 @@ function ModalBody({ onSaved }) {
   </View>;
 }
 
-function Surface() {
+function Surface({ theme, layout }) {
   const [open, setOpen] = useState(false);
+  const [handledLinks, setHandledLinks] = useState([]);
   return <View>
+    <Markdown
+      text={"**Plugin Markdown** and [handled link](" + LINK_URL + ")."}
+      compact={layout.compact}
+      onLinkPress={(url) => { setHandledLinks((links) => [...links, url]); return false; }}
+    />
+    <Text testID="handled-markdown-links" style={{ color: theme.colors.foreground }}>
+      {handledLinks.join(", ")}
+    </Text>
+    <Markdown text={"[default link](" + LINK_URL + ")"} />
+    <Markdown text={"[allowed link](" + LINK_URL + ")"} onLinkPress={() => true} />
     <Pressable accessibilityRole="button" onPress={() => setOpen(true)}>
       <View style={{ flexDirection: "row" }}>
         <Icon name="Pencil" size={18} />
@@ -68,6 +82,7 @@ export default function contribute(plugin) {
   });
   return () => {};
 }`;
+}
 
 async function openHostUiPlugin(page: Page): Promise<void> {
   await gotoAppShell(page);
@@ -115,7 +130,33 @@ async function savePluginIssue(page: Page): Promise<void> {
   await expect(page.getByText("Plugin modal contexts ready", { exact: true })).not.toBeVisible();
 }
 
-test("plugin modal adapts its presentation and preserves host contexts", async ({ page }) => {
+async function expectPluginMarkdown(page: Page, linkUrl: string): Promise<void> {
+  await expect(page.getByText("Plugin Markdown", { exact: true })).toHaveCSS("font-weight", "500");
+  const url = page.url();
+  const handledLinks = page.getByTestId("handled-markdown-links");
+  const previous = await handledLinks.innerText();
+  await page.getByRole("link", { name: "handled link", exact: true }).click();
+  await expect(handledLinks).toHaveText(previous ? `${previous}, ${linkUrl}` : linkUrl);
+  expect(page.context().pages()).toEqual([page]);
+
+  for (const name of ["default link", "allowed link"]) {
+    const popupPromise = page.context().waitForEvent("page");
+    await page.getByRole("link", { name, exact: true }).click();
+    const popup = await popupPromise;
+    try {
+      await expect(popup).toHaveURL(linkUrl);
+    } finally {
+      await popup.close();
+    }
+  }
+  await expect(page).toHaveURL(url);
+}
+
+test("plugin host UI renders Markdown and preserves modal contexts across layouts", async ({
+  page,
+  baseURL,
+}) => {
+  const linkUrl = new URL("/favicon.ico", baseURL).href;
   const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-host-ui-e2e-"));
   const client = await connectNewWorkspaceDaemonClient({ ownProjects: false });
   const previousConfig = await client.getDaemonConfig();
@@ -123,7 +164,7 @@ test("plugin modal adapts its presentation and preserves host contexts", async (
     path.join(directory, "paseo-plugin.json"),
     JSON.stringify({ id: PLUGIN_ID, requirements: pluginRequirements }),
   );
-  await writeFile(path.join(directory, "index.client.tsx"), PLUGIN_SOURCE);
+  await writeFile(path.join(directory, "index.client.tsx"), createPluginSource(linkUrl));
 
   try {
     await client.patchDaemonConfig({ pluginsEnabled: true });
@@ -132,6 +173,7 @@ test("plugin modal adapts its presentation and preserves host contexts", async (
     await openHostUiPlugin(page);
 
     await test.step("non-compact layouts use a centered dialog", async () => {
+      await expectPluginMarkdown(page, linkUrl);
       await openPluginModal(page);
       await expectCenteredPluginDialog(page);
       await closeCenteredPluginDialog(page);
@@ -140,10 +182,13 @@ test("plugin modal adapts its presentation and preserves host contexts", async (
     await test.step("compact layouts preserve host contexts inside a sheet", async () => {
       await useCompactLayout(page);
       await reopenHostUiPluginFromCompactSidebar(page);
+      await expectPluginMarkdown(page, linkUrl);
       await openPluginModal(page);
       await expectCompactPluginSheet(page);
       await savePluginIssue(page);
     });
+
+    await gotoAppShell(page);
   } finally {
     await client.removePlugin(PLUGIN_ID).catch(() => undefined);
     await client

@@ -669,6 +669,22 @@ export function IssueActions({ theme }: PluginSurfaceProps) {
 }
 ```
 
+### Markdown
+
+Use `Markdown` in surfaces and timeline renderers for Paseo's themed Markdown and platform text selection.
+
+```tsx
+import { Markdown } from "@getpaseo/plugin/client/react-native";
+
+<Markdown text="**Result**: [details](https://example.com)" compact />;
+```
+
+`text` is required; `compact` defaults to `false`. Return `false` from `onLinkPress(url)` to suppress
+opening. Omit it or return `true` for Paseo's normal HTTP(S) link handling.
+
+Parser customization, workspace-file links, and assistant actions are not exposed.
+For streaming, pass the result of `useRevealedText(text, phase)` as `text`.
+
 ### Modal
 
 `Modal` uses a bottom sheet on compact layouts and a centered dialog otherwise. The plugin owns
