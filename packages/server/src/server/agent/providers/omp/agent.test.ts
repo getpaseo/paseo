@@ -575,6 +575,101 @@ describe("OMP agent client and session", () => {
     expect(omp.isClosed()).toBe(true);
   });
 
+  test.each(["aborted", "canceled", "cancelled"] as const)(
+    "maps OMP's %s terminal response during a direct stop to cancellation",
+    async (stopReason) => {
+      const omp = new OmpHarness();
+      await omp.start();
+      await omp.requireStartTurn("stop this turn");
+      const runtime = omp.runtime();
+      runtime.beginTurn();
+      runtime.abortTerminalMessage = {
+        role: "assistant",
+        content: [],
+        errorMessage: "Interrupted by user",
+        stopReason,
+      };
+
+      await omp.interrupt();
+      await waitForImmediate();
+
+      expect(
+        omp
+          .eventTypes()
+          .filter((type) => ["turn_completed", "turn_failed", "turn_canceled"].includes(type)),
+      ).toEqual(["turn_canceled"]);
+    },
+  );
+
+  test("provider-reported cancellation terminalizes tools and children before a successful resume", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    await omp.requireStartTurn("run something slow");
+    const runtime = omp.runtime();
+    runtime.beginTurn();
+    runtime.emit({
+      type: "tool_execution_start",
+      toolCallId: "tool-1",
+      toolName: "bash",
+      args: { command: "sleep 30" },
+    });
+    runtime.emit({
+      type: "subagent_lifecycle",
+      payload: {
+        id: "child-1",
+        agent: "worker",
+        status: "started",
+        parentToolCallId: "tool-1",
+        index: 0,
+      },
+    });
+    runtime.abortTerminalMessage = {
+      role: "assistant",
+      content: [],
+      errorMessage: "Interrupted by user",
+      stopReason: "aborted",
+    };
+
+    await omp.interrupt();
+    expect(
+      omp.timeline().findLast((item) => item.type === "tool_call" && item.callId === "tool-1"),
+    ).toMatchObject({ status: "canceled", error: null });
+    expect(omp.runningToolCallIds()).toEqual([]);
+    expect(omp.subagentUpserts()).toEqual([
+      { id: "child-1", status: "running" },
+      { id: "child-1", status: "canceled" },
+    ]);
+    await expect(omp.runPrompt("continue", "resumed successfully")).resolves.toMatchObject({
+      finalText: "resumed successfully",
+    });
+    expect(
+      omp
+        .eventTypes()
+        .filter((type) => ["turn_completed", "turn_failed", "turn_canceled"].includes(type)),
+    ).toEqual(["turn_canceled", "turn_completed"]);
+  });
+
+  test("preserves genuine OMP provider failures", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    await omp.requireStartTurn("fail this turn");
+    const runtime = omp.runtime();
+    runtime.beginTurn();
+    runtime.finishTurn({
+      role: "assistant",
+      content: [],
+      errorMessage: "Provider quota exceeded",
+      stopReason: "error",
+    });
+    await waitForImmediate();
+
+    expect(
+      omp
+        .eventTypes()
+        .filter((type) => ["turn_completed", "turn_failed", "turn_canceled"].includes(type)),
+    ).toEqual(["turn_failed"]);
+  });
+
   test("interrupt terminalizes in-flight tool calls and running subagents", async () => {
     const omp = new OmpHarness();
     await omp.start();

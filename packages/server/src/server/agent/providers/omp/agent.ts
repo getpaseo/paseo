@@ -518,12 +518,15 @@ function formatOmpErrorMessage(message: Extract<OmpAgentMessage, { role: "assist
   return details.length > 0 ? `${headline} (${details.join(", ")})` : headline;
 }
 
-function latestOmpErrorMessage(messages: OmpAgentMessage[]): string | null {
-  const latestAssistant = messages.findLast((message) => message.role === "assistant");
-  if (!latestAssistant || !latestAssistant.errorMessage?.trim()) {
-    return null;
+function isOmpCanceledTerminal(message: Extract<OmpAgentMessage, { role: "assistant" }>): boolean {
+  switch (message.stopReason?.trim().toLowerCase()) {
+    case "aborted":
+    case "canceled":
+    case "cancelled":
+      return true;
+    default:
+      return false;
   }
-  return formatOmpErrorMessage(latestAssistant);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -2126,6 +2129,11 @@ export class OmpAgentSession implements AgentSession {
   }
 
   private completeTurn(turnId: string | undefined, messages: OmpAgentMessage[]): void {
+    const terminalAssistant = messages.findLast((message) => message.role === "assistant");
+    const canceled = terminalAssistant ? isOmpCanceledTerminal(terminalAssistant) : false;
+    if (canceled) {
+      this.terminalizeActiveWork();
+    }
     this.activeTurnId = null;
     this.activeClientMessageId = null;
     this.activeAssistantMessageId = null;
@@ -2133,14 +2141,24 @@ export class OmpAgentSession implements AgentSession {
     this.activeTurnStarted = false;
     this.activeTurnHasUserMessage = false;
     this.clearNoTurnBuffers();
-    const errorMessage = latestOmpErrorMessage(messages);
-    if (typeof errorMessage === "string" && errorMessage.length > 0) {
+    if (terminalAssistant && canceled) {
+      this.usagePoller.stopTurn();
+      this.emit({
+        type: "turn_canceled",
+        provider: this.provider,
+        turnId,
+        reason:
+          terminalAssistant.errorMessage?.trim() || terminalAssistant.stopReason || "canceled",
+      });
+      return;
+    }
+    if (terminalAssistant?.errorMessage?.trim()) {
       this.usagePoller.stopTurn();
       this.emit({
         type: "turn_failed",
         provider: this.provider,
         turnId,
-        error: errorMessage,
+        error: formatOmpErrorMessage(terminalAssistant),
       });
       return;
     }
