@@ -12,11 +12,11 @@ function user(id: string, timestamp: Date): StreamItem {
   };
 }
 
-function assistant(id: string, timestamp: Date): StreamItem {
+function assistant(id: string, timestamp: Date, text = id): StreamItem {
   return {
     kind: "assistant_message",
     id,
-    text: id,
+    text,
     timestamp,
   };
 }
@@ -123,6 +123,99 @@ describe("deriveStreamTurnTiming", () => {
     assert.deepEqual(timing.byAssistantId.get("hidden-prompt-a2"), {
       completedAt: hiddenPromptTurnAt,
       durationMs: null,
+    });
+  });
+
+  it("keeps the timing map identity while a streamed delta grows the live head", () => {
+    const tail = [
+      user("u1", new Date("2026-05-15T00:00:00.000Z")),
+      assistant("a1", new Date("2026-05-15T00:00:07.000Z")),
+      user("u2", new Date("2026-05-15T00:01:00.000Z")),
+    ];
+    const derive = (text: string, at: string) =>
+      deriveStreamTurnTiming({
+        isTurnActive: true,
+        activeTurnStartedAt: tail[2]?.timestamp ?? null,
+        tail,
+        head: [assistant("a2", new Date(at), text)],
+      });
+
+    const first = derive("one", "2026-05-15T00:01:04.000Z");
+    const second = derive("one two", "2026-05-15T00:01:05.000Z");
+
+    assert.equal(second.byAssistantId, first.byAssistantId);
+    assert.deepEqual(first.byAssistantId.get("a1"), {
+      completedAt: tail[1]?.timestamp,
+      durationMs: 7000,
+    });
+    assert.equal(first.byAssistantId.has("a2"), false);
+  });
+
+  it("keeps the timing map identity when the head closed the tail's open turn", () => {
+    const lastTailAt = new Date("2026-05-15T00:00:07.000Z");
+    const tail = [user("u1", new Date("2026-05-15T00:00:00.000Z")), assistant("a1", lastTailAt)];
+    const derive = (text: string, at: string) =>
+      deriveStreamTurnTiming({
+        isTurnActive: true,
+        activeTurnStartedAt: null,
+        tail,
+        head: [
+          user("u2", new Date("2026-05-15T00:01:00.000Z")),
+          assistant("a2", new Date(at), text),
+        ],
+      });
+
+    const first = derive("one", "2026-05-15T00:01:04.000Z");
+    const second = derive("one two", "2026-05-15T00:01:05.000Z");
+
+    assert.equal(second.byAssistantId, first.byAssistantId);
+    assert.deepEqual(first.byAssistantId.get("a1"), {
+      completedAt: lastTailAt,
+      durationMs: 7000,
+    });
+  });
+
+  it("produces a new timing map when the streamed turn completes", () => {
+    const tail = [user("u1", new Date("2026-05-15T00:00:00.000Z"))];
+    const completedAt = new Date("2026-05-15T00:00:09.000Z");
+    const head = [assistant("a1", completedAt)];
+
+    const active = deriveStreamTurnTiming({
+      isTurnActive: true,
+      activeTurnStartedAt: tail[0]?.timestamp ?? null,
+      tail,
+      head,
+    });
+    const completed = deriveStreamTurnTiming({
+      isTurnActive: false,
+      activeTurnStartedAt: null,
+      tail,
+      head,
+    });
+
+    assert.notEqual(completed.byAssistantId, active.byAssistantId);
+    assert.equal(active.byAssistantId.has("a1"), false);
+    assert.deepEqual(completed.byAssistantId.get("a1"), { completedAt, durationMs: 9000 });
+  });
+
+  it("derives fresh timing when the tail itself changes", () => {
+    const firstTail = [
+      user("u1", new Date("2026-05-15T00:00:00.000Z")),
+      assistant("a1", new Date("2026-05-15T00:00:07.000Z")),
+      user("u2", new Date("2026-05-15T00:01:00.000Z")),
+    ];
+    const secondTail = [...firstTail, assistant("a2", new Date("2026-05-15T00:01:03.000Z"))];
+    const derive = (tail: StreamItem[]) =>
+      deriveStreamTurnTiming({ isTurnActive: false, activeTurnStartedAt: null, tail, head: [] });
+
+    const first = derive(firstTail);
+    const second = derive(secondTail);
+
+    assert.notEqual(second.byAssistantId, first.byAssistantId);
+    assert.equal(first.byAssistantId.has("a2"), false);
+    assert.deepEqual(second.byAssistantId.get("a2"), {
+      completedAt: secondTail[3]?.timestamp,
+      durationMs: 3000,
     });
   });
 });

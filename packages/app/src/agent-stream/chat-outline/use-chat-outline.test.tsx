@@ -153,7 +153,7 @@ describe("useChatOutline", () => {
           timelineEpoch,
           enabled,
           viewportRef,
-          visibleItemIds: new Set(),
+          mountedHistoryItemIds: new Set(),
           onJumpError: vi.fn(),
         }),
       {
@@ -253,7 +253,7 @@ describe("useChatOutline", () => {
       },
     ];
     const { result, rerender } = renderHook(
-      ({ visibleItemIds }) =>
+      ({ mountedHistoryItemIds }) =>
         useChatOutline({
           agentId: "agent-1",
           serverId: "server-1",
@@ -263,10 +263,10 @@ describe("useChatOutline", () => {
           enabled: true,
           viewportRef,
           onJumpError: vi.fn(),
-          visibleItemIds,
+          mountedHistoryItemIds,
           revealLoadedItem,
         }),
-      { initialProps: { visibleItemIds: new Set<string>() } },
+      { initialProps: { mountedHistoryItemIds: new Set<string>() } },
     );
 
     await waitFor(() => expect(result.current.prompts).toHaveLength(1));
@@ -274,7 +274,7 @@ describe("useChatOutline", () => {
     expect(revealLoadedItem).toHaveBeenCalledWith("older-prompt");
     expect(scrollToMessage).not.toHaveBeenCalled();
 
-    rerender({ visibleItemIds: new Set(["older-prompt"]) });
+    rerender({ mountedHistoryItemIds: new Set(["older-prompt"]) });
     await waitFor(() => expect(scrollToMessage).toHaveBeenCalledWith("older-prompt"));
   });
 
@@ -302,7 +302,7 @@ describe("useChatOutline", () => {
       timelineCursor: { epoch: "epoch-1", seq: 1 },
     };
     const { result, rerender } = renderHook(
-      ({ tail, visibleItemIds }) =>
+      ({ tail, mountedHistoryItemIds }) =>
         useChatOutline({
           agentId: "agent-1",
           serverId: "server-1",
@@ -312,13 +312,13 @@ describe("useChatOutline", () => {
           enabled: true,
           viewportRef,
           onJumpError: vi.fn(),
-          visibleItemIds,
+          mountedHistoryItemIds,
           revealLoadedItem,
         }),
       {
         initialProps: {
           tail: [] as (typeof fetchedPrompt)[],
-          visibleItemIds: new Set<string>(),
+          mountedHistoryItemIds: new Set<string>(),
         },
       },
     );
@@ -327,11 +327,11 @@ describe("useChatOutline", () => {
     act(() => result.current.jumpToPrompt(1));
     await waitFor(() => expect(runtime.fetchAgentTimeline).toHaveBeenCalledOnce());
 
-    rerender({ tail: [fetchedPrompt], visibleItemIds: new Set<string>() });
+    rerender({ tail: [fetchedPrompt], mountedHistoryItemIds: new Set<string>() });
     await waitFor(() => expect(revealLoadedItem).toHaveBeenCalledWith(fetchedPrompt.id));
     expect(scrollToMessage).not.toHaveBeenCalled();
 
-    rerender({ tail: [fetchedPrompt], visibleItemIds: new Set([fetchedPrompt.id]) });
+    rerender({ tail: [fetchedPrompt], mountedHistoryItemIds: new Set([fetchedPrompt.id]) });
     await waitFor(() => expect(scrollToMessage).toHaveBeenCalledOnce());
     expect(scrollToMessage).toHaveBeenCalledWith(fetchedPrompt.id);
     await act(async () => fetch.resolve());
@@ -367,7 +367,7 @@ describe("useChatOutline", () => {
         enabled: true,
         viewportRef: { current: viewport },
         onJumpError: vi.fn(),
-        visibleItemIds: new Set([livePrompt.id]),
+        mountedHistoryItemIds: new Set<string>(),
         revealLoadedItem,
       }),
     );
@@ -375,5 +375,39 @@ describe("useChatOutline", () => {
     await waitFor(() => expect(result.current.prompts).toHaveLength(1));
     await act(async () => result.current.jumpToPrompt(2));
     expect(scrollToMessage).toHaveBeenCalledWith("live-prompt");
+  });
+
+  it("keeps jumpToPrompt stable while assistant chunks replace the live head", async () => {
+    runtime.listAgentTimelinePrompts.mockResolvedValue({
+      epoch: "epoch-1",
+      prompts: [{ seq: 1, timestamp: new Date(1).toISOString(), preview: "prompt" }],
+    });
+    const viewportRef = createRef<StreamViewportHandle>();
+    const chunk = (text: string): import("@/types/stream").StreamItem => ({
+      id: "assistant",
+      kind: "assistant_message",
+      text,
+      timestamp: new Date(2),
+    });
+    const { result, rerender } = renderHook(
+      ({ head }) =>
+        useChatOutline({
+          agentId: "agent-1",
+          serverId: "server-1",
+          timelineEpoch: "epoch-1",
+          tail: [],
+          head,
+          enabled: true,
+          viewportRef,
+          onJumpError: vi.fn(),
+        }),
+      { initialProps: { head: [chunk("one")] } },
+    );
+    await waitFor(() => expect(result.current.prompts).toHaveLength(1));
+    const jumpToPrompt = result.current.jumpToPrompt;
+
+    rerender({ head: [chunk("one two")] });
+
+    expect(result.current.jumpToPrompt).toBe(jumpToPrompt);
   });
 });

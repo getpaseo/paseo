@@ -604,12 +604,9 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     const handleTimelineHistoryLoadError = useCallback(() => {
       toast?.error(t("agentStream.historyLoadFailed"));
     }, [t, toast]);
-    const visibleHistoryItemIds = useMemo(
-      () =>
-        new Set(
-          [...baseRenderModel.history, ...baseRenderModel.segments.liveHead].map((item) => item.id),
-        ),
-      [baseRenderModel.history, baseRenderModel.segments.liveHead],
+    const mountedHistoryItemIds = useMemo(
+      () => new Set(baseRenderModel.history.map((item) => item.id)),
+      [baseRenderModel.history],
     );
     const chatOutline = useChatOutline({
       agentId,
@@ -620,7 +617,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       enabled: supportsChatOutline && chatOutlineEnabled,
       viewportRef,
       onJumpError: handleTimelineHistoryLoadError,
-      visibleItemIds: visibleHistoryItemIds,
+      mountedHistoryItemIds,
       revealLoadedItem: revealLoadedHistory,
     });
 

@@ -44,6 +44,16 @@ So arrival sets a _target_ and the reveal rate is derived from the backlog inste
   through that hook; the web viewport once skipped it and history hosts of a live tool group went
   stale. A new field on `StreamLayoutItem` must be added to `areLayoutItemsEquivalent`, or sharing
   silently stops.
+- **Per-delta work is bounded by the head, not the timeline.** `buildAgentStreamRenderModel` runs
+  once per coalesced delta, and everything downstream (ordering, history split, turn timing,
+  `layoutStream`'s history cache, `useRevisedHistoryRows`) is a `WeakMap` keyed on the rendered
+  tail's identity. The model caches the history-window slice for that reason; a fresh array there
+  restarts every cache on every delta. Turn timing walks the tail once per tail identity and only
+  the head per delta, and returns the same `byAssistantId` Map while the head adds no completed
+  turn, so the layout memo does not miss on it. Anything else fed the full tail (the chat outline,
+  the history-window boundary lookup) memoizes on the tail and does per-delta work on the head
+  only. `stream-tick.bench.ts` measures this pipeline; `model.test.ts` and `turn-time.test.ts`
+  assert the identity contracts.
 
 ## Measuring
 
@@ -79,6 +89,7 @@ tests in the module check pixels, append/replacement behavior, and cleanup.
 - **Reproducing bursty arrival:** the `bursty-stream` model in `mock-load-test-agent.ts` emits uneven runs of tokens separated by idle gaps. Burst sizes come from a seeded generator, so a run repeats exactly.
 - **Rate policy in isolation:** `packages/app/src/word-stream/internal/model.test.ts` checks the shared word scheduler without a renderer.
 - **Fade behavior:** `word-stream-fade.spec.ts` checks web direction, layout stability, selection, and tail cleanup. Native tests in `modules/paseo-word-stream` drive the host view React mounts with the same range props the bridge sends, advance frame time through the host's injected frame clock, and check rendered pixels and animation completion on Android and iOS.
+- **Per-delta cost on a long timeline:** `npx vitest bench --project unit src/agent-stream/stream-tick.bench.ts` from `packages/app` replays 200 deltas over a 2,000-item timeline through the pure model and layout pipeline, with the default mounted window and with history fully revealed. It measures the JS work per delta, not paint.
 
 Historical character-reveal baseline (2026-08, Expo web against a local dev daemon, real Claude Haiku agent, ~8.5s samples during active streaming). The paint-on-arrival column disabled the former reveal horizon:
 
