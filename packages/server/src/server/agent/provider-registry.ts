@@ -49,6 +49,7 @@ import { PiRpcAgentClient } from "./providers/pi/agent.js";
 import { TraeACPAgentClient } from "./providers/trae-acp-agent.js";
 import { MockLoadTestAgentClient } from "./providers/mock-load-test-agent.js";
 import { MockSlowProviderClient } from "./providers/mock-slow-provider.js";
+import { MuseAgentClient } from "./providers/muse/agent.js";
 import { ClaudeProviderOptionsSchema } from "./providers/claude/options.js";
 import { CodexProviderOptionsSchema } from "./providers/codex/options.js";
 import { OpenCodeProviderOptionsSchema } from "./providers/opencode/options.js";
@@ -214,6 +215,12 @@ const PROVIDER_CLIENT_FACTORIES: Record<string, ProviderClientFactory> = {
       logger,
       command: getCursorACPCommand(runtimeSettings),
       env: runtimeSettings?.env,
+    }),
+  muse: (logger, runtimeSettings, options) =>
+    new MuseAgentClient({
+      logger,
+      runtimeSettings,
+      providerParams: options?.providerParams,
     }),
   opencode: (logger, runtimeSettings, options) =>
     new OpenCodeAgentClient(logger, runtimeSettings, {
