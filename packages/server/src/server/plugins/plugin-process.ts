@@ -260,7 +260,8 @@ async function initialize(message: Extract<PluginProcessRequest, { type: "initia
     clientId: createPluginClientId(message.pluginId),
     clientType: "cli",
     appVersion: message.appVersion,
-    reconnect: { enabled: false },
+    // The runtime re-attaches a session when the daemon drops this socket.
+    reconnect: { enabled: true },
     transportFactory,
   });
   paseo = createPaseoApi(daemonClient);
