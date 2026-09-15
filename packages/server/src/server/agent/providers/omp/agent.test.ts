@@ -430,19 +430,17 @@ describe("OMP agent client and session", () => {
     await omp.start();
 
     await omp.runPrompt("hello OMP", "done");
-    omp
-      .runtime()
-      .acceptCustomMessage(
-        [
-          "<system-notice>",
-          "Background job DocsSmokeTwo has completed.",
-          '<task-result id="DocsSmokeTwo" agent="explore" status="completed" duration="21.6s">',
-          "<output>done</output>",
-          "</task-result>",
-          "</system-notice>",
-        ].join("\n"),
-      );
-    omp.runtime().acceptCustomMessage("plain custom status text");
+    omp.runtime().acceptCustomMessage({
+      content: [
+        "<system-notice>",
+        "Background job DocsSmokeTwo has completed.",
+        '<task-result id="DocsSmokeTwo" agent="explore" status="completed" duration="21.6s">',
+        "<output>done</output>",
+        "</task-result>",
+        "</system-notice>",
+      ].join("\n"),
+    });
+    omp.runtime().acceptCustomMessage({ content: "plain custom status text" });
 
     expect(omp.timeline().filter((item) => item.type === "notification")).toEqual([
       {
