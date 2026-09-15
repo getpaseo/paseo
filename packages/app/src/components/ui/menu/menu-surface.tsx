@@ -413,6 +413,7 @@ function MenuSheetSurface({
       // sheet up instead, which is the only thing a content-sized sheet can usefully do.
       keyboardBehavior="interactive"
       keyboardBlurBehavior="restore"
+      android_keyboardInputMode="adjustPan"
     >
       <BottomSheetScrollView
         dataSet={sheetDataSet}
