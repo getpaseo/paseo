@@ -34,6 +34,7 @@ import {
   BottomSheetBackgroundProps,
 } from "@gorhom/bottom-sheet";
 import Animated, { FadeIn, FadeOut } from "react-native-reanimated";
+import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { Check, File, Folder, Search } from "lucide-react-native";
 import {
   flip,
@@ -1266,7 +1267,8 @@ function DesktopComboboxBody(props: DesktopBodyProps): ReactElement {
       visible={props.isOpen}
       onRequestClose={props.handleClose}
     >
-      {overlay}
+      {/* Android Modal opens a separate window outside the app's gesture root. */}
+      <GestureHandlerRootView style={styles.desktopOverlay}>{overlay}</GestureHandlerRootView>
     </Modal>
   );
 }

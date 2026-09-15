@@ -4,6 +4,7 @@ import type { DaemonClientConfig } from "./daemon-client.js";
 import type { AgentPermissionResponse } from "@getpaseo/protocol/agent-types";
 import type {
   AgentSnapshotPayload,
+  CreationSnapshot,
   CreateAgentRequestMessage,
   FetchWorkspacesRequestMessage,
   FetchWorkspacesResponseMessage,
@@ -28,7 +29,7 @@ import type {
   WorkspaceDescriptorPayload,
   WorkspaceCreateRequest,
 } from "@getpaseo/protocol/messages";
-import { DaemonClient } from "./daemon-client.js";
+import { DaemonClient, type CreateAgentRequestOptions } from "./daemon-client.js";
 import {
   createTerminalActions,
   type PaseoTerminalActions,
@@ -142,8 +143,16 @@ export interface PaseoWorkspaceOpenOptions {
   requestId?: string;
 }
 
-export type PaseoWorkspaceCreateOptions = Omit<WorkspaceCreateRequest, "type" | "requestId"> & {
+export type PaseoWorkspaceCreateOptions = Omit<
+  WorkspaceCreateRequest,
+  "type" | "requestId" | "agent" | "subscribe"
+> & {
   requestId?: string;
+  agent?: Omit<
+    PaseoAgentCreateOptions,
+    "worktree" | "git" | "onEvent" | "idempotencyKey" | "requestId"
+  >;
+  onEvent?: (snapshot: CreationSnapshot) => void;
 };
 
 export interface PaseoWorkspaceArchiveResult {
@@ -232,6 +241,9 @@ export interface PaseoAgentConfig {
 }
 
 export interface PaseoAgentCreateOptions {
+  idempotencyKey?: string;
+  agentId?: string;
+  onEvent?: (snapshot: CreationSnapshot) => void;
   config: PaseoAgentConfig;
   cwd: string;
   parent?: string | PaseoAgentHandle;
@@ -303,7 +315,7 @@ export type PaseoAgentTimelineEvent =
   | {
       agentId: string;
       subscriptionId: string;
-      event: { type: "snapshot"; reason: "reconnect"; page: FetchAgentTimelinePayload };
+      event: { type: "subscription_restored" };
     }
   | { agentId: string; event: { type: "error"; error: string } };
 
@@ -318,10 +330,10 @@ export interface PaseoAgentTimelineHandle {
    */
   refetch(options?: PaseoAgentTimelineRefetchOptions): Promise<FetchAgentTimelinePayload>;
   /**
-   * Initially delivers live events only. Reconnect delivers a projected snapshot
-   * of the latest 100 entries before subsequent updates. Replace your recent view
-   * with this page; use its cursors to load older history. A replacement event
-   * invalidates the previous epoch. Recovery errors release this observation.
+   * Delivers live events only. After reconnect, subscription_restored precedes
+   * subsequent updates. History may have been missed; use refetch() to request
+   * the range you need. No history is fetched automatically. A replacement event
+   * invalidates the previous epoch. Subscription errors release this observation.
    * Await the returned unsubscribe function's `ready` promise before starting
    * work that must be observed. It rejects if establishment fails.
    */
@@ -513,6 +525,29 @@ export function createPaseoClient(config: PaseoClientConfig): PaseoClient {
   };
 }
 
+function toDaemonAgentCreateOptions(
+  options: PaseoAgentCreateOptions,
+  placement?: { workspaceId: string; cwd: string },
+): CreateAgentRequestOptions {
+  const { config: agentConfig, cwd, parent, title, prompt, ...requestOptions } = options;
+  const { provider: providerModel, options: providerOptions, ...runtimeConfig } = agentConfig;
+  const { provider, model } = parseProviderModel(providerModel);
+  return {
+    ...requestOptions,
+    config: {
+      ...runtimeConfig,
+      provider,
+      model,
+      cwd: placement?.cwd ?? cwd,
+      ...(title !== undefined ? { title } : {}),
+      ...(providerOptions !== undefined ? { providerOptions } : {}),
+    },
+    ...(placement ? { workspaceId: placement.workspaceId } : {}),
+    ...(parent ? { callerAgentId: resolveAgentId(parent) } : {}),
+    ...(prompt !== undefined ? { initialPrompt: prompt } : {}),
+  };
+}
+
 export function createPaseoApi(
   daemonClient: DaemonClient,
   scopeOptions?: { signal?: AbortSignal },
@@ -520,8 +555,6 @@ export function createPaseoApi(
   const handles = new Set<{ release(): Promise<void> }>();
   const agentListeners = new Set<PaseoAgentUpdateHandler>();
   const workspaceListeners = new Set<PaseoWorkspaceUpdateHandler>();
-  const projectListeners = new Set<PaseoProjectUpdateHandler>();
-  const providerListeners = new Set<(update: PaseoProviderSnapshotUpdate) => void>();
   const lifetime = new AbortController();
   const own = <T extends { release(): Promise<void> }>(create: () => T): T => {
     if (lifetime.signal.aborted) throw new Error("Paseo API is disposed");
@@ -557,24 +590,7 @@ export function createPaseoApi(
     options: PaseoAgentCreateOptions,
     placement?: { workspaceId: string; cwd: string },
   ) => {
-    const { config: agentConfig, cwd, parent, title, prompt, ...requestOptions } = options;
-    const { provider: providerModel, options: providerOptions, ...runtimeConfig } = agentConfig;
-    const { provider, model } = parseProviderModel(providerModel);
-    const effectiveCwd = placement?.cwd ?? cwd;
-    const agent = await daemonClient.createAgent({
-      ...requestOptions,
-      config: {
-        ...runtimeConfig,
-        provider,
-        model,
-        cwd: effectiveCwd,
-        ...(title !== undefined ? { title } : {}),
-        ...(providerOptions !== undefined ? { providerOptions } : {}),
-      },
-      ...(placement ? { workspaceId: placement.workspaceId } : {}),
-      ...(parent ? { callerAgentId: resolveAgentId(parent) } : {}),
-      ...(prompt !== undefined ? { initialPrompt: prompt } : {}),
-    });
+    const agent = await daemonClient.createAgent(toDaemonAgentCreateOptions(options, placement));
     return createAgentHandle(agent);
   };
   const terminals = createTerminalActions(daemonClient, async (workspaceId) => {
@@ -598,8 +614,6 @@ export function createPaseoApi(
     scopeOptions?.signal?.removeEventListener("abort", abort);
     agentListeners.clear();
     workspaceListeners.clear();
-    projectListeners.clear();
-    providerListeners.clear();
     disposal = Promise.allSettled([...handles].map((handle) => handle.release())).then(
       (results) => {
         handles.clear();
@@ -619,18 +633,20 @@ export function createPaseoApi(
   if (scopeOptions?.signal?.aborted) abort();
   else scopeOptions?.signal?.addEventListener("abort", abort, { once: true });
 
-  const observeEvents: DaemonClient["observeEvents"] = (events, options) => {
-    const subscription = own(() => daemonClient.observeEvents(events, options));
-    subscription.subscribe({
-      snapshot: () => {},
-      update: (message) => {
-        if (message.type === "project.update")
-          for (const listener of projectListeners) listener(message.payload);
-        if (message.type === "providers_snapshot_update")
-          for (const listener of providerListeners) listener(message.payload);
-      },
-    });
-    return subscription;
+  const observeEvents: DaemonClient["observeEvents"] = (events, options) =>
+    own(() => daemonClient.observeEvents(events, options));
+
+  const subscribeEvent = (
+    event: "project.update" | "providers_snapshot_update",
+    update: (message: SessionOutboundMessage) => void,
+  ): (() => void) => {
+    const observation = observeEvents([event]);
+    observation.subscribe({ snapshot: () => {}, update });
+    return () => {
+      void observation
+        .release()
+        .catch((error) => console.error("Event subscription cleanup failed", error));
+    };
   };
 
   function listWorkspaces(options: PaseoWorkspaceListOptions & { subscribe: {} }): Promise<
@@ -686,11 +702,9 @@ export function createPaseoApi(
     projects: {
       list: (options) => daemonClient.listProjects(options),
       subscribe: (handler) => {
-        if (lifetime.signal.aborted) throw new Error("Paseo API is disposed");
-        projectListeners.add(handler);
-        return () => {
-          projectListeners.delete(handler);
-        };
+        return subscribeEvent("project.update", (message) => {
+          if (message.type === "project.update") handler(message.payload);
+        });
       },
     },
     workspaces: {
@@ -698,8 +712,11 @@ export function createPaseoApi(
       ref: (workspace) => createWorkspaceHandle(workspace),
       open: (input, requestId) =>
         openWorkspace(daemonClient, createWorkspaceHandle, input, requestId),
-      create: async ({ requestId, ...options }) => {
-        const result = await daemonClient.createWorkspace(options, requestId);
+      create: async ({ requestId, agent, ...options }) => {
+        const result = await daemonClient.createWorkspace(
+          { ...options, ...(agent ? { agent: toDaemonAgentCreateOptions(agent) } : {}) },
+          requestId,
+        );
         if (result.error || !result.workspace) {
           throw new Error(result.error ?? "The daemon did not create a workspace");
         }
@@ -735,11 +752,9 @@ export function createPaseoApi(
       diagnostic: (provider, options) => daemonClient.getProviderDiagnostic(provider, options),
       listUsage: (options) => listProviderUsage(daemonClient, options),
       subscribe: (handler) => {
-        if (lifetime.signal.aborted) throw new Error("Paseo API is disposed");
-        providerListeners.add(handler);
-        return () => {
-          providerListeners.delete(handler);
-        };
+        return subscribeEvent("providers_snapshot_update", (message) => {
+          if (message.type === "providers_snapshot_update") handler(message.payload);
+        });
       },
     },
     config: {
@@ -865,11 +880,11 @@ function createAgentHandleFactory(
             switch (message.type) {
               case "agent_stream":
                 return handler(message.payload);
-              case "agent.timeline.snapshot":
+              case "agent.timeline.subscription_restored":
                 return handler({
                   agentId: id,
                   subscriptionId: message.payload.subscriptionId,
-                  event: { type: "snapshot", reason: "reconnect", page: message.payload.page },
+                  event: { type: "subscription_restored" },
                 });
               case "agent.timeline.error":
                 return handler({

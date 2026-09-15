@@ -487,13 +487,8 @@ export class DirectorySync {
     try {
       await this.waitForSessionMetadata(client, source);
       const serverInfo = useSessionStore.getState().sessions[this.serverId]?.serverInfo;
-      if (serverInfo?.features?.workspaceMultiplicity !== true) {
-        const deltas = this.workspaceTransactions.fail(transaction);
-        if (deltas) for (const delta of deltas) this.applyWorkspaceDelta(delta);
-        return;
-      }
-      const supportsProjectList = serverInfo.features?.projectList === true;
-      const supportsDirectorySync = serverInfo.features?.directorySync === true;
+      const supportsProjectList = serverInfo?.features?.projectList === true;
+      const supportsDirectorySync = serverInfo?.features?.directorySync === true;
       if (supportsProjectList) {
         await this.fetchProjectSnapshot(client, source, transaction, supportsDirectorySync);
       }

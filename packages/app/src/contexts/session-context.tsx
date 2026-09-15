@@ -15,7 +15,7 @@ import { deriveAgentStreamTurnLiveness } from "@/timeline/session-stream-reducer
 import { planTimelineTailFetch } from "@/timeline/timeline-sync-plan";
 import { requestTimelineReplacement } from "@/timeline/timeline-replacement";
 import { type ViewedTimelineOwner } from "@/timeline/viewed-timeline-sync";
-import type { AgentAttachment, SessionOutboundMessage } from "@getpaseo/protocol/messages";
+import type { SessionOutboundMessage } from "@getpaseo/protocol/messages";
 import { parseServerInfoStatusPayload } from "@getpaseo/protocol/messages";
 import {
   buildAgentAttentionNotificationPayload,
@@ -25,8 +25,6 @@ import {
 } from "@getpaseo/protocol/agent-attention-notification";
 
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
-import type { AgentSessionConfig } from "@getpaseo/protocol/agent-types";
-import type { GitSetupOptions } from "@getpaseo/protocol/messages";
 import type { AgentPermissionResponse } from "@getpaseo/protocol/agent-types";
 import { getHostRuntimeStore, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { useVoiceAudioEngineOptional, useVoiceRuntimeOptional } from "@/contexts/voice-context";
@@ -45,9 +43,7 @@ import {
   createInitDeferred,
   rejectInitDeferred,
 } from "@/utils/agent-initialization";
-import { encodeImages } from "@/utils/encode-images";
 import { derivePendingPermissionKey } from "@/utils/agent-snapshots";
-import type { AttachmentMetadata } from "@/attachments/types";
 import { useToast } from "@/contexts/toast-context";
 import { toErrorMessage } from "@/utils/error-messages";
 import { showProviderNoticeToast } from "@/utils/provider-notice-toast";
@@ -820,48 +816,6 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       }
       void client.restartServer(reason).catch((error) => {
         console.error("[Session] Failed to restart server:", error);
-      });
-    },
-    [client],
-  );
-
-  const _createAgent = useCallback(
-    async ({
-      config,
-      initialPrompt,
-      images,
-      attachments,
-      git,
-      worktreeName,
-      requestId,
-    }: {
-      config: AgentSessionConfig;
-      initialPrompt: string;
-      images?: AttachmentMetadata[];
-      attachments?: AgentAttachment[];
-      git?: GitSetupOptions;
-      worktreeName?: string;
-      requestId?: string;
-    }) => {
-      if (!client) {
-        console.warn("[Session] createAgent skipped: daemon unavailable");
-        return;
-      }
-      const trimmedPrompt = initialPrompt.trim();
-      let imagesData: Array<{ data: string; mimeType: string }> | undefined;
-      try {
-        imagesData = await encodeImages(images);
-      } catch (error) {
-        console.error("[Session] Failed to prepare images for agent creation:", error);
-      }
-      await client.createAgent({
-        config,
-        ...(trimmedPrompt ? { initialPrompt: trimmedPrompt } : {}),
-        ...(imagesData && imagesData.length > 0 ? { images: imagesData } : {}),
-        ...(attachments && attachments.length > 0 ? { attachments } : {}),
-        ...(git ? { git } : {}),
-        ...(worktreeName ? { worktreeName } : {}),
-        ...(requestId ? { requestId } : {}),
       });
     },
     [client],

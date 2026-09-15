@@ -1,3 +1,4 @@
+import { projectTimelineRows } from "./timeline-projection.js";
 import type { PluginLifecycle } from "../plugins/lifecycle/index.js";
 import { describeHookAgent, publishAgentStream } from "../plugins/lifecycle/index.js";
 import type { PluginSessionOpenRequest } from "@getpaseo/plugin/server";
@@ -1169,7 +1170,10 @@ export class AgentManager {
   async getTimelineRows(id: string): Promise<AgentTimelineRow[]> {
     this.requireAgent(id);
     if (this.durableTimelineStore) {
-      return await this.durableTimelineStore.getCommittedRows(id);
+      return projectTimelineRows({
+        rows: await this.durableTimelineStore.getCommittedRows(id),
+        mode: "projected",
+      }).map((entry) => Object.assign({ seq: entry.seqEnd }, entry));
     }
     return this.timelineStore.getRows(id);
   }
@@ -1297,8 +1301,20 @@ export class AgentManager {
     },
     resumeOptions?: AgentResumeSessionOptions,
   ): Promise<ManagedAgent> {
+    const resolvedAgentId = validateAgentId(
+      agentId ?? this.idFactory(),
+      "resumeAgentFromPersistence",
+    );
     return this.trackAgentRegistrationOperation(
-      this.resumeAgentFromPersistenceInternal(handle, overrides, agentId, options, resumeOptions),
+      this.runLifecycleMutation(resolvedAgentId, () =>
+        this.resumeAgentFromPersistenceInternal(
+          handle,
+          overrides,
+          resolvedAgentId,
+          options,
+          resumeOptions,
+        ),
+      ),
     );
   }
 
@@ -1332,6 +1348,12 @@ export class AgentManager {
       resolvedAgentId,
     );
 
+    // Decide residency from durable state inside the lifecycle lane. A loader may
+    // have read the record before a queued archive or restore completed.
+    const record = this.registry ? await this.registry.get(resolvedAgentId) : null;
+    const currentResumeOptions = record
+      ? { purpose: record.archivedAt ? ("history" as const) : ("interactive" as const) }
+      : resumeOptions;
     const client = this.requireClient(handle.provider);
     const available = await client.isAvailable();
     if (!available) {
@@ -1348,7 +1370,7 @@ export class AgentManager {
       undefined,
       {
         reason: "resume",
-        purpose: resumeOptions?.purpose ?? "interactive",
+        purpose: currentResumeOptions?.purpose ?? "interactive",
         workspaceId: options?.workspaceId ?? null,
       },
     );
@@ -1357,7 +1379,7 @@ export class AgentManager {
       handle,
       providerLaunchConfig,
       launchContext,
-      resumeOptions,
+      currentResumeOptions,
     );
     await this.requireExternalMcpSupport(session, storedConfig);
     return this.registerSession(session, storedConfig, resolvedAgentId, {
@@ -1655,14 +1677,11 @@ export class AgentManager {
       "agent.manager.close.start",
     );
     await this.drainSessionEvents(agentId);
+    // Retain ownership until shutdown succeeds. A failed close may still own a
+    // native writer, so publishing a resumable closed snapshot would orphan it.
+    await agent.session.close();
     this.cancelRunningProviderSubagents(agentId);
     const closedAgent = this.prepareAgentForClosure(agent, "agent closed");
-    let closeError: unknown;
-    try {
-      await agent.session.close();
-    } catch (error) {
-      closeError = error;
-    }
 
     let persistError: unknown;
     try {
@@ -1680,9 +1699,6 @@ export class AgentManager {
       "agent.manager.close.complete",
     );
 
-    if (closeError !== undefined) {
-      throw closeError;
-    }
     if (persistError !== undefined) {
       throw persistError;
     }
@@ -1706,7 +1722,10 @@ export class AgentManager {
     return this.runLifecycleMutation(agentId, () => this.archiveAgentUnlocked(agentId));
   }
 
-  private async archiveAgentUnlocked(agentId: string): Promise<{ archivedAt: string }> {
+  private async archiveAgentUnlocked(
+    agentId: string,
+    requestedArchivedAt?: string,
+  ): Promise<{ archivedAt: string }> {
     const agent = this.requireAgent(agentId);
     if (!this.registry) {
       throw new Error("Agent storage is not configured");
@@ -1720,7 +1739,7 @@ export class AgentManager {
       throw new Error(`Agent ${agentId} not found in storage after snapshot`);
     }
 
-    const { archivedAt } = await this.markRecordArchived(stored);
+    const { archivedAt } = await this.markRecordArchived(stored, requestedArchivedAt);
     agent.updatedAt = new Date(archivedAt);
     await this.closeAgentRuntime(agentId);
     await this.syncNativeArchiveState(stored.provider, stored.persistence, "archive");
@@ -1770,14 +1789,16 @@ export class AgentManager {
         } else if (this.agents.has(currentChild.id)) {
           await this.archiveAgentUnlocked(currentChild.id);
         } else {
-          await this.archiveSnapshot(currentChild.id, new Date().toISOString());
+          await this.archiveSnapshotUnlocked(currentChild.id, new Date().toISOString());
         }
       });
     }
   }
 
-  private async markRecordArchived(record: StoredAgentRecord): Promise<ArchivedStoredAgentRecord> {
-    const archivedAt = new Date().toISOString();
+  private async markRecordArchived(
+    record: StoredAgentRecord,
+    archivedAt = new Date().toISOString(),
+  ): Promise<ArchivedStoredAgentRecord> {
     const archivedRecord = await this.persistArchivedRecord(record, {
       archivedAt,
       updatedAt: archivedAt,
@@ -2115,12 +2136,23 @@ export class AgentManager {
   }
 
   async archiveSnapshot(agentId: string, archivedAt: string): Promise<StoredAgentRecord> {
+    return this.runLifecycleMutation(agentId, () =>
+      this.archiveSnapshotUnlocked(agentId, archivedAt),
+    );
+  }
+
+  private async archiveSnapshotUnlocked(
+    agentId: string,
+    archivedAt: string,
+  ): Promise<StoredAgentRecord> {
     const registry = this.requireRegistry();
-    const liveAgent = this.getAgent(agentId);
-    if (liveAgent) {
-      await this.persistSnapshot(liveAgent, {
-        internal: liveAgent.internal,
-      });
+    // A stored-only archive can have waited behind a persisted resume. Reuse the
+    // live archive transition so its newly acquired runtime is closed as well.
+    if (this.agents.has(agentId)) {
+      await this.archiveAgentUnlocked(agentId, archivedAt);
+      const archivedRecord = await registry.get(agentId);
+      if (!archivedRecord) throw new Error(`Agent not found: ${agentId}`);
+      return archivedRecord;
     }
 
     const record = await registry.get(agentId);
@@ -2132,14 +2164,8 @@ export class AgentManager {
 
     await this.syncNativeArchiveState(record.provider, record.persistence, "archive");
 
-    if (this.agents.has(agentId)) {
-      this.notifyAgentState(agentId);
-    } else {
-      this.discardRetainedAgentState(agentId);
-      if (!nextRecord.internal) {
-        this.dispatchStoredAgentState(nextRecord);
-      }
-    }
+    this.discardRetainedAgentState(agentId);
+    if (!nextRecord.internal) this.dispatchStoredAgentState(nextRecord);
 
     await this.fireAgentArchived(agentId);
     await this.cascadeArchiveChildren(agentId);
@@ -2148,14 +2174,24 @@ export class AgentManager {
   }
 
   async unarchiveSnapshot(agentId: string, updates?: UnarchiveSnapshotUpdates): Promise<boolean> {
+    return this.runLifecycleMutation(agentId, () =>
+      this.unarchiveSnapshotUnlocked(agentId, updates),
+    );
+  }
+
+  private async unarchiveSnapshotUnlocked(
+    agentId: string,
+    updates?: UnarchiveSnapshotUpdates,
+  ): Promise<boolean> {
     const registry = this.requireRegistry();
     const record = await registry.get(agentId);
     if (!record || !record.archivedAt) {
       return false;
     }
 
-    // Archived history may have loaded a runtime that still owns the native writer.
-    await this.closeAgent(agentId);
+    // Close and native restore share the lifecycle lane with persisted resume.
+    // No new history or interactive runtime can acquire the writer between them.
+    if (this.agents.has(agentId)) await this.closeAgentRuntime(agentId);
     await this.syncNativeArchiveState(record.provider, record.persistence, "restore");
 
     await registry.upsert({

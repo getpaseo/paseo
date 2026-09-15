@@ -213,7 +213,8 @@ test("observes a thousand concurrent writes and remains healthy after delete and
   const directories = Array.from({ length: 20 }, (_, index) => join(root, `dir-${index}`));
   await Promise.all(directories.map((directory) => mkdir(directory)));
   const observed = new Map<string, Set<FileChange["type"]>>();
-  const subscription = await subscribeToFileChanges(root, (error, events) => {
+  const observer = createObserver();
+  const subscription = await observer.subscribe(root, (error, events) => {
     expect(error).toBeNull();
     for (const event of events) {
       const types = observed.get(event.path) ?? new Set();
@@ -239,6 +240,16 @@ test("observes a thousand concurrent writes and remains healthy after delete and
   await expect
     .poll(() => paths.filter((path) => !observed.has(path)), { timeout: 60_000 })
     .toEqual([]);
+
+  // Native notifications arrive before reconciliation finishes. Drain that work
+  // so pending creates cannot coalesce with this test's separate deletion phase.
+  await expect
+    .poll(() => observer.getDiagnostics(), { timeout: 10_000 })
+    .toMatchObject({
+      pendingEventCount: 0,
+      pendingReconciliationWorkCount: 0,
+      reconciliationInFlightCount: 0,
+    });
 
   const removedPaths = paths.slice(0, 100);
   await Promise.all(removedPaths.map((path) => rm(path)));
