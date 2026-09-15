@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import net from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -59,23 +59,37 @@ export async function startPackagedWebDaemon(input: {
   const serverId = `relay-deployment-${Date.now().toString(36)}`;
   const paseo = path.resolve(__dirname, "../../../../../node_modules/.bin/paseo");
   const env: NodeJS.ProcessEnv = {
-    ...process.env,
+    ...Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith("PASEO_"))),
+    HOME: home,
+    USERPROFILE: home,
     CI: "true",
     NODE_ENV: "development",
     PASEO_NODE_ENV: "development",
     PASEO_SERVER_ID: serverId,
-    PASEO_RELAY_ENDPOINT: input.relayEndpoint,
-    PASEO_RELAY_PUBLIC_ENDPOINT: input.relayEndpoint,
-    PASEO_RELAY_USE_TLS: "false",
-    PASEO_RELAY_PUBLIC_USE_TLS: "false",
   };
 
   try {
-    await execFileAsync(
-      paseo,
-      ["daemon", "start", "--home", home, "--port", String(port), "--relay", "--web-ui"],
-      { env },
+    await writeFile(
+      path.join(home, "config.json"),
+      JSON.stringify({
+        daemon: {
+          listen: `127.0.0.1:${port}`,
+          relay: {
+            enabled: true,
+            endpoint: input.relayEndpoint,
+            publicEndpoint: input.relayEndpoint,
+            useTls: false,
+            publicUseTls: false,
+          },
+        },
+        features: {
+          webUi: { enabled: true },
+          dictation: { enabled: false },
+          voiceMode: { enabled: false },
+        },
+      }),
     );
+    await execFileAsync(paseo, ["daemon", "start", "--home", home], { env });
     const origin = `http://127.0.0.1:${port}`;
     await waitForWebUi(origin, home);
 

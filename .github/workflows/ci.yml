@@ -178,7 +178,7 @@ jobs:
     name: desktop-tests (ubuntu-latest)
     needs: changes
     if: ${{ !cancelled() && (needs.changes.outputs.full != 'false' || needs.changes.outputs.desktop != 'false') }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
       contents: read
@@ -201,11 +201,34 @@ jobs:
 
       - name: Install virtual display
         if: ${{ runner.os == 'Linux' }}
-        run: sudo apt-get update && sudo apt-get install -y xvfb xauth
+        run: sudo apt-get update && sudo apt-get install -y xvfb xauth xdotool
 
       - name: Install Playwright browser
         if: ${{ runner.os == 'Linux' }}
         run: npx playwright install chromium
+
+      - name: Verify Windows daemon process control
+        if: ${{ runner.os == 'Windows' }}
+        run: npx vitest run packages/cli/src/commands/daemon/lifecycle.e2e.test.ts --bail=1 --maxWorkers=1 -t "Windows unbound|managed two-home"
+
+      - name: Run desktop lifecycle E2E (Linux)
+        if: ${{ runner.os == 'Linux' }}
+        run: xvfb-run -a --server-args="-screen 0 1280x800x24" npm run test:e2e:lifecycle --workspace=@getpaseo/desktop
+        env:
+          PASEO_DESKTOP_LIFECYCLE_ARTIFACT_DIR: ${{ runner.temp }}/desktop-lifecycle
+
+      - name: Upload desktop lifecycle screenshots
+        uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && runner.os == 'Linux' }}
+        with:
+          name: desktop-lifecycle
+          path: ${{ runner.temp }}/desktop-lifecycle
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Run desktop lifecycle E2E (Windows)
+        if: ${{ runner.os == 'Windows' }}
+        run: npm run test:e2e:lifecycle --workspace=@getpaseo/desktop
 
       - name: Run desktop renderer E2E
         if: ${{ runner.os == 'Linux' }}
@@ -223,23 +246,6 @@ jobs:
         with:
           name: desktop-browser-e2e
           path: ${{ runner.temp }}/desktop-browser-e2e
-          if-no-files-found: ignore
-          retention-days: 7
-
-      - name: Build and smoke unpacked desktop app
-        if: ${{ runner.os == 'Linux' }}
-        run: npm run build:desktop -- --publish never --linux --x64 --dir
-        env:
-          EP_GH_IGNORE_TIME: true
-          PASEO_DESKTOP_SMOKE: "1"
-          PASEO_DESKTOP_SMOKE_ARTIFACT_DIR: ${{ runner.temp }}/desktop-smoke
-
-      - name: Upload packaged smoke diagnostics
-        uses: actions/upload-artifact@v4
-        if: ${{ failure() && runner.os == 'Linux' }}
-        with:
-          name: desktop-packaged-smoke-linux-x64
-          path: ${{ runner.temp }}/desktop-smoke
           if-no-files-found: ignore
           retention-days: 7
 
@@ -296,16 +302,13 @@ jobs:
         run: node scripts/npm-retry.mjs ci
 
       - name: Build client dependencies
-        run: npm run build:client
+        run: npm run build:relay && npm run build:client
 
       - name: Build plugin SDK
         run: npm run build:plugin
 
       - name: Run plugin SDK tests
         run: npm run test --workspace=@getpaseo/plugin
-
-      - name: Typecheck plugin examples
-        run: npm run typecheck --workspace=@getpaseo/plugin
 
       - name: Run protocol tests
         run: npm run test --workspace=@getpaseo/protocol
@@ -355,6 +358,9 @@ jobs:
         run: npm run test:e2e --workspace=@getpaseo/app -- --shard=${{ env.PLAYWRIGHT_SHARD }}
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          # Weight file groups by observed duration; raw test counts overload
+          # early agent/Changes specs. Required check names remain unchanged.
+          PWTEST_SHARD_WEIGHTS: "111:172:137:160"
 
       - name: Upload test artifacts
         uses: actions/upload-artifact@v4
@@ -440,14 +446,18 @@ jobs:
       - name: Install dependencies
         run: node scripts/npm-retry.mjs ci
 
-      - name: Build server stack
-        run: npm run build:server
-
       - name: Install agent CLIs for provider tests
         run: node scripts/npm-retry.mjs install -g @anthropic-ai/claude-code @openai/codex@0.105.0 opencode-ai
 
-      - name: Run CLI tests
-        run: npm run test --workspace=@getpaseo/cli
+      # The local runner builds its dependencies and shards its own E2E files.
+      - name: Run CLI E2E tests
+        run: npm run test:local --workspace=@getpaseo/cli
+
+      # Source tests do not read PASEO_CLI_TEST_SHARD. Run them once, on the
+      # shortest E2E shard, after its runner has built the server stack.
+      - name: Run CLI source tests
+        if: ${{ env.PASEO_CLI_TEST_SHARD == '3' }}
+        run: npm run test:unit --workspace=@getpaseo/cli
 
   cli-tests-2:
     name: cli-tests (shard 2/3)

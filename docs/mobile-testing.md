@@ -47,6 +47,13 @@ focused input identity and IME hide/show events. It saves screenshots and logs u
 `.dev/agent-device-artifacts/terminal-keyboard-android`. Set `PASEO_TERMINAL_KEYBOARD_APP_ID=sh.paseo`
 to test an installed production build. It never submits a chat message.
 
+`npm run test:e2e:composer-keyboard:android` covers composer growth in chat and
+New workspace, plus keyboard and control interactions. Configure its daemon,
+Metro, and device through the `PASEO_COMPOSER_KEYBOARD_*` variables in
+`packages/app/e2e/mobile/composer-keyboard/android.sh`. Use a software keyboard;
+the headless input helper cannot verify the
+[visible composer constraints](floating-panels.md#gotcha-3--keyboard-layout-and-portal-anchors).
+
 When replay diverges, read its ranked selector suggestions. Edit the script deliberately and rerun it from the beginning. `--update` is retained for compatibility but no longer rewrites scripts.
 
 ## Maestro compatibility

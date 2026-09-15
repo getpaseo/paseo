@@ -67,7 +67,7 @@ function contributeClient(client) {
     pills.get(agentId)?.();
     pills.delete(agentId);
   };
-  const unsubscribe = client.paseo.agents.subscribe((update) => {
+  const apply = (update) => {
     if (update.kind === "remove") {
       remove(update.agentId);
       return;
@@ -94,9 +94,20 @@ function contributeClient(client) {
       },
     });
     pills.set(agent.id, () => pill.remove());
-  });
+  };
+  const lifetime = new AbortController();
+  void client.paseo.agents.list({ subscribe: {}, signal: lifetime.signal }).then(({ subscription }) => {
+    subscription.subscribe({
+      snapshot({ entries }) {
+        for (const removePill of pills.values()) removePill();
+        pills.clear();
+        for (const { agent } of entries) apply({ kind: "upsert", agent });
+      },
+      update(message) { if (message.type === "agent_update") apply(message.payload); },
+    });
+  }).catch((error) => { if (!lifetime.signal.aborted) console.error(error); });
   return () => {
-    unsubscribe();
+    lifetime.abort();
     for (const removePill of pills.values()) removePill();
     pills.clear();
   };
@@ -344,7 +355,9 @@ test.describe("plugin workspace panels and Command Center", () => {
 
         await page.goto(buildAgentRoute(primary.workspaceId, agent.id));
         await page.waitForURL(isSettledWorkspaceUrl, { timeout: 60_000 });
-        await expect(page.getByRole("button", { name: "Open composer review" })).toHaveCount(0);
+        // Pressing removed the pill from that page only. The reloaded page evaluates
+        // the plugin again, and its agents snapshot contributes the pill afresh.
+        await expect(page.getByRole("button", { name: "Open composer review" })).toBeVisible();
         await openCompactSidebar(page);
         // The sidebar's Search row dismisses the compact sidebar on its way to the
         // command center, so nothing has to close it after the command runs.

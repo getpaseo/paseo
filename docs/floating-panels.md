@@ -58,7 +58,10 @@ Android touches sailed straight through to the chat scroll view behind it.
 Two escape hatches in the codebase:
 
 - **`Modal`** (combobox, dropdown menu and tooltip on native) — opens a new Android window, so
-  hit-testing starts fresh in that window. Side effect: a Modal opening on
+  hit-testing starts fresh in that window. If its children use gesture-handler,
+  the Modal owner must wrap its content in a full-height `GestureHandlerRootView`:
+  the app's root does not span Android windows. React context alone does not
+  establish a native gesture root. Side effect: a Modal opening on
   Android can detach the IME from an underlying TextInput. Fine for combobox
   (it has its own input) and tooltip (no input). **Not** fine for autocomplete
   (the composer's input must stay focused so the user keeps typing).
@@ -153,6 +156,19 @@ mounted layouts arrived in bursts every 2–4 frames. A transform does not dirty
 layout. Preserve the translated dock's history scroll range with a far-end
 content inset on the inverted stream list. Update that inset only when keyboard
 motion settles; never drive it per frame.
+
+The translated dock's height is not the composer's available height. Bound the
+composer against the stationary space below the header through
+`composer/viewport`, including its controls and attachments. Reserve the
+keyboard destination at move start on the UI thread. Keep the last nonzero
+reservation when the keyboard closes so an unchanged draft does not expand.
+Viewport changes and subsequent keyboard openings recalculate the capacity.
+Waiting for a settled JS update lets a long draft disappear behind the header
+during opening. This is a boundary-time layout change, not an animated
+layout prop. Keep the input's native intrinsic sizing and internal scrolling.
+New workspace also needs its setup fields to scroll when the form exceeds this
+space. The Android regression must check both the header and IME boundaries;
+checking only the bottom controls allowed this regression through previously.
 
 Move the stream and composer together through `KeyboardDock`. Do not translate
 them independently.

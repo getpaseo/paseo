@@ -854,7 +854,12 @@ export default function contribute(client: PluginClientContext) {
 `query.itemType` is the stable, coarse selector. Inspect the selected item inside `transform` for
 provider- or tool-specific recognition. Returning `undefined` keeps the original entry. Returning
 `items` replaces it; an empty array removes it. Item `data` must be JSON-compatible. The `phase`
-input is `"streaming"` for running tool calls and loading reasoning, and `"complete"` otherwise.
+input is `"streaming"` for the live assistant message, running tool calls, and loading reasoning;
+it is `"complete"` for committed or fetched messages and finished tools or reasoning.
+Assistant and reasoning callbacks receive the full accumulated text on each update, including
+paragraph separators. Paseo invokes transformers before splitting native Markdown or grouping
+tools in Overview. A claimed assistant message remains one source item throughout streaming;
+return `undefined` until recognizable if the first text is insufficient to identify it.
 Each replacement may set an optional plugin-local `id`; otherwise Paseo uses its index within that
 source item's output.
 
@@ -1044,9 +1049,22 @@ export const preferences = defineSettings({
 });
 ```
 
-Register it with `server.registerSettings(preferences)` in `index.server.ts` before returning
-cleanup. This server entry is required for built-in persistence; a screen using its own data
-can remain client-only.
+Register it in `index.server.ts` before returning cleanup. The returned handle lets server code
+read the document and react to changes. A screen using its own data can remain client-only.
+
+```ts
+export default function contribute(server: PluginServerContext) {
+  const settings = server.registerSettings(preferences);
+
+  settings.subscribe((next) => {
+    if (next.status === "ready") {
+      console.log("Settings changed", next.revision);
+    }
+  });
+
+  return () => {};
+}
+```
 
 | Definition field               | Contract                                                                                                                             |
 | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------ |
@@ -1064,6 +1082,19 @@ Call `useSettings(preferences)` in any contributed component. It returns a discr
 | `ready`   | Typed `values` and an opaque `revision`.                                 |
 | `invalid` | `error` and `revision`; stored data is preserved.                        |
 | `error`   | `error` from the read/connection.                                        |
+
+The server handle exposes `read()` and `subscribe()`. `read()` returns the same `ready` or
+`invalid` state as the client hook, including the opaque revision. `subscribe()` returns a cleanup
+function and receives a new `ready` state after a successful save, reset, or migration. Invalid
+writes and revision conflicts do not notify subscribers. Listener failures are logged without
+turning a committed write into a failed save.
+
+```ts
+const current = await settings.read();
+if (current.status === "ready") {
+  // Use current.values and current.revision.
+}
+```
 
 Every state also exposes `saving`, `saveError`, and these actions:
 
@@ -1356,6 +1387,10 @@ const pill = client.addComposerPill({
   },
 });
 ```
+
+For pills that follow the agent directory, use an explicit [owned list subscription](/docs/sdk/events#follow-one-agents-status).
+The [local plugin example](https://github.com/getpaseo/paseo/blob/main/plugin-examples/local-plugin/client/main.tsx)
+replaces registrations on each snapshot and aborts the observation during entry cleanup, including pending bootstrap.
 
 ## Button descriptor
 

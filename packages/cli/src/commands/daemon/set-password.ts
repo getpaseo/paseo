@@ -3,7 +3,8 @@ import type { Command } from "commander";
 import { isCancel, password as passwordPrompt } from "@clack/prompts";
 import {
   hashDaemonPassword,
-  loadPersistedConfig,
+  readPersistedConfig,
+  resolvePaseoHome,
   savePersistedConfig,
   type PersistedConfig,
 } from "@getpaseo/server";
@@ -14,7 +15,6 @@ import type {
   OutputSchema,
   SingleResult,
 } from "../../output/index.js";
-import { resolveLocalPaseoHome } from "./local-daemon.js";
 
 const CONFIG_FILENAME = "config.json";
 
@@ -81,9 +81,9 @@ export async function setDaemonPasswordInConfig(
   newPassword: string,
   options: SetPasswordOptions = {},
 ): Promise<SetPasswordResult> {
-  const paseoHome = resolveLocalPaseoHome(options.home);
+  const paseoHome = resolvePaseoHome({ PASEO_HOME: options.home });
   const configPath = path.join(paseoHome, CONFIG_FILENAME);
-  const persisted = loadPersistedConfig(paseoHome);
+  const persisted = readPersistedConfig(paseoHome);
   const nextConfig: PersistedConfig = {
     ...persisted,
     daemon: {
@@ -100,8 +100,8 @@ export async function setDaemonPasswordInConfig(
   return {
     action: "password_set",
     configPath,
-    restartCommand: "paseo daemon restart",
-    message: `Password written to ${configPath}\nRestart the daemon for the change to take effect.\nRun: paseo daemon restart`,
+    restartCommand: `paseo daemon restart --home ${JSON.stringify(paseoHome)}`,
+    message: `Password written to ${configPath}\nRestart the daemon for the change to take effect.\nRun: paseo daemon restart --home ${JSON.stringify(paseoHome)}`,
   };
 }
 
@@ -115,7 +115,7 @@ export async function runSetPasswordCommand(
       : (message: string) => passwordPrompt({ message });
   const newPassword = await promptForPassword(promptPassword);
   const result = await setDaemonPasswordInConfig(newPassword, {
-    home: typeof options.home === "string" ? options.home : undefined,
+    home: options.daemonTarget.kind === "instance" ? options.daemonTarget.home : undefined,
   });
 
   return {

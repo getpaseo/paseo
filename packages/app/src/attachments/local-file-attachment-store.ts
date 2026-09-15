@@ -44,9 +44,10 @@ async function ensureDirectory(fileSystem: AttachmentFileSystem, uri: string): P
   await fileSystem.makeDirectory(uri, { intermediates: true });
 }
 
-async function dataUrlToBytes(dataUrl: string): Promise<Uint8Array> {
-  const response = await fetch(dataUrl);
-  return new Uint8Array(await response.arrayBuffer());
+function dataUrlToBytes(dataUrl: string): Uint8Array {
+  // React Native's fetch cannot read data URLs. Decode the embedded bytes locally.
+  const { base64 } = parseDataUrl(dataUrl);
+  return Uint8Array.from(atob(base64), (character) => character.charCodeAt(0));
 }
 
 async function blobToBytes(blob: Blob): Promise<Uint8Array> {
@@ -70,7 +71,7 @@ async function writeFromSource(input: {
 
   let bytes: Uint8Array;
   if (input.source.kind === "data_url") {
-    bytes = await dataUrlToBytes(input.source.dataUrl);
+    bytes = dataUrlToBytes(input.source.dataUrl);
   } else if (input.source.kind === "blob") {
     bytes = await blobToBytes(input.source.blob);
   } else {

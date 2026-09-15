@@ -10,6 +10,7 @@ import * as pluginProviderRuntime from "@getpaseo/plugin/server/provider";
 import * as pluginAcpRuntime from "@getpaseo/plugin/server/acp";
 import type { SettingsDefinition, PluginRpcContract } from "@getpaseo/plugin";
 import type { PluginHandlerContext } from "@getpaseo/plugin/server";
+import type { ZodType } from "zod";
 import {
   ProviderEventSchema,
   type ProviderConnection,
@@ -23,7 +24,7 @@ import { createPluginClientId } from "./plugin-session-identity.js";
 
 import { PluginSettingsStore } from "./settings/index.js";
 let settingsStore: PluginSettingsStore | null = null;
-function registerSettings(definition: SettingsDefinition) {
+function registerSettings<Schema extends ZodType>(definition: SettingsDefinition<Schema>) {
   if (!settingsStore) throw new Error("Plugin settings storage is unavailable");
   const handlers = settingsStore.register(definition);
   register(handlers.read.contract, handlers.read.handle);
@@ -33,6 +34,7 @@ function registerSettings(definition: SettingsDefinition) {
   register(handlers.reset.contract, (input) =>
     handlers.reset.handle(handlers.reset.contract.input.parse(input)),
   );
+  return handlers.settings;
 }
 
 type RpcHandler = (input: unknown, context: PluginHandlerContext) => unknown | Promise<unknown>;
@@ -282,6 +284,9 @@ async function initialize(message: Extract<PluginProcessRequest, { type: "initia
 async function shutdown(): Promise<void> {
   if (stopping) return;
   stopping = true;
+  const releaseApi = paseo
+    ?.dispose()
+    .catch((error) => console.error("Plugin API cleanup failed", error));
   hooks.close();
   for (const pending of pendingProviderConnections.values()) pending.tombstoned = true;
   const currentCleanup = cleanup;
@@ -292,6 +297,7 @@ async function shutdown(): Promise<void> {
     console.error("Plugin cleanup failed", error);
   }
   await Promise.all([...providerConnections.keys()].map(closeProviderConnection));
+  await releaseApi;
   await daemonClient?.close().catch(() => undefined);
   await sendAndWait({ type: "paseo_close" });
   daemonClient = null;
@@ -321,6 +327,9 @@ process.on("message", (rawMessage: unknown) => {
   if (message.type === "initialize") {
     void initialize(message).catch(async (error) => {
       send({ type: "fatal", error: describeError(error) });
+      await paseo
+        ?.dispose()
+        .catch((failure) => console.error("Plugin API cleanup failed", failure));
       await daemonClient?.close().catch(() => undefined);
     });
     return;

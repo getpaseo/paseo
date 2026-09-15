@@ -31,10 +31,10 @@ export async function runCreateCommand(
   const projectPath = resolveProjectPath({
     pathArg,
     cwd: process.cwd(),
-    daemonTarget: options.host ?? process.env.PASEO_HOST,
+    daemonTarget: options.daemonTarget.kind === "endpoint" ? options.daemonTarget.host : undefined,
   });
-  const client = await connectToDaemon({ host: options.host }).catch((error: unknown) => {
-    throw buildDaemonConnectionCommandError({ host: options.host, error });
+  const client = await connectToDaemon({ target: options.daemonTarget }).catch((error: unknown) => {
+    throw buildDaemonConnectionCommandError({ target: options.daemonTarget, error });
   });
 
   try {
@@ -44,6 +44,7 @@ export async function runCreateCommand(
     }
     return { type: "single", data: toProjectRow(payload.project), schema: projectSchema };
   } catch (error) {
+    if (error && typeof error === "object" && "code" in error) throw error;
     const message = error instanceof Error ? error.message : String(error);
     throw { code: "PROJECT_CREATE_FAILED", message } satisfies CommandError;
   } finally {

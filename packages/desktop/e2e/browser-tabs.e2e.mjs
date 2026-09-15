@@ -198,7 +198,14 @@ async function startTargetPage() {
     response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
     response.end(`<!doctype html>
       <html>
-        <head><title>Desktop browser target</title></head>
+        <head><title>Desktop browser target</title>
+          <style>body { min-height: 100vh; background: rgb(255, 0, 0); }</style>
+          <script>
+            window.frameCount = 0;
+            function tick() { window.frameCount++; requestAnimationFrame(tick); }
+            requestAnimationFrame(tick);
+          </script>
+        </head>
         <body>
           <button id="bridge-target" onclick="this.textContent = 'Clicked'">Bridge target</button>
           <label for="typing-target">Typing target</label>
@@ -231,20 +238,6 @@ function mcpPayload(result, command) {
 
 async function callBrowserTool(client, name, args = {}) {
   return mcpPayload(await client.callTool({ name, args }), name);
-}
-
-async function callBrowserToolUntilReady(client, name, args = {}) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const result = await client.callTool({ name, args });
-    const payload = result.structuredContent;
-    if (payload?.ok === true) return payload.result;
-    if (payload?.ok !== false || payload.error?.retryable !== true) {
-      return mcpPayload(result, name);
-    }
-    await delay(100);
-  }
-  throw new Error(`${name} remained unavailable for ${timeoutMs}ms`);
 }
 
 async function waitForGuestSelector(client, browserId) {
@@ -366,7 +359,8 @@ async function readPresentation(page, browserId) {
 async function readViewport(client, browserId) {
   const evaluated = await callBrowserTool(client, "browser_evaluate", {
     browserId,
-    function: "() => ({ width: window.innerWidth, height: window.innerHeight })",
+    function:
+      "() => ({ width: window.innerWidth, height: window.innerHeight, scale: window.devicePixelRatio })",
   });
   return JSON.parse(evaluated.resultJson);
 }
@@ -383,17 +377,12 @@ async function clickGuestElement(page, client, browserId, selector) {
   });
   const elementRect = JSON.parse(evaluated.resultJson);
   assert(elementRect, `Guest element ${selector} was unavailable`);
-  const webviewRect = await page.evaluate((id) => {
-    const webview = document.querySelector(`[data-paseo-browser-id="${id}"]`);
-    if (!(webview instanceof HTMLElement)) return null;
-    const rect = webview.getBoundingClientRect();
-    return { x: rect.x, y: rect.y };
-  }, browserId);
-  assert(webviewRect, `Browser webview ${browserId} was unavailable`);
-  await page.mouse.click(
-    webviewRect.x + elementRect.x + elementRect.width / 2,
-    webviewRect.y + elementRect.y + elementRect.height / 2,
-  );
+  await page.locator(`[data-paseo-browser-id="${browserId}"]`).click({
+    position: {
+      x: elementRect.x + elementRect.width / 2,
+      y: elementRect.y + elementRect.height / 2,
+    },
+  });
 }
 
 async function selectDeviceSize(page, label) {
@@ -464,7 +453,122 @@ function recordViewportMismatch(failures, label, actual, expected) {
   );
 }
 
-async function runRegression({ page, client, serverId, targetUrl, callerAgentId, artifactDir }) {
+async function setWindowHidden(inspectorPort, hidden) {
+  const [target] = await (await fetch(`http://127.0.0.1:${inspectorPort}/json/list`)).json();
+  const socket = new WebSocket(target.webSocketDebuggerUrl);
+  try {
+    await new Promise((resolve, reject) => {
+      socket.addEventListener("error", reject, { once: true });
+      socket.addEventListener("message", ({ data }) => {
+        const response = JSON.parse(data);
+        if (response.id !== 1) return;
+        if (response.error || response.result?.exceptionDetails) reject(new Error(data));
+        else resolve();
+      });
+      socket.addEventListener(
+        "open",
+        () =>
+          socket.send(
+            JSON.stringify({
+              id: 1,
+              method: "Runtime.evaluate",
+              params: {
+                expression: `(() => { const win = process.mainModule.require('electron').BrowserWindow.getAllWindows().find(win => win.webContents.getURL().includes('localhost:')); win.${hidden ? "hide" : "show"}(); if (win.isVisible() !== ${!hidden}) throw new Error('Window visibility did not change'); })()`,
+              },
+            }),
+          ),
+        { once: true },
+      );
+    });
+  } finally {
+    socket.close();
+  }
+}
+
+async function verifyHiddenBrowserScreenshots({
+  page,
+  client,
+  browserId,
+  artifactDir,
+  inspectorPort,
+}) {
+  const readFrames = async () => {
+    const result = await callBrowserTool(client, "browser_evaluate", {
+      browserId,
+      function: "() => window.frameCount",
+    });
+    return JSON.parse(result.resultJson);
+  };
+  const expectAnimation = async () => {
+    const start = await readFrames();
+    assert(typeof start === "number", "Animation fixture was not loaded");
+    const deadline = Date.now() + 5_000;
+    while (Date.now() < deadline) {
+      if ((await readFrames()) > start + 2) return;
+      await delay(50);
+    }
+    throw new Error("Browser did not animate in the restored window");
+  };
+  const measurements = [];
+  const expectIdle = async (label) => {
+    await delay(500); // Let Chromium consume the visibility change before sampling.
+    const start = await readFrames();
+    await delay(1_000); // A fixed sampling interval is the behavior under test.
+    const frames = (await readFrames()) - start;
+    measurements.push({ label, frames });
+    writeJson(path.join(artifactDir, "hidden-browser-frames.json"), measurements);
+    assert(frames === 0, `${label}: hidden browser produced ${frames} animation frames`);
+  };
+  try {
+    await expectAnimation();
+    await setWindowHidden(inspectorPort, true);
+    await expectIdle("before-capture");
+    await callBrowserTool(client, "browser_evaluate", {
+      browserId,
+      function: "() => { document.body.style.background = 'rgb(0,255,0)'; }",
+    });
+    const response = await client.callTool({ name: "browser_screenshot", args: { browserId } });
+    mcpPayload(response, "browser_screenshot");
+    const screenshot = response.content.find((item) => item.type === "image");
+    assert(screenshot, "browser_screenshot returned no image");
+    fs.writeFileSync(
+      path.join(artifactDir, "hidden-browser-viewport.png"),
+      Buffer.from(screenshot.data, "base64"),
+    );
+    const pixel = await page.evaluate(async (base64) => {
+      const image = new Image();
+      image.src = `data:image/png;base64,${base64}`;
+      await image.decode();
+      const canvas = document.createElement("canvas");
+      canvas.width = image.width;
+      canvas.height = image.height;
+      const context = canvas.getContext("2d");
+      context.drawImage(image, 0, 0);
+      return [
+        ...context.getImageData(Math.floor(image.width / 2), Math.floor(image.height / 2), 1, 1)
+          .data,
+      ];
+    }, screenshot.data);
+    assert(
+      JSON.stringify(pixel) === "[0,255,0,255]",
+      `Hidden screenshot returned stale pixels: ${pixel}`,
+    );
+    await expectIdle("after-capture");
+  } finally {
+    await setWindowHidden(inspectorPort, false);
+  }
+  await expectAnimation();
+}
+
+async function runRegression({
+  page,
+  client,
+  serverId,
+  targetUrl,
+  callerAgentId,
+  artifactDir,
+  inspectorPort,
+}) {
   const failures = [];
   const originalWorkspaceId = workspaceIds[0];
   const originalWorkspaceRow = page.getByTestId(
@@ -492,7 +596,10 @@ async function runRegression({ page, client, serverId, targetUrl, callerAgentId,
   await page.waitForFunction(
     (id) => {
       const webview = document.querySelector(`[data-paseo-browser-id="${id}"]`);
-      return webview && webview.parentElement?.id !== "paseo-browser-resident-webviews";
+      const surface = webview?.parentElement;
+      return (
+        surface?.getAttribute("aria-hidden") === "false" && surface.style.pointerEvents === "auto"
+      );
     },
     browserId,
     { timeout: timeoutMs },
@@ -519,10 +626,11 @@ async function runRegression({ page, client, serverId, targetUrl, callerAgentId,
 
   const deviceSizeMenuPainted = await selectDeviceSize(page, "iPhone SE · 375×667");
   assert(deviceSizeMenuPainted, "Device size menu did not paint above the browser surface");
+  const deviceViewport = await readViewport(client, browserId);
   recordViewportMismatch(
     failures,
     "device size menu paints and receives input above the browser surface",
-    await readViewport(client, browserId),
+    deviceViewport,
     { width: 375, height: 667 },
   );
 
@@ -531,6 +639,12 @@ async function runRegression({ page, client, serverId, targetUrl, callerAgentId,
     text: "Bridge target",
     timeoutMs: 5_000,
   });
+  const resizedScreenshot = await callBrowserTool(client, "browser_screenshot", { browserId });
+  assert(
+    resizedScreenshot.width === Math.round(375 * deviceViewport.scale) &&
+      resizedScreenshot.height === Math.round(667 * deviceViewport.scale),
+    `Screenshot after resize returned ${resizedScreenshot.width}×${resizedScreenshot.height}`,
+  );
   const requestedViewport = { width: 640, height: 480 };
   await callBrowserTool(client, "browser_resize", { browserId, ...requestedViewport });
   recordViewportMismatch(
@@ -606,7 +720,7 @@ async function runRegression({ page, client, serverId, targetUrl, callerAgentId,
     { timeout: timeoutMs },
   );
   try {
-    await callBrowserToolUntilReady(client, "browser_screenshot", { browserId });
+    await callBrowserTool(client, "browser_screenshot", { browserId });
   } catch (error) {
     failures.push(`inactive browser remains captureable: ${String(error)}`);
   }
@@ -718,6 +832,8 @@ async function runRegression({ page, client, serverId, targetUrl, callerAgentId,
   );
   const parkedGuest = await readGuest(page, browserId);
   assert(parkedGuest, "Browser guest was not parked after workspace eviction");
+
+  await verifyHiddenBrowserScreenshots({ page, client, browserId, artifactDir, inspectorPort });
 
   const listed = await callBrowserTool(client, "browser_list_tabs");
   assert(
@@ -886,6 +1002,7 @@ async function runRegression({ page, client, serverId, targetUrl, callerAgentId,
     guestFocus: "passed",
     overlayPlane: "passed",
     inactiveCapture: "passed",
+    hiddenWindowCapture: "passed",
     list: "passed",
     snapshot: "passed",
     click: "passed",
@@ -904,7 +1021,8 @@ async function main() {
   const workspaceRoot = path.join(runtimeDir, "workspaces");
   fs.mkdirSync(paseoHome, { recursive: true });
 
-  const [daemonPort, expoPort, cdpPort] = await Promise.all([
+  const [daemonPort, expoPort, cdpPort, inspectorPort] = await Promise.all([
+    reservePort(),
     reservePort(),
     reservePort(),
     reservePort(),
@@ -942,6 +1060,7 @@ async function main() {
     const desktopArgs = [
       process.execPath,
       devRunner,
+      `--inspect=127.0.0.1:${inspectorPort}`,
       ...(process.platform === "linux" ? ["--no-sandbox"] : []),
     ];
     const desktopCommand = process.platform === "linux" ? "xvfb-run" : desktopArgs.shift();
@@ -996,6 +1115,7 @@ async function main() {
       client,
       serverId: status.serverId,
       targetUrl: target.url,
+      inspectorPort,
       callerAgentId,
       artifactDir,
     });

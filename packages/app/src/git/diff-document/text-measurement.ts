@@ -10,6 +10,7 @@ export interface CachedAsciiTextMetrics {
   measure(text: string): number;
   hasEveryGlyph(text: string): boolean;
   measureAdvances(graphemes: readonly string[]): number[];
+  measureWidth(graphemes: readonly string[]): number;
 }
 
 const CODE_LIGATURE_CANDIDATE = /(?:===?|!==?|=>|<=|>=|->|::|\+\+|--)/;
@@ -65,6 +66,22 @@ export function createChunkedAdvanceMeasurer(
       start = end;
     }
     return result;
+  };
+}
+
+/** Preserve advance chunk boundaries when only the final width is needed. */
+export function createChunkedWidthMeasurer(
+  measure: (graphemes: readonly string[]) => number,
+): (graphemes: readonly string[]) => number {
+  return (graphemes) => {
+    let width = 0;
+    let start = 0;
+    while (start < graphemes.length) {
+      const end = chunkEnd(graphemes, start);
+      width += measure(graphemes.slice(start, end));
+      start = end;
+    }
+    return width;
   };
 }
 
@@ -144,6 +161,11 @@ export function createCachedAsciiTextMetrics(primary: PrimaryTextFace): CachedAs
       return true;
     },
     measureAdvances: additiveAdvances(measure),
+    measureWidth(graphemes) {
+      let width = 0;
+      for (const grapheme of graphemes) width += measure(grapheme);
+      return width;
+    },
   };
 }
 

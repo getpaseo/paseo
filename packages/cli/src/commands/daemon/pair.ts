@@ -3,27 +3,21 @@ import { Command } from "commander";
 import chalk from "chalk";
 import {
   generateLocalPairingOffer,
-  getOrCreateServerId,
-  loadConfig,
-  resolvePaseoHome,
+  readDaemonInstance,
+  readPersistedConfig,
+  editPersistedConfig,
+  resolveConfigFromPersisted,
 } from "@getpaseo/server";
-import { tryConnectToDaemon } from "../../utils/client.js";
-import { resolveLocalDaemonState } from "./local-daemon.js";
-import { addJsonOption } from "../../utils/command-options.js";
+import { connectToDaemon } from "../../utils/client.js";
+import type { DaemonTarget } from "../../utils/daemon-target.js";
+import { addJsonAndDaemonHostOptions, withGlobalOptions } from "../../utils/command-options.js";
 import { formatPairingInstructions } from "../../output/pairing.js";
 
 interface PairOptions {
+  daemonTarget: DaemonTarget;
   home?: string;
   json?: boolean;
   relay?: boolean;
-}
-
-export interface PairCommandDependencies {
-  resolveOffer: typeof resolveLocalPairingOffer;
-  confirmRelay: typeof confirmRelayPairing;
-  printDirectGuidance: typeof printDirectConnectionGuidance;
-  isInteractive: () => boolean;
-  output: PairCommandOutput;
 }
 
 export interface PairCommandOutput {
@@ -62,33 +56,32 @@ function createProcessOutput(): PairCommandOutput {
 }
 
 export function pairCommand(): Command {
-  return addJsonOption(new Command("pair").description("Print the daemon pairing QR code and link"))
-    .option("--home <path>", "Paseo home directory (default: ~/.paseo)")
+  return addJsonAndDaemonHostOptions(
+    new Command("pair").description("Print the daemon pairing QR code and link"),
+  )
     .option("--relay", "Enable relay without prompting")
-    .action(async (_options: PairOptions, command: Command) => {
-      await runPairCommand(command.optsWithGlobals());
-    });
+    .action(
+      withGlobalOptions((options: PairOptions, _command: Command) => runPairCommand(options)),
+    );
 }
 
 export async function resolveLocalPairingOffer(options: {
   paseoHome: string;
   enableRelay?: boolean;
 }): Promise<PairingOffer> {
-  const state = resolveLocalDaemonState({ home: options.paseoHome });
-  const serverId = getOrCreateServerId(state.home);
-  const daemonOffer = await resolveDaemonPairingOffer(state.listen, serverId, options.enableRelay);
-  if (daemonOffer) return daemonOffer;
-
-  if (state.running) {
-    throw new Error(
-      "The running daemon did not provide a pairing offer. Check daemon connectivity or update the daemon.",
+  const instance = await readDaemonInstance(options.paseoHome);
+  if (instance)
+    return resolveDaemonPairingOffer(
+      { kind: "instance", home: options.paseoHome },
+      options.enableRelay,
     );
-  }
-
-  const config = loadConfig(options.paseoHome);
-  if (options.enableRelay && !config.relayEnabled) {
-    throw new Error("Start the daemon before enabling relay for pairing.");
-  }
+  if (options.enableRelay)
+    editPersistedConfig(options.paseoHome, "daemon.relay.enabled", { value: true });
+  const config = resolveConfigFromPersisted(
+    options.paseoHome,
+    readPersistedConfig(options.paseoHome, { defaultsIfMissing: true }),
+    { env: {} },
+  );
 
   return generateLocalPairingOffer({
     paseoHome: options.paseoHome,
@@ -103,23 +96,16 @@ export async function resolveLocalPairingOffer(options: {
 }
 
 async function resolveDaemonPairingOffer(
-  listen: string,
-  expectedServerId: string,
+  target: DaemonTarget,
   enableRelay: boolean | undefined,
-): Promise<PairingOffer | null> {
-  const client = await tryConnectToDaemon({
-    host: listen,
+): Promise<PairingOffer> {
+  const client = await connectToDaemon({
+    target,
     timeout: PAIRING_DAEMON_RPC_TIMEOUT_MS,
   });
-  if (!client) return null;
 
   try {
     const serverInfo = client.getLastServerInfoMessage();
-    if (serverInfo?.serverId.trim() !== expectedServerId) {
-      throw new Error(
-        "The reachable daemon belongs to a different Paseo home. Check --home or the daemon listen configuration.",
-      );
-    }
     if (serverInfo?.features?.daemonStatusRpc !== true) {
       throw new Error("Update the Paseo daemon before pairing from this command.");
     }
@@ -132,9 +118,14 @@ async function resolveDaemonPairingOffer(
         throw new Error("Update the Paseo daemon before enabling relay from this command.");
       }
       await client.patchDaemonConfig({ relay: { enabled: true } });
-      offer = await client.getDaemonPairingOffer({
-        timeout: PAIRING_DAEMON_RPC_TIMEOUT_MS,
-      });
+      try {
+        offer = await client.getDaemonPairingOffer({ timeout: PAIRING_DAEMON_RPC_TIMEOUT_MS });
+      } catch (error) {
+        throw new Error(
+          `Relay configuration was saved, but fetching the pairing offer failed: ${String(error)}`,
+          { cause: error },
+        );
+      }
     }
     return {
       relayEnabled: offer.relayEnabled,
@@ -164,40 +155,22 @@ export function printDirectConnectionGuidance(): void {
   console.log(`Learn more: ${RELAY_DOCS_URL}#direct-connections`);
 }
 
-export async function runPairCommand(
-  options: PairOptions,
-  dependencyOverrides: Partial<PairCommandDependencies> = {},
-): Promise<void> {
-  if (options.home) process.env.PASEO_HOME = options.home;
-  const dependencies: PairCommandDependencies = {
-    resolveOffer: resolveLocalPairingOffer,
-    confirmRelay: confirmRelayPairing,
-    printDirectGuidance: printDirectConnectionGuidance,
-    isInteractive: () => Boolean(process.stdin.isTTY && process.stdout.isTTY),
-    output: createProcessOutput(),
-    ...dependencyOverrides,
-  };
+export async function runPairCommand(options: PairOptions): Promise<void> {
+  const output = createProcessOutput();
+  const target = options.daemonTarget;
+  const resolveOffer = (enableRelay: boolean) =>
+    target.kind === "instance"
+      ? resolveLocalPairingOffer({ paseoHome: target.home, enableRelay })
+      : resolveDaemonPairingOffer(target, enableRelay);
+  const offline = target.kind === "instance" && !(await readDaemonInstance(target.home));
+  const pairing = await resolveOffer(options.relay === true);
 
-  const paseoHome = resolvePaseoHome();
-  let pairing = await dependencies.resolveOffer({
-    paseoHome,
-    enableRelay: options.relay === true,
-  });
+  if (offline)
+    output.writeStderr(
+      `Offline pairing offer. Start with: paseo daemon start --home ${JSON.stringify(target.kind === "instance" ? target.home : "")}\n`,
+    );
 
-  const canPrompt = dependencies.isInteractive() && options.json !== true;
-  if (!pairing.relayEnabled && canPrompt) {
-    const shouldEnable = await dependencies.confirmRelay();
-    if (!shouldEnable) {
-      dependencies.printDirectGuidance();
-      dependencies.output.writeStderr(`${chalk.yellow("No pairing QR was created.")}\n`);
-      dependencies.output.setExitCode(1);
-      return;
-    }
-    pairing = await dependencies.resolveOffer({ paseoHome, enableRelay: true });
-    dependencies.output.success("Relay enabled");
-  }
-
-  outputPairingResult(pairing, options, dependencies.output);
+  outputPairingResult(pairing, options, output);
 }
 
 function outputPairingResult(

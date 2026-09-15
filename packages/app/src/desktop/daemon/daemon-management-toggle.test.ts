@@ -11,10 +11,16 @@ const runningManagedStatus: DesktopDaemonStatus = {
   home: "/tmp/paseo",
   version: "1.0.0",
   desktopManaged: true,
+  ownedByDesktop: true,
+  startedAt: "2026-01-01T00:00:00.000Z",
   error: null,
 };
 
-const stoppedStatus: DesktopDaemonStatus = { ...runningManagedStatus, status: "stopped" };
+const stoppedStatus: DesktopDaemonStatus = {
+  ...runningManagedStatus,
+  status: "stopped",
+  ownedByDesktop: false,
+};
 
 function makeDeps(overrides?: {
   confirm?: () => Promise<boolean>;
@@ -128,9 +134,9 @@ describe("executeDaemonManagementToggle", () => {
       expect(result).toEqual({ kind: "disabled", newStatus: stoppedStatus });
     });
 
-    it("skips stop when daemon is running but not desktop-managed", async () => {
+    it("skips stop for an attached daemon even with a legacy desktop-managed flag", async () => {
       const { deps, calls } = makeDeps();
-      const manuallyManagedStatus = { ...runningManagedStatus, desktopManaged: false };
+      const manuallyManagedStatus = { ...runningManagedStatus, ownedByDesktop: false };
 
       const result = await executeDaemonManagementToggle(true, manuallyManagedStatus, deps);
 

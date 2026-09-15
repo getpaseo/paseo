@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+const daemonTarget = { kind: "endpoint" as const, host: "example.test:12345" };
+
 const listPlugins = vi.fn(async () => [
   {
     id: "git-plugin",
@@ -68,7 +70,9 @@ describe("plugin management commands", () => {
   });
 
   it("requires host support before attempting a management RPC", async () => {
-    await expect(runPluginListCommand(undefined, {}, {} as never)).rejects.toMatchObject({
+    await expect(
+      runPluginListCommand(undefined, { daemonTarget }, {} as never),
+    ).rejects.toMatchObject({
       code: "DAEMON_UPDATE_REQUIRED",
       message: "Update the host to use plugin management.",
     });
@@ -89,7 +93,7 @@ describe("plugin management commands", () => {
   it("lists runtime state and the installed commit without an upstream commit", async () => {
     features.pluginManagement = true;
 
-    const result = await runPluginListCommand(undefined, {}, {} as never);
+    const result = await runPluginListCommand(undefined, { daemonTarget }, {} as never);
     const output = render(result, { noColor: true });
 
     expect(output).toContain("SOURCE");
@@ -102,13 +106,15 @@ describe("plugin management commands", () => {
   it("filters the shared ls and status command by plugin ID", async () => {
     features.pluginManagement = true;
 
-    const result = await runPluginListCommand("legacy-plugin", {}, {} as never);
+    const result = await runPluginListCommand("legacy-plugin", { daemonTarget }, {} as never);
 
     expect(result.data.map((plugin) => plugin.id)).toEqual(["legacy-plugin"]);
   });
 
   it("requires plugin log support before attempting the RPC", async () => {
-    await expect(runPluginLogsCommand("example", {}, {} as never)).rejects.toMatchObject({
+    await expect(
+      runPluginLogsCommand("example", { daemonTarget }, {} as never),
+    ).rejects.toMatchObject({
       code: "DAEMON_UPDATE_REQUIRED",
       message: "Update the host to view plugin logs.",
     });
@@ -117,7 +123,7 @@ describe("plugin management commands", () => {
 
   it("returns readable and JSON plugin log output", async () => {
     features.pluginLogs = true;
-    const result = await runPluginLogsCommand("example", {}, {} as never);
+    const result = await runPluginLogsCommand("example", { daemonTarget }, {} as never);
 
     expect(getPluginLogs).toHaveBeenCalledWith("example");
     expect(render(result, { noColor: true })).toContain("ready");

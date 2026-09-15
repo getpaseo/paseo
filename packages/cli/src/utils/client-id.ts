@@ -1,14 +1,7 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { ensurePrivateDirectory } from "@getpaseo/server";
+import { readFile, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
-import { dirname, join } from "node:path";
-import { homedir } from "node:os";
-
-const CLIENT_SESSION_KEY_FILE = join(
-  process.env.PASEO_HOME ?? join(homedir(), ".paseo"),
-  "cli-client-id",
-);
-
-let cachedClientId: string | null = null;
+import { join } from "node:path";
 
 function normalizeClientId(value: string): string | null {
   const trimmed = value.trim();
@@ -19,15 +12,12 @@ function generateClientId(): string {
   return `cid_${randomUUID().replace(/-/g, "")}`;
 }
 
-export async function getOrCreateCliClientId(): Promise<string> {
-  if (cachedClientId) {
-    return cachedClientId;
-  }
+export async function getOrCreateCliClientId(home: string): Promise<string> {
+  const clientSessionKeyFile = join(home, "cli-client-id");
 
   try {
-    const existing = normalizeClientId(await readFile(CLIENT_SESSION_KEY_FILE, "utf8"));
+    const existing = normalizeClientId(await readFile(clientSessionKeyFile, "utf8"));
     if (existing) {
-      cachedClientId = existing;
       return existing;
     }
   } catch (error) {
@@ -38,8 +28,7 @@ export async function getOrCreateCliClientId(): Promise<string> {
   }
 
   const nextValue = generateClientId();
-  await mkdir(dirname(CLIENT_SESSION_KEY_FILE), { recursive: true });
-  await writeFile(CLIENT_SESSION_KEY_FILE, nextValue, { mode: 0o600 });
-  cachedClientId = nextValue;
+  ensurePrivateDirectory(home);
+  await writeFile(clientSessionKeyFile, nextValue, { mode: 0o600 });
   return nextValue;
 }

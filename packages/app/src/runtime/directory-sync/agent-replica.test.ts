@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { DaemonClient, FetchAgentsEntry } from "@getpaseo/client/internal/daemon-client";
 import type { AgentSnapshotPayload } from "@getpaseo/protocol/messages";
-import { selectAgentTurnPresentation, useSessionStore } from "@/stores/session-store";
+import {
+  selectAgentTimelineState,
+  selectAgentTurnPresentation,
+  useSessionStore,
+} from "@/stores/session-store";
 import { normalizeAgentSnapshot } from "@/utils/agent-snapshots";
 import type { DirectoryReplicaMutation } from "@/runtime/replica-cache";
 import { AgentDirectoryReplica } from "./agent-replica";
@@ -53,6 +57,50 @@ function entry(agent: AgentSnapshotPayload): FetchAgentsEntry {
 }
 
 describe("AgentDirectoryReplica", () => {
+  it.each(["delta", "snapshot"] as const)(
+    "does not erase freshly fetched history when the active directory removes it by %s",
+    (removal) => {
+      const serverId = `agent-replica-history-${removal}`;
+      const store = useSessionStore.getState();
+      store.initializeSession(serverId, null);
+      const replica = new AgentDirectoryReplica(
+        serverId,
+        () => undefined,
+        () => undefined,
+      );
+      const archived = { ...payload("archived"), archivedAt: "2026-09-11T00:00:00.000Z" };
+      replica.submitTimelineAgent(replica.captureTimeline("agent"), archived);
+      store.applyAgentTimelineResponseState(serverId, "agent", {
+        items: [
+          {
+            kind: "assistant_message",
+            id: "reply",
+            text: "server history",
+            timestamp: new Date(),
+            timelineCursor: { epoch: "e", seq: 1 },
+          },
+        ],
+        head: [],
+        range: { epoch: "e", startSeq: 1, endSeq: 1 },
+        older: "none",
+        newer: false,
+        synchronized: true,
+        acknowledgedClientMessageIds: [],
+      });
+      if (removal === "delta") replica.applyDelta({ kind: "remove", agentId: "agent" });
+      else replica.commitSnapshot([], []);
+      expect(selectAgentTimelineState(store.getSession(serverId), "agent")).toMatchObject({
+        status: "synced",
+        items: [{ text: "server history" }],
+      });
+      replica.remove("agent");
+      expect(selectAgentTimelineState(store.getSession(serverId), "agent")).toMatchObject({
+        status: "cold",
+      });
+      store.clearSession(serverId);
+    },
+  );
+
   it("does not let a late cache read replace newer live turn state", () => {
     const serverId = "agent-replica-late-cache";
     const store = useSessionStore.getState();

@@ -96,7 +96,7 @@ beforeEach(async () => {
   unsubscribe = ctx.client.subscribeRawMessages((message) => {
     messages.push(message);
   });
-  await ctx.client.fetchAgents({ subscribe: { subscriptionId: "live-preferences" } });
+  await ctx.client.fetchAgents({ subscribe: {} });
 });
 
 afterEach(async () => {

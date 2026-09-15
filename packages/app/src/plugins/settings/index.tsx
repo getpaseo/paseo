@@ -13,7 +13,6 @@ import type { Theme } from "@/styles/theme";
 import { useInstalledPlugin } from "../registry";
 import { PluginRuntimeBoundary } from "../runtime-boundary";
 import { SurfaceErrorBoundary } from "../surface-error-boundary";
-import { createPluginSurfaceRuntime } from "../surface-runtime";
 import { toPluginTheme } from "../theme";
 import { buildPluginSettingsRoute } from "./routes";
 
@@ -101,8 +100,7 @@ function SettingsContent({
     return <Text style={styles.message}>{t("settings.plugins.screens.offline")}</Text>;
   // COMPAT(pluginSettings): added in v0.8, remove after 2027-03-05.
   if (!supported) return <Text style={styles.message}>{t("settings.plugins.screens.update")}</Text>;
-  const runtime = createPluginSurfaceRuntime(client, pluginId);
-  if (!plugin || !screen || !runtime)
+  if (!plugin || !screen || !client)
     return <Text style={styles.message}>{t("settings.plugins.screens.unavailable")}</Text>;
   const Component = screen.Component;
   return (
@@ -113,7 +111,7 @@ function SettingsContent({
         resetKey={attempt}
         renderError={renderError}
       >
-        <PluginRuntimeBoundary plugin={plugin} runtime={runtime}>
+        <PluginRuntimeBoundary plugin={plugin} client={client}>
           <Component theme={theme} layout={layout} host={host} />
         </PluginRuntimeBoundary>
       </SurfaceErrorBoundary>

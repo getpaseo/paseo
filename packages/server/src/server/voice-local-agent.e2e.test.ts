@@ -31,8 +31,10 @@ function makeErrorHandler(reject: (error: Error) => void) {
   };
 }
 
-function makeSpeakToolHandler(resolve: (value: string) => void) {
-  return (msg: SessionMessage<"agent_stream" | "agent.timeline.replacement">) => {
+function makeSpeakToolHandler(
+  resolve: (value: string) => void,
+): Parameters<DaemonTestContext["client"]["subscribeAgentTimeline"]>[1] {
+  return (msg) => {
     if (msg.type !== "agent_stream") return;
     if (msg.payload.event.type !== "timeline") return;
     const item = msg.payload.event.item;

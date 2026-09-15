@@ -134,7 +134,7 @@ export class AgentDirectoryReplica {
       if (!this.members.has(agentId)) this.advance(agentId);
     }
     for (const agentId of previous.keys()) {
-      if (!nextIds.has(agentId)) this.storeProjection.remove(agentId);
+      if (!nextIds.has(agentId)) this.storeProjection.removeFromDirectory(agentId);
     }
     this.members.clear();
     this.pendingCacheReads.clear();
