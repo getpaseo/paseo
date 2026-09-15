@@ -394,10 +394,11 @@ describe("OMP agent client and session", () => {
         message: "Background job DocsSmokeTwo completed",
       },
     ]);
-    // Non-notice custom messages still fall through as assistant messages.
-    expect(omp.timeline().filter((item) => item.type === "assistant_message")).toMatchObject([
-      { text: "done" },
-      { text: "plain custom status text" },
+    // Non-notice custom messages still fall through as assistant messages with
+    // their own id so the stream coalescer never glues them onto the open reply.
+    expect(omp.timeline().filter((item) => item.type === "assistant_message")).toEqual([
+      { type: "assistant_message", text: "done", messageId: "omp-assistant-1" },
+      { type: "assistant_message", text: "plain custom status text", messageId: "omp-custom-1" },
     ]);
   });
 

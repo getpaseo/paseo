@@ -357,6 +357,34 @@ describe("AgentStreamCoalescer", () => {
     ]);
   });
 
+  test("keeps an injected message with its own id out of the open assistant burst", async () => {
+    const { coalescer, flushes } = createHarness();
+
+    coalescer.handle("agent-1", assistant("Done.", { turnId: "turn-1", messageId: "resp-1" }));
+    coalescer.handle(
+      "agent-1",
+      assistant('[IMPORTANT: User invoked the "commit" skill]', {
+        turnId: "turn-1",
+        messageId: "omp-custom-076a4b32",
+      }),
+    );
+    coalescer.handle(
+      "agent-1",
+      assistant(" Anything else?", { turnId: "turn-1", messageId: "resp-1" }),
+    );
+
+    await vi.advanceTimersByTimeAsync(60);
+    expect(flushes.map((flush) => flush.item)).toEqual([
+      { type: "assistant_message", messageId: "resp-1", text: "Done." },
+      {
+        type: "assistant_message",
+        messageId: "omp-custom-076a4b32",
+        text: '[IMPORTANT: User invoked the "commit" skill]',
+      },
+      { type: "assistant_message", messageId: "resp-1", text: " Anything else?" },
+    ]);
+  });
+
   test("drops empty text chunks", async () => {
     const { coalescer, flushes } = createHarness();
 
