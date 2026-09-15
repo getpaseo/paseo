@@ -837,6 +837,18 @@ function createPluginProviderDefinition(
   };
 }
 
+interface TimelineSnapshotNode {
+  id: string;
+  item: ProviderTimelineItem;
+  parent: TimelineSnapshotNode | null;
+}
+
+interface TimelineCheckpoint {
+  historyLengthBefore: number;
+  timelineHead: TimelineSnapshotNode | null;
+  childHeads: Map<string, TimelineSnapshotNode | null>;
+}
+
 interface PendingChild {
   session: ProviderRuntimeSession;
   opened: Extract<ProviderEvent, { type: "session.opened" }>;
@@ -1033,12 +1045,22 @@ class PluginAgentSession implements AgentSession {
   private readonly history: AgentStreamEvent[] = [];
   private readonly pendingPermissions = new Map<string, AgentPermissionRequest>();
   private readonly permissionResponses = new Map<string, AgentPermissionResponse>();
+  private readonly discardedPermissionResolutions = new Set<string>();
+  private readonly rewoundPermissionCleanups = new Map<
+    string,
+    { response: AgentPermissionResponse; accepted: boolean }
+  >();
   private readonly revertTokens = new Map<string, ProviderTimelineItem["revertToken"]>();
   private readonly timelineSnapshots = new Map<string, ProviderTimelineItem>();
+  private readonly timelineCheckpoints = new Map<string, TimelineCheckpoint[]>();
+  private timelineHead: TimelineSnapshotNode | null = null;
   private readonly childUnsubscribes = new Map<string, () => void>();
   private readonly childSnapshots = new Map<string, Map<string, ProviderTimelineItem>>();
+  private readonly childHeads = new Map<string, TimelineSnapshotNode | null>();
   private unsubscribe: (() => void) | null = null;
   private currentTurnId: string | null = null;
+  private rewindLane: Promise<void> = Promise.resolve();
+  private permissionCleanupLane: Promise<void> = Promise.resolve();
   private closed = false;
 
   constructor(
@@ -1083,6 +1105,8 @@ class PluginAgentSession implements AgentSession {
     prompt: AgentPromptInput,
     options: AgentRunOptions = {},
   ): Promise<{ turnId: string }> {
+    await this.rewindLane;
+    await this.flushRewoundPermissionCleanups();
     const clientMessageId = options.clientMessageId ?? randomUUID();
     const result = await this.bridge.prompt({
       clientMessageId,
@@ -1105,6 +1129,8 @@ class PluginAgentSession implements AgentSession {
     prompt: AgentPromptInput,
     options: SteerActiveTurnOptions,
   ): Promise<SteerResult> {
+    await this.rewindLane;
+    await this.flushRewoundPermissionCleanups();
     const result = await this.bridge.prompt({
       clientMessageId: options.clientMessageId ?? randomUUID(),
       delivery: "steer",
@@ -1258,18 +1284,43 @@ class PluginAgentSession implements AgentSession {
     });
     const snapshots = new Map<string, ProviderTimelineItem>();
     this.childSnapshots.set(childId, snapshots);
+    this.childHeads.set(childId, null);
     for (const event of child.history) this.acceptChildEvent(childId, event, snapshots);
     this.childUnsubscribes.set(
-      child.id,
+      childId,
       child.onEvent((event) => this.acceptChildEvent(childId, event, snapshots)),
     );
   }
 
+  private captureTimelineCheckpoint(
+    item: Extract<ProviderTimelineItem, { type: "user_message" }>,
+  ): void {
+    const checkpoint: TimelineCheckpoint = {
+      historyLengthBefore: this.history.length,
+      timelineHead: this.timelineHead,
+      childHeads: new Map(this.childHeads),
+    };
+    const key = item.messageId !== undefined ? `message:${item.messageId}` : `item:${item.id}`;
+    const checkpoints = this.timelineCheckpoints.get(key) ?? [];
+    checkpoints.push(checkpoint);
+    this.timelineCheckpoints.set(key, checkpoints);
+  }
+
   private accept(event: ProviderEvent, live: boolean): void {
+    if (event.type === "timeline.item" && event.item.type === "user_message") {
+      this.captureTimelineCheckpoint(event.item);
+    }
     const translated = this.translate(event);
     for (const next of translated) {
       this.history.push(next);
       if (live) this.emit(next);
+    }
+    if (event.type === "timeline.item") {
+      this.timelineHead = {
+        id: event.item.id,
+        item: event.item,
+        parent: this.timelineHead,
+      };
     }
   }
 
@@ -1290,8 +1341,10 @@ class PluginAgentSession implements AgentSession {
         return this.translateTimeline(event);
       case "session.permission":
         return [this.translatePermission(event)];
-      case "session.permission_resolved":
-        return [this.translatePermissionResolution(event)];
+      case "session.permission_resolved": {
+        const translated = this.translatePermissionResolution(event);
+        return translated ? [translated] : [];
+      }
       case "session.config":
         return this.translateConfig(event);
       case "session.notice":
@@ -1353,6 +1406,9 @@ class PluginAgentSession implements AgentSession {
     event: Extract<ProviderEvent, { type: "session.permission" }>,
   ): AgentStreamEvent {
     const request: AgentPermissionRequest = { ...event.request, provider: this.provider };
+    if (this.discardedPermissionResolutions.delete(request.id)) {
+      this.rewoundPermissionCleanups.delete(request.id);
+    }
     this.pendingPermissions.set(request.id, request);
     return {
       type: "permission_requested",
@@ -1364,7 +1420,11 @@ class PluginAgentSession implements AgentSession {
 
   private translatePermissionResolution(
     event: Extract<ProviderEvent, { type: "session.permission_resolved" }>,
-  ): AgentStreamEvent {
+  ): AgentStreamEvent | null {
+    if (this.discardedPermissionResolutions.delete(event.permissionId)) {
+      this.rewoundPermissionCleanups.delete(event.permissionId);
+      return null;
+    }
     this.pendingPermissions.delete(event.permissionId);
     const resolution = this.permissionResponses.get(event.permissionId) ?? {
       behavior: "deny" as const,
@@ -1452,6 +1512,11 @@ class PluginAgentSession implements AgentSession {
           event: { type: "timeline", id: childId, item, timestamp: event.timestamp },
         });
       }
+      this.childHeads.set(childId, {
+        id: event.item.id,
+        item: event.item,
+        parent: this.childHeads.get(childId) ?? null,
+      });
       return;
     }
     if (event.type === "session.turn" && event.state !== "started") {
@@ -1476,6 +1541,15 @@ class PluginAgentSession implements AgentSession {
   }
 
   private async revert(messageId: string, scope: "conversation" | "files" | "both") {
+    const operation = this.rewindLane.then(() => this.revertOnce(messageId, scope));
+    this.rewindLane = operation.then(
+      () => undefined,
+      () => undefined,
+    );
+    return await operation;
+  }
+
+  private async revertOnce(messageId: string, scope: "conversation" | "files" | "both") {
     const token = this.revertTokens.get(messageId);
     if (token === undefined) throw new Error(`No provider revert token for message ${messageId}`);
     await this.bridge.revert({
@@ -1485,6 +1559,184 @@ class PluginAgentSession implements AgentSession {
       token,
       scope,
     });
+    if (scope !== "files") await this.truncateHistoryAt(messageId);
+  }
+
+  private async truncateHistoryAt(messageId: string): Promise<void> {
+    const targetIndex = this.history.findLastIndex(
+      (event) =>
+        event.type === "timeline" &&
+        event.item.type === "user_message" &&
+        event.item.messageId === messageId,
+    );
+    if (targetIndex < 0) return;
+
+    const removedPermissionIds = new Set(
+      this.history
+        .slice(targetIndex)
+        .flatMap((event) => (event.type === "permission_requested" ? [event.request.id] : [])),
+    );
+    const checkpoint =
+      this.findTimelineCheckpoint(`message:${messageId}`, targetIndex) ??
+      this.findTimelineCheckpoint(`item:${messageId}`, targetIndex);
+    this.history.splice(targetIndex);
+    this.restoreSnapshots(checkpoint, targetIndex);
+    this.detachDiscardedChildren();
+
+    let permissionError: Error | null = null;
+    for (const permissionId of removedPermissionIds) {
+      const error = await this.resolveRewoundPermission(permissionId);
+      if (error && !permissionError) permissionError = error;
+    }
+
+    this.pruneRevertTokens();
+    this.prunePermissionState();
+    if (permissionError) throw permissionError;
+  }
+
+  private restoreSnapshots(checkpoint: TimelineCheckpoint | undefined, targetIndex: number): void {
+    this.timelineHead = checkpoint?.timelineHead ?? null;
+    this.restoreSnapshotMap(this.timelineSnapshots, this.timelineHead);
+
+    this.childHeads.clear();
+    const retainedChildHeads = checkpoint?.childHeads ?? new Map();
+    for (const [childId, head] of retainedChildHeads) {
+      const snapshots = this.childSnapshots.get(childId) ?? new Map();
+      this.restoreSnapshotMap(snapshots, head);
+      this.childSnapshots.set(childId, snapshots);
+      this.childHeads.set(childId, head);
+    }
+    for (const [key, checkpoints] of this.timelineCheckpoints) {
+      const retained = checkpoints.filter(
+        (candidate) => candidate.historyLengthBefore < targetIndex,
+      );
+      if (retained.length > 0) this.timelineCheckpoints.set(key, retained);
+      else this.timelineCheckpoints.delete(key);
+    }
+  }
+
+  private findTimelineCheckpoint(key: string, targetIndex: number): TimelineCheckpoint | undefined {
+    return this.timelineCheckpoints
+      .get(key)
+      ?.findLast((checkpoint) => checkpoint.historyLengthBefore === targetIndex);
+  }
+
+  private restoreSnapshotMap(
+    snapshots: Map<string, ProviderTimelineItem>,
+    head: TimelineSnapshotNode | null,
+  ): void {
+    snapshots.clear();
+    const seen = new Set<string>();
+    for (let node = head; node; node = node.parent) {
+      if (seen.has(node.id)) continue;
+      seen.add(node.id);
+      snapshots.set(node.id, node.item);
+    }
+  }
+
+  private detachDiscardedChildren(): void {
+    const retainedChildIds = new Set(
+      this.history.flatMap((event) => (event.type === "provider_subagent" ? [event.event.id] : [])),
+    );
+    for (const [childId, unsubscribe] of this.childUnsubscribes) {
+      if (retainedChildIds.has(childId)) continue;
+      unsubscribe();
+      this.childUnsubscribes.delete(childId);
+      this.childSnapshots.delete(childId);
+      this.childHeads.delete(childId);
+    }
+  }
+
+  private pruneRevertTokens(): void {
+    const retainedMessageIds = new Set(
+      this.history.flatMap((event) =>
+        event.type === "timeline" &&
+        (event.item.type === "user_message" || event.item.type === "assistant_message") &&
+        event.item.messageId
+          ? [event.item.messageId]
+          : [],
+      ),
+    );
+    for (const messageKey of this.revertTokens.keys()) {
+      if (!retainedMessageIds.has(messageKey)) this.revertTokens.delete(messageKey);
+    }
+  }
+
+  private prunePermissionState(): void {
+    const retainedPermissionIds = new Set(
+      this.history.flatMap((event) =>
+        event.type === "permission_requested" ? [event.request.id] : [],
+      ),
+    );
+    for (const permissionId of this.pendingPermissions.keys()) {
+      if (!retainedPermissionIds.has(permissionId)) this.pendingPermissions.delete(permissionId);
+    }
+    for (const permissionId of this.permissionResponses.keys()) {
+      if (!retainedPermissionIds.has(permissionId)) this.permissionResponses.delete(permissionId);
+    }
+  }
+
+  private async flushRewoundPermissionCleanups(): Promise<void> {
+    const operation = this.permissionCleanupLane.then(() =>
+      this.flushRewoundPermissionCleanupsNow(),
+    );
+    this.permissionCleanupLane = operation.then(
+      () => undefined,
+      () => undefined,
+    );
+    return await operation;
+  }
+
+  private async flushRewoundPermissionCleanupsNow(): Promise<void> {
+    let firstError: Error | null = null;
+    for (const [permissionId, cleanup] of this.rewoundPermissionCleanups) {
+      const error = await this.attemptRewoundPermissionCleanup(permissionId, cleanup);
+      if (error && !firstError) firstError = error;
+    }
+    if (firstError) throw firstError;
+  }
+
+  private async attemptRewoundPermissionCleanup(
+    permissionId: string,
+    cleanup: { response: AgentPermissionResponse; accepted: boolean },
+  ): Promise<Error | null> {
+    if (cleanup.accepted) return null;
+    try {
+      await this.bridge.respondToPermission(
+        permissionId,
+        toJsonValue(cleanup.response, "rewind permission resolution") as Extract<
+          ProviderInput,
+          { type: "session.permission" }
+        >["response"],
+      );
+      if (this.rewoundPermissionCleanups.get(permissionId) === cleanup) {
+        cleanup.accepted = true;
+      }
+      return null;
+    } catch (failure) {
+      return failure instanceof Error ? failure : new Error(String(failure));
+    }
+  }
+
+  private async resolveRewoundPermission(permissionId: string): Promise<Error | null> {
+    if (!this.pendingPermissions.has(permissionId)) return null;
+    const cleanup = {
+      response: { behavior: "deny" as const, message: "Removed by rewind" },
+      accepted: false,
+    };
+    this.rewoundPermissionCleanups.set(permissionId, cleanup);
+    this.discardedPermissionResolutions.add(permissionId);
+    const error = await this.attemptRewoundPermissionCleanup(permissionId, cleanup);
+    this.pendingPermissions.delete(permissionId);
+    this.permissionResponses.delete(permissionId);
+    this.emit({
+      type: "permission_resolved",
+      provider: this.provider,
+      requestId: permissionId,
+      resolution: cleanup.response,
+      turnId: this.currentTurnId ?? undefined,
+    });
+    return error;
   }
 
   private publish(event: AgentStreamEvent): void {
