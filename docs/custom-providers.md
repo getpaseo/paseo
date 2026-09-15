@@ -39,6 +39,7 @@ catalog probe. `PASEO_PROVIDER_REFRESH_TIMEOUT_MS` sets it when the config field
 - [Z.AI (Zhipu) coding plan](#zai-zhipu-coding-plan)
 - [Alibaba Cloud (Qwen) coding plan](#alibaba-cloud-qwen-coding-plan)
 - [Codex with a custom OpenAI-compatible endpoint](#codex-with-a-custom-openai-compatible-endpoint)
+- [Ollama Cloud](#ollama-cloud)
 - [Multiple profiles for the same provider](#multiple-profiles-for-the-same-provider)
 - [Custom binary for a provider](#custom-binary-for-a-provider)
 - [Disabling a provider](#disabling-a-provider)
@@ -252,6 +253,59 @@ requires_openai_auth = false
 - Set `models` explicitly. Custom endpoints expose their own model IDs (`anthropic/claude-opus-4-7`, `qwen/qwen3-coder`, `local/llama`, etc.), and Paseo does not discover them automatically for Codex.
 - To run multiple endpoints side-by-side, define multiple entries that each extend `"codex"` with different IDs, labels, and env. Each appears as its own provider in the app.
 - If you only want to override the binary (e.g. a nightly Codex build) without changing the endpoint, omit `OPENAI_BASE_URL` and use `command` instead — see [Custom binary for a provider](#custom-binary-for-a-provider).
+
+---
+
+## Ollama Cloud
+
+[Ollama Cloud](https://ollama.com) hosts open-weight models behind an OpenAI-compatible
+API. It serves the Responses API, so it works with a provider that extends `"codex"`.
+These are open models such as Kimi, GLM, Qwen and DeepSeek, not OpenAI models.
+
+### Setup
+
+1. Create an API key at [ollama.com](https://ollama.com)
+2. Add a provider entry in config.json:
+
+```json
+{
+  "agents": {
+    "providers": {
+      "ollama-cloud": {
+        "extends": "codex",
+        "label": "Ollama",
+        "description": "Ollama Cloud open models over the OpenAI Responses API",
+        "env": {
+          "OPENAI_API_KEY": "<your-ollama-api-key>",
+          "OPENAI_BASE_URL": "https://ollama.com"
+        },
+        "models": [
+          { "id": "kimi-k2.7-code", "label": "Kimi K2.7 Code", "isDefault": true },
+          { "id": "kimi-k3", "label": "Kimi K3" },
+          { "id": "glm-5.3", "label": "GLM 5.3" },
+          { "id": "qwen3.5:397b", "label": "Qwen3.5 397B" },
+          { "id": "deepseek-v4-pro:0813", "label": "DeepSeek V4 Pro" }
+        ]
+      }
+    }
+  }
+}
+```
+
+Model ids are whatever `GET https://ollama.com/v1/models` returns for your account.
+Codex has no metadata for them and will warn that it is falling back to defaults,
+which is expected and harmless.
+
+### Notes
+
+- Do not name the provider `ollama`. Codex ships a built-in provider with that id, and
+  Paseo derives the generated Codex `model_providers` entry from the provider id. Paseo
+  namespaces the generated key (`paseo-<id>`) so the two cannot collide, but keeping the
+  id distinct also keeps the provider list readable next to a local Ollama setup.
+- The local Ollama daemon on `http://localhost:11434` serves chat completions rather
+  than the Responses API, so it does not work with `extends: "codex"`. Use Ollama Cloud
+  for this integration, or reach a local daemon through an agent that speaks chat
+  completions.
 
 ---
 
