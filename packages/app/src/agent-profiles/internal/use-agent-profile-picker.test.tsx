@@ -68,7 +68,8 @@ test.each([undefined, "paseo-workflow-router"])(
     );
     act(() => result.current!.applyProfile("ordinary-profile"));
     const createAgent = vi.fn().mockResolvedValue({ id: "created" });
-    await requestWorkspaceDraftAgent({ createAgent } as unknown as DaemonClient, {
+    const sendMessage = vi.fn().mockResolvedValue(undefined);
+    await requestWorkspaceDraftAgent({ createAgent, sendMessage } as unknown as DaemonClient, {
       workspaceId: "workspace",
       launchProfileId: state.form.launchProfileId,
       config: { provider: state.form.provider!, cwd: "/workspace" },
