@@ -128,24 +128,66 @@ function notReady(home: string, instance: PidLockInfo): DaemonInstanceError {
   );
 }
 
+/**
+ * Races `promise` against `signal` so an aborted caller never waits on a
+ * graceful-shutdown callback that ignores the signal (e.g. a hung CLI child).
+ * The underlying promise keeps running; callers pass the same signal through to
+ * their own work so they can cancel it.
+ */
+function abortable<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return promise;
+  if (signal.aborted)
+    return Promise.reject(signal.reason ?? new DOMException("Aborted", "AbortError"));
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => {
+      signal.removeEventListener("abort", onAbort);
+      reject(signal.reason ?? new DOMException("Aborted", "AbortError"));
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+    promise.then(
+      (value) => {
+        signal.removeEventListener("abort", onAbort);
+        resolve(value);
+      },
+      (error) => {
+        signal.removeEventListener("abort", onAbort);
+        reject(error);
+      },
+    );
+  });
+}
+
 async function requestInstanceStop(
   home: string,
   instance: PidLockInfo,
   options: {
     force?: boolean;
     ports: StopDaemonPorts;
-    requestShutdown?: (instance: PidLockInfo & { listen: string }) => Promise<void>;
+    signal?: AbortSignal;
+    requestShutdown?: (
+      instance: PidLockInfo & { listen: string },
+      signal?: AbortSignal,
+    ) => Promise<void>;
   },
 ) {
-  const { ports } = options;
+  const { ports, signal } = options;
   let forced = false;
   let usedLifecycleRpc = false;
   if (process.platform === "win32") {
     if (instance.listen && options.requestShutdown) {
       try {
-        await options.requestShutdown({ ...instance, listen: instance.listen });
+        await abortable(
+          options.requestShutdown({ ...instance, listen: instance.listen }, signal),
+          signal,
+        );
         usedLifecycleRpc = true;
       } catch (error) {
+        if (signal?.aborted) {
+          // The caller's deadline fired while the graceful shutdown was in
+          // flight. Leave the daemon running; the caller's wait loop turns this
+          // into a cancellation instead of an AbortError escaping the stop.
+          return { forced, usedLifecycleRpc };
+        }
         if (!options.force) throw error;
         const current = await ports.readInstance(home);
         if (current && !ports.isSameInstance(instance, current))
@@ -242,7 +284,10 @@ export async function stopDaemonInstance(
     killTimeoutMs?: number;
     signal?: AbortSignal;
     ports?: StopDaemonPorts;
-    requestShutdown?: (instance: PidLockInfo & { listen: string }) => Promise<void>;
+    requestShutdown?: (
+      instance: PidLockInfo & { listen: string },
+      signal?: AbortSignal,
+    ) => Promise<void>;
   } = {},
 ): Promise<{
   action: "stopped" | "not_running" | "cancelled";

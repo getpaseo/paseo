@@ -62,6 +62,9 @@ function createFakePorts(input?: { instance?: PidLockInfo | null }) {
       fake.running = false;
     },
     wait(_ms, signal) {
+      if (signal?.aborted) {
+        return Promise.reject(new DOMException("Aborted", "AbortError"));
+      }
       return new Promise<void>((resolve, reject) => {
         const settle = (fn: () => void) => {
           fake.pendingWait = null;
@@ -113,6 +116,30 @@ describe("stopDaemonInstance", () => {
     // A cancelled wait must not release the lock: the daemon may still be alive.
     expect(fake.state.events).toEqual([]);
     expect(fake.state.instance).not.toBeNull();
+  });
+
+  it("returns cancelled when the signal aborts while the shutdown RPC is in flight", async () => {
+    const fake = createFakePorts();
+    const controller = new AbortController();
+    const stop = stopDaemonInstance("/tmp/home", {
+      timeoutMs: 15_000,
+      signal: controller.signal,
+      ports: fake.ports,
+      // A shutdown RPC that never settles must not block the stop past the
+      // deadline: an aborted signal cancels it (Windows) or the wait loop
+      // reports the cancellation (POSIX).
+      requestShutdown: () => new Promise<void>(() => {}),
+    });
+
+    controller.abort();
+    const result = await stop;
+
+    expect(result).toMatchObject({
+      action: "cancelled",
+      pid: 4242,
+      forced: false,
+    });
+    expect(fake.state.events).toEqual([]);
   });
 
   it("stops once the daemon exits and releases the lock", async () => {

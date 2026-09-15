@@ -345,8 +345,8 @@ export async function stopDesktopDaemon(
   await stopDaemonInstance(home, {
     instance,
     timeoutMs: 15_000,
-    requestShutdown: async (ready) => {
-      await runExternalCliJsonCommand(["daemon", "stop", "--host", ready.listen, "--json"]);
+    requestShutdown: async (ready, signal) => {
+      await runExternalCliJsonCommand(["daemon", "stop", "--host", ready.listen, "--json"], signal);
     },
   });
   if (owned) ownedLaunch = null;
@@ -378,8 +378,8 @@ export async function stopDesktopManagedDaemonBeforeUpdate(deps?: {
     instance: instance ?? undefined,
     timeoutMs: 15_000,
     signal: deps?.signal,
-    requestShutdown: async (ready) => {
-      await runExternalCliJsonCommand(["daemon", "stop", "--host", ready.listen, "--json"]);
+    requestShutdown: async (ready, signal) => {
+      await runExternalCliJsonCommand(["daemon", "stop", "--host", ready.listen, "--json"], signal);
     },
   });
   if (result.action === "cancelled") {
