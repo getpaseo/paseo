@@ -744,6 +744,34 @@ describe("Codex app-server provider", () => {
     });
   });
 
+  test("Default Permissions sends the user reviewer to thread/start", async () => {
+    const requests: Array<{ method: string; params: unknown }> = [];
+    const session = createSession({ modeId: "auto", thinkingOptionId: "medium" });
+    session.currentThreadId = null;
+    session.activeForegroundTurnId = null;
+    session.client = {
+      request: vi.fn(async (method: string, params: unknown) => {
+        requests.push({ method, params });
+        if (method === "thread/start") {
+          return { thread: { id: "default-permissions-thread" } };
+        }
+        if (method === "turn/start") {
+          return {};
+        }
+        throw new Error(`Unexpected request: ${method}`);
+      }),
+    };
+
+    await session.startTurn("trigger thread creation");
+
+    const startCall = requests.find((request) => request.method === "thread/start");
+    expect(startCall?.params).toMatchObject({
+      approvalPolicy: "on-request",
+      sandbox: "workspace-write",
+      approvalsReviewer: "user",
+    });
+  });
+
   test("setMode and setThinkingOption return a next-turn notice while a turn is active", async () => {
     const session = createSession({ modeId: "auto", thinkingOptionId: "medium" });
 
@@ -794,8 +822,11 @@ describe("Codex app-server provider", () => {
     },
   );
 
-  test("turn/start forwards approvalsReviewer while in auto-review mode", async () => {
-    const session = createSession({ modeId: "auto-review" }, { autoReviewEnabled: true });
+  test.each([
+    ["Default Permissions", "auto", "user"],
+    ["Auto-review", "auto-review", "auto_review"],
+  ])("turn/start forwards the %s reviewer", async (_label, modeId, approvalsReviewer) => {
+    const session = createSession({ modeId }, { autoReviewEnabled: true });
     const request = vi.fn(async (method: string) => {
       if (method === "thread/loaded/list") {
         return { data: ["test-thread"] };
@@ -814,9 +845,45 @@ describe("Codex app-server provider", () => {
     expect(turnStartCall?.[1]).toEqual(
       expect.objectContaining({
         approvalPolicy: "on-request",
-        approvalsReviewer: "auto_review",
+        approvalsReviewer,
       }),
     );
+  });
+
+  test("switching from Auto-review to Default resets the reviewer on the same thread", async () => {
+    const appServer = createFakeCodexAppServer({
+      "thread/loaded/list": () => ({ data: ["thread-1"] }),
+    });
+    const session = new CodexAppServerAgentSession(
+      createConfig({ modeId: "auto-review" }),
+      null,
+      createTestLogger(),
+      async () => appServer.child,
+      {},
+      false,
+      false,
+      true,
+    );
+
+    try {
+      await session.startTurn("first turn with Auto-review");
+      appServer.startsTurn({ threadId: "thread-1" });
+      appServer.completeTurn({ threadId: "thread-1" });
+      await session.setMode("auto");
+      await session.startTurn("next turn with Default Permissions");
+      expect(
+        appServer.requests().filter((request) => request.method === "thread/start"),
+      ).toHaveLength(1);
+      expect(
+        appServer.requests().filter((request) => request.method === "turn/start"),
+      ).toMatchObject([
+        { params: { threadId: "thread-1", approvalsReviewer: "auto_review" } },
+        { params: { threadId: "thread-1", approvalsReviewer: "user" } },
+      ]);
+      appServer.assertNoErrors();
+    } finally {
+      await session.close();
+    }
   });
 
   test("omitted mode preserves Codex resolved approval and sandbox config", async () => {
@@ -834,6 +901,7 @@ describe("Codex app-server provider", () => {
     const turnStart = request.mock.calls.find(([method]) => method === "turn/start")?.[1];
     expect(turnStart).not.toHaveProperty("approvalPolicy");
     expect(turnStart).not.toHaveProperty("sandboxPolicy");
+    expect(turnStart).not.toHaveProperty("approvalsReviewer");
   });
 
   test("carries the complete native workspace-write policy including writable roots", async () => {
