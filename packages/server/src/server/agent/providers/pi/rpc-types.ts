@@ -41,6 +41,12 @@ export type PiAgentMessage =
   | {
       role: "custom";
       content: string | Array<PiTextContent | PiImageContent>;
+      /**
+       * Extensions set `display: false` for model-only context (pi's own TUI hides these).
+       * Absent or `true` means visible, matching `shouldDisplayOmpCustomMessage` in the omp
+       * provider.
+       */
+      display?: boolean;
     }
   | {
       role: "assistant";
