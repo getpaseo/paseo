@@ -13,7 +13,9 @@ import { CursorQuotaProvider } from "./providers/cursor.js";
 import { GrokQuotaProvider } from "./providers/grok.js";
 import { KimiQuotaProvider } from "./providers/kimi.js";
 import { MiniMaxQuotaProvider } from "./providers/minimax.js";
+import { OpenCodeQuotaProvider } from "./providers/opencode.js";
 import { ZaiQuotaProvider } from "./providers/zai.js";
+import { createProviderUsageFetchers } from "./manifest.js";
 import { ProviderUsageService } from "./service.js";
 
 function writeClaudeCredentials(
@@ -81,6 +83,12 @@ function writeCursorStateDb(homeDir: string, rows: Record<string, string | Uint8
     insert.run(key, value);
   }
   db.close();
+}
+
+function writeOpenCodeAuth(homeDir: string, key: string): void {
+  const dir = join(homeDir, ".local", "share", "opencode");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, "auth.json"), JSON.stringify({ "opencode-go": { type: "api", key } }));
 }
 
 function writeCursorAuthJson(homeDir: string, accessToken: string): void {
@@ -404,6 +412,7 @@ describe("real provider usage fetchers", () => {
       keychain?: () => Promise<unknown | null>;
       kimiHomeDir?: string;
       cursorHomeDir?: string;
+      openCodeHomeDir?: string;
       miniMaxConfigPath?: string;
       miniMaxCredentialsPath?: string;
     } = {},
@@ -428,6 +437,12 @@ describe("real provider usage fetchers", () => {
           logger,
           fetch: fetchThroughTestDouble,
           homeDir: options.cursorHomeDir,
+        }),
+        new OpenCodeQuotaProvider({
+          logger,
+          fetch: fetchThroughTestDouble,
+          homeDir: options.openCodeHomeDir ?? homeDir,
+          env: {} as NodeJS.ProcessEnv,
         }),
         new ZaiQuotaProvider({ logger, fetch: fetchThroughTestDouble }),
         new GrokQuotaProvider({
@@ -1309,6 +1324,102 @@ describe("real provider usage fetchers", () => {
         }),
       ]),
     });
+  });
+
+  it("fetches OpenCode Go windows from the official usage endpoint", async () => {
+    writeOpenCodeAuth(homeDir, "sk-go-test");
+    fetchApi = mockFetch(
+      new Map([
+        [
+          "https://opencode.ai/zen/go/v1/usage",
+          () =>
+            jsonResponse({
+              usage: {
+                rolling: { status: "ok", percent: 3, resetsAt: "2026-09-13T16:07:58.882Z" },
+                weekly: { status: "ok", percent: 30, resetsAt: "2026-09-14T00:00:00.882Z" },
+                monthly: { status: "ok", percent: 15, resetsAt: "2026-10-13T10:54:18.882Z" },
+              },
+            }),
+        ],
+      ]),
+    );
+
+    const openCode = findProvider(await service().listUsage(), "opencode");
+
+    expect(openCode).toMatchObject({
+      status: "available",
+      planLabel: "$12 / 5h · $30 / week · $60 / month",
+      windows: [
+        expect.objectContaining({
+          id: "rolling",
+          label: "5-hour",
+          usedPct: 3,
+          resetsAt: "2026-09-13T16:07:58.882Z",
+        }),
+        expect.objectContaining({ id: "weekly", label: "Weekly", usedPct: 30 }),
+        expect.objectContaining({ id: "monthly", label: "Monthly", usedPct: 15 }),
+      ],
+    });
+    expect(fetchApi).toHaveBeenCalledWith(
+      "https://opencode.ai/zen/go/v1/usage",
+      expect.objectContaining({
+        headers: expect.objectContaining({ Authorization: "Bearer sk-go-test" }),
+      }),
+    );
+  });
+
+  it("returns unavailable OpenCode usage when no Go credentials exist", async () => {
+    const openCode = findProvider(await service().listUsage(), "opencode");
+
+    expect(openCode.status).toBe("unavailable");
+  });
+
+  it("returns unavailable on a rejected OpenCode Go key", async () => {
+    writeOpenCodeAuth(homeDir, "sk-go-test");
+    fetchApi = mockFetch(
+      new Map([
+        ["https://opencode.ai/zen/go/v1/usage", () => jsonResponse({ error: "unauthorized" }, 401)],
+      ]),
+    );
+
+    const openCode = findProvider(await service().listUsage(), "opencode");
+
+    expect(openCode.status).toBe("unavailable");
+  });
+
+  it("forwards the injected fetch to the OpenCode provider through the manifest", async () => {
+    process.env["OPENCODE_GO_API_KEY"] = "sk-go-test";
+    fetchApi = mockFetch(
+      new Map([
+        [
+          "https://opencode.ai/zen/go/v1/usage",
+          () =>
+            jsonResponse({
+              usage: {
+                rolling: { status: "ok", percent: 5, resetsAt: "2026-09-13T16:00:00.000Z" },
+              },
+            }),
+        ],
+      ]),
+    );
+    try {
+      const fetcher = createProviderUsageFetchers({
+        logger: createLogger(),
+        fetch: (url, init) => fetchApi(url, init),
+      }).find((candidate) => candidate.providerId === "opencode");
+
+      const usage = await fetcher?.fetchUsage();
+
+      expect(usage?.status).toBe("available");
+      expect(fetchApi).toHaveBeenCalledWith(
+        "https://opencode.ai/zen/go/v1/usage",
+        expect.objectContaining({
+          headers: expect.objectContaining({ Authorization: "Bearer sk-go-test" }),
+        }),
+      );
+    } finally {
+      delete process.env["OPENCODE_GO_API_KEY"];
+    }
   });
 });
 
