@@ -1,11 +1,13 @@
 import { subscribeTimeline, type TimelineMessage } from "./timeline-subscription/index.js";
 import { ProviderSnapshotUpdates } from "./provider-snapshots/index.js";
 import {
-  OwnedSubscriptions,
+  ConnectionSubscriptions,
   type OwnedSubscription,
   DEFAULT_CLIENT_CAPABILITIES,
   type TimelineSubscription,
 } from "./connection/index.js";
+import { CreationClient } from "./creation/index.js";
+import type { CreationSnapshot } from "@getpaseo/protocol/messages";
 import type { z } from "zod";
 import type { SessionEventSubscription } from "@getpaseo/protocol/messages";
 import type { ClientCapability } from "@getpaseo/protocol/client-capabilities";
@@ -370,6 +372,8 @@ export interface AgentAttentionRequiredNotification {
 type AgentConfigOverrides = Partial<Omit<AgentSessionConfig, "provider" | "cwd">>;
 
 export interface CreateAgentRequestOptions extends AgentConfigOverrides {
+  agentId?: string;
+  onEvent?: (snapshot: CreationSnapshot) => void;
   config?: AgentSessionConfig;
   provider?: AgentProvider;
   cwd?: string;
@@ -390,6 +394,20 @@ export interface CreateAgentRequestOptions extends AgentConfigOverrides {
   worktreeName?: string;
   requestId?: string;
   labels?: Record<string, string>;
+}
+
+export interface CreateWorkspaceRequestOptions {
+  source: WorkspaceCreateRequest["source"];
+  title?: string;
+  idempotencyKey?: string;
+  workspaceId?: string;
+  agent?: Omit<
+    CreateAgentRequestOptions,
+    "workspaceId" | "onEvent" | "worktree" | "git" | "worktreeName" | "idempotencyKey" | "requestId"
+  >;
+  onEvent?: (snapshot: CreationSnapshot) => void;
+  firstAgentContext?: WorkspaceCreateRequest["firstAgentContext"];
+  requestId?: string;
 }
 
 export interface CreatePaseoWorktreeInput extends Pick<
@@ -1094,7 +1112,11 @@ export class DaemonClient {
     emit: (message) => this.deliverSessionMessage(message),
     failed: (error) => this.logger.error({ err: error }, "Failed to resolve provider snapshot"),
   });
-  private readonly owned = new OwnedSubscriptions({
+  private readonly owned = new ConnectionSubscriptions({
+    send: (message) =>
+      this.sendSessionMessageOrThrow(
+        SessionInboundMessageSchema.parse({ ...message, requestId: this.createRequestId() }),
+      ),
     release: async (subscriptionId) => {
       if (!this.isConnected) return;
       try {
@@ -1412,6 +1434,7 @@ export class DaemonClient {
     this.providerSnapshotUpdates.clear();
     this.clearWaiters(new Error("Daemon client closed"));
     await this.owned.close();
+    this.creations.close();
     this.rejectPendingSendQueue(new Error("Daemon client closed"));
     this.rejectPingProbe(new Error("Daemon client closed"));
     this.terminalStreams.clearSlots();
@@ -1731,6 +1754,7 @@ export class DaemonClient {
     select: (msg: SessionOutboundMessage) => T | null;
     options?: { skipQueue?: boolean };
   }): Promise<T> {
+    const wire = this.owned.prepareRequest(params.message);
     const timeout = params.timeout ?? DEFAULT_SESSION_RPC_TIMEOUT_MS;
     const { promise, cancel } = this.waitForWithCancel<RpcWaitResult<T>>(
       (msg) => {
@@ -1745,7 +1769,7 @@ export class DaemonClient {
             }),
           };
         }
-        const value = params.select(msg);
+        const value = params.select(wire.receive(msg));
         if (value === null) {
           return null;
         }
@@ -1756,7 +1780,7 @@ export class DaemonClient {
     );
 
     try {
-      await this.sendSessionMessageOrThrow(params.message);
+      await this.sendSessionMessageOrThrow(wire.message);
     } catch (error) {
       const err = error instanceof Error ? error : new Error(String(error));
       cancel(err);
@@ -1764,11 +1788,13 @@ export class DaemonClient {
       throw err;
     }
 
-    const result = await promise;
-    if (result.kind === "error") {
-      throw result.error;
+    try {
+      const result = await promise;
+      if (result.kind === "error") throw result.error;
+      return result.value;
+    } finally {
+      await wire.finish();
     }
-    return result.value;
   }
 
   private async sendCorrelatedRequest<
@@ -2098,23 +2124,18 @@ export class DaemonClient {
   // Agent RPCs (requestId-correlated)
   // ============================================================================
 
-  private requireOwnedSubscriptions(): void {
-    if (this.lastServerInfoMessage?.features?.ownedSubscriptions !== true)
-      throw new Error("Update the host to use independent subscriptions.");
-  }
-
   private observe<T extends CorrelatedResponseType>(
     responseType: T,
     message: { type: SessionInboundMessage["type"] } & Record<string, unknown>,
     options?: { requestId?: string; timeout?: number; signal?: AbortSignal },
   ): OwnedSubscription<CorrelatedResponsePayload<T>> {
     let resetSource = false;
-    return this.owned.observe<CorrelatedResponsePayload<T>>(
-      async (accept) => {
+    return this.owned.observeRequest<CorrelatedResponsePayload<T>>(
+      message,
+      async (query, accept) => {
         resetSource = false;
-        this.requireOwnedSubscriptions();
         const requestId = this.createRequestId(options?.requestId);
-        const request = SessionInboundMessageSchema.parse({ ...message, requestId });
+        const request = SessionInboundMessageSchema.parse({ ...query, requestId });
         try {
           return await this.sendCorrelatedRequest<T, CorrelatedResponsePayload<T>>({
             message: request,
@@ -2654,7 +2675,58 @@ export class DaemonClient {
   // Agent Lifecycle
   // ============================================================================
 
+  private readonly creations = new CreationClient({
+    supports: () => this.lastServerInfoMessage?.features?.creationLifecycle === true,
+    requestId: () => this.createRequestId(),
+    request: (kind, input) =>
+      kind === "workspace"
+        ? this.sendCorrelatedSessionRequest({
+            requestId: input.requestId as string | undefined,
+            message: { ...input, type: "workspace.create.request" },
+            responseType: "workspace.create.response",
+            timeout: 0,
+          })
+        : this.sendCorrelatedSessionRequest({
+            requestId: input.requestId as string | undefined,
+            message: { ...input, type: "agent.create.request" },
+            responseType: "agent.create.response",
+            timeout: 0,
+          }),
+    observe: (kind, idempotencyKey, next, error) => {
+      const observation = this.observe("creation.subscribe.response", {
+        type: "creation.subscribe.request",
+        kind,
+        idempotencyKey,
+      });
+      observation.subscribe({
+        snapshot: (result) => next(result.snapshot),
+        update: (message) => {
+          if (message.type === "workspace.create.update" || message.type === "agent.create.update")
+            next(message.payload);
+        },
+        error,
+      });
+      return () => {
+        void observation.release().catch(error);
+      };
+    },
+    legacyAgent: (input) => this.createLegacyAgent(input),
+    legacyWorkspace: (input) => this.createLegacyWorkspace(input, input.requestId),
+    sendMessage: (id, text, options) => this.sendMessage(id, text, options),
+  });
+
   async createAgent(options: CreateAgentRequestOptions): Promise<AgentSnapshotPayload> {
+    const result = await this.creations.createAgent({
+      ...options,
+      config: resolveAgentConfig(options),
+    });
+    if (result.error || !result.agent) throw new Error(result.error ?? "Agent creation failed");
+    return result.agent;
+  }
+
+  private async createLegacyAgent(
+    options: CreateAgentRequestOptions,
+  ): Promise<AgentSnapshotPayload> {
     if (options.idempotencyKey !== undefined) this.requireAgentRequestReceipts();
     const requestId = this.createRequestId(options.requestId);
     const config = resolveAgentConfig(options);
@@ -3135,6 +3207,10 @@ export class DaemonClient {
     subagentId: string,
     options: FetchProviderSubagentTimelineOptions = {},
   ): Promise<ProviderSubagentTimelinePayload> {
+    // COMPAT(projectedSubagentTimeline): added after v0.8.0, remove after 2027-03-14.
+    if (this.lastServerInfoMessage?.features?.projectedSubagentTimeline !== true) {
+      throw new Error("Update the host to view subagent conversations.");
+    }
     const requestId = this.createRequestId(options.requestId);
     const message = SessionInboundMessageSchema.parse({
       type: "agent.provider_subagents.timeline.get.request",
@@ -3177,17 +3253,8 @@ export class DaemonClient {
     agentId: string,
     handler: (message: TimelineMessage) => void,
   ): TimelineSubscription {
-    return subscribeTimeline(
-      agentId,
-      this.observeTimeline([agentId]),
-      () =>
-        this.fetchAgentTimeline(agentId, {
-          direction: "before",
-          limit: 100,
-          projection: "projected",
-        }),
-      handler,
-      (error) => this.logger.error({ err: error }, "Timeline observation failed"),
+    return subscribeTimeline(agentId, this.observeTimeline([agentId]), handler, (error) =>
+      this.logger.error({ err: error }, "Timeline observation failed"),
     );
   }
 
@@ -3900,7 +3967,6 @@ export class DaemonClient {
     compare: { mode: "uncommitted" | "base"; baseRef?: string; ignoreWhitespace?: boolean },
     requestId?: string,
   ): Promise<CheckoutDiffPayload> {
-    this.requireOwnedSubscriptions();
     return this.sendCorrelatedSessionRequest({
       message: {
         type: "checkout.diff.get.request",
@@ -4338,18 +4404,43 @@ export class DaemonClient {
   }
 
   async createWorkspace(
-    input: {
-      source: WorkspaceCreateRequest["source"];
-      title?: string;
-      firstAgentContext?: WorkspaceCreateRequest["firstAgentContext"];
-    },
+    input: CreateWorkspaceRequestOptions,
     requestId?: string,
   ): Promise<WorkspaceCreatePayload> {
+    const resolvedRequestId = this.createRequestId(requestId ?? input.requestId);
+    const result = await this.creations.createWorkspace({
+      ...input,
+      requestId: resolvedRequestId,
+      ...(input.agent
+        ? { agent: { ...input.agent, config: resolveAgentConfig(input.agent) } }
+        : {}),
+    });
+    return {
+      ...result,
+      workspace: result.workspace ?? null,
+      agent: result.agent ?? undefined,
+      setupTerminalId: result.setupTerminalId ?? null,
+      requestId: result.requestId ?? resolvedRequestId,
+    };
+  }
+
+  private async createLegacyWorkspace(
+    input: CreateWorkspaceRequestOptions,
+    requestId?: string,
+  ): Promise<WorkspaceCreatePayload> {
+    // COMPAT(workspaceRequestReceipts): added in v0.8.0; remove gate after 2027-03-07.
+    if (
+      input.idempotencyKey !== undefined &&
+      !this.lastServerInfoMessage?.features?.workspaceRequestReceipts
+    ) {
+      throw new Error("Update the host to use retry-safe workspace creation.");
+    }
     return this.sendCorrelatedSessionRequest({
       requestId,
       message: {
         type: "workspace.create.request",
         source: input.source,
+        ...(input.idempotencyKey !== undefined ? { idempotencyKey: input.idempotencyKey } : {}),
         ...(input.title !== undefined ? { title: input.title } : {}),
         ...(input.firstAgentContext !== undefined
           ? { firstAgentContext: input.firstAgentContext }
@@ -4550,8 +4641,13 @@ export class DaemonClient {
     unsubscribe: () => Promise<void>;
   }> {
     const subscription = this.observeFile(input);
+    let initial = true;
     subscription.subscribe({
-      snapshot: (snapshot) => onUpdate(snapshot.initial),
+      snapshot: (snapshot) => {
+        // The initial version is returned below. Subsequent snapshots repair reconnects.
+        if (!initial) onUpdate(snapshot.initial);
+        initial = false;
+      },
       update: (message) => {
         if (message.type === "fs.file.update") onUpdate(message.payload.version);
       },
@@ -6142,6 +6238,7 @@ export class DaemonClient {
       this.lastErrorValue = reason.trim();
     }
 
+    this.owned.disconnected();
     this.providerSnapshotUpdates.clear();
 
     // Clear all pending waiters and queued sends since the connection was lost
@@ -6242,6 +6339,7 @@ export class DaemonClient {
   }
 
   private handleSessionMessage(msg: SessionOutboundMessage): void {
+    msg = this.owned.normalize(msg);
     if (
       msg.type === "providers_snapshot_update" &&
       this.config.providerSnapshots !== "wire" &&
@@ -6269,7 +6367,11 @@ export class DaemonClient {
           this.reconnectAttempt = 0;
           this.updateConnectionState({ status: "connected" }, { event: "HELLO_SERVER_INFO" });
           this.startLivenessHeartbeat();
-          this.owned.restore();
+          this.owned.restore(serverInfo, {
+            ...DEFAULT_CLIENT_CAPABILITIES,
+            ...this.config.capabilities,
+          });
+          this.creations.reconnect();
           this.flushPendingSendQueue();
           this.resolveConnect();
         }
@@ -6304,6 +6406,12 @@ export class DaemonClient {
       }
     }
 
+    if (
+      consumerMessage.type === "workspace.create.update" ||
+      consumerMessage.type === "agent.create.update"
+    ) {
+      if (!consumerMessage.payload.subscriptionId) this.creations.receive(consumerMessage.payload);
+    }
     this.resolveWaiters(consumerMessage);
     this.owned.receive(consumerMessage);
   }
@@ -6487,6 +6595,15 @@ function resolveAgentConfig(options: CreateAgentRequestOptions): AgentSessionCon
     config,
     provider,
     cwd,
+    agentId: _agentId,
+    onEvent: _onEvent,
+    idempotencyKey: _idempotencyKey,
+    clientMessageId: _clientMessageId,
+    callerAgentId: _callerAgentId,
+    outputSchema: _outputSchema,
+    attachments: _attachments,
+    worktree: _worktree,
+    autoArchive: _autoArchive,
     env: _env,
     workspaceId: _workspaceId,
     initialPrompt: _initialPrompt,

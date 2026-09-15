@@ -28,7 +28,7 @@ export async function openWorkspaceFromCommandCenter(
 ): Promise<void> {
   const panel = await openCommandCenter(page);
   await panel.getByTestId("command-center-input").fill(title);
-  await page.keyboard.press("Enter");
+  await action(panel, title).click();
   await expectAppRoute(page, buildHostWorkspaceRoute(getServerId(), seeded.workspaceId), {
     timeout: 30_000,
   });

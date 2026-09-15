@@ -102,9 +102,9 @@ async function connectClient(
     ownedSubscriptions: true,
   },
 ): Promise<{ client: PaseoClient; ws: FakeWebSocket }> {
-  vi.stubGlobal("WebSocket", FakeWebSocket);
   const client = createPaseoClient({
     url: "ws://daemon.test",
+    webSocketFactory: (url) => new FakeWebSocket(url),
     reconnect: { enabled: false },
   });
 
@@ -377,13 +377,15 @@ test("project actions list registered projects through the existing RPC", async 
 
 test("project actions subscribe to existing project updates", async () => {
   const { client, ws } = await connectClient();
-  const observation = client.observeEvents(["project.update"]);
-  acknowledgeObservation(ws, "projects-sdk");
-  await observation.ready;
   const updates: string[] = [];
   const unsubscribe = client.projects.subscribe((update) => {
     updates.push(update.kind === "upsert" ? update.project.projectDisplayName : update.projectId);
   });
+  expect(parseSentSessionMessage(ws.sent.at(-1))).toMatchObject({
+    type: "session.events.set_subscription.request",
+    events: ["project.update"],
+  });
+  acknowledgeObservation(ws, "projects-sdk");
 
   ws.message(
     sessionMessage({
@@ -1367,15 +1369,17 @@ test("provider actions delegate to existing provider RPCs and local snapshot upd
     ],
   });
 
-  const observation = client.observeEvents(["providers_snapshot_update"]);
-  acknowledgeObservation(ws, "provider-updates");
-  await observation.ready;
   const snapshotUpdates: string[] = [];
   const snapshotModelDefaults: Array<string | undefined> = [];
   const unsubscribe = client.providers.subscribe((update) => {
     snapshotUpdates.push(update.generatedAt);
     snapshotModelDefaults.push(update.entries[0]?.models?.[0]?.defaultThinkingOptionId);
   });
+  expect(parseSentSessionMessage(ws.sent.at(-1))).toMatchObject({
+    type: "session.events.set_subscription.request",
+    events: ["providers_snapshot_update"],
+  });
+  acknowledgeObservation(ws, "provider-updates");
   ws.message(
     sessionMessage({
       type: "providers_snapshot_update",
@@ -1408,15 +1412,25 @@ test("provider actions delegate to existing provider RPCs and local snapshot upd
   await client.close();
 });
 
-test("waitForReady requires owned subscriptions from the host", async () => {
+test("waitForReady reads an older host on the existing connection", async () => {
   const { client, ws } = await connectClient({});
-  const sentBeforeWait = ws.sent.length;
-
-  await expect(client.providers.waitForReady({ cwd: "/repo/./sdk" })).rejects.toThrow(
-    "Update the host to use independent subscriptions.",
+  const waiting = client.providers.waitForReady({ cwd: "/repo/./sdk" });
+  await expect
+    .poll(() => parseSentSessionMessage(ws.sent.at(-1)).type)
+    .toBe("get_providers_snapshot_request");
+  const request = parseSentSessionMessage(ws.sent.at(-1));
+  ws.message(
+    sessionMessage({
+      type: "get_providers_snapshot_response",
+      payload: {
+        requestId: request.requestId,
+        entries: [],
+        generatedAt: "2026-09-11T00:00:00.000Z",
+      },
+    }),
   );
-  expect(ws.sent).toHaveLength(sentBeforeWait);
-
+  await expect(waiting).resolves.toMatchObject({ entries: [] });
+  expect(FakeWebSocket.instances).toHaveLength(1);
   await client.close();
 });
 

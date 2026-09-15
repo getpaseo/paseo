@@ -19,6 +19,7 @@ import {
   type BottomSheetBackgroundProps,
 } from "@gorhom/bottom-sheet";
 import Animated, { useAnimatedStyle } from "react-native-reanimated";
+import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { ArrowLeft, Search, X } from "lucide-react-native";
 import {
   IsolatedBottomSheetModal,
@@ -41,6 +42,11 @@ export { AdaptiveTextInput, type AdaptiveTextInputProps } from "@/components/ada
 // sheet body. Rows whose leading icon should line up with the header must
 // match this padding.
 export const SHEET_HORIZONTAL_PADDING_SCALE = 6;
+
+// The header's close button grows outward from its glyph, so the glyph's
+// trailing rail is the content inset plus this padding. Rows whose trailing
+// glyph should line up with the X must reach the same rail.
+export const SHEET_HEADER_CLOSE_PADDING_SCALE = 2;
 
 export interface SheetHeaderSearch {
   onChange: (value: string) => void;
@@ -71,6 +77,9 @@ const SCROLL_CONTENT_GROW = { flexGrow: 1 };
 const ABSOLUTE_FILL_STYLE = { ...StyleSheet.absoluteFillObject };
 
 const styles = StyleSheet.create((theme) => ({
+  nativeModalRoot: {
+    flex: 1,
+  },
   desktopOverlay: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: "rgba(0,0,0,0.55)",
@@ -124,7 +133,7 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.spacing[2],
   },
   closeButton: {
-    padding: theme.spacing[2],
+    padding: theme.spacing[SHEET_HEADER_CLOSE_PADDING_SCALE],
     borderRadius: theme.borderRadius.lg,
   },
   searchRow: {
@@ -724,7 +733,10 @@ export function AdaptiveModalSheet({
       onDismiss={notifyNativeModalDismiss}
       hardwareAccelerated
     >
-      {desktopContent}
+      {/* Android Modal opens a separate window outside the app's gesture root. */}
+      <GestureHandlerRootView style={styles.nativeModalRoot}>
+        {desktopContent}
+      </GestureHandlerRootView>
     </Modal>
   );
 }
