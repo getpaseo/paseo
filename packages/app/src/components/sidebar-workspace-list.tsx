@@ -300,6 +300,7 @@ interface WorkspaceRowInnerProps {
   isPinned?: boolean;
   onTogglePin?: () => void;
   reserveIdleStatusIndicatorSpace?: boolean;
+  hideLeadingVisual?: boolean;
 }
 
 export function PrBadge({ hint, style }: { hint: PrHint; style?: StyleProp<ViewStyle> }) {
@@ -1086,6 +1087,7 @@ function WorkspaceRowInner({
   isPinned,
   onTogglePin,
   reserveIdleStatusIndicatorSpace = true,
+  hideLeadingVisual = false,
 }: WorkspaceRowInnerProps) {
   const isCompact = useIsCompactFormFactor();
   const [isPressed, setIsPressed] = useState(false);
@@ -1187,6 +1189,7 @@ function WorkspaceRowInner({
                 shortcutNumber={shortcutNumber}
                 showShortcutBadge={showShortcutBadge}
                 reserveIdleStatusIndicatorSpace={reserveIdleStatusIndicatorSpace}
+                hideLeadingVisual={hideLeadingVisual}
               >
                 <WorkspaceRowRightGroup
                   workspace={workspace}
@@ -1234,6 +1237,7 @@ function WorkspaceRowWithMenu({
   canPin,
   onToggleWorkspacePin,
   reserveIdleStatusIndicatorSpace = true,
+  hideLeadingVisual = false,
   isCreating = false,
 }: {
   workspace: SidebarWorkspaceEntry;
@@ -1251,6 +1255,7 @@ function WorkspaceRowWithMenu({
   canPin: boolean;
   onToggleWorkspacePin: ToggleSidebarWorkspacePin;
   reserveIdleStatusIndicatorSpace?: boolean;
+  hideLeadingVisual?: boolean;
   isCreating?: boolean;
 }) {
   const { t } = useTranslation();
@@ -1364,6 +1369,7 @@ function WorkspaceRowWithMenu({
         isPinned={isPinned}
         onTogglePin={onTogglePin}
         reserveIdleStatusIndicatorSpace={reserveIdleStatusIndicatorSpace}
+        hideLeadingVisual={hideLeadingVisual}
       />
       <WorkspaceRenameModal
         visible={isRenameOpen}
@@ -1387,6 +1393,7 @@ interface WorkspaceRowItemProps {
   canPin: boolean;
   onToggleWorkspacePin: ToggleSidebarWorkspacePin;
   reserveIdleStatusIndicatorSpace?: boolean;
+  hideLeadingVisual?: boolean;
   isCreating?: boolean;
   selectionEnabled: boolean;
   activeWorkspaceSelection: ActiveWorkspaceSelection | null;
@@ -1408,6 +1415,7 @@ function WorkspaceRowItem({
   canPin,
   onToggleWorkspacePin,
   reserveIdleStatusIndicatorSpace = true,
+  hideLeadingVisual = false,
   isCreating = false,
   selectionEnabled,
   activeWorkspaceSelection,
@@ -1436,6 +1444,7 @@ function WorkspaceRowItem({
       canPin={canPin}
       onToggleWorkspacePin={onToggleWorkspacePin}
       reserveIdleStatusIndicatorSpace={reserveIdleStatusIndicatorSpace}
+      hideLeadingVisual={hideLeadingVisual}
       isCreating={isCreating}
       selected={isWorkspaceSelected({
         selection: activeWorkspaceSelection,
@@ -1479,6 +1488,7 @@ function areWorkspaceRowItemPropsEqual(
     previous.canPin === next.canPin &&
     previous.onToggleWorkspacePin === next.onToggleWorkspacePin &&
     previous.reserveIdleStatusIndicatorSpace === next.reserveIdleStatusIndicatorSpace &&
+    previous.hideLeadingVisual === next.hideLeadingVisual &&
     previous.isCreating === next.isCreating &&
     previous.onWorkspacePress === next.onWorkspacePress &&
     previous.drag === next.drag &&
@@ -1505,6 +1515,7 @@ function WorkspaceRow({
   canPin,
   onToggleWorkspacePin,
   reserveIdleStatusIndicatorSpace = true,
+  hideLeadingVisual = false,
   isCreating = false,
   selected,
 }: {
@@ -1522,6 +1533,7 @@ function WorkspaceRow({
   canPin: boolean;
   onToggleWorkspacePin: ToggleSidebarWorkspacePin;
   reserveIdleStatusIndicatorSpace?: boolean;
+  hideLeadingVisual?: boolean;
   isCreating?: boolean;
   selected: boolean;
 }) {
@@ -1546,6 +1558,7 @@ function WorkspaceRow({
       canPin={canPin}
       onToggleWorkspacePin={onToggleWorkspacePin}
       reserveIdleStatusIndicatorSpace={reserveIdleStatusIndicatorSpace}
+      hideLeadingVisual={hideLeadingVisual}
       isCreating={isCreating}
     />
   );
@@ -2034,8 +2047,9 @@ function SidebarChatsSection({
                   workspace={entry}
                   workspaceEntry={entry}
                   hostBadge={hostBadgeByServerId.get(entry.serverId) ?? null}
-                  leadingProjectName="Chats"
+                  leadingProjectName={null}
                   leadingProjectIconDataUri={null}
+                  hideLeadingVisual={true}
                   shortcutNumber={shortcutIndexByWorkspaceKey.get(entry.workspaceKey) ?? null}
                   showShortcutBadge={showShortcutBadges}
                   canCopyBranchName={false}
@@ -2574,15 +2588,20 @@ function ProjectModeList({
       isActive,
       dragHandleProps,
     }: DraggableRenderItemInfo<SidebarWorkspacePlacement>) => {
+      const isChat =
+        workspace.workspaceKind === "chat" ||
+        workspace.projectName === "Chats" ||
+        workspace.projectViewKey === "__chats__";
       return (
         <MemoWorkspaceRowItem
           workspace={workspace}
           workspaceEntry={workspaceEntriesByKey.get(workspace.workspaceKey) ?? null}
           hostBadge={hostBadgeByServerId.get(workspace.serverId) ?? null}
-          leadingProjectName={workspace.projectName}
+          leadingProjectName={isChat ? null : workspace.projectName}
           leadingProjectIconDataUri={
-            projectIconByProjectViewKey.get(workspace.projectViewKey) ?? null
+            isChat ? null : (projectIconByProjectViewKey.get(workspace.projectViewKey) ?? null)
           }
+          hideLeadingVisual={isChat}
           shortcutNumber={shortcutIndexByWorkspaceKey.get(workspace.workspaceKey) ?? null}
           showShortcutBadge={showShortcutBadges}
           canCopyBranchName={workspace.projectKind === "git"}

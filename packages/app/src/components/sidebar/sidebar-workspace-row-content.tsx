@@ -101,6 +101,7 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
   shortcutNumber = null,
   showShortcutBadge = false,
   reserveIdleStatusIndicatorSpace = true,
+  hideLeadingVisual = false,
   children,
 }: {
   workspace: SidebarWorkspaceEntry;
@@ -118,6 +119,7 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
   showShortcutBadge?: boolean;
   /** Keep the empty leading slot when the workspace has no active status. */
   reserveIdleStatusIndicatorSpace?: boolean;
+  hideLeadingVisual?: boolean;
   children?: ReactNode;
 }) {
   const {
@@ -136,27 +138,36 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
     [isHovered, isCreating],
   );
 
+  let leadingVisual: ReactNode = null;
+  if (!hideLeadingVisual) {
+    if (leadingProjectName) {
+      leadingVisual = (
+        <ProjectStatusIndicator
+          iconDataUri={leadingProjectIconDataUri}
+          displayName={leadingProjectName}
+          projectViewKey={workspace.projectViewKey}
+          statusBucket={workspace.statusBucket}
+          backdrop={backdrop}
+          loading={isLoading}
+          testID={`sidebar-row-project-icon-${workspace.workspaceKey}`}
+        />
+      );
+    } else {
+      leadingVisual = (
+        <WorkspaceStatusIndicator
+          bucket={workspace.statusBucket}
+          workspaceKind={workspace.workspaceKind}
+          loading={isLoading}
+          reserveIdleSpace={reserveIdleStatusIndicatorSpace}
+        />
+      );
+    }
+  }
+
   return (
     <View style={styles.workspaceRowContent}>
       <View style={styles.workspaceRowMain}>
-        {leadingProjectName ? (
-          <ProjectStatusIndicator
-            iconDataUri={leadingProjectIconDataUri}
-            displayName={leadingProjectName}
-            projectViewKey={workspace.projectViewKey}
-            statusBucket={workspace.statusBucket}
-            backdrop={backdrop}
-            loading={isLoading}
-            testID={`sidebar-row-project-icon-${workspace.workspaceKey}`}
-          />
-        ) : (
-          <WorkspaceStatusIndicator
-            bucket={workspace.statusBucket}
-            workspaceKind={workspace.workspaceKind}
-            loading={isLoading}
-            reserveIdleSpace={reserveIdleStatusIndicatorSpace}
-          />
-        )}
+        {leadingVisual}
         <View style={styles.workspaceContentColumn}>
           <View style={styles.workspaceTitleRow}>
             <Text style={workspaceBranchTextStyle} numberOfLines={1}>
