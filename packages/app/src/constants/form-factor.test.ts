@@ -37,7 +37,6 @@ describe("resolveOrientationPolicy", () => {
   });
 
   it("ignores the window, so a narrow tablet window stays a tablet", () => {
-    // The screen is 1280x800 even while a floating window is 375x700.
     expect(resolveOrientationPolicy({ ...android, screenWidth: 1280, screenHeight: 800 })).not.toBe(
       "lock-portrait",
     );

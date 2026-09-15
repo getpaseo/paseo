@@ -5,19 +5,10 @@ import { resolveOrientationPolicy } from "@/constants/form-factor";
 
 const isAndroid = Platform.OS === "android";
 
-/**
- * Android rotates an app into landscape the moment its window gets wide enough,
- * which puts phones into the tablet layout. Keep phones portrait and let large
- * screens rotate, which is what Android 16 already does on its own.
- *
- * The manifest cannot express this: `android:screenOrientation` has no
- * screen-size qualifier, so the phone/tablet split has to happen at runtime.
- * iOS gets the same split from the Info.plist keys Expo writes and is skipped.
- *
- * Reads the physical screen rather than the window, so a tablet in a floating
- * or split window still unlocks. Screen metrics do not change on rotation or
- * window resize, so a single read at mount is enough.
- */
+// Android rotates the app into landscape as soon as the window is wide enough,
+// which drops phones into the tablet layout. `android:screenOrientation` has no
+// screen-size qualifier, so the phone/tablet split has to happen here.
+// A single read is enough: screen metrics do not change on rotation or resize.
 export function useAdaptiveOrientation(): void {
   useEffect(() => {
     if (!isAndroid) {

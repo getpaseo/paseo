@@ -99,13 +99,9 @@ export default {
     name: variant.name,
     slug: "voice-mobile",
     version: nativeReleaseVersion.appVersion,
-    // No static orientation lock: `android:screenOrientation` has no
-    // screen-size qualifier, so a fixed value would pin tablets to portrait and
-    // pillarbox them on Android 15 and below. The phone/tablet split is applied
-    // at runtime by useAdaptiveOrientation.
-    //
-    // iOS is pinned explicitly below. Without it, a non-portrait `orientation`
-    // rewrites the iPhone key to all four orientations.
+    // `android:screenOrientation` has no screen-size qualifier, so a static lock
+    // would pillarbox tablets. The phone/tablet split happens at runtime in
+    // useAdaptiveOrientation.
     orientation: "default",
     icon: "./assets/images/icon.png",
     scheme: "paseo",
@@ -114,10 +110,8 @@ export default {
     ios: {
       supportsTablet: true,
       infoPlist: {
-        // Keep the iPhone portrait-only. Expo's iOS plugin writes all four
-        // orientations for a non-"portrait" `orientation`, and an explicit
-        // value here wins, so this preserves the previous behavior. The
-        // `~ipad` key is written separately and stays all-four.
+        // Without this, a non-"portrait" `orientation` makes Expo write all four
+        // orientations for the iPhone too. `~ipad` stays all-four either way.
         UISupportedInterfaceOrientations: [
           "UIInterfaceOrientationPortrait",
           "UIInterfaceOrientationPortraitUpsideDown",
