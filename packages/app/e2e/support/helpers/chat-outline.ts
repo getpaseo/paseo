@@ -2,6 +2,41 @@ import { expect, type Locator, type Page } from "@playwright/test";
 import { openSettings } from "./app";
 import { openSettingsSection } from "./settings";
 import { runWorkspaceActionFromCommandCenter } from "./command-center-workspace-actions";
+import { seedMockAgentWorkspace, type MockAgentWorkspace } from "./mock-agent";
+
+export async function withStreamingMarkdownOutline(
+  run: (agent: MockAgentWorkspace) => Promise<void>,
+): Promise<void> {
+  const agent = await seedMockAgentWorkspace({
+    repoPrefix: "chat-outline-markdown-",
+    title: "Streaming Markdown outline",
+    featureValues: {
+      mockStreamingAssistantResponse: Array.from(
+        { length: 60 },
+        (_, index) => `Paragraph ${index + 1}.`,
+      ).join("\n\n"),
+      mockStreamingAssistantIntervalMs: 80,
+    },
+  });
+  try {
+    await run(agent);
+  } finally {
+    await agent.cleanup();
+  }
+}
+
+export async function expectReadingStreamedMarkdown(page: Page, prompt: string): Promise<void> {
+  await expect(page.getByText("Paragraph 30.", { exact: true }).last()).toBeVisible();
+  const timeline = page.locator('[data-testid="agent-chat-scroll"]:visible').first();
+  const promptRow = timeline.getByTestId("user-message").filter({ hasText: prompt });
+  await expect
+    .poll(async () => {
+      const [viewport, row] = await Promise.all([timeline.boundingBox(), promptRow.boundingBox()]);
+      return viewport && row ? row.y + row.height - viewport.y : Number.POSITIVE_INFINITY;
+    })
+    .toBeLessThan(0);
+  await expect(page.getByRole("button", { name: "Stop agent", exact: true })).toBeVisible();
+}
 
 export function chatOutlineRail(page: Page): Locator {
   return page.getByTestId("chat-outline-rail");

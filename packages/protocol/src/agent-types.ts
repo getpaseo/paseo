@@ -102,6 +102,17 @@ export function normalizeAgentModelDefinition(model: AgentModelDefinition): Agen
   return { ...model, defaultThinkingOptionId };
 }
 
+/** A provider addresses models by ID; repeated rows retain the first definition. */
+export function normalizeAgentModelCatalog(models: AgentModelDefinition[]): AgentModelDefinition[] {
+  const ids = new Set<string>();
+  const unique = models.filter((model) => {
+    if (ids.has(model.id)) return false;
+    ids.add(model.id);
+    return true;
+  });
+  return unique.length === models.length ? models : unique;
+}
+
 export interface ProviderSnapshotEntry {
   provider: AgentProvider;
   status: ProviderStatus;

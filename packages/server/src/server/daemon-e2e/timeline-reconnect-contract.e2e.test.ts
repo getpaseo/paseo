@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, test } from "vitest";
+import { afterEach, beforeEach, expect, onTestFinished, test } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -10,6 +10,23 @@ import {
 } from "../test-utils/index.js";
 import { createMessageCollector } from "../test-utils/message-collector.js";
 import type { SessionOutboundMessage } from "../messages.js";
+
+async function observeTimeline(
+  client: DaemonClient,
+  agentId: string,
+  messages: SessionOutboundMessage[],
+): Promise<void> {
+  const subscription = client.observeTimeline([agentId]);
+  onTestFinished(
+    subscription.subscribe({
+      snapshot() {},
+      update(message) {
+        messages.push(message);
+      },
+    }),
+  );
+  await subscription.ready;
+}
 
 function tmpCwd(): string {
   return mkdtempSync(path.join(tmpdir(), "daemon-e2e-"));
@@ -32,7 +49,6 @@ async function waitFor(
 function isLiveAssistantTimeline(
   message: SessionOutboundMessage,
   agentId: string,
-  epoch?: string,
   text?: string,
 ): boolean {
   return (
@@ -41,8 +57,7 @@ function isLiveAssistantTimeline(
     message.payload.event.type === "timeline" &&
     message.payload.event.item.type === "assistant_message" &&
     message.payload.seq === undefined &&
-    typeof message.payload.epoch === "string" &&
-    (epoch === undefined || message.payload.epoch === epoch) &&
+    message.payload.epoch === undefined &&
     (text === undefined || message.payload.event.item.text === text)
   );
 }
@@ -69,6 +84,8 @@ test("reconnect catches up committed rows without replaying a provisional seed",
       modeId: "full-access",
     });
 
+    await observeTimeline(ctx.client, agent.id, primaryCollector.messages);
+
     for (let seq = 1; seq <= 120; seq += 1) {
       await ctx.daemon.daemon.agentManager.appendTimelineItem(agent.id, {
         type: "assistant_message",
@@ -91,7 +108,7 @@ test("reconnect catches up committed rows without replaying a provisional seed",
     });
     await waitFor(() =>
       primaryCollector.messages.some((message) =>
-        isLiveAssistantTimeline(message, agent.id, epoch, "partial before disconnect"),
+        isLiveAssistantTimeline(message, agent.id, "partial before disconnect"),
       ),
     );
 
@@ -107,6 +124,7 @@ test("reconnect catches up committed rows without replaying a provisional seed",
     });
     await reconnectClient.connect();
     const reconnectCollector = createMessageCollector(reconnectClient);
+    await observeTimeline(reconnectClient, agent.id, reconnectCollector.messages);
 
     try {
       await reconnectClient.fetchAgents({
@@ -114,9 +132,7 @@ test("reconnect catches up committed rows without replaying a provisional seed",
       });
 
       expect(
-        reconnectCollector.messages.some((message) =>
-          isLiveAssistantTimeline(message, agent.id, epoch),
-        ),
+        reconnectCollector.messages.some((message) => isLiveAssistantTimeline(message, agent.id)),
       ).toBe(false);
 
       const catchUp = await reconnectClient.fetchAgentTimeline(agent.id, {
@@ -133,11 +149,14 @@ test("reconnect catches up committed rows without replaying a provisional seed",
       expect(catchUp.entries).toHaveLength(1);
       expect(catchUp.startCursor).toEqual({ epoch, seq: 121 });
       expect(catchUp.endCursor).toEqual({ epoch, seq: 121 });
-      expect(catchUp.entries[0]?.seqStart).toBe(121);
+      expect(catchUp.projection).toBe("projected");
+      expect(catchUp.entries[0]?.seqStart).toBe(1);
       expect(catchUp.entries[0]?.seqEnd).toBe(121);
       expect(catchUp.entries[0]?.item).toEqual({
         type: "assistant_message",
-        text: "finalized while disconnected",
+        text:
+          Array.from({ length: 120 }, (_, index) => `committed row ${index + 1}`).join("") +
+          "finalized while disconnected",
       });
     } finally {
       reconnectCollector.unsubscribe();
@@ -161,6 +180,8 @@ test("reconnect with no new committed rows resumes from future live provisional 
       modeId: "full-access",
     });
 
+    await observeTimeline(ctx.client, agent.id, primaryCollector.messages);
+
     for (let seq = 1; seq <= 120; seq += 1) {
       await ctx.daemon.daemon.agentManager.appendTimelineItem(agent.id, {
         type: "assistant_message",
@@ -183,7 +204,7 @@ test("reconnect with no new committed rows resumes from future live provisional 
     });
     await waitFor(() =>
       primaryCollector.messages.some((message) =>
-        isLiveAssistantTimeline(message, agent.id, epoch, "partial before disconnect"),
+        isLiveAssistantTimeline(message, agent.id, "partial before disconnect"),
       ),
     );
 
@@ -194,6 +215,7 @@ test("reconnect with no new committed rows resumes from future live provisional 
     });
     await reconnectClient.connect();
     const reconnectCollector = createMessageCollector(reconnectClient);
+    await observeTimeline(reconnectClient, agent.id, reconnectCollector.messages);
 
     try {
       await reconnectClient.fetchAgents({
@@ -201,9 +223,7 @@ test("reconnect with no new committed rows resumes from future live provisional 
       });
 
       expect(
-        reconnectCollector.messages.some((message) =>
-          isLiveAssistantTimeline(message, agent.id, epoch),
-        ),
+        reconnectCollector.messages.some((message) => isLiveAssistantTimeline(message, agent.id)),
       ).toBe(false);
 
       const catchUp = await reconnectClient.fetchAgentTimeline(agent.id, {
@@ -228,7 +248,7 @@ test("reconnect with no new committed rows resumes from future live provisional 
       });
       await waitFor(() =>
         reconnectCollector.messages.some((message) =>
-          isLiveAssistantTimeline(message, agent.id, epoch, "fresh live after reconnect"),
+          isLiveAssistantTimeline(message, agent.id, "fresh live after reconnect"),
         ),
       );
     } finally {

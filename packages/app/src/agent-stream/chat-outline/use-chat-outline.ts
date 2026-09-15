@@ -41,7 +41,7 @@ export interface ChatOutline {
   prompts: ChatOutlinePrompt[];
   activePrompt: ActivePromptSource;
   jumpToPrompt: (seq: number) => void;
-  reportReadingPosition: (rowId: string | null) => void;
+  reportReadingPosition: (seq: number | null) => void;
 }
 
 export function useChatOutline({
@@ -59,7 +59,7 @@ export function useChatOutline({
   const [index, setIndex] = useState<AgentTimelinePromptIndexPayload | null>(null);
   const [pendingJump, setPendingJump] = useState<PendingPromptJump | null>(null);
   const [activePrompt] = useState(createActivePromptPublisher);
-  const readingRowIdRef = useRef<string | null>(null);
+  const readingSeqRef = useRef<number | null>(null);
   const nextJumpRequestIdRef = useRef(0);
   const nextIndexRequestIdRef = useRef(0);
   const loadedItems = useMemo(() => [...tail, ...(head ?? NO_STREAM_ITEMS)], [head, tail]);
@@ -107,26 +107,21 @@ export function useChatOutline({
     };
   }, [agentId, enabled, serverId, timelineEpoch, latestPromptSeq]);
 
-  // The transcript names the row it is showing; the outline turns that into a prompt using the
-  // complete index, so unloaded rows never have to exist in the DOM to be marked.
+  // The transcript resolves display rows (including Markdown blocks and plugin cards) to
+  // timeline positions. The outline uses the complete index, including unloaded prompts.
   const publishActivePrompt = useStableEvent(() => {
-    const rowId = readingRowIdRef.current;
-    const anchorSeq =
-      rowId === null
-        ? null
-        : (loadedItems.find((item) => item.id === rowId)?.timelineCursor?.seq ?? null);
-    activePrompt.publish(resolveActivePromptSeq(prompts, anchorSeq));
+    activePrompt.publish(resolveActivePromptSeq(prompts, readingSeqRef.current));
   });
 
-  const reportReadingPosition = useStableEvent((rowId: string | null) => {
-    readingRowIdRef.current = rowId;
+  const reportReadingPosition = useStableEvent((seq: number | null) => {
+    readingSeqRef.current = seq;
     publishActivePrompt();
   });
 
   useEffect(() => {
     nextJumpRequestIdRef.current += 1;
     setPendingJump(null);
-    readingRowIdRef.current = null;
+    readingSeqRef.current = null;
     activePrompt.publish(null);
   }, [activePrompt, agentId, timelineEpoch]);
 
@@ -134,7 +129,7 @@ export function useChatOutline({
   // who never scrolls would otherwise sit on an unmarked rail.
   useEffect(() => {
     publishActivePrompt();
-  }, [loadedItems, prompts, publishActivePrompt]);
+  }, [prompts, publishActivePrompt]);
 
   useEffect(() => {
     if (pendingJump === null) return;

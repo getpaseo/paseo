@@ -44,3 +44,20 @@ test("two registrations for one terminal retain independent slots and release", 
   expect(a).toHaveLength(1);
   expect(b).toHaveLength(2);
 });
+
+test("legacy listeners share a terminal slot without releasing each other", () => {
+  const router = new TerminalStreamRouter();
+  const received: string[] = [];
+  const release = router.attach("first", "terminal", 1, () => received.push("first"));
+  router.attach("second", "terminal", 1, () => received.push("second"));
+  const frame = {
+    opcode: TerminalStreamOpcode.Output,
+    slot: 1,
+    payload: new TextEncoder().encode("bytes"),
+  };
+  router.handleFrame(frame);
+  expect(received).toEqual(["first", "second"]);
+  release();
+  router.handleFrame(frame);
+  expect(received).toEqual(["first", "second", "second"]);
+});

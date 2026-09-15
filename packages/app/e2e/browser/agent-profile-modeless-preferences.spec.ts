@@ -9,7 +9,7 @@ import {
   seedModelProvider,
 } from "../support/helpers/agent-profiles";
 import { gotoAppShell } from "../support/helpers/app";
-import { daemonWsRoutePattern } from "../support/helpers/daemon-port";
+import { captureWorkspaceAgentRequest } from "../support/helpers/creation";
 import {
   openGlobalNewWorkspaceComposer,
   selectNewWorkspaceProject,
@@ -21,53 +21,6 @@ import { waitForSidebarHydration } from "../support/helpers/workspace-ui";
 const CREATE_AGENT_PREFERENCES_KEY = "@paseo:create-agent-preferences";
 const MODELESS_PROVIDER = "modeless-profile-e2e";
 const MODELESS_MODEL = "pi-profile-model";
-
-type WebSocketMessage = string | Buffer;
-
-interface CreateAgentRequestMessage {
-  type: "create_agent_request";
-  config?: {
-    provider?: unknown;
-    modeId?: unknown;
-    featureValues?: unknown;
-  };
-}
-
-function getSessionMessage(message: WebSocketMessage): Record<string, unknown> | null {
-  const rawMessage = typeof message === "string" ? message : message.toString("utf8");
-  try {
-    const envelope = JSON.parse(rawMessage) as { type?: unknown; message?: unknown };
-    return envelope.type === "session" && envelope.message && typeof envelope.message === "object"
-      ? (envelope.message as Record<string, unknown>)
-      : null;
-  } catch {
-    return null;
-  }
-}
-
-async function recordAndBlockCreateAgentRequest(page: Page): Promise<{
-  waitForRequest(): Promise<CreateAgentRequestMessage>;
-}> {
-  let resolveRequest: ((message: CreateAgentRequestMessage) => void) | null = null;
-  const request = new Promise<CreateAgentRequestMessage>((resolve) => {
-    resolveRequest = resolve;
-  });
-
-  await page.routeWebSocket(daemonWsRoutePattern(), (ws) => {
-    const server = ws.connectToServer();
-    ws.onMessage((message) => {
-      const sessionMessage = getSessionMessage(message);
-      if (sessionMessage?.type === "create_agent_request") {
-        resolveRequest?.(sessionMessage as unknown as CreateAgentRequestMessage);
-        return;
-      }
-      server.send(message);
-    });
-    server.onMessage((message) => ws.send(message));
-  });
-
-  return { waitForRequest: () => request };
-}
 
 async function seedPoisonedModelessPreference(page: Page): Promise<void> {
   await page.addInitScript(
@@ -143,7 +96,7 @@ test.describe("Agent profiles repair modeless provider preferences", () => {
       ],
     });
     await seedPoisonedModelessPreference(page);
-    const createAgentRecorder = await recordAndBlockCreateAgentRequest(page);
+    const createAgentRecorder = await captureWorkspaceAgentRequest(page, { block: true });
 
     try {
       await gotoAppShell(page);
@@ -206,7 +159,7 @@ test.describe("Agent profiles repair modeless provider preferences", () => {
         },
       ],
     });
-    const createAgentRecorder = await recordAndBlockCreateAgentRequest(page);
+    const createAgentRecorder = await captureWorkspaceAgentRequest(page, { block: true });
 
     try {
       await gotoAppShell(page);

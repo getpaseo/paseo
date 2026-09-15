@@ -3,6 +3,8 @@ import type { SharedValue } from "react-native-reanimated";
 
 export interface KeyboardShiftContextValue {
   shift: SharedValue<number>;
+  /** Space reserved at keyboard boundaries, never updated by animation frames. */
+  layoutShift: SharedValue<number>;
   isMoving: SharedValue<boolean>;
   bottomInset: SharedValue<number>;
 }

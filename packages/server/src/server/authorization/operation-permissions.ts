@@ -62,6 +62,8 @@ const INBOUND_PERMISSION = {
   client_heartbeat: "workspace.read",
   close_items_request: "workspace.manage",
   create_agent_request: ["workspace.write", "hub.execute"],
+  "agent.create.request": ["workspace.write", "hub.execute"],
+  "creation.subscribe.request": "workspace.read",
   create_paseo_worktree_request: "workspace.manage",
   create_terminal_request: "workspace.write",
   "daemon.config.reload.request": "daemon.manage",
@@ -209,6 +211,10 @@ const INBOUND_PERMISSION = {
 } as const satisfies Record<InboundOperation, PermissionRequirement>;
 
 const OUTBOUND_PERMISSION = {
+  "agent.create.response": ["workspace.write", "hub.execute"],
+  "agent.create.update": ["workspace.write", "hub.execute"],
+  "workspace.create.update": "workspace.manage",
+  "creation.subscribe.response": "workspace.read",
   activity_log: "workspace.read",
   "agent.config.apply.response": ["workspace.write", "hub.execute"],
   "agent.detach.response": "workspace.write",

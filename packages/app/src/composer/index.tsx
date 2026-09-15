@@ -2407,8 +2407,7 @@ function ComposerContentImpl({
 const animatedStaticStyles = RNStyleSheet.create({
   container: {
     flexDirection: "column",
-    // KeyboardDock reduces the available column height with bottom padding.
-    // Keep the composer's constraint chain shrinkable down to its scrolling input.
+    // Propagate the viewport's height constraint down to the scrolling input.
     flexShrink: 1,
     position: "relative",
   },
