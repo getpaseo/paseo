@@ -49,10 +49,11 @@ describe("bottomOverlayClearancesEqual", () => {
 });
 
 describe("shouldAnchorForBottomOverlayAppearance", () => {
-  it("anchors only when a bottom overlay first appears", () => {
-    expect(shouldAnchorForBottomOverlayAppearance(0, 64)).toBe(true);
-    expect(shouldAnchorForBottomOverlayAppearance(64, 64)).toBe(false);
-    expect(shouldAnchorForBottomOverlayAppearance(64, 72)).toBe(false);
-    expect(shouldAnchorForBottomOverlayAppearance(64, 0)).toBe(false);
+  it("anchors only when a bottom overlay first appears while following output", () => {
+    expect(shouldAnchorForBottomOverlayAppearance(0, 64, true)).toBe(true);
+    expect(shouldAnchorForBottomOverlayAppearance(0, 64, false)).toBe(false);
+    expect(shouldAnchorForBottomOverlayAppearance(64, 64, true)).toBe(false);
+    expect(shouldAnchorForBottomOverlayAppearance(64, 72, true)).toBe(false);
+    expect(shouldAnchorForBottomOverlayAppearance(64, 0, true)).toBe(false);
   });
 });

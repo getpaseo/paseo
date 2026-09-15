@@ -443,17 +443,24 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     useEffect(() => {
       const previousTailClearance = previousBottomOverlayTailClearanceRef.current;
       previousBottomOverlayTailClearanceRef.current = bottomOverlayTailClearance;
-      if (
-        isTimelineDetached ||
-        !shouldAnchorForBottomOverlayAppearance(previousTailClearance, bottomOverlayTailClearance)
-      ) {
+      if (isTimelineDetached || previousTailClearance > 0 || bottomOverlayTailClearance <= 0) {
         return;
       }
 
       // Plugin registrations can add the floating composer track after the initial route anchor.
       // Re-anchor once after its spacer commits so the newly protected tail is actually visible.
       const frame = requestAnimationFrame(() => {
-        viewportRef.current?.scrollToBottom("jump-to-bottom");
+        const viewport = viewportRef.current;
+        if (
+          viewport &&
+          shouldAnchorForBottomOverlayAppearance(
+            previousTailClearance,
+            bottomOverlayTailClearance,
+            viewport.isFollowingOutput(),
+          )
+        ) {
+          viewport.scrollToBottom("jump-to-bottom");
+        }
       });
       return () => cancelAnimationFrame(frame);
     }, [bottomOverlayTailClearance, isTimelineDetached]);

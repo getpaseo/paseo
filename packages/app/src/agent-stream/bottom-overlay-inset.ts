@@ -27,6 +27,7 @@ export function bottomOverlayClearancesEqual(
 export function shouldAnchorForBottomOverlayAppearance(
   previousTailClearance: number,
   nextTailClearance: number,
+  isFollowingOutput: boolean,
 ): boolean {
-  return previousTailClearance <= 0 && nextTailClearance > 0;
+  return isFollowingOutput && previousTailClearance <= 0 && nextTailClearance > 0;
 }
