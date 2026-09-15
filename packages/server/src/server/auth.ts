@@ -15,14 +15,15 @@ export function resolveDaemonBearerPrincipal(
   auth: DaemonAuthConfig | undefined,
   token: string | null,
 ): DaemonBearerPrincipal | null {
-  if (
+  const deckMatches = Boolean(
     auth?.firstmateDeckCredential &&
-    isBearerTokenValid({ password: auth.firstmateDeckCredential, token })
-  ) {
-    return "service:firstmate-deck";
-  }
-  if (!auth?.password) return "owner";
-  return isBearerTokenValid({ password: auth.password, token }) ? "owner" : null;
+    isBearerTokenValid({ password: auth.firstmateDeckCredential, token }),
+  );
+  if (!auth?.password) return deckMatches ? "service:firstmate-deck" : "owner";
+  const ownerMatches = isBearerTokenValid({ password: auth.password, token });
+  if (deckMatches && ownerMatches) return null;
+  if (deckMatches) return "service:firstmate-deck";
+  return ownerMatches ? "owner" : null;
 }
 
 export interface BearerAuthRejectContext {

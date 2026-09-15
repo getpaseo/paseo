@@ -2437,6 +2437,9 @@ export class AgentManager {
     options?: AgentRunOptions,
   ): AsyncGenerator<AgentStreamEvent> {
     const existingAgent = this.requireSessionAgent(agentId);
+    if (options?.requireIdle && existingAgent.lifecycle !== "idle") {
+      throw new Error(`Agent ${agentId} is not idle (${existingAgent.lifecycle})`);
+    }
     this.logger.trace(
       {
         agentId,

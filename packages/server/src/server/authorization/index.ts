@@ -9,18 +9,29 @@ import {
 export { DAEMON_PERMISSIONS, type DaemonPermission };
 
 const daemonPermissionSet: ReadonlySet<string> = new Set(DAEMON_PERMISSIONS);
+const configurableDaemonPermissionSet: ReadonlySet<string> = new Set(
+  DAEMON_PERMISSIONS.filter((permission) => permission !== "fleet.control"),
+);
 
 export function isDaemonPermission(value: string): value is DaemonPermission {
   return daemonPermissionSet.has(value);
 }
 
+function isConfigurableDaemonPermission(value: string): value is DaemonPermission {
+  return configurableDaemonPermissionSet.has(value);
+}
+
 export function parseDaemonPermissions(values: readonly string[]): DaemonPermission[] {
   const permissions = [...new Set(values)];
-  if (!permissions.every(isDaemonPermission)) throw new Error("Invalid daemon permission");
+  if (!permissions.every(isConfigurableDaemonPermission)) {
+    throw new Error("Invalid daemon permission");
+  }
   return permissions;
 }
 
-export const OWNER_PERMISSIONS: readonly DaemonPermission[] = DAEMON_PERMISSIONS;
+export const OWNER_PERMISSIONS: readonly DaemonPermission[] = DAEMON_PERMISSIONS.filter(
+  (permission) => permission !== "fleet.control",
+);
 
 export class SessionAuthorization {
   private permissions: ReadonlySet<DaemonPermission>;

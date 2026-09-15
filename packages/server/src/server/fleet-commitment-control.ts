@@ -1,17 +1,17 @@
 import { createHash } from "node:crypto";
-import { mkdir, readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { readFileSync, realpathSync, statSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import {
   FLEET_CONTROL_CONTRACT_VERSION,
   FLEET_CONTROL_PORTFOLIO_AGENT_ID,
   FleetControlMarkerSchema,
-  FleetControlReceiptSchema,
   type FleetControlAction,
   type FleetControlMarker,
   type FleetControlReceipt,
   type FleetControlStrictResult,
 } from "@getpaseo/protocol/fleet-control";
-import { writeFileAtomic } from "./atomic-file.js";
+import { withExclusiveFileLock, writeFileAtomic } from "./atomic-file.js";
+import type { MessageReceipts } from "./message-receipts/index.js";
 
 export type FleetControlCrashPoint =
   | "before_ledger_write"
@@ -33,13 +33,18 @@ interface FleetControlAgentRecord {
 
 interface FleetControlOptions {
   ledgerPath: string;
-  receiptsDirectory: string;
+  receipts: Pick<
+    MessageReceipts,
+    "readFleetControlReceipt" | "writeFleetControlReceipt" | "withFleetControlOperation"
+  >;
   readPortfolioAgent: () => Promise<FleetControlAgentRecord | null>;
   streamAgent: (
     agentId: string,
     prompt: string,
+    options: { requireIdle: true },
   ) => AsyncGenerator<{ type: string; turnId?: string }>;
   crash?: (point: FleetControlCrashPoint) => void | Promise<void>;
+  beforeLedgerRename?: () => void | Promise<void>;
 }
 
 interface OperateInput {
@@ -79,19 +84,6 @@ function receiptFingerprint(input: OperateInput): string {
   ]);
 }
 
-function receiptIdentity(operationRequestId: string): string {
-  return `fleet-control-${fleetControlDigest([FLEET_CONTROL_CONTRACT_VERSION, operationRequestId])}`;
-}
-
-async function readOptional(path: string): Promise<string | null> {
-  try {
-    return await readFile(path, "utf8");
-  } catch (error) {
-    if (error instanceof Error && "code" in error && error.code === "ENOENT") return null;
-    throw error;
-  }
-}
-
 function splitMarkdownRow(line: string): string[] | null {
   if (!line.trimStart().startsWith("|")) return null;
   const cells: string[] = [];
@@ -111,7 +103,42 @@ function splitMarkdownRow(line: string): string[] | null {
   return cells;
 }
 
-const MARKER_PATTERN = /<!--(\[[^\r\n]*\])-->/u;
+const MARKER_PATTERN = /<!--(\[[^\r\n]*?\])-->/gu;
+
+function parseControlRow(
+  line: string,
+  expectedCommitmentId?: string,
+): { markerText: string; control: LedgerControl } {
+  const cells = splitMarkdownRow(line);
+  if (!cells || cells.length !== 7) throw new FleetControlError("control_marker_invalid");
+  const matches = [...cells[6]!.matchAll(MARKER_PATTERN)];
+  if (matches.length !== 1 || !matches[0]?.[0] || !matches[0][1]) {
+    throw new FleetControlError("control_marker_invalid");
+  }
+  const match = matches[0];
+  if (cells[6]!.slice(0, match.index).trim()) {
+    throw new FleetControlError("control_marker_invalid");
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(match[1]);
+  } catch {
+    throw new FleetControlError("control_marker_invalid");
+  }
+  const result = FleetControlMarkerSchema.safeParse(parsed);
+  if (
+    !result.success ||
+    JSON.stringify(result.data) !== match[1] ||
+    cells[0]!.trim() !== result.data[1] ||
+    (expectedCommitmentId !== undefined && result.data[1] !== expectedCommitmentId)
+  ) {
+    throw new FleetControlError("control_marker_invalid");
+  }
+  return {
+    markerText: match[0],
+    control: { marker: result.data, digest: fleetControlDigest(result.data) },
+  };
+}
 
 function findControl(
   contents: string,
@@ -136,39 +163,54 @@ function findControl(
     const cells = splitMarkdownRow(line);
     if (!cells || cells.length !== 7 || cells[0]!.trim() !== commitmentId) continue;
     if (found) throw new FleetControlError("commitment_duplicate");
-    const match = cells[6]!.match(MARKER_PATTERN);
-    if (!match?.[1] || cells[6]!.slice(0, match.index).trim())
-      throw new FleetControlError("control_marker_missing");
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(match[1]);
-    } catch {
-      throw new FleetControlError("control_marker_invalid");
-    }
-    const result = FleetControlMarkerSchema.safeParse(parsed);
-    if (!result.success || result.data[1] !== commitmentId)
-      throw new FleetControlError("control_marker_invalid");
+    if (!cells[6]!.includes("<!--")) throw new FleetControlError("control_marker_missing");
+    const parsed = parseControlRow(line, commitmentId);
     found = {
       lines,
       lineIndex,
-      markerText: match[0],
-      control: { marker: result.data, digest: fleetControlDigest(result.data) },
+      ...parsed,
     };
   }
   if (found) return found;
   throw new FleetControlError("commitment_not_found");
 }
 
+export function resolveReadyFleetCommitmentLedgerPath(ledgerPath: string): string {
+  let resolvedPath: string;
+  try {
+    resolvedPath = realpathSync(ledgerPath);
+    if (!statSync(resolvedPath).isFile()) {
+      throw new Error("not a regular file");
+    }
+    const contents = readFileSync(resolvedPath, "utf8");
+    const commitmentIds = new Set<string>();
+    let markerCount = 0;
+    for (const line of contents.split("\n")) {
+      if (!line.includes("<!--") || !line.includes(FLEET_CONTROL_CONTRACT_VERSION)) continue;
+      const { control } = parseControlRow(line);
+      if (commitmentIds.has(control.marker[1])) {
+        throw new FleetControlError("commitment_duplicate");
+      }
+      commitmentIds.add(control.marker[1]);
+      markerCount++;
+    }
+    if (markerCount === 0) throw new Error("missing control marker");
+  } catch (error) {
+    throw new Error(`Fleet commitment ledger is not ready: ${String(error)}`, { cause: error });
+  }
+  return resolvedPath;
+}
+
 export class FleetCommitmentControlService {
-  private operations: Promise<void> = Promise.resolve();
   private readonly active = new Map<
     string,
     { fingerprint: string; operation: Promise<FleetControlReceipt> }
   >();
 
   constructor(private readonly options: FleetControlOptions) {
-    if (!options.ledgerPath || !options.receiptsDirectory)
+    if (!options.ledgerPath || !options.receipts)
       throw new Error("Fleet commitment control paths are required");
+    this.options.ledgerPath = resolveReadyFleetCommitmentLedgerPath(options.ledgerPath);
   }
 
   operate(input: OperateInput): Promise<FleetControlReceipt> {
@@ -180,7 +222,10 @@ export class FleetCommitmentControlService {
         throw new FleetControlError("operation_request_conflict");
       return active.operation;
     }
-    const operation = this.exclusive(() => this.operateExclusive(input));
+    const operation = this.options.receipts.withFleetControlOperation(
+      input.operationRequestId,
+      () => this.operateExclusive(input),
+    );
     this.active.set(input.operationRequestId, { fingerprint, operation });
     void operation.finally(() => this.active.delete(input.operationRequestId)).catch(() => {});
     return operation;
@@ -188,29 +233,34 @@ export class FleetCommitmentControlService {
 
   async read(input: { commitmentId: string; principalId: string }): Promise<LedgerControl> {
     this.requireDeckPrincipal(input.principalId);
-    return this.exclusive(() => this.readLedger(input.commitmentId));
+    return this.readLedger(input.commitmentId);
   }
 
   async confirm(input: ConfirmInput): Promise<FleetControlReceipt> {
     this.requireDeckPrincipal(input.principalId);
-    return await this.exclusive(async () => {
-      const receipt = await this.requireReceipt(input.operationRequestId);
-      if (receipt.commitmentId !== input.commitmentId)
-        throw new FleetControlError("operation_request_conflict");
-      if (receipt.lifecycle === "completed") return receipt;
-      if (receipt.lifecycle !== "awaiting_confirmation" || !receipt.strictResult) return receipt;
-      const current = await this.readLedger(input.commitmentId);
-      const strict = receipt.strictResult;
-      if (
-        current.digest !== strict.afterDigest ||
-        JSON.stringify(current.marker) !== JSON.stringify(strict.after)
-      ) {
-        return this.finish(receipt, "failed", "confirmation_mismatch");
-      }
-      const completed = await this.finish(receipt, "completed");
-      await this.options.crash?.("after_confirmation_persistence");
-      return completed;
-    });
+    return await this.options.receipts.withFleetControlOperation(
+      input.operationRequestId,
+      async () => {
+        const receipt = await this.requireReceipt(input.operationRequestId);
+        if (receipt.commitmentId !== input.commitmentId)
+          throw new FleetControlError("operation_request_conflict");
+        if (receipt.lifecycle === "completed") return receipt;
+        if (receipt.lifecycle !== "awaiting_confirmation" || !receipt.strictResult) return receipt;
+        const identityError = await this.currentPortfolioIdentityError();
+        if (identityError) return this.finish(receipt, "rejected", identityError);
+        const current = await this.readLedger(input.commitmentId);
+        const strict = receipt.strictResult;
+        if (
+          current.digest !== strict.afterDigest ||
+          JSON.stringify(current.marker) !== JSON.stringify(strict.after)
+        ) {
+          return this.finish(receipt, "failed", "confirmation_mismatch");
+        }
+        const completed = await this.finish(receipt, "completed");
+        await this.options.crash?.("after_confirmation_persistence");
+        return completed;
+      },
+    );
   }
 
   // The crash-safe transaction stays linear so every durable boundary remains visible in order.
@@ -244,11 +294,8 @@ export class FleetCommitmentControlService {
 
     if (input.expectedPortfolioAgentId !== FLEET_CONTROL_PORTFOLIO_AGENT_ID)
       return this.finish(receipt, "rejected", "portfolio_identity_mismatch");
-    const agent = await this.options.readPortfolioAgent();
-    if (!agent) return this.finish(receipt, "rejected", "portfolio_agent_missing");
-    if (agent.id !== FLEET_CONTROL_PORTFOLIO_AGENT_ID)
-      return this.finish(receipt, "rejected", "portfolio_identity_mismatch");
-    if (agent.archivedAt) return this.finish(receipt, "rejected", "portfolio_agent_archived");
+    const identityError = await this.currentPortfolioIdentityError();
+    if (identityError) return this.finish(receipt, "rejected", identityError);
 
     let before: LedgerControl;
     try {
@@ -268,10 +315,21 @@ export class FleetCommitmentControlService {
       stream = this.options.streamAgent(
         FLEET_CONTROL_PORTFOLIO_AGENT_ID,
         `Apply Fleet commitment ${input.action} for ${input.commitmentId} under operation ${input.operationRequestId}.`,
+        { requireIdle: true },
       );
     } catch (error) {
-      if (error instanceof Error && error.message.includes("active run"))
-        return this.finish(receipt, "rejected", "agent_busy");
+      if (error instanceof Error) {
+        if (error.message.includes("active run") || error.message.includes("not idle (running)"))
+          return this.finish(receipt, "rejected", "agent_busy");
+        if (error.message.includes("not idle (error)"))
+          return this.finish(receipt, "rejected", "portfolio_agent_error");
+        if (error.message.includes("not idle (initializing)"))
+          return this.finish(receipt, "rejected", "portfolio_agent_initializing");
+        if (error.message.includes("Unknown agent"))
+          return this.finish(receipt, "rejected", "portfolio_agent_missing");
+        if (error.message.includes("no managed session"))
+          return this.finish(receipt, "rejected", "portfolio_agent_archived");
+      }
       return this.finish(receipt, "failed", "agent_start_failed");
     }
     let first: IteratorResult<{ type: string; turnId?: string }>;
@@ -298,14 +356,8 @@ export class FleetCommitmentControlService {
     })();
     await this.options.crash?.("before_ledger_write");
 
-    const currentAgent = await this.options.readPortfolioAgent();
-    if (
-      !currentAgent ||
-      currentAgent.id !== FLEET_CONTROL_PORTFOLIO_AGENT_ID ||
-      currentAgent.archivedAt
-    ) {
-      return this.finish(receipt, "rejected", "portfolio_custody_changed");
-    }
+    const currentIdentityError = await this.currentPortfolioIdentityError();
+    if (currentIdentityError) return this.finish(receipt, "rejected", currentIdentityError);
 
     const state = input.action === "pause" ? "paused" : "open";
     const after: FleetControlMarker = [
@@ -358,24 +410,35 @@ export class FleetCommitmentControlService {
     marker: FleetControlMarker,
     beforeRename: () => Promise<void>,
   ): Promise<LedgerControl> {
-    const contents = await readFile(this.options.ledgerPath, "utf8");
-    const found = findControl(contents, commitmentId);
-    if (found.control.digest !== expectedDigest) throw new FleetControlError("stale_control");
-    const markerText = `<!--${JSON.stringify(marker)}-->`;
-    found.lines[found.lineIndex] = found.lines[found.lineIndex]!.replace(
-      found.markerText,
-      markerText,
-    );
-    await beforeRename();
-    await writeFileAtomic(this.options.ledgerPath, found.lines.join("\n"));
-    return { marker, digest: fleetControlDigest(marker) };
+    return withExclusiveFileLock(`${this.options.ledgerPath}.fleet-control.lock`, async () => {
+      const admittedContents = await readFile(this.options.ledgerPath, "utf8");
+      const admitted = findControl(admittedContents, commitmentId);
+      if (admitted.control.digest !== expectedDigest) throw new FleetControlError("stale_control");
+
+      await this.options.beforeLedgerRename?.();
+      const currentContents = await readFile(this.options.ledgerPath, "utf8");
+      const current = findControl(currentContents, commitmentId);
+      if (current.control.digest !== expectedDigest) throw new FleetControlError("stale_control");
+      const markerText = `<!--${JSON.stringify(marker)}-->`;
+      current.lines[current.lineIndex] = current.lines[current.lineIndex]!.replace(
+        current.markerText,
+        markerText,
+      );
+      await beforeRename();
+      await writeFileAtomic(this.options.ledgerPath, current.lines.join("\n"));
+      return { marker, digest: fleetControlDigest(marker) };
+    });
   }
 
   private rejectLedgerError(
     receipt: FleetControlReceipt,
     error: unknown,
   ): Promise<FleetControlReceipt> {
-    const code = error instanceof FleetControlError ? error.code : "ledger_failed";
+    let code = "ledger_failed";
+    if (error instanceof FleetControlError) code = error.code;
+    else if (error instanceof Error && error.message.startsWith("file_lock_")) {
+      code = error.message;
+    }
     const lifecycle = receipt.ledgerWriteStarted ? "outcome_unknown" : "rejected";
     return this.finish(receipt, lifecycle, code);
   }
@@ -395,8 +458,12 @@ export class FleetCommitmentControlService {
       throw new FleetControlError("confirmation_access_denied");
   }
 
-  private receiptPath(operationRequestId: string): string {
-    return join(this.options.receiptsDirectory, `${receiptIdentity(operationRequestId)}.json`);
+  private async currentPortfolioIdentityError(): Promise<string | null> {
+    const agent = await this.options.readPortfolioAgent();
+    if (!agent) return "portfolio_agent_missing";
+    if (agent.id !== FLEET_CONTROL_PORTFOLIO_AGENT_ID) return "portfolio_identity_mismatch";
+    if (agent.archivedAt) return "portfolio_agent_archived";
+    return null;
   }
 
   private async requireReceipt(operationRequestId: string): Promise<FleetControlReceipt> {
@@ -406,26 +473,10 @@ export class FleetCommitmentControlService {
   }
 
   private async readReceipt(operationRequestId: string): Promise<FleetControlReceipt | null> {
-    const text = await readOptional(this.receiptPath(operationRequestId));
-    return text === null ? null : FleetControlReceiptSchema.parse(JSON.parse(text));
+    return this.options.receipts.readFleetControlReceipt(operationRequestId);
   }
 
   private async writeReceipt(receipt: FleetControlReceipt): Promise<void> {
-    await mkdir(this.options.receiptsDirectory, { recursive: true });
-    await writeFileAtomic(this.receiptPath(receipt.operationRequestId), JSON.stringify(receipt));
-  }
-
-  private async exclusive<T>(operation: () => Promise<T>): Promise<T> {
-    const previous = this.operations;
-    let release!: () => void;
-    this.operations = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    await previous;
-    try {
-      return await operation();
-    } finally {
-      release();
-    }
+    await this.options.receipts.writeFleetControlReceipt(receipt);
   }
 }

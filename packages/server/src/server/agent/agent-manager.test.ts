@@ -1511,6 +1511,55 @@ function fakeCodexEmitting(args: FakeCodexEmitterArgs): AgentClient {
 
 const logger = createTestLogger();
 
+test("require-idle stream admission accepts idle and rejects every non-idle lifecycle", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-require-idle-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const manager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: storage,
+    logger,
+  });
+  const createdIds: string[] = [];
+  const requireIdle = { requireIdle: true } as AgentRunOptions & { requireIdle: true };
+  try {
+    const idle = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    createdIds.push(idle.id);
+    const accepted = manager.streamAgent(idle.id, "accepted", requireIdle);
+    expect((await accepted.next()).value?.type).toBe("turn_started");
+    await drainAsyncGenerator(accepted);
+
+    for (const lifecycle of ["running", "error", "initializing"] as const) {
+      const snapshot = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+        workspaceId: undefined,
+      });
+      createdIds.push(snapshot.id);
+      const internal = manager as unknown as { agents: Map<string, ManagedAgent> };
+      const agent = internal.agents.get(snapshot.id);
+      if (!agent) throw new Error("test agent missing");
+      Object.assign(agent, {
+        lifecycle,
+        ...(lifecycle === "error" ? { lastError: "provider failed" } : {}),
+      });
+      expect(() => manager.streamAgent(snapshot.id, "rejected", requireIdle)).toThrow(
+        `not idle (${lifecycle})`,
+      );
+    }
+
+    await manager.archiveAgent(idle.id);
+    await expect(() => manager.streamAgent(idle.id, "archived", requireIdle)).toThrow();
+    expect(() =>
+      manager.streamAgent("00000000-0000-4000-8000-000000000999", "missing", requireIdle),
+    ).toThrow("Unknown agent");
+  } finally {
+    for (const id of createdIds) await manager.closeAgent(id).catch(() => undefined);
+    await manager.flush().catch(() => undefined);
+    await storage.flush().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("does not register a session that finishes starting after shutdown begins", async () => {
   const client = new HeldAgentCreationClient();
   const manager = new AgentManager({

@@ -9,6 +9,7 @@ import {
   DAEMON_PERMISSIONS,
   OWNER_PERMISSIONS,
   SessionAuthorization,
+  isDaemonPermission,
   permissionsForLegacyHubScopes,
   parseDaemonPermissions,
 } from "./index.js";
@@ -35,14 +36,18 @@ function outboundMessage(type: SessionOutboundMessage["type"]): SessionOutboundM
 }
 
 describe("SessionAuthorization", () => {
-  test("owner authority covers every session operation", () => {
+  test("owner authority covers every ordinary session operation", () => {
     const authorization = new SessionAuthorization(OWNER_PERMISSIONS);
 
     expect(
-      inboundOperationTypes().every((type) => authorization.allowsInbound(inboundMessage(type))),
+      inboundOperationTypes()
+        .filter((type) => !type.startsWith("fleet.commitment."))
+        .every((type) => authorization.allowsInbound(inboundMessage(type))),
     ).toBe(true);
     expect(
-      outboundOperationTypes().every((type) => authorization.allowsOutbound(outboundMessage(type))),
+      outboundOperationTypes()
+        .filter((type) => !type.startsWith("fleet.commitment."))
+        .every((type) => authorization.allowsOutbound(outboundMessage(type))),
     ).toBe(true);
   });
 
@@ -130,6 +135,12 @@ describe("SessionAuthorization", () => {
     }
     expect(authorization.allowsInbound(inboundMessage("send_agent_message_request"))).toBe(false);
     expect(authorization.allowsInbound(inboundMessage("get_daemon_config_request"))).toBe(false);
+  });
+
+  test("keeps Fleet permission out of owner and externally configurable grants", () => {
+    expect(isDaemonPermission("fleet.control")).toBe(true);
+    expect(OWNER_PERMISSIONS).not.toContain("fleet.control");
+    expect(() => parseDaemonPermissions(["fleet.control"])).toThrow("Invalid daemon permission");
   });
 
   test("legacy Hub authority is translated at one compatibility boundary", () => {

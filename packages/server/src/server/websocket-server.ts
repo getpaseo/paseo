@@ -691,13 +691,14 @@ export class VoiceAssistantWebSocketServer {
     this.fleetCommitmentControl = fleetCommitmentControls
       ? new FleetCommitmentControlService({
           ledgerPath: fleetCommitmentControls.ledgerPath,
-          receiptsDirectory: join(paseoHome, "agent-requests"),
+          receipts: this.messageReceipts,
           readPortfolioAgent: async () => {
             const stored = await this.agentStorage.get(FLEET_CONTROL_PORTFOLIO_AGENT_ID);
             const live = this.agentManager.getAgent(FLEET_CONTROL_PORTFOLIO_AGENT_ID);
             return stored && live ? { id: live.id, archivedAt: stored.archivedAt } : null;
           },
-          streamAgent: (agentId, prompt) => this.agentManager.streamAgent(agentId, prompt),
+          streamAgent: (agentId, prompt, options) =>
+            this.agentManager.streamAgent(agentId, prompt, options),
         })
       : null;
     this.projectRegistry = projectRegistry ?? createNoopProjectRegistry();
