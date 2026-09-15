@@ -399,14 +399,14 @@ describe("OMP agent client and session", () => {
     await omp.start();
 
     await expect(
-      omp.runPromptWithCustomMessageBeforeUser(
-        "hello OMP",
-        {
+      omp.runPromptWithCustomMessageBeforeUser({
+        input: "hello OMP",
+        customMessage: {
           role: "custom",
           content: "<system-notice>\nxd://: mounted mcp__agent_browser_click\n</system-notice>",
         },
-        "done",
-      ),
+        output: "done",
+      }),
     ).resolves.toMatchObject({ finalText: "done" });
 
     expect(omp.timeline()).toEqual([
