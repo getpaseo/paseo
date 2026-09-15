@@ -2308,6 +2308,11 @@ export const es: TranslationResources = {
       updated: "Actualizado {{relativeTime}}",
     },
   },
+  intents: {
+    share: {
+      skippedFiles: "Se omitieron {{count}} archivos compartidos. Paseo acepta texto e imágenes.",
+    },
+  },
   settings: {
     title: "Ajustes",
     loading: "Cargando configuración...",

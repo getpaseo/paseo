@@ -2294,6 +2294,11 @@ export const ru: TranslationResources = {
       updated: "Обновлено {{relativeTime}}",
     },
   },
+  intents: {
+    share: {
+      skippedFiles: "Пропущено файлов: {{count}}. Paseo принимает только текст и изображения.",
+    },
+  },
   settings: {
     title: "Настройки",
     loading: "Загрузка настроек...",

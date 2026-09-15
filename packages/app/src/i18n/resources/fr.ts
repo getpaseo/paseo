@@ -2309,6 +2309,12 @@ export const fr: TranslationResources = {
       updated: "Mis à jour {{relativeTime}}",
     },
   },
+  intents: {
+    share: {
+      skippedFiles:
+        "{{count}} fichiers partagés ont été ignorés. Paseo accepte le texte et les images.",
+    },
+  },
   settings: {
     title: "Paramètres",
     loading: "Chargement des paramètres…",

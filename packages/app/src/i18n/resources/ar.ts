@@ -2295,6 +2295,11 @@ export const ar: TranslationResources = {
       updated: "تم التحديث {{relativeTime}}",
     },
   },
+  intents: {
+    share: {
+      skippedFiles: "تم تخطي {{count}} من الملفات المشتركة. يقبل Paseo النصوص والصور فقط.",
+    },
+  },
   settings: {
     title: "إعدادات",
     loading: "جارٍ تحميل الإعدادات...",

@@ -2293,6 +2293,12 @@ export const ptBR: TranslationResources = {
       updated: "Atualizado {{relativeTime}}",
     },
   },
+  intents: {
+    share: {
+      skippedFiles:
+        "{{count}} arquivos compartilhados foram ignorados. O Paseo aceita texto e imagens.",
+    },
+  },
   settings: {
     title: "Configurações",
     loading: "Carregando configurações...",

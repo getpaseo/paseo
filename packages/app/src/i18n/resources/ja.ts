@@ -2282,6 +2282,12 @@ export const ja: TranslationResources = {
       updated: "更新: {{relativeTime}}",
     },
   },
+  intents: {
+    share: {
+      skippedFiles:
+        "共有された {{count}} 件のファイルをスキップしました。Paseo はテキストと画像のみ受け付けます。",
+    },
+  },
   settings: {
     title: "設定",
     loading: "設定を読み込み中...",

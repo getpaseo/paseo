@@ -145,6 +145,7 @@ import {
 import { PluginCatalogSync } from "@/plugins";
 import { NotificationOpenRouter } from "@/notification-open/react";
 import { ensureOsNotificationPermission } from "@/utils/os-notifications";
+import { AndroidIntentListener } from "@/intents/android-intent-listener";
 
 polyfillCrypto();
 
@@ -658,6 +659,7 @@ function ProvidersWrapper({ children }: { children: ReactNode }) {
       <VoiceProvider>
         <DesktopWindowControlsSync />
         <OfferLinkListener />
+        {isNative ? <AndroidIntentListener /> : null}
         <HostSessionManager />
         <FaviconStatusSync />
         {children}

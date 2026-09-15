@@ -2236,6 +2236,11 @@ export const zhCN: TranslationResources = {
       updated: "更新于 {{relativeTime}}",
     },
   },
+  intents: {
+    share: {
+      skippedFiles: "已跳过 {{count}} 个共享文件。Paseo 只接受文本和图片。",
+    },
+  },
   settings: {
     title: "设置",
     loading: "正在加载设置...",
