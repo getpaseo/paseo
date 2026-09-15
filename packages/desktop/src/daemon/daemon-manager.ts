@@ -345,12 +345,58 @@ export async function stopDesktopDaemon(
   await stopDaemonInstance(home, {
     instance,
     timeoutMs: 15_000,
-    requestShutdown: async (ready) => {
-      await runExternalCliJsonCommand(["daemon", "stop", "--host", ready.listen, "--json"]);
+    requestShutdown: async (ready, signal) => {
+      await runExternalCliJsonCommand(["daemon", "stop", "--host", ready.listen, "--json"], signal);
     },
   });
   if (owned) ownedLaunch = null;
   return resolveDesktopDaemonStatus();
+}
+
+/**
+ * Stops the desktop-managed daemon before an update is installed.
+ *
+ * Unlike the quit path this cannot rely on `ownedLaunch`: a daemon can outlive a
+ * previous desktop session when `keepRunningAfterQuit` is enabled, so the
+ * process installing the update never started it. The daemon's own report marks
+ * it as desktop-managed, which is what separates it from a daemon the user
+ * started manually; those are left alone.
+ */
+export async function stopDesktopManagedDaemonBeforeUpdate(deps?: {
+  signal?: AbortSignal;
+}): Promise<boolean> {
+  const status = await resolveDesktopDaemonStatus();
+  const running = status.status === "running" || status.status === "starting";
+  if (!status.desktopManaged || !running) {
+    return false;
+  }
+
+  const home = getPaseoHome();
+  const instance = await readDaemonInstance(home);
+  logDesktopDaemonLifecycle("stopping managed daemon before update", { pid: status.pid });
+  const result = await stopDaemonInstance(home, {
+    instance: instance ?? undefined,
+    timeoutMs: 15_000,
+    signal: deps?.signal,
+    requestShutdown: async (ready, signal) => {
+      await runExternalCliJsonCommand(["daemon", "stop", "--host", ready.listen, "--json"], signal);
+    },
+  });
+  if (result.action === "cancelled") {
+    // The startup deadline fired mid-stop. Report "not stopped" so the caller
+    // abandons the install and boots normally instead of spawning an installer
+    // against a daemon that still holds file handles.
+    return false;
+  }
+  if (
+    ownedLaunch &&
+    ownedLaunch.home === home &&
+    instance &&
+    isSameDaemonInstance(instance, ownedLaunch.instance)
+  ) {
+    ownedLaunch = null;
+  }
+  return true;
 }
 
 async function restartDaemon(): Promise<DesktopDaemonStatus> {

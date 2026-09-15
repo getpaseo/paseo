@@ -20,12 +20,6 @@ interface ExternalQuitSignalSource {
 
 interface QuitLifecycle {
   handleBeforeQuit(event: BeforeQuitEvent): void;
-  handleBeforeQuitForUpdate(): void;
-}
-
-interface DeferredUpdateQuit {
-  promise: Promise<boolean>;
-  resolve(): void;
 }
 
 export interface StopOnQuitDeps {
@@ -73,57 +67,31 @@ export async function stopDesktopManagedDaemonOnQuitIfNeeded(
   return true;
 }
 
-function waitForUpdateDeadline(signal: AbortSignal): Promise<boolean> {
-  if (signal.aborted) {
-    return Promise.resolve(false);
-  }
-
-  return new Promise((resolve) => {
-    signal.addEventListener("abort", () => resolve(false), { once: true });
-  });
-}
-
-function createDeferredUpdateQuit(): DeferredUpdateQuit {
-  let resolvePromise!: (started: boolean) => void;
-  const promise = new Promise<boolean>((resolve) => {
-    resolvePromise = resolve;
-  });
-  return { promise, resolve: () => resolvePromise(true) };
-}
-
 export function createQuitLifecycle({
   app,
   closeTransportSessions,
   stopDesktopManagedDaemonIfNeeded,
-  installAppUpdateOnQuit,
-  createUpdateDeadlineSignal,
+  flushPendingUpdate,
   onStopError,
-  onUpdateError,
 }: {
   app: BeforeQuitApp;
   closeTransportSessions: () => void;
   stopDesktopManagedDaemonIfNeeded: () => Promise<boolean>;
-  installAppUpdateOnQuit: (signal: AbortSignal) => Promise<boolean>;
-  createUpdateDeadlineSignal: () => AbortSignal;
+  /**
+   * Waits for an in-flight pending-update marker write to settle. Injected so
+   * this module stays unaware of the updater; the quit path must not drop a
+   * marker recorded just before exit.
+   */
+  flushPendingUpdate?: () => Promise<void>;
   onStopError: (error: unknown) => void;
-  onUpdateError: (error: unknown) => void;
 }): QuitLifecycle {
-  // The first quit waits for daemon shutdown and update revalidation. A validated
-  // update re-fires app.quit(); otherwise app.exit(0) bypasses Electron's macOS
-  // window-all-closed handler, which would veto that second quit.
+  // The first quit waits for daemon shutdown; app.exit(0) then bypasses
+  // Electron's macOS window-all-closed handler, which would veto a second quit.
   let quitting = false;
-  let quittingForUpdate = false;
-  const updateQuit = createDeferredUpdateQuit();
 
   function handleBeforeQuit(event: BeforeQuitEvent): void {
     closeTransportSessions();
-    if (quittingForUpdate) return;
-    if (quitting) {
-      // MacUpdater's no-relaunch path calls app.quit() without emitting
-      // before-quit-for-update. A second quit is equivalent handoff evidence.
-      updateQuit.resolve();
-      return;
-    }
+    if (quitting) return;
     quitting = true;
     event.preventDefault();
 
@@ -134,34 +102,15 @@ export function createQuitLifecycle({
         onStopError(error);
       }
 
-      const signal = createUpdateDeadlineSignal();
-      const updateInstallation = installAppUpdateOnQuit(signal).catch((error) => {
-        onUpdateError(error);
-        return false;
-      });
-      const installingUpdate = await Promise.race([
-        updateInstallation,
-        waitForUpdateDeadline(signal),
-      ]);
-      if (installingUpdate) {
-        const handoffStarted = await Promise.race([
-          updateQuit.promise,
-          waitForUpdateDeadline(createUpdateDeadlineSignal()),
-        ]);
-        if (handoffStarted) {
-          return;
-        }
+      try {
+        await flushPendingUpdate?.();
+      } catch {
+        // A failed marker write must never block quitting.
       }
 
       app.exit(0);
     })();
   }
 
-  return {
-    handleBeforeQuit,
-    handleBeforeQuitForUpdate() {
-      quittingForUpdate = true;
-      updateQuit.resolve();
-    },
-  };
+  return { handleBeforeQuit };
 }
