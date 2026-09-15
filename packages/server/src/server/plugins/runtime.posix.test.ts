@@ -126,9 +126,26 @@ function createTrackedSessionHost() {
   const active = new Set<object>();
   // One entry per hello handshake: an attached socket is not a redialled one.
   const hellos: object[] = [];
+  const waiters = new Set<{ count: number; resolve: () => void }>();
+  function recordHello(socket: object): void {
+    hellos.push(socket);
+    for (const waiter of waiters) {
+      if (hellos.length < waiter.count) continue;
+      waiters.delete(waiter);
+      waiter.resolve();
+    }
+  }
   return {
     active,
     hellos,
+    // Resolves on the handshake itself rather than after a delay, so the test
+    // waits for the event it cares about instead of a guess at how long it takes.
+    waitForHellos(count: number): Promise<void> {
+      if (hellos.length >= count) return Promise.resolve();
+      return new Promise<void>((resolve) => {
+        waiters.add({ count, resolve });
+      });
+    },
     host: {
       async attachPluginSocket(_pluginId: string, socket: PluginSessionSocket) {
         const closed = new Promise<void>((resolve) => socket.once("close", resolve));
@@ -138,7 +155,7 @@ function createTrackedSessionHost() {
           if (typeof data !== "string") return;
           const message = JSON.parse(data);
           if (message.type !== "hello") return;
-          hellos.push(socket);
+          recordHello(socket);
           socket.send(
             JSON.stringify({
               type: "session",
@@ -1795,42 +1812,53 @@ export default function contribute(plugin: any) {
     // What an expired lease does: drop the socket, leave the process running.
     first.close(1000, "expired application lease");
 
-    await vi.waitFor(
-      () => {
-        expect(sessions.active.size).toBe(1);
-        expect([...sessions.active][0]).not.toBe(first);
-      },
-      { timeout: 15_000 },
-    );
-
     // A second handshake, not just a second attachment: the client really redialled.
-    await vi.waitFor(() => expect(sessions.hellos.length).toBeGreaterThanOrEqual(2), {
-      timeout: 15_000,
-    });
+    await sessions.waitForHellos(2);
+
+    expect(sessions.active.size).toBe(1);
+    expect([...sessions.active][0]).not.toBe(first);
   });
 
-  it("attaches no replacement session until the plugin redials", async () => {
+  it("replaces a closed plugin session only once the child sends a fresh hello", async () => {
     const directory = await createPlugin(
       "lazy-reattach",
       `export default function contribute(plugin: unknown) { void plugin; return () => undefined; }`,
     );
     const sessions = createTrackedSessionHost();
-    const runtime = createTestRuntime({ sessionHost: sessions.host });
+    const child = createReloadChild("lazy-reattach", []);
+    const runtime = createTestRuntime({ spawnChild: () => child, sessionHost: sessions.host });
     await runtime.startPlugin("lazy-reattach", directory);
     const first = [...sessions.active][0] as PluginSessionSocket;
+    // This child is a stub with no real client, so no handshake has happened.
+    expect(sessions.hellos).toHaveLength(0);
 
     first.close(1000, "expired application lease");
-
-    // A replacement appears only once the child's client redials. Attaching one
-    // eagerly would sit unused until the host's hello timeout closed it, and
-    // that close would attach another - an endless cycle behind a wedged child.
-    await new Promise((resolve) => setTimeout(resolve, 500));
     expect(sessions.active.size).toBe(0);
 
-    await vi.waitFor(() => expect(sessions.hellos.length).toBeGreaterThanOrEqual(2), {
-      timeout: 15_000,
+    // Frames the child had already queued belong to the session that just died.
+    // Standing a socket up for one would leave it unspoken to until the host's
+    // hello timeout closed it, and that close would stand up another.
+    child.emitMessage({
+      type: "paseo_frame",
+      data: JSON.stringify({ type: "session", message: { type: "ping" } }),
+      isBinary: false,
     });
+    expect(sessions.active.size).toBe(0);
+
+    child.emitMessage({
+      type: "paseo_frame",
+      data: JSON.stringify({
+        type: "hello",
+        clientId: "plugin:lazy-reattach",
+        clientType: "cli",
+        protocolVersion: 1,
+      }),
+      isBinary: false,
+    });
+    await sessions.waitForHellos(1);
+
     expect(sessions.active.size).toBe(1);
+    expect([...sessions.active][0]).not.toBe(first);
   });
 
   it("attaches no replacement session when the plugin is stopped", async () => {
@@ -1844,8 +1872,6 @@ export default function contribute(plugin: any) {
     expect(sessions.active.size).toBe(1);
 
     await runtime.stopPluginById("stopping");
-    // Long enough for an attach that slipped past the guards to land.
-    await new Promise((resolve) => setTimeout(resolve, 500));
 
     expect(runtime.getLogs("stopping").map((entry) => entry.message)).not.toContain(
       "[paseo] Re-attached plugin session",
