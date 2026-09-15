@@ -21,6 +21,20 @@ describe("OMP runtime event mapper", () => {
     });
   });
 
+  test("hides metadata-free dynamic device mount notices", () => {
+    expect(
+      mapOmpRuntimeEventToTimelineItem({
+        type: "notice",
+        level: "info",
+        message: "xd://: mounted mcp__agent_browser_click",
+      }),
+    ).toEqual({
+      handled: true,
+      item: null,
+      logReason: "hidden_omp_dynamic_device_mount",
+    });
+  });
+
   test("maps goal_updated events to provider notices and timeline status lines", () => {
     expect(
       mapOmpRuntimeEventToTimelineItem({
