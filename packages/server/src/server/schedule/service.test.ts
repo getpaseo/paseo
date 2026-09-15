@@ -352,6 +352,61 @@ describe("ScheduleService", () => {
     expect(inspected.nextRunAt).toBe("2026-01-01T00:02:00.000Z");
   });
 
+  test("claims a due slot once when overlapping ticks use stale schedule snapshots", async () => {
+    let releaseFirstRun: (() => void) | null = null;
+    const firstRunStarted = new Promise<void>((resolve) => {
+      releaseFirstRun = resolve;
+    });
+    let unblockFirstRun: (() => void) | null = null;
+    const firstRunBlocked = new Promise<void>((resolve) => {
+      unblockFirstRun = resolve;
+    });
+    let laterScheduleRuns = 0;
+
+    const service = createScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: new AgentManager({ logger: createTestLogger() }),
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      now: () => now,
+      runner: async (schedule) => {
+        if (schedule.prompt === "block the first tick") {
+          releaseFirstRun?.();
+          await firstRunBlocked;
+        } else {
+          laterScheduleRuns += 1;
+        }
+        return { agentId: null, output: "ok" };
+      },
+    });
+
+    await service.create({
+      prompt: "block the first tick",
+      cadence: { type: "cron", expression: "*/30 * * * *" },
+      target: { type: "new-agent", config: { provider: "claude", cwd: tempDir } },
+    });
+    const laterSchedule = await service.create({
+      prompt: "later due schedule",
+      cadence: { type: "cron", expression: "*/30 * * * *" },
+      target: { type: "new-agent", config: { provider: "claude", cwd: tempDir } },
+    });
+
+    now = new Date("2026-01-01T00:30:00.000Z");
+    const firstTick = service.tick();
+    await firstRunStarted;
+
+    await service.tick();
+    unblockFirstRun?.();
+    await firstTick;
+
+    const inspected = await service.inspect(laterSchedule.id);
+    expect(laterScheduleRuns).toBe(1);
+    expect(inspected.runs).toHaveLength(1);
+    expect(inspected.runs[0]?.scheduledFor).toBe("2026-01-01T00:30:00.000Z");
+    expect(inspected.nextRunAt).toBe("2026-01-01T01:00:00.000Z");
+  });
+
   test("pause and resume update persisted schedule state", async () => {
     const service = createScheduleService({
       paseoHome: tempDir,
