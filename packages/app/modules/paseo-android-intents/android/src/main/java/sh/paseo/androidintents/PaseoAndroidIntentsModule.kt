@@ -5,6 +5,9 @@ import android.content.Intent
 import android.net.Uri
 import android.provider.OpenableColumns
 import androidx.core.content.IntentCompat
+import androidx.core.content.pm.ShortcutInfoCompat
+import androidx.core.content.pm.ShortcutManagerCompat
+import androidx.core.graphics.drawable.IconCompat
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
 import java.io.File
@@ -15,11 +18,12 @@ private const val MAX_FILES = 16
 private const val MAX_FILE_BYTES = 25L * 1024 * 1024
 private const val MAX_TEXT_LENGTH = 100_000
 private const val SHARED_DIR = "shared-intents"
+private const val SHORTCUT_URI_SCHEME = "paseo"
 
 /**
- * Hands share-sheet and PROCESS_TEXT intents to JavaScript. Expo's linking
- * layer only sees ACTION_VIEW data URIs, so these have to be read off the
- * activity intent here.
+ * Hands share-sheet and PROCESS_TEXT intents to JavaScript, and publishes the
+ * dynamic launcher shortcut. Expo's linking layer only sees ACTION_VIEW data
+ * URIs, so these have to be read off the activity intent here.
  */
 class PaseoAndroidIntentsModule : Module() {
   override fun definition() = ModuleDefinition {
@@ -35,6 +39,25 @@ class PaseoAndroidIntentsModule : Module() {
     Function("consumeLaunchIntent") {
       val intent = appContext.currentActivity?.intent ?: return@Function null
       extract(intent)
+    }
+
+    Function("setResumeShortcut") { id: String, label: String, uri: String ->
+      val context = requireContext()
+      val parsed = Uri.parse(uri)
+      require(parsed.scheme == SHORTCUT_URI_SCHEME) { "Shortcut links must use the paseo scheme" }
+      val shortLabel = label.trim().take(25).ifEmpty { "Paseo" }
+      val shortcut =
+        ShortcutInfoCompat.Builder(context, id.take(64))
+          .setShortLabel(shortLabel)
+          .setLongLabel(label.trim().take(60).ifEmpty { shortLabel })
+          .setIcon(IconCompat.createWithResource(context, context.applicationInfo.icon))
+          .setIntent(Intent(Intent.ACTION_VIEW, parsed).setPackage(context.packageName))
+          .build()
+      ShortcutManagerCompat.setDynamicShortcuts(context, listOf(shortcut))
+    }
+
+    Function("clearDynamicShortcuts") {
+      ShortcutManagerCompat.removeAllDynamicShortcuts(requireContext())
     }
   }
 

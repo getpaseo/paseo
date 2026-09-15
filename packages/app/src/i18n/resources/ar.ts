@@ -2311,6 +2311,9 @@ export const ar: TranslationResources = {
       hostOffline: "تمت إضافة المطالبة إلى المحرر. المضيف غير متصل، لذا لم يتم إرسالها.",
       sendFailed: "تعذر إرسال المطالبة: {{message}}",
     },
+    shortcuts: {
+      resume: "استئناف {{name}}",
+    },
   },
   settings: {
     title: "إعدادات",

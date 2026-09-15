@@ -2310,6 +2310,9 @@ export const ptBR: TranslationResources = {
       hostOffline: "Prompt adicionado ao compositor. O host está offline, então não foi enviado.",
       sendFailed: "Não foi possível enviar o prompt: {{message}}",
     },
+    shortcuts: {
+      resume: "Retomar {{name}}",
+    },
   },
   settings: {
     title: "Configurações",

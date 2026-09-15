@@ -2286,6 +2286,9 @@ export const ko: TranslationResources = {
       hostOffline: "프롬프트를 작성기에 추가했습니다. 호스트가 오프라인이라 보내지 않았습니다.",
       sendFailed: "프롬프트를 보내지 못했습니다: {{message}}",
     },
+    shortcuts: {
+      resume: "{{name}} 이어서 하기",
+    },
   },
   settings: {
     title: "설정",

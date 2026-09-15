@@ -2301,6 +2301,9 @@ export const en = {
       hostOffline: "Prompt added to the composer. The host is offline, so it was not sent.",
       sendFailed: "Couldn't send the prompt: {{message}}",
     },
+    shortcuts: {
+      resume: "Resume {{name}}",
+    },
   },
   settings: {
     title: "Settings",

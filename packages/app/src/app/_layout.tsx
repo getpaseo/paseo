@@ -146,6 +146,7 @@ import { PluginCatalogSync } from "@/plugins";
 import { NotificationOpenRouter } from "@/notification-open/react";
 import { ensureOsNotificationPermission } from "@/utils/os-notifications";
 import { AndroidIntentListener } from "@/intents/android-intent-listener";
+import { AndroidResumeShortcutSync } from "@/intents/android-resume-shortcut-sync";
 
 polyfillCrypto();
 
@@ -660,6 +661,7 @@ function ProvidersWrapper({ children }: { children: ReactNode }) {
         <DesktopWindowControlsSync />
         <OfferLinkListener />
         {isNative ? <AndroidIntentListener /> : null}
+        {isNative ? <AndroidResumeShortcutSync /> : null}
         <HostSessionManager />
         <FaviconStatusSync />
         {children}

@@ -2300,6 +2300,9 @@ export const ja: TranslationResources = {
         "プロンプトをコンポーザーに追加しました。ホストがオフラインのため送信していません。",
       sendFailed: "プロンプトを送信できませんでした: {{message}}",
     },
+    shortcuts: {
+      resume: "{{name}} を再開",
+    },
   },
   settings: {
     title: "設定",
