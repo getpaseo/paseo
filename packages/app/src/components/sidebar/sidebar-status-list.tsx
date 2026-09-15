@@ -466,6 +466,9 @@ function StatusGroupLeadingVisual({
   showChevron: boolean;
 }) {
   if (!showChevron) {
+    if (!leading) {
+      return null;
+    }
     return <StatusGroupIcon bucket={leading.bucket} />;
   }
   if (collapsed) {

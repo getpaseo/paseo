@@ -7,7 +7,7 @@ export interface SidebarWorkspaceGroup {
   key: string;
   label: string;
   rows: SidebarWorkspaceEntry[];
-  leading: { kind: "status"; bucket: StatusBucket };
+  leading: { kind: "status"; bucket: StatusBucket } | null;
 }
 
 export function statusWorkspaceGroups(groups: readonly StatusGroup[]): SidebarWorkspaceGroup[] {
@@ -17,6 +17,17 @@ export function statusWorkspaceGroups(groups: readonly StatusGroup[]): SidebarWo
     rows: group.rows,
     leading: { kind: "status", bucket: group.bucket },
   }));
+}
+
+/**
+ * Recency grouping is one flat group: the ordering carries the meaning, so a header would only
+ * restate the menu's answer. `leading: null` keeps the header purely a label.
+ */
+export function recentActivityWorkspaceGroups(
+  rows: readonly SidebarWorkspaceEntry[],
+): SidebarWorkspaceGroup[] {
+  if (rows.length === 0) return [];
+  return [{ key: "recentActivity", label: "", rows: [...rows], leading: null }];
 }
 
 /**
