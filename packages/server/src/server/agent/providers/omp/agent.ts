@@ -518,12 +518,15 @@ function formatOmpErrorMessage(message: Extract<OmpAgentMessage, { role: "assist
   return details.length > 0 ? `${headline} (${details.join(", ")})` : headline;
 }
 
-function latestOmpErrorMessage(messages: OmpAgentMessage[]): string | null {
-  const latestAssistant = messages.findLast((message) => message.role === "assistant");
-  if (!latestAssistant || !latestAssistant.errorMessage?.trim()) {
-    return null;
+function isOmpCanceledTerminal(message: Extract<OmpAgentMessage, { role: "assistant" }>): boolean {
+  switch (message.stopReason?.trim().toLowerCase()) {
+    case "aborted":
+    case "canceled":
+    case "cancelled":
+      return true;
+    default:
+      return false;
   }
-  return formatOmpErrorMessage(latestAssistant);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -1124,7 +1127,7 @@ export class OmpAgentSession implements AgentSession {
     const turnId = this.activeTurnId;
     await this.runtimeSession.abort();
     if (turnId && this.activeTurnId === turnId) {
-      this.terminalizeActiveWork();
+      this.terminalizeActiveWork("foreground");
       this.usagePoller.stopTurn();
       this.activeTurnId = null;
       this.activeClientMessageId = null;
@@ -1179,12 +1182,12 @@ export class OmpAgentSession implements AgentSession {
     this.subagentCardTracker.clear();
   }
 
-  private terminalizeActiveWork(): void {
+  private terminalizeActiveWork(scope: "foreground" | "all"): void {
     for (const [toolCallId, toolCall] of this.activeToolCalls) {
       this.emitToolCallEvent(toolCallId, toolCall, "canceled", null, null);
     }
     this.activeToolCalls.clear();
-    for (const event of this.subagentIndex.terminalizeRunning(this.runtimeSession)) {
+    for (const event of this.subagentIndex.terminalizeRunning(this.runtimeSession, scope)) {
       this.emit(event);
     }
     this.clearOmpTurnState();
@@ -1779,7 +1782,7 @@ export class OmpAgentSession implements AgentSession {
 
   private handleProcessExit(error: string): void {
     this.usagePoller.stopTurn();
-    this.terminalizeActiveWork();
+    this.terminalizeActiveWork("all");
     this.subagentIndex.clear(this.runtimeSession);
     if (!this.activeTurnId) {
       return;
@@ -2126,6 +2129,11 @@ export class OmpAgentSession implements AgentSession {
   }
 
   private completeTurn(turnId: string | undefined, messages: OmpAgentMessage[]): void {
+    const terminalAssistant = messages.findLast((message) => message.role === "assistant");
+    const canceled = terminalAssistant ? isOmpCanceledTerminal(terminalAssistant) : false;
+    if (canceled) {
+      this.terminalizeActiveWork("foreground");
+    }
     this.activeTurnId = null;
     this.activeClientMessageId = null;
     this.activeAssistantMessageId = null;
@@ -2133,14 +2141,24 @@ export class OmpAgentSession implements AgentSession {
     this.activeTurnStarted = false;
     this.activeTurnHasUserMessage = false;
     this.clearNoTurnBuffers();
-    const errorMessage = latestOmpErrorMessage(messages);
-    if (typeof errorMessage === "string" && errorMessage.length > 0) {
+    if (terminalAssistant && canceled) {
+      this.usagePoller.stopTurn();
+      this.emit({
+        type: "turn_canceled",
+        provider: this.provider,
+        turnId,
+        reason:
+          terminalAssistant.errorMessage?.trim() || terminalAssistant.stopReason || "canceled",
+      });
+      return;
+    }
+    if (terminalAssistant?.errorMessage?.trim()) {
       this.usagePoller.stopTurn();
       this.emit({
         type: "turn_failed",
         provider: this.provider,
         turnId,
-        error: errorMessage,
+        error: formatOmpErrorMessage(terminalAssistant),
       });
       return;
     }
@@ -2160,6 +2178,9 @@ export class OmpAgentSession implements AgentSession {
     while (!this.closed && this.activeTurnStarted && this.currentTurnIdForEvent() === turnId) {
       try {
         const state = await this.runtimeSession.getState();
+        if (this.closed || !this.activeTurnStarted || this.currentTurnIdForEvent() !== turnId) {
+          return;
+        }
         this.state = state;
         if (!state.isStreaming && !state.isCompacting) {
           this.completeTurn(turnId, messages);

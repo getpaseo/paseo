@@ -113,6 +113,7 @@ export class FakeOmpSession implements OmpRuntimeSession {
   getStateRequestCount = 0;
   abortRequested = false;
   abortError: Error | null = null;
+  abortTerminalMessage: OmpAgentMessage | null = null;
   readonly canceledExtensionUiRequests: string[] = [];
   readonly extensionUiResponses: Array<{
     id: string;
@@ -243,6 +244,9 @@ export class FakeOmpSession implements OmpRuntimeSession {
       throw this.abortError;
     }
     this.abortRequested = true;
+    if (this.abortTerminalMessage) {
+      this.finishTurn(this.abortTerminalMessage);
+    }
   }
 
   async getState(): Promise<OmpSessionState> {
