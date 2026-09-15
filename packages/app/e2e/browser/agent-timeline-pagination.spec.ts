@@ -1,5 +1,10 @@
 import { expect, test } from "../support/fixtures";
 import {
+  withSpokenTimeline,
+  captureSpokenTimeline,
+  reloadSpokenTimeline,
+  expectSpokenTimelinePrompt,
+  sendSpokenTimelinePrompt,
   expectStableHistoryStartGutter,
   expectTimelineAtHistoryStart,
   expectTimelinePromptCentered,
@@ -27,6 +32,24 @@ import {
 } from "../support/helpers/timeline-pagination";
 
 test.describe("Agent timeline pagination", () => {
+  test("shows spoken words without voice instructions in history, live updates and after reload", async ({
+    page,
+  }, testInfo) => {
+    const historyText = "Please check the voice history.";
+    const liveText = "Now check the live voice message.";
+    await withSpokenTimeline(historyText, async (agent) => {
+      await openAgentTimeline(page, agent);
+      await expectSpokenTimelinePrompt(page, historyText);
+      await sendSpokenTimelinePrompt(agent, liveText);
+      await expectSpokenTimelinePrompt(page, liveText);
+      await captureSpokenTimeline(page, testInfo, "desktop");
+      await reloadSpokenTimeline(page);
+      await expectSpokenTimelinePrompt(page, liveText);
+      await captureSpokenTimeline(page, testInfo, "compact");
+      await expectSpokenTimelinePrompt(page, liveText);
+    });
+  });
+
   test("keeps the history-start gutter and visible position stable through the final page", async ({
     page,
   }) => {
