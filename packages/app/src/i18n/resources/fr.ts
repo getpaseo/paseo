@@ -2314,6 +2314,19 @@ export const fr: TranslationResources = {
       skippedFiles:
         "{{count}} fichiers partagés ont été ignorés. Paseo accepte le texte et les images.",
     },
+    links: {
+      unknownHost: "Aucun hôte nommé {{serverId}} n’est configuré sur cet appareil.",
+      noHosts: "Ajoutez un hôte avant d’ouvrir des liens Paseo.",
+      ambiguousHost: "Plusieurs hôtes sont configurés. Ajoutez serverId au lien.",
+      missingAgent: "Le lien ne désigne aucun agent.",
+      missingWorkspace: "Le lien ne désigne aucun espace de travail.",
+      promptSent: "Prompt envoyé.",
+      sendDisabled:
+        "Prompt ajouté au compositeur. Activez « Envoyer les prompts depuis les liens » dans les réglages pour l’envoyer sans confirmation.",
+      hostOffline:
+        "Prompt ajouté au compositeur. L’hôte est hors ligne, il n’a donc pas été envoyé.",
+      sendFailed: "Impossible d’envoyer le prompt : {{message}}",
+    },
   },
   settings: {
     title: "Paramètres",
@@ -2547,6 +2560,11 @@ export const fr: TranslationResources = {
           collapseToolCalls: "Réduire les appels d’outils",
           collapseTurns: "Réduire les tours",
         },
+      },
+      linkPromptSend: {
+        label: "Envoyer les prompts depuis les liens",
+        description:
+          "Autoriser les liens paseo:// et d’autres apps à envoyer un prompt à un agent sans confirmation",
       },
       language: {
         label: "Langue",

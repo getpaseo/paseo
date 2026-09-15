@@ -2299,6 +2299,18 @@ export const ar: TranslationResources = {
     share: {
       skippedFiles: "تم تخطي {{count}} من الملفات المشتركة. يقبل Paseo النصوص والصور فقط.",
     },
+    links: {
+      unknownHost: "لا يوجد مضيف باسم {{serverId}} على هذا الجهاز.",
+      noHosts: "أضف مضيفًا قبل فتح روابط Paseo.",
+      ambiguousHost: "تم إعداد عدة مضيفين. أضف serverId إلى الرابط.",
+      missingAgent: "الرابط لا يحدد وكيلًا.",
+      missingWorkspace: "الرابط لا يحدد مساحة عمل.",
+      promptSent: "تم إرسال المطالبة.",
+      sendDisabled:
+        "تمت إضافة المطالبة إلى المحرر. فعّل «إرسال المطالبات من الروابط» في الإعدادات لإرسالها دون تأكيد.",
+      hostOffline: "تمت إضافة المطالبة إلى المحرر. المضيف غير متصل، لذا لم يتم إرسالها.",
+      sendFailed: "تعذر إرسال المطالبة: {{message}}",
+    },
   },
   settings: {
     title: "إعدادات",
@@ -2527,6 +2539,10 @@ export const ar: TranslationResources = {
           collapseToolCalls: "طيّ استدعاءات الأدوات",
           collapseTurns: "طيّ الأدوار",
         },
+      },
+      linkPromptSend: {
+        label: "إرسال المطالبات من الروابط",
+        description: "السماح لروابط paseo:// والتطبيقات الأخرى بإرسال مطالبة إلى وكيل دون تأكيد",
       },
       language: {
         label: "لغة",
