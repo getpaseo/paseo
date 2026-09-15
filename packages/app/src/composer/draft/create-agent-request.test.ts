@@ -2,8 +2,9 @@ import { expect, it, vi } from "vitest";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { requestWorkspaceDraftAgent } from "./create-agent-request";
 
-it("sends launch provenance alongside the materialized draft config only on submit", async () => {
+it("creates and sends a workspace draft idempotently", async () => {
   const createAgent = vi.fn().mockResolvedValue({ id: "router-agent" });
+  const sendMessage = vi.fn().mockResolvedValue(undefined);
   const config = {
     provider: "codex",
     cwd: "/workspace",
@@ -13,19 +14,23 @@ it("sends launch provenance alongside the materialized draft config only on subm
     featureValues: { webSearch: true },
   };
   await expect(
-    requestWorkspaceDraftAgent({ createAgent } as unknown as DaemonClient, {
+    requestWorkspaceDraftAgent({ createAgent, sendMessage } as unknown as DaemonClient, {
       workspaceId: "workspace",
       launchProfileId: "paseo-workflow-router",
       config,
       text: "Build a calendar",
       clientMessageId: "message",
+      attachments: [{ type: "text", mimeType: "text/plain", text: "Calendar constraints" }],
     }),
   ).resolves.toEqual({ id: "router-agent" });
   expect(createAgent).toHaveBeenCalledExactlyOnceWith({
     workspaceId: "workspace",
     launchProfileId: "paseo-workflow-router",
     config,
-    initialPrompt: "Build a calendar",
-    clientMessageId: "message",
+    idempotencyKey: "message:agent",
+  });
+  expect(sendMessage).toHaveBeenCalledExactlyOnceWith("router-agent", "Build a calendar", {
+    messageId: "message",
+    attachments: [{ type: "text", mimeType: "text/plain", text: "Calendar constraints" }],
   });
 });

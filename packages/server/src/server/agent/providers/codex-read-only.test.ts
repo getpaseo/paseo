@@ -236,7 +236,7 @@ test.skipIf(process.platform !== "darwin")(
     await writeFile(
       script,
       [
-        "import {appendFileSync,readFileSync,writeFileSync,linkSync,symlinkSync} from 'node:fs';",
+        "import {appendFileSync,readFileSync,realpathSync,writeFileSync,linkSync,symlinkSync} from 'node:fs';",
         "import {connect} from 'node:net';",
         "import {spawnSync} from 'node:child_process';",
         "import {createInterface} from 'node:readline';",
@@ -252,9 +252,12 @@ test.skipIf(process.platform !== "darwin")(
         "let secretError=null;try{readFileSync(" +
           JSON.stringify(secret) +
           ")}catch(error){secretError=error.code;}",
+        "const homeResolved=realpathSync(process.env.CODEX_HOME);",
+        "const ownState=readFileSync(process.env.CODEX_HOME+'/clean-state','utf8');",
+        "let neighborError=null;try{readFileSync(process.env.CODEX_HOME+'/../another-agent/secret')}catch(error){neighborError=error.code;}",
         "writeFileSync(" +
           JSON.stringify(report) +
-          ",JSON.stringify({input,writeError,links,loopback,configError,secretError,paseoToken:process.env.PASEO_AUTH_TOKEN??null,childExit:child.status,home:process.env.CODEX_HOME}));",
+          ",JSON.stringify({input,writeError,links,loopback,configError,secretError,homeResolved,ownState,neighborError,paseoToken:process.env.PASEO_AUTH_TOKEN??null,childExit:child.status,home:process.env.CODEX_HOME}));",
         "createInterface({input:process.stdin}).on('line',line=>{",
         " const request=JSON.parse(line); if(request.id===undefined)return;",
         " appendFileSync(" + JSON.stringify(requests) + ", JSON.stringify(request)+'\\n');",
@@ -263,6 +266,9 @@ test.skipIf(process.platform !== "darwin")(
         "});",
       ].join("\n"),
     );
+    await writeFile(join(state, "clean-state"), "owner");
+    await mkdir(join(stateRoot, "another-agent"));
+    await writeFile(join(stateRoot, "another-agent", "secret"), "neighbor");
     const client = new CodexAppServerAgentClient(
       createTestLogger(),
       {
@@ -295,6 +301,9 @@ test.skipIf(process.platform !== "darwin")(
         loopback: "EPERM",
         configError: "EPERM",
         secretError: "EPERM",
+        homeResolved: state,
+        ownState: "owner",
+        neighborError: "EPERM",
         paseoToken: null,
       });
       expect(await readFile(fixture, "utf8")).toBe("original");

@@ -56,14 +56,8 @@ import {
 } from "@/stores/navigation-active-workspace-store";
 import { normalizeWorkspaceDescriptor, type WorkspaceDescriptor } from "@/stores/session-store";
 import { useWorkspace } from "@/stores/session-store-hooks";
-import {
-  buildDraftStoreKey,
-  buildNewWorkspaceDraftKey,
-  generateDraftId,
-} from "@/stores/draft-keys";
-import { useDraftStore, flushDraftPersistStorage } from "@/stores/draft-store";
-import { materializeAgentProfile } from "@/agent-profiles";
-import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
+import { buildNewWorkspaceDraftKey, generateDraftId } from "@/stores/draft-keys";
+import { materializeAgentProfile, type MaterializedAgentProfile } from "@/agent-profiles";
 import { useOpenAddProject } from "@/hooks/use-open-add-project";
 import { isActiveCreateFlowForDraft, useCreateFlowStore } from "@/stores/create-flow-store";
 import {
@@ -75,7 +69,6 @@ import type { KeyboardActionId } from "@/keyboard/keyboard-action-dispatcher";
 import { useFormPreferences } from "@/hooks/use-form-preferences";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import type { CreateAgentInitialValues } from "@/hooks/use-agent-form-state";
-import { generateMessageId } from "@/types/stream";
 import { toErrorMessage } from "@/utils/error-messages";
 import { projectIconPlaceholderLabelFromDisplayName } from "@/utils/project-display-name";
 import {
@@ -106,7 +99,6 @@ import type { WorkspaceDraftTabSetup, WorkspaceTabTarget } from "@/workspace-tab
 import {
   isEmptyWorkspaceSubmission,
   runCreateEmptyWorkspace,
-  runCreateIntentionWorkspace,
   ROUTER_LAUNCH_PROFILE_ID,
 } from "./new-workspace-empty";
 import {
@@ -785,6 +777,7 @@ interface SubmitDraftInput {
   draftId?: string;
   draftContextScopeKey: string | null;
   initialSetup?: WorkspaceDraftTabSetup;
+  preferInitialSetup?: boolean;
   workspaceId: string;
   workspaceDirectory: string;
   text: string;
@@ -909,6 +902,7 @@ interface CreateChatAgentInput {
     composerStateRequired: string;
     selectModel: string;
   };
+  launchProfile?: MaterializedAgentProfile & { id: string };
 }
 
 function buildWorkspaceDraftSetupFromComposer(input: {
@@ -968,7 +962,7 @@ async function runCreateChatAgent(input: CreateChatAgentInput): Promise<SubmitOu
   if (!composerState) {
     throw new Error(input.labels.composerStateRequired);
   }
-  const provider = composerState.selectedProvider;
+  const provider = input.launchProfile?.provider ?? composerState.selectedProvider;
   if (!provider) {
     throw new Error(input.labels.selectModel);
   }
@@ -985,12 +979,22 @@ async function runCreateChatAgent(input: CreateChatAgentInput): Promise<SubmitOu
     attachments: workspaceNamingAttachments,
     withInitialAgent: true,
   });
-  const initialSetup = buildWorkspaceDraftSetupForCreatedWorkspace({
-    forkDraftSetup: input.forkDraftSetup,
-    workspaceDirectory: ensuredWorkspace.workspaceDirectory,
-    provider,
-    composerState,
-  });
+  const initialSetup = input.launchProfile
+    ? {
+        launchProfileId: input.launchProfile.id,
+        cwd: ensuredWorkspace.workspaceDirectory,
+        provider: input.launchProfile.provider,
+        model: input.launchProfile.modelId || null,
+        modeId: input.launchProfile.modeId || null,
+        thinkingOptionId: input.launchProfile.thinkingOptionId || null,
+        featureValues: input.launchProfile.featureValues,
+      }
+    : buildWorkspaceDraftSetupForCreatedWorkspace({
+        forkDraftSetup: input.forkDraftSetup,
+        workspaceDirectory: ensuredWorkspace.workspaceDirectory,
+        provider,
+        composerState,
+      });
   return await submitWorkspaceDraft({
     clearConsumedDraft,
     serverId,
@@ -999,6 +1003,7 @@ async function runCreateChatAgent(input: CreateChatAgentInput): Promise<SubmitOu
     draftId: input.draftId,
     draftContextScopeKey: input.draftContextScopeKey,
     initialSetup,
+    preferInitialSetup: Boolean(input.launchProfile),
     workspaceId: ensuredWorkspace.id,
     workspaceDirectory: ensuredWorkspace.workspaceDirectory,
     text,
@@ -1046,9 +1051,14 @@ function resolveWorkspaceDraftSubmissionConfig(input: {
   provider: AgentProvider;
   composerState: NewWorkspaceComposerState;
   initialSetup?: WorkspaceDraftTabSetup;
+  preferInitialSetup?: boolean;
 }): WorkspaceDraftSubmissionConfig {
   const { draftId, workspaceDirectory, provider, composerState, initialSetup } = input;
-  if (initialSetup && composerState.selectedLaunchProfileId === initialSetup.launchProfileId) {
+  if (
+    initialSetup &&
+    (input.preferInitialSetup ||
+      composerState.selectedLaunchProfileId === initialSetup.launchProfileId)
+  ) {
     return {
       launchProfileId: initialSetup.launchProfileId,
       cwd: initialSetup.cwd,
@@ -1084,9 +1094,10 @@ async function submitWorkspaceDraft(input: SubmitDraftInput): Promise<SubmitOutc
     provider,
     composerState,
     initialSetup,
+    preferInitialSetup,
   } = input;
   const draftId = draftIdInput?.trim() || generateDraftId();
-  const clientMessageId = generateMessageId();
+  const clientMessageId = `workspace-draft:${serverId}:${workspaceId}:${draftId}:prompt`;
   const timestamp = Date.now();
   const wirePayload = splitComposerAttachmentsForSubmit(attachments, {
     format: resolveComposerAttachmentSubmitFormat({
@@ -1099,6 +1110,7 @@ async function submitWorkspaceDraft(input: SubmitDraftInput): Promise<SubmitOutc
     provider,
     composerState,
     initialSetup,
+    preferInitialSetup,
   });
   // Creation blocks on a slow daemon RPC. If the user moved on while it ran, the destination
   // screen's draft tab will never mount to issue create_agent, so this path does it instead.
@@ -2128,7 +2140,6 @@ export function NewWorkspaceScreen({
     ],
   );
 
-  const clearChatDraft = chatDraft.clear;
   const handleSubmitNewWorkspace = useCallback(
     async (payload: MessagePayload) => {
       try {
@@ -2142,41 +2153,32 @@ export function NewWorkspaceScreen({
           );
           if (!profile) throw new Error(t("newWorkspace.intention.profileUnavailable"));
           if (!payload.text.trim()) throw new Error(t("newWorkspace.intention.required"));
-          const clearConsumedDraft = captureWorkspaceDraftCleanup({
-            draftId,
-            draftKey,
-            draftContextScopeKey,
-            clearDraft: clearChatDraft,
-          });
-          setPendingAction("empty");
-          const routerDraftId = generateDraftId();
-          await runCreateIntentionWorkspace({
+          const intention = payload.rawText ?? payload.text;
+          setPendingAction("chat");
+          const outcome = await runCreateChatAgent({
             payload,
-            ensureWorkspace,
-            draftId: routerDraftId,
-            profile: { ...materializeAgentProfile(profile), id: profile.id },
-            saveDraft: (draft) =>
-              useDraftStore.getState().saveDraftInput({
-                draftKey: buildDraftStoreKey({
-                  serverId: selectedServerId,
-                  agentId: routerDraftId,
-                  draftId: routerDraftId,
-                }),
-                draft,
+            composerState,
+            forkDraftSetup,
+            ensureWorkspace: (workspaceInput) =>
+              ensureWorkspace({
+                ...workspaceInput,
+                intent: intention,
               }),
-            openDraft: (workspaceId, target) => {
-              useWorkspaceLayoutStore.getState().openTab({
-                workspaceKey: `${selectedServerId}:${workspaceId}`,
-                target,
-                intent: "background",
-              });
-              if (isStillOnCreateScreen())
-                navigateToWorkspace({ serverId: selectedServerId, workspaceId, target });
+            serverId: selectedServerId,
+            clearDraft: chatDraft.clear,
+            draftKey,
+            draftId,
+            draftContextScopeKey,
+            supportsForgeSearch,
+            resolveClient: withConnectedClient,
+            isStillOnCreateScreen,
+            labels: {
+              composerStateRequired: t("newWorkspace.errors.composerStateRequired"),
+              selectModel: t("newWorkspace.errors.selectModel"),
             },
+            launchProfile: { ...materializeAgentProfile(profile), id: profile.id },
           });
-          await flushDraftPersistStorage();
-          clearConsumedDraft();
-          setPendingAction(null);
+          if (outcome === "background") setPendingAction(null);
           return;
         }
         if (isEmptyWorkspaceSubmission(payload)) {
@@ -2238,7 +2240,6 @@ export function NewWorkspaceScreen({
       draftContextScopeKey,
       draftId,
       chatDraft.clear,
-      clearChatDraft,
       draftKey,
       ensureWorkspace,
       forkDraftSetup,

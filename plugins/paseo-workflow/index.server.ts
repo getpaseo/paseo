@@ -24,9 +24,9 @@ export default function contribute(server: PluginServerContext) {
     type: "workflow.handoff.prepare.response" as const,
     ...(await workflow(paseo).prepareHandoff(input)),
   }));
-  server.handle(handoffRpc, async ({ selection, ...context }, { paseo }) => ({
+  server.handle(handoffRpc, async ({ selection: _ignored, ...context }, { paseo }) => ({
     type: "workflow.plan.handoff.response" as const,
-    ...(await workflow(paseo).handoff(context, selection)),
+    ...(await workflow(paseo).handoff(context)),
   }));
   server.handle(statusRpc, async (input, { paseo }) => ({
     type: "workflow.status.get.response" as const,
@@ -59,8 +59,19 @@ export default function contribute(server: PluginServerContext) {
       await workflow(paseo).approved(agent.id, requestId);
   });
   server.on("agent.turn_ended", async ({ agent, outcome, turnId }, { paseo }) => {
-    if (outcome.kind !== "completed" || !agent.launchProfileId?.startsWith("paseo-workflow-"))
-      return;
+    if (outcome.kind !== "completed") return;
+    // Direct-config executors have no workflow launch profile; trust only the executor role labels.
+    const roles = [
+      "executor-trivial",
+      "executor-bounded",
+      "executor-diagnostic",
+      "executor-complex",
+      "executor-critical",
+    ];
+    const admitted =
+      agent.launchProfileId?.startsWith("paseo-workflow-") ||
+      roles.includes(agent.labels["paseo.workflow.role"] ?? "");
+    if (!admitted) return;
     await workflow(paseo).turnEnded(agent.id, turnId);
   });
   return () => {};

@@ -29,7 +29,9 @@ export const prepareRpc = defineRpc({
 });
 export const handoffRpc = defineRpc({
   name: "workflow.plan.handoff.request",
-  input: planContext.extend({ selection: executorSelection }),
+  // COMPAT(workflow-automatic-routing): added in v0.9.1, remove after 2027-09-15.
+  // An already-loaded older client may still send its dropdown selection; the server ignores it.
+  input: planContext.extend({ selection: executorSelection.optional() }),
   output: z.object({ type: z.literal("workflow.plan.handoff.response"), agentId: z.string() }),
 });
 export const statusRpc = defineRpc({
@@ -50,8 +52,9 @@ export const statusRpc = defineRpc({
     recommendation: executorSelection.nullable(),
     handoff: z
       .object({
-        selection: executorSelection,
-        phase: z.enum(["closing", "closed", "running"]),
+        // COMPAT(workflow-executor-selection): added in v0.8.0, remove after 2027-09-13.
+        selection: executorSelection.optional(),
+        phase: z.enum(["closing", "closed", "running", "outcome_unknown"]),
         agentId: z.string().optional(),
       })
       .nullable()

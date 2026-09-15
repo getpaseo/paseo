@@ -1,5 +1,5 @@
 import type { PluginClientContext, PluginPlanActionContext } from "@getpaseo/plugin/client";
-import { reviewRpc, prepareRpc } from "../shared/rpc";
+import { handoffRpc, reviewRpc } from "../shared/rpc";
 import { profileId } from "../shared/profiles";
 
 function planInput(context: PluginPlanActionContext) {
@@ -27,12 +27,11 @@ export function registerActions(client: Pick<PluginClientContext, "addPlanAction
   });
   client.addPlanAction({
     id: "handoff",
-    title: "Hand off",
+    title: "Handoff",
     order: 20,
-    query: { launchProfileId: profileId("planner") },
     async onPress(context) {
-      await context.rpc(prepareRpc, planInput(context));
-      context.openPanel("workflow");
+      const { agentId } = await context.rpc(handoffRpc, planInput(context));
+      context.navigation?.openAgent({ agentId });
     },
   });
 }

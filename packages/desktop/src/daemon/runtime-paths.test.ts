@@ -3,6 +3,7 @@ import { resolveNodeExecPath } from "./runtime-paths";
 
 const mocks = vi.hoisted(() => ({
   existsSync: vi.fn(),
+  readdirSync: vi.fn(),
   app: {
     isPackaged: true,
   },
@@ -10,6 +11,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("node:fs", () => ({
   existsSync: mocks.existsSync,
+  readdirSync: mocks.readdirSync,
   readFileSync: vi.fn(),
 }));
 
@@ -52,6 +54,7 @@ describe("runtime-paths", () => {
   beforeEach(() => {
     mocks.app.isPackaged = true;
     mocks.existsSync.mockReturnValue(true);
+    mocks.readdirSync.mockReturnValue(["Paseo Helper.app"]);
     setProcessRuntime({
       platform: "darwin",
       execPath: "/Applications/Paseo.app/Contents/MacOS/Paseo",
@@ -72,5 +75,18 @@ describe("runtime-paths", () => {
     expect(resolveNodeExecPath()).toBe(
       "/Applications/Paseo.app/Contents/Frameworks/Paseo Helper.app/Contents/MacOS/Paseo Helper",
     );
+  });
+
+  it("discovers the renamed helper in a Paseo Local bundle", () => {
+    const helper =
+      "/Users/me/Applications/Paseo Local.app/Contents/Frameworks/Paseo Local Helper.app/Contents/MacOS/Paseo Local Helper";
+    setProcessRuntime({
+      platform: "darwin",
+      execPath: "/Users/me/Applications/Paseo Local.app/Contents/MacOS/Paseo",
+    });
+    mocks.existsSync.mockImplementation((candidate) => candidate === helper);
+    mocks.readdirSync.mockReturnValue(["Paseo Local Helper.app"]);
+
+    expect(resolveNodeExecPath()).toBe(helper);
   });
 });

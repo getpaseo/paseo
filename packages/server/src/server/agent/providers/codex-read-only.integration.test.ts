@@ -11,7 +11,7 @@ import {
 import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
 import { createTestLogger } from "../../../test-utils/test-logger.js";
 import { CodexAppServerAgentClient } from "./codex-app-server-agent.js";
 import { CodexAppServerClient } from "./codex/app-server-transport.js";
@@ -25,9 +25,11 @@ test.skipIf(process.platform !== "darwin")(
   "isolated native Codex persists, resumes, archives and restores its own conversation",
   async () => {
     const root = await realpath(await mkdtemp(join(tmpdir(), "paseo-native-readonly-")));
+    const paseoHome = join(root, "paseo-home");
     const cwd = join(root, "workspace");
     const sourceHome = join(root, "empty-source-home");
-    const stateRoot = join(root, "state");
+    const stateRoot = join(paseoHome, "codex-read-only");
+    vi.stubEnv("PASEO_HOME", paseoHome);
     await mkdir(cwd);
     await mkdir(sourceHome);
     const agentId = "8ea1cec9-1e09-477c-82e5-ea4142f09f19";
@@ -189,6 +191,7 @@ test.skipIf(process.platform !== "darwin")(
       manager.prepareForShutdown();
       await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id)));
       await manager.flushForShutdown();
+      vi.unstubAllEnvs();
       await rm(root, { recursive: true, force: true });
     }
   },
@@ -199,6 +202,8 @@ test.skipIf(process.platform !== "darwin")(
   "native exec-policy allow cannot bypass workspace confinement",
   async () => {
     const root = await realpath(await mkdtemp(join(tmpdir(), "paseo-native-boundary-")));
+    const paseoHome = join(root, "paseo-home");
+    vi.stubEnv("PASEO_HOME", paseoHome);
     const cwd = join(root, "workspace");
     const source = join(root, "source");
     await mkdir(cwd);
@@ -211,8 +216,8 @@ test.skipIf(process.platform !== "darwin")(
         agentId: "native-boundary",
         cwd,
         env: { ...process.env, CODEX_HOME: source },
-        stateRoot: join(root, "state"),
       });
+      expect(runtime.stateDir).toBe(join(paseoHome, "codex-read-only", "native-boundary"));
       const binary = await findExecutable("codex");
       if (!binary)
         throw new Error("Codex CLI is required for the native read-only integration test");
@@ -261,6 +266,7 @@ test.skipIf(process.platform !== "darwin")(
       expect(await readFile(fixture, "utf8")).toBe("original");
     } finally {
       await rpc?.dispose();
+      vi.unstubAllEnvs();
       await rm(root, { recursive: true, force: true });
     }
   },

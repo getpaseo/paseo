@@ -184,6 +184,7 @@ export interface PluginAgentCommandContext extends PluginCommandCapabilities {
   context: "agent";
   workspace: PluginWorkspaceSnapshot;
   agent: PluginAgentSnapshot;
+  navigation?: Pick<NonNullable<PluginNavigableHostProps["navigation"]>, "openAgent">;
   openPanel(id: string, options?: PluginOpenPanelOptions): void;
 }
 

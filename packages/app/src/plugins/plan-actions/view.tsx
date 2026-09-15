@@ -249,27 +249,29 @@ export function PlanActions({
   );
 }
 
-const styles = StyleSheet.create((theme) => ({
-  container: { minWidth: 0, gap: theme.spacing[2] },
-  bar: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "flex-end",
-    gap: theme.spacing[2],
-    minWidth: 0,
-  },
-  more: {
-    minHeight: 44,
-    paddingHorizontal: theme.spacing[3],
-    justifyContent: "center",
-    borderRadius: theme.borderRadius.lg,
-  },
-  moreLabel: { fontSize: theme.fontSize.base, color: theme.colors.foregroundMuted },
-  status: {
-    minHeight: 20,
-    fontSize: theme.fontSize.sm,
-    lineHeight: 20,
-    color: theme.colors.foregroundMuted,
-  },
-  error: { color: theme.colors.statusDanger },
-}));
+const styles = StyleSheet.create((theme) => {
+  return {
+    container: { minWidth: 0, gap: theme.spacing[2] },
+    bar: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "flex-end",
+      gap: theme.spacing[2],
+      minWidth: 0,
+    },
+    more: {
+      minHeight: 44,
+      paddingHorizontal: theme.spacing[3],
+      justifyContent: "center",
+      borderRadius: theme.borderRadius.lg,
+    },
+    moreLabel: { fontSize: theme.fontSize.base, color: theme.colors.foregroundMuted },
+    status: {
+      minHeight: 20,
+      fontSize: theme.fontSize.sm,
+      lineHeight: 20,
+      color: theme.colors.foregroundMuted,
+    },
+    error: { color: theme.colors.statusDanger },
+  };
+});

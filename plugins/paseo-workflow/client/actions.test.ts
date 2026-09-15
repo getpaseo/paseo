@@ -5,7 +5,7 @@ import type {
 } from "@getpaseo/plugin/client";
 import { registerActions } from "./actions";
 
-test("the client contributes Revue and Hand off with the exact live plan context and waits before opening the choice panel", async () => {
+test("the client contributes Revue and one direct automatic Handoff", async () => {
   const actions: PluginPlanActionContribution[] = [];
   registerActions({
     addPlanAction: (action) => {
@@ -13,10 +13,10 @@ test("the client contributes Revue and Hand off with the exact live plan context
       return () => {};
     },
   });
-  expect(actions.map((action) => action.title)).toEqual(["Revue", "Hand off"]);
-  expect(
-    actions.every((action) => action.query?.launchProfileId === "paseo-workflow-planner"),
-  ).toBe(true);
+  expect(actions.map((action) => action.title)).toEqual(["Revue", "Handoff"]);
+  expect(actions[0]?.query?.launchProfileId).toBe("paseo-workflow-planner");
+  expect(actions[1]?.query).toBeUndefined();
+  expect(actions[1]?.choices).toBeUndefined();
   const calls: unknown[] = [];
   const context = {
     agent: { id: "agent" },
@@ -24,10 +24,11 @@ test("the client contributes Revue and Hand off with the exact live plan context
     plan: { callId: "call", permissionRequestId: "permission", text: "Exact plan", turnId: "turn" },
     rpc: async (contract: { name: string }, input: unknown) => {
       calls.push({ rpc: contract.name, input });
+      if (contract.name === "workflow.plan.handoff.request") return { agentId: "executor" };
       return {};
     },
-    openPanel: (id: string) => {
-      calls.push({ panel: id });
+    navigation: {
+      openAgent: ({ agentId }: { agentId: string }) => calls.push({ agentId }),
     },
   } as unknown as PluginPlanActionContext;
   await actions[0].onPress(context);
@@ -41,7 +42,7 @@ test("the client contributes Revue and Hand off with the exact live plan context
   };
   expect(calls).toEqual([
     { rpc: "workflow.plan.review.request", input: expected },
-    { rpc: "workflow.handoff.prepare.request", input: expected },
-    { panel: "workflow" },
+    { rpc: "workflow.plan.handoff.request", input: expected },
+    { agentId: "executor" },
   ]);
 });

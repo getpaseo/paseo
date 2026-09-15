@@ -28,6 +28,7 @@ export interface PluginHookAgent {
   provider: string;
   cwd: string;
   title: string | null;
+  labels: Record<string, string>;
 }
 
 export interface PluginSessionOpenRequest {

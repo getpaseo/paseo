@@ -2,6 +2,7 @@ import { defineSettings } from "@getpaseo/plugin";
 import { z } from "zod";
 import { planContext, executorSelection } from "../shared/rpc";
 import { classification, auditDecision } from "../shared/final-review";
+import { executionDecision } from "./execution-routing";
 
 const storedPlanContext = planContext.omit({ permissionRequestId: true }).extend({
   permissionRequestId: z.string().optional(),
@@ -82,9 +83,19 @@ export const workflowSettings = defineSettings({
                 .optional(),
               handoff: z
                 .object({
-                  selection: executorSelection,
-                  phase: z.enum(["closing", "closed", "running"]),
+                  // COMPAT(workflow-executor-selection): added in v0.8.0, remove after 2027-09-13.
+                  selection: executorSelection.optional(),
+                  phase: z.enum(["closing", "closed", "running", "outcome_unknown"]),
                   agentId: z.string().optional(),
+                })
+                .optional(),
+              routing: z
+                .object({
+                  attempt: z.number().int().positive(),
+                  phase: z.enum(["running", "complete", "failed", "outcome_unknown"]),
+                  agentId: z.string().optional(),
+                  decision: executionDecision.optional(),
+                  error: z.string().optional(),
                 })
                 .optional(),
             }),

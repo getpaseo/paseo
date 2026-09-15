@@ -14,9 +14,10 @@ Each live agent in `AgentManager` carries a `lastStatus` of `initializing`, `idl
 
 ## Plans and launch history
 
-Creating a workspace with an intention prepares an unsent Router draft. Sending that draft is
-the agent-creation boundary. Editing the workspace intention later does not rewrite the draft
-or an agent conversation; [data-model.md](data-model.md#workspace-intention) owns its persistence.
+Submitting a workspace intention creates the workspace and sends that intention to its configured
+Router in one action. The created conversation owns retry and delivery state. Editing the workspace
+intention later does not rewrite an agent conversation; [data-model.md](data-model.md#workspace-intention)
+owns its persistence.
 
 A launch profile records provenance, not a live binding to settings. Applying another profile
 to an active agent does not change its launch history. The post-approval mode is captured at

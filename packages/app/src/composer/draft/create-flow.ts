@@ -19,6 +19,10 @@ import type { PendingMessageSubmission } from "@/composer/submission/model";
 
 const EMPTY_STREAM_ITEMS: StreamItem[] = [];
 
+function createAttemptMessageId(fixedId?: string): string {
+  return fixedId ?? generateMessageId();
+}
+
 interface CreateAttempt {
   clientMessageId: string;
   text: string;
@@ -97,6 +101,7 @@ interface CreateRequestContext {
 
 interface UseDraftAgentCreateFlowOptions<TDraftAgent, TCreateResult> {
   draftId: string;
+  clientMessageId?: string;
   getPendingServerId: () => string | null;
   initialAttempt?: CreateAttempt | null;
   allowEmptyText?: boolean;
@@ -111,6 +116,7 @@ interface UseDraftAgentCreateFlowOptions<TDraftAgent, TCreateResult> {
 
 export function useDraftAgentCreateFlow<TDraftAgent, TCreateResult>({
   draftId,
+  clientMessageId,
   getPendingServerId,
   initialAttempt = null,
   allowEmptyText = false,
@@ -296,7 +302,7 @@ export function useDraftAgentCreateFlow<TDraftAgent, TCreateResult>({
       }
 
       const attempt: CreateAttempt = {
-        clientMessageId: generateMessageId(),
+        clientMessageId: createAttemptMessageId(clientMessageId),
         text: trimmedPrompt,
         timestamp: new Date(),
         ...(images && images.length > 0 ? { images } : {}),
@@ -322,6 +328,7 @@ export function useDraftAgentCreateFlow<TDraftAgent, TCreateResult>({
     },
     [
       allowEmptyText,
+      clientMessageId,
       draftId,
       getPendingServerId,
       isSubmitting,

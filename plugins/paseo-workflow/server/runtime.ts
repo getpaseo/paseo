@@ -56,6 +56,18 @@ export function runtime(
   };
   const port: WorkflowPort = {
     profiles: async () => (await paseo.config.get()).config.agentProfiles ?? [],
+    models: async (provider, cwd) => {
+      const result = await paseo.providers.listModels(provider, { cwd });
+      if (result.error) throw new Error(result.error);
+      return result.models ?? [];
+    },
+    wait: async (id, timeoutMs) => {
+      const result = await paseo.agents.ref(id).waitForFinish(timeoutMs);
+      return { status: result.status, error: result.error, lastMessage: result.lastMessage };
+    },
+    archive: async (id) => {
+      await paseo.agents.ref(id).archive();
+    },
     agent: async (id) => {
       const handle = paseo.agents.ref(id);
       const snapshot = await handle.refresh();

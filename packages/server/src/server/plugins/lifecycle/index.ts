@@ -93,6 +93,7 @@ export function describeHookAgent(agent: {
     provider: agent.provider,
     cwd: agent.cwd,
     title: agent.title ?? null,
+    labels: agent.labels,
   };
 }
 

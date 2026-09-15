@@ -17,6 +17,11 @@ import type {
 import { AgentTurnNotAcceptedError } from "../agent/agent-sdk-types.js";
 import { workflowNativeHistory } from "../test-utils/native-provider-history.js";
 import { AgentRequests, AgentRequestRejectedError } from "../agent/requests/index.js";
+import type { StoredAgentRecord } from "../agent/agent-storage.js";
+
+function nextRoleFor(role: string) {
+  return role === "router" ? "planner" : "final-review";
+}
 
 async function lifecycleFixture(
   options: {
@@ -42,6 +47,43 @@ async function lifecycleFixture(
   const provider = createTestAgentClient("codex");
   const originalCreate = provider.createSession.bind(provider);
   const originalResume = provider.resumeSession.bind(provider);
+  const originalCatalog = provider.fetchCatalog.bind(provider);
+  provider.fetchCatalog = async (catalogOptions) => {
+    const { modes } = await originalCatalog(catalogOptions);
+    return {
+      models: [
+        {
+          provider: "codex",
+          id: "gpt-5.6-luna",
+          label: "Luna",
+          thinkingOptions: [{ id: "low", label: "Low" }],
+        },
+        {
+          provider: "codex",
+          id: "gpt-5.6-sol",
+          label: "Sol",
+          isDefault: true,
+          thinkingOptions: [
+            { id: "low", label: "Low" },
+            { id: "medium", label: "Medium" },
+            { id: "high", label: "High" },
+          ],
+        },
+        {
+          provider: "codex",
+          id: "gpt-6-astra",
+          label: "Astra",
+          thinkingOptions: [
+            { id: "low", label: "Low" },
+            { id: "medium", label: "Medium" },
+            { id: "high", label: "High" },
+            { id: "xhigh", label: "Extra high" },
+          ],
+        },
+      ],
+      modes,
+    };
+  };
   const prompts: Array<{ role: string; text: string }> = [];
   const replies = new Map<string, string[]>();
   const holds = new Map<string, Promise<void>>();
@@ -207,6 +249,10 @@ async function lifecycleFixture(
     daemon.daemon.agentManager
       .listAgents()
       .filter((agent) => agent.launchProfileId === `paseo-workflow-${role}`);
+  const labelled = (role: string) =>
+    daemon.daemon.agentManager
+      .listAgents()
+      .filter((agent) => agent.labels["paseo.workflow.role"] === role);
   return {
     directory,
     git,
@@ -219,6 +265,7 @@ async function lifecycleFixture(
     workspace,
     read,
     agents,
+    labelled,
     prompts,
     replies,
     holds,
@@ -412,6 +459,74 @@ async function publishPlanApproval(
     .toBe(true);
 }
 
+test("an ordinary conversation classifies its pending plan and hands it to one direct-config executor", async () => {
+  const f = await lifecycleFixture();
+  try {
+    await f.client.patchDaemonConfig({
+      agentProfiles: [
+        ...profiles,
+        { id: "ordinary-profile", name: "Ordinary", provider: "codex", modeId: "full-access" },
+      ],
+    });
+    const ordinary = await f.client.createAgent({
+      provider: "codex",
+      cwd: f.directory,
+      workspaceId: f.workspace.id,
+      launchProfileId: "ordinary-profile",
+      modeId: "full-access",
+    });
+    await f.client.sendMessage(ordinary.id, "Plan this existing conversation");
+    await expect
+      .poll(() => f.daemon.daemon.agentManager.getAgent(ordinary.id)?.lifecycle)
+      .toBe("idle");
+    f.replies.set("router", [
+      '{"category":"bounded","provider":"codex","model":"gpt-5.6-sol","effort":"medium","reason":"Scoped fix"}',
+    ]);
+    const plan = await pendingPlan(f, ordinary.id, "ordinary-plan");
+    await expect(
+      f.client.invokePluginRpc("paseo-workflow", "workflow.plan.handoff.request", plan),
+    ).resolves.toMatchObject({ agentId: expect.any(String) });
+    expect(f.agents("executor-standard")).toHaveLength(0);
+    let classifier!: StoredAgentRecord;
+    await expect
+      .poll(async () => {
+        classifier = (await f.daemon.daemon.agentStorage.list()).find(
+          (record) => record.labels["paseo.workflow.role"] === "execution-router",
+        )!;
+        return classifier?.archivedAt ?? null;
+      })
+      .toBeTruthy();
+    expect(classifier.launchProfileId).toBeUndefined();
+    expect(classifier.config.model).toBe("gpt-5.6-sol");
+    expect(classifier.config.thinkingOptionId).toBe("medium");
+    expect(
+      f.prompts.filter((prompt) => prompt.text.startsWith("Classify the workflow plan")),
+    ).toHaveLength(1);
+    expect(f.labelled("executor-bounded")).toHaveLength(1);
+    const executor = f.labelled("executor-bounded")[0]!;
+    expect(executor.launchProfileId).toBeUndefined();
+    expect(executor.config.model).toBe("gpt-5.6-sol");
+    expect(executor.config.thinkingOptionId).toBe("medium");
+    expect(executor.config.writePolicy).toBe("read_write");
+    expect(f.prompts.filter((prompt) => prompt.text.startsWith("/paseo-handoff"))).toHaveLength(1);
+    await f.client.reloadPlugin("paseo-workflow");
+    await f.client.invokePluginRpc("paseo-workflow", "workflow.status.get.request", {
+      agentId: ordinary.id,
+      workspaceId: f.workspace.id,
+    });
+    expect(f.labelled("executor-bounded")).toHaveLength(1);
+    expect(f.prompts.filter((prompt) => prompt.text.startsWith("/paseo-handoff"))).toHaveLength(1);
+    await expect
+      .poll(
+        async () =>
+          (await f.read()).values.workflows[plan.agentId!]?.plans[plan.callId]?.verification,
+      )
+      .toBeTruthy();
+  } finally {
+    await f.close();
+  }
+}, 60_000);
+
 test.each(["no-commit", "no-target"] as const)(
   "implementation completion exposes verification required (%s)",
   async (reason) => {
@@ -504,9 +619,14 @@ test.each(["router", "executor-standard"] as const)(
       } else {
         const plan = await pendingPlan(f);
         ownerId = plan.agentId;
-        f.effects.set(role, async () => {
-          await writeFile(path.join(f.directory, "feature.txt"), "functional\n");
-          f.git("commit", "--quiet", "-am", "functional");
+        f.replies.set("router", [
+          '{"category":"complex","provider":"codex","model":"gpt-6-astra","effort":"high","reason":"Coordinated changes"}',
+        ]);
+        f.effects.set("router", async (text) => {
+          if (text.startsWith("/paseo-handoff")) {
+            await writeFile(path.join(f.directory, "feature.txt"), "functional\n");
+            f.git("commit", "--quiet", "-am", "functional");
+          }
         });
         await f.client.invokePluginRpc("paseo-workflow", "workflow.plan.handoff.request", {
           ...plan,
@@ -515,7 +635,13 @@ test.each(["router", "executor-standard"] as const)(
       }
       await f.client.disablePlugin("paseo-workflow");
       release();
-      await expect.poll(() => f.agents(role)[0]?.lifecycle).toBe("idle");
+      await expect
+        .poll(() =>
+          role === "router"
+            ? f.agents("router")[0]?.lifecycle
+            : f.labelled("executor-complex")[0]?.lifecycle,
+        )
+        .toBe("idle");
       await f.client.enablePlugin("paseo-workflow");
       const status = () =>
         f.client.invokePluginRpc("paseo-workflow", "workflow.status.get.request", {
@@ -523,7 +649,7 @@ test.each(["router", "executor-standard"] as const)(
           workspaceId: f.workspace.id,
         });
       await status();
-      const nextRole = role === "router" ? "planner" : "final-review";
+      const nextRole = nextRoleFor(role);
       expect(f.agents(nextRole)).toHaveLength(1);
       await f.client.reloadPlugin("paseo-workflow");
       await status();
@@ -986,6 +1112,7 @@ test("Planner clarification after routing is transported in review, handoff and 
   try {
     f.replies.set("router", [
       '{"ready":true,"recommendation":"advanced","constraints":[],"assumptions":[]}',
+      '{"category":"diagnostic","provider":"codex","model":"gpt-5.6-sol","effort":"high","reason":"Several modules"}',
     ]);
     f.replies.set("final-review", ['{"classification":"SIMPLE"}']);
     f.replies.set("audit-economic", ['{"findings":[]}']);
@@ -1026,12 +1153,9 @@ test("Planner clarification after routing is transported in review, handoff and 
     await expect.poll(() => f.agents("planner")[0]?.lifecycle).toBe("idle");
     const plan = await pendingPlan(f, planner.id, "plan-2");
     await f.client.invokePluginRpc("paseo-workflow", "workflow.handoff.prepare.request", plan);
-    await f.client.invokePluginRpc("paseo-workflow", "workflow.plan.handoff.request", {
-      ...plan,
-      selection: "advanced",
-    });
-    const executor = f.agents("executor-advanced")[0]!;
-    await expect.poll(() => f.agents("executor-advanced")[0]?.lifecycle).toBe("idle");
+    await f.client.invokePluginRpc("paseo-workflow", "workflow.plan.handoff.request", plan);
+    const executor = f.labelled("executor-diagnostic")[0]!;
+    await expect.poll(() => f.labelled("executor-diagnostic")[0]?.lifecycle).toBe("idle");
     await writeFile(path.join(f.directory, "feature.txt"), "functional\n");
     f.git("add", "feature.txt");
     f.git("commit", "--quiet", "-m", "functional");
@@ -1039,18 +1163,23 @@ test("Planner clarification after routing is transported in review, handoff and 
     await expect
       .poll(() => f.prompts.filter((prompt) => prompt.role === "final-review").length)
       .toBeGreaterThan(0);
-    for (const role of ["plan-reviewer", "executor-advanced", "final-review"])
+    for (const role of ["plan-reviewer", "final-review"])
       expect(
         f.prompts.find((prompt) => prompt.role === role)?.text.includes(clarification),
         role,
       ).toBe(true);
+    expect(
+      f.prompts
+        .find((prompt) => prompt.text.startsWith("/paseo-handoff"))
+        ?.text.includes(clarification),
+    ).toBe(true);
     await f.client.reloadPlugin("paseo-workflow");
     expect(
       await f.client.invokePluginRpc("paseo-workflow", "workflow.status.get.request", {
         agentId: planner.id,
         workspaceId: plan.workspaceId,
       }),
-    ).toMatchObject({ handoff: { selection: "advanced", phase: "running", agentId: executor.id } });
+    ).toMatchObject({ handoff: { phase: "running", agentId: executor.id } });
   } finally {
     await f.close();
   }
@@ -1176,6 +1305,9 @@ test.each(["review", "handoff"] as const)(
       manager.getAgent(plan.agentId)!.session!.respondToPermission = async () => {
         throw new Error("Native API forbidden");
       };
+      f.replies.set("router", [
+        '{"category":"diagnostic","provider":"codex","model":"gpt-5.6-sol","effort":"high","reason":"Several modules"}',
+      ]);
       const context = { ...plan, permissionRequestId: permission.id };
       const method =
         action === "review" ? "workflow.plan.review.request" : "workflow.plan.handoff.request";
@@ -1183,7 +1315,7 @@ test.each(["review", "handoff"] as const)(
       const first = await f.client.invokePluginRpc("paseo-workflow", method, input);
       expect(await f.client.invokePluginRpc("paseo-workflow", method, input)).toEqual(first);
       expect(manager.getAgent(plan.agentId)!.pendingPermissions.size).toBe(0);
-      expect(f.agents(action === "review" ? "plan-reviewer" : "executor-advanced")).toHaveLength(1);
+      expect(f.labelled("executor-diagnostic")).toHaveLength(action === "review" ? 0 : 1);
       await expect(f.client.ensurePlanPermission(request)).rejects.toThrow();
     } finally {
       await f.close();
@@ -2076,29 +2208,30 @@ test.each([
           });
           await f.client.respondToPermissionAndWait(ownerId, permission.id, { behavior: "allow" });
         } else {
-          let release!: () => void;
-          f.holds.set(
-            role,
-            new Promise<void>((resolve) => {
-              release = resolve;
-            }),
-          );
-          f.effects.set(role, async () => {
-            await writeFile(path.join(f.directory, "feature.txt"), "implemented\n");
-            f.git("commit", "--quiet", "-am", "functional");
+          f.replies.set("router", [
+            '{"category":"complex","provider":"codex","model":"gpt-6-astra","effort":"high","reason":"Coordinated changes"}',
+            "Implemented and committed",
+          ]);
+          f.effects.set("router", async (text) => {
+            if (text.startsWith("/paseo-handoff")) {
+              await writeFile(path.join(f.directory, "feature.txt"), "implemented\n");
+              f.git("commit", "--quiet", "-am", "functional");
+            }
           });
           await f.client.invokePluginRpc("paseo-workflow", "workflow.plan.handoff.request", {
             ...plan,
             selection: "standard",
           });
           await f.client.disablePlugin("paseo-workflow");
-          release();
-          f.holds.delete(role);
         }
       }
-      await expect.poll(() => f.agents(role)[0]?.lifecycle).toBe("idle");
+      const completedAgent = () =>
+        role === "router" || role === "planner"
+          ? f.agents(role)[0]
+          : f.labelled("executor-complex")[0];
+      await expect.poll(() => completedAgent()?.lifecycle).toBe("idle");
       await f.daemon.daemon.agentManager.flush();
-      const completed = f.agents(role)[0]!.lastCompletedTurnId;
+      const completed = completedAgent()!.lastCompletedTurnId;
       expect(completed).toBeTruthy();
       if (!hasTurnIds) {
         for (const event of [...f.providerHistory.values()].flat()) {

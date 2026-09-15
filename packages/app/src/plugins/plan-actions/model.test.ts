@@ -21,7 +21,12 @@ function input(overrides: Partial<PlanActionsInput> = {}): PlanActionsInput {
     contributions: [
       {
         pluginId: "workflow",
-        contribution: { id: "handoff", title: "Hand off", order: 20, onPress() {} },
+        contribution: {
+          id: "handoff",
+          title: "Transférer le plan",
+          order: 20,
+          onPress() {},
+        },
       },
       {
         pluginId: "workflow",

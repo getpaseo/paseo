@@ -24,8 +24,17 @@ provider support; [permissions](permissions.md#read-only-agent-launches) defines
 and network limits. Unsupported combinations fail before spawning. You can edit
 the role profiles' provider, model, mode and effort in Agent profiles.
 
-The workflow uses the existing plan actions and an agent panel for executor selection and review
-status. Its settings retain plan IDs, executor selection and review limits across reloads. Review
+The workflow uses the existing plan actions and an agent panel for review status. Any live,
+unresolved structured plan — from the Workflow Router, the Workflow Planner, or an ordinary
+conversation — can be handed off with one action. Handoff classifies the exact final plan through a
+short read-only Codex classifier turn whose decision is validated against a versioned routing policy
+and persisted in the workflow settings; it requires no Router conversation and no saved executor
+profiles, because the executor is launched with the classified provider, model and effort directly
+(only `executor-standard`/`executor-advanced` wording is legacy stored state). While classification
+runs the action is pending and duplicate presses are disabled; failure keeps the plan actionable
+with a retryable error and never routes to a cheaper fallback. The early Router recommendation is
+retained only as context. Plan review remains limited to workflow Planner conversations. Its
+settings retain plan IDs, routing decisions and review limits across reloads. Review
 creates and sends the read-only reviewer before closing the planner's permission. A definitive
 pre-acceptance failure leaves the plan retryable; an uncertain delivery requires manual inspection
 without replay. Planner clarification is transported verbatim and without truncation, not inferred constraints.
@@ -46,7 +55,8 @@ an uncertain prompt receipt blocks automatic continuation. Older hosts do not ex
 The exact captured proposal is revalidated before approval. The host's private decision record
 survives provider-history refresh and daemon restart; see [plan persistence](data-model.md#plan-persistence).
 
-Lifecycle hooks are best-effort notifications, not durable delivery. Status reconciles routing,
+Lifecycle hooks are best-effort notifications, not durable delivery. An uncertain handoff prompt
+is not replayed; reopen its existing executor to inspect it. Status reconciles routing,
 approved implementation, handoff and review/audit operations against the expected prompt and the
 host's completed-turn evidence.
 Stored closed agents can supply that evidence after history hydration. Native turn IDs or the

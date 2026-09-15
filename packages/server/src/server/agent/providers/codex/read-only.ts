@@ -141,6 +141,7 @@ export async function prepareReadOnlyCodexRuntime(input: {
 (deny default)
 (allow file-read*)
 (deny file-read* (subpath ${JSON.stringify(paseoHome)}))
+(allow file-read-metadata (literal ${JSON.stringify(paseoHome)}) (literal ${JSON.stringify(root)}))
 (allow file-read* (subpath ${JSON.stringify(stateDir)}))
 (allow process-exec process-fork)
 (allow signal (target same-sandbox))

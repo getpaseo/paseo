@@ -28,7 +28,7 @@ test.use({
   },
 });
 
-test("intention creates an empty workspace, persists an unsent Router draft and edits explicitly", async ({
+test("intention creates a workspace, starts its Router once and edits explicitly", async ({
   page,
 }) => {
   test.setTimeout(120_000);
@@ -75,23 +75,46 @@ test("intention creates an empty workspace, persists an unsent Router draft and 
     await fillNewWorkspaceDraft(page, intention);
     await page.getByTestId("workspace-create-submit").click();
     await page.waitForURL((url) => url.pathname.includes("/workspace/"));
-    const composer = page
-      .getByRole("textbox", { name: "Message agent..." })
-      .filter({ visible: true });
-    await expect(composer).toHaveValue(intention);
-    expect(requests.filter((request) => request.type === "create_agent_request")).toEqual([]);
+    await expect
+      .poll(() => requests.filter((request) => request.type === "create_agent_request").length)
+      .toBe(1);
     const created = (await client.fetchWorkspaces()).entries.find(
       (workspace) => workspace.intent === intention,
     );
     expect(created?.intent).toBe(intention);
-    expect(
-      (await client.fetchAgents()).entries.filter(
-        (entry) => entry.agent.workspaceId === created?.id,
-      ),
-    ).toEqual([]);
+    await expect
+      .poll(
+        async () =>
+          (await client.fetchAgents()).entries.filter(
+            (entry) => entry.agent.workspaceId === created?.id,
+          ).length,
+      )
+      .toBe(1);
+    const router = (await client.fetchAgents()).entries.find(
+      (entry) => entry.agent.workspaceId === created?.id,
+    );
+    expect(router).toBeDefined();
+    const createRequest = requests.find((request) => request.type === "create_agent_request");
+    expect(createRequest).toMatchObject({
+      launchProfileId: "paseo-workflow-router",
+      config: { provider: "mock", model: "ten-second-stream" },
+    });
+    expect(createRequest).not.toHaveProperty("initialPrompt");
+    expect(createRequest?.idempotencyKey).toEqual(expect.any(String));
+    await expect
+      .poll(
+        () => requests.filter((request) => request.type === "send_agent_message_request").length,
+      )
+      .toBe(1);
+    expect(requests.find((request) => request.type === "send_agent_message_request")).toMatchObject(
+      {
+        text: intention.trim(),
+        messageId: expect.any(String),
+      },
+    );
     await page.reload();
-    await expect(composer).toHaveValue(intention);
-    await expect(page.getByText("Router", { exact: true }).first()).toBeVisible();
+    await waitForSidebarHydration(page);
+    await expect(page.getByTestId(`workspace-tab-agent_${router!.agent.id}`)).toBeVisible();
     await page.getByTestId("workspace-header-menu-trigger").click();
     await page.getByTestId("workspace-header-edit-intention").click();
     await expect(page.getByTestId("workspace-intention-input")).toHaveValue(intention);
@@ -113,24 +136,10 @@ test("intention creates an empty workspace, persists an unsent Router draft and 
             ?.intent,
       )
       .toBe("Calendar for the team");
-    await expect(composer).toHaveValue(intention);
-    await composer.press("Enter");
-    await expect
-      .poll(() => requests.filter((request) => request.type === "create_agent_request").length)
-      .toBe(1);
-    expect(requests.find((request) => request.type === "create_agent_request")).toMatchObject({
-      launchProfileId: "paseo-workflow-router",
-      initialPrompt: intention.trim(),
-      config: { provider: "mock", model: "ten-second-stream" },
-    });
-    await expect
-      .poll(
-        async () =>
-          (await client.fetchAgents()).entries.filter(
-            (entry) => entry.agent.workspaceId === created?.id,
-          ).length,
-      )
-      .toBe(1);
+    expect(requests.filter((request) => request.type === "create_agent_request")).toHaveLength(1);
+    expect(
+      requests.filter((request) => request.type === "send_agent_message_request"),
+    ).toHaveLength(1);
   } finally {
     await client.close();
     await project.cleanup();

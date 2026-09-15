@@ -11,6 +11,7 @@ import type { PluginSurfaceRuntime } from "./surface-runtime";
 import type { InstalledPlugin } from "./types";
 
 export interface PluginNavigation {
+  openAgent?(agentId: string): void;
   openSettings(pluginId: string, screenId: string): void;
   openSurface(pluginId: string, surfaceId: string): void;
   openWorkspacePanel(pluginId: string, panelId: string, location: PluginPanelLocation): void;
@@ -61,6 +62,9 @@ export function createPluginAgentActionContext(input: {
     ...createPluginCapabilities(plugin, runtime, navigation),
     workspace,
     agent,
+    navigation: navigation.openAgent
+      ? { openAgent: ({ agentId: targetAgentId }) => navigation.openAgent?.(targetAgentId) }
+      : undefined,
     openPanel(panelId, options) {
       const panel = plugin.workspacePanels.find((candidate) => candidate.id === panelId);
       if (!panel) throw new Error(`Workspace panel is unavailable: ${panelId}`);

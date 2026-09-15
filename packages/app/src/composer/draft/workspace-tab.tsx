@@ -458,6 +458,7 @@ export function WorkspaceDraftAgentTab({
     continueCreateFromAttempt,
   } = useDraftAgentCreateFlow<Agent, AgentSnapshotPayload>({
     draftId,
+    clientMessageId: `workspace-draft:${serverId}:${workspaceId}:${draftId}:prompt`,
     getPendingServerId: () => serverId,
     initialAttempt: initialCreateAttempt,
     allowEmptyText: allowsEmptyAutoSubmit,

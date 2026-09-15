@@ -50,7 +50,7 @@ export function resolvePlanActions(input: PlanActionsInput): PlanAction[] {
     actions.push({
       id: `${pluginId}/${contribution.id}`,
       title: contribution.title,
-      ...secondary,
+      overflow: input.compact === true,
       disabled: Boolean(contribution.disabledReason),
       disabledReason: contribution.disabledReason,
       pluginId,

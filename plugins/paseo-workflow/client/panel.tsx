@@ -21,9 +21,11 @@ const executorOptions = [
 function Handoff({
   data,
   theme,
+  navigation,
 }: {
   data: RpcOutput<typeof statusRpc>;
   theme: PluginAgentPanelProps["theme"];
+  navigation: PluginAgentPanelProps["navigation"];
 }) {
   const [selection, setSelection] = useState<string>(
     data.handoff?.selection ?? data.recommendation ?? "",
@@ -36,6 +38,7 @@ function Handoff({
       if (!data.plan) throw new Error("Open Hand off on the current pending plan.");
       return execute({ ...data.plan, selection: executorSelection.parse(effectiveSelection) });
     },
+    onSuccess: ({ agentId }) => navigation?.openAgent({ agentId }),
   });
   const handoff = useCallback(() => mutation.mutate(), [mutation]);
   const textStyle = useMemo(() => ({ color: theme.colors.foreground }), [theme]);
@@ -123,7 +126,12 @@ export function WorkflowPanel({
     <ScrollView contentContainerStyle={contentStyle}>
       {query.data ? (
         <>
-          <Handoff key={query.data.plan?.callId ?? "none"} data={query.data} theme={theme} />
+          <Handoff
+            key={query.data.plan?.callId ?? "none"}
+            data={query.data}
+            theme={theme}
+            navigation={navigation}
+          />
           <SettingsSection title="Final review">
             <SettingsCard>
               {query.data.verification?.map((item) => (
