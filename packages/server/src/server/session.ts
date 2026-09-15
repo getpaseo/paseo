@@ -24,6 +24,7 @@ import { CreationService, type CreatedAgent } from "./creation/index.js";
 import type { CreationSnapshot, AgentCreateRequest } from "@getpaseo/protocol/messages";
 import type { MessageReceipts } from "./message-receipts/index.js";
 import type { AgentBackgroundWorkItem } from "./agent/background-work/index.js";
+import type { FleetCommitmentControlService } from "./fleet-commitment-control.js";
 import equal from "fast-deep-equal";
 import { WorkspaceSetupObservation } from "./workspace-setup-observation.js";
 import { SessionDelivery, type OwnedSubscription } from "./session/owned-subscriptions/index.js";
@@ -300,6 +301,10 @@ function resolveWorkspaceArchiveOperations(
 ): WorkspaceArchiveOperations {
   return operations ?? new WorkspaceArchiveOperations();
 }
+
+function resolveSessionPrincipal(principalId: string | undefined): string {
+  return principalId ?? "owner";
+}
 import { WorktreeRequestError, toWorktreeWireError } from "./worktree-errors.js";
 import { parseGitRemoteLocation } from "@getpaseo/protocol/git-remote";
 import {
@@ -479,6 +484,7 @@ export interface SessionOptions {
   routed?: boolean;
   browserToolsBroker?: BrowserToolsBroker | null;
   clientId: string;
+  principalId?: string;
   permissions: readonly DaemonPermission[];
   appVersion?: string | null;
   clientCapabilities?: Record<string, unknown> | null;
@@ -501,6 +507,7 @@ export interface SessionOptions {
   messageReceipts: Pick<MessageReceipts, "send">;
   agentMessages: AgentMessageDelivery;
   creationService: Pick<CreationService, "create" | "subscribe">;
+  fleetCommitmentControl?: FleetCommitmentControlService;
   projectRegistry: ProjectRegistry;
   workspaceRegistry: WorkspaceRegistry;
   workspaceBaseBranch?: WorkspaceBaseBranchService;
@@ -764,6 +771,7 @@ export class Session {
   );
   private readonly browserToolsBroker: SessionOptions["browserToolsBroker"];
   private readonly clientId: string;
+  private readonly principalId: string;
   private readonly authorization: SessionAuthorization;
   private appVersion: string | null;
   private clientCapabilities: ReadonlySet<ClientCapability>;
@@ -873,10 +881,12 @@ export class Session {
   private readonly agentMessages: AgentMessageDelivery;
   private readonly createAgentLifecycleDispatch: CreateAgentLifecycleDispatch;
   private readonly creationService: Pick<CreationService, "create" | "subscribe">;
+  private readonly fleetCommitmentControl: FleetCommitmentControlService | undefined;
 
   constructor(options: SessionOptions) {
     const {
       clientId,
+      principalId,
       permissions,
       appVersion,
       clientCapabilities,
@@ -936,6 +946,7 @@ export class Session {
     } = options;
     this.browserToolsBroker = options.browserToolsBroker;
     this.clientId = clientId;
+    this.principalId = resolveSessionPrincipal(principalId);
     this.authorization = new SessionAuthorization(permissions);
 
     this.appVersion = appVersion ?? null;
@@ -959,6 +970,7 @@ export class Session {
     this.messageReceipts = options.messageReceipts;
     this.agentMessages = options.agentMessages;
     this.creationService = options.creationService;
+    this.fleetCommitmentControl = options.fleetCommitmentControl;
     this.projectIcons = new ProjectIconReader(paseoHome);
     this.worktreesRoot = worktreesRoot;
     this.pluginRuntime = pluginRuntime;
@@ -2615,7 +2627,7 @@ export class Session {
     const promise =
       this.connectedHostSession?.dispatch(msg) ??
       this.dispatchSubscriptionMessage(msg, source) ??
-      this.dispatchVoiceAndControlMessage(msg) ??
+      this.dispatchControlMessage(msg) ??
       this.dispatchAgentObservationMessage(msg, source) ??
       this.dispatchHubExecutionMessage(msg) ??
       this.dispatchCreationMessage(msg, source) ??
@@ -2632,6 +2644,49 @@ export class Session {
       this.dispatchHostServiceMessage(msg) ??
       this.dispatchMiscMessage(msg);
     if (promise) await promise;
+  }
+
+  private dispatchControlMessage(msg: SessionInboundMessage): Promise<void> | undefined {
+    return this.dispatchFleetCommitmentMessage(msg) ?? this.dispatchVoiceAndControlMessage(msg);
+  }
+
+  private dispatchFleetCommitmentMessage(msg: SessionInboundMessage): Promise<void> | undefined {
+    if (!msg.type.startsWith("fleet.commitment.")) return undefined;
+    if (!this.fleetCommitmentControl) throw new Error("Fleet commitment controls are unavailable");
+    if (msg.type === "fleet.commitment.operate.request") {
+      return this.fleetCommitmentControl
+        .operate({ ...msg, principalId: this.principalId })
+        .then((receipt) => {
+          this.emit({
+            type: "fleet.commitment.operate.response",
+            payload: { requestId: msg.requestId, receipt },
+          });
+          return undefined;
+        });
+    }
+    if (msg.type === "fleet.commitment.read.request") {
+      return this.fleetCommitmentControl
+        .read({ commitmentId: msg.commitmentId, principalId: this.principalId })
+        .then(({ marker, digest }) => {
+          this.emit({
+            type: "fleet.commitment.read.response",
+            payload: { requestId: msg.requestId, commitmentId: msg.commitmentId, marker, digest },
+          });
+          return undefined;
+        });
+    }
+    if (msg.type === "fleet.commitment.confirm.request") {
+      return this.fleetCommitmentControl
+        .confirm({ ...msg, principalId: this.principalId })
+        .then((receipt) => {
+          this.emit({
+            type: "fleet.commitment.confirm.response",
+            payload: { requestId: msg.requestId, receipt },
+          });
+          return undefined;
+        });
+    }
+    return undefined;
   }
 
   private dispatchAgentObservationMessage(
