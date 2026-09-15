@@ -22,7 +22,6 @@ import type { WorkspaceFileLocation } from "@/workspace/file-open";
 import { useRetainedPanelActive } from "@/components/retained-panel";
 import { useAppActivelyVisible } from "@/hooks/use-app-visible";
 import { isFileQueryEnabled } from "@/components/file-pane-enabled";
-import { isWeb } from "@/constants/platform";
 import { useAppSettings } from "@/hooks/use-settings";
 import { useLiveFile } from "./live-file/hook";
 import { useFilePreview } from "./preview-lifecycle/hook";
@@ -329,10 +328,7 @@ function isEditableTextFile(input: {
   supportsEditing: boolean;
 }): boolean {
   return Boolean(
-    isWeb &&
-    input.supportsEditing &&
-    input.preview?.kind === "text" &&
-    input.preview.size <= 1024 * 1024,
+    input.supportsEditing && input.preview?.kind === "text" && input.preview.size <= 1024 * 1024,
   );
 }
 
