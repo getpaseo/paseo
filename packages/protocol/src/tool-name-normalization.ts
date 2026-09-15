@@ -19,6 +19,13 @@ export function isSpeakToolName(name: string): boolean {
   return getToolLeafName(name) === "speak";
 }
 
+const SUB_AGENT_TOOL_NAMES: ReadonlySet<string> = new Set(["task", "agent", "workflow"]);
+
+/** Claude Code spawns subagents through Task (legacy), Agent and Workflow. */
+export function isSubAgentToolName(name: string): boolean {
+  return SUB_AGENT_TOOL_NAMES.has(normalizeToolName(name));
+}
+
 export function isLikelyNamespacedToolName(name: string): boolean {
   const normalized = normalizeToolName(name);
   if (STANDARD_NAMESPACE_SEPARATOR_REGEX.test(normalized)) {
