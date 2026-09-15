@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { resolveBottomOverlayTailInset } from "./bottom-overlay-inset";
+import {
+  bottomOverlayClearancesEqual,
+  resolveBottomOverlayTailInset,
+  shouldAnchorForBottomOverlayAppearance,
+} from "./bottom-overlay-inset";
 
 describe("resolveBottomOverlayTailInset", () => {
   it("adds only the space missing after existing footer clearance", () => {
@@ -18,5 +22,37 @@ describe("resolveBottomOverlayTailInset", () => {
         existingTailSpacing: 0,
       }),
     ).toBe(56);
+  });
+});
+
+describe("bottomOverlayClearancesEqual", () => {
+  it("invalidates the stream when either floating-overlay clearance changes", () => {
+    const baseline = {
+      bottomOverlayTailClearance: 0,
+      bottomOverlayControlClearance: 0,
+    };
+
+    expect(bottomOverlayClearancesEqual(baseline, { ...baseline })).toBe(true);
+    expect(
+      bottomOverlayClearancesEqual(baseline, {
+        ...baseline,
+        bottomOverlayTailClearance: 64,
+      }),
+    ).toBe(false);
+    expect(
+      bottomOverlayClearancesEqual(baseline, {
+        ...baseline,
+        bottomOverlayControlClearance: 48,
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("shouldAnchorForBottomOverlayAppearance", () => {
+  it("anchors only when a bottom overlay first appears", () => {
+    expect(shouldAnchorForBottomOverlayAppearance(0, 64)).toBe(true);
+    expect(shouldAnchorForBottomOverlayAppearance(64, 64)).toBe(false);
+    expect(shouldAnchorForBottomOverlayAppearance(64, 72)).toBe(false);
+    expect(shouldAnchorForBottomOverlayAppearance(64, 0)).toBe(false);
   });
 });
