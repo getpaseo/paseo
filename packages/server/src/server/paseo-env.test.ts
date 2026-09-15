@@ -28,6 +28,8 @@ describe("paseo env contract", () => {
     "PASEO_SUPERVISED",
     "ELECTRON_NO_ATTACH_CONSOLE",
     "ESBUILD_BINARY_PATH",
+    "PASEO_FIRSTMATE_DECK_CREDENTIAL",
+    "PASEO_FLEET_COMMITMENT_LEDGER_PATH",
   ] as const;
 
   test("builds internal daemon child env by preserving pass-through and control vars", () => {
@@ -70,6 +72,23 @@ describe("paseo env contract", () => {
     expect(env.CUSTOM).toBe("value");
     expect(env.NODE_ENV).toBe("development");
     expect(env.PATH).toBe("/custom/bin");
+  });
+
+  test("strips Fleet secrets from base and overlay external environments", () => {
+    const env = createExternalProcessEnv(
+      {
+        PATH: "/usr/bin",
+        PASEO_FIRSTMATE_DECK_CREDENTIAL: "base-secret",
+        PASEO_FLEET_COMMITMENT_LEDGER_PATH: "/private/base-ledger.md",
+      },
+      {
+        PASEO_FIRSTMATE_DECK_CREDENTIAL: "overlay-secret",
+        PASEO_FLEET_COMMITMENT_LEDGER_PATH: "/private/overlay-ledger.md",
+      },
+    );
+
+    expect(env.PASEO_FIRSTMATE_DECK_CREDENTIAL).toBeUndefined();
+    expect(env.PASEO_FLEET_COMMITMENT_LEDGER_PATH).toBeUndefined();
   });
 
   test("builds external command env without process.execPath special-casing", () => {

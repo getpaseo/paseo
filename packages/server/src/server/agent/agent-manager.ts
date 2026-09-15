@@ -3265,6 +3265,9 @@ export class AgentManager {
     if (this.collectingRuntimes.has(agentId) || (!this.agents.has(agentId) && this.registry))
       return this.streamAfterRuntimeCollection(agentId, prompt, options, promptStart);
     const existingAgent = this.requireSessionAgent(agentId);
+    if (options?.requireIdle && existingAgent.lifecycle !== "idle") {
+      throw new Error(`Agent ${agentId} is not idle (${existingAgent.lifecycle})`);
+    }
     if (this.historySessions.has(existingAgent.session))
       return this.streamAfterHistoryLoad(agentId, prompt, options, promptStart);
     this.logger.trace(
