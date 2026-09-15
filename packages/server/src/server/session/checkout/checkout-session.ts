@@ -1034,6 +1034,46 @@ export class CheckoutSession {
     }
   }
 
+  async handleCheckoutForgeSetReadyRequest(
+    msg: Extract<SessionInboundMessage, { type: "checkout.forge.set_ready.request" }>,
+  ): Promise<void> {
+    const { cwd, requestId } = msg;
+
+    try {
+      const pullRequest = await this.resolveCurrentPullRequest(cwd, "set-ready", {
+        force: true,
+        includeForge: true,
+        reason: "set-pr-ready-validation",
+      });
+      if (pullRequest.isDraft !== true) {
+        throw new Error("Pull request is not a draft");
+      }
+      const { service } = await this.requireForgeService(cwd);
+      await service.markPullRequestReady({ cwd, prNumber: pullRequest.number });
+      await this.gitMutation.notifyGitMutation(cwd, "set-pr-ready", { invalidateForge: true });
+
+      this.host.emit({
+        type: "checkout.forge.set_ready.response",
+        payload: {
+          cwd,
+          success: true,
+          error: null,
+          requestId,
+        },
+      });
+    } catch (error) {
+      this.host.emit({
+        type: "checkout.forge.set_ready.response",
+        payload: {
+          cwd,
+          success: false,
+          error: toCheckoutError(error),
+          requestId,
+        },
+      });
+    }
+  }
+
   async handleCheckoutForgeSetAutoMergeRequest(
     msg: Extract<
       SessionInboundMessage,
@@ -1110,7 +1150,7 @@ export class CheckoutSession {
 
   private async resolveCurrentPullRequest(
     cwd: string,
-    operation: "merge" | "auto-merge",
+    operation: "merge" | "auto-merge" | "set-ready",
     options?: WorkspaceGitSnapshotOptions,
   ): Promise<CurrentWorkspacePullRequest> {
     const snapshot = await this.workspaceGitService.getSnapshot(cwd, options);
