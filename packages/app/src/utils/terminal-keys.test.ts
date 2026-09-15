@@ -7,6 +7,7 @@ import {
   mergeTerminalModifiers,
   normalizeDomTerminalKey,
   normalizeTerminalTransportKey,
+  resolveDomTerminalKeyInput,
   resolvePendingModifierDataInput,
   shouldInterceptDomTerminalKey,
 } from "./terminal-keys";
@@ -41,6 +42,71 @@ describe("terminal key helpers", () => {
   it("lowercases printable transport keys", () => {
     expect(normalizeTerminalTransportKey("C")).toBe("c");
     expect(normalizeTerminalTransportKey("Escape")).toBe("Escape");
+  });
+
+  it("maps bare macOS Cmd+Left/Right to terminal line-boundary controls", () => {
+    const baseInput = {
+      ctrlKey: false,
+      shiftKey: false,
+      altKey: false,
+      metaKey: true,
+      pendingModifiers: { ctrl: false, shift: false, alt: false },
+      isMacDesktop: true,
+    };
+
+    expect(resolveDomTerminalKeyInput({ ...baseInput, key: "ArrowLeft" })).toEqual({
+      key: "a",
+      ctrl: true,
+      shift: false,
+      alt: false,
+      meta: false,
+    });
+    expect(resolveDomTerminalKeyInput({ ...baseInput, key: "ArrowRight" })).toEqual({
+      key: "e",
+      ctrl: true,
+      shift: false,
+      alt: false,
+      meta: false,
+    });
+  });
+
+  it("leaves non-macOS and modified Command arrows available to their existing shortcuts", () => {
+    const baseInput = {
+      key: "ArrowLeft",
+      ctrlKey: false,
+      shiftKey: false,
+      altKey: false,
+      metaKey: true,
+      pendingModifiers: { ctrl: false, shift: false, alt: false },
+      isMacDesktop: true,
+    };
+
+    expect(resolveDomTerminalKeyInput({ ...baseInput, isMacDesktop: false })).toBeNull();
+    expect(resolveDomTerminalKeyInput({ ...baseInput, shiftKey: true })).toBeNull();
+    expect(resolveDomTerminalKeyInput({ ...baseInput, altKey: true })).toBeNull();
+    expect(resolveDomTerminalKeyInput({ ...baseInput, ctrlKey: true })).toBeNull();
+    expect(resolveDomTerminalKeyInput({ ...baseInput, metaKey: false })).toBeNull();
+    expect(resolveDomTerminalKeyInput({ ...baseInput, key: "ArrowUp" })).toBeNull();
+  });
+
+  it("preserves pending terminal modifiers instead of applying macOS line-boundary mapping", () => {
+    expect(
+      resolveDomTerminalKeyInput({
+        key: "ArrowLeft",
+        ctrlKey: false,
+        shiftKey: false,
+        altKey: false,
+        metaKey: true,
+        pendingModifiers: { ctrl: false, shift: true, alt: false },
+        isMacDesktop: true,
+      }),
+    ).toEqual({
+      key: "ArrowLeft",
+      ctrl: false,
+      shift: true,
+      alt: false,
+      meta: true,
+    });
   });
 
   it("merges pending modifiers with native key modifiers", () => {
