@@ -242,6 +242,109 @@ describe("OMP history mapper", () => {
     ]);
   });
 
+  test("preserves raw custom_message metadata so xdev notices stay hidden during replay", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "omp-custom-message-history-"));
+    const sessionFile = join(dir, "session.jsonl");
+    writeFileSync(
+      sessionFile,
+      [
+        { type: "session", id: "root", parentId: null },
+        {
+          type: "message",
+          id: "user-1",
+          parentId: "root",
+          message: { role: "user", content: "hello" },
+        },
+        {
+          type: "custom_message",
+          id: "xdev-1",
+          parentId: "user-1",
+          customType: "xdev-mount-notice",
+          display: false,
+          content: "<system-notice>\nxd:// device inventory changed.\n</system-notice>",
+          details: { added: ["mcp__agent_browser_click"] },
+        },
+        {
+          type: "service_tier_change",
+          id: "tier-1",
+          parentId: "xdev-1",
+          tier: "priority",
+        },
+        {
+          type: "message",
+          id: "assistant-1",
+          parentId: "tier-1",
+          message: {
+            role: "assistant",
+            content: [{ type: "text", text: "answer" }],
+            responseId: "assistant-1",
+          },
+        },
+      ]
+        .map((entry) => JSON.stringify(entry))
+        .join("\n"),
+    );
+
+    const events: AgentStreamEvent[] = [];
+    for await (const event of streamOmpHistory({ sessionFile, provider: "omp" })) {
+      events.push(event);
+    }
+
+    expect(events.map((event) => event.item)).toEqual([
+      { type: "user_message", text: "hello", messageId: "user-1" },
+      { type: "assistant_message", text: "answer", messageId: "assistant-1" },
+    ]);
+  });
+
+  test("preserves raw custom_message advisor metadata during replay", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "omp-advisor-history-"));
+    const sessionFile = join(dir, "session.jsonl");
+    writeFileSync(
+      sessionFile,
+      [
+        { type: "session", id: "root", parentId: null },
+        {
+          type: "custom_message",
+          id: "advisor-1",
+          parentId: "root",
+          customType: "advisor",
+          display: true,
+          content: '<advisory severity="concern">Check the edge case.</advisory>',
+          details: { notes: [{ note: "Check the edge case.", severity: "concern" }] },
+        },
+      ]
+        .map((entry) => JSON.stringify(entry))
+        .join("\n"),
+    );
+
+    const events: AgentStreamEvent[] = [];
+    for await (const event of streamOmpHistory({ sessionFile, provider: "omp" })) {
+      events.push(event);
+    }
+
+    expect(events.map((event) => event.item)).toEqual([
+      {
+        type: "tool_call",
+        callId: "omp-advisor:advisor-1",
+        name: "advisor",
+        status: "completed",
+        detail: {
+          type: "plain_text",
+          label: "Advisor · 1 note",
+          text: "[concern] Check the edge case.",
+          icon: "brain",
+        },
+        metadata: {
+          synthetic: true,
+          source: "omp_advisor",
+          noteCount: 1,
+          blockerCount: 0,
+        },
+        error: null,
+      },
+    ]);
+  });
+
   test("suppresses replayed raw todo tool calls through the OMP detail hook", async () => {
     await expect(
       collectHistory([

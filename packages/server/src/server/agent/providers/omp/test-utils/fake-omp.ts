@@ -434,10 +434,10 @@ export class FakeOmpSession implements OmpRuntimeSession {
     });
   }
 
-  acceptCustomMessage(content: string): void {
+  acceptCustomMessage(content: string, metadata?: Record<string, unknown>): void {
     this.emit({
       type: "message_end",
-      message: { role: "custom", content },
+      message: { role: "custom", content, ...metadata },
     });
   }
 
