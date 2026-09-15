@@ -18,6 +18,7 @@ import {
   DEFAULT_IOS_KEYBOARD_INSET_MIN_HEIGHT,
   resolveKeyboardShift,
   reserveKeyboardLayoutShift,
+  shouldPublishSettledKeyboardShift,
   shouldReconcileHiddenKeyboardEnd,
 } from "@/hooks/keyboard-shift-policy";
 import {
@@ -100,7 +101,7 @@ export function KeyboardShiftProvider({ children }: { children: ReactNode }) {
   useAnimatedReaction(
     () => ({ moving: isMoving.value, shift: shift.value }),
     (current, previous) => {
-      if (!current.moving && (previous === null || previous.moving)) {
+      if (shouldPublishSettledKeyboardShift({ current, previous })) {
         scheduleOnRN(publishSettledShift, current.shift);
       }
     },

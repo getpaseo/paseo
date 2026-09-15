@@ -4,6 +4,7 @@ import {
   shouldReconcileHiddenKeyboardEnd,
   resolveKeyboardShift,
   reserveKeyboardLayoutShift,
+  shouldPublishSettledKeyboardShift,
   shouldUseCompactExplorerKeyboardPadding,
 } from "./keyboard-shift-policy";
 
@@ -118,5 +119,41 @@ describe("shouldUseCompactExplorerKeyboardPadding", () => {
     expect(shouldUseCompactExplorerKeyboardPadding({ isGit: false, explorerTab: "changes" })).toBe(
       true,
     );
+  });
+});
+
+describe("shouldPublishSettledKeyboardShift", () => {
+  it("publishes once when a keyboard animation stops, not on the frames in between", () => {
+    const frames = Array.from({ length: 15 }, (_, index) => ({
+      moving: true,
+      shift: Math.round((296 * (index + 1)) / 15),
+    }));
+    const samples = [...frames, { moving: false, shift: 296 }];
+
+    let previous: { moving: boolean; shift: number } | null = null;
+    const published: number[] = [];
+    for (const sample of samples) {
+      if (shouldPublishSettledKeyboardShift({ current: sample, previous })) {
+        published.push(sample.shift);
+      }
+      previous = sample;
+    }
+
+    expect(published).toEqual([296]);
+  });
+
+  it("publishes the initial resting value on the first sample", () => {
+    expect(
+      shouldPublishSettledKeyboardShift({ current: { moving: false, shift: 0 }, previous: null }),
+    ).toBe(true);
+  });
+
+  it("does not republish while the keyboard rests", () => {
+    expect(
+      shouldPublishSettledKeyboardShift({
+        current: { moving: false, shift: 296 },
+        previous: { moving: false, shift: 296 },
+      }),
+    ).toBe(false);
   });
 });
