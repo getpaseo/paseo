@@ -907,6 +907,9 @@ export const ptBR: TranslationResources = {
         openChangesTab: "Abrir a aba Alterações",
         openDiffTab: "Abrir a aba Diff",
         closeChangesTab: "Fechar a aba Alterações",
+        jumpToFile: {
+          title: "Ir para o arquivo",
+        },
         binaryFile: "Arquivo binário",
         tooLarge: "Diff grande demais para exibir",
         previewTooLargeTitle: "Este diff é grande demais para visualizar",

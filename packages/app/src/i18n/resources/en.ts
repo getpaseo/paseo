@@ -894,6 +894,9 @@ export const en = {
         openChangesTab: "Open Changes tab",
         openDiffTab: "Open Diff tab",
         closeChangesTab: "Close Changes tab",
+        jumpToFile: {
+          title: "Jump to file",
+        },
         binaryFile: "Binary file",
         tooLarge: "Diff too large to display",
         previewTooLargeTitle: "This diff is too large to preview",

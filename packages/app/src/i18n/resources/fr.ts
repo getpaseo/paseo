@@ -916,6 +916,9 @@ export const fr: TranslationResources = {
         openChangesTab: "Ouvrir l'onglet Modifications",
         openDiffTab: "Ouvrir l'onglet Diff",
         closeChangesTab: "Fermer l'onglet Modifications",
+        jumpToFile: {
+          title: "Aller au fichier",
+        },
         binaryFile: "Fichier binaire",
         tooLarge: "Diff trop grand pour être affiché",
         previewTooLargeTitle: "Ce diff est trop volumineux pour être prévisualisé",

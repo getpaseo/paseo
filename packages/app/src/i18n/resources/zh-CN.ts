@@ -877,6 +877,9 @@ export const zhCN: TranslationResources = {
         openChangesTab: "打开“更改”标签页",
         openDiffTab: "打开 Diff 标签页",
         closeChangesTab: "关闭“更改”标签页",
+        jumpToFile: {
+          title: "跳转到文件",
+        },
         binaryFile: "二进制文件",
         tooLarge: "Diff 过大，无法显示",
         previewTooLargeTitle: "此 diff 过大，无法预览",
