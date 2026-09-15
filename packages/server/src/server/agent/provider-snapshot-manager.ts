@@ -840,6 +840,7 @@ export class ProviderSnapshotManager {
           label: definition.label,
           description: definition.description,
           iconSvg: definition.iconSvg,
+          derivedFrom: definition.derivedFromProviderId ?? undefined,
           defaultModeId: definition.defaultModeId ?? null,
         }),
       });
