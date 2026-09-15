@@ -269,11 +269,13 @@ Showing another toast replaces the currently visible toast. An empty message is 
 `Icon` renders a [Lucide icon](https://lucide.dev/icons/) from Paseo's installed icon set. Plugin bundles do not import
 `lucide-react-native` or `react-native-svg`.
 
-| Prop    | Type     | Required | Behavior                                        |
-| ------- | -------- | -------- | ----------------------------------------------- |
-| `name`  | `string` | Yes      | Lucide icon name. Unknown names render nothing. |
-| `size`  | `number` | No       | Icon width and height.                          |
-| `color` | `string` | No       | Icon color. Use a plugin theme token.           |
+| Prop                 | Type      | Required | Behavior                                        |
+| -------------------- | --------- | -------- | ----------------------------------------------- |
+| `name`               | `string`  | Yes      | Lucide icon name. Unknown names render nothing. |
+| `size`               | `number`  | No       | Icon width and height.                          |
+| `color`              | `string`  | No       | Icon color. Use a plugin theme token.           |
+| `accessible`         | `boolean` | No       | Includes the icon in the accessibility tree.    |
+| `accessibilityLabel` | `string`  | No       | Provides the icon's accessible label.           |
 
 ## Timeline items
 
