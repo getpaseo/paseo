@@ -13,6 +13,7 @@ import {
   deriveProjectStatusBucket,
   deriveSidebarLoadingState,
   shouldShowSidebarHostLabels,
+  sortSidebarWorkspacesByRecency,
   type ProjectStatusSession,
   type SidebarProjectEntry,
   type SidebarWorkspacePlacement,
@@ -196,6 +197,43 @@ describe("applyStoredOrdering", () => {
     });
 
     expect(result).toBe(baseline);
+  });
+});
+
+describe("sortSidebarWorkspacesByRecency", () => {
+  function recencyEntry(lastActivityAt: string | null) {
+    return { lastActivityAt: lastActivityAt === null ? null : new Date(lastActivityAt) };
+  }
+
+  it("orders most-recently-active first and sinks workspaces with no activity", () => {
+    const entriesByKey = new Map([
+      ["srv:a", recencyEntry("2026-06-01T10:00:00.000Z")],
+      ["srv:b", recencyEntry(null)],
+      ["srv:c", recencyEntry("2026-06-01T12:00:00.000Z")],
+    ]);
+
+    const result = sortSidebarWorkspacesByRecency({
+      items: [item("a"), item("b"), item("c")],
+      getKey: (entry) => `srv:${entry.key}`,
+      entriesByKey,
+    });
+
+    expect(result.map((entry) => entry.key)).toEqual(["c", "a", "b"]);
+  });
+
+  it("keeps the baseline order on ties and for unknown keys", () => {
+    const entriesByKey = new Map([
+      ["srv:a", recencyEntry("2026-06-01T10:00:00.000Z")],
+      ["srv:b", recencyEntry("2026-06-01T10:00:00.000Z")],
+    ]);
+
+    const result = sortSidebarWorkspacesByRecency({
+      items: [item("unknown"), item("a"), item("b")],
+      getKey: (entry) => `srv:${entry.key}`,
+      entriesByKey,
+    });
+
+    expect(result.map((entry) => entry.key)).toEqual(["a", "b", "unknown"]);
   });
 });
 

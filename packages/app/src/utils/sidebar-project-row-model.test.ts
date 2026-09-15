@@ -25,6 +25,7 @@ function workspace(overrides: Partial<SidebarWorkspaceEntry> = {}): SidebarWorks
     title: null,
     currentBranch: null,
     statusBucket: "done",
+    lastActivityAt: null,
     diffStat: null,
     prHint: null,
     archiveHasUncommittedChanges: null,
