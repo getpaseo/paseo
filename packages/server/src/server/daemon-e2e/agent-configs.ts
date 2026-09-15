@@ -57,6 +57,14 @@ export const agentConfigs = {
     provider: "pi",
     thinkingOptionId: "medium",
   },
+  muse: {
+    provider: "muse",
+    model: "muse-spark-1.2",
+    modes: {
+      full: "allowAll",
+      ask: "promptUnmatched",
+    },
+  },
   omp: {
     provider: "omp",
     thinkingOptionId: "medium",
