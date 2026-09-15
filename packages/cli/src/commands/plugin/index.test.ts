@@ -45,6 +45,7 @@ const features: {
   pluginManagement?: boolean;
   pluginLogs?: boolean;
   pluginGitManagement?: boolean;
+  pluginGitRefUpdate?: boolean;
 } = {};
 
 vi.mock("../../utils/client.js", () => ({
@@ -66,6 +67,7 @@ describe("plugin management commands", () => {
     features.pluginManagement = false;
     features.pluginLogs = false;
     features.pluginGitManagement = false;
+    features.pluginGitRefUpdate = false;
     vi.clearAllMocks();
   });
 

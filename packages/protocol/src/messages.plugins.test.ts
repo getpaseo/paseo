@@ -125,6 +125,19 @@ describe("plugin protocol compatibility", () => {
       }).type,
     ).toBe("plugin.source.install.request");
     expect(
+      SessionInboundMessageSchema.parse({
+        type: "plugin.source.update.request",
+        requestId: "request-update",
+        pluginId: "review",
+        ref: "92d85c3a4410fedcba",
+      }),
+    ).toEqual({
+      type: "plugin.source.update.request",
+      requestId: "request-update",
+      pluginId: "review",
+      ref: "92d85c3a4410fedcba",
+    });
+    expect(
       SessionOutboundMessageSchema.parse({
         type: "plugin.source.status.response",
         payload: {
@@ -152,9 +165,18 @@ describe("plugin protocol compatibility", () => {
         features: { pluginManagement: true },
       },
     });
+    const current = StatusMessageSchema.parse({
+      type: "status",
+      payload: {
+        status: "server_info",
+        serverId: "current-host",
+        features: { pluginGitManagement: true, pluginGitRefUpdate: true },
+      },
+    });
     expect(older.payload.features?.pluginGitManagement).toBeUndefined();
+    expect(older.payload.features?.pluginGitRefUpdate).toBeUndefined();
+    expect(current.payload.features?.pluginGitRefUpdate).toBe(true);
   });
-
   it("uses a namespaced snapshot RPC for structured plugin logs", () => {
     expect(
       SessionInboundMessageSchema.parse({

@@ -5312,7 +5312,7 @@ export class DaemonClient {
     return payload.plugins;
   }
 
-  async updatePluginSources(pluginId?: string): Promise<PluginSourceUpdateItem[]> {
+  async updatePluginSources(pluginId?: string, ref?: string): Promise<PluginSourceUpdateItem[]> {
     const requestId = this.createRequestId();
     const payload = await this.sendCorrelatedSessionRequest({
       requestId,
@@ -5320,6 +5320,7 @@ export class DaemonClient {
         type: "plugin.source.update.request",
         requestId,
         ...(pluginId ? { pluginId } : {}),
+        ...(ref !== undefined ? { ref } : {}),
       },
       responseType: "plugin.source.update.response",
     });
