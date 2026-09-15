@@ -442,7 +442,9 @@ export function loadPersistedConfig(paseoHome: string, logger?: LoggerLike): Per
 
   let parsed: unknown;
   try {
-    parsed = JSON.parse(raw);
+    // Windows Notepad saves UTF-8 with a BOM, which JSON.parse rejects; it is
+    // not part of the document.
+    parsed = JSON.parse(raw.replace(/^\uFEFF/, ""));
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     throw new Error(`[Config] Invalid JSON in ${configPath}: ${message}`, {

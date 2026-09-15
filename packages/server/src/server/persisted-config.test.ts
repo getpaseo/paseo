@@ -748,6 +748,21 @@ describe.skipIf(process.platform === "win32")("persisted config file permissions
     }
   });
 
+  test("tolerates a UTF-8 byte order mark in config.json", () => {
+    // Windows Notepad saves UTF-8 with a BOM; JSON.parse rejects it, and every
+    // new session went through loadPersistedConfig and failed (#4683).
+    const home = createTempHome();
+    try {
+      writeFileSync(path.join(home, "config.json"), '\uFEFF{\r\n  "version": 1,\r\n  "providers": {}\r\n}\r\n');
+
+      const config = loadPersistedConfig(home);
+
+      expect(config.providers).toEqual({});
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   test("repairs permissive config.json permissions when loading", () => {
     const home = createTempHome();
     const configPath = path.join(home, "config.json");
