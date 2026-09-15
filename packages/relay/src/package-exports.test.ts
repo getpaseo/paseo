@@ -30,14 +30,13 @@ function runtimeExportTargets(manifest: PackageManifest): string[] {
 
 describe("published package exports", () => {
   it("includes every runtime export target in the npm package", async () => {
-    const npmCli = process.env.npm_execpath;
-    expect(npmCli).toEqual(expect.any(String));
+    const npmCli = process.env.npm_execpath ?? "";
 
     const temporaryDirectory = await mkdtemp(join(tmpdir(), "paseo-relay-pack-"));
     try {
       const { stdout } = await execFileAsync(
         process.execPath,
-        [npmCli!, "pack", "--dry-run", "--json", "--silent"],
+        [npmCli, "pack", "--dry-run", "--json", "--silent"],
         {
           cwd: packageRoot,
           env: { ...process.env, npm_config_cache: join(temporaryDirectory, "npm-cache") },
