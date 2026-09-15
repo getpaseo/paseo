@@ -1,3 +1,6 @@
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import type { ToolPolicy } from "@getpaseo/protocol/agent-types";
 
@@ -599,6 +602,50 @@ test("built-in override applies env", () => {
       },
     },
   });
+});
+
+test("built-in override applies a provider icon", () => {
+  const directory = mkdtempSync(path.join(tmpdir(), "paseo-provider-icon-"));
+  const iconPath = path.join(directory, "icon.svg");
+  writeFileSync(
+    iconPath,
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 4h16v16H4z"/></svg>',
+  );
+
+  const registry = buildProviderRegistry(logger, {
+    providerOverrides: {
+      claude: {
+        icon: iconPath,
+      },
+    },
+  });
+
+  expect(registry.claude.iconSvg).toContain("<svg");
+});
+
+test("built-in override ignores an invalid provider icon", () => {
+  const directory = mkdtempSync(path.join(tmpdir(), "paseo-provider-icon-"));
+  const iconPath = path.join(directory, "icon.svg");
+  writeFileSync(
+    iconPath,
+    '<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>',
+  );
+  const warn = vi.spyOn(logger, "warn").mockImplementation(() => logger);
+
+  const registry = buildProviderRegistry(logger, {
+    providerOverrides: {
+      claude: {
+        icon: iconPath,
+      },
+    },
+  });
+
+  expect(registry.claude.iconSvg).toBeUndefined();
+  expect(warn).toHaveBeenCalledWith(
+    expect.objectContaining({ provider: "claude", icon: iconPath }),
+    "Ignoring invalid provider icon",
+  );
+  warn.mockRestore();
 });
 
 test("OMP is a disabled built-in backed by the real OMP adapter", async () => {
