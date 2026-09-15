@@ -156,6 +156,14 @@ export function createWorkerTerminalManager(
   const recordsById = new Map<string, WorkerTerminalRecord>();
   const terminalIdsByCwd = new Map<string, Set<string>>();
   const terminalActivityTokenById = new Map<string, string>();
+  // A terminal can die before its createTerminal response is handled: the worker
+  // sends terminalCreated, the response, and terminalExit in the same tick, so
+  // the awaiting create continuation resumes after the exit was already
+  // processed. These hold the ids being created and the finished records their
+  // exit removed, so that continuation returns the exited session instead of
+  // registering a live one for a terminal the worker no longer owns.
+  const creatingTerminalIds = new Set<string>();
+  const exitedDuringCreateById = new Map<string, WorkerTerminalRecord>();
   const terminalsChangedListeners = new Set<TerminalsChangedListener>();
   const terminalActivityListeners = new Set<TerminalActivityListener>();
   const terminalWorkspaceContributionChangedListeners =
@@ -448,6 +456,9 @@ export function createWorkerTerminalManager(
     record.exitListeners.clear();
     const previousBucket = deriveTerminalActivityStatusBucket(record.activity);
     const removedRecord = removeRecord(message.terminalId);
+    if (removedRecord && creatingTerminalIds.has(message.terminalId)) {
+      exitedDuringCreateById.set(message.terminalId, removedRecord);
+    }
     if (previousBucket !== null && removedRecord) {
       emitTerminalWorkspaceContributionChanged({
         terminalId: removedRecord.info.id,
@@ -686,6 +697,7 @@ export function createWorkerTerminalManager(
       const activityToken = createActivityToken();
       const terminalActivityUrl = managerOptions.getTerminalActivityUrl?.() ?? null;
       terminalActivityTokenById.set(terminalId, activityToken);
+      creatingTerminalIds.add(terminalId);
       let result: {
         terminal: RequiredWorkerTerminalInfo;
         state: TerminalState;
@@ -705,7 +717,15 @@ export function createWorkerTerminalManager(
         };
       } catch (error) {
         terminalActivityTokenById.delete(terminalId);
+        exitedDuringCreateById.delete(terminalId);
         throw error;
+      } finally {
+        creatingTerminalIds.delete(terminalId);
+      }
+      const exitedDuringCreate = exitedDuringCreateById.get(terminalId);
+      if (exitedDuringCreate) {
+        exitedDuringCreateById.delete(terminalId);
+        return exitedDuringCreate.session;
       }
       const session = registerRecord({ info: result.terminal, state: result.state });
       return session;
