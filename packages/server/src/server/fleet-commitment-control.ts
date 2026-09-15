@@ -84,22 +84,26 @@ function receiptFingerprint(input: OperateInput): string {
   ]);
 }
 
-function splitMarkdownRow(line: string): string[] | null {
+interface MarkdownCell {
+  value: string;
+  start: number;
+}
+
+function splitMarkdownRow(line: string): MarkdownCell[] | null {
   if (!line.trimStart().startsWith("|")) return null;
-  const cells: string[] = [];
-  let cell = "";
+  const cells: MarkdownCell[] = [];
+  let cellStart = line.indexOf("|") + 1;
   let escaped = false;
-  for (const character of line.slice(line.indexOf("|") + 1)) {
+  for (let index = cellStart; index < line.length; index++) {
+    const character = line[index]!;
     if (character === "|" && !escaped) {
-      cells.push(cell);
-      cell = "";
-    } else {
-      cell += character;
+      cells.push({ value: line.slice(cellStart, index), start: cellStart });
+      cellStart = index + 1;
     }
     escaped = character === "\\" && !escaped;
     if (character !== "\\") escaped = false;
   }
-  if (cell.trim().length > 0) return null;
+  if (line.slice(cellStart).trim().length > 0) return null;
   return cells;
 }
 
@@ -108,15 +112,16 @@ const MARKER_PATTERN = /<!--(\[[^\r\n]*?\])-->/gu;
 function parseControlRow(
   line: string,
   expectedCommitmentId?: string,
-): { markerText: string; control: LedgerControl } {
+): { markerStart: number; markerEnd: number; control: LedgerControl } {
   const cells = splitMarkdownRow(line);
   if (!cells || cells.length !== 7) throw new FleetControlError("control_marker_invalid");
-  const matches = [...cells[6]!.matchAll(MARKER_PATTERN)];
+  const remainingCell = cells[6]!;
+  const matches = [...remainingCell.value.matchAll(MARKER_PATTERN)];
   if (matches.length !== 1 || !matches[0]?.[0] || !matches[0][1]) {
     throw new FleetControlError("control_marker_invalid");
   }
   const match = matches[0];
-  if (cells[6]!.slice(0, match.index).trim()) {
+  if (remainingCell.value.slice(0, match.index).trim()) {
     throw new FleetControlError("control_marker_invalid");
   }
   let parsed: unknown;
@@ -129,13 +134,15 @@ function parseControlRow(
   if (
     !result.success ||
     JSON.stringify(result.data) !== match[1] ||
-    cells[0]!.trim() !== result.data[1] ||
+    cells[0]!.value.trim() !== result.data[1] ||
     (expectedCommitmentId !== undefined && result.data[1] !== expectedCommitmentId)
   ) {
     throw new FleetControlError("control_marker_invalid");
   }
+  const markerStart = remainingCell.start + (match.index ?? 0);
   return {
-    markerText: match[0],
+    markerStart,
+    markerEnd: markerStart + match[0].length,
     control: { marker: result.data, digest: fleetControlDigest(result.data) },
   };
 }
@@ -144,32 +151,35 @@ function findControl(
   contents: string,
   commitmentId: string,
 ): {
-  lines: string[];
-  lineIndex: number;
-  markerText: string;
+  markerStart: number;
+  markerEnd: number;
   control: LedgerControl;
 } {
   const lines = contents.split("\n");
   let found:
     | {
-        lines: string[];
-        lineIndex: number;
-        markerText: string;
+        markerStart: number;
+        markerEnd: number;
         control: LedgerControl;
       }
     | undefined;
+  let lineStart = 0;
   for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
     const line = lines[lineIndex]!;
     const cells = splitMarkdownRow(line);
-    if (!cells || cells.length !== 7 || cells[0]!.trim() !== commitmentId) continue;
+    if (!cells || cells.length !== 7 || cells[0]!.value.trim() !== commitmentId) {
+      lineStart += line.length + 1;
+      continue;
+    }
     if (found) throw new FleetControlError("commitment_duplicate");
-    if (!cells[6]!.includes("<!--")) throw new FleetControlError("control_marker_missing");
+    if (!cells[6]!.value.includes("<!--")) throw new FleetControlError("control_marker_missing");
     const parsed = parseControlRow(line, commitmentId);
     found = {
-      lines,
-      lineIndex,
-      ...parsed,
+      markerStart: lineStart + parsed.markerStart,
+      markerEnd: lineStart + parsed.markerEnd,
+      control: parsed.control,
     };
+    lineStart += line.length + 1;
   }
   if (found) return found;
   throw new FleetControlError("commitment_not_found");
@@ -410,22 +420,27 @@ export class FleetCommitmentControlService {
     marker: FleetControlMarker,
     beforeRename: () => Promise<void>,
   ): Promise<LedgerControl> {
+    // Every trusted canonical-ledger writer must hold this adjacent lock. Writes
+    // outside that contract can only be rejected when the content CAS observes them.
     return withExclusiveFileLock(`${this.options.ledgerPath}.fleet-control.lock`, async () => {
+      await this.options.beforeLedgerRename?.();
       const admittedContents = await readFile(this.options.ledgerPath, "utf8");
       const admitted = findControl(admittedContents, commitmentId);
       if (admitted.control.digest !== expectedDigest) throw new FleetControlError("stale_control");
 
-      await this.options.beforeLedgerRename?.();
+      await beforeRename();
       const currentContents = await readFile(this.options.ledgerPath, "utf8");
+      if (currentContents !== admittedContents) throw new Error("atomic_file_source_changed");
       const current = findControl(currentContents, commitmentId);
       if (current.control.digest !== expectedDigest) throw new FleetControlError("stale_control");
       const markerText = `<!--${JSON.stringify(marker)}-->`;
-      current.lines[current.lineIndex] = current.lines[current.lineIndex]!.replace(
-        current.markerText,
-        markerText,
-      );
-      await beforeRename();
-      await writeFileAtomic(this.options.ledgerPath, current.lines.join("\n"));
+      const nextContents =
+        currentContents.slice(0, current.markerStart) +
+        markerText +
+        currentContents.slice(current.markerEnd);
+      await writeFileAtomic(this.options.ledgerPath, nextContents, {
+        expectedSource: currentContents,
+      });
       return { marker, digest: fleetControlDigest(marker) };
     });
   }
@@ -436,7 +451,10 @@ export class FleetCommitmentControlService {
   ): Promise<FleetControlReceipt> {
     let code = "ledger_failed";
     if (error instanceof FleetControlError) code = error.code;
-    else if (error instanceof Error && error.message.startsWith("file_lock_")) {
+    else if (
+      error instanceof Error &&
+      (error.message.startsWith("file_lock_") || error.message === "atomic_file_source_changed")
+    ) {
       code = error.message;
     }
     const lifecycle = receipt.ledgerWriteStarted ? "outcome_unknown" : "rejected";

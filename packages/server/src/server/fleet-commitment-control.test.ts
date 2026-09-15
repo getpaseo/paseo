@@ -1,10 +1,12 @@
+import { promises as fs } from "node:fs";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { basename, join } from "node:path";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   FLEET_CONTROL_PORTFOLIO_AGENT_ID,
   type FleetControlAction,
+  type FleetControlReceipt,
 } from "@getpaseo/protocol/fleet-control";
 import {
   FleetCommitmentControlService,
@@ -46,6 +48,7 @@ async function harness(options?: {
   archived?: boolean;
   afterAdmission?: () => Promise<void>;
   beforeLedgerRename?: () => Promise<void>;
+  afterWriteStartedReceipt?: () => Promise<void>;
   ledgerContents?: string;
   admissionLifecycle?: "running" | "error" | "initializing";
 }) {
@@ -79,10 +82,21 @@ async function harness(options?: {
         id: FLEET_CONTROL_PORTFOLIO_AGENT_ID,
         archivedAt: options?.archived ? "2026-09-15T00:00:00.000Z" : null,
       };
+  class FixtureReceipts extends MessageReceipts {
+    private mutated = false;
+
+    override async writeFleetControlReceipt(receipt: FleetControlReceipt): Promise<void> {
+      await super.writeFleetControlReceipt(receipt);
+      if (receipt.ledgerWriteStarted && !this.mutated) {
+        this.mutated = true;
+        await options?.afterWriteStartedReceipt?.();
+      }
+    }
+  }
   const createService = () =>
     new FleetCommitmentControlService({
       ledgerPath,
-      receipts: new MessageReceipts(receiptsDirectory),
+      receipts: new FixtureReceipts(receiptsDirectory),
       readPortfolioAgent: async () => currentAgent,
       streamAgent: (_agentId, _prompt) => {
         if (options?.admissionLifecycle) {
@@ -439,6 +453,59 @@ describe("FleetCommitmentControlService", () => {
     expect(await readFile(h.ledgerPath, "utf8")).toContain("# external");
   });
 
+  it("does not overwrite an unrelated edit made while write-started receipt persists", async () => {
+    let h!: Awaited<ReturnType<typeof harness>>;
+    h = await harness({
+      afterWriteStartedReceipt: async () => {
+        const current = await readFile(h.ledgerPath, "utf8");
+        await writeFile(h.ledgerPath, current.replace("Other", "Other changed during receipt"));
+      },
+    });
+
+    const result = await h.service.operate(operation());
+
+    expect(result).toMatchObject({
+      lifecycle: "outcome_unknown",
+      code: "atomic_file_source_changed",
+      ledgerWriteStarted: true,
+    });
+    const written = await readFile(h.ledgerPath, "utf8");
+    expect(written).toContain("Other changed during receipt");
+    expect(written).toContain(JSON.stringify(marker));
+  });
+
+  it("does not rename over an unrelated edit made while the ledger temp file is prepared", async () => {
+    const h = await harness();
+    const originalWriteFile = fs.writeFile.bind(fs);
+    const ledgerTempPrefix = `.${basename(h.ledgerPath)}.`;
+    let mutated = false;
+    const writeSpy = vi.spyOn(fs, "writeFile").mockImplementation(async (file, data, options) => {
+      await originalWriteFile(file, data, options);
+      if (!mutated && typeof file === "string" && basename(file).startsWith(ledgerTempPrefix)) {
+        mutated = true;
+        const current = await readFile(h.ledgerPath, "utf8");
+        await originalWriteFile(
+          h.ledgerPath,
+          current.replace("Other", "Other changed during temp preparation"),
+          "utf8",
+        );
+      }
+    });
+    try {
+      const result = await h.service.operate(operation());
+      expect(result).toMatchObject({
+        lifecycle: "outcome_unknown",
+        code: "atomic_file_source_changed",
+        ledgerWriteStarted: true,
+      });
+      const written = await readFile(h.ledgerPath, "utf8");
+      expect(written).toContain("Other changed during temp preparation");
+      expect(written).toContain(JSON.stringify(marker));
+    } finally {
+      writeSpy.mockRestore();
+    }
+  });
+
   it("rejects a target marker changed immediately before rename", async () => {
     let h!: Awaited<ReturnType<typeof harness>>;
     const changedMarker = [
@@ -499,7 +566,12 @@ describe("FleetCommitmentControlService", () => {
     const h = await harness();
     await writeFile(
       `${h.ledgerPath}.fleet-control.lock`,
-      JSON.stringify({ pid: 2_147_483_647, token: "stale", createdAt: "2026-01-01T00:00:00.000Z" }),
+      JSON.stringify({
+        pid: 2_147_483_647,
+        processStartedAt: "2025-12-31T23:59:59.000Z",
+        token: "stale",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      }),
     );
     await expect(h.service.operate(operation())).resolves.toMatchObject({
       lifecycle: "awaiting_confirmation",
@@ -537,6 +609,30 @@ describe("FleetCommitmentControlService", () => {
     expect(written).toContain("Target \\| path \\\\ root");
     expect(written.match(/\r\n/gu)?.length).toBe(contents.match(/\r\n/gu)?.length);
     expect(written).toContain("| unrelated | table |");
+  });
+
+  it("splices only the column-seven marker when identical text appears in Evidence", async () => {
+    const markerText = `<!--${JSON.stringify(marker)}-->`;
+    const sourceRow = `| ${commitmentId} | Target \\| path \\\\ root | owner | active | now | evidence ${markerText} | ${markerText}keep |`;
+    const contents = `${sourceRow}\r\n`;
+    const h = await harness({ ledgerContents: contents });
+
+    const result = await h.service.operate(operation());
+
+    expect(result.lifecycle).toBe("awaiting_confirmation");
+    const afterMarker = [
+      "fleet-control.v1",
+      commitmentId,
+      "paused",
+      3,
+      operationRequestId,
+      FLEET_CONTROL_PORTFOLIO_AGENT_ID,
+    ] as const;
+    expect(result.strictResult?.after).toEqual(afterMarker);
+    expect(await readFile(h.ledgerPath, "utf8")).toBe(
+      sourceRow.replace(`| ${markerText}keep |`, `| <!--${JSON.stringify(afterMarker)}-->keep |`) +
+        "\r\n",
+    );
   });
 
   it("rejects duplicate control markers during startup readiness", async () => {
