@@ -623,14 +623,13 @@ describe("OMP agent client and session", () => {
         index: 0,
       },
     });
-    runtime.abortTerminalMessage = {
+    runtime.finishTurn({
       role: "assistant",
       content: [],
       errorMessage: "Interrupted by user",
       stopReason: "aborted",
-    };
-
-    await omp.interrupt();
+    });
+    await waitForImmediate();
     expect(
       omp.timeline().findLast((item) => item.type === "tool_call" && item.callId === "tool-1"),
     ).toMatchObject({ status: "canceled", error: null });
@@ -639,6 +638,11 @@ describe("OMP agent client and session", () => {
       { id: "child-1", status: "running" },
       { id: "child-1", status: "canceled" },
     ]);
+    const eventTypes = omp.eventTypes();
+    expect(eventTypes.lastIndexOf("timeline")).toBeLessThan(eventTypes.indexOf("turn_canceled"));
+    expect(eventTypes.lastIndexOf("provider_subagent")).toBeLessThan(
+      eventTypes.indexOf("turn_canceled"),
+    );
     await expect(omp.runPrompt("continue", "resumed successfully")).resolves.toMatchObject({
       finalText: "resumed successfully",
     });
@@ -647,6 +651,71 @@ describe("OMP agent client and session", () => {
         .eventTypes()
         .filter((type) => ["turn_completed", "turn_failed", "turn_canceled"].includes(type)),
     ).toEqual(["turn_canceled", "turn_completed"]);
+  });
+
+  test("a delayed canceled-turn idle response cannot terminalize the next turn", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    await omp.requireStartTurn("stop this turn");
+    const runtime = omp.runtime();
+    runtime.beginTurn();
+    const readState = runtime.getState.bind(runtime);
+    const idleReport = Promise.withResolvers<typeof runtime.state>();
+    runtime.getState = () => idleReport.promise;
+    runtime.abortTerminalMessage = {
+      role: "assistant",
+      content: [],
+      errorMessage: "Interrupted by user",
+      stopReason: "aborted",
+    };
+
+    await omp.interrupt();
+    await omp.requireStartTurn("continue working");
+    runtime.beginTurn();
+    runtime.emit({
+      type: "tool_execution_start",
+      toolCallId: "next-tool",
+      toolName: "bash",
+      args: { command: "echo healthy" },
+    });
+    runtime.emit({
+      type: "subagent_lifecycle",
+      payload: {
+        id: "next-child",
+        agent: "worker",
+        status: "started",
+        parentToolCallId: "next-tool",
+        index: 0,
+      },
+    });
+    idleReport.resolve({ ...runtime.state, isStreaming: false, isCompacting: false });
+    await waitForImmediate();
+    runtime.getState = readState;
+
+    expect(omp.runningToolCallIds()).toEqual(["next-tool"]);
+    expect(omp.subagentUpserts()).toEqual([{ id: "next-child", status: "running" }]);
+    runtime.emit({
+      type: "tool_execution_end",
+      toolCallId: "next-tool",
+      toolName: "bash",
+      result: { content: [{ type: "text", text: "healthy" }] },
+      isError: false,
+    });
+    runtime.emit({
+      type: "subagent_lifecycle",
+      payload: { id: "next-child", agent: "worker", status: "completed" },
+    });
+    runtime.finishTurn();
+    await waitForImmediate();
+    expect(
+      omp
+        .eventTypes()
+        .filter((type) => ["turn_completed", "turn_failed", "turn_canceled"].includes(type)),
+    ).toEqual(["turn_canceled", "turn_completed"]);
+    await expect(omp.runPrompt("one more turn", "still healthy")).resolves.toMatchObject({
+      finalText: "still healthy",
+    });
+    await omp.close();
   });
 
   test("preserves genuine OMP provider failures", async () => {
