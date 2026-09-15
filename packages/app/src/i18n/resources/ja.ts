@@ -227,7 +227,8 @@ export const ja: TranslationResources = {
     states: {
       notFound: "エージェントが見つかりません",
       failedToLoad: "エージェントの読み込みに失敗しました",
-      reconnecting: "再接続中",
+      reconnecting: "ホストに再接続中",
+      updating: "メッセージを更新中",
       timelineSyncFailed: "エージェントの履歴を更新できませんでした。",
       timelineSyncRetrying: "再試行しています…",
       archivingTitle: "エージェントをアーカイブ中...",
@@ -896,6 +897,9 @@ export const ja: TranslationResources = {
         openChangesTab: "変更タブを開く",
         openDiffTab: "差分タブを開く",
         closeChangesTab: "変更タブを閉じる",
+        jumpToFile: {
+          title: "ファイルへ移動",
+        },
         binaryFile: "バイナリファイル",
         tooLarge: "差分が大きすぎて表示できません",
         previewTooLargeTitle: "この差分は大きすぎるためプレビューできません",

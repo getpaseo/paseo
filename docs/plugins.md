@@ -371,8 +371,10 @@ work inside it. See the maintained [composer pill example](../plugin-examples/lo
 
 Timeline transformers and renderers are client contributions. The daemon's canonical rows and
 built-in projection stay unchanged. The app transforms each source item while building the render
-model, for both fetched history and live events. The input includes `phase: "streaming" | "complete"`.
-Paseo memoizes by source-item reference and derives every replacement ID from the source identity, so
+model, for both fetched history and live events, before native Markdown splitting and Overview
+tool grouping. Assistant callbacks receive the accumulated source text, never display fragments.
+Live assistant messages use `phase: "streaming"`; committing to history makes them `"complete"`.
+Paseo memoizes by source-item reference and phase and derives replacement IDs from source identity, so
 streaming updates preserve mounted component identity.
 
 `query.itemType` selects one public `AgentTimelineItem.type`. The callback owns any detailed
@@ -476,6 +478,10 @@ Settings storage is scoped to the runtime installation ID, never the source path
 Its writer lives with the plugin subprocess, while its directory lives outside managed sources,
 so updates and reloads retain values. Settings-change notifications must not enter the catalog
 reload path: that path disposes the plugin and would destroy open drafts after every save.
+
+`server.registerSettings(definition)` returns a server-side handle. Use `read()` for the current
+`ready` or `invalid` state and `subscribe()` for successful saves, resets, and migrations. The
+subscription cleanup belongs in the plugin's contribution cleanup when it outlives the entry.
 
 ## Contribute a theme
 

@@ -76,10 +76,19 @@ cannot be reconstructed from sequence metadata. Forking the current context rema
 
 ## Resume behavior
 
-Opening, reconnecting, or revisiting after a selective-delivery coverage gap fetches the latest tail
-page.
-Focus alone does not mutate timeline state; the tail response is compared with the local
+Opening, reconnecting, and returning from app background establish the current timeline through
+bounded catch-up. Switching between continuously subscribed open chats needs no fetch.
+Focus alone does not mutate timeline state; the response is compared with the local
 authoritative range first.
+
+Cached history remains readable during recovery. The chat shows Reconnecting to host while the host is
+offline, then Updating messages until authoritative catch-up completes. Socket connectivity alone cannot
+certify that the displayed conversation is current. The timeline owner publishes freshness; the
+view renders it without a toast timer or a separate resume workflow.
+
+Foregrounding probes a nominally connected session immediately. A healthy response preserves the
+socket; a failed three-second probe starts reconnecting without waiting for the background heartbeat
+or retry backoff. This cannot keep a mobile socket alive after the operating system suspends it.
 
 - The same epoch and `window.maxSeq` is an exact display no-op. The app advances synchronization
   bookkeeping without replacing timeline arrays, preserving an upward-scrolled viewport.
@@ -157,14 +166,14 @@ replica cache.
 
 The app chooses one delivery policy from `server_info.features.selectiveAgentTimeline`:
 
-- Selective daemons receive every agent visible in any pane plus the most recently viewed hidden
-  agents, up to five subscribed agents. Visible agents always win: if more than five are visible,
-  they all remain subscribed and no hidden agent does. Switching and app backgrounding preserve
-  this connection-scoped hot set, so returning to an agent still covered by it needs no catch-up.
-  Losing window keyboard focus does not make a selected pane invisible. Disconnecting clears hidden
-  hot agents; reconnect restores the currently visible set before authoritative catch-up. Revisiting
-  an evicted retained timeline displays its cached state immediately while authoritative catch-up
-  advances it to the current tail.
+- Selective daemons receive every open workspace chat plus any visible agent pane. Workspace layout
+  owns open-chat lifetime, independently of mounted or retained React views. Switching workspaces,
+  evicting a retained view, and app backgrounding preserve that demand; closing the chat releases it.
+  Reconnect restores the open set and gives visible chats the first catch-up attempt. Hidden chats
+  follow when those attempts settle, including failures, so a failed visible chat does not starve
+  background recovery. Split panes catch up together. Hidden chats update the replica; on web their
+  retained presentation stays suspended until revealed, on native it keeps rendering. Revealing a
+  chat reads the current store and preserves its local UI state. There is no recent-agent limit.
 - Legacy daemons keep globally streaming agent timelines. Visibility still triggers the existing
   authoritative catch-up, but the app does not issue selective-subscription RPCs.
 

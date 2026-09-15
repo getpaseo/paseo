@@ -56,17 +56,27 @@ export default defineConfig({
     server: {
       deps: {
         fallbackCJS: true,
-        inline: ["zustand", "@tanstack/react-query", "react-native-web"],
+        inline: [
+          "zustand",
+          "@tanstack/react-query",
+          "react-native-web",
+          "react-native-gesture-handler",
+        ],
       },
     },
   },
-  // Reanimated ships one file per platform and picks between them by extension
-  // (`findHostInstance.web.js`). Vite's dependency optimizer does not apply `resolve.extensions`,
+  // Reanimated and gesture-handler pick platform files by extension
+  // (e.g. `GestureHandlerRootView.web.js`). Vite's optimizer does not apply `resolve.extensions`,
   // so it scans the native files and dies on imports react-native-web has no answer for.
   // Unbundled, the same imports go through the resolver below and land on the web files.
   optimizeDeps: {
-    include: ["react/jsx-runtime"],
-    exclude: ["react-native-reanimated"],
+    // Bundle the CJS dependencies of the excluded gesture-handler package for the browser.
+    include: [
+      "react/jsx-runtime",
+      "react-native-gesture-handler > hoist-non-react-statics",
+      "react-native-gesture-handler > invariant",
+    ],
+    exclude: ["react-native-reanimated", "react-native-gesture-handler"],
   },
   // The globals a React Native bundler defines, which esbuild is no longer there to supply for
   // the package excluded above.
@@ -101,6 +111,14 @@ export default defineConfig({
         replacement: path.resolve(__dirname, "../relay/src/index.ts"),
       },
       { find: "@", replacement: path.resolve(__dirname, "src") },
+      // The CJS entry bypasses Vite's React Native alias and web-extension resolution.
+      {
+        find: /^react-native-gesture-handler$/,
+        replacement: path.resolve(
+          rootNodeModules,
+          "react-native-gesture-handler/lib/module/index.js",
+        ),
+      },
       // Must precede the `react-native` alias: a string `find` matches by prefix, so this subpath
       // would otherwise resolve inside a react-native-web *file* and break the dependency scan.
       // Reanimated only imports it on the native path, which no test takes.

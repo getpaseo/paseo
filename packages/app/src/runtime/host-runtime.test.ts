@@ -36,6 +36,7 @@ class FakeDaemonClient {
   private latencyMeasurementsRequested: Array<{ timeoutMs?: number }> = [];
   public connectCalls = 0;
   public ensureConnectedCalls = 0;
+  public connectionVerifications = 0;
   public reconnectEnabledChanges: boolean[] = [];
   public fetchAgentsCalls: FetchAgentsOptions[] = [];
   public fetchAgentsResponses: Array<
@@ -120,8 +121,9 @@ class FakeDaemonClient {
     });
   }
 
-  ensureConnected(): void {
+  ensureConnected(options?: { verify?: boolean }): void {
     this.ensureConnectedCalls += 1;
+    if (options?.verify) this.connectionVerifications += 1;
     if (this.state.status !== "connected") {
       this.setConnectionState({ status: "connected" });
     }
@@ -1631,6 +1633,8 @@ describe("HostRuntimeStore", () => {
       expect(clientA.reconnectEnabledChanges.at(-1)).toBe(true);
       expect(clientB.reconnectEnabledChanges.at(-1)).toBe(true);
       expect(clientA.ensureConnectedCalls).toBe(1);
+      expect(clientA.connectionVerifications).toBe(1);
+      expect(clientB.connectionVerifications).toBe(1);
       expect(clientB.ensureConnectedCalls).toBe(1);
       expect(store.getSnapshot(hostA.serverId)?.connectionStatus).toBe("online");
       expect(store.getSnapshot(hostB.serverId)?.connectionStatus).toBe("online");

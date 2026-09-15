@@ -355,7 +355,9 @@ test.describe("plugin workspace panels and Command Center", () => {
 
         await page.goto(buildAgentRoute(primary.workspaceId, agent.id));
         await page.waitForURL(isSettledWorkspaceUrl, { timeout: 60_000 });
-        await expect(page.getByRole("button", { name: "Open composer review" })).toHaveCount(0);
+        // Pressing removed the pill from that page only. The reloaded page evaluates
+        // the plugin again, and its agents snapshot contributes the pill afresh.
+        await expect(page.getByRole("button", { name: "Open composer review" })).toBeVisible();
         await openCompactSidebar(page);
         // The sidebar's Search row dismisses the compact sidebar on its way to the
         // command center, so nothing has to close it after the command runs.

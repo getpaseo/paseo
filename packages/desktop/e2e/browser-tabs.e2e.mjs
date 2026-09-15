@@ -240,20 +240,6 @@ async function callBrowserTool(client, name, args = {}) {
   return mcpPayload(await client.callTool({ name, args }), name);
 }
 
-async function callBrowserToolUntilReady(client, name, args = {}) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const result = await client.callTool({ name, args });
-    const payload = result.structuredContent;
-    if (payload?.ok === true) return payload.result;
-    if (payload?.ok !== false || payload.error?.retryable !== true) {
-      return mcpPayload(result, name);
-    }
-    await delay(100);
-  }
-  throw new Error(`${name} remained unavailable for ${timeoutMs}ms`);
-}
-
 async function waitForGuestSelector(client, browserId) {
   const deadline = Date.now() + 5_000;
   while (Date.now() < deadline) {
@@ -373,7 +359,8 @@ async function readPresentation(page, browserId) {
 async function readViewport(client, browserId) {
   const evaluated = await callBrowserTool(client, "browser_evaluate", {
     browserId,
-    function: "() => ({ width: window.innerWidth, height: window.innerHeight })",
+    function:
+      "() => ({ width: window.innerWidth, height: window.innerHeight, scale: window.devicePixelRatio })",
   });
   return JSON.parse(evaluated.resultJson);
 }
@@ -390,17 +377,12 @@ async function clickGuestElement(page, client, browserId, selector) {
   });
   const elementRect = JSON.parse(evaluated.resultJson);
   assert(elementRect, `Guest element ${selector} was unavailable`);
-  const webviewRect = await page.evaluate((id) => {
-    const webview = document.querySelector(`[data-paseo-browser-id="${id}"]`);
-    if (!(webview instanceof HTMLElement)) return null;
-    const rect = webview.getBoundingClientRect();
-    return { x: rect.x, y: rect.y };
-  }, browserId);
-  assert(webviewRect, `Browser webview ${browserId} was unavailable`);
-  await page.mouse.click(
-    webviewRect.x + elementRect.x + elementRect.width / 2,
-    webviewRect.y + elementRect.y + elementRect.height / 2,
-  );
+  await page.locator(`[data-paseo-browser-id="${browserId}"]`).click({
+    position: {
+      x: elementRect.x + elementRect.width / 2,
+      y: elementRect.y + elementRect.height / 2,
+    },
+  });
 }
 
 async function selectDeviceSize(page, label) {
@@ -614,7 +596,10 @@ async function runRegression({
   await page.waitForFunction(
     (id) => {
       const webview = document.querySelector(`[data-paseo-browser-id="${id}"]`);
-      return webview && webview.parentElement?.id !== "paseo-browser-resident-webviews";
+      const surface = webview?.parentElement;
+      return (
+        surface?.getAttribute("aria-hidden") === "false" && surface.style.pointerEvents === "auto"
+      );
     },
     browserId,
     { timeout: timeoutMs },
@@ -641,10 +626,11 @@ async function runRegression({
 
   const deviceSizeMenuPainted = await selectDeviceSize(page, "iPhone SE · 375×667");
   assert(deviceSizeMenuPainted, "Device size menu did not paint above the browser surface");
+  const deviceViewport = await readViewport(client, browserId);
   recordViewportMismatch(
     failures,
     "device size menu paints and receives input above the browser surface",
-    await readViewport(client, browserId),
+    deviceViewport,
     { width: 375, height: 667 },
   );
 
@@ -653,6 +639,12 @@ async function runRegression({
     text: "Bridge target",
     timeoutMs: 5_000,
   });
+  const resizedScreenshot = await callBrowserTool(client, "browser_screenshot", { browserId });
+  assert(
+    resizedScreenshot.width === Math.round(375 * deviceViewport.scale) &&
+      resizedScreenshot.height === Math.round(667 * deviceViewport.scale),
+    `Screenshot after resize returned ${resizedScreenshot.width}×${resizedScreenshot.height}`,
+  );
   const requestedViewport = { width: 640, height: 480 };
   await callBrowserTool(client, "browser_resize", { browserId, ...requestedViewport });
   recordViewportMismatch(
@@ -728,7 +720,7 @@ async function runRegression({
     { timeout: timeoutMs },
   );
   try {
-    await callBrowserToolUntilReady(client, "browser_screenshot", { browserId });
+    await callBrowserTool(client, "browser_screenshot", { browserId });
   } catch (error) {
     failures.push(`inactive browser remains captureable: ${String(error)}`);
   }

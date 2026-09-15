@@ -293,11 +293,14 @@ export async function holdRewindCompletion(
       }
       if (
         !released &&
-        sessionMessage?.type === "agent.rewind.response" &&
+        (sessionMessage?.type === "agent.rewind.response" ||
+          sessionMessage?.type === "agent.timeline.replacement") &&
         payload?.agentId === agentId
       ) {
+        // The replacement also signals completion and removes the rewound row/menu.
+        // Hold it with the response so the pending-state assertion observes a pending rewind.
         delayedForwards.push(() => ws.send(message));
-        resolveDelayedResponse?.();
+        if (sessionMessage.type === "agent.rewind.response") resolveDelayedResponse?.();
         return;
       }
       ws.send(message);
@@ -604,5 +607,73 @@ async function delayAgentTimelineResponse(
       }
     },
     waitForDelayedResponse: () => delayedResponse,
+  };
+}
+
+/** Holds real incoming frames so intermediate rendering assertions do not race the producer. */
+export async function holdAssistantStream(page: Page, agentId: string) {
+  const pending: Array<{ forward(): void; text: string }> = [];
+  let holding = false;
+  let released = false;
+  let forwardedText = "";
+  let notifyFrame: (() => void) | undefined;
+  let notifyInitialTimeline!: () => void;
+  const initialTimeline = new Promise<void>((resolve) => {
+    notifyInitialTimeline = resolve;
+  });
+
+  await page.routeWebSocket(daemonWsRoutePattern(), (ws) => {
+    const server = ws.connectToServer();
+    ws.onMessage((message) => server.send(message));
+    server.onMessage((message) => {
+      const session = getSessionMessage(message);
+      const payload = session ? getPayload(session) : null;
+      if (session?.type === "fetch_agent_timeline_response" && payload?.agentId === agentId) {
+        notifyInitialTimeline();
+      }
+      const event = payload?.event as
+        | { type?: string; item?: { type?: string; text?: string } }
+        | undefined;
+      const text =
+        session?.type === "agent_stream" &&
+        payload?.agentId === agentId &&
+        event?.type === "timeline" &&
+        event.item?.type === "assistant_message"
+          ? (event.item.text ?? "")
+          : "";
+      if (text) holding = true;
+      if (holding && !released) {
+        pending.push({ forward: () => ws.send(message), text });
+        notifyFrame?.();
+      } else {
+        ws.send(message);
+      }
+    });
+  });
+
+  return {
+    waitForInitialTimeline: () => initialTimeline,
+    async showThrough(prefix: string): Promise<void> {
+      while (forwardedText.length < prefix.length) {
+        const frame = pending.shift();
+        if (!frame) {
+          await new Promise<void>((resolve) => {
+            notifyFrame = resolve;
+          });
+          continue;
+        }
+        forwardedText += frame.text;
+        frame.forward();
+      }
+      if (forwardedText !== prefix) {
+        throw new Error(
+          `Stream did not stop at ${JSON.stringify(prefix)}: ${JSON.stringify(forwardedText)}`,
+        );
+      }
+    },
+    release() {
+      released = true;
+      for (const frame of pending.splice(0)) frame.forward();
+    },
   };
 }

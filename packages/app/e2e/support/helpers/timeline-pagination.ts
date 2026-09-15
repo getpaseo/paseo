@@ -402,8 +402,15 @@ export async function expectStableHistoryStartGutter(page: Page): Promise<void> 
 export async function scrollTimelinePromptIntoView(page: Page, prompt: string): Promise<void> {
   const timeline = page.locator('[data-testid="agent-chat-scroll"]:visible').first();
   const row = timeline.getByTestId("user-message").filter({ hasText: prompt });
-  await row.scrollIntoViewIfNeeded();
-  await expect(row).toBeVisible();
+  const [viewport, target] = await Promise.all([timeline.boundingBox(), row.boundingBox()]);
+  if (!viewport || !target) {
+    throw new Error(`Expected a rendered timeline prompt for ${prompt}`);
+  }
+  // Programmatic scrolling does not express the user's intent to stop following output.
+  await timeline.hover();
+  await page.mouse.wheel(0, target.y - viewport.y - (viewport.height - target.height) / 2);
+  await expect(row).toBeInViewport({ ratio: 1 });
+  await waitForTimelineGeometryToSettle(page);
   await expect
     .poll(async () => (await readTimelineViewport(page)).scrollTop)
     .toBeGreaterThan(HISTORY_START_THRESHOLD_PX);

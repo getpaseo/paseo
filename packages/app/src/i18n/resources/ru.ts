@@ -227,7 +227,8 @@ export const ru: TranslationResources = {
     states: {
       notFound: "Агент не найден",
       failedToLoad: "Не удалось загрузить агента",
-      reconnecting: "Повторное подключение",
+      reconnecting: "Повторное подключение к хосту",
+      updating: "Обновление сообщений",
       timelineSyncFailed: "Не удалось обновить историю агента.",
       timelineSyncRetrying: "Повторная попытка…",
       archivingTitle: "Агент перемещается в архив...",
@@ -900,6 +901,9 @@ export const ru: TranslationResources = {
         openChangesTab: "Открыть вкладку «Изменения»",
         openDiffTab: "Открыть вкладку «Дифф»",
         closeChangesTab: "Закрыть вкладку «Изменения»",
+        jumpToFile: {
+          title: "Перейти к файлу",
+        },
         binaryFile: "Бинарный файл",
         tooLarge: "Дифф слишком велик для отображения",
         previewTooLargeTitle: "Этот дифф слишком велик для предварительного просмотра",
