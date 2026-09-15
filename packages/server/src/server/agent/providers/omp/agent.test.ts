@@ -623,6 +623,17 @@ describe("OMP agent client and session", () => {
         index: 0,
       },
     });
+    runtime.emit({
+      type: "subagent_lifecycle",
+      payload: {
+        id: "background-child",
+        agent: "worker",
+        status: "started",
+        parentToolCallId: "background-tool",
+        index: 0,
+        detached: true,
+      },
+    });
     runtime.finishTurn({
       role: "assistant",
       content: [],
@@ -636,6 +647,7 @@ describe("OMP agent client and session", () => {
     expect(omp.runningToolCallIds()).toEqual([]);
     expect(omp.subagentUpserts()).toEqual([
       { id: "child-1", status: "running" },
+      { id: "background-child", status: "running" },
       { id: "child-1", status: "canceled" },
     ]);
     const eventTypes = omp.eventTypes();
@@ -643,6 +655,20 @@ describe("OMP agent client and session", () => {
     expect(eventTypes.lastIndexOf("provider_subagent")).toBeLessThan(
       eventTypes.indexOf("turn_canceled"),
     );
+    runtime.emit({
+      type: "subagent_progress",
+      payload: {
+        agent: "worker",
+        task: "run something slow",
+        index: 0,
+        progress: { id: "child-1", status: "running" },
+        parentToolCallId: "tool-1",
+      },
+    });
+    expect(omp.subagentUpserts().findLast((event) => event.id === "child-1")).toEqual({
+      id: "child-1",
+      status: "canceled",
+    });
     await expect(omp.runPrompt("continue", "resumed successfully")).resolves.toMatchObject({
       finalText: "resumed successfully",
     });
@@ -651,6 +677,23 @@ describe("OMP agent client and session", () => {
         .eventTypes()
         .filter((type) => ["turn_completed", "turn_failed", "turn_canceled"].includes(type)),
     ).toEqual(["turn_canceled", "turn_completed"]);
+    runtime.emit({
+      type: "subagent_lifecycle",
+      payload: { id: "child-1", agent: "worker", status: "started", index: 0 },
+    });
+    expect(omp.subagentUpserts().findLast((event) => event.id === "child-1")).toEqual({
+      id: "child-1",
+      status: "running",
+    });
+    runtime.emit({
+      type: "process_exit",
+      error: "OMP process exited",
+    });
+    expect(omp.subagentUpserts().findLast((event) => event.id === "background-child")).toEqual({
+      id: "background-child",
+      status: "canceled",
+    });
+    await omp.close();
   });
 
   test("a delayed canceled-turn idle response cannot terminalize the next turn", async () => {
@@ -703,7 +746,7 @@ describe("OMP agent client and session", () => {
     });
     runtime.emit({
       type: "subagent_lifecycle",
-      payload: { id: "next-child", agent: "worker", status: "completed" },
+      payload: { id: "next-child", agent: "worker", status: "completed", index: 0 },
     });
     runtime.finishTurn();
     await waitForImmediate();

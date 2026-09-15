@@ -1127,7 +1127,7 @@ export class OmpAgentSession implements AgentSession {
     const turnId = this.activeTurnId;
     await this.runtimeSession.abort();
     if (turnId && this.activeTurnId === turnId) {
-      this.terminalizeActiveWork();
+      this.terminalizeActiveWork("foreground");
       this.usagePoller.stopTurn();
       this.activeTurnId = null;
       this.activeClientMessageId = null;
@@ -1182,12 +1182,12 @@ export class OmpAgentSession implements AgentSession {
     this.subagentCardTracker.clear();
   }
 
-  private terminalizeActiveWork(): void {
+  private terminalizeActiveWork(scope: "foreground" | "all"): void {
     for (const [toolCallId, toolCall] of this.activeToolCalls) {
       this.emitToolCallEvent(toolCallId, toolCall, "canceled", null, null);
     }
     this.activeToolCalls.clear();
-    for (const event of this.subagentIndex.terminalizeRunning(this.runtimeSession)) {
+    for (const event of this.subagentIndex.terminalizeRunning(this.runtimeSession, scope)) {
       this.emit(event);
     }
     this.clearOmpTurnState();
@@ -1782,7 +1782,7 @@ export class OmpAgentSession implements AgentSession {
 
   private handleProcessExit(error: string): void {
     this.usagePoller.stopTurn();
-    this.terminalizeActiveWork();
+    this.terminalizeActiveWork("all");
     this.subagentIndex.clear(this.runtimeSession);
     if (!this.activeTurnId) {
       return;
@@ -2132,7 +2132,7 @@ export class OmpAgentSession implements AgentSession {
     const terminalAssistant = messages.findLast((message) => message.role === "assistant");
     const canceled = terminalAssistant ? isOmpCanceledTerminal(terminalAssistant) : false;
     if (canceled) {
-      this.terminalizeActiveWork();
+      this.terminalizeActiveWork("foreground");
     }
     this.activeTurnId = null;
     this.activeClientMessageId = null;
