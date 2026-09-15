@@ -453,11 +453,11 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         const viewport = viewportRef.current;
         if (
           viewport &&
-          shouldAnchorForBottomOverlayAppearance(
+          shouldAnchorForBottomOverlayAppearance({
             previousTailClearance,
-            bottomOverlayTailClearance,
-            viewport.isFollowingOutput(),
-          )
+            nextTailClearance: bottomOverlayTailClearance,
+            isFollowingOutput: viewport.isFollowingOutput(),
+          })
         ) {
           viewport.scrollToBottom("jump-to-bottom");
         }

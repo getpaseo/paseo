@@ -24,10 +24,11 @@ export function bottomOverlayClearancesEqual(
   );
 }
 
-export function shouldAnchorForBottomOverlayAppearance(
-  previousTailClearance: number,
-  nextTailClearance: number,
-  isFollowingOutput: boolean,
-): boolean {
+export function shouldAnchorForBottomOverlayAppearance(input: {
+  previousTailClearance: number;
+  nextTailClearance: number;
+  isFollowingOutput: boolean;
+}): boolean {
+  const { previousTailClearance, nextTailClearance, isFollowingOutput } = input;
   return isFollowingOutput && previousTailClearance <= 0 && nextTailClearance > 0;
 }
