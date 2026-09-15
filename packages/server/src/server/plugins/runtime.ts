@@ -574,35 +574,51 @@ export class PluginRuntime {
         throw error;
       });
     let loaded: LoadedPlugin | null = null;
-    // A daemon-side close leaves a live child with nothing to redial onto.
-    const reattachSession = async (): Promise<void> => {
+    let reattaching = false;
+    // A published plugin whose process is still up; anything else is either
+    // still loading or being torn down, and must not get a new session.
+    const canReattach = (): boolean =>
+      loaded !== null && this.plugins.get(pluginId) === loaded && child.connected;
+    const reattachSession = async (
+      frame: string | Uint8Array,
+      isBinary: boolean,
+    ): Promise<void> => {
       const replacement = new PluginSessionSocket(child);
       try {
         const attachment = await sessionHost.attachPluginSocket(pluginId, replacement);
+        if (!canReattach()) {
+          replacement.close();
+          return;
+        }
         sessionSocket = replacement;
         if (loaded) {
           loaded.sessionSocket = replacement;
           loaded.sessionClosed = attachment.closed;
         }
-        watchForHostClose(replacement);
+        replacement.receive(frame, isBinary);
         this.appendLog(pluginId, "stdout", "[paseo] Re-attached plugin session");
       } catch (error) {
-        this.logger.warn(
-          { pluginId, err: error },
-          "Failed to re-attach a plugin session after the daemon closed its socket",
-        );
+        const reason = error instanceof Error ? error.message : String(error);
+        this.appendLog(pluginId, "stderr", `[paseo] Failed to re-attach plugin session: ${reason}`);
+        this.logger.warn({ pluginId, err: error }, "Failed to re-attach a plugin session");
+        this.notify(pluginId, `Plugin session could not be re-attached: ${pluginId}`);
       }
     };
-    const watchForHostClose = (socket: PluginSessionSocket): void => {
-      socket.on("close", () => {
-        // Both stop paths clear the catalog entry before closing anything, so a
-        // plugin on its way out never reaches here.
-        if (!loaded || this.plugins.get(pluginId) !== loaded) return;
-        if (!child.connected) return;
-        void reattachSession();
+    // Frames still in flight belong to the closed session; only a fresh hello
+    // means the child redialled and wants a new one. Attaching on the close
+    // instead would leave a socket nobody speaks to until the host's hello
+    // timeout closed it, and that close would attach another.
+    const routeFrame = (frame: string | Uint8Array, isBinary: boolean): void => {
+      if (sessionSocket.readyState === 1) {
+        sessionSocket.receive(frame, isBinary);
+        return;
+      }
+      if (reattaching || !isSessionHelloFrame(frame, isBinary) || !canReattach()) return;
+      reattaching = true;
+      void reattachSession(frame, isBinary).finally(() => {
+        reattaching = false;
       });
     };
-    watchForHostClose(sessionSocket);
     let ready: Extract<PluginProcessMessage, { type: "ready" }>;
     try {
       ready = await new Promise<Extract<PluginProcessMessage, { type: "ready" }>>(
@@ -630,7 +646,7 @@ export class PluginRuntime {
             }
             const message = parsed.data;
             if (message.type === "paseo_frame") {
-              sessionSocket.receive(message.data, message.isBinary);
+              routeFrame(message.data, message.isBinary);
             } else if (message.type === "paseo_close") {
               sessionSocket.peerClosed();
             } else if (message.type === "ready") {
@@ -1094,6 +1110,15 @@ export class PluginRuntime {
 
   private notify(pluginId: string, error?: string): void {
     for (const listener of this.listeners) listener(pluginId, error);
+  }
+}
+
+function isSessionHelloFrame(frame: string | Uint8Array, isBinary: boolean): boolean {
+  if (isBinary || typeof frame !== "string") return false;
+  try {
+    return (JSON.parse(frame) as { type?: unknown }).type === "hello";
+  } catch {
+    return false;
   }
 }
 

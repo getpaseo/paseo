@@ -1809,6 +1809,30 @@ export default function contribute(plugin: any) {
     });
   });
 
+  it("attaches no replacement session until the plugin redials", async () => {
+    const directory = await createPlugin(
+      "lazy-reattach",
+      `export default function contribute(plugin: unknown) { void plugin; return () => undefined; }`,
+    );
+    const sessions = createTrackedSessionHost();
+    const runtime = createTestRuntime({ sessionHost: sessions.host });
+    await runtime.startPlugin("lazy-reattach", directory);
+    const first = [...sessions.active][0] as PluginSessionSocket;
+
+    first.close(1000, "expired application lease");
+
+    // A replacement appears only once the child's client redials. Attaching one
+    // eagerly would sit unused until the host's hello timeout closed it, and
+    // that close would attach another - an endless cycle behind a wedged child.
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    expect(sessions.active.size).toBe(0);
+
+    await vi.waitFor(() => expect(sessions.hellos.length).toBeGreaterThanOrEqual(2), {
+      timeout: 15_000,
+    });
+    expect(sessions.active.size).toBe(1);
+  });
+
   it("attaches no replacement session when the plugin is stopped", async () => {
     const directory = await createPlugin(
       "stopping",
@@ -1820,6 +1844,8 @@ export default function contribute(plugin: any) {
     expect(sessions.active.size).toBe(1);
 
     await runtime.stopPluginById("stopping");
+    // Long enough for an attach that slipped past the guards to land.
+    await new Promise((resolve) => setTimeout(resolve, 500));
 
     expect(runtime.getLogs("stopping").map((entry) => entry.message)).not.toContain(
       "[paseo] Re-attached plugin session",
