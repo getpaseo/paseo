@@ -13,6 +13,7 @@ function emptyState(): CollapsedProjectsState {
   return {
     collapsedProjectKeys: new Set(),
     collapsedWorkspaceGroupKeys: new Set(),
+    collapsedWorkspaceSectionKeys: new Set(),
     collapsedPinned: false,
   };
 }
@@ -34,12 +35,14 @@ describe("sidebar collapsed projects transitions", () => {
     const state: CollapsedProjectsState = {
       collapsedProjectKeys: new Set(["project-a", "project-b"]),
       collapsedWorkspaceGroupKeys: new Set(["running"]),
+      collapsedWorkspaceSectionKeys: new Set(["project-a::finance"]),
       collapsedPinned: true,
     };
 
     expect(serializeCollapsedProjects(state)).toEqual({
       collapsedProjectKeys: ["project-a", "project-b"],
       collapsedWorkspaceGroupKeys: ["running"],
+      collapsedWorkspaceSectionKeys: ["project-a::finance"],
       collapsedPinned: true,
     });
   });
@@ -50,6 +53,17 @@ describe("sidebar collapsed projects transitions", () => {
 
     const restored = mergePersistedCollapsedProjects({ collapsedPinned: true }, emptyState());
     expect(restored.collapsedPinned).toBe(true);
+  });
+
+  it("restores collapsed workspace section keys independently from status groups", () => {
+    const restored = mergePersistedCollapsedProjects(
+      { collapsedWorkspaceSectionKeys: ["project-a::finance"] },
+      emptyState(),
+    );
+
+    expect(Reflect.get(restored, "collapsedWorkspaceSectionKeys")).toEqual(
+      new Set(["project-a::finance"]),
+    );
   });
 
   it("rejects the complete value when a persisted project key is invalid", () => {
