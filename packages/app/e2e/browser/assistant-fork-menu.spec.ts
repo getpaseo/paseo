@@ -84,6 +84,7 @@ test.describe("Assistant fork menu", () => {
     await forkInFlightTurnToNewTab(page);
     await expectChatHistoryAttachment(page);
     expect(await forkAttachment.waitForText()).toContain(visibleBeforeFork);
+    await expect(page.getByRole("button", { name: "Menu backdrop", exact: true })).toHaveCount(0);
 
     await page.getByRole("button", { name: sourceAgentTitle }).click();
     await expectLiveAssistantText(page, visibleAfterFork);

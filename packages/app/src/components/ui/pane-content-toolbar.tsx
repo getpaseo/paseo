@@ -155,8 +155,26 @@ export function paneContentToolbarIconSize(isCompact: boolean): number {
   return iconButtonChromeGlyphSize("small", isCompact);
 }
 
-/** Keeps a toolbar glyph on the same trailing rail as tree-row glyphs. */
-export function paneContentToolbarTrailingPadding(isCompact: boolean): number {
+/**
+ * What the last control in a toolbar row ends with. A `glyph` control paints an icon
+ * inside a larger invisible hitbox; a `framed` control (bordered trigger, split button)
+ * paints its own frame, so the frame is the ink.
+ */
+export type ToolbarTrailingControl = "glyph" | "framed";
+
+/**
+ * Keeps the last control in a toolbar row on the same trailing rail as tree-row glyphs.
+ * A bare glyph's hitbox overhangs its ink, so the row pads by less than the rail and lets
+ * the hitbox run off the edge; a framed control's ink reaches its own edge, so it pads by
+ * the full rail.
+ */
+export function paneContentToolbarTrailingPadding(
+  isCompact: boolean,
+  trailing: ToolbarTrailingControl,
+): number {
+  if (trailing === "framed") {
+    return WORKSPACE_PANE_TRAILING_GLYPH_RAIL;
+  }
   const buttonSize = smallIconButtonChromeFrameSize(isCompact);
   return (
     WORKSPACE_PANE_TRAILING_GLYPH_RAIL - (buttonSize - paneContentToolbarIconSize(isCompact)) / 2
