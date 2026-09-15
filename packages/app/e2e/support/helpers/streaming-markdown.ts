@@ -36,7 +36,11 @@ export async function requestStreamingMarkdown(agent: StreamingMarkdownAgent): P
   await agent.client.sendAgentMessage(agent.agentId, "Show the formatted streaming response.");
   // Exercise late assertions: the producer finishes before the browser consumes its frames.
   await agent.client.waitForFinish(agent.agentId, 30_000);
-  await agent.stream.showThrough("**Bold");
+  // The mock splits "**Bold" into two frames. Whether they land in one store
+  // commit or two is up to the browser's task scheduling, and word pacing only
+  // releases a word once the whitespace after it has arrived, so stop after
+  // that whitespace: every batching then reveals "Bold" and nothing past "text".
+  await agent.stream.showThrough("**Bold text");
 }
 
 export async function expectUnfinishedBold(page: Page): Promise<void> {
