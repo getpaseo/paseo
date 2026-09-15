@@ -474,7 +474,7 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
     void updateSettings({ theme: getNextThemePreference(settings.theme) });
   }, [settings.theme, updateSettings]);
 
-  useAdaptiveOrientation();
+  const isOrientationPolicyApplied = useAdaptiveOrientation();
   const isCompactLayout = useIsCompactFormFactor();
   const explorerSidebarPresentation = resolveExplorerSidebarPresentation({
     isCompact: isCompactLayout,
@@ -624,6 +624,12 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
   ) : (
     surface
   );
+
+  // Hold the first frame until the phone's portrait lock is in place, so a
+  // phone cold-started in landscape never paints the tablet layout.
+  if (!isOrientationPolicyApplied) {
+    return null;
+  }
 
   return <CommandCenterProvider>{content}</CommandCenterProvider>;
 }
