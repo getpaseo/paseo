@@ -565,7 +565,7 @@ export class PluginRuntime {
     const outputCapture = new PluginOutputCapture(child, (stream, message) => {
       this.appendLog(pluginId, stream, message);
     });
-    const sessionSocket = new PluginSessionSocket(child);
+    let sessionSocket = new PluginSessionSocket(child);
     const pending = new Map<string, PendingInvocation>();
     const sessionAttachment = await sessionHost
       .attachPluginSocket(pluginId, sessionSocket)
@@ -574,6 +574,41 @@ export class PluginRuntime {
         throw error;
       });
     let loaded: LoadedPlugin | null = null;
+    // The daemon can drop a plugin's socket while the process behind it is
+    // still running and healthy. The plugin's own client redials on its own,
+    // but it can only reach a socket the session host still owns, so stand a
+    // fresh one up in its place; otherwise the plugin stays loaded with a dead
+    // host API and only `paseo plugin reload` brings it back.
+    const reattachSession = async (): Promise<void> => {
+      const replacement = new PluginSessionSocket(child);
+      try {
+        const attachment = await sessionHost.attachPluginSocket(pluginId, replacement);
+        sessionSocket = replacement;
+        if (loaded) {
+          loaded.sessionSocket = replacement;
+          loaded.sessionClosed = attachment.closed;
+        }
+        watchForHostClose(replacement);
+        this.appendLog(pluginId, "stdout", "[paseo] Re-attached plugin session");
+      } catch (error) {
+        this.logger.warn(
+          { pluginId, err: error },
+          "Failed to re-attach a plugin session after the daemon closed its socket",
+        );
+      }
+    };
+    const watchForHostClose = (socket: PluginSessionSocket): void => {
+      socket.on("close", () => {
+        // Still initializing, or already unpublished: both stop paths clear the
+        // catalog entry before they close anything, so a plugin on its way out
+        // never looks like one worth re-attaching.
+        if (!loaded || this.plugins.get(pluginId) !== loaded) return;
+        // The process itself is gone; `handleChildClose` owns what happens next.
+        if (!child.connected) return;
+        void reattachSession();
+      });
+    };
+    watchForHostClose(sessionSocket);
     let ready: Extract<PluginProcessMessage, { type: "ready" }>;
     try {
       ready = await new Promise<Extract<PluginProcessMessage, { type: "ready" }>>(

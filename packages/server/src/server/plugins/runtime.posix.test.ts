@@ -124,8 +124,12 @@ function createTestRuntime(
 
 function createTrackedSessionHost() {
   const active = new Set<object>();
+  // One entry per hello handshake, so a test can tell a replacement socket that
+  // merely got attached from one the plugin's own client actually redialled.
+  const hellos: object[] = [];
   return {
     active,
+    hellos,
     host: {
       async attachPluginSocket(_pluginId: string, socket: PluginSessionSocket) {
         const closed = new Promise<void>((resolve) => socket.once("close", resolve));
@@ -135,6 +139,7 @@ function createTrackedSessionHost() {
           if (typeof data !== "string") return;
           const message = JSON.parse(data);
           if (message.type !== "hello") return;
+          hellos.push(socket);
           socket.send(
             JSON.stringify({
               type: "session",
@@ -1773,5 +1778,58 @@ export default function contribute(plugin: any) {
     await expect(runtime.invoke("crashing", "anything", {})).rejects.toThrow(
       "Plugin is not available",
     );
+  });
+
+  it("re-attaches a plugin session when the daemon closes the socket under a live child", async () => {
+    const directory = await createPlugin(
+      "reattaching",
+      `export default function contribute(plugin: unknown) { void plugin; return () => undefined; }`,
+    );
+    const sessions = createTrackedSessionHost();
+    const runtime = createTestRuntime({ sessionHost: sessions.host });
+    await runtime.startPlugin("reattaching", directory);
+
+    expect(sessions.active.size).toBe(1);
+    expect(sessions.hellos).toHaveLength(1);
+    const first = [...sessions.active][0] as PluginSessionSocket;
+
+    // Exactly what an expired application lease does: the daemon drops the
+    // socket while the plugin process itself keeps running.
+    first.close(1000, "expired application lease");
+
+    await vi.waitFor(
+      () => {
+        expect(sessions.active.size).toBe(1);
+        expect([...sessions.active][0]).not.toBe(first);
+      },
+      { timeout: 15_000 },
+    );
+
+    // The replacement is only useful if the plugin's own client redials onto
+    // it, so require a second handshake rather than just a second attachment.
+    await vi.waitFor(() => expect(sessions.hellos.length).toBeGreaterThanOrEqual(2), {
+      timeout: 15_000,
+    });
+  });
+
+  it("attaches no replacement session when the plugin is stopped", async () => {
+    const directory = await createPlugin(
+      "stopping",
+      `export default function contribute(plugin: unknown) { void plugin; return () => undefined; }`,
+    );
+    const sessions = createTrackedSessionHost();
+    const runtime = createTestRuntime({ sessionHost: sessions.host });
+    await runtime.startPlugin("stopping", directory);
+    expect(sessions.active.size).toBe(1);
+
+    // A clean stop closes the session from the plugin's side, which must not
+    // look like a socket worth replacing - otherwise stopping a plugin stands
+    // up a fresh session for a process that is on its way out.
+    await runtime.stopPluginById("stopping");
+
+    expect(runtime.getLogs("stopping").map((entry) => entry.message)).not.toContain(
+      "[paseo] Re-attached plugin session",
+    );
+    expect(sessions.active.size).toBe(0);
   });
 });
