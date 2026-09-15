@@ -10177,6 +10177,103 @@ test("provider user_message is recorded from the live stream", async () => {
   expect(userMessages[0].text).toBe("continuation prompt");
 });
 
+test("reconciles an OMP provider echo without client metadata by foreground turn", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-omp-echo-reconcile-"));
+  const storagePath = join(workdir, "agents");
+  const storage = new AgentStorage(storagePath, logger);
+
+  class UncorrelatedOmpEchoSession extends TestAgentSession {
+    override readonly provider = "omp" as const;
+    private turnCount = 0;
+
+    override async startTurn(prompt: AgentPromptInput): Promise<{ turnId: string }> {
+      const turnNumber = ++this.turnCount;
+      const turnId = `omp-turn-${turnNumber}`;
+      const text = typeof prompt === "string" ? prompt : "";
+      const providerMessageId = `omp-provider-message-${turnNumber}`;
+      setTimeout(() => {
+        this.pushEvent({ type: "turn_started", provider: this.provider, turnId });
+        this.pushEvent({
+          type: "timeline",
+          provider: this.provider,
+          turnId,
+          item: { type: "user_message", text, messageId: providerMessageId },
+        });
+        this.pushEvent({
+          type: "timeline",
+          provider: this.provider,
+          turnId,
+          item: { type: "assistant_message", text: `reply-${turnNumber}` },
+        });
+        this.pushEvent({ type: "turn_completed", provider: this.provider, turnId });
+      }, 0);
+      return { turnId };
+    }
+  }
+
+  class UncorrelatedOmpEchoClient extends TestAgentClient {
+    readonly session = new UncorrelatedOmpEchoSession({ provider: "omp", cwd: workdir });
+
+    constructor() {
+      super("omp");
+    }
+
+    override async createSession(): Promise<AgentSession> {
+      return this.session;
+    }
+  }
+
+  const manager = new AgentManager({
+    clients: { omp: new UncorrelatedOmpEchoClient() },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000404",
+  });
+
+  try {
+    const snapshot = await manager.createAgent({ provider: "omp", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+
+    await manager.runAgent(snapshot.id, "same prompt", { clientMessageId: "client-1" });
+    await manager.runAgent(snapshot.id, "same prompt", { clientMessageId: "client-2" });
+
+    const userRows = manager
+      .fetchTimeline(snapshot.id, { direction: "tail", limit: 0 })
+      .rows.filter((row) => row.item.type === "user_message");
+    expect(userRows).toEqual([
+      expect.objectContaining({
+        seq: 1,
+        timestamp: expect.any(String),
+        turnId: "omp-turn-1",
+        providerMessageId: "omp-provider-message-1",
+        item: {
+          type: "user_message",
+          text: "same prompt",
+          messageId: "client-1",
+          clientMessageId: "client-1",
+        },
+      }),
+      expect.objectContaining({
+        seq: 3,
+        timestamp: expect.any(String),
+        turnId: "omp-turn-2",
+        providerMessageId: "omp-provider-message-2",
+        item: {
+          type: "user_message",
+          text: "same prompt",
+          messageId: "client-2",
+          clientMessageId: "client-2",
+        },
+      }),
+    ]);
+  } finally {
+    await manager.flush().catch(() => undefined);
+    await storage.flush().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("canonical submitted prompt keeps wire identity while rewind resolves provider identity", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-submitted-prompt-"));
   const storagePath = join(workdir, "agents");

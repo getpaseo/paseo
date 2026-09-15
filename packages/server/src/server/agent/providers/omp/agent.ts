@@ -1874,28 +1874,50 @@ export class OmpAgentSession implements AgentSession {
           },
         });
         return;
-      case "agent_end": {
-        const messages = event.messages ?? [];
-        let terminalMessages: OmpAgentMessage[] | null = null;
-        if (messages.some((message) => message.role === "assistant")) {
-          terminalMessages = messages;
-        } else if (this.activeTurnTerminalAssistantMessage) {
-          terminalMessages = [this.activeTurnTerminalAssistantMessage];
-        }
-        // OMP can end an internal extension-notice cycle before it starts the
-        // model turn for the same prompt. Ignore only cycles where neither the
-        // terminal payload nor the live stream contained an assistant message.
-        if (!terminalMessages) {
-          return;
-        }
-        // A state request is processed after OMP's RPC loop becomes promptable,
-        // so do not advertise Paseo idle until it reports that transition.
-        void this.completeTurnAfterProviderIdle(turnId, terminalMessages);
+      case "agent_end":
+        this.handleAgentEnd(event, turnId);
         return;
-      }
       default:
         return;
     }
+  }
+
+  private handleAgentEnd(
+    event: Extract<OmpAgentSessionEvent, { type: "agent_end" }>,
+    turnId: string | undefined,
+  ): void {
+    const messages = event.messages ?? [];
+    let terminalMessages: OmpAgentMessage[] | null = null;
+    if (messages.some((message) => message.role === "assistant")) {
+      terminalMessages = messages;
+    } else if (this.activeTurnTerminalAssistantMessage) {
+      terminalMessages = [this.activeTurnTerminalAssistantMessage];
+    }
+    // OMP can end an internal extension-notice cycle before it starts the
+    // model turn for the same prompt. Ignore only cycles where neither the
+    // terminal payload nor the live stream contained an assistant message.
+    if (!terminalMessages || this.shouldIgnoreEarlyTerminalEvent(turnId)) {
+      return;
+    }
+    // A state request is processed after OMP's RPC loop becomes promptable,
+    // so do not advertise Paseo idle until it reports that transition.
+    void this.completeTurnAfterProviderIdle(turnId, terminalMessages);
+  }
+
+  private shouldIgnoreEarlyTerminalEvent(turnId: string | undefined): boolean {
+    // A replacement can start before OMP delivers the previous turn's
+    // terminal event. Do not let that late event complete the new
+    // foreground prompt before its user echo establishes correlation.
+    // Provider-owned/autonomous turns have no client id and retain the
+    // existing completion behavior.
+    if (!this.activeClientMessageId || this.activeTurnHasUserMessage) {
+      return false;
+    }
+    this.logger.debug(
+      { turnId, sessionFile: this.state.sessionFile },
+      "Ignoring OMP terminal event before foreground user echo",
+    );
+    return true;
   }
 
   private handleToolExecutionEnd(
