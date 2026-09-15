@@ -394,6 +394,37 @@ describe("OMP agent client and session", () => {
     expect(omp.completedTurnCount()).toBe(1);
   });
 
+  test("hides metadata-free xdev notices before the provider echo", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+
+    await expect(
+      omp.runPromptWithCustomMessageBeforeUser(
+        "hello OMP",
+        {
+          role: "custom",
+          content: "<system-notice>\nxd://: mounted mcp__agent_browser_click\n</system-notice>",
+        },
+        "done",
+      ),
+    ).resolves.toMatchObject({ finalText: "done" });
+
+    expect(omp.timeline()).toEqual([
+      {
+        type: "user_message",
+        text: "hello OMP",
+        messageId: "user-1",
+        clientMessageId: "client-1",
+      },
+      {
+        type: "assistant_message",
+        text: "done",
+        messageId: "omp-assistant-1",
+      },
+    ]);
+    expect(omp.completedTurnCount()).toBe(1);
+  });
+
   test("renders a live system-notice custom message as a notification", async () => {
     const omp = new OmpHarness();
     await omp.start();

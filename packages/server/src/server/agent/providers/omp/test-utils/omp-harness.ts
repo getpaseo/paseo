@@ -188,6 +188,25 @@ export class OmpHarness {
     return await run;
   }
 
+  async runPromptWithCustomMessageBeforeUser(
+    input: string,
+    customMessage: Extract<OmpAgentMessage, { role: "custom" }>,
+    output: string,
+    clientMessageId = "client-1",
+  ): Promise<unknown> {
+    const session = this.requireSession();
+    const promptStarted = this.omp.latestSession().nextPrompt();
+    const run = session.run(input, { clientMessageId });
+    await promptStarted;
+    const runtime = this.omp.latestSession();
+    runtime.beginTurn();
+    runtime.emit({ type: "message_end", message: customMessage });
+    runtime.acceptPrompt(input, "user-1");
+    runtime.streamAssistantText(output);
+    runtime.finishTurn();
+    return await run;
+  }
+
   async startPromptWithEmptyAgentEnd(
     input: string,
     output: string,
