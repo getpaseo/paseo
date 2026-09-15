@@ -19,6 +19,12 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet } from "react-native-unistyles";
 import { Autocomplete, type AutocompleteOption } from "@/components/ui/autocomplete";
 import {
+  createMeasurementLoop,
+  type FrameScheduler,
+  type MeasurementLoop,
+  type RelativeAnchorRect,
+} from "@/components/ui/autocomplete-measurement";
+import {
   measureFloatingPanelPortalHost,
   useFloatingPanelPortalHostName,
 } from "@/components/ui/floating-panel-portal";
@@ -30,34 +36,20 @@ const OFFSET_FROM_ANCHOR = SPACING[3];
 
 /**
  * Frames to keep re-measuring while the anchor or the portal host answer with no usable rect.
- * The host registers itself from an effect and both are measured through the layout engine, so
- * the first frames after the popover opens can come back empty or zero-sized. Nothing else
- * re-triggers measurement on a platform without keyboard motion, so without this the popover
- * stays hidden until the window is resized.
+ * The retry lifecycle itself lives in `autocomplete-measurement`, which is where it is tested.
  */
 const MEASUREMENT_RETRY_FRAMES = 12;
+
+const animationFrames: FrameScheduler = {
+  request: (callback) => requestAnimationFrame(callback),
+  cancel: (handle) => cancelAnimationFrame(handle),
+};
 
 interface Rect {
   x: number;
   y: number;
   width: number;
   height: number;
-}
-
-/**
- * A missing host, a collapsed host or a zero-width anchor all mean layout has not produced the
- * geometry yet. Positioning against those values hides the popover just as thoroughly as not
- * rendering it, so they are treated as "not measured yet" rather than as a result.
- */
-function isMeasured(anchorRect: Rect, hostRect: Rect | null): hostRect is Rect {
-  return hostRect !== null && hostRect.height > 0 && anchorRect.width > 0;
-}
-
-interface RelativeAnchorRect {
-  x: number;
-  y: number;
-  width: number;
-  hostHeight: number;
 }
 
 function measureElement(element: View): Promise<Rect> {
@@ -99,63 +91,43 @@ export function AutocompletePopover({
   const portalHostName = useFloatingPanelPortalHostName();
   const { shift, isMoving } = useKeyboardShift();
   const measuredShift = useSharedValue(0);
-  const measurementGeneration = useRef(0);
-  const retryFrame = useRef<number | null>(null);
-  const retriesLeft = useRef(0);
+  const loopRef = useRef<MeasurementLoop | null>(null);
+  loopRef.current ??= createMeasurementLoop(animationFrames, MEASUREMENT_RETRY_FRAMES);
+  const loop = loopRef.current;
   const canMeasure = visible && (options.length === 0 || selectedIndex >= 0);
 
   const remeasure = useCallback(() => {
     if (!canMeasure) return;
     const anchorElement = anchorRef.current;
     if (!anchorElement) return;
-    const generation = measurementGeneration.current;
-    void Promise.all([
-      measureElement(anchorElement),
-      measureFloatingPanelPortalHost(portalHostName),
-    ]).then(([anchorRect, hostRect]) => {
-      if (generation !== measurementGeneration.current) return undefined;
-      if (!isMeasured(anchorRect, hostRect)) {
-        // One retry in flight at a time, so the effect cleanup has a single frame to cancel.
-        if (retriesLeft.current > 0 && retryFrame.current === null) {
-          retriesLeft.current -= 1;
-          retryFrame.current = requestAnimationFrame(() => {
-            retryFrame.current = null;
-            remeasure();
-          });
-        }
-        return undefined;
-      }
-      setRelativeAnchorRect({
-        x: anchorRect.x - hostRect.x,
-        y: anchorRect.y - hostRect.y,
-        width: anchorRect.width,
-        hostHeight: hostRect.height,
-      });
-      measuredShift.value = shift.value;
-      return undefined;
+    loop.run({
+      measure: () =>
+        Promise.all([
+          measureElement(anchorElement),
+          measureFloatingPanelPortalHost(portalHostName),
+        ]),
+      onMeasured: (rect) => {
+        setRelativeAnchorRect(rect);
+        measuredShift.value = shift.value;
+      },
     });
-  }, [anchorRef, canMeasure, measuredShift, portalHostName, shift]);
+  }, [anchorRef, canMeasure, loop, measuredShift, portalHostName, shift]);
 
   useEffect(() => {
-    measurementGeneration.current += 1;
+    loop.reset();
     if (!canMeasure) {
       setRelativeAnchorRect(null);
       return;
     }
 
-    retriesLeft.current = MEASUREMENT_RETRY_FRAMES;
     remeasure();
     const raf = requestAnimationFrame(remeasure);
 
     return () => {
-      measurementGeneration.current += 1;
+      loop.stop();
       cancelAnimationFrame(raf);
-      if (retryFrame.current !== null) {
-        cancelAnimationFrame(retryFrame.current);
-        retryFrame.current = null;
-      }
     };
-  }, [canMeasure, remeasure, windowDimensions.width, windowDimensions.height]);
+  }, [canMeasure, loop, remeasure, windowDimensions.width, windowDimensions.height]);
 
   useAnimatedReaction(
     () => isMoving.value,
