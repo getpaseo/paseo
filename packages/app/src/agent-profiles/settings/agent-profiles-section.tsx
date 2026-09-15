@@ -55,7 +55,11 @@ export function AgentProfilesSection({ serverId }: { serverId: string }): ReactE
       // user cleared, so spreading it over the stored record would silently keep
       // the old model, mode, thinking option or notes.
       const next: AgentProfile[] = editing
-        ? current.map((entry) => (entry.id === editing.id ? { id: entry.id, ...value } : entry))
+        ? current.map((entry) =>
+            entry.id === editing.id
+              ? { id: entry.id, ...value, ...(entry.isDefault ? { isDefault: true } : {}) }
+              : entry,
+          )
         : [...current, { id: generateAgentProfileId(), ...value }];
       await saveProfiles(next);
     },
@@ -89,6 +93,29 @@ export function AgentProfilesSection({ serverId }: { serverId: string }): ReactE
 
   const handleMoveUp = useCallback((id: string) => void reorder(id, -1), [reorder]);
   const handleMoveDown = useCallback((id: string) => void reorder(id, 1), [reorder]);
+
+  const handleSetDefault = useCallback(
+    async (id: string) => {
+      if (!profiles) {
+        return;
+      }
+      const next = profiles.map((entry) => {
+        if (entry.id === id) {
+          return { ...entry, isDefault: !entry.isDefault };
+        }
+        return entry.isDefault ? { ...entry, isDefault: false } : entry;
+      });
+      try {
+        await saveProfiles(next);
+      } catch (error) {
+        Alert.alert(
+          t("common.errors.unableToSave"),
+          error instanceof Error ? error.message : String(error),
+        );
+      }
+    },
+    [profiles, saveProfiles, t],
+  );
 
   const handleRemove = useCallback(
     (id: string) => {
@@ -174,6 +201,7 @@ export function AgentProfilesSection({ serverId }: { serverId: string }): ReactE
                 onRemove={handleRemove}
                 onMoveUp={handleMoveUp}
                 onMoveDown={handleMoveDown}
+                onSetDefault={handleSetDefault}
               />
             ))
           ) : (

@@ -223,6 +223,8 @@ export const fr: TranslationResources = {
       implement: "Mettre en œuvre",
       question: "Comment souhaitez-vous procéder?",
       proposedPlan: "Plan proposé",
+      chooseMode: "Choisir le mode après l'implémentation",
+      modeLabel: "Mode :",
     },
   },
   agentPanel: {
@@ -2515,6 +2517,9 @@ export const fr: TranslationResources = {
         removeConfirmMessage: "Supprimer « {{name}} » ?",
         moveUp: "Déplacer vers le haut",
         moveDown: "Déplacer vers le bas",
+        setDefault: "Définir par défaut pour les nouveaux espaces de travail",
+        unsetDefault: "Retirer par défaut pour les nouveaux espaces de travail",
+        defaultBadge: "Par défaut",
       },
       daemon: {
         rename: {
@@ -2635,6 +2640,12 @@ export const fr: TranslationResources = {
         discovered: "Découvert",
         custom: "Modèles personnalisés",
         updated: "{{time}}mis à jour",
+      },
+      planAcceptMode: {
+        sectionTitle: "Mode d'acceptation du plan",
+        rowTitle: "Mode par défaut après acceptation d'un plan",
+        pickerLabel: "Choisir le mode d'acceptation de plan par défaut",
+        unset: "Non défini",
       },
       diagnostic: {
         title: "Diagnostique",

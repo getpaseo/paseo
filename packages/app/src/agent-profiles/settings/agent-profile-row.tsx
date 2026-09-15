@@ -1,7 +1,7 @@
 import { useCallback, useMemo, type ReactElement } from "react";
 import { Text, View } from "react-native";
 import { useTranslation } from "react-i18next";
-import { ArrowDown, ArrowUp, FileText, Pencil, Trash2 } from "lucide-react-native";
+import { ArrowDown, ArrowUp, FileText, Pencil, Star, Trash2 } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import type { ProviderSnapshotEntry } from "@getpaseo/protocol/agent-types";
 import type { AgentProfile } from "@getpaseo/protocol/messages";
@@ -16,14 +16,21 @@ const ThemedArrowDown = withUnistyles(ArrowDown);
 const ThemedPencil = withUnistyles(Pencil);
 const ThemedTrash2 = withUnistyles(Trash2);
 const ThemedFileText = withUnistyles(FileText);
+const ThemedStar = withUnistyles(Star);
 
 const mutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 const destructiveColorMapping = (theme: Theme) => ({ color: theme.colors.destructive });
+const accentColorMapping = (theme: Theme) => ({
+  color: theme.colors.accent,
+  fill: theme.colors.accent,
+});
 
 const moveUpIcon = <ThemedArrowUp size={ICON_SIZE.sm} uniProps={mutedColorMapping} />;
 const moveDownIcon = <ThemedArrowDown size={ICON_SIZE.sm} uniProps={mutedColorMapping} />;
 const editIcon = <ThemedPencil size={ICON_SIZE.sm} uniProps={mutedColorMapping} />;
 const removeIcon = <ThemedTrash2 size={ICON_SIZE.sm} uniProps={destructiveColorMapping} />;
+const setDefaultIcon = <ThemedStar size={ICON_SIZE.sm} uniProps={mutedColorMapping} />;
+const unsetDefaultIcon = <ThemedStar size={ICON_SIZE.sm} uniProps={accentColorMapping} />;
 
 export interface AgentProfileRowProps {
   profile: AgentProfile;
@@ -34,6 +41,7 @@ export interface AgentProfileRowProps {
   onRemove: (id: string) => void;
   onMoveUp: (id: string) => void;
   onMoveDown: (id: string) => void;
+  onSetDefault: (id: string) => void;
 }
 
 export function AgentProfileRow({
@@ -45,13 +53,16 @@ export function AgentProfileRow({
   onRemove,
   onMoveUp,
   onMoveDown,
+  onSetDefault,
 }: AgentProfileRowProps): ReactElement {
   const { t } = useTranslation();
+  const isDefault = profile.isDefault === true;
 
   const handleEdit = useCallback(() => onEdit(profile.id), [onEdit, profile.id]);
   const handleRemove = useCallback(() => onRemove(profile.id), [onRemove, profile.id]);
   const handleMoveUp = useCallback(() => onMoveUp(profile.id), [onMoveUp, profile.id]);
   const handleMoveDown = useCallback(() => onMoveDown(profile.id), [onMoveDown, profile.id]);
+  const handleSetDefault = useCallback(() => onSetDefault(profile.id), [onSetDefault, profile.id]);
 
   const formatFeatureCount = useCallback(
     (count: number) =>
@@ -82,6 +93,14 @@ export function AgentProfileRow({
             <Text style={settingsStyles.rowTitle} numberOfLines={1}>
               {profile.name}
             </Text>
+            {isDefault ? (
+              <Text
+                style={styles.defaultBadge}
+                testID={`agent-profile-default-badge-${profile.id}`}
+              >
+                {t("settings.host.agentProfiles.defaultBadge")}
+              </Text>
+            ) : null}
             <Text style={styles.summary} numberOfLines={1}>
               {summary}
             </Text>
@@ -101,6 +120,18 @@ export function AgentProfileRow({
         </View>
       </View>
       <View style={styles.rowActions}>
+        <Button
+          variant="ghost"
+          size="sm"
+          leftIcon={isDefault ? unsetDefaultIcon : setDefaultIcon}
+          onPress={handleSetDefault}
+          accessibilityLabel={t(
+            isDefault
+              ? "settings.host.agentProfiles.unsetDefault"
+              : "settings.host.agentProfiles.setDefault",
+          )}
+          testID={`agent-profile-set-default-${profile.id}`}
+        />
         <Button
           variant="ghost"
           size="sm"
@@ -169,6 +200,11 @@ const styles = StyleSheet.create((theme) => ({
     flexShrink: 1,
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.sm,
+  },
+  defaultBadge: {
+    color: theme.colors.accent,
+    fontSize: theme.fontSize.sm,
+    textTransform: "uppercase",
   },
   notes: {
     flexDirection: "row",

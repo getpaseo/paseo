@@ -510,6 +510,8 @@ export type AgentPermissionResponse =
       selectedActionId?: string;
       updatedInput?: AgentMetadata;
       updatedPermissions?: AgentPermissionUpdate[];
+      /** Explicit mode to switch to on plan acceptance; ignored for non-plan requests. */
+      targetModeId?: string;
     }
   | {
       behavior: "deny";

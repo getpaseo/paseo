@@ -190,6 +190,57 @@ describe("DaemonConfigStore", () => {
     expect(loadPersistedConfig(paseoHome).daemon?.agentProfiles).toHaveLength(1);
   });
 
+  test("patches and persists the per-provider plan-accept mode defaults", () => {
+    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
+    tempDirs.push(paseoHome);
+    const store = new DaemonConfigStore(paseoHome, {
+      relay: { enabled: false },
+      mcp: { injectIntoAgents: false },
+      browserTools: { enabled: false },
+      providers: {},
+      metadataGeneration: { providers: [] },
+      autoArchiveAfterMerge: false,
+      enableTerminalAgentHooks: false,
+      appendSystemPrompt: "",
+    });
+
+    store.patch({ planAcceptModeDefaults: { claude: "acceptEdits" } });
+
+    expect(store.get().planAcceptModeDefaults).toEqual({ claude: "acceptEdits" });
+    expect(loadPersistedConfig(paseoHome).daemon?.planAcceptModeDefaults).toEqual({
+      claude: "acceptEdits",
+    });
+  });
+
+  test("merges a single-provider plan-accept mode patch instead of replacing the whole map", () => {
+    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
+    tempDirs.push(paseoHome);
+    const store = new DaemonConfigStore(paseoHome, {
+      relay: { enabled: false },
+      mcp: { injectIntoAgents: false },
+      browserTools: { enabled: false },
+      providers: {},
+      metadataGeneration: { providers: [] },
+      autoArchiveAfterMerge: false,
+      enableTerminalAgentHooks: false,
+      appendSystemPrompt: "",
+    });
+
+    store.patch({ planAcceptModeDefaults: { claude: "acceptEdits" } });
+    // A second client patching only "codex" must not know about (or clobber) the
+    // "claude" entry another client already saved.
+    store.patch({ planAcceptModeDefaults: { codex: "full-access" } });
+
+    expect(store.get().planAcceptModeDefaults).toEqual({
+      claude: "acceptEdits",
+      codex: "full-access",
+    });
+    expect(loadPersistedConfig(paseoHome).daemon?.planAcceptModeDefaults).toEqual({
+      claude: "acceptEdits",
+      codex: "full-access",
+    });
+  });
+
   test("rolls back config when a field transition fails", () => {
     const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
     tempDirs.push(paseoHome);

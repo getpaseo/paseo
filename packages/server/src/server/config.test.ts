@@ -40,6 +40,19 @@ describe("server config", () => {
     expect(config.providerCatalogRefreshTimeoutMs).toBe(180_000);
   });
 
+  test("survives a restart with persisted plan-accept mode defaults", async () => {
+    const paseoHome = await mkdtemp(path.join(os.tmpdir(), "paseo-config-plan-accept-"));
+    roots.push(paseoHome);
+    await writeFile(
+      path.join(paseoHome, "config.json"),
+      JSON.stringify({ daemon: { planAcceptModeDefaults: { claude: "acceptEdits" } } }),
+    );
+
+    const config = loadConfig(paseoHome, { env: {} });
+
+    expect(config.planAcceptModeDefaults).toEqual({ claude: "acceptEdits" });
+  });
+
   test("resolves reload state from the supplied validated snapshot", async () => {
     const paseoHome = await mkdtemp(path.join(os.tmpdir(), "paseo-config-snapshot-"));
     roots.push(paseoHome);
