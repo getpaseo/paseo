@@ -21,9 +21,10 @@ private const val SHARED_DIR = "shared-intents"
 private const val SHORTCUT_URI_SCHEME = "paseo"
 
 /**
- * Hands share-sheet and PROCESS_TEXT intents to JavaScript, and publishes the
- * dynamic launcher shortcut. Expo's linking layer only sees ACTION_VIEW data
- * URIs, so these have to be read off the activity intent here.
+ * Hands share-sheet and PROCESS_TEXT intents to JavaScript, publishes the
+ * dynamic launcher shortcut, and stores the assistant catalog. Expo's linking
+ * layer only sees ACTION_VIEW data URIs, so intents are read off the activity
+ * here.
  */
 class PaseoAndroidIntentsModule : Module() {
   override fun definition() = ModuleDefinition {
@@ -58,6 +59,10 @@ class PaseoAndroidIntentsModule : Module() {
 
     Function("clearDynamicShortcuts") {
       ShortcutManagerCompat.removeAllDynamicShortcuts(requireContext())
+    }
+
+    Function("publishAssistantCatalog") { json: String ->
+      AssistantCatalogStore.write(requireContext(), json)
     }
   }
 
