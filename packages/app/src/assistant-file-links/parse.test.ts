@@ -271,6 +271,48 @@ describe("parseAssistantFileLink", () => {
     });
   });
 
+  it("decodes percent-encoded unicode in workspace-relative hrefs", () => {
+    expect(
+      parseAssistantFileLink("docs/%E4%B8%AD%E6%96%87/%E6%8A%A5%E5%91%8A.md", {
+        workspaceRoot: "/Users/test/project",
+      }),
+    ).toEqual({
+      raw: "docs/%E4%B8%AD%E6%96%87/%E6%8A%A5%E5%91%8A.md",
+      path: "/Users/test/project/docs/中文/报告.md",
+      lineStart: undefined,
+      lineEnd: undefined,
+    });
+  });
+
+  it("decodes percent-encoded unicode before parsing an absolute href line suffix", () => {
+    expect(
+      parseAssistantFileLink(
+        "/Users/test/project/docs/%E4%B8%AD%E6%96%87/%E6%8A%A5%E5%91%8A.md:89",
+        {
+          workspaceRoot: "/Users/test/project",
+        },
+      ),
+    ).toEqual({
+      raw: "/Users/test/project/docs/%E4%B8%AD%E6%96%87/%E6%8A%A5%E5%91%8A.md:89",
+      path: "/Users/test/project/docs/中文/报告.md",
+      lineStart: 89,
+      lineEnd: undefined,
+    });
+  });
+
+  it("decodes percent-encoded paths exactly once", () => {
+    expect(
+      parseAssistantFileLink("docs/%2525-notes.md", {
+        workspaceRoot: "/Users/test/project",
+      }),
+    ).toEqual({
+      raw: "docs/%2525-notes.md",
+      path: "/Users/test/project/docs/%25-notes.md",
+      lineStart: undefined,
+      lineEnd: undefined,
+    });
+  });
+
   it("parses absolute POSIX hrefs inside the active workspace", () => {
     expect(
       parseAssistantFileLink("/Users/test/project/src/app.tsx#L33", {
@@ -307,6 +349,19 @@ describe("parseAssistantFileLink", () => {
       path: "C:/repo/src/app.tsx",
       lineStart: 12,
       lineEnd: 20,
+    });
+  });
+
+  it("decodes percent-encoded unicode in absolute Windows hrefs", () => {
+    expect(
+      parseAssistantFileLink("C:/repo/docs/%E4%B8%AD%E6%96%87/%E6%8A%A5%E5%91%8A.md", {
+        workspaceRoot: "C:/repo",
+      }),
+    ).toEqual({
+      raw: "C:/repo/docs/%E4%B8%AD%E6%96%87/%E6%8A%A5%E5%91%8A.md",
+      path: "C:/repo/docs/中文/报告.md",
+      lineStart: undefined,
+      lineEnd: undefined,
     });
   });
 
