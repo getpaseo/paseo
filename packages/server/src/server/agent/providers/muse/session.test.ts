@@ -2,14 +2,21 @@ import { describe, expect, test, vi } from "vitest";
 
 import { createTestLogger } from "../../../../test-utils/test-logger.js";
 import type { AgentStreamEvent } from "../../agent-sdk-types.js";
-import type { MuseHostConnection, MuseHostNotification } from "./host.js";
+import type {
+  MuseHostConnection,
+  MuseHostNotification,
+  MuseHostServerRequest,
+} from "./host.js";
 import { isMissingRunError, MuseAgentSession } from "./session.js";
 
-function createHarness(options?: { systemPrefix?: string }) {
+function createHarness(options?: { systemPrefix?: string; modelId?: string | null }) {
   const commands: Array<{ method: string; params: Record<string, unknown> }> = [];
   const routes = new Map<string, (params: Record<string, unknown>) => unknown>();
   const events: AgentStreamEvent[] = [];
   let notifHandler: ((notification: MuseHostNotification) => void) | undefined;
+  let requestHandler:
+    | ((request: MuseHostServerRequest) => Promise<Record<string, unknown>>)
+    | undefined;
   let exitHandler: ((exit: { code: number | null; signal: string | null }) => void) | undefined;
   const host: MuseHostConnection = {
     initializeResult: {},
@@ -26,7 +33,9 @@ function createHarness(options?: { systemPrefix?: string }) {
     onNotification: vi.fn((handler) => {
       notifHandler = handler;
     }),
-    onServerRequest: vi.fn(),
+    onServerRequest: vi.fn((handler) => {
+      requestHandler = handler;
+    }),
     onExit: vi.fn((handler) => {
       exitHandler = handler;
     }),
@@ -44,7 +53,7 @@ function createHarness(options?: { systemPrefix?: string }) {
       supportsReasoningStream: true,
       supportsToolInvocations: true,
     },
-    modelId: null,
+    modelId: options?.modelId ?? null,
     modeId: "allowAll",
     systemPrefix: options?.systemPrefix,
     logger: createTestLogger(),
@@ -58,12 +67,63 @@ function createHarness(options?: { systemPrefix?: string }) {
     routes,
     events,
     emit: (notification: MuseHostNotification) => notifHandler?.(notification),
+    request: (request: MuseHostServerRequest) => requestHandler?.(request),
     exit: (exit: { code: number | null; signal: string | null }) => exitHandler?.(exit),
   };
 }
 
 function acceptTurn(turnId = "turn-1") {
   return { status: "accepted", commandId: turnId, turnId, disposition: "started" };
+}
+
+function mspError(message: string, kind: string) {
+  return Object.assign(new Error(message), { kind });
+}
+
+function approvalParams(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    approvalId: "approval-1",
+    sessionId: "session-1",
+    currentRequirementId: "req-1",
+    toolName: "shell",
+    rawArgs: JSON.stringify({ command: "ls" }),
+    subject: { kind: "shell", stages: [{ argv: ["ls"] }] },
+    availableChoices: [
+      {
+        choiceId: "allow-once",
+        decision: "approved",
+        label: "Allow once",
+        scope: "once",
+        acceptsFeedback: false,
+      },
+      {
+        choiceId: "deny",
+        decision: "denied",
+        label: "Deny",
+        scope: "once",
+        acceptsFeedback: true,
+      },
+    ],
+    ...overrides,
+  };
+}
+
+function userInputParams(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    userInputId: "input-1",
+    sessionId: "session-1",
+    toolName: "askUser",
+    questions: [
+      {
+        id: "q1",
+        header: "Target",
+        question: "Which target?",
+        selection: { mode: "single" },
+        options: [{ label: "a" }, { label: "b" }],
+      },
+    ],
+    ...overrides,
+  };
 }
 
 describe("MuseAgentSession", () => {
@@ -309,6 +369,357 @@ describe("MuseAgentSession", () => {
 
     expect(host.close).toHaveBeenCalledTimes(1);
     await expect(session.startTurn("late")).rejects.toThrow("closed");
+  });
+
+  test("surfaces server approval requests and decides them", async () => {
+    const { session, commands, routes, events, request } = createHarness();
+    routes.set("approval/decide", () => ({}));
+
+    await request({
+      requestId: 1,
+      method: "approval/request",
+      params: approvalParams(),
+    });
+
+    expect(session.getPendingPermissions()).toHaveLength(1);
+    expect(events.at(-1)).toMatchObject({
+      type: "permission_requested",
+      provider: "muse",
+      request: { id: "approval-1", kind: "tool" },
+    });
+
+    await session.respondToPermission("approval-1", { behavior: "allow" });
+
+    expect(commands).toEqual([
+      {
+        method: "approval/decide",
+        params: {
+          sessionId: "session-1",
+          approvalId: "approval-1",
+          requirementId: "req-1",
+          choiceId: "allow-once",
+        },
+      },
+    ]);
+    expect(session.getPendingPermissions()).toHaveLength(0);
+    expect(events.at(-1)).toMatchObject({
+      type: "permission_resolved",
+      provider: "muse",
+      requestId: "approval-1",
+      resolution: { behavior: "allow" },
+    });
+  });
+
+  test("rejects responses for unknown permission requests", async () => {
+    const { session } = createHarness();
+
+    await expect(session.respondToPermission("missing", { behavior: "allow" })).rejects.toThrow(
+      "Unknown Muse permission request: missing",
+    );
+  });
+
+  test("sends deny feedback with approval decisions", async () => {
+    const { session, commands, routes, request } = createHarness();
+    routes.set("approval/decide", () => ({}));
+    await request({ requestId: 1, method: "approval/request", params: approvalParams() });
+
+    await session.respondToPermission("approval-1", {
+      behavior: "deny",
+      message: "too risky",
+    });
+
+    expect(commands).toEqual([
+      {
+        method: "approval/decide",
+        params: {
+          sessionId: "session-1",
+          approvalId: "approval-1",
+          requirementId: "req-1",
+          choiceId: "deny",
+          feedback: "too risky",
+        },
+      },
+    ]);
+  });
+
+  test("tolerates already-resolved approvals", async () => {
+    const { session, routes, events, request } = createHarness();
+    routes.set("approval/decide", () => {
+      throw mspError("already resolved", "approvalAlreadyResolved");
+    });
+    await request({ requestId: 1, method: "approval/request", params: approvalParams() });
+
+    await session.respondToPermission("approval-1", { behavior: "allow" });
+
+    expect(session.getPendingPermissions()).toHaveLength(0);
+    expect(events.at(-1)).toMatchObject({
+      type: "permission_resolved",
+      requestId: "approval-1",
+    });
+  });
+
+  test("refreshes stale approval requirements and retries", async () => {
+    const { session, commands, routes, request } = createHarness();
+    let attempts = 0;
+    routes.set("approval/decide", () => {
+      attempts += 1;
+      if (attempts === 1) {
+        throw mspError("stale requirement", "approvalRequirementStale");
+      }
+      return {};
+    });
+    routes.set("approval/listPending", () => ({
+      approvals: [approvalParams({ currentRequirementId: "req-2" })],
+    }));
+    await request({ requestId: 1, method: "approval/request", params: approvalParams() });
+
+    await session.respondToPermission("approval-1", { behavior: "allow" });
+
+    expect(commands.map((command) => command.method)).toEqual([
+      "approval/decide",
+      "approval/listPending",
+      "approval/decide",
+    ]);
+    expect(commands[2]?.params).toMatchObject({
+      approvalId: "approval-1",
+      requirementId: "req-2",
+      choiceId: "allow-once",
+    });
+  });
+
+  test("reports approvals that vanish mid-decision", async () => {
+    const { session, routes, request } = createHarness();
+    routes.set("approval/decide", () => {
+      throw mspError("gone", "approvalNotFound");
+    });
+    await request({ requestId: 1, method: "approval/request", params: approvalParams() });
+
+    await expect(session.respondToPermission("approval-1", { behavior: "allow" })).rejects.toThrow(
+      "Muse approval is no longer pending",
+    );
+    expect(session.getPendingPermissions()).toHaveLength(0);
+  });
+
+  test("asks for review when approval choices change", async () => {
+    const { session, commands, routes, request } = createHarness();
+    routes.set("approval/decide", () => {
+      throw mspError("choices changed", "approvalChoiceInvalid");
+    });
+    routes.set("approval/listPending", () => ({
+      approvals: [approvalParams({ currentRequirementId: "req-2" })],
+    }));
+    await request({ requestId: 1, method: "approval/request", params: approvalParams() });
+
+    await expect(session.respondToPermission("approval-1", { behavior: "allow" })).rejects.toThrow(
+      "Muse approval choices changed; review the updated request",
+    );
+    expect(commands.map((command) => command.method)).toEqual([
+      "approval/decide",
+      "approval/listPending",
+    ]);
+    expect(session.getPendingPermissions()).toHaveLength(1);
+  });
+
+  test("answers server user-input requests", async () => {
+    const { session, commands, routes, events, request } = createHarness();
+    routes.set("userInput/answer", () => ({}));
+    await request({ requestId: 2, method: "userInput/request", params: userInputParams() });
+
+    expect(session.getPendingPermissions()).toHaveLength(1);
+    expect(events.at(-1)).toMatchObject({
+      type: "permission_requested",
+      request: { id: "input-1", kind: "question" },
+    });
+
+    await session.respondToPermission("input-1", {
+      behavior: "allow",
+      updatedInput: { answers: { Target: "b" } },
+    });
+
+    expect(commands).toEqual([
+      {
+        method: "userInput/answer",
+        params: {
+          sessionId: "session-1",
+          userInputId: "input-1",
+          answers: [{ questionId: "q1", selectedLabel: "b" }],
+        },
+      },
+    ]);
+    expect(events.at(-1)).toMatchObject({
+      type: "permission_resolved",
+      requestId: "input-1",
+    });
+  });
+
+  test("cancels user input on deny", async () => {
+    const { session, commands, routes, request } = createHarness();
+    routes.set("userInput/cancel", () => ({}));
+    await request({ requestId: 2, method: "userInput/request", params: userInputParams() });
+
+    await session.respondToPermission("input-1", {
+      behavior: "deny",
+      message: "stop asking",
+    });
+
+    expect(commands).toEqual([
+      {
+        method: "userInput/cancel",
+        params: { sessionId: "session-1", userInputId: "input-1", reason: "stop asking" },
+      },
+    ]);
+  });
+
+  test("tolerates settled or missing user input", async () => {
+    const settled = createHarness();
+    settled.routes.set("userInput/answer", () => {
+      throw mspError("settled", "userInputAlreadySettled");
+    });
+    await settled.request({ requestId: 2, method: "userInput/request", params: userInputParams() });
+    await settled.session.respondToPermission("input-1", { behavior: "allow" });
+    expect(settled.session.getPendingPermissions()).toHaveLength(0);
+
+    const missing = createHarness();
+    missing.routes.set("userInput/answer", () => {
+      throw mspError("gone", "userInputNotFound");
+    });
+    await missing.request({
+      requestId: 2,
+      method: "userInput/request",
+      params: userInputParams(),
+    });
+    await expect(
+      missing.session.respondToPermission("input-1", { behavior: "allow" }),
+    ).rejects.toThrow("Muse question is no longer pending");
+    expect(missing.session.getPendingPermissions()).toHaveLength(0);
+  });
+
+  test("clears pending requests on settled notifications", async () => {
+    const { session, emit, request } = createHarness();
+    await request({ requestId: 1, method: "approval/request", params: approvalParams() });
+    await request({ requestId: 2, method: "userInput/request", params: userInputParams() });
+    expect(session.getPendingPermissions()).toHaveLength(2);
+
+    emit({ method: "approval/resolved", params: { approvalId: "approval-1" } });
+    emit({ method: "userInput/settled", params: { userInputId: "input-1" } });
+
+    expect(session.getPendingPermissions()).toHaveLength(0);
+  });
+
+  test("setMode updates the host approval mode", async () => {
+    const { session, commands, routes, events } = createHarness();
+    routes.set("session/setApprovalMode", () => ({}));
+
+    await session.setMode("denyUnmatched");
+
+    expect(commands).toEqual([
+      {
+        method: "session/setApprovalMode",
+        params: { sessionId: "session-1", approvalMode: "denyUnmatched" },
+      },
+    ]);
+    await expect(session.getCurrentMode()).resolves.toBe("denyUnmatched");
+    expect(events.at(-1)).toMatchObject({
+      type: "mode_changed",
+      provider: "muse",
+      currentModeId: "denyUnmatched",
+    });
+    await expect(session.setMode("bogus")).rejects.toThrow("Unknown Muse approval mode: bogus");
+  });
+
+  test("setModel switches the host model and restores the initial model", async () => {
+    const { session, commands, routes, events } = createHarness({ modelId: "muse-spark-1.2" });
+    routes.set("session/setModel", () => ({}));
+
+    await session.setModel("muse-spark-1.3");
+    await session.setModel(null);
+
+    expect(commands).toEqual([
+      {
+        method: "session/setModel",
+        params: { sessionId: "session-1", model: { modelId: "muse-spark-1.3" } },
+      },
+      {
+        method: "session/setModel",
+        params: { sessionId: "session-1", model: { modelId: "muse-spark-1.2" } },
+      },
+    ]);
+    await expect(session.getRuntimeInfo()).resolves.toMatchObject({
+      model: "muse-spark-1.2",
+    });
+    expect(events.at(-1)).toMatchObject({ type: "model_changed", provider: "muse" });
+  });
+
+  test("setModel without a target is a no-op", async () => {
+    const { session, commands } = createHarness();
+
+    await session.setModel(null);
+
+    expect(commands).toEqual([]);
+  });
+
+  test("setThinkingOption applies reasoning effort with a default", async () => {
+    const { session, commands, routes } = createHarness();
+    routes.set("session/setReasoningEffort", () => ({}));
+
+    await session.setThinkingOption("low");
+    await session.setThinkingOption(null);
+    await session.setThinkingOption("bogus");
+
+    expect(commands.map((command) => command.params["reasoningEffort"])).toEqual([
+      "low",
+      "high",
+      "high",
+    ]);
+    await expect(session.getRuntimeInfo()).resolves.toMatchObject({
+      thinkingOptionId: "high",
+    });
+  });
+
+  test("steerActiveTurn requires the expected turn", async () => {
+    const { session, commands, routes } = createHarness();
+    routes.set("turn/start", () => acceptTurn());
+    routes.set("turn/steer", () => ({}));
+
+    await expect(session.steerActiveTurn("early", { expectedTurnId: "turn-1" })).resolves.toEqual({
+      status: "unavailable",
+    });
+
+    await session.startTurn("hello");
+    await expect(session.steerActiveTurn("stale", { expectedTurnId: "turn-9" })).resolves.toEqual({
+      status: "unavailable",
+    });
+    await expect(session.steerActiveTurn("more", { expectedTurnId: "turn-1" })).resolves.toEqual({
+      status: "accepted",
+    });
+
+    expect(commands.map((command) => command.method)).toEqual(["turn/start", "turn/steer"]);
+    expect(commands[1]?.params).toEqual({
+      sessionId: "session-1",
+      expectedTurnId: "turn-1",
+      input: [{ type: "text", text: "more" }],
+    });
+  });
+
+  test("steerActiveTurn maps command rejections to unavailable", async () => {
+    const { session, routes } = createHarness();
+    routes.set("turn/start", () => acceptTurn());
+    routes.set("turn/steer", () => {
+      throw mspError("busy", "commandRejected");
+    });
+
+    await session.startTurn("hello");
+
+    await expect(session.steerActiveTurn("more", { expectedTurnId: "turn-1" })).resolves.toEqual({
+      status: "unavailable",
+    });
+
+    routes.set("turn/steer", () => {
+      throw new Error("boom");
+    });
+    await expect(session.steerActiveTurn("more", { expectedTurnId: "turn-1" })).rejects.toThrow(
+      "boom",
+    );
   });
 });
 

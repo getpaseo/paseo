@@ -14,9 +14,15 @@ import type {
   AgentPersistenceHandle,
   AgentProvider,
   AgentResumeSessionOptions,
+  AgentSelectOption,
   AgentSession,
   AgentSessionConfig,
   FetchCatalogOptions,
+  ImportableProviderSession,
+  ImportedProviderSession,
+  ImportProviderSessionContext,
+  ImportProviderSessionInput,
+  ListImportableSessionsOptions,
   ProviderCatalog,
   ProviderRefreshContext,
 } from "../../agent-sdk-types.js";
@@ -32,6 +38,8 @@ import {
   formatProviderDiagnostic,
   formatProviderDiagnosticError,
 } from "../diagnostic-utils.js";
+import { importSessionFromPersistence } from "../../provider-session-import.js";
+import { createPathEquivalenceMatcher } from "../../../../utils/path.js";
 import {
   spawnMuseHost,
   type MuseHostConnection,
@@ -69,6 +77,46 @@ export const MUSE_MODES: AgentMode[] = [
     description: "Automatically approves all Muse tool, path, and URL requests.",
   },
 ];
+
+export const MUSE_DEFAULT_THINKING_OPTION_ID = "high";
+
+const MUSE_THINKING_TIERS = [
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+  "ultra",
+] as const;
+
+export type MuseThinkingTier = (typeof MUSE_THINKING_TIERS)[number];
+
+export const MUSE_THINKING_OPTIONS: AgentSelectOption[] = [
+  { id: "minimal", label: "Minimal", description: "Quick answers with least reasoning" },
+  { id: "low", label: "Low", description: "Light reasoning for simple tasks" },
+  { id: "medium", label: "Medium", description: "Balanced reasoning" },
+  {
+    id: "high",
+    label: "High",
+    description: "Deep reasoning for hard problems",
+    isDefault: true,
+  },
+  { id: "xhigh", label: "Extra High", description: "Extended reasoning" },
+  { id: "max", label: "Max", description: "Maximum reasoning depth" },
+  { id: "ultra", label: "Ultra", description: "Delegating ultra reasoning" },
+];
+
+export function normalizeMuseThinkingOption(
+  value: string | null | undefined,
+): MuseThinkingTier | null {
+  if (!value) {
+    return null;
+  }
+  return (MUSE_THINKING_TIERS as readonly string[]).includes(value)
+    ? (value as MuseThinkingTier)
+    : null;
+}
 
 const MUSE_CAPABILITIES: AgentCapabilityFlags = {
   supportsStreaming: true,
@@ -132,6 +180,8 @@ export function mapMuseCatalogEntry(entry: MuseModelCatalogEntry): AgentModelDef
     ...(typeof entry.contextLimit === "number"
       ? { contextWindowMaxTokens: entry.contextLimit }
       : {}),
+    thinkingOptions: MUSE_THINKING_OPTIONS,
+    defaultThinkingOptionId: MUSE_DEFAULT_THINKING_OPTION_ID,
   };
 }
 
@@ -169,6 +219,15 @@ export class MuseAgentClient implements AgentClient {
       if (!session.sessionId) {
         throw new Error("Muse session/start did not return a session id");
       }
+      const thinkingOptionId = config.thinkingOptionId
+        ? requireMuseThinkingOption(config.thinkingOptionId)
+        : null;
+      if (thinkingOptionId) {
+        await host.command("session/setReasoningEffort", {
+          sessionId: session.sessionId,
+          reasoningEffort: thinkingOptionId,
+        });
+      }
       return new MuseAgentSession({
         host,
         sessionId: session.sessionId,
@@ -176,6 +235,7 @@ export class MuseAgentClient implements AgentClient {
         capabilities: this.capabilities,
         modelId: session.modelId ?? config.model ?? null,
         modeId: session.approvalMode ?? approvalMode,
+        thinkingOptionId,
         systemPrefix: composeSystemPromptParts(
           config.systemPrompt,
           config.daemonAppendSystemPrompt,
@@ -213,11 +273,14 @@ export class MuseAgentClient implements AgentClient {
         session.approvalMode ??
         "onRequest";
       const model = overrides?.model ?? readMetadataString(metadata, "model");
+      const thinkingOptionId =
+        overrides?.thinkingOptionId ?? readMetadataString(metadata, "thinkingOptionId") ?? null;
       const config: AgentSessionConfig = {
         provider: this.provider,
         cwd,
         ...(model ? { model } : {}),
         modeId,
+        ...(thinkingOptionId ? { thinkingOptionId } : {}),
       };
       return new MuseAgentSession({
         host,
@@ -226,6 +289,7 @@ export class MuseAgentClient implements AgentClient {
         capabilities: this.capabilities,
         modelId: config.model ?? session.modelId ?? null,
         modeId,
+        thinkingOptionId,
         logger: this.logger,
       });
     } catch (error) {
@@ -302,6 +366,58 @@ export class MuseAgentClient implements AgentClient {
     }
   }
 
+  async listImportableSessions(
+    options?: ListImportableSessionsOptions,
+  ): Promise<ImportableProviderSession[]> {
+    const limit = options?.limit ?? MUSE_IMPORTABLE_SESSION_LIMIT;
+    const scanLimit = Math.min(options?.scanLimit ?? limit, 500);
+    const belongsToWorkspace = options?.cwd
+      ? createPathEquivalenceMatcher(options.cwd)
+      : null;
+    const host = await this.spawnSessionHost(options?.cwd ?? homedir());
+    try {
+      const candidates: ImportableProviderSession[] = [];
+      const seenCursors = new Set<string>();
+      let cursor: string | undefined;
+      let scanned = 0;
+      for (;;) {
+        const page = await host.command("session/list", {
+          ...(cursor ? { cursor } : {}),
+          limit: 200,
+        });
+        const { sessions, nextCursor } = readSessionListPage(page);
+        for (const session of sessions) {
+          if (scanned >= scanLimit || candidates.length >= limit) break;
+          scanned += 1;
+          const row = mapMuseImportableSession(session);
+          if (belongsToWorkspace && !belongsToWorkspace(row.cwd)) continue;
+          candidates.push(row);
+        }
+        if (candidates.length >= limit || scanned >= scanLimit) break;
+        if (!nextCursor || seenCursors.has(nextCursor)) break;
+        seenCursors.add(nextCursor);
+        cursor = nextCursor;
+      }
+      return candidates
+        .sort((left, right) => right.lastActivityAt.getTime() - left.lastActivityAt.getTime())
+        .slice(0, limit);
+    } finally {
+      await host.close().catch(() => undefined);
+    }
+  }
+
+  async importSession(
+    input: ImportProviderSessionInput,
+    context: ImportProviderSessionContext,
+  ): Promise<ImportedProviderSession> {
+    return importSessionFromPersistence({
+      provider: this.provider,
+      request: input,
+      context,
+      resumeSession: this.resumeSession.bind(this),
+    });
+  }
+
   async isAvailable(): Promise<boolean> {
     try {
       const launch = await this.resolveMuseLaunch();
@@ -366,6 +482,14 @@ export class MuseAgentClient implements AgentClient {
   }
 }
 
+function requireMuseThinkingOption(value: string): MuseThinkingTier {
+  const tier = normalizeMuseThinkingOption(value);
+  if (!tier) {
+    throw new Error(`Unknown Muse thinking option: ${value}`);
+  }
+  return tier;
+}
+
 const MUSE_APPROVAL_MODES = new Set(["onRequest", "promptUnmatched", "denyUnmatched", "allowAll"]);
 
 export function resolveMuseApprovalMode(modeId: string | undefined): string {
@@ -406,4 +530,57 @@ function readSessionRecord(result: Record<string, unknown>): {
       ? approvalModeRecord["mode"]
       : undefined) ?? null;
   return { sessionId, modelId, approvalMode };
+}
+
+const MUSE_IMPORTABLE_SESSION_LIMIT = 50;
+
+interface MuseSessionListRow {
+  sessionId: string;
+  workspaceRoot: string | null;
+  title: string | null;
+  updatedAt: string | null;
+}
+
+function readSessionListPage(payload: unknown): {
+  sessions: MuseSessionListRow[];
+  nextCursor?: string;
+} {
+  if (typeof payload !== "object" || payload === null) {
+    return { sessions: [] };
+  }
+  const record = payload as Record<string, unknown>;
+  const rows: MuseSessionListRow[] = [];
+  if (Array.isArray(record["sessions"])) {
+    for (const entry of record["sessions"]) {
+      if (typeof entry !== "object" || entry === null) continue;
+      const row = entry as Record<string, unknown>;
+      if (typeof row["sessionId"] !== "string" || row["sessionId"].length === 0) continue;
+      rows.push({
+        sessionId: row["sessionId"],
+        workspaceRoot: typeof row["workspaceRoot"] === "string" ? row["workspaceRoot"] : null,
+        title:
+          typeof row["title"] === "string" && row["title"].trim().length > 0 ? row["title"] : null,
+        updatedAt: typeof row["updatedAt"] === "string" ? row["updatedAt"] : null,
+      });
+    }
+  }
+  const nextCursor = record["nextCursor"];
+  return {
+    sessions: rows,
+    ...(typeof nextCursor === "string" && nextCursor.length > 0 ? { nextCursor } : {}),
+  };
+}
+
+function mapMuseImportableSession(session: MuseSessionListRow): ImportableProviderSession {
+  const parsed = session.updatedAt ? Date.parse(session.updatedAt) : Number.NaN;
+  return {
+    providerHandleId: session.sessionId,
+    cwd: session.workspaceRoot ?? homedir(),
+    title: session.title,
+    // MSP session/list rows carry no prompt text, and per-session enrichment
+    // would pull a full transcript for every candidate.
+    firstPromptPreview: null,
+    lastPromptPreview: null,
+    lastActivityAt: Number.isNaN(parsed) ? new Date(0) : new Date(parsed),
+  };
 }

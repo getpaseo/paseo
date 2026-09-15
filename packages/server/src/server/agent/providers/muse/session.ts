@@ -17,9 +17,17 @@ import type {
   AgentSessionConfig,
   AgentStreamEvent,
   AgentUsage,
+  SteerActiveTurnOptions,
+  SteerResult,
 } from "../../agent-sdk-types.js";
 import { runProviderTurn } from "../provider-runner.js";
-import { MUSE_MODES, MUSE_PROVIDER } from "./agent.js";
+import {
+  MUSE_DEFAULT_THINKING_OPTION_ID,
+  MUSE_MODES,
+  MUSE_PROVIDER,
+  normalizeMuseThinkingOption,
+  resolveMuseApprovalMode,
+} from "./agent.js";
 import { MuseNotificationFold } from "./fold.js";
 import {
   extractMuseHistoryItems,
@@ -28,6 +36,14 @@ import {
 } from "./history.js";
 import type { MuseHostConnection, MuseHostExit, MuseHostNotification } from "./host.js";
 import type { MuseViewItem } from "./items.js";
+import {
+  buildMuseApprovalDecision,
+  buildMuseUserInputResolution,
+  mapMuseApprovalRequest,
+  mapMuseUserInputRequest,
+  readMspErrorKind,
+  type MusePendingRequest,
+} from "./permissions.js";
 import { convertMusePromptInput } from "./prompts.js";
 
 const DEFAULT_MUSE_INTERRUPT_TIMEOUT_MS = 30_000;
@@ -45,6 +61,7 @@ export interface MuseAgentSessionOptions {
   capabilities: AgentCapabilityFlags;
   modelId: string | null;
   modeId: string;
+  thinkingOptionId?: string | null;
   /** Delivered with the first turn of a fresh session; never on resume. */
   systemPrefix?: string;
   logger: Logger;
@@ -63,9 +80,12 @@ export class MuseAgentSession implements AgentSession {
   private readonly subscribers = new Set<(event: AgentStreamEvent) => void>();
   private readonly fold: MuseNotificationFold;
   private readonly turnWaiters = new Map<string, () => void>();
+  private readonly pendingRequests = new Map<string, MusePendingRequest>();
   private activeTurn: MuseActiveTurn | null = null;
   private modelId: string | null;
+  private readonly initialModelId: string | null;
   private modeId: string;
+  private thinkingOptionId: string | null;
   private systemPrefix: string | undefined;
   private lastUsage: AgentUsage = {};
   private closed = false;
@@ -76,7 +96,9 @@ export class MuseAgentSession implements AgentSession {
     this.config = options.config;
     this.capabilities = options.capabilities;
     this.modelId = options.modelId;
+    this.initialModelId = options.modelId;
     this.modeId = options.modeId;
+    this.thinkingOptionId = options.thinkingOptionId ?? null;
     this.systemPrefix = options.systemPrefix;
     this.logger = options.logger;
     this.interruptTimeoutMs = options.interruptTimeoutMs ?? DEFAULT_MUSE_INTERRUPT_TIMEOUT_MS;
@@ -187,7 +209,7 @@ export class MuseAgentSession implements AgentSession {
       provider: this.provider,
       sessionId: this.sessionId,
       model: this.modelId,
-      thinkingOptionId: null,
+      thinkingOptionId: this.thinkingOptionId,
       modeId: this.modeId,
     };
   }
@@ -200,19 +222,196 @@ export class MuseAgentSession implements AgentSession {
     return this.modeId;
   }
 
-  async setMode(_modeId: string): Promise<void | AgentProviderNotice> {
-    throw new Error("Muse mode switching is not implemented yet");
+  async setMode(modeId: string): Promise<void | AgentProviderNotice> {
+    const approvalMode = resolveMuseApprovalMode(modeId);
+    await this.host.command("session/setApprovalMode", {
+      sessionId: this.sessionId,
+      approvalMode,
+    });
+    this.modeId = approvalMode;
+    this.emit({
+      type: "mode_changed",
+      provider: this.provider,
+      currentModeId: this.modeId,
+      availableModes: MUSE_MODES,
+    });
+  }
+
+  async setModel(modelId: string | null): Promise<void> {
+    const target = modelId ?? this.initialModelId;
+    if (!target) {
+      return;
+    }
+    await this.host.command("session/setModel", {
+      sessionId: this.sessionId,
+      model: { modelId: target },
+    });
+    this.modelId = target;
+    this.emit({
+      type: "model_changed",
+      provider: this.provider,
+      runtimeInfo: await this.getRuntimeInfo(),
+    });
+  }
+
+  async setThinkingOption(thinkingOptionId: string | null): Promise<void> {
+    const effort = normalizeMuseThinkingOption(thinkingOptionId) ?? MUSE_DEFAULT_THINKING_OPTION_ID;
+    await this.host.command("session/setReasoningEffort", {
+      sessionId: this.sessionId,
+      reasoningEffort: effort,
+    });
+    this.thinkingOptionId = effort;
+  }
+
+  async steerActiveTurn(
+    prompt: AgentPromptInput,
+    options: SteerActiveTurnOptions,
+  ): Promise<SteerResult> {
+    const active = this.activeTurn;
+    if (!active || active.turnId !== options.expectedTurnId) {
+      return { status: "unavailable" };
+    }
+    const payload = convertMusePromptInput(prompt);
+    try {
+      await this.host.command("turn/steer", {
+        sessionId: this.sessionId,
+        expectedTurnId: active.turnId,
+        input: payload.parts,
+      });
+    } catch (error) {
+      if (readMspErrorKind(error) === "commandRejected") {
+        return { status: "unavailable" };
+      }
+      throw error;
+    }
+    return { status: "accepted" };
   }
 
   getPendingPermissions(): AgentPermissionRequest[] {
-    return [];
+    return [...this.pendingRequests.values()].map((entry) => entry.request);
   }
 
   async respondToPermission(
     requestId: string,
-    _response: AgentPermissionResponse,
+    response: AgentPermissionResponse,
   ): Promise<AgentPermissionResult | void> {
-    throw new Error(`Unknown Muse permission request: ${requestId}`);
+    const entry = this.pendingRequests.get(requestId);
+    if (!entry) {
+      throw new Error(`Unknown Muse permission request: ${requestId}`);
+    }
+    if (entry.kind === "approval") {
+      await this.decideApproval(entry, response);
+    } else {
+      await this.answerUserInput(entry, response);
+    }
+    this.pendingRequests.delete(requestId);
+    this.emit({
+      type: "permission_resolved",
+      provider: this.provider,
+      requestId,
+      resolution: response,
+      ...(this.activeTurn ? { turnId: this.activeTurn.turnId } : {}),
+    });
+  }
+
+  private async decideApproval(
+    entry: Extract<MusePendingRequest, { kind: "approval" }>,
+    response: AgentPermissionResponse,
+  ): Promise<void> {
+    try {
+      await this.sendApprovalDecision(entry, buildMuseApprovalDecision(entry, response));
+      return;
+    } catch (error) {
+      const kind = readMspErrorKind(error);
+      if (kind === "approvalAlreadyResolved") {
+        return;
+      }
+      if (kind === "approvalNotFound") {
+        this.pendingRequests.delete(entry.approvalId);
+        throw new Error("Muse approval is no longer pending", { cause: error });
+      }
+      if (kind === "approvalRequirementStale") {
+        const refreshed = await this.refreshPendingApproval(entry.approvalId);
+        if (!refreshed) {
+          this.pendingRequests.delete(entry.approvalId);
+          throw error;
+        }
+        await this.sendApprovalDecision(refreshed, buildMuseApprovalDecision(refreshed, response));
+        return;
+      }
+      if (kind === "approvalChoiceInvalid") {
+        await this.refreshPendingApproval(entry.approvalId);
+        throw new Error("Muse approval choices changed; review the updated request", {
+          cause: error,
+        });
+      }
+      throw error;
+    }
+  }
+
+  private async sendApprovalDecision(
+    entry: Extract<MusePendingRequest, { kind: "approval" }>,
+    decision: { choiceId: string; feedback?: string },
+  ): Promise<void> {
+    await this.host.command("approval/decide", {
+      sessionId: entry.sessionId,
+      approvalId: entry.approvalId,
+      requirementId: entry.requirementId,
+      choiceId: decision.choiceId,
+      ...(decision.feedback ? { feedback: decision.feedback } : {}),
+    });
+  }
+
+  private async refreshPendingApproval(
+    approvalId: string,
+  ): Promise<Extract<MusePendingRequest, { kind: "approval" }> | null> {
+    const result = (await this.host.command("approval/listPending", {
+      sessionId: this.sessionId,
+    })) as unknown as Record<string, unknown>;
+    const approvals = Array.isArray(result["approvals"]) ? result["approvals"] : [];
+    for (const params of approvals) {
+      if (typeof params !== "object" || params === null) {
+        continue;
+      }
+      const mapped = mapMuseApprovalRequest(params as Record<string, unknown>, this.provider);
+      if (mapped && mapped.entry.approvalId === approvalId) {
+        this.pendingRequests.set(approvalId, mapped.entry);
+        return mapped.entry;
+      }
+    }
+    return null;
+  }
+
+  private async answerUserInput(
+    entry: Extract<MusePendingRequest, { kind: "userInput" }>,
+    response: AgentPermissionResponse,
+  ): Promise<void> {
+    const resolution = buildMuseUserInputResolution(entry, response);
+    try {
+      if (resolution.cancel) {
+        await this.host.command("userInput/cancel", {
+          sessionId: entry.sessionId,
+          userInputId: entry.userInputId,
+          ...(resolution.reason ? { reason: resolution.reason } : {}),
+        });
+        return;
+      }
+      await this.host.command("userInput/answer", {
+        sessionId: entry.sessionId,
+        userInputId: entry.userInputId,
+        answers: resolution.answers,
+      });
+    } catch (error) {
+      const kind = readMspErrorKind(error);
+      if (kind === "userInputAlreadySettled") {
+        return;
+      }
+      if (kind === "userInputNotFound") {
+        this.pendingRequests.delete(entry.userInputId);
+        throw new Error("Muse question is no longer pending", { cause: error });
+      }
+      throw error;
+    }
   }
 
   describePersistence(): AgentPersistenceHandle | null {
@@ -224,6 +423,7 @@ export class MuseAgentSession implements AgentSession {
         cwd: this.config.cwd,
         ...(this.config.model ? { model: this.config.model } : {}),
         ...(this.modeId ? { modeId: this.modeId } : {}),
+        ...(this.thinkingOptionId ? { thinkingOptionId: this.thinkingOptionId } : {}),
       },
     };
   }
@@ -274,10 +474,24 @@ export class MuseAgentSession implements AgentSession {
             provider: this.provider,
             sessionId: this.sessionId,
             model: this.modelId,
-            thinkingOptionId: null,
+            thinkingOptionId: this.thinkingOptionId,
             modeId: this.modeId,
           },
         });
+      }
+      return;
+    }
+    if (notification.method === "approval/resolved") {
+      const approvalId = notification.params["approvalId"];
+      if (typeof approvalId === "string") {
+        this.pendingRequests.delete(approvalId);
+      }
+      return;
+    }
+    if (notification.method === "userInput/settled") {
+      const userInputId = notification.params["userInputId"];
+      if (typeof userInputId === "string") {
+        this.pendingRequests.delete(userInputId);
       }
       return;
     }
@@ -318,12 +532,47 @@ export class MuseAgentSession implements AgentSession {
   private async handleServerRequest(request: {
     requestId: string | number;
     method: string;
+    params: Record<string, unknown>;
   }): Promise<Record<string, unknown>> {
-    // Phase 3 answers approvals and user-input prompts. Until then the receipt
-    // keeps the host unblocked; the turn parks visibly rather than hanging.
+    if (request.method === "approval/request") {
+      const mapped = mapMuseApprovalRequest(request.params, this.provider);
+      if (!mapped) {
+        this.logger.error(
+          { requestId: request.requestId },
+          "Dropping unparseable Muse approval request",
+        );
+        return {};
+      }
+      this.pendingRequests.set(mapped.entry.approvalId, mapped.entry);
+      this.emit({
+        type: "permission_requested",
+        provider: this.provider,
+        request: mapped.request,
+        ...(this.activeTurn ? { turnId: this.activeTurn.turnId } : {}),
+      });
+      return {};
+    }
+    if (request.method === "userInput/request") {
+      const mapped = mapMuseUserInputRequest(request.params, this.provider);
+      if (!mapped) {
+        this.logger.error(
+          { requestId: request.requestId },
+          "Dropping unparseable Muse user-input request",
+        );
+        return {};
+      }
+      this.pendingRequests.set(mapped.entry.userInputId, mapped.entry);
+      this.emit({
+        type: "permission_requested",
+        provider: this.provider,
+        request: mapped.request,
+        ...(this.activeTurn ? { turnId: this.activeTurn.turnId } : {}),
+      });
+      return {};
+    }
     this.logger.debug(
       { requestId: request.requestId, method: request.method },
-      "Muse server request parked until permission support lands",
+      "Ignoring unknown Muse server request",
     );
     return {};
   }

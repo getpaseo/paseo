@@ -5,7 +5,9 @@ import { createTestLogger } from "../../../../test-utils/test-logger.js";
 import type { ProviderRefreshContext } from "../../agent-sdk-types.js";
 import { buildProviderRegistry } from "../../provider-registry.js";
 import {
+  MUSE_DEFAULT_THINKING_OPTION_ID,
   MUSE_MODES,
+  MUSE_THINKING_OPTIONS,
   MuseAgentClient,
   describeMuseAuthFileState,
   mapMuseCatalogEntry,
@@ -38,7 +40,7 @@ function createCatalogEntry(
   };
 }
 
-function createFakeHost(entries: ModelCatalogEntry[] = [createCatalogEntry()]): {
+function createFakeHost(entries: MuseModelCatalogEntry[] = [createCatalogEntry()]): {
   host: MuseHostConnection;
   spawner: ReturnType<typeof vi.fn>;
   spawns: MuseHostSpawnOptions[];
@@ -100,11 +102,15 @@ describe("MuseAgentClient", () => {
         description: "Meta coding model",
         isDefault: true,
         contextWindowMaxTokens: 1_000_000,
+        thinkingOptions: MUSE_THINKING_OPTIONS,
+        defaultThinkingOptionId: MUSE_DEFAULT_THINKING_OPTION_ID,
       },
       {
         provider: "muse",
         id: "muse-spark-1.1",
         label: "Muse Spark 1.1",
+        thinkingOptions: MUSE_THINKING_OPTIONS,
+        defaultThinkingOptionId: MUSE_DEFAULT_THINKING_OPTION_ID,
       },
     ]);
     expect(catalog.modes).toEqual(MUSE_MODES);
@@ -363,6 +369,254 @@ describe("MuseAgentClient", () => {
       nativeHandle: "msp-session-9",
     });
     await session.close();
+  });
+
+  test("listImportableSessions pages, filters by cwd, and sorts newest first", async () => {
+    const commands: Array<{ method: string; params: Record<string, unknown> }> = [];
+    const close = vi.fn(async () => {});
+    const spawns: MuseHostSpawnOptions[] = [];
+    const spawner = vi.fn(async (options: MuseHostSpawnOptions) => {
+      spawns.push(options);
+      return {
+        initializeResult: {},
+        fingerprintWarning: undefined,
+        command: vi.fn(async (method: string, params: Record<string, unknown>) => {
+          commands.push({ method, params });
+          if (params["cursor"] === "c1") {
+            return {
+              sessions: [
+                {
+                  sessionId: "msp-c",
+                  workspaceRoot: "/tmp/ws",
+                  title: "newest",
+                  updatedAt: "2026-09-14T12:00:00.000Z",
+                },
+              ],
+            };
+          }
+          return {
+            sessions: [
+              {
+                sessionId: "msp-a",
+                workspaceRoot: "/tmp/ws",
+                title: "older",
+                updatedAt: "2026-09-14T10:00:00.000Z",
+              },
+              {
+                sessionId: "msp-b",
+                workspaceRoot: "/tmp/other",
+                title: "elsewhere",
+                updatedAt: "2026-09-14T11:00:00.000Z",
+              },
+              { workspaceRoot: "/tmp/ws", title: "missing id" },
+            ],
+            nextCursor: "c1",
+          };
+        }),
+        modelList: vi.fn(async () => ({ models: [] })),
+        onNotification: vi.fn(),
+        onServerRequest: vi.fn(),
+        onExit: vi.fn(),
+        close,
+      };
+    });
+    const client = new MuseAgentClient({ logger: createTestLogger(), hostSpawner: spawner });
+
+    const rows = await client.listImportableSessions({ cwd: "/tmp/ws" });
+
+    expect(rows).toEqual([
+      {
+        providerHandleId: "msp-c",
+        cwd: "/tmp/ws",
+        title: "newest",
+        firstPromptPreview: null,
+        lastPromptPreview: null,
+        lastActivityAt: new Date("2026-09-14T12:00:00.000Z"),
+      },
+      {
+        providerHandleId: "msp-a",
+        cwd: "/tmp/ws",
+        title: "older",
+        firstPromptPreview: null,
+        lastPromptPreview: null,
+        lastActivityAt: new Date("2026-09-14T10:00:00.000Z"),
+      },
+    ]);
+    expect(commands.map((command) => command.params["cursor"] ?? null)).toEqual([null, "c1"]);
+    expect(spawns).toHaveLength(1);
+    expect(spawns[0]?.cwd).toBe("/tmp/ws");
+    expect(close).toHaveBeenCalledTimes(1);
+  });
+
+  test("listImportableSessions honors limit and survives cursor loops", async () => {
+    let calls = 0;
+    const spawner = vi.fn(async () => ({
+      initializeResult: {},
+      fingerprintWarning: undefined,
+      command: vi.fn(async () => {
+        calls += 1;
+        return {
+          sessions: [
+            {
+              sessionId: `msp-${calls}`,
+              workspaceRoot: "/tmp/ws",
+              title: "  ",
+              updatedAt: "not a date",
+            },
+          ],
+          nextCursor: "loop",
+        };
+      }),
+      modelList: vi.fn(async () => ({ models: [] })),
+      onNotification: vi.fn(),
+      onServerRequest: vi.fn(),
+      onExit: vi.fn(),
+      close: vi.fn(async () => {}),
+    }));
+    const client = new MuseAgentClient({ logger: createTestLogger(), hostSpawner: spawner });
+
+    const rows = await client.listImportableSessions({ limit: 5 });
+
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toMatchObject({ providerHandleId: "msp-1", title: null });
+    expect(rows[0]?.lastActivityAt).toEqual(new Date(0));
+    expect(calls).toBe(2);
+  });
+
+  test("listImportableSessions closes the host on failure", async () => {
+    const close = vi.fn(async () => {});
+    const spawner = vi.fn(async () => ({
+      initializeResult: {},
+      fingerprintWarning: undefined,
+      command: vi.fn(async () => {
+        throw new Error("list blew up");
+      }),
+      modelList: vi.fn(async () => ({ models: [] })),
+      onNotification: vi.fn(),
+      onServerRequest: vi.fn(),
+      onExit: vi.fn(),
+      close,
+    }));
+    const client = new MuseAgentClient({ logger: createTestLogger(), hostSpawner: spawner });
+
+    await expect(client.listImportableSessions()).rejects.toThrow("list blew up");
+    expect(close).toHaveBeenCalledTimes(1);
+  });
+
+  test("importSession resumes the native session and collects history", async () => {
+    const commands: Array<{ method: string; params: Record<string, unknown> }> = [];
+    const spawner = vi.fn(async () => ({
+      initializeResult: {},
+      fingerprintWarning: undefined,
+      command: vi.fn(async (method: string, params: Record<string, unknown>) => {
+        commands.push({ method, params });
+        return {
+          session: {
+            sessionId: "msp-1",
+            modelId: "muse-spark-1.2",
+            approvalMode: { mode: "onRequest" },
+          },
+          history: {
+            mode: "inline",
+            items: [
+              {
+                itemId: "u1",
+                revision: 1,
+                kind: "userMessage",
+                turnId: "t0",
+                status: "completed",
+                text: "past",
+              },
+              {
+                itemId: "a1",
+                revision: 1,
+                kind: "agentMessage",
+                turnId: "t0",
+                status: "completed",
+                text: "reply",
+              },
+            ],
+          },
+        };
+      }),
+      modelList: vi.fn(async () => ({ models: [] })),
+      onNotification: vi.fn(),
+      onServerRequest: vi.fn(),
+      onExit: vi.fn(),
+      close: vi.fn(async () => {}),
+    }));
+    const client = new MuseAgentClient({ logger: createTestLogger(), hostSpawner: spawner });
+
+    const imported = await client.importSession(
+      { providerHandleId: "msp-1", cwd: "/tmp/ws" },
+      {
+        config: { provider: "muse", cwd: "/tmp/ws" },
+        storedConfig: { provider: "muse", cwd: "/tmp/ws" },
+      },
+    );
+
+    expect(imported.session.id).toBe("msp-1");
+    expect(imported.persistence).toMatchObject({
+      provider: "muse",
+      sessionId: "msp-1",
+      nativeHandle: "msp-1",
+    });
+    expect(imported.timeline).toHaveLength(2);
+    expect(imported.timeline[0]?.item).toMatchObject({ type: "user_message", text: "past" });
+    expect(commands.map((command) => command.method)).toEqual([
+      "session/resume",
+      "session/resume",
+    ]);
+    await imported.session.close();
+  });
+
+  test("createSession applies thinkingOptionId via setReasoningEffort", async () => {
+    const commands: Array<{ method: string; params: Record<string, unknown> }> = [];
+    const spawner = vi.fn(async () => ({
+      initializeResult: {},
+      fingerprintWarning: undefined,
+      command: vi.fn(async (method: string, params: Record<string, unknown>) => {
+        commands.push({ method, params });
+        return {
+          session: {
+            sessionId: "msp-session-1",
+            modelId: "muse-spark-1.2",
+            approvalMode: { mode: "allowAll" },
+          },
+        };
+      }),
+      modelList: vi.fn(async () => ({ models: [] })),
+      onNotification: vi.fn(),
+      onServerRequest: vi.fn(),
+      onExit: vi.fn(),
+      close: vi.fn(async () => {}),
+    }));
+    const client = new MuseAgentClient({ logger: createTestLogger(), hostSpawner: spawner });
+
+    const session = await client.createSession({
+      provider: "muse",
+      cwd: "/tmp/muse",
+      thinkingOptionId: "low",
+    });
+
+    expect(commands).toEqual([
+      {
+        method: "session/start",
+        params: { workspaceRoot: "/tmp/muse", approvalMode: "onRequest" },
+      },
+      {
+        method: "session/setReasoningEffort",
+        params: { sessionId: "msp-session-1", reasoningEffort: "low" },
+      },
+    ]);
+    await expect(session.getRuntimeInfo()).resolves.toMatchObject({
+      thinkingOptionId: "low",
+    });
+    await session.close();
+
+    await expect(
+      client.createSession({ provider: "muse", cwd: "/tmp/muse", thinkingOptionId: "bogus" }),
+    ).rejects.toThrow("Unknown Muse thinking option: bogus");
   });
 
   test("registry exposes the muse provider", () => {
