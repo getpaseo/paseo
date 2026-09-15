@@ -574,11 +574,7 @@ export class PluginRuntime {
         throw error;
       });
     let loaded: LoadedPlugin | null = null;
-    // The daemon can drop a plugin's socket while the process behind it is
-    // still running and healthy. The plugin's own client redials on its own,
-    // but it can only reach a socket the session host still owns, so stand a
-    // fresh one up in its place; otherwise the plugin stays loaded with a dead
-    // host API and only `paseo plugin reload` brings it back.
+    // A daemon-side close leaves a live child with nothing to redial onto.
     const reattachSession = async (): Promise<void> => {
       const replacement = new PluginSessionSocket(child);
       try {
@@ -599,11 +595,9 @@ export class PluginRuntime {
     };
     const watchForHostClose = (socket: PluginSessionSocket): void => {
       socket.on("close", () => {
-        // Still initializing, or already unpublished: both stop paths clear the
-        // catalog entry before they close anything, so a plugin on its way out
-        // never looks like one worth re-attaching.
+        // Both stop paths clear the catalog entry before closing anything, so a
+        // plugin on its way out never reaches here.
         if (!loaded || this.plugins.get(pluginId) !== loaded) return;
-        // The process itself is gone; `handleChildClose` owns what happens next.
         if (!child.connected) return;
         void reattachSession();
       });

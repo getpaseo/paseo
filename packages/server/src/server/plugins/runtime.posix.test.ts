@@ -124,8 +124,7 @@ function createTestRuntime(
 
 function createTrackedSessionHost() {
   const active = new Set<object>();
-  // One entry per hello handshake, so a test can tell a replacement socket that
-  // merely got attached from one the plugin's own client actually redialled.
+  // One entry per hello handshake: an attached socket is not a redialled one.
   const hellos: object[] = [];
   return {
     active,
@@ -1793,8 +1792,7 @@ export default function contribute(plugin: any) {
     expect(sessions.hellos).toHaveLength(1);
     const first = [...sessions.active][0] as PluginSessionSocket;
 
-    // Exactly what an expired application lease does: the daemon drops the
-    // socket while the plugin process itself keeps running.
+    // What an expired lease does: drop the socket, leave the process running.
     first.close(1000, "expired application lease");
 
     await vi.waitFor(
@@ -1805,8 +1803,7 @@ export default function contribute(plugin: any) {
       { timeout: 15_000 },
     );
 
-    // The replacement is only useful if the plugin's own client redials onto
-    // it, so require a second handshake rather than just a second attachment.
+    // A second handshake, not just a second attachment: the client really redialled.
     await vi.waitFor(() => expect(sessions.hellos.length).toBeGreaterThanOrEqual(2), {
       timeout: 15_000,
     });
@@ -1822,9 +1819,6 @@ export default function contribute(plugin: any) {
     await runtime.startPlugin("stopping", directory);
     expect(sessions.active.size).toBe(1);
 
-    // A clean stop closes the session from the plugin's side, which must not
-    // look like a socket worth replacing - otherwise stopping a plugin stands
-    // up a fresh session for a process that is on its way out.
     await runtime.stopPluginById("stopping");
 
     expect(runtime.getLogs("stopping").map((entry) => entry.message)).not.toContain(

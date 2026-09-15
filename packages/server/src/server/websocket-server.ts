@@ -2203,12 +2203,8 @@ export class VoiceAssistantWebSocketServer {
       this.recordInboundMessageType(message.type);
 
       if (message.type === "ping") {
-        // A plugin socket is IPC to a child this daemon spawned and already
-        // supervises: the plugin runtime tears the session down from the
-        // child's own `close`. Heartbeat silence there means a starved event
-        // loop, not an abandoned socket, and reaping it strands the plugin for
-        // good — its client is built with reconnect disabled and cannot redial
-        // the IPC transport, so every later host API call fails.
+        // A plugin socket is IPC to a child this daemon already supervises, not
+        // an abandonable application socket.
         if (!this.pluginSocketIds.has(ws)) {
           this.applicationSocketLease.claim(ws);
         }

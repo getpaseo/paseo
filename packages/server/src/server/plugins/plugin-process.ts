@@ -260,10 +260,7 @@ async function initialize(message: Extract<PluginProcessRequest, { type: "initia
     clientId: createPluginClientId(message.pluginId),
     clientType: "cli",
     appVersion: message.appVersion,
-    // The daemon can close this socket while the process keeps running - an
-    // expired application lease, say. The runtime stands a fresh session up on
-    // its side, so redial instead of leaving every later host API call to fail
-    // with "Transport not connected (status: disconnected)".
+    // The runtime re-attaches a session when the daemon drops this socket.
     reconnect: { enabled: true },
     transportFactory,
   });

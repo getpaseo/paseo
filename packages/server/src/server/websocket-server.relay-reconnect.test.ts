@@ -554,9 +554,7 @@ describe("relay external socket reconnect behavior", () => {
     socket.emit("message", JSON.stringify(createHelloMessage("plugin:stalled")));
     socket.emit("message", JSON.stringify({ type: "ping" }));
 
-    // The plugin process is starved of its event loop for longer than the
-    // lease: no further ping arrives. The daemon supervises the child
-    // directly, so silence here is not evidence the socket is abandoned.
+    // Event loop starved past the lease: no further ping arrives.
     await vi.advanceTimersByTimeAsync(APPLICATION_SOCKET_LEASE_MS * 2);
 
     expect(socket.readyState).toBe(1);
