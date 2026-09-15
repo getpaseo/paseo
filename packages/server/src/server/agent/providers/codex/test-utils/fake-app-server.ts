@@ -54,6 +54,7 @@ export interface FakeCodexAppServer {
   disconnect(): void;
   nextResponse(): Promise<string>;
   startsTurn(params: { threadId: string; turnId?: string }): void;
+  updatesDiff(params: { threadId: string; turnId: string; diff: string }): void;
   startsCompaction(params: { threadId: string; itemId: string }): void;
   updatesPlan(params: { threadId: string; steps: string[] }): void;
   completeTurn(params?: {
@@ -358,6 +359,9 @@ export function createFakeCodexAppServer(
           },
         })}\n`,
       );
+    },
+    updatesDiff(params) {
+      writeNotification("turn/diff/updated", params);
     },
     startsCompaction(params) {
       writeNotification("item/started", {

@@ -425,19 +425,26 @@ plans, and mode changes; requesting permission does not end the turn.
 
 ### Events
 
-| Name                         | Event fields                             | Trigger                                            |
-| ---------------------------- | ---------------------------------------- | -------------------------------------------------- |
-| `agent.created`              | `agent`                                  | Ordinary creation finishes; excludes import/resume |
-| `agent.turn_started`         | `agent`, `turnId`                        | Live turn starts                                   |
-| `agent.turn_ended`           | `agent`, `turnId`, `outcome`, `timeline` | Live turn completes, fails, or is canceled         |
-| `agent.permission_requested` | `agent`, `request`                       | Permission or question becomes pending             |
-| `agent.permission_resolved`  | `agent`, `requestId`, `resolution`       | Pending request is answered or cleared             |
-| `agent.archived`             | `agent`, `archivedAt`                    | Archive state is saved                             |
-| `workspace.created`          | `workspace`                              | Record created; directory available                |
-| `workspace.archived`         | `workspace`                              | Archive state is saved                             |
+| Name                         | Event fields                                            | Trigger                                            |
+| ---------------------------- | ------------------------------------------------------- | -------------------------------------------------- |
+| `agent.created`              | `agent`                                                 | Ordinary creation finishes; excludes import/resume |
+| `agent.turn_started`         | `agent`, `turnId`                                       | Live turn starts                                   |
+| `agent.turn_ended`           | `agent`, `turnId`, `outcome`, `timeline`, `nativeDiff?` | Live turn completes, fails, or is canceled         |
+| `agent.permission_requested` | `agent`, `request`                                      | Permission or question becomes pending             |
+| `agent.permission_resolved`  | `agent`, `requestId`, `resolution`                      | Pending request is answered or cleared             |
+| `agent.archived`             | `agent`, `archivedAt`                                   | Archive state is saved                             |
+| `workspace.created`          | `workspace`                                             | Record created; directory available                |
+| `workspace.archived`         | `workspace`                                             | Archive state is saved                             |
 
 Agent events exclude internal utility agents. Archive events can precede runtime/worktree cleanup;
 `workspace.created` is not a setup barrier before agent startup.
+
+`agent.turn_ended.nativeDiff` optionally contains the provider's latest cumulative unified diff
+for that turn. Codex supplies the last matching `turn/diff/updated` notification, including on
+failure or cancellation. `null` means the provider emitted no diff; an omitted field means the
+provider does not expose this capability. It is delivered only to server lifecycle hooks, not
+ordinary client stream events. It describes recorded edits, not a complete Git working-tree diff.
+Plugins must verify current file contents before applying or reverting any change.
 
 **Shared payload shapes** (`@getpaseo/plugin/server`):
 
