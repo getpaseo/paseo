@@ -171,9 +171,9 @@ The app chooses one delivery policy from `server_info.features.selectiveAgentTim
   evicting a retained view, and app backgrounding preserve that demand; closing the chat releases it.
   Reconnect restores the open set and gives visible chats the first catch-up attempt. Hidden chats
   follow when those attempts settle, including failures, so a failed visible chat does not starve
-  background recovery. Split panes catch up together. Hidden chats update the replica while retained
-  presentation stays frozen; revealing a chat reads the current store and preserves its local UI
-  state. There is no recent-agent limit.
+  background recovery. Split panes catch up together. Hidden chats update the replica; on web their
+  retained presentation stays suspended until revealed, on native it keeps rendering. Revealing a
+  chat reads the current store and preserves its local UI state. There is no recent-agent limit.
 - Legacy daemons keep globally streaming agent timelines. Visibility still triggers the existing
   authoritative catch-up, but the app does not issue selective-subscription RPCs.
 

@@ -27,7 +27,7 @@ import { KeyboardDock } from "@/components/keyboard-dock";
 import { ComposerViewport, ComposerViewportContent } from "@/composer/viewport";
 import { FileDropZone } from "@/components/file-drop/file-drop-zone";
 import { useRetainedPanelActive } from "@/components/retained-panel";
-import { AgentPanelFreeze } from "./agent-panel-freeze";
+import { RetainedChatContent } from "./retained-chat-content";
 import { Composer } from "@/composer";
 import { useWorkspaceHasDiffStat } from "@/composer/workspace-diff-stat";
 import {
@@ -374,7 +374,7 @@ function AgentPanel() {
   invariant(target.kind === "agent", "AgentPanel requires agent target");
 
   return (
-    <AgentPanelFreeze>
+    <RetainedChatContent>
       <AgentPanelContent
         serverId={serverId}
         workspaceId={workspaceId}
@@ -382,7 +382,7 @@ function AgentPanel() {
         isPaneFocused={isInteractive}
         onOpenWorkspaceFile={openFileInWorkspace}
       />
-    </AgentPanelFreeze>
+    </RetainedChatContent>
   );
 }
 
