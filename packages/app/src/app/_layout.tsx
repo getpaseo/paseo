@@ -113,6 +113,7 @@ import {
 import { getDaemonStartService } from "@/runtime/daemon-start-service";
 import { usePanelStore } from "@/stores/panel-store";
 import { flushDraftPersistStorage } from "@/stores/draft-store";
+import { flushWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 import { getNextThemePreference } from "@/styles/theme";
 import { useSessionStore } from "@/stores/session-store";
 import { installWebScrollbarStyles } from "@/styles/install-web-scrollbar-styles";
@@ -996,6 +997,7 @@ export default function RootLayout() {
     const subscription = AppState.addEventListener("change", (nextState) => {
       if (nextState !== "active") {
         void flushDraftPersistStorage();
+        void flushWorkspaceLayoutStore();
       }
     });
     return () => subscription.remove();

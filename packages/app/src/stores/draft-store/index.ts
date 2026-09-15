@@ -33,7 +33,7 @@ import {
   type MigrateLegacyImages,
   PersistedDraftStoreSchema,
 } from "./migration";
-import { createDraftPersistStorage } from "./persistence";
+import { createThrottledPersistStorage } from "@/storage/throttled-persist-storage";
 import { createValidatedPersistStorage } from "@/storage/validated-persist-storage";
 
 export type { DraftInput, DraftLifecycleState } from "./state";
@@ -63,12 +63,14 @@ interface DraftStoreRuntimeState {
 type DraftStore = DraftStoreState & DraftStoreRuntimeState & DraftStoreActions;
 
 let gcScheduled = false;
-const draftPersistStorage = createDraftPersistStorage(
+const DRAFT_PERSIST_INTERVAL_MS = 200;
+const draftPersistStorage = createThrottledPersistStorage(
   createValidatedPersistStorage(AsyncStorage, PersistedDraftStoreSchema),
+  { intervalMs: DRAFT_PERSIST_INTERVAL_MS },
 );
 
 export function flushDraftPersistStorage(): Promise<void> {
-  return draftPersistStorage?.flush() ?? Promise.resolve();
+  return draftPersistStorage.flush();
 }
 
 function createDraftRecord(input: {
