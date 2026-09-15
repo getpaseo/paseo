@@ -6,6 +6,7 @@ import { useTranslation } from "react-i18next";
 import { useRetainedPanelActive } from "@/components/retained-panel";
 import { useCheckoutCommitsQuery, type CheckoutCommitsQueryResult } from "@/git/use-commits-query";
 import { ThemedChevron, chevronColorMapping } from "@/git/themed-chevron";
+import { treeRowPaddingLeft } from "@/components/tree-primitives";
 import { normalizeBranchOptionName } from "@/utils/branch-suggestions";
 import { CommitRow } from "./commit-row";
 
@@ -175,7 +176,9 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[2],
-    paddingLeft: theme.spacing[2],
+    // Same leading rail as a depth-0 tree row, so the disclosure chevron lines up
+    // with the folder chevrons above it.
+    paddingLeft: treeRowPaddingLeft(0),
     paddingRight: theme.spacing[3],
     paddingVertical: theme.spacing[2],
     flexShrink: 0,

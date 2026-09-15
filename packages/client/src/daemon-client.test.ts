@@ -419,8 +419,13 @@ class FakeDaemon {
       if (typeof data !== "string") {
         return;
       }
-      const frame = JSON.parse(data) as { type?: string };
-      if (frame.type !== "ping") {
+      const frame = JSON.parse(data) as {
+        type?: string;
+        message?: { type?: string; requestId: string; clientSentAt: number };
+      };
+      const sessionPing =
+        frame.type === "session" && frame.message?.type === "ping" ? frame.message : null;
+      if (frame.type !== "ping" && !sessionPing) {
         return;
       }
       this.pingsSentAt.push(performance.now());
@@ -431,12 +436,18 @@ class FakeDaemon {
       if (this.pongMode.kind === "silent") {
         return;
       }
+      const pong = sessionPing
+        ? wrapSessionMessage({
+            type: "pong",
+            payload: { ...sessionPing, serverReceivedAt: Date.now(), serverSentAt: Date.now() },
+          })
+        : JSON.stringify({ type: "pong" });
       if (this.pongMode.delayMs === 0) {
-        this.onMessage(JSON.stringify({ type: "pong" }));
+        this.onMessage(pong);
         return;
       }
       setTimeout(() => {
-        this.onMessage(JSON.stringify({ type: "pong" }));
+        this.onMessage(pong);
       }, this.pongMode.delayMs);
     },
     close: (code?: number, reason?: string) => {
@@ -979,6 +990,49 @@ test("ensureConnected reconnects immediately without leaving the scheduled retry
     expect(transportIndex).toBe(2);
 
     second.triggerOpen();
+    expect(client.getConnectionState().status).toBe("connected");
+    await vi.advanceTimersByTimeAsync(1_500);
+
+    expect(client.getConnectionState().status).toBe("connected");
+    expect(transportIndex).toBe(2);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("connect during a scheduled retry reconnects immediately without leaving the retry armed", async () => {
+  useHeartbeatClock();
+  try {
+    const first = createMockTransport();
+    const second = createMockTransport();
+    const third = createMockTransport();
+    const transports = [first, second, third];
+    let transportIndex = 0;
+    const client = new DaemonClient({
+      url: "ws://test",
+      clientId: "clsk_explicit_reconnect",
+      reconnect: { enabled: true, baseDelayMs: 1_500, maxDelayMs: 1_500 },
+      transportFactory: () => {
+        const transport = transports[transportIndex];
+        if (!transport) throw new Error("unexpected extra reconnect");
+        transportIndex += 1;
+        return transport.transport;
+      },
+    });
+    clients.push(client);
+
+    const initialConnect = client.connect();
+    first.triggerOpen();
+    await initialConnect;
+    first.triggerClose({ code: 1001, reason: "daemon restarted" });
+    expect(client.getConnectionState().status).toBe("disconnected");
+
+    const reconnect = client.connect();
+    expect(client.getConnectionState().status).toBe("connecting");
+    expect(transportIndex).toBe(2);
+
+    second.triggerOpen();
+    await reconnect;
     expect(client.getConnectionState().status).toBe("connected");
     await vi.advanceTimersByTimeAsync(1_500);
 
@@ -1715,6 +1769,78 @@ test("keeps default connect timeout shorter than session RPC waiters", async () 
   } finally {
     vi.useRealTimers();
   }
+});
+
+test("foreground verification replaces a silently broken socket without waiting for heartbeats", async () => {
+  useHeartbeatClock();
+  const first = new FakeDaemon();
+  const second = new FakeDaemon();
+  first.daemonGoesSilent();
+  let attempts = 0;
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "foreground-recovery",
+    logger: noopLogger,
+    transportFactory: () => (++attempts === 1 ? first : second).transport,
+  });
+  clients.push(client);
+  const connection = client.connect();
+  first.openConnection();
+  await connection;
+
+  client.ensureConnected({ verify: true });
+  await vi.advanceTimersByTimeAsync(3_000);
+  expect(attempts).toBe(2);
+  second.openConnection();
+  expect(client.getConnectionState()).toEqual({ status: "connected" });
+});
+
+test("foreground verification preserves a healthy socket and deduplicates simultaneous checks", async () => {
+  useHeartbeatClock();
+  const daemon = new FakeDaemon();
+  daemon.daemonAnswersPingsAfter("0.1s");
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "healthy-resume",
+    logger: noopLogger,
+    transportFactory: () => daemon.transport,
+  });
+  clients.push(client);
+  const connection = client.connect();
+  daemon.openConnection();
+  await connection;
+  client.ensureConnected({ verify: true });
+  client.ensureConnected({ verify: true });
+  await vi.advanceTimersByTimeAsync(3_000);
+  expect(client.getConnectionState()).toEqual({ status: "connected" });
+  expect(daemon.pingTimestamps()).toEqual(["0s"]);
+  expect(daemon.closesFromClient()).toEqual([]);
+});
+
+test("an obsolete foreground probe cannot close a replacement connection", async () => {
+  useHeartbeatClock();
+  const first = new FakeDaemon();
+  const second = new FakeDaemon();
+  first.daemonGoesSilent();
+  let attempts = 0;
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "resume-race",
+    logger: noopLogger,
+    transportFactory: () => (++attempts === 1 ? first : second).transport,
+  });
+  clients.push(client);
+  const connection = client.connect();
+  first.openConnection();
+  await connection;
+  client.ensureConnected({ verify: true });
+  first.daemonClosesWith("network changed");
+  client.ensureConnected();
+  second.openConnection();
+  await vi.advanceTimersByTimeAsync(3_000);
+  expect(attempts).toBe(2);
+  expect(client.getConnectionState()).toEqual({ status: "connected" });
+  expect(second.closesFromClient()).toEqual([]);
 });
 
 test("stays online through ten minutes of pongs that arrive five seconds late", async () => {

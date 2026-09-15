@@ -332,6 +332,7 @@ export interface ViewedTimelineUiBridge {
 }
 
 export interface ViewedTimelineSync extends ViewedTimelineUiBridge {
+  replaceOpenAgentIds(agentIds: string[]): void;
   setActive(active: boolean): void;
   setConnected(connected: boolean): void;
   recoverGap(agentId: string, cursor: { epoch: string; endSeq: number }): void;
@@ -406,7 +407,6 @@ export function createViewedTimelineOwner(input: {
 
 const RETRY_DELAY_MS = 1_000;
 const MAX_RETRY_DELAY_MS = 30_000;
-const VIEWED_TIMELINE_HOT_AGENT_LIMIT = 5;
 
 type CatchUpStatus = "running" | "complete" | "error";
 
@@ -472,7 +472,7 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
   const catchUps = new Map<string, CatchUpState>();
   const catchUpGenerations = new Map<string, number>();
   // Authoritative fetch owed but not runnable yet: disconnected, unacknowledged, or parked.
-  // Acknowledgement and tail completion are the only drain points.
+  // Membership acknowledgement and catch-up completion drain parked requests.
   const pendingCatchUps = new Map<string, ProjectedTimelineForwardFetchPlan>();
   const visibilityCatchUpPending = new Set<string>();
   const visibilityCatchUpErrors = new Map<string, string>();
@@ -495,36 +495,16 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
   let membershipNeedsRetry = false;
   let membershipRetryDelayMs: number | undefined;
   let cancelMembershipRetry: (() => void) | null = null;
-  let recentlyViewedAgentIds: string[] = [];
+  let openAgentIds: string[] = [];
 
   const visibleAgentIds = () => normalizeAgentIds([...sources.values()].flat());
 
-  const selectHotAgentIds = (visible: string[]) => {
-    const visibleSet = new Set(visible);
-    recentlyViewedAgentIds = [
-      ...visible,
-      ...recentlyViewedAgentIds.filter((agentId) => !visibleSet.has(agentId)),
-    ];
-    const hiddenBudget = Math.max(0, VIEWED_TIMELINE_HOT_AGENT_LIMIT - visible.length);
-    const desiredAgentIds = normalizeAgentIds([
-      ...visible,
-      ...recentlyViewedAgentIds
-        .filter((agentId) => !visibleSet.has(agentId))
-        .slice(0, hiddenBudget),
-    ]);
-    const desiredSet = new Set(desiredAgentIds);
-    recentlyViewedAgentIds = recentlyViewedAgentIds.filter((agentId) => desiredSet.has(agentId));
-    return desiredAgentIds;
-  };
-
   const isAcknowledged = (agentId: string) => acknowledged.includes(agentId);
   const isDesired = (agentId: string) => desired.includes(agentId);
+  const canCatchUp = (agentId: string) =>
+    !disposed && connected && isDesired(agentId) && isAcknowledged(agentId);
   const ownsCatchUp = (agentId: string, generation: number) =>
-    !disposed &&
-    connected &&
-    isDesired(agentId) &&
-    isAcknowledged(agentId) &&
-    catchUps.get(agentId)?.generation === generation;
+    canCatchUp(agentId) && catchUps.get(agentId)?.generation === generation;
 
   const notifyListeners = () => {
     for (const listener of listeners) listener();
@@ -572,6 +552,7 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
       if (page.hasNewer && page.endCursor) {
         if (fallbackToLatestTailOnOverflow) {
           await ports.fetchLatestTail(agentId);
+          if (!ownsCatchUp(agentId, generation)) return;
           catchUps.set(agentId, { generation, status: "complete" });
           setVisibilityCatchUpReady(agentId);
           return;
@@ -612,6 +593,8 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
         setVisibilityCatchUpError([agentId], error);
         ports.reportError(error);
       }
+    } finally {
+      startAcknowledgedCatchUps();
     }
   };
 
@@ -629,6 +612,19 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
     cacheLoads.set(agentId, load);
   };
 
+  // Existing streams and retries continue; only initial hidden catch-ups wait.
+  const shouldWaitForVisibleCatchUp = (agentId: string) => {
+    if (!active || catchUps.has(agentId)) return false;
+    const visible = visibleAgentIds();
+    return (
+      !visible.includes(agentId) &&
+      visible.some((id) => {
+        const status = catchUps.get(id)?.status;
+        return isDesired(id) && (status === undefined || status === "running");
+      })
+    );
+  };
+
   const startCatchUp = (
     agentId: string,
     options: {
@@ -637,7 +633,11 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
     } = {},
   ) => {
     const { request, supersede = false } = options;
-    if (!connected || !isDesired(agentId) || !isAcknowledged(agentId)) {
+    if (!canCatchUp(agentId)) {
+      if (request) pendingCatchUps.set(agentId, request);
+      return;
+    }
+    if (shouldWaitForVisibleCatchUp(agentId)) {
       if (request) pendingCatchUps.set(agentId, request);
       return;
     }
@@ -677,8 +677,17 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
   };
 
   const startAcknowledgedCatchUps = () => {
-    for (const agentId of acknowledged) {
+    const visible = visibleAgentIds();
+    const ordered = [
+      ...visible.filter(isAcknowledged),
+      ...acknowledged.filter((id) => !visible.includes(id)),
+    ];
+    for (const agentId of ordered) {
       const pendingCatchUp = pendingCatchUps.get(agentId);
+      const current = catchUps.get(agentId);
+      // Completion of a different chat must not bypass a failed chat's backoff or
+      // supersede an in-flight tail that owns its parked gap recovery.
+      if (current && !(current.status === "complete" && pendingCatchUp)) continue;
       startCatchUp(agentId, {
         request: pendingCatchUp,
         supersede: Boolean(pendingCatchUp),
@@ -786,15 +795,7 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
   };
 
   const publishVisibleMembership = () => {
-    const visible = visibleAgentIds();
-    if (!connected) {
-      const activeVisible = active ? visible : [];
-      recentlyViewedAgentIds = activeVisible;
-      commitDesiredMembership(activeVisible);
-      return;
-    }
-    if (!active) return;
-    commitDesiredMembership(selectHotAgentIds(visible));
+    commitDesiredMembership(normalizeAgentIds([...openAgentIds, ...visibleAgentIds()]));
   };
 
   return {
@@ -811,24 +812,39 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
     getAgentTimelineError(agentId) {
       return visibilityCatchUpErrors.get(agentId) ?? null;
     },
+    replaceOpenAgentIds(agentIds) {
+      const next = normalizeAgentIds(agentIds);
+      if (sameAgentIds(next, openAgentIds)) return;
+      openAgentIds = next;
+      publishVisibleMembership();
+    },
     replaceVisibleAgentIds(sourceId, agentIds) {
       const normalized = normalizeAgentIds(agentIds);
       if (normalized.length === 0) sources.delete(sourceId);
       else sources.set(sourceId, normalized);
       publishVisibleMembership();
+      startAcknowledgedCatchUps();
     },
     setActive(nextActive) {
       if (active === nextActive) return;
       active = nextActive;
       publishVisibleMembership();
+      if (!active) {
+        startAcknowledgedCatchUps();
+        return;
+      }
+      for (const agentId of visibleAgentIds()) {
+        visibilityCatchUpPending.add(agentId);
+        visibilityCatchUpErrors.delete(agentId);
+        startCatchUp(agentId, { supersede: true });
+      }
+      notifyListeners();
     },
     setConnected(nextConnected) {
       if (connected === nextConnected) return;
       connected = nextConnected;
       if (!connected) {
-        const visible = active ? visibleAgentIds() : [];
-        recentlyViewedAgentIds = visible;
-        commitDesiredMembership(visible, { resetCatchUpStatus: true });
+        commitDesiredMembership(desired, { resetCatchUpStatus: true });
         cancelMembershipRetry?.();
         cancelMembershipRetry = null;
         membershipRetryDelayMs = undefined;
@@ -863,7 +879,7 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
       desired = [];
       ports.replaceDemandedAgentIds([]);
       acknowledged = [];
-      recentlyViewedAgentIds = [];
+      openAgentIds = [];
       loadedCache.clear();
       cacheLoads.clear();
       visibilityCatchUpPending.clear();

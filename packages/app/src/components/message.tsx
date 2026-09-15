@@ -69,7 +69,7 @@ import { HighlightedCodeBlock } from "@/components/highlighted-code-block";
 import { MarkdownFenceBlock } from "@/components/markdown/fence";
 import type { MarkdownPhase } from "@/components/markdown/fence/types";
 import { splitMarkdownBlocks } from "@/utils/split-markdown-blocks";
-import { useRevealedText } from "@/hooks/use-revealed-text";
+import { StreamingWords, useWordStream } from "@/word-stream";
 import { colorMarkdownLinkChildren } from "@/components/markdown/link-children";
 import { createAssistantMarkdownParser } from "@/utils/assistant-markdown-parser";
 import { formatDuration, formatMessageTimestamp } from "@/utils/time";
@@ -421,6 +421,8 @@ function UserMessageImagePill({ image, onOpen, accessibilityLabel }: UserMessage
   );
 }
 
+const MESSAGE_TEXT_DATASET = { messageText: "true" };
+
 export const UserMessage = memo(function UserMessage({
   serverId,
   agentId,
@@ -540,7 +542,7 @@ export const UserMessage = memo(function UserMessage({
             </View>
           ) : null}
           {hasText ? (
-            <Text selectable style={userMessageStylesheet.text}>
+            <Text selectable style={userMessageStylesheet.text} dataSet={MESSAGE_TEXT_DATASET}>
               {message}
             </Text>
           ) : null}
@@ -746,6 +748,7 @@ export const LiveElapsed = memo(function LiveElapsed({
 });
 
 interface AssistantMessageProps {
+  renderFullContent?: boolean;
   occurrenceKey: string;
   message: string;
   timestamp: number;
@@ -1388,6 +1391,7 @@ function AssistantMessageBlockContainer({
 
 interface MemoizedMarkdownBlockProps {
   text: string;
+  sourceOffset: number;
   rules: RenderRules;
   parser: MarkdownIt;
   onLinkPress: (url: string) => boolean;
@@ -1395,6 +1399,7 @@ interface MemoizedMarkdownBlockProps {
 
 const MemoizedMarkdownBlock = React.memo(function MemoizedMarkdownBlock({
   text,
+  sourceOffset,
   rules,
   parser,
   onLinkPress,
@@ -1402,6 +1407,7 @@ const MemoizedMarkdownBlock = React.memo(function MemoizedMarkdownBlock({
   return (
     <MarkdownRenderer
       text={text}
+      sourceOffset={sourceOffset}
       enableHtmlish={false}
       rules={rules}
       markdownit={parser}
@@ -1490,6 +1496,7 @@ function MarkdownListView({
 }
 
 export const AssistantMessage = memo(function AssistantMessage({
+  renderFullContent = false,
   occurrenceKey,
   message,
   timestamp: _timestamp,
@@ -1505,10 +1512,15 @@ export const AssistantMessage = memo(function AssistantMessage({
     () => createAssistantMarkdownParser({ streaming: true }),
     [],
   );
-  const renderedMessage = useMemo(() => capAssistantMessageForRender(message), [message]);
+  const renderedMessage = useMemo(
+    () =>
+      renderFullContent ? { text: message, capped: false } : capAssistantMessageForRender(message),
+    [message, renderFullContent],
+  );
   // Paint a paced prefix while the turn is streaming so text arrives at a steady
   // rate instead of in whatever lumps the daemon's coalescing window produced.
-  const revealedMessage = useRevealedText(renderedMessage.text, phase);
+  const stream = useWordStream(renderedMessage.text, phase);
+  const revealedMessage = renderFullContent ? renderedMessage.text : stream.text;
   const fullMessageByteLength = useMemo(
     () => (renderedMessage.capped && phase === "complete" ? getUtf8ByteLength(message) : null),
     [message, phase, renderedMessage.capped],
@@ -1952,10 +1964,14 @@ export const AssistantMessage = memo(function AssistantMessage({
   }, [client, fileLinkActions, markdownParser, occurrenceKey, phase, serverId, workspaceRoot]);
 
   const blocks = useMemo(() => splitMarkdownBlocks(revealedMessage), [revealedMessage]);
-  const keyedBlocks = useMemo(
-    () => blocks.map((block, index) => ({ key: `block:${index}`, block })),
-    [blocks],
-  );
+  const keyedBlocks = useMemo(() => {
+    let cursor = 0;
+    return blocks.map((block) => {
+      const sourceOffset = revealedMessage.indexOf(block, cursor);
+      cursor = sourceOffset + block.length;
+      return { key: `block:${sourceOffset}`, block, sourceOffset };
+    });
+  }, [blocks, revealedMessage]);
 
   const assistantContainerStyle = useMemo(
     () => [
@@ -1970,40 +1986,47 @@ export const AssistantMessage = memo(function AssistantMessage({
   const revealDataSet = useMemo(
     () =>
       isRenderProfileEnabled()
-        ? { revealKey: occurrenceKey, revealLength: String(revealedMessage.length) }
-        : undefined,
+        ? {
+            ...MESSAGE_TEXT_DATASET,
+            revealKey: occurrenceKey,
+            revealLength: String(revealedMessage.length),
+          }
+        : MESSAGE_TEXT_DATASET,
     [occurrenceKey, revealedMessage.length],
   );
 
   return (
-    <View testID="assistant-message" dataSet={revealDataSet} style={assistantContainerStyle}>
-      {keyedBlocks.map(({ key, block }, index) => (
-        <AssistantMessageBlockContainer
-          key={key}
-          block={block}
-          marginBottom={index < keyedBlocks.length - 1 ? 12 : 0}
-        >
-          <MemoizedMarkdownBlock
-            text={block}
-            rules={markdownRules}
-            parser={
-              phase === "streaming" && index === keyedBlocks.length - 1
-                ? streamingMarkdownParser
-                : markdownParser
-            }
-            onLinkPress={handleMarkdownLinkPress}
-          />
-        </AssistantMessageBlockContainer>
-      ))}
-      {fullMessageByteLength !== null ? (
-        <Text
-          testID="assistant-message-capped-notice"
-          style={assistantMessageStylesheet.cappedNotice}
-        >
-          {t("agentStream.messageCapped", { bytes: fullMessageByteLength })}
-        </Text>
-      ) : null}
-    </View>
+    <StreamingWords stream={stream}>
+      <View testID="assistant-message" dataSet={revealDataSet} style={assistantContainerStyle}>
+        {keyedBlocks.map(({ key, block, sourceOffset }, index) => (
+          <AssistantMessageBlockContainer
+            key={key}
+            block={block}
+            marginBottom={index < keyedBlocks.length - 1 ? 12 : 0}
+          >
+            <MemoizedMarkdownBlock
+              text={block}
+              sourceOffset={sourceOffset}
+              rules={markdownRules}
+              parser={
+                phase === "streaming" && index === keyedBlocks.length - 1
+                  ? streamingMarkdownParser
+                  : markdownParser
+              }
+              onLinkPress={handleMarkdownLinkPress}
+            />
+          </AssistantMessageBlockContainer>
+        ))}
+        {fullMessageByteLength !== null ? (
+          <Text
+            testID="assistant-message-capped-notice"
+            style={assistantMessageStylesheet.cappedNotice}
+          >
+            {t("agentStream.messageCapped", { bytes: fullMessageByteLength })}
+          </Text>
+        ) : null}
+      </View>
+    </StreamingWords>
   );
 });
 
