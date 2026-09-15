@@ -2387,6 +2387,11 @@ describe("ACPAgentSession slash commands", () => {
           name: "create_plan",
           description: "Draft a plan for the requested work",
         },
+        {
+          name: "review-commit",
+          description: "Review the staged change",
+          _meta: { kind: "skill" },
+        },
       ],
     });
 
@@ -2403,6 +2408,12 @@ describe("ACPAgentSession slash commands", () => {
         argumentHint: "",
         kind: "command",
       },
+      {
+        name: "review-commit",
+        description: "Review the staged change",
+        argumentHint: "",
+        kind: "skill",
+      },
     ]);
 
     expect(await session.listCommands()).toEqual([
@@ -2417,6 +2428,12 @@ describe("ACPAgentSession slash commands", () => {
         description: "Draft a plan for the requested work",
         argumentHint: "",
         kind: "command",
+      },
+      {
+        name: "review-commit",
+        description: "Review the staged change",
+        argumentHint: "",
+        kind: "skill",
       },
     ]);
   });
