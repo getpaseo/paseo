@@ -246,6 +246,25 @@ describe("createProviderEnv", () => {
     expect(env.PATH).toBe("/custom/path");
   });
 
+  test("never passes Fleet secrets to provider launches", () => {
+    const env = createProviderEnv({
+      baseEnv: {
+        PATH: "/usr/bin",
+        PASEO_FIRSTMATE_DECK_CREDENTIAL: "base-secret",
+        PASEO_FLEET_COMMITMENT_LEDGER_PATH: "/private/base-ledger.md",
+      },
+      runtimeSettings: {
+        env: {
+          PASEO_FIRSTMATE_DECK_CREDENTIAL: "provider-secret",
+          PASEO_FLEET_COMMITMENT_LEDGER_PATH: "/private/provider-ledger.md",
+        },
+      },
+    });
+
+    expect(env.PASEO_FIRSTMATE_DECK_CREDENTIAL).toBeUndefined();
+    expect(env.PASEO_FLEET_COMMITMENT_LEDGER_PATH).toBeUndefined();
+  });
+
   test("strips parent Claude Code session env vars without removing SDK child flags", () => {
     const base = {
       PATH: "/usr/bin",

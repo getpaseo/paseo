@@ -116,7 +116,7 @@ vi.mock("./push/index.js", () => ({
 
 import { z } from "zod";
 import { VoiceAssistantWebSocketServer } from "./websocket-server";
-import { DAEMON_PERMISSIONS, parseServerInfoStatusPayload } from "./messages.js";
+import { parseServerInfoStatusPayload } from "./messages.js";
 import type { SpeechReadinessSnapshot } from "./speech/speech-runtime.js";
 
 interface WebSocketServerInternals {
@@ -124,6 +124,23 @@ interface WebSocketServerInternals {
 }
 
 const TEST_DAEMON_VERSION = "1.2.3-test";
+const BASE_DAEMON_PERMISSIONS = [
+  "daemon.read",
+  "daemon.manage",
+  "tunnel.manage",
+  "access.manage",
+  "workspace.read",
+  "workspace.write",
+  "workspace.manage",
+  "automation.manage",
+  "hub.execute",
+] as const;
+const LegacyServerInfoSchema = z.object({
+  status: z.literal("server_info"),
+  serverId: z.string(),
+  permissions: z.array(z.enum(BASE_DAEMON_PERMISSIONS)),
+  features: z.object({ creationLifecycle: z.boolean().optional() }).optional(),
+});
 
 const WireEnvelopeSchema = z.object({
   type: z.string().optional(),
@@ -535,6 +552,10 @@ describe("relay external socket reconnect behavior", () => {
     secondSocket.emit("message", JSON.stringify(createHelloMessage("plugin:exclusive")));
 
     expect(sessionMock.instances).toHaveLength(2);
+    expect(sessionMock.instances[0]?.args).toMatchObject({
+      principalId: "plugin:exclusive",
+      permissions: expect.not.arrayContaining(["fleet.control"]),
+    });
     firstSocket.emit("close", 1000, "plugin stopped");
     await firstAttachment.closed;
     expect(sessionMock.instances[0]?.cleanup).toHaveBeenCalledOnce();
@@ -713,7 +734,7 @@ describe("relay external socket reconnect behavior", () => {
     const hubInfo = parseServerInfoStatusPayload(hubEnvelope.message?.payload);
 
     expect(sessionMock.instances).toHaveLength(2);
-    expect(ownerInfo.permissions).toEqual(DAEMON_PERMISSIONS);
+    expect(ownerInfo.permissions).toEqual(BASE_DAEMON_PERMISSIONS);
     expect(hubInfo?.permissions).toEqual(["hub.execute"]);
     await server.close();
   });
@@ -1025,7 +1046,8 @@ describe("relay external socket reconnect behavior", () => {
     expect(serverInfo.features?.["terminal-input-mode-replay"]).toBe(true);
     expect(serverInfo.features?.["terminal-size-ownership"]).toBe(true);
     expect(serverInfo.features?.agentTurnIdentity).toBeUndefined();
-    expect(serverInfo.permissions).toEqual(DAEMON_PERMISSIONS);
+    expect(serverInfo.permissions).toEqual(BASE_DAEMON_PERMISSIONS);
+    expect(LegacyServerInfoSchema.parse(serverInfo).permissions).toEqual(BASE_DAEMON_PERMISSIONS);
     await server.close();
   });
 
