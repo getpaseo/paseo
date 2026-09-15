@@ -4,7 +4,7 @@ import type { PresentableCheck } from "@/git/check-presentation";
 export interface PrHint {
   url: string;
   number: number;
-  state: "open" | "merged" | "closed";
+  state: "open" | "draft" | "merged" | "closed";
   /** Forge backing this change request, so badges render the right brand mark. */
   forge: Forge;
   checks?: PrHintCheck[];
@@ -21,6 +21,7 @@ interface PrStatusLike {
   url: string;
   state: string;
   isMerged: boolean;
+  isDraft?: boolean;
   checks?: PrHintCheck[];
   checksStatus?: string;
   reviewDecision?: string | null;
@@ -57,10 +58,10 @@ export function selectPrHintFromStatus(
     return null;
   }
 
-  let state: "merged" | "open" | "closed";
+  let state: "merged" | "open" | "closed" | "draft";
   if (status.isMerged || status.state === "merged") state = "merged";
-  else if (status.state === "open") state = "open";
-  else state = "closed";
+  else if (status.state !== "open") state = "closed";
+  else state = status.isDraft ? "draft" : "open";
 
   return {
     url: status.url,

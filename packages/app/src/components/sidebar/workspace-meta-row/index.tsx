@@ -301,6 +301,7 @@ function ServiceItem({ summary }: { summary: WorkspaceServiceSummary }) {
 const successMapping = (theme: Theme) => ({ color: theme.colors.statusSuccess });
 
 const PR_STATE_LABEL_KEYS = {
+  draft: "workspace.git.pr.states.draft",
   merged: "workspace.git.pr.states.merged",
   closed: "workspace.git.pr.states.closed",
 } as const;
