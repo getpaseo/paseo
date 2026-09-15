@@ -78,6 +78,13 @@ jobs:
               echo "$STATUS_JSON"
               curl --fail --silent --show-error http://127.0.0.1:6767/ >"$PASEO_HOME/web-ui.html"
               [[ -s "$PASEO_HOME/web-ui.html" ]]
+
+              TERMINAL_JSON="$(./result/bin/paseo terminal create \
+                --cwd "$PWD" \
+                --name nix-smoke \
+                --json)"
+              TERMINAL_ID="$(jq -er '.id' <<<"$TERMINAL_JSON")"
+              ./result/bin/paseo terminal kill "$TERMINAL_ID"
               exit 0
             fi
 
