@@ -48,6 +48,35 @@ export function findClaudeModel(
   return getClaudeModels().find((model) => model.id === normalizedModelId);
 }
 
+const CLAUDE_ONE_MILLION_CONTEXT_SUFFIX = "[1m]";
+const ONE_MILLION_TOKENS = 1_000_000;
+
+/**
+ * Resolve the model string handed to the Claude Code SDK.
+ *
+ * Claude Code only enables the 1M context window for ids that carry the `[1m]` suffix when the
+ * endpoint is not `api.anthropic.com`; behind a gateway (CLIProxyAPI, Z.AI, a custom base URL)
+ * a bare 1M-capable id falls back to the 200k default and reports that through
+ * `modelUsage.contextWindow`. The catalog already knows which models are 1M, so pass the
+ * suffixed spelling and let the SDK report the real window.
+ *
+ * Ids the catalog does not know (custom and gateway model names) pass through unchanged.
+ */
+export function resolveClaudeSdkModelId(modelId: string | null | undefined): string | undefined {
+  const trimmed = typeof modelId === "string" ? modelId.trim() : "";
+  if (!trimmed) {
+    return undefined;
+  }
+  if (trimmed.toLowerCase().endsWith(CLAUDE_ONE_MILLION_CONTEXT_SUFFIX)) {
+    return trimmed;
+  }
+  const manifestModel = findClaudeModel(trimmed);
+  if ((manifestModel?.contextWindowMaxTokens ?? 0) >= ONE_MILLION_TOKENS) {
+    return `${trimmed}${CLAUDE_ONE_MILLION_CONTEXT_SUFFIX}`;
+  }
+  return trimmed;
+}
+
 export async function getClaudeModelsWithSettings(
   logger: Logger,
   configDir?: string,

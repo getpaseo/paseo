@@ -742,6 +742,56 @@ describe("ClaudeAgentSession features", () => {
     await session.close();
   });
 
+  test("passes catalog 1M models to Claude Code with the [1m] suffix", async () => {
+    const { queryFactory, queryMock } = createQueryMock();
+    const client = new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const session = await client.createSession({
+      provider: "claude",
+      cwd: process.cwd(),
+      model: "claude-opus-5",
+    });
+
+    await (
+      session as unknown as {
+        ensureQuery(): Promise<unknown>;
+      }
+    ).ensureQuery();
+    expect(queryFactory.mock.calls[0]?.[0].options.model).toBe("claude-opus-5[1m]");
+
+    await session.setModel?.("claude-fable-5-1");
+    expect(queryMock.setModel).toHaveBeenCalledWith("claude-fable-5-1[1m]");
+    await session.close();
+  });
+
+  test("leaves 200k and custom models unchanged when handing them to Claude Code", async () => {
+    const { queryFactory, queryMock } = createQueryMock();
+    const client = new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const session = await client.createSession({
+      provider: "claude",
+      cwd: process.cwd(),
+      model: "claude-sonnet-5",
+    });
+
+    await (
+      session as unknown as {
+        ensureQuery(): Promise<unknown>;
+      }
+    ).ensureQuery();
+    expect(queryFactory.mock.calls[0]?.[0].options.model).toBe("claude-sonnet-5");
+
+    await session.setModel?.("glm-4.6");
+    expect(queryMock.setModel).toHaveBeenCalledWith("glm-4.6");
+    await session.close();
+  });
+
   test("preapproves only granted Hub MCP tools while preserving Claude denies", async () => {
     const { queryFactory } = createQueryMock();
     const client = new ClaudeAgentClient({
