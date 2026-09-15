@@ -3,6 +3,12 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
 import { writeJsonFileAtomic } from "../atomic-file.js";
+import { withExclusiveFileLock } from "../atomic-file.js";
+import {
+  FLEET_CONTROL_CONTRACT_VERSION,
+  FleetControlReceiptSchema,
+  type FleetControlReceipt,
+} from "@getpaseo/protocol/fleet-control";
 
 const ReceiptSchema = z.object({
   fingerprint: z.string(),
@@ -38,6 +44,32 @@ export class MessageReceipts {
     return result;
   }
 
+  readFleetControlReceipt(operationRequestId: string): Promise<FleetControlReceipt | null> {
+    return readTypedReceipt(
+      this.fleetControlReceiptPath(operationRequestId),
+      FleetControlReceiptSchema,
+    );
+  }
+
+  async writeFleetControlReceipt(receipt: FleetControlReceipt): Promise<void> {
+    await writeJsonFileAtomic(this.fleetControlReceiptPath(receipt.operationRequestId), receipt);
+  }
+
+  withFleetControlOperation<T>(
+    operationRequestId: string,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    return withExclusiveFileLock(
+      `${this.fleetControlReceiptPath(operationRequestId)}.lock`,
+      operation,
+    );
+  }
+
+  private fleetControlReceiptPath(operationRequestId: string): string {
+    const key = digest([FLEET_CONTROL_CONTRACT_VERSION, operationRequestId]);
+    return path.join(this.directory, `fleet-control-${key}.json`);
+  }
+
   private async sendOnce(key: string, input: SendMessageInput): Promise<void> {
     const file = path.join(this.directory, `${key}.json`);
     const fingerprint = digest(input.request);
@@ -53,6 +85,15 @@ export class MessageReceipts {
     await writeJsonFileAtomic(file, { ...receipt, state: "pending" });
     await input.send();
     await writeJsonFileAtomic(file, { ...receipt, state: "completed" });
+  }
+}
+
+async function readTypedReceipt<T>(file: string, schema: z.ZodType<T>): Promise<T | null> {
+  try {
+    return schema.parse(JSON.parse(await readFile(file, "utf8")));
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return null;
+    throw error;
   }
 }
 

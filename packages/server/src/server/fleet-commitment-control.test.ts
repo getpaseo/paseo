@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -11,6 +11,7 @@ import {
   fleetControlDigest,
   type FleetControlCrashPoint,
 } from "./fleet-commitment-control.js";
+import { MessageReceipts } from "./message-receipts/index.js";
 
 const commitmentId = "64e89b9a-ff01-4cd8-b3f8-202bd276bc1d";
 const otherCommitmentId = "18ae9795-a93a-4ed2-b0de-5cff41a809a0";
@@ -44,66 +45,79 @@ async function harness(options?: {
   missing?: boolean;
   archived?: boolean;
   afterAdmission?: () => Promise<void>;
+  beforeLedgerRename?: () => Promise<void>;
+  ledgerContents?: string;
+  admissionLifecycle?: "running" | "error" | "initializing";
 }) {
   const directory = await mkdtemp(join(tmpdir(), "paseo-fleet-control-"));
   directories.push(directory);
   const ledgerPath = join(directory, "ledger.md");
   const receiptsDirectory = join(directory, "agent-requests");
   const initialMarker = options?.markerOverride ?? marker;
-  await writeFile(
-    ledgerPath,
-    [
-      "# Fleet commitments",
-      "",
-      "| ID | Commitment | Owner | State | Updated | Evidence | Remaining |",
-      "| --- | --- | --- | --- | --- | --- | --- |",
-      row(commitmentId, "Target", "keep this", initialMarker),
-      row(otherCommitmentId, "Other", "unchanged", [
-        "fleet-control.v1",
-        otherCommitmentId,
-        "open",
-        9,
-        null,
-        FLEET_CONTROL_PORTFOLIO_AGENT_ID,
-      ]),
-      "",
-    ].join("\n"),
-  );
+  const defaultContents = [
+    "# Fleet commitments",
+    "",
+    "| ID | Commitment | Owner | State | Updated | Evidence | Remaining |",
+    "| --- | --- | --- | --- | --- | --- | --- |",
+    row(commitmentId, "Target", "keep this", initialMarker),
+    row(otherCommitmentId, "Other", "unchanged", [
+      "fleet-control.v1",
+      otherCommitmentId,
+      "open",
+      9,
+      null,
+      FLEET_CONTROL_PORTFOLIO_AGENT_ID,
+    ]),
+    "",
+  ].join("\n");
+  await writeFile(ledgerPath, options?.ledgerContents ?? defaultContents);
   let starts = 0;
   let liveBusy = options?.busy ?? false;
-  const service = new FleetCommitmentControlService({
-    ledgerPath,
-    receiptsDirectory,
-    readPortfolioAgent: async () =>
-      options?.missing
-        ? null
-        : {
-            id: FLEET_CONTROL_PORTFOLIO_AGENT_ID,
-            archivedAt: options?.archived ? "2026-09-15T00:00:00.000Z" : null,
-          },
-    streamAgent: (_agentId, _prompt) => {
-      if (liveBusy) throw new Error("already has an active run");
-      liveBusy = true;
-      starts++;
-      return (async function* () {
-        await options?.afterAdmission?.();
-        yield { type: "turn_started" as const, turnId: `turn-${starts}` };
-        if (options?.holdRun) await new Promise<void>(() => {});
-        liveBusy = false;
-      })();
-    },
-    crash: options?.crashAt
-      ? (point) => {
-          if (point === options.crashAt) throw new Error(`crash:${point}`);
+  let currentAgent: { id: string; archivedAt: string | null } | null = options?.missing
+    ? null
+    : {
+        id: FLEET_CONTROL_PORTFOLIO_AGENT_ID,
+        archivedAt: options?.archived ? "2026-09-15T00:00:00.000Z" : null,
+      };
+  const createService = () =>
+    new FleetCommitmentControlService({
+      ledgerPath,
+      receipts: new MessageReceipts(receiptsDirectory),
+      readPortfolioAgent: async () => currentAgent,
+      streamAgent: (_agentId, _prompt) => {
+        if (options?.admissionLifecycle) {
+          throw new Error(
+            `Agent ${FLEET_CONTROL_PORTFOLIO_AGENT_ID} is not idle (${options.admissionLifecycle})`,
+          );
         }
-      : undefined,
-  });
+        if (liveBusy) throw new Error("already has an active run");
+        liveBusy = true;
+        starts++;
+        return (async function* () {
+          await options?.afterAdmission?.();
+          yield { type: "turn_started" as const, turnId: `turn-${starts}` };
+          if (options?.holdRun) await new Promise<void>(() => {});
+          liveBusy = false;
+        })();
+      },
+      beforeLedgerRename: options?.beforeLedgerRename,
+      crash: options?.crashAt
+        ? (point) => {
+            if (point === options.crashAt) throw new Error(`crash:${point}`);
+          }
+        : undefined,
+    });
+  const service = createService();
   return {
     service,
+    createService,
     ledgerPath,
     receiptsDirectory,
     get starts() {
       return starts;
+    },
+    setAgent(agent: typeof currentAgent) {
+      currentAgent = agent;
     },
   };
 }
@@ -146,6 +160,32 @@ describe("FleetCommitmentControlService", () => {
     );
   });
 
+  it("executes a same-key operation once across service instances", async () => {
+    const h = await harness();
+    const otherService = h.createService();
+    const [first, second] = await Promise.all([
+      h.service.operate(operation()),
+      otherService.operate(operation("pause", { requestId: "transport-2" })),
+    ]);
+    expect(h.starts).toBe(1);
+    expect(second).toEqual(first);
+  });
+
+  it("rejects distinct fingerprints racing on one key across service instances", async () => {
+    const h = await harness();
+    const results = await Promise.allSettled([
+      h.service.operate(operation("pause")),
+      h.createService().operate(operation("resume", { requestId: "transport-2" })),
+    ]);
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    expect(results.filter((result) => result.status === "rejected")).toEqual([
+      expect.objectContaining({
+        reason: expect.objectContaining({ code: "operation_request_conflict" }),
+      }),
+    ]);
+    expect(h.starts).toBe(1);
+  });
+
   it("rejects a conflicting fingerprint for the same operation key", async () => {
     const h = await harness();
     const first = h.service.operate(operation());
@@ -183,6 +223,17 @@ describe("FleetCommitmentControlService", () => {
         }),
       ),
     ).toEqual(result);
+  });
+
+  it.each([
+    ["running", "agent_busy"],
+    ["error", "portfolio_agent_error"],
+    ["initializing", "portfolio_agent_initializing"],
+  ] as const)("durably rejects Portfolio lifecycle %s", async (lifecycle, code) => {
+    const h = await harness({ admissionLifecycle: lifecycle });
+    const result = await h.service.operate(operation());
+    expect(result).toMatchObject({ lifecycle: "rejected", code });
+    expect(await h.createService().operate(operation())).toEqual(result);
   });
 
   it("durably rejects missing, archived, target, and ledger custody identity changes", async () => {
@@ -233,7 +284,7 @@ describe("FleetCommitmentControlService", () => {
   it("requires the exact Deck principal for confirmation, even with owner permissions", async () => {
     const h = await harness();
     await h.service.operate(operation());
-    for (const principalId of ["owner", "plugin:deck", "caller:forged"]) {
+    for (const principalId of ["owner", "plugin:deck", "hub:workspace-write", "caller:forged"]) {
       await expect(
         h.service.confirm({
           requestId: `confirm-${principalId}`,
@@ -253,6 +304,29 @@ describe("FleetCommitmentControlService", () => {
   });
 
   it.each([
+    [null, "portfolio_agent_missing"],
+    [
+      { id: FLEET_CONTROL_PORTFOLIO_AGENT_ID, archivedAt: "2026-09-15T00:00:00.000Z" },
+      "portfolio_agent_archived",
+    ],
+    [{ id: otherCommitmentId, archivedAt: null }, "portfolio_identity_mismatch"],
+  ] as const)(
+    "does not confirm after Portfolio identity or custody changes",
+    async (agent, code) => {
+      const h = await harness();
+      await h.service.operate(operation());
+      h.setAgent(agent);
+      const result = await h.service.confirm({
+        requestId: "confirmation",
+        operationRequestId,
+        commitmentId,
+        principalId: "service:firstmate-deck",
+      });
+      expect(result).toMatchObject({ lifecycle: "rejected", code });
+    },
+  );
+
+  it.each([
     ["before_ledger_write", "failed"],
     ["after_ledger_write_before_strict_result", "outcome_unknown"],
   ] as const)("does not replay after a crash at %s", async (crashAt, lifecycle) => {
@@ -260,7 +334,7 @@ describe("FleetCommitmentControlService", () => {
     await expect(h.service.operate(operation())).rejects.toThrow(`crash:${crashAt}`);
     const restarted = new FleetCommitmentControlService({
       ledgerPath: h.ledgerPath,
-      receiptsDirectory: h.receiptsDirectory,
+      receipts: new MessageReceipts(h.receiptsDirectory),
       readPortfolioAgent: async () => ({
         id: FLEET_CONTROL_PORTFOLIO_AGENT_ID,
         archivedAt: null,
@@ -279,7 +353,7 @@ describe("FleetCommitmentControlService", () => {
     );
     const restarted = new FleetCommitmentControlService({
       ledgerPath: h.ledgerPath,
-      receiptsDirectory: h.receiptsDirectory,
+      receipts: new MessageReceipts(h.receiptsDirectory),
       readPortfolioAgent: async () => ({
         id: FLEET_CONTROL_PORTFOLIO_AGENT_ID,
         archivedAt: null,
@@ -347,5 +421,159 @@ describe("FleetCommitmentControlService", () => {
       ]),
     );
     expect(after).toContain("# Fleet commitments");
+  });
+
+  it("rereads under the ledger lock before rename and preserves an unrelated edit", async () => {
+    let h!: Awaited<ReturnType<typeof harness>>;
+    h = await harness({
+      beforeLedgerRename: async () => {
+        const current = await readFile(h.ledgerPath, "utf8");
+        await writeFile(
+          h.ledgerPath,
+          current.replace("# Fleet commitments", "# external\n# Fleet commitments"),
+        );
+      },
+    });
+    const result = await h.service.operate(operation());
+    expect(result.lifecycle).toBe("awaiting_confirmation");
+    expect(await readFile(h.ledgerPath, "utf8")).toContain("# external");
+  });
+
+  it("rejects a target marker changed immediately before rename", async () => {
+    let h!: Awaited<ReturnType<typeof harness>>;
+    const changedMarker = [
+      "fleet-control.v1",
+      commitmentId,
+      "paused",
+      3,
+      otherOperationRequestId,
+      FLEET_CONTROL_PORTFOLIO_AGENT_ID,
+    ] as const;
+    h = await harness({
+      beforeLedgerRename: async () => {
+        const current = await readFile(h.ledgerPath, "utf8");
+        await writeFile(
+          h.ledgerPath,
+          current.replace(JSON.stringify(marker), JSON.stringify(changedMarker)),
+        );
+      },
+    });
+    const result = await h.service.operate(operation());
+    expect(result).toMatchObject({ lifecycle: "rejected", code: "stale_control" });
+    expect(await readFile(h.ledgerPath, "utf8")).toContain(JSON.stringify(changedMarker));
+  });
+
+  it("allows only one service instance to pass the same ledger CAS", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "paseo-fleet-control-race-"));
+    directories.push(directory);
+    const ledgerPath = join(directory, "ledger.md");
+    const receiptsDirectory = join(directory, "agent-requests");
+    await mkdir(receiptsDirectory);
+    await writeFile(ledgerPath, `${row(commitmentId, "Target", "keep")}\nexternal-before\n`);
+    const service = () =>
+      new FleetCommitmentControlService({
+        ledgerPath,
+        receipts: new MessageReceipts(receiptsDirectory),
+        readPortfolioAgent: async () => ({
+          id: FLEET_CONTROL_PORTFOLIO_AGENT_ID,
+          archivedAt: null,
+        }),
+        streamAgent: () =>
+          (async function* () {
+            yield { type: "turn_started", turnId: crypto.randomUUID() };
+          })(),
+      });
+    const [pause, resume] = await Promise.all([
+      service().operate(operation("pause")),
+      service().operate(operation("resume", { operationRequestId: otherOperationRequestId })),
+    ]);
+    expect([pause.lifecycle, resume.lifecycle].sort()).toEqual([
+      "awaiting_confirmation",
+      "rejected",
+    ]);
+    expect([pause.code, resume.code]).toContain("stale_control");
+    expect(await readFile(ledgerPath, "utf8")).toContain("external-before");
+  });
+
+  it("recovers a dead-owner ledger lock without bypassing the transaction", async () => {
+    const h = await harness();
+    await writeFile(
+      `${h.ledgerPath}.fleet-control.lock`,
+      JSON.stringify({ pid: 2_147_483_647, token: "stale", createdAt: "2026-01-01T00:00:00.000Z" }),
+    );
+    await expect(h.service.operate(operation())).resolves.toMatchObject({
+      lifecycle: "awaiting_confirmation",
+    });
+    await expect(readFile(`${h.ledgerPath}.fleet-control.lock`, "utf8")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
+  it("fails closed on malformed ledger lock ownership", async () => {
+    const h = await harness();
+    await writeFile(`${h.ledgerPath}.fleet-control.lock`, "not lock metadata");
+    await expect(h.service.operate(operation())).resolves.toMatchObject({
+      lifecycle: "rejected",
+      code: "file_lock_invalid",
+    });
+    expect(await readFile(h.ledgerPath, "utf8")).toContain(JSON.stringify(marker));
+  });
+
+  it("preserves CRLF, escaped pipes and backslashes across multiple tables", async () => {
+    const escaped = `| ${commitmentId} | Target \\| path \\\\ root | owner | active | now | evidence | <!--${JSON.stringify(marker)}-->keep |`;
+    const contents = [
+      "| A | B |",
+      "| --- | --- |",
+      "| unrelated | table |",
+      "",
+      escaped,
+      `| ${otherCommitmentId} | Other | owner | active | now | evidence | <!--["fleet-control.v1","${otherCommitmentId}","open",1,null,"${FLEET_CONTROL_PORTFOLIO_AGENT_ID}"]-->other |`,
+      "",
+    ].join("\r\n");
+    const h = await harness({ ledgerContents: contents });
+    const result = await h.service.operate(operation());
+    expect(result.lifecycle).toBe("awaiting_confirmation");
+    const written = await readFile(h.ledgerPath, "utf8");
+    expect(written).toContain("Target \\| path \\\\ root");
+    expect(written.match(/\r\n/gu)?.length).toBe(contents.match(/\r\n/gu)?.length);
+    expect(written).toContain("| unrelated | table |");
+  });
+
+  it("rejects duplicate control markers during startup readiness", async () => {
+    const duplicate = `| ${commitmentId} | Target | owner | active | now | evidence | <!--${JSON.stringify(marker)}--><!--${JSON.stringify(marker)}-->keep |\n`;
+    await expect(harness({ ledgerContents: duplicate })).rejects.toThrow(
+      "Fleet commitment ledger is not ready",
+    );
+  });
+
+  it("rejects non-compact and out-of-row startup control markers", async () => {
+    const spacedMarker = JSON.stringify(marker, null, 1).replaceAll("\n", "");
+    await expect(
+      harness({
+        ledgerContents: `${row(commitmentId, "Target", "keep").replace(JSON.stringify(marker), spacedMarker)}\n`,
+      }),
+    ).rejects.toThrow("Fleet commitment ledger is not ready");
+    await expect(
+      harness({
+        ledgerContents: `<!--${JSON.stringify(marker)}-->\n${row(commitmentId, "Target", "keep")}\n`,
+      }),
+    ).rejects.toThrow("Fleet commitment ledger is not ready");
+  });
+
+  it("rejects the same commitment row repeated across Markdown tables", async () => {
+    await expect(
+      harness({
+        ledgerContents: [
+          "| ID | Commitment | Owner | State | Updated | Evidence | Remaining |",
+          "| --- | --- | --- | --- | --- | --- | --- |",
+          row(commitmentId, "First", "keep"),
+          "",
+          "| ID | Commitment | Owner | State | Updated | Evidence | Remaining |",
+          "| --- | --- | --- | --- | --- | --- | --- |",
+          row(commitmentId, "Second", "keep"),
+          "",
+        ].join("\n"),
+      }),
+    ).rejects.toThrow("Fleet commitment ledger is not ready");
   });
 });

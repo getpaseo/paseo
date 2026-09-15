@@ -18,13 +18,15 @@ export async function resolveDaemonBearerPrincipal(
   token: string | null,
 ): Promise<DaemonBearerPrincipal | null> {
   const deckCredential = auth?.firstmateDeckCredential;
-  if (deckCredential && token !== null) {
-    if (await isBearerTokenValidAsync({ password: deckCredential, token })) {
-      return "service:firstmate-deck";
-    }
-  }
-  if (!auth?.password) return "owner";
-  return (await isBearerTokenValidAsync({ password: auth.password, token })) ? "owner" : null;
+  const deckMatches =
+    deckCredential !== undefined && token !== null
+      ? await isBearerTokenValidAsync({ password: deckCredential, token })
+      : false;
+  if (!auth?.password) return deckMatches ? "service:firstmate-deck" : "owner";
+  const ownerMatches = await isBearerTokenValidAsync({ password: auth.password, token });
+  if (deckMatches && ownerMatches) return null;
+  if (deckMatches) return "service:firstmate-deck";
+  return ownerMatches ? "owner" : null;
 }
 
 export interface BearerAuthRejectContext {
