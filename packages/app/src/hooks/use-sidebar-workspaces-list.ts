@@ -2,7 +2,10 @@ import { useCallback, useEffect, useMemo } from "react";
 import { useStoreWithEqualityFn } from "zustand/traditional";
 import { useCreateFlowStore } from "@/stores/create-flow-store";
 import { useSessionStore } from "@/stores/session-store";
-import { useWorkspaceDirectoryServerIds } from "@/stores/session-store-hooks";
+import {
+  useHydratedWorkspaceServerIds,
+  useWorkspaceDirectoryServerIds,
+} from "@/stores/session-store-hooks";
 import { workspaceEqualityFns } from "@/stores/session-store-hooks/selectors";
 import { useHostProjects } from "@/projects/host-projects";
 import { getHostRuntimeStore, useHostRegistryLoaded, useHosts } from "@/runtime/host-runtime";
@@ -32,6 +35,7 @@ export {
   deriveProjectStatusBucket,
   deriveSidebarLoadingState,
   shouldShowSidebarHostLabels,
+  sortSidebarProjects,
   type SidebarLoadingState,
   type SidebarOrderUpdates,
   type SidebarStatusWorkspacePlacement,
@@ -42,17 +46,6 @@ export {
   type SidebarWorkspaceEntry,
 } from "./sidebar-workspaces-view-model";
 
-/**
- * Aggregate status for a project's workspaces, for the collapsed project row.
- *
- * `SidebarProjectEntry` is structural — it carries workspace identity but no status — and
- * `ProjectBlock` is memoized on that stable reference, so the row can't learn about a
- * child's status without its own subscription. Returns a primitive, so status churn in a
- * project only re-renders the row when the aggregate actually moves.
- *
- * Pass `enabled: false` while the project is expanded: the child rows show their own dots
- * and the selector is pure cost.
- */
 export function useSidebarProjectStatusBucket(input: {
   workspaces: readonly SidebarWorkspacePlacement[];
   enabled: boolean;
@@ -136,6 +129,7 @@ export function useSidebarWorkspacesList(options?: {
 
   const persistedProjectOrder = useSidebarOrderStore((state) => state.projectOrder ?? EMPTY_ORDER);
 
+  const hydratedServerIds = useHydratedWorkspaceServerIds(serverIds);
   const directoryServerIds = useWorkspaceDirectoryServerIds(serverIds);
 
   const hostProjects = useHostProjects(directoryServerIds);
@@ -156,6 +150,9 @@ export function useSidebarWorkspacesList(options?: {
       ? sidebarModel.projectNamesByViewKey
       : EMPTY_PROJECT_NAMES;
 
+  // Persisted-order reconciliation runs against the canonical (manual-ordered) `projects`. The
+  // sidebar-only "Sort by" preference is applied downstream in the sidebar model (where the
+  // workspace entries live), so it never rewrites the saved manual drag order.
   useEffect(() => {
     const orderStore = useSidebarOrderStore.getState();
     const updates = computeSidebarOrderUpdates({
@@ -188,7 +185,7 @@ export function useSidebarWorkspacesList(options?: {
   const loadingState = deriveSidebarLoadingState({
     isActive,
     serverIds,
-    hydratedServerIds: directoryServerIds,
+    hydratedServerIds,
     hasProjects: projects.length > 0,
   });
 

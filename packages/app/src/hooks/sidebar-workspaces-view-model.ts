@@ -3,6 +3,7 @@ import { selectPrHintFromStatus } from "@/git/pr-hint";
 import { type HostProjectListItem } from "@/projects/host-project-model";
 import type { PendingCreateAttempt } from "@/stores/create-flow-store";
 import type { WorkspaceDescriptor } from "@/stores/session-store";
+import type { SidebarSortMode } from "@/stores/sidebar-view-store";
 import type {
   WorkspaceStructureHostPlacement,
   WorkspaceStructureProject,
@@ -36,6 +37,7 @@ export interface SidebarStatusWorkspacePlacement extends SidebarWorkspacePlaceme
 }
 
 export interface SidebarWorkspaceEntry extends SidebarStatusWorkspacePlacement {
+  activityAt?: Date | null;
   workspaceDirectory: string;
   workspaceDirectoryLabel: string;
   // Raw user-set title (null when the name is derived from branch/directory).
@@ -143,6 +145,20 @@ function normalizeCurrentBranch(currentBranch: string | null | undefined): strin
   return trimmed.length === 0 || trimmed === "HEAD" ? null : trimmed;
 }
 
+function resolveWorkspaceActivityAt(
+  workspace: WorkspaceDescriptor,
+  agentActivity: WorkspaceAgentActivity | undefined,
+): Date | null {
+  const candidates = [workspace.activityAt, agentActivity?.activityAt];
+  let latest: Date | null = null;
+  for (const candidate of candidates) {
+    if (candidate && (!latest || candidate > latest)) {
+      latest = candidate;
+    }
+  }
+  return latest;
+}
+
 export function createSidebarWorkspaceEntry(input: {
   serverId: string;
   workspace: WorkspaceDescriptor;
@@ -152,6 +168,7 @@ export function createSidebarWorkspaceEntry(input: {
 }): SidebarWorkspaceEntry {
   const projectViewKey = input.projectViewKey ?? input.workspace.projectId;
   const effectiveStatus = deriveEffectiveWorkspaceStatus(input);
+  const agentActivity = input.workspaceAgentActivity?.get(input.workspace.id);
   return {
     workspaceKey: `${input.serverId}:${input.workspace.id}`,
     serverId: input.serverId,
@@ -171,6 +188,7 @@ export function createSidebarWorkspaceEntry(input: {
     currentBranch: normalizeCurrentBranch(input.workspace.gitRuntime?.currentBranch),
     statusBucket: effectiveStatus.status,
     statusEnteredAt: effectiveStatus.enteredAt,
+    activityAt: resolveWorkspaceActivityAt(input.workspace, agentActivity),
     archivingAt: input.workspace.archivingAt,
     diffStat: input.workspace.diffStat,
     prHint: selectPrHintFromStatus(
@@ -594,6 +612,63 @@ export function computeSidebarOrderUpdates(input: {
   }
 
   return { projectOrder, workspaceOrders };
+}
+
+function compareByName(a: string, b: string): number {
+  return a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" });
+}
+
+// Applies the sidebar's "Sort by" preference to the canonical project list (which arrives in the
+// persisted manual/drag order). This is sidebar-only presentation: it deliberately runs here,
+// after the shared workspace structure and after persisted-order reconciliation, so that neither
+// the New Workspace flow nor the saved manual order is affected by the chosen sort.
+//
+// The ordering keys come from the caller (resolved from the sidebar workspace entries) so this
+// stays pure and orders by what the row actually renders:
+// - "name": the displayed workspace label (branch name or title), then project name.
+// - "activity": the effective, agent-activity-aware status timestamp (the signal status mode uses).
+// - "manual": returned unchanged (already in the persisted order).
+export function sortSidebarProjects(input: {
+  projects: SidebarProjectEntry[];
+  sortMode: SidebarSortMode;
+  labelByKey: ReadonlyMap<string, string>;
+  activityByKey: ReadonlyMap<string, number>;
+}): SidebarProjectEntry[] {
+  if (input.sortMode === "manual" || input.projects.length === 0) {
+    return input.projects;
+  }
+
+  if (input.sortMode === "name") {
+    const labelOf = (placement: SidebarWorkspacePlacement): string =>
+      input.labelByKey.get(placement.workspaceKey) ?? placement.name;
+    return input.projects
+      .map((project) => ({
+        ...project,
+        workspaces: [...project.workspaces].sort(
+          (a, b) =>
+            compareByName(labelOf(a), labelOf(b)) || a.workspaceKey.localeCompare(b.workspaceKey),
+        ),
+      }))
+      .sort((a, b) => compareByName(a.projectName, b.projectName));
+  }
+
+  const activityOf = (workspaceKey: string): number => input.activityByKey.get(workspaceKey) ?? 0;
+  return input.projects
+    .map((project, index) => {
+      const workspaces = [...project.workspaces].sort(
+        (a, b) => activityOf(b.workspaceKey) - activityOf(a.workspaceKey),
+      );
+      let latest = 0;
+      for (const workspace of workspaces) {
+        const value = activityOf(workspace.workspaceKey);
+        if (value > latest) {
+          latest = value;
+        }
+      }
+      return { project: { ...project, workspaces }, latest, index };
+    })
+    .sort((a, b) => b.latest - a.latest || a.index - b.index)
+    .map((entry) => entry.project);
 }
 
 export interface SidebarLoadingState {

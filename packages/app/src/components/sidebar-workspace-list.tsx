@@ -1553,6 +1553,7 @@ function ProjectBlock({
   onToggleCollapsed,
   onWorkspacePress,
   onWorkspaceReorder,
+  reorderEnabled,
   onWorktreeCreated,
   drag,
   isDragging,
@@ -1578,6 +1579,7 @@ function ProjectBlock({
   onToggleCollapsed: (projectViewKey: string) => void;
   onWorkspacePress?: () => void;
   onWorkspaceReorder: (projectViewKey: string, workspaces: SidebarWorkspacePlacement[]) => void;
+  reorderEnabled: boolean;
   onWorktreeCreated?: (workspaceId: string) => void;
   drag: () => void;
   isDragging: boolean;
@@ -1761,6 +1763,7 @@ function ProjectBlock({
             extraData={activeWorkspaceSelectionKey(activeWorkspaceSelection)}
             scrollEnabled={false}
             useDragHandle
+            enabled={reorderEnabled}
             nestable={useNestable}
             simultaneousGestureRef={parentGestureRef}
             gestureHostPresented={dragGestureHostActive}
@@ -1842,6 +1845,7 @@ function areProjectBlockPropsEqual(previous: ProjectBlockProps, next: ProjectBlo
     previous.onToggleCollapsed === next.onToggleCollapsed &&
     previous.onWorkspacePress === next.onWorkspacePress &&
     previous.onWorkspaceReorder === next.onWorkspaceReorder &&
+    previous.reorderEnabled === next.reorderEnabled &&
     previous.onWorktreeCreated === next.onWorktreeCreated &&
     previous.drag === next.drag &&
     previous.isDragging === next.isDragging &&
@@ -2120,6 +2124,7 @@ function ProjectModeList({
   onPinnedWorkspaceReorder: (workspaces: SidebarWorkspacePlacement[]) => void;
 }) {
   const hasActiveHostFilter = useSidebarViewStore((state) => state.hostFilters.length > 0);
+  const reorderEnabled = useSidebarViewStore((state) => state.sortMode === "manual");
   const [creatingWorkspaceIds, setCreatingWorkspaceIds] = useState<Set<string>>(() => new Set());
   const creatingWorkspaceTimeoutsRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(
     new Map(),
@@ -2305,6 +2310,7 @@ function ProjectModeList({
           onToggleCollapsed={onToggleProjectCollapsed}
           onWorkspacePress={onWorkspacePress}
           onWorkspaceReorder={handleWorkspaceReorder}
+          reorderEnabled={reorderEnabled}
           onWorktreeCreated={handleWorktreeCreated}
           drag={dragState.drag}
           isDragging={dragState.isDragging}
@@ -2331,6 +2337,7 @@ function ProjectModeList({
       onToggleWorkspacePin,
       onWorkspacePress,
       onToggleProjectCollapsed,
+      reorderEnabled,
       parentGestureRef,
       dragGestureHostActive,
       projectIconByProjectViewKey,
@@ -2407,6 +2414,7 @@ function ProjectModeList({
         extraData={activeWorkspaceSelectionKey(activeWorkspaceSelection)}
         scrollEnabled={false}
         useDragHandle
+        enabled={reorderEnabled}
         nestable={platformIsNative}
         simultaneousGestureRef={parentGestureRef}
         gestureHostPresented={dragGestureHostActive}

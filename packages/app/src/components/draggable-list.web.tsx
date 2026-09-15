@@ -28,6 +28,8 @@ const restrictToVerticalAxis: Modifier = ({ transform }) => ({
 });
 
 const DND_MODIFIERS = [restrictToVerticalAxis];
+// Stable empty sensor list used to disable dragging without changing hook order.
+const EMPTY_SENSORS: ReturnType<typeof useSensors> = [];
 const DRAG_ACTIVATION_CONFIG = {
   movementDistance: 6,
   touchHoldDelayMs: 180,
@@ -203,6 +205,7 @@ export function DraggableList<T>({
   // simultaneousGestureRef is native-only, ignored on web
   onDragBegin,
   nestable: _nestable = false,
+  enabled = true,
 }: DraggableListProps<T>) {
   const { activeId, items, handlers } = useDragReorderState({
     data,
@@ -212,7 +215,7 @@ export function DraggableList<T>({
   });
   const activationConstraints = getDragActivationConstraints(useDragHandle, DRAG_ACTIVATION_CONFIG);
 
-  const sensors = useSensors(
+  const allSensors = useSensors(
     useSensor(MouseSensor, {
       activationConstraint: activationConstraints.mouse,
     }),
@@ -223,6 +226,8 @@ export function DraggableList<T>({
       coordinateGetter: sortableKeyboardCoordinates,
     }),
   );
+  // With no sensors, dnd-kit cannot start a drag, so rows are effectively static.
+  const sensors = enabled ? allSensors : EMPTY_SENSORS;
 
   const ids = useMemo(
     () => items.map((item, index) => keyExtractor(item, index)),
