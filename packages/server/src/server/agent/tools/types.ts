@@ -40,6 +40,13 @@ export interface PaseoToolRuntimeContext {
   paseoToolPolicy?: ProviderPaseoToolsPolicy;
   enableVoiceTools?: boolean;
   voiceOnly?: boolean;
+  /**
+   * Schema scope for advertised tool definitions. Defaults to "agent" when a
+   * callerAgentId is set, "top-level" otherwise. The OpenCode bridge manifest
+   * sets this to "agent" explicitly: the manifest is served globally without a
+   * caller, but every session that executes bridge tools is bound to one.
+   */
+  toolScope?: "agent" | "top-level";
 }
 
 export type PaseoToolCatalogFactory = (
