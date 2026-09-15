@@ -1,5 +1,4 @@
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
-import readline from "node:readline";
 import type { Logger } from "pino";
 import { z } from "zod";
 
@@ -167,8 +166,82 @@ function readProviderTurnId(params: unknown): string | undefined {
   return isRecord(turn) && typeof turn.id === "string" ? turn.id : undefined;
 }
 
+class CodexAppServerLineFramer {
+  private readonly lineParts: Buffer[] = [];
+  private lineLength = 0;
+  private skipNextLf = false;
+  private closed = false;
+
+  constructor(private readonly onLine: (line: string) => void) {}
+
+  write(chunk: Buffer | string): void {
+    if (this.closed) return;
+    const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    let segmentStart = 0;
+
+    for (let index = 0; index < bytes.length; index += 1) {
+      const byte = bytes[index];
+      if (this.skipNextLf) {
+        if (byte === 0x0a) {
+          this.skipNextLf = false;
+          segmentStart = index + 1;
+          continue;
+        }
+        this.skipNextLf = false;
+      }
+      if (byte !== 0x0a && byte !== 0x0d) {
+        continue;
+      }
+
+      this.append(bytes.subarray(segmentStart, index));
+      this.emitLine();
+      // A notification handler can dispose the client while this chunk is being read.
+      if (this.closed) return;
+      this.skipNextLf = byte === 0x0d;
+      segmentStart = index + 1;
+    }
+
+    this.append(bytes.subarray(segmentStart));
+  }
+
+  end(): void {
+    if (this.lineLength > 0) {
+      this.emitLine();
+    }
+    this.close();
+  }
+
+  close(): void {
+    this.closed = true;
+    this.lineParts.length = 0;
+    this.lineLength = 0;
+    this.skipNextLf = false;
+  }
+
+  private append(part: Buffer): void {
+    if (part.length === 0) {
+      return;
+    }
+    this.lineParts.push(part);
+    this.lineLength += part.length;
+  }
+
+  private emitLine(): void {
+    let bytes: Buffer;
+    if (this.lineParts.length === 1) {
+      bytes = this.lineParts[0];
+    } else {
+      bytes = Buffer.concat(this.lineParts, this.lineLength);
+    }
+    const line = bytes.toString("utf8");
+    this.lineParts.length = 0;
+    this.lineLength = 0;
+    this.onLine(line);
+  }
+}
+
 export class CodexAppServerClient {
-  private readonly rl: readline.Interface;
+  private readonly stdoutFramer: CodexAppServerLineFramer;
   private readonly pending = new Map<number, PendingRequest>();
   private readonly requestHandlers = new Map<string, RequestHandler>();
   private notificationHandler: NotificationHandler | null = null;
@@ -177,17 +250,38 @@ export class CodexAppServerClient {
   private disposed = false;
   private stderrBuffer = "";
 
+  private readonly handleStdoutData = (chunk: Buffer | string): void => {
+    this.stdoutFramer.write(chunk);
+  };
+
+  private readonly handleStdoutEnd = (): void => {
+    this.stdoutFramer.end();
+    this.closeStdout();
+  };
+
+  private readonly closeStdout = (): void => {
+    this.child.stdout.off("data", this.handleStdoutData);
+    this.child.stdout.off("end", this.handleStdoutEnd);
+    this.child.stdout.off("close", this.closeStdout);
+    this.stdoutFramer.close();
+  };
+
   constructor(
     private readonly child: ChildProcessWithoutNullStreams,
     private readonly logger: Logger,
     private readonly getTraceContext: () => CodexAppServerTraceContext = () => ({}),
   ) {
-    this.rl = readline.createInterface({ input: child.stdout });
-    this.rl.on("line", (line) => {
+    this.stdoutFramer = new CodexAppServerLineFramer((line) => {
+      if (this.disposed) {
+        return;
+      }
       void this.handleLine(line).catch((error) => {
         this.logger.warn({ error, line }, "Failed to handle Codex app-server stdout line");
       });
     });
+    child.stdout.on("data", this.handleStdoutData);
+    child.stdout.on("end", this.handleStdoutEnd);
+    child.stdout.on("close", this.closeStdout);
 
     child.stderr.on("data", (chunk) => {
       this.stderrBuffer += chunk.toString();
@@ -258,8 +352,8 @@ export class CodexAppServerClient {
 
   async dispose(): Promise<void> {
     this.disposed = true;
+    this.closeStdout();
     this.unexpectedTerminationHandler = null;
-    this.rl.close();
     this.rejectPending(new Error("Codex app-server client is closed"));
     try {
       this.child.stdin.end();
@@ -286,7 +380,7 @@ export class CodexAppServerClient {
       return;
     }
     this.disposed = true;
-    this.rl.close();
+    this.closeStdout();
     this.rejectPending(error);
     const handler = this.unexpectedTerminationHandler;
     this.unexpectedTerminationHandler = null;
