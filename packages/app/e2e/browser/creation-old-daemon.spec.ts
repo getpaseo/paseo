@@ -19,7 +19,7 @@ import { fillComposerDraft } from "../support/helpers/composer";
 import { pressSubmitBeforeTheNextRender } from "../support/helpers/creation";
 import { createAgentTabFromMenu } from "../support/helpers/workspace-tabs";
 
-for (const version of ["0.2.5", "0.7.2"]) {
+for (const version of ["0.2.5", "0.7.2", "0.8.0"]) {
   let daemon: Awaited<ReturnType<typeof startIsolatedHostDaemon>>;
   const test = metroTest.extend<{
     client: DaemonClient;
@@ -73,14 +73,16 @@ for (const version of ["0.2.5", "0.7.2"]) {
         const features = client.getLastServerInfoMessage()?.features;
         expect(features?.creationLifecycle).not.toBe(true);
         expect(features?.workspaceRequestReceipts).not.toBe(true);
-        expect(features?.agentRequestReceipts).not.toBe(true);
+        expect(features?.agentRequestReceipts === true).toBe(version === "0.8.0");
 
         const create = await prepareCreation(client, kind, repo.path, prompt);
         const [agent, duplicate] = await Promise.all([create(), create()]);
         expect(duplicate.id).toBe(agent.id);
+        expect(agent.title).toBe(prompt);
         await client.waitForFinish(agent.id, 20_000);
         const agents = await client.fetchAgents();
         expect(agents.entries).toHaveLength(1);
+        expect(agents.entries[0]!.agent.title).toBe(prompt);
         const timeline = await client.fetchAgentTimeline(agent.id);
         expect(
           timeline.entries.filter(
@@ -120,7 +122,7 @@ for (const version of ["0.2.5", "0.7.2"]) {
       await expectPromptOnce(client, first.id, prompt);
       await expect(
         page.getByTestId(`workspace-tab-agent_${first.id}`).filter({ visible: true }),
-      ).toBeVisible();
+      ).toHaveText(prompt);
 
       await createAgentTabFromMenu(page);
       const secondPrompt = "Create another agent: emit 1 coalesced agent stream updates";
@@ -133,6 +135,9 @@ for (const version of ["0.2.5", "0.7.2"]) {
       expect(second.workspaceId).toBe(first.workspaceId);
       await client.waitForFinish(second.id, 20_000);
       await expectPromptOnce(client, second.id, secondPrompt);
+      await expect(
+        page.getByTestId(`workspace-tab-agent_${second.id}`).filter({ visible: true }),
+      ).toHaveText(secondPrompt);
       await expect(
         page
           .getByTestId("user-message")

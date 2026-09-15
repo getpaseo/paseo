@@ -31,15 +31,6 @@ interface Dependencies {
   legacyWorkspace: (
     input: CreateWorkspaceRequestOptions,
   ) => Promise<WorkspaceCreateResponse["payload"]>;
-  sendMessage: (
-    id: string,
-    text: string,
-    options: {
-      messageId: string;
-      images?: CreateAgentRequestOptions["images"];
-      attachments?: CreateAgentRequestOptions["attachments"];
-    },
-  ) => Promise<unknown>;
 }
 interface Operation {
   kind: Kind;
@@ -105,30 +96,15 @@ export class CreationClient {
 
   private async legacyAgent(input: CreateAgentRequestOptions): Promise<CreationResult> {
     if (input.agentId) throw new Error("Update the host to use caller-selected creation IDs.");
-    const { idempotencyKey, ...unkeyed } = input;
+    const { idempotencyKey: _key, ...unkeyed } = input;
     const hasPrompt = Boolean(
-      input.initialPrompt?.trim() || input.images?.length || input.attachments?.length,
+      input.initialPrompt || input.images?.length || input.attachments?.length,
     );
     // COMPAT(creationLifecycle): added in v0.8.0, remove after 2027-03-11 once the daemon floor supports creationLifecycle.
-    // Without receipts, keep the original create-and-prompt RPC. Structured initial
-    // output also requires that RPC; splitting it into sendMessage loses the schema.
-    if (
-      !idempotencyKey ||
-      !this.deps.supports("agentRequestReceipts") ||
-      (hasPrompt && input.outputSchema)
-    ) {
-      return { agent: await this.deps.legacyAgent(unkeyed), error: null };
-    }
-    // Receipt-capable legacy hosts reject initialPrompt on keyed creates.
-    const { initialPrompt = "", images, attachments, ...creation } = input;
-    const agent = await this.deps.legacyAgent(creation);
-    if (hasPrompt)
-      await this.deps.sendMessage(agent.id, initialPrompt, {
-        messageId: input.clientMessageId ?? `${idempotencyKey}:initial-message`,
-        images,
-        attachments,
-      });
-    return { agent, error: null };
+    // Preserve the original create-and-prompt RPC: old hosts use its prompt for
+    // titles, creation context and startup. Their keyed create cannot accept it.
+    const request = !hasPrompt && this.deps.supports("agentRequestReceipts") ? input : unkeyed;
+    return { agent: await this.deps.legacyAgent(request), error: null };
   }
 
   private start(

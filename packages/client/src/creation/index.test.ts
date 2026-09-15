@@ -73,9 +73,6 @@ function fixture(modern: boolean) {
       legacy.push({ kind: "agent", input });
       return agent;
     },
-    sendMessage: async (id, text, options) => {
-      legacy.push({ kind: "message", input: { id, text, ...options } });
-    },
   });
   const input = {
     idempotencyKey: "intent-one",
@@ -155,18 +152,8 @@ test("legacy adaptation keeps workspace, agent and initial prompt sequencing ins
       input: {
         config: { provider: "codex", cwd: workspace.workspaceDirectory },
         workspaceId: workspace.id,
-        idempotencyKey: "intent-one:agent",
+        initialPrompt: "Start once",
         clientMessageId: "message-one",
-      },
-    },
-    {
-      kind: "message",
-      input: {
-        id: agent.id,
-        text: "Start once",
-        messageId: "message-one",
-        images: undefined,
-        attachments: undefined,
       },
     },
   ]);
@@ -194,7 +181,10 @@ test("keyed creation with an empty prompt works on legacy daemons without sendin
     initialPrompt: "",
   });
   expect(f.legacy).toEqual([
-    { kind: "agent", input: { idempotencyKey: "empty-agent", config: f.input.agent.config } },
+    {
+      kind: "agent",
+      input: { idempotencyKey: "empty-agent", config: f.input.agent.config, initialPrompt: "" },
+    },
   ]);
   f.client.close();
 });

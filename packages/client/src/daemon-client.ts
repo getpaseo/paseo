@@ -2736,7 +2736,6 @@ export class DaemonClient {
     },
     legacyAgent: (input) => this.createLegacyAgent(input),
     legacyWorkspace: (input) => this.createLegacyWorkspace(input, input.requestId),
-    sendMessage: (id, text, options) => this.sendMessage(id, text, options),
   });
 
   async createAgent(options: CreateAgentRequestOptions): Promise<AgentSnapshotPayload> {

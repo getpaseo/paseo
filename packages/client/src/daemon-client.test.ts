@@ -3,6 +3,7 @@ import { z } from "zod";
 import {
   DaemonClient,
   type DaemonClientTrace,
+  type CreateAgentRequestOptions,
   type DaemonTransport,
   type Logger,
 } from "./daemon-client";
@@ -291,9 +292,14 @@ test("advertises consumer-provided browser automation capabilities", async () =>
   });
 });
 
-test.each([false, true])(
-  "legacy structured creation keeps the prompt and schema together with receipt support=%s",
-  async (receipts) => {
+test.each([
+  { receipts: false, structured: false },
+  { receipts: true, structured: false },
+  { receipts: false, structured: true },
+  { receipts: true, structured: true },
+])(
+  "legacy creation preserves the original payload with receipts=$receipts, structured=$structured",
+  async ({ receipts, structured }) => {
     const transport = createMockTransport();
     const client = new DaemonClient({
       url: "ws://test",
@@ -305,12 +311,32 @@ test.each([false, true])(
     const connecting = client.connect();
     transport.triggerOpen({ features: { agentRequestReceipts: receipts } });
     await connecting;
-    const input = {
-      provider: "codex",
-      cwd: "/project",
+    const input: CreateAgentRequestOptions = {
+      config: {
+        provider: "codex",
+        cwd: "/project",
+        title: "Explicit title",
+        model: "gpt-5",
+        modeId: "full-access",
+      },
+      workspaceId: "workspace",
+      callerAgentId: "parent",
+      env: { CREATION_CONTEXT: "preserved" },
+      labels: { source: "test" },
       idempotencyKey: "creation",
+      clientMessageId: "first-message",
       initialPrompt: "Start this agent",
-      outputSchema: { type: "object" },
+      images: [{ data: "aGVsbG8=", mimeType: "image/png" }],
+      attachments: [
+        {
+          type: "github_pr",
+          mimeType: "application/github-pr",
+          number: 123,
+          title: "Review this PR",
+          url: "https://github.com/getpaseo/paseo/pull/123",
+        },
+      ],
+      ...(structured ? { outputSchema: { type: "object" } } : {}),
     };
     const created = client.createAgent(input);
     void created.catch(() => {});
@@ -320,8 +346,16 @@ test.each([false, true])(
     const request = parseSentFrame(transport.sent[0]);
     expect(request).toMatchObject({
       type: "create_agent_request",
+      config: input.config,
+      workspaceId: input.workspaceId,
+      callerAgentId: input.callerAgentId,
+      env: input.env,
+      labels: input.labels,
+      clientMessageId: input.clientMessageId,
       initialPrompt: input.initialPrompt,
-      outputSchema: input.outputSchema,
+      images: input.images,
+      attachments: input.attachments,
+      ...(structured ? { outputSchema: input.outputSchema } : {}),
     });
     expect(request).not.toHaveProperty("idempotencyKey");
     transport.triggerMessage(
