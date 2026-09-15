@@ -633,7 +633,7 @@ class ProviderRuntimeSession {
         sessionId: this.providerSessionId,
       });
     } catch (error) {
-      if (!this.runtime.isClosed) throw error;
+      if (!this.terminal && !this.runtime.isClosed) throw error;
     } finally {
       this.runtime.removeSession(this.id, this.providerSessionId);
     }
