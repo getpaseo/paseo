@@ -1,4 +1,6 @@
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
+import { existsSync } from "node:fs";
+import { readPaseoWorktreeMetadata } from "../utils/worktree-metadata.js";
 
 import type { Logger } from "pino";
 
@@ -588,7 +590,7 @@ export async function killTerminalsForWorkspace(
 // The user removes the project explicitly, so we never archive the parent here.
 export async function archivePersistedWorkspaceRecord(input: {
   workspaceId: string;
-  workspaceRegistry: Pick<WorkspaceRegistry, "get" | "archive">;
+  workspaceRegistry: Pick<WorkspaceRegistry, "get" | "archive" | "update">;
   archivedAt?: string;
   context?: WorkspaceArchiveContext;
 }): Promise<PersistedWorkspaceRecord | null> {
@@ -601,8 +603,43 @@ export async function archivePersistedWorkspaceRecord(input: {
     return existingWorkspace;
   }
 
+  // COMPAT(workspaceBaseRef): added after v0.8.0, remove after 2027-09-15.
+  // Preserve the exact base of pre-existing workspaces before Git deletes their metadata.
+  if (
+    !existingWorkspace.baseBranch?.startsWith("refs/") &&
+    existingWorkspace.worktreeRoot &&
+    existsSync(join(existingWorkspace.worktreeRoot, ".git"))
+  ) {
+    const baseRef = readBaseBeforeArchive(existingWorkspace, existingWorkspace.worktreeRoot);
+    if (baseRef) {
+      await input.workspaceRegistry.update(input.workspaceId, (workspace) => ({
+        ...workspace,
+        baseBranch: baseRef,
+      }));
+    }
+  }
+
   const archivedAt = input.archivedAt ?? new Date().toISOString();
   await input.workspaceRegistry.archive(input.workspaceId, archivedAt, input.context);
 
   return existingWorkspace;
+}
+
+function readBaseBeforeArchive(
+  workspace: PersistedWorkspaceRecord,
+  worktreeRoot: string,
+): string | null {
+  try {
+    const metadata = readPaseoWorktreeMetadata(worktreeRoot);
+    if (metadata?.baseRef) {
+      return metadata.baseRef;
+    }
+    if (workspace.baseBranch === null && metadata && metadata.baseRefName !== workspace.branch) {
+      return metadata.baseRefName;
+    }
+  } catch {
+    // Optional legacy backfill must not prevent archiving an unreadable worktree.
+    // Retain the saved base when metadata cannot be recovered.
+  }
+  return null;
 }
