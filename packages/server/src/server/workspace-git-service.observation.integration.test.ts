@@ -54,6 +54,21 @@ function createStatus(cwd: string): CheckoutStatusGit {
   };
 }
 
+function hasIgnoreUpdateCoveringPath(params: {
+  updates: Array<{ directory: string; paths: string[] }>;
+  directory: string;
+  targetPath: string;
+}): boolean {
+  const { updates, directory, targetPath } = params;
+  for (const update of updates) {
+    if (update.directory !== directory) continue;
+    for (const ignoredPath of update.paths) {
+      if (path.resolve(ignoredPath) === targetPath) return true;
+    }
+  }
+  return false;
+}
+
 const cleanup: Array<() => Promise<void>> = [];
 
 afterEach(async () => {
@@ -413,3 +428,257 @@ test("recursive observation updates tracked state and prunes ignored storms", as
   expect(getCheckoutDiff).not.toHaveBeenCalled();
   expect(service.getMetrics().workspaceRefreshQueuedCount).toBe(0);
 }, 30_000);
+
+interface LateIgnoredDirectoryHarness {
+  observer: ReturnType<typeof createFileObserver>;
+  repoDir: string;
+  depsDir: string;
+  ignoreUpdates: Array<{ directory: string; paths: string[] }>;
+  deliveredEvents: Array<{ directory: string; events: FileChange[] }>;
+  setDepsExists: (value: boolean) => void;
+}
+
+// Shared by both tests below: the platform-independent delivered-events test
+// and the native-only tracked-file-count test need the exact same watcher,
+// service, and gitignore-refresh wiring established before either one can
+// assert anything. Keeping it in one place also means the "deps/ is
+// gitignored but does not exist yet" fixture behavior — the real `git`
+// behavior this bug depends on — is defined once.
+async function setUpLateIgnoredDirectoryHarness(): Promise<LateIgnoredDirectoryHarness> {
+  const tempDir = realpathSync(mkdtempSync(path.join(tmpdir(), "paseo-late-ignored-")));
+  const repoDir = path.join(tempDir, "repo");
+  const depsDir = path.join(repoDir, "deps");
+  mkdirSync(path.join(repoDir, ".git"), { recursive: true });
+  mkdirSync(path.join(repoDir, "src"), { recursive: true });
+  writeFileSync(path.join(repoDir, "src", "tracked.txt"), "base\n");
+
+  const observer = createFileObserver();
+  const ignoreUpdates: Array<{ directory: string; paths: string[] }> = [];
+  const deliveredEvents: Array<{ directory: string; events: FileChange[] }> = [];
+  // The delivered-events assertion reads only `deliveredEvents` /
+  // `ignoreUpdates`, both of which are populated identically by every
+  // backend (native-recursive on macOS/Windows, the per-directory watcher
+  // model on Linux) because both funnel through `Observation.queueEvent`,
+  // which applies the same `isIgnored` check regardless of backend. See the
+  // report for the full argument on why this holds on Linux even though it
+  // cannot be run here.
+  const subscribe: SubscribeToFileChanges = async (directory, callback, options) => {
+    const subscription = await observer.subscribe(
+      directory,
+      (error, events) => {
+        deliveredEvents.push({ directory, events });
+        callback(error, events);
+      },
+      options,
+    );
+    return {
+      updateIgnore: async (paths: string[]) => {
+        await subscription.updateIgnore(paths);
+        ignoreUpdates.push({ directory, paths: [...paths] });
+      },
+      unsubscribe: () => subscription.unsubscribe(),
+    };
+  };
+  const fileObserver = {
+    subscribe,
+    getDiagnostics: () => observer.getDiagnostics(),
+    close: () => observer.close(),
+  };
+
+  // `deps/` is gitignored but does not exist yet, so `ls-files -o -i` reports
+  // nothing until it exists on disk — reproducing the real `git` behavior the
+  // bug depends on.
+  let depsExists = false;
+  // `createFacts`/`createStatus` predate the `upstreamStatus`/`upstreamRef`
+  // fields on the real types and are shared with other tests in this file
+  // that this PR does not otherwise touch — fill the gap here instead of
+  // widening the shared fixtures, so `deps` below can carry its real type
+  // instead of an `as never` bypass.
+  const getCheckoutSnapshotFacts = vi.fn(async (cwd: string): Promise<CheckoutSnapshotFacts> => {
+    const facts = createFacts(cwd);
+    // Narrow before spreading — `createFacts` always returns the `isGit: true`
+    // branch, but its declared return type is the full union, and spreading
+    // `upstreamStatus` across an un-narrowed union would also (incorrectly)
+    // attach it to the `isGit: false` member.
+    return facts.isGit ? { ...facts, upstreamStatus: null } : facts;
+  });
+  const getCheckoutStatus = vi.fn(
+    async (cwd: string): Promise<CheckoutStatusGit> => ({
+      ...createStatus(cwd),
+      upstreamRef: null,
+    }),
+  );
+  const getCheckoutShortstat = vi.fn(async () => ({ additions: 0, deletions: 0 }));
+  const getCheckoutWorktreeState = vi.fn(async () => ({
+    isDirty: false,
+    diffStat: { additions: 0, deletions: 0 },
+  }));
+  const getCheckoutDiff = vi.fn(async () => ({ diff: "", structured: [] }));
+  const runGitCommand = vi.fn(async (args: string[]) => {
+    if (args[0] === "rev-parse") {
+      return { stdout: `${repoDir}\n`, stderr: "", truncated: false, exitCode: 0, signal: null };
+    }
+    if (args[0] === "ls-files") {
+      return {
+        stdout: depsExists ? "deps/\n" : "",
+        stderr: "",
+        truncated: false,
+        exitCode: 0,
+        signal: null,
+      };
+    }
+    throw new Error(`Unexpected Git command: ${args.join(" ")}`);
+  });
+
+  const service = new WorkspaceGitServiceImpl({
+    logger: createLogger(),
+    paseoHome: path.join(tempDir, "paseo-home"),
+    fileObserver,
+    deps: {
+      getCheckoutSnapshotFacts,
+      getCheckoutStatus,
+      getCheckoutShortstat,
+      getCheckoutWorktreeState,
+      getCheckoutDiff,
+      runGitCommand,
+    },
+  });
+  // Let `service.dispose()` release the observer itself (it owns
+  // `fileObserver.close`), instead of closing the raw `observer` separately —
+  // closing it out from under the service would mask a bug in the service's
+  // own unsubscribe/dispose path.
+  cleanup.push(async () => {
+    await service.dispose();
+    rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  const subscription = service.registerWorkspace({ cwd: repoDir }, vi.fn());
+  cleanup.push(async () => {
+    subscription.unsubscribe();
+  });
+
+  // Confirm observation is genuinely established before trusting anything
+  // below: setup must finish, the ignore query must actually have run, and a
+  // snapshot must exist.
+  await expect
+    .poll(() => service.getMetrics().workspaceObservationSetupInFlightCount, { timeout: 20_000 })
+    .toBe(0);
+  expect(runGitCommand).toHaveBeenCalledWith(
+    expect.arrayContaining(["ls-files"]),
+    expect.anything(),
+  );
+  expect(service.peekSnapshot(repoDir)).not.toBeNull();
+
+  return {
+    observer,
+    repoDir,
+    depsDir,
+    ignoreUpdates,
+    deliveredEvents,
+    setDepsExists: (value: boolean) => {
+      depsExists = value;
+    },
+  };
+}
+
+// Phase 1: create the ignored directory and a small batch of files inside
+// it. Under the fix, discovering an untracked directory must trigger a
+// working-tree ignore refresh that ends up calling `updateIgnore` with
+// `deps/` included; today nothing does. Events delivered during this phase
+// are not asserted on — they are allowed to leak while the refresh is still
+// in flight (see "why two phases" in the report).
+async function runPhase1AndWaitForIgnore(harness: LateIgnoredDirectoryHarness): Promise<void> {
+  harness.setDepsExists(true);
+  mkdirSync(harness.depsDir, { recursive: true });
+  for (let index = 0; index < 100; index += 1) {
+    writeFileSync(path.join(harness.depsDir, `phase1-${index}.js`), `${index}\n`);
+  }
+
+  // RED today: no code path calls `updateIgnore` for a plain new directory
+  // (only a `.gitignore`-named file event does), so `ignoreUpdates` never
+  // gains an entry naming `deps/`, and this wait runs the full 15s and fails
+  // — for exactly the reason under test, on every platform, since it depends
+  // only on the `updateIgnore` call the working-tree watch target already
+  // makes today (see `replaceWorkingTreeIgnoredDirectories` in
+  // `workspace-git-service.ts`), not on any backend-specific diagnostics.
+  await vi.waitFor(
+    () => {
+      expect(
+        hasIgnoreUpdateCoveringPath({
+          updates: harness.ignoreUpdates,
+          directory: harness.repoDir,
+          targetPath: harness.depsDir,
+        }),
+      ).toBe(true);
+    },
+    { timeout: 15_000 },
+  );
+}
+
+// Phase 2: the ignore set already includes `deps/` at this point —
+// `Observation.updateIgnore` assigns `this.ignoredRoots` synchronously before
+// awaiting the backend, and that assignment happened strictly before phase
+// 1's `await subscription.updateIgnore(...)` resolved, which is strictly
+// before it was observed in `ignoreUpdates`, which is strictly before the
+// write loop below starts. So every file created below is checked against
+// the *already-updated* ignore set by `Observation.queueEvent`'s `isIgnored`
+// guard the moment any backend reports it, regardless of which internal code
+// path (native `classify`, an audit reconciliation, or the Linux
+// per-directory watcher callback) produced the event. None of these 2,000
+// new files should ever reach the subscriber callback. Returns the delivered
+// event count as of just before the writes, so the caller can isolate the
+// events this phase alone produced.
+async function runPhase2(harness: LateIgnoredDirectoryHarness): Promise<number> {
+  const deliveredBeforePhase2 = harness.deliveredEvents.length;
+  for (let index = 0; index < 2_000; index += 1) {
+    writeFileSync(path.join(harness.depsDir, `phase2-${index}.js`), `${index}\n`);
+  }
+
+  // Give the filesystem a generous window to deliver anything it would
+  // (there is no async catch-up step to wait for on the fixed path — the
+  // ignore check is synchronous at event-arrival time — so this is purely
+  // margin for OS event delivery latency, not a condition we are hoping
+  // resolves a particular way).
+  await new Promise((resolve) => setTimeout(resolve, 2_000));
+  return deliveredBeforePhase2;
+}
+
+test("an ignored directory created after subscribe stops delivering events once ignored", async () => {
+  const harness = await setUpLateIgnoredDirectoryHarness();
+  await runPhase1AndWaitForIgnore(harness);
+  const deliveredBeforePhase2 = await runPhase2(harness);
+
+  const depsPrefix = `${harness.depsDir}${path.sep}`;
+  const phase2EventsUnderDeps = harness.deliveredEvents
+    .slice(deliveredBeforePhase2)
+    .flatMap((batch) => batch.events)
+    .filter((event) => {
+      const resolved = path.resolve(event.path);
+      return resolved === harness.depsDir || resolved.startsWith(depsPrefix);
+    });
+
+  expect(phase2EventsUnderDeps).toHaveLength(0);
+}, 40_000);
+
+// `nativeTrackedFileCount` is meaningful evidence of a live watch on the
+// backends that populate it, but the Linux backend
+// (`file-observer/internal/linux.ts`) hardcodes it to 0 — it has no per-file
+// inventory, only a `Map` of directory watchers. Skipped as a whole there
+// instead of gated inline, so every run of this test proves the same thing;
+// the platform-independent delivered-events coverage lives in the test
+// above, which runs everywhere.
+test.skipIf(process.platform !== "darwin" && process.platform !== "win32")(
+  "an ignored directory created after subscribe keeps the native tracked-file inventory bounded",
+  async () => {
+    const harness = await setUpLateIgnoredDirectoryHarness();
+    expect(harness.observer.getDiagnostics().nativeTrackedFileCount).toBeGreaterThan(0);
+
+    await runPhase1AndWaitForIgnore(harness);
+    await runPhase2(harness);
+
+    // The backend's own inventory should not have absorbed the phase-2 files
+    // either.
+    expect(harness.observer.getDiagnostics().nativeTrackedFileCount).toBeLessThan(300);
+  },
+  40_000,
+);

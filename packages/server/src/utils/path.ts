@@ -138,7 +138,15 @@ function shouldCompareAsWindows(left: string, right: string): boolean {
   return looksLikeDefiniteWindowsPath(left) || looksLikeDefiniteWindowsPath(right);
 }
 
-function looksLikeDefiniteWindowsPath(value: string): boolean {
+/**
+ * True when `value`'s shape identifies it as a Windows path (drive letter,
+ * `\\?\` device namespace, or UNC), independent of the host platform. Callers
+ * that fold case for Windows-looking paths (this module's own comparisons,
+ * and `pruneKnownDirectories` in `workspace-git-service.ts`, which needs the
+ * same decision without paying for a realpath syscall) must all agree on this
+ * one rule — do not reimplement the pattern.
+ */
+export function looksLikeDefiniteWindowsPath(value: string): boolean {
   return (
     /^[a-zA-Z]:[\\/]/u.test(value) ||
     /^[/\\]{2}\?[/\\]/u.test(value) ||

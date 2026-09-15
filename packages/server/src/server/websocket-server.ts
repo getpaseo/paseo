@@ -282,6 +282,7 @@ function createFallbackWorkspaceGitService(): WorkspaceGitService {
         nativeTrackedFileCount: 0,
         pendingEventCount: 0,
         pendingReconciliationWorkCount: 0,
+        pendingClassificationCount: 0,
         reconciliationInFlightCount: 0,
         reconciliationCount: 0,
         scopedReconciliationCount: 0,
