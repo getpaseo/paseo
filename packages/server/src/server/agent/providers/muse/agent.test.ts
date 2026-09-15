@@ -46,12 +46,16 @@ function createFakeHost(entries: ModelCatalogEntry[] = [createCatalogEntry()]): 
   const host: MuseHostConnection = {
     initializeResult: {} as MuseHostConnection["initializeResult"],
     fingerprintWarning: undefined,
+    command: vi.fn(async () => ({})),
     modelList: vi.fn(async () => ({
       models: entries,
       providerId: "meta",
       profileId: null,
       source: "bundledCatalog",
     })),
+    onNotification: vi.fn(),
+    onServerRequest: vi.fn(),
+    onExit: vi.fn(),
     close: vi.fn(async () => {}),
   };
   const spawns: MuseHostSpawnOptions[] = [];
@@ -218,15 +222,147 @@ describe("MuseAgentClient", () => {
     expect(diagnostic).toContain("auth.json");
   });
 
-  test("sessions throw until the session core lands", async () => {
-    const client = new MuseAgentClient({ logger: createTestLogger() });
+  test("createSession starts an MSP session with mode, model, and MCP servers", async () => {
+    const commands: Array<{ method: string; params: Record<string, unknown> }> = [];
+    let host!: MuseHostConnection;
+    host = {
+      initializeResult: {} as MuseHostConnection["initializeResult"],
+      fingerprintWarning: undefined,
+      command: vi.fn(async (method: string, params: Record<string, unknown>) => {
+        commands.push({ method, params });
+        return {
+          session: {
+            sessionId: "msp-session-1",
+            modelId: "muse-spark-1.2",
+            approvalMode: { mode: "allowAll" },
+          },
+        };
+      }),
+      modelList: vi.fn(async () => ({ models: [] })),
+      onNotification: vi.fn(),
+      onServerRequest: vi.fn(),
+      onExit: vi.fn(),
+      close: vi.fn(async () => {}),
+    };
+    const spawner = vi.fn(async () => host);
+    const client = new MuseAgentClient({ logger: createTestLogger(), hostSpawner: spawner });
 
-    await expect(client.createSession({ provider: "muse", cwd: "/tmp/muse" })).rejects.toThrow(
-      "not implemented yet",
-    );
+    const session = await client.createSession({
+      provider: "muse",
+      cwd: "/tmp/muse",
+      model: "muse-spark-1.2",
+      modeId: "allowAll",
+      systemPrompt: "Be terse.",
+      mcpServers: {
+        paseo: { type: "http", url: "http://127.0.0.1:1/mcp/agents" },
+      },
+    });
+
+    expect(session.id).toBe("msp-session-1");
+    expect(commands).toHaveLength(1);
+    expect(commands[0]).toEqual({
+      method: "session/start",
+      params: {
+        workspaceRoot: "/tmp/muse",
+        approvalMode: "allowAll",
+        modelId: "muse-spark-1.2",
+        config: {
+          mcpServers: {
+            paseo: { transport: "streamableHttp", url: "http://127.0.0.1:1/mcp/agents" },
+          },
+        },
+      },
+    });
+    await expect(session.getCurrentMode()).resolves.toBe("allowAll");
+    await session.close();
+  });
+
+  test("createSession rejects unknown modes without spawning", async () => {
+    const spawner = vi.fn(async () => {
+      throw new Error("must not spawn");
+    });
+    const client = new MuseAgentClient({ logger: createTestLogger(), hostSpawner: spawner });
+
     await expect(
-      client.resumeSession({ provider: "muse", sessionId: "abc" }),
-    ).rejects.toThrow("not implemented yet");
+      client.createSession({ provider: "muse", cwd: "/tmp/muse", modeId: "yolo" }),
+    ).rejects.toThrow("Unknown Muse approval mode: yolo");
+    expect(spawner).not.toHaveBeenCalled();
+  });
+
+  test("createSession closes the host when session/start fails", async () => {
+    const close = vi.fn(async () => {});
+    const spawner = vi.fn(async () => ({
+      initializeResult: {},
+      fingerprintWarning: undefined,
+      command: vi.fn(async () => {
+        throw new Error("start blew up");
+      }),
+      modelList: vi.fn(async () => ({ models: [] })),
+      onNotification: vi.fn(),
+      onServerRequest: vi.fn(),
+      onExit: vi.fn(),
+      close,
+    }));
+    const client = new MuseAgentClient({ logger: createTestLogger(), hostSpawner: spawner });
+
+    await expect(
+      client.createSession({ provider: "muse", cwd: "/tmp/muse" }),
+    ).rejects.toThrow("start blew up");
+    expect(close).toHaveBeenCalledTimes(1);
+  });
+
+  test("resumeSession resumes by native handle and merges overrides", async () => {
+    const commands: Array<{ method: string; params: Record<string, unknown> }> = [];
+    const spawner = vi.fn(async () => ({
+      initializeResult: {},
+      fingerprintWarning: undefined,
+      command: vi.fn(async (method: string, params: Record<string, unknown>) => {
+        commands.push({ method, params });
+        return {
+          session: {
+            sessionId: "msp-session-9",
+            modelId: "muse-spark-1.2",
+            approvalMode: { mode: "promptUnmatched" },
+          },
+          history: { mode: "inline", items: [] },
+          pendingRequests: [],
+          viewCursor: "v:head",
+        };
+      }),
+      modelList: vi.fn(async () => ({ models: [] })),
+      onNotification: vi.fn(),
+      onServerRequest: vi.fn(),
+      onExit: vi.fn(),
+      close: vi.fn(async () => {}),
+    }));
+    const client = new MuseAgentClient({ logger: createTestLogger(), hostSpawner: spawner });
+
+    const session = await client.resumeSession(
+      {
+        provider: "muse",
+        sessionId: "msp-session-9",
+        nativeHandle: "msp-session-9",
+        metadata: { cwd: "/tmp/muse-old", model: "muse-spark-1.1" },
+      },
+      { cwd: "/tmp/muse-new" },
+    );
+
+    expect(session.id).toBe("msp-session-9");
+    expect(commands).toEqual([
+      { method: "session/resume", params: { sessionId: "msp-session-9" } },
+    ]);
+    await expect(session.getRuntimeInfo()).resolves.toMatchObject({
+      provider: "muse",
+      sessionId: "msp-session-9",
+      model: "muse-spark-1.1",
+      modeId: "promptUnmatched",
+    });
+    expect(session.describePersistence()).toMatchObject({
+      provider: "muse",
+      sessionId: "msp-session-9",
+      nativeHandle: "msp-session-9",
+    });
+    await session.close();
   });
 
   test("registry exposes the muse provider", () => {

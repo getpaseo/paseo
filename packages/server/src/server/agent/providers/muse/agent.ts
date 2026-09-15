@@ -7,11 +7,13 @@ import { z } from "zod";
 import type {
   AgentCapabilityFlags,
   AgentClient,
+  AgentCreateSessionOptions,
   AgentLaunchContext,
   AgentMode,
   AgentModelDefinition,
   AgentPersistenceHandle,
   AgentProvider,
+  AgentResumeSessionOptions,
   AgentSession,
   AgentSessionConfig,
   FetchCatalogOptions,
@@ -33,9 +35,13 @@ import {
 import {
   spawnMuseHost,
   type MuseHostConnection,
+  type MuseHostSpawnOptions,
   type MuseHostSpawner,
   type MuseModelCatalogEntry,
 } from "./host.js";
+import { mapMuseMcpServers } from "./mcps.js";
+import { MuseAgentSession } from "./session.js";
+import { composeSystemPromptParts } from "../../system-prompt.js";
 
 export const MUSE_PROVIDER = "muse";
 
@@ -145,25 +151,93 @@ export class MuseAgentClient implements AgentClient {
   }
 
   async createSession(
-    _config: AgentSessionConfig,
-    _launchContext?: AgentLaunchContext,
+    config: AgentSessionConfig,
+    launchContext?: AgentLaunchContext,
+    _options?: AgentCreateSessionOptions,
   ): Promise<AgentSession> {
-    throw new Error("Muse agent sessions are not implemented yet");
+    const approvalMode = resolveMuseApprovalMode(config.modeId);
+    const host = await this.spawnSessionHost(config.cwd, launchContext?.env);
+    try {
+      const mcpServers = mapMuseMcpServers(config.mcpServers, this.logger);
+      const started = (await host.command("session/start", {
+        workspaceRoot: config.cwd,
+        approvalMode,
+        ...(config.model ? { modelId: config.model } : {}),
+        ...(mcpServers ? { config: { mcpServers } } : {}),
+      })) as unknown as Record<string, unknown>;
+      const session = readSessionRecord(started);
+      if (!session.sessionId) {
+        throw new Error("Muse session/start did not return a session id");
+      }
+      return new MuseAgentSession({
+        host,
+        sessionId: session.sessionId,
+        config,
+        capabilities: this.capabilities,
+        modelId: session.modelId ?? config.model ?? null,
+        modeId: session.approvalMode ?? approvalMode,
+        systemPrefix: composeSystemPromptParts(
+          config.systemPrompt,
+          config.daemonAppendSystemPrompt,
+        ),
+        logger: this.logger,
+      });
+    } catch (error) {
+      await host.close().catch(() => undefined);
+      throw error;
+    }
   }
 
   async resumeSession(
-    _handle: AgentPersistenceHandle,
-    _overrides?: Partial<AgentSessionConfig>,
-    _launchContext?: AgentLaunchContext,
+    handle: AgentPersistenceHandle,
+    overrides?: Partial<AgentSessionConfig>,
+    launchContext?: AgentLaunchContext,
+    _options?: AgentResumeSessionOptions,
   ): Promise<AgentSession> {
-    throw new Error("Muse agent sessions are not implemented yet");
+    const nativeHandle = handle.nativeHandle ?? handle.sessionId;
+    const metadata = handle.metadata ?? {};
+    const cwd =
+      overrides?.cwd ?? (typeof metadata["cwd"] === "string" ? metadata["cwd"] : homedir());
+    const host = await this.spawnSessionHost(cwd, launchContext?.env);
+    try {
+      const resumed = (await host.command("session/resume", {
+        sessionId: nativeHandle,
+      })) as unknown as Record<string, unknown>;
+      const session = readSessionRecord(resumed);
+      if (!session.sessionId) {
+        throw new Error("Muse session/resume did not return a session id");
+      }
+      const modeId =
+        overrides?.modeId ??
+        readMetadataString(metadata, "modeId") ??
+        session.approvalMode ??
+        "onRequest";
+      const model = overrides?.model ?? readMetadataString(metadata, "model");
+      const config: AgentSessionConfig = {
+        provider: this.provider,
+        cwd,
+        ...(model ? { model } : {}),
+        modeId,
+      };
+      return new MuseAgentSession({
+        host,
+        sessionId: session.sessionId,
+        config,
+        capabilities: this.capabilities,
+        modelId: config.model ?? session.modelId ?? null,
+        modeId,
+        logger: this.logger,
+      });
+    } catch (error) {
+      await host.close().catch(() => undefined);
+      throw error;
+    }
   }
 
   async fetchCatalog(
     options: FetchCatalogOptions,
     context?: ProviderRefreshContext,
   ): Promise<ProviderCatalog> {
-    const launch = await this.resolveMuseLaunch();
     let host: MuseHostConnection | undefined;
     let closePromise: Promise<void> | undefined;
     const closeHost = () => {
@@ -177,15 +251,13 @@ export class MuseAgentClient implements AgentClient {
     try {
       try {
         await runProviderRefreshActivity(context, "msp.initialize", async () => {
-          host = await this.hostSpawner({
-            command: launch.command,
-            args: [...launch.args, "serve", "--trust-workspace"],
-            cwd: options.scope === "global" ? homedir() : options.cwd,
-            env: { ...process.env, ...this.runtimeSettings?.env },
-            onStderr: (chunk) => {
+          host = await this.spawnSessionHost(
+            options.scope === "global" ? homedir() : options.cwd,
+            undefined,
+            (chunk) => {
               stderrChunks.push(chunk);
             },
-          });
+          );
           if (context?.signal.aborted) await closeHost();
         });
         if (!host) throw new Error("Muse catalog host did not start");
@@ -276,4 +348,62 @@ export class MuseAgentClient implements AgentClient {
       defaultBinary: MUSE_DEFAULT_BINARY,
     });
   }
+
+  private async spawnSessionHost(
+    cwd: string,
+    env?: Record<string, string>,
+    onStderr?: (chunk: string) => void,
+  ) {
+    const launch = await this.resolveMuseLaunch();
+    const options: MuseHostSpawnOptions = {
+      command: launch.command,
+      args: [...launch.args, "serve", "--trust-workspace"],
+      cwd,
+      env: { ...process.env, ...this.runtimeSettings?.env, ...env },
+      ...(onStderr ? { onStderr } : {}),
+    };
+    return this.hostSpawner(options);
+  }
+}
+
+const MUSE_APPROVAL_MODES = new Set(["onRequest", "promptUnmatched", "denyUnmatched", "allowAll"]);
+
+export function resolveMuseApprovalMode(modeId: string | undefined): string {
+  if (!modeId) {
+    return "onRequest";
+  }
+  if (!MUSE_APPROVAL_MODES.has(modeId)) {
+    throw new Error(`Unknown Muse approval mode: ${modeId}`);
+  }
+  return modeId;
+}
+
+function readMetadataString(
+  metadata: Record<string, unknown>,
+  key: string,
+): string | undefined {
+  const value = metadata[key];
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function readSessionRecord(result: Record<string, unknown>): {
+  sessionId: string | null;
+  modelId: string | null;
+  approvalMode: string | null;
+} {
+  const session =
+    typeof result["session"] === "object" && result["session"] !== null
+      ? (result["session"] as Record<string, unknown>)
+      : {};
+  const sessionId = typeof session["sessionId"] === "string" ? session["sessionId"] : null;
+  const modelId = typeof session["modelId"] === "string" ? session["modelId"] : null;
+  const approvalModeRecord =
+    typeof session["approvalMode"] === "object" && session["approvalMode"] !== null
+      ? (session["approvalMode"] as Record<string, unknown>)
+      : undefined;
+  const approvalMode =
+    (approvalModeRecord && typeof approvalModeRecord["mode"] === "string"
+      ? approvalModeRecord["mode"]
+      : undefined) ?? null;
+  return { sessionId, modelId, approvalMode };
 }

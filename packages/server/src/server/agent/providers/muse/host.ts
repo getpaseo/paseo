@@ -30,10 +30,32 @@ export interface MuseInitializeResult {
   readonly grantedCapabilities?: readonly string[];
 }
 
+export interface MuseHostNotification {
+  readonly method: string;
+  readonly params: Record<string, unknown>;
+}
+
+export interface MuseHostServerRequest {
+  readonly requestId: string | number;
+  readonly method: string;
+  readonly params: Record<string, unknown>;
+}
+
+export interface MuseHostExit {
+  readonly code: number | null;
+  readonly signal: string | null;
+}
+
 export interface MuseHostConnection {
   readonly initializeResult: MuseInitializeResult;
   readonly fingerprintWarning: FingerprintWarning | undefined;
+  command(method: string, params: Record<string, unknown>): Promise<unknown>;
   modelList(): Promise<MuseModelListResult>;
+  onNotification(handler: (event: MuseHostNotification) => void): void;
+  onServerRequest(
+    handler: (request: MuseHostServerRequest) => Promise<Record<string, unknown>>,
+  ): void;
+  onExit(handler: (exit: MuseHostExit) => void): void;
   close(): Promise<void>;
 }
 
@@ -81,8 +103,32 @@ export const spawnMuseHost: MuseHostSpawner = async (options) => {
   return {
     initializeResult: spawned.initializeResult as unknown as MuseInitializeResult,
     fingerprintWarning: spawned.fingerprintWarning,
+    command: (method, params) => spawned.connection.command(method, params),
     modelList: async () =>
       (await spawned.connection.command("model/list", {})) as unknown as MuseModelListResult,
+    onNotification: (handler) => {
+      spawned.connection.onNotification((notification) => {
+        handler({
+          method: notification.method,
+          params: notification.params ?? {},
+        });
+      });
+    },
+    onServerRequest: (handler) => {
+      spawned.connection.onServerRequest(async (request) =>
+        handler({
+          requestId: request.id,
+          method: request.method,
+          params: request.params ?? {},
+        }),
+      );
+    },
+    onExit: (handler) => {
+      void spawned.exited.then(
+        (exit) => handler({ code: exit.code, signal: exit.signal }),
+        () => handler({ code: null, signal: null }),
+      );
+    },
     close: async () => {
       await spawned.close();
     },
