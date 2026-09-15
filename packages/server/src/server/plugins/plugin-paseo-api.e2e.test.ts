@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, expect, test } from "vitest";
+import { z } from "zod";
 import { DaemonClient } from "../test-utils/daemon-client.js";
 import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
 import { createTestAgentClient, createTestAgentClients } from "../test-utils/fake-agent-client.js";
@@ -216,6 +217,146 @@ test("daemon config reload enables and disables configured plugins without resta
       .toMatchObject({ enabled: true, status: "disabled" });
   } finally {
     await client.close().catch(() => undefined);
+    await daemon.close();
+  }
+}, 60_000);
+
+const ReconnectingPluginStateSchema = z.object({
+  snapshots: z.array(z.string()),
+  names: z.array(z.string()),
+});
+
+async function readReconnectingPluginState(client: DaemonClient) {
+  return ReconnectingPluginStateSchema.parse(
+    await client.invokePluginRpc("reconnecting", "state", {}),
+  );
+}
+
+test("plugin host APIs and observations recover after repeated daemon-side socket closes", async () => {
+  const pluginDirectory = await mkdtemp(path.join(tmpdir(), "paseo-reconnecting-plugin-"));
+  const workspaceDirectory = await mkdtemp(path.join(tmpdir(), "paseo-reconnecting-workspace-"));
+  roots.push(pluginDirectory, workspaceDirectory);
+  await writeFile(
+    path.join(pluginDirectory, "paseo-plugin.json"),
+    JSON.stringify({ id: "reconnecting", requirements: { paseo: ">=0.8.0" } }),
+  );
+  await writeFile(
+    path.join(pluginDirectory, "index.server.ts"),
+    `
+import { defineRpc } from "@getpaseo/plugin";
+import { type PluginServerContext } from "@getpaseo/plugin/server";
+import { z } from "zod";
+
+export default function contribute(server: PluginServerContext) {
+  const snapshots: string[] = [];
+  const names: string[] = [];
+  let release: (() => Promise<void>) | undefined;
+  server.handle(defineRpc({ name: "observe", input: z.object({}), output: z.string() }), async (_, { paseo }) => {
+    const { subscription } = await paseo.workspaces.list({ subscribe: {} });
+    subscription.subscribe({
+      snapshot: (snapshot) => snapshots.push(snapshot.subscriptionId!),
+      update: (message) => {
+        if (message.type === "workspace_update" && message.payload.kind === "upsert") {
+          names.push(message.payload.workspace.name);
+        }
+      },
+    });
+    release = () => subscription.release();
+    return subscription.subscriptionId!;
+  });
+  server.handle(defineRpc({ name: "state", input: z.object({}), output: z.object({ snapshots: z.array(z.string()), names: z.array(z.string()) }) }), () => ({ snapshots, names }));
+  server.handle(defineRpc({ name: "probe", input: z.object({}), output: z.object({ pid: z.number(), projectIds: z.array(z.string()) }) }), async (_, { paseo }) => ({
+    pid: process.pid,
+    projectIds: (await paseo.projects.list()).projects.map((project) => project.projectId),
+  }));
+  server.handle(defineRpc({ name: "release", input: z.object({}), output: z.null() }), async () => {
+    await release?.();
+    return null;
+  });
+  server.handle(defineRpc({ name: "disconnect", input: z.object({}), output: z.null() }), () => new Promise((resolve) => {
+    // Inject a protocol violation through real IPC. The real daemon closes the
+    // active socket, and the worker's normal transport must observe that close.
+    function closed(message: { type: string }) {
+      if (message.type !== "paseo_close") return;
+      process.off("message", closed);
+      resolve(null);
+    }
+    process.on("message", closed);
+    process.send!({ type: "paseo_frame", isBinary: false, data: JSON.stringify({
+      type: "hello", clientId: "plugin:reconnecting", clientType: "cli", protocolVersion: 1,
+    }) });
+  }));
+  return async () => { await release?.(); };
+}`,
+  );
+  const daemon = await createTestPaseoDaemon();
+  const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+  let projectId: string | undefined;
+  try {
+    await client.connect();
+    const opened = await client.openProject(workspaceDirectory);
+    if (!opened.workspace) throw new Error(opened.error ?? "Workspace did not open");
+    projectId = opened.workspace.projectId;
+    const workspaceId = opened.workspace.id;
+    await client.patchDaemonConfig({ pluginsEnabled: true });
+    await client.installDirectoryPlugin(pluginDirectory);
+    const original = await client.invokePluginRpc("reconnecting", "probe", {});
+    expect(original).toEqual({ pid: expect.any(Number), projectIds: [projectId] });
+    const initialId = await client.invokePluginRpc("reconnecting", "observe", {});
+    const app = await client.fetchWorkspaces({ subscribe: {} });
+    const appNames: string[] = [];
+    app.subscription.subscribe({
+      snapshot: () => undefined,
+      update: (message) => {
+        if (message.type === "workspace_update" && message.payload.kind === "upsert") {
+          appNames.push(message.payload.workspace.name);
+        }
+      },
+    });
+    await client.setWorkspaceTitle(workspaceId, "Before disconnect");
+    await expect
+      .poll(async () => (await readReconnectingPluginState(client)).names.at(-1))
+      .toBe("Before disconnect");
+    const ids = [initialId];
+    for (const name of ["First recovery", "Second recovery"]) {
+      await client.invokePluginRpc("reconnecting", "disconnect", {});
+      await expect
+        .poll(async () => (await readReconnectingPluginState(client)).snapshots.length, {
+          timeout: 15_000,
+        })
+        .toBe(ids.length + 1);
+      const state = await readReconnectingPluginState(client);
+      ids.push(state.snapshots.at(-1));
+      expect(new Set(ids).size).toBe(ids.length);
+      expect(app.subscription.subscriptionId).toBe(app.subscriptionId);
+      await client.setWorkspaceTitle(workspaceId, name);
+      await expect
+        .poll(async () => (await readReconnectingPluginState(client)).names.at(-1))
+        .toBe(name);
+      await expect.poll(() => appNames.at(-1)).toBe(name);
+      expect(await client.invokePluginRpc("reconnecting", "probe", {})).toEqual(original);
+    }
+    await client.invokePluginRpc("reconnecting", "release", {});
+    const releasedState = await client.invokePluginRpc("reconnecting", "state", {});
+    await client.invokePluginRpc("reconnecting", "disconnect", {});
+    await expect
+      .poll(() => client.invokePluginRpc("reconnecting", "probe", {}), { timeout: 15_000 })
+      .toEqual(original);
+    await client.setWorkspaceTitle(workspaceId, "After release");
+    await expect.poll(() => appNames.at(-1)).toBe("After release");
+    await client.invokePluginRpc("reconnecting", "probe", {});
+    expect(await client.invokePluginRpc("reconnecting", "state", {})).toEqual(releasedState);
+    await app.subscription.release();
+    // Removal while reconnect is scheduled must stop the child, not reload it.
+    await client.invokePluginRpc("reconnecting", "disconnect", {});
+    await client.removePlugin("reconnecting");
+    expect(await client.listPlugins()).toEqual([]);
+    await expect(client.invokePluginRpc("reconnecting", "probe", {})).rejects.toThrow(
+      "Plugin is not available",
+    );
+  } finally {
+    if (projectId) await client.removeProject(projectId);
+    await client.close();
     await daemon.close();
   }
 }, 60_000);

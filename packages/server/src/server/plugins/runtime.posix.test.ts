@@ -1817,6 +1817,8 @@ export default function contribute(plugin: any) {
 
     expect(sessions.active.size).toBe(1);
     expect([...sessions.active][0]).not.toBe(first);
+    await runtime.stopAll();
+    expect(sessions.active.size).toBe(0);
   });
 
   it("replaces a closed plugin session only once the child sends a fresh hello", async () => {
@@ -1859,6 +1861,8 @@ export default function contribute(plugin: any) {
 
     expect(sessions.active.size).toBe(1);
     expect([...sessions.active][0]).not.toBe(first);
+    await runtime.stopAll();
+    expect(sessions.active.size).toBe(0);
   });
 
   it("attaches no replacement session when the plugin is stopped", async () => {
@@ -1877,5 +1881,63 @@ export default function contribute(plugin: any) {
       "[paseo] Re-attached plugin session",
     );
     expect(sessions.active.size).toBe(0);
+  });
+  it("closes an in-flight replacement when the plugin stops before attachment completes", async () => {
+    const directory = await createPlugin(
+      "stopping-redial",
+      `export default function contribute() { return () => undefined; }`,
+    );
+    const child = createReloadChild("stopping-redial", []);
+    const sessions = createTrackedSessionHost();
+    let finishAttachment!: () => void;
+    const attachmentHeld = new Promise<void>((resolve) => {
+      finishAttachment = resolve;
+    });
+    let replacementAttached!: (socket: PluginSessionSocket) => void;
+    const replacementStarted = new Promise<PluginSessionSocket>((resolve) => {
+      replacementAttached = resolve;
+    });
+    let attachments = 0;
+    const runtime = createTestRuntime({
+      spawnChild: () => child,
+      sessionHost: {
+        async attachPluginSocket(pluginId, socket) {
+          const attachment = await sessions.host.attachPluginSocket(pluginId, socket);
+          attachments += 1;
+          if (attachments === 2) {
+            replacementAttached(socket);
+            await attachmentHeld;
+          }
+          return attachment;
+        },
+      },
+    });
+    try {
+      await runtime.startPlugin("stopping-redial", directory);
+      const first = [...sessions.active][0] as PluginSessionSocket;
+      first.close();
+      child.emitMessage({
+        type: "paseo_frame",
+        data: JSON.stringify({ type: "hello" }),
+        isBinary: false,
+      });
+      const replacement = await replacementStarted;
+      const replacementClosed = new Promise<void>((resolve) => replacement.once("close", resolve));
+      await runtime.stopPluginById("stopping-redial");
+      finishAttachment();
+      await replacementClosed;
+      expect(sessions.active.size).toBe(0);
+      expect(sessions.hellos).toEqual([]);
+      expect(runtime.catalog()).toEqual([]);
+      child.emitMessage({
+        type: "paseo_frame",
+        data: JSON.stringify({ type: "hello" }),
+        isBinary: false,
+      });
+      expect(attachments).toBe(2);
+    } finally {
+      finishAttachment();
+      await runtime.stopAll();
+    }
   });
 });
