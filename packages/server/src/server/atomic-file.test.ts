@@ -277,3 +277,25 @@ test("fails closed when a live PID has a different process-instance identity", a
   await expect(withExclusiveFileLock(lockPath, async () => undefined)).rejects.toThrow(
     "file_lock_busy",
   );
+});
+
+test.skipIf(process.platform === "win32")(
+  "preserves requested source permissions and ownership during replacement",
+  async () => {
+    const { directory } = await fixture();
+    const filePath = path.join(directory, "ledger.md");
+    await fs.writeFile(filePath, "before");
+    await fs.chmod(filePath, 0o600);
+    const before = await fs.stat(filePath);
+
+    await writeFileAtomic(filePath, "after", undefined, {
+      expectedSource: "before",
+      expectedSourceStat: before,
+      preserveSourceMetadata: true,
+    });
+
+    const after = await fs.stat(filePath);
+    expect(after.mode & 0o7777).toBe(0o600);
+    expect({ uid: after.uid, gid: after.gid }).toEqual({ uid: before.uid, gid: before.gid });
+  },
+);
