@@ -1,17 +1,9 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import {
   computeSidebarOrderUpdates,
   type SidebarProjectEntry,
 } from "@/hooks/sidebar-workspaces-view-model";
 import { migrateSidebarOrderState, useSidebarOrderStore } from "./sidebar-order-store";
-
-vi.mock("@react-native-async-storage/async-storage", () => ({
-  default: {
-    getItem: vi.fn().mockResolvedValue(null),
-    setItem: vi.fn().mockResolvedValue(undefined),
-    removeItem: vi.fn().mockResolvedValue(undefined),
-  },
-}));
 
 describe("migrateSidebarOrderState", () => {
   it("prefixes legacy per-server workspace order with the source server id", () => {
