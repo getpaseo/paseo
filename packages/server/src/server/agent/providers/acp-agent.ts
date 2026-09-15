@@ -12,6 +12,7 @@ import type {
   WritableStream as NodeWritableStream,
 } from "node:stream/web";
 import {
+  type AuthMethod,
   ClientSideConnection,
   PROTOCOL_VERSION,
   type AgentCapabilities as ACPAgentCapabilities,
@@ -142,6 +143,72 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isACPError(value: unknown): value is ACPError {
   return isRecord(value) && typeof value.message === "string" && typeof value.code === "number";
+}
+
+/** ACP agents answer session/new, session/load and session/resume with this until `authenticate` succeeds. */
+const ACP_AUTH_REQUIRED_CODE = -32000;
+
+function isACPAuthRequiredError(value: unknown): boolean {
+  return isACPError(value) && value.code === ACP_AUTH_REQUIRED_CODE;
+}
+
+function describeACPAuthMethods(methods: readonly AuthMethod[]): string {
+  return methods
+    .map((method) =>
+      method.name && method.name !== method.id ? `${method.id} (${method.name})` : method.id,
+    )
+    .join(", ");
+}
+
+type ACPAuthMethodSelection = { methodId: string } | { error: string };
+
+/**
+ * Picks the method Paseo runs when an agent demands authentication. An explicit
+ * `params.authMethod` wins; a single advertised method is unambiguous; anything
+ * else is a choice only the user can make, so the error says exactly what to set.
+ */
+function selectACPAuthMethod(
+  methods: readonly AuthMethod[],
+  configured: string | undefined,
+): ACPAuthMethodSelection {
+  if (methods.length === 0) {
+    return {
+      error:
+        "The agent advertised no authentication methods in initialize; sign in with the agent's own CLI.",
+    };
+  }
+  if (configured) {
+    if (methods.some((method) => method.id === configured)) {
+      return { methodId: configured };
+    }
+    return {
+      error: `params.authMethod is "${configured}" but the agent advertises: ${describeACPAuthMethods(methods)}.`,
+    };
+  }
+  const only = methods[0];
+  if (methods.length === 1 && only) {
+    return { methodId: only.id };
+  }
+  return {
+    error: `Set params.authMethod to one of the agent's methods: ${describeACPAuthMethods(methods)}.`,
+  };
+}
+
+/**
+ * Probe errors that mean "sign in first" name the advertised methods, because
+ * the probe itself never runs `authenticate` and the user has to configure it.
+ */
+function withACPAuthMethodsHint(error: unknown, methods: readonly AuthMethod[] | undefined): Error {
+  const converted = toACPRequestError(error);
+  if (!isACPAuthRequiredError(error) || !methods?.length) {
+    return converted;
+  }
+  const next = new Error(
+    `${converted.message}. Advertised authentication methods: ${describeACPAuthMethods(methods)}. ` +
+      "Paseo signs in when an agent starts, using params.authMethod or the only advertised method; catalogue discovery never starts an interactive sign-in.",
+  );
+  next.name = converted.name;
+  return next;
 }
 
 function extractACPErrorDataMessage(data: unknown): string | null {
@@ -425,6 +492,8 @@ interface ACPAgentClientOptions {
   configFeatureOptions?: ACPConfigFeatureOption[];
   clientCapabilities?: ACPClientCapabilities;
   clientCapabilityMeta?: ACPClientCapabilityMeta;
+  /** ACP `authMethods` id to run when the agent answers session/new with "Authentication required". */
+  authMethod?: string;
   modeIdTransformer?: (modeId: string) => string | null;
   toolSnapshotTransformer?: (snapshot: ACPToolSnapshot) => ACPToolSnapshot;
   providerModeWriter?: (
@@ -456,6 +525,8 @@ interface ACPAgentSessionOptions {
   configFeatureOptions?: ACPConfigFeatureOption[];
   clientCapabilities?: ACPClientCapabilities;
   clientCapabilityMeta?: ACPClientCapabilityMeta;
+  /** ACP `authMethods` id to run when the agent answers session/new with "Authentication required". */
+  authMethod?: string;
   modeIdTransformer?: (modeId: string) => string | null;
   toolSnapshotTransformer?: (snapshot: ACPToolSnapshot) => ACPToolSnapshot;
   providerModeWriter?: (
@@ -885,6 +956,7 @@ export class ACPAgentClient implements AgentClient {
   private readonly configFeatureOptions: ACPConfigFeatureOption[];
   private readonly clientCapabilities?: ACPClientCapabilities;
   private readonly clientCapabilityMeta?: ACPClientCapabilityMeta;
+  private readonly authMethod?: string;
   private readonly modeIdTransformer?: (modeId: string) => string | null;
   private readonly toolSnapshotTransformer?: (snapshot: ACPToolSnapshot) => ACPToolSnapshot;
   private readonly providerModeWriter?: (
@@ -923,6 +995,7 @@ export class ACPAgentClient implements AgentClient {
     this.configFeatureOptions = options.configFeatureOptions ?? [];
     this.clientCapabilities = options.clientCapabilities;
     this.clientCapabilityMeta = options.clientCapabilityMeta;
+    this.authMethod = options.authMethod;
     this.modeIdTransformer = options.modeIdTransformer;
     this.toolSnapshotTransformer = options.toolSnapshotTransformer;
     this.providerModeWriter = options.providerModeWriter;
@@ -953,6 +1026,7 @@ export class ACPAgentClient implements AgentClient {
         configFeatureOptions: this.configFeatureOptions,
         clientCapabilities: this.clientCapabilities,
         clientCapabilityMeta: this.clientCapabilityMeta,
+        authMethod: this.authMethod,
         modeIdTransformer: this.modeIdTransformer,
         toolSnapshotTransformer: this.toolSnapshotTransformer,
         providerModeWriter: this.providerModeWriter,
@@ -1003,6 +1077,7 @@ export class ACPAgentClient implements AgentClient {
       configFeatureOptions: this.configFeatureOptions,
       clientCapabilities: this.clientCapabilities,
       clientCapabilityMeta: this.clientCapabilityMeta,
+      authMethod: this.authMethod,
       modeIdTransformer: this.modeIdTransformer,
       toolSnapshotTransformer: this.toolSnapshotTransformer,
       providerModeWriter: this.providerModeWriter,
@@ -1068,7 +1143,7 @@ export class ACPAgentClient implements AgentClient {
         ),
       );
       probe = initializedProbe;
-      probeSessionPromise = this.runACPRequest(() =>
+      probeSessionPromise = this.runACPProbeRequest(initializedProbe.initialize.authMethods, () =>
         initializedProbe.connection.newSession({
           cwd,
           mcpServers: [],
@@ -1129,7 +1204,7 @@ export class ACPAgentClient implements AgentClient {
     const probe = await this.spawnProcess(PROBE_ENV);
     let probeSessionId: string | null = null;
     try {
-      const response = await this.runACPRequest(() =>
+      const response = await this.runACPProbeRequest(probe.initialize.authMethods, () =>
         probe.connection.newSession({
           cwd: config.cwd,
           mcpServers: [],
@@ -1465,6 +1540,23 @@ export class ACPAgentClient implements AgentClient {
     }
   }
 
+  /**
+   * Like runACPRequest, but when an agent refuses a probe session with ACP
+   * -32000 the error names the sign-in methods it advertised. Probes never run
+   * `authenticate`: that can open a browser on the daemon host, which is a
+   * decision for a real session start, not for catalogue discovery.
+   */
+  protected async runACPProbeRequest<T>(
+    authMethods: readonly AuthMethod[] | undefined,
+    request: () => Promise<T>,
+  ): Promise<T> {
+    try {
+      return await request();
+    } catch (error) {
+      throw withACPAuthMethodsHint(error, authMethods);
+    }
+  }
+
   protected async buildACPProbeDiagnosticRows(
     options: {
       cwd?: string;
@@ -1519,7 +1611,7 @@ export class ACPAgentClient implements AgentClient {
       const sessionStartedAt = Date.now();
       try {
         const response = await withTimeout(
-          this.runACPRequest(() =>
+          this.runACPProbeRequest(initialize.authMethods, () =>
             activeTransport.connection.newSession({
               cwd,
               mcpServers: [],
@@ -1637,6 +1729,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private readonly configFeatureOptions: ACPConfigFeatureOption[];
   private readonly clientCapabilities?: ACPClientCapabilities;
   private readonly clientCapabilityMeta?: ACPClientCapabilityMeta;
+  private readonly authMethod?: string;
   private readonly modeIdTransformer?: (modeId: string) => string | null;
   private readonly toolSnapshotTransformer?: (snapshot: ACPToolSnapshot) => ACPToolSnapshot;
   private readonly providerModeWriter?: (
@@ -1652,6 +1745,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   ) => Promise<void>;
   private readonly agentId?: string;
   private readonly launchEnv?: Record<string, string>;
+  private authMethods: readonly AuthMethod[] = [];
   private readonly subscribers = new Set<(event: AgentStreamEvent) => void>();
   private readonly pendingPermissions = new Map<string, PendingPermission>();
   private pendingUserMessage: PendingUserMessage | null = null;
@@ -1703,6 +1797,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.configFeatureOptions = options.configFeatureOptions ?? [];
     this.clientCapabilities = options.clientCapabilities;
     this.clientCapabilityMeta = options.clientCapabilityMeta;
+    this.authMethod = options.authMethod;
     this.modeIdTransformer = options.modeIdTransformer;
     this.toolSnapshotTransformer = options.toolSnapshotTransformer;
     this.providerModeWriter = options.providerModeWriter;
@@ -1732,8 +1827,9 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       this.child = spawned.child;
       this.connection = spawned.connection;
       this.agentCapabilities = spawned.initialize.agentCapabilities ?? null;
+      this.authMethods = spawned.initialize.authMethods ?? [];
 
-      const response = await this.runACPRequest(() =>
+      const response = await this.openWithAuthentication(() =>
         this.connection!.newSession({
           cwd: this.config.cwd,
           mcpServers: this.acpMcpServers(),
@@ -1766,13 +1862,14 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       this.child = spawned.child;
       this.connection = spawned.connection;
       this.agentCapabilities = spawned.initialize.agentCapabilities ?? null;
+      this.authMethods = spawned.initialize.authMethods ?? [];
       this.sessionId = handle.sessionId;
       this.bootstrapThreadEventPending = true;
 
       const sessionCapabilities = this.agentCapabilities?.sessionCapabilities;
       if (this.agentCapabilities?.loadSession) {
         this.replayingHistory = true;
-        const response = await this.runACPRequest(() =>
+        const response = await this.openWithAuthentication(() =>
           this.connection!.loadSession({
             sessionId: handle.sessionId,
             cwd: this.config.cwd,
@@ -1784,7 +1881,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
         this.historyPending = this.persistedHistory.length > 0;
         this.applySessionState(response);
       } else if (sessionCapabilities?.resume) {
-        const response = await this.runACPRequest(() =>
+        const response = await this.openWithAuthentication(() =>
           this.connection!.unstable_resumeSession({
             sessionId: handle.sessionId,
             cwd: this.config.cwd,
@@ -1799,6 +1896,49 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       await this.applyConfiguredOverrides();
     } catch (error) {
       await this.closeAfterInitializationFailure(error);
+    }
+  }
+
+  /**
+   * Runs a session-opening request, signing in first when the agent demands it.
+   * Agents that gate sessions behind authentication answer with ACP error
+   * -32000 and expect the client to call `authenticate` with a method they
+   * advertised in `initialize`, then retry (#477, #1802, #2041). Sign-in may
+   * open a browser or a terminal on the daemon host, so this only ever happens
+   * for a real session, never during catalogue discovery.
+   */
+  private async openWithAuthentication<T>(open: () => Promise<T>): Promise<T> {
+    try {
+      return await open();
+    } catch (error) {
+      if (!isACPAuthRequiredError(error)) {
+        throw toACPRequestError(error);
+      }
+      const selection = selectACPAuthMethod(this.authMethods, this.authMethod);
+      if ("error" in selection) {
+        const next = new Error(`${toACPRequestError(error).message}. ${selection.error}`);
+        next.name = "ACPRequestError";
+        throw next;
+      }
+      this.logger.info(
+        { provider: this.provider, methodId: selection.methodId },
+        "ACP agent requires authentication; running authenticate. Complete any browser or terminal sign-in on the daemon host.",
+      );
+      await this.runACPRequest(() =>
+        this.connection!.authenticate({ methodId: selection.methodId }),
+      );
+      try {
+        return await open();
+      } catch (retryError) {
+        if (isACPAuthRequiredError(retryError)) {
+          const next = new Error(
+            `${this.provider} still requires authentication after running method "${selection.methodId}". Check the agent's sign-in state on the daemon host.`,
+          );
+          next.name = "ACPRequestError";
+          throw next;
+        }
+        throw toACPRequestError(retryError);
+      }
     }
   }
 

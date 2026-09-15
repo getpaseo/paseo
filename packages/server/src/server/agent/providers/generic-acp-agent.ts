@@ -21,6 +21,7 @@ import {
 export const GenericACPProviderParamsSchema = z
   .object({
     supportsMcpServers: z.boolean().optional(),
+    authMethod: z.string().trim().min(1).optional(),
     clientCapabilities: z
       .object({
         fs: z
@@ -73,6 +74,7 @@ export class GenericACPAgentClient extends ACPAgentClient {
       waitForInitialCommands: options.waitForInitialCommands,
       initialCommandsWaitTimeoutMs: options.initialCommandsWaitTimeoutMs,
       clientCapabilities: providerParams.clientCapabilities,
+      authMethod: providerParams.authMethod,
       clientCapabilityMeta: options.clientCapabilityMeta,
       configFeatureOptions: options.configFeatureOptions,
       extensionCommandsParser: options.extensionCommandsParser,
