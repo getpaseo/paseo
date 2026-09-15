@@ -1,50 +1,10 @@
 /**
- * How long ago something was, before it's worded. The two formatters below share this so
- * their thresholds can't drift apart; they differ only in how much room they have to say it.
- *
- * `elapsed` takes an "ago" in prose, `now` and `date` read as absolutes and never do.
- */
-type Elapsed =
-  | { kind: "now" }
-  | { kind: "elapsed"; value: string }
-  | { kind: "date"; value: string };
-
-function describeElapsed(date: Date, now: Date): Elapsed {
-  const diffMs = now.getTime() - date.getTime();
-  const diffSec = Math.floor(diffMs / 1000);
-  const diffMin = Math.floor(diffSec / 60);
-  const diffHour = Math.floor(diffMin / 60);
-  const diffDay = Math.floor(diffHour / 24);
-
-  if (diffSec < 10) return { kind: "now" };
-  if (diffMin < 1) return { kind: "elapsed", value: `${diffSec}s` };
-  if (diffHour < 1) return { kind: "elapsed", value: `${diffMin}m` };
-  if (diffDay < 1) return { kind: "elapsed", value: `${diffHour}h` };
-  if (diffDay < 7) return { kind: "elapsed", value: `${diffDay}d` };
-
-  // For older dates, show abbreviated month and day
-  const month = date.toLocaleDateString("en-US", { month: "short" });
-  return { kind: "date", value: `${month} ${date.getDate()}` };
-}
-
-/**
- * Format a date as a human-friendly relative time string
- * Examples: "just now", "5m ago", "2h ago", "3d ago", "Jan 15"
- */
-export function formatTimeAgo(date: Date, now: Date = new Date()): string {
-  const elapsed = describeElapsed(date, now);
-  if (elapsed.kind === "now") return "just now";
-  if (elapsed.kind === "elapsed") return `${elapsed.value} ago`;
-  return elapsed.value;
-}
-
-/**
- * How often a compact label can change, which is all a caller needs to know to keep it honest.
+ * How often a relative label can change, which is all a caller needs to know to keep it honest.
  * `static` means it never will again.
  */
 export type RelativeTimeResolution = "minute" | "hour" | "day" | "static";
 
-export interface CompactTimeAgo {
+export interface RelativeTimeAgo {
   label: string;
   resolution: RelativeTimeResolution;
 }
@@ -56,35 +16,82 @@ const DAY_MS = 24 * HOUR_MS;
 const ABSOLUTE_AFTER_MS = 7 * DAY_MS;
 
 /**
+ * How long ago something was, before it's worded. Both formatters below share this so their
+ * thresholds can't drift apart; they differ only in how much room they have to say it.
+ *
+ * `elapsed` takes an "ago" in prose, `now` and `date` read as absolutes and never do.
+ *
+ * Deliberately never sub-minute. A seconds label is only correct for the second it was
+ * rendered, so it either lies or forces a once-a-second re-render of a list that has nothing
+ * new to say. Everything under a minute is "now", which is both true and stable.
+ */
+type Elapsed = { resolution: RelativeTimeResolution } & (
+  | { kind: "now" }
+  | { kind: "elapsed"; value: string }
+  | { kind: "date"; value: string }
+);
+
+function describeElapsed(date: Date, now: Date): Elapsed {
+  const elapsedMs = now.getTime() - date.getTime();
+
+  if (elapsedMs < MINUTE_MS) {
+    return { kind: "now", resolution: "minute" };
+  }
+  if (elapsedMs < HOUR_MS) {
+    return {
+      kind: "elapsed",
+      value: `${Math.floor(elapsedMs / MINUTE_MS)}m`,
+      resolution: "minute",
+    };
+  }
+  if (elapsedMs < DAY_MS) {
+    return { kind: "elapsed", value: `${Math.floor(elapsedMs / HOUR_MS)}h`, resolution: "hour" };
+  }
+  if (elapsedMs < ABSOLUTE_AFTER_MS) {
+    return { kind: "elapsed", value: `${Math.floor(elapsedMs / DAY_MS)}d`, resolution: "day" };
+  }
+
+  // For older dates, show abbreviated month and day
+  const month = date.toLocaleDateString("en-US", { month: "short" });
+  return { kind: "date", value: `${month} ${date.getDate()}`, resolution: "static" };
+}
+
+/**
+ * A prose relative timestamp and how often it can change.
+ * Examples: "just now", "5m ago", "2h ago", "3d ago", "Jan 15".
+ *
+ * The resolution comes back with the label so a caller can wake at the rate the label actually
+ * changes instead of guessing — see `useTimeAgo`.
+ */
+export function describeTimeAgo(date: Date, now: Date = new Date()): RelativeTimeAgo {
+  const elapsed = describeElapsed(date, now);
+  if (elapsed.kind === "now") return { label: "just now", resolution: elapsed.resolution };
+  if (elapsed.kind === "elapsed") {
+    return { label: `${elapsed.value} ago`, resolution: elapsed.resolution };
+  }
+  return { label: elapsed.value, resolution: elapsed.resolution };
+}
+
+/**
+ * Format a date as a human-friendly relative time string
+ * Examples: "just now", "5m ago", "2h ago", "3d ago", "Jan 15"
+ */
+export function formatTimeAgo(date: Date, now: Date = new Date()): string {
+  return describeTimeAgo(date, now).label;
+}
+
+/**
  * The same instant with the prose removed, for somewhere with no room for it — a dense list
  * where the column is understood to be a timestamp and "ago" is the only word on the line.
  * Examples: "now", "5m", "2h", "3d", "Jan 15".
  *
- * Deliberately never sub-minute. A seconds label is only correct for the second it was rendered,
- * so it either lies or forces a once-a-second re-render of a list that has nothing new to say.
- * Everything under a minute is "now", which is both true and stable.
- *
  * The resolution comes back with the label so a caller can wake at the rate the label actually
  * changes instead of guessing — see `useCompactTimeAgo`.
  */
-export function describeCompactTimeAgo(date: Date, now: Date = new Date()): CompactTimeAgo {
-  const elapsedMs = now.getTime() - date.getTime();
-
-  if (elapsedMs < MINUTE_MS) {
-    return { label: "now", resolution: "minute" };
-  }
-  if (elapsedMs < HOUR_MS) {
-    return { label: `${Math.floor(elapsedMs / MINUTE_MS)}m`, resolution: "minute" };
-  }
-  if (elapsedMs < DAY_MS) {
-    return { label: `${Math.floor(elapsedMs / HOUR_MS)}h`, resolution: "hour" };
-  }
-  if (elapsedMs < ABSOLUTE_AFTER_MS) {
-    return { label: `${Math.floor(elapsedMs / DAY_MS)}d`, resolution: "day" };
-  }
-
-  const month = date.toLocaleDateString("en-US", { month: "short" });
-  return { label: `${month} ${date.getDate()}`, resolution: "static" };
+export function describeCompactTimeAgo(date: Date, now: Date = new Date()): RelativeTimeAgo {
+  const elapsed = describeElapsed(date, now);
+  if (elapsed.kind === "now") return { label: "now", resolution: elapsed.resolution };
+  return { label: elapsed.value, resolution: elapsed.resolution };
 }
 
 export function formatCompactTimeAgo(date: Date, now: Date = new Date()): string {
