@@ -70,6 +70,7 @@ test.describe("Composer control density across tab switches", () => {
       });
       await gotoWorkspace(page, workspace.workspaceId);
       await clickNewChat(page);
+      await clickNewChat(page);
 
       const draftTabs = page
         .locator('[data-testid^="workspace-tab-draft"]')

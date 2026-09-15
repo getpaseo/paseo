@@ -876,6 +876,32 @@ test("compact Changes keeps its actions compact and menu-only", async ({ page })
   ).toContainText("Scroll long lines");
 });
 
+test("compact Changes jumps to a file from the changed-files sheet", async ({ page }) => {
+  const workspace = await createWorkspaceWithMountedTabDiff({ includeNestedFolders: true });
+  await useUnwrappedDiffLines(page);
+  const explorer = await openCompactChanges(page, workspace);
+
+  await openChangedFilesOverview(page);
+  await test.step("reopening the overview expands folders again", async () => {
+    await expectOverviewReopensExpanded(page, "zz-folder", "changed.ts");
+  });
+  await test.step("jumping to a nested file closes the overview and scrolls to its diff", async () => {
+    await jumpToOverviewFile(page, explorer, "src/zz-folder/nested/changed.ts");
+  });
+});
+
+test("Jump to file stays out of the desktop diff and of an empty comparison", async ({ page }) => {
+  const committed = await createWorkspaceWithCommittedDiff();
+  await openWorkspaceChangesSurface(page, committed, 90_000);
+  await expect(page.getByRole("button", { name: "Jump to file" })).toHaveCount(0);
+
+  const explorer = await openCompactChanges(page, committed);
+  await expect(explorer.getByRole("button", { name: "Jump to file" })).toBeVisible();
+
+  await selectEmptyUncommittedComparison(page, explorer);
+  await expect(page.getByRole("button", { name: "Jump to file" })).toHaveCount(0);
+});
+
 test("canvas diff stays sharp while its workspace pane is resized", async ({ page }) => {
   const workspace = await createWorkspaceWithMountedTabDiff();
   await useUnwrappedDiffLines(page);
@@ -1159,20 +1185,25 @@ test("canvas diff copies a dragged character selection without opening a review"
   await expect(page.getByTestId("inline-review-editor")).toHaveCount(0);
 });
 
-test("canvas diff context menu copies selections and source lines", async ({ context, page }) => {
-  const workspace = await createWorkspaceWithExactSelectionDiff("ABCDEFGHIJ");
-  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
-  await useUnwrappedDiffLines(page);
-  await openSelectionWorkspaceChanges(page, workspace);
-
+test("canvas diff preserves selection through a repaint and copies selections and source lines", async ({
+  page,
+}) => {
+  await openCopyableSelectionDiff(page, "ABCDEFGHIJ");
   await dragExactAddedText(page, { startOffset: 2, endOffset: 8 });
-  await rightClickFirstChangedLine(page);
-  await page.getByTestId("diff-source-copy-selection").click();
-  await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe("CDEFGH");
 
-  await rightClickFirstChangedLine(page);
-  await page.getByTestId("diff-source-copy-line").click();
-  await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe("ABCDEFGHIJ");
+  await test.step("copy the selection before resizing", async () => {
+    await copyDiffSelectionWithKeyboard(page);
+    await expectClipboardText(page, "CDEFGH");
+  });
+  await test.step("copy the preserved selection after resizing", async () => {
+    await resizeDiffViewportHeight(page, 960);
+    await copyFromChangedLineMenu(page, "Copy");
+    await expectClipboardText(page, "CDEFGH");
+  });
+  await test.step("copy the complete source line", async () => {
+    await copyFromChangedLineMenu(page, "Copy line");
+    await expectClipboardText(page, "ABCDEFGHIJ");
+  });
 });
 
 test("canvas diff clears a selection when collapsing an earlier file", async ({ page }) => {
@@ -1667,6 +1698,62 @@ async function openWorkspaceChanges(page: Page, workspace: DirtyWorkspace): Prom
   await expectExpandedMountedTabDiff(page);
 }
 
+/** The Explorer overlay a phone-sized viewport shows, with its Changes tab selected. */
+async function openCompactChanges(page: Page, workspace: DirtyWorkspace): Promise<Locator> {
+  await page.setViewportSize({ width: 390, height: 844 });
+  // Reload at the compact size: panel selection starts at the center on a cold
+  // mount, independently of any desktop sidebar used earlier in the test.
+  await page.goto(buildHostWorkspaceRoute(getServerId(), workspace.id));
+  await page.reload();
+  await page.getByTestId("workspace-explorer-toggle").first().click();
+  const changesTab = page.getByTestId("explorer-tab-changes").filter({ visible: true });
+  await expect(changesTab).toBeVisible({ timeout: 30_000 });
+  await changesTab.click();
+  const explorer = page.getByTestId("explorer-content-area").filter({ visible: true });
+  await expect(explorer.getByTestId("changes-header")).toBeVisible({ timeout: 30_000 });
+  return explorer;
+}
+
+async function openChangedFilesOverview(page: Page): Promise<void> {
+  const jumpToFile = page.getByRole("button", { name: "Jump to file" });
+  await expect(jumpToFile).toBeVisible();
+  await jumpToFile.click();
+  await expect(page.getByTestId("changes-jump-to-file-sheet")).toContainText("Jump to file");
+}
+
+async function expectOverviewReopensExpanded(
+  page: Page,
+  folderName: string,
+  childFileName: string,
+): Promise<void> {
+  const sheet = page.getByTestId("changes-jump-to-file-sheet");
+  const tree = changesTree(page);
+  const folder = tree
+    .getByRole("button")
+    .filter({ has: page.getByText(folderName, { exact: true }) });
+  const child = tree.getByText(childFileName, { exact: true });
+  await expect(folder).toBeVisible();
+  await expect(child).toBeVisible();
+  await folder.click();
+  await expect(child).toHaveCount(0);
+  await sheet.getByRole("button", { name: "Close", exact: true }).click();
+  await openChangedFilesOverview(page);
+  await expect(child).toBeVisible();
+}
+
+async function jumpToOverviewFile(page: Page, explorer: Locator, filePath: string): Promise<void> {
+  const sheet = page.getByTestId("changes-jump-to-file-sheet");
+  await changesTree(page).getByText(path.basename(filePath), { exact: true }).click();
+  await expect(sheet).toHaveCount(0);
+  await expect(diffHeaderForPath(explorer, filePath)).toBeInViewport();
+}
+
+async function selectEmptyUncommittedComparison(page: Page, explorer: Locator): Promise<void> {
+  await explorer.getByRole("button", { name: "Diff mode", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Uncommitted", exact: true }).click();
+  await expect(explorer.getByText("No changes to display", { exact: true })).toBeVisible();
+}
+
 async function openWorkspaceChangesSurface(
   page: Page,
   workspace: DirtyWorkspace,
@@ -1818,6 +1905,41 @@ async function clickFirstChangedLine(page: Page): Promise<void> {
   if (!bodyBounds) throw new Error("Expanded diff body has no bounds");
   const lineHeight = Math.round(fontSize * 1.5);
   await page.mouse.click(bodyBounds.x + 120, bodyBounds.y + lineHeight * 1.5);
+}
+
+async function openCopyableSelectionDiff(page: Page, content: string): Promise<void> {
+  const workspace = await createWorkspaceWithExactSelectionDiff(content);
+  await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+  await configureDiffPresentation(page, { layout: "unified", wrapLines: false });
+  await openSelectionWorkspaceChanges(page, workspace);
+}
+
+async function copyDiffSelectionWithKeyboard(page: Page): Promise<void> {
+  await page.evaluate(() => navigator.clipboard.writeText(""));
+  await page.keyboard.press("ControlOrMeta+C");
+}
+
+async function copyFromChangedLineMenu(page: Page, action: "Copy" | "Copy line"): Promise<void> {
+  await page.evaluate(() => navigator.clipboard.writeText(""));
+  await rightClickFirstChangedLine(page);
+  const item = page.getByRole("menuitem", { name: action, exact: true });
+  await expect(item).toBeEnabled();
+  await item.click();
+}
+
+async function expectClipboardText(page: Page, text: string): Promise<void> {
+  await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(text);
+}
+
+async function resizeDiffViewportHeight(page: Page, height: number): Promise<void> {
+  const canvas = page.getByTestId("git-diff-canvas");
+  const previousViewport = page.viewportSize()!;
+  const previousHeight = await canvas.evaluate((element) => element.getBoundingClientRect().height);
+  await page.setViewportSize({ width: previousViewport.width, height });
+  await expect(canvas).toHaveCSS(
+    "height",
+    `${previousHeight + height - previousViewport.height}px`,
+  );
 }
 
 async function rightClickFirstChangedLine(page: Page, fileIndex = 0): Promise<void> {

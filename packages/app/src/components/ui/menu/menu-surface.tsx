@@ -21,6 +21,7 @@ import {
   type ContextBridge,
 } from "@/components/ui/isolated-bottom-sheet-modal";
 import { SPACING, type Theme } from "@/styles/theme";
+import { useRetainedPanelActive } from "@/components/retained-panel";
 import { useMenuContext, MenuContextProvider } from "./menu-context";
 import { MenuPage } from "./menu-item";
 import { currentPageId, isSubPageOpen } from "./menu-navigation";
@@ -125,6 +126,10 @@ export interface MenuSurfaceProps {
  */
 export function MenuSurface(props: MenuSurfaceProps): ReactElement | null {
   const { presentation } = useMenuContext("MenuSurface");
+  const active = useRetainedPanelActive();
+  // Portals escape the hidden panel. Remove the surface in its inactive commit,
+  // before freezing can suspend an async menu action's closing update.
+  if (!active) return null;
   if (presentation === "sheet") {
     return <MenuSheetSurface {...props} />;
   }

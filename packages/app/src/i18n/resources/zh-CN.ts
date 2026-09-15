@@ -226,7 +226,8 @@ export const zhCN: TranslationResources = {
     states: {
       notFound: "未找到 Agent",
       failedToLoad: "加载 Agent 失败",
-      reconnecting: "正在重连",
+      reconnecting: "正在重新连接主机",
+      updating: "正在更新消息",
       timelineSyncFailed: "无法刷新代理历史记录。",
       timelineSyncRetrying: "正在重试…",
       archivingTitle: "正在归档 Agent...",
@@ -876,6 +877,9 @@ export const zhCN: TranslationResources = {
         openChangesTab: "打开“更改”标签页",
         openDiffTab: "打开 Diff 标签页",
         closeChangesTab: "关闭“更改”标签页",
+        jumpToFile: {
+          title: "跳转到文件",
+        },
         binaryFile: "二进制文件",
         tooLarge: "Diff 过大，无法显示",
         previewTooLargeTitle: "此 diff 过大，无法预览",

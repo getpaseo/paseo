@@ -103,6 +103,9 @@ layering inside `overlay-root`. Activating a presented browser also focuses its 
 
 There is no renderer prep/restore handshake or lifetime background-throttling override.
 Screenshot capture temporarily enables frame production inside the shared serialized queue,
-restores the previous throttling policy on success or failure, invalidates before each attempt,
-and retries known first-frame failures within the 5-second capture budget. Viewport screenshots use `capturePage({ stayHidden:false })`;
-full-page screenshots use the existing CDP path with layout metrics and screenshot clip.
+restores the previous throttling policy on success or failure, and retains a 5-second capture budget.
+The browser tool takes one viewport frame through Electron's frame subscription and releases the
+subscription on completion or cancellation. A resized resident guest can produce fresh pixels
+while `capturePage()` leaves its surface-copy request pending; waiting for animation frames or
+retrying the copy does not repair that state. Full-page screenshots retain the CDP path with layout
+metrics and screenshot clip.

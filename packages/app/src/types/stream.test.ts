@@ -883,7 +883,7 @@ describe("stream reducer canonical tool calls", () => {
     expect(new Set(messages.map((message) => message.id)).size).toBe(2);
   });
 
-  it("keeps every promoted block when an assistant message resumes after a tool", () => {
+  it("keeps whole messages when an assistant resumes after a tool", () => {
     const messageId = "msg-promoted-resume";
     let tail: StreamItem[] = [];
     let head: StreamItem[] = [];
@@ -926,15 +926,13 @@ describe("stream reducer canonical tool calls", () => {
         item.kind === "assistant_message",
     );
     expect(messages.map((message) => message.text)).toEqual([
-      "Before one.",
-      "Before two.",
-      "After one.",
-      "After two.",
+      "Before one.\n\nBefore two.",
+      "After one.\n\nAfter two.",
     ]);
     expect(new Set(messages.map((message) => message.id)).size).toBe(messages.length);
   });
 
-  it("keeps the timeline position on every promoted assistant block", () => {
+  it("keeps the timeline position on the whole assistant message", () => {
     const timelineCursor = { epoch: "epoch-1", seq: 42 };
     const result = applyStreamEvent({
       tail: [],
@@ -949,13 +947,9 @@ describe("stream reducer canonical tool calls", () => {
         item.kind === "assistant_message",
     );
     expect(messages.map((message) => message.text)).toEqual([
-      "First paragraph.",
-      "Second paragraph.",
+      "First paragraph.\n\nSecond paragraph.",
     ]);
-    expect(messages.map((message) => message.timelineCursor)).toEqual([
-      timelineCursor,
-      timelineCursor,
-    ]);
+    expect(messages.map((message) => message.timelineCursor)).toEqual([timelineCursor]);
   });
 
   it("preserves old assistant merge behavior when message ids are absent", () => {

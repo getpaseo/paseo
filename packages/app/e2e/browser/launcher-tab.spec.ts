@@ -156,6 +156,7 @@ test.describe("Tab creation", () => {
     const newTabs = page
       .locator('[data-testid^="workspace-tab-tab_"]')
       .filter({ hasText: "New tab" });
+    await expect(newTabs.first()).toBeVisible();
     const countBefore = await newTabs.count();
 
     await pressNewTabShortcut(page);

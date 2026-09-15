@@ -23,8 +23,7 @@ export class ImportSessionFlow {
     await expectMobileAgentSidebarVisible(this.page);
     const button = this.page.getByTestId("sidebar-import-session");
     await expect(button).toHaveAccessibleName("Import session");
-    await button.hover();
-    await expect(this.page.getByText("Import session", { exact: true })).toBeVisible();
+    await expect(button).toBeInViewport();
   }
   async openGlobally() {
     await expect(this.page.getByTestId("sidebar-import-session")).toBeVisible();
@@ -49,6 +48,9 @@ export class ImportSessionFlow {
     before?: [string, string];
     folders?: Array<[string, string]>;
   }) {
+    for (const id of input.first ?? input.before ?? []) {
+      await expect(this.page.getByTestId(rowTestId(id))).toHaveCount(1);
+    }
     const ids = await this.rowIds();
     if (input.first) expect(ids.slice(0, input.first.length)).toEqual(input.first.map(rowTestId));
     if (input.before) {

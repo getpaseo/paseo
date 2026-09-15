@@ -11,6 +11,7 @@ import {
   expectWorkspaceTabVisible,
   openWorkspaceWithAgents,
 } from "../support/helpers/archive-tab";
+import { clickNewChat } from "../support/helpers/launcher";
 import { expectComposerVisible } from "../support/helpers/composer";
 import { daemonWsRoutePattern } from "../support/helpers/daemon-port";
 import { seedWorkspace } from "../support/helpers/seed-client";
@@ -132,13 +133,14 @@ test.describe("Workspace navigation regression", () => {
     await expect(page.getByText("Add a project", { exact: true })).toHaveCount(0);
   });
 
-  test("keeps one replacement draft after returning from settings and closing the last tab", async ({
+  test("shows the New launcher after returning from settings and closing the last agent draft tab", async ({
     page,
     withWorkspace,
   }) => {
     const workspace = await withWorkspace({ prefix: "workspace-settings-back-tab-" });
 
     await workspace.navigateTo();
+    await clickNewChat(page);
     await expect.poll(() => getVisibleDraftTabCount(page), { timeout: 30_000 }).toBe(1);
 
     await openSettings(page);
@@ -148,7 +150,12 @@ test.describe("Workspace navigation regression", () => {
 
     await closeFirstVisibleDraftTab(page);
 
-    await expect.poll(() => getVisibleDraftTabCount(page), { timeout: 30_000 }).toBe(1);
+    await expect.poll(() => getVisibleDraftTabCount(page), { timeout: 30_000 }).toBe(0);
+    await expect(
+      page
+        .getByTestId("workspace-new-tab-panel")
+        .getByRole("button", { name: "Agent", exact: true }),
+    ).toBeVisible();
   });
 
   test("keeps the workspace rendered while reconnecting to the host", async ({ page }) => {

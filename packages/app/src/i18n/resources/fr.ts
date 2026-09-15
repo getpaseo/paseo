@@ -229,7 +229,8 @@ export const fr: TranslationResources = {
     states: {
       notFound: "Agentintrouvable",
       failedToLoad: "Échec du chargement de l'agent",
-      reconnecting: "Reconnexion",
+      reconnecting: "Reconnexion à l’hôte",
+      updating: "Mise à jour des messages",
       timelineSyncFailed: "Impossible d’actualiser l’historique de l’agent.",
       timelineSyncRetrying: "Nouvelle tentative…",
       archivingTitle: "Agent d'archivage...",
@@ -915,6 +916,9 @@ export const fr: TranslationResources = {
         openChangesTab: "Ouvrir l'onglet Modifications",
         openDiffTab: "Ouvrir l'onglet Diff",
         closeChangesTab: "Fermer l'onglet Modifications",
+        jumpToFile: {
+          title: "Aller au fichier",
+        },
         binaryFile: "Fichier binaire",
         tooLarge: "Diff trop grand pour être affiché",
         previewTooLargeTitle: "Ce diff est trop volumineux pour être prévisualisé",

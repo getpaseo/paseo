@@ -2,7 +2,8 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useEffect, useState } from "react";
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
-import { z } from "zod";
+import type { z } from "zod";
+import { WorkspaceLayoutPersistedStateSchema } from "./workspace-layout-storage";
 import type { JsonValue } from "@getpaseo/protocol/agent-types";
 import type { WorkspaceTab, WorkspaceTabTarget } from "@/workspace-tabs/model";
 import {
@@ -36,7 +37,7 @@ import {
   openTabInLayoutBackground,
   replaceTabTargetInLayout,
   revealTargetInLayout,
-  restoreEmptyPanesInLayout,
+  restoreWorkspaceLayout,
   reconcileWorkspaceTabs,
   removePaneFromTree,
   removeTabFromTree,
@@ -173,118 +174,6 @@ interface WorkspaceFocusRestorationState {
 // The persisted tree includes the Explorer shell; the renderer docks it outside workspace splits.
 // Preserve four user-created split levels beneath that bookkeeping node.
 const MAX_TREE_DEPTH = 5;
-
-const WorkspaceDraftTabSetupStorageSchema = z.strictObject({
-  provider: z.string(),
-  cwd: z.string(),
-  modeId: z.string().nullable(),
-  model: z.string().nullable(),
-  thinkingOptionId: z.string().nullable(),
-  featureValues: z.record(z.string(), z.union([z.boolean(), z.string(), z.null()])),
-});
-const WorkspaceTabTargetStorageSchema = z.discriminatedUnion("kind", [
-  z.strictObject({ kind: z.literal("new_tab") }),
-  z.strictObject({
-    kind: z.literal("draft"),
-    draftId: z.string(),
-    setup: WorkspaceDraftTabSetupStorageSchema.optional(),
-  }),
-  z.strictObject({ kind: z.literal("agent"), agentId: z.string() }),
-  z.strictObject({
-    kind: z.literal("provider_subagent"),
-    parentAgentId: z.string(),
-    subagentId: z.string(),
-  }),
-  z.strictObject({ kind: z.literal("terminal"), terminalId: z.string() }),
-  z.strictObject({ kind: z.literal("browser"), browserId: z.string() }),
-  z.strictObject({ kind: z.literal("changes_tree") }),
-  z.strictObject({ kind: z.literal("files") }),
-  z.strictObject({ kind: z.literal("pull_request") }),
-  z.strictObject({
-    kind: z.literal("file"),
-    path: z.string(),
-    lineStart: z.number().int().positive().optional(),
-    lineEnd: z.number().int().positive().optional(),
-  }),
-  z.strictObject({
-    kind: z.literal("working_diff"),
-    focusPath: z.string().optional(),
-    focusRequestId: z.number().optional(),
-    // COMPAT(workingDiffTarget): accepted from pre-canonical tab ids; normalization removes them.
-    mode: z.enum(["uncommitted", "base"]).optional(),
-    baseRef: z.string().nullable().optional(),
-    ignoreWhitespace: z.boolean().optional(),
-  }),
-  z.strictObject({ kind: z.literal("setup"), workspaceId: z.string() }),
-  z.strictObject({ kind: z.literal("commit_diff"), sha: z.string() }),
-  z.discriminatedUnion("context", [
-    z.strictObject({
-      kind: z.literal("plugin"),
-      pluginId: z.string(),
-      panelId: z.string(),
-      context: z.literal("workspace"),
-    }),
-    z.strictObject({
-      kind: z.literal("plugin"),
-      pluginId: z.string(),
-      panelId: z.string(),
-      context: z.literal("agent"),
-      agentId: z.string(),
-    }),
-  ]),
-]);
-const WorkspaceTabStorageSchema = z.strictObject({
-  tabId: z.string(),
-  target: WorkspaceTabTargetStorageSchema,
-  createdAt: z.number(),
-  state: z.json().optional(),
-});
-const SplitNodeStorageSchema: z.ZodType<SplitNode> = z.lazy(() =>
-  z.discriminatedUnion("kind", [
-    z.strictObject({
-      kind: z.literal("pane"),
-      pane: z.strictObject({
-        id: z.string(),
-        tabIds: z.array(z.string()),
-        focusedTabId: z.string().nullable(),
-        tabs: z.array(WorkspaceTabStorageSchema).optional(),
-        hidden: z.boolean().optional(),
-      }),
-    }),
-    z.strictObject({
-      kind: z.literal("group"),
-      group: z.strictObject({
-        id: z.string(),
-        direction: z.enum(["horizontal", "vertical"]),
-        children: z.array(SplitNodeStorageSchema),
-        sizes: z.array(z.number()),
-      }),
-    }),
-  ]),
-);
-const WorkspaceLayoutStorageSchema: z.ZodType<WorkspaceLayout> = z.strictObject({
-  root: SplitNodeStorageSchema,
-  focusedPaneId: z.string().nullable(),
-  parentTabIdByTabId: z.record(z.string(), z.string()).optional(),
-});
-const WorkspaceLayoutPersistedStateSchema = z.strictObject({
-  pinnedAgentIdsByWorkspace: z.record(z.string(), z.array(z.string())).optional(),
-  layoutByWorkspace: z.record(z.string(), WorkspaceLayoutStorageSchema),
-  splitSizesByWorkspace: z.record(z.string(), z.record(z.string(), z.array(z.number()))).optional(),
-  explorerSidebarWidthByWorkspace: z.record(z.string(), z.number()).optional(),
-  // COMPAT(explorerSidebarWidth): added in v0.6, remove after 2027-08-25.
-  explorerSidebarRatioByWorkspace: z.record(z.string(), z.number()).optional(),
-  // COMPAT(explorerSidebarNaming): accepted from builds that called this dock the Side panel.
-  sidePanelRatioByWorkspace: z.record(z.string(), z.number()).optional(),
-  // The persisted keys keep their pre-rename spelling: the schema is strict, so a
-  // rename here would fail every existing blob and wipe the layout it describes.
-  explorerPaneIdByWorkspace: z.record(z.string(), z.string().nullable()).optional(),
-  explorerSidebarPaneIdByWorkspace: z.record(z.string(), z.string().nullable()).optional(),
-  sidePaneIdByWorkspace: z.record(z.string(), z.string().nullable()).optional(),
-  // COMPAT(pullRequestAutoAdd): PR detection stopped opening a tab in v0.5; accepted
-  // and ignored so upgrading does not discard the layout. Remove after 2027-08-20.
-  acknowledgedPullRequestByWorkspace: z.record(z.string(), z.string()).optional(),
-});
 
 const LEGACY_EXPLORER_SIDEBAR_REFERENCE_WIDTH = 1440;
 const WORKSPACE_LAYOUT_PERSIST_VERSION = 2;
@@ -634,7 +523,7 @@ function ensurePersistedExplorerSidebarPane(input: {
     paneId: split.paneId,
     hidden: true,
   });
-  const seededLayout = restoreEmptyPanesInLayout(
+  const seededLayout = restoreWorkspaceLayout(
     stripEphemeralTabsFromLayout(hiddenLayout ?? split.layout),
     split.paneId,
   );
@@ -991,14 +880,10 @@ export function createWorkspaceLayoutStore(
                 },
               };
             }
-            const preserveEmptyPaneId =
-              closingPane?.id === "main" || closingPane?.id === explorerSidebarPaneId
-                ? closingPane.id
-                : null;
             const closedLayout = closeTabInLayout({
               layout,
               tabId: normalizedTabId,
-              preserveEmptyPaneId,
+              explorerSidebarPaneId,
             });
             const nextLayoutBeforeFocusNormalization =
               closedLayout &&
@@ -1156,8 +1041,13 @@ export function createWorkspaceLayoutStore(
             return null;
           }
 
+          const layout = getWorkspaceLayout(get().layoutByWorkspace, normalizedWorkspaceKey);
           const result = convertDraftToAgentInLayout({
-            layout: getWorkspaceLayout(get().layoutByWorkspace, normalizedWorkspaceKey),
+            layout,
+            explorerSidebarPaneId: resolveExplorerSidebarPaneId(
+              layout,
+              get().explorerSidebarPaneIdByWorkspace[normalizedWorkspaceKey],
+            ),
             tabId: normalizedTabId,
             agentId: normalizedAgentId,
           });
@@ -1224,6 +1114,7 @@ export function createWorkspaceLayoutStore(
               }
             }
             if (
+              state.layoutByWorkspace[normalizedWorkspaceKey] &&
               nextLayout === rawLayout &&
               pinnedAgentIdsByWorkspace === state.pinnedAgentIdsByWorkspace
             ) {
@@ -1400,7 +1291,7 @@ export function createWorkspaceLayoutStore(
             }
             const restoredLayout =
               normalizedToPaneId === explorerSidebarPaneId
-                ? restoreEmptyPanesInLayout(nextLayout, explorerSidebarPaneId)
+                ? restoreWorkspaceLayout(nextLayout, explorerSidebarPaneId)
                 : nextLayout;
             const normalizedNextLayout = keepWorkspaceFocusOutOfExplorerSidebar(
               restoredLayout,
@@ -1813,21 +1704,23 @@ export function createWorkspaceLayoutStore(
           for (const [workspaceKey, persistedLayout] of Object.entries(
             result.data.layoutByWorkspace,
           )) {
-            const strippedLayout = stripEphemeralTabsFromLayout(persistedLayout);
+            const restoredLayout = restoreWorkspaceLayout(
+              stripEphemeralTabsFromLayout(persistedLayout),
+              resolveExplorerSidebarPaneId(
+                persistedLayout,
+                explorerSidebarPaneIdByWorkspace[workspaceKey],
+              ),
+              ids.createNodeId,
+            );
             const explorerSidebar = ensurePersistedExplorerSidebarPane({
-              layout: strippedLayout,
+              layout: restoredLayout,
               registeredPaneId: explorerSidebarPaneIdByWorkspace[workspaceKey],
               ids,
             });
-            if (!explorerSidebar) {
-              layoutByWorkspace[workspaceKey] = restoreEmptyPanesInLayout(strippedLayout);
-              continue;
+            layoutByWorkspace[workspaceKey] = explorerSidebar?.layout ?? restoredLayout;
+            if (explorerSidebar) {
+              explorerSidebarPaneIdByWorkspace[workspaceKey] = explorerSidebar.paneId;
             }
-            layoutByWorkspace[workspaceKey] = restoreEmptyPanesInLayout(
-              explorerSidebar.layout,
-              explorerSidebar.paneId,
-            );
-            explorerSidebarPaneIdByWorkspace[workspaceKey] = explorerSidebar.paneId;
           }
           return {
             ...currentState,
@@ -1856,6 +1749,34 @@ export function createWorkspaceLayoutStore(
 }
 
 export const useWorkspaceLayoutStore = createWorkspaceLayoutStore();
+
+/** Observe open chats independently of which workspace views are mounted. */
+export function observeOpenWorkspaceAgentIds(
+  serverId: string,
+  listener: (agentIds: string[]) => void,
+  store = useWorkspaceLayoutStore,
+): () => void {
+  let previous: string[] | undefined;
+  const publish = (state: Pick<WorkspaceLayoutStore, "layoutByWorkspace">) => {
+    const ids = new Set<string>();
+    for (const [workspaceKey, layout] of Object.entries(state.layoutByWorkspace)) {
+      if (!workspaceKey.startsWith(`${serverId}:`)) continue;
+      for (const tab of collectAllTabs(layout.root)) {
+        if (tab.target.kind === "agent") ids.add(tab.target.agentId);
+      }
+    }
+    const next = [...ids].sort();
+    if (previous?.length === next.length && previous.every((id, index) => id === next[index]))
+      return;
+    previous = next;
+    listener(next);
+  };
+  const unsubscribe = store.subscribe((state, before) => {
+    if (state.layoutByWorkspace !== before.layoutByWorkspace) publish(state);
+  });
+  publish(store.getState());
+  return unsubscribe;
+}
 
 export function useWorkspaceLayoutStoreHydrated(): boolean {
   const [hasHydrated, setHasHydrated] = useState(() =>

@@ -226,7 +226,8 @@ export const ar: TranslationResources = {
     states: {
       notFound: "لم يتم العثور على Agent",
       failedToLoad: "فشل تحميل الوكيل",
-      reconnecting: "جارٍ إعادة الاتصال",
+      reconnecting: "جارٍ إعادة الاتصال بالمضيف",
+      updating: "جارٍ تحديث الرسائل",
       timelineSyncFailed: "تعذر تحديث سجل الوكيل.",
       timelineSyncRetrying: "جارٍ إعادة المحاولة…",
       archivingTitle: "وكيل الارشيف...",
@@ -884,6 +885,9 @@ export const ar: TranslationResources = {
         openChangesTab: "فتح علامة تبويب التغييرات",
         openDiffTab: "فتح علامة تبويب الفرق",
         closeChangesTab: "إغلاق علامة تبويب التغييرات",
+        jumpToFile: {
+          title: "الانتقال إلى ملف",
+        },
         binaryFile: "ملف ثنائي",
         tooLarge: "الفرق كبير جدًا بحيث لا يمكن عرضه",
         previewTooLargeTitle: "هذا الفرق كبير جدًا بحيث لا يمكن معاينته",

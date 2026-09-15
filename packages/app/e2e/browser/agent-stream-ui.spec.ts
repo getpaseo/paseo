@@ -16,6 +16,17 @@ import {
   waitForScrollableChat,
 } from "../support/helpers/agent-bottom-anchor";
 import { delayCreatedAgentInitialTailResponse } from "../support/helpers/agent-timeline-gate";
+import {
+  collapseSettledWord,
+  installMarkdownRootObserver,
+  mountObservedSyntheticBlock,
+  readMarkdownRootEvidence,
+  replaceParagraph,
+  replaceParagraphKeepingFadingWord,
+  restartFadingWord,
+  resumeFadingWord,
+  settleMarkdownRootObserver,
+} from "../support/helpers/markdown-root-stability";
 import { selectModel } from "../support/helpers/app";
 import { clickNewChat } from "../support/helpers/launcher";
 import { expectComposerVisible, startRunningMockAgent } from "../support/helpers/composer";
@@ -63,6 +74,55 @@ test.describe("Agent stream UI", () => {
     }
   });
 
+  test("the Markdown root observer tells designed fade churn from replacements", async ({
+    page,
+  }) => {
+    await test.step("a word re-created with its start time resumes its fade", async () => {
+      await mountObservedSyntheticBlock(page);
+      await resumeFadingWord(page);
+      expect(await readMarkdownRootEvidence(page)).toEqual({
+        replacedElements: 0,
+        restartedFades: 0,
+      });
+    });
+
+    await test.step("a word re-created with a new start time is a restarted fade", async () => {
+      await mountObservedSyntheticBlock(page);
+      await restartFadingWord(page);
+      expect(await readMarkdownRootEvidence(page)).toEqual({
+        replacedElements: 0,
+        restartedFades: 1,
+      });
+    });
+
+    await test.step("a settled word collapsing into text is not a replacement", async () => {
+      await mountObservedSyntheticBlock(page);
+      await collapseSettledWord(page);
+      expect(await readMarkdownRootEvidence(page)).toEqual({
+        replacedElements: 0,
+        restartedFades: 0,
+      });
+    });
+
+    await test.step("a re-created paragraph is a replaced element", async () => {
+      await mountObservedSyntheticBlock(page);
+      await replaceParagraph(page);
+      expect(await readMarkdownRootEvidence(page)).toEqual({
+        replacedElements: 1,
+        restartedFades: 0,
+      });
+    });
+
+    await test.step("a re-created paragraph is still a replacement when it keeps its fading word", async () => {
+      await mountObservedSyntheticBlock(page);
+      await replaceParagraphKeepingFadingWord(page);
+      expect(await readMarkdownRootEvidence(page)).toEqual({
+        replacedElements: 1,
+        restartedFades: 0,
+      });
+    });
+  });
+
   test("keeps the active Markdown root mounted across streamed text updates", async ({
     page,
   }, testInfo) => {
@@ -87,51 +147,20 @@ test.describe("Agent stream UI", () => {
         throw new Error("Expected the active assistant block to contain a Markdown root");
       }
 
-      await page.evaluate((block) => {
-        const evidence = {
-          addedNodes: 0,
-          characterDataMutations: 0,
-          removedNodes: 0,
-        };
-        const observer = new MutationObserver((records) => {
-          for (const record of records) {
-            evidence.addedNodes += record.addedNodes.length;
-            evidence.removedNodes += record.removedNodes.length;
-            if (record.type === "characterData") {
-              evidence.characterDataMutations += 1;
-            }
-          }
-        });
-        observer.observe(block, { characterData: true, childList: true, subtree: true });
-        Object.assign(window, {
-          __markdownRootEvidence: evidence,
-          __markdownRootObserver: observer,
-        });
-      }, activeBlockHandle);
+      await page.evaluate(installMarkdownRootObserver, activeBlockHandle);
 
       await expect
         .poll(async () => ((await activeBlock.textContent()) ?? "").length)
         .toBeGreaterThan(initialText.length + 80);
 
-      const evidence = await page.evaluate((root) => {
-        const state = window as typeof window & {
-          __markdownRootEvidence?: {
-            addedNodes: number;
-            characterDataMutations: number;
-            removedNodes: number;
-          };
-          __markdownRootObserver?: MutationObserver;
-        };
-        state.__markdownRootObserver?.disconnect();
+      const settled = await page.evaluate(settleMarkdownRootObserver);
+      const rootState = await page.evaluate((root) => {
         const messages = document.querySelectorAll('[data-testid="assistant-message"]');
         const message = messages.item(messages.length - 1);
         const block = message?.lastElementChild;
-        return {
-          ...state.__markdownRootEvidence,
-          connected: root.isConnected,
-          sameRoot: block?.firstElementChild === root,
-        };
+        return { connected: root.isConnected, sameRoot: block?.firstElementChild === root };
       }, markdownRoot);
+      const evidence = { ...settled, ...rootState };
 
       await testInfo.attach("markdown-root-stability", {
         body: JSON.stringify(evidence, null, 2),
@@ -140,8 +169,12 @@ test.describe("Agent stream UI", () => {
       expect(evidence.connected).toBe(true);
       expect(evidence.sameRoot).toBe(true);
       expect(
-        evidence.removedNodes,
+        evidence.replacedElements,
         `Streaming Markdown replaced mounted descendants: ${JSON.stringify(evidence)}`,
+      ).toBe(0);
+      expect(
+        evidence.restartedFades,
+        `Streaming Markdown re-created a fading word with a new start time: ${JSON.stringify(evidence)}`,
       ).toBe(0);
     } finally {
       await agent.cleanup();
