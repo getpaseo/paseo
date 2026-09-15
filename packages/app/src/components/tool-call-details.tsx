@@ -21,6 +21,7 @@ import { hasMeaningfulToolCallDetail } from "@/utils/tool-call-detail-state";
 import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 import { CODE_SURFACE_DATASET } from "@/styles/code-surface";
 import { extensionFromPath, highlightToKeyedLines } from "@/utils/highlight-cache";
+import { deriveFallbackToolCallInput } from "@/utils/tool-call-details-input";
 import { HighlightedLines } from "./highlighted-content";
 import { DiffViewer } from "./diff-viewer";
 import { getCodeInsets } from "./code-insets";
@@ -33,6 +34,7 @@ const ScrollView = isWeb ? RNScrollView : GHScrollView;
 interface ToolCallDetailsContentProps {
   toolName?: string;
   detail?: ToolCallDetail;
+  rawInput?: unknown;
   errorText?: string;
   maxHeight?: number;
   fillAvailableHeight?: boolean;
@@ -783,6 +785,7 @@ function LoadingSkeleton({ containerStyle }: { containerStyle: StyleProp<ViewSty
 export function ToolCallDetailsContent({
   toolName,
   detail,
+  rawInput,
   errorText,
   maxHeight,
   fillAvailableHeight = false,
@@ -794,6 +797,13 @@ export function ToolCallDetailsContent({
   const diffLines = useDiffLines(detail);
 
   const sections: ReactNode[] = buildDetailSections(toolName, detail, diffLines, ds, t);
+  if (detail?.type !== "unknown") {
+    const input =
+      rawInput ?? (sections.length === 0 ? deriveFallbackToolCallInput(detail) : undefined);
+    if (input !== undefined) {
+      sections.unshift(...buildUnknownSections({ input, output: null }, ds, t));
+    }
+  }
 
   if (errorText) {
     sections.push(<ErrorSection key="error" errorText={errorText} ds={ds} />);
