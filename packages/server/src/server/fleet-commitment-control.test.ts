@@ -506,6 +506,52 @@ describe("FleetCommitmentControlService", () => {
     }
   });
 
+  it.skipIf(process.platform === "win32")(
+    "preserves ledger permissions and ownership during replacement",
+    async () => {
+      const h = await harness();
+      await fs.chmod(h.ledgerPath, 0o600);
+      const before = await fs.stat(h.ledgerPath);
+
+      expect((await h.service.operate(operation())).lifecycle).toBe("awaiting_confirmation");
+
+      const after = await fs.stat(h.ledgerPath);
+      expect(after.mode & 0o7777).toBe(0o600);
+      expect({ uid: after.uid, gid: after.gid }).toEqual({ uid: before.uid, gid: before.gid });
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "does not replace the ledger when source metadata changes during temp preparation",
+    async () => {
+      const h = await harness();
+      await fs.chmod(h.ledgerPath, 0o600);
+      const original = await readFile(h.ledgerPath, "utf8");
+      const originalWriteFile = fs.writeFile.bind(fs);
+      const ledgerTempPrefix = `.${basename(h.ledgerPath)}.`;
+      let mutated = false;
+      const writeSpy = vi.spyOn(fs, "writeFile").mockImplementation(async (file, data, options) => {
+        await originalWriteFile(file, data, options);
+        if (!mutated && typeof file === "string" && basename(file).startsWith(ledgerTempPrefix)) {
+          mutated = true;
+          await fs.chmod(h.ledgerPath, 0o640);
+        }
+      });
+      try {
+        const result = await h.service.operate(operation());
+        expect(result).toMatchObject({
+          lifecycle: "outcome_unknown",
+          code: "atomic_file_source_changed",
+          ledgerWriteStarted: true,
+        });
+        expect(await readFile(h.ledgerPath, "utf8")).toBe(original);
+        expect((await fs.stat(h.ledgerPath)).mode & 0o7777).toBe(0o640);
+      } finally {
+        writeSpy.mockRestore();
+      }
+    },
+  );
+
   it("rejects a target marker changed immediately before rename", async () => {
     let h!: Awaited<ReturnType<typeof harness>>;
     const changedMarker = [
