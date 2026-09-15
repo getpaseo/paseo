@@ -65,7 +65,7 @@ export function toScheduleLogRow(run: ScheduleRunRecord): ScheduleLogRow {
 }
 
 export function createScheduleInspectRows(schedule: ScheduleRecord): ScheduleInspectRow[] {
-  return [
+  const rows: ScheduleInspectRow[] = [
     { key: "Id", value: schedule.id },
     { key: "Name", value: schedule.name ?? "null" },
     { key: "Prompt", value: schedule.prompt },
@@ -84,7 +84,17 @@ export function createScheduleInspectRows(schedule: ScheduleRecord): ScheduleIns
     { key: "LastRunAt", value: schedule.lastRunAt ?? "null" },
     { key: "PausedAt", value: schedule.pausedAt ?? "null" },
     { key: "ExpiresAt", value: schedule.expiresAt ?? "null" },
-    { key: "MaxRuns", value: schedule.maxRuns == null ? "null" : `${schedule.maxRuns}` },
+    {
+      key: "MaxRuns",
+      value: schedule.maxRuns == null ? "null" : `${schedule.maxRuns}`,
+    },
     { key: "RunCount", value: `${schedule.runs.length}` },
   ];
+  if (schedule.target.type === "new-agent") {
+    rows.splice(5, 0, {
+      key: "Workspace",
+      value: schedule.target.config.workspaceId ?? "new workspace each run",
+    });
+  }
+  return rows;
 }

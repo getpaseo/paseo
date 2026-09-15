@@ -632,6 +632,7 @@ test("dedupes in-flight checkout status requests per agentId", async () => {
       type: "checkout_status_response",
       payload: {
         cwd: "/tmp/project",
+        workspaceId: "wks_daily",
         error: null,
         requestId: request.requestId,
         isGit: false,
@@ -817,6 +818,7 @@ test("sends new-agent run options when creating schedules", async () => {
       config: {
         provider: "claude",
         cwd: "/tmp/project",
+        workspaceId: "wks_daily",
         thinkingOptionId: "think-hard",
         archiveOnFinish: false,
         isolation: "worktree",
@@ -835,6 +837,7 @@ test("sends new-agent run options when creating schedules", async () => {
       config: {
         provider: "claude",
         cwd: "/tmp/project",
+        workspaceId: "wks_daily",
         thinkingOptionId: "think-hard",
         archiveOnFinish: false,
         isolation: "worktree",
@@ -874,6 +877,7 @@ test("sends new-agent run options when updating schedules", async () => {
       thinkingOptionId: "think-hard",
       archiveOnFinish: false,
       isolation: "worktree",
+      workspaceId: null,
     },
   });
 
@@ -886,6 +890,7 @@ test("sends new-agent run options when updating schedules", async () => {
       thinkingOptionId: "think-hard",
       archiveOnFinish: false,
       isolation: "worktree",
+      workspaceId: null,
     },
   });
 

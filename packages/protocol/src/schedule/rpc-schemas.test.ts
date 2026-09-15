@@ -14,6 +14,7 @@ describe("schedule RPC schemas", () => {
           config: {
             provider: "claude",
             cwd: "/tmp/project",
+            workspaceId: "wks_daily",
             thinkingOptionId: "think-hard",
             archiveOnFinish: false,
             isolation: "worktree",
@@ -30,6 +31,7 @@ describe("schedule RPC schemas", () => {
         config: {
           provider: "claude",
           cwd: "/tmp/project",
+          workspaceId: "wks_daily",
           thinkingOptionId: "think-hard",
           archiveOnFinish: false,
           isolation: "worktree",
@@ -48,6 +50,7 @@ describe("schedule RPC schemas", () => {
           thinkingOptionId: "think-hard",
           archiveOnFinish: false,
           isolation: "worktree",
+          workspaceId: null,
         },
       }),
     ).toEqual({
@@ -58,6 +61,7 @@ describe("schedule RPC schemas", () => {
         thinkingOptionId: "think-hard",
         archiveOnFinish: false,
         isolation: "worktree",
+        workspaceId: null,
       },
     });
   });
