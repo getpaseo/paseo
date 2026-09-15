@@ -334,6 +334,8 @@ export interface WaitForAgentResult {
   status: AgentLifecycleStatus;
   permission: AgentPermissionRequest | null;
   lastMessage: string | null;
+  /** Set when a bounded wait gave up while the agent was still working. */
+  timedOut?: boolean;
 }
 
 export interface WaitForAgentStartOptions {

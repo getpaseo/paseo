@@ -1865,6 +1865,9 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     }
   }
 
+  const FINISH_NOTIFICATION_GUIDANCE =
+    "You will get notified when the prompted agent finishes, errors, or needs permission. Do not poll for status; continue with other work until the notification arrives.";
+
   registerTool(
     "send_agent_prompt",
     {
@@ -1910,15 +1913,40 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
 
       // If not running in background, wait for completion
       if (!background) {
-        const result = await waitForAgentWithTimeout(agentManager, agentId, {
+        let result = await waitForAgentWithTimeout(agentManager, agentId, {
           waitForActive: true,
         });
+        let guidance: string | undefined;
+
+        if (result.timedOut && callerAgentId && notifyOnFinish) {
+          // The caller asked to wait but the wait ran out. Without a finish
+          // notification the result would be lost, so arm the same notification
+          // a background prompt gets. No await between the lifecycle check and
+          // the subscribe inside setupFinishNotification, so a finish cannot
+          // slip through the gap.
+          const liveSnapshot = agentManager.getAgent(agentId);
+          if (liveSnapshot && liveSnapshot.lifecycle === "running") {
+            setupFinishNotification({
+              agentManager,
+              agentStorage,
+              childAgentId: agentId,
+              callerAgentId,
+              logger: childLogger,
+            });
+            guidance = FINISH_NOTIFICATION_GUIDANCE;
+          } else {
+            // The agent settled while the timeout was being reported; return
+            // its final state instead of a stale "still running" message.
+            result = await agentManager.waitForAgentEvent(agentId, { waitForActive: false });
+          }
+        }
 
         const responseData = {
           success: true,
           status: result.status,
           lastMessage: result.lastMessage,
           permission: sanitizePermissionRequest(result.permission),
+          ...(guidance ? { guidance } : {}),
         };
         const validJson = ensureValidJson(responseData);
 
@@ -1938,12 +1966,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
         status: currentSnapshot?.lifecycle ?? "idle",
         lastMessage: null,
         permission: null,
-        ...(shouldNotifyOnFinish
-          ? {
-              guidance:
-                "You will get notified when the prompted agent finishes, errors, or needs permission. Do not poll for status; continue with other work until the notification arrives.",
-            }
-          : {}),
+        ...(shouldNotifyOnFinish ? { guidance: FINISH_NOTIFICATION_GUIDANCE } : {}),
       };
       const validJson = ensureValidJson(responseData);
 
