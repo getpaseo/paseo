@@ -331,6 +331,20 @@ function mapEntryMessage(entry: OmpSessionEntry): OmpAgentMessage | null {
     }
     return visibleFallback(message.role, message);
   }
+  if (entry.type === "custom_message") {
+    const content = entry.content;
+    if (typeof content !== "string" && !Array.isArray(content)) {
+      return null;
+    }
+    return {
+      role: "custom",
+      content,
+      ...(typeof entry.id === "string" ? { id: entry.id } : {}),
+      ...(typeof entry.customType === "string" ? { customType: entry.customType } : {}),
+      ...(typeof entry.display === "boolean" ? { display: entry.display } : {}),
+      ...(entry.details !== undefined ? { details: entry.details } : {}),
+    } as OmpAgentMessage;
+  }
   if (!entry.type || isControlEntryType(entry.type)) {
     return null;
   }
@@ -345,6 +359,7 @@ function isControlEntryType(type: string): boolean {
     type === "title" ||
     type === "title_change" ||
     type === "custom" ||
+    type === "service_tier_change" ||
     type === "system_prompt" ||
     type === "model_change" ||
     type === "thinking_level_change" ||
