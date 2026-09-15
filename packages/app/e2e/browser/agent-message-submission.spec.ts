@@ -37,7 +37,7 @@ import { installDaemonWebSocketGate } from "../support/helpers/daemon-websocket-
 import { gotoAppShell, openSettings, selectModel } from "../support/helpers/app";
 import { observeTimelineSubscriptions } from "../support/helpers/timeline-delivery";
 import {
-  expectResumeOverflowFallsBackToOneTail,
+  expectOneResumeCheckWithoutTail,
   rememberTimelineRequestCounts,
 } from "../support/helpers/timeline-resume";
 import {
@@ -466,25 +466,29 @@ async function expectHiddenStreamingSubmissionOrderAfterWorkspaceEviction(
     }
     await expect(targetDeckEntry).toHaveCount(0);
     await subscriptions.waitForSubscribedAgents([
-      evictionAgents[WORKSPACE_DECK_MAX_MOUNTED_WORKSPACES - 1]!.agentId,
+      target.agentId,
+      ...evictionAgents.map((agent) => agent.agentId),
     ]);
     gate.setAgentStreamSuppressed(false);
 
     await target.client.waitForFinish(target.agentId, 30_000);
-    const requestsBeforeReturn = rememberTimelineRequestCounts(gate);
+    const requestsBeforeReturn = rememberTimelineRequestCounts(gate, target.agentId);
     await waitForWorkspaceInSidebar(page, {
       serverId: getServerId(),
       workspaceId: target.workspaceId,
     });
     await openAgentRoute(page, target);
     await expectComposerVisible(page);
-    await subscriptions.waitForSubscribedAgents([target.agentId]);
+    await subscriptions.waitForSubscribedAgents([
+      target.agentId,
+      ...evictionAgents.map((agent) => agent.agentId),
+    ]);
 
     const response = page.getByText("(end of synthetic stream)", { exact: true }).last();
     await expect(promptRow).toBeVisible();
     await expect(response).toBeVisible();
     await expectRenderedBefore(promptRow, response);
-    expectResumeOverflowFallsBackToOneTail(gate, requestsBeforeReturn);
+    expectOneResumeCheckWithoutTail(gate, requestsBeforeReturn);
   } finally {
     gate.setAgentStreamSuppressed(false);
     gate.restore();

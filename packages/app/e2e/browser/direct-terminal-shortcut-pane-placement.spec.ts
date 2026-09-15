@@ -1,6 +1,10 @@
 import { expect, test } from "../support/fixtures";
 import { runWorkspaceActionFromCommandCenter } from "../support/helpers/command-center-workspace-actions";
-import { gotoWorkspace, pressDirectNewTabShortcut } from "../support/helpers/launcher";
+import {
+  clickNewChat,
+  gotoWorkspace,
+  pressDirectNewTabShortcut,
+} from "../support/helpers/launcher";
 import { seedWorkspace } from "../support/helpers/seed-client";
 import { waitForWorkspaceTabsVisible } from "../support/helpers/workspace-tabs";
 
@@ -11,6 +15,7 @@ test.describe("Direct terminal shortcut pane placement", () => {
     try {
       await gotoWorkspace(page, workspace.workspaceId);
       await waitForWorkspaceTabsVisible(page);
+      await clickNewChat(page);
 
       await runWorkspaceActionFromCommandCenter(page, "Split pane right");
       const focusedPaneChild = page

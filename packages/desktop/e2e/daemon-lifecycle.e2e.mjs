@@ -206,7 +206,8 @@ try {
     (await mkdtemp(path.join(tmpdir(), "paseo-desktop-lifecycle-artifacts-")));
   await mkdir(artifacts, { recursive: true });
   for (const name of await readdir(root))
-    if (name.endsWith(".png")) await copyFile(path.join(root, name), path.join(artifacts, name));
+    if (name.endsWith(".png") || name === "metro.log")
+      await copyFile(path.join(root, name), path.join(artifacts, name));
   await rm(root, { recursive: true, force: true });
   console.log(`Lifecycle artifacts: ${artifacts}`);
 }

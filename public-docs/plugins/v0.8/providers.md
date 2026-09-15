@@ -117,6 +117,11 @@ later through `session.config`.
 prompt, MCP servers, tool policy, model, mode, settings, opaque provider options, and persistence
 preference.
 
+For persisted host-scoped plugin settings, use the handle returned by `server.registerSettings()`.
+Read it in catalog and session callbacks, and subscribe when the provider keeps in-memory
+configuration. See [settings](./reference.md#persisted-values) for the `read()` and `subscribe()`
+contract.
+
 Create the native session with the selected catalog values, then publish its effective state:
 
 ```ts
