@@ -28,11 +28,29 @@ import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 
 const OFFSET_FROM_ANCHOR = SPACING[3];
 
+/**
+ * Frames to keep re-measuring while the anchor or the portal host answer with no usable rect.
+ * The host registers itself from an effect and both are measured through the layout engine, so
+ * the first frames after the popover opens can come back empty or zero-sized. Nothing else
+ * re-triggers measurement on a platform without keyboard motion, so without this the popover
+ * stays hidden until the window is resized.
+ */
+const MEASUREMENT_RETRY_FRAMES = 12;
+
 interface Rect {
   x: number;
   y: number;
   width: number;
   height: number;
+}
+
+/**
+ * A missing host, a collapsed host or a zero-width anchor all mean layout has not produced the
+ * geometry yet. Positioning against those values hides the popover just as thoroughly as not
+ * rendering it, so they are treated as "not measured yet" rather than as a result.
+ */
+function isMeasured(anchorRect: Rect, hostRect: Rect | null): hostRect is Rect {
+  return hostRect !== null && hostRect.height > 0 && anchorRect.width > 0;
 }
 
 interface RelativeAnchorRect {
@@ -82,6 +100,8 @@ export function AutocompletePopover({
   const { shift, isMoving } = useKeyboardShift();
   const measuredShift = useSharedValue(0);
   const measurementGeneration = useRef(0);
+  const retryFrame = useRef<number | null>(null);
+  const retriesLeft = useRef(0);
   const canMeasure = visible && (options.length === 0 || selectedIndex >= 0);
 
   const remeasure = useCallback(() => {
@@ -93,7 +113,18 @@ export function AutocompletePopover({
       measureElement(anchorElement),
       measureFloatingPanelPortalHost(portalHostName),
     ]).then(([anchorRect, hostRect]) => {
-      if (generation !== measurementGeneration.current || !hostRect) return undefined;
+      if (generation !== measurementGeneration.current) return undefined;
+      if (!isMeasured(anchorRect, hostRect)) {
+        // One retry in flight at a time, so the effect cleanup has a single frame to cancel.
+        if (retriesLeft.current > 0 && retryFrame.current === null) {
+          retriesLeft.current -= 1;
+          retryFrame.current = requestAnimationFrame(() => {
+            retryFrame.current = null;
+            remeasure();
+          });
+        }
+        return undefined;
+      }
       setRelativeAnchorRect({
         x: anchorRect.x - hostRect.x,
         y: anchorRect.y - hostRect.y,
@@ -112,12 +143,17 @@ export function AutocompletePopover({
       return;
     }
 
+    retriesLeft.current = MEASUREMENT_RETRY_FRAMES;
     remeasure();
     const raf = requestAnimationFrame(remeasure);
 
     return () => {
       measurementGeneration.current += 1;
       cancelAnimationFrame(raf);
+      if (retryFrame.current !== null) {
+        cancelAnimationFrame(retryFrame.current);
+        retryFrame.current = null;
+      }
     };
   }, [canMeasure, remeasure, windowDimensions.width, windowDimensions.height]);
 
