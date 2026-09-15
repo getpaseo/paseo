@@ -24,7 +24,7 @@ const FULL_SCAN_LINE_LIMIT = 2_000;
 const IMPORT_CANDIDATE_OVERSCAN = 40;
 const IMPORT_CANDIDATE_MIN = 400;
 
-interface OmpSessionDescriptorOptions extends ListImportableSessionsOptions {
+export interface OmpSessionDescriptorOptions extends ListImportableSessionsOptions {
   sessionDir?: string;
   runtimeSettings?: ProviderRuntimeSettings;
   env?: NodeJS.ProcessEnv;
@@ -102,12 +102,66 @@ export async function listOmpImportableSessions(
   );
 }
 
+/**
+ * Reads the model/thinking config of an OMP session for import.
+ *
+ * `handle` is either an absolute path to the session `.jsonl` (what the
+ * importable-sessions list hands back) or a bare OMP session id (what
+ * `paseo import <id>` supplies). Ids are resolved against the configured
+ * sessions directory; an unresolvable handle yields `{}`.
+ */
 export async function readOmpImportSessionConfig(
-  filePath: string,
+  handle: string,
+  options: OmpSessionDescriptorOptions = {},
 ): Promise<OmpImportSessionConfig> {
+  const filePath = await resolveOmpSessionFile(handle, options);
+  if (!filePath) return {};
   const descriptor = await readOmpSessionDescriptor(filePath);
   if (!descriptor) return {};
   return toOmpImportSessionConfig(descriptor);
+}
+
+/**
+ * Resolves an import handle to a session file path. Returns the handle itself
+ * when it already names a readable file; otherwise searches the sessions
+ * directory for a file whose header `id` matches.
+ */
+export async function resolveOmpSessionFile(
+  handle: string,
+  options: OmpSessionDescriptorOptions = {},
+): Promise<string | null> {
+  const trimmed = handle.trim();
+  if (!trimmed) return null;
+  if (await isReadableFile(trimmed)) return trimmed;
+
+  const sessionsDir = await resolveOmpSessionsDir(options);
+  const files = await walkJsonlFiles(sessionsDir);
+  // OMP names session files `<timestamp>_<id>.jsonl`; try those first so the
+  // common case opens a single file instead of scanning the directory.
+  const nameSuffix = `_${trimmed}.jsonl`;
+  const byName = files.filter((file) => path.basename(file).endsWith(nameSuffix));
+  for (const file of byName) {
+    if (await headerSessionIdMatches(file, trimmed)) return file;
+  }
+  const rest = byName.length > 0 ? files.filter((file) => !byName.includes(file)) : files;
+  for (const file of rest) {
+    if (await headerSessionIdMatches(file, trimmed)) return file;
+  }
+  return null;
+}
+
+async function isReadableFile(filePath: string): Promise<boolean> {
+  try {
+    return (await stat(filePath)).isFile();
+  } catch {
+    return false;
+  }
+}
+
+async function headerSessionIdMatches(filePath: string, sessionId: string): Promise<boolean> {
+  const headChunk = await readHeadChunk(filePath);
+  if (!headChunk) return false;
+  return parseSessionHeaderFromChunk(headChunk)?.sessionId === sessionId;
 }
 
 async function resolveOmpSessionsDir(options: OmpSessionDescriptorOptions): Promise<string> {

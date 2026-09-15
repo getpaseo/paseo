@@ -3,7 +3,11 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, test } from "vitest";
 
-import { listOmpImportableSessions, readOmpImportSessionConfig } from "./session-descriptor.js";
+import {
+  listOmpImportableSessions,
+  readOmpImportSessionConfig,
+  resolveOmpSessionFile,
+} from "./session-descriptor.js";
 
 async function writeSession(root: string, relativePath: string, lines: unknown[]): Promise<string> {
   const filePath = path.join(root, "sessions", relativePath);
@@ -93,6 +97,50 @@ describe("OMP session descriptor", () => {
     await expect(readOmpImportSessionConfig(sessionFile)).resolves.toEqual({
       model: "openai-codex/gpt-5.1",
     });
+  });
+
+  test("resolves a bare session id to its file and reads the same import config", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "paseo-omp-session-by-id-"));
+    const sessionDir = path.join(root, "sessions");
+    const cwd = path.join(root, "repo");
+    const sessionId = "01a03dc8-77bb-7000-b0a3-bb7d25477e81";
+    const sessionFile = await writeSession(
+      root,
+      `project/2026-08-26T11-15-43-163Z_${sessionId}.jsonl`,
+      [
+        { type: "title", v: 1, title: "", updatedAt: "2026-08-26T11:15:43.163Z" },
+        { type: "session", version: 3, id: sessionId, timestamp: "2026-08-26T11:15:43.163Z", cwd },
+        {
+          type: "model_change",
+          id: "model-1",
+          timestamp: "2026-08-26T11:15:43.200Z",
+          model: "anthropic/claude-opus-5",
+        },
+      ],
+    );
+    // A decoy whose filename does not follow the `<timestamp>_<id>` convention
+    // but whose header carries the id must still be found.
+    const oddlyNamedId = "renamed-session";
+    const oddlyNamed = await writeSession(root, "project/notes.jsonl", [
+      { type: "session", id: oddlyNamedId, timestamp: "2026-08-27T00:00:00.000Z", cwd },
+      {
+        type: "model_change",
+        id: "model-2",
+        timestamp: "2026-08-27T00:00:00.100Z",
+        model: "mimorouter/claude-fable-5-1",
+      },
+    ]);
+
+    await expect(resolveOmpSessionFile(sessionId, { sessionDir })).resolves.toBe(sessionFile);
+    await expect(resolveOmpSessionFile(sessionFile, { sessionDir })).resolves.toBe(sessionFile);
+    await expect(resolveOmpSessionFile(oddlyNamedId, { sessionDir })).resolves.toBe(oddlyNamed);
+    await expect(resolveOmpSessionFile("does-not-exist", { sessionDir })).resolves.toBeNull();
+
+    const byId = await readOmpImportSessionConfig(sessionId, { sessionDir });
+    const byPath = await readOmpImportSessionConfig(sessionFile, { sessionDir });
+    expect(byId).toEqual({ model: "anthropic/claude-opus-5" });
+    expect(byId).toEqual(byPath);
+    await expect(readOmpImportSessionConfig("does-not-exist", { sessionDir })).resolves.toEqual({});
   });
 
   test("keeps recent nested OMP subagent sessions importable", async () => {
