@@ -22,7 +22,10 @@ import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store"
 import { useActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
 import { type SidebarWorkspaceEntry } from "@/hooks/use-sidebar-workspaces-list";
 import type { StatusBucket } from "@/hooks/sidebar-status-view-model";
-import type { SidebarWorkspaceGroup } from "@/components/sidebar/sidebar-labels";
+import {
+  SIDEBAR_HEADERLESS_GROUP_KEY,
+  type SidebarWorkspaceGroup,
+} from "@/components/sidebar/sidebar-labels";
 import { SidebarFilterEmptyState } from "@/components/sidebar/empty-states";
 import type { HostBadgeModel } from "@/hosts/appearance";
 import { isWeb as platformIsWeb, isNative as platformIsNative } from "@/constants/platform";
@@ -299,7 +302,9 @@ function StatusGroupList({
         <StatusGroupRows
           key={group.key}
           group={group}
-          collapsed={collapsedWorkspaceGroupKeys.has(group.key)}
+          collapsed={
+            group.key !== SIDEBAR_HEADERLESS_GROUP_KEY && collapsedWorkspaceGroupKeys.has(group.key)
+          }
           projectIconByProjectViewKey={projectIconByProjectViewKey}
           shortcutIndex={shortcutIndex}
           showShortcutBadges={showShortcutBadges}
@@ -341,9 +346,14 @@ function StatusGroupRows({
     toggleExpanded: toggleWorkspacesExpanded,
   } = useLimitedSidebarGroup(group.rows);
 
+  // Headerless groups (recent activity) render rows directly: the ordering carries the
+  // grouping's meaning, and a header would be a blank pressable row that collapses the whole
+  // list behind a chevron on hover.
+  const headerless = group.key === SIDEBAR_HEADERLESS_GROUP_KEY;
+
   return (
     <View style={collapsed ? undefined : styles.statusGroupBlockExpanded}>
-      <StatusGroupHeader group={group} collapsed={collapsed} />
+      {headerless ? null : <StatusGroupHeader group={group} collapsed={collapsed} />}
       {!collapsed ? (
         <View
           style={styles.statusWorkspaceListContainer}
