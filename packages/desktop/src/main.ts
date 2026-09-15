@@ -67,8 +67,11 @@ import {
   registerBrowserWebviewNavigationGuards,
   unregisterPaseoBrowserFromHost,
   registerAttachedPaseoBrowser,
+  setPaseoGuestPresented,
   setWorkspaceActivePaseoBrowserId,
+  startPaseoGuestCompositorWatchdog,
   unregisterPaseoBrowserHost,
+  withPaseoGuestLiveHold,
 } from "./features/browser-webviews/index.js";
 import {
   clearPaseoBrowserProfile,
@@ -144,43 +147,60 @@ interface AttachedBrowserInput {
   webContentsId: number;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 function readAttachedBrowserInput(input: unknown): AttachedBrowserInput | null {
-  if (typeof input !== "object" || input === null || Array.isArray(input)) {
+  if (!isRecord(input)) {
     return null;
   }
-  const record = input as Record<string, unknown>;
-  if (typeof record.browserId !== "string" || record.browserId.trim().length === 0) {
+  if (typeof input.browserId !== "string" || input.browserId.trim().length === 0) {
     return null;
   }
-  if (typeof record.workspaceId !== "string" || record.workspaceId.trim().length === 0) {
+  if (typeof input.workspaceId !== "string" || input.workspaceId.trim().length === 0) {
     return null;
   }
   if (
-    typeof record.webContentsId !== "number" ||
-    !Number.isInteger(record.webContentsId) ||
-    record.webContentsId <= 0
+    typeof input.webContentsId !== "number" ||
+    !Number.isInteger(input.webContentsId) ||
+    input.webContentsId <= 0
   ) {
     return null;
   }
   return {
-    browserId: record.browserId.trim(),
-    workspaceId: record.workspaceId.trim(),
-    webContentsId: record.webContentsId,
+    browserId: input.browserId.trim(),
+    workspaceId: input.workspaceId.trim(),
+    webContentsId: input.webContentsId,
   };
+}
+
+function readPresentedBrowserInput(
+  input: unknown,
+): { browserId: string; presented: boolean } | null {
+  if (!isRecord(input)) {
+    return null;
+  }
+  if (typeof input.browserId !== "string" || input.browserId.trim().length === 0) {
+    return null;
+  }
+  if (typeof input.presented !== "boolean") {
+    return null;
+  }
+  return { browserId: input.browserId.trim(), presented: input.presented };
 }
 
 function readActiveBrowserInput(
   input: unknown,
 ): { workspaceId: string; browserId: string | null } | null {
-  if (typeof input !== "object" || input === null || Array.isArray(input)) {
+  if (!isRecord(input)) {
     return null;
   }
-  const record = input as Record<string, unknown>;
-  if (typeof record.workspaceId !== "string" || record.workspaceId.trim().length === 0) {
+  if (typeof input.workspaceId !== "string" || input.workspaceId.trim().length === 0) {
     return null;
   }
-  const browserId = typeof record.browserId === "string" ? record.browserId.trim() : null;
-  return { workspaceId: record.workspaceId.trim(), browserId: browserId || null };
+  const browserId = typeof input.browserId === "string" ? input.browserId.trim() : null;
+  return { workspaceId: input.workspaceId.trim(), browserId: browserId || null };
 }
 
 const browserKeyboard = new BrowserKeyboard(getPaseoBrowserWebviewRegistry());
@@ -454,6 +474,17 @@ ipcMain.handle("paseo:browser:set-workspace-active-browser", (event, rawInput: u
   }
 });
 
+ipcMain.handle("paseo:browser:set-guest-presented", (event, rawInput: unknown) => {
+  const input = readPresentedBrowserInput(rawInput);
+  if (input) {
+    setPaseoGuestPresented({
+      hostWebContentsId: event.sender.id,
+      browserId: input.browserId,
+      presented: input.presented,
+    });
+  }
+});
+
 ipcMain.handle("paseo:browser:focus", (event, browserId: unknown): boolean => {
   if (typeof browserId !== "string" || browserId.trim().length === 0) {
     return false;
@@ -527,7 +558,16 @@ ipcMain.handle("paseo:browser:clear-profile", async (_event, rawLegacyBrowserIds
 });
 
 const browserCapture = createBrowserCaptureService<Electron.NativeImage>({
-  findGuest: getPaseoBrowserWebContentsForHostWindow,
+  findGuest: (browserId, hostWebContentsId) => {
+    const contents = getPaseoBrowserWebContentsForHostWindow(browserId, hostWebContentsId);
+    if (!contents) {
+      return null;
+    }
+    return {
+      isDestroyed: () => contents.isDestroyed(),
+      capturePage: (rect) => withPaseoGuestLiveHold(contents.id, () => contents.capturePage(rect)),
+    };
+  },
   decodeImage: (dataUrl) => nativeImage.createFromDataURL(dataUrl),
   clipboard: {
     write: async ({ text, image }) => {
@@ -969,6 +1009,9 @@ async function bootstrap(): Promise<void> {
   ipcMain.handle("paseo:opener:openUrl", (_event, value: unknown) => openExternalUrl(value));
   registerEditorTargetHandlers();
   registerBrowserAutomationIpc();
+  startPaseoGuestCompositorWatchdog({
+    getMetrics: () => app.getAppMetrics(),
+  });
 
   // In-app "Open in new window": opens a window that lands on the given project
   // via the same open-project flow as a CLI launch (no move, no ownership).

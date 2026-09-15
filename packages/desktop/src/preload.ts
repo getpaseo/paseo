@@ -123,6 +123,8 @@ contextBridge.exposeInMainWorld("paseoDesktop", {
       ipcRenderer.invoke("paseo:browser:unregister-workspace-browser", browserId),
     setWorkspaceActiveBrowser: (input: { workspaceId: string; browserId: string | null }) =>
       ipcRenderer.invoke("paseo:browser:set-workspace-active-browser", input),
+    setGuestPresented: (input: { browserId: string; presented: boolean }) =>
+      ipcRenderer.invoke("paseo:browser:set-guest-presented", input),
     focus: (browserId: string) => ipcRenderer.invoke("paseo:browser:focus", browserId),
     openDevTools: (browserId: string) =>
       ipcRenderer.invoke("paseo:browser:open-devtools", browserId),

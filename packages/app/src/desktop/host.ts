@@ -153,6 +153,7 @@ export interface DesktopBrowserBridge {
     workspaceId: string;
     browserId: string | null;
   }) => Promise<void>;
+  setGuestPresented?: (input: { browserId: string; presented: boolean }) => Promise<void>;
   focus?: (browserId: string) => Promise<boolean>;
   openDevTools?: (browserId: string) => Promise<unknown>;
   clearProfile?: (legacyBrowserIds: string[]) => Promise<void>;
