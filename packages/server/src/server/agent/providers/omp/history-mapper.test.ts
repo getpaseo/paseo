@@ -296,6 +296,51 @@ describe("OMP history mapper", () => {
     ]);
   });
 
+  test("hides metadata-free dynamic device mount notices during replay", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "omp-metadata-free-xdev-history-"));
+    const sessionFile = join(dir, "session.jsonl");
+    writeFileSync(
+      sessionFile,
+      [
+        { type: "session", id: "root", parentId: null },
+        {
+          type: "message",
+          id: "user-1",
+          parentId: "root",
+          message: { role: "user", content: "hello" },
+        },
+        {
+          type: "custom_message",
+          id: "xdev-legacy-1",
+          parentId: "user-1",
+          content: "<system-notice>\nxd://: mounted mcp__agent_browser_click\n</system-notice>",
+        },
+        {
+          type: "message",
+          id: "assistant-1",
+          parentId: "xdev-legacy-1",
+          message: {
+            role: "assistant",
+            content: [{ type: "text", text: "answer" }],
+            responseId: "assistant-1",
+          },
+        },
+      ]
+        .map((entry) => JSON.stringify(entry))
+        .join("\n"),
+    );
+
+    const events: AgentStreamEvent[] = [];
+    for await (const event of streamOmpHistory({ sessionFile, provider: "omp" })) {
+      events.push(event);
+    }
+
+    expect(events.map((event) => event.item)).toEqual([
+      { type: "user_message", text: "hello", messageId: "user-1" },
+      { type: "assistant_message", text: "answer", messageId: "assistant-1" },
+    ]);
+  });
+
   test("preserves raw custom_message advisor metadata during replay", async () => {
     const dir = mkdtempSync(join(tmpdir(), "omp-advisor-history-"));
     const sessionFile = join(dir, "session.jsonl");

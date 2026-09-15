@@ -13,6 +13,7 @@ import {
   type OmpGoal,
   type OmpGoalUpdatedEvent,
 } from "./rpc-types.js";
+import { isOmpDynamicDeviceMountNoticeText } from "./custom-message.js";
 
 type OmpTelemetryToolCallItem = Extract<AgentTimelineItem, { type: "tool_call" }>;
 
@@ -69,6 +70,9 @@ function mapNoticeEvent(event: unknown): OmpRuntimeEventMapping {
   const parsed = OmpNoticeEventSchema.safeParse(event);
   if (!parsed.success) {
     return { handled: true, item: null, logReason: "malformed_omp_notice" };
+  }
+  if (isOmpDynamicDeviceMountNoticeText(parsed.data.message)) {
+    return { handled: true, item: null, logReason: "hidden_omp_dynamic_device_mount" };
   }
   return {
     handled: true,
