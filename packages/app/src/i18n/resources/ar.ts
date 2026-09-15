@@ -1888,6 +1888,7 @@ export const ar: TranslationResources = {
     used: "تم استخدام{{percentage}}%",
     tokens: "رموز{{used}}/{{max}}",
     sessionCost: "تكلفة الجلسة{{cost}}",
+    pending: "لم يتم الإبلاغ عن الاستخدام بعد",
     accessibility: "تم استخدام نافذة السياق{{percentage}}%",
   },
   review: {
