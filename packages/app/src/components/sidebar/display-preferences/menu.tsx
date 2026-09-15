@@ -21,6 +21,8 @@ import {
   GitBranch,
   GitPullRequest,
   Globe,
+  Plus,
+  Rows3,
   Server,
   Settings2,
   Tag,
@@ -51,7 +53,11 @@ import {
   type SidebarGroupMode,
 } from "@/stores/sidebar-view-store";
 import { workspaceLabelKey, type WorkspaceLabelColor } from "@getpaseo/protocol/workspace-labels";
-import type { WorkspaceTitleSource } from "@/hooks/use-settings";
+import {
+  RECENTLY_DONE_WINDOW_OPTIONS,
+  type RecentlyDoneWindowMinutes,
+  type WorkspaceTitleSource,
+} from "@/hooks/use-settings";
 import { SIDEBAR_CHECKS_DISPLAYS, type SidebarChecksDisplay } from "./checks-display";
 import { useSidebarDisplayPreferences, type SidebarTrailingChoice } from "./model";
 import { SIDEBAR_ROW_ITEMS, type SidebarRowItem } from "./row-items";
@@ -123,6 +129,8 @@ const TRAILING_ICONS: Record<SidebarTrailingChoice, OptionIcon> = {
 const GROUPING_MODES: readonly SidebarGroupMode[] = ["project", "status"];
 const TITLE_SOURCES: readonly WorkspaceTitleSource[] = ["title", "branch"];
 const TRAILING_CHOICES: readonly SidebarTrailingChoice[] = ["diff", "timestamp"];
+const LAYOUT_TOGGLES = ["compactRows", "newWorkspaceRow"] as const;
+type LayoutToggle = (typeof LAYOUT_TOGGLES)[number];
 
 const GROUPING_LABEL_KEYS: Record<SidebarGroupMode, string> = {
   project: "sidebar.display.grouping.project",
@@ -152,6 +160,16 @@ const CHECKS_DISPLAY_LABEL_KEYS: Record<SidebarChecksDisplay, string> = {
 const TRAILING_LABEL_KEYS: Record<SidebarTrailingChoice, string> = {
   diff: "sidebar.display.show.diff",
   timestamp: "sidebar.display.show.timestamp",
+};
+
+const LAYOUT_TOGGLE_ICONS: Record<LayoutToggle, OptionIcon> = {
+  compactRows: withUnistyles(Rows3),
+  newWorkspaceRow: withUnistyles(Plus),
+};
+
+const LAYOUT_TOGGLE_LABEL_KEYS: Record<LayoutToggle, string> = {
+  compactRows: "sidebar.display.show.compactRows",
+  newWorkspaceRow: "sidebar.display.show.newWorkspaceRow",
 };
 
 /**
@@ -223,6 +241,11 @@ export function SidebarDisplayPreferencesMenu(): ReactElement {
         id: "show",
         title: t("sidebar.display.show.label"),
         content: <ShowPage preferences={preferences} />,
+      },
+      {
+        id: "recentlyDone",
+        title: t("sidebar.display.recentlyDone.label"),
+        content: <RecentlyDonePage preferences={preferences} />,
       },
       {
         id: "checks",
@@ -317,6 +340,13 @@ export function SidebarDisplayPreferencesMenu(): ReactElement {
           </MenuSubTrigger>
           <MenuSubTrigger id="show" testID="sidebar-display-show">
             {t("sidebar.display.show.label")}
+          </MenuSubTrigger>
+          <MenuSubTrigger
+            id="recentlyDone"
+            value={formatRecentlyDoneWindow(t, preferences.recentlyDoneWindowMinutes)}
+            testID="sidebar-display-recently-done"
+          >
+            {t("sidebar.display.recentlyDone.label")}
           </MenuSubTrigger>
           {showHostFilter ? (
             <>
@@ -550,6 +580,16 @@ function OptionList<Value extends string>({
  */
 function ShowPage({ preferences }: { preferences: Preferences }): ReactElement {
   const { t } = useTranslation();
+  const toggleLayout = useCallback(
+    (item: LayoutToggle) => {
+      if (item === "compactRows") {
+        preferences.toggleCompactRows();
+      } else {
+        preferences.toggleNewWorkspaceRow();
+      }
+    },
+    [preferences],
+  );
   return (
     <>
       {SIDEBAR_ROW_ITEMS.map((item) => (
@@ -578,6 +618,21 @@ function ShowPage({ preferences }: { preferences: Preferences }): ReactElement {
           testID={`sidebar-workspace-trailing-${choice}`}
         />
       ))}
+      <MenuSeparator />
+      {LAYOUT_TOGGLES.map((item) => (
+        <OptionItem
+          key={item}
+          value={item}
+          icon={LAYOUT_TOGGLE_ICONS[item]}
+          label={t(LAYOUT_TOGGLE_LABEL_KEYS[item])}
+          selected={
+            item === "compactRows" ? preferences.compactRows : preferences.showNewWorkspaceRow
+          }
+          closeOnSelect={false}
+          onSelect={toggleLayout}
+          testID={`sidebar-layout-${item}`}
+        />
+      ))}
     </>
   );
 }
@@ -597,6 +652,48 @@ function ChecksSubTrigger(): ReactElement {
     <MenuSubTrigger id="checks" leading={leading} testID="sidebar-display-checks">
       {t("sidebar.display.show.checks")}
     </MenuSubTrigger>
+  );
+}
+
+function formatRecentlyDoneWindow(
+  t: ReturnType<typeof useTranslation>["t"],
+  value: RecentlyDoneWindowMinutes,
+): string {
+  if (value === 0) return t("sidebar.display.recentlyDone.options.off");
+  if (value === 60) return t("sidebar.display.recentlyDone.options.hour");
+  return t("sidebar.display.recentlyDone.options.minutes", { minutes: value });
+}
+
+function RecentlyDonePage({ preferences }: { preferences: Preferences }): ReactElement {
+  return (
+    <>
+      {RECENTLY_DONE_WINDOW_OPTIONS.map((value) => (
+        <RecentlyDoneOption key={value} value={value} preferences={preferences} />
+      ))}
+    </>
+  );
+}
+
+function RecentlyDoneOption({
+  value,
+  preferences,
+}: {
+  value: RecentlyDoneWindowMinutes;
+  preferences: Preferences;
+}): ReactElement {
+  const { t } = useTranslation();
+  const handleSelect = useCallback(
+    () => preferences.setRecentlyDoneWindowMinutes(value),
+    [preferences, value],
+  );
+  return (
+    <MenuItem
+      selected={preferences.recentlyDoneWindowMinutes === value}
+      onSelect={handleSelect}
+      testID={`sidebar-recently-done-${value}`}
+    >
+      {formatRecentlyDoneWindow(t, value)}
+    </MenuItem>
   );
 }
 

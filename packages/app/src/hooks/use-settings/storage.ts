@@ -64,6 +64,22 @@ export const MIN_CODE_FONT_SIZE = 9;
 export const MAX_CODE_FONT_SIZE = 22; // line-height 1.5×22=33 stays safe
 export const MAX_FONT_FAMILY_LENGTH = 200;
 
+export const RECENTLY_DONE_WINDOW_OPTIONS = [0, 1, 5, 15, 30, 60] as const; // minutes, 0 = off
+export type RecentlyDoneWindowMinutes = (typeof RECENTLY_DONE_WINDOW_OPTIONS)[number];
+
+// Device-local appearance settings for the sidebar. All default to their
+// "current behavior" (nothing hidden, comfortable density, no recency split),
+// so an old stored blob without the key loads with today's look.
+export interface AppearanceSettings {
+  hideWorkspaceDiffStats: boolean;
+  hideHostLabels: boolean;
+  compactSidebarRows: boolean;
+  hidePrStatus: boolean;
+  hideNewWorkspaceRow: boolean;
+  hideScriptIndicators: boolean;
+  recentlyDoneWindowMinutes: RecentlyDoneWindowMinutes;
+}
+
 export interface AppSettings {
   theme: ThemePreference;
   /** Which contributed theme `theme: "plugin"` selects. */
@@ -92,6 +108,7 @@ export interface AppSettings {
   /** Desktop-only preferences for implicit opens into the ordinary side pane. */
   openInSidePane: OpenInSidePanePreferences;
   pullRequestOpenLocation: PullRequestOpenLocation;
+  appearance: AppearanceSettings;
 }
 
 export type AppSettingsUpdate =
@@ -119,6 +136,16 @@ export interface Settings extends AppSettings {
   releaseChannel: ReleaseChannel;
 }
 
+export const DEFAULT_APPEARANCE_SETTINGS: AppearanceSettings = {
+  hideWorkspaceDiffStats: false,
+  hideHostLabels: false,
+  compactSidebarRows: false,
+  hidePrStatus: false,
+  hideNewWorkspaceRow: false,
+  hideScriptIndicators: false,
+  recentlyDoneWindowMinutes: 0,
+};
+
 export const DEFAULT_CLIENT_SETTINGS: AppSettings = {
   theme: DEFAULT_THEME_PREFERENCE,
   pluginThemeId: null,
@@ -144,6 +171,7 @@ export const DEFAULT_CLIENT_SETTINGS: AppSettings = {
   vimKeybindings: false,
   openInSidePane: DEFAULT_OPEN_IN_SIDE_PANE_PREFERENCES,
   pullRequestOpenLocation: "explorer",
+  appearance: DEFAULT_APPEARANCE_SETTINGS,
 };
 
 export const DEFAULT_APP_SETTINGS: Settings = {
@@ -260,6 +288,7 @@ const StoredAppSettingsSchema = z
         legacyPullRequestsInSidePane: undefined,
       }),
     pullRequestOpenLocation: z.enum(["main", "side", "explorer"]).optional(),
+    appearance: z.unknown().optional().catch(undefined),
     // COMPAT(explorerSidebarRouting): replaced by source-specific side-pane preferences in v0.6.
     openSupportingTabsInSidePanel: z.boolean().optional().catch(undefined),
     // COMPAT(rendererDesktopSettings): these fields used to share this renderer-owned key.
@@ -298,6 +327,9 @@ const StoredAppSettingsSchema = z
           (stored.sidebarRowItems.scripts === false ? false : DEFAULT_SIDEBAR_ROW_ITEMS.services),
       },
       toolCallDetailLevel,
+      // Always produce a fresh, fully-defaulted appearance object so callers never
+      // see a shared default reference and never need a `??` fallback downstream.
+      appearance: parseAppearance(stored.appearance),
       needsWrite,
     };
   })
@@ -439,6 +471,35 @@ function pickAppSettingsFromLegacy(legacy: StoredAppSettings): AppSettings {
     // rendered value into the new independent preference during migration.
     contentFontSize: legacy.uiBaseFontSize,
   };
+}
+
+function parseAppearance(value: unknown): AppearanceSettings {
+  const stored =
+    typeof value === "object" && value !== null && !Array.isArray(value)
+      ? (value as Partial<Record<keyof AppearanceSettings, unknown>>)
+      : {};
+  const defaults = DEFAULT_APPEARANCE_SETTINGS;
+  return {
+    hideWorkspaceDiffStats: readBoolean(
+      stored.hideWorkspaceDiffStats,
+      defaults.hideWorkspaceDiffStats,
+    ),
+    hideHostLabels: readBoolean(stored.hideHostLabels, defaults.hideHostLabels),
+    compactSidebarRows: readBoolean(stored.compactSidebarRows, defaults.compactSidebarRows),
+    hidePrStatus: readBoolean(stored.hidePrStatus, defaults.hidePrStatus),
+    hideNewWorkspaceRow: readBoolean(stored.hideNewWorkspaceRow, defaults.hideNewWorkspaceRow),
+    hideScriptIndicators: readBoolean(stored.hideScriptIndicators, defaults.hideScriptIndicators),
+    recentlyDoneWindowMinutes: readRecentlyDoneWindowMinutes(stored.recentlyDoneWindowMinutes),
+  };
+}
+
+function readRecentlyDoneWindowMinutes(value: unknown): RecentlyDoneWindowMinutes {
+  const match = RECENTLY_DONE_WINDOW_OPTIONS.find((option) => option === value);
+  return match ?? DEFAULT_APPEARANCE_SETTINGS.recentlyDoneWindowMinutes;
+}
+
+function readBoolean(value: unknown, fallback: boolean): boolean {
+  return typeof value === "boolean" ? value : fallback;
 }
 
 export function parseTerminalScrollbackLines(value: unknown): number | null {

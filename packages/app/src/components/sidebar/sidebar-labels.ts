@@ -1,21 +1,21 @@
 import { workspaceLabelKey } from "@getpaseo/protocol/workspace-labels";
 import type { SidebarWorkspaceEntry } from "@/hooks/use-sidebar-workspaces-list";
 import { SIDEBAR_UNLABELLED_LABEL_KEY, type SidebarLabelFilter } from "@/stores/sidebar-view-store";
-import type { StatusBucket, StatusGroup } from "@/hooks/sidebar-status-view-model";
+import type { StatusGroup, StatusGroupKey } from "@/hooks/sidebar-status-view-model";
 
 export interface SidebarWorkspaceGroup {
   key: string;
   label: string;
   rows: SidebarWorkspaceEntry[];
-  leading: { kind: "status"; bucket: StatusBucket };
+  leading: { kind: "status"; bucket: StatusGroupKey };
 }
 
 export function statusWorkspaceGroups(groups: readonly StatusGroup[]): SidebarWorkspaceGroup[] {
   return groups.map((group) => ({
-    key: group.bucket,
+    key: group.key,
     label: group.label,
     rows: group.rows,
-    leading: { kind: "status", bucket: group.bucket },
+    leading: { kind: "status", bucket: group.key },
   }));
 }
 
