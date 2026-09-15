@@ -78,7 +78,11 @@ import {
   type InFlightTurnForkHandler,
   type TurnContentStrategy,
 } from "./turn-footer";
-import { resolveBottomOverlayTailInset } from "./bottom-overlay-inset";
+import {
+  bottomOverlayClearancesEqual,
+  resolveBottomOverlayTailInset,
+  shouldAnchorForBottomOverlayAppearance,
+} from "./bottom-overlay-inset";
 import { layoutStream, type StreamLayoutItem } from "./layout";
 import {
   type BottomAnchorLocalRequest,
@@ -349,6 +353,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     const toolCallDetailLevel = useSettings((settings) => settings.toolCallDetailLevel);
     const chatOutlineEnabled = useSettings((settings) => settings.chatOutlineEnabled);
     const viewportRef = useRef<StreamViewportHandle | null>(null);
+    const previousBottomOverlayTailClearanceRef = useRef(0);
     const pendingClientMessageIds = useMemo(
       () => new Set(pendingMessageSubmissions.map((submission) => submission.clientMessageId)),
       [pendingMessageSubmissions],
@@ -434,6 +439,31 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       setExpandedInlineToolCallIds(new Set());
       setExpandedToolCallGroupIds(new Set());
     }, [agentId]);
+
+    useEffect(() => {
+      const previousTailClearance = previousBottomOverlayTailClearanceRef.current;
+      previousBottomOverlayTailClearanceRef.current = bottomOverlayTailClearance;
+      if (isTimelineDetached || previousTailClearance > 0 || bottomOverlayTailClearance <= 0) {
+        return;
+      }
+
+      // Plugin registrations can add the floating composer track after the initial route anchor.
+      // Re-anchor once after its spacer commits so the newly protected tail is actually visible.
+      const frame = requestAnimationFrame(() => {
+        const viewport = viewportRef.current;
+        if (
+          viewport &&
+          shouldAnchorForBottomOverlayAppearance({
+            previousTailClearance,
+            nextTailClearance: bottomOverlayTailClearance,
+            isFollowingOutput: viewport.isFollowingOutput(),
+          })
+        ) {
+          viewport.scrollToBottom("jump-to-bottom");
+        }
+      });
+      return () => cancelAnimationFrame(frame);
+    }, [bottomOverlayTailClearance, isTimelineDetached]);
 
     const handleInlinePathPress = useStableEvent(
       (target: InlinePathTarget, disposition: OpenFileDisposition) => {
@@ -1243,6 +1273,9 @@ function agentStreamViewPropsEqual(
   }
   if (left.isAuthoritativeHistoryReady !== right.isAuthoritativeHistoryReady) {
     reasons.push("isAuthoritativeHistoryReady");
+  }
+  if (!bottomOverlayClearancesEqual(left, right)) {
+    reasons.push("bottomOverlayClearance");
   }
   if (left.toast !== right.toast) reasons.push("toast");
   if (left.onOpenWorkspaceFile !== right.onOpenWorkspaceFile) reasons.push("onOpenWorkspaceFile");

@@ -353,6 +353,7 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
         bottomAnchorController.prepareForStickyViewportChange();
         markNativeViewportSettling();
       },
+      isFollowingOutput: () => bottomAnchorController.mode === "sticky-bottom",
     };
     viewportRef.current = handle;
     return () => {
