@@ -2421,7 +2421,7 @@ function ComposerContentImpl({
               <RenderProfile id="MessageInput">
                 <StableMessageInput
                   ref={messageInputRef}
-                  value={textReplacement.text}
+                  value={textSource.getSnapshot()}
                   onChangeText={setUserInput}
                   onSubmit={handleSubmit}
                   hasExternalContent={hasExternalContent}
