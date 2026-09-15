@@ -81,6 +81,15 @@ interface PluginSessionBinding {
   plugin: LoadedPlugin | null;
 }
 
+interface PluginFrameInput {
+  session: PluginSessionBinding;
+  pluginId: string;
+  child: PluginChild;
+  sessionHost: PluginPaseoSessionHost;
+  frame: string | Uint8Array;
+  isBinary: boolean;
+}
+
 interface PendingProviderSend {
   input: ProviderInput;
   resolve: () => void;
@@ -687,14 +696,7 @@ export class PluginRuntime {
    * instead would leave a socket nobody speaks to until the host's hello
    * timeout closed it, and that close would attach another.
    */
-  private routePluginFrame(input: {
-    session: PluginSessionBinding;
-    pluginId: string;
-    child: PluginChild;
-    sessionHost: PluginPaseoSessionHost;
-    frame: string | Uint8Array;
-    isBinary: boolean;
-  }): void {
+  private routePluginFrame(input: PluginFrameInput): void {
     const { session, frame, isBinary } = input;
     if (session.socket.readyState === 1) {
       session.socket.receive(frame, isBinary);
@@ -708,14 +710,7 @@ export class PluginRuntime {
     });
   }
 
-  private async reattachPluginSession(input: {
-    session: PluginSessionBinding;
-    pluginId: string;
-    child: PluginChild;
-    sessionHost: PluginPaseoSessionHost;
-    frame: string | Uint8Array;
-    isBinary: boolean;
-  }): Promise<void> {
+  private async reattachPluginSession(input: PluginFrameInput): Promise<void> {
     const { session, pluginId, sessionHost, child, frame, isBinary } = input;
     const replacement = new PluginSessionSocket(child);
     try {
