@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { readFileSync, realpathSync, statSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import {
   FLEET_CONTROL_CONTRACT_VERSION,
   FLEET_CONTROL_PORTFOLIO_AGENT_ID,
@@ -431,6 +431,7 @@ export class FleetCommitmentControlService {
       await beforeRename();
       const currentContents = await readFile(this.options.ledgerPath, "utf8");
       if (currentContents !== admittedContents) throw new Error("atomic_file_source_changed");
+      const currentStat = await stat(this.options.ledgerPath);
       const current = findControl(currentContents, commitmentId);
       if (current.control.digest !== expectedDigest) throw new FleetControlError("stale_control");
       const markerText = `<!--${JSON.stringify(marker)}-->`;
@@ -440,6 +441,8 @@ export class FleetCommitmentControlService {
         currentContents.slice(current.markerEnd);
       await writeFileAtomic(this.options.ledgerPath, nextContents, {
         expectedSource: currentContents,
+        expectedSourceStat: currentStat,
+        preserveSourceMetadata: true,
       });
       return { marker, digest: fleetControlDigest(marker) };
     });

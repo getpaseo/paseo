@@ -1,11 +1,11 @@
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, expect, test } from "vitest";
-import { withExclusiveFileLock } from "./atomic-file.js";
+import { withExclusiveFileLock, writeFileAtomic } from "./atomic-file.js";
 
 const directories: string[] = [];
 
@@ -141,3 +141,24 @@ test("fails closed when a live PID has a different process-instance identity", a
     "file_lock_busy",
   );
 });
+
+test.skipIf(process.platform === "win32")(
+  "preserves requested source permissions and ownership during replacement",
+  async () => {
+    const { directory } = await fixture();
+    const filePath = join(directory, "ledger.md");
+    await writeFile(filePath, "before");
+    await chmod(filePath, 0o600);
+    const before = await stat(filePath);
+
+    await writeFileAtomic(filePath, "after", {
+      expectedSource: "before",
+      expectedSourceStat: before,
+      preserveSourceMetadata: true,
+    });
+
+    const after = await stat(filePath);
+    expect(after.mode & 0o7777).toBe(0o600);
+    expect({ uid: after.uid, gid: after.gid }).toEqual({ uid: before.uid, gid: before.gid });
+  },
+);

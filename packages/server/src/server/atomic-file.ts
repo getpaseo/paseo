@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { promises as fs } from "node:fs";
+import { promises as fs, type Stats } from "node:fs";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
@@ -8,6 +8,20 @@ interface FileLockOwner {
   processStartedAt: string;
   token: string;
   createdAt: string;
+}
+
+type AtomicFileSourceStat = Pick<Stats, "dev" | "ino" | "uid" | "gid" | "mode">;
+
+function hasSameOwnershipAndMode(left: AtomicFileSourceStat, right: AtomicFileSourceStat): boolean {
+  return (
+    left.uid === right.uid &&
+    left.gid === right.gid &&
+    (left.mode & 0o7777) === (right.mode & 0o7777)
+  );
+}
+
+function isSameSourceFile(left: AtomicFileSourceStat, right: AtomicFileSourceStat): boolean {
+  return left.dev === right.dev && left.ino === right.ino && hasSameOwnershipAndMode(left, right);
 }
 
 const PROCESS_STARTED_AT = new Date(Date.now() - process.uptime() * 1_000).toISOString();
@@ -201,8 +215,15 @@ export async function withExclusiveFileLock<T>(
 export async function writeFileAtomic(
   filePath: string,
   data: string | NodeJS.ArrayBufferView,
-  options?: { expectedSource?: string | NodeJS.ArrayBufferView },
+  options?: {
+    expectedSource?: string | NodeJS.ArrayBufferView;
+    expectedSourceStat?: AtomicFileSourceStat;
+    preserveSourceMetadata?: boolean;
+  },
 ): Promise<void> {
+  if (options?.preserveSourceMetadata && !options.expectedSourceStat) {
+    throw new Error("atomic_file_expected_stat_required");
+  }
   await fs.mkdir(path.dirname(filePath), { recursive: true });
   const tempPath = path.join(
     path.dirname(filePath),
@@ -210,6 +231,20 @@ export async function writeFileAtomic(
   );
   try {
     await fs.writeFile(tempPath, data, "utf8");
+    if (options?.preserveSourceMetadata && options.expectedSourceStat) {
+      const tempStat = await fs.stat(tempPath);
+      if (
+        tempStat.uid !== options.expectedSourceStat.uid ||
+        tempStat.gid !== options.expectedSourceStat.gid
+      ) {
+        await fs.chown(tempPath, options.expectedSourceStat.uid, options.expectedSourceStat.gid);
+      }
+      await fs.chmod(tempPath, options.expectedSourceStat.mode & 0o7777);
+      const preserved = await fs.stat(tempPath);
+      if (!hasSameOwnershipAndMode(preserved, options.expectedSourceStat)) {
+        throw new Error("atomic_file_metadata_not_preserved");
+      }
+    }
     if (options?.expectedSource !== undefined) {
       const expected =
         typeof options.expectedSource === "string"
@@ -220,6 +255,12 @@ export async function writeFileAtomic(
               options.expectedSource.byteLength,
             );
       if (!(await fs.readFile(filePath)).equals(expected)) {
+        throw new Error("atomic_file_source_changed");
+      }
+    }
+    if (options?.expectedSourceStat) {
+      const current = await fs.stat(filePath);
+      if (!isSameSourceFile(current, options.expectedSourceStat)) {
         throw new Error("atomic_file_source_changed");
       }
     }
