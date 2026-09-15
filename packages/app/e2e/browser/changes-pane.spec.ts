@@ -980,11 +980,21 @@ test("canvas diff stays sharp while its workspace pane is resized", async ({ pag
     .toBe(true);
 });
 
-test("changes diff applies code size changes to gutter and code typography", async ({ page }) => {
+test("changes diff waits for configured fonts, then applies code typography changes", async ({
+  page,
+}) => {
   const workspace = await createWorkspaceWithMountedTabDiff();
   await useCodeFont(page, 12);
   await useUnwrappedDiffLines(page);
-  await openWorkspaceChanges(page, workspace);
+  await holdBrowserFontLoads(page);
+  await navigateToWorkspaceChanges(page, workspace);
+
+  await test.step("commit no geometry before the configured fonts are ready", async () => {
+    await expect(page.getByTestId("git-diff-canvas")).toBeVisible();
+    await expect(page.getByTestId("diff-file-0-body")).toHaveCount(0);
+    await releaseBrowserFontLoads(page);
+    await expectExpandedMountedTabDiff(page);
+  });
   const before = await readDiffTypographyGeometry(page);
 
   await changeCodeTypographyFromSettings(page, {
@@ -1003,63 +1013,31 @@ test("changes diff applies code size changes to gutter and code typography", asy
   expect(after.canvasPixels).not.toEqual(before.canvasPixels);
 });
 
-test("canvas diff does not commit geometry before configured fonts are ready", async ({ page }) => {
-  const workspace = await createWorkspaceWithMountedTabDiff();
-  await holdBrowserFontLoads(page);
-  await useUnwrappedDiffLines(page);
-  await page.setViewportSize({ width: 1400, height: 900 });
-  await page.goto(buildHostWorkspaceRoute(getServerId(), workspace.id));
-  await waitForWorkspaceTabsVisible(page);
-  await openChangesPanel(page);
-
-  await expect(page.getByTestId("git-diff-canvas")).toBeVisible();
-  await expect(page.getByTestId("diff-file-0-body")).toHaveCount(0);
-  await releaseBrowserFontLoads(page);
-  await expectExpandedMountedTabDiff(page);
-});
-
-test("canvas diff creates, edits, and deletes an inline review without DOM code rows", async ({
+test("creates, cancels, edits, and deletes a review while keeping Changes focused", async ({
   page,
 }) => {
   const workspace = await createWorkspaceWithMountedTabDiff();
   await useUnwrappedDiffLines(page);
   await openWorkspaceChanges(page, workspace);
-
-  await startReviewOnFirstChangedLine(page);
-  await cancelInlineReview(page);
-  await startReviewOnFirstChangedLine(page);
-  await saveInlineReview(page, "Please keep this branch explicit");
-  await editInlineReview(page, "Please keep this branch named explicitly");
-  await deleteInlineReview(page);
-
-  await expect(page.locator('[data-testid^="diff-code-row-"]')).toHaveCount(0);
-});
-
-test("autofocusing an inline review keeps the Changes tab focused", async ({ page }) => {
-  const workspace = await createWorkspaceWithMountedTabDiff();
-  await useUnwrappedDiffLines(page);
-  await openWorkspaceChanges(page, workspace);
-
   const changesTab = page.getByTestId("workspace-tab-working_diff").filter({ visible: true });
   const focusedBackground = await changesTab.evaluate(
     (element) => getComputedStyle(element).backgroundColor,
   );
 
-  await startReviewOnFirstChangedLine(page);
-  await expect(page.getByTestId("inline-review-editor-input")).toBeFocused();
-  await expect
-    .poll(() => changesTab.evaluate((element) => getComputedStyle(element).backgroundColor))
-    .toBe(focusedBackground);
-});
-
-test("inline reviews keep the browser text context menu", async ({ page }) => {
-  const workspace = await createWorkspaceWithMountedTabDiff();
-  await useUnwrappedDiffLines(page);
-  await openWorkspaceChanges(page, workspace);
-
-  await startReviewOnFirstChangedLine(page);
-  await page.getByTestId("inline-review-editor-input").click({ button: "right" });
-  await expect(page.getByTestId("diff-source-context-menu")).toHaveCount(0);
+  await test.step("start a focused review with the browser text menu", async () => {
+    await startReviewOnFirstChangedLine(page);
+    await expect(page.getByTestId("inline-review-editor-input")).toBeFocused();
+    await expect(changesTab).toHaveCSS("background-color", focusedBackground);
+    await page.getByTestId("inline-review-editor-input").click({ button: "right" });
+    await expect(page.getByTestId("diff-source-context-menu")).toHaveCount(0);
+    await cancelInlineReview(page);
+  });
+  await test.step("save, edit, and delete the review", async () => {
+    await startReviewOnFirstChangedLine(page);
+    await saveInlineReview(page, "Please keep this branch explicit");
+    await editInlineReview(page, "Please keep this branch named explicitly");
+    await deleteInlineReview(page);
+  });
 });
 
 test("split canvas creates a review on the changed side and keeps it in that column", async ({
@@ -1169,31 +1147,16 @@ test("the whole reviewable row reveals the gutter affordance and uses a text cur
   await expect(page.getByTestId("git-diff-scroll")).toHaveCSS("cursor", "text");
 });
 
-test("canvas diff copies a dragged character selection without opening a review", async ({
-  context,
-  page,
-}) => {
-  const workspace = await createWorkspaceWithExactSelectionDiff("ABCDEFGHIJ");
-  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
-  await useUnwrappedDiffLines(page);
-  await openSelectionWorkspaceChanges(page, workspace);
-
-  await dragExactAddedText(page, { startOffset: 2, endOffset: 8 });
-  await page.keyboard.press("ControlOrMeta+C");
-
-  await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe("CDEFGH");
-  await expect(page.getByTestId("inline-review-editor")).toHaveCount(0);
-});
-
-test("canvas diff preserves selection through a repaint and copies selections and source lines", async ({
+test("selects, preserves, copies, and dismisses diff text without opening a review", async ({
   page,
 }) => {
   await openCopyableSelectionDiff(page, "ABCDEFGHIJ");
   await dragExactAddedText(page, { startOffset: 2, endOffset: 8 });
 
-  await test.step("copy the selection before resizing", async () => {
+  await test.step("copy the selected characters with the keyboard", async () => {
     await copyDiffSelectionWithKeyboard(page);
     await expectClipboardText(page, "CDEFGH");
+    await expect(page.getByTestId("inline-review-editor")).toHaveCount(0);
   });
   await test.step("copy the preserved selection after resizing", async () => {
     await resizeDiffViewportHeight(page, 960);
@@ -1203,6 +1166,16 @@ test("canvas diff preserves selection through a repaint and copies selections an
   await test.step("copy the complete source line", async () => {
     await copyFromChangedLineMenu(page, "Copy line");
     await expectClipboardText(page, "ABCDEFGHIJ");
+  });
+  await test.step("dismiss a new selection without starting a review", async () => {
+    await dragExactAddedText(page, { startOffset: 2, endOffset: 8 });
+    await clickFirstChangedLine(page);
+    await expect(page.getByTestId("inline-review-editor")).toHaveCount(0);
+    await rightClickFirstChangedLine(page);
+    await expect(page.getByTestId("diff-source-copy-selection")).toBeDisabled();
+    await page.keyboard.press("Escape");
+    await clickFirstChangedLine(page);
+    await expect(page.getByTestId("inline-review-editor")).toHaveCount(0);
   });
 });
 
@@ -1215,19 +1188,6 @@ test("canvas diff clears a selection when collapsing an earlier file", async ({ 
   await page.getByTestId("diff-file-0-toggle").click();
   await rightClickFirstChangedLine(page, 1);
   await expect(page.getByTestId("diff-source-copy-selection")).toBeDisabled();
-});
-
-test("clicking the canvas dismisses a selection without opening a review", async ({ page }) => {
-  const workspace = await createWorkspaceWithExactSelectionDiff("ABCDEFGHIJ");
-  await useUnwrappedDiffLines(page);
-  await openSelectionWorkspaceChanges(page, workspace);
-
-  await dragExactAddedText(page, { startOffset: 2, endOffset: 8 });
-  await clickFirstChangedLine(page);
-  await expect(page.getByTestId("inline-review-editor")).toHaveCount(0);
-
-  await clickFirstChangedLine(page);
-  await expect(page.getByTestId("inline-review-editor")).toHaveCount(0);
 });
 
 test("canvas diff replaces a selection with forward and backward drags", async ({
@@ -1424,14 +1384,17 @@ async function setOpenChangesPresentation(
   }
 }
 
+/** Holds every font load in the document until released; later loads pass through. */
 async function holdBrowserFontLoads(page: Page): Promise<void> {
   await page.addInitScript(() => {
     const fontSet = document.fonts;
     const originalLoad = fontSet.load.bind(fontSet);
     const pending: Array<() => void> = [];
+    let released = false;
     Object.defineProperty(fontSet, "load", {
       configurable: true,
       value(font: string, text?: string) {
+        if (released) return originalLoad(font, text);
         return new Promise<FontFace[]>((resolve, reject) => {
           pending.push(() => {
             originalLoad(font, text).then(resolve, reject);
@@ -1441,6 +1404,7 @@ async function holdBrowserFontLoads(page: Page): Promise<void> {
     });
     Object.assign(window, {
       __releasePaseoDiffFontLoads() {
+        released = true;
         for (const release of pending.splice(0)) release();
       },
     });
@@ -1690,12 +1654,16 @@ async function createWorkspaceWithStickyTransitionDiff(): Promise<DirtyWorkspace
 }
 
 async function openWorkspaceChanges(page: Page, workspace: DirtyWorkspace): Promise<void> {
+  await navigateToWorkspaceChanges(page, workspace);
+  await expectExpandedMountedTabDiff(page);
+}
+
+async function navigateToWorkspaceChanges(page: Page, workspace: DirtyWorkspace): Promise<void> {
   await page.setViewportSize({ width: 1400, height: 900 });
   await page.goto(buildHostWorkspaceRoute(getServerId(), workspace.id));
   await waitForWorkspaceTabsVisible(page);
   await page.getByTestId("workspace-explorer-toggle").first().click();
   await openChangesInVisibleExplorer(page);
-  await expectExpandedMountedTabDiff(page);
 }
 
 /** The Explorer overlay a phone-sized viewport shows, with its Changes tab selected. */

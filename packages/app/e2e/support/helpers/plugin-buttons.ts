@@ -1,7 +1,7 @@
 import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import type { Locator, TestInfo } from "@playwright/test";
+import type { Locator } from "@playwright/test";
 import { test, expect, type Page } from "@playwright/test";
 import { gotoAppShell } from "./app";
 import { buildAgentRoute } from "./mock-agent";
@@ -9,7 +9,6 @@ import { openCommandCenter } from "./command-center";
 import { connectNewWorkspaceDaemonClient } from "./new-workspace";
 import { seedWorkspace } from "./seed-client";
 import { pluginRequirements } from "./plugin-fixture";
-import { waitForSettledPosition } from "./sheet-layout";
 
 const PLUGIN_ID = "button-showcase";
 const WIDE = { width: 1440, height: 900 };
@@ -166,17 +165,11 @@ async function command(page: Page, title: string) {
   await expect(panel).not.toBeVisible();
 }
 
-async function capture(
+async function expectSurfaceVisible(
   page: Page,
-  testInfo: TestInfo,
-  name: string,
   subject: Locator = page.getByRole("toolbar", { name: "Workspace actions", exact: true }),
 ) {
   await expect(subject).toBeInViewport();
-  await waitForSettledPosition(subject);
-  const file = testInfo.outputPath(`${name}.png`);
-  await page.screenshot({ path: file, animations: "disabled" });
-  await testInfo.attach(name, { path: file, contentType: "image/png" });
 }
 
 async function expectDetails(page: Page) {
@@ -214,7 +207,7 @@ async function holdButton(page: Page, button: Locator) {
   await page.mouse.down();
 }
 
-async function openCompactOverflowWithHeaderChrome(page: Page, testInfo: TestInfo) {
+async function openCompactOverflowWithHeaderChrome(page: Page) {
   const hamburger = page.getByRole("button", { name: "Open menu", exact: true });
   const action = page.getByRole("button", { name: "Deploy application", exact: true });
   const overflow = page
@@ -230,13 +223,12 @@ async function openCompactOverflowWithHeaderChrome(page: Page, testInfo: TestInf
   await expect(action).toHaveCSS("background-color", highlight);
   await holdButton(page, overflow);
   await expect(overflow).toHaveCSS("background-color", highlight);
-  await capture(page, testInfo, "12c-compact-overflow-pressed");
+  await expectSurfaceVisible(page);
   await page.mouse.up();
 }
 
 export async function withButtonShowcase(
   page: Page,
-  testInfo: TestInfo,
   run: (buttons: {
     openWideMenusAndPopovers(): Promise<void>;
     runAndUpdateActions(): Promise<void>;
@@ -300,15 +292,9 @@ export async function withButtonShowcase(
           await expect(page.getByTestId("workspace-header-title")).toHaveText(
             "Healthy app after button failure",
           );
-          await showcase.disable();
+          await press(page, "Close deployment details");
           await expect.poll(() => released.has(recovered)).toBe(true);
-          await expect(page.getByRole("button", { name: "Run review", exact: true })).toHaveCount(
-            0,
-          );
-          await showcase.setTitle("Healthy app after plugin unload");
-          await expect(page.getByTestId("workspace-header-title")).toHaveText(
-            "Healthy app after plugin unload",
-          );
+          await showcase.setTitle("Button showcase");
         }),
       openWideMenusAndPopovers: () =>
         test.step("wide buttons have placement-owned labels and chevrons", async () => {
@@ -322,23 +308,19 @@ export async function withButtonShowcase(
               .getByRole("button", { name: "Composer checks", exact: true })
               .getByTestId("plugin-button-chevron"),
           ).toHaveCount(0);
-          await capture(page, testInfo, "01-wide-buttons");
+          await expectSurfaceVisible(page);
           await press(page, "Header checks");
           await expect(
             page.getByRole("menuitem", { name: "Run checks", exact: true }),
           ).toBeVisible();
-          await capture(
+          await expectSurfaceVisible(
             page,
-            testInfo,
-            "02-header-menu",
             page.getByRole("menuitem", { name: "Run checks", exact: true }),
           );
           await choose(page, "Environment");
           await expect(page.getByRole("menuitem", { name: "Staging", exact: true })).toBeVisible();
-          await capture(
+          await expectSurfaceVisible(
             page,
-            testInfo,
-            "03-header-submenu",
             page.getByRole("menuitem", { name: "Staging", exact: true }),
           );
           await choose(page, "Staging");
@@ -346,10 +328,8 @@ export async function withButtonShowcase(
           await expect(
             page.getByRole("menuitem", { name: "Production locked", exact: true }),
           ).toBeDisabled();
-          await capture(
+          await expectSurfaceVisible(
             page,
-            testInfo,
-            "03b-wide-overflow",
             page.getByRole("menuitem", { name: "Production locked", exact: true }),
           );
           await choose(page, "Open deployment logs");
@@ -357,35 +337,27 @@ export async function withButtonShowcase(
           await press(page, "Close deployment details");
           await press(page, "Header status");
           await expectDetails(page);
-          await capture(
+          await expectSurfaceVisible(
             page,
-            testInfo,
-            "04-header-popover",
             page.getByRole("button", { name: "Close deployment details", exact: true }),
           );
           await press(page, "Close deployment details");
           await press(page, "Composer checks");
-          await capture(
+          await expectSurfaceVisible(
             page,
-            testInfo,
-            "05-composer-menu",
             page.getByRole("menuitem", { name: "Run checks", exact: true }),
           );
           await choose(page, "Deployment details");
           await expectDetails(page);
-          await capture(
+          await expectSurfaceVisible(
             page,
-            testInfo,
-            "06-composer-menu-content",
             page.getByRole("button", { name: "Close deployment details", exact: true }),
           );
           await press(page, "Close deployment details");
           await press(page, "Composer status");
           await expectDetails(page);
-          await capture(
+          await expectSurfaceVisible(
             page,
-            testInfo,
-            "07-composer-popover",
             page.getByRole("button", { name: "Close deployment details", exact: true }),
           );
           await press(page, "Close deployment details");
@@ -396,17 +368,15 @@ export async function withButtonShowcase(
           await expect(
             page.getByText("Deployment failed. Try again.", { exact: true }),
           ).toBeVisible();
-          await capture(
+          await expectSurfaceVisible(
             page,
-            testInfo,
-            "08-action-error",
             page.getByText("Deployment failed. Try again.", { exact: true }),
           );
           await press(page, "Deploy application");
           await expect(
             page.getByRole("button", { name: "Deploy application", exact: true }),
           ).toBeDisabled();
-          await capture(page, testInfo, "09-action-pending");
+          await expectSurfaceVisible(page);
           await command(page, "Finish deployment");
           await expect(
             page.getByRole("button", { name: "Deploy application", exact: true }),
@@ -415,7 +385,7 @@ export async function withButtonShowcase(
           await expect(
             page.getByRole("button", { name: "Run review", exact: true }),
           ).toBeDisabled();
-          await capture(page, testInfo, "09b-composer-pending");
+          await expectSurfaceVisible(page);
           await command(page, "Finish review");
           await expect(page.getByRole("button", { name: "Run review", exact: true })).toContainText(
             "Reviewed",
@@ -424,10 +394,10 @@ export async function withButtonShowcase(
           await expect(
             page.getByRole("button", { name: "Run review", exact: true }),
           ).toBeDisabled();
-          await capture(page, testInfo, "10-disabled-buttons");
+          await expectSurfaceVisible(page);
           await command(page, "Enable example buttons");
           await command(page, "Use icon-only header");
-          await capture(page, testInfo, "11-icon-only-header");
+          await expectSurfaceVisible(page);
           await command(page, "Hide review button");
           await expect(page.getByRole("button", { name: "Run review", exact: true })).toHaveCount(
             0,
@@ -456,30 +426,24 @@ export async function withButtonShowcase(
             "Button showcase with a long workspace title",
           );
           await expectHeaderTextTruncated(page);
-          await capture(page, testInfo, "12-compact-buttons");
-          await openCompactOverflowWithHeaderChrome(page, testInfo);
+          await expectSurfaceVisible(page);
+          await openCompactOverflowWithHeaderChrome(page);
           await expect(
             page.getByRole("menuitem", { name: "Production locked", exact: true }),
           ).toBeDisabled();
-          await capture(
+          await expectSurfaceVisible(
             page,
-            testInfo,
-            "13-compact-header-overflow",
             page.getByRole("menuitem", { name: "Production locked", exact: true }),
           );
           await choose(page, "Header checks");
-          await capture(
+          await expectSurfaceVisible(
             page,
-            testInfo,
-            "14-compact-header-menu",
             page.getByRole("menuitem", { name: "Run checks", exact: true }),
           );
           await choose(page, "Deployment details");
           await expectDetails(page);
-          await capture(
+          await expectSurfaceVisible(
             page,
-            testInfo,
-            "15-compact-header-content",
             page.getByRole("button", { name: "Close deployment details", exact: true }),
           );
           await press(page, "Close deployment details");
@@ -490,28 +454,22 @@ export async function withButtonShowcase(
               .getByRole("button", { name: "Header checks", exact: true })
               .getByTestId("plugin-button-chevron"),
           ).toHaveCount(0);
-          await capture(
+          await expectSurfaceVisible(
             page,
-            testInfo,
-            "15b-compact-header-direct-menu",
             page.getByRole("menuitem", { name: "Run checks", exact: true }),
           );
           await choose(page, "Run checks");
           await showcase.setTitle("Button showcase");
           await press(page, "Composer status");
           await expectDetails(page);
-          await capture(
+          await expectSurfaceVisible(
             page,
-            testInfo,
-            "16-compact-composer-popover",
             page.getByRole("button", { name: "Close deployment details", exact: true }),
           );
           await press(page, "Close deployment details");
           await press(page, "Composer checks");
-          await capture(
+          await expectSurfaceVisible(
             page,
-            testInfo,
-            "17-compact-composer-menu",
             page.getByRole("menuitem", { name: "Run checks", exact: true }),
           );
           await choose(page, "Run checks");
@@ -529,16 +487,18 @@ export async function withButtonShowcase(
           ).toHaveCount(0);
           await showcase.setTitle("Button showcase");
           await page.emulateMedia({ colorScheme: "dark" });
-          await capture(page, testInfo, "18-dark-buttons");
+          await expectSurfaceVisible(page);
           await press(page, "Header status");
           await expectDetails(page);
-          await capture(
+          await expectSurfaceVisible(
             page,
-            testInfo,
-            "19-dark-popover",
             page.getByRole("button", { name: "Close deployment details", exact: true }),
           );
+          const observation = page.getByLabel("Content observation", { exact: true });
+          await expect(observation).not.toHaveText("");
+          const owner = (await observation.textContent())!;
           await showcase.disable();
+          await expect.poll(() => released.has(owner)).toBe(true);
           await expect(
             page.getByRole("button", { name: "Header status", exact: true }),
           ).toHaveCount(0);
@@ -546,6 +506,10 @@ export async function withButtonShowcase(
             0,
           );
           await expect(page.getByText("All systems operational", { exact: true })).toHaveCount(0);
+          await showcase.setTitle("Healthy app after plugin unload");
+          await expect(page.getByTestId("workspace-header-title")).toHaveText(
+            "Healthy app after plugin unload",
+          );
         }),
     });
   } finally {
