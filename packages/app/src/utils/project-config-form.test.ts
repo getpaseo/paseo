@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { PaseoConfigRawSchema } from "@getpaseo/protocol/paseo-config-schema";
 import type { PaseoConfigRaw } from "@getpaseo/protocol/messages";
-import { applyDraftToConfig, configToDraft, type ProjectConfigDraft } from "./project-config-form";
+import {
+  applyDraftToConfig,
+  configToDraft,
+  formatProjectEnv,
+  parseProjectEnv,
+  type ProjectConfigDraft,
+} from "./project-config-form";
 
 function emptyDraft(): ProjectConfigDraft {
   return {
@@ -9,6 +15,7 @@ function emptyDraft(): ProjectConfigDraft {
     setupOriginalKind: "missing",
     teardownText: "",
     teardownOriginalKind: "missing",
+    envText: "",
     scripts: [],
     metadataPrompts: {
       branchName: "",
@@ -63,6 +70,51 @@ describe("configToDraft", () => {
     expect(buildRow.portText).toBe("");
     expect(buildRow.id).not.toBe(devRow.id);
   });
+
+  it("renders environment variables as key=value lines", () => {
+    const draft = configToDraft({
+      worktree: { env: { API_URL: "https://example.com?a=b", EMPTY: "" } },
+    });
+    expect(draft.envText).toBe("API_URL=https://example.com?a=b\nEMPTY=");
+  });
+});
+
+describe("project env text", () => {
+  it("accepts Windows line endings and keys that match object properties", () => {
+    expect(parseProjectEnv("__proto__=literal\r\nconstructor=value\r\n")).toEqual({
+      ok: true,
+      env: { ["__proto__"]: "literal", constructor: "value" },
+    });
+  });
+
+  it("parses values at the first equals sign and ignores blank lines", () => {
+    expect(parseProjectEnv("API_URL=https://example.com?a=b\n\nEMPTY=\n")).toEqual({
+      ok: true,
+      env: { API_URL: "https://example.com?a=b", EMPTY: "" },
+    });
+  });
+
+  it("rejects malformed, invalid, and duplicate keys with their line number", () => {
+    expect(parseProjectEnv("GOOD=1\nMISSING")).toEqual({
+      ok: false,
+      line: 2,
+      reason: "missing_equals",
+    });
+    expect(parseProjectEnv("BAD KEY=1")).toEqual({
+      ok: false,
+      line: 1,
+      reason: "invalid_key",
+    });
+    expect(parseProjectEnv("DUP=1\nDUP=2")).toEqual({
+      ok: false,
+      line: 2,
+      reason: "duplicate_key",
+    });
+  });
+
+  it("formats environment variables without changing values", () => {
+    expect(formatProjectEnv({ TOKEN: "abc=def", EMPTY: "" })).toBe("TOKEN=abc=def\nEMPTY=");
+  });
 });
 
 describe("applyDraftToConfig", () => {
@@ -106,6 +158,28 @@ describe("applyDraftToConfig", () => {
     draft.setupText = "";
     const next = applyDraftToConfig({ draft, base });
     expect(next.worktree?.setup).toBeUndefined();
+  });
+
+  it("writes and removes project environment variables", () => {
+    const base: PaseoConfigRaw = { worktree: { env: { OLD: "value" } } };
+    const draft = configToDraft(base);
+    draft.envText = "API_URL=https://example.com\nEMPTY=";
+    expect(applyDraftToConfig({ draft, base }).worktree?.env).toEqual({
+      API_URL: "https://example.com",
+      EMPTY: "",
+    });
+
+    draft.envText = "";
+    expect(applyDraftToConfig({ draft, base }).worktree?.env).toBeUndefined();
+  });
+
+  it("refuses to apply malformed project environment text", () => {
+    const base: PaseoConfigRaw = {};
+    const draft = configToDraft(base);
+    draft.envText = "MISSING_EQUALS";
+    expect(() => applyDraftToConfig({ draft, base })).toThrow(
+      "Invalid project environment on line 1",
+    );
   });
 
   it("preserves unknown top-level, worktree, and script entry fields on round-trip", () => {

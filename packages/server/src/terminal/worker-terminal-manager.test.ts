@@ -415,12 +415,18 @@ it("does not surface fire-and-forget send timeouts as unhandled rejections", asy
   expect(unhandledRejections).toEqual([]);
 });
 
-it("keeps registered cwd env inheritance behind the worker manager interface", async () => {
+it("combines fresh project env with registered runtime env through the worker", async () => {
   manager = createWorkerTerminalManager();
   const cwd = mkdtempSync(join(tmpdir(), "worker-terminal-manager-env-"));
   temporaryDirs.push(cwd);
   const markerPath = join(cwd, "env.txt");
 
+  writeFileSync(
+    join(cwd, "paseo.json"),
+    JSON.stringify({
+      worktree: { env: { PASEO_PROJECT_TERMINAL_TEST: "project-env" } },
+    }),
+  );
   manager.registerCwdEnv({
     cwd,
     env: { PASEO_WORKER_TERMINAL_TEST: "worker-env" },
@@ -432,7 +438,7 @@ it("keeps registered cwd env inheritance behind the worker manager interface", a
       ...nodeTerminalCommand(`
       require("node:fs").writeFileSync(
         ${JSON.stringify(markerPath)},
-        process.env.PASEO_WORKER_TERMINAL_TEST ?? "",
+        [process.env.PASEO_WORKER_TERMINAL_TEST, process.env.PASEO_PROJECT_TERMINAL_TEST].join(":"),
       );
       setInterval(() => {}, 1000);
     `),
@@ -441,7 +447,7 @@ it("keeps registered cwd env inheritance behind the worker manager interface", a
 
   await waitForCondition(() => existsSync(markerPath), 10000);
 
-  expect(readFileSync(markerPath, "utf8")).toBe("worker-env");
+  expect(readFileSync(markerPath, "utf8")).toBe("worker-env:project-env");
 });
 
 it("injects parent-minted terminal activity env through the worker", async () => {
