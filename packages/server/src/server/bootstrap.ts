@@ -429,6 +429,7 @@ export interface PaseoDaemonConfig {
   };
   appBaseUrl?: string;
   auth?: DaemonAuthConfig;
+  fleetCommitmentControls?: { ledgerPath: string };
   openai?: PaseoOpenAIConfig;
   speech?: PaseoSpeechConfig;
   voiceLlmProvider?: AgentProvider | null;
@@ -1717,6 +1718,7 @@ export async function createPaseoDaemon(
               pluginRuntime,
               orchestrationSkills,
               workspaceLabelService,
+              config.fleetCommitmentControls,
             );
             pluginRuntime.bindPaseoSessionHost(wsServer);
             await pluginRuntime.start();

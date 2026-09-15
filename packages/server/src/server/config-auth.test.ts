@@ -55,4 +55,33 @@ describe("daemon auth config", () => {
     expect(config.auth?.password).toMatch(/^\$2[aby]\$12\$/);
     expect(isBearerTokenValid({ password: config.auth?.password, token: "from-env" })).toBe(true);
   });
+
+  test("loads Fleet ledger and Deck credential only from trusted server environment", async () => {
+    const paseoHome = await createPaseoHome({ version: 1 });
+    const ledgerPath = path.join(paseoHome, "private", "fleet.md");
+    const config = loadConfig(paseoHome, {
+      env: {
+        PASEO_FLEET_COMMITMENT_LEDGER_PATH: ledgerPath,
+        PASEO_FIRSTMATE_DECK_CREDENTIAL: "deck-secret",
+      },
+    });
+
+    expect(config.fleetCommitmentControls).toEqual({ ledgerPath });
+    expect(config.auth?.firstmateDeckCredential).toMatch(/^\$2[aby]\$12\$/);
+    expect(
+      isBearerTokenValid({
+        password: config.auth?.firstmateDeckCredential,
+        token: "deck-secret",
+      }),
+    ).toBe(true);
+  });
+
+  test("rejects partial Fleet server configuration", async () => {
+    const paseoHome = await createPaseoHome({ version: 1 });
+    expect(() =>
+      loadConfig(paseoHome, {
+        env: { PASEO_FLEET_COMMITMENT_LEDGER_PATH: path.join(paseoHome, "fleet.md") },
+      }),
+    ).toThrow("Fleet controls require both ledger path and Deck credential");
+  });
 });

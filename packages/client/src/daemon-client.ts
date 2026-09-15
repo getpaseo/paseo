@@ -11,6 +11,12 @@ import type { CreationSnapshot } from "@getpaseo/protocol/messages";
 import type { z } from "zod";
 import type { SessionEventSubscription } from "@getpaseo/protocol/messages";
 import type { ClientCapability } from "@getpaseo/protocol/client-capabilities";
+import type {
+  FleetCommitmentConfirmRequest,
+  FleetCommitmentOperateRequest,
+  FleetCommitmentReadRequest,
+  FleetControlReceipt,
+} from "@getpaseo/protocol/fleet-control";
 import type { AgentAttentionNotificationPayload } from "@getpaseo/protocol/agent-attention-notification";
 import { parsePluginSourceReference } from "@getpaseo/protocol/plugin-source-reference";
 import {
@@ -4979,6 +4985,50 @@ export class DaemonClient {
       responseType: "daemon.get_status.response",
       timeout: options?.timeout,
     });
+  }
+
+  async operateFleetCommitment(
+    input: Omit<FleetCommitmentOperateRequest, "type" | "requestId"> & { requestId?: string },
+  ): Promise<FleetControlReceipt> {
+    this.requireFleetCommitmentControls();
+    const { requestId, ...message } = input;
+    const payload =
+      await this.sendNamespacedCorrelatedSessionRequest<"fleet.commitment.operate.response">({
+        requestId,
+        message: { type: "fleet.commitment.operate.request", ...message },
+      });
+    return payload.receipt;
+  }
+
+  async readFleetCommitment(
+    input: Omit<FleetCommitmentReadRequest, "type" | "requestId"> & { requestId?: string },
+  ) {
+    this.requireFleetCommitmentControls();
+    const { requestId, ...message } = input;
+    return this.sendNamespacedCorrelatedSessionRequest<"fleet.commitment.read.response">({
+      requestId,
+      message: { type: "fleet.commitment.read.request", ...message },
+    });
+  }
+
+  async confirmFleetCommitment(
+    input: Omit<FleetCommitmentConfirmRequest, "type" | "requestId"> & { requestId?: string },
+  ): Promise<FleetControlReceipt> {
+    this.requireFleetCommitmentControls();
+    const { requestId, ...message } = input;
+    const payload =
+      await this.sendNamespacedCorrelatedSessionRequest<"fleet.commitment.confirm.response">({
+        requestId,
+        message: { type: "fleet.commitment.confirm.request", ...message },
+      });
+    return payload.receipt;
+  }
+
+  private requireFleetCommitmentControls(): void {
+    // COMPAT(fleetCommitmentControls): old daemons have no safe fallback for this mutation.
+    if (this.lastServerInfoMessage?.features?.fleetCommitmentControls !== true) {
+      throw new Error("Update the host to use Fleet commitment controls.");
+    }
   }
 
   async reloadDaemonConfig(requestId?: string): Promise<DaemonConfigReloadResponse["payload"]> {

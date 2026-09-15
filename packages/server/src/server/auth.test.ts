@@ -8,6 +8,7 @@ import {
   isAgentMcpRequestAuthorized,
   isBearerTokenValidAsync,
   isBearerTokenValid,
+  resolveDaemonBearerPrincipal,
   shouldBypassBearerAuth,
 } from "./auth.js";
 
@@ -39,6 +40,22 @@ describe("daemon bearer validator", () => {
 
     expect(hash).toMatch(/^\$2[aby]\$12\$/);
     expect(isBearerTokenValid({ password: hash, token: "correct-password" })).toBe(true);
+  });
+
+  test("admits the Deck credential as only the Deck service principal", () => {
+    expect(
+      resolveDaemonBearerPrincipal(
+        { password: CORRECT_PASSWORD_HASH, firstmateDeckCredential: CORRECT_PASSWORD_HASH },
+        "correct-password",
+      ),
+    ).toBe("service:firstmate-deck");
+    expect(
+      resolveDaemonBearerPrincipal(
+        { password: CORRECT_PASSWORD_HASH, firstmateDeckCredential: CORRECT_PASSWORD_HASH },
+        "wrong",
+      ),
+    ).toBeNull();
+    expect(resolveDaemonBearerPrincipal(undefined, null)).toBe("owner");
   });
 
   test("extracts HTTP bearer tokens", () => {

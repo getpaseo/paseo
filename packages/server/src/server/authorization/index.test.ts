@@ -119,6 +119,19 @@ describe("SessionAuthorization", () => {
     expect(authorization.allowsOutbound(outboundMessage("rpc_error"))).toBe(true);
   });
 
+  test("Fleet service permission is scoped to Fleet operation, read, and confirmation", () => {
+    const authorization = new SessionAuthorization(["fleet.control"]);
+    for (const type of [
+      "fleet.commitment.operate.request",
+      "fleet.commitment.read.request",
+      "fleet.commitment.confirm.request",
+    ] as const) {
+      expect(authorization.allowsInbound(inboundMessage(type))).toBe(true);
+    }
+    expect(authorization.allowsInbound(inboundMessage("send_agent_message_request"))).toBe(false);
+    expect(authorization.allowsInbound(inboundMessage("get_daemon_config_request"))).toBe(false);
+  });
+
   test("legacy Hub authority is translated at one compatibility boundary", () => {
     expect(permissionsForLegacyHubScopes(["hub.execution.*"])).toEqual(["hub.execute"]);
     expect(permissionsForLegacyHubScopes(["*"])).toEqual([]);
