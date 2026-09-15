@@ -76,7 +76,8 @@ function useTerminalPanelDescriptor(
 }
 
 function TerminalPanel() {
-  const { serverId, workspaceId, target, openFileInWorkspace } = usePaneContext();
+  const { serverId, workspaceId, target, openFileInWorkspace, openUrlInBrowserTab } =
+    usePaneContext();
   const { isWorkspaceFocused, isPaneFocused } = usePaneFocus();
   const workspaceFields = useWorkspaceFields(serverId, workspaceId, (w) => ({
     workspaceDirectory: w.workspaceDirectory,
@@ -110,6 +111,7 @@ function TerminalPanel() {
       isPaneFocused={isPaneFocused}
       onOpenFileExplorer={handleOpenFileExplorer}
       onOpenWorkspaceFile={openFileInWorkspace}
+      onOpenUrlInBrowserTab={openUrlInBrowserTab}
     />
   );
 }
