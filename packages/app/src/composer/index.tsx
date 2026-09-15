@@ -14,6 +14,7 @@ import type { TFunction } from "i18next";
 import {
   useState,
   useEffect,
+  useLayoutEffect,
   useRef,
   useCallback,
   useMemo,
@@ -1069,7 +1070,10 @@ function ComposerForgeBinding({
   const value = useSyncExternalStore(text.subscribe, text.getSnapshot, text.getSnapshot);
   const binding = useComposerForgeAutoAttach({ ...configuration, text: value });
   useImperativeHandle(ref, () => binding, [binding]);
-  useEffect(() => onResolvingChange(binding.isResolving), [binding.isResolving, onResolvingChange]);
+  useLayoutEffect(
+    () => onResolvingChange(binding.isResolving),
+    [binding.isResolving, onResolvingChange],
+  );
   return null;
 }
 

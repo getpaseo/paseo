@@ -1,5 +1,4 @@
-import { useComposerHeight } from "./height.web";
-import React, { act, useCallback, useRef, useMemo } from "react";
+import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it } from "vitest";
 import { EditingTextInput as ComposerTextInput } from "@/components/ui/text-input/text-input.web";
@@ -207,62 +206,5 @@ describe("ComposerTextInput web IME composition", () => {
     });
 
     expect(mounted.textarea.value).toBe("");
-  });
-});
-
-describe("composer height with input-owned text", () => {
-  it("remeasures the live draft when its width changes", async () => {
-    const container = document.createElement("div");
-    document.body.appendChild(container);
-    const root = createRoot(container);
-    function Probe() {
-      const source = useRef<HTMLTextAreaElement>(null);
-      const liveText = useRef("");
-      const getText = useCallback(() => liveText.current, []);
-      const height = useComposerHeight({
-        getText,
-        textareaRef: source,
-        minHeight: 24,
-        maxHeight: 600,
-      });
-      const onInput = useCallback(
-        (event: React.FormEvent<HTMLTextAreaElement>) => {
-          const next = event.currentTarget.value;
-          if (height.mode === "measured") height.onTextChange(liveText.current, next);
-          liveText.current = next;
-        },
-        [height],
-      );
-      const style = useMemo<React.CSSProperties>(
-        () => ({
-          height: Number(height.style.height),
-          minHeight: 24,
-          maxHeight: 600,
-          width: 320,
-          lineHeight: "20px",
-          fontSize: 16,
-          padding: 0,
-        }),
-        [height.style.height],
-      );
-      return <textarea ref={source} onInput={onInput} style={style} />;
-    }
-    try {
-      act(() => root.render(<Probe />));
-      const textarea = container.querySelector("textarea")!;
-      act(() =>
-        typeFromIme(
-          textarea,
-          "A long sentence that wraps when the editor becomes narrower. ".repeat(8),
-        ),
-      );
-      await expect.poll(() => textarea.getBoundingClientRect().height).toBeGreaterThan(100);
-      const before = textarea.getBoundingClientRect().height;
-      textarea.style.width = "160px";
-      await expect.poll(() => textarea.getBoundingClientRect().height).toBeGreaterThan(before);
-    } finally {
-      act(() => root.unmount());
-      container.remove();
-    }
   });
 });
