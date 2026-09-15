@@ -155,6 +155,21 @@ interface TimeoutOptions {
   onLateError?: (error: unknown) => void;
 }
 
+interface ImportProviderSessionInput {
+  provider: AgentProvider;
+  providerHandleId: string;
+  cwd: string;
+  workspaceId: string;
+  labels?: Record<string, string>;
+  modeId?: string;
+}
+
+interface UnarchiveSnapshotUpdates {
+  workspaceId?: string;
+  labels?: AgentLabelPatch;
+  modeId?: string;
+}
+
 function formatProviderList(providers: readonly string[]): string {
   return providers.length > 0 ? providers.join(", ") : "none";
 }
@@ -1373,23 +1388,13 @@ export class AgentManager {
     });
   }
 
-  importProviderSession(input: {
-    provider: AgentProvider;
-    providerHandleId: string;
-    cwd: string;
-    workspaceId: string;
-    labels?: Record<string, string>;
-  }): Promise<ManagedAgent> {
+  importProviderSession(input: ImportProviderSessionInput): Promise<ManagedAgent> {
     return this.trackAgentRegistrationOperation(this.importProviderSessionInternal(input));
   }
 
-  private async importProviderSessionInternal(input: {
-    provider: AgentProvider;
-    providerHandleId: string;
-    cwd: string;
-    workspaceId: string;
-    labels?: Record<string, string>;
-  }): Promise<ManagedAgent> {
+  private async importProviderSessionInternal(
+    input: ImportProviderSessionInput,
+  ): Promise<ManagedAgent> {
     this.assertAcceptingAgentRegistrations();
     const resolvedAgentId = validateAgentId(this.idFactory(), "importProviderSession");
     this.requireEnabledProvider(input.provider);
@@ -1403,6 +1408,7 @@ export class AgentManager {
       {
         provider: input.provider,
         cwd: input.cwd,
+        modeId: input.modeId,
       },
       resolvedAgentId,
     );
@@ -2167,10 +2173,7 @@ export class AgentManager {
     return nextRecord;
   }
 
-  async unarchiveSnapshot(
-    agentId: string,
-    updates?: { workspaceId?: string; labels?: AgentLabelPatch },
-  ): Promise<boolean> {
+  async unarchiveSnapshot(agentId: string, updates?: UnarchiveSnapshotUpdates): Promise<boolean> {
     return this.runLifecycleMutation(agentId, () =>
       this.unarchiveSnapshotUnlocked(agentId, updates),
     );
@@ -2178,7 +2181,7 @@ export class AgentManager {
 
   private async unarchiveSnapshotUnlocked(
     agentId: string,
-    updates?: { workspaceId?: string; labels?: AgentLabelPatch },
+    updates?: UnarchiveSnapshotUpdates,
   ): Promise<boolean> {
     const registry = this.requireRegistry();
     const record = await registry.get(agentId);
@@ -2195,6 +2198,7 @@ export class AgentManager {
       ...record,
       ...(updates?.workspaceId ? { workspaceId: updates.workspaceId } : {}),
       ...(updates?.labels ? { labels: applyLabelPatch(record.labels, updates.labels) } : {}),
+      ...(updates?.modeId ? { config: { ...record.config, modeId: updates.modeId } } : {}),
       archivedAt: null,
       updatedAt: new Date().toISOString(),
     });

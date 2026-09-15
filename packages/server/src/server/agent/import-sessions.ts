@@ -48,6 +48,7 @@ export interface NormalizedImportAgentRequest {
   cwd?: string;
   workspaceId?: string;
   labels?: Record<string, string>;
+  modeId?: string;
   requestId: string;
 }
 
@@ -112,6 +113,7 @@ export function normalizeImportAgentRequest(
     cwd: msg.cwd,
     workspaceId: msg.workspaceId,
     labels: msg.labels,
+    ...(msg.modeId ? { modeId: msg.modeId } : {}),
     requestId: msg.requestId,
   };
 }
@@ -230,6 +232,7 @@ async function importProviderSessionNow(
     await unarchiveAgentState(input.agentStorage, input.agentManager, archivedRecord.id, {
       workspaceId,
       labels: Object.keys(labelPatch).length > 0 ? labelPatch : undefined,
+      modeId: input.request.modeId,
     });
     try {
       const snapshot = await ensureAgentLoaded(archivedRecord.id, {
@@ -253,6 +256,7 @@ async function importProviderSessionNow(
     cwd,
     workspaceId,
     labels,
+    ...(input.request.modeId ? { modeId: input.request.modeId } : {}),
   });
   await unarchiveAgentState(input.agentStorage, input.agentManager, snapshot.id);
 
