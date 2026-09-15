@@ -121,8 +121,9 @@ pill.remove();
 ```
 
 Move dynamic text from the former component into updates from your model or SDK subscription.
-Custom icon components may still use hooks. Composer pills always show icon and label and never
-show chevrons. See [buttons](./reference.md#button-descriptor) for menus, popovers, and visibility.
+Custom icon components may still use hooks. Composer pills use `title` when `label` is omitted;
+pass `null` or an empty string for icon-only. They never show chevrons. See
+[buttons](./reference.md#button-descriptor) for menus, popovers, and visibility.
 
 ## 4. Separate imports
 

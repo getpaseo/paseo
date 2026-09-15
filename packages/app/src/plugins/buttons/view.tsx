@@ -28,7 +28,7 @@ import {
   iconButtonChromeStyle,
   type IconButtonChromeState,
 } from "@/components/ui/icon-button-chrome";
-import { composerPillStyles } from "@/composer/pill-styles";
+import { COMPOSER_PILL_MIN_HEIGHT, composerPillStyles } from "@/composer/pill-styles";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { ToastApiProvider, useToast } from "@/contexts/toast-context";
 import { useHostRuntimeClient, useHosts } from "@/runtime/host-runtime";
@@ -259,9 +259,10 @@ function ButtonControl({ view }: { view: ButtonView }) {
   const disabled = button.disabled || entry.pending;
   const expanded = button.behavior.kind !== "action";
   const chevron = !composer && !props.layout.compact && expanded;
-  let label = button.label;
-  if (composer) label = button.label ?? button.title;
-  else if (props.layout.compact) label = undefined;
+  let label = button.label ?? undefined;
+  if (composer && button.label === undefined) label = button.title;
+  else if (!composer && props.layout.compact) label = undefined;
+  const composerIconOnly = composer && label === undefined;
   const press = useCallback(() => pressButton(view, []), [view]);
   const setOpen = useCallback(
     (open: boolean) => pluginButtonStore.setOpen(entry.key, open),
@@ -273,11 +274,12 @@ function ButtonControl({ view }: { view: ButtonView }) {
         ? [
             composerPillStyles.body,
             styles.button,
+            composerIconOnly && styles.composerIconOnly,
             (hovered || pressed || entry.open) && styles.active,
             disabled && styles.disabled,
           ]
         : headerButtonStyle(props.layout.compact, { hovered, pressed, open: entry.open }, disabled),
-    [composer, disabled, entry.open, props.layout.compact],
+    [composer, composerIconOnly, disabled, entry.open, props.layout.compact],
   );
   const contents = (
     <>
@@ -655,6 +657,11 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.sm,
     color: theme.colors.foregroundMuted,
     flexShrink: 1,
+  },
+  composerIconOnly: {
+    width: COMPOSER_PILL_MIN_HEIGHT,
+    minWidth: COMPOSER_PILL_MIN_HEIGHT,
+    paddingHorizontal: 0,
   },
   label: { fontSize: theme.fontSize.sm, color: theme.colors.foregroundMuted, flexShrink: 1 },
   icon: {

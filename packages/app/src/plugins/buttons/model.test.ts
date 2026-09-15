@@ -90,6 +90,27 @@ describe("plugin buttons", () => {
     expect(buttons.getSnapshot()[0].button.title).toBe("Review");
   });
 
+  it("keeps omitted labels distinct from explicit icon-only labels", () => {
+    const buttons = store();
+    const plugin = installation();
+    const omitted = buttons.addComposerPill(plugin, {
+      id: "omitted",
+      workspaceId: "workspace",
+      agentId: "agent",
+      button: button(),
+    });
+    buttons.addComposerPill(plugin, {
+      id: "empty",
+      workspaceId: "workspace",
+      agentId: "agent",
+      button: { ...button(), label: "  " },
+    });
+
+    expect(buttons.getSnapshot().map((entry) => entry.button.label)).toEqual([undefined, null]);
+    omitted.update({ label: null });
+    expect(buttons.getSnapshot()[0].button.label).toBeNull();
+  });
+
   it("prevents repeated presses and cannot resurrect a removed pending button", async () => {
     const buttons = store();
     let finish = () => {};

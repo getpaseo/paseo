@@ -76,8 +76,14 @@ function validateBehavior(
 export type ResolvedPluginButton = PluginButton & {
   visible: boolean;
   disabled: boolean;
-  label: string | undefined;
+  label: string | null | undefined;
 };
+
+function optionalLabel(value: string | null | undefined): string | null | undefined {
+  if (value === undefined || value === null) return value;
+  if (typeof value !== "string") throw new Error("Plugin button needs label");
+  return value.trim() || null;
+}
 
 export function validateButton(
   button: PluginButton,
@@ -87,7 +93,7 @@ export function validateButton(
   return {
     ...button,
     title: requireText(button.title, "title"),
-    label: button.label === undefined ? undefined : requireText(button.label, "label"),
+    label: optionalLabel(button.label),
     visible: optionalBoolean(button.visible, true),
     disabled: optionalBoolean(button.disabled, false),
     behavior: validateBehavior(button.behavior, validation),
