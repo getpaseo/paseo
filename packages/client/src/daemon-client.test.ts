@@ -2689,6 +2689,17 @@ test("uploadFile sends metadata request and file bytes as binary chunks", async 
     chunkSize: 5,
   });
 
+  // Other tasks must run before a multi-chunk upload has queued all its bytes.
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const framesDuringUpload = mock.sent.slice(1).map(assertUint8Array).map(decodeFileTransferFrame);
+  expect(framesDuringUpload.some((frame) => frame.opcode === FileTransferOpcode.FileEnd)).toBe(
+    false,
+  );
+  await vi.waitFor(() => {
+    const frames = mock.sent.slice(1).map(assertUint8Array).map(decodeFileTransferFrame);
+    expect(frames.at(-1)?.opcode).toBe(FileTransferOpcode.FileEnd);
+  });
+
   expect(JSON.parse(assertStr(mock.sent[0]))).toEqual({
     type: "session",
     message: {
@@ -6757,4 +6768,38 @@ test("creation reconnect observation uses connection-owned subscriptions and rel
     }),
   );
   expect(phases).toEqual(["accepted", "failed"]);
+});
+
+test("uploadFile stops sending chunks when the connection closes between sends", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "upload-interrupted",
+    logger: createMockLogger(),
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+  const connection = client.connect();
+  mock.triggerOpen();
+  await connection;
+  const upload = client.uploadFile({
+    fileName: "test.bin",
+    mimeType: "application/octet-stream",
+    bytes: new Uint8Array(1024 * 1024),
+  });
+  const rejection = expect(upload).rejects.toThrow();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const beforeClose = mock.sent.length;
+  mock.triggerClose();
+  await rejection;
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  expect(mock.sent).toHaveLength(beforeClose);
+  expect(
+    mock.sent
+      .filter((frame) => typeof frame !== "string")
+      .map(assertUint8Array)
+      .map(decodeFileTransferFrame)
+      .some((frame) => frame.opcode === FileTransferOpcode.FileEnd),
+  ).toBe(false);
 });

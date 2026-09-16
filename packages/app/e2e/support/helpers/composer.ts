@@ -125,6 +125,16 @@ export async function expectAttachmentPill(page: Page, testID: string): Promise<
   await expect(page.getByTestId(testID).first()).toBeVisible({ timeout: 10_000 });
 }
 
+export async function attachFileFromMenu(
+  page: Page,
+  file: { name: string; mimeType: string; buffer: Buffer },
+): Promise<void> {
+  await openAttachmentMenu(page);
+  const chooserPromise = page.waitForEvent("filechooser");
+  await page.getByRole("menuitem", { name: "Upload file", exact: true }).click();
+  await (await chooserPromise).setFiles(file);
+}
+
 export async function dropFileOnComposer(
   page: Page,
   file: { name: string; mimeType: string; buffer: Buffer },

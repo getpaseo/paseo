@@ -4761,6 +4761,7 @@ export class DaemonClient {
     if (!bytes) {
       throw new Error("File bytes are required.");
     }
+    const uploadTransport = this.transport;
     const resolvedRequestId = this.createRequestId(input.requestId);
     const modifiedAt = input.modifiedAt ?? new Date().toISOString();
     const responsePromise = this.sendCorrelatedRequest({
@@ -4777,37 +4778,63 @@ export class DaemonClient {
       options: { skipQueue: true },
     });
 
-    this.sendBinaryFrame(
-      encodeFileTransferFrame({
-        opcode: FileTransferOpcode.FileBegin,
-        requestId: resolvedRequestId,
-        metadata: {
-          mime: input.mimeType,
-          size: bytes.byteLength,
-          encoding: "binary",
-          modifiedAt,
-          fileName: input.fileName,
-        },
-      }),
+    let settled = false;
+    void responsePromise.then(
+      () => {
+        settled = true;
+        return undefined;
+      },
+      () => {
+        settled = true;
+        return undefined;
+      },
     );
-
-    const chunkSize = input.chunkSize ?? 1024 * 1024;
-    for (let offset = 0; offset < bytes.byteLength; offset += chunkSize) {
+    try {
       this.sendBinaryFrame(
         encodeFileTransferFrame({
-          opcode: FileTransferOpcode.FileChunk,
+          opcode: FileTransferOpcode.FileBegin,
           requestId: resolvedRequestId,
-          payload: bytes.subarray(offset, Math.min(offset + chunkSize, bytes.byteLength)),
+          metadata: {
+            mime: input.mimeType,
+            size: bytes.byteLength,
+            encoding: "binary",
+            modifiedAt,
+            fileName: input.fileName,
+          },
         }),
       );
-    }
 
-    this.sendBinaryFrame(
-      encodeFileTransferFrame({
-        opcode: FileTransferOpcode.FileEnd,
-        requestId: resolvedRequestId,
-      }),
-    );
+      const chunkSize = input.chunkSize ?? 128 * 1024;
+      for (let offset = 0; offset < bytes.byteLength; offset += chunkSize) {
+        // Native WebSocket.send encodes binary synchronously. Let rendering and
+        // incoming messages run between bounded pieces on every platform.
+        await new Promise<void>((resolve) => setTimeout(resolve, 0));
+        if (settled) return await responsePromise;
+        if (this.transport !== uploadTransport || this.connectionState.status !== "connected") {
+          throw new DaemonConnectionError("Connection changed during file upload");
+        }
+        this.sendBinaryFrame(
+          encodeFileTransferFrame({
+            opcode: FileTransferOpcode.FileChunk,
+            requestId: resolvedRequestId,
+            payload: bytes.subarray(offset, Math.min(offset + chunkSize, bytes.byteLength)),
+          }),
+        );
+      }
+
+      this.sendBinaryFrame(
+        encodeFileTransferFrame({
+          opcode: FileTransferOpcode.FileEnd,
+          requestId: resolvedRequestId,
+        }),
+      );
+    } catch (error) {
+      this.rejectWaitersForRequestId(
+        resolvedRequestId,
+        error instanceof Error ? error : new Error(String(error)),
+      );
+      throw error;
+    }
 
     return responsePromise;
   }

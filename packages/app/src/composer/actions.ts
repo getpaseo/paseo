@@ -1,3 +1,4 @@
+import type { SelectedFile } from "@/attachments/picked-file";
 import type { ForgeSearchItem } from "@getpaseo/protocol/messages";
 import type { ActiveTurnBehavior } from "@getpaseo/protocol/messages";
 import type {
@@ -123,12 +124,22 @@ export async function pickAndPersistImages(input: {
 
 export async function uploadFileAttachments(input: {
   client: ComposerSendClient;
-  files: Array<{ fileName: string; mimeType: string; bytes: Uint8Array }>;
+  files: SelectedFile[];
 }): Promise<Extract<ComposerAttachment, { kind: "file" }>[]> {
   const result: Extract<ComposerAttachment, { kind: "file" }>[] = [];
 
   for (const file of input.files) {
-    const response = await input.client.uploadFile(file);
+    const bytes = await file.readBytes();
+    if (bytes.byteLength > 50 * 1024 * 1024) {
+      throw new Error(
+        i18n.t("composer.errors.fileTooLarge", { size: "50MB", fileName: file.fileName }),
+      );
+    }
+    const response = await input.client.uploadFile({
+      fileName: file.fileName,
+      mimeType: file.mimeType,
+      bytes,
+    });
     if (response.error || !response.file) {
       throw new Error(response.error ?? "Upload failed.");
     }
