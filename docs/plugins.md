@@ -265,7 +265,7 @@ catalog is complete.
 
 When the same plugin contribution exists on multiple hosts, Paseo shows it once in the sidebar and
 adds a host picker to the screen header. The selected host supplies the bundle, RPC transport, and
-query cache. Plugin code cannot address another host.
+query cache. Explicit SDK targets follow the [host API contract](../public-docs/plugins/v0.8/reference.md#discover-hosts-and-target-another-host).
 
 Workspace panels, Command Center items, and client slash commands are client contributions. The
 daemon transports their compiled bundle without interpreting placement or callbacks. Panel props
