@@ -285,14 +285,18 @@ node "${ASSERT}" xml-composer-contained \
 # its baseline height. Fabric only re-measures the Android input when its text prop changes,
 # so the editing input renders again after every edit
 # (packages/app/src/components/ui/text-input/text-input.native.tsx). The sequence mirrors the
-# report: grow to the cap, close and reopen the keyboard mid-draft, hold delete, jump to the
-# end, hold delete again. Backspace sits on Gboard's third key row on the paseo-api35 layout.
+# report: grow to the cap, close and reopen the keyboard, hold delete from the middle of the
+# draft, jump to the end, hold delete again. The first hold-delete must start mid-draft: from
+# the end, the pre-fix input also returns to baseline. Backspace sits on Gboard's third key
+# row on the paseo-api35 layout.
 adb shell ime set "${HELPER_IME}" >/dev/null
 ad fill 'editable=true' "${BLANK_LINE_DRAFT}" --settle
 open_gboard "${input_x}" "${input_y}"
 adb shell input keyevent BACK
 wait_for_ime false
 open_gboard "${input_x}" "${input_y}"
+adb shell input keycombination 113 122
+adb shell input keyevent 20 20 20 20 20 20 20 20
 screen_width="$(adb shell wm size | sed -n 's/.*: \([0-9]*\)x.*/\1/p' | tail -1)"
 backspace_x="$((screen_width - 85))"
 backspace_y="$(($(read_ime_top) + 507))"
