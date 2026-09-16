@@ -127,6 +127,7 @@ export async function uploadFileAttachments(input: {
   files: SelectedFile[];
 }): Promise<Extract<ComposerAttachment, { kind: "file" }>[]> {
   const result: Extract<ComposerAttachment, { kind: "file" }>[] = [];
+  const prepared: Array<{ fileName: string; mimeType: string; bytes: Uint8Array }> = [];
 
   for (const file of input.files) {
     const bytes = await file.readBytes();
@@ -135,11 +136,15 @@ export async function uploadFileAttachments(input: {
         i18n.t("composer.errors.fileTooLarge", { size: "50MB", fileName: file.fileName }),
       );
     }
-    const response = await input.client.uploadFile({
+    prepared.push({
       fileName: file.fileName,
       mimeType: file.mimeType,
       bytes,
     });
+  }
+
+  for (const file of prepared) {
+    const response = await input.client.uploadFile(file);
     if (response.error || !response.file) {
       throw new Error(response.error ?? "Upload failed.");
     }

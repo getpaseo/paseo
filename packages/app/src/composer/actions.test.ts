@@ -1089,28 +1089,37 @@ describe("file upload preparation", () => {
     await expect(upload).resolves.toEqual([{ kind: "file", attachment: file }]);
   });
 
-  it("does not upload a file whose read fails", async () => {
-    let sends = 0;
-    await expect(
-      uploadFileAttachments({
-        client: {
-          sendAgentMessage: async () => {},
-          uploadFile: async () => {
-            sends++;
-            throw new Error("unexpected send");
-          },
-        },
-        files: [
-          {
-            fileName: "missing.bin",
-            mimeType: "application/octet-stream",
-            readBytes: async () => {
-              throw new Error("read failed");
+  it.each(["unreadable", "oversized"])(
+    "does not upload a batch containing a later %s file",
+    async (failure) => {
+      let sends = 0;
+      await expect(
+        uploadFileAttachments({
+          client: {
+            sendAgentMessage: async () => {},
+            uploadFile: async () => {
+              sends++;
+              throw new Error("unexpected send");
             },
           },
-        ],
-      }),
-    ).rejects.toThrow("read failed");
-    expect(sends).toBe(0);
-  });
+          files: [
+            {
+              fileName: "valid.bin",
+              mimeType: "application/octet-stream",
+              readBytes: async () => new Uint8Array([1]),
+            },
+            {
+              fileName: "missing.bin",
+              mimeType: "application/octet-stream",
+              readBytes: async () => {
+                if (failure === "oversized") return new Uint8Array(50 * 1024 * 1024 + 1);
+                throw new Error("read failed");
+              },
+            },
+          ],
+        }),
+      ).rejects.toThrow(failure === "unreadable" ? "read failed" : "too large");
+      expect(sends).toBe(0);
+    },
+  );
 });

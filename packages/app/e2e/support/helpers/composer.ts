@@ -8,6 +8,16 @@ import { selectWorkspaceInSidebar } from "./sidebar";
 import { getServerId } from "./server-id";
 import { waitForTabBar } from "./launcher";
 import { waitForSettledPosition } from "./sheet-layout";
+import { installDaemonWebSocketGate } from "./daemon-websocket-gate";
+
+export async function controlFileUploadCompletion(page: Page) {
+  const gate = await installDaemonWebSocketGate(page);
+  return {
+    hold: () => gate.holdNextServerMessage("file.upload.response"),
+    waitForUpload: () => gate.waitForHeldServerMessage("file.upload.response"),
+    complete: () => gate.releaseHeldServerMessage("file.upload.response"),
+  };
+}
 
 function composerInput(page: Page) {
   return page.getByRole("textbox", { name: "Message agent..." }).first();
