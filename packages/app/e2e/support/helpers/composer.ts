@@ -166,7 +166,7 @@ export async function expectGithubAttachmentPill(
   page: Page,
   input: { number: number; title: string },
 ): Promise<void> {
-  const pill = page.getByTestId("composer-github-attachment-pill").first();
+  const pill = page.getByTestId("composer-github-attachment-pill").filter({ hasText: input.title });
   await expect(pill).toBeVisible({ timeout: 10_000 });
   await expect(pill).toContainText(`#${input.number}`);
   await expect(pill).toContainText(input.title);
@@ -188,7 +188,7 @@ export async function openGithubPickerFromMenu(page: Page): Promise<void> {
   await expect(page.getByTestId("combobox-desktop-container")).toBeVisible({ timeout: 5_000 });
 }
 
-/** Open picker, type a query, wait for the matching option by id (e.g. "issue:3", "pr:1"), and click it. */
+/** Open picker, type a query, wait for the matching option by id (e.g. "issue:3", "change_request:1"), and click it. */
 export async function selectGithubOption(
   page: Page,
   searchTerm: string,

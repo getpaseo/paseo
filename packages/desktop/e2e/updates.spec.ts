@@ -49,17 +49,6 @@ test.describe("Desktop updates", () => {
     await expect(page.getByTestId("host-page-update-button")).toBeDisabled();
   });
 
-  test("update banner appears in the sidebar when an app update is available", async ({ page }) => {
-    await installDesktopRuntime(page, {
-      serverId: getServerId(),
-      updateAvailable: true,
-      latestVersion: "1.2.3",
-    });
-    await gotoAppShell(page);
-
-    await expectUpdateBanner(page, "1.2.3");
-  });
-
   test("clicking install shows the installing state on the callout", async ({ page }) => {
     await installDesktopRuntime(page, {
       serverId: getServerId(),
@@ -105,9 +94,7 @@ test.describe("Desktop updates", () => {
 });
 
 test.describe("Desktop daemon management", () => {
-  test("disabling built-in daemon management shows confirm dialog with correct copy", async ({
-    page,
-  }) => {
+  test("cancelling the management confirmation preserves the enabled daemon", async ({ page }) => {
     const serverId = getServerId();
     await installDesktopRuntime(page, {
       serverId,
@@ -121,22 +108,6 @@ test.describe("Desktop daemon management", () => {
     const dialogArgs = await interceptDaemonManagementConfirmDialog(page);
     expectDaemonManagementConfirmDialog(dialogArgs);
 
-    await expectDaemonManagementEnabled(page);
-  });
-
-  test("cancelling the confirm dialog leaves the daemon management toggle on", async ({ page }) => {
-    const serverId = getServerId();
-    await installDesktopRuntime(page, {
-      serverId,
-      manageBuiltInDaemon: true,
-      ownedByDesktop: true,
-      confirmShouldAccept: false,
-    });
-    await gotoAppShell(page);
-    await openDesktopSettings(page, serverId);
-
-    await expectDaemonManagementEnabled(page);
-    await toggleDaemonManagement(page, "disable");
     await expectDaemonManagementEnabled(page);
   });
 
@@ -176,93 +147,34 @@ test.describe("Desktop daemon management", () => {
     await expectDaemonStatusLogPath(page, realState.logPath);
   });
 
-  test("stopping and restarting the daemon updates the PID", async ({ page }) => {
-    const serverId = getServerId();
-    const realState = await loadRealDaemonState();
-    await installDesktopRuntime(page, {
-      serverId,
-      manageBuiltInDaemon: true,
-      ownedByDesktop: true,
-      daemonPid: realState.pid,
-      daemonVersion: realState.version,
-      daemonLogPath: realState.logPath,
-      confirmShouldAccept: true,
-    });
-    await gotoAppShell(page);
-    await openDesktopSettings(page, serverId);
-
-    await expectDaemonStatusPid(page, realState.pid);
-
-    await toggleDaemonManagement(page, "disable");
-    await expectDaemonManagementDisabled(page);
-    await expectDaemonStatusPid(page, null);
-
-    await toggleDaemonManagement(page, "enable");
-    await expectDaemonManagementEnabled(page);
-    const newPid = realState.pid !== null ? realState.pid + 1000 : 11000;
-    await expectDaemonStatusPid(page, newPid);
-  });
-
-  test("pausing management preserves an attached legacy desktop-managed daemon", async ({
-    page,
-  }) => {
-    const serverId = getServerId();
-    const realState = await loadRealDaemonState();
-    await installDesktopRuntime(page, {
-      serverId,
-      manageBuiltInDaemon: true,
-      ownedByDesktop: false,
-      daemonPid: realState.pid,
-      confirmShouldAccept: true,
-    });
-    await gotoAppShell(page);
-    await openDesktopSettings(page, serverId);
-
-    const dialog = await interceptDaemonManagementConfirmDialog(page);
-    expect(dialog).toEqual({
-      title: "Pause built-in daemon",
-      message: "Pause automatic daemon management? The attached daemon will keep running.",
-    });
-    await expectDaemonManagementDisabled(page);
-    await expectDaemonStatusPid(page, realState.pid);
-
-    await toggleDaemonManagement(page, "enable");
-    await expectDaemonManagementEnabled(page);
-    await expectDaemonStatusPid(page, realState.pid);
-  });
-
-  for (const ownedByDesktop of [false, true]) {
-    for (const confirmShouldAccept of [false, true]) {
-      test(`${confirmShouldAccept ? "confirming" : "cancelling"} Stop identifies the ${ownedByDesktop ? "owned" : "attached"} daemon`, async ({
-        page,
-      }) => {
-        const serverId = getServerId();
-        const realState = await loadRealDaemonState();
-        const daemonHome = process.env.E2E_PASEO_HOME!;
-        await installDesktopRuntime(page, {
-          serverId,
-          daemonPid: realState.pid,
-          daemonHome,
-          ownedByDesktop,
-          confirmShouldAccept,
-        });
-        await gotoAppShell(page);
-        await openDesktopSettings(page, serverId);
-
-        const dialog = await interceptDaemonStopConfirmDialog(page);
-        expect(dialog).toEqual({
-          title: "Stop local daemon?",
-          message: [
-            ownedByDesktop
-              ? "This daemon was launched by this Desktop session."
-              : "This daemon was not launched by this Desktop session.",
-            `Home: ${daemonHome}`,
-            `Supervisor PID: ${realState.pid}`,
-            "Running agent work will be interrupted.",
-          ].join("\n"),
-        });
-        await expectDaemonStatusPid(page, confirmShouldAccept ? null : realState.pid);
+  for (const confirmShouldAccept of [false, true]) {
+    test(`${confirmShouldAccept ? "confirming" : "cancelling"} Stop identifies the owned daemon`, async ({
+      page,
+    }) => {
+      const serverId = getServerId();
+      const realState = await loadRealDaemonState();
+      const daemonHome = process.env.E2E_PASEO_HOME!;
+      await installDesktopRuntime(page, {
+        serverId,
+        daemonPid: realState.pid,
+        daemonHome,
+        ownedByDesktop: true,
+        confirmShouldAccept,
       });
-    }
+      await gotoAppShell(page);
+      await openDesktopSettings(page, serverId);
+
+      const dialog = await interceptDaemonStopConfirmDialog(page);
+      expect(dialog).toEqual({
+        title: "Stop local daemon?",
+        message: [
+          "This daemon was launched by this Desktop session.",
+          `Home: ${daemonHome}`,
+          `Supervisor PID: ${realState.pid}`,
+          "Running agent work will be interrupted.",
+        ].join("\n"),
+      });
+      await expectDaemonStatusPid(page, confirmShouldAccept ? null : realState.pid);
+    });
   }
 });

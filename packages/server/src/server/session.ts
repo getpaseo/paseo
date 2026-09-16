@@ -1,3 +1,4 @@
+import { searchTimeline } from "./agent/chat-search/index.js";
 import type { BrowserToolsBroker } from "./browser-tools/broker.js";
 import { BrowserAutomationHostCapabilitySchema } from "@getpaseo/protocol/browser-automation/capabilities";
 import type { SessionEventSubscription } from "@getpaseo/protocol/messages";
@@ -2584,6 +2585,8 @@ export class Session {
         return this.handleFetchAgentTimelineRequest(msg, source);
       case "agent.timeline.append.request":
         return this.handleAgentTimelineAppendRequest(msg);
+      case "agent.timeline.search.request":
+        return this.handleAgentTimelineSearchRequest(msg, source);
       case "agent.timeline.list_prompts.request":
         return this.handleAgentTimelineListPromptsRequest(msg, source);
       case "agent.provider_subagents.list.request":
@@ -7761,6 +7764,59 @@ export class Session {
       type: "agent.timeline.append.response",
       payload: { requestId: msg.requestId, seq, epoch },
     });
+  }
+
+  private async handleAgentTimelineSearchRequest(
+    msg: Extract<SessionInboundMessage, { type: "agent.timeline.search.request" }>,
+    source?: object,
+  ): Promise<void> {
+    try {
+      await ensureAgentLoaded(msg.agentId, {
+        agentManager: this.agentManager,
+        agentStorage: this.agentStorage,
+        logger: this.sessionLogger,
+      });
+      const rows = await this.agentManager.getTimelineRows(msg.agentId);
+      const { epoch } = this.agentManager.fetchTimeline(msg.agentId, {
+        direction: "tail",
+        limit: 1,
+      });
+      const result = await searchTimeline({ rows, query: msg.query, cursor: msg.cursor });
+      if (
+        this.agentManager.fetchTimeline(msg.agentId, { direction: "tail", limit: 1 }).epoch !==
+        epoch
+      ) {
+        throw new Error("History changed; search again");
+      }
+      this.emitForSource(
+        {
+          type: "agent.timeline.search.response",
+          payload: {
+            requestId: msg.requestId,
+            agentId: msg.agentId,
+            epoch,
+            ...result,
+            error: null,
+          },
+        },
+        source,
+      );
+    } catch (error) {
+      this.emitForSource(
+        {
+          type: "agent.timeline.search.response",
+          payload: {
+            requestId: msg.requestId,
+            agentId: msg.agentId,
+            epoch: "",
+            locations: [],
+            nextCursor: null,
+            error: error instanceof Error ? error.message : String(error),
+          },
+        },
+        source,
+      );
+    }
   }
 
   private async handleAgentTimelineListPromptsRequest(

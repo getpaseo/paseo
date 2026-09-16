@@ -108,7 +108,7 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
   const settledKeyboardShift = useSettledKeyboardShift();
   const userScrollEndFrameIdRef = useRef<number | null>(null);
   const programmaticScrollEventBudgetRef = useRef(0);
-  const [isNativeViewportSettling, setIsNativeViewportSettling] = useState(false);
+  const isNativeViewportSettlingRef = useRef(false);
   const nativeViewportSettlingFrameIdRef = useRef<number | null>(null);
   const historyStartReadyRef = useRef(false);
   const [historyStartPaginationState, setHistoryStartPaginationState] = useState(
@@ -210,12 +210,12 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
 
   const markNativeViewportSettling = useCallback(() => {
     clearNativeViewportSettling();
-    setIsNativeViewportSettling(true);
+    isNativeViewportSettlingRef.current = true;
     let remainingFrames = 4;
     const tick = () => {
       if (remainingFrames <= 0) {
         nativeViewportSettlingFrameIdRef.current = null;
-        setIsNativeViewportSettling(false);
+        isNativeViewportSettlingRef.current = false;
         return;
       }
       remainingFrames -= 1;
@@ -224,13 +224,13 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
     nativeViewportSettlingFrameIdRef.current = requestAnimationFrame(tick);
   }, [clearNativeViewportSettling]);
 
-  const bottomAnchorTransportBehavior = useMemo(
+  const getBottomAnchorTransportBehavior = useCallback(
     () =>
       resolveBottomAnchorTransportBehavior({
         strategy,
-        isViewportSettling: isNativeViewportSettling,
+        isViewportSettling: isNativeViewportSettlingRef.current,
       }),
-    [isNativeViewportSettling, strategy],
+    [strategy],
   );
 
   const scrollToBottom = useCallback(
@@ -255,7 +255,7 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
     routeRequest: routeBottomAnchorRequest,
     isAuthoritativeHistoryReady,
     renderStrategy: "inverted-stream",
-    transportBehavior: bottomAnchorTransportBehavior,
+    getTransportBehavior: getBottomAnchorTransportBehavior,
     getMeasurementState: () => streamViewportMetricsRef.current,
     isNearBottom: () => {
       const metrics = streamViewportMetricsRef.current;
@@ -318,7 +318,7 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
     isUserScrollActiveRef.current = false;
     clearPendingUserScrollEnd();
     clearNativeViewportSettling();
-    setIsNativeViewportSettling(false);
+    isNativeViewportSettlingRef.current = false;
     historyStartReadyRef.current = false;
     const initialHistoryStartState = createHistoryStartPaginationState();
     historyStartPaginationStateRef.current = initialHistoryStartState;

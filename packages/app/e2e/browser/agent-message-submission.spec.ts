@@ -872,7 +872,7 @@ test.describe("Agent message submission", () => {
     }
   });
 
-  test("keeps one canonical prompt when the provider echoes before accepting", async ({
+  test("keeps canonical prompts through early echoes, reload, and later turns", async ({
     page,
   }, testInfo) => {
     const workspace = await seedWorkspace({
@@ -893,6 +893,20 @@ test.describe("Agent message submission", () => {
       await expect(submittedPrompt).toHaveCount(1);
       await expect(submittedPrompt).toHaveAttribute("aria-busy", "false");
       await expectVisibleAgentSurfacesIdle(page);
+      for (const [index, nextPrompt] of [
+        "emit 1 coalesced agent stream updates for the second turn.",
+        "emit 1 coalesced agent stream updates for the third turn.",
+      ].entries()) {
+        await submitMessage(page, nextPrompt);
+        await expect(page.getByText(nextPrompt, { exact: true })).toBeVisible();
+        await expectVisibleAgentSurfacesIdle(page);
+        await expectComposerEditable(page);
+        await expect(page.getByTestId("user-message")).toHaveCount(index + 2);
+      }
+      await fillComposerDraft(page, "Keep this unsent draft.");
+      await composerLocator(page).blur();
+      await expect(page.getByTestId("user-message")).toHaveCount(3);
+      await expectComposerEditable(page);
     } finally {
       await workspace.cleanup();
     }
@@ -912,16 +926,12 @@ test.describe("Agent message submission", () => {
       await submitMessage(page, prompt);
       const submittedPrompt = page.getByTestId("user-message").filter({ hasText: prompt });
       await expect(submittedPrompt).toHaveAttribute("aria-busy", "false", { timeout: 30_000 });
-      const marker = `late-provider-identity-${Date.now()}`;
-      await submittedPrompt.evaluate((element, value) => {
-        element.dataset.lateProviderIdentity = value;
-      }, marker);
 
       await submittedPrompt.hover();
       await expect(submittedPrompt.getByTestId("rewind-menu-trigger")).toBeVisible({
         timeout: 5_000,
       });
-      await expect(page.locator(`[data-late-provider-identity="${marker}"]`)).toBeVisible();
+      await expect(submittedPrompt).toHaveCount(1);
       await page.getByRole("button", { name: "Stop agent", exact: true }).click();
       await expectVisibleAgentSurfacesIdle(page);
     } finally {

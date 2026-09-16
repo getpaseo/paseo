@@ -1716,6 +1716,13 @@ export function NewWorkspaceScreen({
     terminalSubmitLabel,
     launchFocusKey,
   } = useTerminalComposerState({ launchTarget, terminalProfiles, terminalPromptText });
+  const terminalTextSource = useMemo(
+    () => ({
+      getSnapshot: () => terminalComposerValue,
+      subscribe: (_listener: () => void) => () => {},
+    }),
+    [terminalComposerValue],
+  );
   const terminalTextReplacement = useMemo(
     () => ({ key: launchFocusKey, text: terminalComposerValue }),
     [launchFocusKey, terminalComposerValue],
@@ -2403,7 +2410,7 @@ export function NewWorkspaceScreen({
                 isSubmitLoading={isPending}
                 submitBehavior="preserve-and-lock"
                 blurOnSubmit={true}
-                value={terminalComposerValue}
+                textSource={terminalTextSource}
                 onChangeText={setTerminalPromptText}
                 textReplacement={terminalTextReplacement}
                 attachments={NO_TERMINAL_ATTACHMENTS}
@@ -2429,7 +2436,7 @@ export function NewWorkspaceScreen({
                 waitForForgeAutoAttachOnSubmit
                 submitBehavior="preserve-and-lock"
                 blurOnSubmit={true}
-                value={chatDraft.text}
+                textSource={chatDraft.textSource}
                 onChangeText={chatDraft.editText}
                 textReplacement={chatDraft.textReplacement}
                 attachments={chatDraft.attachments}
