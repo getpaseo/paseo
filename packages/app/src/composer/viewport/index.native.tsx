@@ -8,13 +8,18 @@ import Animated, {
   type SharedValue,
 } from "react-native-reanimated";
 import { useKeyboardShift } from "@/hooks/keyboard-shift-context";
-import { updateComposerCapacity, type ComposerCapacity } from "./capacity";
+import {
+  updateComposerCapacity,
+  type ComposerCapacity,
+  type KeyboardReservePolicy,
+} from "./capacity";
 
 const ViewportCapacity = createContext<SharedValue<number | undefined> | null>(null);
 
 interface ComposerViewportProps extends ViewProps {
   bottomInset?: number;
   centered?: boolean;
+  keyboardReserve?: KeyboardReservePolicy;
 }
 
 /** Measure the stationary space below the header, outside keyboard translation. */
@@ -23,6 +28,7 @@ export function ComposerViewport({
   onLayout,
   bottomInset = 0,
   centered = false,
+  keyboardReserve = "release",
   ...props
 }: ComposerViewportProps) {
   const measuredHeight = useSharedValue(0);
@@ -37,8 +43,9 @@ export function ComposerViewport({
     }),
     (geometry) => {
       if (geometry.height <= 0) return;
-      sizing.value = updateComposerCapacity(sizing.value, geometry);
+      sizing.value = updateComposerCapacity(sizing.value, geometry, keyboardReserve);
     },
+    [keyboardReserve],
   );
   const capacity = useDerivedValue(() => sizing.value?.capacity);
   const measureViewport = useCallback(

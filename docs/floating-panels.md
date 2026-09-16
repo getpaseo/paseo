@@ -160,15 +160,23 @@ motion settles; never drive it per frame.
 The translated dock's height is not the composer's available height. Bound the
 composer against the stationary space below the header through
 `composer/viewport`, including its controls and attachments. Reserve the
-keyboard destination at move start on the UI thread. Keep the last nonzero
-reservation when the keyboard closes so an unchanged draft does not expand.
-Viewport changes and subsequent keyboard openings recalculate the capacity.
-Waiting for a settled JS update lets a long draft disappear behind the header
-during opening. This is a boundary-time layout change, not an animated
-layout prop. Keep the input's native intrinsic sizing and internal scrolling.
-New workspace also needs its setup fields to scroll when the form exceeds this
-space. The Android regression must check both the header and IME boundaries;
-checking only the bottom controls allowed this regression through previously.
+keyboard destination at move start on the UI thread. Waiting for a settled JS
+update lets a long draft disappear behind the header during opening. This is a
+boundary-time layout change, not an animated layout prop. Keep the input's
+native intrinsic sizing and internal scrolling. Keep the editing input's
+`defaultValue` current on every edit: Fabric re-measures the Android input from
+the JS text whenever its frame changed, so a stale prop inflates or collapses
+the input (see `packages/app/src/components/ui/text-input/text-input.native.tsx`).
+
+What the closed keyboard leaves behind is the viewport's `keyboardReserve`
+policy. A docked chat composer retains its last reservation so an unchanged
+capped draft does not expand over the stream; subsequent keyboard openings
+recalculate it. New workspace releases it: its setup fields scroll inside the
+same constrained space while the keyboard is open, so keeping the reservation
+after it closes leaves the form clipped and the composer small with the screen
+empty above them. The Android regression must check both the header and IME
+boundaries; checking only the bottom controls allowed this regression through
+previously.
 
 Move the stream and composer together through `KeyboardDock`. Do not translate
 them independently.
