@@ -19,12 +19,8 @@ import {
   resolveKeyboardShift,
   reserveKeyboardLayoutShift,
   shouldReconcileHiddenKeyboardEnd,
-} from "@/hooks/keyboard-shift-policy";
-import {
-  KeyboardShiftContext,
-  SettledKeyboardShiftContext,
-  useKeyboardShift,
-} from "@/hooks/keyboard-shift-context";
+} from "./policy";
+import { KeyboardShiftContext, SettledKeyboardShiftContext, useKeyboardShift } from "./context";
 
 type KeyboardShiftMode = "translate" | "padding";
 

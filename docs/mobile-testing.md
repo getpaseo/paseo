@@ -47,8 +47,15 @@ focused input identity and IME hide/show events. It saves screenshots and logs u
 `.dev/agent-device-artifacts/terminal-keyboard-android`. Set `PASEO_TERMINAL_KEYBOARD_APP_ID=sh.paseo`
 to test an installed production build. It never submits a chat message.
 
-`npm run test:e2e:composer-keyboard:android` covers composer growth in chat and
-New workspace, plus keyboard and control interactions. Configure its daemon,
+`npm run test:e2e:composer-keyboard:android` preserves the chat control and
+keyboard regression flow, then runs the same growth, retained-height, bounds, and
+hold-to-delete and background-tap dismissal scenario on chat, a workspace draft
+tab, and New workspace. It checks empty-content taps and header taps at the cap
+without changing the input height. Each
+host also opens command/file autocomplete, the model selector, the attachment
+menu, and the forge picker from both keyboard states.
+Artifacts are grouped by host under
+`.dev/agent-device-artifacts/composer-keyboard-android`. Configure its daemon,
 Metro, and device through the `PASEO_COMPOSER_KEYBOARD_*` variables in
 `packages/app/e2e/mobile/composer-keyboard/android.sh`. Use a software keyboard;
 the headless input helper cannot verify the

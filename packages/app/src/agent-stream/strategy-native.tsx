@@ -22,8 +22,7 @@ import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import type { StreamItem } from "@/types/stream";
 import type { Theme } from "@/styles/theme";
 import { useStableEvent } from "@/hooks/use-stable-event";
-import { useSettledKeyboardShift } from "@/hooks/keyboard-shift-context";
-import { resolveStreamKeyboardInset } from "@/hooks/keyboard-shift-policy";
+import { useKeyboardStreamInset } from "@/keyboard/shift";
 import { useRevisedHistoryRows } from "./history-row-revision";
 import { useBottomAnchorController } from "./bottom-anchor-controller";
 import { useScrollKeyboardDismiss } from "./scroll-keyboard-dismiss/use-scroll-keyboard-dismiss";
@@ -105,7 +104,7 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
   const scrollOffsetYRef = useRef(0);
   const isUserScrollActiveRef = useRef(false);
   const scrollKeyboardDismiss = useScrollKeyboardDismiss();
-  const settledKeyboardShift = useSettledKeyboardShift();
+  const streamKeyboardInset = useKeyboardStreamInset();
   const userScrollEndFrameIdRef = useRef<number | null>(null);
   const programmaticScrollEventBudgetRef = useRef(0);
   const isNativeViewportSettlingRef = useRef(false);
@@ -275,14 +274,6 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
     Platform.OS === "android" && bottomAnchorController.mode === "sticky-bottom"
       ? undefined
       : DEFAULT_MAINTAIN_VISIBLE_CONTENT_POSITION;
-  const streamKeyboardInset = useMemo(
-    () =>
-      resolveStreamKeyboardInset({
-        platform: Platform.OS === "ios" ? "ios" : "android",
-        settledShift: settledKeyboardShift,
-      }),
-    [settledKeyboardShift],
-  );
   const listContentContainerStyle = useMemo(
     () => [
       baseListContentContainerStyle,

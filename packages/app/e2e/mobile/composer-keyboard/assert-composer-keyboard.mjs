@@ -11,13 +11,56 @@ function xmlBounds(snapshot, attribute) {
   if (!node) throw new Error(`Missing node: ${attribute}`);
   const bounds = node[0].match(/bounds="\[(-?\d+),(-?\d+)\]\[(-?\d+),(-?\d+)\]"/);
   if (!bounds) throw new Error(`Missing bounds: ${attribute}`);
-  return { top: Number(bounds[2]), bottom: Number(bounds[4]) };
+  return {
+    left: Number(bounds[1]),
+    top: Number(bounds[2]),
+    right: Number(bounds[3]),
+    bottom: Number(bounds[4]),
+  };
 }
 const xmlBoundsById = (snapshot, id) => xmlBounds(snapshot, `resource-id="${id}"`);
 const xmlEditTextBounds = (snapshot) => xmlBounds(snapshot, 'class="android.widget.EditText"');
 const boundsHeight = (bounds) => bounds.bottom - bounds.top;
 
-if (command === "xml-composer-contained") {
+if (command === "snapshot-xml") {
+  const [inputPath, outputPath] = args;
+  const snapshot = JSON.parse(await fs.readFile(inputPath, "utf8"));
+  if (!snapshot.success || !snapshot.data.nodes.length) throw new Error("Empty device snapshot");
+  const escape = (value) =>
+    String(value ?? "")
+      .replaceAll("&", "&amp;")
+      .replaceAll('"', "&quot;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;");
+  const nodes = snapshot.data.nodes
+    .filter((node) => node.rect && node.visibleToUser !== false)
+    .map((node) => {
+      const { x, y, width, height } = node.rect;
+      return `<node class="${escape(node.type)}" resource-id="${escape(node.identifier)}" content-desc="${escape(node.label)}" bounds="[${Math.round(x)},${Math.round(y)}][${Math.round(x + width)},${Math.round(y + height)}]" />`;
+    });
+  await fs.writeFile(outputPath, `<hierarchy>${nodes.join("")}</hierarchy>`);
+} else if (command === "xml-background-point") {
+  const [snapshotPath, surface] = args;
+  const snapshot = await fs.readFile(snapshotPath, "utf8");
+  const bounds = xmlBoundsById(
+    snapshot,
+    surface === "header" ? "composer-dock-header" : "composer-dock-content",
+  );
+  process.stdout.write(
+    `${surface === "header" ? bounds.right - 4 : bounds.left + 4} ${bounds.bottom - 8}\n`,
+  );
+} else if (command === "xml-content-follow-growth") {
+  const [beforePath, afterPath] = args;
+  const before = await fs.readFile(beforePath, "utf8");
+  const after = await fs.readFile(afterPath, "utf8");
+  const growth = boundsHeight(xmlEditTextBounds(after)) - boundsHeight(xmlEditTextBounds(before));
+  const movement =
+    xmlBoundsById(before, "composer-dock-content").bottom -
+    xmlBoundsById(after, "composer-dock-content").bottom;
+  if (growth <= 0 || Math.abs(movement - growth) > 1)
+    throw new Error(`Content moved ${movement}px for ${growth}px input growth`);
+  process.stdout.write(`Content followed input growth: ${growth}px\n`);
+} else if (command === "xml-composer-contained") {
   const [snapshotPath, imeTopArgument, densityArgument] = args;
   const snapshot = await fs.readFile(snapshotPath, "utf8");
   const boundsFor = (id) => xmlBoundsById(snapshot, id);
@@ -42,7 +85,7 @@ if (command === "xml-composer-contained") {
     `Composer contained: top=${composer.top}, header=${viewport.top}, bottom=${composer.bottom}, keyboard=${imeTopArgument}\n`,
   );
 } else if (command === "rect") {
-  const [snapshotPath, identifier] = args;
+  const [snapshotPath, identifier, edge] = args;
   const snapshot = JSON.parse(await fs.readFile(snapshotPath, "utf8"));
   const node = snapshot.data.nodes.find(
     (candidate) =>
@@ -52,7 +95,8 @@ if (command === "xml-composer-contained") {
   );
   if (!node) throw new Error(`Missing node: ${identifier}`);
   const { x, y, width, height } = node.rect;
-  process.stdout.write(`${Math.round(x + width / 2)} ${Math.round(y + height / 2)} ${height}\n`);
+  const targetX = edge === "right" ? x + width - 4 : x + width / 2;
+  process.stdout.write(`${Math.round(targetX)} ${Math.round(y + height / 2)} ${height}\n`);
 } else if (command === "above-y") {
   const [snapshotPath, upperIdentifier, lowerYArgument] = args;
   const snapshot = JSON.parse(await fs.readFile(snapshotPath, "utf8"));

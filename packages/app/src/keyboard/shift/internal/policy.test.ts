@@ -5,7 +5,7 @@ import {
   resolveKeyboardShift,
   reserveKeyboardLayoutShift,
   shouldUseCompactExplorerKeyboardPadding,
-} from "./keyboard-shift-policy";
+} from "./policy";
 
 describe("keyboard layout reservation", () => {
   it("reserves the opening destination before motion and releases it only after closing", () => {

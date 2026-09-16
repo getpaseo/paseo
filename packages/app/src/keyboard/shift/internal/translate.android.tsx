@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import type { ViewProps } from "react-native";
 import Animated, { useAnimatedStyle } from "react-native-reanimated";
-import { useKeyboardShift } from "@/hooks/keyboard-shift-context";
+import { useKeyboardShift } from "./context";
 
 interface KeyboardTranslateViewProps extends ViewProps {
   children: ReactNode;

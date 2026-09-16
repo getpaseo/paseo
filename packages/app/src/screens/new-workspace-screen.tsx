@@ -9,17 +9,14 @@ import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "r
 import type { ReactElement, ReactNode, RefObject } from "react";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
-import { Pressable, StyleSheet as RNStyleSheet, Text, View } from "react-native";
+import { Pressable, Text, View } from "react-native";
 import type { PressableStateCallbackType } from "react-native";
 import { StyleSheet, useUnistyles, withUnistyles } from "react-native-unistyles";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { createNameId } from "mnemonic-id";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, Folder, FolderPlus, GitBranch, GitPullRequest } from "lucide-react-native";
 import { Composer } from "@/composer";
-import { KeyboardTranslateView } from "@/components/keyboard-translate-view";
-import { ComposerViewport, ComposerViewportContent } from "@/composer/viewport";
-import { ScrollView } from "@/components/ui/scroll-view";
+import { ComposerDock } from "@/composer/dock";
 import { FileDropZone } from "@/components/file-drop/file-drop-zone";
 import {
   resolveComposerAttachmentSubmitFormat,
@@ -36,7 +33,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { TitlebarDragRegion } from "@/components/desktop/titlebar-drag-region";
 import { SidebarMenuToggle } from "@/components/headers/menu-header";
 import { ScreenHeader } from "@/components/headers/screen-header";
-import { HEADER_INNER_HEIGHT, MAX_CONTENT_WIDTH, useIsCompactFormFactor } from "@/constants/layout";
+import { useIsCompactFormFactor } from "@/constants/layout";
 import { useToast } from "@/contexts/toast-context";
 import { useAgentInputDraft } from "@/composer/draft/input-draft";
 import { useForgeSearchQuery } from "@/git/use-forge-search-query";
@@ -738,13 +735,6 @@ function isolationLabel(t: TFunction, isolation: "local" | "worktree"): string {
   return isolation === "worktree"
     ? t("newWorkspace.isolation.worktree")
     : t("newWorkspace.isolation.local");
-}
-
-function getContentStyle(input: { isCompact: boolean; insetBottom: number }) {
-  if (input.isCompact) {
-    return [styles.content, styles.contentCompact, { paddingBottom: input.insetBottom }];
-  }
-  return [styles.content, styles.contentCentered, { paddingBottom: input.insetBottom }];
 }
 
 function normalizeBranchDetails(
@@ -1634,7 +1624,6 @@ export function NewWorkspaceScreen({
   const queryClient = useQueryClient();
   const { theme } = useUnistyles();
   const { t } = useTranslation();
-  const insets = useSafeAreaInsets();
   const isCompact = useIsCompactFormFactor();
   const toast = useToast();
   const mergeWorkspaces = useCallback(
@@ -2290,15 +2279,6 @@ export function NewWorkspaceScreen({
     ],
   );
 
-  const contentBottomInset = useMemo(
-    () => (isCompact ? insets.bottom : HEADER_INNER_HEIGHT + theme.spacing[6]),
-    [isCompact, insets.bottom, theme.spacing],
-  );
-  const contentStyle = useMemo(
-    () => getContentStyle({ isCompact, insetBottom: contentBottomInset }),
-    [isCompact, contentBottomInset],
-  );
-
   const agentControlsWithDisabled = useMemo(
     () =>
       composerState
@@ -2382,7 +2362,6 @@ export function NewWorkspaceScreen({
   const composer = isTerminalLaunch ? (
     <Composer
       key="terminal"
-      externalKeyboardShift
       inputMode="terminal"
       readOnly={!terminalTakesPrompt}
       placeholder={terminalPlaceholder}
@@ -2410,7 +2389,6 @@ export function NewWorkspaceScreen({
   ) : (
     <Composer
       key="chat"
-      externalKeyboardShift
       agentId={draftKey}
       serverId={selectedServerId}
       isPaneFocused={true}
@@ -2442,7 +2420,7 @@ export function NewWorkspaceScreen({
   return (
     <FileDropZone style={styles.container}>
       <ScreenHeader left={screenHeaderLeft} borderless />
-      <ComposerViewport style={contentStyle} bottomInset={contentBottomInset} centered={!isCompact}>
+      <View style={styles.content}>
         <TitlebarDragRegion />
         <NewWorkspaceLayout
           isCompact={isCompact}
@@ -2452,7 +2430,7 @@ export function NewWorkspaceScreen({
           {composer}
           {errorMessage ? <Text style={styles.errorText}>{errorMessage}</Text> : null}
         </NewWorkspaceLayout>
-      </ComposerViewport>
+      </View>
     </FileDropZone>
   );
 }
@@ -2476,54 +2454,13 @@ function NewWorkspaceLayout({
       {formStack}
     </>
   );
-  if (isCompact) {
-    // A phone docks the composer like a chat: the composer alone is bounded by
-    // the viewport, and the setup fields above it move up as it grows, leaving
-    // under the header instead of losing their bottom rows.
-    return (
-      <KeyboardTranslateView style={animatedStaticStyles.dockedStack}>
-        {setupFields}
-        <ComposerViewportContent style={animatedStaticStyles.dockedComposer}>
-          {children}
-        </ComposerViewportContent>
-      </KeyboardTranslateView>
-    );
-  }
   return (
-    <KeyboardTranslateView style={animatedStaticStyles.centered}>
-      <ComposerViewportContent style={animatedStaticStyles.form}>
-        <ScrollView style={animatedStaticStyles.setup} keyboardShouldPersistTaps="handled">
-          {setupFields}
-        </ScrollView>
-        {children}
-      </ComposerViewportContent>
-    </KeyboardTranslateView>
+    <ComposerDock centered={!isCompact}>
+      {setupFields}
+      {children}
+    </ComposerDock>
   );
 }
-
-const animatedStaticStyles = RNStyleSheet.create({
-  // Sized to its content so the bottom-anchored viewport overflows it upward.
-  dockedStack: {
-    flexShrink: 0,
-    width: "100%",
-    maxWidth: MAX_CONTENT_WIDTH,
-  },
-  dockedComposer: {
-    flexShrink: 1,
-  },
-  centered: {
-    flexShrink: 1,
-    width: "100%",
-    maxWidth: MAX_CONTENT_WIDTH,
-  },
-  form: {
-    flexShrink: 1,
-  },
-  setup: {
-    flexGrow: 0,
-    flexShrink: 1,
-  },
-});
 
 const styles = StyleSheet.create((theme) => ({
   container: {
@@ -2534,15 +2471,6 @@ const styles = StyleSheet.create((theme) => ({
   content: {
     position: "relative",
     flex: 1,
-    alignItems: "center",
-  },
-  contentCentered: {
-    justifyContent: "center",
-  },
-  contentCompact: {
-    justifyContent: "flex-end",
-    // Clip the setup fields at the header edge as the composer pushes them up.
-    overflow: "hidden",
   },
   composerTitleContainer: {
     marginBottom: theme.spacing[8],
