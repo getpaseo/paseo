@@ -174,7 +174,7 @@ describe("buildWorkspaceStructureProjects", () => {
     );
   });
 
-  test("excludes the synthetic Chats project from workspace structure projects", () => {
+  test("sorts Chats project to the very top", () => {
     const result = buildWorkspaceStructureProjects({
       sessions: [
         {
@@ -189,7 +189,7 @@ describe("buildWorkspaceStructureProjects", () => {
       ],
     });
 
-    expect(result.map((p) => p.projectName)).toEqual(["Alpha", "Beta"]);
+    expect(result.map((p) => p.projectName)).toEqual(["Chats", "Alpha", "Beta"]);
   });
 
   test("does not treat regular projects named Chats as the synthetic chats project", () => {
