@@ -107,3 +107,18 @@ describe("plugin host access", () => {
     otherLifetime.abort();
   });
 });
+
+it("reacquires a fresh API after explicit disposal without affecting a later borrower", async () => {
+  const h = registry();
+  h.snapshots.set("b", { connectionStatus: "online", client: connection("b") });
+  const first = h.runtime.getPaseoClient("b");
+  await first.dispose();
+  const second = h.runtime.getPaseoClient("b");
+  expect(second).not.toBe(first);
+  expect(() => second.agents.subscribe(ignoreUpdate)).not.toThrow();
+  expect(() => first.config.get()).toThrow("Paseo client is released: b");
+  await first.dispose();
+  expect(h.runtime.getPaseoClient("b")).toBe(second);
+  h.lifetime.abort();
+  expect(() => second.agents.subscribe(ignoreUpdate)).toThrow("disposed");
+});

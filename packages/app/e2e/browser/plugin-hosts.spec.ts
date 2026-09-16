@@ -10,6 +10,8 @@ test("plugin discovers offline hosts and borrows another host without installing
     await hosts.expectOnline();
     await readHost(page, "selected", "selected:plugins=true");
     await readHost(page, "Secondary", `${hosts.serverId}:plugins=false`);
+    await hosts.disposeSecondaryAndExpectObservationReleased();
+    await readHost(page, "Secondary", `${hosts.serverId}:plugins=false`);
     await readHost(page, "missing", "Unknown Paseo host: missing");
     await hosts.reloadAndExpectObservationReleased();
     await readHost(page, "Secondary", `${hosts.serverId}:plugins=false`);

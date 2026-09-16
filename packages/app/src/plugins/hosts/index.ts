@@ -96,6 +96,12 @@ export function createPluginHosts(source: PluginHostsSource, signal: AbortSignal
         },
       });
       const api = createPaseoApi(borrowed, { signal: lifetime.signal });
+      const dispose = api.dispose;
+      api.dispose = () => {
+        if (clients.get(serverId)?.api === api) clients.delete(serverId);
+        lifetime.abort();
+        return dispose();
+      };
       clients.set(serverId, { client, api, lifetime });
       return api;
     },

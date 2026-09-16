@@ -28,9 +28,14 @@ export default function contribute(plugin) {
         setResult((serverId || "selected") + ":plugins=" + Boolean(config.pluginsEnabled));
       } catch (error) { setResult(error.message); }
     }
+    async function disposeHost(serverId) {
+      await getPaseoClient(serverId).dispose();
+      setResult("Disposed:" + serverId);
+    }
     return <View>
       {hosts.map(host => <View key={host.serverId}>
         <Text>{host.label + ":" + host.status}</Text>
+        <Pressable accessibilityRole="button" onPress={() => disposeHost(host.serverId)}><Text>{"Dispose " + host.label}</Text></Pressable>
         <Pressable accessibilityRole="button" onPress={() => read(host.serverId)}><Text>{"Read " + host.label}</Text></Pressable>
       </View>)}
       <Pressable accessibilityRole="button" onPress={() => read()}><Text>Read selected</Text></Pressable>
@@ -105,6 +110,17 @@ export async function installHostClientsScenario(page: Page) {
     await close();
     throw error;
   }
+  async function expectObservationReleased(action: () => Promise<unknown>) {
+    const text = await page
+      .getByText(/^Agents subscription:/)
+      .filter({ visible: true })
+      .innerText();
+    const subscriptionId = text.slice("Agents subscription:".length);
+    expect(subscriptionId).not.toBe("");
+    expect(releases.has(subscriptionId)).toBe(false);
+    await action();
+    await expect.poll(() => releases.has(subscriptionId)).toBe(true);
+  }
   return {
     serverId: secondary.serverId,
     close,
@@ -116,16 +132,15 @@ export async function installHostClientsScenario(page: Page) {
         page.getByText("Secondary:online", { exact: true }).filter({ visible: true }),
       ).toBeVisible({ timeout: 30_000 });
     },
-    async reloadAndExpectObservationReleased() {
-      const text = await page
-        .getByText(/^Agents subscription:/)
-        .filter({ visible: true })
-        .innerText();
-      const subscriptionId = text.slice("Agents subscription:".length);
-      expect(subscriptionId).not.toBe("");
-      expect(releases.has(subscriptionId)).toBe(false);
-      await primary.reloadPlugin(id);
-      await expect.poll(() => releases.has(subscriptionId)).toBe(true);
+    reloadAndExpectObservationReleased: () =>
+      expectObservationReleased(() => primary.reloadPlugin(id)),
+    async disposeSecondaryAndExpectObservationReleased() {
+      await expectObservationReleased(() =>
+        page.getByRole("button", { name: "Dispose Secondary", exact: true }).click(),
+      );
+      await expect(
+        page.getByText(`Disposed:${secondary.serverId}`, { exact: true }).filter({ visible: true }),
+      ).toBeVisible();
     },
     restartSecondary: () => secondary.restart(),
     async disconnectSecondary() {

@@ -1532,6 +1532,9 @@ The returned API covers projects, workspaces, agents, terminals, providers, and 
 Import `useHosts` and `getPaseoClient` from `@getpaseo/plugin/client`:
 
 ```tsx
+import { getPaseoClient, useHosts } from "@getpaseo/plugin/client";
+
+// Inside a React component:
 const hosts = useHosts();
 
 async function listAgents(serverId: string) {
@@ -1551,12 +1554,16 @@ need this plugin installed. `usePaseo()` continues to use the selected host.
 Unknown IDs throw `Unknown Paseo host: <id>`. Hosts that are not online throw
 `Paseo host is disconnected: <id>`. No call falls through to another host. Acquire the client when
 performing an action so you use the current connection. A retained API survives reconnects on the
-same connection; if the app replaces or removes that connection, its API is released. Acquire a
-new API and recreate subscriptions after a replacement. Retained handles cannot call a released
+same connection, and its observations resume automatically. The app replaces connections when
+connection settings change or it switches to another configured connection, including automatic
+failover. After replacement, acquire a new API and recreate subscriptions. Removing the host also
+releases its API. Retained handles cannot call a released
 connection or outlive the originating installation.
 
 Paseo releases borrowed SDK observations when the originating plugin unloads, even when their
 target is another host. Explicit subscriptions can also be released through the normal SDK API.
+Calling `client.dispose()` releases that borrowed API's observations and removes it from the cache;
+a later `getPaseoClient(serverId)` returns a fresh API over the same app connection.
 Changing the surface's host selection does not retarget an already acquired client.
 
 Plugins are trusted app code. Cross-host access is intentional; host summaries omit connection
