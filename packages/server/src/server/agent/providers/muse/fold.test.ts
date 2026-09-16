@@ -270,4 +270,24 @@ describe("MuseNotificationFold", () => {
       },
     ]);
   });
+
+  test("reset drops folded items and echo memory", () => {
+    const { fold, events } = createFold();
+    const completed = frame("item/completed", {
+      itemId: "u1",
+      revision: 1,
+      kind: "userMessage",
+      turnId: "t1",
+      status: "completed",
+      text: "hi",
+    });
+
+    fold.apply(completed);
+    fold.apply(completed);
+    expect(events).toHaveLength(1);
+
+    fold.reset();
+    fold.apply(completed);
+    expect(events).toHaveLength(2);
+  });
 });

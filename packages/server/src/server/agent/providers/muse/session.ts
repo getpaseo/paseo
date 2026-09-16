@@ -26,6 +26,7 @@ import {
   MUSE_MODES,
   MUSE_PROVIDER,
   normalizeMuseThinkingOption,
+  readSessionRecord,
   resolveMuseApprovalMode,
 } from "./agent.js";
 import { MuseNotificationFold } from "./fold.js";
@@ -45,6 +46,9 @@ import {
   type MusePendingRequest,
 } from "./permissions.js";
 import { convertMusePromptInput } from "./prompts.js";
+import { mapMuseMcpServers } from "./mcps.js";
+import { resolveMuseRewindCutPoint } from "./rewind.js";
+import { composeSystemPromptParts } from "../../system-prompt.js";
 
 const DEFAULT_MUSE_INTERRUPT_TIMEOUT_MS = 30_000;
 
@@ -73,7 +77,7 @@ export class MuseAgentSession implements AgentSession {
   readonly capabilities: AgentCapabilityFlags;
 
   private readonly host: MuseHostConnection;
-  private readonly sessionId: string;
+  private sessionId: string;
   private readonly config: AgentSessionConfig;
   private readonly logger: Logger;
   private readonly interruptTimeoutMs: number;
@@ -426,6 +430,90 @@ export class MuseAgentSession implements AgentSession {
         ...(this.thinkingOptionId ? { thinkingOptionId: this.thinkingOptionId } : {}),
       },
     };
+  }
+
+  async revertConversation(input: { messageId: string }): Promise<void> {
+    if (this.closed) {
+      throw new Error("Muse session is closed");
+    }
+    if (this.activeTurn) {
+      throw new Error("Cannot rewind the Muse conversation while a turn is active");
+    }
+    const plan = resolveMuseRewindCutPoint(await this.readRewindItems(), input.messageId);
+    if (plan.kind === "fresh") {
+      await this.startFreshSessionForRewind();
+      return;
+    }
+    let forked: unknown;
+    try {
+      forked = await this.host.command("session/fork", {
+        sessionId: this.sessionId,
+        cutPoint: { lastTurnId: plan.lastTurnId },
+        excludeItems: true,
+      });
+    } catch (error) {
+      if (readMspErrorKind(error) === "forkBoundaryInvalid") {
+        throw new Error(
+          `Muse rewind target turn ${plan.lastTurnId} is not a completed-turn boundary`,
+          { cause: error },
+        );
+      }
+      throw error;
+    }
+    const session = readSessionRecord(forked as Record<string, unknown>);
+    if (!session.sessionId) {
+      throw new Error("Muse session/fork did not return a session id");
+    }
+    this.modelId = session.modelId ?? this.modelId;
+    this.modeId = session.approvalMode ?? this.modeId;
+    this.rebindSession(session.sessionId);
+  }
+
+  private async readRewindItems(): Promise<MuseViewItem[]> {
+    const result = (await this.host.command("session/read", {
+      sessionId: this.sessionId,
+      excludeItems: false,
+    })) as unknown as Record<string, unknown>;
+    const items = extractMuseHistoryItems(result["history"]);
+    if (!items) {
+      throw new Error("Muse history is not available for rewind");
+    }
+    return items;
+  }
+
+  private async startFreshSessionForRewind(): Promise<void> {
+    const approvalMode = resolveMuseApprovalMode(this.modeId);
+    const mcpServers = mapMuseMcpServers(this.config.mcpServers, this.logger);
+    const started = (await this.host.command("session/start", {
+      workspaceRoot: this.config.cwd,
+      approvalMode,
+      ...(this.modelId ? { modelId: this.modelId } : {}),
+      ...(mcpServers ? { config: { mcpServers } } : {}),
+    })) as unknown as Record<string, unknown>;
+    const session = readSessionRecord(started);
+    if (!session.sessionId) {
+      throw new Error("Muse session/start did not return a session id");
+    }
+    if (this.thinkingOptionId) {
+      await this.host.command("session/setReasoningEffort", {
+        sessionId: session.sessionId,
+        reasoningEffort: this.thinkingOptionId,
+      });
+    }
+    this.modelId = session.modelId ?? this.modelId;
+    this.modeId = session.approvalMode ?? approvalMode;
+    this.systemPrefix = composeSystemPromptParts(
+      this.config.systemPrompt,
+      this.config.daemonAppendSystemPrompt,
+    );
+    this.rebindSession(session.sessionId);
+  }
+
+  private rebindSession(sessionId: string): void {
+    this.sessionId = sessionId;
+    this.pendingRequests.clear();
+    this.fold.reset();
+    this.lastUsage = {};
   }
 
   async interrupt(): Promise<void> {

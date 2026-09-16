@@ -81,6 +81,7 @@ export const MUSE_MODES: AgentMode[] = [
 export const MUSE_DEFAULT_THINKING_OPTION_ID = "high";
 
 const MUSE_THINKING_TIERS = [
+  "none",
   "minimal",
   "low",
   "medium",
@@ -93,6 +94,7 @@ const MUSE_THINKING_TIERS = [
 export type MuseThinkingTier = (typeof MUSE_THINKING_TIERS)[number];
 
 export const MUSE_THINKING_OPTIONS: AgentSelectOption[] = [
+  { id: "none", label: "None", description: "No reasoning; fastest answers" },
   { id: "minimal", label: "Minimal", description: "Quick answers with least reasoning" },
   { id: "low", label: "Low", description: "Light reasoning for simple tasks" },
   { id: "medium", label: "Medium", description: "Balanced reasoning" },
@@ -126,7 +128,7 @@ const MUSE_CAPABILITIES: AgentCapabilityFlags = {
   supportsMcpServers: true,
   supportsReasoningStream: true,
   supportsToolInvocations: true,
-  supportsRewindConversation: false,
+  supportsRewindConversation: true,
   supportsRewindFiles: false,
   supportsRewindBoth: false,
 };
@@ -383,6 +385,7 @@ export class MuseAgentClient implements AgentClient {
       for (;;) {
         const page = await host.command("session/list", {
           ...(cursor ? { cursor } : {}),
+          ...(options?.cwd ? { workspaceRoot: options.cwd } : {}),
           limit: 200,
         });
         const { sessions, nextCursor } = readSessionListPage(page);
@@ -510,7 +513,7 @@ function readMetadataString(
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
-function readSessionRecord(result: Record<string, unknown>): {
+export function readSessionRecord(result: Record<string, unknown>): {
   sessionId: string | null;
   modelId: string | null;
   approvalMode: string | null;

@@ -443,6 +443,7 @@ describe("MuseAgentClient", () => {
       },
     ]);
     expect(commands.map((command) => command.params["cursor"] ?? null)).toEqual([null, "c1"]);
+    expect(commands[0]?.params["workspaceRoot"]).toBe("/tmp/ws");
     expect(spawns).toHaveLength(1);
     expect(spawns[0]?.cwd).toBe("/tmp/ws");
     expect(close).toHaveBeenCalledTimes(1);
@@ -626,6 +627,7 @@ describe("MuseAgentClient", () => {
     expect(registry.muse.enabled).toBe(false);
     const client = registry.muse.createClient(createTestLogger());
     expect(client.provider).toBe("muse");
+    expect(client.capabilities.supportsRewindConversation).toBe(true);
   });
 });
 

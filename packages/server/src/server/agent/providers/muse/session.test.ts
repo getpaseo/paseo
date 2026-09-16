@@ -1,7 +1,7 @@
 import { describe, expect, test, vi } from "vitest";
 
 import { createTestLogger } from "../../../../test-utils/test-logger.js";
-import type { AgentStreamEvent } from "../../agent-sdk-types.js";
+import type { AgentSessionConfig, AgentStreamEvent } from "../../agent-sdk-types.js";
 import type {
   MuseHostConnection,
   MuseHostNotification,
@@ -9,7 +9,12 @@ import type {
 } from "./host.js";
 import { isMissingRunError, MuseAgentSession } from "./session.js";
 
-function createHarness(options?: { systemPrefix?: string; modelId?: string | null }) {
+function createHarness(options?: {
+  systemPrefix?: string;
+  modelId?: string | null;
+  thinkingOptionId?: string | null;
+  config?: AgentSessionConfig;
+}) {
   const commands: Array<{ method: string; params: Record<string, unknown> }> = [];
   const routes = new Map<string, (params: Record<string, unknown>) => unknown>();
   const events: AgentStreamEvent[] = [];
@@ -44,7 +49,7 @@ function createHarness(options?: { systemPrefix?: string; modelId?: string | nul
   const session = new MuseAgentSession({
     host,
     sessionId: "session-1",
-    config: { provider: "muse", cwd: "/tmp/muse" },
+    config: options?.config ?? { provider: "muse", cwd: "/tmp/muse" },
     capabilities: {
       supportsStreaming: true,
       supportsSessionPersistence: true,
@@ -54,6 +59,7 @@ function createHarness(options?: { systemPrefix?: string; modelId?: string | nul
       supportsToolInvocations: true,
     },
     modelId: options?.modelId ?? null,
+    thinkingOptionId: options?.thinkingOptionId ?? null,
     modeId: "allowAll",
     systemPrefix: options?.systemPrefix,
     logger: createTestLogger(),
@@ -699,6 +705,216 @@ describe("MuseAgentSession", () => {
       expectedTurnId: "turn-1",
       input: [{ type: "text", text: "more" }],
     });
+  });
+
+  test("revertConversation forks through the previous turn and rebinds", async () => {
+    const { session, commands, routes, request } = createHarness({
+      modelId: "muse-spark-1.2",
+    });
+    routes.set("session/read", () => ({
+      history: {
+        mode: "inline",
+        items: [
+          {
+            itemId: "u1",
+            revision: 1,
+            kind: "userMessage",
+            turnId: "turn-1",
+            status: "completed",
+            text: "first",
+          },
+          {
+            itemId: "a1",
+            revision: 1,
+            kind: "agentMessage",
+            turnId: "turn-1",
+            status: "completed",
+            text: "reply",
+          },
+          {
+            itemId: "u2",
+            revision: 1,
+            kind: "userMessage",
+            turnId: "turn-2",
+            status: "completed",
+            text: "second",
+          },
+        ],
+      },
+    }));
+    routes.set("session/fork", () => ({
+      session: {
+        sessionId: "session-2",
+        modelId: "muse-spark-1.2",
+        approvalMode: { mode: "allowAll" },
+      },
+      history: { mode: "none" },
+    }));
+    routes.set("turn/start", () => acceptTurn());
+    await request({ requestId: 1, method: "approval/request", params: approvalParams() });
+    expect(session.getPendingPermissions()).toHaveLength(1);
+
+    await session.revertConversation({ messageId: "u2" });
+
+    expect(commands.map((command) => command.method)).toEqual(["session/read", "session/fork"]);
+    expect(commands[1]?.params).toEqual({
+      sessionId: "session-1",
+      cutPoint: { lastTurnId: "turn-1" },
+      excludeItems: true,
+    });
+    expect(session.id).toBe("session-2");
+    expect(session.getPendingPermissions()).toHaveLength(0);
+    expect(session.describePersistence()).toMatchObject({
+      sessionId: "session-2",
+      nativeHandle: "session-2",
+    });
+
+    await session.startTurn("after rewind");
+    expect(commands[2]?.params["sessionId"]).toBe("session-2");
+  });
+
+  test("revertConversation to the first turn starts a fresh session", async () => {
+    const { session, commands, routes } = createHarness({
+      modelId: "muse-spark-1.2",
+      thinkingOptionId: "low",
+      config: {
+        provider: "muse",
+        cwd: "/tmp/muse",
+        systemPrompt: "Be terse.",
+        mcpServers: {
+          paseo: { type: "http", url: "http://127.0.0.1:1/mcp/agents" },
+        },
+      },
+    });
+    routes.set("session/read", () => ({
+      history: {
+        mode: "inline",
+        items: [
+          {
+            itemId: "u1",
+            revision: 1,
+            kind: "userMessage",
+            turnId: "turn-1",
+            status: "completed",
+            text: "first",
+          },
+        ],
+      },
+    }));
+    routes.set("session/start", () => ({
+      session: {
+        sessionId: "session-9",
+        modelId: "muse-spark-1.2",
+        approvalMode: { mode: "allowAll" },
+      },
+    }));
+    routes.set("session/setReasoningEffort", () => ({}));
+    routes.set("turn/start", () => acceptTurn());
+
+    await session.revertConversation({ messageId: "u1" });
+
+    expect(commands.map((command) => command.method)).toEqual([
+      "session/read",
+      "session/start",
+      "session/setReasoningEffort",
+    ]);
+    expect(commands[1]?.params).toEqual({
+      workspaceRoot: "/tmp/muse",
+      approvalMode: "allowAll",
+      modelId: "muse-spark-1.2",
+      config: {
+        mcpServers: {
+          paseo: { transport: "streamableHttp", url: "http://127.0.0.1:1/mcp/agents" },
+        },
+      },
+    });
+    expect(commands[2]?.params).toEqual({
+      sessionId: "session-9",
+      reasoningEffort: "low",
+    });
+    expect(session.id).toBe("session-9");
+
+    await session.startTurn("fresh");
+    expect(commands[3]?.params["input"]).toEqual([
+      { type: "text", text: "Be terse." },
+      { type: "text", text: "fresh" },
+    ]);
+  });
+
+  test("revertConversation rejects active turns and unknown targets", async () => {
+    const busy = createHarness();
+    busy.routes.set("turn/start", () => acceptTurn());
+    await busy.session.startTurn("hello");
+    await expect(busy.session.revertConversation({ messageId: "u1" })).rejects.toThrow(
+      "while a turn is active",
+    );
+
+    const missing = createHarness();
+    missing.routes.set("session/read", () => ({
+      history: {
+        mode: "inline",
+        items: [
+          {
+            itemId: "u1",
+            revision: 1,
+            kind: "userMessage",
+            turnId: "turn-1",
+            status: "completed",
+            text: "first",
+          },
+        ],
+      },
+    }));
+    await expect(missing.session.revertConversation({ messageId: "nope" })).rejects.toThrow(
+      "was not found in history",
+    );
+
+    const unavailable = createHarness();
+    unavailable.routes.set("session/read", () => ({ history: { mode: "none" } }));
+    await expect(unavailable.session.revertConversation({ messageId: "u1" })).rejects.toThrow(
+      "Muse history is not available for rewind",
+    );
+
+    const closed = createHarness();
+    await closed.session.close();
+    await expect(closed.session.revertConversation({ messageId: "u1" })).rejects.toThrow(
+      "Muse session is closed",
+    );
+  });
+
+  test("revertConversation reports invalid fork boundaries", async () => {
+    const { session, routes } = createHarness();
+    routes.set("session/read", () => ({
+      history: {
+        mode: "inline",
+        items: [
+          {
+            itemId: "u1",
+            revision: 1,
+            kind: "userMessage",
+            turnId: "turn-1",
+            status: "completed",
+            text: "first",
+          },
+          {
+            itemId: "u2",
+            revision: 1,
+            kind: "userMessage",
+            turnId: "turn-2",
+            status: "completed",
+            text: "second",
+          },
+        ],
+      },
+    }));
+    routes.set("session/fork", () => {
+      throw mspError("bad boundary", "forkBoundaryInvalid");
+    });
+
+    await expect(session.revertConversation({ messageId: "u2" })).rejects.toThrow(
+      "is not a completed-turn boundary",
+    );
+    expect(session.id).toBe("session-1");
   });
 
   test("steerActiveTurn maps command rejections to unavailable", async () => {

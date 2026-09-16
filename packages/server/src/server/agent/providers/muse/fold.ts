@@ -75,6 +75,13 @@ export class MuseNotificationFold {
     return this.items.list();
   }
 
+  /** Drop all folded state after the session rebinds to a forked native session. */
+  reset(): void {
+    this.items.seed([]);
+    this.streamedFields.clear();
+    this.echoedUserItems.clear();
+  }
+
   private applyItemFrame(method: string, params: Record<string, unknown>): void {
     const item = asMuseViewItem(params["item"]);
     if (!item) {
