@@ -137,7 +137,9 @@ guarantee compatibility with another host's renderer.
 
 These exact module specifiers use the host's runtime instances. A client bundle that requests another host module fails with `Module "<name>" is not available in plugin client code`.
 
-Do not import `lucide-react-native`, `react-native-svg`, or DOM libraries. Set contribution `icon` fields to a [Lucide icon name](https://lucide.dev/icons/); Paseo validates the name and renders the icon.
+Do not import `lucide-react-native`, `react-native-svg`, or DOM libraries. Use the host-rendered
+`Icon` and `ProviderIcon` components in plugin UI. Contribution `icon` fields still take a
+[Lucide icon name](https://lucide.dev/icons/); Paseo validates the name and renders the icon.
 
 ### Cross-platform rules
 
@@ -798,14 +800,31 @@ Showing another toast replaces the currently visible toast. An empty message is 
 
 ### Icons
 
-`Icon` renders a [Lucide icon](https://lucide.dev/icons/) from Paseo's installed icon set. Plugin bundles do not import
-`lucide-react-native` or `react-native-svg`.
+`Icon` renders a [Lucide icon](https://lucide.dev/icons/) from Paseo's installed icon set.
 
 | Prop    | Type     | Required | Behavior                                        |
 | ------- | -------- | -------- | ----------------------------------------------- |
 | `name`  | `string` | Yes      | Lucide icon name. Unknown names render nothing. |
-| `size`  | `number` | No       | Icon width and height.                          |
+| `size`  | `number` | No       | Icon width and height. Defaults to 24.          |
 | `color` | `string` | No       | Icon color. Use a plugin theme token.           |
+
+`ProviderIcon` renders Paseo's icon for a built-in, catalog, or plugin-provided agent provider.
+Pass the current surface or panel's `host.id`; provider SVGs registered by a plugin are scoped to
+that daemon.
+
+```tsx
+<ProviderIcon provider="codex" hostId={host.id} size={18} color={theme.colors.foreground} />
+```
+
+| Prop       | Type     | Required | Behavior                                             |
+| ---------- | -------- | -------- | ---------------------------------------------------- |
+| `provider` | `string` | Yes      | Provider ID, such as `codex`, `claude`, or `cursor`. |
+| `hostId`   | `string` | Yes      | `host.id` from the current plugin surface or panel.  |
+| `size`     | `number` | No       | Icon width and height. Defaults to 24.               |
+| `color`    | `string` | No       | Icon color. Use a plugin theme token.                |
+
+Unknown providers render Paseo's standard provider fallback. Plugin bundles do not import
+`lucide-react-native` or `react-native-svg`.
 
 ## Timeline items
 

@@ -158,8 +158,10 @@ Do not put any other code modules in the plugin root.
 
 Shared files import contract helpers and types from `@getpaseo/plugin`. Server handler files import
 `PluginHandlerContext` from `@getpaseo/plugin/server`. Client files import Paseo UI from
-`@getpaseo/plugin/client/react-native`. Its `Icon` resolves a Lucide name using the client's installed icon
-set; an unknown name renders nothing so it cannot break the plugin surface.
+`@getpaseo/plugin/client/react-native`. The module provides host-rendered `Icon` and `ProviderIcon`
+components. `Icon` resolves a Lucide name from the client's installed set. `ProviderIcon` resolves
+a provider for the selected host, including daemon-supplied plugin provider SVGs. Unknown Lucide
+names render nothing; unknown providers render the standard provider fallback.
 Its controlled modal keeps presentation metadata on `<Modal title="…" icon={…}>` and body UI in
 `<Modal.Content>`. Body layout, sheet-aware scrolling, and clipboard actions follow the
 [host UI contract](../public-docs/plugins/v0.8/reference.md#host-ui).

@@ -1,6 +1,7 @@
+import { getProviderIcon } from "@/components/provider-icons";
 import { createElement, type ReactElement } from "react";
 import * as LucideIcons from "lucide-react-native";
-import type { PluginIconProps } from "@getpaseo/plugin/client";
+import type { PluginIconProps, PluginProviderIconProps } from "@getpaseo/plugin/client";
 import type { LucideIcon } from "lucide-react-native";
 
 function findPluginIcon(name: string): LucideIcon | null {
@@ -21,4 +22,14 @@ export function resolvePluginIcon(name: string): LucideIcon {
 export function Icon({ name, size, color }: PluginIconProps): ReactElement | null {
   const icon = findPluginIcon(name);
   return icon ? createElement(icon, { size, color }) : null;
+}
+
+export function ProviderIcon({
+  provider,
+  hostId,
+  size = 24,
+  color = "currentColor",
+}: PluginProviderIconProps): ReactElement {
+  const icon = getProviderIcon(provider, hostId);
+  return createElement(icon, { size, color });
 }
