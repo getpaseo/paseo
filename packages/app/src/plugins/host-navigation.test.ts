@@ -5,8 +5,11 @@ describe("plugin host navigation", () => {
   function setup(electron = true) {
     const destinations: unknown[] = [];
     const browsers: string[] = [];
+    const workspaces = new Set(["selected:one", "remote:two"]);
     const navigation = createPluginHostNavigation("selected", {
       browserAvailable: electron,
+      resolveWorkspace: ({ serverId, workspaceId }) =>
+        workspaces.has(`${serverId}:${workspaceId}`) ? workspaceId : null,
       openAgent: (input) => destinations.push(input),
       openWorkspace: (input) => destinations.push(input),
       createBrowser: ({ initialUrl }) => {
@@ -14,7 +17,7 @@ describe("plugin host navigation", () => {
         return { browserId: `browser-${browsers.length}` };
       },
     });
-    return { navigation, destinations, browsers };
+    return { navigation, destinations, browsers, workspaces };
   }
 
   it("creates and focuses a local browser in the selected or explicit host workspace", () => {
@@ -38,6 +41,26 @@ describe("plugin host navigation", () => {
         target: { kind: "browser", browserId: "browser-2" },
       },
     ]);
+  });
+
+  it("refuses unknown or removed workspaces before creating browser records", () => {
+    const { navigation, destinations, browsers, workspaces } = setup();
+    expect(() =>
+      navigation.openBrowser!({ url: "https://example.com", workspaceId: "missing" }),
+    ).toThrow("Workspace is unavailable");
+    expect(() =>
+      navigation.openBrowser!({
+        url: "https://example.com",
+        workspaceId: "one",
+        serverId: "unknown",
+      }),
+    ).toThrow("Workspace is unavailable");
+    workspaces.delete("selected:one");
+    expect(() =>
+      navigation.openBrowser!({ url: "https://example.com", workspaceId: "one" }),
+    ).toThrow("Workspace is unavailable");
+    expect(destinations).toEqual([]);
+    expect(browsers).toEqual([]);
   });
 
   it("exposes no browser capability outside Electron and creates no tabs", () => {

@@ -172,7 +172,7 @@ await openExternalUrl("https://paseo.sh/docs");
 `openExternalUrl(url: string): Promise<void>` opens the system browser on Electron, a new tab
 on browser web, and the OS URL handler on iOS/Android. Call it directly from a user interaction
 so browser popup blockers allow the tab. Only absolute HTTP(S) URLs are accepted; unsupported
-URLs reject, and OS opener errors propagate. Browser popup blocking cannot be distinguished
+URLs are ignored, and OS opener errors propagate. Browser popup blocking cannot be distinguished
 from a successful `noopener` open.
 
 `ExternalLink` uses the same opener and accessible link semantics. Its children are link text or
@@ -208,8 +208,8 @@ function Documentation({ navigation, workspaceId }) {
 `navigation.openBrowser({ url, workspaceId, serverId? }): void` creates and focuses a new browser
 tab in the named workspace. `workspaceId` is required. `serverId` selects workspace ownership;
 the browser always runs on the local desktop, including for remote workspaces. Pass an existing
-workspace ID on that host. Invalid HTTP(S) URLs or empty workspace IDs throw before creating a
-tab. No external fallback runs implicitly. This API does not change popup handling inside
+workspace ID already loaded by the app on that host. Invalid HTTP(S) URLs, empty workspace IDs,
+and workspaces not present in that host’s current workspace list throw before creating a tab. No external fallback runs implicitly. This API does not change popup handling inside
 embedded web pages, including OAuth flows.
 
 Use the [settings API](#settings-screens) for typed host-scoped persistence across clients.

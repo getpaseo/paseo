@@ -1,12 +1,9 @@
 /** Shared allowlist for links passed to an OS opener or a workspace browser. */
-export function assertHttpUrl(url: string): void {
-  let parsed: URL;
+export function isHttpUrl(url: string): boolean {
   try {
-    parsed = new URL(url);
+    const protocol = new URL(url).protocol;
+    return protocol === "http:" || protocol === "https:";
   } catch {
-    throw new Error("Only absolute HTTP(S) URLs are supported.");
-  }
-  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-    throw new Error("Only absolute HTTP(S) URLs are supported.");
+    return false;
   }
 }
