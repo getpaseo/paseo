@@ -1,3 +1,4 @@
+import { createPluginHosts } from "./hosts";
 import { afterEach, expect, it } from "vitest";
 import { createPaseoApi } from "@getpaseo/client";
 import { DaemonClient } from "@getpaseo/client/internal/daemon-client";
@@ -10,9 +11,18 @@ function registry(version: string) {
   let cleanups = 0;
   const result = new PluginRegistry({
     version,
-    createRuntime() {
+    createRuntime(installation) {
       starts++;
       return {
+        hosts: createPluginHosts(
+          {
+            getHosts: () => [],
+            getSnapshot: () => null,
+            subscribeAll: () => () => {},
+            subscribeHostList: () => () => {},
+          },
+          installation.lifetime.signal,
+        ),
         paseo: createPaseoApi(client),
         rpc: async () => {
           throw new Error("No RPC in this plugin");

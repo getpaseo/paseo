@@ -1600,6 +1600,82 @@ function PullRequestAction({ theme }: PluginSurfaceProps) {
 
 The returned API covers projects, workspaces, agents, terminals, providers, and daemon config. See the [SDK API reference](/docs/sdk/reference) for its methods. Connection lifecycle methods are intentionally absent because Paseo owns the connection.
 
+### Discover hosts and target another host
+
+Use `useHosts()` to display configured hosts and `getPaseoClient(serverId)` in an action callback
+to run SDK operations on one of them:
+
+```tsx
+import { getPaseoClient, useHosts, type PluginSurfaceProps } from "@getpaseo/plugin/client";
+import { useMemo, useState, type ReactElement } from "react";
+import { Pressable, Text, View } from "react-native";
+
+export function HostAgents({ theme }: Pick<PluginSurfaceProps, "theme">): ReactElement {
+  const hosts = useHosts();
+  const textStyle = useMemo(() => ({ color: theme.colors.foreground }), [theme]);
+  const [result, setResult] = useState("");
+
+  async function listAgents(serverId: string): Promise<void> {
+    try {
+      const { entries } = await getPaseoClient(serverId).agents.list();
+      setResult(`${entries.length} agents`);
+    } catch (error) {
+      setResult(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  const rows = hosts.map((host) => ({
+    host,
+    onPress() {
+      void listAgents(host.serverId);
+    },
+  }));
+
+  return (
+    <View>
+      {rows.map(({ host, onPress }) => (
+        <Pressable key={host.serverId} accessibilityRole="button" onPress={onPress}>
+          <Text style={textStyle}>
+            {host.label}: {host.status}
+          </Text>
+        </Pressable>
+      ))}
+      <Text style={textStyle}>{result}</Text>
+    </View>
+  );
+}
+```
+
+`useHosts(): readonly PluginHostSummary[]` includes offline hosts and updates when hosts,
+labels, or statuses change.
+
+| Summary field | Type or values                                               | Meaning                                                      |
+| ------------- | ------------------------------------------------------------ | ------------------------------------------------------------ |
+| `serverId`    | `string`                                                     | ID to pass to `getPaseoClient`.                              |
+| `label`       | `string`                                                     | Host's display name.                                         |
+| `status`      | `"idle"`, `"connecting"`, `"online"`, `"offline"`, `"error"` | Current app connection status. SDK calls require `"online"`. |
+
+`getPaseoClient(serverId: string): PaseoApi` borrows the host's authenticated app connection.
+Call it in client entry code or callbacks; it opens no socket and does not require the plugin
+on the target daemon. Acquire the API when performing an action to use the current connection.
+
+| Event or condition                                                                       | Result and caller action                                                                                                                                        |
+| ---------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Unknown host ID                                                                          | Throws `Unknown Paseo host: <id>`; never falls through to another host.                                                                                         |
+| Host is not online                                                                       | Throws `Paseo host is disconnected: <id>`, including calls through a retained API. Retry when online.                                                           |
+| Same connection reconnects                                                               | Retained APIs remain usable after reconnection; observations resume automatically.                                                                              |
+| Connection settings change or the app switches connections, including automatic failover | The old API is released. Call `getPaseoClient(serverId)` again and recreate subscriptions.                                                                      |
+| Host is removed                                                                          | Its API is released; the removed ID is unknown.                                                                                                                 |
+| `client.dispose()`                                                                       | Releases that API and its observations. A later getter call returns a fresh API over the app connection. Disposing the old API again leaves the new API usable. |
+| Originating plugin unloads                                                               | All its borrowed APIs and observations are released, including those targeting other hosts. Retained handles cannot outlive the installation.                   |
+| Surface host selection changes                                                           | `usePaseo()` follows the selected host. An explicitly acquired API keeps its original target.                                                                   |
+
+You can also release individual subscriptions through the normal SDK API.
+
+Plugins are trusted app code; cross-host access is intentional. Summaries contain no connection
+URLs or credentials, and borrowed APIs provide no connection lifecycle controls. See the
+[host agents example](https://github.com/getpaseo/paseo/tree/main/plugin-examples/hosts).
+
 ## Add plugin-specific backend behavior
 
 Use plugin RPC only for work that is not a normal Paseo operation: reading a vendor API, accessing daemon-local resources, or keeping credentials off the client.

@@ -602,3 +602,39 @@ describe("evaluatePluginClientBundle", () => {
     ).toThrow("setup exploded");
   });
 });
+
+it("binds imported getters to each originating installation across delayed callbacks", async () => {
+  const calls: string[] = [];
+  const hostRuntime = (installation: string): PluginClientRuntime => ({
+    ...runtime,
+    hosts: {
+      getSnapshot: () => [],
+      subscribe: () => () => {},
+      getPaseoClient(serverId) {
+        calls.push(`${installation}/${serverId}`);
+        return runtime.paseo;
+      },
+    },
+  });
+  const source = bundle(`
+    const { getPaseoClient } = require("@getpaseo/plugin/client");
+    getPaseoClient("entry-host");
+    plugin.addCommandCenterItem({
+      id: "read", title: "Read", icon: "Server", context: "global",
+      onSelect: async () => { await Promise.resolve(); getPaseoClient("target-host"); },
+    });
+  `);
+  const first = runPluginClientBundle("same-id", source, hostRuntime("first"));
+  const second = runPluginClientBundle("same-id", source, hostRuntime("second"));
+  // Both callbacks run after the second bundle has evaluated.
+  await first.commandCenterItems[0].onSelect({} as never);
+  await second.commandCenterItems[0].onSelect({} as never);
+  expect(calls).toEqual([
+    "first/entry-host",
+    "second/entry-host",
+    "first/target-host",
+    "second/target-host",
+  ]);
+  await first.cleanup();
+  await second.cleanup();
+});
