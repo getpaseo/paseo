@@ -3036,8 +3036,8 @@ test("fetch_agent_history_request filters across history and paginates chronolog
     page: { limit: 1 },
   });
 
-  const first = emitted[0];
-  if (first?.type !== "fetch_agent_history_response") throw new Error("Expected history");
+  expect(emitted).toHaveLength(1);
+  const first = filterByType(emitted, "fetch_agent_history_response")[0];
   expect(first.payload.entries.map((entry) => entry.agent.id)).toEqual(["weak"]);
   expect(first.payload.pageInfo.hasMore).toBe(true);
   expect(first.payload.entries[0].searchScore).toBeUndefined();
@@ -3047,8 +3047,8 @@ test("fetch_agent_history_request filters across history and paginates chronolog
     search: "bill",
     page: { limit: 1, cursor: first.payload.pageInfo.nextCursor! },
   });
-  const second = emitted[1];
-  if (second?.type !== "fetch_agent_history_response") throw new Error("Expected history");
+  expect(emitted).toHaveLength(2);
+  const second = filterByType(emitted, "fetch_agent_history_response")[1];
   expect(second.payload.entries.map((entry) => entry.agent.id)).toEqual(["strong"]);
   expect(second.payload.pageInfo.hasMore).toBe(false);
 });
