@@ -8,8 +8,10 @@ export function usePluginHostNavigation(
 ): NonNullable<PluginSurfaceProps["navigation"]> {
   return useMemo(
     () => ({
-      openAgent: ({ agentId }) => navigateToAgent({ serverId, agentId }),
-      openWorkspace: ({ workspaceId }) => navigateToWorkspace({ serverId, workspaceId }),
+      openAgent: ({ agentId, serverId: targetServerId }) =>
+        navigateToAgent({ serverId: targetServerId ?? serverId, agentId }),
+      openWorkspace: ({ workspaceId, serverId: targetServerId }) =>
+        navigateToWorkspace({ serverId: targetServerId ?? serverId, workspaceId }),
     }),
     [serverId],
   );

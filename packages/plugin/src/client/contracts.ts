@@ -33,8 +33,11 @@ export interface PluginHostProps {
 interface PluginNavigableHostProps extends PluginHostProps {
   /** Client-owned navigation. Undefined on older hosts; hide dependent affordances when absent. */
   readonly navigation?: {
-    readonly openAgent: (input: { readonly agentId: string }) => void;
-    readonly openWorkspace: (input: { readonly workspaceId: string }) => void;
+    readonly openAgent: (input: { readonly agentId: string; readonly serverId?: string }) => void;
+    readonly openWorkspace: (input: {
+      readonly workspaceId: string;
+      readonly serverId?: string;
+    }) => void;
   };
 }
 

@@ -153,6 +153,8 @@ export function Surface({ navigation }: PluginSurfaceProps) {
   });
   navigation?.openAgent({ agentId: "agent-1" });
   navigation?.openWorkspace({ workspaceId: "workspace-1" });
+  navigation?.openAgent({ serverId: "server-2", agentId: "agent-2" });
+  navigation?.openWorkspace({ serverId: "server-2", workspaceId: "workspace-2" });
   void createWorkspace;
   return <><Icon name="Settings" size={18} color="#123456" /><Text onPress={() => toast.show("Ready")}>Paseo API</Text><Modal title="Example" icon={<Icon name="Settings" />} open={false} onOpenChange={() => {}}><Modal.Content><Text>Modal</Text></Modal.Content></Modal></>;
 }
