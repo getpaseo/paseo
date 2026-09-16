@@ -103,7 +103,9 @@ if (command === "xml-composer-contained") {
     readInputHeight(firstPath),
     readInputHeight(secondPath),
   ]);
-  if (firstHeight !== secondHeight) {
+  // Yoga rounds each edge to physical pixels; moving the same-sized input can
+  // change its reported height by one pixel when its origin is fractional.
+  if (Math.abs(firstHeight - secondHeight) > 1) {
     throw new Error(`Composer height drifted from ${firstHeight} to ${secondHeight}`);
   }
 } else if (command === "has-exact-text") {

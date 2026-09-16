@@ -388,4 +388,13 @@ node "${ASSERT}" xml-composer-contained \
   "$(read_ime_top)" \
   "${display_density}"
 
+adb shell input keyevent BACK
+wait_for_ime false
+adb shell ime set "${HELPER_IME}" >/dev/null
+snapshot_json "${ARTIFACTS_DIR}/new-workspace-long-draft-keyboard-closed.json"
+capture_screen "${ARTIFACTS_DIR}/new-workspace-long-draft-keyboard-closed.png"
+node "${ASSERT}" same-input-height \
+  "${ARTIFACTS_DIR}/new-workspace-long-draft.json" \
+  "${ARTIFACTS_DIR}/new-workspace-long-draft-keyboard-closed.json"
+
 echo "Composer keyboard invariants passed"
