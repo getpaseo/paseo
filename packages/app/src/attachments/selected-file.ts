@@ -8,12 +8,6 @@ export interface SelectedFile {
   readBytes(): Promise<Uint8Array>;
 }
 
-export interface PickedFile {
-  fileName: string;
-  mimeType: string;
-  bytes: Uint8Array;
-}
-
 function base64ToUint8Array(base64: string): Uint8Array {
   const binaryString = atob(base64);
   const bytes = new Uint8Array(binaryString.length);
