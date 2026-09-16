@@ -197,6 +197,7 @@ function createFallbackWorkspaceGitSnapshot(cwd: string): WorkspaceGitRuntimeSna
       repoRoot: null,
       mainRepoRoot: null,
       currentBranch: null,
+      headOid: null,
       remoteUrl: null,
       isPaseoOwnedWorktree: false,
       isDirty: null,

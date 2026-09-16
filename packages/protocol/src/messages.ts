@@ -5159,6 +5159,10 @@ const CheckoutStatusNotGitSchema = CheckoutStatusCommonSchema.extend({
   isPaseoOwnedWorktree: z.literal(false),
   repoRoot: z.null(),
   currentBranch: z.null(),
+  // COMPAT(checkoutHeadOid): added in v0.3.1, remove optional after 2027-02-09.
+  headOid: z.null().optional(),
+  // COMPAT(checkoutWorktreeRevision): added in v0.7.0, remove optional after 2027-02-28.
+  worktreeRevision: z.null().optional(),
   isDirty: z.null(),
   baseRef: z.null(),
   aheadBehind: z.null(),
@@ -5174,6 +5178,10 @@ const CheckoutStatusGitNonPaseoSchema = CheckoutStatusCommonSchema.extend({
   repoRoot: z.string(),
   mainRepoRoot: z.string().nullable().optional().default(null),
   currentBranch: z.string().nullable(),
+  // COMPAT(checkoutHeadOid): added in v0.3.1, remove optional after 2027-02-09.
+  headOid: z.string().nullable().optional(),
+  // COMPAT(checkoutWorktreeRevision): added in v0.7.0, remove optional after 2027-02-28.
+  worktreeRevision: z.number().int().nonnegative().optional(),
   isDirty: z.boolean(),
   baseRef: z.string().nullable(),
   aheadBehind: AheadBehindSchema.nullable(),
@@ -5189,6 +5197,10 @@ const CheckoutStatusGitPaseoSchema = CheckoutStatusCommonSchema.extend({
   repoRoot: z.string(),
   mainRepoRoot: z.string(),
   currentBranch: z.string().nullable(),
+  // COMPAT(checkoutHeadOid): added in v0.3.1, remove optional after 2027-02-09.
+  headOid: z.string().nullable().optional(),
+  // COMPAT(checkoutWorktreeRevision): added in v0.7.0, remove optional after 2027-02-28.
+  worktreeRevision: z.number().int().nonnegative().optional(),
   isDirty: z.boolean(),
   baseRef: z.string(),
   aheadBehind: AheadBehindSchema.nullable(),
