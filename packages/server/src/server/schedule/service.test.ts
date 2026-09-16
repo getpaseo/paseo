@@ -46,6 +46,37 @@ interface ScheduleServiceInternals {
   executeSchedule(schedule: StoredSchedule, runId: string): Promise<ScheduleExecutionResult>;
 }
 
+class OverlappingTickRunner {
+  private resolveFirstRunStarted: () => void = () => {};
+  private resolveFirstRunBlocked: () => void = () => {};
+  private laterScheduleRunCount = 0;
+
+  readonly firstRunStarted = new Promise<void>((resolve) => {
+    this.resolveFirstRunStarted = resolve;
+  });
+  private readonly firstRunBlocked = new Promise<void>((resolve) => {
+    this.resolveFirstRunBlocked = resolve;
+  });
+
+  async run(schedule: StoredSchedule): Promise<ScheduleExecutionResult> {
+    if (schedule.prompt === "block the first tick") {
+      this.resolveFirstRunStarted();
+      await this.firstRunBlocked;
+    } else {
+      this.laterScheduleRunCount += 1;
+    }
+    return { agentId: null, output: "ok" };
+  }
+
+  unblockFirstRun(): void {
+    this.resolveFirstRunBlocked();
+  }
+
+  get laterScheduleRuns(): number {
+    return this.laterScheduleRunCount;
+  }
+}
+
 const SCHEDULE_TEST_CAPABILITIES: AgentCapabilityFlags = {
   supportsStreaming: true,
   supportsSessionPersistence: true,
@@ -379,15 +410,7 @@ describe("ScheduleService", () => {
   });
 
   test("claims a due slot once when overlapping ticks use stale schedule snapshots", async () => {
-    let releaseFirstRun: (() => void) | null = null;
-    const firstRunStarted = new Promise<void>((resolve) => {
-      releaseFirstRun = resolve;
-    });
-    let unblockFirstRun: (() => void) | null = null;
-    const firstRunBlocked = new Promise<void>((resolve) => {
-      unblockFirstRun = resolve;
-    });
-    let laterScheduleRuns = 0;
+    const runner = new OverlappingTickRunner();
 
     const service = createScheduleService({
       paseoHome: tempDir,
@@ -396,15 +419,7 @@ describe("ScheduleService", () => {
       agentStorage,
       providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
       now: () => now,
-      runner: async (schedule) => {
-        if (schedule.prompt === "block the first tick") {
-          releaseFirstRun?.();
-          await firstRunBlocked;
-        } else {
-          laterScheduleRuns += 1;
-        }
-        return { agentId: null, output: "ok" };
-      },
+      runner: (schedule) => runner.run(schedule),
     });
 
     await service.create({
@@ -420,14 +435,14 @@ describe("ScheduleService", () => {
 
     now = new Date("2026-01-01T00:30:00.000Z");
     const firstTick = service.tick();
-    await firstRunStarted;
+    await runner.firstRunStarted;
 
     await service.tick();
-    unblockFirstRun?.();
+    runner.unblockFirstRun();
     await firstTick;
 
     const inspected = await service.inspect(laterSchedule.id);
-    expect(laterScheduleRuns).toBe(1);
+    expect(runner.laterScheduleRuns).toBe(1);
     expect(inspected.runs).toHaveLength(1);
     expect(inspected.runs[0]?.scheduledFor).toBe("2026-01-01T00:30:00.000Z");
     expect(inspected.nextRunAt).toBe("2026-01-01T01:00:00.000Z");
