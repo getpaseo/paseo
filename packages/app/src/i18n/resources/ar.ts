@@ -2,6 +2,28 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const ar: TranslationResources = {
+  paneFind: {
+    searchFailed: "تعذر البحث في هذه المحادثة. تحقق من الاتصال بالمضيف وأعد المحاولة.",
+    searching: "جارٍ البحث…",
+    loading: "جارٍ التحميل…",
+    failed: "فشل",
+    retry: "إعادة المحاولة",
+    chatPosition: "{{current}} من {{total}} في الرسالة",
+
+    title: "بحث",
+    placeholder: "بحث في اللوحة",
+    close: "إغلاق البحث",
+    matches: "نتائج البحث",
+    previous: "التطابق السابق",
+    next: "التطابق التالي",
+    toggleReplace: "إظهار الاستبدال",
+    replaceWith: "استبدال بـ",
+    replace: "استبدال",
+    replaceAll: "استبدال الكل",
+    noMatches: "لا توجد تطابقات",
+    position: "{{current}} من {{total}}",
+    total: "{{total}} تطابقات",
+  },
   common: {
     back: "خلف",
     loading: "تحميل...",

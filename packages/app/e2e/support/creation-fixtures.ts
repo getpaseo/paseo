@@ -1,4 +1,4 @@
-import { writeFile, rm } from "node:fs/promises";
+import { writeFile, rm, rename } from "node:fs/promises";
 import path from "node:path";
 import { copyPluginExample } from "./helpers/plugin-fixture";
 import { connectNewWorkspaceDaemonClient } from "./helpers/new-workspace";
@@ -23,9 +23,11 @@ export const test = base.extend<{
     const client = await connectNewWorkspaceDaemonClient();
     const plugin = await copyPluginExample("lifecycle-logger");
     const gate = path.join(plugin.directory, "startup.txt");
+    const failure = path.join(plugin.directory, "startup-failure.txt");
     const previous = await client.getDaemonConfig();
     try {
       await writeFile(gate, "hold");
+      await writeFile(failure, "fail");
       await writeFile(
         path.join(plugin.directory, "index.server.ts"),
         `
@@ -52,7 +54,8 @@ export default function contribute(server) {
       await client.installDirectoryPlugin(plugin.directory);
       await provide({
         release: () => rm(gate, { force: true }),
-        fail: () => writeFile(gate, "fail"),
+        // Replacing the command must not expose a truncated, empty file to the hook.
+        fail: () => rename(failure, gate),
       });
     } finally {
       await rm(gate, { force: true });

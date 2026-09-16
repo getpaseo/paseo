@@ -185,6 +185,9 @@ test.describe("Workspace navigation regression", () => {
       });
       await waitForWorkspaceTabsVisible(page);
       await expectWorkspaceTabVisible(page, agent.id);
+      // The reconnect toast belongs to the visible agent panel, which mounts
+      // after the tab strip. Drop the connection only after that panel is ready.
+      await expectComposerVisible(page);
 
       await daemonGate.drop();
       await daemonGate.waitForBlockedConnection();

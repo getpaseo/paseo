@@ -72,6 +72,7 @@ async function selectAgent(page: Page, title: string) {
 }
 
 async function expectForkFailureWithoutOverlappingStatus(page: Page) {
+  const expectContinuousToast = await observeToastReplacement(page);
   await page.getByRole("button", { name: "Fork chat from here" }).last().click();
   await page.getByRole("menuitem", { name: "Fork in a new tab", exact: true }).click();
   await expect(
@@ -79,6 +80,41 @@ async function expectForkFailureWithoutOverlappingStatus(page: Page) {
   ).toBeVisible();
   await expectReconnectingToastGone(page, { timeout: 100 });
   await expectReconnectingToastVisible(page);
+  await expectContinuousToast();
+}
+
+async function observeToastReplacement(page: Page) {
+  const observation = await page
+    .getByRole("alert")
+    .filter({ hasText: "Reconnecting to host" })
+    .evaluateHandle((toast) => {
+      const frames: Array<{ connected: boolean; opacity: number; transform: string }> = [];
+      let frame = 0;
+      const sample = () => {
+        const style = getComputedStyle(toast);
+        frames.push({
+          connected: toast.isConnected,
+          opacity: Number(style.opacity),
+          transform: style.transform,
+        });
+        frame = requestAnimationFrame(sample);
+      };
+      sample();
+      return {
+        stop() {
+          cancelAnimationFrame(frame);
+          return frames;
+        },
+      };
+    });
+  return async () => {
+    const frames = await observation.evaluate((recorder) => recorder.stop());
+    await observation.dispose();
+    expect(frames.length).toBeGreaterThan(1);
+    expect(frames.every((frame) => frame.connected)).toBe(true);
+    expect(Math.min(...frames.map((frame) => frame.opacity))).toBe(1);
+    expect(new Set(frames.map((frame) => frame.transform)).size).toBe(1);
+  };
 }
 
 async function countChatCommits(page: Page, agentId: string) {
@@ -286,6 +322,7 @@ test.describe("Viewed agent timelines", () => {
       ).toHaveCount(0);
       // Hold the visible response to observe the connected-but-updating state.
       gate.holdTimelineResponses(scenario.firstAgentId);
+      const expectContinuousToast = await observeToastReplacement(page);
       gate.restore();
       await gate.waitForHeldTimelineResponse();
       await expectReconnectingToastGone(page);
@@ -295,6 +332,7 @@ test.describe("Viewed agent timelines", () => {
       ).toBeVisible();
       await expect(previousMessage).toBeVisible();
       await expect(page.getByTestId("agent-updating-toast")).toHaveCSS("opacity", "1");
+      await expectContinuousToast();
       await page.screenshot({ path: testInfo.outputPath("updating-chat.png") });
       gate.releaseHeldTimelineResponses();
       await expect(page.getByRole("alert").filter({ hasText: "Updating messages" })).toHaveCount(0);

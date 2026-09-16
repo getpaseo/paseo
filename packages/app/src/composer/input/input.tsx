@@ -1211,8 +1211,9 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     const selectionRef = useRef({ start: value.length, end: value.length });
     const appliedTextReplacementKeyRef = useRef(textReplacement.key);
     const webTextareaRef = useRef<HTMLElement | null>(null);
+    const getLiveText = useCallback(() => valueRef.current, []);
     const composerHeight = useComposerHeight({
-      value,
+      getText: getLiveText,
       textareaRef: webTextareaRef,
       minHeight: MIN_INPUT_HEIGHT,
       maxHeight: maxInputHeight,
