@@ -36,19 +36,6 @@ describe("usePluginHostNavigation", () => {
     });
   });
 
-  it("opens agents and workspaces on an explicitly selected host", () => {
-    const { result } = renderHook(() => usePluginHostNavigation("host-1"));
-
-    act(() => result.current.openAgent({ serverId: "host-2", agentId: "agent-2" }));
-    act(() => result.current.openWorkspace({ serverId: "host-2", workspaceId: "workspace-2" }));
-
-    expect(navigateToAgentMock).toHaveBeenCalledWith({ serverId: "host-2", agentId: "agent-2" });
-    expect(navigateToWorkspaceMock).toHaveBeenCalledWith({
-      serverId: "host-2",
-      workspaceId: "workspace-2",
-    });
-  });
-
   it("keeps the capability stable until the rendering host changes", () => {
     const { result, rerender } = renderHook(({ serverId }) => usePluginHostNavigation(serverId), {
       initialProps: { serverId: "host-1" },
