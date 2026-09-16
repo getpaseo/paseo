@@ -448,7 +448,7 @@ function resolveInitialIsolation(input: {
   if (input.config) {
     return input.config.isolation ?? "local";
   }
-  return input.preferences?.isolation === "worktree" ? "worktree" : "local";
+  return input.preferences?.isolation ?? "local";
 }
 
 function resolveSelectedProjectOptionId(target: ScheduleProjectTarget | null): string {
@@ -921,10 +921,7 @@ export function openScheduleForm(snapshot: ScheduleFormSnapshot): ScheduleFormMo
       !userModified.isolation &&
       preferences?.isolation !== undefined
     ) {
-      resolved = {
-        ...resolved,
-        isolation: preferences.isolation === "worktree" ? "worktree" : "local",
-      };
+      resolved = { ...resolved, isolation: preferences.isolation };
     }
     if (providerEntries.length === 0 || resolved.targetKind !== "new-agent") {
       return resolved;

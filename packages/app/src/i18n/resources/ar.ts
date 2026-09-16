@@ -1239,6 +1239,7 @@ export const ar: TranslationResources = {
     titlePlaceholder: "العنوان (اختياري)",
     errors: {
       hostDisconnected: "Host غير متصل",
+      chatHostUpgradeRequired: "قم بتحديث المضيف لإنشاء جلسات الدردشة",
       createWorktreeFailed: "فشل في إنشاء شجرة العمل",
       composerStateRequired: "حالة الملحن مطلوبة",
       selectModel: "اختر نموذجا",

@@ -1274,6 +1274,7 @@ export const es: TranslationResources = {
     titlePlaceholder: "Título (opcional)",
     errors: {
       hostDisconnected: "Hostno está conectado",
+      chatHostUpgradeRequired: "Actualiza el host para crear sesiones de chat",
       createWorktreeFailed: "No se pudo crear el árbol de trabajo",
       composerStateRequired: "Se requiere el estado del compositor",
       selectModel: "Selecciona un modelo",

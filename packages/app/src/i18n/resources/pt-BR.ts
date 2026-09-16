@@ -1264,6 +1264,7 @@ export const ptBR: TranslationResources = {
     titlePlaceholder: "Título (opcional)",
     errors: {
       hostDisconnected: "Host não está conectado",
+      chatHostUpgradeRequired: "Atualize o host para criar sessões de chat",
       createWorktreeFailed: "Falha ao criar worktree",
       composerStateRequired: "O estado do composer é obrigatório",
       selectModel: "Selecione um modelo",

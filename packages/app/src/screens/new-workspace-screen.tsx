@@ -1,3 +1,4 @@
+import { isChatsProject } from "@/chats/model";
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import type { ReactElement, RefObject } from "react";
@@ -1306,10 +1307,7 @@ function useNewWorkspaceInitialContext({
   const allServerIds = useMemo(() => allHosts.map((h) => h.serverId), [allHosts]);
   const rawProjects = useHostProjects(allServerIds);
   const projects = useMemo(
-    () =>
-      rawProjects.filter(
-        (project) => project.projectName !== "Chats" && project.projectKey !== "__chats__",
-      ),
+    () => rawProjects.filter((project) => !isChatsProject(project)),
     [rawProjects],
   );
   const routeDisplayName = displayNameProp?.trim() ?? "";
@@ -1695,6 +1693,7 @@ export function NewWorkspaceScreen({
   // COMPAT(workspaceMultiplicity): added in v0.1.97, drop the gate when floor >= v0.1.97
   const supportsWorkspaceMultiplicity = useHostFeature(selectedServerId, "workspaceMultiplicity");
   const supportsForgeSearch = useHostFeature(selectedServerId, "forgeSearch");
+  const supportsChatWorkspaces = useHostFeature(selectedServerId, "chatWorkspaces");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [createdWorkspace, setCreatedWorkspace] = useState<ReturnType<
     typeof normalizeWorkspaceDescriptor
@@ -2102,6 +2101,9 @@ export function NewWorkspaceScreen({
       if (createdWorkspace) {
         return createdWorkspace;
       }
+      if (effectiveIsolation === "chat" && !supportsChatWorkspaces) {
+        throw new Error(t("newWorkspace.errors.chatHostUpgradeRequired"));
+      }
       if (effectiveIsolation !== "chat") {
         if (!selectedProject) {
           throw new Error("Choose a project");
@@ -2163,6 +2165,7 @@ export function NewWorkspaceScreen({
       selectedProject,
       selectedServerId,
       selectedSourceDirectory,
+      supportsChatWorkspaces,
       supportsWorkspaceMultiplicity,
       t,
       withConnectedClient,
@@ -2172,6 +2175,12 @@ export function NewWorkspaceScreen({
   const handleSubmitNewWorkspace = useCallback(
     async (payload: MessagePayload) => {
       try {
+        if (isChatKind && !supportsChatWorkspaces) {
+          const message = t("newWorkspace.errors.chatHostUpgradeRequired");
+          setErrorMessage(message);
+          toast.error(message);
+          return;
+        }
         setErrorMessage(null);
         await composerState?.persistFormPreferences();
         await updateFormPreferences({ launchTarget });
@@ -2235,9 +2244,11 @@ export function NewWorkspaceScreen({
       draftKey,
       ensureWorkspace,
       forkDraftSetup,
+      isChatKind,
       isStillOnCreateScreen,
       launchTarget,
       selectedServerId,
+      supportsChatWorkspaces,
       supportsForgeSearch,
       t,
       toast,
@@ -2515,7 +2526,11 @@ export function NewWorkspaceScreen({
               agentControls={agentControlsWithDisabled}
             />
           )}
-          {errorMessage ? <Text style={styles.errorText}>{errorMessage}</Text> : null}
+          {errorMessage || (isChatKind && isConnected && !supportsChatWorkspaces) ? (
+            <Text style={styles.errorText} testID="new-workspace-error-banner">
+              {errorMessage ?? t("newWorkspace.errors.chatHostUpgradeRequired")}
+            </Text>
+          ) : null}
         </KeyboardTranslateView>
       </View>
     </FileDropZone>

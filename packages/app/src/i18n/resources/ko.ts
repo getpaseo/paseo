@@ -1246,6 +1246,7 @@ export const ko: TranslationResources = {
     titlePlaceholder: "제목(선택 사항)",
     errors: {
       hostDisconnected: "호스트가 연결되어 있지 않습니다",
+      chatHostUpgradeRequired: "채팅 세션을 생성하려면 호스트를 업데이트하세요",
       createWorktreeFailed: "워크트리를 생성하지 못했습니다",
       composerStateRequired: "작성기 상태가 필요합니다",
       selectModel: "모델을 선택하세요",

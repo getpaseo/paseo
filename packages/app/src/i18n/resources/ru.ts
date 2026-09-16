@@ -1256,6 +1256,7 @@ export const ru: TranslationResources = {
     titlePlaceholder: "Заголовок (необязательно)",
     errors: {
       hostDisconnected: "Хост не подключён",
+      chatHostUpgradeRequired: "Обновите хост для создания сессий чата",
       createWorktreeFailed: "Не удалось создать worktree.",
       composerStateRequired: "Редактор сообщения ещё не готов.",
       selectModel: "Выберите модель",

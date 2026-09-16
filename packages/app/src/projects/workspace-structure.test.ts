@@ -191,4 +191,28 @@ describe("buildWorkspaceStructureProjects", () => {
 
     expect(result.map((p) => p.projectName)).toEqual(["Chats", "Alpha", "Beta"]);
   });
+
+  test("does not treat regular projects named Chats as the synthetic chats project", () => {
+    const result = buildWorkspaceStructureProjects({
+      sessions: [
+        {
+          serverId: "host-a",
+          projects: [
+            project({ id: "prj_a", key: "repo-a", root: "/repos/a", name: "Alpha" }),
+            project({
+              id: "prj_normal_chats",
+              key: "repo-chats",
+              root: "/repos/chats",
+              name: "Chats",
+            }),
+            project({ id: "prj_b", key: "repo-b", root: "/repos/b", name: "Beta" }),
+          ],
+          workspaces: [],
+        },
+      ],
+    });
+
+    // Alpha, Beta, Chats in alphabetical order because repo-chats is an ordinary project
+    expect(result.map((p) => p.projectName)).toEqual(["Alpha", "Beta", "Chats"]);
+  });
 });

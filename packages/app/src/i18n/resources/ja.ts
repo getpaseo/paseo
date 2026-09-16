@@ -1252,6 +1252,7 @@ export const ja: TranslationResources = {
     titlePlaceholder: "タイトル（任意）",
     errors: {
       hostDisconnected: "ホストが接続されていません",
+      chatHostUpgradeRequired: "チャットセッションを作成するにはホストを更新してください",
       createWorktreeFailed: "ワークツリーの作成に失敗しました",
       composerStateRequired: "コンポーザーの状態が必要です",
       selectModel: "モデルを選択してください",

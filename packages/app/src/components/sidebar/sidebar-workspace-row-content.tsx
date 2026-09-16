@@ -101,7 +101,6 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
   shortcutNumber = null,
   showShortcutBadge = false,
   reserveIdleStatusIndicatorSpace = true,
-  hideLeadingVisual = false,
   children,
 }: {
   workspace: SidebarWorkspaceEntry;
@@ -119,7 +118,6 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
   showShortcutBadge?: boolean;
   /** Keep the empty leading slot when the workspace has no active status. */
   reserveIdleStatusIndicatorSpace?: boolean;
-  hideLeadingVisual?: boolean;
   children?: ReactNode;
 }) {
   const {
@@ -139,29 +137,27 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
   );
 
   let leadingVisual: ReactNode = null;
-  if (!hideLeadingVisual) {
-    if (leadingProjectName) {
-      leadingVisual = (
-        <ProjectStatusIndicator
-          iconDataUri={leadingProjectIconDataUri}
-          displayName={leadingProjectName}
-          projectViewKey={workspace.projectViewKey}
-          statusBucket={workspace.statusBucket}
-          backdrop={backdrop}
-          loading={isLoading}
-          testID={`sidebar-row-project-icon-${workspace.workspaceKey}`}
-        />
-      );
-    } else {
-      leadingVisual = (
-        <WorkspaceStatusIndicator
-          bucket={workspace.statusBucket}
-          workspaceKind={workspace.workspaceKind}
-          loading={isLoading}
-          reserveIdleSpace={reserveIdleStatusIndicatorSpace}
-        />
-      );
-    }
+  if (leadingProjectName) {
+    leadingVisual = (
+      <ProjectStatusIndicator
+        iconDataUri={leadingProjectIconDataUri}
+        displayName={leadingProjectName}
+        projectViewKey={workspace.projectViewKey}
+        statusBucket={workspace.statusBucket}
+        backdrop={backdrop}
+        loading={isLoading}
+        testID={`sidebar-row-project-icon-${workspace.workspaceKey}`}
+      />
+    );
+  } else {
+    leadingVisual = (
+      <WorkspaceStatusIndicator
+        bucket={workspace.statusBucket}
+        workspaceKind={workspace.workspaceKind}
+        loading={isLoading}
+        reserveIdleSpace={reserveIdleStatusIndicatorSpace}
+      />
+    );
   }
 
   return (
@@ -260,10 +256,21 @@ function WorkspaceStatusIndicator({
   else KindIcon = ThemedFolder;
 
   const dotColorStyle = getStatusDotColorStyle(bucket);
+  let indicatorContent: ReactNode = null;
+  if (reserveIdleSpace) {
+    indicatorContent = (
+      <>
+        <KindIcon size={14} uniProps={foregroundMutedColorMapping} />
+        {dotColorStyle ? <StatusDotOverlay dotColorStyle={dotColorStyle} /> : null}
+      </>
+    );
+  } else if (dotColorStyle) {
+    indicatorContent = <View style={[styles.standaloneStatusDot, dotColorStyle]} />;
+  }
+
   return (
     <View style={styles.workspaceStatusDot} testID={`workspace-status-indicator-${bucket}`}>
-      <KindIcon size={14} uniProps={foregroundMutedColorMapping} />
-      {dotColorStyle ? <StatusDotOverlay dotColorStyle={dotColorStyle} /> : null}
+      {indicatorContent}
     </View>
   );
 }

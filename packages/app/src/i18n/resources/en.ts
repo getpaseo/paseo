@@ -1248,6 +1248,7 @@ export const en = {
     titlePlaceholder: "Title (optional)",
     errors: {
       hostDisconnected: "Host is not connected",
+      chatHostUpgradeRequired: "Update the host to create chat sessions",
       createWorktreeFailed: "Failed to create worktree",
       composerStateRequired: "Composer state is required",
       selectModel: "Select a model",
