@@ -2457,10 +2457,14 @@ describe("session checkout merge handling", () => {
       requestId: "request-merge-from-base-success",
     });
 
-    expect(checkoutGitMocks.mergeFromBase).toHaveBeenCalledWith("/tmp/request-worktree", {
-      baseRef: "main",
-      requireCleanTarget: true,
-    });
+    expect(checkoutGitMocks.mergeFromBase).toHaveBeenCalledWith(
+      "/tmp/request-worktree",
+      {
+        baseRef: "main",
+        requireCleanTarget: true,
+      },
+      { paseoHome: "/tmp/paseo-home", worktreesRoot: undefined },
+    );
     expect(workspaceGitService.getSnapshot).toHaveBeenCalledWith("/tmp/request-worktree", {
       force: true,
       reason: "merge-from-base",
@@ -2917,6 +2921,7 @@ diff --git a/file.txt b/file.txt
         base: "main",
       },
       expect.anything(),
+      { paseoHome: "/tmp/paseo-home", worktreesRoot: undefined },
     );
     expect(messages).toContainEqual({
       type: "checkout_pr_create_response",
@@ -3041,6 +3046,7 @@ diff --git a/file.txt b/file.txt
         base: "main",
       },
       expect.anything(),
+      { paseoHome: "/tmp/paseo-home", worktreesRoot: undefined },
     );
     expect(messages).toContainEqual({
       type: "checkout_pr_create_response",
