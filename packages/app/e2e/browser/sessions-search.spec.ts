@@ -38,6 +38,75 @@ async function expectVisibleTitles(page: Page, titles: string[]): Promise<void> 
   }
 }
 
+async function verifyChronologicalFiltering(page: Page): Promise<void> {
+  await test.step("narrows history while preserving chronological grouping", async () => {
+    await expectVisibleTitles(page, [TITLES.unbilled, TITLES.billing, TITLES.terminal]);
+    await expect(page.getByText("Today", { exact: true })).toHaveCount(1, {
+      timeout: 30_000,
+    });
+
+    await search(page, `${NONCE} billing`);
+    await expectVisibleTitles(page, [TITLES.billing]);
+    await expect(page.getByText("Today", { exact: true })).toHaveCount(1, {
+      timeout: 30_000,
+    });
+
+    await page.getByTestId("sessions-search-clear").click();
+    await expect(page.getByTestId("sessions-search-input")).toHaveValue("");
+    await expectVisibleTitles(page, [TITLES.unbilled, TITLES.billing, TITLES.terminal]);
+    await expect(page.getByText("Today", { exact: true })).toHaveCount(1, {
+      timeout: 30_000,
+    });
+  });
+}
+
+async function verifyRecencyBeforeMatchStrength(page: Page): Promise<void> {
+  await test.step("keeps newer partial matches before older stronger matches", async () => {
+    await search(page, `${NONCE} bill`);
+    await expectVisibleTitles(page, [TITLES.unbilled, TITLES.billing]);
+  });
+}
+
+async function verifyExactAndTypoHighlights(page: Page): Promise<void> {
+  await test.step("highlights exact and typo-resolved matches", async () => {
+    await search(page, `${NONCE} billing`);
+    const row = page.getByRole("button").filter({ hasText: NONCE }).first();
+    await expect(row.getByText("billing", { exact: true })).toBeVisible({ timeout: 30_000 });
+
+    await search(page, `${NONCE} bulling`);
+    await expectVisibleTitles(page, [TITLES.billing]);
+    const typoRow = page.getByRole("button").filter({ hasText: NONCE }).first();
+    await expect(typoRow.getByText("billing", { exact: true })).toBeVisible({
+      timeout: 30_000,
+    });
+  });
+}
+
+async function verifyAllSearchFieldHighlights(page: Page): Promise<void> {
+  await test.step("highlights workspace, agent, project and branch independently", async () => {
+    await search(page, `${NONCE} main`);
+    await expectVisibleTitles(page, [TITLES.unbilled, TITLES.billing, TITLES.terminal]);
+    const row = rowTitles(page).filter({ hasText: NONCE }).first();
+    for (const field of ["workspace", "title", "project", "branch"]) {
+      await expect(
+        row.getByTestId(new RegExp(`^agent-row-${field}-`)).getByText(/^main$/i),
+      ).toBeVisible();
+    }
+    await expect(page.getByText("Yesterday", { exact: true })).toHaveCount(0);
+  });
+}
+
+async function verifyEmptySearchAndRecovery(page: Page): Promise<void> {
+  await test.step("distinguishes no matches from empty history", async () => {
+    await search(page, `${NONCE} kubernetes`);
+    await expect(page.getByTestId("sessions-empty")).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByText("No sessions match")).toBeVisible({ timeout: 30_000 });
+
+    await page.getByText("Clear search").click();
+    await expectVisibleTitles(page, [TITLES.unbilled, TITLES.billing, TITLES.terminal]);
+  });
+}
+
 test.describe("History search", () => {
   let client: Awaited<ReturnType<typeof connectSeedClient>>;
   let tempRepo: { path: string; cleanup: () => Promise<void> };
@@ -80,64 +149,15 @@ test.describe("History search", () => {
       await openSessions(page);
       await page.setViewportSize(viewport);
 
-      await test.step("narrows history while preserving chronological grouping", async () => {
-        await expectVisibleTitles(page, [TITLES.unbilled, TITLES.billing, TITLES.terminal]);
-        await expect(page.getByText("Today", { exact: true })).toHaveCount(1, {
-          timeout: 30_000,
-        });
+      await verifyChronologicalFiltering(page);
 
-        await search(page, `${NONCE} billing`);
-        await expectVisibleTitles(page, [TITLES.billing]);
-        await expect(page.getByText("Today", { exact: true })).toHaveCount(1, {
-          timeout: 30_000,
-        });
+      await verifyRecencyBeforeMatchStrength(page);
 
-        await page.getByTestId("sessions-search-clear").click();
-        await expect(page.getByTestId("sessions-search-input")).toHaveValue("");
-        await expectVisibleTitles(page, [TITLES.unbilled, TITLES.billing, TITLES.terminal]);
-        await expect(page.getByText("Today", { exact: true })).toHaveCount(1, {
-          timeout: 30_000,
-        });
-      });
+      await verifyExactAndTypoHighlights(page);
 
-      await test.step("keeps newer partial matches before older stronger matches", async () => {
-        await search(page, `${NONCE} bill`);
-        await expectVisibleTitles(page, [TITLES.unbilled, TITLES.billing]);
-      });
+      await verifyAllSearchFieldHighlights(page);
 
-      await test.step("highlights exact and typo-resolved matches", async () => {
-        await search(page, `${NONCE} billing`);
-        const row = page.getByRole("button").filter({ hasText: NONCE }).first();
-        await expect(row.getByText("billing", { exact: true })).toBeVisible({ timeout: 30_000 });
-
-        await search(page, `${NONCE} bulling`);
-        await expectVisibleTitles(page, [TITLES.billing]);
-        const typoRow = page.getByRole("button").filter({ hasText: NONCE }).first();
-        await expect(typoRow.getByText("billing", { exact: true })).toBeVisible({
-          timeout: 30_000,
-        });
-      });
-
-      await test.step("highlights workspace, agent, project and branch independently", async () => {
-        await search(page, `${NONCE} main`);
-        await expectVisibleTitles(page, [TITLES.unbilled, TITLES.billing, TITLES.terminal]);
-        const row = rowTitles(page).filter({ hasText: NONCE }).first();
-        for (const field of ["workspace", "title", "project", "branch"]) {
-          await expect(
-            row.getByTestId(new RegExp(`^agent-row-${field}-`)).getByText(/^main$/i),
-          ).toBeVisible();
-        }
-        await expect(page.getByText("Yesterday", { exact: true })).toHaveCount(0);
-      });
-
-      await test.step("distinguishes no matches from empty history", async () => {
-        await search(page, `${NONCE} kubernetes`);
-        await expect(page.getByTestId("sessions-empty")).toBeVisible({ timeout: 30_000 });
-        await expect(page.getByText("No sessions match")).toBeVisible({ timeout: 30_000 });
-
-        await page.getByText("Clear search").click();
-        await expectVisibleTitles(page, [TITLES.unbilled, TITLES.billing, TITLES.terminal]);
-      });
+      await verifyEmptySearchAndRecovery(page);
     });
   }
 });
