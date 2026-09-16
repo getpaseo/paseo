@@ -3,16 +3,21 @@ import { useMemo } from "react";
 import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
 import { navigateToAgent } from "@/utils/navigate-to-agent";
 
+import { getIsElectron } from "@/constants/platform";
+import { createWorkspaceBrowser } from "@/desktop/browser/store";
+import { createPluginHostNavigation } from "./host-navigation-model";
+
 export function usePluginHostNavigation(
   serverId: string,
 ): NonNullable<PluginSurfaceProps["navigation"]> {
   return useMemo(
-    () => ({
-      openAgent: ({ agentId, serverId: targetServerId }) =>
-        navigateToAgent({ serverId: targetServerId ?? serverId, agentId }),
-      openWorkspace: ({ workspaceId, serverId: targetServerId }) =>
-        navigateToWorkspace({ serverId: targetServerId ?? serverId, workspaceId }),
-    }),
+    () =>
+      createPluginHostNavigation(serverId, {
+        browserAvailable: getIsElectron(),
+        openAgent: navigateToAgent,
+        openWorkspace: navigateToWorkspace,
+        createBrowser: createWorkspaceBrowser,
+      }),
     [serverId],
   );
 }

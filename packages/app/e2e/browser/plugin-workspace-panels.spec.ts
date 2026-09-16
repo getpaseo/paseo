@@ -37,7 +37,8 @@ function pluginClientSource(input: {
   return `import React, { useRef } from "react";
 import { Pressable, Text, View } from "react-native";
 import { Icon } from "@getpaseo/plugin/client/react-native";
-import { useAgent, useWorkspace } from "@getpaseo/plugin/client";
+import { useAgent, useWorkspace, openExternalUrl } from "@getpaseo/plugin/client";
+import { ExternalLink } from "@getpaseo/plugin/client/ui";
 import { recordComposerOpen } from "./shared/rpc";
 
 function WorkspacePanel({ workspaceId, host, layout }) {
@@ -56,6 +57,9 @@ function AgentPanel({ workspaceId, agentId, host, layout }) {
 function DirectCollisionSurface({ navigation }) {
   return <View>
     <Text>Direct collision surface</Text>
+    <Text>{navigation.openBrowser ? "Browser available" : "Browser unavailable"}</Text>
+    <ExternalLink href="https://example.com/">Plugin documentation</ExternalLink>
+    <Pressable accessibilityRole="button" onPress={() => openExternalUrl("https://example.com/")}><Text>Open external plugin URL</Text></Pressable>
     {navigation ? <>
       <Pressable accessibilityRole="button" onPress={() => navigation.openWorkspace({ workspaceId: ${JSON.stringify(input.workspaceId)} })}><Text>Open workspace from plugin</Text></Pressable>
       <Pressable accessibilityRole="button" onPress={() => navigation.openAgent({ agentId: ${JSON.stringify(input.agentId)} })}><Text>Open agent from plugin</Text></Pressable>
@@ -196,6 +200,14 @@ async function runCommand(page: Page, title: string): Promise<void> {
   await expect(panel).not.toBeVisible();
 }
 
+async function openPluginExternalTab(page: Page, role: "link" | "button", name: string) {
+  const opened = page.context().waitForEvent("page");
+  await page.getByRole(role, { name, exact: true }).click();
+  const tab = await opened;
+  await tab.waitForURL("https://example.com/");
+  await tab.close();
+}
+
 interface RemoteNavigationTarget {
   serverId: string;
   workspaceId: string;
@@ -324,6 +336,15 @@ test.describe("plugin workspace panels and Command Center", () => {
         await expect(page.getByText(`Host ${getServerId()}`, { exact: true })).toBeVisible();
         await expect(page.getByText("Layout wide", { exact: true })).toBeVisible();
         await capture(page, testInfo, "plugin-workspace-panel-wide");
+      });
+
+      await test.step("plugin links open browser tabs and in-app browsing is unavailable", async () => {
+        await runCommand(page, "Open direct collision surface");
+        await expect(page.getByText("Browser unavailable", { exact: true })).toBeVisible();
+        await openPluginExternalTab(page, "link", "Plugin documentation");
+        await openPluginExternalTab(page, "button", "Open external plugin URL");
+        await capture(page, testInfo, "plugin-external-links-web");
+        await page.getByTestId("plugin-surface-close").click();
       });
 
       await test.step("direct and sidebar routes preserve same-id contribution kind", async () => {

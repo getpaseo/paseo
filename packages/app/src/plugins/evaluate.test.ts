@@ -521,7 +521,9 @@ describe("evaluatePluginClientBundle", () => {
         `(function(require) {
       const shared = require("@getpaseo/plugin");
       const client = require("@getpaseo/plugin/client");
-      for (const name of ["usePaseo", "useRpc", "useSettings", "useAgent", "useWorkspace"]) {
+      const { ExternalLink } = require("@getpaseo/plugin/client/ui");
+      if (typeof ExternalLink !== "function") throw new Error("ExternalLink");
+      for (const name of ["usePaseo", "useRpc", "useSettings", "useAgent", "useWorkspace", "openExternalUrl"]) {
         if (name in shared || typeof client[name] !== "function") throw new Error(name);
       }
       if ("Icon" in shared || typeof shared.PluginAttachmentItemSchema.parse !== "function") throw new Error("shared exports");

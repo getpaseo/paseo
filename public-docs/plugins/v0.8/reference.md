@@ -151,32 +151,66 @@ in your browser and crashes on a phone is the most common plugin bug. The rules:
 | `onPress`                                                                  | `onClick`, `onMouseEnter`, or other DOM handlers                            |
 | `Linking`, `Clipboard`-style React Native APIs                             | `window`, `document`, `localStorage`, `navigator`, `location` in components |
 
-The scaffold's `tsconfig.json` omits the DOM library, so `document` and `window` are type errors
-everywhere by default. The one place browser APIs are allowed is `client/web.ts`. It declares the
-narrow shape of each global it uses, gates every export on `Platform.OS`, and gives native the
-alternative:
+The scaffold's `tsconfig.json` omits the DOM library. Keep DOM globals out of cross-platform
+components; do not add `/// <reference lib="dom" />` or `"DOM"` to `lib`.
+`layout.platform` carries the same value as React Native's `Platform.OS` for rendering decisions.
 
-`client/web.ts`:
+### External links and workspace browsers
 
-```ts
-import { Linking, Platform } from "react-native";
+Use the host opener for HTTP(S) links:
 
-// This plugin typechecks without the DOM library. Declare only what this module uses.
-declare const window: { open(url: string, target: string, features: string): unknown };
+```tsx
+import { openExternalUrl } from "@getpaseo/plugin/client";
+import { ExternalLink } from "@getpaseo/plugin/client/ui";
 
-export async function openExternal(url: string): Promise<void> {
-  if (Platform.OS === "web") {
-    window.open(url, "_blank", "noopener,noreferrer");
-    return;
-  }
-  await Linking.openURL(url);
+await openExternalUrl("https://paseo.sh/docs");
+
+// In a surface or panel:
+<ExternalLink href="https://paseo.sh/docs">Open documentation</ExternalLink>;
+```
+
+`openExternalUrl(url: string): Promise<void>` opens the system browser on Electron, a new tab
+on browser web, and the OS URL handler on iOS/Android. Call it directly from a user interaction
+so browser popup blockers allow the tab. Only absolute HTTP(S) URLs are accepted; unsupported
+URLs reject, and OS opener errors propagate. Browser popup blocking cannot be distinguished
+from a successful `noopener` open.
+
+`ExternalLink` uses the same opener and accessible link semantics. Its children are link text or
+inline React Native content. It accepts `accessibilityLabel`, `testID`, and
+`onError(error: unknown)`; without `onError`, opening errors are logged.
+
+Surface and panel `navigation.openBrowser` is a function on Electron and `undefined` on browser
+web, iOS, and Android. Check it once when rendering your action, and choose external opening
+explicitly on other platforms:
+
+```tsx
+function Documentation({ navigation, workspaceId }) {
+  const openBrowser = navigation?.openBrowser;
+  return openBrowser ? (
+    <Pressable
+      accessibilityRole="button"
+      onPress={() =>
+        openBrowser({
+          url: "https://paseo.sh/docs",
+          workspaceId,
+          // serverId: "another-host", // defaults to this surface's selected host
+        })
+      }
+    >
+      <Text>Open in workspace browser</Text>
+    </Pressable>
+  ) : (
+    <ExternalLink href="https://paseo.sh/docs">Open documentation</ExternalLink>
+  );
 }
 ```
 
-Do not add `/// <reference lib="dom" />` or `"DOM"` to `lib`; either one turns DOM types back on
-for the whole project and hides the next mistake. Components import `openExternal` and never touch
-`window` themselves. `layout.platform` on surface and panel props carries the same value as
-`Platform.OS` for rendering decisions.
+`navigation.openBrowser({ url, workspaceId, serverId? }): void` creates and focuses a new browser
+tab in the named workspace. `workspaceId` is required. `serverId` selects workspace ownership;
+the browser always runs on the local desktop, including for remote workspaces. Pass an existing
+workspace ID on that host. Invalid HTTP(S) URLs or empty workspace IDs throw before creating a
+tab. No external fallback runs implicitly. This API does not change popup handling inside
+embedded web pages, including OAuth flows.
 
 Use the [settings API](#settings-screens) for typed host-scoped persistence across clients.
 Use `openSettings`, `openSurface`, and `openPanel` for your own registered contributions.
@@ -614,12 +648,12 @@ export default function contribute(client: PluginClientContext) {
 
 `PluginSurfaceProps` contains:
 
-| Field        | Meaning                                                                                                                                                                           |
-| ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `theme`      | Typed `PluginTheme` color tokens for the active Paseo theme.                                                                                                                      |
-| `host`       | Selected host `id` and display `label`.                                                                                                                                           |
-| `layout`     | `compact` and the `ios`, `android`, or `web` platform.                                                                                                                            |
-| `navigation` | Optional client navigation. `openAgent({ agentId, serverId? })` and `openWorkspace({ workspaceId, serverId? })` open targets on `serverId`, or on the selected host when omitted. |
+| Field        | Meaning                                                                                                                                                                                                                                                                                                                           |
+| ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `theme`      | Typed `PluginTheme` color tokens for the active Paseo theme.                                                                                                                                                                                                                                                                      |
+| `host`       | Selected host `id` and display `label`.                                                                                                                                                                                                                                                                                           |
+| `layout`     | `compact` and the `ios`, `android`, or `web` platform.                                                                                                                                                                                                                                                                            |
+| `navigation` | Optional client navigation. `openAgent({ agentId, serverId? })` and `openWorkspace({ workspaceId, serverId? })` open targets on `serverId`, or on the selected host when omitted. `openBrowser({ url, workspaceId, serverId? })` is available only on Electron; see [links and browsers](#external-links-and-workspace-browsers). |
 
 Paseo owns the route, header, close action, host picker, error boundary, and query client. The plugin owns the surface body.
 

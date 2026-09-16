@@ -1,3 +1,4 @@
+import { openExternalUrl } from "@/utils/open-external-url";
 import * as pluginUiRuntime from "./react-native/ui";
 import { useSettings } from "./settings/use-settings";
 import * as pluginSharedRuntime from "@getpaseo/plugin";
@@ -374,7 +375,8 @@ export function runPluginClientBundle(
     if (name === "react/jsx-runtime") return ReactJsxRuntime;
     if (name === "react-native") return ReactNative;
     if (name === "@getpaseo/plugin") return pluginSharedRuntime;
-    if (name === "@getpaseo/plugin/client") return { ...pluginClientRuntime, useSettings };
+    if (name === "@getpaseo/plugin/client")
+      return { ...pluginClientRuntime, useSettings, openExternalUrl };
     if (name === "@getpaseo/plugin/client/react-native") {
       return pluginReactNativeRuntime;
     }

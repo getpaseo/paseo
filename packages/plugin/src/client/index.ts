@@ -45,3 +45,6 @@ import type { ZodType } from "zod";
 export declare function useSettings<Schema extends ZodType>(
   definition: SettingsDefinition<Schema>,
 ): SettingsState<Schema>;
+
+/** Open an absolute HTTP(S) URL using the client platform’s external opener. */
+export declare function openExternalUrl(url: string): Promise<void>;
