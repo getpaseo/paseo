@@ -550,6 +550,12 @@ interface SteerEventBarrier {
   events: AgentStreamEvent[];
 }
 
+interface RunStartRecovery {
+  promise: Promise<void>;
+  resolve: () => void;
+  reject: (error: unknown) => void;
+}
+
 const BUSY_STATUSES: Set<AgentLifecycleStatus> = new Set(["initializing", "running"]);
 const AgentIdSchema = z.guid();
 
@@ -703,6 +709,8 @@ export class AgentManager {
   private readonly steerEventBarriers = new Map<string, SteerEventBarrier>();
   private readonly foregroundMutationTails = new Map<string, Promise<void>>();
   private readonly runs = new AgentRunState();
+  private readonly runStartRecoveries = new Map<string, RunStartRecovery>();
+  private readonly runStartRecoveryFailures = new Map<string, Error>();
   private readonly subscribers = new Set<SubscriptionRecord>();
   private readonly idFactory: () => string;
   private readonly registry?: AgentStorage;
@@ -1465,11 +1473,15 @@ export class AgentManager {
     overrides?: Partial<AgentSessionConfig>,
     options?: { rehydrateFromDisk?: boolean },
   ): Promise<ManagedAgent> {
-    return this.trackAgentRegistrationOperation(
+    const operation = this.trackAgentRegistrationOperation(
       this.runLifecycleMutation(agentId, () =>
         this.reloadAgentSessionInternal(agentId, overrides, options),
       ),
     );
+    return operation.catch((error: unknown) => {
+      this.settleRunStartRecovery(agentId, error);
+      throw error;
+    });
   }
 
   private async reloadAgentSessionInternal(
@@ -2411,13 +2423,16 @@ export class AgentManager {
         throw error;
       }
       if (isStaleProviderSessionError(error)) {
+        const startedRecovery = this.beginRunStartRecovery(agentId);
         pendingRun.start = { status: "failed", error: error.message };
         agent.pendingReplacement = false;
         if (!agent.activeForegroundTurnId) agent.lifecycle = "idle";
         this.runs.settleForegroundRun(agentId, pendingRun.token);
+        if (!startedRecovery) this.settleRunStartRecovery(agentId, error);
         throw error;
       }
       agent.pendingReplacement = false;
+      this.settleRunStartRecovery(agentId, error);
       const errorMsg = error instanceof Error ? error.message : "Failed to start turn";
       pendingRun.start = { status: "failed", error: errorMsg };
       await this.handleStreamEvent(agent, {
@@ -2436,6 +2451,7 @@ export class AgentManager {
     prompt: AgentPromptInput,
     options?: AgentRunOptions,
   ): AsyncGenerator<AgentStreamEvent> {
+    if (!this.runStartRecoveries.has(agentId)) this.runStartRecoveryFailures.delete(agentId);
     const existingAgent = this.requireSessionAgent(agentId);
     this.logger.trace(
       {
@@ -2491,6 +2507,7 @@ export class AgentManager {
       agent.activeForegroundTurnId = turnId;
       this.openActiveTurn(agent, turnId, turnStartedAt);
       agent.lifecycle = "running";
+      this.settleRunStartRecovery(agentId);
       this.touchUpdatedAt(agent);
       // AgentManager owns the accepted-turn boundary. Publish liveness before the canonical
       // prompt so clients can retire optimistic activity without painting an idle frame.
@@ -2822,7 +2839,75 @@ export class AgentManager {
     this.emitState(agent);
   }
 
+  private beginRunStartRecovery(agentId: string): boolean {
+    if (this.runStartRecoveries.has(agentId)) return false;
+    let resolveRecovery!: () => void;
+    let rejectRecovery!: (error: unknown) => void;
+    const promise = new Promise<void>((resolvePromise, rejectPromise) => {
+      resolveRecovery = resolvePromise;
+      rejectRecovery = rejectPromise;
+    });
+    void promise.catch(() => undefined);
+    this.runStartRecoveries.set(agentId, {
+      promise,
+      resolve: resolveRecovery,
+      reject: rejectRecovery,
+    });
+    return true;
+  }
+
+  private settleRunStartRecovery(agentId: string, error?: unknown): void {
+    const recovery = this.runStartRecoveries.get(agentId);
+    if (!recovery) return;
+    this.runStartRecoveries.delete(agentId);
+    if (error === undefined) {
+      this.runStartRecoveryFailures.delete(agentId);
+      recovery.resolve();
+      return;
+    }
+    const failure = error instanceof Error ? error : new Error(String(error));
+    this.runStartRecoveryFailures.set(agentId, failure);
+    recovery.reject(failure);
+  }
+
+  private takeRunStartRecoveryFailure(agentId: string): Error | null {
+    const failure = this.runStartRecoveryFailures.get(agentId);
+    if (!failure) return null;
+    this.runStartRecoveryFailures.delete(agentId);
+    return failure;
+  }
+
   async waitForAgentRunStart(agentId: string, options?: WaitForAgentStartOptions): Promise<void> {
+    const activeRecovery = this.runStartRecoveries.get(agentId);
+    if (activeRecovery) {
+      if (!options?.signal) return await activeRecovery.promise;
+      if (options.signal.aborted) {
+        throw createAbortError(options.signal, "wait_for_agent_start aborted");
+      }
+      await new Promise<void>((resolvePromise, reject) => {
+        const abort = () => {
+          options.signal?.removeEventListener("abort", abort);
+          reject(createAbortError(options.signal, "wait_for_agent_start aborted"));
+        };
+        options.signal?.addEventListener("abort", abort, { once: true });
+        void activeRecovery.promise.then(
+          () => {
+            options.signal?.removeEventListener("abort", abort);
+            resolvePromise();
+            return undefined;
+          },
+          (error: unknown) => {
+            options.signal?.removeEventListener("abort", abort);
+            reject(error);
+            return undefined;
+          },
+        );
+      });
+      return;
+    }
+    const recoveryFailure = this.takeRunStartRecoveryFailure(agentId);
+    if (recoveryFailure) throw recoveryFailure;
+
     const snapshot = this.getAgent(agentId);
     if (!snapshot) {
       throw new Error(`Agent ${agentId} not found`);
@@ -2852,6 +2937,7 @@ export class AgentManager {
 
       let unsubscribe: (() => void) | null = null;
       let abortHandler: (() => void) | null = null;
+      let observedRecovery: RunStartRecovery | null = null;
 
       const cleanup = () => {
         if (unsubscribe) {
@@ -2889,6 +2975,20 @@ export class AgentManager {
       }
 
       const checkCurrentState = () => {
+        const currentRecovery = this.runStartRecoveries.get(agentId);
+        if (currentRecovery) {
+          if (observedRecovery !== currentRecovery) {
+            observedRecovery = currentRecovery;
+            void currentRecovery.promise.then(finishOk, finishErr);
+          }
+          return false;
+        }
+        const currentRecoveryFailure = this.takeRunStartRecoveryFailure(agentId);
+        if (currentRecoveryFailure) {
+          finishErr(currentRecoveryFailure);
+          return true;
+        }
+
         const current = this.getAgent(agentId);
         if (!current) {
           finishErr(new Error(`Agent ${agentId} not found`));
