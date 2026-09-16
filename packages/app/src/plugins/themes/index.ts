@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import { z } from "zod";
 import type { PluginThemeContribution } from "@getpaseo/plugin";
+import { HexColorSchema } from "@getpaseo/protocol/messages";
 import { useHostFeatureMap } from "@/runtime/host-features";
 import {
   buildDarkSemanticColors,
@@ -18,23 +19,19 @@ import {
 import { useInstalledPlugins } from "../registry";
 import type { InstalledPlugin } from "../types";
 
-const hexColorSchema = z
-  .string()
-  .regex(/^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/, "Must be a hex color");
-
 const contributionSchema: z.ZodType<PluginThemeContribution> = z.strictObject({
   id: z.string(),
   name: z.string().trim().min(1).max(60),
   appearance: z.enum(["light", "dark"]),
   colors: z.strictObject({
-    background: hexColorSchema,
-    foreground: hexColorSchema,
-    raised: hexColorSchema,
-    control: hexColorSchema,
-    border: hexColorSchema,
-    accent: hexColorSchema.optional(),
-    mutedForeground: hexColorSchema,
-    ring: hexColorSchema,
+    background: HexColorSchema,
+    foreground: HexColorSchema,
+    raised: HexColorSchema,
+    control: HexColorSchema,
+    border: HexColorSchema,
+    accent: HexColorSchema.optional(),
+    mutedForeground: HexColorSchema,
+    ring: HexColorSchema,
   }),
 });
 

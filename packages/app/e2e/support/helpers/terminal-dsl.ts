@@ -1,4 +1,5 @@
 import type { Page } from "@playwright/test";
+import type { TerminalDefaultColors } from "@getpaseo/protocol/messages";
 import type { TerminalActivity, TerminalActivityState } from "@getpaseo/protocol/terminal-activity";
 import { createTempGitRepo } from "./workspace";
 import { navigateToTerminal, setupDeterministicPrompt } from "./terminal-perf";
@@ -19,6 +20,7 @@ interface CreateTerminalInput {
   name: string;
   command?: string;
   args?: string[];
+  defaultColors?: TerminalDefaultColors;
 }
 
 function sleep(ms: number): Promise<void> {
@@ -69,14 +71,11 @@ export class TerminalE2EHarness {
   }
 
   async createTerminal(input: CreateTerminalInput): Promise<TerminalInstance> {
-    const options =
-      input.command || input.args
-        ? {
-            command: input.command,
-            args: input.args,
-            workspaceId: this.workspaceId,
-          }
-        : { workspaceId: this.workspaceId };
+    const options = {
+      ...(input.command || input.args ? { command: input.command, args: input.args } : {}),
+      workspaceId: this.workspaceId,
+      ...(input.defaultColors ? { defaultColors: input.defaultColors } : {}),
+    };
     const result = await this.client.createTerminal(
       this.tempRepo.path,
       input.name,

@@ -20,6 +20,25 @@ describe("CreateTerminalRequest size", () => {
     expect(parsed.size).toEqual({ rows: 55, cols: 136 });
   });
 
+  it("parses an optional terminal creation palette", () => {
+    const defaultColors = {
+      foreground: "#18181b",
+      background: "#ffffff",
+      cursor: "#18181b",
+    };
+    const parsed = CreateTerminalRequestSchema.parse({ ...base, defaultColors });
+    expect(parsed.defaultColors).toEqual(defaultColors);
+  });
+
+  it("rejects non-hex terminal colors", () => {
+    expect(() =>
+      CreateTerminalRequestSchema.parse({
+        ...base,
+        defaultColors: { foreground: "rgb(24 24 27)", background: "#ffffff" },
+      }),
+    ).toThrow();
+  });
+
   it("rejects a non-positive or non-integer size", () => {
     expect(() =>
       CreateTerminalRequestSchema.parse({ ...base, size: { rows: 0, cols: 80 } }),

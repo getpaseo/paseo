@@ -10,6 +10,7 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { resolve, sep } from "node:path";
 import { assertAbsolutePath, isSameOrDescendantPath } from "../server/path-utils.js";
 import type { TerminalActivity, TerminalActivityState } from "@getpaseo/protocol/terminal-activity";
+import type { TerminalDefaultColors } from "@getpaseo/protocol/messages";
 import { deriveTerminalActivityStatusBucket } from "@getpaseo/protocol/terminal-activity";
 
 export interface TerminalListItem {
@@ -58,6 +59,7 @@ export interface TerminalManager {
     name?: string;
     title?: string;
     env?: Record<string, string>;
+    defaultColors?: TerminalDefaultColors;
     command?: string;
     args?: string[];
     rows?: number;
@@ -315,6 +317,7 @@ export function createTerminalManager(
       name?: string;
       title?: string;
       env?: Record<string, string>;
+      defaultColors?: TerminalDefaultColors;
       command?: string;
       args?: string[];
       rows?: number;
@@ -348,6 +351,7 @@ export function createTerminalManager(
             id: terminalId,
             cwd: options.cwd,
             workspaceId: options.workspaceId,
+            ...(options.defaultColors ? { defaultColors: options.defaultColors } : {}),
             name: options.name ?? defaultName,
             ...(options.title ? { title: options.title } : {}),
             ...(options.command ? { command: options.command } : {}),
