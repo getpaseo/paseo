@@ -1,4 +1,4 @@
-import type { AssistantMessageItem, StreamItem } from "@/types/stream";
+import type { AssistantMessageItem, StreamItem, UserMessageItem } from "@/types/stream";
 import type { TimelineItemTransform } from "@/plugins/timeline/model";
 import { projectPluginTimelineItems } from "@/plugins/timeline/projection";
 import { splitMarkdownBlocks } from "@/utils/split-markdown-blocks";
@@ -25,6 +25,23 @@ function retainItems(previous: StreamItem[], next: StreamItem[]): StreamItem[] {
 
 /** Source messages reach plugins before any Markdown splitting or Overview grouping. */
 export function createStreamPresentation() {
+  const userMessageCache = new WeakMap<UserMessageItem, UserMessageItem>();
+
+  function presentUserMessage(item: UserMessageItem): UserMessageItem {
+    const cached = userMessageCache.get(item);
+    if (cached) return cached;
+
+    // Recognize the complete voice envelope, including older messages without the
+    // instruction suffix. Leave quoted examples and unrelated XML untouched.
+    const spokenInput =
+      /^\s*<spoken-input>([\s\S]*?)<\/spoken-input>(?:\s*<instruction>This message was spoken by the user\.[\s\S]*?<\/instruction>)?\s*$/.exec(
+        item.text,
+      );
+    const projected = spokenInput ? { ...item, text: spokenInput[1].trim() } : item;
+    userMessageCache.set(item, projected);
+    return projected;
+  }
+
   const blocksBySource = new WeakMap<AssistantMessageItem, AssistantMessageItem[]>();
   let liveSources = new Map<string, AssistantMessageItem>();
   let historySource: StreamItem[] | undefined;
@@ -38,6 +55,7 @@ export function createStreamPresentation() {
   let preparedHistory: PreparedToolCallHistory | null = null;
 
   function nativeBlocks(item: StreamItem): StreamItem[] {
+    if (item.kind === "user_message") return [presentUserMessage(item)];
     if (item.kind !== "assistant_message") return [item];
     const cached = blocksBySource.get(item);
     if (cached) return cached;
@@ -95,7 +113,7 @@ export function createStreamPresentation() {
           // Preserve live block identities at completion; fetched native Markdown
           // stays whole so links and other cross-block constructs keep their context.
           if (item.kind === "assistant_message") return blocksBySource.get(item) ?? [item];
-          return [item];
+          return [item.kind === "user_message" ? presentUserMessage(item) : item];
         },
       );
       historySource = input.tail;

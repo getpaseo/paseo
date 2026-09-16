@@ -1,8 +1,8 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { expect, test } from "vitest";
+import { expect, onTestFinished, test } from "vitest";
 
 import { DaemonClient } from "./test-utils/index.js";
 import { createTestPaseoDaemon } from "./test-utils/paseo-daemon.js";
@@ -258,3 +258,173 @@ test("workspace.create suffixes an occupied checkout branch", async () => {
     rmSync(tempRoot, { recursive: true, force: true });
   }
 }, 180000);
+
+function runGit(cwd: string, ...args: string[]): string {
+  return execFileSync("git", args, { cwd, encoding: "utf8", stdio: "pipe" }).trim();
+}
+function commitFile(cwd: string, name: string, content: string): void {
+  writeFileSync(path.join(cwd, name), content);
+  runGit(cwd, "add", name);
+  runGit(cwd, "-c", "commit.gpgsign=false", "commit", "-m", name);
+}
+
+test.each([
+  ["refs/heads/main", "refs/remotes/origin/main"],
+  ["refs/remotes/origin/main", "refs/heads/main"],
+])(
+  "restore preserves %s through comparison, update and local merge",
+  async (baseRef, conflictingRef) => {
+    const workspace = await createRestorableWorkspace(baseRef);
+    await archiveAndRestoreWorkspace(workspace);
+    await expectRestoredComparison(workspace, conflictingRef);
+    await updateFromOriginalBase(workspace);
+    await expectMergeIntoLocalBase(workspace);
+  },
+  180000,
+);
+
+test("restore preserves upstream comparison and update but rejects a missing local merge target", async () => {
+  const workspace = await createRestorableWorkspace("refs/remotes/upstream/main");
+  await archiveAndRestoreWorkspace(workspace);
+  await expectRestoredComparison(workspace, "refs/heads/main");
+  await updateFromOriginalBase(workspace);
+  await expectMissingLocalMergeTarget(workspace);
+}, 180000);
+
+async function createRestorableWorkspace(baseRef: string) {
+  const daemon = await createTestPaseoDaemon();
+  const { repoDir, tempRoot } = createGitRepoWithBranch();
+  const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws`, appVersion: "0.8.0" });
+  onTestFinished(async () => {
+    await client.close().catch(() => undefined);
+    await daemon.close();
+    rmSync(tempRoot, { recursive: true, force: true });
+  });
+  createDivergentBases(repoDir);
+  await client.connect();
+  const created = await client.createWorkspace({
+    source: {
+      kind: "worktree",
+      cwd: repoDir,
+      action: "branch-off",
+      baseBranch: baseRef,
+      branchName: "feature/restore",
+      worktreeSlug: "restore-base",
+    },
+  });
+  expect(created.error).toBeNull();
+  const workspace = created.workspace!;
+  const cwd = workspace.workspaceDirectory;
+  commitFile(cwd, "feature.txt", "feature change\n");
+  const head = runGit(cwd, "rev-parse", "HEAD");
+  await client.checkoutRefresh(cwd);
+  const before = await client.getCheckoutDiff(cwd, { mode: "base", baseRef: "main" });
+  expect(before.error).toBeNull();
+  expect(before.files.map((file) => file.path)).toEqual(["feature.txt"]);
+  expect((await client.getCheckoutStatus(cwd)).baseRef).toBe("main");
+  return { client, daemon, repoDir, workspace, cwd, head, before, baseRef };
+}
+
+type RestorableWorkspace = Awaited<ReturnType<typeof createRestorableWorkspace>>;
+
+function createDivergentBases(repoDir: string): void {
+  const root = runGit(repoDir, "rev-parse", "HEAD");
+  // Same displayed name, three different commit streams.
+  commitFile(repoDir, "local.txt", "local base\n");
+  runGit(repoDir, "switch", "--detach", root);
+  commitFile(repoDir, "origin.txt", "origin base\n");
+  runGit(repoDir, "update-ref", "refs/remotes/origin/main", "HEAD");
+  runGit(repoDir, "switch", "--detach", root);
+  commitFile(repoDir, "upstream.txt", "upstream base\n");
+  runGit(repoDir, "update-ref", "refs/remotes/upstream/main", "HEAD");
+  runGit(repoDir, "switch", "main");
+}
+
+async function archiveAndRestoreWorkspace({ client, workspace, cwd }: RestorableWorkspace) {
+  expect((await client.archiveWorkspace(workspace.id)).error).toBeNull();
+  expect(existsSync(cwd)).toBe(false);
+  expect(await client.inspectWorkspaceRecovery(workspace.id)).toMatchObject({ action: "restore" });
+  await client.restoreWorkspace(workspace.id);
+}
+
+async function expectRestoredComparison(
+  { client, daemon, workspace, cwd, head, before, baseRef }: RestorableWorkspace,
+  conflictingRef: string,
+) {
+  const restoredStatus = await client.getCheckoutStatus(cwd);
+  await client.checkoutRefresh(cwd);
+  const after = await client.getCheckoutDiff(cwd, {
+    mode: "base",
+    baseRef: restoredStatus.baseRef ?? undefined,
+  });
+  expect(after.error).toBeNull();
+  expect(after.files).toEqual(before.files);
+  expect(runGit(cwd, "rev-parse", "HEAD")).toBe(head);
+  expect(runGit(cwd, "branch", "--show-current")).toBe("feature/restore");
+  expect(await client.getCheckoutStatus(cwd)).toMatchObject({
+    baseRef: "main",
+    aheadBehind: { ahead: 1, behind: 0 },
+  });
+  const history = await client.listCheckoutCommits(cwd);
+  expect(history.baseRef).toBe(baseRef);
+  expect(history.commits.filter((commit) => !commit.isOnBase).map((commit) => commit.sha)).toEqual([
+    head,
+  ]);
+  expect((await client.getCommitFileDiff(cwd, head, "feature.txt")).file?.path).toBe("feature.txt");
+  const records = JSON.parse(
+    readFileSync(path.join(daemon.paseoHome, "projects/workspaces.json"), "utf8"),
+  );
+  expect(
+    records.find((record: { workspaceId: string }) => record.workspaceId === workspace.id)
+      .baseBranch,
+  ).toBe(baseRef);
+  expect(
+    (await client.getCheckoutDiff(cwd, { mode: "base", baseRef: conflictingRef })).error?.message,
+  ).toContain("Base ref mismatch");
+}
+
+async function updateFromOriginalBase({ client, repoDir, cwd, baseRef }: RestorableWorkspace) {
+  // Advance only the chosen base; Update must not merge a same-named alternative.
+  runGit(repoDir, "switch", "--detach", baseRef);
+  commitFile(repoDir, "base-update.txt", `${baseRef}\n`);
+  const baseUpdate = runGit(repoDir, "rev-parse", "HEAD");
+  runGit(repoDir, "update-ref", baseRef, baseUpdate);
+  runGit(repoDir, "switch", "main");
+  await client.checkoutRefresh(cwd);
+  expect(await client.getCheckoutStatus(cwd)).toMatchObject({
+    aheadBehind: { ahead: 1, behind: 1 },
+  });
+  expect((await client.checkoutMergeFromBase(cwd, { baseRef: "main" })).error).toBeNull();
+  expect(readFileSync(path.join(cwd, "base-update.txt"), "utf8")).toBe(`${baseRef}\n`);
+  expect(runGit(cwd, "merge-base", baseUpdate, "HEAD")).toBe(baseUpdate);
+  expect(
+    (await client.getCheckoutDiff(cwd, { mode: "base", baseRef: "main" })).files.map(
+      (file) => file.path,
+    ),
+  ).toEqual(["feature.txt"]);
+}
+
+async function expectMergeIntoLocalBase({ client, cwd, repoDir }: RestorableWorkspace) {
+  expect(
+    (
+      await client.checkoutMerge(cwd, {
+        baseRef: "main",
+        strategy: "merge",
+        requireCleanTarget: true,
+      })
+    ).error,
+  ).toBeNull();
+  expect(runGit(repoDir, "show", "main:feature.txt")).toBe("feature change");
+}
+
+async function expectMissingLocalMergeTarget({ client, cwd }: RestorableWorkspace) {
+  expect(
+    (
+      await client.checkoutMerge(cwd, {
+        baseRef: "main",
+        strategy: "merge",
+        requireCleanTarget: true,
+      })
+    ).error?.message,
+  ).toContain("No local merge target is recorded");
+}

@@ -8,9 +8,11 @@ import {
   hydrateStreamState,
   type StreamItem,
   type ToolCallItem,
+  type UserMessageItem,
 } from "@/types/stream";
 import { transformTimelineItem, type TimelineItemTransform } from "@/plugins/timeline/model";
 import { createStreamPresentation } from "./presentation";
+import { buildAgentStreamRenderModel } from "./model";
 
 const runtime = {
   paseo: {},
@@ -347,5 +349,123 @@ describe("stream presentation through installed plugins", () => {
     expect(pluginData([...rendered.tail, ...rendered.head])).toEqual([
       { text: sourceText, phase: "streaming" },
     ]);
+  });
+});
+
+function createTimestamp(seed: number): Date {
+  return new Date(`2026-01-01T00:00:${seed.toString().padStart(2, "0")}.000Z`);
+}
+
+function userMessage(id: string, seed: number): UserMessageItem {
+  return {
+    kind: "user_message",
+    id,
+    text: id,
+    timestamp: createTimestamp(seed),
+  };
+}
+
+function assistantMessage(
+  id: string,
+  seed: number,
+): Extract<StreamItem, { kind: "assistant_message" }> {
+  return {
+    kind: "assistant_message",
+    id,
+    text: id,
+    timestamp: createTimestamp(seed),
+  };
+}
+
+describe("timeline presentation", () => {
+  const present = createStreamPresentation();
+  function projectTimelineItems(items: StreamItem[], transform?: TimelineItemTransform) {
+    return present({ ...presentationOptions, tail: items, head: [], transform }).tail;
+  }
+  const envelope =
+    "<spoken-input>\nPlease fix the voice chat.\n</spoken-input>\n<instruction>This message was spoken by the user. Respond using the speak tool only, not normal messages, because the user may not be looking at the chat.</instruction>";
+
+  it.each(["live", "history"])(
+    "shows only spoken words from a %s user message without mutating its source",
+    (source) => {
+      const item: UserMessageItem = Object.freeze({
+        ...userMessage(source, 1),
+        text: envelope,
+        messageId: "provider-message",
+        clientMessageId: "client-message",
+        turnId: "turn-1",
+        timelineCursor: { epoch: "epoch", seq: 12 },
+      });
+      const presentMessage = () =>
+        present({
+          ...presentationOptions,
+          tail: source === "history" ? [item] : [],
+          head: source === "live" ? [item] : [],
+          transform: undefined,
+        });
+      const projected = rows(presentMessage());
+      expect(projected).toEqual([{ ...item, text: "Please fix the voice chat." }]);
+      const model = buildAgentStreamRenderModel({
+        tail: source === "history" ? projected : [],
+        head: source === "live" ? projected : [],
+        isTurnActive: source === "live",
+        activeTurnStartedAt: item.timestamp,
+        platform: "native",
+        isMobileBreakpoint: true,
+      });
+      const rendered = [...model.history, ...model.segments.liveHead];
+      expect(rendered).toContainEqual({ ...item, text: "Please fix the voice chat." });
+      expect(item.text).toBe(envelope);
+      expect(rows(presentMessage())[0]).toBe(projected[0]);
+    },
+  );
+
+  it("supports older envelopes and preserves multiline spoken content", () => {
+    const item = {
+      ...userMessage("legacy", 1),
+      text: "<spoken-input>\nFirst line.\nSecond line with <example>XML</example>.\n</spoken-input>",
+    };
+    expect(projectTimelineItems([item])).toEqual([
+      { ...item, text: "First line.\nSecond line with <example>XML</example>." },
+    ]);
+  });
+
+  it("leaves ordinary messages, assistant examples and incomplete wrappers unchanged", () => {
+    const items: StreamItem[] = [
+      userMessage("ordinary", 1),
+      { ...assistantMessage("example", 2), text: envelope },
+      { ...userMessage("incomplete", 3), text: "<spoken-input>unfinished" },
+      { ...userMessage("quoted", 4), text: "Explain this example: " + envelope },
+      {
+        ...userMessage("xml", 5),
+        text: "<spoken-input>Example</spoken-input><instruction>Explain this XML.</instruction>",
+      },
+    ];
+    expect(projectTimelineItems(items)).toEqual(items);
+    expect(projectTimelineItems(items)[0]).toBe(items[0]);
+  });
+
+  it("keeps plugin transforms on the original source and respects replacements", () => {
+    const source: StreamItem = { ...userMessage("spoken", 1), text: envelope };
+    const inputs: string[] = [];
+    const transformed = projectTimelineItems([source], ({ item, sourceId }) => {
+      if (item.type === "user_message") inputs.push(item.text);
+      return [
+        {
+          type: "plugin",
+          pluginId: "test",
+          id: sourceId,
+          kind: "voice",
+          version: 1,
+          data: { text: "Custom voice row" },
+        },
+      ];
+    });
+    expect(inputs).toEqual([envelope]);
+    expect(transformed).toMatchObject([{ kind: "plugin", data: { text: "Custom voice row" } }]);
+    expect(projectTimelineItems([source], () => undefined)).toEqual([
+      { ...source, text: "Please fix the voice chat." },
+    ]);
+    expect(projectTimelineItems([source], () => [])).toEqual([]);
   });
 });

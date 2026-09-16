@@ -20,7 +20,6 @@ import {
 import { getCurrentBranch, localBranchExists, renameCurrentBranch } from "../utils/checkout-git.js";
 import {
   markPaseoWorktreeFirstAgentBranchAutoNameAttempted,
-  normalizeBaseRefName,
   readPaseoWorktreeMetadata,
   writePaseoWorktreeFirstAgentBranchAutoNameMetadata,
 } from "../utils/worktree-metadata.js";
@@ -99,7 +98,7 @@ async function createPaseoWorktreeWithPriority(
       cwd: workspaceCwd,
       worktreeRoot: createdWorktree.worktree.worktreePath,
       branch: createdWorktree.worktree.branchName || null,
-      baseBranch: resolveIntentBaseBranch(createdWorktree.intent),
+      baseBranch: createdWorktree.worktree.comparisonBaseRef,
       title: input.title?.trim() || resolveFirstAgentPromptTitle(input.firstAgentContext),
       expectsInitialAgent: Boolean(input.firstAgentContext),
       ...(createdWorktree.intent.kind === "checkout-change-request" &&
@@ -272,19 +271,4 @@ function maybeMarkFirstAgentBranchAutoNameEligible(options: {
   writePaseoWorktreeFirstAgentBranchAutoNameMetadata(createdWorktree.worktree.worktreePath, {
     placeholderBranchName: createdWorktree.worktree.branchName,
   });
-}
-
-// The base branch is normalized to match worktree.json's baseRefName (origin/
-// stripped). checkout-branch worktrees have no distinct base, so they stay null.
-function resolveIntentBaseBranch(intent: WorktreeCreationIntent): string | null {
-  switch (intent.kind) {
-    case "branch-off":
-      return normalizeBaseRefName(intent.baseBranch);
-    case "checkout-change-request":
-      return normalizeBaseRefName(intent.baseRefName);
-    case "checkout-github-pr":
-      return normalizeBaseRefName(intent.baseRefName);
-    case "checkout-branch":
-      return null;
-  }
 }

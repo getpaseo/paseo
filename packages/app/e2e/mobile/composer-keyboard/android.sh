@@ -17,6 +17,7 @@ DAEMON_HOME="${PASEO_COMPOSER_KEYBOARD_DAEMON_HOME:-${REPO_ROOT}/.dev/composer-e
 SERVER_ID="${PASEO_COMPOSER_KEYBOARD_SERVER_ID:-}"
 MESSAGE=$'keyboard invariant line one\nline two\nline three\nline four'
 LONG_MESSAGE="$(node -e 'process.stdout.write(Array.from({ length: 180 }, (_, index) => `line${index + 1}`).join(" "))')"
+BLANK_LINE_DRAFT="$(node -e 'process.stdout.write("\n".repeat(22) + "ddjdj")')"
 AGENT_TITLE="Keyboard dismiss QA $(date +%s)"
 
 if [[ -z "${SERVER_ID}" ]]; then
@@ -280,6 +281,35 @@ node "${ASSERT}" xml-composer-contained \
   "${ARTIFACTS_DIR}/long-draft-keyboard-open.xml" \
   "$(read_ime_top)" \
   "${display_density}"
+# Emptying a capped blank-line draft with Gboard's hold-to-delete must return the input to
+# its baseline height. Fabric only re-measures the Android input when its text prop changes,
+# so the editing input renders again after every edit
+# (packages/app/src/components/ui/text-input/text-input.native.tsx). The sequence mirrors the
+# report: grow to the cap, close and reopen the keyboard, hold delete from the middle of the
+# draft, jump to the end, hold delete again. The first hold-delete must start mid-draft: from
+# the end, the pre-fix input also returns to baseline. Backspace sits on Gboard's third key
+# row on the paseo-api35 layout.
+adb shell ime set "${HELPER_IME}" >/dev/null
+ad fill 'editable=true' "${BLANK_LINE_DRAFT}" --settle
+open_gboard "${input_x}" "${input_y}"
+adb shell input keyevent BACK
+wait_for_ime false
+open_gboard "${input_x}" "${input_y}"
+adb shell input keycombination 113 122
+adb shell input keyevent 20 20 20 20 20 20 20 20
+screen_width="$(adb shell wm size | sed -n 's/.*: \([0-9]*\)x.*/\1/p' | tail -1)"
+backspace_x="$((screen_width - 85))"
+backspace_y="$(($(read_ime_top) + 507))"
+adb shell input swipe "${backspace_x}" "${backspace_y}" "${backspace_x}" "${backspace_y}" 8000
+adb shell input keycombination 113 123
+adb shell input swipe "${backspace_x}" "${backspace_y}" "${backspace_x}" "${backspace_y}" 12000
+adb shell ime set "${HELPER_IME}" >/dev/null
+ad wait 'label="Message, @files, /commands"' 10000
+snapshot_json "${ARTIFACTS_DIR}/after-hold-delete.json"
+node "${ASSERT}" same-input-height \
+  "${ARTIFACTS_DIR}/baseline.json" \
+  "${ARTIFACTS_DIR}/after-hold-delete.json"
+
 adb shell ime set "${HELPER_IME}" >/dev/null
 ad fill 'editable=true' "${MESSAGE}" --settle
 open_gboard "${input_x}" "${input_y}"
@@ -361,5 +391,14 @@ node "${ASSERT}" xml-composer-contained \
   "${ARTIFACTS_DIR}/new-workspace-long-draft-keyboard-open.xml" \
   "$(read_ime_top)" \
   "${display_density}"
+
+adb shell input keyevent BACK
+wait_for_ime false
+adb shell ime set "${HELPER_IME}" >/dev/null
+snapshot_json "${ARTIFACTS_DIR}/new-workspace-long-draft-keyboard-closed.json"
+capture_screen "${ARTIFACTS_DIR}/new-workspace-long-draft-keyboard-closed.png"
+node "${ASSERT}" same-input-height \
+  "${ARTIFACTS_DIR}/new-workspace-long-draft.json" \
+  "${ARTIFACTS_DIR}/new-workspace-long-draft-keyboard-closed.json"
 
 echo "Composer keyboard invariants passed"
