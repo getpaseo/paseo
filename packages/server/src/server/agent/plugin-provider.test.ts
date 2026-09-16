@@ -24,6 +24,7 @@ const CAPABILITIES = [
 interface ProviderHarnessOptions {
   capabilities?: ProviderConnection["capabilities"];
   completeTurn?: boolean;
+  openChildren?: (rootSessionId: string, emit: (event: ProviderEvent) => void) => void;
 }
 
 function createProviderHarness(options: ProviderHarnessOptions = {}) {
@@ -108,6 +109,7 @@ function createProviderHarness(options: ProviderHarnessOptions = {}) {
           state: "completed",
         });
         emit({ type: "session.ready", sessionId: "child-1" });
+        options.openChildren?.(input.sessionId, emit);
         emit({ type: "session.ready", requestId: input.requestId, sessionId: input.sessionId });
         return;
       }
@@ -202,6 +204,7 @@ function createProviderHarness(options: ProviderHarnessOptions = {}) {
 
   return {
     registration,
+    emit,
     inputs,
     closeCount: () => closeCount,
     waitForClose: () => closed,
@@ -213,6 +216,93 @@ function eventsOfType(events: AgentStreamEvent[], type: AgentStreamEvent["type"]
 }
 
 describe("PluginAgentClientRegistry", () => {
+  test.each(["opening", "live"] as const)(
+    "preserves nested provider child ownership during %s",
+    async (timing) => {
+      const openChildren = (rootSessionId: string, emit: (event: ProviderEvent) => void) => {
+        for (const [sessionId, parentSessionId] of [
+          ["a", rootSessionId],
+          ["a.b", "a"],
+          ["a.b.c", "a.b"],
+          ["sibling", rootSessionId],
+        ]) {
+          emit({
+            type: "session.opened",
+            sessionId,
+            parentSessionId,
+            toolCallId: `${sessionId}-task`,
+            capabilities: [],
+            restoration: "parent",
+            cwd: "/workspace",
+          });
+          emit({
+            type: "timeline.item",
+            sessionId,
+            item: { type: "assistant_message", id: `${sessionId}-message`, text: sessionId },
+          });
+          emit({
+            type: "session.turn",
+            sessionId,
+            turnId: `${sessionId}-turn`,
+            state: "completed",
+          });
+        }
+      };
+      const harness = createProviderHarness({
+        openChildren: timing === "opening" ? openChildren : undefined,
+      });
+      const registry = new PluginAgentClientRegistry(createTestLogger());
+      registry.replace([harness.registration]);
+      const session = await registry.clients()[harness.registration.id]!.createSession({
+        provider: harness.registration.id,
+        cwd: "/workspace",
+      });
+      try {
+        const events: AgentStreamEvent[] = [];
+        if (timing === "live") {
+          session.subscribe((event) => events.push(event));
+          const open = harness.inputs.find((input) => input.type === "session.open");
+          if (!open || open.type !== "session.open") throw new Error("Missing root session open");
+          openChildren(open.sessionId, harness.emit);
+        } else {
+          for await (const event of session.streamHistory()) events.push(event);
+        }
+        for (const [id, parentSubagentId] of [
+          ["a", null],
+          ["a.b", "a"],
+          ["a.b.c", "a.b"],
+          ["sibling", null],
+        ]) {
+          expect(events).toContainEqual(
+            expect.objectContaining({
+              type: "provider_subagent",
+              event: expect.objectContaining({
+                type: "upsert",
+                id,
+                parentSubagentId,
+                toolCallId: `${id}-task`,
+                status: "running",
+              }),
+            }),
+          );
+          expect(events).toContainEqual(
+            expect.objectContaining({
+              type: "provider_subagent",
+              event: expect.objectContaining({
+                type: "timeline",
+                id,
+                item: expect.objectContaining({ text: id }),
+              }),
+            }),
+          );
+        }
+      } finally {
+        await session.close();
+        registry.replace([]);
+      }
+    },
+  );
+
   test("gates persistence operations on negotiated provider capabilities", async () => {
     const harness = createProviderHarness({ capabilities: ["session.persistence"] });
     const registry = new PluginAgentClientRegistry(createTestLogger());
