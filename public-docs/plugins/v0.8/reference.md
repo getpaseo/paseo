@@ -157,60 +157,99 @@ components; do not add `/// <reference lib="dom" />` or `"DOM"` to `lib`.
 
 ### External links and workspace browsers
 
-Use the host opener for HTTP(S) links:
+Use `ExternalLink` to open documentation outside Paseo:
 
 ```tsx
-import { openExternalUrl } from "@getpaseo/plugin/client";
 import { ExternalLink } from "@getpaseo/plugin/client/ui";
 
-await openExternalUrl("https://paseo.sh/docs");
-
-// In a surface or panel:
-<ExternalLink href="https://paseo.sh/docs">Open documentation</ExternalLink>;
+export function DocumentationLink() {
+  return <ExternalLink href="https://paseo.sh/docs">Open documentation</ExternalLink>;
+}
 ```
 
-`openExternalUrl(url: string): Promise<void>` opens the system browser on Electron, a new tab
-on browser web, and the OS URL handler on iOS/Android. Call it directly from a user interaction
-so browser popup blockers allow the tab. Only absolute HTTP(S) URLs are accepted; unsupported
-URLs are ignored, and OS opener errors propagate. Browser popup blocking cannot be distinguished
-from a successful `noopener` open.
+The component has accessible link semantics and uses the same opener as
+`openExternalUrl(url: string): Promise<void>`:
 
-`ExternalLink` uses the same opener and accessible link semantics. Its children are link text or
-inline React Native content. It accepts `accessibilityLabel`, `testID`, and
-`onError(error: unknown)`; without `onError`, opening errors are logged.
+```ts
+import { openExternalUrl } from "@getpaseo/plugin/client";
 
-Surface and panel `navigation.openBrowser` is a function on Electron and `undefined` on browser
-web, iOS, and Android. Check it once when rendering your action, and choose external opening
-explicitly on other platforms:
+export async function openDocumentation() {
+  await openExternalUrl("https://paseo.sh/docs");
+}
+```
+
+Call the function directly from a user interaction so the browser permits a new tab.
+
+| Platform      | External links                     | `navigation.openBrowser`                         |
+| ------------- | ---------------------------------- | ------------------------------------------------ |
+| Electron      | System browser                     | Available; creates a local workspace browser tab |
+| Browser web   | New tab with `noopener,noreferrer` | `undefined`                                      |
+| iOS / Android | OS URL handler                     | `undefined`                                      |
+
+#### ExternalLink props
+
+| Prop                            | Required | Behavior / default                                     |
+| ------------------------------- | -------- | ------------------------------------------------------ |
+| `href: string`                  | Yes      | Absolute HTTP(S) destination                           |
+| `children: ReactNode`           | Yes      | Link text or inline React Native content               |
+| `accessibilityLabel: string`    | No       | Overrides the accessible name derived from the content |
+| `testID: string`                | No       | Test identifier; unset by default                      |
+| `onError(error: unknown): void` | No       | Receives opening errors; defaults to logging them      |
+
+#### Open a workspace browser
+
+Use `navigation.openBrowser` from a surface or panel. Check availability before rendering
+the action. This workspace panel chooses an external link on other platforms:
 
 ```tsx
-function Documentation({ navigation, workspaceId }) {
+import type { PluginWorkspacePanelProps } from "@getpaseo/plugin/client";
+import { ExternalLink } from "@getpaseo/plugin/client/ui";
+import { Pressable, Text } from "react-native";
+
+export function DocumentationPanel({ navigation, workspaceId, theme }: PluginWorkspacePanelProps) {
   const openBrowser = navigation?.openBrowser;
-  return openBrowser ? (
-    <Pressable
-      accessibilityRole="button"
-      onPress={() =>
-        openBrowser({
-          url: "https://paseo.sh/docs",
-          workspaceId,
-          // serverId: "another-host", // defaults to this surface's selected host
-        })
-      }
-    >
-      <Text>Open in workspace browser</Text>
+  const url = "https://paseo.sh/docs";
+
+  if (!openBrowser) {
+    return <ExternalLink href={url}>Open documentation</ExternalLink>;
+  }
+
+  return (
+    <Pressable accessibilityRole="button" onPress={() => openBrowser({ url, workspaceId })}>
+      <Text style={{ color: theme.colors.foreground }}>Open in workspace browser</Text>
     </Pressable>
-  ) : (
-    <ExternalLink href="https://paseo.sh/docs">Open documentation</ExternalLink>
   );
 }
 ```
 
-`navigation.openBrowser({ url, workspaceId, serverId? }): void` creates and focuses a new browser
-tab in the named workspace. `workspaceId` is required. `serverId` selects workspace ownership;
-the browser always runs on the local desktop, including for remote workspaces. Pass an existing
-workspace ID already loaded by the app on that host. Invalid HTTP(S) URLs, empty workspace IDs,
-and workspaces not present in that host’s current workspace list throw before creating a tab. No external fallback runs implicitly. This API does not change popup handling inside
-embedded web pages, including OAuth flows.
+`navigation.openBrowser({ url, workspaceId, serverId? }): void` creates and focuses a new tab.
+It never opens externally as an automatic fallback.
+
+| Option                | Required | Behavior / default                                                |
+| --------------------- | -------- | ----------------------------------------------------------------- |
+| `url: string`         | Yes      | Absolute HTTP(S) destination                                      |
+| `workspaceId: string` | Yes      | Workspace already present in the target host's app workspace list |
+| `serverId: string`    | No       | Defaults to the surface or panel's selected host                  |
+
+To target another host, pass its ID with that host's workspace ID:
+
+```ts
+openBrowser({ url, workspaceId: remoteWorkspaceId, serverId: remoteServerId });
+```
+
+`serverId` selects workspace ownership. The page runs on your local desktop, including
+for remote workspaces; `localhost` URLs refer to that desktop.
+
+#### Errors and refusal
+
+| Condition                                                             | Result                                                                         |
+| --------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| External URL is malformed or uses a non-HTTP(S) scheme                | Ignored; `openExternalUrl` resolves without opening anything                   |
+| OS opener fails                                                       | `openExternalUrl` rejects; `ExternalLink` calls `onError` or logs the error    |
+| Browser blocks a new external tab                                     | Cannot be distinguished from a successful `noopener` open                      |
+| In-app browser URL is malformed or uses a non-HTTP(S) scheme          | Throws `Only absolute HTTP(S) URLs are supported.` before creating a tab       |
+| In-app browser workspace ID is empty                                  | Throws `workspaceId is required.` before creating a tab                        |
+| Target host/workspace is unknown or its workspace list has not loaded | Throws `Workspace is unavailable on the requested host.` before creating a tab |
 
 Use the [settings API](#settings-screens) for typed host-scoped persistence across clients.
 Use `openSettings`, `openSurface`, and `openPanel` for your own registered contributions.

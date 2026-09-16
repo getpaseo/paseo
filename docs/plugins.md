@@ -278,11 +278,11 @@ when moved between hosts. Explorer configuration can create workspace-context pa
 existing agent-context instances, but it cannot create an agent panel without an agent-aware command.
 
 Command Center callbacks use the selected host's existing `PaseoApi` for normal Paseo operations.
-They use typed plugin RPC only for plugin-specific backend work. Surface and panel props expose
-optional client-owned agent and workspace navigation; its absence is the compatibility gate for
-older clients. Navigation targets the selected host unless the call includes another `serverId`.
-Other navigation remains limited to registered global surfaces and workspace panels. Plugins do not
-receive Expo Router or workspace-layout store access.
+They use typed plugin RPC only for plugin-specific backend work. Surface and panel navigation
+belongs to the app; plugins do not receive Expo Router or workspace-layout store access.
+See the public [navigation fields](../public-docs/plugins/v0.8/reference.md#surfaces-and-sidebar-items)
+and [external links and workspace browsers](../public-docs/plugins/v0.8/reference.md#external-links-and-workspace-browsers)
+for the author-facing contract.
 
 ## Lifecycle hooks
 
