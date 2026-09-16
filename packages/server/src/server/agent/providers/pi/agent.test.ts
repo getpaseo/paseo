@@ -2324,6 +2324,97 @@ describe("PiRpcAgentClient", () => {
     expect(pi.recordedLaunches[0]).toMatchObject({ cwd: "/workspace/with-extension" });
   });
 
+  test("filters pi thinking levels to those the model supports", async () => {
+    const pi = new FakePi();
+    const client = createClient(pi);
+    const catalogPromise = client.fetchCatalog({
+      scope: "workspace",
+      cwd: "/workspace/with-extension",
+      force: false,
+    });
+    pi.latestSession().models = [
+      {
+        provider: "anthropic",
+        id: "claude-opus-4-6",
+        name: "Claude Opus 4.6",
+        reasoning: true,
+        thinkingLevelMap: { max: "max" },
+      },
+    ];
+
+    const catalog = await catalogPromise;
+
+    expect(catalog.models[0]?.thinkingOptions?.map((option) => option.id)).toEqual([
+      "off",
+      "minimal",
+      "low",
+      "medium",
+      "high",
+      "max",
+    ]);
+    expect(catalog.models[0]?.defaultThinkingOptionId).toBe("medium");
+  });
+
+  test("clamps the default pi thinking level to the model's supported levels", async () => {
+    const pi = new FakePi();
+    const client = createClient(pi);
+    const catalogPromise = client.fetchCatalog({
+      scope: "workspace",
+      cwd: "/workspace/with-extension",
+      force: false,
+    });
+    pi.latestSession().models = [
+      {
+        provider: "moonshotai",
+        id: "kimi-k3",
+        name: "Kimi K3",
+        reasoning: true,
+        thinkingLevelMap: {
+          off: null,
+          minimal: null,
+          low: "low",
+          medium: null,
+          high: "high",
+          xhigh: null,
+          max: "max",
+        },
+      },
+    ];
+
+    const catalog = await catalogPromise;
+
+    expect(catalog.models[0]?.thinkingOptions?.map((option) => option.id)).toEqual([
+      "low",
+      "high",
+      "max",
+    ]);
+    expect(catalog.models[0]?.thinkingOptions?.find((option) => option.isDefault)?.id).toBe("high");
+    expect(catalog.models[0]?.defaultThinkingOptionId).toBe("high");
+  });
+
+  test("hides pi thinking options for non-reasoning models", async () => {
+    const pi = new FakePi();
+    const client = createClient(pi);
+    const catalogPromise = client.fetchCatalog({
+      scope: "workspace",
+      cwd: "/workspace/with-extension",
+      force: false,
+    });
+    pi.latestSession().models = [
+      {
+        provider: "openrouter",
+        id: "google/gemini-2.5-flash-lite",
+        name: "google/gemini-2.5-flash-lite",
+        reasoning: false,
+      },
+    ];
+
+    const catalog = await catalogPromise;
+
+    expect(catalog.models[0]?.thinkingOptions).toBeUndefined();
+    expect(catalog.models[0]?.defaultThinkingOptionId).toBeUndefined();
+  });
+
   test("lists no draft features without starting a Pi session", async () => {
     const pi = new FakePi();
     const client = createClient(pi);

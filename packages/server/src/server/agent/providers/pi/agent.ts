@@ -24,6 +24,7 @@ import {
   type AgentRunOptions,
   type AgentRunResult,
   type AgentRuntimeInfo,
+  type AgentSelectOption,
   type AgentSession,
   type AgentSessionConfig,
   type AgentSlashCommand,
@@ -181,6 +182,17 @@ const PI_THINKING_OPTIONS: ReadonlyArray<{
   { id: "xhigh", label: "XHigh", description: "Very deep reasoning" },
   { id: "max", label: "Max", description: "Extreme reasoning" },
 ] as const;
+
+// Ordered from least to most reasoning, matching pi's own level ordering.
+const PI_EXTENDED_THINKING_LEVELS: readonly PiThinkingLevel[] = [
+  "off",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+];
 
 export interface PiRpcAgentClientOptions {
   logger: Logger;
@@ -373,19 +385,76 @@ function parseAutoCompactMode(value: string | undefined): AutoCompactMode {
   return "unknown";
 }
 
-function mapThinkingOption(option: (typeof PI_THINKING_OPTIONS)[number]) {
-  const mappedOption = {
+function mapThinkingOption(
+  option: (typeof PI_THINKING_OPTIONS)[number],
+  isDefault?: boolean,
+): AgentSelectOption {
+  const mapped: AgentSelectOption = {
     id: option.id,
     label: option.label,
     description: option.description,
   };
-  if (option.isDefault) {
-    return {
-      ...mappedOption,
-      isDefault: true,
-    };
+  if (isDefault ?? option.isDefault) {
+    mapped.isDefault = true;
   }
-  return mappedOption;
+  return mapped;
+}
+
+// Mirrors pi's getSupportedThinkingLevels: a null mapping marks a level unsupported, and
+// xhigh/max stay unsupported unless the model maps them explicitly.
+function piSupportedThinkingLevels(model: PiModel): PiThinkingLevel[] {
+  return PI_EXTENDED_THINKING_LEVELS.filter((level) => {
+    const mapped = model.thinkingLevelMap?.[level];
+    if (mapped === null) {
+      return false;
+    }
+    if (level === "xhigh" || level === "max") {
+      return mapped !== undefined;
+    }
+    return true;
+  });
+}
+
+// Mirrors pi's clampThinkingLevel: fall forward to the next supported level, then backward.
+function clampPiThinkingLevel(
+  level: PiThinkingLevel,
+  supported: readonly PiThinkingLevel[],
+): PiThinkingLevel {
+  if (supported.includes(level)) {
+    return level;
+  }
+  const requestedIndex = PI_EXTENDED_THINKING_LEVELS.indexOf(level);
+  for (let i = requestedIndex; i < PI_EXTENDED_THINKING_LEVELS.length; i += 1) {
+    const candidate = PI_EXTENDED_THINKING_LEVELS[i];
+    if (candidate !== undefined && supported.includes(candidate)) {
+      return candidate;
+    }
+  }
+  for (let i = requestedIndex - 1; i >= 0; i -= 1) {
+    const candidate = PI_EXTENDED_THINKING_LEVELS[i];
+    if (candidate !== undefined && supported.includes(candidate)) {
+      return candidate;
+    }
+  }
+  return supported[0] ?? "off";
+}
+
+function resolvePiThinkingConfig(model: PiModel): {
+  thinkingOptions: AgentSelectOption[] | undefined;
+  defaultThinkingOptionId: string | undefined;
+} {
+  if (!model.reasoning) {
+    return { thinkingOptions: undefined, defaultThinkingOptionId: undefined };
+  }
+  const supported = piSupportedThinkingLevels(model);
+  const supportedSet = new Set(supported);
+  const defaultThinkingOptionId = clampPiThinkingLevel(DEFAULT_PI_THINKING_LEVEL, supported);
+  return {
+    thinkingOptions: PI_THINKING_OPTIONS.filter((option) => supportedSet.has(option.id)).map(
+      (option) => mapThinkingOption(option, option.id === defaultThinkingOptionId),
+    ),
+    defaultThinkingOptionId,
+  };
 }
 
 function piModelSupportsImageInput(model: PiModel | null | undefined): boolean {
@@ -1196,6 +1265,7 @@ function buildExtensionUiResponse(
 }
 
 function mapPiModel(model: PiModel, provider: AgentProvider): AgentModelDefinition {
+  const { thinkingOptions, defaultThinkingOptionId } = resolvePiThinkingConfig(model);
   return {
     provider,
     id: `${model.provider}/${model.id}`,
@@ -1205,8 +1275,8 @@ function mapPiModel(model: PiModel, provider: AgentProvider): AgentModelDefiniti
       provider: model.provider,
       modelId: model.id,
     },
-    thinkingOptions: model.reasoning ? PI_THINKING_OPTIONS.map(mapThinkingOption) : undefined,
-    defaultThinkingOptionId: model.reasoning ? DEFAULT_PI_THINKING_LEVEL : undefined,
+    thinkingOptions,
+    defaultThinkingOptionId,
   };
 }
 
