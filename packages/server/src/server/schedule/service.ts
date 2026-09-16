@@ -41,6 +41,25 @@ export class ScheduleTargetGoneError extends Error {
   }
 }
 
+export class ScheduleRunStartError extends Error {
+  constructor(public readonly scheduleId: string) {
+    super(`Failed to start schedule run: ${scheduleId}`);
+    this.name = "ScheduleRunStartError";
+  }
+}
+
+function advanceNextRunAtPast(
+  cadence: StoredSchedule["cadence"],
+  nextRunAt: Date,
+  now: Date,
+): Date {
+  let next = nextRunAt;
+  while (next.getTime() <= now.getTime()) {
+    next = computeNextRunAt(cadence, next);
+  }
+  return next;
+}
+
 function trimOptionalName(value: string | null | undefined): string | null {
   if (typeof value !== "string") {
     return null;
@@ -724,7 +743,7 @@ export class ScheduleService {
       }
 
       if (!scheduleWithRun || !runId) {
-        throw new Error(`Failed to start schedule run: ${schedule.id}`);
+        throw new ScheduleRunStartError(schedule.id);
       }
       const result = await this.runner(scheduleWithRun, runId);
       await this.finishRun({
@@ -775,10 +794,11 @@ export class ScheduleService {
       }
 
       const scheduledFor = schedule.nextRunAt;
-      let nextRunAt = computeNextRunAt(schedule.cadence, new Date(scheduledFor));
-      while (nextRunAt.getTime() <= now.getTime()) {
-        nextRunAt = computeNextRunAt(schedule.cadence, nextRunAt);
-      }
+      const nextRunAt = advanceNextRunAtPast(
+        schedule.cadence,
+        computeNextRunAt(schedule.cadence, new Date(scheduledFor)),
+        now,
+      );
 
       // Claim the due slot and advance its cursor in the same serialized update.
       // A tick can hold a stale list while another tick finishes this schedule.
@@ -864,6 +884,17 @@ export class ScheduleService {
         updated = {
           ...updated,
           nextRunAt: null,
+        };
+      } else if (updated.nextRunAt) {
+        updated = {
+          ...updated,
+          // A long run can cross one or more cadence boundaries. Persist a
+          // future cursor so the next tick cannot immediately launch a catch-up run.
+          nextRunAt: advanceNextRunAtPast(
+            updated.cadence,
+            new Date(updated.nextRunAt),
+            now,
+          ).toISOString(),
         };
       }
 
