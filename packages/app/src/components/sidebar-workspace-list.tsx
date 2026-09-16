@@ -2081,7 +2081,6 @@ function SidebarGroupedModeList({
         hostBadge={hostBadgeByServerId.get(entry.serverId) ?? null}
         leadingProjectName={null}
         leadingProjectIconDataUri={null}
-        reserveIdleStatusIndicatorSpace={false}
         shortcutNumber={_projectShortcutIndex.get(entry.workspaceKey) ?? null}
         showShortcutBadge={showShortcutBadges}
         canCopyBranchName={false}
@@ -2448,7 +2447,6 @@ function ProjectModeList({
           leadingProjectIconDataUri={
             isChat ? null : (projectIconByProjectViewKey.get(workspace.projectViewKey) ?? null)
           }
-          reserveIdleStatusIndicatorSpace={!isChat}
           shortcutNumber={shortcutIndexByWorkspaceKey.get(workspace.workspaceKey) ?? null}
           showShortcutBadge={showShortcutBadges}
           canCopyBranchName={workspace.projectKind === "git"}
@@ -2508,7 +2506,6 @@ function ProjectModeList({
         hostBadge={hostBadgeByServerId.get(entry.serverId) ?? null}
         leadingProjectName={null}
         leadingProjectIconDataUri={null}
-        reserveIdleStatusIndicatorSpace={false}
         shortcutNumber={shortcutIndexByWorkspaceKey.get(entry.workspaceKey) ?? null}
         showShortcutBadge={showShortcutBadges}
         canCopyBranchName={false}
