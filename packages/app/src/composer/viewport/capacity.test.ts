@@ -1,7 +1,40 @@
 import { describe, expect, it } from "vitest";
-import { resolveComposerCapacity } from "./capacity";
+import { resolveComposerCapacity, updateComposerCapacity } from "./capacity";
 
 describe("composer viewport", () => {
+  it("preserves the editing capacity when the keyboard closes", () => {
+    const viewport = { height: 582, bottomInset: 24, centered: false };
+    const open = updateComposerCapacity(undefined, { ...viewport, keyboardShift: 308 });
+    const closed = updateComposerCapacity(open, { ...viewport, keyboardShift: 0 });
+    expect(open.capacity).toBe(245);
+    expect(closed.capacity).toBe(open.capacity);
+    expect(updateComposerCapacity(closed, { ...viewport, keyboardShift: 250 }).capacity).toBe(303);
+  });
+
+  it("remeasures the viewport without forgetting the keyboard reservation", () => {
+    const open = updateComposerCapacity(undefined, {
+      height: 582,
+      bottomInset: 24,
+      centered: false,
+      keyboardShift: 308,
+    });
+    expect(
+      updateComposerCapacity(open, {
+        height: 650,
+        bottomInset: 24,
+        centered: false,
+        keyboardShift: 0,
+      }).capacity,
+    ).toBe(313);
+    expect(
+      updateComposerCapacity(open, {
+        height: 0,
+        bottomInset: 24,
+        centered: false,
+        keyboardShift: 0,
+      }),
+    ).toEqual(open);
+  });
   it("leaves five points below the header for a bottom-anchored composer", () => {
     const height = resolveComposerCapacity({
       height: 582,
@@ -24,7 +57,7 @@ describe("composer viewport", () => {
     expect((1000 - 80 - height) / 2 - 300).toBe(5);
   });
 
-  it("releases space after closing and responds to rotation instead of using window height", () => {
+  it("uses the measured viewport before the first keyboard opening", () => {
     expect(
       resolveComposerCapacity({ height: 582, bottomInset: 24, keyboardShift: 0, centered: false }),
     ).toBe(553);

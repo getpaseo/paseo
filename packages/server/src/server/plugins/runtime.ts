@@ -74,6 +74,22 @@ interface LoadedPlugin {
   sessionClosed: Promise<void> | null;
 }
 
+/** The session socket a loaded plugin currently speaks through. */
+interface PluginSessionBinding {
+  socket: PluginSessionSocket;
+  reattaching: boolean;
+  plugin: LoadedPlugin | null;
+}
+
+interface PluginFrameInput {
+  session: PluginSessionBinding;
+  pluginId: string;
+  child: PluginChild;
+  sessionHost: PluginPaseoSessionHost;
+  frame: string | Uint8Array;
+  isBinary: boolean;
+}
+
 interface PendingProviderSend {
   input: ProviderInput;
   resolve: () => void;
@@ -565,10 +581,14 @@ export class PluginRuntime {
     const outputCapture = new PluginOutputCapture(child, (stream, message) => {
       this.appendLog(pluginId, stream, message);
     });
-    const sessionSocket = new PluginSessionSocket(child);
+    const session: PluginSessionBinding = {
+      socket: new PluginSessionSocket(child),
+      reattaching: false,
+      plugin: null,
+    };
     const pending = new Map<string, PendingInvocation>();
     const sessionAttachment = await sessionHost
-      .attachPluginSocket(pluginId, sessionSocket)
+      .attachPluginSocket(pluginId, session.socket)
       .catch((error) => {
         terminatePluginChild(child);
         throw error;
@@ -601,9 +621,16 @@ export class PluginRuntime {
             }
             const message = parsed.data;
             if (message.type === "paseo_frame") {
-              sessionSocket.receive(message.data, message.isBinary);
+              this.routePluginFrame({
+                session,
+                pluginId,
+                child,
+                sessionHost,
+                frame: message.data,
+                isBinary: message.isBinary,
+              });
             } else if (message.type === "paseo_close") {
-              sessionSocket.peerClosed();
+              session.socket.peerClosed();
             } else if (message.type === "ready") {
               if (settled) return;
               settled = true;
@@ -616,7 +643,7 @@ export class PluginRuntime {
             }
           });
           child.on("close", () => {
-            sessionSocket.peerClosed();
+            session.socket.peerClosed();
             if (!loaded) {
               fail(new Error(`Plugin ${pluginId} exited during initialization`));
               return;
@@ -635,7 +662,7 @@ export class PluginRuntime {
         },
       );
     } catch (error) {
-      sessionSocket.close();
+      session.socket.close();
       await sessionAttachment.closed;
       terminatePluginChild(child);
       throw error;
@@ -652,14 +679,74 @@ export class PluginRuntime {
       pending,
       providerConnections: new Map(),
       providerConnectionTombstones: new Set(),
-      sessionSocket,
+      sessionSocket: session.socket,
       sessionClosed: sessionAttachment.closed,
     };
+    session.plugin = loaded;
     this.logger.info(
       { pluginId, methods: ready.methods, providers: ready.providers },
       "Loaded plugin",
     );
     return loaded;
+  }
+
+  /**
+   * Frames still in flight belong to the closed session; only a fresh hello
+   * means the child redialled and wants a new one. Attaching on the close
+   * instead would leave a socket nobody speaks to until the host's hello
+   * timeout closed it, and that close would attach another.
+   */
+  private routePluginFrame(input: PluginFrameInput): void {
+    const { session, frame, isBinary } = input;
+    if (session.socket.readyState === 1) {
+      session.socket.receive(frame, isBinary);
+      return;
+    }
+    if (session.reattaching || !isSessionHelloFrame({ frame, isBinary })) return;
+    if (!this.canReattachPluginSession(input)) return;
+    session.reattaching = true;
+    void this.reattachPluginSession(input).finally(() => {
+      session.reattaching = false;
+    });
+  }
+
+  private async reattachPluginSession(input: PluginFrameInput): Promise<void> {
+    const { session, pluginId, sessionHost, child, frame, isBinary } = input;
+    const replacement = new PluginSessionSocket(child);
+    try {
+      const attachment = await sessionHost.attachPluginSocket(pluginId, replacement);
+      if (!this.canReattachPluginSession(input)) {
+        replacement.close();
+        return;
+      }
+      session.socket = replacement;
+      if (session.plugin) {
+        session.plugin.sessionSocket = replacement;
+        session.plugin.sessionClosed = attachment.closed;
+      }
+      replacement.receive(frame, isBinary);
+      this.appendLog(pluginId, "stdout", "[paseo] Re-attached plugin session");
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      this.appendLog(pluginId, "stderr", `[paseo] Failed to re-attach plugin session: ${reason}`);
+      this.logger.warn({ pluginId, err: error }, "Failed to re-attach a plugin session");
+      this.notify(pluginId, `Plugin session could not be re-attached: ${pluginId}`);
+    }
+  }
+
+  /**
+   * A published plugin whose process is still up. Anything else is either still
+   * loading or being torn down, and must not get a new session.
+   */
+  private canReattachPluginSession(input: {
+    session: PluginSessionBinding;
+    pluginId: string;
+    child: PluginChild;
+  }): boolean {
+    const { session, pluginId, child } = input;
+    return (
+      session.plugin !== null && this.plugins.get(pluginId) === session.plugin && child.connected
+    );
   }
 
   private handleChildMessage(loaded: LoadedPlugin, message: PluginProcessMessage): void {
@@ -1065,6 +1152,16 @@ export class PluginRuntime {
 
   private notify(pluginId: string, error?: string): void {
     for (const listener of this.listeners) listener(pluginId, error);
+  }
+}
+
+function isSessionHelloFrame(input: { frame: string | Uint8Array; isBinary: boolean }): boolean {
+  const { frame, isBinary } = input;
+  if (isBinary || typeof frame !== "string") return false;
+  try {
+    return (JSON.parse(frame) as { type?: unknown }).type === "hello";
+  } catch {
+    return false;
   }
 }
 

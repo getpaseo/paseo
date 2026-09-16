@@ -1185,7 +1185,7 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
   // Stabilize the agentInputDraft object identity so that memo(AgentComposerSection) can bail out
   // when only toast state changes (which does not affect any draft field).
   const {
-    text,
+    textSource,
     editText,
     replaceText,
     textReplacement,
@@ -1198,7 +1198,7 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
   } = rawAgentInputDraft;
   const agentInputDraft = useMemo(
     (): AgentInputDraft => ({
-      text,
+      textSource,
       editText,
       replaceText,
       textReplacement,
@@ -1210,7 +1210,7 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
       composerState,
     }),
     [
-      text,
+      textSource,
       editText,
       replaceText,
       textReplacement,
@@ -1276,7 +1276,7 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
 
   return (
     <RewindComposerRestoreProvider
-      text={agentInputDraft.text}
+      textSource={agentInputDraft.textSource}
       setText={agentInputDraft.replaceText}
       onRewindComplete={handleRewindComplete}
     >
@@ -1607,7 +1607,7 @@ function ActiveAgentComposer({
         externalKeyboardShift
         blurOnSubmit={isNative}
         isPaneFocused={isPaneFocused}
-        value={agentInputDraft.text}
+        textSource={agentInputDraft.textSource}
         onChangeText={agentInputDraft.editText}
         textReplacement={agentInputDraft.textReplacement}
         attachments={agentInputDraft.attachments}

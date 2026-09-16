@@ -680,7 +680,7 @@ export function WorkspaceDraftAgentTab({
               onSubmitMessage={handleCreateFromInput}
               isSubmitLoading={isSubmitting}
               blurOnSubmit={true}
-              value={draftInput.text}
+              textSource={draftInput.textSource}
               onChangeText={draftInput.editText}
               textReplacement={draftInput.textReplacement}
               attachments={draftInput.attachments}
