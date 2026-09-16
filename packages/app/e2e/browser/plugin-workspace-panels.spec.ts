@@ -196,6 +196,44 @@ async function runCommand(page: Page, title: string): Promise<void> {
   await expect(panel).not.toBeVisible();
 }
 
+interface RemoteNavigationTarget {
+  serverId: string;
+  workspaceId: string;
+  agentId: string;
+}
+
+function remoteWorkspaceRoute(target: RemoteNavigationTarget): RegExp {
+  return new RegExp(
+    `/h/${encodeURIComponent(target.serverId)}/workspace/${encodeURIComponent(target.workspaceId)}(?:\\?.*)?$`,
+  );
+}
+
+async function openRemoteWorkspaceFromPlugin(
+  page: Page,
+  target: RemoteNavigationTarget,
+): Promise<void> {
+  await page
+    .getByRole("button", { name: "Open remote workspace from plugin", exact: true })
+    .click();
+  await page.waitForURL(remoteWorkspaceRoute(target));
+  await expect(
+    page
+      .getByTestId(`workspace-deck-entry-${target.serverId}:${target.workspaceId}`)
+      .getByTestId("workspace-header-title"),
+  ).toBeVisible();
+}
+
+async function openRemoteAgentFromPlugin(
+  page: Page,
+  target: RemoteNavigationTarget,
+): Promise<void> {
+  await page.getByRole("button", { name: "Open remote agent from plugin", exact: true }).click();
+  await page.waitForURL(remoteWorkspaceRoute(target));
+  await expect(
+    page.getByTestId(`workspace-tab-agent_${target.agentId}`).filter({ visible: true }).first(),
+  ).toBeVisible();
+}
+
 async function openCompactSidebar(page: Page): Promise<void> {
   await page.getByRole("button", { name: "Open menu", exact: true }).click();
   await expect(page.getByTestId("sidebar-search")).toBeVisible();
@@ -302,9 +340,6 @@ test.describe("plugin workspace panels and Command Center", () => {
       });
 
       await test.step("surface navigation opens host-owned workspace and agent routes", async () => {
-        const remoteWorkspaceRoute = new RegExp(
-          `/h/${encodeURIComponent(secondaryDaemon.serverId)}/workspace/${encodeURIComponent(secondary.workspaceId)}(?:\\?.*)?$`,
-        );
         await runCommand(page, "Open direct collision surface");
         await page.getByRole("button", { name: "Open workspace from plugin", exact: true }).click();
         await page.waitForURL(isSettledWorkspaceUrl);
@@ -337,36 +372,23 @@ test.describe("plugin workspace panels and Command Center", () => {
             .filter({ visible: true })
             .first(),
         ).toBeVisible();
+      });
 
+      await test.step("surface navigation opens a workspace and agent on another host", async () => {
+        const remoteTarget = {
+          serverId: secondaryDaemon.serverId,
+          workspaceId: secondary.workspaceId,
+          agentId: secondaryAgent.id,
+        };
         await runCommand(page, "Open direct collision surface");
-        await page
-          .getByRole("button", { name: "Open remote workspace from plugin", exact: true })
-          .click();
-        await page.waitForURL(remoteWorkspaceRoute);
-        await expect(
-          page
-            .getByTestId(
-              `workspace-deck-entry-${secondaryDaemon.serverId}:${secondary.workspaceId}`,
-            )
-            .getByTestId("workspace-header-title"),
-        ).toBeVisible();
-
+        await openRemoteWorkspaceFromPlugin(page, remoteTarget);
         await switchWorkspaceViaSidebar({
           page,
           serverId: getServerId(),
           workspaceId: primary.workspaceId,
         });
         await runCommand(page, "Open direct collision surface");
-        await page
-          .getByRole("button", { name: "Open remote agent from plugin", exact: true })
-          .click();
-        await page.waitForURL(remoteWorkspaceRoute);
-        await expect(
-          page
-            .getByTestId(`workspace-tab-agent_${secondaryAgent.id}`)
-            .filter({ visible: true })
-            .first(),
-        ).toBeVisible();
+        await openRemoteAgentFromPlugin(page, remoteTarget);
       });
 
       await test.step("switching hosts removes commands from an uninstalled host", async () => {
