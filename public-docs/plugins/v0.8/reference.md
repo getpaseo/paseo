@@ -1533,12 +1533,13 @@ Use `useHosts()` to display configured hosts and `getPaseoClient(serverId)` in a
 to run SDK operations on one of them:
 
 ```tsx
-import { getPaseoClient, useHosts } from "@getpaseo/plugin/client";
-import { useState, type ReactElement } from "react";
+import { getPaseoClient, useHosts, type PluginSurfaceProps } from "@getpaseo/plugin/client";
+import { useMemo, useState, type ReactElement } from "react";
 import { Pressable, Text, View } from "react-native";
 
-export function HostAgents(): ReactElement {
+export function HostAgents({ theme }: Pick<PluginSurfaceProps, "theme">): ReactElement {
   const hosts = useHosts();
+  const textStyle = useMemo(() => ({ color: theme.colors.foreground }), [theme]);
   const [result, setResult] = useState("");
 
   async function listAgents(serverId: string): Promise<void> {
@@ -1561,12 +1562,12 @@ export function HostAgents(): ReactElement {
     <View>
       {rows.map(({ host, onPress }) => (
         <Pressable key={host.serverId} accessibilityRole="button" onPress={onPress}>
-          <Text>
+          <Text style={textStyle}>
             {host.label}: {host.status}
           </Text>
         </Pressable>
       ))}
-      <Text>{result}</Text>
+      <Text style={textStyle}>{result}</Text>
     </View>
   );
 }
