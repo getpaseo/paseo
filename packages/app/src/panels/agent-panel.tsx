@@ -1280,7 +1280,7 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
       setText={agentInputDraft.replaceText}
       onRewindComplete={handleRewindComplete}
     >
-      <ComposerViewport style={styles.root} keyboardReserve="retain">
+      <ComposerViewport style={styles.root}>
         <DockedChatSurface disabled={isArchivingCurrentAgent}>
           {contentContainer}
 

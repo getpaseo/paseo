@@ -69,7 +69,8 @@ wait_for_ime() {
   local expected="$1"
   local previous_top=""
   local stable_count=0
-  for _ in $(seq 1 30); do
+  # Gboard's first show after an IME switch can take several seconds on a loaded host.
+  for _ in $(seq 1 100); do
     local window_state
     window_state="$(adb shell dumpsys window)"
     if [[ "${expected}" == "true" ]]; then
@@ -87,6 +88,10 @@ wait_for_ime() {
         fi
       fi
     elif ! printf '%s' "${window_state}" | rg -q "type=ime .*visible=true"; then
+      # The window stops reporting visible when the hide animation starts. Android
+      # drops a show request made while it is still running, so let it finish
+      # before the next tap.
+      sleep 0.75
       return
     fi
     sleep 0.1
@@ -376,6 +381,26 @@ ad press 'id="menu-button"' --settle
 ad press 'id="sidebar-global-new-workspace"' --settle
 ad wait 'id="workspace-create-submit"' 10000
 adb shell ime set "${HELPER_IME}" >/dev/null
+ad fill 'editable=true' "x" --settle
+snapshot_json "${ARTIFACTS_DIR}/new-workspace-short-draft.json"
+read -r new_input_x new_input_y _ < <(
+  node "${ASSERT}" rect "${ARTIFACTS_DIR}/new-workspace-short-draft.json" "editable"
+)
+open_gboard "${new_input_x}" "${new_input_y}"
+capture_ui_xml "${ARTIFACTS_DIR}/new-workspace-short-draft-keyboard-open.xml"
+# Typing more lines moves the setup fields up with the composer instead of
+# hiding their bottom rows behind it.
+adb shell input keycombination 113 123
+adb shell input keyevent 66 66 66
+adb shell input text grown
+sleep 1
+capture_ui_xml "${ARTIFACTS_DIR}/new-workspace-grown-draft-keyboard-open.xml"
+capture_screen "${ARTIFACTS_DIR}/new-workspace-grown-draft-keyboard-open.png"
+node "${ASSERT}" xml-fields-follow-growth \
+  "${ARTIFACTS_DIR}/new-workspace-short-draft-keyboard-open.xml" \
+  "${ARTIFACTS_DIR}/new-workspace-grown-draft-keyboard-open.xml"
+
+adb shell ime set "${HELPER_IME}" >/dev/null
 ad fill 'editable=true' "${LONG_MESSAGE}" --settle
 snapshot_json "${ARTIFACTS_DIR}/new-workspace-long-draft.json"
 read -r new_input_x new_input_y new_input_height < <(
@@ -392,13 +417,16 @@ node "${ASSERT}" xml-composer-contained \
   "$(read_ime_top)" \
   "${display_density}"
 
+# Dismissing the keyboard moves the composer down at its editing height and
+# brings the setup fields back fully visible above it.
 adb shell input keyevent BACK
 wait_for_ime false
-adb shell ime set "${HELPER_IME}" >/dev/null
-snapshot_json "${ARTIFACTS_DIR}/new-workspace-long-draft-keyboard-closed.json"
+capture_ui_xml "${ARTIFACTS_DIR}/new-workspace-long-draft-keyboard-closed.xml"
 capture_screen "${ARTIFACTS_DIR}/new-workspace-long-draft-keyboard-closed.png"
 node "${ASSERT}" same-input-height \
-  "${ARTIFACTS_DIR}/new-workspace-long-draft.json" \
-  "${ARTIFACTS_DIR}/new-workspace-long-draft-keyboard-closed.json"
+  "${ARTIFACTS_DIR}/new-workspace-long-draft-keyboard-open.xml" \
+  "${ARTIFACTS_DIR}/new-workspace-long-draft-keyboard-closed.xml"
+node "${ASSERT}" xml-fields-above-composer \
+  "${ARTIFACTS_DIR}/new-workspace-long-draft-keyboard-closed.xml"
 
 echo "Composer keyboard invariants passed"

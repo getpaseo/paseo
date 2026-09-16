@@ -168,15 +168,19 @@ native intrinsic sizing and internal scrolling. Keep the editing input's
 the JS text whenever its frame changed, so a stale prop inflates or collapses
 the input (see `packages/app/src/components/ui/text-input/text-input.native.tsx`).
 
-What the closed keyboard leaves behind is the viewport's `keyboardReserve`
-policy. A docked chat composer retains its last reservation so an unchanged
-capped draft does not expand over the stream; subsequent keyboard openings
-recalculate it. New workspace releases it: its setup fields scroll inside the
-same constrained space while the keyboard is open, so keeping the reservation
-after it closes leaves the form clipped and the composer small with the screen
-empty above them. The Android regression must check both the header and IME
-boundaries; checking only the bottom controls allowed this regression through
-previously.
+Closing the keyboard moves the composer; it does not enlarge its capacity. The
+viewport keeps the last keyboard reservation until the next opening replaces
+it, so a capped draft keeps one height through every keyboard transition
+instead of expanding on close and shrinking again on open.
+
+Bound only the composer, never a form above it. New workspace on a phone docks
+the composer like a chat and lets the setup fields move up under the header as
+the draft grows (`packages/app/src/screens/new-workspace-screen.tsx`). Putting
+the fields and the composer in one bounded, shrinkable column made Yoga split
+the shortage between them: rows vanished behind the composer while the input
+lost lines at the same time. The Android regression checks the header and IME
+boundaries, the fields moving with composer growth, and the input height across
+dismissal; checking only the bottom controls let this through before.
 
 Move the stream and composer together through `KeyboardDock`. Do not translate
 them independently.

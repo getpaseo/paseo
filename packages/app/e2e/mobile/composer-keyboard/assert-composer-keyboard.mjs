@@ -4,16 +4,23 @@ import sharp from "sharp";
 
 const [, , command, ...args] = process.argv;
 
+// uiautomator reports bounds clipped to the visible parent and omits nodes
+// that are entirely off screen.
+function xmlBounds(snapshot, attribute) {
+  const node = snapshot.match(new RegExp(`<node[^>]*${attribute}[^>]*>`));
+  if (!node) throw new Error(`Missing node: ${attribute}`);
+  const bounds = node[0].match(/bounds="\[(-?\d+),(-?\d+)\]\[(-?\d+),(-?\d+)\]"/);
+  if (!bounds) throw new Error(`Missing bounds: ${attribute}`);
+  return { top: Number(bounds[2]), bottom: Number(bounds[4]) };
+}
+const xmlBoundsById = (snapshot, id) => xmlBounds(snapshot, `resource-id="${id}"`);
+const xmlEditTextBounds = (snapshot) => xmlBounds(snapshot, 'class="android.widget.EditText"');
+const boundsHeight = (bounds) => bounds.bottom - bounds.top;
+
 if (command === "xml-composer-contained") {
   const [snapshotPath, imeTopArgument, densityArgument] = args;
   const snapshot = await fs.readFile(snapshotPath, "utf8");
-  const boundsFor = (id) => {
-    const node = snapshot.match(new RegExp(`<node[^>]*resource-id="${id}"[^>]*>`));
-    if (!node) throw new Error(`Missing node: ${id}`);
-    const bounds = node[0].match(/bounds="\[(-?\d+),(-?\d+)\]\[(-?\d+),(-?\d+)\]"/);
-    if (!bounds) throw new Error(`Missing bounds: ${id}`);
-    return { top: Number(bounds[2]), bottom: Number(bounds[4]) };
-  };
+  const boundsFor = (id) => xmlBoundsById(snapshot, id);
   const viewport = boundsFor("composer-viewport");
   const content = boundsFor("composer-viewport-content");
   const composer = boundsFor("message-input-root");
@@ -91,9 +98,46 @@ if (command === "xml-composer-contained") {
   if (changedRatio > 0.01) {
     throw new Error(`Header changed while the keyboard opened (${changedRatio.toFixed(3)})`);
   }
+} else if (command === "xml-fields-follow-growth") {
+  // Growing the draft with the keyboard open moves the setup fields up by the
+  // same amount; the composer never eats their bottom rows.
+  const [beforePath, afterPath] = args;
+  const [before, after] = await Promise.all([
+    fs.readFile(beforePath, "utf8"),
+    fs.readFile(afterPath, "utf8"),
+  ]);
+  const growth = boundsHeight(xmlEditTextBounds(after)) - boundsHeight(xmlEditTextBounds(before));
+  if (growth <= 0) throw new Error(`Composer did not grow (${growth}px)`);
+  const fieldsBefore = xmlBoundsById(before, "new-workspace-launch-trigger");
+  const fieldsAfter = xmlBoundsById(after, "new-workspace-launch-trigger");
+  const moved = fieldsBefore.bottom - fieldsAfter.bottom;
+  if (Math.abs(moved - growth) > 2) {
+    throw new Error(`Setup fields moved ${moved}px while the composer grew ${growth}px`);
+  }
+  process.stdout.write(`Setup fields followed composer growth: ${growth}px\n`);
+} else if (command === "xml-fields-above-composer") {
+  // With the keyboard closed the setup fields sit fully visible above the composer.
+  const [snapshotPath] = args;
+  const snapshot = await fs.readFile(snapshotPath, "utf8");
+  const fields = xmlBoundsById(snapshot, "new-workspace-launch-trigger");
+  const content = xmlBoundsById(snapshot, "composer-viewport-content");
+  if (boundsHeight(fields) < 40) {
+    throw new Error(`Setup fields are clipped: launch row height=${boundsHeight(fields)}`);
+  }
+  if (fields.bottom > content.top) {
+    throw new Error(
+      `Setup fields overlap the composer: fields=${fields.bottom}, composer=${content.top}`,
+    );
+  }
+  process.stdout.write(
+    `Setup fields visible above the composer: ${fields.bottom} <= ${content.top}\n`,
+  );
 } else if (command === "same-input-height") {
   const [firstPath, secondPath] = args;
   const readInputHeight = async (snapshotPath) => {
+    if (snapshotPath.endsWith(".xml")) {
+      return boundsHeight(xmlEditTextBounds(await fs.readFile(snapshotPath, "utf8")));
+    }
     const snapshot = JSON.parse(await fs.readFile(snapshotPath, "utf8"));
     const input = snapshot.data.nodes.find((candidate) => candidate.type.endsWith("EditText"));
     if (!input) throw new Error(`Missing composer input in ${snapshotPath}`);

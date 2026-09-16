@@ -2,47 +2,37 @@ import { describe, expect, it } from "vitest";
 import { resolveComposerCapacity, updateComposerCapacity } from "./capacity";
 
 describe("composer viewport", () => {
-  it("preserves the editing capacity when the keyboard closes on a docked composer", () => {
+  it("preserves the editing capacity when the keyboard closes", () => {
     const viewport = { height: 582, bottomInset: 24, centered: false };
-    const open = updateComposerCapacity(undefined, { ...viewport, keyboardShift: 308 }, "retain");
-    const closed = updateComposerCapacity(open, { ...viewport, keyboardShift: 0 }, "retain");
+    const open = updateComposerCapacity(undefined, { ...viewport, keyboardShift: 308 });
+    const closed = updateComposerCapacity(open, { ...viewport, keyboardShift: 0 });
     expect(open.capacity).toBe(245);
     expect(closed.capacity).toBe(open.capacity);
-    expect(
-      updateComposerCapacity(closed, { ...viewport, keyboardShift: 250 }, "retain").capacity,
-    ).toBe(303);
-  });
-
-  it("releases the whole viewport when the keyboard closes on a form", () => {
-    const viewport = { height: 582, bottomInset: 24, centered: false };
-    const open = updateComposerCapacity(undefined, { ...viewport, keyboardShift: 308 }, "release");
-    const closed = updateComposerCapacity(open, { ...viewport, keyboardShift: 0 }, "release");
-    expect(open.capacity).toBe(245);
-    expect(closed.capacity).toBe(553);
-    expect(
-      updateComposerCapacity(closed, { ...viewport, keyboardShift: 308 }, "release").capacity,
-    ).toBe(245);
+    expect(updateComposerCapacity(closed, { ...viewport, keyboardShift: 250 }).capacity).toBe(303);
   });
 
   it("remeasures the viewport without forgetting the keyboard reservation", () => {
-    const open = updateComposerCapacity(
-      undefined,
-      { height: 582, bottomInset: 24, centered: false, keyboardShift: 308 },
-      "retain",
-    );
+    const open = updateComposerCapacity(undefined, {
+      height: 582,
+      bottomInset: 24,
+      centered: false,
+      keyboardShift: 308,
+    });
     expect(
-      updateComposerCapacity(
-        open,
-        { height: 650, bottomInset: 24, centered: false, keyboardShift: 0 },
-        "retain",
-      ).capacity,
+      updateComposerCapacity(open, {
+        height: 650,
+        bottomInset: 24,
+        centered: false,
+        keyboardShift: 0,
+      }).capacity,
     ).toBe(313);
     expect(
-      updateComposerCapacity(
-        open,
-        { height: 0, bottomInset: 24, centered: false, keyboardShift: 0 },
-        "retain",
-      ),
+      updateComposerCapacity(open, {
+        height: 0,
+        bottomInset: 24,
+        centered: false,
+        keyboardShift: 0,
+      }),
     ).toEqual(open);
   });
   it("leaves five points below the header for a bottom-anchored composer", () => {

@@ -54,6 +54,15 @@ Metro, and device through the `PASEO_COMPOSER_KEYBOARD_*` variables in
 the headless input helper cannot verify the
 [visible composer constraints](floating-panels.md#gotcha-3--keyboard-layout-and-portal-anchors).
 
+On a Play-image emulator, disable Gmail and Calendar first. Their welcome
+screens launch on their own, take input focus, and the run fails with
+`IME did not become visible` while the app still looks focused:
+
+```bash
+adb shell pm disable-user --user 0 com.google.android.gm
+adb shell pm disable-user --user 0 com.google.android.calendar
+```
+
 When replay diverges, read its ranked selector suggestions. Edit the script deliberately and rerun it from the beginning. `--update` is retained for compatibility but no longer rewrites scripts.
 
 ## Maestro compatibility

@@ -6,7 +6,7 @@ import type { AgentSnapshotPayload, CreationSnapshot } from "@getpaseo/protocol/
 import { encodeImages } from "@/utils/encode-images";
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
-import type { ReactElement, RefObject } from "react";
+import type { ReactElement, ReactNode, RefObject } from "react";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { Pressable, StyleSheet as RNStyleSheet, Text, View } from "react-native";
@@ -2379,88 +2379,138 @@ export function NewWorkspaceScreen({
 
   const screenHeaderLeft = useMemo(() => <SidebarMenuToggle />, []);
 
+  const composer = isTerminalLaunch ? (
+    <Composer
+      key="terminal"
+      externalKeyboardShift
+      inputMode="terminal"
+      readOnly={!terminalTakesPrompt}
+      placeholder={terminalPlaceholder}
+      submitLabel={terminalSubmitLabel}
+      agentId={draftKey}
+      serverId={selectedServerId}
+      isPaneFocused={true}
+      onSubmitMessage={handleSubmitTerminalLaunch}
+      allowEmptySubmit={true}
+      submitButtonAccessibilityLabel={t("newWorkspace.launch.submit")}
+      submitButtonTestID="new-workspace-launch-submit"
+      isSubmitLoading={isPending}
+      submitBehavior="preserve-and-lock"
+      blurOnSubmit={true}
+      textSource={terminalTextSource}
+      onChangeText={setTerminalPromptText}
+      textReplacement={terminalTextReplacement}
+      attachments={NO_TERMINAL_ATTACHMENTS}
+      onChangeAttachments={noopChangeAttachments}
+      cwd={selectedSourceDirectory ?? ""}
+      clearDraft={noopClearDraft}
+      autoFocus={terminalTakesPrompt}
+      autoFocusKey={launchFocusKey}
+    />
+  ) : (
+    <Composer
+      key="chat"
+      externalKeyboardShift
+      agentId={draftKey}
+      serverId={selectedServerId}
+      isPaneFocused={true}
+      onSubmitMessage={handleSubmitNewWorkspace}
+      allowEmptySubmit={true}
+      submitButtonAccessibilityLabel={t("newWorkspace.create")}
+      submitButtonTestID="workspace-create-submit"
+      submitIcon="return"
+      isSubmitLoading={isPending}
+      waitForForgeAutoAttachOnSubmit
+      submitBehavior="preserve-and-lock"
+      blurOnSubmit={true}
+      textSource={chatDraft.textSource}
+      onChangeText={chatDraft.editText}
+      textReplacement={chatDraft.textReplacement}
+      attachments={chatDraft.attachments}
+      attachmentScopeKeys={visibleDraftContextScopeKeys}
+      onChangeAttachments={chatDraft.setAttachments}
+      onForgeChangeRequestDetected={handleForgeChangeRequestDetected}
+      onForgeChangeRequestAutoAttach={handleForgeChangeRequestAutoAttach}
+      cwd={selectedSourceDirectory ?? ""}
+      clearDraft={handleClearDraft}
+      autoFocus
+      autoFocusKey={launchFocusKey}
+      commandDraftConfig={composerState?.commandDraftConfig}
+      agentControls={agentControlsWithDisabled}
+    />
+  );
   return (
     <FileDropZone style={styles.container}>
       <ScreenHeader left={screenHeaderLeft} borderless />
       <ComposerViewport style={contentStyle} bottomInset={contentBottomInset} centered={!isCompact}>
         <TitlebarDragRegion />
-        <KeyboardTranslateView style={animatedStaticStyles.centered}>
-          <ComposerViewportContent style={animatedStaticStyles.form}>
-            <ScrollView style={animatedStaticStyles.setup} keyboardShouldPersistTaps="handled">
-              <View style={styles.composerTitleContainer}>
-                <Text style={styles.composerTitle}>{t("newWorkspace.title")}</Text>
-              </View>
-              {formStack}
-            </ScrollView>
-            {isTerminalLaunch ? (
-              <Composer
-                key="terminal"
-                externalKeyboardShift
-                inputMode="terminal"
-                readOnly={!terminalTakesPrompt}
-                placeholder={terminalPlaceholder}
-                submitLabel={terminalSubmitLabel}
-                agentId={draftKey}
-                serverId={selectedServerId}
-                isPaneFocused={true}
-                onSubmitMessage={handleSubmitTerminalLaunch}
-                allowEmptySubmit={true}
-                submitButtonAccessibilityLabel={t("newWorkspace.launch.submit")}
-                submitButtonTestID="new-workspace-launch-submit"
-                isSubmitLoading={isPending}
-                submitBehavior="preserve-and-lock"
-                blurOnSubmit={true}
-                textSource={terminalTextSource}
-                onChangeText={setTerminalPromptText}
-                textReplacement={terminalTextReplacement}
-                attachments={NO_TERMINAL_ATTACHMENTS}
-                onChangeAttachments={noopChangeAttachments}
-                cwd={selectedSourceDirectory ?? ""}
-                clearDraft={noopClearDraft}
-                autoFocus={terminalTakesPrompt}
-                autoFocusKey={launchFocusKey}
-              />
-            ) : (
-              <Composer
-                key="chat"
-                externalKeyboardShift
-                agentId={draftKey}
-                serverId={selectedServerId}
-                isPaneFocused={true}
-                onSubmitMessage={handleSubmitNewWorkspace}
-                allowEmptySubmit={true}
-                submitButtonAccessibilityLabel={t("newWorkspace.create")}
-                submitButtonTestID="workspace-create-submit"
-                submitIcon="return"
-                isSubmitLoading={isPending}
-                waitForForgeAutoAttachOnSubmit
-                submitBehavior="preserve-and-lock"
-                blurOnSubmit={true}
-                textSource={chatDraft.textSource}
-                onChangeText={chatDraft.editText}
-                textReplacement={chatDraft.textReplacement}
-                attachments={chatDraft.attachments}
-                attachmentScopeKeys={visibleDraftContextScopeKeys}
-                onChangeAttachments={chatDraft.setAttachments}
-                onForgeChangeRequestDetected={handleForgeChangeRequestDetected}
-                onForgeChangeRequestAutoAttach={handleForgeChangeRequestAutoAttach}
-                cwd={selectedSourceDirectory ?? ""}
-                clearDraft={handleClearDraft}
-                autoFocus
-                autoFocusKey={launchFocusKey}
-                commandDraftConfig={composerState?.commandDraftConfig}
-                agentControls={agentControlsWithDisabled}
-              />
-            )}
-            {errorMessage ? <Text style={styles.errorText}>{errorMessage}</Text> : null}
-          </ComposerViewportContent>
-        </KeyboardTranslateView>
+        <NewWorkspaceLayout
+          isCompact={isCompact}
+          title={t("newWorkspace.title")}
+          formStack={formStack}
+        >
+          {composer}
+          {errorMessage ? <Text style={styles.errorText}>{errorMessage}</Text> : null}
+        </NewWorkspaceLayout>
       </ComposerViewport>
     </FileDropZone>
   );
 }
 
+function NewWorkspaceLayout({
+  isCompact,
+  title,
+  formStack,
+  children,
+}: {
+  isCompact: boolean;
+  title: string;
+  formStack: ReactNode;
+  children: ReactNode;
+}) {
+  const setupFields = (
+    <>
+      <View style={styles.composerTitleContainer}>
+        <Text style={styles.composerTitle}>{title}</Text>
+      </View>
+      {formStack}
+    </>
+  );
+  if (isCompact) {
+    // A phone docks the composer like a chat: the composer alone is bounded by
+    // the viewport, and the setup fields above it move up as it grows, leaving
+    // under the header instead of losing their bottom rows.
+    return (
+      <KeyboardTranslateView style={animatedStaticStyles.dockedStack}>
+        {setupFields}
+        <ComposerViewportContent style={animatedStaticStyles.dockedComposer}>
+          {children}
+        </ComposerViewportContent>
+      </KeyboardTranslateView>
+    );
+  }
+  return (
+    <KeyboardTranslateView style={animatedStaticStyles.centered}>
+      <ComposerViewportContent style={animatedStaticStyles.form}>
+        <ScrollView style={animatedStaticStyles.setup} keyboardShouldPersistTaps="handled">
+          {setupFields}
+        </ScrollView>
+        {children}
+      </ComposerViewportContent>
+    </KeyboardTranslateView>
+  );
+}
+
 const animatedStaticStyles = RNStyleSheet.create({
+  // Sized to its content so the bottom-anchored viewport overflows it upward.
+  dockedStack: {
+    flexShrink: 0,
+    width: "100%",
+    maxWidth: MAX_CONTENT_WIDTH,
+  },
+  dockedComposer: {
+    flexShrink: 1,
+  },
   centered: {
     flexShrink: 1,
     width: "100%",
@@ -2491,6 +2541,8 @@ const styles = StyleSheet.create((theme) => ({
   },
   contentCompact: {
     justifyContent: "flex-end",
+    // Clip the setup fields at the header edge as the composer pushes them up.
+    overflow: "hidden",
   },
   composerTitleContainer: {
     marginBottom: theme.spacing[8],
