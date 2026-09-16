@@ -126,8 +126,6 @@ export interface CommandCenterSearchFields {
   hidden: readonly string[];
 }
 
-const MATCH_OPTIONS = { subsequence: false } as const;
-
 /**
  * The one definition of "how well did this row match", shared by every scored row kind. Null
  * means the row is filtered out, so scoring and filtering are the same pass — a separate boolean
@@ -138,19 +136,17 @@ const MATCH_OPTIONS = { subsequence: false } as const;
  * only ever widen the result set: tokens hold no whitespace, so any token that was found in the
  * old space-joined haystack lies entirely within one field and is still found here.
  *
- * Subsequence matching is off, unlike the composer's slash-command list. Each token has to be a
- * run of adjacent characters, so `lab des` matches and `labdes` does not. It widens hard enough
- * that almost any typo finds something, and this list preselects its first row: a query the user
- * expects to find nothing would instead put an unrelated action under Enter.
+ * Subsequence matches stay within each word, so `lbl dsgn` finds "Label as Design"
+ * while `labdes` cannot assemble a match across those words.
  */
 export function scoreSearchFields(
   query: string,
   fields: CommandCenterSearchFields,
 ): CommandCenterScore | null {
-  const visible = scoreTextFields(query, [...fields.visible], MATCH_OPTIONS);
+  const visible = scoreTextFields(query, [...fields.visible]);
   if (visible) return { fieldRank: VISIBLE_FIELD_RANK, match: visible };
   if (fields.hidden.length === 0) return null;
-  const match = scoreTextFields(query, [...fields.visible, ...fields.hidden], MATCH_OPTIONS);
+  const match = scoreTextFields(query, [...fields.visible, ...fields.hidden]);
   return match ? { fieldRank: KEYWORD_FIELD_RANK, match } : null;
 }
 
