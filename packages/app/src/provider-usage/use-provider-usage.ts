@@ -1,9 +1,9 @@
 import { useCallback, useMemo } from "react";
+import { useTranslation } from "react-i18next";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { useSessionStore } from "@/stores/session-store";
-import { providerUsageCopy } from "./copy";
 import type { ProviderUsageListPayload, ProviderUsageView } from "./types";
 
 export const PROVIDER_USAGE_STALE_TIME_MS = 5 * 60 * 1000;
@@ -30,6 +30,7 @@ export function useProviderUsage(
   refresh: () => Promise<void>;
   canFetch: boolean;
 } {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const client = useHostRuntimeClient(serverId ?? "");
   const isConnected = useHostRuntimeIsConnected(serverId ?? "");
@@ -42,10 +43,10 @@ export function useProviderUsage(
 
   const queryFn = useCallback(async () => {
     if (!client) {
-      throw new Error(providerUsageCopy.clientUnavailable);
+      throw new Error(t("providerUsage.clientUnavailable"));
     }
     return fetchProviderUsage(client);
-  }, [client]);
+  }, [client, t]);
 
   const query = useQuery({
     queryKey,
@@ -69,10 +70,10 @@ export function useProviderUsage(
 
   const view = useMemo<ProviderUsageView>(() => {
     if (!serverId || !client || !isConnected) {
-      return { kind: "error", message: providerUsageCopy.hostUnavailable };
+      return { kind: "error", message: t("providerUsage.hostUnavailable") };
     }
     if (!supportsProviderUsage) {
-      return { kind: "error", message: providerUsageCopy.hostUpgradeRequired };
+      return { kind: "error", message: t("providerUsage.hostUpgradeRequired") };
     }
     if (query.data) {
       return {
@@ -97,6 +98,7 @@ export function useProviderUsage(
     query.isFetching,
     serverId,
     supportsProviderUsage,
+    t,
   ]);
 
   return { view, refresh, canFetch };
