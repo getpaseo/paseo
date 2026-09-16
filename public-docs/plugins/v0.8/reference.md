@@ -1527,6 +1527,42 @@ function PullRequestAction({ theme }: PluginSurfaceProps) {
 
 The returned API covers projects, workspaces, agents, terminals, providers, and daemon config. See the [SDK API reference](/docs/sdk/reference) for its methods. Connection lifecycle methods are intentionally absent because Paseo owns the connection.
 
+### Discover hosts and target another host
+
+Import `useHosts` and `getPaseoClient` from `@getpaseo/plugin/client`:
+
+```tsx
+const hosts = useHosts();
+
+async function listAgents(serverId: string) {
+  const client = getPaseoClient(serverId);
+  return client.agents.list();
+}
+```
+
+`useHosts(): readonly PluginHostSummary[]` returns every configured app host, including offline
+hosts. Each summary contains only `serverId`, `label`, and `status`. Status is `"idle"`,
+`"connecting"`, `"online"`, `"offline"`, or `"error"`; labels and statuses update live.
+
+`getPaseoClient(serverId: string): PaseoApi` is imperative: call it in client entry code or callbacks.
+It borrows that host's authenticated app connection and opens no socket. The target daemon does not
+need this plugin installed. `usePaseo()` continues to use the selected host.
+
+Unknown IDs throw `Unknown Paseo host: <id>`. Hosts that are not online throw
+`Paseo host is disconnected: <id>`. No call falls through to another host. Acquire the client when
+performing an action so you use the current connection. A retained API survives reconnects on the
+same connection; if the app replaces or removes that connection, its API is released. Acquire a
+new API and recreate subscriptions after a replacement. Retained handles cannot call a released
+connection or outlive the originating installation.
+
+Paseo releases borrowed SDK observations when the originating plugin unloads, even when their
+target is another host. Explicit subscriptions can also be released through the normal SDK API.
+Changing the surface's host selection does not retarget an already acquired client.
+
+Plugins are trusted app code. Cross-host access is intentional; host summaries omit connection
+URLs and credentials, and the returned API has no connection lifecycle controls. See the
+[host agents example](https://github.com/getpaseo/paseo/tree/main/plugin-examples/hosts).
+
 ## Add plugin-specific backend behavior
 
 Use plugin RPC only for work that is not a normal Paseo operation: reading a vendor API, accessing daemon-local resources, or keeping credentials off the client.

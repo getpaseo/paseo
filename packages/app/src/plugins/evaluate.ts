@@ -1,3 +1,4 @@
+import type { createPluginHosts } from "./hosts";
 import * as pluginUiRuntime from "./react-native/ui";
 import { useSettings } from "./settings/use-settings";
 import * as pluginSharedRuntime from "@getpaseo/plugin";
@@ -78,7 +79,7 @@ export type PluginClientRuntime = Pick<
   | "openPanel"
   | "addComposerPill"
   | "addHeaderButton"
->;
+> & { hosts: ReturnType<typeof createPluginHosts> };
 
 export function runPluginClientBundle(
   id: string,
@@ -374,7 +375,18 @@ export function runPluginClientBundle(
     if (name === "react/jsx-runtime") return ReactJsxRuntime;
     if (name === "react-native") return ReactNative;
     if (name === "@getpaseo/plugin") return pluginSharedRuntime;
-    if (name === "@getpaseo/plugin/client") return { ...pluginClientRuntime, useSettings };
+    if (name === "@getpaseo/plugin/client")
+      return {
+        ...pluginClientRuntime,
+        useSettings,
+        getPaseoClient: (serverId: string) => runtime.hosts.getPaseoClient(serverId),
+        useHosts: () =>
+          React.useSyncExternalStore(
+            runtime.hosts.subscribe,
+            runtime.hosts.getSnapshot,
+            runtime.hosts.getSnapshot,
+          ),
+      };
     if (name === "@getpaseo/plugin/client/react-native") {
       return pluginReactNativeRuntime;
     }

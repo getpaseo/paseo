@@ -253,6 +253,10 @@ selected host's existing connection; switching the screen's host changes both `u
 installation. A server handler owns an IPC-backed daemon session for the life of its subprocess.
 Use plugin RPC for plugin-specific backend behavior that is not a normal Paseo operation.
 
+Host-targeted clients and discovery are owned by `packages/app/src/plugins/hosts`, with per-installation
+bindings supplied by the bundle loader. Their subscriptions share the installation lifetime, not the
+selected surface lifetime. See the [public host API contract](../public-docs/plugins/v0.8/reference.md#discover-hosts-and-target-another-host).
+
 Each subprocess gets an exclusively owned `plugin:<id>` session. That identity is reserved from
 normal clients, never resumes another session, and is cleaned immediately on exit without reconnect
 grace. During daemon startup, plugin sessions may connect while application WebSockets remain
