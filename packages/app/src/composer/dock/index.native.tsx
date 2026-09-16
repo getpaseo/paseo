@@ -107,6 +107,7 @@ export function ComposerDock({
               {composer}
             </ComposerViewportContent>
           </ComposerViewportContent>
+          {overlay}
         </KeyboardTranslateView>
       </ComposerViewport>
     );

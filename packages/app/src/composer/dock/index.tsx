@@ -21,6 +21,7 @@ export function ComposerDock({
             {content}
           </ScrollView>
           <View style={styles.centeredComposer}>{composer}</View>
+          {overlay}
         </View>
       </View>
     );
