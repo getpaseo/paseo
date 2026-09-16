@@ -179,6 +179,10 @@ its own.
 - **Released height.** Reanimated's web entering animation leaves an inline height snapshot on
   the surface. `AnchoredSurface` clears it, and a `revision` prop re-clears it when content
   identity changes — a pushed page taller than the one it replaced is clipped without that.
+- **Animate only once placed.** The same snapshot carries top/left, and Reanimated writes it back
+  750ms after mount. `AnchoredSurface` remounts the surface when its position resolves so the
+  entering animation never ends at the off-screen measuring position; on a slow machine that
+  write moved the open menu back off-screen.
 - **Sheets size to content.** `enableDynamicSizing`, not fixed snap points. A pushed page is
   rarely the height of the page before it.
 - **The sheet's content is teleported out of the menu's subtree**, so `MenuSheetSurface` rebuilds
