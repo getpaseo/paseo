@@ -1092,6 +1092,9 @@ const quitLifecycle = createQuitLifecycle({
   onStopError: (error) => {
     log.error("[desktop daemon] failed to stop managed daemon on quit", error);
   },
+  onFlushError: (error) => {
+    log.error("[desktop updater] failed to flush the pending update on quit", error);
+  },
 });
 
 app.on("before-quit", quitLifecycle.handleBeforeQuit);

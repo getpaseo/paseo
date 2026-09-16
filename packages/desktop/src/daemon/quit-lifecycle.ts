@@ -67,12 +67,16 @@ export async function stopDesktopManagedDaemonOnQuitIfNeeded(
   return true;
 }
 
+const DEFAULT_FLUSH_PENDING_UPDATE_DEADLINE_MS = 2_000;
+
 export function createQuitLifecycle({
   app,
   closeTransportSessions,
   stopDesktopManagedDaemonIfNeeded,
   flushPendingUpdate,
+  flushDeadlineMs,
   onStopError,
+  onFlushError,
 }: {
   app: BeforeQuitApp;
   closeTransportSessions: () => void;
@@ -83,7 +87,9 @@ export function createQuitLifecycle({
    * marker recorded just before exit.
    */
   flushPendingUpdate?: () => Promise<void>;
+  flushDeadlineMs?: number;
   onStopError: (error: unknown) => void;
+  onFlushError: (error: unknown) => void;
 }): QuitLifecycle {
   // The first quit waits for daemon shutdown; app.exit(0) then bypasses
   // Electron's macOS window-all-closed handler, which would veto a second quit.
@@ -102,10 +108,22 @@ export function createQuitLifecycle({
         onStopError(error);
       }
 
+      // A stalled marker write must never block quitting, so the flush is
+      // bounded by a deadline. flushPendingUpdate promises never to reject;
+      // onFlushError covers an unexpected violation of that contract.
+      let flushTimer: NodeJS.Timeout | undefined;
       try {
-        await flushPendingUpdate?.();
-      } catch {
-        // A failed marker write must never block quitting.
+        await Promise.race([
+          flushPendingUpdate?.().catch((error) => onFlushError(error)),
+          new Promise<void>((resolve) => {
+            flushTimer = setTimeout(
+              resolve,
+              flushDeadlineMs ?? DEFAULT_FLUSH_PENDING_UPDATE_DEADLINE_MS,
+            );
+          }),
+        ]);
+      } finally {
+        clearTimeout(flushTimer);
       }
 
       app.exit(0);

@@ -128,6 +128,7 @@ describe("quit-lifecycle", () => {
       onStopError: () => {
         events.push("stop-error");
       },
+      onFlushError: () => {},
     });
 
     quitLifecycle.handleBeforeQuit({
@@ -142,12 +143,7 @@ describe("quit-lifecycle", () => {
     stopDecision.resolve(false);
     await waitForQuitLifecycle();
 
-    expect(events).toEqual([
-      "close-transports",
-      "prevent-default",
-      "daemon-stopped",
-      "exit:0",
-    ]);
+    expect(events).toEqual(["close-transports", "prevent-default", "daemon-stopped", "exit:0"]);
 
     quitLifecycle.handleBeforeQuit({
       preventDefault: () => {
@@ -170,6 +166,7 @@ describe("quit-lifecycle", () => {
       onStopError: () => {
         events.push("stop-error");
       },
+      onFlushError: () => {},
     });
 
     quitLifecycle.handleBeforeQuit({ preventDefault: () => {} });
@@ -194,6 +191,7 @@ describe("quit-lifecycle", () => {
       closeTransportSessions: () => {},
       stopDesktopManagedDaemonIfNeeded: async () => false,
       onStopError: () => {},
+      onFlushError: () => {},
       flushPendingUpdate,
     });
 
@@ -216,6 +214,9 @@ describe("quit-lifecycle", () => {
       closeTransportSessions: () => {},
       stopDesktopManagedDaemonIfNeeded: async () => false,
       onStopError: () => {},
+      onFlushError: () => {
+        events.push("flush-error");
+      },
       flushPendingUpdate: async () => {
         throw new Error("disk full");
       },
@@ -223,6 +224,28 @@ describe("quit-lifecycle", () => {
 
     quitLifecycle.handleBeforeQuit({ preventDefault: () => {} });
     await waitForQuitLifecycle();
+
+    expect(events).toEqual(["flush-error", "exit:0"]);
+  });
+
+  it("exits when the pending update flush never settles", async () => {
+    const events: string[] = [];
+    const quitLifecycle = createQuitLifecycle({
+      app: { exit: (code) => events.push(`exit:${code}`) },
+      closeTransportSessions: () => {},
+      stopDesktopManagedDaemonIfNeeded: async () => false,
+      onStopError: () => {},
+      onFlushError: () => {},
+      flushPendingUpdate: () => new Promise<void>(() => {}),
+      flushDeadlineMs: 5,
+    });
+
+    quitLifecycle.handleBeforeQuit({ preventDefault: () => {} });
+    await waitForQuitLifecycle();
+
+    expect(events).toEqual([]);
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
 
     expect(events).toEqual(["exit:0"]);
   });
