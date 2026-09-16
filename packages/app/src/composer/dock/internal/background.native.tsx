@@ -1,6 +1,6 @@
 import { Keyboard, Pressable, type ViewProps } from "react-native";
 
-/** Child controls and scroll views claim their own touches before this background. */
+/** Use behind scrollable content as a sibling, never as its responder ancestor. */
 export function ComposerDockBackground(props: ViewProps) {
   return <Pressable {...props} accessible={false} onPress={Keyboard.dismiss} />;
 }

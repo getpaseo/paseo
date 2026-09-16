@@ -142,8 +142,15 @@ capacity, and keyboard motion for chat, workspace draft tabs, and New workspace.
 Render `<ComposerDock>{contentAbove}{composer}</ComposerDock>` below the header.
 The optional third child is an overlay that moves with the surface. New workspace
 uses `centered` for its existing desktop/tablet form. Hosts never reserve keyboard
-space or translate the composer themselves. The dock's background surface dismisses
-on empty-content taps; the shared screen header uses that same surface. Keep the
+space or translate the composer themselves. Put the dismiss surface behind content
+as a sibling, with `pointerEvents="box-none"` on its content wrapper. A Pressable
+ancestor takes the JS responder on idle Android Fabric and intercepts the stream's
+MOVE events before its native scroll view reaches touch slop. Streaming can hide
+this failure by delaying the responder grant. Native scroll views retain their own
+tap-to-dismiss behavior; unclaimed empty-space taps reach the dismiss sibling.
+On iOS, decorative form containers also need `box-none` (and inert titles/spacers
+need `none`); otherwise their empty padding blocks hit testing of that sibling.
+The shared screen header uses the same dismiss surface. Keep the
 header escape available when a capped draft clips all content above it, since
 iPhone has no system keyboard-dismiss button. Child controls keep their touches,
 and the stream keeps its existing flick-to-dismiss gesture.

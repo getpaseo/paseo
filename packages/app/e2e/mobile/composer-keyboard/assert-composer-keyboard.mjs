@@ -22,7 +22,37 @@ const xmlBoundsById = (snapshot, id) => xmlBounds(snapshot, `resource-id="${id}"
 const xmlEditTextBounds = (snapshot) => xmlBounds(snapshot, 'class="android.widget.EditText"');
 const boundsHeight = (bounds) => bounds.bottom - bounds.top;
 
-if (command === "snapshot-xml") {
+if (command === "stream-moved") {
+  const [beforePath, afterPath, topArgument = "330", heightArgument = "1000"] = args;
+  const { width } = await sharp(beforePath).metadata();
+  const region = {
+    left: 16,
+    top: Number(topArgument),
+    width: width - 32,
+    height: Number(heightArgument),
+  };
+  const [before, after] = await Promise.all(
+    [beforePath, afterPath].map((path) =>
+      sharp(path).extract(region).removeAlpha().raw().toBuffer(),
+    ),
+  );
+  let changed = 0;
+  for (let offset = 0; offset < before.length; offset += 3) {
+    if (
+      [0, 1, 2].some((channel) => Math.abs(before[offset + channel] - after[offset + channel]) > 8)
+    )
+      changed++;
+  }
+  const fraction = changed / (before.length / 3);
+  // Exclude the scrollbar rail and require more than incidental icon/antialias changes.
+  if (fraction < 0.01)
+    throw new Error(
+      `Native swipe did not move stream content: ${(fraction * 100).toFixed(2)}% changed`,
+    );
+  process.stdout.write(
+    `Native swipe moved stream content: ${(fraction * 100).toFixed(2)}% changed\n`,
+  );
+} else if (command === "snapshot-xml") {
   const [inputPath, outputPath] = args;
   const snapshot = JSON.parse(await fs.readFile(inputPath, "utf8"));
   if (!snapshot.success || !snapshot.data.nodes.length) throw new Error("Empty device snapshot");

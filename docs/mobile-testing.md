@@ -53,7 +53,11 @@ hold-to-delete and background-tap dismissal scenario on chat, a workspace draft
 tab, and New workspace. It checks empty-content taps and header taps at the cap
 without changing the input height. Each
 host also opens command/file autocomplete, the model selector, the attachment
-menu, and the forge picker from both keyboard states.
+menu, and the forge picker from both keyboard states. It then submits a long
+fixture from each host and checks native stream displacement twice: after the
+response settles, and after returning to the bottom and letting the scrollbar
+fade. The image comparison excludes the scrollbar; keyboard dismissal alone
+does not prove that native scrolling receives touches.
 Artifacts are grouped by host under
 `.dev/agent-device-artifacts/composer-keyboard-android`. Configure its daemon,
 Metro, and device through the `PASEO_COMPOSER_KEYBOARD_*` variables in

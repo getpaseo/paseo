@@ -115,13 +115,19 @@ export function ComposerDock({
   return (
     <ComposerViewport style={dockStyles.viewport}>
       <KeyboardTranslateView style={dockStyles.surface}>
-        <ComposerDockBackground
+        <View
           testID="composer-dock-content"
           collapsable={false}
           style={dockStyles.content}
+          pointerEvents="box-none"
         >
-          {content}
-        </ComposerDockBackground>
+          {/* A responder ancestor intercepts native scroll drags on Android Fabric.
+              Only unclaimed background touches may reach this sibling. */}
+          <ComposerDockBackground style={StyleSheet.absoluteFill} />
+          <View style={dockStyles.content} pointerEvents="box-none">
+            {content}
+          </View>
+        </View>
         <ComposerViewportContent style={dockStyles.composer}>
           <View style={[dockStyles.composer, { paddingBottom: insets.bottom }]}>{composer}</View>
         </ComposerViewportContent>

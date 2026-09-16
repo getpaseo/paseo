@@ -686,8 +686,13 @@ function IsolationPickerTrigger({
 
 // Wraps a single argument control in the mobile vertical stack. On desktop the
 // controls are laid out in one horizontal row, so no per-control wrapper is used.
+// Decorative padding must not block the dock background from iOS hit testing.
 function FormRow({ children }: { children: React.ReactNode }) {
-  return <View style={styles.row}>{children}</View>;
+  return (
+    <View style={styles.row} pointerEvents="box-none">
+      {children}
+    </View>
+  );
 }
 
 interface WorkspaceIsolationState {
@@ -1592,23 +1597,27 @@ function useNewWorkspaceFormStack(input: NewWorkspaceFormStackInput): ReactEleme
   );
 
   return isCompact ? (
-    <View testID="new-workspace-ref-picker-row" style={styles.formStack}>
+    <View testID="new-workspace-ref-picker-row" style={styles.formStack} pointerEvents="box-none">
       <FormRow>{projectControl}</FormRow>
       {hostControl ? <FormRow>{hostControl}</FormRow> : null}
       {isolationControl ? <FormRow>{isolationControl}</FormRow> : null}
       {baseControl ? <FormRow>{baseControl}</FormRow> : null}
       <FormRow>{launchControl}</FormRow>
       {/* Keep fixed stack height without separating the visible controls. */}
-      {isolationControl ? null : <View style={styles.baseSpacer} />}
-      {baseControl ? null : <View style={styles.baseSpacer} />}
+      {isolationControl ? null : <View style={styles.baseSpacer} pointerEvents="none" />}
+      {baseControl ? null : <View style={styles.baseSpacer} pointerEvents="none" />}
     </View>
   ) : (
-    <View testID="new-workspace-ref-picker-row" style={styles.formStackDesktop}>
+    <View
+      testID="new-workspace-ref-picker-row"
+      style={styles.formStackDesktop}
+      pointerEvents="box-none"
+    >
       {projectControl}
       {hostControl}
       {isolationControl}
       {baseControl}
-      <View style={styles.launchSpacer} />
+      <View style={styles.launchSpacer} pointerEvents="none" />
       {launchControl}
     </View>
   );
@@ -2448,7 +2457,7 @@ function NewWorkspaceLayout({
 }) {
   const setupFields = (
     <>
-      <View style={styles.composerTitleContainer}>
+      <View style={styles.composerTitleContainer} pointerEvents="none">
         <Text style={styles.composerTitle}>{title}</Text>
       </View>
       {formStack}

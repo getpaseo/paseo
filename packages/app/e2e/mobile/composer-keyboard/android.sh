@@ -503,6 +503,55 @@ run_host_overlays() {
   done
 }
 
+run_host_scroll() {
+  local host="$1"
+  local prefix="${ARTIFACTS_DIR}/${host}-native-scroll"
+  prepare_composer closed
+  if [[ "${host}" == new-workspace ]]; then
+    ad press 'id="workspace-create-isolation-trigger"' --settle
+    ad press 'text="Local"' --settle
+  fi
+  # Submit through each real host; draft/workspace creation then mounts its chat.
+  # A selectable mock model keeps this test independent of provider credentials.
+  press_composer_control combined-model-selector
+  ad wait 'id="model-search-all-input"' 10000
+  ad fill 'id="model-search-all-input"' 'Ten second stream'
+  ad wait 'id="model-row-mock-ten-second-stream"' 10000
+  ad press 'id="model-row-mock-ten-second-stream"' --settle
+  ad press 'label="Close"' --settle
+  adb shell ime set "${HELPER_IME}" >/dev/null
+  wait_for_ime false
+  local scroll_message
+  scroll_message="$(node -e 'process.stdout.write(Array.from({length: 50}, (_, i) => `Native scroll fixture ${i}: distinct history row after submitting from a dock host.`).join("\n"))')"
+  ad fill 'editable=true' "${scroll_message}"
+  if [[ "${host}" == new-workspace ]]; then
+    ad press 'id="workspace-create-submit"' --settle
+  else
+    ad press 'label="Send message"' --settle
+  fi
+  ad wait 'id="agent-chat-scroll"' 45000
+  sleep 15
+  ad wait 'text="(end of synthetic stream)"' 45000
+  if ime_is_visible; then adb shell input keyevent BACK; fi
+  wait_for_ime false
+  # Streaming/re-renders can mask responder interception. Exercise idle JS after
+  # submit, and again after returning to the bottom and letting the scrollbar fade.
+  sleep 5
+  capture_screen "${prefix}-submitted.png"
+  adb shell input swipe 540 800 540 1400 250
+  sleep 2
+  capture_screen "${prefix}-after-submit-swipe.png"
+  node "${ASSERT}" stream-moved "${prefix}-submitted.png" "${prefix}-after-submit-swipe.png"
+  for _ in 1 2 3 4 5 6; do adb shell input swipe 540 1400 540 600 120; done
+  sleep 5
+  capture_screen "${prefix}-bottom-idle.png"
+  adb shell input swipe 540 800 540 1400 250
+  sleep 2
+  capture_screen "${prefix}-after-idle-swipe.png"
+  node "${ASSERT}" stream-moved "${prefix}-bottom-idle.png" "${prefix}-after-idle-swipe.png"
+  echo "PASS host=${host}: native stream swipe after submit and after idle at bottom"
+}
+
 run_host_scenario() {
   local host="$1"
   local prefix="${ARTIFACTS_DIR}/${host}"
@@ -604,6 +653,7 @@ run_host_scenario() {
   node "${ASSERT}" same-region "${prefix}-stall-baseline.png" "${prefix}-after-stall.png" 1400 430
   echo "PASS host=${host}: growth, header/keyboard/safe-area bounds, close/reopen height, hold-delete baseline, content/header dismissal, JS-stall motion"
   run_host_overlays "${host}"
+  run_host_scroll "${host}"
 }
 
 adb shell am start -a android.intent.action.VIEW -d "paseo://h/${SERVER_ID}/agent/${agent_id}" "${APP_ID}" >/dev/null
