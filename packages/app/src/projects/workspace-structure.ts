@@ -53,6 +53,7 @@ export function buildWorkspaceStructureProjects(input: {
 
   for (const session of input.sessions) {
     for (const project of session.projects) {
+      if (isChatsProject(project)) continue;
       projectEntries.push({ serverId: session.serverId, project });
       const sharedKey = project.projectKey ?? null;
       if (sharedKey) {
@@ -104,18 +105,13 @@ export function buildWorkspaceStructureProjects(input: {
         .sort(compareWorkspaceStructureItems)
         .map((workspace) => workspace.workspaceKey),
     }))
-    .sort((left, right) => {
-      const isLeftChats = isChatsProject(left);
-      const isRightChats = isChatsProject(right);
-      if (isLeftChats && !isRightChats) return -1;
-      if (!isLeftChats && isRightChats) return 1;
-      return (
+    .sort(
+      (left, right) =>
         left.projectName.localeCompare(right.projectName, undefined, {
           numeric: true,
           sensitivity: "base",
-        }) || left.viewKey.localeCompare(right.viewKey)
-      );
-    });
+        }) || left.viewKey.localeCompare(right.viewKey),
+    );
 }
 
 export function createProjectViewKey(

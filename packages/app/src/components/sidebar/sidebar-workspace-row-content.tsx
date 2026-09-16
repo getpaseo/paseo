@@ -237,6 +237,11 @@ function WorkspaceStatusIndicator({
   }
 
   if (bucket === "done") {
+    if (workspaceKind === "chat") {
+      return reserveIdleSpace ? (
+        <View style={styles.workspaceStatusDot} testID="workspace-status-indicator-done" />
+      ) : null;
+    }
     // An idle row still gets a dot rather than an empty slot. Nested rows are marked as
     // workspaces by indentation alone, and with nothing in the leading slot the rail has no
     // edge to read against — a workspace carrying its own glyph starts looking like a project
@@ -258,8 +263,6 @@ function WorkspaceStatusIndicator({
   if (workspaceKind === "chat") {
     if (dotColorStyle) {
       indicatorContent = <View style={[styles.standaloneStatusDot, dotColorStyle]} />;
-    } else if (reserveIdleSpace) {
-      indicatorContent = <View style={styles.idleStatusDot} />;
     }
   } else if (reserveIdleSpace) {
     indicatorContent = (
