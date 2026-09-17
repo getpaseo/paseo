@@ -151,11 +151,12 @@ export class JsonlRpcProcess {
     };
   }
 
-  startRequest(
-    command: { type: string; [key: string]: unknown },
-    timeoutMs?: number | null,
-    requestOptions?: JsonlRpcRequestOptions,
-  ): { id: string; promise: Promise<unknown> } {
+  startRequest(options: {
+    command: { type: string; [key: string]: unknown };
+    timeoutMs?: number | null;
+    requestOptions?: JsonlRpcRequestOptions;
+  }): { id: string; promise: Promise<unknown> } {
+    const { command, timeoutMs, requestOptions } = options;
     if (this.disposed) {
       return {
         id: "",
@@ -186,12 +187,12 @@ export class JsonlRpcProcess {
     return { id, promise };
   }
 
-  request(
-    command: { type: string; [key: string]: unknown },
-    timeoutMs?: number | null,
-    requestOptions?: JsonlRpcRequestOptions,
-  ): Promise<unknown> {
-    return this.startRequest(command, timeoutMs, requestOptions).promise;
+  request(options: {
+    command: { type: string; [key: string]: unknown };
+    timeoutMs?: number | null;
+    requestOptions?: JsonlRpcRequestOptions;
+  }): Promise<unknown> {
+    return this.startRequest(options).promise;
   }
 
   /**
@@ -204,15 +205,16 @@ export class JsonlRpcProcess {
    * transport before termination completes, and a child that outlives SIGKILL can
    * still be working, so a disposed transport is not proof the work stopped.
    */
-  async requestStopWork(
-    command: { type: string; [key: string]: unknown },
-    timeoutMs?: number | null,
-  ): Promise<void> {
+  async requestStopWork(options: {
+    command: { type: string; [key: string]: unknown };
+    timeoutMs?: number | null;
+    requestOptions?: JsonlRpcRequestOptions;
+  }): Promise<void> {
     if (this.exited) {
       return;
     }
     try {
-      await this.request(command, timeoutMs);
+      await this.request(options);
     } catch (error) {
       // A dying child breaks its stdin pipe a fraction before it emits `exit`, which
       // fails this request and starts a termination. Wait for that termination to reach

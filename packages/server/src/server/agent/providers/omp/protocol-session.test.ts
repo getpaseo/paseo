@@ -21,8 +21,8 @@ function transportHarness() {
         receiveExit = null;
       };
     },
-    async request(command, timeoutMs) {
-      requests.push({ command, timeoutMs });
+    async request(options) {
+      requests.push({ command: options.command, timeoutMs: options.timeoutMs ?? null });
       return response;
     },
   };

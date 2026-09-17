@@ -586,7 +586,7 @@ describe("OMP CLI runtime", () => {
     await session.close();
   });
 
-  test("pins the session to legacy via pagingUnsupported after a page failure", async () => {
+  test("falls back to legacy on unknown command and pins pagingUnsupported", async () => {
     const child = createOmpChild({ supportedProtocolVersions: [1, 2] });
     const seen: string[] = [];
     replyCommandOutcomes(child, (command) => {
@@ -602,10 +602,11 @@ describe("OMP CLI runtime", () => {
     });
     const session = await createRuntime(child).startSession({ cwd: "/workspace/project" });
 
-    await expect(session.getMessages()).rejects.toThrow("unknown command");
+    // First load must succeed via legacy even though paging is unsupported.
+    await expect(session.getMessages()).resolves.toEqual([{ role: "user", content: "fallback" }]);
     await expect(session.getMessages()).resolves.toEqual([{ role: "user", content: "fallback" }]);
     expect(seen.filter((type) => type === "get_messages_page")).toHaveLength(1);
-    expect(seen.filter((type) => type === "get_messages")).toHaveLength(1);
+    expect(seen.filter((type) => type === "get_messages")).toHaveLength(2);
     await session.close();
   });
 
