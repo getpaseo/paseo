@@ -993,6 +993,7 @@ export class Session {
           validateAgentConfiguration: (input) =>
             providerSnapshotManager.validateAgentConfiguration(input),
           send: (message) => this.emit(message),
+          logger: this.sessionLogger,
         })
       : null;
     this.daemonConfigStore = daemonConfigStore;

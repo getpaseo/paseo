@@ -80,7 +80,7 @@ export interface CreateAgentFromSessionInput {
 export interface CreateAgentFromMcpInput {
   kind: "mcp";
   provider: string;
-  title: string;
+  title?: string;
   initialPrompt?: string;
   config?: Partial<AgentSessionConfig>;
   cwd?: string;

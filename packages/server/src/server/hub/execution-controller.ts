@@ -1,4 +1,5 @@
 import { isAbsolute } from "node:path";
+import type pino from "pino";
 import type {
   HubExecutionAgentCreateError,
   HubExecutionAgentCreateRequest,
@@ -20,12 +21,14 @@ interface HubExecutionControllerOptions {
     input: Omit<HubExecutionAgentValidateRequest, "type" | "requestId">,
   ) => Promise<HubExecutionAgentValidationIssue[]>;
   send: (message: SessionOutboundMessage) => void;
+  logger: pino.Logger;
 }
 
 export class HubExecutionController {
   private readonly agents: HubExecutionAgents;
   private readonly send: (message: SessionOutboundMessage) => void;
   private readonly validateAgentConfiguration: HubExecutionControllerOptions["validateAgentConfiguration"];
+  private readonly logger: pino.Logger;
   private readonly unsubscribe: () => void;
   private readonly pendingCreates = new Set<Promise<void>>();
   private readonly pendingControls = new Set<Promise<void>>();
@@ -37,6 +40,7 @@ export class HubExecutionController {
     this.agents = options.agents;
     this.validateAgentConfiguration = options.validateAgentConfiguration;
     this.send = options.send;
+    this.logger = options.logger;
     this.unsubscribe = this.agents.subscribe((event) => this.sendOwnedEvent(event));
   }
 
@@ -176,6 +180,20 @@ export class HubExecutionController {
         },
       });
     } catch (error) {
+      this.logger.error(
+        {
+          err: error,
+          executionId: message.executionId,
+          requestId: message.requestId,
+          provider: message.provider,
+          model: message.model,
+          cwd: message.cwd,
+          worktree: message.worktree,
+          promptLength: message.prompt.length,
+        },
+        "Hub execution agent creation failed",
+      );
+
       if (this.closed) return;
       this.send({
         type: "hub.execution.agent.create.response",

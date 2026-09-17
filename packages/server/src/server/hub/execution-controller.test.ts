@@ -16,6 +16,7 @@ import {
   ProviderOptionsValidationError,
   ToolPolicyUnsupportedError,
 } from "../agent/provider-options.js";
+import { createTestLogger } from "../../test-utils/test-logger.js";
 
 interface Deferred<T> {
   promise: Promise<T>;
@@ -92,6 +93,7 @@ describe("HubExecutionController", () => {
       agents: new ControlledHubExecutionAgents(),
       validateAgentConfiguration,
       send: (message) => messages.push(message),
+      logger: createTestLogger(),
     });
 
     await controller.validateAgent({
@@ -121,6 +123,7 @@ describe("HubExecutionController", () => {
       agents,
       validateAgentConfiguration: async () => [],
       send: (message) => messages.push(message),
+      logger: createTestLogger(),
     });
 
     const create = controller.createAgent({
@@ -147,6 +150,7 @@ describe("HubExecutionController", () => {
       agents,
       validateAgentConfiguration: async () => [],
       send: (message) => messages.push(message),
+      logger: createTestLogger(),
     });
 
     const create = controller.createAgent({
@@ -202,6 +206,7 @@ describe("HubExecutionController", () => {
       agents: new RejectingHubExecutionAgents(error),
       validateAgentConfiguration: async () => [],
       send: (message) => messages.push(message),
+      logger: createTestLogger(),
     });
 
     await controller.createAgent({
