@@ -124,13 +124,27 @@ export function getComboboxFallbackIndex(
   return optionsPosition === "above-search" ? itemCount - 1 : 0;
 }
 
+// A query names an option exactly when it is the option's id, its label, or the value half of a
+// namespaced id such as "github-pr:42". The custom row only appears when no option's id or
+// label equals the query, so in practice this is how a PR-number search ("42") is recognized as
+// an exact target while a partial branch search ("feature" against "feature-old") is not.
+export function isExactComboboxOptionMatch(option: ComboboxOptionModel, query: string): boolean {
+  const normalized = query.trim().replace(/^#/, "").toLowerCase();
+  if (!normalized) return false;
+  if (option.id.toLowerCase() === normalized || option.label.toLowerCase() === normalized) {
+    return true;
+  }
+  const separator = option.id.lastIndexOf(":");
+  return separator !== -1 && option.id.slice(separator + 1).toLowerCase() === normalized;
+}
+
 export interface ResolveInitialComboboxActiveIndexInput {
   /** Options in display order. */
   options: ComboboxOptionModel[];
   optionsPosition: "below-search" | "above-search";
   hasSearch: boolean;
   selectedValue: string;
-  /** The custom row's id, or null when the custom row is not shown. */
+  /** The custom row's id, which is the sanitized query, or null when it is not shown. */
   customOptionId: string | null;
 }
 
@@ -142,12 +156,16 @@ export function resolveInitialComboboxActiveIndex(
   const fallbackIndex = getComboboxFallbackIndex(options.length, optionsPosition);
   if (hasSearch) {
     // The custom row is always first in logical order, so the fallback index points at it.
-    // Default to the real match beside it instead: pressing Enter should pick the searched
-    // branch or PR, not create a branch named after the query.
+    // Only prefer the row beside it when that row is the exact search target: any other
+    // visible option is a partial or fuzzy match, and Enter should create the typed branch
+    // rather than select an unrelated one.
     if (customOptionId !== null) {
       const adjacentIndex =
         optionsPosition === "above-search" ? fallbackIndex - 1 : fallbackIndex + 1;
-      if (adjacentIndex >= 0 && adjacentIndex < options.length) return adjacentIndex;
+      const adjacentOption = options[adjacentIndex];
+      if (adjacentOption && isExactComboboxOptionMatch(adjacentOption, customOptionId)) {
+        return adjacentIndex;
+      }
     }
     return fallbackIndex;
   }
