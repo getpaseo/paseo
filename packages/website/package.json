@@ -9,7 +9,7 @@
     "preview": "vite preview",
     "typecheck": "tsgo --noEmit",
     "deploy": "npm run build && wrangler deploy",
-    "test:e2e:mockups": "playwright test e2e/mockups.spec.ts"
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "@cloudflare/vite-plugin": "^1.29.1",
