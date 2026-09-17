@@ -30,7 +30,11 @@ export function useAdaptiveOrientation(): boolean {
 
     if (policy === "lock-portrait") {
       ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP)
-        .catch(() => {})
+        .catch((error) => {
+          // No recovery path exists: holding the gate closed would blank the
+          // screen forever, so proceed unlocked and surface the failure.
+          console.warn("[AdaptiveOrientation] Portrait lock failed:", error);
+        })
         .finally(() => setIsPortraitLockApplied(true));
     } else if (policy === "follow-sensor") {
       void ScreenOrientation.unlockAsync();
