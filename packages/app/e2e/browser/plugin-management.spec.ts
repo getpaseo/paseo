@@ -330,6 +330,67 @@ test("installs, reloads, recovers, disables, and removes a trusted local plugin"
   page,
   pluginEnvironment,
 }, testInfo) => {
+  const directory = await installLocalPluginWithStatusExamples(page, pluginEnvironment, testInfo);
+  await reloadAndRecoverLocalPlugin(page, pluginEnvironment.client, directory);
+  await toggleRemoveAndReinstallLocalPlugin(page, directory);
+});
+
+test("installs a Git source after a failed source remains editable", async ({
+  page,
+  pluginEnvironment,
+}, testInfo) => {
+  const source = await prepareCompactGitInstall(page, pluginEnvironment);
+  await retryGitInstallAndInspectRows(page, source, testInfo);
+});
+
+for (const sourceSupport of [undefined, false]) {
+  test(`keeps installed plugins manageable without source capability (${sourceSupport})`, async ({
+    page,
+    pluginEnvironment,
+  }) => {
+    const directory = await prepareLegacyPluginHost(page, pluginEnvironment, sourceSupport);
+    await verifyLegacyPluginManagement(page, directory);
+  });
+}
+
+for (const viewport of [
+  { width: 1280, height: 900 },
+  { width: 390, height: 844 },
+]) {
+  test(`installs an npm source and manages its row at ${viewport.width}px`, async ({
+    page,
+    pluginEnvironment,
+  }, testInfo) => {
+    await prepareNpmPluginHost(page, pluginEnvironment, viewport);
+    await retryNpmInstallAndInspectRow(page, viewport.width, testInfo);
+    await reloadAndRemoveNpmPlugin(page);
+  });
+}
+
+async function openNpmPluginSettings(page: Page, width: number) {
+  if (width < 600) await openCompactPluginSettings(page);
+  else await openPluginSettings(page);
+}
+
+async function expectSourceHierarchy(page: Page, description: string, source: string) {
+  const descriptionText = page.getByText(description, { exact: false });
+  const sourceText = page.getByText(source, { exact: false });
+  const descriptionSize = await descriptionText.evaluate((element) =>
+    Number.parseFloat(getComputedStyle(element).fontSize),
+  );
+  const sourceSize = await sourceText.evaluate((element) =>
+    Number.parseFloat(getComputedStyle(element).fontSize),
+  );
+  expect(sourceSize).toBeLessThan(descriptionSize);
+  await expect(sourceText).toHaveCSS("color", "rgb(161, 161, 170)");
+  await expect(descriptionText).toHaveCSS("color", "rgb(113, 113, 122)");
+}
+
+async function installLocalPluginWithStatusExamples(
+  page: Page,
+  pluginEnvironment: PluginEnvironment,
+  testInfo: TestInfo,
+) {
   const directory = await mkdtemp(path.join(pluginEnvironment.directory, "local-"));
   const disabledDirectory = await createDirectoryPlugin(
     pluginEnvironment.directory,
@@ -385,6 +446,14 @@ test("installs, reloads, recovers, disables, and removes a trusted local plugin"
   await page.getByRole("button", { name: "Close", exact: true }).click();
   await openContributionFromSettings(page, "Plugin v1", "Plugin v1 cleanup 0");
 
+  return directory;
+}
+
+async function reloadAndRecoverLocalPlugin(
+  page: Page,
+  client: PluginEnvironment["client"],
+  directory: string,
+) {
   await openPluginSettings(page);
   await reloadPlugin(page);
   await openContributionFromSettings(page, "Plugin v1", "Plugin v1 cleanup 1");
@@ -422,7 +491,9 @@ test("installs, reloads, recovers, disables, and removes a trusted local plugin"
   await selectPluginAction(page, "e2e-plugin", "Reload");
   await expect(page.getByLabel("e2e-plugin running")).toBeVisible();
   await openContributionFromSettings(page, "Plugin v3", "Plugin v3 cleanup 5");
+}
 
+async function toggleRemoveAndReinstallLocalPlugin(page: Page, directory: string) {
   await openPluginSettings(page);
   await page.getByRole("switch", { name: "e2e-plugin: Disable", exact: true }).click();
   await expect(page.getByLabel("e2e-plugin disabled")).toBeVisible();
@@ -443,12 +514,9 @@ test("installs, reloads, recovers, disables, and removes a trusted local plugin"
   await expect(page.getByLabel("e2e-plugin running")).toBeVisible();
   await gotoAppShell(page);
   await openContribution(page, "Plugin v3", "Plugin v3 cleanup 7");
-});
+}
 
-test("installs a Git source after a failed source remains editable", async ({
-  page,
-  pluginEnvironment,
-}, testInfo) => {
+async function prepareCompactGitInstall(page: Page, pluginEnvironment: PluginEnvironment) {
   const root = pluginEnvironment.directory;
   const repository = await createGitPluginRepository(root);
   const longDirectory = await createDirectoryPlugin(
@@ -477,6 +545,16 @@ test("installs a Git source after a failed source remains editable", async ({
   await page.getByRole("switch", { name: "Enable plugins" }).click();
   await expect(page.getByText("Plugins enabled", { exact: true })).toBeVisible();
 
+  return { repository, missingSource };
+}
+
+async function retryGitInstallAndInspectRows(
+  page: Page,
+  source: { repository: string; missingSource: string },
+  testInfo: TestInfo,
+) {
+  const { repository, missingSource } = source;
+
   await installPlugin(page, missingSource);
   await expect(page.getByTestId("plugin-management-feedback")).toContainText(
     "Plugin source is neither an existing directory nor a Git URL",
@@ -499,94 +577,81 @@ test("installs a Git source after a failed source remains editable", async ({
   await waitForSettledPosition(removeAction);
   await capturePluginInstallForm(page, testInfo, "compact-menu");
   await page.keyboard.press("Escape");
-});
+}
 
-for (const sourceSupport of [undefined, false]) {
-  test(`keeps installed plugins manageable without source capability (${sourceSupport})`, async ({
+async function prepareLegacyPluginHost(
+  page: Page,
+  pluginEnvironment: PluginEnvironment,
+  sourceSupport: boolean | undefined,
+) {
+  const directory = await createDirectoryPlugin(
+    pluginEnvironment.directory,
+    "legacy-source-plugin",
+    undefined,
+    "Legacy plugin",
+  );
+  const { client } = pluginEnvironment;
+  await client.patchDaemonConfig({ pluginsEnabled: true });
+  await client.installPluginSource({ source: directory });
+  await advertisePluginCapabilities(page, {
+    pluginSourceInstallation: sourceSupport,
+    pluginGitManagement: true,
+  });
+  await gotoAppShell(page);
+  await openPluginSettings(page);
+
+  return directory;
+}
+
+async function verifyLegacyPluginManagement(page: Page, directory: string) {
+  await expect(
+    page.getByText("Update this host to install plugins", { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByRole("textbox", { name: "Plugin source", exact: true })).toHaveCount(0);
+  await expect(page.getByText(directory, { exact: true })).toBeVisible();
+  await selectPluginAction(page, "legacy-source-plugin", "Reload");
+  await expect(page.getByText("Reloaded legacy-source-plugin", { exact: true })).toBeVisible();
+}
+
+async function prepareNpmPluginHost(
+  page: Page,
+  pluginEnvironment: PluginEnvironment,
+  viewport: { width: number; height: number },
+) {
+  const { client } = pluginEnvironment;
+  await page.setViewportSize(viewport);
+  await advertisePluginCapabilities(page, { pluginGitManagement: false });
+  await client.patchDaemonConfig({ pluginsEnabled: true });
+  await gotoAppShell(page);
+  await openNpmPluginSettings(page, viewport.width);
+}
+
+async function retryNpmInstallAndInspectRow(page: Page, width: number, testInfo: TestInfo) {
+  await installPlugin(page, "npm:missing-plugin");
+  await expect(page.getByTestId("plugin-management-feedback")).toContainText("404");
+  await expect(page.getByLabel("Plugin source")).toHaveValue("npm:missing-plugin");
+  await installPlugin(page, "npm:@paseo-fixture/review@^2.0.0");
+  await expect(page.getByText("Installed npm-review", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("npm-review running")).toBeVisible();
+  await expectSourceHierarchy(
     page,
-    pluginEnvironment,
-  }) => {
-    const directory = await createDirectoryPlugin(
-      pluginEnvironment.directory,
-      "legacy-source-plugin",
-      undefined,
-      "Legacy plugin",
-    );
-    const { client } = pluginEnvironment;
-    await client.patchDaemonConfig({ pluginsEnabled: true });
-    await client.installPluginSource({ source: directory });
-    await advertisePluginCapabilities(page, {
-      pluginSourceInstallation: sourceSupport,
-      pluginGitManagement: true,
-    });
-    await gotoAppShell(page);
-    await openPluginSettings(page);
-    await expect(
-      page.getByText("Update this host to install plugins", { exact: true }),
-    ).toBeVisible();
-    await expect(page.getByRole("textbox", { name: "Plugin source", exact: true })).toHaveCount(0);
-    await expect(page.getByText(directory, { exact: true })).toBeVisible();
-    await selectPluginAction(page, "legacy-source-plugin", "Reload");
-    await expect(page.getByText("Reloaded legacy-source-plugin", { exact: true })).toBeVisible();
+    "Installed from the npm fixture registry",
+    "npm:@paseo-fixture/review · 2.0.0",
+  );
+  await expect(
+    page.getByText("Installed from the npm fixture registry", { exact: true }),
+  ).toBeVisible();
+  await page.screenshot({
+    path: testInfo.outputPath(`npm-plugin-${width}.png`),
+    animations: "disabled",
   });
 }
 
-for (const viewport of [
-  { width: 1280, height: 900 },
-  { width: 390, height: 844 },
-]) {
-  test(`installs an npm source and manages its row at ${viewport.width}px`, async ({
-    page,
-    pluginEnvironment,
-  }, testInfo) => {
-    const { client } = pluginEnvironment;
-    await page.setViewportSize(viewport);
-    await advertisePluginCapabilities(page, { pluginGitManagement: false });
-    await client.patchDaemonConfig({ pluginsEnabled: true });
-    await gotoAppShell(page);
-    await openNpmPluginSettings(page, viewport.width);
-    await installPlugin(page, "npm:missing-plugin");
-    await expect(page.getByTestId("plugin-management-feedback")).toContainText("404");
-    await expect(page.getByLabel("Plugin source")).toHaveValue("npm:missing-plugin");
-    await installPlugin(page, "npm:@paseo-fixture/review@^2.0.0");
-    await expect(page.getByText("Installed npm-review", { exact: true })).toBeVisible();
-    await expect(page.getByLabel("npm-review running")).toBeVisible();
-    await expectSourceHierarchy(
-      page,
-      "Installed from the npm fixture registry",
-      "npm:@paseo-fixture/review · 2.0.0",
-    );
-    await expect(
-      page.getByText("Installed from the npm fixture registry", { exact: true }),
-    ).toBeVisible();
-    await page.screenshot({
-      path: testInfo.outputPath(`npm-plugin-${viewport.width}.png`),
-      animations: "disabled",
-    });
-    await selectPluginAction(page, "npm-review", "Reload");
-    await expect(page.getByText("Reloaded npm-review", { exact: true })).toBeVisible();
-    page.once("dialog", (dialog) => dialog.accept());
-    await selectPluginAction(page, "npm-review", "Remove");
-    await expect(page.getByText("Removed npm-review", { exact: true })).toBeVisible();
-    await expect(page.getByLabel("npm-review running")).toHaveCount(0);
-  });
-}
-
-async function openNpmPluginSettings(page: Page, width: number) {
-  if (width < 600) await openCompactPluginSettings(page);
-  else await openPluginSettings(page);
-}
-
-async function expectSourceHierarchy(page: Page, description: string, source: string) {
-  const descriptionText = page.getByText(description, { exact: false });
-  const sourceText = page.getByText(source, { exact: false });
-  const descriptionSize = await descriptionText.evaluate((element) =>
-    Number.parseFloat(getComputedStyle(element).fontSize),
-  );
-  const sourceSize = await sourceText.evaluate((element) =>
-    Number.parseFloat(getComputedStyle(element).fontSize),
-  );
-  expect(sourceSize).toBeLessThan(descriptionSize);
-  await expect(sourceText).toHaveCSS("color", "rgb(161, 161, 170)");
-  await expect(descriptionText).toHaveCSS("color", "rgb(113, 113, 122)");
+async function reloadAndRemoveNpmPlugin(page: Page) {
+  await selectPluginAction(page, "npm-review", "Reload");
+  await expect(page.getByText("Reloaded npm-review", { exact: true })).toBeVisible();
+  page.once("dialog", (dialog) => dialog.accept());
+  await selectPluginAction(page, "npm-review", "Remove");
+  await expect(page.getByText("Removed npm-review", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("npm-review running")).toHaveCount(0);
 }

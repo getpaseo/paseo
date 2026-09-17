@@ -8,41 +8,27 @@ category: Plugins
 
 # Publish a plugin
 
-Publish your plugin so other people can install and use it in Paseo. Once you have a working
-[plugin project](/docs/plugins), choose where to share it:
+Publish your plugin so other people can install and use it in Paseo. Start with a working
+[plugin project](/docs/plugins), then choose where to share it:
 
 - [npm](#publish-on-npm): publish a package on the public npm registry.
-- [Private registry](#use-a-private-github-package): share a package with your team using GitHub Packages.
-- [GitHub or Git](#share-through-github-or-git): let users install directly from a repository.
+- [GitHub or Git](#share-through-github-or-git): let users install from a repository.
 
 ## Publish on npm
 
-Give your `package.json` a unique package name and version, and include the plugin files in the
-published package. For a plugin with both client and server entries, add these fields to the
-scaffold's existing `package.json`:
+The scaffold prepares the package files and development dependencies. You choose the package name
+and release version.
 
-```json
-{
-  "name": "@acme/paseo-review",
-  "version": "1.0.0",
-  "private": false,
-  "files": [
-    "paseo-plugin.json",
-    "index.client.tsx",
-    "index.server.ts",
-    "client/",
-    "server/",
-    "shared/"
-  ]
-}
+### 1. Set your package name and version
+
+From the plugin directory, set your package details and allow publication. Replace `@acme` with your npm scope:
+
+```bash
+npm pkg set name=@acme/paseo-review version=1.0.0
+npm pkg delete private
 ```
 
-The scaffold sets `private: true`; change it to `false` to allow publication.
-Replace `@acme` with your npm scope. Match the entry filenames to your project, and include any
-additional assets your plugin reads. Keep the scaffold's development dependencies and scripts.
-The package name identifies the npm source; `paseo-plugin.json` supplies the installed plugin ID.
-
-From the plugin directory, check and publish:
+### 2. Check and publish
 
 ```bash
 npm run typecheck
@@ -50,113 +36,131 @@ npm pack --dry-run
 npm publish --access public
 ```
 
-Inspect the pack output for the manifest, entries, imported files, and assets before publishing.
-Then test the published package through Paseo. npm must be on the daemon host's `PATH` for installation:
+Check the pack output includes any assets you added to the project.
+
+### 3. Test the published plugin
+
+On a daemon host with npm available:
 
 ```bash
 paseo plugin install npm:@acme/paseo-review@1.0.0
 ```
 
-Users can paste `npm:@acme/paseo-review` into **Settings → Plugins → Plugin source** to install the
-latest release. An explicit version selects that installation; it does not pin future updates.
-See [source identifiers](/docs/plugins/reference#plugin-sources) for tags, ranges, and subdirectories.
+Users can also paste `npm:@acme/paseo-review` into **Settings → Plugins → Plugin source**.
 
-### Dependencies and generated files
+:::example[Package configuration]
 
-Put libraries your plugin needs at runtime in `dependencies`. Paseo uses npm to install those
-libraries and their transitive dependencies. Development dependencies are omitted and automatic
-peer dependency installation is disabled. Keep Paseo's host modules—the plugin SDK, React, React
-Native, TanStack Query, and Zod—in `devDependencies` for authoring; Paseo supplies their runtime
-instances. Declare other required peer modules as dependencies.
-
-Paseo compiles TypeScript and bundles imports separately for the client and server. You do not need
-to precompile or bundle an ordinary TypeScript plugin. The entry names remain `index.client.ts`
-or `.tsx` and `index.server.ts` or `.tsx`; at least one is required. npm's `main` and `exports`
-fields do not select Paseo entries.
-
-If your plugin generates code or assets, generate them before publishing and include the output
-in `files`. Prebuilt JavaScript can live under `client/`, `server/`, or `shared/`, imported by the
-normal TypeScript entry. Preserve the [runtime boundaries](/docs/plugins/reference#project-files)
-and host module imports. Paseo still compiles the entries.
-
-npm lifecycle scripts, including dependency `install`, `postinstall`, and `prepare` scripts, do not
-run when Paseo acquires a package. Publish ready-to-use files where possible. If installation needs
-host-specific preparation, such as rebuilding a native dependency, declare it in the manifest's
-[`build` commands](/docs/plugins/reference#cli-reference). These commands run on installation and
-update after the Paseo requirements check. An npm plugin does not need a build command to install
-its ordinary dependencies.
-
-## Use a private GitHub package
-
-Paseo uses the daemon user's npm configuration and environment for registries and authentication.
-For a company plugin, publish a scoped package such as `@acme/paseo-review` to GitHub Packages.
-Add the repository and publication registry to its `package.json`:
+The scaffold includes this `files` list in `package.json`:
 
 ```json
 {
-  "name": "@acme/paseo-review",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/acme/paseo-review.git"
-  },
-  "publishConfig": {
-    "registry": "https://npm.pkg.github.com"
-  }
+  "files": [
+    "paseo-plugin.json",
+    "index.client.ts",
+    "index.client.tsx",
+    "index.server.ts",
+    "index.server.tsx",
+    "client/",
+    "server/",
+    "shared/"
+  ]
 }
 ```
 
-Authenticate with GitHub Packages and run `npm publish` from the plugin directory. Follow
-[GitHub's npm registry guide](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-npm-registry)
-for publishing credentials and package access permissions.
+- Add any assets stored outside these directories to `files`.
+- Keep the scaffold's SDK and host libraries in `devDependencies`.
+- Add other runtime libraries with `npm install <package>`. Paseo installs their dependencies too.
+- The npm package name identifies the source. The manifest's `id` identifies the installed plugin.
 
-To install the private package, configure npm **on the daemon host, as the user running Paseo**.
-Add the scope mapping to that user's `~/.npmrc`:
+See the [project reference](/docs/plugins/reference#project-files) for entry points and runtime boundaries.
 
-```ini
-@acme:registry=https://npm.pkg.github.com
-```
+:::
 
-Log in with a GitHub personal access token (classic) with `read:packages` and access to the package:
+### Plugins with a build step
+
+Paseo compiles TypeScript. An ordinary plugin needs no separate build before publication.
+If your plugin generates files, include the generated output in the package.
+
+**Installation scripts do not run automatically.** If a dependency needs host-specific setup,
+declare a [preparation command](/docs/plugins/reference#cli-reference).
+
+:::example[Generated files and dependencies]
+
+- Generate code and assets before running `npm publish`.
+- Keep generated JavaScript in its runtime directory and import it from the TypeScript entry.
+- Include generated assets in `files`.
+- Keep host-provided modules external when producing your own bundle.
+- Remove Git-only dependency-install commands from the published manifest; npm installation already
+  installs production dependencies.
+
+Paseo skips npm lifecycle scripts during installation, including dependency scripts. For example,
+a native dependency that needs rebuilding requires an explicit preparation command.
+
+:::
+
+:::example[Publish a private package with GitHub Packages]
+
+You can publish a company plugin to GitHub Packages. Follow the npm steps above, using your
+organization's scope, and replace the publish command with:
 
 ```bash
-npm login --scope=@acme --auth-type=legacy --registry=https://npm.pkg.github.com
-paseo plugin install npm:@acme/paseo-review
+npm publish --registry=https://npm.pkg.github.com
 ```
 
-Use your GitHub username and the token as the password. Keep credentials on the daemon host;
-enter only the source identifier in the app. Updates use the host's current npm configuration too.
-Other npm-compatible registries use the same npm configuration mechanism.
+[Configure GitHub authentication and package access](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-npm-registry)
+before publishing.
+
+To install the plugin, configure npm **on the daemon host, as the user running Paseo**:
+
+1. Add your organization's registry to `~/.npmrc`:
+
+   ```ini
+   @acme:registry=https://npm.pkg.github.com
+   ```
+
+2. Log in with your GitHub username and a personal access token (classic) as the password.
+   The token needs `read:packages` and access to the package.
+
+   ```bash
+   npm login --scope=@acme --auth-type=legacy --registry=https://npm.pkg.github.com
+   ```
+
+3. Install the plugin:
+
+   ```bash
+   paseo plugin install npm:@acme/paseo-review
+   ```
+
+Paseo uses the host's npm registry settings and credentials for installation and updates.
+In the app, enter only the source identifier.
+
+:::
 
 ## Share through GitHub or Git
 
-You can also share a repository containing the plugin project:
+Push the plugin project to a repository. Users can install it with:
 
 ```bash
 paseo plugin install github:acme/paseo-review
+```
+
+For another Git host:
+
+```bash
 paseo plugin install git:https://git.example.com/acme/paseo-review.git
 ```
 
-For a plugin that only imports host modules, no preparation is needed. If it has runtime npm
-dependencies, commit `package.json` and `package-lock.json`, then add this to `paseo-plugin.json`:
+If your plugin has runtime npm dependencies, commit `package-lock.json` and add a preparation
+command to `paseo-plugin.json`:
 
 ```json
 {
-  "id": "paseo-review",
-  "requirements": { "paseo": ">=0.8.0" },
   "build": [["npm", "ci", "--omit=dev"]]
 }
 ```
 
-`npm ci` installs from the committed lockfile and fails if it disagrees with `package.json`.
-`--omit=dev` leaves authoring tools out of the installation. Paseo runs the command in the plugin
-directory on the daemon host, where npm must be on `PATH`. Git installation does not infer this
-command from the presence of a package file.
+- `npm ci` installs the versions in the committed lockfile.
+- `--omit=dev` excludes development tools.
+- npm must be available on the daemon host.
 
-If additional preparation needs development tools, `--omit=dev` will not install those tools.
-Prefer generating and publishing the required files on npm. If you distribute the same project on
-npm and Git, omit the dependency-install build command from the published manifest: npm acquisition
-already installs production dependencies.
-
-Set `requirements.paseo` to the earliest release whose APIs your plugin uses. `>=0.8.0` permits
-compatible later releases, including 0.9; add an upper bound only for a known incompatibility.
-See [requirements](/docs/plugins/reference#requirements).
+Plugins that only use Paseo's host libraries need no preparation command.
