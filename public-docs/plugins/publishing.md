@@ -8,9 +8,12 @@ category: Plugins
 
 # Publish a plugin
 
-Publish your plugin on npm so users can install it and its dependencies with one source identifier.
-Start with a working [plugin project](/docs/plugins). npm is required on the daemon host for installation;
-loading and reloading the installed plugin use its local files.
+Publish your plugin so other people can install and use it in Paseo. Once you have a working
+[plugin project](/docs/plugins), choose where to share it:
+
+- [npm](#publish-on-npm): publish a package on the public npm registry.
+- [Private registry](#use-a-private-github-package): share a package with your team using GitHub Packages.
+- [GitHub or Git](#share-through-github-or-git): let users install directly from a repository.
 
 ## Publish on npm
 
@@ -48,7 +51,7 @@ npm publish --access public
 ```
 
 Inspect the pack output for the manifest, entries, imported files, and assets before publishing.
-Then test the published package through Paseo:
+Then test the published package through Paseo. npm must be on the daemon host's `PATH` for installation:
 
 ```bash
 paseo plugin install npm:@acme/paseo-review@1.0.0
