@@ -1,3 +1,13 @@
+import {
+  CodeDocumentRequestSchema,
+  CodeDocumentResponseSchema,
+  CodeQueryRequestSchema,
+  CodeQueryResponseSchema,
+  CodeCancelRequestSchema,
+  CodeCancelResponseSchema,
+  CodeSnippetsRequestSchema,
+  CodeSnippetsResponseSchema,
+} from "./code-language.js";
 import { z } from "zod";
 import { DiffStatSchema, ChangeBreakdownSchema } from "./diff-stat.js";
 import { TerminalActivitySchema } from "./terminal-activity.js";
@@ -2729,6 +2739,7 @@ const DiffHunkSchema = z.object({
 });
 
 const ParsedDiffFileSchema = z.object({
+  targetContentId: z.string().optional(),
   path: z.string(),
   // COMPAT(diffOldPath): added in v0.3.0, remove gate after 2027-02-09.
   oldPath: z.string().optional(),
@@ -3176,6 +3187,11 @@ export const SessionEventsSetSubscriptionResponseSchema = z.object({
 });
 
 export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
+  CodeDocumentRequestSchema,
+  CodeQueryRequestSchema,
+  CodeCancelRequestSchema,
+  CodeSnippetsRequestSchema,
+
   SessionEventsSetSubscriptionRequestSchema,
   HubExecutionAgentCreateRequestSchema,
   HubExecutionAgentValidateRequestSchema,
@@ -3640,6 +3656,7 @@ export const ServerInfoStatusPayloadSchema = z
         workspaceRecovery: z.boolean().optional(),
         // COMPAT(workspaceFileEditing): added in v0.2.0, remove after 2027-01-18 once daemon floor >= v0.2.0.
         workspaceFileEditing: z.boolean().optional(),
+        codeLanguage: z.boolean().optional(),
         // COMPAT(providerUsageList): added in v0.1.98, drop the gate when daemon floor >= v0.1.98.
         providerUsageList: z.boolean().optional(),
         // COMPAT(agentDetach): added in v0.1.98, remove gate after 2026-12-19 once daemon floor >= v0.1.98.
@@ -6604,6 +6621,11 @@ export const AgentSkillsImportLegacySelectionResponseSchema = z.object({
 });
 
 export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
+  CodeDocumentResponseSchema,
+  CodeQueryResponseSchema,
+  CodeCancelResponseSchema,
+  CodeSnippetsResponseSchema,
+
   SessionEventsSetSubscriptionResponseSchema,
   HubExecutionAgentCreateResponseSchema,
   HubExecutionAgentValidateResponseSchema,

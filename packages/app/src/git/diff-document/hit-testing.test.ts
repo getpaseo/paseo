@@ -1,3 +1,4 @@
+import { diffLanguageTarget } from "./language-target";
 import type { ParsedDiffFile } from "@getpaseo/protocol/messages";
 import { describe, expect, it } from "vitest";
 import {
@@ -14,6 +15,55 @@ import type { BuildDiffDocumentModelInput, DiffCell, DiffSelection } from "./typ
 const measurer = { measure: (text: string) => Array.from(text).length * 10 };
 
 describe("diff hit testing", () => {
+  it("removes a first-line BOM from language columns while preserving UTF-16 offsets", () => {
+    const model = buildModel("\uFEFFconst emoji = '😀';");
+    model.files[0]!.file.targetContentId = "snapshot";
+    const cell = changedCell(model);
+    const hit = { kind: "cell" as const, target: null, position: position(model, cell, 8) };
+    expect(diffLanguageTarget(model, hit, "/repo")?.position.character).toBe(7);
+  });
+
+  it("maps unified and split current cells to UTF-16 source positions and excludes old sides", () => {
+    for (const layout of ["unified", "split"] as const) {
+      const source = splitFile();
+      source.targetContentId = "snapshot";
+      const model = buildModel("", { files: [source], layout, viewportWidth: 90 });
+      for (const row of model.rows) {
+        if (row.kind !== "line") continue;
+        row.cells.forEach((cell, cellIndex) => {
+          if (!cell || cell.type === "header") return;
+          const hit = {
+            kind: "cell" as const,
+            target: null,
+            position: {
+              fileIndex: row.fileIndex,
+              rowIndex: row.index,
+              cellIndex,
+              side: cell.sourceIdentity.side,
+              sourceOffset: 3,
+            },
+          };
+          const target = diffLanguageTarget(model, hit, "/repo");
+          if (cell.sourceIdentity.side === "old") expect(target).toBeNull();
+          else
+            expect(target).toEqual({
+              path: "/repo/src/split.ts",
+              position: { line: cell.lineNumber! - 1, character: 3 },
+              targetContentId: "snapshot",
+            });
+        });
+      }
+    }
+    const model = buildModel("no snapshot");
+    expect(
+      diffLanguageTarget(
+        model,
+        { kind: "cell", target: null, position: position(model, changedCell(model), 0) },
+        "/repo",
+      ),
+    ).toBeNull();
+  });
+
   it("locates the closest character from measured wrapped geometry", () => {
     const cell = changedCell(buildModel("abcdef", { viewportWidth: 90 }));
     expect(characterOffsetAtPoint({ cell, x: 6, y: 20, lineHeight: 18 })).toBe(5);

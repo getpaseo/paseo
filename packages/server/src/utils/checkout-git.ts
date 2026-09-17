@@ -1,3 +1,7 @@
+import {
+  captureLanguageDiffs,
+  identifyLanguageDiffs,
+} from "../server/code-language/diff-snapshot.js";
 import type { DiffStat } from "@getpaseo/protocol/diff-stat";
 import {
   addFileBreakdowns,
@@ -3344,6 +3348,10 @@ export async function getCheckoutDiff(
 
   const ignoreWhitespace = compare.ignoreWhitespace === true;
   let effectiveRefsForDiff = refsForDiff;
+  if (effectiveRefsForDiff.targetRef) {
+    const target = await runGitCommand(["rev-parse", effectiveRefsForDiff.targetRef], { cwd });
+    effectiveRefsForDiff = { ...effectiveRefsForDiff, targetRef: target.stdout.trim() };
+  }
   let changes: CheckoutFileChange[];
   try {
     changes = await listCheckoutFileChanges(cwd, effectiveRefsForDiff, ignoreWhitespace);
@@ -3378,6 +3386,7 @@ export async function getCheckoutDiff(
     }
   };
 
+  const languageBefore = await captureLanguageDiffs(cwd, compare.includeStructured ? changes : []);
   const trackedChanges = changes.filter((change) => !change.isUntracked);
   const untrackedChanges = changes.filter((change) => change.isUntracked === true);
   const trackedDiff = await processTrackedChanges({
@@ -3447,6 +3456,14 @@ export async function getCheckoutDiff(
       targetRef: effectiveRefsForDiff.targetRef,
       files: structured.files,
       loadPatch: true,
+    });
+    await identifyLanguageDiffs({
+      cwd,
+      files: structured.files,
+      before: languageBefore,
+      readTarget: effectiveRefsForDiff.targetRef
+        ? (path) => readGitFileContentAtRef(cwd, effectiveRefsForDiff.targetRef!, path)
+        : null,
     });
     // Classification adds wire data after the initial diff-size accounting.
     if (

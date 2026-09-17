@@ -1,3 +1,4 @@
+import { CodeLanguageSession } from "./code-language/session.js";
 import type { DiffStat } from "@getpaseo/protocol/diff-stat";
 import type { SessionEventSubscription } from "@getpaseo/protocol/messages";
 import type { AgentRequests } from "./agent/requests/index.js";
@@ -750,6 +751,7 @@ export class Session {
   private readonly scheduleSession: ScheduleSession;
   private readonly providerCatalogSession: ProviderCatalogSession;
   private readonly workspaceFilesSession: WorkspaceFilesSession;
+  private readonly codeLanguage: CodeLanguageSession;
   private readonly agentConfigSession: AgentConfigSession;
   private readonly projectConfigSession: ProjectConfigSession;
   private readonly daemonSession: DaemonSession;
@@ -840,6 +842,7 @@ export class Session {
       clientId: this.clientId,
       sessionId: this.sessionId,
     });
+    this.codeLanguage = new CodeLanguageSession(this.sessionLogger);
     this.workspaceFilesSession = new WorkspaceFilesSession({
       host: {
         emit: (msg, source) => this.emitForSource(msg, source),
@@ -1556,6 +1559,11 @@ export class Session {
         mutation.workspace?.archivedAt
       ) {
         this.workspaceGitObserver.removeForWorkspaceId(mutation.workspaceId);
+        if (mutation.workspace) this.codeLanguage.closeWorkspace(mutation.workspace.cwd);
+        else {
+          const remaining = await this.workspaceRegistry.list();
+          this.codeLanguage.retainWorkspaces(new Set(remaining.map((workspace) => workspace.cwd)));
+        }
       } else {
         await this.syncWorkspaceMutationObserver(mutation);
       }
@@ -2683,6 +2691,11 @@ export class Session {
     source?: object,
   ): Promise<void> | undefined {
     switch (msg.type) {
+      case "code.language.sync.request":
+      case "code.language.query.request":
+      case "code.language.cancel.request":
+      case "code.language.snippets.request":
+        return this.codeLanguage.handle(msg, (message) => this.emitForSource(message, source));
       case "file_explorer_request":
         return this.workspaceFilesSession.handleFileExplorerRequest(msg, source);
       case "fs.file.subscribe.request":
@@ -7987,6 +8000,7 @@ export class Session {
 
     this.workspaceGitObserver.dispose();
     this.workspaceFilesSession.dispose();
+    this.codeLanguage.dispose();
   }
 }
 

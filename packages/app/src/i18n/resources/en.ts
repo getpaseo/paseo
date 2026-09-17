@@ -1,4 +1,17 @@
 export const en = {
+  codeLanguage: {
+    definition: "Go to definition",
+    usages: "Find usages",
+    inspect: "Inspect type",
+    close: "Close",
+    filter: "Filter by file",
+    loading: "Finding locations…",
+    empty: "No locations found",
+    error: "Code intelligence is unavailable. Try again.",
+    stale: "This view no longer matches the current file.",
+    retry: "Retry",
+    openCurrent: "Open current file",
+  },
   changeStats: {
     title: "Change breakdown",
     code: "Code",

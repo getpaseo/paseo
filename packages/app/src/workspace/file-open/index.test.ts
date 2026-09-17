@@ -7,6 +7,11 @@ import {
 } from ".";
 
 describe("normalizeWorkspaceFileLocation", () => {
+  it("preserves exact symbol ranges and detects column-only navigation", () => {
+    const location = { path: "a.ts", lineStart: 2, lineEnd: 2, columnStart: 7, columnEnd: 13 };
+    expect(normalizeWorkspaceFileLocation(location)).toEqual(location);
+    expect(workspaceFileLocationsEqual(location, { ...location, columnStart: 8 })).toBe(false);
+  });
   it("normalizes paths and valid line ranges", () => {
     expect(
       normalizeWorkspaceFileLocation({

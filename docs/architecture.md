@@ -220,6 +220,25 @@ Agent browser_keypress -> guest sendInputEvent(skipIfUnhandled)
 
 TanStack Router + Cloudflare Workers. Serves paseo.sh.
 
+## Code intelligence
+
+TypeScript code intelligence runs on the host through a bundled language server. The editor and
+working diff share the app's code-language module, so buffer synchronization and stale-result
+handling have one owner. Keep LSP details inside the daemon module; UI surfaces request hover,
+definitions, or references through the normal authenticated WebSocket connection.
+
+Language sessions belong to a client connection and workspace. Sharing a process across clients
+would let one window's unsaved buffer replace another window's text. Processes start on the first
+query and stop five minutes after the last document/query releases demand. Reconnect recreates the
+session and replays editor buffers. Use the semantic server alone: syntax-server hover during
+project loading can return an unresolved import without its type.
+
+Diff coordinates are valid only against the complete file snapshot that produced the patch.
+Optional target-content identities enable current-side language actions after checking both disk
+and the client's buffer. Base comparisons target committed HEAD and qualify only when that file
+matches disk. Deleted lines and commit-detail views do not have language actions. Do not load old
+revision text into an editor's language document to approximate historical analysis.
+
 ## WebSocket protocol
 
 All clients speak the same WebSocket protocol over a single connection that mixes JSON text frames and a small binary framing for terminal streams. Schemas live in `packages/protocol/src/messages.ts`.
