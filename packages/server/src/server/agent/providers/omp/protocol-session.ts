@@ -23,17 +23,18 @@ export async function establishOmpProtocol(
   transport: OmpProtocolTransport,
   logger: Logger,
   timeouts: OmpProtocolTimeouts = {},
-): Promise<void> {
+): Promise<boolean> {
   const readyTimeoutMs = timeouts.readyTimeoutMs ?? OMP_READY_TIMEOUT_MS;
   const requestTimeoutMs = timeouts.requestTimeoutMs ?? JSONL_RPC_DEFAULT_TIMEOUT_MS;
   const ready = await waitForReady(transport, readyTimeoutMs);
-  if (!supportsJsonlRpcProtocolV2(ready)) return;
+  if (!supportsJsonlRpcProtocolV2(ready)) return false;
   const response = (await transport.request({
     command: { type: "negotiate_protocol", protocolVersion: 2 },
     timeoutMs: requestTimeoutMs,
   })) as { protocolVersion?: unknown } | undefined;
   if (response?.protocolVersion !== 2) throw new Error("OMP did not accept RPC protocol v2");
   logger.debug({}, "Negotiated OMP RPC protocol v2 (chunked frame transport)");
+  return true;
 }
 
 function waitForReady(
