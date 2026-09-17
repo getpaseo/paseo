@@ -1048,6 +1048,9 @@ test("one client can stream two terminals concurrently", async () => {
 
   expect(firstSubscribe.error).toBeNull();
   expect(secondSubscribe.error).toBeNull();
+  if (firstSubscribe.error !== null || secondSubscribe.error !== null) {
+    throw new Error("Expected both terminal subscriptions to succeed");
+  }
   expect(firstSubscribe.slot).not.toBe(secondSubscribe.slot);
 
   const firstOutput = waitForTerminalOutput(ctx.client, firstTerminalId, (text) =>
@@ -1077,8 +1080,8 @@ test("disconnect and reconnect both receive the current snapshot", async () => {
   const created = await createTerminalInWorkspace(ctx.client, { cwd });
   const terminalId = created.terminal!.id;
 
-  await ctx.client.subscribeTerminal(terminalId);
-  ctx.client.unsubscribeTerminal(terminalId);
+  const observation = await ctx.client.subscribeTerminal(terminalId);
+  await observation.subscription.release();
 
   ctx.client.sendTerminalInput(terminalId, {
     type: "input",

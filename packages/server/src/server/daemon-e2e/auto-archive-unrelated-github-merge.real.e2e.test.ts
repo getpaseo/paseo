@@ -126,7 +126,7 @@ githubTest(
       throw new Error("Failed to register both worktrees");
     }
     await context.client.fetchWorkspaces({
-      subscribe: { subscriptionId: "real-unrelated-merge" },
+      subscribe: {},
     });
 
     writeFileSync(path.join(merged.worktreePath, "feature.txt"), "merged\n");

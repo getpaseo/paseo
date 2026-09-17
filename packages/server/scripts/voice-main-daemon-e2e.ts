@@ -47,7 +47,7 @@ async function runVoiceRoundTrip(params: {
   const client = new DaemonClient({ url: `${params.daemonUrl}/ws` });
   await client.connect();
   await client.fetchAgents({
-    subscribe: { subscriptionId: `voice-e2e-${randomUUID()}` },
+    subscribe: {},
   });
 
   const mode = await client.setVoiceMode(true, params.voiceAgentId);
@@ -77,7 +77,7 @@ async function runVoiceRoundTrip(params: {
     });
   });
 
-  const offStream = client.on("agent_stream", (msg) => {
+  const offStream = client.subscribeAgentTimeline(activeVoiceAgentId, (msg) => {
     if (msg.type !== "agent_stream") return;
     if (msg.payload.agentId !== activeVoiceAgentId) return;
     if (msg.payload.event.type !== "timeline") return;
@@ -87,6 +87,8 @@ async function runVoiceRoundTrip(params: {
       speakToolCalls += 1;
     }
   });
+
+  await offStream.ready;
 
   const chunkBytes = 4800;
   for (let offset = 0; offset < pcm.length; offset += chunkBytes) {

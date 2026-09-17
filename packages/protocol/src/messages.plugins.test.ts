@@ -1,3 +1,4 @@
+import { z } from "zod";
 import { describe, expect, it } from "vitest";
 import {
   MutableDaemonConfigSchema,
@@ -7,6 +8,21 @@ import {
 } from "./messages.js";
 
 describe("plugin protocol compatibility", () => {
+  it.each([undefined, { paseo: ">=0.8.0" }])(
+    "parses plugin catalogs with requirements %j",
+    (requirements) => {
+      const message = {
+        type: "plugin.catalog.get.response",
+        payload: {
+          requestId: "catalog",
+          plugins: [
+            { id: "example", clientBundle: "bundle", ...(requirements ? { requirements } : {}) },
+          ],
+        },
+      };
+      expect(SessionOutboundMessageSchema.parse(message)).toEqual(message);
+    },
+  );
   it("parses plugin timeline append messages and advertises the capability", () => {
     expect(
       SessionInboundMessageSchema.parse({
@@ -81,6 +97,22 @@ describe("plugin protocol compatibility", () => {
         type: "plugin.directory.install.response",
         payload: {
           requestId: "request-1",
+          plugin: {
+            id: "example-work",
+            description: "Reviews changes before merge",
+            path: "/plugins/example",
+            enabled: true,
+            status: "running",
+          },
+        },
+      }).type,
+    ).toBe("plugin.directory.install.response");
+
+    expect(
+      SessionOutboundMessageSchema.parse({
+        type: "plugin.directory.install.response",
+        payload: {
+          requestId: "request-old-shape",
           plugin: {
             id: "example-work",
             path: "/plugins/example",
@@ -260,5 +292,39 @@ describe("plugin protocol compatibility", () => {
         payload: { requestId: "request-2", plugin: { id: "extra" } },
       }),
     ).toThrow();
+  });
+});
+
+it("npm metadata leaves legacy plugin rows parseable without extending their closed source enum", () => {
+  const legacyPlugin = z.object({
+    id: z.string(),
+    path: z.string(),
+    enabled: z.boolean(),
+    status: z.enum(["running", "disabled", "failed"]),
+    source: z.enum(["directory", "git"]).optional(),
+  });
+  const plugin = {
+    id: "review",
+    path: "/plugins/review",
+    enabled: true,
+    status: "running",
+    installation: {
+      identity: { kind: "npm", packageName: "@acme/review", pluginPath: "." },
+      currentRevision: "1.2.0",
+    },
+  };
+  const message = SessionOutboundMessageSchema.parse({
+    type: "plugin.list.response",
+    payload: { requestId: "npm", plugins: [plugin] },
+  });
+  expect(legacyPlugin.parse(plugin)).toEqual({
+    id: "review",
+    path: "/plugins/review",
+    enabled: true,
+    status: "running",
+  });
+  expect(message).toEqual({
+    type: "plugin.list.response",
+    payload: { requestId: "npm", plugins: [plugin] },
   });
 });

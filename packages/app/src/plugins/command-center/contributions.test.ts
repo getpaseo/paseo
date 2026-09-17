@@ -4,9 +4,9 @@ import { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import {
   defineRpc,
   type PluginAgentSnapshot,
-  type PluginCommandCenterItemContribution,
   type PluginWorkspaceSnapshot,
 } from "@getpaseo/plugin";
+import { type PluginCommandCenterItemContribution } from "@getpaseo/plugin/client";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import type { InstalledPlugin } from "../types";
@@ -60,8 +60,10 @@ function plugin(onAgentSelect: AgentCommandItem["onSelect"]): InstalledPlugin {
     id: "review",
     serverId: "host-1",
     clientBundle: "bundle",
+    lifetime: new AbortController(),
     queryClient: new QueryClient(),
     cleanup: () => {},
+    settingsScreens: [],
     surfaces: [{ id: "main", Component: () => null }],
     sidebarItems: [],
     workspacePanels: [
@@ -119,7 +121,7 @@ function stateSource() {
   };
 }
 
-function createRuntime(pluginId: string) {
+function createRuntime(installed: InstalledPlugin) {
   const client = new DaemonClient({
     url: "ws://127.0.0.1:1",
     clientId: "plugin-command-test",
@@ -128,7 +130,7 @@ function createRuntime(pluginId: string) {
   return {
     paseo: createPaseoApi(client),
     invoke: async (method: string, input: unknown) => {
-      expect(pluginId).toBe("review");
+      expect(installed.id).toBe("review");
       expect(method).toBe("review.inspect");
       return { value: inspect.input.parse(input).value + 1 };
     },
@@ -143,6 +145,7 @@ describe("plugin Command Center contributions", () => {
       runtime: createRuntime,
       state: stateSource(),
       navigation: {
+        openSettings() {},
         openSurface() {},
         openWorkspacePanel() {},
         openAgentPanel() {},
@@ -185,7 +188,7 @@ describe("plugin Command Center contributions", () => {
       context.openSurface("main");
       context.openPanel("details", { location: "explorer" });
     });
-    const runtime = createRuntime("review");
+    const runtime = createRuntime(installed);
     const actions = buildPluginCommandCenterContributions({
       plugins: [installed],
       runtime: () => runtime,
@@ -193,6 +196,7 @@ describe("plugin Command Center contributions", () => {
       workspaceId: workspace.id,
       agentId: agent.id,
       navigation: {
+        openSettings() {},
         openSurface(pluginId, surfaceId) {
           opened.push(`${pluginId}/surface/${surfaceId}`);
         },
@@ -224,6 +228,7 @@ describe("plugin Command Center contributions", () => {
         workspaceId: workspace.id,
         agentId: agent.id,
         navigation: {
+          openSettings() {},
           openSurface() {},
           openWorkspacePanel() {},
           openAgentPanel() {},

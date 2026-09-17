@@ -7,23 +7,36 @@ import {
 
 function createNavigationRef(rootState: unknown, options: { ready?: boolean } = {}) {
   const dispatch = vi.fn();
-  const navigationRef = {
-    current: {
-      isReady: () => options.ready ?? true,
-      getRootState: () => rootState,
-      dispatch,
+  let ready = options.ready ?? true;
+  const readyListeners = new Set<() => void>();
+  const navigation = {
+    isReady: () => ready,
+    getRootState: () => rootState,
+    dispatch,
+    addListener: (event: string, listener: () => void) => {
+      if (event === "ready") readyListeners.add(listener);
+      return () => readyListeners.delete(listener);
     },
+  };
+  const navigationRef = {
+    ...navigation,
+    current: navigation,
   } as unknown as NavigationContainerRefWithCurrent<ReactNavigation.RootParamList>;
 
-  return { navigationRef, dispatch };
+  return {
+    navigationRef,
+    dispatch,
+    becomeReady() {
+      ready = true;
+      for (const listener of readyListeners) listener();
+    },
+  };
 }
 
 describe("navigateToHostWorkspaceRoute", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    registerWorkspaceRouteNavigationRef({
-      current: null,
-    } as unknown as NavigationContainerRefWithCurrent<ReactNavigation.RootParamList>)();
+    registerWorkspaceRouteNavigationRef(createNavigationRef({}).navigationRef)();
   });
 
   it("falls back to route navigation when no host route is mounted yet", () => {
@@ -130,5 +143,75 @@ describe("navigateToHostWorkspaceRoute", () => {
         },
       },
     });
+  });
+
+  it("waits for the root navigator before applying a route intent", () => {
+    const { navigationRef, becomeReady } = createNavigationRef(
+      {
+        key: "root-stack",
+        routes: [{ key: "launcher", name: "index" }],
+      },
+      { ready: false },
+    );
+    registerWorkspaceRouteNavigationRef(navigationRef);
+    const dismissTo = vi.fn();
+
+    navigateToHostWorkspaceRoute("/h/server-1/workspace/workspace-a", { dismissTo });
+    expect(dismissTo).not.toHaveBeenCalled();
+
+    becomeReady();
+    expect(dismissTo).toHaveBeenCalledWith("/h/server-1/workspace/workspace-a");
+    becomeReady();
+    expect(dismissTo).toHaveBeenCalledTimes(1);
+  });
+
+  it("retains an intent submitted before the root ref registers", () => {
+    const dismissTo = vi.fn();
+    navigateToHostWorkspaceRoute("/h/server-1/workspace/workspace-a", { dismissTo });
+    expect(dismissTo).not.toHaveBeenCalled();
+
+    const root = createNavigationRef({}, { ready: false });
+    const unregister = registerWorkspaceRouteNavigationRef(root.navigationRef);
+    expect(dismissTo).not.toHaveBeenCalled();
+    root.becomeReady();
+    expect(dismissTo).toHaveBeenCalledExactlyOnceWith("/h/server-1/workspace/workspace-a");
+    unregister();
+  });
+
+  it("keeps only the latest route intent while the root navigator is unavailable", () => {
+    const { navigationRef, becomeReady } = createNavigationRef({}, { ready: false });
+    registerWorkspaceRouteNavigationRef(navigationRef);
+    const firstDismissTo = vi.fn();
+    const latestDismissTo = vi.fn();
+
+    navigateToHostWorkspaceRoute("/h/server-1/workspace/workspace-a", {
+      dismissTo: firstDismissTo,
+    });
+    navigateToHostWorkspaceRoute("/h/server-1/workspace/workspace-b", {
+      dismissTo: latestDismissTo,
+    });
+    becomeReady();
+
+    expect(firstDismissTo).not.toHaveBeenCalled();
+    expect(latestDismissTo).toHaveBeenCalledWith("/h/server-1/workspace/workspace-b");
+  });
+
+  it("preserves a pending route intent across root navigator re-registration", () => {
+    const first = createNavigationRef({}, { ready: false });
+    const unregisterFirst = registerWorkspaceRouteNavigationRef(first.navigationRef);
+    const dismissTo = vi.fn();
+    navigateToHostWorkspaceRoute("/h/server-1/workspace/workspace-a", { dismissTo });
+
+    unregisterFirst();
+    first.becomeReady();
+    expect(dismissTo).not.toHaveBeenCalled();
+
+    const replacement = createNavigationRef({
+      key: "root-stack",
+      routes: [{ key: "launcher", name: "index" }],
+    });
+    registerWorkspaceRouteNavigationRef(replacement.navigationRef);
+
+    expect(dismissTo).toHaveBeenCalledWith("/h/server-1/workspace/workspace-a");
   });
 });

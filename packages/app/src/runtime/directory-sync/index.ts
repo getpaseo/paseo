@@ -1,3 +1,4 @@
+import type { OwnedSubscription } from "@getpaseo/client";
 import type {
   DaemonClient,
   FetchAgentsEntry,
@@ -12,12 +13,6 @@ import {
   type ProjectDescriptor,
   type WorkspaceDescriptor,
 } from "@/stores/session-store";
-import {
-  readLegacyDaemonWorkspaceDirectory,
-  buildLegacyWorkspaces,
-  shouldUseLegacyDaemonWorkspaceDirectory,
-  stampLegacyWorkspaceIds,
-} from "@/workspace/legacy-daemon-workspaces";
 import type { AgentDirectoryDelta } from "@/utils/agent-directory-sync";
 import { AgentDirectoryReplica } from "./agent-replica";
 import {
@@ -36,7 +31,12 @@ import type {
   CachedWorkspace,
   DirectoryCheckpoint,
   DirectoryCursor,
+  DirectoryReplicaMutation,
 } from "@/runtime/replica-cache";
+import type { TurnLivenessTransition } from "@/timeline/turn-liveness";
+
+type FetchAgentsPayload = Awaited<ReturnType<DaemonClient["fetchAgents"]>>;
+type FetchWorkspacesPayload = Awaited<ReturnType<DaemonClient["fetchWorkspaces"]>>;
 
 const PAGE_LIMIT = 200;
 const AGENT_SORT: NonNullable<FetchAgentsOptions["sort"]> = [
@@ -56,7 +56,6 @@ function resolveAgentNextPage(pageInfo: AgentPageInfo): {
 interface AgentSnapshot {
   entries: FetchAgentsEntry[];
   subscriptionId: string | null;
-  legacy: boolean;
   syncMode?: "snapshot" | "changes";
   syncCursor?: DirectoryCursor;
   syncRemovals: Array<{ id: string; seq: number }>;
@@ -69,6 +68,36 @@ interface AgentPageInfo {
   afterCursor?: string | null;
 }
 
+function applyWorkspaceSnapshotPage(
+  snapshot: WorkspaceDirectorySnapshot,
+  payload: Awaited<ReturnType<DaemonClient["fetchWorkspaces"]>>,
+  firstPage: boolean,
+): void {
+  if (firstPage && payload.sync?.mode !== "changes") snapshot.workspaces.clear();
+  if (firstPage) (snapshot.syncModes ??= {}).workspaces = payload.sync?.mode ?? "snapshot";
+  for (const entry of payload.entries) {
+    const workspace = normalizeWorkspaceDescriptor(entry);
+    snapshot.workspaces.set(workspace.id, workspace);
+    (snapshot.touchedWorkspaceIds ??= new Set()).add(workspace.id);
+    (snapshot.touchedProjectIds ??= new Set()).add(workspace.projectId);
+  }
+  for (const removal of payload.sync?.removals ?? []) {
+    snapshot.workspaces.delete(removal.id);
+    (snapshot.touchedWorkspaceIds ??= new Set()).add(removal.id);
+  }
+  if (payload.sync) {
+    (snapshot.syncCursors ??= {}).workspaces = {
+      generation: payload.sync.generation,
+      afterSeq: payload.sync.headSeq,
+    };
+  }
+  for (const entry of payload.emptyProjects ?? []) {
+    const project = normalizeProjectDescriptor(entry);
+    snapshot.projects.set(project.projectId, project);
+    (snapshot.touchedProjectIds ??= new Set()).add(project.projectId);
+  }
+}
+
 export interface DirectoryConnection {
   client: DaemonClient | null;
   status: "online" | "offline";
@@ -79,15 +108,12 @@ export interface DirectoryCheckpointStorage {
   readAgent(serverId: string, agentId: string): Promise<Agent | undefined>;
   readWorkspace(serverId: string, workspaceId: string): Promise<CachedWorkspace | undefined>;
   readDirectory(serverId: string): Promise<CachedDirectory>;
-  commitDirectory(
+  commitDirectoryMutations(
     serverId: string,
-    directory: {
-      agents: Map<string, Agent>;
-      workspaces: Map<string, WorkspaceDescriptor>;
-      projects: Map<string, ProjectDescriptor>;
-      checkpoint?: DirectoryCheckpoint;
-    },
+    mutations: readonly DirectoryReplicaMutation[],
+    checkpoint?: DirectoryCheckpoint,
   ): void;
+  replaceDirectoryBaseline?(serverId: string, directory: CachedDirectory): void;
 }
 
 export interface RefreshAgentDirectoryInput {
@@ -117,7 +143,9 @@ export class DirectorySync {
     status: "offline",
     source: { clientGeneration: 0, connectionEpoch: 0 },
   };
-  private unsubscribe: (() => void) | null = null;
+  private agentSubscription: OwnedSubscription<FetchAgentsPayload> | null = null;
+  private workspaceSubscription: OwnedSubscription<FetchWorkspacesPayload> | null = null;
+  private eventSubscription: ReturnType<DaemonClient["observeEvents"]> | null = null;
   private readonly abortSessionWaits = new Set<() => void>();
   private cacheLoad: Promise<void> | null = null;
   private cacheAccepted = false;
@@ -139,7 +167,9 @@ export class DirectorySync {
     },
     private readonly checkpoints?: DirectoryCheckpointStorage,
   ) {
-    this.agents = new AgentDirectoryReplica(serverId, callbacks.onAgentStoppedRunning);
+    const persist = (mutations: readonly DirectoryReplicaMutation[]) =>
+      this.checkpoints?.commitDirectoryMutations(this.serverId, mutations);
+    this.agents = new AgentDirectoryReplica(serverId, callbacks.onAgentStoppedRunning, persist);
     this.workspaces = new WorkspaceDirectoryReplica(serverId);
   }
 
@@ -154,79 +184,11 @@ export class DirectorySync {
       return false;
     }
     this.flushAbortedTransactions();
-    this.unsubscribe?.();
-    this.unsubscribe = null;
+    this.releaseSubscriptions();
     workspaceLabels.disconnect(this.serverId);
     this.connection = connection;
     this.abortPendingSessionWaits();
     if (!connection.client || connection.status !== "online") return true;
-    const client = connection.client;
-    const source = connection.source;
-    const subscriptions = [
-      client.on("agent_update", (message) => {
-        if (message.type !== "agent_update" || !this.isCurrent(client, source)) return;
-        this.revision += 1;
-        const recorded = this.agentTransactions.record(source, message.payload);
-        if (!recorded) {
-          this.agents.applyDelta(message.payload);
-          this.noteLiveCursor("agents", message.payload);
-          this.persistDirectory();
-        }
-      }),
-      client.on("workspace_update", (message) => {
-        if (message.type !== "workspace_update" || !this.isCurrent(client, source)) return;
-        this.revision += 1;
-        this.workspaceRevision += 1;
-        const recorded = this.workspaceTransactions.record(source, message.payload);
-        if (!recorded) {
-          this.workspaces.applyDelta(message.payload);
-          this.noteLiveCursor("workspaces", message.payload);
-          this.persistDirectory();
-        }
-      }),
-      client.on("project.update", (message) => {
-        if (message.type !== "project.update" || !this.isCurrent(client, source)) return;
-        this.revision += 1;
-        this.workspaceRevision += 1;
-        const recorded = this.workspaceTransactions.record(source, message.payload);
-        if (!recorded) {
-          this.workspaces.applyDelta(message.payload);
-          this.noteLiveCursor("projects", message.payload);
-          this.persistDirectory();
-        }
-      }),
-      client.on("script_status_update", (message) => {
-        if (message.type !== "script_status_update" || !this.isCurrent(client, source)) return;
-        this.revision += 1;
-        this.workspaceRevision += 1;
-        const delta: WorkspaceDirectoryDelta = {
-          kind: "script_status",
-          update: message.payload,
-        };
-        const recorded = this.workspaceTransactions.record(source, delta);
-        if (!recorded) {
-          this.workspaces.applyDelta(delta);
-          this.persistDirectory();
-        }
-      }),
-      client.on("agent_deleted", (message) => {
-        if (message.type === "agent_deleted" && this.isCurrent(client, source)) {
-          this.revision += 1;
-          this.agents.remove(message.payload.agentId);
-          this.persistDirectory();
-        }
-      }),
-      client.on("agent_archived", (message) => {
-        if (message.type === "agent_archived" && this.isCurrent(client, source)) {
-          this.revision += 1;
-          this.agents.archive(message.payload.agentId, message.payload.archivedAt);
-          this.persistDirectory();
-        }
-      }),
-    ];
-    this.unsubscribe = () => {
-      for (const unsubscribe of subscriptions) unsubscribe();
-    };
     if (this.hasDemand()) void this.requestDemandRefresh().catch(() => undefined);
     return true;
   }
@@ -235,6 +197,7 @@ export class DirectorySync {
     const wasDemanded = this.fullDemandSources.size > 0;
     if (demanded) this.fullDemandSources.add(source);
     else this.fullDemandSources.delete(source);
+    if (!this.hasDemand()) this.releaseSubscriptions();
     if (!wasDemanded && this.fullDemandSources.size > 0) {
       void this.loadCachedDirectory().catch(() => undefined);
       if (this.getOnlineConnection()) void this.requestDemandRefresh().catch(() => undefined);
@@ -251,6 +214,7 @@ export class DirectorySync {
     }
     this.routeDemandIds.clear();
     for (const agentId of next) this.routeDemandIds.add(agentId);
+    if (!this.hasDemand()) this.releaseSubscriptions();
     if (this.routeDemandIds.size > 0 && this.getOnlineConnection()) {
       void this.requestDemandRefresh().catch(() => undefined);
     }
@@ -259,11 +223,63 @@ export class DirectorySync {
   dispose(): void {
     this.flushAbortedTransactions();
     this.abortPendingSessionWaits();
-    this.unsubscribe?.();
-    this.unsubscribe = null;
+    this.releaseSubscriptions();
     this.fullDemandSources.clear();
     this.routeDemandIds.clear();
     workspaceLabels.disconnect(this.serverId);
+  }
+
+  private releaseSubscriptions(): void {
+    for (const subscription of [
+      this.agentSubscription,
+      this.workspaceSubscription,
+      this.eventSubscription,
+    ]) {
+      void subscription?.release().catch(() => undefined);
+    }
+    this.agentSubscription = null;
+    this.workspaceSubscription = null;
+    this.eventSubscription = null;
+    this.satisfiedDemandSource = null;
+  }
+
+  private receiveAgentDelta(source: DirectorySourceToken, delta: AgentDirectoryDelta): void {
+    this.revision += 1;
+    if (this.agentTransactions.record(source, delta)) return;
+    this.agents.applyDelta(delta);
+    this.noteLiveCursor("agents", delta);
+    this.persistCheckpoint();
+  }
+
+  private receiveWorkspaceDelta(
+    source: DirectorySourceToken,
+    delta: WorkspaceDirectoryDelta,
+  ): void {
+    this.revision += 1;
+    this.workspaceRevision += 1;
+    if (this.workspaceTransactions.record(source, delta)) return;
+    this.applyWorkspaceDelta(delta);
+    if (delta.kind !== "script_status")
+      this.noteLiveCursor(
+        "projectId" in delta || "project" in delta ? "projects" : "workspaces",
+        delta,
+      );
+    this.persistCheckpoint();
+  }
+
+  private observeDirectoryEvents(): void {
+    if (this.eventSubscription) return;
+    const { client, source } = this.requireOnline();
+    this.eventSubscription = client.observeEvents(["project.update", "script_status_update"]);
+    this.eventSubscription.subscribe({
+      snapshot: () => {},
+      update: (message) => {
+        if (!this.isCurrent(client, source)) return;
+        if (message.type === "project.update") this.receiveWorkspaceDelta(source, message.payload);
+        if (message.type === "script_status_update")
+          this.receiveWorkspaceDelta(source, { kind: "script_status", update: message.payload });
+      },
+    });
   }
 
   private hasDemand(): boolean {
@@ -276,6 +292,7 @@ export class DirectorySync {
     if (!this.getOnlineConnection()) {
       return this.fullDemandSources.size > 0 ? this.loadCachedDirectory() : Promise.resolve();
     }
+    this.observeDirectoryEvents();
     const source = this.connection.source;
     if (
       !force &&
@@ -352,30 +369,30 @@ export class DirectorySync {
     if (!checkpoints) return Promise.resolve();
     this.cacheLoad ??= (async () => {
       const revision = this.revision;
-      const initial = useSessionStore.getState().sessions[this.serverId];
-      if (!initial) return;
-      const initialAgents = initial.agents;
-      const initialWorkspaces = initial.workspaces;
-      const initialProjects = initial.projects;
-      const pristine =
-        initialAgents.size === 0 && initialWorkspaces.size === 0 && initialProjects.size === 0;
       const cached = await checkpoints.readDirectory(this.serverId);
-      if (this.cacheAccepted || !pristine || this.revision !== revision) return;
-      const session = useSessionStore.getState().sessions[this.serverId];
-      if (
-        !session ||
-        session.agents !== initialAgents ||
-        session.workspaces !== initialWorkspaces ||
-        session.projects !== initialProjects
-      ) {
-        return;
-      }
+      if (this.cacheAccepted) return;
+      if (!useSessionStore.getState().sessions[this.serverId]) return;
       this.agents.commitCached(cached.agents);
       this.workspaces.commitCached(cached);
-      this.cursors = cached.checkpoint ?? {};
+      if (this.revision === revision) this.cursors = cached.checkpoint ?? {};
       this.cacheAccepted = true;
     })();
     return this.cacheLoad;
+  }
+
+  restoreCachedDirectory(): Promise<void> {
+    return this.loadCachedDirectory();
+  }
+
+  applyAgentTurnLiveness(
+    agentId: string,
+    transition: TurnLivenessTransition | readonly TurnLivenessTransition[],
+  ): void {
+    this.agents.applyTurnLiveness(agentId, transition);
+  }
+
+  acceptAgent(agent: Agent): Agent {
+    return this.agents.accept(agent);
   }
 
   async fetchTimeline(
@@ -387,7 +404,7 @@ export class DirectorySync {
     const page = await fetchAgentTimelineOnce(client, agentId, request);
     if (page.agent && this.agents.submitTimelineAgent(token, page.agent)) {
       this.revision += 1;
-      this.persistDirectory();
+      this.persistCheckpoint();
     }
     return page;
   }
@@ -418,32 +435,12 @@ export class DirectorySync {
     const transaction = this.agentTransactions.begin(source, () => ({
       entries: [],
       subscriptionId: null,
-      legacy: false,
       syncRemovals: [],
     }));
     this.callbacks.markAgentLoading();
     try {
       await this.waitForSession(client, source);
-      const session = useSessionStore.getState().sessions[this.serverId];
-      if (!input.filter && shouldUseLegacyDaemonWorkspaceDirectory(session?.serverInfo)) {
-        const directory = await readLegacyDaemonWorkspaceDirectory({
-          client,
-          subscribe: input.subscribe,
-          page: input.page,
-        });
-        if (
-          !directory ||
-          !this.agentTransactions.isCurrent(transaction) ||
-          !this.isCurrent(client, source)
-        ) {
-          throw new DirectoryRefreshSupersededError("legacy fetch no longer current");
-        }
-        transaction.snapshot.entries.push(...stampLegacyWorkspaceIds(directory.entries));
-        transaction.snapshot.subscriptionId = directory.subscriptionId;
-        transaction.snapshot.legacy = true;
-      } else {
-        await this.fetchAgents(client, source, transaction, input);
-      }
+      await this.fetchAgents(client, source, transaction, input);
       if (!this.isCurrent(client, source) || !this.hasMatchingSession(client, source)) {
         throw new DirectoryRefreshSupersededError("agent completion no longer current");
       }
@@ -451,27 +448,10 @@ export class DirectorySync {
       if (completion.kind === "stale") {
         throw new DirectoryRefreshSupersededError("agent completion was superseded");
       }
-      if (completion.snapshot.legacy) {
-        const store = useSessionStore.getState();
-        const workspaces = buildLegacyWorkspaces(completion.snapshot.entries);
-        store.setWorkspaces(this.serverId, workspaces);
-        store.setProjects(
-          this.serverId,
-          Array.from(workspaces.values(), legacyProjectDescriptorFromWorkspace),
-        );
-        store.setHasHydratedWorkspaces(this.serverId, true);
-      }
-      const deltas = completion.snapshot.legacy
-        ? completion.deltas.map((delta) =>
-            delta.kind === "upsert"
-              ? { ...delta, agent: { ...delta.agent, workspaceId: delta.agent.cwd } }
-              : delta,
-          )
-        : completion.deltas;
       this.revision += 1;
-      const agents = this.commitAgentSnapshot(completion.snapshot, deltas);
+      const agents = this.commitAgentSnapshot(completion.snapshot, completion.deltas);
       this.persistAgentCursors(completion.snapshot, completion.deltas);
-      this.persistDirectory();
+      this.persistCheckpoint();
       this.callbacks.markAgentReady();
       return { agents, subscriptionId: completion.snapshot.subscriptionId };
     } catch (error) {
@@ -500,17 +480,15 @@ export class DirectorySync {
       workspaces: new Map(useSessionStore.getState().sessions[this.serverId]?.workspaces),
       projects: new Map(useSessionStore.getState().sessions[this.serverId]?.projects),
       syncCursors: {},
+      syncModes: {},
+      touchedWorkspaceIds: new Set(),
+      touchedProjectIds: new Set(),
     }));
     try {
       await this.waitForSessionMetadata(client, source);
       const serverInfo = useSessionStore.getState().sessions[this.serverId]?.serverInfo;
-      if (serverInfo?.features?.workspaceMultiplicity !== true) {
-        const deltas = this.workspaceTransactions.fail(transaction);
-        if (deltas) for (const delta of deltas) this.workspaces.applyDelta(delta);
-        return;
-      }
-      const supportsProjectList = serverInfo.features?.projectList === true;
-      const supportsDirectorySync = serverInfo.features?.directorySync === true;
+      const supportsProjectList = serverInfo?.features?.projectList === true;
+      const supportsDirectorySync = serverInfo?.features?.directorySync === true;
       if (supportsProjectList) {
         await this.fetchProjectSnapshot(client, source, transaction, supportsDirectorySync);
       }
@@ -521,11 +499,15 @@ export class DirectorySync {
         input?.subscribe === true,
         supportsDirectorySync,
       );
-      if (!supportsProjectList) this.buildLegacyProjectSnapshot(transaction.snapshot);
+      if (!supportsProjectList) {
+        this.buildLegacyProjectSnapshot(transaction.snapshot);
+        (transaction.snapshot.syncModes ??= {}).projects =
+          transaction.snapshot.syncModes?.workspaces;
+      }
       this.completeWorkspaceRefresh(client, source, transaction);
     } catch (error) {
       const deltas = this.workspaceTransactions.fail(transaction);
-      if (deltas) for (const delta of deltas) this.workspaces.applyDelta(delta);
+      if (deltas) for (const delta of deltas) this.applyWorkspaceDelta(delta);
       throw error;
     }
   }
@@ -540,33 +522,27 @@ export class DirectorySync {
     let cursor: string | null = null;
     let subscribe = initialSubscribe;
     while (true) {
-      const payload = await client.fetchWorkspaces({
+      const query: Parameters<DaemonClient["observeWorkspaces"]>[0] = {
         sort: [{ key: "activity_at", direction: "desc" }],
-        ...(subscribe ? { subscribe: {} } : {}),
         page: cursor ? { limit: PAGE_LIMIT, cursor } : { limit: PAGE_LIMIT },
         ...(supportsDirectorySync ? { sync: this.readCursors().workspaces ?? {} } : {}),
-      });
+      };
+      let payload: FetchWorkspacesPayload;
+      if (subscribe) {
+        void this.workspaceSubscription?.release().catch(() => undefined);
+        const subscription = client.observeWorkspaces(query);
+        this.workspaceSubscription = subscription;
+        subscription.subscribe({
+          snapshot: () => {},
+          update: (message) => {
+            if (message.type === "workspace_update" && this.isCurrent(client, source))
+              this.receiveWorkspaceDelta(source, message.payload);
+          },
+        });
+        payload = await subscription.ready;
+      } else payload = await client.fetchWorkspaces(query);
       this.assertWorkspaceTransactionCurrent(client, source, transaction);
-      if (cursor === null && payload.sync?.mode !== "changes") {
-        transaction.snapshot.workspaces.clear();
-      }
-      for (const entry of payload.entries) {
-        const workspace = normalizeWorkspaceDescriptor(entry);
-        transaction.snapshot.workspaces.set(workspace.id, workspace);
-      }
-      for (const removal of payload.sync?.removals ?? []) {
-        transaction.snapshot.workspaces.delete(removal.id);
-      }
-      if (payload.sync) {
-        (transaction.snapshot.syncCursors ??= {}).workspaces = {
-          generation: payload.sync.generation,
-          afterSeq: payload.sync.headSeq,
-        };
-      }
-      for (const entry of payload.emptyProjects ?? []) {
-        const project = normalizeProjectDescriptor(entry);
-        transaction.snapshot.projects.set(project.projectId, project);
-      }
+      applyWorkspaceSnapshotPage(transaction.snapshot, payload, cursor === null);
       if (!payload.pageInfo.hasMore || !payload.pageInfo.nextCursor) return;
       cursor = payload.pageInfo.nextCursor;
       subscribe = false;
@@ -587,6 +563,11 @@ export class DirectorySync {
       this.refreshAgents({ subscribe: {} }),
       this.refreshWorkspaces({ subscribe: true }),
     ]);
+    this.checkpoints?.replaceDirectoryBaseline?.(this.serverId, {
+      agents: this.agents.snapshot(),
+      ...this.workspaces.snapshot(),
+      checkpoint: this.cursors,
+    });
     if (this.getOnlineConnection()) await this.connectWorkspaceLabels();
   }
 
@@ -600,6 +581,33 @@ export class DirectorySync {
     });
   }
 
+  acceptWorkspaces(workspaces: readonly WorkspaceDescriptor[]): void {
+    const mutations = this.workspaces.acceptWorkspaces(workspaces);
+    this.checkpoints?.commitDirectoryMutations(this.serverId, mutations);
+  }
+
+  archiveAgent(agentId: string, archivedAt: string): void {
+    this.agents.archive(agentId, archivedAt);
+  }
+
+  removeAgent(agentId: string): void {
+    this.agents.remove(agentId);
+  }
+
+  acceptProject(project: ProjectDescriptor): void {
+    const mutations = this.workspaces.acceptProject(project);
+    this.checkpoints?.commitDirectoryMutations(this.serverId, mutations);
+  }
+
+  removeWorkspace(workspaceId: string): void {
+    const mutations = this.workspaces.removeWorkspaceSnapshot(workspaceId);
+    this.checkpoints?.commitDirectoryMutations(this.serverId, mutations);
+  }
+
+  markWorkspacesHydrated(hydrated: boolean): void {
+    useSessionStore.getState().setHasHydratedWorkspaces(this.serverId, hydrated);
+  }
+
   private async fetchAgents(
     client: DaemonClient,
     source: DirectorySourceToken,
@@ -610,15 +618,29 @@ export class DirectorySync {
     let subscribe = input.subscribe;
     while (true) {
       const limit = input.page?.limit ?? PAGE_LIMIT;
-      const payload = await client.fetchAgents({
+      const query: Omit<FetchAgentsOptions, "subscribe"> = {
         ...(input.filter ? { filter: input.filter } : { scope: "active" as const }),
         sort: AGENT_SORT,
-        ...(subscribe ? { subscribe } : {}),
         page: cursor ? { limit, cursor } : { limit },
         ...(!input.filter && cursor === null && this.supportsDirectorySync()
           ? { sync: this.readCursors().agents ?? {} }
           : {}),
-      });
+      };
+      let payload: FetchAgentsPayload;
+      if (subscribe) {
+        if (subscribe.subscriptionId) throw new Error("Subscription IDs are assigned by the host");
+        void this.agentSubscription?.release().catch(() => undefined);
+        const subscription = client.observeAgents(query);
+        this.agentSubscription = subscription;
+        subscription.subscribe({
+          snapshot: () => {},
+          update: (message) => {
+            if (message.type === "agent_update" && this.isCurrent(client, source))
+              this.receiveAgentDelta(source, message.payload);
+          },
+        });
+        payload = await subscription.ready;
+      } else payload = await client.fetchAgents(query);
       this.assertAgentTransactionCurrent(client, source, transaction);
       transaction.snapshot.entries.push(...payload.entries);
       transaction.snapshot.subscriptionId ??= payload.subscriptionId ?? null;
@@ -669,7 +691,6 @@ export class DirectorySync {
     this.agentTransactions.begin(connection.source, () => ({
       entries: [],
       subscriptionId: null,
-      legacy: false,
       syncRemovals: [],
     }));
   }
@@ -709,12 +730,15 @@ export class DirectorySync {
     );
     this.assertWorkspaceTransactionCurrent(client, source, transaction);
     if (payload.sync?.mode !== "changes") transaction.snapshot.projects.clear();
+    (transaction.snapshot.syncModes ??= {}).projects = payload.sync?.mode ?? "snapshot";
     for (const entry of payload.projects) {
       const project = normalizeProjectDescriptor(entry);
       transaction.snapshot.projects.set(project.projectId, project);
+      (transaction.snapshot.touchedProjectIds ??= new Set()).add(project.projectId);
     }
     for (const removal of payload.sync?.removals ?? []) {
       transaction.snapshot.projects.delete(removal.id);
+      (transaction.snapshot.touchedProjectIds ??= new Set()).add(removal.id);
     }
     if (payload.sync) {
       (transaction.snapshot.syncCursors ??= {}).projects = {
@@ -738,7 +762,22 @@ export class DirectorySync {
     }
     this.revision += 1;
     this.workspaceRevision += 1;
-    this.workspaces.commitSnapshot(completion.snapshot, completion.deltas);
+    const previous = this.readWorkspaceState();
+    const deltaMutations = this.workspaces.commitSnapshot(completion.snapshot, completion.deltas);
+    const next = this.workspaces.snapshot();
+    const workspaceIds =
+      completion.snapshot.syncModes?.workspaces === "changes"
+        ? new Set(completion.snapshot.touchedWorkspaceIds)
+        : new Set([...previous.workspaces.keys(), ...next.workspaces.keys()]);
+    const projectIds =
+      completion.snapshot.syncModes?.projects === "changes"
+        ? new Set(completion.snapshot.touchedProjectIds)
+        : new Set([...previous.projects.keys(), ...next.projects.keys()]);
+    for (const mutation of deltaMutations) {
+      if (mutation.kind === "workspace") workspaceIds.add(mutation.id);
+      if (mutation.kind === "project") projectIds.add(mutation.id);
+    }
+    this.persistWorkspaceChanges(previous, workspaceIds, projectIds);
     for (const [entity, cursor] of Object.entries(completion.snapshot.syncCursors ?? {})) {
       if (cursor) this.writeCursor(entity as "projects" | "workspaces", cursor);
     }
@@ -747,19 +786,41 @@ export class DirectorySync {
       const entity = "projectId" in delta || "project" in delta ? "projects" : "workspaces";
       this.noteLiveCursor(entity, delta);
     }
-    this.persistDirectory();
+    this.persistCheckpoint();
   }
 
-  private persistDirectory(): void {
-    if (!this.checkpoints) return;
-    const session = useSessionStore.getState().sessions[this.serverId];
-    if (!session) return;
-    this.checkpoints.commitDirectory(this.serverId, {
-      agents: session.agents,
-      workspaces: session.workspaces,
-      projects: session.projects,
-      checkpoint: this.cursors,
-    });
+  private persistCheckpoint(): void {
+    this.checkpoints?.commitDirectoryMutations(this.serverId, [], this.cursors);
+  }
+
+  private readWorkspaceState(): WorkspaceDirectorySnapshot {
+    return this.workspaces.snapshot();
+  }
+
+  private applyWorkspaceDelta(delta: WorkspaceDirectoryDelta): void {
+    const mutations = this.workspaces.applyDelta(delta);
+    this.checkpoints?.commitDirectoryMutations(this.serverId, mutations);
+  }
+
+  private persistWorkspaceChanges(
+    previous: WorkspaceDirectorySnapshot,
+    workspaceIds: Set<string>,
+    projectIds: Set<string>,
+  ): void {
+    const next = this.workspaces.snapshot();
+    const mutations: DirectoryReplicaMutation[] = [];
+    for (const id of workspaceIds) {
+      const value = next.workspaces.get(id);
+      if (value) mutations.push({ kind: "workspace", type: "upsert", id, value });
+      else if (previous.workspaces.has(id))
+        mutations.push({ kind: "workspace", type: "delete", id });
+    }
+    for (const id of projectIds) {
+      const value = next.projects.get(id);
+      if (value) mutations.push({ kind: "project", type: "upsert", id, value });
+      else if (previous.projects.has(id)) mutations.push({ kind: "project", type: "delete", id });
+    }
+    this.checkpoints?.commitDirectoryMutations(this.serverId, mutations);
   }
 
   private recordAgentSync(
@@ -858,7 +919,7 @@ export class DirectorySync {
 
   private flushAbortedTransactions(): void {
     for (const delta of this.agentTransactions.abort()) this.agents.applyDelta(delta);
-    for (const delta of this.workspaceTransactions.abort()) this.workspaces.applyDelta(delta);
+    for (const delta of this.workspaceTransactions.abort()) this.applyWorkspaceDelta(delta);
   }
 
   private abortPendingSessionWaits(): void {

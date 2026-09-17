@@ -1,4 +1,5 @@
-import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { rename, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -7,6 +8,10 @@ import { afterEach, describe, expect, it } from "vitest";
 import { DaemonConfigStore } from "../daemon-config-store.js";
 import { PluginService } from "./index.js";
 import { ManagedPluginSources } from "./managed-source.js";
+import {
+  startNpmRegistry,
+  npmPluginPackages,
+} from "../../../../../scripts/test-support/npm-registry.mjs";
 import { runGitCommand } from "../../utils/run-git-command.js";
 
 const roots: string[] = [];
@@ -155,6 +160,68 @@ function createPluginSelectivePausedRuntime(pausedPluginId: string) {
 }
 
 describe("PluginService", () => {
+  it("resolves a provider icon path to sanitized inline SVG", async () => {
+    const home = await mkdtemp(path.join(tmpdir(), "paseo-plugin-home-"));
+    roots.push(home);
+    const directory = await createPlugin(
+      "provider-icon",
+      `export default function contribute(server) {
+  server.registerProvider({
+    id: "plugin-agent",
+    label: "Plugin agent",
+    icon: "icon.svg",
+    async getCatalogCacheKey(options) { return options.scope === "workspace" ? "runtime:" + options.cwd : undefined; },
+    async connect() { throw new Error("not opened by this test"); },
+  });
+  return () => {};
+}`,
+    );
+    const iconSvg = '<svg viewBox="0 0 24 24"><path d="M4 4h16v16H4z" /></svg>';
+    await writeFile(path.join(directory, "icon.svg"), iconSvg);
+    const service = createService(home);
+
+    await service.start();
+    await service.installDirectory({ path: directory });
+
+    expect(service.getProviderRegistrations()).toMatchObject([
+      { id: "plugin-agent", icon: iconSvg, getCatalogCacheKey: expect.any(Function) },
+    ]);
+    const provider = service.getProviderRegistrations()[0]!;
+    expect(await provider.getCatalogCacheKey!({ scope: "workspace", cwd: "/project-a" })).toBe(
+      "runtime:/project-a",
+    );
+    expect(
+      await provider.getCatalogCacheKey!({ scope: "workspace", cwd: "/project-b", force: true }),
+    ).toBe("runtime:/project-b");
+    expect(await provider.getCatalogCacheKey!({ scope: "global" })).toBeUndefined();
+  });
+
+  it("publishes provider registrations only while their plugin is running", async () => {
+    const home = await mkdtemp(path.join(tmpdir(), "paseo-plugin-home-"));
+    roots.push(home);
+    const directory = await createPlugin(
+      "provider-lifecycle",
+      `export default function contribute(server) {
+  server.registerProvider({
+    id: "plugin-agent",
+    label: "Plugin agent",
+    async connect() { throw new Error("not opened by this test"); },
+  });
+  return () => {};
+}`,
+    );
+    const service = createService(home);
+
+    await service.start();
+    await service.installDirectory({ path: directory });
+    expect(service.getProviderRegistrations()).toMatchObject([
+      { id: "plugin-agent", label: "Plugin agent" },
+    ]);
+
+    await service.disablePlugin("provider-lifecycle");
+    expect(service.getProviderRegistrations()).toEqual([]);
+  });
+
   it("retains logs when disabled and clears them only when removed", async () => {
     const home = await mkdtemp(path.join(tmpdir(), "paseo-plugin-home-"));
     roots.push(home);
@@ -247,7 +314,7 @@ describe("PluginService", () => {
     await writeFile(path.join(directory, "index.server.ts"), "export default broken syntax !!!");
     await expect(service.reloadPlugin("work-plugin")).rejects.toThrow();
     expect(service.catalog()).toEqual([]);
-    expect(service.listPlugins()).toEqual([
+    expect(await service.listPlugins()).toMatchObject([
       expect.objectContaining({ id: "work-plugin", status: "failed", error: expect.any(String) }),
     ]);
 
@@ -258,6 +325,39 @@ describe("PluginService", () => {
     await expect(service.reloadPlugin("work-plugin")).resolves.toMatchObject({ status: "running" });
     await service.stopAllPlugins();
   }, 20_000);
+
+  it("lists manifest descriptions for running and disabled plugins without hiding malformed entries", async () => {
+    const home = await mkdtemp(path.join(tmpdir(), "paseo-plugin-home-"));
+    roots.push(home);
+    const running = await createPlugin("running", "export default () => () => {};");
+    const disabled = await createPlugin("disabled", "export default () => () => {};");
+    const malformed = await createPlugin("malformed", "export default () => () => {};");
+    await writeFile(
+      path.join(running, "paseo-plugin.json"),
+      JSON.stringify({ id: "running", description: "Runs checks" }),
+    );
+    await writeFile(
+      path.join(disabled, "paseo-plugin.json"),
+      JSON.stringify({ id: "disabled", description: "Waits until enabled" }),
+    );
+    await writeFile(path.join(malformed, "paseo-plugin.json"), "{");
+    const service = createService(home, {
+      running: { source: "directory", path: running },
+      disabled: { source: "directory", path: disabled, enabled: false },
+      malformed: { source: "directory", path: malformed },
+    });
+
+    await service.start();
+
+    expect(
+      (await service.listPlugins()).map(({ id, description }) => ({ id, description })),
+    ).toEqual([
+      { id: "disabled", description: "Waits until enabled" },
+      { id: "malformed", description: undefined },
+      { id: "running", description: "Runs checks" },
+    ]);
+    await service.stopAllPlugins();
+  });
 
   it("prefers an existing directory and installs its selected plugin subdirectory", async () => {
     const home = await mkdtemp(path.join(tmpdir(), "paseo-plugin-home-"));
@@ -282,6 +382,150 @@ describe("PluginService", () => {
     ).resolves.toMatchObject({ id: "local-monorepo", path: pluginDirectory, status: "running" });
     await service.stopAllPlugins();
   }, 20_000);
+
+  it.each([true, false])(
+    "updates the shipped legacy Git layout with enabled=%s",
+    async (enabled) => {
+      const home = await mkdtemp(path.join(tmpdir(), "paseo-legacy-layout-"));
+      roots.push(home);
+      const repository = await mkdtemp(path.join(tmpdir(), "paseo-legacy-remote-"));
+      roots.push(repository);
+      const id = "legacy-review";
+      const pluginPath = "plugins/review";
+      await mkdir(path.join(repository, pluginPath), { recursive: true });
+      await writeFile(
+        path.join(repository, pluginPath, "paseo-plugin.json"),
+        JSON.stringify({ id, requirements: { paseo: ">=0.8.0" } }),
+      );
+      await writeFile(
+        path.join(repository, pluginPath, "index.server.ts"),
+        `import { defineSettings } from "@getpaseo/plugin";
+import { z } from "zod";
+import type { PluginServerContext } from "@getpaseo/plugin/server";
+export default function contribute(server: PluginServerContext) {
+  server.registerSettings(defineSettings({ id: "preferences", scope: "host", version: 1, schema: z.object({ message: z.string().default("default") }) }));
+  return () => {};
+}`,
+      );
+      for (const args of [
+        ["init", "-b", "main"],
+        ["add", "."],
+        ["-c", "user.name=Test", "-c", "user.email=test@example.test", "commit", "-m", "initial"],
+        ["tag", "v1"],
+      ])
+        await runGitCommand(args, { cwd: repository });
+      const initial = (
+        await runGitCommand(["rev-parse", "HEAD"], { cwd: repository })
+      ).stdout.trim();
+      const remote = pathToFileURL(repository).href;
+      const legacyRoot = path.join(home, "plugins", id, `${initial.slice(0, 12)}-${randomUUID()}`);
+      const checkoutRoot = path.join(legacyRoot, "checkout");
+      const directory = path.join(checkoutRoot, pluginPath);
+      await mkdir(legacyRoot, { recursive: true });
+      await runGitCommand(["clone", remote, checkoutRoot], { cwd: home });
+      await runGitCommand(["checkout", "--detach", "v1"], { cwd: checkoutRoot });
+      await writeFile(
+        path.join(home, "plugins", "sources.json"),
+        JSON.stringify({
+          [id]: {
+            remote,
+            requestedRef: "v1",
+            trackingBranch: null,
+            commit: "f".repeat(40),
+            pluginPath,
+            checkoutRoot,
+          },
+        }),
+      );
+      const settingsDirectory = path.join(home, "plugin-settings");
+      await mkdir(path.join(settingsDirectory, id), { recursive: true });
+      const settingsFile = path.join(settingsDirectory, id, "preferences.json");
+      const savedSettings = JSON.stringify({ version: 1, values: { message: "keep my settings" } });
+      await writeFile(settingsFile, savedSettings);
+      const store = createStore(home, { [id]: { source: "directory", path: directory, enabled } });
+      const open = () =>
+        bindTestSessionHost(
+          new PluginService(pino({ level: "silent" }), store, "0.8.0", {
+            managedSources: new ManagedPluginSources(home),
+            settingsDirectory,
+          }),
+        );
+      let service = open();
+      try {
+        await service.start();
+        const expected = {
+          identity: { kind: "git", remote, pluginPath },
+          currentRevision: initial,
+        };
+        await rename(repository, `${repository}-offline`);
+        try {
+          expect(await new ManagedPluginSources(home).describe(id, directory)).toEqual(expected);
+          expect(await service.listPlugins()).toMatchObject([
+            { id, enabled, status: enabled ? "running" : "disabled", installation: expected },
+          ]);
+        } finally {
+          await rename(`${repository}-offline`, repository);
+        }
+        await service.stopAllPlugins();
+        service = open();
+        await service.start();
+        await runGitCommand(["checkout", "-b", "new-default"], { cwd: repository });
+        await writeFile(path.join(repository, pluginPath, "revision.txt"), "new default");
+        for (const args of [
+          ["add", "."],
+          ["-c", "user.name=Test", "-c", "user.email=test@example.test", "commit", "-m", "update"],
+        ])
+          await runGitCommand(args, { cwd: repository });
+        const latest = (
+          await runGitCommand(["rev-parse", "HEAD"], { cwd: repository })
+        ).stdout.trim();
+        const [preview] = await service.previewUpdates({ pluginId: id });
+        expect(preview).toMatchObject({
+          outcome: "update",
+          current: expected,
+          target: { kind: "git", commit: latest },
+        });
+        const [updated] = await service.applyUpdates([preview!.proposal!]);
+        expect(updated).toMatchObject({
+          outcome: "updated",
+          plugin: {
+            id,
+            enabled,
+            status: enabled ? "running" : "disabled",
+            installation: { identity: expected.identity, currentRevision: latest },
+          },
+        });
+        await expect(stat(legacyRoot)).rejects.toMatchObject({ code: "ENOENT" });
+        expect(await readFile(settingsFile, "utf8")).toBe(savedSettings);
+        await service.disablePlugin(id);
+        await service.enablePlugin(id);
+        expect(await service.reloadPlugin(id)).toMatchObject({ status: "running" });
+        expect(await service.invokePluginRpc(id, "settings.preferences.read", {})).toMatchObject({
+          status: "ready",
+          values: { message: "keep my settings" },
+        });
+        await service.removePlugin(id);
+        await expect(stat(path.join(home, "plugins", id))).rejects.toMatchObject({
+          code: "ENOENT",
+        });
+        expect(await stat(repository)).toBeDefined();
+        const sources = new ManagedPluginSources(home);
+        // A record cannot confer ownership on another plugin's tree or a malformed version name.
+        sources.commit(id, { kind: "git", remote });
+        for (const outside of [
+          path.join(home, "plugins", "other", path.basename(legacyRoot), "checkout"),
+          path.join(home, "plugins", id, "f".repeat(36), "checkout"),
+          path.join(home, "plugins", id, `${initial.slice(0, 12)}-invalid`, "checkout"),
+        ])
+          await expect(sources.describe(id, outside)).rejects.toThrow(
+            "outside its managed installation",
+          );
+      } finally {
+        await service.stopAllPlugins();
+      }
+    },
+    30_000,
+  );
 
   it("keeps the running commit when a Git update build command fails", async () => {
     const home = await mkdtemp(path.join(tmpdir(), "paseo-plugin-home-"));
@@ -329,12 +573,14 @@ describe("PluginService", () => {
     await runGitCommand(["add", "-A"], { cwd: repository });
     await runGitCommand(["commit", "-m", "broken update"], { cwd: repository });
 
-    await expect(service.updateSources("git-update")).rejects.toThrow();
+    expect(await applyReviewedUpdate(service, "git-update")).toMatchObject([
+      { outcome: "error", error: expect.stringContaining("build exploded") },
+    ]);
     expect(await readdir(path.join(home, "plugins", ".staging"))).toEqual([]);
     expect(service.catalog()).toEqual([
       expect.objectContaining({ id: "git-update", clientBundle: expect.any(String) }),
     ]);
-    expect(service.listPlugins()).toEqual([
+    expect(await service.listPlugins()).toMatchObject([
       expect.objectContaining({
         id: "git-update",
         path: installedPath,
@@ -423,8 +669,8 @@ describe("PluginService", () => {
     await runGitCommand(["add", "-A"], { cwd: repository });
     await runGitCommand(["commit", "-m", "prepared update"], { cwd: repository });
 
-    await expect(service.updateSources("prepared-git-plugin")).resolves.toEqual([
-      expect.objectContaining({ id: "prepared-git-plugin", updated: true }),
+    await expect(applyReviewedUpdate(service, "prepared-git-plugin")).resolves.toEqual([
+      expect.objectContaining({ id: "prepared-git-plugin", outcome: "updated" }),
     ]);
     expect(events).toEqual(["validate:prepared", "start", "validate:updated", "start"]);
     await service.stopAllPlugins();
@@ -483,7 +729,7 @@ describe("PluginService", () => {
       managedSources,
     });
     await service.start();
-    expect(service.listPlugins()).toEqual([
+    expect(await service.listPlugins()).toMatchObject([
       expect.objectContaining({ id: "failed-update", status: "failed" }),
     ]);
 
@@ -494,16 +740,86 @@ describe("PluginService", () => {
     await runGitCommand(["add", "-A"], { cwd: repository });
     await runGitCommand(["commit", "-m", "fixed"], { cwd: repository });
 
-    await expect(service.updateSources("failed-update")).resolves.toEqual([
-      expect.objectContaining({ id: "failed-update", updated: true }),
+    await expect(applyReviewedUpdate(service, "failed-update")).resolves.toEqual([
+      expect.objectContaining({ id: "failed-update", outcome: "updated" }),
     ]);
     expect(starts).toHaveLength(2);
     expect(starts[1]).not.toBe(initial.directory);
-    expect(service.listPlugins()).toEqual([
+    expect(await service.listPlugins()).toMatchObject([
       expect.objectContaining({ id: "failed-update", path: starts[1], status: "running" }),
     ]);
     await service.stopAllPlugins();
   }, 30_000);
+
+  it.each([false, true])(
+    "cleans a failed update when restoration also fails=%s",
+    async (failRestore) => {
+      const home = await mkdtemp(path.join(tmpdir(), "paseo-plugin-recovery-"));
+      roots.push(home);
+      const repository = await createPlugin("recovery", "export default () => () => {};\n");
+      for (const args of [
+        ["init", "-b", "main"],
+        ["add", "."],
+        ["-c", "user.name=Test", "-c", "user.email=test@example.test", "commit", "-m", "initial"],
+      ])
+        await runGitCommand(args, { cwd: repository });
+      const running = new Set<string>();
+      let starts = 0;
+      const runtime: TestPluginRuntime = {
+        catalog: () => [...running].map((id) => ({ id, clientBundle: "bundle" })),
+        invoke: async () => undefined,
+        getLogs: () => [],
+        clearLogs: () => undefined,
+        validatePlugin: async () => undefined,
+        startPlugin: async (id) => {
+          starts++;
+          if (starts === 2) throw new Error("candidate activation failed");
+          if (starts === 3 && failRestore) throw new Error("prior activation failed");
+          running.add(id);
+        },
+        stopPluginById: async (id) => running.delete(id),
+        stopAll: async () => running.clear(),
+        subscribe: () => () => undefined,
+        bindPaseoSessionHost: () => undefined,
+      };
+      const service = createService(
+        home,
+        {},
+        { runtime, managedSources: new ManagedPluginSources(home) },
+      );
+      await service.start();
+      const installed = await service.installSource({ source: pathToFileURL(repository).href });
+      await writeFile(path.join(repository, "revision.txt"), "new");
+      for (const args of [
+        ["add", "."],
+        ["-c", "user.name=Test", "-c", "user.email=test@example.test", "commit", "-m", "update"],
+      ])
+        await runGitCommand(args, { cwd: repository });
+      const result = await applyReviewedUpdate(service, "recovery");
+      expect(result).toMatchObject([
+        {
+          outcome: "error",
+          error: expect.stringContaining(
+            failRestore ? "restoring previous plugin also failed" : "candidate activation failed",
+          ),
+        },
+      ]);
+      expect(await service.listPlugins()).toMatchObject([
+        {
+          path: installed.path,
+          enabled: true,
+          status: failRestore ? "failed" : "running",
+          installation: installed.installation,
+        },
+      ]);
+      expect(await readdir(path.join(home, "plugins", "recovery"))).toEqual([
+        path.basename(path.dirname(installed.path)),
+      ]);
+      expect(await readdir(path.join(home, "plugins", ".staging"))).toEqual([]);
+      await service.stopAllPlugins();
+    },
+    30_000,
+  );
 
   it("disables and removes a plugin without touching its source directory", async () => {
     const home = await mkdtemp(path.join(tmpdir(), "paseo-plugin-home-"));
@@ -530,7 +846,7 @@ export default function contribute(plugin: unknown) {
     expect(await readFile(cleanupFile, "utf8")).toBe("cleaned");
     await service.removePlugin("cleanup-plugin");
 
-    expect(service.listPlugins()).toEqual([]);
+    expect(await service.listPlugins()).toMatchObject([]);
     await expect(stat(directory)).resolves.toMatchObject({});
     await service.stopAllPlugins();
   }, 20_000);
@@ -562,7 +878,7 @@ export default function contribute(plugin: unknown) {
     );
     store.patch({ pluginsEnabled: true });
     await service.reloadPlugin("first");
-    expect(service.listPlugins().map(({ id, status }) => ({ id, status }))).toEqual([
+    expect((await service.listPlugins()).map(({ id, status }) => ({ id, status }))).toEqual([
       { id: "first", status: "running" },
       { id: "second", status: "running" },
     ]);
@@ -589,7 +905,7 @@ export default function contribute(plugin: unknown) {
     await service.stopAllPlugins();
 
     expect(service.catalog()).toEqual([]);
-    expect(service.listPlugins()).toEqual([
+    expect(await service.listPlugins()).toMatchObject([
       { id: "slow", path: "/plugins/slow", enabled: true, status: "disabled" },
     ]);
   });
@@ -699,17 +1015,17 @@ export default function contribute(plugin: unknown) {
       "Plugin entry points are missing",
     );
     await expect(service.installDirectory({ path: legacy })).rejects.toThrow(
-      "This plugin was made for an older version of Paseo and cannot run on Paseo v0.8. Ask its author to update it. Plugin authors can follow the migration guide: https://paseo.sh/docs/plugins/v0.8/migration",
+      "This plugin was made for an older version of Paseo and cannot run on Paseo v0.8. Ask its author to update it. Plugin authors can follow the migration guide: https://paseo.sh/docs/plugins/migration",
     );
     await expect(service.installDirectory({ path: startupFailure })).rejects.toThrow(
       "startup exploded",
     );
-    expect(service.listPlugins()).toEqual([
+    expect(await service.listPlugins()).toMatchObject([
       expect.objectContaining({
         id: "legacy-plugin",
         status: "failed",
         error:
-          "This plugin was made for an older version of Paseo and cannot run on Paseo v0.8. Ask its author to update it. Plugin authors can follow the migration guide: https://paseo.sh/docs/plugins/v0.8/migration",
+          "This plugin was made for an older version of Paseo and cannot run on Paseo v0.8. Ask its author to update it. Plugin authors can follow the migration guide: https://paseo.sh/docs/plugins/migration",
       }),
       expect.objectContaining({
         id: "missing-entry",
@@ -753,3 +1069,282 @@ export default function contribute(plugin: unknown) {
     expect((await readFile(cleanupFile, "utf8")).trim().split("\n")).toHaveLength(4);
   });
 });
+
+describe("npm plugin installation", () => {
+  it("preserves dependencies and metadata, and reloads without npm", async () => {
+    const packages = npmPluginPackages();
+    const fixture = packages[1];
+    packages.push({ ...fixture, version: "2.0.0", tags: ["future"] });
+    const failures: Array<[string, Record<string, string>]> = [
+      ["bad-manifest", { "paseo-plugin.json": "{}" }],
+      [
+        "bad-build",
+        {
+          "paseo-plugin.json": JSON.stringify({
+            id: "bad-build",
+            requirements: { paseo: ">=0.4.0" },
+            build: [[process.execPath, "-e", "throw new Error('preparation failed')"]],
+          }),
+        },
+      ],
+      [
+        "bad-requirements",
+        {
+          "paseo-plugin.json": JSON.stringify({
+            id: "bad-requirements",
+            requirements: { paseo: ">=999.0.0" },
+          }),
+        },
+      ],
+      ["bad-code", { "index.server.ts": "invalid syntax !!!" }],
+      [
+        "bad-activation",
+        { "index.server.ts": "export default () => { throw new Error('activation failed'); };" },
+      ],
+    ];
+    const failedPackages = [];
+    for (const [name, overrides] of failures) {
+      failedPackages.push({ ...fixture, name, files: { ...fixture.files, ...overrides } });
+    }
+    const registry = await startNpmRegistry([
+      ...packages,
+      {
+        name: "paseo-prepared-plugin",
+        version: "1.0.0",
+        dependencies: { "paseo-fixture-dependency": "1.0.0" },
+        scripts: { postinstall: "node -e \"throw new Error('npm lifecycle must not run')\"" },
+        files: {
+          "nested/paseo-plugin.json": JSON.stringify({
+            id: "prepared",
+            requirements: { paseo: ">=0.4.0" },
+            build: [
+              [
+                process.execPath,
+                "-e",
+                "require('node:fs').mkdirSync('server'); require('node:fs').writeFileSync('server/generated.js', 'export default 42;');",
+              ],
+            ],
+          }),
+          "nested/index.server.ts": `import generated from "./server/generated.js";
+import dependency from "paseo-fixture-dependency";
+import { z } from "zod";
+export default function contribute() {
+  if (generated !== 42 || z.string().parse(dependency) !== "dependency loaded") throw new Error("Preparation failed");
+  return () => {};
+}`,
+        },
+      },
+      ...failedPackages,
+    ]);
+    const home = await mkdtemp(path.join(tmpdir(), "paseo-npm-service-"));
+    roots.push(home);
+    const previousConfig = process.env.npm_config_userconfig;
+    const previousPath = process.env.PATH;
+    process.env.npm_config_userconfig = registry.userconfig;
+    const store = createStore(home);
+    const open = () =>
+      bindTestSessionHost(
+        new PluginService(pino({ level: "silent" }), store, "0.8.0", {
+          managedSources: new ManagedPluginSources(home),
+        }),
+      );
+    let service = open();
+    try {
+      await service.start();
+      const installed = await service.installSource({ source: "npm:paseo-fixture-plugin@^1.0.0" });
+      expect(installed).toMatchObject({
+        id: "npm-review",
+        status: "running",
+        installation: {
+          identity: { kind: "npm", packageName: "paseo-fixture-plugin", pluginPath: "." },
+          currentRevision: "1.1.0",
+        },
+      });
+      expect(installed.commit).toBeUndefined();
+      expect(installed.remote).toBeUndefined();
+      expect(
+        service
+          .getLogs("npm-review")
+          .map((entry) => entry.message)
+          .join("\n"),
+      ).toContain("dependency loaded");
+      const installRoot = path.dirname(path.dirname(installed.path));
+      expect(
+        JSON.parse(await readFile(path.join(home, "plugins", "sources.json"), "utf8"))[
+          "npm-review"
+        ],
+      ).toEqual({ kind: "npm" });
+      expect(
+        JSON.parse(await readFile(path.join(installRoot, "package-lock.json"), "utf8")).packages[
+          "node_modules/paseo-fixture-dependency"
+        ].version,
+      ).toBe("1.0.0");
+      for (const [source, id, version] of [
+        ["npm:paseo-fixture-plugin@1.0.0", "exact", "1.0.0"],
+        ["paseo-fixture-plugin@stable", "tag", "1.0.0"],
+        ["npm:@paseo-fixture/review", "scoped", "2.0.0"],
+      ]) {
+        expect(await service.installSource({ source, id })).toMatchObject({
+          id,
+          status: "running",
+          installation: { currentRevision: version },
+        });
+      }
+      const [preview] = await service.previewUpdates({ pluginId: "exact" });
+      expect(preview).toMatchObject({
+        outcome: "update",
+        current: { currentRevision: "1.0.0" },
+        target: { version: "1.1.0" },
+      });
+      const before = (await service.listPlugins()).find((item) => item.id === "exact")!;
+      await service.disablePlugin("exact");
+      registry.setTag("paseo-fixture-plugin", "latest", "2.0.0");
+      const results = await service.applyUpdates([
+        { ...preview!.proposal!, id: "missing-plugin" },
+        preview!.proposal!,
+      ]);
+      expect(results).toMatchObject([
+        { outcome: "error" },
+        {
+          outcome: "updated",
+          plugin: { enabled: false, installation: { currentRevision: "1.1.0" } },
+        },
+      ]);
+      expect(results[1]?.plugin?.installation?.identity).toEqual(before.installation?.identity);
+      registry.setTag("paseo-fixture-plugin", "latest", "1.1.0");
+      expect(await service.applyUpdates([preview!.proposal!])).toMatchObject([
+        { outcome: "error", error: expect.stringContaining("changed since review") },
+      ]);
+      await service.enablePlugin("exact");
+      const [future] = await service.previewUpdates({
+        pluginId: "exact",
+        target: { kind: "npm", version: "future" },
+      });
+      expect(await service.applyUpdates([future!.proposal!])).toMatchObject([
+        { outcome: "updated", plugin: { installation: { currentRevision: "2.0.0" } } },
+      ]);
+      const [newer] = await service.previewUpdates({ pluginId: "exact" });
+      expect(newer).toMatchObject({
+        outcome: "installed-newer",
+        current: { currentRevision: "2.0.0" },
+        target: { version: "1.1.0" },
+      });
+      expect(newer?.proposal).toBeUndefined();
+      const [downgrade] = await service.previewUpdates({
+        pluginId: "exact",
+        target: { kind: "npm", version: "1.0.0" },
+      });
+      const wrongArtifact = {
+        ...downgrade!.proposal!,
+        target: { ...downgrade!.proposal!.target, integrity: "sha512-invalid" },
+      };
+      expect(await service.applyUpdates([wrongArtifact])).toMatchObject([{ outcome: "error" }]);
+      expect(await service.applyUpdates([downgrade!.proposal!])).toMatchObject([
+        { outcome: "updated", plugin: { installation: { currentRevision: "1.0.0" } } },
+      ]);
+      expect((await service.previewUpdates({ pluginId: "exact" }))[0]?.outcome).toBe("update");
+      await expect(service.updateSources("exact")).rejects.toThrow("Update the client");
+      const prepared = await service.installSource({
+        source: "npm:paseo-prepared-plugin@1.0.0:nested",
+      });
+      expect(prepared).toMatchObject({ id: "prepared", status: "running" });
+      expect(await readFile(path.join(prepared.path, "server/generated.js"), "utf8")).toBe(
+        "export default 42;",
+      );
+      expect(prepared.installation).toMatchObject({ identity: { pluginPath: "nested" } });
+      await service.removePlugin("prepared");
+      expect(registry.requests).not.toContain("/@getpaseo/plugin");
+      await expect(service.installSource({ source: "npm:missing-plugin" })).rejects.toThrow();
+      await expect(
+        service.installSource({ source: "npm:paseo-fixture-plugin", ref: "main" }),
+      ).rejects.toThrow("--ref is only valid for Git");
+      await expect(service.installSource({ source: "npm:paseo-fixture-plugin" })).rejects.toThrow(
+        "already configured",
+      );
+      expect(await readdir(path.join(home, "plugins", ".staging"))).toEqual([]);
+      for (const name of [
+        "bad-manifest",
+        "bad-build",
+        "bad-requirements",
+        "bad-code",
+        "bad-activation",
+      ]) {
+        await expect(service.installSource({ source: `npm:${name}`, id: name })).rejects.toThrow();
+        expect((await service.listPlugins()).map((plugin) => plugin.id)).toEqual([
+          "exact",
+          "npm-review",
+          "scoped",
+          "tag",
+        ]);
+        expect(await readdir(path.join(home, "plugins", ".staging"))).toEqual([]);
+      }
+      await service.disablePlugin("scoped");
+      await service.stopAllPlugins();
+      const recordsPath = path.join(home, "plugins", "sources.json");
+      const oldRecords = JSON.parse(await readFile(recordsPath, "utf8"));
+      Object.assign(oldRecords["npm-review"], {
+        requestedSpec: "0.0.1",
+        version: "0.0.1",
+        packageName: "obsolete",
+        installRoot: "/obsolete",
+        integrity: "obsolete",
+      });
+      await writeFile(recordsPath, JSON.stringify(oldRecords));
+      process.env.PATH = path.join(home, "no-executables");
+      service = open();
+      await service.start();
+      expect(await service.listPlugins()).toMatchObject(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: "npm-review",
+            status: "running",
+            installation: installed.installation,
+          }),
+          expect.objectContaining({ id: "scoped", enabled: false, status: "disabled" }),
+        ]),
+      );
+      expect(await service.reloadPlugin("npm-review")).toMatchObject({
+        status: "running",
+        installation: installed.installation,
+      });
+      await expect(
+        service.installSource({ source: "npm:paseo-fixture-plugin", id: "missing-npm" }),
+      ).rejects.toThrow("npm is required on the daemon host");
+      expect(await readdir(path.join(home, "plugins", ".staging"))).toEqual([]);
+      const packagePath = path.join(installed.path, "package.json");
+      const packageJson = await readFile(packagePath, "utf8");
+      await writeFile(
+        packagePath,
+        JSON.stringify({ ...JSON.parse(packageJson), version: "99.0.0" }),
+      );
+      const corrupt = (await service.listPlugins()).find((plugin) => plugin.id === "npm-review")!;
+      expect(corrupt.status).toBe("running");
+      expect(corrupt.installation).toEqual({ identity: installed.installation!.identity });
+      expect((await service.previewUpdates({ pluginId: "npm-review" }))[0]).toMatchObject({
+        outcome: "error",
+        error: expect.stringContaining("Installed revision is unavailable"),
+      });
+      expect(await service.reloadPlugin("npm-review")).toMatchObject({ status: "running" });
+      await writeFile(packagePath, packageJson);
+      await service.removePlugin("npm-review");
+      await expect(stat(installRoot)).rejects.toMatchObject({ code: "ENOENT" });
+      expect(
+        JSON.parse(await readFile(path.join(home, "plugins", "sources.json"), "utf8"))[
+          "npm-review"
+        ],
+      ).toBeUndefined();
+    } finally {
+      process.env.PATH = previousPath;
+      if (previousConfig === undefined) delete process.env.npm_config_userconfig;
+      else process.env.npm_config_userconfig = previousConfig;
+      await service.stopAllPlugins();
+      await registry.close();
+    }
+  }, 120_000);
+});
+
+async function applyReviewedUpdate(service: PluginService, pluginId: string) {
+  const [preview] = await service.previewUpdates({ pluginId });
+  expect(preview?.outcome).toBe("update");
+  return service.applyUpdates([preview!.proposal!]);
+}

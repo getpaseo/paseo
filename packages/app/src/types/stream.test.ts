@@ -23,6 +23,51 @@ import { timelineItemIdentity } from "@getpaseo/protocol/timeline-identity";
 
 type CanonicalToolStatus = "running" | "completed" | "failed" | "canceled";
 
+it("updates a resolved Claude plan at its proposal position across a follow-up", () => {
+  const proposal = {
+    type: "timeline",
+    provider: "claude",
+    turnId: "turn-1",
+    item: {
+      type: "tool_call",
+      callId: "plan-1",
+      name: "ExitPlanMode",
+      status: "running",
+      error: null,
+      detail: { type: "plan", text: "Ship it" },
+    },
+  } satisfies AgentStreamEventPayload;
+  const pending = reduceStreamUpdate([], proposal, new Date(1));
+  const steered = reduceStreamUpdate(
+    pending,
+    {
+      type: "timeline",
+      provider: "claude",
+      turnId: "turn-1",
+      item: { type: "user_message", text: "What about tests?", messageId: "question" },
+    },
+    new Date(2),
+  );
+  const resolved = reduceStreamUpdate(
+    steered,
+    {
+      ...proposal,
+      item: {
+        ...proposal.item,
+        name: "plan_approval",
+        status: "completed",
+        metadata: { approved: false },
+      },
+    },
+    new Date(3),
+  );
+  expect(resolved.map((item) => item.kind)).toEqual(["tool_call", "user_message"]);
+  expect(resolved[0]?.id).toBe(pending[0]?.id);
+  expect(resolved[0]).toMatchObject({
+    payload: { data: { name: "plan_approval", metadata: { approved: false } } },
+  });
+});
+
 describe("plugin timeline rows", () => {
   it("uses the protocol identity format for stream tool and plugin rows", () => {
     const tool = {
@@ -838,7 +883,7 @@ describe("stream reducer canonical tool calls", () => {
     expect(new Set(messages.map((message) => message.id)).size).toBe(2);
   });
 
-  it("keeps every promoted block when an assistant message resumes after a tool", () => {
+  it("keeps whole messages when an assistant resumes after a tool", () => {
     const messageId = "msg-promoted-resume";
     let tail: StreamItem[] = [];
     let head: StreamItem[] = [];
@@ -881,15 +926,13 @@ describe("stream reducer canonical tool calls", () => {
         item.kind === "assistant_message",
     );
     expect(messages.map((message) => message.text)).toEqual([
-      "Before one.",
-      "Before two.",
-      "After one.",
-      "After two.",
+      "Before one.\n\nBefore two.",
+      "After one.\n\nAfter two.",
     ]);
     expect(new Set(messages.map((message) => message.id)).size).toBe(messages.length);
   });
 
-  it("keeps the timeline position on every promoted assistant block", () => {
+  it("keeps the timeline position on the whole assistant message", () => {
     const timelineCursor = { epoch: "epoch-1", seq: 42 };
     const result = applyStreamEvent({
       tail: [],
@@ -904,13 +947,9 @@ describe("stream reducer canonical tool calls", () => {
         item.kind === "assistant_message",
     );
     expect(messages.map((message) => message.text)).toEqual([
-      "First paragraph.",
-      "Second paragraph.",
+      "First paragraph.\n\nSecond paragraph.",
     ]);
-    expect(messages.map((message) => message.timelineCursor)).toEqual([
-      timelineCursor,
-      timelineCursor,
-    ]);
+    expect(messages.map((message) => message.timelineCursor)).toEqual([timelineCursor]);
   });
 
   it("preserves old assistant merge behavior when message ids are absent", () => {

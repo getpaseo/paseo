@@ -10,7 +10,7 @@ const PASEO_BROWSER_STORAGE_TYPES = [
   "localstorage",
   "serviceworkers",
   "cachestorage",
-  "websql",
+  "shadercache",
 ] as const;
 
 interface BrowserProfileSession {

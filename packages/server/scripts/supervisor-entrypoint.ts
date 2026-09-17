@@ -18,13 +18,11 @@ process.title = "Paseo Supervisor";
 
 interface DaemonRunnerConfig {
   devMode: boolean;
-  reclaimStalePidLock: boolean;
   workerArgs: string[];
 }
 
 function parseConfig(argv: string[]): DaemonRunnerConfig {
   let devMode = false;
-  let reclaimStalePidLock = false;
   const workerArgs: string[] = [];
 
   for (const arg of argv) {
@@ -33,13 +31,14 @@ function parseConfig(argv: string[]): DaemonRunnerConfig {
       continue;
     }
     if (arg === "--reclaim-stale-pid-lock") {
-      reclaimStalePidLock = true;
-      continue;
+      throw new Error(
+        "--reclaim-stale-pid-lock was removed: stop the existing supervisor before starting another.",
+      );
     }
     workerArgs.push(arg);
   }
 
-  return { devMode, reclaimStalePidLock, workerArgs };
+  return { devMode, workerArgs };
 }
 
 function resolveWorkerEntry(): string {
@@ -116,7 +115,6 @@ async function main(): Promise<void> {
   try {
     await acquirePidLock(paseoHome, null, {
       ownerPid: process.pid,
-      reclaimStaleDesktopLock: config.reclaimStalePidLock,
     });
   } catch (error) {
     if (error instanceof PidLockError) {
@@ -177,6 +175,7 @@ async function main(): Promise<void> {
     onWorkerReady: async ({ listen }) => {
       await updatePidLock(paseoHome, { listen }, { ownerPid: process.pid });
     },
+    onWorkerExit: () => updatePidLock(paseoHome, { listen: null }, { ownerPid: process.pid }),
     onSupervisorExit: releaseLock,
   });
   requestSupervisorShutdown = supervisor.requestShutdown;

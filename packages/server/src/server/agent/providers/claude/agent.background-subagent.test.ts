@@ -313,4 +313,101 @@ describe("background Claude subagents", () => {
       },
     });
   });
+
+  test.each([
+    {
+      source: "system task protocol",
+      notification: {
+        type: "system",
+        subtype: "task_notification",
+        task_id: "bash-task",
+        tool_use_id: "toolu_bash",
+        status: "completed",
+        summary: "sleep 2; printf NESTED_BACKGROUND_SENTINEL",
+      },
+    },
+    {
+      source: "queued user envelope",
+      notification: {
+        type: "user",
+        uuid: "bash-notification",
+        message: {
+          role: "user",
+          content:
+            "<task-notification>\n<task-id>bash-task</task-id>\n<tool-use-id>toolu_bash</tool-use-id>\n<status>completed</status>\n<summary>sleep 2; printf NESTED_BACKGROUND_SENTINEL</summary>\n</task-notification>",
+        },
+      },
+    },
+  ])(
+    "routes a child-owned background notification from $source to that child's timeline",
+    async ({ notification }) => {
+      queryFactory.mockImplementation(() =>
+        buildQueryMock([
+          { type: "system", subtype: "init", session_id: "nested-session" },
+          {
+            type: "system",
+            subtype: "task_started",
+            task_id: "direct-task",
+            tool_use_id: "toolu_direct",
+            task_type: "local_agent",
+            subagent_type: "general-purpose",
+            description: "Run a background command",
+            spawn_depth: 1,
+          },
+          {
+            type: "assistant",
+            parent_tool_use_id: "toolu_direct",
+            message: {
+              model: "claude-sonnet-5",
+              content: [
+                {
+                  type: "tool_use",
+                  id: "toolu_bash",
+                  name: "Bash",
+                  input: { command: "sleep 2; printf NESTED_BACKGROUND_SENTINEL" },
+                },
+              ],
+            },
+          },
+          {
+            type: "system",
+            subtype: "task_started",
+            task_id: "bash-task",
+            tool_use_id: "toolu_bash",
+            task_type: "local_bash",
+            owned_by_subagent: true,
+            is_backgrounded: true,
+          },
+          notification,
+          { type: "result", subtype: "success", usage: {}, total_cost_usd: 0 },
+        ]),
+      );
+      const session = await new ClaudeAgentClient({
+        logger: createTestLogger(),
+        queryFactory,
+        resolveBinary: async () => "/test/claude/bin",
+      }).createSession({ provider: "claude", cwd: process.cwd() });
+      const events = await collectUntilTerminal(streamSession(session, "delegate work"));
+      await session.close();
+
+      expect(
+        events.filter(
+          (event) =>
+            event.type === "timeline" &&
+            event.item.type === "tool_call" &&
+            event.item.name === "task_notification",
+        ),
+      ).toEqual([]);
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: "provider_subagent",
+          event: expect.objectContaining({
+            type: "timeline",
+            id: "toolu_direct",
+            item: expect.objectContaining({ type: "tool_call", name: "task_notification" }),
+          }),
+        }),
+      );
+    },
+  );
 });

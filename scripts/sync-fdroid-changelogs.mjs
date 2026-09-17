@@ -21,6 +21,7 @@ import { fileURLToPath } from "node:url";
 // require it, so the ABI table has exactly one definition across all three callers.
 import { getFdroidVersionCodes as defaultGetFdroidVersionCodes } from "../packages/app/native-release-version.js";
 import { parseChangelogBody, parseChangelogEntries } from "./changelog-utils.mjs";
+import { isMainModule } from "./is-main-module.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(__dirname, "..");
@@ -263,6 +264,6 @@ export function syncFdroidChangelogs(argv = process.argv.slice(2), deps = {}) {
   return { contents, version, versionCodes, written };
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (isMainModule(import.meta.url)) {
   syncFdroidChangelogs();
 }

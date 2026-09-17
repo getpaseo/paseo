@@ -70,6 +70,9 @@ export type { AgentProviderDefinition };
 export { AGENT_PROVIDER_DEFINITIONS, getAgentProviderDefinition };
 
 export interface ProviderDefinition extends AgentProviderDefinition {
+  /** Effective inputs after overrides and inheritance; plugin registrations are owned separately. */
+  configuration: Omit<ResolvedProvider, "createBaseClient" | "contract"> | null;
+  iconSvg?: string;
   enabled: boolean;
   /**
    * The id of another *registered* provider this one extends (e.g. a Z.AI
@@ -572,7 +575,8 @@ function wrapClientProvider(
           };
         }
       : undefined,
-    isAvailable: (signal) => inner.isAvailable(signal),
+    getCatalogCacheKey: inner.getCatalogCacheKey?.bind(inner),
+    isAvailable: (signal, options) => inner.isAvailable(signal, options),
     getDiagnostic: inner.getDiagnostic?.bind(inner),
   };
 }
@@ -607,8 +611,10 @@ function createRegistryEntry(
 
   const hasStaticModes = resolved.definition.modes.length > 0;
 
+  const { createBaseClient: _createBaseClient, contract: _contract, ...configuration } = resolved;
   return {
     ...resolved.definition,
+    configuration,
     enabled: resolved.enabled,
     derivedFromProviderId: resolved.derivedFromProviderId,
     optionsSchema: resolved.contract.optionsSchema,

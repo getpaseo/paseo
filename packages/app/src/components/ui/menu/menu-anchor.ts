@@ -144,18 +144,21 @@ export function computePosition({
   return { ...clampToDisplayArea({ ...anchored, contentSize, displayArea }), actualPlacement };
 }
 
-export function getTransformOrigin(placement: Placement, alignment: Alignment): string {
-  let vertical: string;
-  if (placement === "bottom") vertical = "top";
-  else if (placement === "top") vertical = "bottom";
-  else vertical = "center";
+export function getTransformOrigin(
+  placement: Placement,
+  alignment: Alignment,
+): [number | string, number | string, number] {
+  let vertical: number | string;
+  if (placement === "bottom") vertical = 0;
+  else if (placement === "top") vertical = "100%";
+  else vertical = "50%";
 
-  let horizontal: string;
-  if (alignment === "start") horizontal = "left";
-  else if (alignment === "end") horizontal = "right";
-  else horizontal = "center";
+  let horizontal: number | string;
+  if (alignment === "start") horizontal = 0;
+  else if (alignment === "end") horizontal = "100%";
+  else horizontal = "50%";
 
-  // React Native parses transform-origin positionally (x then y), unlike CSS
-  // which accepts keyword pairs in either order.
-  return `${horizontal} ${vertical}`;
+  // Native theme updates can bypass RN's JS string preprocessing. Supply the native
+  // array shape directly; Reanimated's web style builder also accepts this form.
+  return [horizontal, vertical, 0];
 }

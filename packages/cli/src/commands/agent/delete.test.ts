@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
+const daemonTarget = { kind: "endpoint" as const, host: "example.test:12345" };
+
 import { runDeleteCommand } from "./delete.js";
 
 const agent = {
@@ -27,7 +29,7 @@ vi.mock("../../utils/client.js", () => ({
 
 describe("runDeleteCommand", () => {
   it("force-deletes a running agent when graceful cancellation is refused", async () => {
-    const result = await runDeleteCommand(agent.id, {}, {} as never);
+    const result = await runDeleteCommand(agent.id, { daemonTarget }, {} as never);
 
     expect(cancelAgent).toHaveBeenCalledWith(agent.id);
     expect(deleteAgent).toHaveBeenCalledWith(agent.id);

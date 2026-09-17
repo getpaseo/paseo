@@ -10,7 +10,7 @@ function image(dataUrl = "data:image/png;base64,capture"): BrowserCaptureImage {
 }
 
 function harness(guest: BrowserCaptureGuest | null = null) {
-  const clipboard = { write: vi.fn(), writeImage: vi.fn(), writeText: vi.fn() };
+  const clipboard = { write: vi.fn(async () => undefined) };
   const decodeImage = vi.fn(() => image("data:image/png;base64,clipboard"));
   const warn = vi.fn();
   return {
@@ -51,16 +51,21 @@ describe("browser capture service", () => {
     expect(capturePage).not.toHaveBeenCalled();
   });
 
-  it("writes text and a decoded image to the clipboard atomically", () => {
+  it("writes text and a decoded image to the clipboard atomically", async () => {
     const { service, clipboard } = harness();
-    expect(service.copy({ text: "button", imageDataUrl: "data:image/png;base64,value" })).toBe(
-      true,
-    );
+    await expect(
+      service.copy({ text: "button", imageDataUrl: "data:image/png;base64,value" }),
+    ).resolves.toBe(true);
     expect(clipboard.write).toHaveBeenCalledWith({
       text: "button",
       image: expect.any(Object),
     });
-    expect(clipboard.writeText).not.toHaveBeenCalled();
-    expect(clipboard.writeImage).not.toHaveBeenCalled();
+  });
+
+  it("keeps text-only clipboard writes", async () => {
+    const { service, clipboard } = harness();
+
+    await expect(service.copy({ text: "button" })).resolves.toBe(true);
+    expect(clipboard.write).toHaveBeenCalledWith({ text: "button", image: null });
   });
 });

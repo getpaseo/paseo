@@ -4,7 +4,7 @@ import { Text, View } from "react-native";
 import { Switch } from "@/components/ui/switch";
 import { useAppSettings } from "@/hooks/use-settings";
 import { settingsStyles } from "@/styles/settings";
-import { SettingsSection } from "./settings-section";
+import { SettingsSection } from "@/components/settings/headings/settings-section";
 
 export function EditorSection() {
   const { t } = useTranslation();

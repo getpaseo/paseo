@@ -84,7 +84,7 @@ describe("observeReplaySubagents", () => {
       subagents: [{ agentId: AGENT_ID, meta: { toolUseId: TOOL_USE_ID }, entries: [] }],
       parent: parentWithTaskCall(),
       convertEntry: () => [],
-    });
+    }).observations;
 
     expect(observations[0]).toMatchObject({
       kind: "declared",
@@ -95,25 +95,39 @@ describe("observeReplaySubagents", () => {
     });
   });
 
-  it("replays only this session's own children, not their descendants", () => {
-    // Claude Code writes every descendant into the same subagents/ directory. A grandchild's
-    // toolUseId names a Task call made inside its parent's session, so nothing here can resolve
-    // it: it would replay as an extra row the live stream never showed, with no Task card and no
-    // outcome. One recorded session showed 10 subagents live and 22 on reopen.
+  it("replays descendants beneath the sidechain that declared their Task", () => {
+    const nestedToolUseId = "toolu_012rzYnFZA";
     const observations = observeReplaySubagents({
       subagents: [
-        { agentId: AGENT_ID, meta: { toolUseId: TOOL_USE_ID, spawnDepth: 1 }, entries: [] },
+        {
+          agentId: AGENT_ID,
+          meta: { toolUseId: TOOL_USE_ID, spawnDepth: 1 },
+          entries: [],
+          parentFacts: {
+            toolCalls: new Map([
+              [nestedToolUseId, { title: "Explore", description: "Nested audit" }],
+            ]),
+            linksByAgentId: new Map(),
+            outcomesByToolCallId: new Map([[nestedToolUseId, { failed: false }]]),
+          },
+        },
         {
           agentId: "a6acb4b898",
-          meta: { toolUseId: "toolu_012rzYnFZA", agentType: "Explore", spawnDepth: 2 },
+          meta: { toolUseId: nestedToolUseId, agentType: "Explore", spawnDepth: 2 },
           entries: [],
         },
       ],
       parent: parentWithTaskCall(),
       convertEntry: () => [],
-    });
+    }).observations;
 
-    expect([...new Set(observations.map((observation) => observation.id))]).toEqual([TOOL_USE_ID]);
+    expect(observations).toContainEqual(
+      expect.objectContaining({
+        kind: "declared",
+        id: nestedToolUseId,
+        parentSubagentId: TOOL_USE_ID,
+      }),
+    );
   });
 
   it("keeps a subagent recorded before spawnDepth existed", () => {
@@ -121,7 +135,7 @@ describe("observeReplaySubagents", () => {
       subagents: [{ agentId: AGENT_ID, meta: { toolUseId: TOOL_USE_ID }, entries: [] }],
       parent: parentWithTaskCall(),
       convertEntry: () => [],
-    });
+    }).observations;
 
     expect(observations[0]).toMatchObject({ kind: "declared", id: TOOL_USE_ID });
   });
@@ -137,7 +151,7 @@ describe("observeReplaySubagents", () => {
       ],
       parent: emptyParent(),
       convertEntry: () => [],
-    });
+    }).observations;
 
     expect(observations).toEqual([]);
   });
@@ -153,7 +167,7 @@ describe("observeReplaySubagents", () => {
       subagents: [{ agentId: AGENT_ID, meta: null, entries: [] }],
       parent,
       convertEntry: () => [],
-    });
+    }).observations;
 
     expect(declared).toMatchObject({ id: TOOL_USE_ID, toolCallId: TOOL_USE_ID, title: "Explore" });
     expect(rest.at(-1)).toMatchObject({ kind: "status", status: "completed" });
@@ -164,7 +178,7 @@ describe("observeReplaySubagents", () => {
       subagents: [{ agentId: AGENT_ID, meta: null, entries: [] }],
       parent: emptyParent(),
       convertEntry: () => [],
-    });
+    }).observations;
     expect(observations).toEqual([]);
   });
 
@@ -188,7 +202,7 @@ describe("observeReplaySubagents", () => {
         ],
         parent: emptyParent(),
         convertEntry: () => [],
-      }),
+      }).observations,
     );
 
     expect(descriptor).toBeNull();
@@ -214,7 +228,7 @@ describe("observeReplaySubagents", () => {
         ],
         parent: emptyParent(),
         convertEntry: () => [],
-      }),
+      }).observations,
     );
 
     expect(descriptor).toBeNull();
@@ -230,7 +244,7 @@ describe("observeReplaySubagents", () => {
           outcomesByToolCallId: new Map(),
         },
         convertEntry: () => [],
-      }),
+      }).observations,
     );
 
     expect(descriptor).toMatchObject({ id: TOOL_USE_ID, status: "failed" });
@@ -253,7 +267,7 @@ describe("observeReplaySubagents", () => {
       ],
       parent: emptyParent(),
       convertEntry: () => [],
-    });
+    }).observations;
 
     expect(observations).toEqual([]);
   });
@@ -276,7 +290,7 @@ describe("observeReplaySubagents", () => {
         ],
         parent: { ...parentWithTaskCall(), outcomesByToolCallId: new Map() },
         convertEntry: () => [],
-      }),
+      }).observations,
     );
 
     expect(descriptor).toMatchObject({ status: "completed" });
@@ -287,7 +301,7 @@ describe("observeReplaySubagents", () => {
       subagents: [{ agentId: AGENT_ID, meta: { toolUseId: TOOL_USE_ID }, entries: [] }],
       parent: { ...parentWithTaskCall(), outcomesByToolCallId: new Map() },
       convertEntry: () => [],
-    });
+    }).observations;
     expect(observations.some((o) => o.kind === "status")).toBe(false);
   });
 
@@ -296,7 +310,7 @@ describe("observeReplaySubagents", () => {
       subagents: [{ agentId: AGENT_ID, meta: { toolUseId: TOOL_USE_ID }, entries: [] }],
       parent: parentWithTaskCall(true),
       convertEntry: () => [],
-    });
+    }).observations;
     expect(observations.at(-1)).toMatchObject({ kind: "status", status: "failed" });
   });
 
@@ -311,7 +325,7 @@ describe("observeReplaySubagents", () => {
       ],
       parent: parentWithTaskCall(),
       convertEntry: () => [{ type: "reasoning", text: "thinking" }],
-    });
+    }).observations;
 
     expect(observations.find((observation) => observation.kind === "timeline")).toMatchObject({
       kind: "timeline",
@@ -333,7 +347,7 @@ describe("replay runtime", () => {
       ],
       parent: parentWithTaskCall(),
       convertEntry: () => [],
-    });
+    }).observations;
 
     expect(observations.find((o) => o.kind === "subtitle")).toEqual({
       kind: "subtitle",
@@ -356,7 +370,7 @@ describe("replay runtime", () => {
       ],
       parent: parentWithTaskCall(),
       convertEntry: () => [],
-    });
+    }).observations;
 
     expect(observations.find((o) => o.kind === "subtitle")).toMatchObject({
       subtitle: "general-purpose · Sonnet 5 · Low",
@@ -368,7 +382,7 @@ describe("replay runtime", () => {
       subagents: [{ agentId: AGENT_ID, meta: { toolUseId: TOOL_USE_ID }, entries: [] }],
       parent: parentWithTaskCall(),
       convertEntry: () => [],
-    });
+    }).observations;
     expect(observations.some((o) => o.kind === "subtitle")).toBe(false);
   });
 
@@ -384,7 +398,7 @@ describe("replay runtime", () => {
       ],
       parent: parentWithTaskCall(),
       convertEntry: () => [],
-    });
+    }).observations;
     expect(observations.find((o) => o.kind === "subtitle")).toMatchObject({
       subtitle: "general-purpose · glm-5.1",
     });
@@ -397,7 +411,7 @@ describe("replay usage", () => {
       subagents: [{ agentId: AGENT_ID, meta: { toolUseId: TOOL_USE_ID }, entries }],
       parent: parentWithTaskCall(),
       convertEntry: () => [],
-    }).find((observation) => observation.kind === "subtitle");
+    }).observations.find((observation) => observation.kind === "subtitle");
   }
 
   it("derives the counters Claude Code itself reports, from a real transcript's shape", () => {
@@ -532,7 +546,7 @@ describe("replay usage", () => {
       ],
       parent: parentWithTaskCall(),
       convertEntry: () => [],
-    });
+    }).observations;
     for (const event of foldSubagentObservations(observations)) {
       store.apply("parent", "claude", event);
     }
@@ -579,7 +593,7 @@ describe("live and replay agree", () => {
       ],
       parent: parentWithTaskCall(),
       convertEntry: () => [],
-    });
+    }).observations;
 
     const fromWire = applyToStore(liveObservations);
     const fromDisk = applyToStore(replayObservations);

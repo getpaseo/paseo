@@ -58,7 +58,7 @@ vi.mock("@gorhom/bottom-sheet", async () => {
 });
 
 import { IsolatedBottomSheetModal, type ContextBridge } from ".";
-import { useIsInsideBottomSheet } from "@/components/ui/text-input/bottom-sheet-scope";
+import { useIsInsideBottomSheet } from "@/components/ui/bottom-sheet-scope";
 
 /** Renders whatever the portal is currently holding, from its own place in the tree. */
 function PortalHostProbe() {

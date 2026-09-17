@@ -681,3 +681,13 @@ describe("subscription lifecycle", () => {
     expect(h.agentUpdates()).toEqual([{ kind: "remove", agentId: "a" }]);
   });
 });
+
+test("an idle session skips agent hydration while preserving workspace updates", async () => {
+  const h = buildHarness();
+  const agent = { ...h.managed("unobserved"), workspaceId: "workspace" };
+  // No payload is registered: attempting to hydrate this agent would fail.
+  await h.service.forwardLiveAgent(agent);
+  expect(h.loggedErrors).toEqual([]);
+  expect(h.agentUpdates()).toEqual([]);
+  expect(h.workspaceUpdates).toEqual([agent.workspaceId]);
+});

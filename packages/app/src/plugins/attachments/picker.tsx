@@ -3,7 +3,7 @@ import { View } from "react-native";
 import { withUnistyles } from "react-native-unistyles";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { PluginAttachmentItem, PluginAttachmentSourceContribution } from "@getpaseo/plugin";
-import { searchPluginAttachments } from "@getpaseo/plugin/host";
+import { searchPluginAttachments } from "@getpaseo/plugin/client/host";
 import type { LucideIcon } from "lucide-react-native";
 import type { UserComposerAttachment } from "@/attachments/types";
 import type { AttachmentMenuItem } from "@/composer/input/input";

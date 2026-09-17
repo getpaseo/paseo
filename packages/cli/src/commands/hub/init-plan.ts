@@ -1,16 +1,9 @@
 import path from "node:path";
 import YAML from "yaml";
-import type { HubDeployBundle } from "./deploy-bundle.js";
-import type { HubProject } from "./hub-client/index.js";
 import type { HubStatus } from "./daemon-client.js";
 import type { HubStarterAgentRuntime } from "./starter-agent-runtime.js";
 
 export type HubInitProvider = "github" | "slack" | "discord";
-
-export type HubInitProjectResolution =
-  | { kind: "none" }
-  | { kind: "selected"; project: HubProject }
-  | { kind: "choose"; projects: readonly HubProject[] };
 
 export type HubInitConnectionResolution =
   | { kind: "connected"; daemonId: string }
@@ -18,58 +11,22 @@ export type HubInitConnectionResolution =
   | { kind: "connect" }
   | { kind: "conflict"; origin: string };
 
-export interface HubInitOpeningPlan {
-  replaceExisting: boolean;
-  steps: readonly ("login" | "connect" | "project" | "scaffold")[];
-}
-
 export interface HubInitScaffoldInput {
   cwd: string;
   daemonSlug: string;
-  agent: HubStarterAgentRuntime;
+  agent: HubStarterAgentRuntime & { mode: string };
   provider: HubInitProvider;
   providerFilters: Readonly<Record<string, string>>;
 }
 
 export interface HubInitScaffold {
-  hub: string;
-  workflowPath: string;
-  workflow: string;
+  triggerPath: string;
+  trigger: string;
   testAction: string;
 }
 
 export function hubLoginResumeCommand(step: "connect" | "init", origin: string): string {
   return step === "connect" ? `paseo hub connect ${origin}` : "paseo hub init";
-}
-
-export function planHubInitOpening(input: {
-  loggedIn: boolean;
-  paseoDirectoryExists: boolean;
-}): HubInitOpeningPlan {
-  return {
-    replaceExisting: input.paseoDirectoryExists,
-    steps: [...(input.loggedIn ? [] : (["login"] as const)), "connect", "project", "scaffold"],
-  };
-}
-
-export function createHubInitBundle(
-  projectSlug: string,
-  scaffold: HubInitScaffold,
-): HubDeployBundle {
-  return {
-    projectSlug,
-    workflowCount: 1,
-    files: [
-      { path: ".paseo/hub.yml", content: scaffold.hub },
-      { path: scaffold.workflowPath, content: scaffold.workflow },
-    ],
-  };
-}
-
-export function resolveHubInitProjects(projects: readonly HubProject[]): HubInitProjectResolution {
-  if (projects.length === 0) return { kind: "none" };
-  if (projects.length === 1) return { kind: "selected", project: projects[0]! };
-  return { kind: "choose", projects };
 }
 
 export function resolveHubInitConnection(
@@ -92,31 +49,21 @@ export function resolveHubInitConnection(
 }
 
 export function createHubInitScaffold(input: HubInitScaffoldInput): HubInitScaffold {
-  const environmentName = input.daemonSlug;
-  const hub = YAML.stringify(
-    {
-      environments: {
-        [environmentName]: {
-          kind: "daemon",
-          daemon: input.daemonSlug,
-          cwd: path.resolve(input.cwd),
-        },
-      },
-      agents: {
-        starter: {
+  const provider = providerScaffold(input.provider, input.providerFilters);
+  return {
+    triggerPath: `.paseo/triggers/${input.provider}-help.yml`,
+    trigger: YAML.stringify(
+      triggerDocument({
+        ...provider,
+        target: { daemon: input.daemonSlug, cwd: path.resolve(input.cwd) },
+        agent: {
           provider: input.agent.provider,
           model: input.agent.model,
-          ...(input.agent.mode === undefined ? {} : { mode: input.agent.mode }),
+          mode: input.agent.mode,
         },
-      },
-    },
-    { lineWidth: 0 },
-  );
-  const provider = providerScaffold(input.provider, input.providerFilters, environmentName);
-  return {
-    hub,
-    workflowPath: `.paseo/workflows/${input.provider}-help.yml`,
-    workflow: YAML.stringify(provider.workflow, { lineWidth: 0 }),
+      }),
+      { lineWidth: 0 },
+    ),
     testAction: provider.testAction,
   };
 }
@@ -124,80 +71,75 @@ export function createHubInitScaffold(input: HubInitScaffoldInput): HubInitScaff
 function providerScaffold(
   provider: HubInitProvider,
   filters: Readonly<Record<string, string>>,
-  environment: string,
-): { workflow: object; testAction: string } {
+): {
+  name: string;
+  event: string;
+  connection: string;
+  filters: object;
+  reply?: "slack.reply" | "discord.reply";
+  testAction: string;
+} {
+  const connection = requireFilter(filters, "connection");
   if (provider === "github") {
     const repo = requireFilter(filters, "repo");
     const user = requireFilter(filters, "user");
     return {
-      workflow: workflow({
-        name: "github-help",
-        on: "github.issue_comment",
-        filters: { repo, contains: "@paseo", from_users: [user] },
-        environment,
-      }),
+      name: "github-help",
+      event: "github.issue_comment",
+      connection,
+      filters: { repo, contains: "@paseo", from_users: [user] },
       testAction: `Comment \`@paseo have a look\` on ${repo}.`,
     };
   }
 
   const user = requireFilter(filters, "user");
   if (provider === "slack") {
-    const workspace = requireFilter(filters, "workspace");
     return {
-      workflow: workflow({
-        name: "slack-help",
-        on: "slack.mention",
-        filters: { workspace, from_users: [user] },
-        environment,
-        reply: "slack.reply",
-      }),
+      name: "slack-help",
+      event: "slack.mention",
+      connection,
+      filters: { from_users: [user] },
+      reply: "slack.reply",
       testAction: "Mention `@Paseo have a look` in Slack.",
     };
   }
 
-  const guild = requireFilter(filters, "guild");
   return {
-    workflow: workflow({
-      name: "discord-help",
-      on: "discord.mention",
-      filters: { guild, from_users: [user] },
-      environment,
-      reply: "discord.reply",
-    }),
+    name: "discord-help",
+    event: "discord.mention",
+    connection,
+    filters: { from_users: [user] },
+    reply: "discord.reply",
     testAction: "Mention `@Paseo have a look` in Discord.",
   };
 }
 
-function workflow(input: {
+function triggerDocument(input: {
   name: string;
-  on: string;
+  event: string;
+  connection: string;
   filters: object;
-  environment: string;
+  target: { daemon: string; cwd: string };
+  agent: { provider: string; model: string; mode?: string };
   reply?: "slack.reply" | "discord.reply";
 }): object {
   const replyInstruction = input.reply === undefined ? "" : "Answer with hub.reply, then ";
   return {
     name: input.name,
-    on: input.on,
+    enabled: true,
+    on: { [input.event]: { connection: input.connection, filters: input.filters } },
     max_runtime: "2h",
-    filters: input.filters,
-    steps: [
-      {
-        id: "work",
-        environment: input.environment,
-        max_runtime: "90m",
-        idle_timeout: "10m",
-        agent: "starter",
-        prompt: [
-          {
-            text: `${replyInstruction}complete this request and call hub.finish_execution when done.\n\n<user-prompt>\n\${{ paseo.prompt }}\n</user-prompt>\n`,
-          },
-        ],
-        ...(input.reply === undefined
-          ? {}
-          : { allow_outputs: [{ type: input.reply, max: 1, required: true }] }),
-      },
-    ],
+    run: {
+      target: input.target,
+      agent: input.agent,
+      continuation: { mode: "conversation" },
+      max_runtime: "90m",
+      idle_timeout: "10m",
+      prompt: `${replyInstruction}complete this request and call hub.finish_execution when done.\n\n<user-prompt>\n\${{ paseo.prompt }}\n</user-prompt>\n`,
+      ...(input.reply === undefined
+        ? {}
+        : { outputs: { [input.reply]: { max: 1, required: true } } }),
+    },
   };
 }
 

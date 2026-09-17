@@ -1,3 +1,5 @@
+import type { DaemonTarget } from "../../utils/daemon-target.js";
+import { createPaseoApi } from "@getpaseo/client";
 import { connectToDaemon, getDaemonHost } from "../../utils/client.js";
 import type { CommandError, CommandOptions } from "../../output/index.js";
 
@@ -10,12 +12,13 @@ interface TerminalLike {
   name?: string | null;
 }
 
-export async function connectTerminalClient(host?: string) {
-  const daemonHost = getDaemonHost({ host });
+export async function connectTerminalClient(target: DaemonTarget) {
+  const daemonHost = getDaemonHost({ target });
   try {
-    const client = await connectToDaemon({ host });
-    return { client, daemonHost };
+    const client = await connectToDaemon({ target });
+    return { client: createPaseoApi(client), daemonHost, close: () => client.close() };
   } catch (err) {
+    if (err && typeof err === "object" && "code" in err) throw err;
     const message = err instanceof Error ? err.message : String(err);
     const error: CommandError = {
       code: "DAEMON_NOT_RUNNING",
@@ -44,11 +47,11 @@ export function toTerminalCommandError(code: string, action: string, err: unknow
 }
 
 export async function resolveTerminalId(
-  client: Awaited<ReturnType<typeof connectToDaemon>>,
+  client: Awaited<ReturnType<typeof connectTerminalClient>>["client"],
   idOrName: string,
 ): Promise<string | null> {
-  const payload = await client.listTerminals();
-  return resolveTerminalIdentifier(idOrName, payload.terminals);
+  const payload = await client.terminals.list();
+  return resolveTerminalIdentifier(idOrName, payload.entries);
 }
 
 function resolveTerminalIdentifier(idOrName: string, terminals: TerminalLike[]): string | null {

@@ -28,7 +28,7 @@ export async function runDiagnosticCommand(
   options: ProviderDiagnosticOptions,
   _command: Command,
 ): Promise<SingleResult<ProviderDiagnosticResult>> {
-  const client = await connectToDaemon({ host: options.host });
+  const client = await connectToDaemon({ target: options.daemonTarget });
   try {
     const result = await client.getProviderDiagnostic(provider.trim().toLowerCase());
     return {

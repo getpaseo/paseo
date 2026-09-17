@@ -7,6 +7,7 @@ interface SurfaceErrorBoundaryProps {
   installation: object;
   resetKey?: unknown;
   Surface: unknown;
+  renderError?(error: string): ReactNode;
 }
 
 interface SurfaceErrorBoundaryState {
@@ -40,6 +41,7 @@ export class SurfaceErrorBoundary extends Component<
 
   render() {
     if (this.state.error) {
+      if (this.props.renderError) return this.props.renderError(this.state.error);
       return <Text style={styles.errorText}>Plugin failed: {this.state.error}</Text>;
     }
     return this.props.children;

@@ -1,0 +1,7 @@
+{
+  "id": "modal-ui-example",
+  "requirements": {
+    "paseo": ">=0.8.0"
+  },
+  "description": "Interactive modal forms, scrolling lists, and clipboard examples"
+}

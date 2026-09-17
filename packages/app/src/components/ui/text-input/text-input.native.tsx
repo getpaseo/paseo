@@ -1,11 +1,18 @@
-import React, { forwardRef, useCallback, useImperativeHandle, useRef, useState } from "react";
+import React, {
+  forwardRef,
+  useCallback,
+  useImperativeHandle,
+  useRef,
+  useReducer,
+  useState,
+} from "react";
 import { TextInput } from "react-native";
 import { BottomSheetTextInput } from "@gorhom/bottom-sheet";
 import PasteInput, {
   type PastedFile,
   type PasteTextInputInstance,
 } from "@mattermost/react-native-paste-input";
-import { useIsInsideBottomSheet } from "./bottom-sheet-scope";
+import { useIsInsideBottomSheet } from "@/components/ui/bottom-sheet-scope";
 import type { EditingTextInputHandle, EditingTextInputProps } from "./types";
 
 type NativeInput = (TextInput | PasteTextInputInstance) & {
@@ -35,7 +42,8 @@ export const EditingTextInput = forwardRef<EditingTextInputHandle, EditingTextIn
     const inputRef = useRef<NativeInput | null>(null);
     const initialTextRef = useRef(initialValue);
     const textRef = useRef(initialTextRef.current);
-    // Clearing swaps the native input for a fresh instance (see replaceText).
+    // Resetting the editor swaps the native input to reset intrinsic multiline
+    // sizing. Text replacement (including an empty buffer) keeps the input mounted.
     // Until React commits that swap, `inputRef` still points at the doomed
     // instance: focusing it asks Android for the keyboard and then tears the
     // focused view down, which cancels the show. Fabric also runs view
@@ -45,6 +53,12 @@ export const EditingTextInput = forwardRef<EditingTextInputHandle, EditingTextIn
     // once the view is attached.
     const isAwaitingReplacementRef = useRef(false);
     const [replacement, setReplacement] = useState({ revision: 0, autoFocus: false });
+    // Fabric re-measures the Android input when its `text` prop changes. A native edit only
+    // refreshes a cached spannable, and batched IME deletes (Gboard hold-to-delete) leave the
+    // measured height at the previous content, so an emptied draft keeps several lines. Render
+    // again after every edit so `defaultValue` carries the current text and the input is
+    // re-measured. Only this leaf renders; the composer stays isolated from typing.
+    const [, bumpTextRevision] = useReducer((revision: number) => revision + 1, 0);
 
     const assignInputRef = useCallback((input: NativeInput | null) => {
       inputRef.current = input;
@@ -74,19 +88,12 @@ export const EditingTextInput = forwardRef<EditingTextInputHandle, EditingTextIn
       getText: () => textRef.current,
       replaceText: (nextText, selection) => {
         textRef.current = nextText;
-        if (nextText === "") {
-          const autoFocus = inputRef.current?.isFocused?.() ?? false;
-          if (inputRef.current?.replaceText) {
-            inputRef.current.replaceText(nextText, selection);
-          } else {
-            inputRef.current?.clear?.();
-          }
-          isAwaitingReplacementRef.current = true;
-          setReplacement((current) => ({ revision: current.revision + 1, autoFocus }));
-          return;
-        }
         if (inputRef.current?.replaceText) {
           inputRef.current.replaceText(nextText, selection);
+          return;
+        }
+        if (nextText === "") {
+          inputRef.current?.clear?.();
           return;
         }
         inputRef.current?.setNativeProps?.({
@@ -95,6 +102,17 @@ export const EditingTextInput = forwardRef<EditingTextInputHandle, EditingTextIn
         });
         if (selection) inputRef.current?.setSelection?.(selection.start, selection.end);
       },
+      reset: () => {
+        textRef.current = "";
+        const autoFocus = inputRef.current?.isFocused?.() ?? false;
+        if (inputRef.current?.replaceText) {
+          inputRef.current.replaceText("");
+        } else {
+          inputRef.current?.clear?.();
+        }
+        isAwaitingReplacementRef.current = true;
+        setReplacement((current) => ({ revision: current.revision + 1, autoFocus }));
+      },
       getNativeRef: () => inputRef.current?.getNativeRef?.() ?? inputRef.current,
     }));
 
@@ -102,6 +120,7 @@ export const EditingTextInput = forwardRef<EditingTextInputHandle, EditingTextIn
       (nextText: string) => {
         textRef.current = nextText;
         onChangeText?.(nextText);
+        bumpTextRevision();
       },
       [onChangeText],
     );

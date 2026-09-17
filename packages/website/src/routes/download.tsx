@@ -86,10 +86,13 @@ function Download() {
 
         <div className="divide-y divide-border">
           <PlatformRow icon={AppleIcon} label="macOS">
-            <PillGroup>
-              <DownloadPill href={urls.macAppleSilicon} label="Apple Silicon" />
-              <DownloadPill href={urls.macIntel} label="Intel" />
-            </PillGroup>
+            <div className="flex flex-col items-start gap-2 sm:items-end">
+              <PillGroup>
+                <DownloadPill href={urls.macAppleSilicon} label="Apple Silicon" />
+                <DownloadPill href={urls.macIntel} label="Intel" />
+              </PillGroup>
+              <span className="text-xs text-muted-foreground">Requires macOS 13 or newer</span>
+            </div>
           </PlatformRow>
 
           {!onBeta && (

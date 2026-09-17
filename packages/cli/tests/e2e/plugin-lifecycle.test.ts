@@ -1,8 +1,14 @@
 #!/usr/bin/env npx tsx
+import { resolveCliVersion } from "../../src/version.js";
+import { readPluginManifest } from "../../../server/src/server/plugins/manifest.js";
 
+import {
+  startNpmRegistry,
+  npmPluginPackages,
+} from "../../../../scripts/test-support/npm-registry.mjs";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -24,25 +30,55 @@ async function git(cwd: string, args: string[]): Promise<void> {
 async function main(): Promise<void> {
   const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-cli-e2e-"));
   const gitDirectory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-git-cli-e2e-"));
-  const context = await createE2ETestContext({ timeout: 45_000 });
+  const registry = await startNpmRegistry(npmPluginPackages());
+  const context = await createE2ETestContext({ timeout: 45_000, env: registry.env });
   try {
-    await writeFile(path.join(directory, "paseo-plugin.json"), JSON.stringify({ id: "cli-e2e" }));
+    const scaffold = path.join(context.workDir, "authored-plugin");
+    const init = await context.paseo(["plugin", "init", scaffold, "--json"]);
+    assert.equal(init.exitCode, 0, init.stderr);
+    const manifestPath = path.join(scaffold, "paseo-plugin.json");
+    const manifest = await readPluginManifest(scaffold);
+    assert.deepEqual(manifest.requirements, { paseo: `>=${resolveCliVersion()}` });
+    await writeFile(
+      path.join(directory, "paseo-plugin.json"),
+      JSON.stringify({ id: "cli-e2e", requirements: { paseo: `>=${resolveCliVersion()}` } }),
+    );
     await writeFile(path.join(directory, "index.server.ts"), pluginSource);
 
     const install = await context.paseo(["plugin", "install", directory, "--json"]);
     assert.equal(install.exitCode, 0, install.stderr);
     assert.equal(JSON.parse(install.stdout).id, "cli-e2e");
 
-    const client = await connectToDaemon({ host: `127.0.0.1:${context.port}` });
+    const client = await connectToDaemon({
+      target: { kind: "endpoint", host: `127.0.0.1:${context.port}` },
+    });
     await client.patchDaemonConfig({ pluginsEnabled: true });
     await client.close();
+
+    await writeFile(
+      manifestPath,
+      JSON.stringify({ ...manifest, requirements: { paseo: ">=999.0.0" } }),
+    );
+    const incompatibleInstall = await context.paseo(["plugin", "install", scaffold, "--json"]);
+    assert.equal(incompatibleInstall.exitCode, 1);
+    assert.match(incompatibleInstall.stderr, /requires Paseo >=999.0.0/);
+    const afterRejection = await context.paseo(["plugin", "ls", "--json"]);
+    assert.equal(afterRejection.exitCode, 0, afterRejection.stderr);
+    assert.deepEqual(
+      JSON.parse(afterRejection.stdout).map((plugin: { id: string }) => plugin.id),
+      ["cli-e2e"],
+    );
+    await writeFile(manifestPath, JSON.stringify(manifest));
+    const scaffoldInstall = await context.paseo(["plugin", "install", scaffold, "--json"]);
+    assert.equal(scaffoldInstall.exitCode, 0, scaffoldInstall.stderr);
+    assert.equal(JSON.parse(scaffoldInstall.stdout).status, "running");
 
     await git(gitDirectory, ["init", "-b", "main"]);
     await git(gitDirectory, ["config", "user.name", "Paseo Tests"]);
     await git(gitDirectory, ["config", "user.email", "paseo@example.test"]);
     await writeFile(
       path.join(gitDirectory, "paseo-plugin.json"),
-      JSON.stringify({ id: "git-cli-e2e" }),
+      JSON.stringify({ id: "git-cli-e2e", requirements: { paseo: `>=${resolveCliVersion()}` } }),
     );
     await writeFile(path.join(gitDirectory, "index.server.ts"), pluginSource);
     await git(gitDirectory, ["add", "-A"]);
@@ -51,7 +87,7 @@ async function main(): Promise<void> {
     const gitInstall = await context.paseo([
       "plugin",
       "add",
-      pathToFileURL(gitDirectory).href,
+      `git:${pathToFileURL(gitDirectory).href}`,
       "--json",
     ]);
     assert.equal(gitInstall.exitCode, 0, gitInstall.stderr);
@@ -65,11 +101,57 @@ async function main(): Promise<void> {
     await git(gitDirectory, ["commit", "-m", "update"]);
     const status = await context.paseo(["plugin", "status", "git-cli-e2e", "--json"]);
     assert.equal(status.exitCode, 0, status.stderr);
-    assert.equal(JSON.parse(status.stdout)[0].updateAvailable, true);
+    assert.equal(JSON.parse(status.stdout)[0].status, "running");
+    assert.equal(JSON.parse(status.stdout)[0].commit, JSON.parse(gitInstall.stdout).commit);
 
-    const update = await context.paseo(["plugin", "update", "git-cli-e2e", "--json"]);
+    const update = await context.paseo(["plugin", "update", "git-cli-e2e", "--yes", "--json"]);
     assert.equal(update.exitCode, 0, update.stderr);
-    assert.equal(JSON.parse(update.stdout)[0].updated, true);
+    assert.equal(JSON.parse(update.stdout)[0].outcome, "updated");
+
+    const installedCommit = JSON.parse(update.stdout)[0].plugin.installation.currentRevision;
+    const buildMarker = path.join(context.workDir, "incompatible-build-ran");
+    await writeFile(
+      path.join(gitDirectory, "paseo-plugin.json"),
+      JSON.stringify({
+        id: "git-cli-e2e",
+        requirements: { paseo: ">=999.0.0" },
+        build: [
+          [
+            process.execPath,
+            "-e",
+            'require("node:fs").writeFileSync(process.argv[1], "ran")',
+            buildMarker,
+          ],
+        ],
+      }),
+    );
+    await git(gitDirectory, ["add", "-A"]);
+    await git(gitDirectory, ["commit", "-m", "requires a future Paseo"]);
+    const incompatibleUpdate = await context.paseo([
+      "plugin",
+      "update",
+      "git-cli-e2e",
+      "--yes",
+      "--json",
+    ]);
+    assert.equal(incompatibleUpdate.exitCode, 1);
+    assert.match(JSON.parse(incompatibleUpdate.stdout)[0].error, /requires Paseo >=999.0.0/);
+    await assert.rejects(readFile(buildMarker), { code: "ENOENT" });
+    const retained = await context.paseo(["plugin", "ls", "git-cli-e2e", "--json"]);
+    assert.equal(retained.exitCode, 0, retained.stderr);
+    assert.equal(JSON.parse(retained.stdout)[0].commit, installedCommit);
+    assert.equal(JSON.parse(retained.stdout)[0].status, "running");
+    const incompatibleAdd = await context.paseo([
+      "plugin",
+      "add",
+      pathToFileURL(gitDirectory).href,
+      "--id",
+      "future-plugin",
+      "--json",
+    ]);
+    assert.equal(incompatibleAdd.exitCode, 1);
+    assert.match(incompatibleAdd.stderr, /requires Paseo >=999.0.0/);
+    await assert.rejects(readFile(buildMarker), { code: "ENOENT" });
 
     const reload = await context.paseo(["plugin", "reload", "cli-e2e", "--json"]);
     assert.equal(reload.exitCode, 0, reload.stderr);
@@ -87,11 +169,56 @@ async function main(): Promise<void> {
     assert.equal(remove.exitCode, 0, remove.stderr);
     const removeGit = await context.paseo(["plugin", "remove", "git-cli-e2e", "--json"]);
     assert.equal(removeGit.exitCode, 0, removeGit.stderr);
+    const removeScaffold = await context.paseo(["plugin", "remove", "authored-plugin", "--json"]);
+    assert.equal(removeScaffold.exitCode, 0, removeScaffold.stderr);
+    for (const source of ["npm:paseo-fixture-plugin@^1.0.0", "npm:@paseo-fixture/review@2.0.0"]) {
+      const npmInstall = await context.paseo([
+        "plugin",
+        "install",
+        source,
+        "--path",
+        ".",
+        "--json",
+      ]);
+      assert.equal(npmInstall.exitCode, 0, npmInstall.stderr);
+      assert.equal(JSON.parse(npmInstall.stdout).id, "npm-review");
+      assert.equal(JSON.parse(npmInstall.stdout).status, "running");
+      assert.equal(
+        JSON.parse(npmInstall.stdout).installation.currentRevision,
+        source.includes("@paseo-fixture") ? "2.0.0" : "1.1.0",
+      );
+      const npmDisabled = await context.paseo(["plugin", "disable", "npm-review", "--json"]);
+      assert.equal(npmDisabled.exitCode, 0, npmDisabled.stderr);
+      const restart = await context.paseo(["daemon", "restart", "--timeout", "45", "--json"], {
+        timeout: 60_000,
+      });
+      assert.equal(restart.exitCode, 0, restart.stderr);
+      assert.notEqual(
+        JSON.parse(restart.stdout).workerPid,
+        JSON.parse(restart.stdout).previousWorkerPid,
+      );
+      const persisted = await context.paseo(["plugin", "ls", "npm-review", "--json"]);
+      assert.equal(persisted.exitCode, 0, persisted.stderr);
+      assert.equal(JSON.parse(persisted.stdout)[0].status, "disabled");
+      assert.equal(JSON.parse(persisted.stdout)[0].path, JSON.parse(npmInstall.stdout).path);
+      assert.deepEqual(
+        JSON.parse(persisted.stdout)[0].installation,
+        JSON.parse(npmInstall.stdout).installation,
+      );
+      const npmEnabled = await context.paseo(["plugin", "enable", "npm-review", "--json"]);
+      assert.equal(npmEnabled.exitCode, 0, npmEnabled.stderr);
+      assert.equal(JSON.parse(npmEnabled.stdout).status, "running");
+      const npmReload = await context.paseo(["plugin", "reload", "npm-review", "--json"]);
+      assert.equal(npmReload.exitCode, 0, npmReload.stderr);
+      const npmRemove = await context.paseo(["plugin", "remove", "npm-review", "--json"]);
+      assert.equal(npmRemove.exitCode, 0, npmRemove.stderr);
+    }
     const list = await context.paseo(["plugin", "ls", "--json"]);
     assert.equal(list.exitCode, 0, list.stderr);
     assert.deepEqual(JSON.parse(list.stdout), []);
   } finally {
     await context.stop();
+    await registry.close();
     await rm(directory, { recursive: true, force: true });
     await rm(gitDirectory, { recursive: true, force: true });
   }

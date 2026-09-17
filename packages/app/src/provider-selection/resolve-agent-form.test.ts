@@ -2,9 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   resolveAgentForm,
   resolveFormState,
+  resolveEffectiveModel,
   resolveThinkingOptionId,
   mergeSelectedComposerPreferences,
-  combineInitialValues,
   buildProviderDefinitionMap,
   buildProviderDefinitionMapForStatuses,
   resolveDefaultModel,
@@ -90,12 +90,11 @@ function makeState(
 ): AgentFormReducerState {
   return {
     form: {
-      serverId: null,
       provider: null,
       modeId: "",
       model: "",
       thinkingOptionId: "",
-      workingDir: "",
+
       ...overrides,
     },
     userModified: { ...INITIAL_USER_MODIFIED, ...modified },
@@ -259,35 +258,6 @@ describe("resolveThinkingOptionId", () => {
         requestedThinkingOptionId: "",
       }),
     ).toBe("low");
-  });
-});
-
-describe("combineInitialValues", () => {
-  it("returns undefined when no initial values and no initial server id", () => {
-    expect(combineInitialValues(undefined, null)).toBeUndefined();
-  });
-
-  it("does not inject a null serverId override when initialValues are present but serverId is absent", () => {
-    const combined = combineInitialValues({}, null);
-    expect(combined).toEqual({});
-    expect(Object.prototype.hasOwnProperty.call(combined, "serverId")).toBe(false);
-  });
-
-  it("injects serverId from options when provided", () => {
-    expect(combineInitialValues({}, "daemon-1")).toEqual({ serverId: "daemon-1" });
-  });
-
-  it("keeps other initial values without forcing serverId", () => {
-    const combined = combineInitialValues({ workingDir: "/repo" }, null);
-    expect(combined).toEqual({ workingDir: "/repo" });
-    expect(Object.prototype.hasOwnProperty.call(combined, "serverId")).toBe(false);
-  });
-
-  it("respects an explicit serverId override (including null) over initialServerId", () => {
-    expect(combineInitialValues({ serverId: null }, "daemon-1")).toEqual({ serverId: null });
-    expect(combineInitialValues({ serverId: "daemon-2" }, "daemon-1")).toEqual({
-      serverId: "daemon-2",
-    });
   });
 });
 
@@ -534,7 +504,7 @@ describe("resolveFormState", () => {
     expect(resolved.thinkingOptionId).toBe("low");
   });
 
-  it("clears an invalid provider instead of falling back to the first allowed provider", () => {
+  it("preserves the remembered provider when it is absent from the available catalogue", () => {
     const resolved = resolveFormState(
       undefined,
       { provider: "codex" },
@@ -545,7 +515,7 @@ describe("resolveFormState", () => {
       claudeProviderMap,
     );
 
-    expect(resolved.provider).toBeNull();
+    expect(resolved.provider).toBe("codex");
   });
 
   it("preserves a user-selected provider and model while that provider is loading during refresh", () => {
@@ -582,12 +552,10 @@ describe("resolveFormState", () => {
       {},
       null,
       {
-        serverId: false,
         provider: true,
         modeId: true,
         model: true,
         thinkingOptionId: true,
-        workingDir: false,
       },
       makeState({
         provider: "codex",
@@ -677,7 +645,7 @@ describe("resolveFormState", () => {
     expect(resolved.modeId).toBe("auto");
   });
 
-  it("ignores disabled ready providers when resolving selectable defaults", () => {
+  it("preserves saved intent even when a provider is disabled", () => {
     const entries: ProviderSnapshotEntry[] = [
       {
         provider: "codex",
@@ -715,8 +683,8 @@ describe("resolveFormState", () => {
       selectableProviderMap,
     );
 
-    expect(resolved.provider).toBe("codex");
-    expect(resolved.modeId).toBe("auto");
+    expect(resolved.provider).toBe("claude");
+    expect(resolved.modeId).toBe("");
   });
 
   it("excludes disabled providers from the selectable provider map without removing them from snapshot definitions", () => {
@@ -752,7 +720,7 @@ describe("resolveFormState", () => {
     expect(providerDefinitions.map((d) => d.id)).toEqual(["codex", "claude"]);
   });
 
-  it("clears a user-selected provider when the refreshed snapshot marks it unavailable", () => {
+  it("preserves a user-selected provider when the refreshed snapshot marks it unavailable", () => {
     const unavailableEntries: ProviderSnapshotEntry[] = [
       {
         provider: "codex",
@@ -785,7 +753,13 @@ describe("resolveFormState", () => {
       undefined,
       {},
       null,
-      { ...INITIAL_USER_MODIFIED, provider: true },
+      {
+        ...INITIAL_USER_MODIFIED,
+        provider: true,
+        modeId: true,
+        model: true,
+        thinkingOptionId: true,
+      },
       makeState({
         provider: "codex",
         modeId: "full-access",
@@ -796,10 +770,10 @@ describe("resolveFormState", () => {
       resolvableProviderMap,
     );
 
-    expect(resolved.provider).toBeNull();
-    expect(resolved.modeId).toBe("");
-    expect(resolved.model).toBe("");
-    expect(resolved.thinkingOptionId).toBe("");
+    expect(resolved.provider).toBe("codex");
+    expect(resolved.modeId).toBe("full-access");
+    expect(resolved.model).toBe("gpt-5.3-codex");
+    expect(resolved.thinkingOptionId).toBe("xhigh");
   });
 
   it("does not force fallback provider when allowed provider map is empty", () => {
@@ -817,8 +791,63 @@ describe("resolveFormState", () => {
   });
 });
 
+it("keeps the explicit model when a refreshed catalogue no longer lists it", () => {
+  const resolved = resolveFormState(
+    undefined,
+    { provider: "codex", providerPreferences: { codex: { model: "gpt-6-astra" } } },
+    CODEX_MODELS,
+    INITIAL_USER_MODIFIED,
+    makeState().form,
+    codexProviderMap,
+  );
+  expect(resolved.model).toBe("gpt-6-astra");
+  // Label/persistence lookup must not reinterpret the submitted ID as another model.
+  expect(resolveEffectiveModel(CODEX_MODELS, resolved.model)).toBeNull();
+});
+
 describe("resolveAgentForm", () => {
   describe("resolution state", () => {
+    it.each(["error", "unavailable"] as const)(
+      "restores a remembered model after opening against a %s provider snapshot",
+      (status) => {
+        const preferences = {
+          provider: "codex",
+          providerPreferences: { codex: { model: "gpt-5.3-codex" } },
+        };
+        const snapshotEntries: ProviderSnapshotEntry[] = [
+          {
+            provider: "codex",
+            enabled: true,
+            status,
+            models: [],
+          },
+        ];
+        const opened = resolveAgentForm(makeState(), {
+          type: "COMPLETE_RESOLUTION",
+          initialValues: undefined,
+          preferences,
+          providerModelsByProvider: makeProviderModelsByProvider([["codex", []]]),
+          allowedProviderMap: buildProviderDefinitionMapForStatuses({
+            snapshotEntries,
+            providerDefinitions: buildProviderDefinitions(snapshotEntries),
+            statuses: new Set(["ready", "loading"]),
+          }),
+        });
+        const recovered = resolveAgentForm(opened, {
+          type: "COMPLETE_RESOLUTION",
+          initialValues: undefined,
+          preferences,
+          providerModelsByProvider: makeProviderModelsByProvider([["codex", CODEX_MODELS]]),
+          allowedProviderMap: codexProviderMap,
+        });
+
+        expect(recovered.form).toMatchObject({
+          provider: "codex",
+          model: "gpt-5.3-codex",
+        });
+      },
+    );
+
     it("requests resolution without changing the current form values", () => {
       const state = makeState(
         { provider: "codex", modeId: "auto", model: "gpt-5.3-codex" },
@@ -833,7 +862,7 @@ describe("resolveAgentForm", () => {
     });
 
     it("completes a pending open resolution when snapshot models arrive late", () => {
-      const state = resolveAgentForm(makeState({ serverId: "host-1" }), {
+      const state = resolveAgentForm(makeState(), {
         type: "REQUEST_RESOLUTION",
       });
       const next = resolveAgentForm(state, {
@@ -855,7 +884,7 @@ describe("resolveAgentForm", () => {
     });
 
     it("does not change settled selection when a background snapshot has different defaults", () => {
-      const settled = resolveAgentForm(makeState({ serverId: "host-1" }), {
+      const settled = resolveAgentForm(makeState(), {
         type: "COMPLETE_RESOLUTION",
         initialValues: undefined,
         preferences: {
@@ -885,7 +914,7 @@ describe("resolveAgentForm", () => {
     });
 
     it("prefills edit hydration from initial values", () => {
-      const state = makeState({ serverId: "host-1" });
+      const state = makeState();
       const next = resolveAgentForm(state, {
         type: "COMPLETE_RESOLUTION",
         initialValues: {
@@ -893,7 +922,6 @@ describe("resolveAgentForm", () => {
           modeId: "full-access",
           model: "gpt-5.3-codex",
           thinkingOptionId: "low",
-          workingDir: "/repo",
         },
         preferences: { provider: "claude" },
         providerModelsByProvider: makeProviderModelsByProvider([["codex", CODEX_MODELS]]),
@@ -904,7 +932,6 @@ describe("resolveAgentForm", () => {
       expect(next.form.modeId).toBe("full-access");
       expect(next.form.model).toBe("gpt-5.3-codex");
       expect(next.form.thinkingOptionId).toBe("low");
-      expect(next.form.workingDir).toBe("/repo");
     });
 
     it("keeps a user model change after resolution has completed", () => {
@@ -912,7 +939,7 @@ describe("resolveAgentForm", () => {
         ...CODEX_MODELS,
         { provider: "codex", id: "gpt-5.4-codex", label: "gpt-5.4-codex" },
       ];
-      const settled = resolveAgentForm(makeState({ serverId: "host-1" }), {
+      const settled = resolveAgentForm(makeState(), {
         type: "COMPLETE_RESOLUTION",
         initialValues: undefined,
         preferences: {
@@ -955,26 +982,6 @@ describe("resolveAgentForm", () => {
       });
 
       expect(next.form.provider).toBe("codex");
-    });
-  });
-
-  describe("SET_SERVER_ID", () => {
-    it("updates serverId without marking it user-modified", () => {
-      const state = makeState();
-      const next = resolveAgentForm(state, { type: "SET_SERVER_ID", value: "host-1" });
-
-      expect(next.form.serverId).toBe("host-1");
-      expect(next.userModified.serverId).toBe(false);
-    });
-  });
-
-  describe("SET_SERVER_ID_FROM_USER", () => {
-    it("updates serverId and marks it user-modified", () => {
-      const state = makeState();
-      const next = resolveAgentForm(state, { type: "SET_SERVER_ID_FROM_USER", value: "host-2" });
-
-      expect(next.form.serverId).toBe("host-2");
-      expect(next.userModified.serverId).toBe(true);
     });
   });
 
@@ -1167,51 +1174,6 @@ describe("resolveAgentForm", () => {
     });
   });
 
-  describe("SET_WORKING_DIR", () => {
-    it("updates workingDir without marking it modified", () => {
-      const state = makeState();
-      const next = resolveAgentForm(state, { type: "SET_WORKING_DIR", value: "/home/user/proj" });
-
-      expect(next.form.workingDir).toBe("/home/user/proj");
-      expect(next.userModified.workingDir).toBe(false);
-    });
-  });
-
-  describe("SET_WORKING_DIR_FROM_USER", () => {
-    it("updates workingDir and marks it modified", () => {
-      const state = makeState();
-      const next = resolveAgentForm(state, {
-        type: "SET_WORKING_DIR_FROM_USER",
-        value: "/home/user/proj",
-      });
-
-      expect(next.form.workingDir).toBe("/home/user/proj");
-      expect(next.userModified.workingDir).toBe(true);
-    });
-  });
-
-  describe("AUTO_SELECT_SERVER", () => {
-    it("sets serverId when currently null", () => {
-      const state = makeState({ serverId: null });
-      const next = resolveAgentForm(state, {
-        type: "AUTO_SELECT_SERVER",
-        candidateServerId: "host-1",
-      });
-
-      expect(next.form.serverId).toBe("host-1");
-    });
-
-    it("does not override an already-set serverId", () => {
-      const state = makeState({ serverId: "existing" });
-      const next = resolveAgentForm(state, {
-        type: "AUTO_SELECT_SERVER",
-        candidateServerId: "host-1",
-      });
-
-      expect(next).toBe(state);
-    });
-  });
-
   describe("RESET", () => {
     it("keeps form values but marks them unresolved for the next open", () => {
       const state = makeState(
@@ -1275,4 +1237,35 @@ describe("resolveAgentForm", () => {
       expect([...map.keys()]).toEqual(["codex"]);
     });
   });
+});
+
+it("owns input readiness, reopening and user edits in the reducer", () => {
+  const inputs = {
+    type: "INPUTS_CHANGED" as const,
+    serverId: "host",
+    isVisible: true,
+    isCreateFlow: true,
+    isPreferencesLoading: true,
+    hasSnapshot: false,
+    initialValues: undefined,
+    preferences: { provider: "codex", providerPreferences: { codex: { model: "astra" } } },
+    allowedProviderMap: new Map(),
+    providerModelsByProvider: new Map(),
+  };
+  let state = resolveAgentForm(makeState(), inputs);
+  expect(state.resolution.status).toBe("pending");
+  state = resolveAgentForm(state, { ...inputs, isPreferencesLoading: false, hasSnapshot: true });
+  expect(state.form).toMatchObject({ provider: "codex", model: "astra" });
+  state = resolveAgentForm(state, {
+    type: "SET_MODEL_FROM_USER",
+    modelId: "manual",
+    availableModels: null,
+    providerPrefs: undefined,
+  });
+  state = resolveAgentForm(state, { ...inputs, isPreferencesLoading: false, hasSnapshot: true });
+  expect(state.form.model).toBe("manual");
+  state = resolveAgentForm(state, { ...inputs, isVisible: false });
+  expect(state.resolution.status).toBe("pending");
+  state = resolveAgentForm(state, { ...inputs, isPreferencesLoading: false, hasSnapshot: true });
+  expect(state.form).toMatchObject({ provider: "codex", model: "astra" });
 });

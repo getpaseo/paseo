@@ -10,6 +10,14 @@ function makeAgent(overrides: Partial<AggregatedAgent> = {}): AggregatedAgent {
     serverLabel: (overrides as { serverLabel?: string }).serverLabel ?? "server",
     title: overrides.title ?? null,
     status: overrides.status ?? ("running" as AggregatedAgent["status"]),
+    turn:
+      overrides.turn ??
+      ({
+        phase: "open",
+        turnId: null,
+        startedAt: null,
+        cancellationRequestId: null,
+      } as const),
     lastActivityAt: overrides.lastActivityAt ?? now,
     cwd: overrides.cwd ?? "/tmp/repo",
     provider: overrides.provider ?? ("openai" as AggregatedAgent["provider"]),
@@ -63,6 +71,28 @@ describe("deriveProjectDisplayName", () => {
 });
 
 describe("groupAgents", () => {
+  it("uses turn liveness instead of protocol status for active grouping", () => {
+    const old = new Date("2020-01-01T00:00:00.000Z");
+    const open = makeAgent({ id: "open", status: "idle", lastActivityAt: old });
+    const idle = makeAgent({
+      id: "idle",
+      status: "running",
+      lastActivityAt: old,
+      turn: { phase: "idle", cancellationRequestId: null },
+    });
+
+    const grouped = groupAgents([open, idle]);
+
+    const activeIds = grouped.activeGroups
+      .flatMap((group) => group.agents)
+      .map((agent) => agent.id);
+    const inactiveIds = grouped.inactiveGroups
+      .flatMap((group) => group.agents)
+      .map((agent) => agent.id);
+    expect(activeIds).toEqual(["open"]);
+    expect(inactiveIds).toEqual(["idle"]);
+  });
+
   it("groups active agents by remote URL when available", () => {
     const agents = [
       makeAgent({ id: "a1", cwd: "/Users/me/dev/paseo" }),

@@ -806,11 +806,14 @@ function buildOpenCodeModelDefinition(
   },
 ): AgentModelDefinition {
   const rawVariants = model.variants ? Object.keys(model.variants) : [];
-  // OpenCode lists only overrides; its base model behavior is selected by omitting `variant`.
+  // Like OpenCode's web UI, Default omits `variant` and lets OpenCode resolve it.
+  // Reserve that choice instead of exposing a second upstream `default` entry.
   const thinkingOptions = rawVariants.length
     ? [
         { id: OPENCODE_DEFAULT_VARIANT_ID, label: "Default", isDefault: true },
-        ...rawVariants.map((id) => ({ id, label: id })),
+        ...rawVariants
+          .filter((id) => id !== OPENCODE_DEFAULT_VARIANT_ID)
+          .map((id) => ({ id, label: id })),
       ]
     : [];
 
@@ -2423,6 +2426,7 @@ function appendOpenCodeChildSessionDetected(
     event: {
       type: "upsert",
       id: child.id,
+      parentSubagentId: child.parentSessionId === state.sessionId ? null : child.parentSessionId,
       ...(title ? { title } : {}),
       ...(child.title && !presentation.descriptionFromLink ? { description: child.title } : {}),
       ...(status ? { status } : {}),
@@ -4702,8 +4706,13 @@ class OpenCodeAgentSession implements AgentSession {
       return;
     }
     if (event.type === "provider_subagent" && event.event.type === "upsert" && event.event.status) {
-      if (isDeepStrictEqual(this.childStatuses.get(event.event.id), event.event)) return;
-      this.childStatuses.set(event.event.id, structuredClone(event.event));
+      const previous = this.childStatuses.get(event.event.id);
+      const current =
+        event.event.parentSubagentId === undefined && previous?.parentSubagentId !== undefined
+          ? { ...event.event, parentSubagentId: previous.parentSubagentId }
+          : event.event;
+      if (isDeepStrictEqual(previous, current)) return;
+      this.childStatuses.set(event.event.id, structuredClone(current));
     }
     const turnId = turnIdOverride === null ? null : (turnIdOverride ?? this.activeForegroundTurnId);
     const tagged = turnId ? { ...event, turnId } : event;

@@ -259,6 +259,89 @@ describe("ClaudeAgentSession persisted subagent replay", () => {
     rmSync(tempRoot, { recursive: true, force: true });
   });
 
+  test.each(["system", "user", "queue-operation"] as const)(
+    "restores nested background notification ownership from %s history",
+    async (form) => {
+      const nestedId = "toolu_nested";
+      const bashId = "toolu_nested_bash";
+      const timestamp = "2026-07-26T06:28:01.000Z";
+      function notification(toolUseId: string) {
+        const content = `<task-notification><task-id>${toolUseId}-task</task-id><tool-use-id>${toolUseId}</tool-use-id><status>completed</status><summary>Background command completed</summary></task-notification>`;
+        const records = {
+          system: {
+            subtype: "task_notification",
+            task_id: `${toolUseId}-task`,
+            tool_use_id: toolUseId,
+            status: "completed",
+            summary: "Background command completed",
+          },
+          user: { uuid: `${toolUseId}-notification`, message: { role: "user", content } },
+          "queue-operation": { operation: "enqueue", content },
+        };
+        return JSON.stringify({ type: form, timestamp, ...records[form] });
+      }
+      const subagentDir = writeParentSession([
+        taskToolUse(),
+        taskToolResult(),
+        notification(bashId),
+        notification("toolu_root_bash"),
+        notification("toolu_orphan_bash"),
+      ]);
+      function toolEntry(agentId: string, id: string, name: string) {
+        return JSON.stringify({
+          type: "assistant",
+          isSidechain: true,
+          agentId,
+          message: { role: "assistant", content: [{ type: "tool_use", id, name, input: {} }] },
+        });
+      }
+      writeSubagent({
+        subagentDir,
+        meta: JSON.stringify({ toolUseId: TOOL_USE_ID }),
+        sidechainLines: [toolEntry(AGENT_ID, nestedId, "Agent")],
+      });
+      writeSubagent({
+        subagentDir,
+        agentId: "nested-agent",
+        meta: JSON.stringify({ toolUseId: nestedId }),
+        sidechainLines: [toolEntry("nested-agent", bashId, "Bash")],
+      });
+      writeSubagent({
+        subagentDir,
+        agentId: "orphan-agent",
+        meta: JSON.stringify({ toolUseId: "missing-parent-tool" }),
+        sidechainLines: [toolEntry("orphan-agent", "toolu_orphan_bash", "Bash")],
+      });
+
+      const replayed = await replayEvents();
+      const rootNotifications = replayed.flatMap((event) =>
+        event.type === "timeline" &&
+        event.item.type === "tool_call" &&
+        event.item.name === "task_notification"
+          ? [event.item.metadata?.toolUseId]
+          : [],
+      );
+      expect(rootNotifications).toEqual(["toolu_root_bash", "toolu_orphan_bash"]);
+      const childNotifications = replayed.flatMap((event) =>
+        event.type === "provider_subagent" &&
+        event.event.type === "timeline" &&
+        event.event.item.type === "tool_call" &&
+        event.event.item.name === "task_notification"
+          ? [event.event]
+          : [],
+      );
+      expect(childNotifications).toEqual([
+        expect.objectContaining({
+          id: nestedId,
+          timestamp,
+          item: expect.objectContaining({
+            metadata: expect.objectContaining({ toolUseId: bashId }),
+          }),
+        }),
+      ]);
+    },
+  );
+
   test("links a subagent to its Task call through the meta sidecar", async () => {
     writeSession({
       parentLines: [taskToolUse(), taskToolResult()],

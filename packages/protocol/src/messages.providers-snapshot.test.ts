@@ -94,3 +94,20 @@ describe("provider snapshot message schemas", () => {
     expect(parsed.payload.entries[0]?.enabled).toBe(true);
   });
 });
+
+test("accepts a bodyless announcement with separate discovery freshness", async () => {
+  const { validateWSOutboundMessage } = await import("./validation/ws-outbound.js");
+  const message = {
+    type: "providers_snapshot_update",
+    payload: {
+      cwd: "/project",
+      entries: [],
+      snapshotHash: "content-hash",
+      fetchedAt: { codex: "2026-09-06T12:00:00.000Z" },
+      generatedAt: "2026-09-06T13:00:00.000Z",
+    },
+  };
+  expect(ProvidersSnapshotUpdateMessageSchema.parse(message)).toEqual(message);
+  const result = validateWSOutboundMessage({ type: "session", message });
+  expect(result.success).toBe(true);
+});

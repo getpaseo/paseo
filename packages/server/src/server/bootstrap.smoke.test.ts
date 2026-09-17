@@ -1,3 +1,4 @@
+import { resolveDaemonVersion } from "./daemon-version.js";
 import os from "node:os";
 import http from "node:http";
 import path from "node:path";
@@ -672,7 +673,10 @@ describe("paseo daemon bootstrap", () => {
       await mkdir(pluginDirectory);
       await writeFile(
         path.join(pluginDirectory, "paseo-plugin.json"),
-        JSON.stringify({ id: "startup-rollback" }),
+        JSON.stringify({
+          id: "startup-rollback",
+          requirements: { paseo: `>=${resolveDaemonVersion(import.meta.url)}` },
+        }),
       );
       await writeFile(
         path.join(pluginDirectory, "index.server.ts"),

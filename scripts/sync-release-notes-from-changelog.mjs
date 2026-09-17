@@ -9,6 +9,7 @@ import {
   normalizeReleaseTag,
   parseReleaseVersion,
 } from "./release-version-utils.mjs";
+import { isMainModule } from "./is-main-module.mjs";
 
 function usageAndExit(code = 1) {
   const usage = `
@@ -201,6 +202,6 @@ export function syncReleaseNotes(argv = process.argv.slice(2), deps = {}) {
   }
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (isMainModule(import.meta.url)) {
   syncReleaseNotes();
 }

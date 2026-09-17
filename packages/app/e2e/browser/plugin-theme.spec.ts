@@ -1,3 +1,4 @@
+import { pluginRequirements } from "../support/helpers/plugin-fixture";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -53,7 +54,10 @@ test("applies a contributed theme and falls back when its plugin is gone", async
   const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-theme-e2e-"));
   const client = await connectNewWorkspaceDaemonClient({ ownProjects: false });
   const previousConfig = await client.getDaemonConfig();
-  await writeFile(path.join(directory, "paseo-plugin.json"), JSON.stringify({ id: PLUGIN_ID }));
+  await writeFile(
+    path.join(directory, "paseo-plugin.json"),
+    JSON.stringify({ id: PLUGIN_ID, requirements: pluginRequirements }),
+  );
   await writeFile(path.join(directory, "index.client.ts"), PLUGIN_SOURCE);
 
   try {

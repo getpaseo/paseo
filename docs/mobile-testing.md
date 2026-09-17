@@ -35,6 +35,45 @@ PASEO_MOBILE_E2E_METRO_PORT=62093 npm run test:e2e:mobile
 
 [native-terminal-basic.ios.ad](../packages/app/e2e/mobile/agent-device/native-terminal-basic.ios.ad) and [native-terminal-basic.android.ad](../packages/app/e2e/mobile/agent-device/native-terminal-basic.android.ad) are the smallest examples. Each opens a fresh terminal, types a command at zero delay, submits it, and asserts its distinct output. The app must be connected to a daemon with an active workspace.
 
+For Android keyboard continuity, run the current checkout in the app, open an idle terminal
+with an empty prompt, hide its keyboard, and run:
+
+```bash
+ANDROID_SERIAL=emulator-5554 node packages/app/e2e/mobile/terminal-keyboard/android.mjs
+```
+
+Use a real docked software keyboard. The harness taps Ctrl, Esc, and Enter and checks Android's
+focused input identity and IME hide/show events. It saves screenshots and logs under
+`.dev/agent-device-artifacts/terminal-keyboard-android`. Set `PASEO_TERMINAL_KEYBOARD_APP_ID=sh.paseo`
+to test an installed production build. It never submits a chat message.
+
+`npm run test:e2e:composer-keyboard:android` preserves the chat control and
+keyboard regression flow, then runs the same growth, retained-height, bounds, and
+hold-to-delete and background-tap dismissal scenario on chat, a workspace draft
+tab, and New workspace. It checks empty-content taps and header taps at the cap
+without changing the input height. Each
+host also opens command/file autocomplete, the model selector, the attachment
+menu, and the forge picker from both keyboard states. It then submits a long
+fixture from each host and checks native stream displacement twice: after the
+response settles, and after returning to the bottom and letting the scrollbar
+fade. The image comparison excludes the scrollbar; keyboard dismissal alone
+does not prove that native scrolling receives touches.
+Artifacts are grouped by host under
+`.dev/agent-device-artifacts/composer-keyboard-android`. Configure its daemon,
+Metro, and device through the `PASEO_COMPOSER_KEYBOARD_*` variables in
+`packages/app/e2e/mobile/composer-keyboard/android.sh`. Use a software keyboard;
+the headless input helper cannot verify the
+[visible composer constraints](floating-panels.md#gotcha-3--keyboard-layout-and-portal-anchors).
+
+On a Play-image emulator, disable Gmail and Calendar first. Their welcome
+screens launch on their own, take input focus, and the run fails with
+`IME did not become visible` while the app still looks focused:
+
+```bash
+adb shell pm disable-user --user 0 com.google.android.gm
+adb shell pm disable-user --user 0 com.google.android.calendar
+```
+
 When replay diverges, read its ranked selector suggestions. Edit the script deliberately and rerun it from the beginning. `--update` is retained for compatibility but no longer rewrites scripts.
 
 ## Maestro compatibility

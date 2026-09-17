@@ -6,13 +6,14 @@ import type {
   AgentTimelineFetchResult,
   AgentTimelineRow,
 } from "../agent-timeline-store-types.js";
-import { selectTimelineWindowByProjectedLimit } from "../timeline-projection.js";
 
 export type ProviderSubagentStatus = "running" | "completed" | "failed" | "canceled";
 
 export interface ProviderSubagentDescriptor {
   id: string;
   parentAgentId: string;
+  /** Direct provider-subagent parent. Null identifies a child of the managed agent. */
+  parentSubagentId: string | null;
   provider: AgentProvider;
   title: string | null;
   description: string | null;
@@ -38,6 +39,7 @@ export type ProviderSubagentInputEvent =
       toolCallId?: string | null;
       cwd?: string | null;
       subtitle?: string | null;
+      parentSubagentId?: string | null;
       timestamp?: string;
     }
   | {
@@ -123,6 +125,7 @@ export class ProviderSubagentStore {
       toolCallId: stickyField(event.toolCallId, previous?.toolCallId),
       cwd: stickyField(event.cwd, previous?.cwd),
       subtitle: stickyField(event.subtitle, previous?.subtitle),
+      parentSubagentId: stickyField(event.parentSubagentId, previous?.parentSubagentId),
     };
     this.descriptors.set(key, subagent);
     return { type: "upsert", subagent };
@@ -147,30 +150,7 @@ export class ProviderSubagentStore {
     subagentId: string,
     options?: AgentTimelineFetchOptions,
   ): AgentTimelineFetchResult {
-    const direction = options?.direction ?? "tail";
-    const limit = options?.limit === undefined ? 200 : Math.max(0, Math.floor(options.limit));
-    const timeline = this.timelines.fetch(storeKey(parentAgentId, subagentId), {
-      ...options,
-      limit: 0,
-    });
-    if (limit === 0 || timeline.rows.length === 0) {
-      return timeline;
-    }
-    const selected = selectTimelineWindowByProjectedLimit({
-      rows: timeline.rows,
-      direction: timeline.reset ? "tail" : direction,
-      limit,
-    });
-    const firstRow = selected.selectedRows[0];
-    const lastRow = selected.selectedRows[selected.selectedRows.length - 1];
-    return {
-      ...timeline,
-      rows: selected.selectedRows,
-      hasOlder:
-        timeline.hasOlder || (firstRow !== undefined && firstRow.seq > timeline.window.minSeq),
-      hasNewer:
-        timeline.hasNewer || (lastRow !== undefined && lastRow.seq < timeline.window.maxSeq),
-    };
+    return this.timelines.fetch(storeKey(parentAgentId, subagentId), options);
   }
 
   deleteParent(parentAgentId: string): ProviderSubagentStoreEvent[] {

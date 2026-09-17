@@ -1,6 +1,6 @@
 ---
 title: Hub public API
-description: Use organization credentials to list projects, validate or install configuration, dispatch runs, and enroll daemons.
+description: Use organization credentials to install triggers, manage legacy configuration, dispatch runs, and enroll daemons.
 nav: Public API
 order: 79
 category: Hub
@@ -8,7 +8,7 @@ category: Hub
 
 # Hub public API
 
-The Hub public API lets automation operate on projects and daemons in one
+The Hub public API lets automation operate on triggers, projects, and daemons in one
 organization. Set the Hub origin in `PASEO_HUB_URL` below, for example
 `https://hub.example.com`.
 
@@ -37,13 +37,13 @@ organization is not accessible through the key.
 
 Each key has one or more selectable scopes:
 
-| Scope                    | Operation                                           |
-| ------------------------ | --------------------------------------------------- |
-| `projects:read`          | List active projects in the organization.           |
-| `configuration:validate` | Validate configuration without changing Hub state.  |
-| `configuration:install`  | Replace and activate a project's configuration.     |
-| `runs:dispatch`          | Dispatch a configured manual trigger for a project. |
-| `daemons:enroll`         | Issue a short-lived daemon enrollment token.        |
+| Scope                    | Operation                                                             |
+| ------------------------ | --------------------------------------------------------------------- |
+| `projects:read`          | List active projects in the organization.                             |
+| `configuration:validate` | Validate triggers or legacy configuration without changing Hub state. |
+| `configuration:install`  | Install triggers or replace a legacy project's configuration.         |
+| `runs:dispatch`          | Dispatch a configured manual trigger for a project.                   |
+| `daemons:enroll`         | Issue a short-lived daemon enrollment token.                          |
 
 API keys do not grant dashboard access. They cannot manage connections,
 projects, or organization members.
@@ -65,6 +65,34 @@ API failures use RFC 9457 problem details. Missing, invalid, or revoked credenti
 
 A valid key without the scope required by an endpoint returns `403` in the same format.
 
+## Trigger validation and installation
+
+`paseo hub deploy --dry-run` validates each `.paseo/triggers/*.yml` file through `POST /api/v1/triggers/validate`. `paseo hub deploy` validates all files first, then installs each through `POST /api/v1/triggers/install`.
+
+Both endpoints accept one self-contained document:
+
+```json
+{
+  "yaml": "name: manual-task\nenabled: true\non:\n  manual.run: {}\nrun:\n  target: { daemon: my-macbook, cwd: /workspace }\n  agent: { provider: codex, model: gpt-5, mode: full-access }\n  prompt: Complete the task and call hub.finish_execution.\n  max_runtime: 1h\n  idle_timeout: 5m\n"
+}
+```
+
+Use a daemon slug and agent runtime available in your organization. Validation requires `configuration:validate` and returns `200` with `{ "name": "manual-task", "valid": true }`.
+
+Installation requires `configuration:install`. It creates or updates the organization's trigger by the YAML `name` and returns `201`:
+
+```json
+{
+  "triggerId": "00000000-0000-4000-8000-000000000001",
+  "name": "manual-task",
+  "revisionId": "00000000-0000-4000-8000-000000000002",
+  "version": 1,
+  "active": true
+}
+```
+
+Invalid YAML or an unknown organization resource returns `422` with field issues. Each installation is a separate request; a later failure does not undo earlier successful installs. See [Deploy from the CLI](/docs/hub/configuration#deploy-from-the-cli).
+
 ## Project list
 
 `GET /api/v1/projects` returns active projects in the bearer credential's organization. `paseo hub projects` renders the projects as a table. With `--json`, it returns `{ "origin": "...", "projects": [...] }` so even an empty result records the resolved Hub.
@@ -81,7 +109,7 @@ A valid key without the scope required by an endpoint returns `403` in the same 
 }
 ```
 
-## Configuration validation
+## Legacy configuration validation
 
 `POST /api/v1/configurations/validate` accepts the same `projectSlug` and complete `files` bundle as configuration install. It performs the same compilation and resource resolution without recording a revision or changing the active configuration.
 
@@ -94,9 +122,9 @@ On success, Hub returns `200`:
 }
 ```
 
-`paseo hub deploy --dry-run` calls this endpoint with the identical locally resolved payload that a deployment would send.
+`paseo hub deploy --project <slug> --dry-run` calls this endpoint with the identical locally resolved payload that a deployment would send.
 
-## Configuration install
+## Legacy configuration install
 
 `configuration:install` validates the supplied canonical bundle, stores the exact authored files, and activates a new revision.
 
@@ -157,7 +185,7 @@ curl --fail-with-body -sS -X POST "$PASEO_HUB_URL/api/v1/configurations/install"
   --data @configuration-install.json
 ```
 
-`paseo hub deploy -p <project>` calls this endpoint with the discovered local bundle. The command uses an exact-origin stored login when flags and environment credentials are absent. See [Deploy from the CLI](/docs/hub/configuration#deploy-from-the-cli).
+`paseo hub deploy -p <project>` selects this legacy endpoint with the discovered local bundle. The command uses an exact-origin stored login when flags and environment credentials are absent. See [Deploy from the CLI](/docs/hub/configuration#deploy-from-the-cli).
 
 ## Manual run dispatch
 

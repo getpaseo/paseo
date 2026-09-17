@@ -53,6 +53,8 @@ export interface WorkspaceTabLaunchItem {
   shortcutActionId?: string;
   disabled: boolean;
   panelKind: WorkspaceTabTarget["kind"];
+  /** The fixed view this item can toggle in a configuration menu, or null for launch-only items. */
+  toggleTarget: WorkspaceTabTarget | null;
   launch: (destination: WorkspaceTabLaunchDestination) => void;
 }
 
@@ -75,7 +77,7 @@ export function NewTabLauncherProvider({
   return <NewTabLauncherContext.Provider value={value}>{children}</NewTabLauncherContext.Provider>;
 }
 
-const BUILT_IN_SELECTIONS: Record<BuiltInLaunchItemId, NewTabSelection> = {
+const BUILT_IN_SELECTIONS = {
   agent: { kind: "agent" },
   terminal: { kind: "terminal" },
   changes: { kind: "target", target: { kind: "changes_tree" } },
@@ -83,7 +85,7 @@ const BUILT_IN_SELECTIONS: Record<BuiltInLaunchItemId, NewTabSelection> = {
   files: { kind: "target", target: { kind: "files" } },
   browser: { kind: "browser" },
   pullRequest: { kind: "target", target: { kind: "pull_request" } },
-};
+} satisfies Record<BuiltInLaunchItemId, NewTabSelection>;
 
 function getLaunchPresentation(kind: WorkspaceTabTarget["kind"]): PanelPresentation {
   const registration = getPanelRegistration(kind);
@@ -128,6 +130,7 @@ export function useWorkspaceTabLaunchCatalog(input: {
         shortcutActionId: "workspace-tab-target-agent",
         disabled: false,
         panelKind: "draft",
+        toggleTarget: null,
         launch: launchSelection(BUILT_IN_SELECTIONS.agent),
       },
       terminal: {
@@ -137,6 +140,7 @@ export function useWorkspaceTabLaunchCatalog(input: {
         shortcutActionId: "workspace-terminal-new",
         disabled: launcher.terminalDisabled,
         panelKind: "terminal",
+        toggleTarget: null,
         launch: launchSelection(BUILT_IN_SELECTIONS.terminal),
       },
       changes: {
@@ -145,6 +149,7 @@ export function useWorkspaceTabLaunchCatalog(input: {
         Icon: changesPresentation.icon,
         disabled: false,
         panelKind: "changes_tree",
+        toggleTarget: BUILT_IN_SELECTIONS.changes.target,
         hidden: !launcher.showChanges,
         launch: launchSelection(BUILT_IN_SELECTIONS.changes),
       },
@@ -155,6 +160,7 @@ export function useWorkspaceTabLaunchCatalog(input: {
         shortcutActionId: "workspace-tab-target-changes",
         disabled: false,
         panelKind: "working_diff",
+        toggleTarget: null,
         hidden: !launcher.showChanges,
         launch: launchSelection(BUILT_IN_SELECTIONS.diff),
       },
@@ -165,6 +171,7 @@ export function useWorkspaceTabLaunchCatalog(input: {
         shortcutActionId: "workspace-tab-target-files",
         disabled: false,
         panelKind: "files",
+        toggleTarget: BUILT_IN_SELECTIONS.files.target,
         launch: launchSelection(BUILT_IN_SELECTIONS.files),
       },
       browser: {
@@ -174,6 +181,7 @@ export function useWorkspaceTabLaunchCatalog(input: {
         shortcutActionId: "workspace-tab-target-browser",
         disabled: false,
         panelKind: "browser",
+        toggleTarget: null,
         hidden: !launcher.showBrowser,
         launch: launchSelection(BUILT_IN_SELECTIONS.browser),
       },
@@ -183,6 +191,7 @@ export function useWorkspaceTabLaunchCatalog(input: {
         Icon: pullRequestPresentation.icon,
         disabled: false,
         panelKind: "pull_request",
+        toggleTarget: null,
         hidden: !launcher.showPullRequest,
         launch: launchSelection(BUILT_IN_SELECTIONS.pullRequest),
       },
@@ -209,6 +218,7 @@ export function useWorkspaceTabLaunchCatalog(input: {
           Icon: resolvePluginIcon(panel.icon),
           disabled: false,
           panelKind: "plugin",
+          toggleTarget: selection.target,
           launch: launchSelection(selection),
         });
       }
@@ -229,6 +239,7 @@ export function useWorkspaceTabLaunchCatalog(input: {
           terminalIconKey: getTerminalProfileIcon(profile),
           disabled: launcher.terminalDisabled,
           panelKind: "terminal",
+          toggleTarget: null,
           launch: launchSelection({ kind: "terminal", profile }),
         })),
         accessory: {

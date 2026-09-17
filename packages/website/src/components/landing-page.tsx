@@ -4,6 +4,7 @@ import {
   Bot,
   BookOpen,
   Braces,
+  Coffee,
   ExternalLink,
   GitFork,
   Laptop,
@@ -790,40 +791,58 @@ function ExtensibleSection() {
           icon={Puzzle}
           title="Plugins"
           description="Plugins can add server-side functionality and modify the client with custom components. They work across all clients, including mobile"
-          href="/docs/plugins"
-          linkLabel="Plugin documentation"
-          linkIcon="book"
+          links={PLUGIN_CARD_LINKS}
         />
         <ExtensibleCard
           icon={GitFork}
           title="Fork the repo"
           description="Paseo is licensed under Apache 2.0. You can inspect the implementation, fork the project, and adapt it to your workflow or organization"
-          href="https://github.com/getpaseo/paseo"
-          linkLabel="View the repository"
-          linkIcon="github"
-          external
+          links={FORK_CARD_LINKS}
         />
       </div>
     </FeatureSection>
   );
 }
 
+interface ExtensibleCardLink {
+  href: string;
+  label: string;
+  icon: React.ComponentType<{ className?: string }>;
+  external?: boolean;
+  /** Accent links stand out without hover, for destinations worth noticing. */
+  accent?: boolean;
+}
+
+const PLUGIN_CARD_LINKS: ReadonlyArray<ExtensibleCardLink> = [
+  { href: "/docs/plugins", label: "Plugin documentation", icon: BookOpen },
+  {
+    href: "https://paseo.cafe",
+    label: "Community plugins",
+    icon: Coffee,
+    external: true,
+    accent: true,
+  },
+];
+
+const FORK_CARD_LINKS: ReadonlyArray<ExtensibleCardLink> = [
+  {
+    href: "https://github.com/getpaseo/paseo",
+    label: "View the repository",
+    icon: GitHubIcon,
+    external: true,
+  },
+];
+
 function ExtensibleCard({
   icon: Icon,
   title,
   description,
-  href,
-  linkLabel,
-  linkIcon,
-  external = false,
+  links,
 }: {
   icon: LucideIcon;
   title: string;
   description: string;
-  href: string;
-  linkLabel: string;
-  linkIcon?: "book" | "github";
-  external?: boolean;
+  links: ReadonlyArray<ExtensibleCardLink>;
 }) {
   return (
     <div className="flex min-h-64 flex-col rounded-xl border border-white/10 bg-white/[0.025] p-6">
@@ -832,15 +851,24 @@ function ExtensibleCard({
       </div>
       <h3 className="text-lg font-medium text-white/85">{title}</h3>
       <p className="mt-2 text-sm leading-relaxed text-white/45">{description}</p>
-      <a
-        href={href}
-        {...(external ? { target: "_blank", rel: "noopener noreferrer" } : {})}
-        className="mt-auto inline-flex items-center gap-2 pt-6 text-sm text-muted-foreground transition-colors hover:text-foreground"
-      >
-        {linkIcon === "book" ? <BookOpen className="h-4 w-4" /> : null}
-        {linkIcon === "github" ? <GitHubIcon className="h-4 w-4" /> : null}
-        {linkLabel}
-      </a>
+      <div className="mt-auto flex flex-col items-start gap-3 pt-6">
+        {links.map((link) => (
+          <a
+            key={link.href}
+            href={link.href}
+            {...(link.external ? { target: "_blank", rel: "noopener noreferrer" } : {})}
+            className={
+              link.accent
+                ? "inline-flex items-center gap-2 text-sm text-emerald-300/85 transition-colors hover:text-emerald-200"
+                : "inline-flex items-center gap-2 text-sm text-muted-foreground transition-colors hover:text-foreground"
+            }
+          >
+            <link.icon className="h-4 w-4" />
+            {link.label}
+            {link.external ? <ExternalLink className="h-3.5 w-3.5 opacity-70" /> : null}
+          </a>
+        ))}
+      </div>
     </div>
   );
 }

@@ -1,3 +1,6 @@
 {
-  "id": "pi-tasks-timeline"
+  "id": "pi-tasks-timeline",
+  "requirements": {
+    "paseo": ">=0.8.0"
+  }
 }

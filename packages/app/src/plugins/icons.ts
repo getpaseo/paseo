@@ -1,6 +1,6 @@
 import { createElement, type ReactElement } from "react";
 import * as LucideIcons from "lucide-react-native";
-import type { PluginIconProps } from "@getpaseo/plugin";
+import type { PluginIconProps } from "@getpaseo/plugin/client";
 import type { LucideIcon } from "lucide-react-native";
 
 function findPluginIcon(name: string): LucideIcon | null {

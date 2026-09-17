@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import type { ToastApi, ToastOptions } from "@getpaseo/plugin/react-native";
+import type { ToastApi, ToastOptions } from "@getpaseo/plugin/client/react-native";
 import { useToast as useAppToast } from "@/contexts/toast-api-context";
 
 export function useToast(): ToastApi {

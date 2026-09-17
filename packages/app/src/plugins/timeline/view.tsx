@@ -1,5 +1,6 @@
-import { PluginClientStateProvider } from "@getpaseo/plugin/host";
-import type { PluginHostProps, PluginTheme, PluginTimelineItemProps } from "@getpaseo/plugin";
+import { PluginClientStateProvider } from "@getpaseo/plugin/client/host";
+import type { PluginHostProps, PluginTimelineItemProps } from "@getpaseo/plugin/client";
+import type { PluginTheme } from "@getpaseo/plugin";
 import React, { type ComponentType, useMemo } from "react";
 import { Platform, Text } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
@@ -10,7 +11,6 @@ import type { PluginTimelineStreamItem } from "@/types/stream";
 import { createPluginClientStateSource } from "../client-state/source";
 import { useInstalledPlugin } from "../registry";
 import { PluginRuntimeBoundary } from "../runtime-boundary";
-import { createPluginSurfaceRuntime } from "../surface-runtime";
 import { SurfaceErrorBoundary } from "../surface-error-boundary";
 import { toPluginTheme } from "../theme";
 
@@ -59,10 +59,6 @@ function PluginTimelineItemBody({
   );
   const parsed = parseRendererData(renderer, item.data);
   const client = useHostRuntimeClient(serverId);
-  const runtime = useMemo(
-    () => createPluginSurfaceRuntime(client, item.pluginId),
-    [client, item.pluginId],
-  );
   const compact = useIsCompactFormFactor();
   const hosts = useHosts();
   const hostLabel = hosts.find((host) => host.serverId === serverId)?.label ?? serverId;
@@ -70,7 +66,7 @@ function PluginTimelineItemBody({
   const layout = useMemo(() => ({ compact, platform: resolvePlatform() }), [compact]);
   const stateSource = useMemo(() => createPluginClientStateSource(serverId), [serverId]);
 
-  if (!plugin || !renderer || !parsed || !runtime) {
+  if (!plugin || !renderer || !parsed || !client) {
     return <TimelineItemUnavailable />;
   }
 
@@ -90,7 +86,7 @@ function PluginTimelineItemBody({
   };
   return (
     <SurfaceErrorBoundary installation={plugin} resetKey={item.data} Surface={Component}>
-      <PluginRuntimeBoundary plugin={plugin} runtime={runtime}>
+      <PluginRuntimeBoundary plugin={plugin} client={client}>
         <PluginClientStateProvider source={stateSource}>
           <Component {...props} />
         </PluginClientStateProvider>

@@ -14,6 +14,7 @@ import {
   app,
   autoUpdater as electronAutoUpdater,
   BrowserWindow,
+  ClipboardItem,
   clipboard,
   Menu,
   ipcMain,
@@ -130,6 +131,12 @@ const bootstrapComplete = new Promise<void>((resolve) => {
 let bootstrapIsComplete = false;
 
 app.setName(APP_NAME);
+log.info("[desktop] app startup", {
+  version: app.getVersion(),
+  platform: process.platform,
+  arch: process.arch,
+  isPackaged: app.isPackaged,
+});
 
 interface AttachedBrowserInput {
   browserId: string;
@@ -323,13 +330,6 @@ if (forcedUserDataDir) {
   }
 }
 
-// AppImage runtimes mount the app from /tmp under the user's UID, so the SUID
-// chrome-sandbox helper we ship in .deb/.rpm cannot work there. Disable the
-// sandbox only in that case; .deb/.rpm keep the sandbox on, matching VS Code.
-if (process.platform === "linux" && process.env.APPIMAGE) {
-  app.commandLine.appendSwitch("no-sandbox");
-}
-
 // Allow users to pass Chromium flags via PASEO_ELECTRON_FLAGS for debugging
 // rendering issues (e.g. "--disable-gpu --ozone-platform=x11").
 // Must run before app.whenReady().
@@ -340,6 +340,16 @@ if (electronFlags) {
     app.commandLine.appendSwitch(key, rest.join("=") || undefined);
   }
   log.info("[electron-flags]", electronFlags);
+}
+
+if (process.platform === "linux") {
+  // Keep the desktop/dock identity independent of the wrapped Electron filename.
+  app.setDesktopName("Paseo.desktop");
+  if (!app.commandLine.hasSwitch("class")) app.commandLine.appendSwitch("class", "Paseo");
+  log.info("[linux-sandbox]", {
+    enabled: !app.commandLine.hasSwitch("no-sandbox"),
+    reason: process.env.PASEO_DESKTOP_SANDBOX_REASON ?? "Chromium default",
+  });
 }
 
 let pendingOpenProjectPath = parseOpenProjectPathFromArgv({
@@ -519,7 +529,19 @@ ipcMain.handle("paseo:browser:clear-profile", async (_event, rawLegacyBrowserIds
 const browserCapture = createBrowserCaptureService<Electron.NativeImage>({
   findGuest: getPaseoBrowserWebContentsForHostWindow,
   decodeImage: (dataUrl) => nativeImage.createFromDataURL(dataUrl),
-  clipboard,
+  clipboard: {
+    write: async ({ text, image }) => {
+      const items: Record<string, string | Blob> = {};
+      if (text) items["text/plain"] = text;
+      if (image) {
+        const png = image.toPNG();
+        const bytes = new Uint8Array(png.byteLength);
+        bytes.set(png);
+        items["image/png"] = new Blob([bytes], { type: "image/png" });
+      }
+      await clipboard.write([new ClipboardItem(items)]);
+    },
+  },
   warn: (event, details) => log.warn(`[browser-capture] ${event}`, details),
 });
 
@@ -615,7 +637,8 @@ async function getEffectiveAppIconPath(): Promise<string | null> {
 }
 
 async function applyAppIcon(): Promise<void> {
-  if (process.platform !== "darwin") {
+  // Packaged apps keep the bundle icon and its macOS system appearance.
+  if (app.isPackaged || process.platform !== "darwin") {
     return;
   }
 
@@ -1031,7 +1054,10 @@ const quitLifecycle = createQuitLifecycle({
 });
 
 // electron-updater forwards this event through Electron's built-in autoUpdater.
-electronAutoUpdater.on("before-quit-for-update", quitLifecycle.handleBeforeQuitForUpdate);
+electronAutoUpdater.on("before-quit-for-update", () => {
+  log.info("[auto-updater] before-quit-for-update", { currentVersion: app.getVersion() });
+  quitLifecycle.handleBeforeQuitForUpdate();
+});
 app.on("before-quit", quitLifecycle.handleBeforeQuit);
 registerExternalQuitSignals({ signals: process, quit: () => app.quit() });
 

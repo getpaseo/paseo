@@ -1,131 +1,122 @@
-import type { Command } from "commander";
-import {
-  startLocalDaemonDetached,
-  stopLocalDaemon,
-  DEFAULT_STOP_TIMEOUT_MS,
-  type DaemonStartOptions,
-} from "./local-daemon.js";
-import type {
-  CommandOptions,
-  SingleResult,
-  OutputSchema,
-  CommandError,
-} from "../../output/index.js";
+import { Command } from "commander";
+import { readDaemonInstance, isSameDaemonInstance, DaemonInstanceError } from "@getpaseo/server";
+import { setTimeout as delay } from "node:timers/promises";
+import { connectToDaemon } from "../../utils/client.js";
+import { withOutput, type CommandOptions } from "../../output/index.js";
+import { addJsonAndDaemonHostOptions } from "../../utils/command-options.js";
+import { describeDaemonTarget } from "../../utils/daemon-target.js";
+import { parseTimeoutMs, rejectRemovedLaunchFlags } from "./local-daemon.js";
 
-interface RestartResult {
-  action: "restarted";
-  home: string;
-  pid: string;
-  message: string;
+export function daemonRestartCommand(): Command {
+  return rejectRemovedLaunchFlags(
+    addJsonAndDaemonHostOptions(
+      new Command("restart").description(
+        "Restart the selected daemon worker, retaining its supervisor launch",
+      ),
+    ),
+  )
+    .option("--timeout <seconds>", "Replacement readiness deadline (default: 600)")
+    .action(withOutput(runRestartCommand));
 }
 
-const restartResultSchema: OutputSchema<RestartResult> = {
-  idField: "action",
-  columns: [
-    {
-      header: "STATUS",
-      field: "action",
-      color: () => "green",
-    },
-    { header: "HOME", field: "home" },
-    { header: "PID", field: "pid" },
-    { header: "MESSAGE", field: "message" },
-  ],
-};
-
-export type RestartCommandResult = SingleResult<RestartResult>;
-
-function parseTimeoutMs(raw: unknown): number {
-  if (typeof raw !== "string" || raw.trim().length === 0) {
-    return DEFAULT_STOP_TIMEOUT_MS;
+export async function runRestartCommand(options: CommandOptions, _command: Command) {
+  const target = options.daemonTarget;
+  const deadline = Date.now() + parseTimeoutMs(options.timeout);
+  const remaining = () => Math.max(1, deadline - Date.now());
+  const instance = target.kind === "instance" ? await readDaemonInstance(target.home) : null;
+  async function checkSupervisor() {
+    if (target.kind !== "instance") return;
+    const current = await readDaemonInstance(target.home);
+    if (!current || !instance || !isSameDaemonInstance(instance, current))
+      throw new DaemonInstanceError(
+        "DAEMON_REPLACED",
+        `Supervisor exited or was replaced for ${target.home}.`,
+      );
   }
-
-  const seconds = Number(raw);
-  if (!Number.isFinite(seconds) || seconds <= 0) {
-    const error: CommandError = {
-      code: "INVALID_TIMEOUT",
-      message: `Invalid timeout value: ${raw}`,
-      details: "Timeout must be a positive number of seconds",
-    };
-    throw error;
-  }
-
-  return Math.ceil(seconds * 1000);
-}
-
-function toStartOptions(options: CommandOptions): DaemonStartOptions {
-  const startOptions: DaemonStartOptions = {
-    home: typeof options.home === "string" ? options.home : undefined,
-    listen: typeof options.listen === "string" ? options.listen : undefined,
-    port: typeof options.port === "string" ? options.port : undefined,
-    relay: typeof options.relay === "boolean" ? options.relay : undefined,
-    mcp: typeof options.mcp === "boolean" ? options.mcp : undefined,
-    injectMcp: typeof options.injectMcp === "boolean" ? options.injectMcp : undefined,
-    webUi: typeof options.webUi === "boolean" ? options.webUi : undefined,
-    hostnames: typeof options.hostnames === "string" ? options.hostnames : undefined,
-  };
-
-  if (startOptions.listen && startOptions.port) {
-    const error: CommandError = {
-      code: "INVALID_OPTIONS",
-      message: "Cannot use --listen and --port together",
-    };
-    throw error;
-  }
-
-  return startOptions;
-}
-
-export async function runRestartCommand(
-  options: CommandOptions,
-  _command: Command,
-): Promise<RestartCommandResult> {
-  const timeoutMs = parseTimeoutMs(options.timeout);
-  const force = options.force === true;
-  const startOptions = toStartOptions(options);
-
+  if (target.kind === "instance" && !instance)
+    throw new DaemonInstanceError(
+      "DAEMON_NOT_RUNNING",
+      `Daemon is not running for ${target.home}.`,
+    );
+  const client = await connectToDaemon({
+    target,
+    instance: instance ?? undefined,
+    timeout: remaining(),
+  });
+  let workerPid: number;
+  const serverId = client.getLastServerInfoMessage()?.serverId;
+  let acknowledged = false;
   try {
-    let stopResult: Awaited<ReturnType<typeof stopLocalDaemon>>;
+    workerPid = (await client.getDaemonStatus({ timeout: remaining() })).pid;
+    await checkSupervisor();
     try {
-      stopResult = await stopLocalDaemon({
-        home: startOptions.home,
-        timeoutMs,
-        force,
-      });
-    } catch (err) {
-      const isTimeout =
-        err instanceof Error && err.message.includes("Timed out waiting for daemon PID");
-      if (!force && isTimeout) {
-        stopResult = await stopLocalDaemon({
-          home: startOptions.home,
-          timeoutMs,
-          force: true,
-        });
-      } else {
-        throw err;
-      }
+      await client.restartServer("cli_restart", undefined, { timeout: remaining() });
+      acknowledged = true;
+    } catch (error) {
+      if (!isReconnectFailure(error)) throw error;
     }
-
-    const startup = await startLocalDaemonDetached(startOptions);
-    const before = stopResult.pid === null ? "not running" : `PID ${stopResult.pid}`;
-    const after = startup.pid === null ? "unknown PID" : `PID ${startup.pid}`;
-
-    return {
-      type: "single",
-      data: {
-        action: "restarted",
-        home: stopResult.home,
-        pid: startup.pid === null ? "-" : String(startup.pid),
-        message: `Local daemon restarted (${before} -> ${after})`,
-      },
-      schema: restartResultSchema,
-    };
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    const error: CommandError = {
-      code: "RESTART_FAILED",
-      message: `Failed to restart local daemon: ${message}`,
-    };
-    throw error;
+  } finally {
+    await client.close();
   }
+  let lastError: unknown = "No replacement worker observed";
+  while (Date.now() < deadline) {
+    try {
+      const replacement = await connectToDaemon({
+        target,
+        instance: instance ?? undefined,
+        timeout: Math.min(1_000, remaining()),
+      });
+      try {
+        if (replacement.getLastServerInfoMessage()?.serverId !== serverId)
+          throw new Error("Connected peer identity changed");
+        const status = await replacement.getDaemonStatus({ timeout: Math.min(1_000, remaining()) });
+        if (status.pid !== workerPid) {
+          await checkSupervisor();
+          return {
+            type: "single" as const,
+            data: {
+              action: "restarted",
+              target: describeDaemonTarget(target),
+              supervisorPid: instance?.pid ?? null,
+              previousWorkerPid: workerPid,
+              workerPid: status.pid,
+              acknowledged,
+            },
+            schema: {
+              idField: "action" as const,
+              columns: [],
+              renderHuman: () =>
+                `Restarted worker ${workerPid} → ${status.pid} at ${describeDaemonTarget(target)}. Supervisor launch retained.`,
+            },
+          };
+        }
+      } finally {
+        await replacement.close();
+      }
+    } catch (error) {
+      lastError = error;
+      const code = (error as { code?: string } | null)?.code;
+      if (code === "DAEMON_REPLACED" || code === "DAEMON_NOT_RUNNING") break;
+      if (!isReconnectFailure(error)) throw error;
+    }
+    await delay(Math.min(100, remaining()));
+  }
+  throw {
+    code: "RESTART_NOT_CONFIRMED",
+    message: `Replacement was not confirmed for ${describeDaemonTarget(target)}. Restart acknowledged: ${acknowledged}. Last observation: ${String(lastError)}`,
+  };
+}
+
+function isReconnectFailure(error: unknown): boolean {
+  return Boolean(
+    error &&
+    typeof error === "object" &&
+    "code" in error &&
+    [
+      "DAEMON_CONNECTION_LOST",
+      "DAEMON_REQUEST_TIMEOUT",
+      "DAEMON_UNREACHABLE",
+      "DAEMON_NOT_READY",
+    ].includes(String(error.code)),
+  );
 }

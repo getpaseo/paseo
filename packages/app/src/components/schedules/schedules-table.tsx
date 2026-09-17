@@ -129,6 +129,7 @@ function SchedulesTableRow({
 
   return (
     <ScheduleRow
+      serverId={row.schedule.serverId}
       schedule={schedule}
       targetLabel={row.targetLabel}
       provider={row.provider}

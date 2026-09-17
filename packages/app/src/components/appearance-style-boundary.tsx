@@ -7,6 +7,15 @@ interface AppearanceStyleBoundaryProps {
   children: ReactNode;
 }
 
+// Remounts its children when an appearance token changes. Memoized and parsed content bakes
+// tokens in, and on web numeric tokens (font sizes, line heights) are baked into generated
+// classes that only a re-render refreshes. Native tracked styles update in place.
+// Keep native gesture hosts outside these keys too: shared gesture refs can outlive detached
+// dependent views until passive cleanup. It must sit below every native navigator: remounting
+// a navigator while settings hydrate
+// detaches its screen container inside a FragmentManager transaction and crashes Android.
+// `ThemedStack` places one per screen; the app shell places them around the chrome outside the
+// navigators.
 function AppearanceStyleBoundaryBase({ appearanceKey, children }: AppearanceStyleBoundaryProps) {
   return <Fragment key={appearanceKey}>{children}</Fragment>;
 }
