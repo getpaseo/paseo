@@ -217,7 +217,8 @@ export function parseFileProtocolUrl(value: string): InlinePathTarget | null {
     return null;
   }
 
-  const normalizedPath = normalizeFileUrlPath(parsedUrl.pathname);
+  const inlinePathTarget = parseInlinePathToken(parsedUrl.pathname);
+  const normalizedPath = normalizeFileUrlPath(inlinePathTarget?.path ?? parsedUrl.pathname);
   if (!normalizedPath) {
     return null;
   }
@@ -230,7 +231,8 @@ export function parseFileProtocolUrl(value: string): InlinePathTarget | null {
   return {
     raw: value,
     path: normalizedPath,
-    ...lines,
+    lineStart: lines.lineStart ?? inlinePathTarget?.lineStart,
+    lineEnd: parsedUrl.hash ? lines.lineEnd : inlinePathTarget?.lineEnd,
   };
 }
 
@@ -247,7 +249,7 @@ function parseAssistantInlinePathLink(value: string): InlinePathTarget | null {
 
   return {
     ...inlinePathTarget,
-    path: normalizedPath,
+    path: safeDecodeURIComponent(normalizedPath),
   };
 }
 
@@ -327,7 +329,7 @@ export function parseAssistantFileLink(
 
     return {
       raw: value,
-      path: normalizedPath,
+      path: safeDecodeURIComponent(normalizedPath),
       ...lines,
     };
   }
