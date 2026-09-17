@@ -1,13 +1,13 @@
 import path from "node:path";
 import type { Command } from "commander";
 import { isCancel, password as passwordPrompt } from "@clack/prompts";
+import { hashDaemonPassword } from "@getpaseo/server/auth";
 import {
-  hashDaemonPassword,
   readPersistedConfig,
-  resolvePaseoHome,
   savePersistedConfig,
   type PersistedConfig,
-} from "@getpaseo/server";
+} from "@getpaseo/server/configuration";
+import { resolvePaseoHome } from "@getpaseo/server/daemon-control";
 import type {
   CommandError,
   CommandOptions,

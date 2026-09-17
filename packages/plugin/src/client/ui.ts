@@ -54,3 +54,12 @@ export declare function SettingsSelect<Value extends string>(
 ): ReactNode;
 export declare const SettingsInput: ComponentType<SettingsInputProps>;
 export declare const SettingsAction: ComponentType<SettingsActionProps>;
+
+export interface ExternalLinkProps {
+  href: string;
+  children: ReactNode;
+  accessibilityLabel?: string;
+  testID?: string;
+  onError?: (error: unknown) => void;
+}
+export declare const ExternalLink: ComponentType<ExternalLinkProps>;

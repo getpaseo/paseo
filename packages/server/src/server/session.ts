@@ -42,7 +42,7 @@ import type { TerminalActivity } from "@getpaseo/protocol/terminal-activity";
 import type { BinaryFrame } from "@getpaseo/protocol/binary-frames/index";
 import { CursorError } from "./pagination/cursor.js";
 import { SortablePager, type SortSpec } from "./pagination/sortable-pager.js";
-import { describeAgentHistoryMatches, rankAgentHistoryCandidates } from "./agent-history-search.js";
+import { matchesAgentHistoryQuery } from "./agent-history-search.js";
 import type { SpeechToTextProvider, TextToSpeechProvider } from "./speech/speech-provider.js";
 import type { TurnDetectionProvider } from "./speech/turn-detection-provider.js";
 import {
@@ -476,7 +476,7 @@ export interface SessionOptions {
   pluginRuntime?: {
     before: import("./plugins/lifecycle/index.js").PluginLifecycle["before"];
     emit: import("./plugins/lifecycle/index.js").PluginLifecycle["emit"];
-    listPlugins(): import("@getpaseo/protocol/messages").PluginListItem[];
+    listPlugins(): Promise<import("@getpaseo/protocol/messages").PluginListItem[]>;
     getLogs(pluginId: string): import("@getpaseo/protocol/messages").PluginLogEntry[];
     installDirectory(input: {
       path: string;
@@ -491,6 +491,13 @@ export interface SessionOptions {
     statusSources(
       pluginId?: string,
     ): Promise<import("@getpaseo/protocol/messages").PluginSourceStatusItem[]>;
+    previewUpdates(input: {
+      pluginId?: string;
+      target?: import("@getpaseo/protocol/messages").PluginUpdateSelection;
+    }): Promise<import("@getpaseo/protocol/messages").PluginUpdatePreview[]>;
+    applyUpdates(
+      proposals: import("@getpaseo/protocol/messages").PluginUpdateProposal[],
+    ): Promise<import("@getpaseo/protocol/messages").PluginUpdateResult[]>;
     updateSources(
       pluginId?: string,
     ): Promise<import("@getpaseo/protocol/messages").PluginSourceUpdateItem[]>;
@@ -2359,11 +2366,13 @@ export class Session {
 
   private dispatchPluginMessage(msg: SessionInboundMessage): Promise<void> | undefined {
     if (msg.type === "plugin.list.request") {
-      this.emit({
-        type: "plugin.list.response",
-        payload: { requestId: msg.requestId, plugins: this.pluginRuntime?.listPlugins() ?? [] },
+      return (this.pluginRuntime?.listPlugins() ?? Promise.resolve([])).then((plugins) => {
+        this.emit({
+          type: "plugin.list.response",
+          payload: { requestId: msg.requestId, plugins },
+        });
+        return undefined;
       });
-      return undefined;
     }
     if (msg.type === "plugin.logs.get.request") {
       if (!this.pluginRuntime) throw new Error("Plugin service is unavailable");
@@ -2462,6 +2471,28 @@ export class Session {
       return this.pluginRuntime.statusSources(msg.pluginId).then((plugins) => {
         this.emit({
           type: "plugin.source.status.response",
+          payload: { requestId: msg.requestId, plugins },
+        });
+        return undefined;
+      });
+    }
+    if (msg.type === "plugin.source.update.preview.request") {
+      if (!this.pluginRuntime) throw new Error("Plugin service is unavailable");
+      return this.pluginRuntime
+        .previewUpdates({ pluginId: msg.pluginId, target: msg.target })
+        .then((plugins) => {
+          this.emit({
+            type: "plugin.source.update.preview.response",
+            payload: { requestId: msg.requestId, plugins },
+          });
+          return undefined;
+        });
+    }
+    if (msg.type === "plugin.source.update.apply.request") {
+      if (!this.pluginRuntime) throw new Error("Plugin service is unavailable");
+      return this.pluginRuntime.applyUpdates(msg.proposals).then((plugins) => {
+        this.emit({
+          type: "plugin.source.update.apply.response",
           payload: { requestId: msg.requestId, plugins },
         });
         return undefined;
@@ -5297,8 +5328,9 @@ export class Session {
     limit: number;
     getPlacement: (workspaceId: string | undefined) => Promise<ProjectPlacementPayload | null>;
     filter: AgentUpdatesFilter | undefined;
+    search?: string;
   }): Promise<FetchAgentsResponseEntry[]> {
-    const { candidates, limit, getPlacement, filter } = params;
+    const { candidates, limit, getPlacement, filter, search } = params;
     const matchedEntries: FetchAgentsResponseEntry[] = [];
     const batchSize = 25;
     for (
@@ -5326,6 +5358,7 @@ export class Session {
         ) {
           continue;
         }
+        if (search && !matchesAgentHistoryQuery(search, entry)) continue;
         matchedEntries.push(entry);
         if (matchedEntries.length > limit) {
           break;
@@ -5384,17 +5417,6 @@ export class Session {
     };
 
     const search = agentDirectorySearchQuery(request);
-    if (search) {
-      return this.listRankedAgentHistoryEntries({
-        search,
-        agents,
-        sort,
-        filter,
-        getPlacement,
-        page: request.page,
-      });
-    }
-
     let candidates = [...agents];
     candidates.sort((left, right) => this.agentsPager.compare(left, right, sort));
     const cursorToken = request.page?.cursor;
@@ -5412,6 +5434,7 @@ export class Session {
       limit,
       getPlacement,
       filter,
+      search,
     });
 
     const pagedEntries = matchedEntries.slice(0, limit);
@@ -5428,64 +5451,6 @@ export class Session {
         prevCursor: request.page?.cursor ?? null,
         hasMore,
       },
-    };
-  }
-
-  /**
-   * The searched history page. Ranking has to see every candidate before it can
-   * name the best one, so this path resolves placements for the whole set
-   * instead of stopping at the page limit — that is what makes a query answer
-   * from all persisted sessions rather than from the first page of them.
-   */
-  private async listRankedAgentHistoryEntries(params: {
-    search: string;
-    agents: AgentSnapshotPayload[];
-    sort: FetchAgentsRequestSort[];
-    filter: AgentUpdatesFilter | undefined;
-    getPlacement: (workspaceId: string | undefined) => Promise<ProjectPlacementPayload | null>;
-    page: AgentDirectoryRequestMessage["page"];
-  }): Promise<{
-    entries: FetchAgentsResponseEntry[];
-    pageInfo: FetchAgentsResponsePageInfo;
-    searchTruncated: boolean;
-  }> {
-    const { search, agents, sort, filter, getPlacement, page } = params;
-    if (page?.cursor) {
-      // A ranked result set has no pages to walk, so a cursor here is caller
-      // misuse. Returning the ranked head instead would hide it.
-      throw new SessionRequestError(
-        "invalid_cursor",
-        "A history search returns one ranked page; it cannot be paged with a cursor.",
-      );
-    }
-
-    const allEntries = await this.collectFetchAgentsEntries({
-      candidates: agents,
-      limit: Number.MAX_SAFE_INTEGER,
-      getPlacement,
-      filter,
-    });
-
-    const ranked = rankAgentHistoryCandidates(search, allEntries, (left, right) =>
-      this.agentsPager.compare(left.agent, right.agent, sort),
-    );
-
-    const limit = page?.limit ?? 200;
-    // Ranges are derived only for the rows that will be rendered; ranking
-    // itself never needs them.
-    const entries = ranked.slice(0, limit).map((result) =>
-      Object.assign({}, result.candidate, {
-        searchScore: result.searchScore,
-        searchMatches: describeAgentHistoryMatches(search, result.candidate),
-      }),
-    );
-
-    return {
-      entries,
-      // No next page exists, so `hasMore` is false and truncation is reported
-      // on its own field. See the note on rankAgentHistoryCandidates.
-      pageInfo: { nextCursor: null, prevCursor: null, hasMore: false },
-      searchTruncated: ranked.length > limit,
     };
   }
 
