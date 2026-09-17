@@ -53,6 +53,11 @@ describe("TerminalInputModeTracker", () => {
       win32InputMode: true,
       applicationCursorKeys: false,
       bracketedPaste: false,
+      mouseX10: false,
+      mouseButtonEvent: false,
+      mouseAnyEvent: false,
+      mouseSgr: false,
+      mouseUrxvt: false,
     });
     expect(tracker.supportsModifiedEnter()).toBe(true);
     expect(tracker.getPreamble()).toBe("\x1b[?9001h");
@@ -71,6 +76,11 @@ describe("TerminalInputModeTracker", () => {
       win32InputMode: true,
       applicationCursorKeys: false,
       bracketedPaste: false,
+      mouseX10: false,
+      mouseButtonEvent: false,
+      mouseAnyEvent: false,
+      mouseSgr: false,
+      mouseUrxvt: false,
     });
     expect(tracker.getPreamble()).toBe("\x1b[=7;1u\x1b[?9001h");
   });
@@ -84,6 +94,11 @@ describe("TerminalInputModeTracker", () => {
       win32InputMode: false,
       applicationCursorKeys: true,
       bracketedPaste: false,
+      mouseX10: false,
+      mouseButtonEvent: false,
+      mouseAnyEvent: false,
+      mouseSgr: false,
+      mouseUrxvt: false,
     });
     expect(tracker.getPreamble()).toBe("\x1b[?1h");
 
@@ -93,6 +108,11 @@ describe("TerminalInputModeTracker", () => {
       win32InputMode: false,
       applicationCursorKeys: false,
       bracketedPaste: false,
+      mouseX10: false,
+      mouseButtonEvent: false,
+      mouseAnyEvent: false,
+      mouseSgr: false,
+      mouseUrxvt: false,
     });
   });
 
@@ -105,6 +125,11 @@ describe("TerminalInputModeTracker", () => {
       win32InputMode: false,
       applicationCursorKeys: false,
       bracketedPaste: true,
+      mouseX10: false,
+      mouseButtonEvent: false,
+      mouseAnyEvent: false,
+      mouseSgr: false,
+      mouseUrxvt: false,
     });
     expect(tracker.getPreamble()).toBe("\x1b[?2004h");
 
@@ -114,6 +139,11 @@ describe("TerminalInputModeTracker", () => {
       win32InputMode: false,
       applicationCursorKeys: false,
       bracketedPaste: false,
+      mouseX10: false,
+      mouseButtonEvent: false,
+      mouseAnyEvent: false,
+      mouseSgr: false,
+      mouseUrxvt: false,
     });
     expect(tracker.getPreamble()).toBe("");
   });
@@ -124,5 +154,47 @@ describe("TerminalInputModeTracker", () => {
     tracker.feed("\x1b[13;2u");
 
     expect(tracker.supportsModifiedEnter()).toBe(false);
+  });
+
+  it("tracks mouse tracking-level and encoding modes independently, and replays them", () => {
+    const tracker = new TerminalInputModeTracker();
+
+    // Matches hydra's own enable sequence: any-motion tracking plus SGR
+    // extended coordinates.
+    expect(tracker.feed("\x1b[?1003h\x1b[?1006h").changed).toBe(true);
+    expect(tracker.getState()).toEqual({
+      kittyKeyboardFlags: 0,
+      win32InputMode: false,
+      applicationCursorKeys: false,
+      bracketedPaste: false,
+      mouseX10: false,
+      mouseButtonEvent: false,
+      mouseAnyEvent: true,
+      mouseSgr: true,
+      mouseUrxvt: false,
+    });
+    expect(tracker.getPreamble()).toBe("\x1b[?1003h\x1b[?1006h");
+
+    expect(tracker.feed("\x1b[?1003l\x1b[?1006l").changed).toBe(true);
+    expect(tracker.getPreamble()).toBe("");
+  });
+
+  it("tracks each mouse tracking-level mode as its own bit, not a single level", () => {
+    const tracker = new TerminalInputModeTracker();
+
+    tracker.feed("\x1b[?1000h");
+    tracker.feed("\x1b[?1002h");
+    const state = tracker.getState();
+
+    expect(state.mouseX10).toBe(true);
+    expect(state.mouseButtonEvent).toBe(true);
+    expect(state.mouseAnyEvent).toBe(false);
+  });
+
+  it("reports no change when re-feeding a mouse mode already at that state", () => {
+    const tracker = new TerminalInputModeTracker();
+    tracker.feed("\x1b[?1006h");
+
+    expect(tracker.feed("\x1b[?1006h").changed).toBe(false);
   });
 });
