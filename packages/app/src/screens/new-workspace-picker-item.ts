@@ -1,4 +1,4 @@
-import type { CreatePaseoWorktreeInput } from "@getpaseo/client/internal/daemon-client";
+import type { CreateWorkspaceRequestOptions } from "@getpaseo/client/internal/daemon-client";
 import type { ForgeSearchItem } from "@getpaseo/protocol/messages";
 import type { ComboboxOptionModel } from "@/components/ui/combobox-options";
 import { getForgePresentation } from "@/git/forge";
@@ -24,19 +24,42 @@ export type PickerItem =
   | {
       kind: "github-pr";
       item: ForgeSearchItem;
+    }
+  | {
+      kind: "new-branch";
+      name: string;
     };
 
+type WorktreeCreateSource = Extract<CreateWorkspaceRequestOptions["source"], { kind: "worktree" }>;
+
 export type PickerCheckoutRequest = Pick<
-  CreatePaseoWorktreeInput,
-  "action" | "refName" | "checkoutSource" | "githubPrNumber"
+  WorktreeCreateSource,
+  "action" | "refName" | "branchName" | "checkoutSource" | "githubPrNumber"
 >;
 
 const BRANCH_OPTION_PREFIX = "branch:";
 const PR_OPTION_PREFIX = "github-pr:";
+const NEW_BRANCH_OPTION_PREFIX = "new-branch:";
 const REMOTE_TRACKING_PREFIX = "refs/remotes/";
 
 export function branchPickerOptionId(refName: string): string {
   return `${BRANCH_OPTION_PREFIX}${refName}`;
+}
+
+export function newBranchPickerOptionId(branchName: string): string {
+  return `${NEW_BRANCH_OPTION_PREFIX}${branchName}`;
+}
+
+// Resolves a combobox row id to a selection. A known row is returned as-is; an unknown id is
+// the custom "create branch" entry, whose id is the typed branch name.
+export function resolvePickerSelection(input: {
+  id: string;
+  itemById: Map<string, PickerItem>;
+}): PickerItem | null {
+  const existing = input.itemById.get(input.id);
+  if (existing) return existing;
+  const branchName = input.id.trim();
+  return branchName ? { kind: "new-branch", name: branchName } : null;
 }
 
 function divergenceLabel(ahead: number, behind: number): string | undefined {
@@ -153,13 +176,16 @@ function refQualifier(refName: string): string | null {
   return null;
 }
 
-// The one owner of "what do we branch off when the user picked nothing". The checkmarked
-// row, the trigger label, and the created ref all read this; computing it twice is how the
-// picker once showed local main while branching off something else.
+// The one owner of "which branch the selector pre-selects when the user picked nothing". The
+// checkmarked row, the trigger label, and the created ref all read this; computing it twice
+// is how the picker once showed local main while branching off something else.
 //
 // The upstream wins when the branch has one, because branching off the local ref silently
 // carries unpushed commits into the new workspace. The daemon sends the resolved ref rather
 // than a remote name, so a fork tracking upstream/main branches from upstream/main.
+//
+// This is the selector's default only. A user-named new branch deliberately ignores it and
+// is cut from the repository default branch instead.
 export function defaultBasePickerItem(status: BaseRefCheckoutStatus): PickerItem | null {
   const currentBranch = status.currentBranch;
   if (!currentBranch) return null;
@@ -185,6 +211,9 @@ export function pickerItemToCheckoutRequest(
   switch (item.kind) {
     case "branch":
       return { action: "branch-off", refName: item.refName };
+    case "new-branch":
+      // No base ref: the daemon cuts the user-named branch from the repository default.
+      return { action: "branch-off", branchName: item.name };
     case "github-pr": {
       const headRefName = item.item.headRefName?.trim();
       const forge = item.item.forge ?? "github";
@@ -215,9 +244,14 @@ export function prPickerOptionId(number: number): string {
 }
 
 export function pickerOptionId(item: PickerItem): string {
-  return item.kind === "branch"
-    ? branchPickerOptionId(item.refName)
-    : prPickerOptionId(item.item.number);
+  switch (item.kind) {
+    case "branch":
+      return branchPickerOptionId(item.refName);
+    case "github-pr":
+      return prPickerOptionId(item.item.number);
+    case "new-branch":
+      return newBranchPickerOptionId(item.name);
+  }
 }
 
 function formatPrLabel(item: Pick<ForgeSearchItem, "forge" | "number" | "title">): string {
@@ -226,7 +260,13 @@ function formatPrLabel(item: Pick<ForgeSearchItem, "forge" | "number" | "title">
 }
 
 export function pickerItemLabel(item: PickerItem): string {
-  return item.kind === "branch" ? item.name : formatPrLabel(item.item);
+  switch (item.kind) {
+    case "branch":
+    case "new-branch":
+      return item.name;
+    case "github-pr":
+      return formatPrLabel(item.item);
+  }
 }
 
 export interface PickerOptionData {

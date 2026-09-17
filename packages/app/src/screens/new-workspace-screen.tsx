@@ -104,6 +104,7 @@ import {
   buildPickerOptionData,
   defaultBasePickerItem,
   pickerItemLabel,
+  resolvePickerSelection,
   pickerItemToCheckoutRequest,
   type BranchPickerDetail,
   type PickerCheckoutRequest,
@@ -523,6 +524,7 @@ function NewWorkspacePickerOption({
   onPress,
   itemById,
   isPending,
+  newBranchDescription,
 }: {
   option: ComboboxOptionType;
   selected: boolean;
@@ -530,20 +532,48 @@ function NewWorkspacePickerOption({
   onPress: () => void;
   itemById: Map<string, PickerItem>;
   isPending: boolean;
+  newBranchDescription: string | null;
 }) {
   const { theme } = useUnistyles();
   const { t } = useTranslation();
   const item = itemById.get(option.id);
-  if (!item) return <View key={option.id} />;
+  // The combobox's custom "create branch" row is not in itemById: render the label the
+  // combobox built instead of an empty row.
+  if (!item) {
+    return (
+      <PickerOptionItem
+        testID={`new-workspace-ref-picker-create-branch-${option.id}`}
+        label={option.label}
+        description={option.description}
+        selected={selected}
+        active={active}
+        disabled={isPending}
+        onPress={onPress}
+        isBranch
+        iconColor={theme.colors.foregroundMuted}
+        iconSize={theme.iconSize.sm}
+      />
+    );
+  }
 
-  const isBranch = item.kind === "branch";
-  const testID = isBranch
-    ? `new-workspace-ref-picker-branch-${item.name}`
-    : `new-workspace-ref-picker-pr-${item.item.number}`;
-  const description =
-    !isBranch && item.item.baseRefName
+  const isBranch = item.kind !== "github-pr";
+  let testID: string;
+  let description: string | undefined;
+  let trailingLabel: string | undefined;
+  let accessibilityLabel: string | undefined;
+  if (item.kind === "branch") {
+    testID = `new-workspace-ref-picker-branch-${item.name}`;
+    trailingLabel = item.divergenceLabel;
+    accessibilityLabel = item.accessibilityLabel;
+  } else if (item.kind === "new-branch") {
+    testID = `new-workspace-ref-picker-new-branch-${item.name}`;
+    description = newBranchDescription ?? undefined;
+  } else {
+    testID = `new-workspace-ref-picker-pr-${item.item.number}`;
+    description = item.item.baseRefName
       ? t("newWorkspace.refPicker.intoBase", { baseRef: item.item.baseRefName })
       : undefined;
+  }
 
   return (
     <PickerOptionItem
@@ -555,8 +585,8 @@ function NewWorkspacePickerOption({
       disabled={isPending}
       onPress={onPress}
       isBranch={isBranch}
-      trailingLabel={isBranch ? item.divergenceLabel : undefined}
-      accessibilityLabel={isBranch ? item.accessibilityLabel : undefined}
+      trailingLabel={trailingLabel}
+      accessibilityLabel={accessibilityLabel}
       iconColor={theme.colors.foregroundMuted}
       iconSize={theme.iconSize.sm}
     />
@@ -1410,6 +1440,7 @@ interface NewWorkspaceFormStackInput {
     emptyText: string;
     renderOption: RefPickerRenderOption;
     showRefPicker: boolean;
+    newBranchDescription: string | null;
   };
   launch: {
     serverId: string;
@@ -1581,6 +1612,9 @@ function useNewWorkspaceFormStack(input: NewWorkspaceFormStackInput): ReactEleme
         anchorRef={base.anchorRef}
         emptyText={base.emptyText}
         renderOption={base.renderOption}
+        allowCustomValue
+        customValuePrefix={t("newWorkspace.refPicker.createBranch")}
+        customValueDescription={base.newBranchDescription ?? undefined}
       />
     </View>
   ) : null;
@@ -1863,17 +1897,16 @@ export function NewWorkspaceScreen({
     return githubPrSearchQuery.data?.items ?? [];
   }, [forgeSearchAuthenticated, githubPrSearchQuery.data?.items]);
 
-  const baseItem = useMemo(
-    () => selectedItem ?? (checkoutStatus ? defaultBasePickerItem(checkoutStatus) : null),
-    [checkoutStatus, selectedItem],
+  const defaultBaseItem = useMemo(
+    () => (checkoutStatus ? defaultBasePickerItem(checkoutStatus) : null),
+    [checkoutStatus],
   );
+  const baseItem = useMemo(() => selectedItem ?? defaultBaseItem, [defaultBaseItem, selectedItem]);
+  // A user-named new branch ignores the selector's default and is cut from the repository
+  // default branch, so this description names no concrete base.
+  const newBranchDescription = useMemo(() => t("newWorkspace.refPicker.newBranchFrom"), [t]);
   const { options, itemById, selectedOptionId }: PickerOptionData = useMemo(
-    () =>
-      buildPickerOptionData({
-        branchDetails,
-        prItems,
-        baseItem,
-      }),
+    () => buildPickerOptionData({ branchDetails, prItems, baseItem }),
     [baseItem, branchDetails, prItems],
   );
   const triggerLabel = useMemo(() => {
@@ -1896,7 +1929,9 @@ export function NewWorkspaceScreen({
 
   const handleSelectOption = useCallback(
     (id: string) => {
-      const item = itemById.get(id);
+      // An unknown row id is the custom "create branch" entry; resolvePickerSelection turns it
+      // into a new-branch selection.
+      const item = resolvePickerSelection({ id, itemById });
       if (!item) return;
       selectPickerItem(item);
     },
@@ -2259,8 +2294,15 @@ export function NewWorkspaceScreen({
       selected: boolean;
       active: boolean;
       onPress: () => void;
-    }) => <NewWorkspacePickerOption {...props} itemById={itemById} isPending={isPending} />,
-    [isPending, itemById],
+    }) => (
+      <NewWorkspacePickerOption
+        {...props}
+        itemById={itemById}
+        isPending={isPending}
+        newBranchDescription={newBranchDescription}
+      />
+    ),
+    [isPending, itemById, newBranchDescription],
   );
 
   const renderProjectOption = useCallback(
@@ -2356,6 +2398,7 @@ export function NewWorkspaceScreen({
       emptyText: pickerEmptyText,
       renderOption: renderPickerOption,
       showRefPicker,
+      newBranchDescription,
     },
     launch: {
       serverId: selectedServerId,
