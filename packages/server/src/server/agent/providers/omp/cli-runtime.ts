@@ -95,12 +95,12 @@ export class OmpCliRuntime implements OmpRuntime {
     const handleAbort = () => void process.close(input.signal?.reason).catch(() => undefined);
     input.signal?.addEventListener("abort", handleAbort, { once: true });
     try {
-      await establishOmpProtocol(process, this.options.logger, {
+      const protocolV2 = await establishOmpProtocol(process, this.options.logger, {
         readyTimeoutMs: this.options.readyTimeoutMs,
         requestTimeoutMs: this.options.requestTimeoutMs,
       });
       input.signal?.throwIfAborted();
-      return new OmpCliRuntimeSession(process, this.commandsRpcName);
+      return new OmpCliRuntimeSession(process, this.commandsRpcName, !protocolV2);
     } catch (error) {
       const startupError = error instanceof Error ? error : new Error(String(error));
       await process.close(startupError);
@@ -119,7 +119,9 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
   constructor(
     private readonly process: JsonlRpcProcess,
     private readonly commandsRpcName: "get_available_commands",
+    pagingUnsupported = false,
   ) {
+    this.pagingUnsupported = pagingUnsupported;
     process.onMessage((message) => {
       const event = OmpRuntimeEventSchema.safeParse(message);
       if (event.success) {
@@ -204,7 +206,11 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
     } catch (error) {
       const code = error && typeof error === "object" && "code" in error ? error.code : undefined;
       const message = error instanceof Error ? error.message : String(error);
-      if (code === "session_busy" || code === "stale_cursor" || message === "unknown command") {
+      if (
+        code === "session_busy" ||
+        code === "stale_cursor" ||
+        message.toLowerCase().includes("unknown command")
+      ) {
         // Protocol-v1 runtimes lack get_messages_page entirely; pin to legacy
         // and serve this call from it so the first history load still works.
         this.pagingUnsupported = true;
