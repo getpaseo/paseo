@@ -1,8 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { Animated, Easing, Platform, Text, ToastAndroid, View } from "react-native";
+import {
+  Platform,
+  Pressable,
+  StyleSheet as NativeStyleSheet,
+  Text,
+  ToastAndroid,
+  View,
+} from "react-native";
+import Animated, { FadeIn, FadeOut } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { StyleSheet, withUnistyles } from "react-native-unistyles";
+import type { Theme } from "@/styles/theme";
 import { useTranslation } from "react-i18next";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { isWeb } from "@/constants/platform";
@@ -44,13 +53,22 @@ type ToastViewportPlacement = "app-shell" | "panel";
 
 const DEFAULT_DURATION_MS = 2200;
 const TOAST_MAX_WIDTH = 480;
+const toastEntering = FadeIn.duration(140);
+const toastExiting = FadeOut.duration(140);
+const ThemedCheckCircle = withUnistyles(CheckCircle2);
+const ThemedInfo = withUnistyles(Info);
+const ThemedWarning = withUnistyles(AlertTriangle);
+const foregroundIcon = (theme: Theme) => ({ color: theme.colors.foreground });
+const infoIcon = (theme: Theme) => ({ color: theme.colors.palette.blue[300] });
+const successIcon = (theme: Theme) => ({ color: theme.colors.primary });
+const warningIcon = (theme: Theme) => ({ color: theme.colors.palette.amber[500] });
+const errorIcon = (theme: Theme) => ({ color: theme.colors.destructive });
 
 export function useToastHost(): {
   api: ToastApi;
   toast: ToastState | null;
   dismiss: () => void;
 } {
-  const { theme } = useUnistyles();
   const { t } = useTranslation();
   const [toast, setToast] = useState<ToastState | null>(null);
   const idRef = useRef(0);
@@ -90,11 +108,11 @@ export function useToastHost(): {
       copied: (label?: string) =>
         show(label ? t("common.states.copiedLabel", { label }) : t("common.states.copied"), {
           variant: "success",
-          icon: <CheckCircle2 size={18} color={theme.colors.foreground} />,
+          icon: <ThemedCheckCircle size={18} uniProps={foregroundIcon} />,
         }),
       error: (message: string) => show(message, { variant: "error", durationMs: 3200 }),
     }),
-    [show, theme.colors.foreground, t],
+    [show, t],
   );
 
   const dismiss = useCallback(() => {
@@ -113,11 +131,8 @@ export function ToastViewport({
   onDismiss: () => void;
   placement?: ToastViewportPlacement;
 }) {
-  const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
   const isMobile = useIsCompactFormFactor();
-  const opacity = useRef(new Animated.Value(0)).current;
-  const translateY = useRef(new Animated.Value(-8)).current;
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const dismissDeadlineRef = useRef<number | null>(null);
   const remainingDurationRef = useRef(0);
@@ -128,28 +143,6 @@ export function ToastViewport({
       timeoutRef.current = null;
     }
   }, []);
-
-  const animateOut = useCallback(() => {
-    clearTimer();
-    Animated.parallel([
-      Animated.timing(opacity, {
-        toValue: 0,
-        duration: 140,
-        easing: Easing.out(Easing.quad),
-        useNativeDriver: true,
-      }),
-      Animated.timing(translateY, {
-        toValue: -8,
-        duration: 140,
-        easing: Easing.out(Easing.quad),
-        useNativeDriver: true,
-      }),
-    ]).start(({ finished }) => {
-      if (finished) {
-        onDismiss();
-      }
-    });
-  }, [clearTimer, onDismiss, opacity, translateY]);
 
   const scheduleDismiss = useCallback(
     (durationMs: number | null) => {
@@ -163,10 +156,10 @@ export function ToastViewport({
       remainingDurationRef.current = nextDurationMs;
       dismissDeadlineRef.current = Date.now() + nextDurationMs;
       timeoutRef.current = setTimeout(() => {
-        animateOut();
+        onDismiss();
       }, nextDurationMs);
     },
-    [animateOut, clearTimer],
+    [onDismiss, clearTimer],
   );
 
   const pauseDismiss = useCallback(() => {
@@ -184,107 +177,35 @@ export function ToastViewport({
     scheduleDismiss(remainingDurationRef.current || toast.durationMs);
   }, [scheduleDismiss, toast]);
 
+  const toastId = toast?.id;
+  const durationMs = toast?.durationMs ?? null;
   useEffect(() => {
-    if (!toast) {
-      clearTimer();
-      dismissDeadlineRef.current = null;
-      remainingDurationRef.current = 0;
-      opacity.setValue(0);
-      translateY.setValue(-8);
-      return;
-    }
-
-    clearTimer();
-    opacity.setValue(0);
-    translateY.setValue(-8);
-
-    Animated.parallel([
-      Animated.timing(opacity, {
-        toValue: 1,
-        duration: 140,
-        easing: Easing.out(Easing.quad),
-        useNativeDriver: true,
-      }),
-      Animated.timing(translateY, {
-        toValue: 0,
-        duration: 140,
-        easing: Easing.out(Easing.quad),
-        useNativeDriver: true,
-      }),
-    ]).start();
-
-    scheduleDismiss(toast.durationMs);
-
-    return () => {
-      clearTimer();
-    };
-  }, [clearTimer, opacity, scheduleDismiss, toast, translateY]);
+    scheduleDismiss(durationMs);
+    return clearTimer;
+  }, [clearTimer, durationMs, scheduleDismiss, toastId]);
 
   const headerHeight = isMobile ? HEADER_INNER_HEIGHT_MOBILE : HEADER_INNER_HEIGHT;
   const headerTopPadding = isMobile ? HEADER_TOP_PADDING_MOBILE : 0;
-  const topOffset =
-    placement === "app-shell"
-      ? insets.top + headerTopPadding + headerHeight + theme.spacing[2]
-      : theme.spacing[3];
-
-  const toastVariant = toast?.variant;
-  const toastAnimatedStyle = useMemo(
-    () => [
-      styles.toast,
-      toastVariant === "info" ? styles.toastInfo : null,
-      toastVariant === "success" ? styles.toastSuccess : null,
-      toastVariant === "warning" ? styles.toastWarning : null,
-      toastVariant === "error" ? styles.toastError : null,
-      {
-        marginTop: topOffset,
-        opacity,
-        transform: [{ translateY }],
-      },
-    ],
-    [toastVariant, topOffset, opacity, translateY],
-  );
-  const toastMessageStyle = useMemo(
-    () => [styles.message, toastVariant === "error" ? styles.messageError : null],
-    [toastVariant],
-  );
-
-  if (!toast) {
-    return null;
-  }
-
-  let defaultIcon: ReactNode = null;
-  if (toast.variant === "info") {
-    defaultIcon = <Info size={18} color={theme.colors.palette.blue[300]} />;
-  } else if (toast.variant === "success") {
-    defaultIcon = <CheckCircle2 size={18} color={theme.colors.primary} />;
-  } else if (toast.variant === "warning") {
-    defaultIcon = <AlertTriangle size={18} color={theme.colors.palette.amber[500]} />;
-  } else if (toast.variant === "error") {
-    defaultIcon = <AlertTriangle size={18} color={theme.colors.destructive} />;
-  }
-  const icon = toast.icon ?? defaultIcon;
+  const topOffset = placement === "app-shell" ? insets.top + headerTopPadding + headerHeight : 0;
 
   const content = (
-    <View style={styles.container} pointerEvents="box-none">
-      <View style={styles.widthBoundary} pointerEvents="box-none">
-        <Animated.View
-          testID={toast.testID ?? "app-toast"}
-          onPointerEnter={isWeb ? pauseDismiss : undefined}
-          onPointerLeave={isWeb ? resumeDismiss : undefined}
-          style={toastAnimatedStyle}
-          accessibilityRole="alert"
-        >
-          {icon ? <View style={styles.iconSlot}>{icon}</View> : null}
-          {typeof toast.content === "string" ? (
-            <Text testID="app-toast-message" style={toastMessageStyle}>
-              {toast.content}
-            </Text>
-          ) : (
-            <View testID="app-toast-message" style={styles.contentSlot}>
-              {toast.content}
-            </View>
-          )}
-        </Animated.View>
+    <View
+      style={styles.container(placement, topOffset)}
+      pointerEvents="box-none"
+      collapsable={false}
+    >
+      <View style={styles.widthBoundary} pointerEvents="box-none" collapsable={false}>
+        {toast ? (
+          <Animated.View
+            entering={toastEntering}
+            exiting={toastExiting}
+            style={animatedStyles.surface}
+            testID={toast.testID ?? "app-toast"}
+            accessibilityRole="alert"
+          >
+            <ToastCard toast={toast} onHoverIn={pauseDismiss} onHoverOut={resumeDismiss} />
+          </Animated.View>
+        ) : null}
       </View>
     </View>
   );
@@ -296,15 +217,66 @@ export function ToastViewport({
   return content;
 }
 
+function ToastCard({
+  toast,
+  onHoverIn,
+  onHoverOut,
+}: {
+  toast: ToastState;
+  onHoverIn: () => void;
+  onHoverOut: () => void;
+}) {
+  let defaultIcon: ReactNode = null;
+  if (toast.variant === "info") {
+    defaultIcon = <ThemedInfo size={18} uniProps={infoIcon} />;
+  } else if (toast.variant === "success") {
+    defaultIcon = <ThemedCheckCircle size={18} uniProps={successIcon} />;
+  } else if (toast.variant === "warning") {
+    defaultIcon = <ThemedWarning size={18} uniProps={warningIcon} />;
+  } else if (toast.variant === "error") {
+    defaultIcon = <ThemedWarning size={18} uniProps={errorIcon} />;
+  }
+  const icon = toast.icon ?? defaultIcon;
+
+  return (
+    <Pressable
+      accessible={false}
+      onHoverIn={onHoverIn}
+      onHoverOut={onHoverOut}
+      style={[
+        styles.toast,
+        toast.variant === "info" ? styles.toastInfo : null,
+        toast.variant === "warning" ? styles.toastWarning : null,
+        toast.variant === "error" ? styles.toastError : null,
+      ]}
+    >
+      {icon ? <View style={styles.iconSlot}>{icon}</View> : null}
+      {typeof toast.content === "string" ? (
+        <Text testID="app-toast-message" style={styles.message}>
+          {toast.content}
+        </Text>
+      ) : (
+        <View testID="app-toast-message" style={styles.contentSlot}>
+          {toast.content}
+        </View>
+      )}
+    </Pressable>
+  );
+}
+
+const animatedStyles = NativeStyleSheet.create({
+  surface: { alignSelf: "center", maxWidth: "100%" },
+});
+
 const styles = StyleSheet.create((theme) => ({
-  container: {
+  container: (placement: ToastViewportPlacement, topOffset: number) => ({
     position: "absolute",
     left: theme.spacing[4],
     right: theme.spacing[4],
-    top: 0,
+    top: topOffset + (placement === "app-shell" ? theme.spacing[2] : theme.spacing[3]),
     zIndex: OVERLAY_Z.toast,
     alignItems: "center",
-  },
+  }),
   widthBoundary: {
     width: "92%",
     maxWidth: TOAST_MAX_WIDTH,
@@ -323,9 +295,6 @@ const styles = StyleSheet.create((theme) => ({
     paddingVertical: theme.spacing[2],
     paddingHorizontal: theme.spacing[3],
     ...theme.shadow.md,
-  },
-  toastSuccess: {
-    borderColor: theme.colors.border,
   },
   toastInfo: {
     borderColor: theme.colors.palette.blue[300],
@@ -349,8 +318,5 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foreground,
     fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.normal,
-  },
-  messageError: {
-    color: theme.colors.foreground,
   },
 }));

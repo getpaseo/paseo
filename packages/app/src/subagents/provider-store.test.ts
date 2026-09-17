@@ -1,5 +1,10 @@
+import { DaemonConnectionError } from "@getpaseo/client/internal/daemon-client";
 import { afterEach, describe, expect, test } from "vitest";
-import { providerSubagentKey, useProviderSubagentStore } from "./provider-store";
+import {
+  observeProviderSubagentTimeline,
+  providerSubagentKey,
+  useProviderSubagentStore,
+} from "./provider-store";
 
 const SERVER_ID = "server-1";
 const PARENT_ID = "parent-1";
@@ -41,6 +46,7 @@ describe("provider subagent client store", () => {
       item: { type: "assistant_message", text: "New live output." },
     });
     subagents.replaceTimeline(SERVER_ID, {
+      projection: "projected",
       requestId: "history-1",
       parentAgentId: PARENT_ID,
       subagentId: SUBAGENT_ID,
@@ -103,12 +109,12 @@ describe("provider subagent client store", () => {
     const state = useProviderSubagentStore.getState();
     expect(state.descriptors.get(key)?.status).toBe("completed");
     expect(state.timelines.get(key)?.head).toEqual([]);
-    expect(state.timelines.get(key)?.tail).toEqual([
-      expect.objectContaining({
-        kind: "assistant_message",
-        text: "Older history.New live output.",
-      }),
-    ]);
+    expect(
+      state.timelines
+        .get(key)
+        ?.tail.map((item) => (item.kind === "assistant_message" ? item.text : ""))
+        .join(""),
+    ).toBe("Older history.New live output.");
   });
 
   test("removes timelines for children no longer returned by the provider", () => {
@@ -325,6 +331,7 @@ describe("provider subagent client store", () => {
   test("merges bounded older pages and tracks whether more history remains", () => {
     const store = useProviderSubagentStore.getState();
     store.replaceTimeline(SERVER_ID, {
+      projection: "projected",
       requestId: "tail-page",
       parentAgentId: PARENT_ID,
       subagentId: SUBAGENT_ID,
@@ -347,6 +354,7 @@ describe("provider subagent client store", () => {
       error: null,
     });
     store.replaceTimeline(SERVER_ID, {
+      projection: "projected",
       requestId: "older-page",
       parentAgentId: PARENT_ID,
       subagentId: SUBAGENT_ID,
@@ -373,8 +381,8 @@ describe("provider subagent client store", () => {
       .getState()
       .timelines.get(providerSubagentKey(SERVER_ID, PARENT_ID, SUBAGENT_ID));
     expect(timeline?.hasOlder).toBe(false);
-    expect([...timeline!.rows.keys()]).toEqual([2, 1]);
-    expect(timeline?.head).toEqual([
+    expect(timeline?.cursor).toMatchObject({ startSeq: 1, endSeq: 2 });
+    expect([...(timeline?.tail ?? []), ...(timeline?.head ?? [])]).toEqual([
       expect.objectContaining({ kind: "assistant_message", text: "Older output.Recent output." }),
     ]);
   });
@@ -382,6 +390,7 @@ describe("provider subagent client store", () => {
   test("ignores delayed live updates from a stale timeline epoch", () => {
     const store = useProviderSubagentStore.getState();
     store.replaceTimeline(SERVER_ID, {
+      projection: "projected",
       requestId: "current-page",
       parentAgentId: PARENT_ID,
       subagentId: SUBAGENT_ID,
@@ -419,8 +428,8 @@ describe("provider subagent client store", () => {
       .getState()
       .timelines.get(providerSubagentKey(SERVER_ID, PARENT_ID, SUBAGENT_ID));
     expect(timeline?.epoch).toBe("epoch-current");
-    expect([...timeline!.rows.keys()]).toEqual([2]);
-    expect(timeline?.head).toEqual([
+    expect(timeline?.cursor).toMatchObject({ startSeq: 2, endSeq: 2 });
+    expect([...(timeline?.tail ?? []), ...(timeline?.head ?? [])]).toEqual([
       expect.objectContaining({ kind: "assistant_message", text: "Current output." }),
     ]);
   });
@@ -428,6 +437,7 @@ describe("provider subagent client store", () => {
   test("replaces cached rows with an authoritative tail page after a reconnect gap", () => {
     const store = useProviderSubagentStore.getState();
     store.replaceTimeline(SERVER_ID, {
+      projection: "projected",
       requestId: "old-tail",
       parentAgentId: PARENT_ID,
       subagentId: SUBAGENT_ID,
@@ -450,6 +460,7 @@ describe("provider subagent client store", () => {
       error: null,
     });
     store.replaceTimeline(SERVER_ID, {
+      projection: "projected",
       requestId: "reconnect-tail",
       parentAgentId: PARENT_ID,
       subagentId: SUBAGENT_ID,
@@ -475,9 +486,244 @@ describe("provider subagent client store", () => {
     const timeline = useProviderSubagentStore
       .getState()
       .timelines.get(providerSubagentKey(SERVER_ID, PARENT_ID, SUBAGENT_ID));
-    expect([...timeline!.rows.keys()]).toEqual([401]);
-    expect(timeline?.head).toEqual([
+    expect(timeline?.cursor).toMatchObject({ startSeq: 401, endSeq: 401 });
+    expect([...(timeline?.tail ?? []), ...(timeline?.head ?? [])]).toEqual([
       expect.objectContaining({ kind: "assistant_message", text: "Current tail output." }),
     ]);
+  });
+});
+
+describe("projected child history", () => {
+  const key = providerSubagentKey(SERVER_ID, PARENT_ID, SUBAGENT_ID);
+  const timestamp = "2026-09-14T00:00:00.000Z";
+  const current = () => useProviderSubagentStore.getState().timelines.get(key)!;
+  const text = () =>
+    [...current().tail, ...current().head]
+      .map((item) => (item.kind === "assistant_message" ? item.text : ""))
+      .join("");
+  function stream(seq: number, value: string) {
+    useProviderSubagentStore.getState().applyUpdate(SERVER_ID, {
+      kind: "timeline",
+      parentAgentId: PARENT_ID,
+      subagentId: SUBAGENT_ID,
+      provider: "codex",
+      epoch: "e",
+      seq,
+      timestamp,
+      item: { type: "assistant_message", messageId: "m", text: value },
+    });
+  }
+  type Payload = Parameters<
+    ReturnType<typeof useProviderSubagentStore.getState>["replaceTimeline"]
+  >[1];
+  function response(
+    value: string,
+    seqStart: number,
+    seqEnd: number,
+    direction: "tail" | "after" = "tail",
+  ): Payload {
+    return {
+      requestId: "r",
+      parentAgentId: PARENT_ID,
+      subagentId: SUBAGENT_ID,
+      provider: "codex",
+      epoch: "e",
+      direction,
+      projection: "projected",
+      reset: false,
+      staleCursor: false,
+      gap: false,
+      window: { minSeq: 1, maxSeq: seqEnd, nextSeq: seqEnd + 1 },
+      startCursor: { epoch: "e", seq: seqStart },
+      endCursor: { epoch: "e", seq: seqEnd },
+      hasOlder: false,
+      hasNewer: false,
+      error: null,
+      rows: [
+        {
+          seq: seqEnd,
+          seqStart,
+          seqEnd,
+          sourceSeqRanges: [{ startSeq: seqStart, endSeq: seqEnd }],
+          timestamp,
+          item: { type: "assistant_message", messageId: "m", text: value },
+        },
+      ],
+    };
+  }
+  function page(
+    value: string,
+    seqStart: number,
+    seqEnd: number,
+    direction: "tail" | "after" = "tail",
+  ) {
+    useProviderSubagentStore
+      .getState()
+      .replaceTimeline(SERVER_ID, response(value, seqStart, seqEnd, direction));
+  }
+  test("replaces overlapping fetched text and continues live streaming", () => {
+    page("AB", 1, 2);
+    stream(3, "C");
+    page("ABCD", 1, 4, "after");
+    expect(text()).toBe("ABCD");
+    stream(5, "E");
+    expect(text()).toBe("ABCDE");
+  });
+  test("reconciles a tail snapshot racing newer live text", () => {
+    stream(1, "A");
+    stream(2, "B");
+    stream(3, "C");
+    page("AB", 1, 2);
+    page("ABC", 1, 3);
+    expect(text()).toBe("ABC");
+    expect(current().needsRefresh).toBe(false);
+  });
+  test("recovers a live sequence gap while observed and stops fetching when closed", async () => {
+    let calls = 0;
+    const client = {
+      async fetchProviderSubagentTimeline() {
+        calls++;
+        return calls === 1 ? response("A", 1, 1) : response("ABC", 1, 3);
+      },
+    };
+    const errors: unknown[] = [];
+    const stop = observeProviderSubagentTimeline({
+      client,
+      serverId: SERVER_ID,
+      parentAgentId: PARENT_ID,
+      subagentId: SUBAGENT_ID,
+      limit: 100,
+      reportError: (error) => {
+        errors.push(error);
+      },
+    });
+    try {
+      await expect.poll(() => current()?.cursor?.endSeq).toBe(1);
+      stream(3, "C");
+      await expect.poll(text).toBe("ABC");
+      expect(calls).toBe(2);
+      expect(current().needsRefresh).toBe(false);
+    } finally {
+      stop();
+    }
+    stream(5, "E");
+    await Promise.resolve();
+    expect(calls).toBe(2);
+    expect(errors).toEqual([]);
+  });
+  test("retries a disconnected history read on the next stream update", async () => {
+    let calls = 0;
+    const errors: unknown[] = [];
+    const stop = observeProviderSubagentTimeline({
+      client: {
+        async fetchProviderSubagentTimeline() {
+          calls++;
+          if (calls === 2) throw new DaemonConnectionError("Connection lost");
+          return calls === 1 ? response("A", 1, 1) : response("ABCD", 1, 4);
+        },
+      },
+      serverId: SERVER_ID,
+      parentAgentId: PARENT_ID,
+      subagentId: SUBAGENT_ID,
+      limit: 100,
+      reportError: (error) => {
+        errors.push(error);
+      },
+    });
+    try {
+      await expect.poll(() => current()?.cursor?.endSeq).toBe(1);
+      stream(3, "C");
+      await expect.poll(() => calls).toBe(2);
+      expect(current().needsRefresh).toBe(true);
+      stream(4, "D");
+      await expect.poll(text).toBe("ABCD");
+      expect(current().needsRefresh).toBe(false);
+      expect(errors).toEqual([]);
+    } finally {
+      stop();
+    }
+  });
+  test("reports unexpected child history failures", async () => {
+    const failure = new TypeError("Invalid child timeline response");
+    const errors: unknown[] = [];
+    const stop = observeProviderSubagentTimeline({
+      client: {
+        async fetchProviderSubagentTimeline() {
+          throw failure;
+        },
+      },
+      serverId: SERVER_ID,
+      parentAgentId: PARENT_ID,
+      subagentId: SUBAGENT_ID,
+      limit: 100,
+      reportError: (error) => {
+        errors.push(error);
+      },
+    });
+    try {
+      await expect.poll(() => errors).toEqual([failure]);
+    } finally {
+      stop();
+    }
+  });
+  test("keeps a completed tool at its original position after fetching its latest update", () => {
+    const payload = response("Answer", 1, 5);
+    payload.rows = [
+      {
+        seq: 5,
+        seqStart: 1,
+        seqEnd: 5,
+        sourceSeqRanges: [
+          { startSeq: 1, endSeq: 1 },
+          { startSeq: 5, endSeq: 5 },
+        ],
+        timestamp,
+        item: {
+          type: "tool_call",
+          callId: "t",
+          name: "shell",
+          status: "completed",
+          error: null,
+          detail: { type: "plain_text", label: "work" },
+        },
+      },
+      {
+        seq: 4,
+        seqStart: 2,
+        seqEnd: 4,
+        sourceSeqRanges: [{ startSeq: 2, endSeq: 4 }],
+        timestamp,
+        item: { type: "assistant_message", text: "Answer", messageId: "m" },
+      },
+    ];
+    useProviderSubagentStore.getState().replaceTimeline(SERVER_ID, payload);
+    expect([...current().tail, ...current().head].map((item) => item.kind)).toEqual([
+      "tool_call",
+      "assistant_message",
+    ]);
+  });
+  test("retains projected display state rather than cumulative tool snapshots", () => {
+    for (let seq = 1; seq <= 2000; seq++) {
+      useProviderSubagentStore.getState().applyUpdate(SERVER_ID, {
+        kind: "timeline",
+        parentAgentId: PARENT_ID,
+        subagentId: SUBAGENT_ID,
+        provider: "codex",
+        epoch: "e",
+        seq,
+        timestamp,
+        item: {
+          type: "tool_call",
+          callId: "tool",
+          name: "task",
+          status: "running",
+          error: null,
+          detail: { type: "sub_agent", description: "Child", log: "x".repeat(seq * 128) },
+        },
+      });
+    }
+    expect([...current().tail, ...current().head]).toHaveLength(1);
+    expect(JSON.stringify(current()).length).toBeLessThan(1_000_000);
+    expect(current().lastSeq).toBe(2000);
   });
 });

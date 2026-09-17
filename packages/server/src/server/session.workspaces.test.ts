@@ -1,4 +1,7 @@
-import { createAgentRequestsStub } from "./test-utils/session-stubs.js";
+import {
+  createMessageReceiptsStub,
+  createTestCreationService,
+} from "./test-utils/session-stubs.js";
 import { execFileSync } from "node:child_process";
 import {
   existsSync,
@@ -642,7 +645,8 @@ function createSessionForWorkspaceTests(
 
   const session = asTestSession(
     new Session({
-      agentRequests: createAgentRequestsStub(),
+      messageReceipts: createMessageReceiptsStub(),
+      creationService: createTestCreationService(),
       clientId: "test-client",
       permissions: OWNER_PERMISSIONS,
       appVersion: options.appVersion ?? null,
@@ -1003,7 +1007,8 @@ test("create_agent_request keeps requested child cwd when grouped under an exist
     const emitted: SessionOutboundMessage[] = [];
     const session = asTestSession(
       new Session({
-        agentRequests: createAgentRequestsStub(),
+        messageReceipts: createMessageReceiptsStub(),
+        creationService: createTestCreationService(),
         clientId: "test-client",
         serverId: "test-server",
         permissions: OWNER_PERMISSIONS,
@@ -1157,7 +1162,8 @@ test("create_agent_request launches from an exact subdirectory in a created work
 
     const emitted: SessionOutboundMessage[] = [];
     const session = new Session({
-      agentRequests: createAgentRequestsStub(),
+      messageReceipts: createMessageReceiptsStub(),
+      creationService: createTestCreationService(),
       clientId: "test-client",
       permissions: OWNER_PERMISSIONS,
       appVersion: null,
@@ -1295,7 +1301,8 @@ test("create_agent_request does not title an existing workspace from the agent p
     let generateCalls = 0;
     const session = asTestSession(
       new Session({
-        agentRequests: createAgentRequestsStub(),
+        messageReceipts: createMessageReceiptsStub(),
+        creationService: createTestCreationService(),
         clientId: "test-client",
         permissions: OWNER_PERMISSIONS,
         appVersion: null,
@@ -1565,7 +1572,8 @@ test("archive emits an authoritative agent_update upsert for subscribed clients"
 
   const session = asTestSession(
     new Session({
-      agentRequests: createAgentRequestsStub(),
+      messageReceipts: createMessageReceiptsStub(),
+      creationService: createTestCreationService(),
       clientId: "test-client",
       permissions: OWNER_PERMISSIONS,
       onMessage: (message) => emitted.push(message),
@@ -2048,7 +2056,8 @@ test("close_items_request archives agents and kills terminals in one batch", asy
   const cancelAgentRun = vi.fn(async () => ({ status: "settled" as const }));
   const session = asTestSession(
     new Session({
-      agentRequests: createAgentRequestsStub(),
+      messageReceipts: createMessageReceiptsStub(),
+      creationService: createTestCreationService(),
       clientId: "test-client",
       permissions: OWNER_PERMISSIONS,
       onMessage: (message) => emitted.push(message),
@@ -2217,7 +2226,8 @@ test("close_items_request archives stored agents that are not currently loaded",
 
   const session = asTestSession(
     new Session({
-      agentRequests: createAgentRequestsStub(),
+      messageReceipts: createMessageReceiptsStub(),
+      creationService: createTestCreationService(),
       clientId: "test-client",
       permissions: OWNER_PERMISSIONS,
       onMessage: (message) => emitted.push(message),
@@ -2377,7 +2387,8 @@ test("close_items_request continues after an archive failure", async () => {
   const killTerminalBestEffort = vi.fn();
   const session = asTestSession(
     new Session({
-      agentRequests: createAgentRequestsStub(),
+      messageReceipts: createMessageReceiptsStub(),
+      creationService: createTestCreationService(),
       clientId: "test-client",
       permissions: OWNER_PERMISSIONS,
       onMessage: (message) => emitted.push(message),
@@ -2956,7 +2967,7 @@ test("fetch_agent_history_request pages archived historical rows separately", as
   expect(session.agentUpdates.hasSubscription()).toBe(false);
 });
 
-test("fetch_agent_history_request ranks a search across the whole history, not one page", async () => {
+test("fetch_agent_history_request filters across history and paginates chronologically", async () => {
   const emitted: SessionOutboundMessage[] = [];
   const session = createSessionForWorkspaceTests();
   const historyCwd = path.resolve("/tmp/history-search");
@@ -2985,8 +2996,7 @@ test("fetch_agent_history_request ranks a search across the whole history, not o
   session.workspaceRegistry.list = async () => [workspace];
   session.workspaceRegistry.get = async () => workspace;
   session.listAgentPayloads = async () => [
-    // The strong match is the oldest row, so a chronological answer would rank
-    // it last and a first-page-only search would not see it at all.
+    // Search keeps chronological order, skipping unrelated rows between pages.
     {
       ...makeAgent({
         id: "weak",
@@ -3026,38 +3036,24 @@ test("fetch_agent_history_request ranks a search across the whole history, not o
     page: { limit: 1 },
   });
 
-  const truncated = emitted[0];
-  if (truncated?.type !== "fetch_agent_history_response") {
-    throw new Error(`Expected a history response, got ${truncated?.type}`);
-  }
-  expect(truncated.payload.entries.map((entry) => entry.agent.id)).toEqual(["strong"]);
-  expect(truncated.payload.entries[0].searchScore).toBeTypeOf("number");
-  // More matched than fit. `hasMore` stays false because no page is fetchable;
-  // truncation is its own fact, so a rank offset can never go stale.
-  expect(truncated.payload.searchTruncated).toBe(true);
-  expect(truncated.payload.pageInfo).toEqual({
-    nextCursor: null,
-    prevCursor: null,
-    hasMore: false,
-  });
-
+  expect(emitted).toHaveLength(1);
+  const first = filterByType(emitted, "fetch_agent_history_response")[0];
+  expect(first.payload.entries.map((entry) => entry.agent.id)).toEqual(["weak"]);
+  expect(first.payload.pageInfo.hasMore).toBe(true);
+  expect(first.payload.entries[0].searchScore).toBeUndefined();
   await session.handleMessage({
     type: "fetch_agent_history_request",
-    requestId: "req-search-whole",
+    requestId: "req-search-next",
     search: "bill",
-    page: { limit: 25 },
+    page: { limit: 1, cursor: first.payload.pageInfo.nextCursor! },
   });
-
-  const whole = emitted[1];
-  if (whole?.type !== "fetch_agent_history_response") {
-    throw new Error(`Expected a history response, got ${whole?.type}`);
-  }
-  expect(whole.payload.entries.map((entry) => entry.agent.id)).toEqual(["strong", "weak"]);
-  expect(whole.payload.searchTruncated).toBe(false);
-  expect(whole.payload.pageInfo.hasMore).toBe(false);
+  expect(emitted).toHaveLength(2);
+  const second = filterByType(emitted, "fetch_agent_history_response")[1];
+  expect(second.payload.entries.map((entry) => entry.agent.id)).toEqual(["strong"]);
+  expect(second.payload.pageInfo.hasMore).toBe(false);
 });
 
-test("fetch_agent_history_request rejects a cursor on a searched request", async () => {
+test("fetch_agent_history_request rejects a malformed search cursor", async () => {
   const emitted: SessionOutboundMessage[] = [];
   const session = createSessionForWorkspaceTests();
   const historyCwd = path.resolve("/tmp/history-cursor");
@@ -3098,8 +3094,7 @@ test("fetch_agent_history_request rejects a cursor on a searched request", async
     },
   ];
 
-  // A ranked result set has no pages to walk. Answering with the ranked head
-  // would let a caller believe it had paged, so this fails loudly instead.
+  // Search uses the same validated chronological cursor as unfiltered history.
   await session.handleMessage({
     type: "fetch_agent_history_request",
     requestId: "req-cursor",
@@ -3649,7 +3644,8 @@ test("workspace update stream keeps persisted workspace visible after agents sto
 
   const session = asTestSession(
     new Session({
-      agentRequests: createAgentRequestsStub(),
+      messageReceipts: createMessageReceiptsStub(),
+      creationService: createTestCreationService(),
       clientId: "test-client",
       permissions: OWNER_PERMISSIONS,
       onMessage: (message) => emitted.push(message),

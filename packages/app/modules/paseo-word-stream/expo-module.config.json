@@ -1,0 +1,9 @@
+{
+  "platforms": ["android", "apple"],
+  "android": {
+    "modules": ["sh.paseo.wordstream.WordStreamModule"]
+  },
+  "apple": {
+    "modules": ["WordStreamModule"]
+  }
+}

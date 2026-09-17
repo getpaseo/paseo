@@ -1,8 +1,8 @@
 import { expect, type BrowserContext, type Page } from "@playwright/test";
-import type { CreateAgentRequestMessage } from "@getpaseo/protocol/messages";
+import type { CreateAgentRequestMessage, SessionInboundMessage } from "@getpaseo/protocol/messages";
 import type { DaemonClient as InternalDaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { decodeWorkspaceIdFromPathSegment } from "@/utils/host-routes";
-import { connectDaemonClient } from "./daemon-client-loader";
+import { connectDaemonClient, loadProtocolSchemas } from "./daemon-client-loader";
 import { daemonWsRoutePattern } from "./daemon-port";
 import { projectEquivalenceViewKey } from "./project-view-key";
 import { expectWorkspaceHeader } from "./workspace-ui";
@@ -22,6 +22,7 @@ type NewWorkspaceDaemonClient = Pick<
   | "getPaseoWorktreeList"
   | "getDaemonConfig"
   | "installDirectoryPlugin"
+  | "installPluginSource"
   | "disablePlugin"
   | "enablePlugin"
   | "inspectWorkspaceRecovery"
@@ -535,37 +536,35 @@ function parseWebSocketJson(message: WebSocketMessage): unknown {
   }
 }
 
-function getSessionMessage(message: WebSocketMessage): Record<string, unknown> | null {
-  const envelope = parseWebSocketJson(message);
-  if (!envelope || typeof envelope !== "object") {
-    return null;
-  }
-  const maybeEnvelope = envelope as { type?: unknown; message?: unknown };
-  if (maybeEnvelope.type !== "session" || !maybeEnvelope.message) {
-    return null;
-  }
-  if (typeof maybeEnvelope.message !== "object") {
-    return null;
-  }
-  return maybeEnvelope.message as Record<string, unknown>;
-}
-
-function getStringField(input: Record<string, unknown>, key: string): string | null {
-  const value = input[key];
-  return typeof value === "string" ? value : null;
+export async function loadSessionMessageReaders() {
+  // Use the same ESM module instance as the dynamically loaded daemon client.
+  const { WSInboundMessageSchema, WSOutboundMessageSchema } = await loadProtocolSchemas();
+  return {
+    client(message: WebSocketMessage) {
+      const parsed = WSInboundMessageSchema.safeParse(parseWebSocketJson(message));
+      return parsed.success && parsed.data.type === "session" ? parsed.data.message : null;
+    },
+    server(message: WebSocketMessage) {
+      const parsed = WSOutboundMessageSchema.safeParse(parseWebSocketJson(message));
+      return parsed.success && parsed.data.type === "session" ? parsed.data.message : null;
+    },
+  };
 }
 
 export interface AgentCreatedDelayControl {
   release(): void;
   waitForCreateRequest(): Promise<void>;
   waitForDelayedCreatedStatus(): Promise<void>;
+  expectSingleWorkspaceIntent(): void;
 }
 
 export async function delayBrowserAgentCreatedStatus(
   page: Page,
 ): Promise<AgentCreatedDelayControl> {
+  const frames = await loadSessionMessageReaders();
   const daemonPortPattern = daemonWsRoutePattern();
   const createRequestIds = new Set<string>();
+  const creationRequests: SessionInboundMessage[] = [];
   const delayedForwards: Array<() => void> = [];
   let releaseRequested = false;
   let resolveCreateRequest: (() => void) | null = null;
@@ -581,26 +580,32 @@ export async function delayBrowserAgentCreatedStatus(
     const server = ws.connectToServer();
 
     ws.onMessage((message) => {
-      const sessionMessage = getSessionMessage(message);
-      if (sessionMessage?.type === "create_agent_request") {
-        const requestId = getStringField(sessionMessage, "requestId");
-        if (requestId) {
-          createRequestIds.add(requestId);
-          resolveCreateRequest?.();
-        }
+      const sessionMessage = frames.client(message);
+      if (sessionMessage?.type === "send_agent_message_request")
+        creationRequests.push(sessionMessage);
+      if (
+        sessionMessage?.type === "create_agent_request" ||
+        sessionMessage?.type === "agent.create.request" ||
+        sessionMessage?.type === "workspace.create.request"
+      ) {
+        creationRequests.push(sessionMessage);
+        createRequestIds.add(sessionMessage.requestId);
+        resolveCreateRequest?.();
       }
       server.send(message);
     });
 
     server.onMessage((message) => {
-      const sessionMessage = getSessionMessage(message);
-      const payload =
-        sessionMessage?.type === "status" && typeof sessionMessage.payload === "object"
-          ? (sessionMessage.payload as Record<string, unknown>)
-          : null;
-      const requestId = payload ? getStringField(payload, "requestId") : null;
-
-      if (payload?.status === "agent_created" && requestId && createRequestIds.has(requestId)) {
+      const sessionMessage = frames.server(message);
+      const isCreated =
+        (sessionMessage?.type === "status" && sessionMessage.payload.status === "agent_created") ||
+        sessionMessage?.type === "agent.create.response" ||
+        sessionMessage?.type === "workspace.create.response";
+      if (
+        isCreated &&
+        typeof sessionMessage.payload.requestId === "string" &&
+        createRequestIds.has(sessionMessage.payload.requestId)
+      ) {
         resolveDelayedCreatedStatus?.();
         if (releaseRequested) {
           ws.send(message);
@@ -621,26 +626,41 @@ export async function delayBrowserAgentCreatedStatus(
         forward();
       }
     },
+
+    expectSingleWorkspaceIntent() {
+      expect(creationRequests).toHaveLength(1);
+      expect(creationRequests[0]).toMatchObject({
+        type: "workspace.create.request",
+        agent: { initialPrompt: expect.any(String) },
+      });
+    },
     waitForCreateRequest: () => createRequestSeen,
     waitForDelayedCreatedStatus: () => delayedCreatedStatusSeen,
   };
 }
 
+type AgentCreationIntent = Pick<
+  CreateAgentRequestMessage,
+  "config" | "initialPrompt" | "attachments"
+>;
+
 export interface WorkspaceCreatedDelayControl {
-  agentRequests: readonly CreateAgentRequestMessage[];
+  agentRequests: readonly AgentCreationIntent[];
   release(): void;
   waitForCreateRequest(): Promise<void>;
 }
 
 /**
- * Holds `workspace.create.response` so a test can act as the user does while the daemon is still
+ * Holds workspace readiness events and responses so a test can act while the daemon is still
  * running `git worktree add` — most importantly, navigate somewhere else.
  */
 export async function delayBrowserWorkspaceCreatedResponse(
   page: Page,
 ): Promise<WorkspaceCreatedDelayControl> {
+  const frames = await loadSessionMessageReaders();
   const daemonPortPattern = daemonWsRoutePattern();
-  const agentRequests: CreateAgentRequestMessage[] = [];
+  const agentRequests: AgentCreationIntent[] = [];
+  const creationKeys = new Set<string>();
   const createRequestIds = new Set<string>();
   const delayedForwards: Array<() => void> = [];
   let releaseRequested = false;
@@ -653,29 +673,25 @@ export async function delayBrowserWorkspaceCreatedResponse(
     const server = ws.connectToServer();
 
     ws.onMessage((message) => {
-      const sessionMessage = getSessionMessage(message);
-      if (sessionMessage?.type === "create_agent_request")
-        agentRequests.push(sessionMessage as CreateAgentRequestMessage);
+      const sessionMessage = frames.client(message);
+      if (sessionMessage?.type === "create_agent_request") agentRequests.push(sessionMessage);
       if (sessionMessage?.type === "workspace.create.request") {
-        const requestId = getStringField(sessionMessage, "requestId");
-        if (requestId) {
-          createRequestIds.add(requestId);
-          resolveCreateRequest?.();
-        }
+        createRequestIds.add(sessionMessage.requestId);
+        if (sessionMessage.idempotencyKey) creationKeys.add(sessionMessage.idempotencyKey);
+        if (sessionMessage.agent) agentRequests.push(sessionMessage.agent);
+        resolveCreateRequest?.();
       }
       server.send(message);
     });
 
     server.onMessage((message) => {
-      const sessionMessage = getSessionMessage(message);
-      const payload =
-        sessionMessage?.type === "workspace.create.response" &&
-        typeof sessionMessage.payload === "object"
-          ? (sessionMessage.payload as Record<string, unknown>)
-          : null;
-      const requestId = payload ? getStringField(payload, "requestId") : null;
-
-      if (requestId && createRequestIds.has(requestId) && !releaseRequested) {
+      const sessionMessage = frames.server(message);
+      const isCreation =
+        (sessionMessage?.type === "workspace.create.response" &&
+          createRequestIds.has(sessionMessage.payload.requestId)) ||
+        (sessionMessage?.type === "workspace.create.update" &&
+          creationKeys.has(sessionMessage.payload.idempotencyKey));
+      if (isCreation && !releaseRequested) {
         delayedForwards.push(() => ws.send(message));
         return;
       }

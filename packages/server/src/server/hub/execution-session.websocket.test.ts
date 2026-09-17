@@ -66,11 +66,34 @@ test("ordinary Hub create and message retries do not duplicate agents or prompts
     hub.requestOrdinary({ ...create, requestId: "create-duplicate" }),
   ]);
   const first = responses[0];
-  expect(first).toMatchObject({ type: "status", payload: { status: "agent_created" } });
+  expect(first).toEqual({
+    type: "status",
+    payload: {
+      status: "agent_created",
+      requestId: "create-first",
+      agentId: expect.any(String),
+      agent: expect.objectContaining({
+        id: expect.any(String),
+        workspaceId: expect.any(String),
+        provider: "codex",
+        cwd: hub.repoRoot(),
+        status: "idle",
+      }),
+    },
+  });
   if (first?.type !== "status" || first.payload.status !== "agent_created")
     throw new Error("Agent was not created");
   const agentId = first.payload.agentId;
-  expect(responses[1]).toMatchObject({ type: "status", payload: { agentId } });
+  expect(first.payload.agent.id).toBe(agentId);
+  expect(responses[1]).toEqual({
+    type: "status",
+    payload: {
+      status: "agent_created",
+      requestId: "create-duplicate",
+      agentId,
+      agent: first.payload.agent,
+    },
+  });
   expect(
     await hub.requestOrdinary({
       type: "fetch_agents_request",
@@ -92,11 +115,13 @@ test("ordinary Hub create and message retries do not duplicate agents or prompts
     text: "hello",
     activeTurnBehavior: "steer",
   };
-  expect(await hub.requestOrdinary({ ...message, requestId: "message-first" })).toMatchObject({
-    payload: { accepted: true },
+  expect(await hub.requestOrdinary({ ...message, requestId: "message-first" })).toEqual({
+    type: "send_agent_message_response",
+    payload: { requestId: "message-first", agentId, accepted: true, error: null },
   });
-  expect(await hub.requestOrdinary({ ...message, requestId: "message-duplicate" })).toMatchObject({
-    payload: { accepted: true },
+  expect(await hub.requestOrdinary({ ...message, requestId: "message-duplicate" })).toEqual({
+    type: "send_agent_message_response",
+    payload: { requestId: "message-duplicate", agentId, accepted: true, error: null },
   });
   expect(
     hub

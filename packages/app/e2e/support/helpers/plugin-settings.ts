@@ -42,7 +42,8 @@ export async function openCompactDisplaySettings(page: Page) {
 }
 async function openPluginScreen(page: Page) {
   await openHostSection(page, getServerId(), "plugins");
-  await page.getByRole("button", { name: "Open", exact: true }).click();
+  await page.getByRole("button", { name: "Actions for settings-example", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Display", exact: true }).click();
   await expect(page.getByRole("switch", { name: "Show metadata" })).toBeVisible();
 }
 export async function groupByWorkspace(page: Page) {
@@ -98,8 +99,10 @@ export async function discardTitle(page: Page) {
 }
 export async function returnAndReopenSettings(page: Page) {
   await goBackInSettings(page);
-  await expect(page.getByRole("button", { name: "Open", exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "Open", exact: true }).click();
+  const actions = page.getByRole("button", { name: "Actions for settings-example", exact: true });
+  await expect(actions).toBeVisible();
+  await actions.click();
+  await page.getByRole("menuitem", { name: "Display", exact: true }).click();
   await expect(page.getByRole("switch", { name: "Show metadata" })).toBeVisible();
 }
 export async function expectSettingsUnavailable(page: Page) {

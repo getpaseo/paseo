@@ -36,14 +36,17 @@ import { delayBrowserAgentCreatedStatus } from "../support/helpers/new-workspace
 import { installDaemonWebSocketGate } from "../support/helpers/daemon-websocket-gate";
 import { gotoAppShell, openSettings, selectModel } from "../support/helpers/app";
 import { observeTimelineSubscriptions } from "../support/helpers/timeline-delivery";
+import { rememberTimelineRequestCounts } from "../support/helpers/timeline-resume";
 import {
-  expectResumeOverflowFallsBackToOneTail,
-  rememberTimelineRequestCounts,
-} from "../support/helpers/timeline-resume";
-import {
+  switchWorkspaceViaSidebar,
   waitForWorkspaceInSidebar,
   workspaceDeckEntryLocator,
 } from "../support/helpers/workspace-ui";
+import {
+  openSessions,
+  clickSessionRow,
+  expectWorkspaceTabVisible,
+} from "../support/helpers/archive-tab";
 import { expectInFlightForkAvailable } from "../support/helpers/assistant-fork";
 import {
   scrollTimelineToNewestLoadedEdge,
@@ -428,6 +431,18 @@ async function expectInterruptedTurnOrderAfterReconnect(
   }
 }
 
+async function visitEvictionWorkspaces(
+  page: Page,
+  agents: readonly { agentId: string }[],
+): Promise<void> {
+  for (const [index, agent] of agents.entries()) {
+    await openSessions(page);
+    await clickSessionRow(page, `Workspace eviction ${index + 1}.`);
+    await expectWorkspaceTabVisible(page, agent.agentId);
+    await expectComposerVisible(page);
+  }
+}
+
 async function expectHiddenStreamingSubmissionOrderAfterWorkspaceEviction(
   page: Page,
   testInfo: { workerIndex: number },
@@ -443,50 +458,76 @@ async function expectHiddenStreamingSubmissionOrderAfterWorkspaceEviction(
     Array.from({ length: WORKSPACE_DECK_MAX_MOUNTED_WORKSPACES }, (_unused, index) =>
       seedMockAgentWorkspace({
         repoPrefix: `submission-workspace-eviction-${testInfo.workerIndex}-${index}-`,
-        title: `Workspace eviction ${index + 1}`,
+        title: `Workspace eviction ${index + 1}.`,
       }),
     ),
   );
   const prompt = "Keep this hidden image prompt before its streaming output.";
   const targetDeckEntry = workspaceDeckEntryLocator(page, getServerId(), target.workspaceId);
+  const openAgentIds = [target.agentId, ...evictionAgents.map((agent) => agent.agentId)];
 
   try {
     await openAgentRoute(page, target);
     await expectComposerVisible(page);
-    await subscriptions.waitForSubscribedAgents([target.agentId]);
+    // Open every chat before holding output. Adding chats replaces the timeline
+    // subscription and retires the IDs stamped on already-buffered frames.
+    await visitEvictionWorkspaces(page, evictionAgents);
+    await subscriptions.waitForSubscribedAgents(openAgentIds);
+    await switchWorkspaceViaSidebar({
+      page,
+      serverId: getServerId(),
+      workspaceId: target.workspaceId,
+    });
+    await expectWorkspaceTabVisible(page, target.agentId);
+    await expectComposerVisible(page);
+    const subscriptionRequests = gate.getClientRequestCount(
+      "agent.timeline.set_subscription.request",
+    );
 
     const userMessageCount = gate.getAgentStreamItemCount("user_message");
-    gate.setAgentStreamSuppressed(true);
+    gate.setAgentStreamItemSuppressed("user_message", true);
+    gate.holdNextAgentStreamEvent("turn_started");
     const promptRow = await submitMessageWithImage(page, prompt);
     await gate.waitForAgentStreamItem("user_message", userMessageCount + 1);
-
-    for (const evictionAgent of evictionAgents) {
-      await openAgentRoute(page, evictionAgent);
-      await expectComposerVisible(page);
-    }
-    await expect(targetDeckEntry).toHaveCount(0);
-    await subscriptions.waitForSubscribedAgents([
-      evictionAgents[WORKSPACE_DECK_MAX_MOUNTED_WORKSPACES - 1]!.agentId,
-    ]);
-    gate.setAgentStreamSuppressed(false);
-
+    await gate.waitForHeldAgentStreamEvent("turn_started");
+    // Finish production before navigation so passing cannot depend on late
+    // chunks arriving after the final workspace switch.
     await target.client.waitForFinish(target.agentId, 30_000);
-    const requestsBeforeReturn = rememberTimelineRequestCounts(gate);
+
+    // Navigate inside the app: a document reload discards the retained deck and
+    // adds startup history fetches, so it cannot prove eviction/resume behavior.
+    await visitEvictionWorkspaces(page, evictionAgents);
+    await expect(targetDeckEntry).toHaveCount(0);
+    await subscriptions.waitForSubscribedAgents(openAgentIds);
+    expect(gate.getClientRequestCount("agent.timeline.set_subscription.request")).toBe(
+      subscriptionRequests,
+    );
+    gate.releaseHeldAgentStreamEvent("turn_started");
+    const requestsBeforeReturn = rememberTimelineRequestCounts(gate, target.agentId);
     await waitForWorkspaceInSidebar(page, {
       serverId: getServerId(),
       workspaceId: target.workspaceId,
     });
-    await openAgentRoute(page, target);
+    await switchWorkspaceViaSidebar({
+      page,
+      serverId: getServerId(),
+      workspaceId: target.workspaceId,
+    });
     await expectComposerVisible(page);
-    await subscriptions.waitForSubscribedAgents([target.agentId]);
+    await subscriptions.waitForSubscribedAgents(openAgentIds);
 
+    const responseStart = page.getByText("Cycle 1", { exact: true });
     const response = page.getByText("(end of synthetic stream)", { exact: true }).last();
     await expect(promptRow).toBeVisible();
+    await expect(responseStart).toBeVisible();
     await expect(response).toBeVisible();
+    await expectRenderedBefore(promptRow, responseStart);
     await expectRenderedBefore(promptRow, response);
-    expectResumeOverflowFallsBackToOneTail(gate, requestsBeforeReturn);
+    // Open chats stay subscribed when their workspace view is evicted. Returning
+    // uses that live timeline without another resume check or startup tail fetch.
+    expect(rememberTimelineRequestCounts(gate, target.agentId)).toEqual(requestsBeforeReturn);
   } finally {
-    gate.setAgentStreamSuppressed(false);
+    gate.setAgentStreamItemSuppressed("user_message", false);
     gate.restore();
     await Promise.all([...evictionAgents.map((agent) => agent.cleanup()), target.cleanup()]);
   }
@@ -868,7 +909,7 @@ test.describe("Agent message submission", () => {
     }
   });
 
-  test("keeps one canonical prompt when the provider echoes before accepting", async ({
+  test("keeps canonical prompts through early echoes, reload, and later turns", async ({
     page,
   }, testInfo) => {
     const workspace = await seedWorkspace({
@@ -889,6 +930,20 @@ test.describe("Agent message submission", () => {
       await expect(submittedPrompt).toHaveCount(1);
       await expect(submittedPrompt).toHaveAttribute("aria-busy", "false");
       await expectVisibleAgentSurfacesIdle(page);
+      for (const [index, nextPrompt] of [
+        "emit 1 coalesced agent stream updates for the second turn.",
+        "emit 1 coalesced agent stream updates for the third turn.",
+      ].entries()) {
+        await submitMessage(page, nextPrompt);
+        await expect(page.getByText(nextPrompt, { exact: true })).toBeVisible();
+        await expectVisibleAgentSurfacesIdle(page);
+        await expectComposerEditable(page);
+        await expect(page.getByTestId("user-message")).toHaveCount(index + 2);
+      }
+      await fillComposerDraft(page, "Keep this unsent draft.");
+      await composerLocator(page).blur();
+      await expect(page.getByTestId("user-message")).toHaveCount(3);
+      await expectComposerEditable(page);
     } finally {
       await workspace.cleanup();
     }
@@ -908,16 +963,12 @@ test.describe("Agent message submission", () => {
       await submitMessage(page, prompt);
       const submittedPrompt = page.getByTestId("user-message").filter({ hasText: prompt });
       await expect(submittedPrompt).toHaveAttribute("aria-busy", "false", { timeout: 30_000 });
-      const marker = `late-provider-identity-${Date.now()}`;
-      await submittedPrompt.evaluate((element, value) => {
-        element.dataset.lateProviderIdentity = value;
-      }, marker);
 
       await submittedPrompt.hover();
       await expect(submittedPrompt.getByTestId("rewind-menu-trigger")).toBeVisible({
         timeout: 5_000,
       });
-      await expect(page.locator(`[data-late-provider-identity="${marker}"]`)).toBeVisible();
+      await expect(submittedPrompt).toHaveCount(1);
       await page.getByRole("button", { name: "Stop agent", exact: true }).click();
       await expectVisibleAgentSurfacesIdle(page);
     } finally {
