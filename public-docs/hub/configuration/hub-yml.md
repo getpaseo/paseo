@@ -188,20 +188,21 @@ An environment or dynamic named-agent expression must have a finite set of possi
 
 ### Steps
 
-| Field           | Required | Notes                                                                                    |
-| --------------- | -------- | ---------------------------------------------------------------------------------------- |
-| `id`            | yes      | Unique within the workflow.                                                              |
-| `environment`   | yes      | Literal environment name or finite expression resolving to one.                          |
-| `max_runtime`   | yes      | Step hard limit.                                                                         |
-| `idle_timeout`  | yes      | Idle limit no longer than `max_runtime`.                                                 |
-| `agent`         | yes      | Named agent, finite expression selecting a named agent, or complete static inline agent. |
-| `prompt`        | yes      | Ordered `text` and `include` blocks.                                                     |
-| `if`            | no       | Expression deciding whether the step runs.                                               |
-| `env`           | no       | Environment variables from connection values.                                            |
-| `output.schema` | no       | JSON Schema for structured step output.                                                  |
-| `allow_outputs` | no       | Provider output capabilities with optional `max` and `required`.                         |
-| `auto_archive`  | no       | Archive the agent after the step ends.                                                   |
-| `github`        | no       | Explicit GitHub authority for this step.                                                 |
+| Field             | Required | Notes                                                                                                                |
+| ----------------- | -------- | -------------------------------------------------------------------------------------------------------------------- |
+| `id`              | yes      | Unique within the workflow.                                                                                          |
+| `environment`     | yes      | Literal environment name or finite expression resolving to one.                                                      |
+| `max_runtime`     | yes      | Step hard limit.                                                                                                     |
+| `idle_timeout`    | yes      | Idle limit no longer than `max_runtime`.                                                                             |
+| `startup_timeout` | no       | Step startup waiting budget. See [startup timeout](/docs/hub/configuration#startup-timeout) for defaults and limits. |
+| `agent`           | yes      | Named agent, finite expression selecting a named agent, or complete static inline agent.                             |
+| `prompt`          | yes      | Ordered `text` and `include` blocks.                                                                                 |
+| `if`              | no       | Expression deciding whether the step runs.                                                                           |
+| `env`             | no       | Environment variables from connection values.                                                                        |
+| `output.schema`   | no       | JSON Schema for structured step output.                                                                              |
+| `allow_outputs`   | no       | Provider output capabilities with optional `max` and `required`.                                                     |
+| `auto_archive`    | no       | Archive the agent after the step ends.                                                                               |
+| `github`          | no       | Explicit GitHub authority for this step.                                                                             |
 
 An inline agent is static and complete:
 
@@ -270,7 +271,7 @@ Keys use the existing expression syntax and must resolve to a non-empty string o
 
 An existing session keeps its daemon, agent configuration, target, environment, and tool contracts. Changing those settings for the same key fails with an explanation; choose a different key or **New agent**. Prompts and output destinations belong to each arrival and may change. A worktree branch is chosen when the session is first created and reused on later arrivals.
 
-Triggers that mint temporary environment credentials, including a `run.github` grant or a connection token in `run.env`, must choose **New agent** when the event has a conversation or uses a custom key. These credentials expire with the execution, and an existing agent's environment cannot be refreshed. Hub-managed reply tools remain available with continuation.
+A follow-up steers the active agent without extending its runtime deadline or credential expiry. With a `run.github` grant or connection token in `run.env`, follow-ups share the active agent’s credentials. Once all requests finish, Hub revokes leased tokens; the next arrival starts a new agent with fresh credentials. Agents without temporary credentials can be reused after completion.
 
 ### Upgrading
 

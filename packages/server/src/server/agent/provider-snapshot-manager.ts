@@ -1,3 +1,4 @@
+import { normalizeAgentModelCatalog } from "@getpaseo/protocol/agent-types";
 import { createHash } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { homedir } from "node:os";
@@ -191,6 +192,7 @@ export interface AgentManagerProviderState {
     >
   >;
   clients: Partial<Record<AgentProvider, AgentClient>>;
+  retiredProviders?: readonly AgentProvider[];
 }
 
 interface ProviderLoadOptions {
@@ -402,6 +404,9 @@ export class ProviderSnapshotManager {
     this.createAgentManagerState(this.generation.definitions, clients);
     this.pluginProviders.replace(registrations);
     const plugins = this.pluginProviders.definitions();
+    const retiredProviders = Object.keys(previousPlugins).filter(
+      (provider) => previousPlugins[provider] !== plugins[provider],
+    );
     const definitions = { ...this.generation.definitions };
     const changed = new Set<AgentProvider>();
     for (const provider of new Set([...Object.keys(previousPlugins), ...Object.keys(plugins)])) {
@@ -415,7 +420,7 @@ export class ProviderSnapshotManager {
     const generation = this.createGeneration(definitions, this.providerOverrides);
     const state = this.createAgentManagerState(definitions, clients);
     this.installGeneration(generation, clients, changed);
-    return state;
+    return { ...state, retiredProviders };
   }
 
   private ensureClient(
@@ -1017,13 +1022,20 @@ export class ProviderSnapshotManager {
         return;
       }
 
+      const models = normalizeAgentModelCatalog(catalog.models);
+      if (models.length !== catalog.models.length) {
+        this.logger.warn(
+          { provider, discardedRows: catalog.models.length - models.length },
+          "Provider catalog contains repeated model IDs; retaining the first definition",
+        );
+      }
       setEntry({
         ...base,
         defaultModeId:
           catalog.defaultModeId === undefined ? base.defaultModeId : catalog.defaultModeId,
         status: "ready",
         enabled: true,
-        models: catalog.models,
+        models,
         modes: catalog.modes,
         fetchedAt: new Date().toISOString(),
       });

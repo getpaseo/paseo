@@ -8,6 +8,10 @@ import { describe, expect, test } from "vitest";
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import type { AgentStreamEvent } from "./agent-sdk-types.js";
 import { PluginAgentClientRegistry } from "./plugin-provider.js";
+import {
+  isStaleProviderSessionError,
+  StaleProviderSessionError,
+} from "./stale-provider-session-error.js";
 
 const CAPABILITIES = [
   "prompt.message",
@@ -20,11 +24,16 @@ const CAPABILITIES = [
 interface ProviderHarnessOptions {
   capabilities?: ProviderConnection["capabilities"];
   completeTurn?: boolean;
+  openChildren?: (rootSessionId: string, emit: (event: ProviderEvent) => void) => void;
 }
 
 function createProviderHarness(options: ProviderHarnessOptions = {}) {
   let listener: ((event: ProviderEvent) => void) | null = null;
   let closeCount = 0;
+  let resolveClosed!: () => void;
+  const closed = new Promise<void>((resolve) => {
+    resolveClosed = resolve;
+  });
   const inputs: ProviderInput[] = [];
   const emit = (event: ProviderEvent) => listener?.(event);
   const capabilities = options.capabilities ?? CAPABILITIES;
@@ -100,6 +109,7 @@ function createProviderHarness(options: ProviderHarnessOptions = {}) {
           state: "completed",
         });
         emit({ type: "session.ready", sessionId: "child-1" });
+        options.openChildren?.(input.sessionId, emit);
         emit({ type: "session.ready", requestId: input.requestId, sessionId: input.sessionId });
         return;
       }
@@ -180,6 +190,7 @@ function createProviderHarness(options: ProviderHarnessOptions = {}) {
     },
     async close() {
       closeCount += 1;
+      resolveClosed();
     },
   };
 
@@ -191,14 +202,120 @@ function createProviderHarness(options: ProviderHarnessOptions = {}) {
     },
   };
 
-  return { registration, inputs, closeCount: () => closeCount };
+  return {
+    registration,
+    emit,
+    inputs,
+    closeCount: () => closeCount,
+    waitForClose: () => closed,
+  };
 }
 
 function eventsOfType(events: AgentStreamEvent[], type: AgentStreamEvent["type"]) {
   return events.filter((event) => event.type === type);
 }
 
+function openNestedChildren(rootSessionId: string, emit: (event: ProviderEvent) => void) {
+  for (const [sessionId, parentSessionId] of [
+    ["a", rootSessionId],
+    ["a.b", "a"],
+    ["a.b.c", "a.b"],
+    ["sibling", rootSessionId],
+  ]) {
+    emit({
+      type: "session.opened",
+      sessionId,
+      parentSessionId,
+      toolCallId: `${sessionId}-task`,
+      capabilities: [],
+      restoration: "parent",
+      cwd: "/workspace",
+    });
+    emit({
+      type: "timeline.item",
+      sessionId,
+      item: { type: "assistant_message", id: `${sessionId}-message`, text: sessionId },
+    });
+    emit({
+      type: "session.turn",
+      sessionId,
+      turnId: `${sessionId}-turn`,
+      state: "completed",
+    });
+  }
+}
+
+function expectNestedChildren(events: AgentStreamEvent[]) {
+  for (const [id, parentSubagentId] of [
+    ["a", null],
+    ["a.b", "a"],
+    ["a.b.c", "a.b"],
+    ["sibling", null],
+  ]) {
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "provider_subagent",
+        event: expect.objectContaining({
+          type: "upsert",
+          id,
+          parentSubagentId,
+          toolCallId: `${id}-task`,
+          status: "running",
+        }),
+      }),
+    );
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "provider_subagent",
+        event: expect.objectContaining({
+          type: "timeline",
+          id,
+          item: expect.objectContaining({ text: id }),
+        }),
+      }),
+    );
+  }
+}
+
 describe("PluginAgentClientRegistry", () => {
+  test("preserves nested provider child ownership during opening", async () => {
+    const harness = createProviderHarness({ openChildren: openNestedChildren });
+    const registry = new PluginAgentClientRegistry(createTestLogger());
+    registry.replace([harness.registration]);
+    const session = await registry.clients()[harness.registration.id]!.createSession({
+      provider: harness.registration.id,
+      cwd: "/workspace",
+    });
+    try {
+      const events: AgentStreamEvent[] = [];
+      for await (const event of session.streamHistory()) events.push(event);
+      expectNestedChildren(events);
+    } finally {
+      await session.close();
+      registry.replace([]);
+    }
+  });
+
+  test("preserves nested provider child ownership during live events", async () => {
+    const harness = createProviderHarness();
+    const registry = new PluginAgentClientRegistry(createTestLogger());
+    registry.replace([harness.registration]);
+    const session = await registry.clients()[harness.registration.id]!.createSession({
+      provider: harness.registration.id,
+      cwd: "/workspace",
+    });
+    try {
+      const events: AgentStreamEvent[] = [];
+      session.subscribe((event) => events.push(event));
+      const open = harness.inputs.find((input) => input.type === "session.open")!;
+      openNestedChildren(open.sessionId, harness.emit);
+      expectNestedChildren(events);
+    } finally {
+      await session.close();
+      registry.replace([]);
+    }
+  });
+
   test("gates persistence operations on negotiated provider capabilities", async () => {
     const harness = createProviderHarness({ capabilities: ["session.persistence"] });
     const registry = new PluginAgentClientRegistry(createTestLogger());
@@ -256,6 +373,84 @@ describe("PluginAgentClientRegistry", () => {
 
     registry.replace([]);
     expect(eventsOfType(events, "turn_failed")).toHaveLength(1);
+  });
+
+  test("closes a stale session after its plugin provider is replaced", async () => {
+    const old = createProviderHarness();
+    const next = createProviderHarness();
+    const registry = new PluginAgentClientRegistry(createTestLogger());
+
+    try {
+      registry.replace([old.registration]);
+
+      const stale = await registry.clients()[old.registration.id]!.createSession({
+        provider: old.registration.id,
+        cwd: "/workspace",
+      });
+      const persistence = stale.describePersistence();
+      expect(persistence).not.toBeNull();
+
+      registry.replace([next.registration]);
+      await old.waitForClose();
+      expect(old.closeCount()).toBe(1);
+
+      await expect(stale.close()).resolves.toBeUndefined();
+
+      const replacement = registry.clients()[next.registration.id];
+      expect(replacement).toBeDefined();
+      const resumed = await replacement!.resumeSession(persistence!, {
+        cwd: "/workspace",
+      });
+
+      await expect(
+        resumed.startTurn("after reload", { clientMessageId: "after-reload" }),
+      ).resolves.toEqual({ turnId: "turn-1" });
+
+      expect(next.inputs).toContainEqual(
+        expect.objectContaining({
+          type: "session.open",
+          history: "replay",
+          persistence: {
+            version: 1,
+            data: { token: "root" },
+          },
+        }),
+      );
+
+      await resumed.close();
+    } finally {
+      await registry.shutdown();
+    }
+  });
+
+  test("prompting a stale session raises StaleProviderSessionError", async () => {
+    const old = createProviderHarness();
+    const registry = new PluginAgentClientRegistry(createTestLogger());
+
+    try {
+      registry.replace([old.registration]);
+      const stale = await registry.clients()[old.registration.id]!.createSession({
+        provider: old.registration.id,
+        cwd: "/workspace",
+      });
+
+      registry.replace([]);
+      await old.waitForClose();
+      expect(old.closeCount()).toBe(1);
+
+      const failure = await stale
+        .startTurn("after reload", { clientMessageId: "after-reload" })
+        .then(
+          () => null,
+          (error: unknown) => error,
+        );
+      expect(failure).toBeInstanceOf(StaleProviderSessionError);
+      expect(isStaleProviderSessionError(failure)).toBe(true);
+      expect(isStaleProviderSessionError(new Error("Provider connection is closed"))).toBe(false);
+      expect(isStaleProviderSessionError(new Error("boom"))).toBe(false);
+    } finally {
+      await registry.shutdown();
+    }
   });
 
   test("adapts callback providers into the existing AgentClient and AgentSession path", async () => {

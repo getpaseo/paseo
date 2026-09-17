@@ -155,18 +155,38 @@ class WorkspaceLabelsController {
       return;
     }
 
-    let connection: HostConnection | undefined;
-    const unsubscribe = input.client.on("workspace.label.update", (message) => {
-      if (this.connections.get(input.serverId) !== connection) return;
-      if (!replica.applyUpdate(message)) {
-        void this.refresh(input.serverId).catch(() => undefined);
-        return;
-      }
-      this.publish(input.serverId, replica, "online", null);
-    });
-    connection = { client: input.client, replica, unsubscribe };
+    const subscription = input.client.observeWorkspaceLabels();
+    const connection: HostConnection = {
+      client: input.client,
+      replica,
+      unsubscribe: () => {
+        void subscription.release().catch(() => undefined);
+      },
+    };
     this.connections.set(input.serverId, connection);
-    await this.refresh(input.serverId);
+    subscription.subscribe({
+      snapshot: (payload) => {
+        replica.applyList(payload);
+        this.publish(input.serverId, replica, "online", null);
+      },
+      update: (message) => {
+        if (message.type !== "workspace.label.update") return;
+        if (!replica.applyUpdate(message)) {
+          void this.refresh(input.serverId).catch(() => undefined);
+          return;
+        }
+        this.publish(input.serverId, replica, "online", null);
+      },
+      error: (error) => {
+        this.publish(
+          input.serverId,
+          replica,
+          "online",
+          error instanceof Error ? error.message : i18n.t("workspaceLabels.errors.load"),
+        );
+      },
+    });
+    await subscription.ready;
   }
 
   disconnect(serverId: string): void {
@@ -207,7 +227,6 @@ class WorkspaceLabelsController {
     if (!connection) return;
     try {
       const payload = await connection.client.listWorkspaceLabels({
-        subscriptionId: `workspace-labels:${serverId}`,
         sync: connection.replica.snapshot().cursor,
       });
       if (this.connections.get(serverId) !== connection) return;

@@ -11,6 +11,8 @@ test("an older host rejects terminal operations before sending requests", async 
       getLastServerInfoMessage: () => ({
         status: "server_info",
         serverId: "older-host",
+        hostname: null,
+        version: null,
         features: {},
       }),
       createTerminal: unexpectedRequest,

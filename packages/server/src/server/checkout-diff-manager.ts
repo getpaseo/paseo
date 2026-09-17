@@ -73,6 +73,12 @@ export class CheckoutDiffManager {
     this.workspaceGitService = options.workspaceGitService;
   }
 
+  async read(
+    params: Omit<CheckoutDiffSubscriptionRequest, "signal">,
+  ): Promise<CheckoutDiffSnapshotPayload> {
+    return this.computeCheckoutDiffSnapshot(params.cwd, this.normalizeCompare(params.compare));
+  }
+
   async subscribe(
     params: CheckoutDiffSubscriptionRequest,
     listener: (snapshot: CheckoutDiffSnapshotPayload) => void,

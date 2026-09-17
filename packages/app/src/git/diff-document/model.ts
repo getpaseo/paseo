@@ -8,7 +8,7 @@ import {
 } from "@/utils/diff-layout";
 import { compactHighlightTokens } from "@/utils/diff-rendering";
 import { getInlineReviewThreadState, getSplitInlineReviewThreadState } from "@/review/geometry";
-import { advancesFor } from "./text-measurement";
+import { advancesFor, requiresShaping } from "./text-measurement";
 import type {
   BuildDiffDocumentModelInput,
   DiffCell,
@@ -157,21 +157,26 @@ function appendReusableFileRows(candidate: {
     !candidate.input.wrapLines &&
     candidate.model.reviewGeometryKey === candidate.reviewGeometryKey &&
     candidate.file.top === candidate.fileTop &&
+    candidate.file.fileIndex === candidate.fileIndex &&
     candidate.file.rowStart === candidate.rows.length;
-  if (retainsRowGeometry) {
-    candidate.rows.push(...reusedRows);
-    return {
-      bottom: candidate.bodyTop + candidate.file.bodyHeight,
-      maximumHorizontalOverflow: Math.max(
-        0,
-        candidate.file.contentWidth - candidate.input.viewportWidth,
-      ),
-    };
-  }
-
   let top = candidate.bodyTop;
   for (const reusedRow of reusedRows) {
-    const nextRow = repositionReusedRow(reusedRow, candidate, top);
+    let nextRow = retainsRowGeometry ? reusedRow : repositionReusedRow(reusedRow, candidate, top);
+    if (
+      nextRow.kind === "line" &&
+      intersectsMaterializationWindow(candidate.input, top, top + nextRow.height) &&
+      nextRow.cells.some((cell) => cell && cell.fragments.length === 0)
+    ) {
+      nextRow = {
+        ...nextRow,
+        cells: materializeCells(
+          nextRow.cells,
+          candidate.file.file,
+          candidate.file.gutterWidth,
+          candidate.input,
+        ),
+      };
+    }
     candidate.rows.push(nextRow);
     top += nextRow.height;
   }
@@ -232,71 +237,45 @@ function appendNewFileRows(candidate: {
     };
   }
 
-  const deferredLines =
-    candidate.input.materializationWindow && !candidate.input.wrapLines
-      ? geometryLines(lineSources(candidate.file, candidate.input.layout, false), candidate.input)
-      : null;
-  const deferredBodyHeight = deferredLines?.reduce((height, line) => height + line.height, 0) ?? 0;
-  const shouldMaterialize =
-    deferredLines === null ||
-    intersectsMaterializationWindow(
-      candidate.input,
-      candidate.fileTop,
-      candidate.bodyTop + deferredBodyHeight + DIFF_BODY_BORDER_HEIGHT,
-    );
-  return shouldMaterialize
-    ? appendMeasuredFileRows(candidate)
-    : appendGeometryFileRows(candidate, deferredLines);
-}
-
-function appendGeometryFileRows(
-  candidate: Parameters<typeof appendNewFileRows>[0],
-  lines: readonly GeometryLine[],
-): FileRowsResult {
-  let top = candidate.bodyTop;
-  for (const line of lines) {
-    candidate.rows.push({
-      kind: "line",
-      index: candidate.rows.length,
-      fileIndex: candidate.fileIndex,
-      path: candidate.file.path,
-      top,
-      height: line.height,
-      cells: line.cells,
-      reviewHeight: line.reviewHeight,
-    });
-    top += line.height;
-  }
-  return { bottom: top + DIFF_BODY_BORDER_HEIGHT, maximumHorizontalOverflow: 0 };
-}
-
-function appendMeasuredFileRows(
-  candidate: Parameters<typeof appendNewFileRows>[0],
-): FileRowsResult {
+  const lines = geometryLines(
+    lineSources(candidate.file, candidate.input.layout, false),
+    candidate.input,
+  );
+  const fileBottom =
+    candidate.bodyTop +
+    lines.reduce((height, line) => height + line.height, 0) +
+    DIFF_BODY_BORDER_HEIGHT;
+  const measureWidth =
+    !candidate.input.wrapLines &&
+    intersectsMaterializationWindow(candidate.input, candidate.fileTop, fileBottom);
   let top = candidate.bodyTop;
   let maximumHorizontalOverflow = 0;
-  for (const sourceCells of lineSources(candidate.file, candidate.input.layout, true)) {
-    const columnCount = sourceCells.length;
-    const columnWidth = candidate.input.viewportWidth / columnCount;
-    const availableWidth = Math.max(
-      candidate.input.measureText.measure("M"),
-      columnWidth - candidate.gutterWidth - CODE_HORIZONTAL_PADDING,
-    );
-    const cells = sourceCells.map((source) => {
-      if (!source) return null;
-      const cell = measureCell({ source, availableWidth, input: candidate.input });
-      maximumHorizontalOverflow = Math.max(
-        maximumHorizontalOverflow,
-        candidate.gutterWidth + CODE_HORIZONTAL_PADDING + measureCellWidth(cell) - columnWidth,
-      );
-      return cell;
-    }) as DiffLineRow["cells"];
+  for (const line of lines) {
+    const shouldMaterialize =
+      candidate.input.wrapLines ||
+      intersectsMaterializationWindow(candidate.input, top, top + line.height);
+    const cells = shouldMaterialize
+      ? materializeCells(line.cells, candidate.file, candidate.gutterWidth, candidate.input)
+      : line.cells;
+    const columnWidth = candidate.input.viewportWidth / cells.length;
+    if (measureWidth) {
+      for (const cell of cells) {
+        if (!cell) continue;
+        const width =
+          cell.fragments.length > 0
+            ? measureCellWidth(cell)
+            : candidate.input.measureText.measure(displayLineText(cell.content));
+        maximumHorizontalOverflow = Math.max(
+          maximumHorizontalOverflow,
+          candidate.gutterWidth + CODE_HORIZONTAL_PADDING + width - columnWidth,
+        );
+      }
+    }
     const textHeight = Math.max(
       candidate.input.typography.lineHeight,
       ...cells.map((cell) => (cell?.fragments.length ?? 1) * candidate.input.typography.lineHeight),
     );
-    const reviewHeight = reviewHeightForCells(cells, candidate.input);
-    const height = textHeight + reviewHeight;
+    const height = textHeight + line.reviewHeight;
     candidate.rows.push({
       kind: "line",
       index: candidate.rows.length,
@@ -305,11 +284,44 @@ function appendMeasuredFileRows(
       top,
       height,
       cells,
-      reviewHeight,
+      reviewHeight: line.reviewHeight,
     });
     top += height;
   }
   return { bottom: top + DIFF_BODY_BORDER_HEIGHT, maximumHorizontalOverflow };
+}
+
+function materializeCells(
+  cells: DiffLineRow["cells"],
+  file: BuildDiffDocumentModelInput["files"][number],
+  gutterWidth: number,
+  input: BuildDiffDocumentModelInput,
+): DiffLineRow["cells"] {
+  const availableWidth = Math.max(
+    input.measureText.measure("M"),
+    input.viewportWidth / cells.length - gutterWidth - CODE_HORIZONTAL_PADDING,
+  );
+  return cells.map((cell) => {
+    if (!cell || cell.fragments.length > 0) return cell;
+    const sourceLine =
+      file.hunks[cell.sourceIdentity.hunkIndex]!.lines[cell.sourceIdentity.lineIndex]!;
+    return measureCell({
+      source: {
+        ...cell,
+        tokenText: cell.type === "header" ? [] : compactHighlightTokens(sourceLine.tokens ?? []),
+      },
+      availableWidth,
+      input,
+    });
+  }) as DiffLineRow["cells"];
+}
+
+function displayLineText(text: string): string {
+  return text.includes("\t")
+    ? segmentGraphemes(text)
+        .map((segment) => segment.text)
+        .join("")
+    : text;
 }
 
 export function reviewGeometryKey(
@@ -334,7 +346,11 @@ export function retainReusableModels(
   previous: readonly DiffDocumentModel[] | undefined,
   next: DiffDocumentModel,
 ): DiffDocumentModel[] {
-  const fullest = [...(previous ?? []), next].reduce((best, candidate) =>
+  const sources = new Set(next.files.map((file) => file.file));
+  const compatible = previous?.filter((model) =>
+    model.files.every((file) => sources.has(file.file)),
+  );
+  const fullest = [...(compatible ?? []), next].reduce((best, candidate) =>
     measuredFileCount(candidate) > measuredFileCount(best) ? candidate : best,
   );
   return fullest === next ? [next] : [fullest, next];
@@ -437,16 +453,17 @@ function intersectsMaterializationWindow(
 
 function hasMeasuredFileRows(model: DiffDocumentModel, file: DiffFileSection): boolean {
   if (file.isCollapsed) return false;
-  return model.rows.slice(file.rowStart, file.rowEnd).every((row) => {
+  return model.rows.slice(file.rowStart, file.rowEnd).some((row) => {
     if (row.kind !== "line") return true;
-    return row.cells.every((cell) => !cell || cell.fragments.length > 0);
+    return row.cells.some((cell) => cell && cell.fragments.length > 0);
   });
 }
 
 function indexReusableModels(
   models: readonly DiffDocumentModel[] | undefined,
 ): ReusableModelIndex[] {
-  return (models ?? []).map((model) => {
+  // The latest model includes text prepared by later scroll windows.
+  return (models ?? []).toReversed().map((model) => {
     const filesBySource = new Map<BuildDiffDocumentModelInput["files"][number], DiffFileSection>();
     const measuredFiles = new Set<DiffFileSection>();
     for (const file of model.files) {
@@ -554,14 +571,31 @@ export function measureFragments(input: {
     return [createFragment(graphemes, 0, graphemes.length, 0, input.lineHeight, input.measureText)];
   }
   const fragments: DiffFragment[] = [];
+  const displayGraphemes = graphemes.map((grapheme) => grapheme.text);
+  const measureWidth =
+    input.measureText.measureWidth?.bind(input.measureText) ??
+    ((slice: readonly string[]) => advancesFor(input.measureText)(slice).at(-1) ?? 0);
+  // Joining/ligatures can make a longer prefix narrower. Preserve the existing
+  // search order for those runs; changing the probes can change their breaks.
+  const canBoundSearch = !requiresShaping(input.text);
   let graphemeIndex = 0;
   while (graphemeIndex < graphemes.length) {
     let low = graphemeIndex + 1;
-    let high = graphemes.length;
+    // A small first probe finishes short lines in one query. Grow it only when
+    // it fits, so narrow wrapping never repeatedly measures a huge line's tail.
+    let high = canBoundSearch ? Math.min(graphemes.length, graphemeIndex + 64) : graphemes.length;
     let fitting = low;
+    if (canBoundSearch) {
+      while (measureWidth(displayGraphemes.slice(graphemeIndex, high)) <= input.availableWidth) {
+        fitting = high;
+        low = high + 1;
+        if (high === graphemes.length) break;
+        high = Math.min(graphemes.length, graphemeIndex + (high - graphemeIndex) * 2);
+      }
+    }
     while (low <= high) {
       const middle = (low + high) >>> 1;
-      const width = measureGraphemeSlice(graphemes, graphemeIndex, middle, input.measureText).width;
+      const width = measureWidth(displayGraphemes.slice(graphemeIndex, middle));
       if (width <= input.availableWidth || middle === graphemeIndex + 1) {
         fitting = middle;
         low = middle + 1;

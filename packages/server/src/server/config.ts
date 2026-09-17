@@ -1,3 +1,4 @@
+import { configurationEnvironment } from "./config-environment.js";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -24,6 +25,15 @@ import { resolveSpeechConfig } from "./speech/speech-config-resolver.js";
 import type { RequestedSpeechProviders } from "./speech/speech-types.js";
 import { mergeHostnames, parseHostnamesEnv, type HostnamesConfig } from "./hostnames.js";
 import { resolveGitProcessPolicy } from "../utils/git-process-scheduler.js";
+
+export {
+  loadPersistedConfig,
+  readPersistedConfig,
+  savePersistedConfig,
+  getPersistedConfigValue,
+  editPersistedConfig,
+  type PersistedConfig,
+} from "./persisted-config.js";
 
 const DEFAULT_PORT = 6767;
 const DEFAULT_RELAY_ENDPOINT = "relay.paseo.sh:443";
@@ -554,7 +564,7 @@ export function resolveConfigFromPersisted(
   options?: ResolveConfigFromPersistedOptions,
 ): PaseoDaemonConfig {
   const resolvedOptions = options ?? {};
-  const env = resolvedOptions.env ?? process.env;
+  const env = configurationEnvironment(resolvedOptions.env ?? process.env);
   const cli = resolvedOptions.cli;
   const relayEnabledFallback =
     resolvedOptions.relayEnabledFallback ?? persisted.daemon?.relay?.enabled === undefined;

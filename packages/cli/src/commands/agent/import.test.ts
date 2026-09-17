@@ -43,6 +43,7 @@ describe("resolveImportCwd", () => {
     const result = await runImportCommand(
       "pi-session-1",
       {
+        daemonTarget: { kind: "endpoint", host: "example.test:12345" },
         provider: "pi",
         cwd: "/tmp/project",
       },

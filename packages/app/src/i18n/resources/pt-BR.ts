@@ -2,6 +2,29 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const ptBR: TranslationResources = {
+  paneFind: {
+    searchFailed:
+      "Não foi possível pesquisar nesta conversa. Verifique a conexão com o host e tente novamente.",
+    searching: "Buscando…",
+    loading: "Carregando…",
+    failed: "Falhou",
+    retry: "Tentar novamente",
+    chatPosition: "{{current}} de {{total}} na mensagem",
+
+    title: "Buscar",
+    placeholder: "Buscar no painel",
+    close: "Fechar busca",
+    matches: "Correspondências",
+    previous: "Correspondência anterior",
+    next: "Próxima correspondência",
+    toggleReplace: "Mostrar substituição",
+    replaceWith: "Substituir por",
+    replace: "Substituir",
+    replaceAll: "Substituir tudo",
+    noMatches: "Nenhuma correspondência",
+    position: "{{current}} de {{total}}",
+    total: "{{total}} correspondências",
+  },
   common: {
     back: "Voltar",
     loading: "Carregando...",
@@ -12,6 +35,7 @@ export const ptBR: TranslationResources = {
       copy: "Copiar",
       copyLine: "Copiar linha",
       dismiss: "Dispensar",
+      reload: "Recarregar",
       retry: "Tentar novamente",
       search: "Buscar",
       select: "Selecionar",
@@ -153,7 +177,7 @@ export const ptBR: TranslationResources = {
       initialPromptRequired: "O prompt inicial é obrigatório",
       alreadyLoading: "Já está carregando",
       uploadFailed: "Falha ao enviar arquivo",
-      noClipboardImage: "Não há imagem na área de transferência",
+      noClipboardImage: "Não há imagem na área de transferência atual. Tente colar pelo teclado.",
       pasteImageFailed: "Falha ao colar a imagem",
       fileTooLarge: "{{fileName}} é grande demais (máximo {{size}})",
     },
@@ -208,6 +232,10 @@ export const ptBR: TranslationResources = {
     historyLoadFailed: "Não foi possível carregar o histórico do agente",
     messageCapped: "Esta mensagem foi truncada ({{bytes}} bytes).",
     permission: {
+      rejectedPlan: "Plano rejeitado",
+      approvedPlan: "Plano aprovado",
+      canceledPlan: "Plano cancelado",
+
       plan: "Plano",
       required: "Permissão necessária",
       deny: "Negar",
@@ -221,7 +249,8 @@ export const ptBR: TranslationResources = {
     states: {
       notFound: "Agente não encontrado",
       failedToLoad: "Falha ao carregar agente",
-      reconnecting: "Reconectando",
+      reconnecting: "Reconectando ao host",
+      updating: "Atualizando mensagens",
       timelineSyncFailed: "Não foi possível atualizar o histórico do agente.",
       timelineSyncRetrying: "Tentando novamente…",
       archivingTitle: "Arquivando agente...",
@@ -901,6 +930,9 @@ export const ptBR: TranslationResources = {
         openChangesTab: "Abrir a aba Alterações",
         openDiffTab: "Abrir a aba Diff",
         closeChangesTab: "Fechar a aba Alterações",
+        jumpToFile: {
+          title: "Ir para o arquivo",
+        },
         binaryFile: "Arquivo binário",
         tooLarge: "Diff grande demais para exibir",
         previewTooLargeTitle: "Este diff é grande demais para visualizar",
@@ -1065,6 +1097,16 @@ export const ptBR: TranslationResources = {
       deleteMessage_other: "Isso remove a etiqueta de {{count}} workspaces neste host.",
       offline: "Este host está offline.",
       updateHost: "Atualize este host para gerenciar etiquetas.",
+    },
+  },
+  changelog: {
+    title: "Novidades",
+    installed: "Instalada",
+    showMore: "Mostrar mais",
+    openWebsite: "Changelog completo",
+    error: {
+      title: "Não foi possível carregar o changelog",
+      description: "Verifique sua conexão e tente novamente.",
     },
   },
   sidebar: {
@@ -1288,6 +1330,7 @@ export const ptBR: TranslationResources = {
       detail: "Parando o daemon local.",
     },
     daemon: {
+      lifecycle: en.desktop.daemon.lifecycle,
       title: "Daemon",
       status: {
         title: "Status",
@@ -2101,6 +2144,7 @@ export const ptBR: TranslationResources = {
     about: {
       title: "Sobre",
       appVersion: "Versão do app",
+      whatsNewHint: "Notas de versão de cada release",
       thisDevice: "Este dispositivo",
       connectedHosts: "Hosts conectados",
       offline: "Offline",

@@ -8,6 +8,7 @@ function installed(): InstalledPlugin {
     id: "review",
     serverId: "host-1",
     clientBundle: "bundle",
+    lifetime: new AbortController(),
     queryClient: new QueryClient(),
     cleanup: () => {},
     settingsScreens: [],

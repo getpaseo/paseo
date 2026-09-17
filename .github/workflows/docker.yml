@@ -1,27 +1,6 @@
 name: Docker
 
 on:
-  pull_request:
-    branches: [main]
-    paths:
-      - "docker/**"
-      - ".dockerignore"
-      - ".github/workflows/docker.yml"
-      - "package.json"
-      - "package-lock.json"
-      - "patches/**"
-      - "scripts/**"
-      - "tsconfig.json"
-      - "tsconfig.base.json"
-      - "packages/app/**"
-      - "packages/cli/**"
-      - "packages/client/**"
-      - "packages/expo-two-way-audio/**"
-      - "packages/highlight/**"
-      - "packages/plugin/**"
-      - "packages/protocol/**"
-      - "packages/relay/**"
-      - "packages/server/**"
   push:
     branches: [main]
     tags:
@@ -51,7 +30,7 @@ on:
 
 concurrency:
   group: docker-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: false
 
 env:
   REGISTRY: ghcr.io

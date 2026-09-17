@@ -1,3 +1,4 @@
+import { shareCheckoutDiff } from "./diff-sharing";
 import { useMemo } from "react";
 import { useRetainedPanelActive } from "@/components/retained-panel";
 import { useReplicaQuery } from "@/data/query";
@@ -74,6 +75,7 @@ export function useCheckoutDiffQuery({
 
   const query = useReplicaQuery<CheckoutDiffQueryPayload>({
     queryKey,
+    structuralSharing: shareCheckoutDiff,
     enabled: routeEnabled,
     pushEvent: "checkout_diff_update",
     meta: checkoutDiffPushRoute({
@@ -89,14 +91,35 @@ export function useCheckoutDiffQuery({
     }),
   });
 
-  const payload = query.data ?? null;
-  const payloadError = payload?.error ?? null;
+  return deriveCheckoutDiffResult(query.data ?? null);
+}
 
+export interface CheckoutDiffResult {
+  files: ParsedDiffFile[];
+  payloadError: CheckoutDiffQueryPayload["error"];
+  diffTooLarge: boolean;
+  isLoading: boolean;
+  isFetching: boolean;
+  isError: boolean;
+  error: null;
+}
+
+/**
+ * The result derives from the payload alone. Until a payload arrives there is no
+ * diff to describe, so the boundary reports loading rather than an empty diff —
+ * whether the query is idle (an inactive retained panel), in flight, or the host
+ * is disconnected. Reporting `files: []` as settled made callers render "+0 -0"
+ * and "No changes" for a diff nobody has fetched yet.
+ */
+export function deriveCheckoutDiffResult(
+  payload: CheckoutDiffQueryPayload | null,
+): CheckoutDiffResult {
+  const payloadError = payload?.error ?? null;
   return {
     files: payload?.files ?? [],
     payloadError,
     diffTooLarge: payload?.diffTooLarge === true,
-    isLoading: payload === null && queryEnabled && isConnected,
+    isLoading: payload === null,
     isFetching: false,
     isError: Boolean(payloadError),
     error: null,

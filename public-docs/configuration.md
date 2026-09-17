@@ -1,6 +1,6 @@
 ---
 title: Configuration
-description: Configure Paseo via config.json, environment variables, and CLI overrides.
+description: Configure managed instances and foreground deployments.
 nav: Configuration
 order: 40
 category: Configuration
@@ -8,7 +8,7 @@ category: Configuration
 
 # Configuration
 
-Paseo loads configuration from a single JSON file in your Paseo home directory, with optional environment variable and CLI overrides.
+Managed instances load their configuration from the home’s `config.json` and defaults. Foreground deployments can override that file with environment variables.
 
 ## Where config lives
 
@@ -18,18 +18,13 @@ By default, Paseo uses `~/.paseo` as its home directory. The configuration file 
 ~/.paseo/config.json
 ```
 
-You can change the home directory by setting `PASEO_HOME` or passing `--home` to `paseo daemon start`.
+You can change the home directory by setting `PASEO_HOME` or selecting `--home` on a CLI command.
 
 ## Precedence
 
-Paseo merges configuration in this order:
+Managed `start` and Desktop use defaults, then `config.json`. Inherited daemon-setting environment variables are removed from their launches.
 
-1. Defaults
-2. `config.json`
-3. Environment variables
-4. CLI flags
-
-Lists append across sources (for example, `hostnames` and `cors.allowedOrigins`).
+Foreground `paseo daemon run`, Docker, and direct supervisor launches apply environment variables after the file. Existing legacy supervisor flags retain their precedence across worker restart. Changing deployment overrides requires stopping and relaunching that deployment. Lists append across sources, including hostnames and CORS origins.
 
 ## Example
 
@@ -51,7 +46,19 @@ Minimal example that configures listening address, hostnames, and MCP:
 
 ## Apply changes
 
-After saving `config.json`, reload it:
+Edit the selected file through the CLI:
+
+```bash
+paseo daemon config get daemon.listen --home ~/paseo-test
+paseo daemon config set daemon.listen 127.0.0.1:6800 --home ~/paseo-test
+paseo daemon config unset features.webUi.enabled --home ~/paseo-test
+```
+
+`get [path]` reports configured values and labels missing fields unset. It does not create a home. `set` parses JSON, otherwise treats the input as a string; `--string` forces a literal string. `--json` selects output format. Use whole-object JSON for dynamic keys containing dots. Unknown paths, invalid values, and invalid existing files are rejected without writing. Passwords use `set-password`.
+
+A successful edit saves the validated file, then reloads once if the instance is reachable. Output distinguishes applied changes, restart requirements, and deployment overrides. A stopped/unbound/unreachable instance reports **saved; not applied**. A failed reload reports **saved; reload failed** with a nonzero exit; the file remains saved. Edits never implicitly restart.
+
+After editing `config.json` directly, reload it:
 
 ```bash
 paseo reload
@@ -69,7 +76,7 @@ New homes keep relay disabled when you remove `daemon.relay.enabled`. A daemon w
 
 Listen addresses, authentication, relay endpoints and TLS, worktree allocation, service-proxy addresses, the bundled web UI, logging, speech, voice, credentials, and local model settings require a restart. Reload applies other valid edits in the same file before reporting those paths.
 
-Environment variables and daemon start flags remain authoritative. Reload reports a changed file setting under `overrideControlledPaths` when a launch override prevents it from taking effect. This includes startup settings such as listen addresses, passwords, relay endpoints and TLS, service-proxy and web UI settings, logging, speech, and voice configuration. List settings such as hostnames and CORS origins still append across sources, so values from `config.json` continue to apply. Remove the override and restart the daemon if you want the file value to become authoritative.
+Deployment environment variables and legacy supervisor flags remain authoritative. Reload reports a changed file setting under `overrideControlledPaths` when a launch override prevents it from taking effect. This includes startup settings such as listen addresses, passwords, relay endpoints and TLS, service-proxy and web UI settings, logging, speech, and voice configuration. List settings such as hostnames and CORS origins still append across sources, so values from `config.json` continue to apply. Stop and relaunch the deployment without the override to make the file value authoritative.
 
 ## Agent providers
 
@@ -104,13 +111,14 @@ The daemon can serve the browser web client from the same HTTP server. This is e
 Enable it from the CLI:
 
 ```bash
-paseo daemon start --web-ui
+paseo daemon config set features.webUi.enabled true
+paseo daemon start
 ```
 
 Or set the environment variable:
 
 ```bash
-PASEO_WEB_UI_ENABLED=true paseo daemon start
+PASEO_WEB_UI_ENABLED=true paseo daemon run
 ```
 
 Or persist it in `config.json`:
@@ -225,7 +233,7 @@ Set the persisted value in `config.json`:
 }
 ```
 
-`PASEO_RELAY_ENABLED=true|false` overrides the persisted value for that daemon launch. The matching `paseo daemon start --relay` and `--no-relay` flags have the same authority. Remove the launch override before changing relay from Paseo Desktop or `paseo daemon pair --relay`.
+`PASEO_RELAY_ENABLED=true|false` overrides the file for a foreground deployment. Managed `start` uses the file. End and relaunch a deployment to remove its override before changing relay from the app or `paseo daemon pair --relay`.
 
 ## Common env vars
 

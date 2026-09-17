@@ -6,8 +6,11 @@ export interface PrimaryTextFace {
 }
 
 export interface CachedAsciiTextMetrics {
+  /** Whole-line width after checking glyph coverage and excluding shaping. */
+  measure(text: string): number;
   hasEveryGlyph(text: string): boolean;
   measureAdvances(graphemes: readonly string[]): number[];
+  measureWidth(graphemes: readonly string[]): number;
 }
 
 const CODE_LIGATURE_CANDIDATE = /(?:===?|!==?|=>|<=|>=|->|::|\+\+|--)/;
@@ -66,6 +69,22 @@ export function createChunkedAdvanceMeasurer(
   };
 }
 
+/** Preserve advance chunk boundaries when only the final width is needed. */
+export function createChunkedWidthMeasurer(
+  measure: (graphemes: readonly string[]) => number,
+): (graphemes: readonly string[]) => number {
+  return (graphemes) => {
+    let width = 0;
+    let start = 0;
+    while (start < graphemes.length) {
+      const end = chunkEnd(graphemes, start);
+      width += measure(graphemes.slice(start, end));
+      start = end;
+    }
+    return width;
+  };
+}
+
 /**
  * Advance measurement for a backend that can only measure a whole string, which
  * is every backend except a native paragraph shaper.
@@ -97,24 +116,39 @@ export function advancesFor(measurer: TextMeasurer): (graphemes: readonly string
 export function createAdditiveAdvances(
   measure: (text: string) => number,
 ): (graphemes: readonly string[]) => number[] {
+  return additiveAdvances(cachedWidths(measure));
+}
+
+function cachedWidths(measure: (text: string) => number): (text: string) => number {
   const widths = new Map<string, number>();
+  return (text) => {
+    let width = widths.get(text);
+    if (width === undefined) {
+      width = measure(text);
+      widths.set(text, width);
+    }
+    return width;
+  };
+}
+
+function additiveAdvances(
+  measure: (text: string) => number,
+): (graphemes: readonly string[]) => number[] {
   return (graphemes) => {
     let advance = 0;
-    return graphemes.map((grapheme) => {
-      let width = widths.get(grapheme);
-      if (width === undefined) {
-        width = measure(grapheme);
-        widths.set(grapheme, width);
-      }
-      advance += width;
-      return advance;
-    });
+    return graphemes.map((grapheme) => (advance += measure(grapheme)));
   };
 }
 
 export function createCachedAsciiTextMetrics(primary: PrimaryTextFace): CachedAsciiTextMetrics {
   const glyphCoverage = new Map<string, boolean>();
+  const measure = cachedWidths((text) => primary.measure(text));
   return {
+    measure(text) {
+      let width = 0;
+      for (const character of text) width += measure(character);
+      return width;
+    },
     hasEveryGlyph(text) {
       for (const character of text) {
         let hasGlyph = glyphCoverage.get(character);
@@ -126,7 +160,12 @@ export function createCachedAsciiTextMetrics(primary: PrimaryTextFace): CachedAs
       }
       return true;
     },
-    measureAdvances: createAdditiveAdvances((text) => primary.measure(text)),
+    measureAdvances: additiveAdvances(measure),
+    measureWidth(graphemes) {
+      let width = 0;
+      for (const grapheme of graphemes) width += measure(grapheme);
+      return width;
+    },
   };
 }
 

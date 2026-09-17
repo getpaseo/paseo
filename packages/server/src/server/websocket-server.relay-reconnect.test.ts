@@ -1,3 +1,4 @@
+import { SessionDelivery } from "./session/owned-subscriptions/index.js";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type { Server as HTTPServer } from "http";
 import type pino from "pino";
@@ -17,6 +18,7 @@ import {
   TerminalStreamOpcode,
 } from "@getpaseo/protocol/terminal-stream-protocol";
 import { CLIENT_CAPS } from "@getpaseo/protocol/client-capabilities";
+import { APPLICATION_SOCKET_LEASE_MS } from "./websocket/physical-socket.js";
 
 type SocketListener = (...args: unknown[]) => void;
 
@@ -46,15 +48,27 @@ const sessionMock = vi.hoisted(() => {
   const instances: MockSession[] = [];
 
   class MockSession {
-    cleanup = vi.fn(async () => {});
+    readonly delivery = new SessionDelivery((source, message) => {
+      const send = this.args.onMessageToSource as (source: object, message: unknown) => void;
+      send(source, message);
+    });
+    cleanup = vi.fn(async () => {
+      await this.delivery.close();
+    });
     handleMessage = vi.fn(async () => {});
     handleBinaryFrame = vi.fn((_frame: unknown) => {});
     supports = vi.fn((capability: string) => this.args.clientCapabilities?.[capability] === true);
-    updateClientCapabilities = vi.fn((capabilities: Record<string, unknown> | null) => {
-      this.args.clientCapabilities = capabilities;
+    updateClientCapabilities = vi.fn(
+      (capabilities: Record<string, unknown> | null, source: object) => {
+        this.args.clientCapabilities = capabilities;
+        this.delivery.attach(source, capabilities?.owned_subscriptions === true);
+      },
+    );
+    clearAgentTimelineSubscription = vi.fn((source: object) => {
+      void this.delivery.detach(source);
     });
-    clearAgentTimelineSubscription = vi.fn();
     getClientActivity = vi.fn(() => null);
+    wantsSourceEvent = (source: object) => !this.delivery.isModern(source);
     getSessionId = vi.fn(() => "mock-session-id");
     getPermissions = vi.fn(() => this.args.permissions as string[]);
     allowsInbound = vi.fn(() => true);
@@ -533,6 +547,32 @@ describe("relay external socket reconnect behavior", () => {
     await server.close();
   });
 
+  test("keeps a plugin socket whose heartbeat stalls past the application lease", async () => {
+    const server = createServer();
+    const socket = new MockSocket();
+    await server.attachPluginSocket("stalled", socket);
+    socket.emit("message", JSON.stringify(createHelloMessage("plugin:stalled")));
+    socket.emit("message", JSON.stringify({ type: "ping" }));
+
+    // Event loop starved past the lease: no further ping arrives.
+    await vi.advanceTimersByTimeAsync(APPLICATION_SOCKET_LEASE_MS * 2);
+
+    expect(socket.readyState).toBe(1);
+    await server.close();
+  });
+
+  test("still reaps an ordinary socket whose heartbeat stalls past the application lease", async () => {
+    const server = createServer();
+    const socket = new MockSocket();
+    await attachRelayAndHello({ server, socket, clientId: "cid-stalled" });
+    socket.emit("message", JSON.stringify({ type: "ping" }));
+
+    await vi.advanceTimersByTimeAsync(APPLICATION_SOCKET_LEASE_MS * 2);
+
+    expect(socket.readyState).toBe(3);
+    await server.close();
+  });
+
   test("rejects ordinary sockets that claim the reserved plugin client id", async () => {
     const server = createServer();
     const socket = new MockSocket();
@@ -889,7 +929,7 @@ describe("relay external socket reconnect behavior", () => {
           payload: {
             requestId: "failing-provider-diagnostic",
             requestType: "provider_diagnostic_request",
-            error: "Invalid message",
+            error: "Invalid message: handler exploded",
             code: "invalid_message",
           },
         },
