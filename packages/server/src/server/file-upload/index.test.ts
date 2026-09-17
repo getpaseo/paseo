@@ -56,6 +56,42 @@ describe("file uploads", () => {
     expect(readFileSync(path, "utf8")).toBe("hello world");
   });
 
+  it("preserves Unicode letters and spaces in uploaded filenames", async () => {
+    const paseoHome = makePaseoHome();
+    const uploads = new FileUploadStore({ paseoHome });
+
+    uploads.beginUpload({
+      type: "file.upload.request",
+      fileName: "化工资料 测试.txt",
+      mimeType: "text/plain",
+      size: 11,
+      modifiedAt: "2026-05-02T00:00:00.000Z",
+      requestId: "req-unicode-name",
+    });
+    await expect(uploads.receiveFrame(uploadBegins("req-unicode-name"))).resolves.toBeNull();
+    await expect(
+      uploads.receiveFrame(uploadChunk("req-unicode-name", "hello world")),
+    ).resolves.toBeNull();
+
+    const path = join(paseoHome, "uploads", "upload_req-unicode-name", "化工资料 测试.txt");
+    await expect(uploads.receiveFrame(uploadEnds("req-unicode-name"))).resolves.toEqual({
+      type: "file.upload.response",
+      payload: {
+        requestId: "req-unicode-name",
+        file: {
+          type: "uploaded_file",
+          id: "upload_req-unicode-name",
+          fileName: "化工资料 测试.txt",
+          mimeType: "text/plain",
+          size: 11,
+          path,
+        },
+        error: null,
+      },
+    });
+    expect(readFileSync(path, "utf8")).toBe("hello world");
+  });
+
   it("rejects chunks beyond the declared size and removes the partial file", async () => {
     const paseoHome = makePaseoHome();
     const uploads = new FileUploadStore({ paseoHome });
