@@ -1126,6 +1126,57 @@ test("plan approval exposes a resume-bypass action and can return to bypassPermi
   }
 });
 
+test("plan approval exposes the resume-bypass action even when plan mode was entered from a non-bypass mode", async () => {
+  const queryMock = createBaseQueryMock(vi.fn(async () => ({ done: true, value: undefined })));
+  sdkQueryFactory.mockImplementation(() => queryMock);
+
+  const session = await createSession();
+  const events: AgentStreamEvent[] = [];
+  session.subscribe((event) => events.push(event));
+
+  try {
+    expect(await session.getCurrentMode()).toBe("default");
+    await session.setMode("plan");
+
+    const internal: {
+      handlePermissionRequest: (
+        toolName: string,
+        input: Record<string, unknown>,
+        options: Record<string, unknown>,
+      ) => Promise<unknown>;
+    } = asInternals(session);
+
+    const pendingResolution = internal.handlePermissionRequest(
+      "ExitPlanMode",
+      { plan: "- Implement the approved plan" },
+      {},
+    );
+
+    const requestEvent = events.find(
+      (event): event is Extract<AgentStreamEvent, { type: "permission_requested" }> =>
+        event.type === "permission_requested" && event.request.kind === "plan",
+    );
+
+    expect(requestEvent).toBeDefined();
+    expect(requestEvent?.request.actions?.map((action) => action.id)).toContain("implement_resume");
+
+    if (!requestEvent) {
+      throw new Error("Expected plan permission request");
+    }
+
+    await session.respondToPermission(requestEvent.request.id, {
+      behavior: "allow",
+      selectedActionId: "implement_resume",
+    });
+
+    await pendingResolution;
+    expect(queryMock.setPermissionMode).toHaveBeenLastCalledWith("bypassPermissions");
+    expect(await session.getCurrentMode()).toBe("bypassPermissions");
+  } finally {
+    await session.close();
+  }
+});
+
 test("reuses one autonomous run for unbound stream_event bursts with no foreground run", async () => {
   const session = await createSession();
   const internal: {
