@@ -7,6 +7,7 @@ import {
 } from "../support/helpers/workspace-ui";
 import { trackPromptJumpRequests } from "../support/helpers/agent-timeline-gate";
 import {
+  composerLocator,
   fillComposerDraft,
   expectComposerDraft,
   expectComposerFocused,
@@ -224,26 +225,11 @@ for (const shortcut of ["Control+f", "Meta+f"]) {
     try {
       await agent.client.waitForFinish(agent.agentId, 15_000);
       await openAgentRoute(page, agent);
-      await fillComposerDraft(page, "Keep this draft");
-      await expectComposerFocused(page);
-      await openFindFromComposer(page, shortcut);
-      await query(page).fill("hello world");
-      await expectHighlight(page, "hello world");
-      await fillComposerDraft(page, "Keep this draft");
-      await expectComposerFocused(page);
-      await openFindFromComposer(page, shortcut);
-      await expect(query(page)).toHaveValue("hello world");
-      await expectComposerDraft(page, "Keep this draft");
-      await page.keyboard.type("a.b");
-      await expect(query(page)).toHaveValue("a.b");
-      await expectHighlight(page, "a.b");
+      await searchFromComposerWithoutLosingDraft(page, shortcut);
+      await refocusFindAndReplaceQuery(page, shortcut);
       await page.screenshot({ path: testInfo.outputPath("find-from-composer.png") });
       await closeFind(page);
-      await openCommandCenter(page);
-      await page.keyboard.press(shortcut);
-      await expect(page.getByTestId("command-center-panel")).toBeVisible();
-      await expect(query(page)).toHaveCount(0);
-      await closeCommandCenter(page);
+      await expectCommandCenterOwnsFindShortcut(page, shortcut);
       await fillComposerDraft(page, "Draft after closing Find");
       await expectComposerDraft(page, "Draft after closing Find");
     } finally {
@@ -255,4 +241,32 @@ for (const shortcut of ["Control+f", "Meta+f"]) {
 async function openFindFromComposer(page: Page, shortcut: string) {
   await page.keyboard.press(shortcut);
   await expect(query(page)).toBeFocused();
+}
+
+async function searchFromComposerWithoutLosingDraft(page: Page, shortcut: string) {
+  await fillComposerDraft(page, "Keep this draft");
+  await expectComposerFocused(page);
+  await openFindFromComposer(page, shortcut);
+  await expectComposerDraft(page, "Keep this draft");
+  await query(page).fill("hello world");
+  await expectHighlight(page, "hello world");
+}
+
+async function refocusFindAndReplaceQuery(page: Page, shortcut: string) {
+  await composerLocator(page).click();
+  await expectComposerFocused(page);
+  await openFindFromComposer(page, shortcut);
+  await expect(query(page)).toHaveValue("hello world");
+  await expectComposerDraft(page, "Keep this draft");
+  await page.keyboard.type("a.b");
+  await expect(query(page)).toHaveValue("a.b");
+  await expectHighlight(page, "a.b");
+}
+
+async function expectCommandCenterOwnsFindShortcut(page: Page, shortcut: string) {
+  await openCommandCenter(page);
+  await page.keyboard.press(shortcut);
+  await expect(page.getByTestId("command-center-panel")).toBeVisible();
+  await expect(query(page)).toHaveCount(0);
+  await closeCommandCenter(page);
 }
