@@ -19,6 +19,29 @@ export const JSONL_RPC_ABORT_TIMEOUT_MS = 5_000;
 const STDERR_BUFFER_LIMIT = 8192;
 const GRACEFUL_SHUTDOWN_TIMEOUT_MS = 2_000;
 const FORCE_SHUTDOWN_TIMEOUT_MS = 1_000;
+export class JsonlRpcTimeoutError extends Error {
+  readonly operation: string;
+  readonly elapsedMs: number;
+  readonly timeoutMs: number | null;
+  readonly stderrTail: string;
+
+  constructor(args: {
+    diagnosticName: string;
+    operation: string;
+    elapsedMs: number;
+    timeoutMs: number | null;
+    stderrTail: string;
+  }) {
+    super(
+      `${args.diagnosticName} request timed out phase=${args.operation} elapsedMs=${args.elapsedMs} timeoutMs=${args.timeoutMs}\n${args.stderrTail}`.trim(),
+    );
+    this.name = "JsonlRpcTimeoutError";
+    this.operation = args.operation;
+    this.elapsedMs = args.elapsedMs;
+    this.timeoutMs = args.timeoutMs;
+    this.stderrTail = args.stderrTail;
+  }
+}
 
 export interface JsonlRpcLaunch {
   command: string;
@@ -171,9 +194,13 @@ export class JsonlRpcProcess {
     const promise = new Promise<unknown>((resolve, reject) => {
       const timer = createRequestTimeout(requestTimeoutMs, () => {
         this.pending.delete(id);
-        const timeoutError = new Error(
-          `${this.diagnosticName} request timed out phase=${command.type} elapsedMs=${Date.now() - startedAt} timeoutMs=${requestTimeoutMs}\n${this.stderrBuffer}`.trim(),
-        );
+        const timeoutError = new JsonlRpcTimeoutError({
+          diagnosticName: this.diagnosticName,
+          operation: command.type,
+          elapsedMs: Date.now() - startedAt,
+          timeoutMs: requestTimeoutMs,
+          stderrTail: this.stderrBuffer,
+        });
         reject(timeoutError);
         if (requestOptions?.closeOnTimeout) {
           void this.close(timeoutError).catch(() => undefined);
