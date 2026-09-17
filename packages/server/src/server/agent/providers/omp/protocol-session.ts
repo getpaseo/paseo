@@ -3,6 +3,7 @@ import {
   JSONL_RPC_DEFAULT_TIMEOUT_MS,
   supportsJsonlRpcProtocolV2,
   type JsonlRpcExit,
+  type JsonlRpcRequestArgs,
 } from "../jsonl-rpc-process.js";
 
 const OMP_READY_TIMEOUT_MS = 20_000;
@@ -10,10 +11,7 @@ const OMP_READY_TIMEOUT_MS = 20_000;
 export interface OmpProtocolTransport {
   onMessage(callback: (message: Record<string, unknown>) => void): () => void;
   onExit(callback: (exit: JsonlRpcExit) => void): () => void;
-  request(options: {
-    command: Record<string, unknown>;
-    timeoutMs?: number | null;
-  }): Promise<unknown>;
+  request(options: JsonlRpcRequestArgs): Promise<unknown>;
 }
 
 export interface OmpProtocolTimeouts {

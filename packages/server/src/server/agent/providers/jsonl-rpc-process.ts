@@ -51,6 +51,11 @@ export interface JsonlRpcRequestOptions {
    */
   closeOnTimeout?: boolean;
 }
+export interface JsonlRpcRequestArgs {
+  command: { type: string; [key: string]: unknown };
+  timeoutMs?: number | null;
+  requestOptions?: JsonlRpcRequestOptions;
+}
 
 export interface JsonlRpcExit {
   code: number | null;
@@ -151,11 +156,7 @@ export class JsonlRpcProcess {
     };
   }
 
-  startRequest(options: {
-    command: { type: string; [key: string]: unknown };
-    timeoutMs?: number | null;
-    requestOptions?: JsonlRpcRequestOptions;
-  }): { id: string; promise: Promise<unknown> } {
+  startRequest(options: JsonlRpcRequestArgs): { id: string; promise: Promise<unknown> } {
     const { command, timeoutMs, requestOptions } = options;
     if (this.disposed) {
       return {
@@ -187,11 +188,7 @@ export class JsonlRpcProcess {
     return { id, promise };
   }
 
-  request(options: {
-    command: { type: string; [key: string]: unknown };
-    timeoutMs?: number | null;
-    requestOptions?: JsonlRpcRequestOptions;
-  }): Promise<unknown> {
+  request(options: JsonlRpcRequestArgs): Promise<unknown> {
     return this.startRequest(options).promise;
   }
 
