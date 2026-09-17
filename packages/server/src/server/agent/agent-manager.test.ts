@@ -1340,6 +1340,7 @@ test("steering records concurrent early echoes as canonical submitted prompts", 
 test("delivers concurrent child completion notifications to their shared parent", async () => {
   const firstSteerEntered = deferred<void>();
   const releaseFirstSteer = deferred<void>();
+  const bothNotificationsDelivered = deferred<void>();
   class HeldFirstSteerSession extends SteeringTestSession {
     readonly deliveredPrompts: string[] = [];
 
@@ -1354,6 +1355,9 @@ test("delivers concurrent child completion notifications to their shared parent"
       const result = await super.steerActiveTurn(prompt, options);
       if (result.status === "accepted" && typeof prompt === "string") {
         this.deliveredPrompts.push(prompt);
+        if (this.deliveredPrompts.length === 2) {
+          bothNotificationsDelivered.resolve();
+        }
       }
       return result;
     }
@@ -1404,29 +1408,24 @@ test("delivers concurrent child completion notifications to their shared parent"
 
     await startAgentRun(manager, parent.id, "Coordinate both children", logger);
     await manager.waitForAgentRunStart(parent.id);
+    const childIdle = children.map((child) => waitForAgentLifecycle(manager, child.id, "idle"));
     await Promise.all(
       children.map((child) => startAgentRun(manager, child.id, "Complete your task", logger)),
     );
     await firstSteerEntered.promise;
-    await vi.waitFor(() => {
-      expect(children.map((child) => manager.getAgent(child.id)?.lifecycle)).toEqual([
-        "idle",
-        "idle",
-      ]);
-    });
+    await Promise.all(childIdle);
 
     releaseFirstSteer.resolve();
+    await bothNotificationsDelivered.promise;
 
-    await vi.waitFor(() => {
-      expect(parentSession.deliveredPrompts).toHaveLength(2);
-      expect(parentSession.deliveredPrompts).toEqual(
-        expect.arrayContaining(
-          children.map((child) =>
-            formatSystemNotificationPrompt(`Agent ${child.id} (${child.config.title}) finished.`),
-          ),
+    expect(parentSession.deliveredPrompts).toHaveLength(2);
+    expect(parentSession.deliveredPrompts).toEqual(
+      expect.arrayContaining(
+        children.map((child) =>
+          formatSystemNotificationPrompt(`Agent ${child.id} (${child.config.title}) finished.`),
         ),
-      );
-    });
+      ),
+    );
   } finally {
     releaseFirstSteer.resolve();
     for (const agentId of createdAgentIds.toReversed()) {
