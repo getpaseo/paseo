@@ -6,20 +6,17 @@ import type { AgentSnapshotPayload, CreationSnapshot } from "@getpaseo/protocol/
 import { encodeImages } from "@/utils/encode-images";
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
-import type { ReactElement, RefObject } from "react";
+import type { ReactElement, ReactNode, RefObject } from "react";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
-import { Pressable, StyleSheet as RNStyleSheet, Text, View } from "react-native";
+import { Pressable, Text, View } from "react-native";
 import type { PressableStateCallbackType } from "react-native";
 import { StyleSheet, useUnistyles, withUnistyles } from "react-native-unistyles";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { createNameId } from "mnemonic-id";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, Folder, FolderPlus, GitBranch, GitPullRequest } from "lucide-react-native";
 import { Composer } from "@/composer";
-import { KeyboardTranslateView } from "@/components/keyboard-translate-view";
-import { ComposerViewport, ComposerViewportContent } from "@/composer/viewport";
-import { ScrollView } from "@/components/ui/scroll-view";
+import { ComposerDock } from "@/composer/dock";
 import { FileDropZone } from "@/components/file-drop/file-drop-zone";
 import {
   resolveComposerAttachmentSubmitFormat,
@@ -36,7 +33,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { TitlebarDragRegion } from "@/components/desktop/titlebar-drag-region";
 import { SidebarMenuToggle } from "@/components/headers/menu-header";
 import { ScreenHeader } from "@/components/headers/screen-header";
-import { HEADER_INNER_HEIGHT, MAX_CONTENT_WIDTH, useIsCompactFormFactor } from "@/constants/layout";
+import { useIsCompactFormFactor } from "@/constants/layout";
 import { useToast } from "@/contexts/toast-context";
 import { useAgentInputDraft } from "@/composer/draft/input-draft";
 import { useForgeSearchQuery } from "@/git/use-forge-search-query";
@@ -689,8 +686,13 @@ function IsolationPickerTrigger({
 
 // Wraps a single argument control in the mobile vertical stack. On desktop the
 // controls are laid out in one horizontal row, so no per-control wrapper is used.
+// Decorative padding must not block the dock background from iOS hit testing.
 function FormRow({ children }: { children: React.ReactNode }) {
-  return <View style={styles.row}>{children}</View>;
+  return (
+    <View style={styles.row} pointerEvents="box-none">
+      {children}
+    </View>
+  );
 }
 
 interface WorkspaceIsolationState {
@@ -738,13 +740,6 @@ function isolationLabel(t: TFunction, isolation: "local" | "worktree"): string {
   return isolation === "worktree"
     ? t("newWorkspace.isolation.worktree")
     : t("newWorkspace.isolation.local");
-}
-
-function getContentStyle(input: { isCompact: boolean; insetBottom: number }) {
-  if (input.isCompact) {
-    return [styles.content, styles.contentCompact, { paddingBottom: input.insetBottom }];
-  }
-  return [styles.content, styles.contentCentered, { paddingBottom: input.insetBottom }];
 }
 
 function normalizeBranchDetails(
@@ -1602,23 +1597,27 @@ function useNewWorkspaceFormStack(input: NewWorkspaceFormStackInput): ReactEleme
   );
 
   return isCompact ? (
-    <View testID="new-workspace-ref-picker-row" style={styles.formStack}>
+    <View testID="new-workspace-ref-picker-row" style={styles.formStack} pointerEvents="box-none">
       <FormRow>{projectControl}</FormRow>
       {hostControl ? <FormRow>{hostControl}</FormRow> : null}
       {isolationControl ? <FormRow>{isolationControl}</FormRow> : null}
       {baseControl ? <FormRow>{baseControl}</FormRow> : null}
       <FormRow>{launchControl}</FormRow>
       {/* Keep fixed stack height without separating the visible controls. */}
-      {isolationControl ? null : <View style={styles.baseSpacer} />}
-      {baseControl ? null : <View style={styles.baseSpacer} />}
+      {isolationControl ? null : <View style={styles.baseSpacer} pointerEvents="none" />}
+      {baseControl ? null : <View style={styles.baseSpacer} pointerEvents="none" />}
     </View>
   ) : (
-    <View testID="new-workspace-ref-picker-row" style={styles.formStackDesktop}>
+    <View
+      testID="new-workspace-ref-picker-row"
+      style={styles.formStackDesktop}
+      pointerEvents="box-none"
+    >
       {projectControl}
       {hostControl}
       {isolationControl}
       {baseControl}
-      <View style={styles.launchSpacer} />
+      <View style={styles.launchSpacer} pointerEvents="none" />
       {launchControl}
     </View>
   );
@@ -1634,7 +1633,6 @@ export function NewWorkspaceScreen({
   const queryClient = useQueryClient();
   const { theme } = useUnistyles();
   const { t } = useTranslation();
-  const insets = useSafeAreaInsets();
   const isCompact = useIsCompactFormFactor();
   const toast = useToast();
   const mergeWorkspaces = useCallback(
@@ -2290,15 +2288,6 @@ export function NewWorkspaceScreen({
     ],
   );
 
-  const contentBottomInset = useMemo(
-    () => (isCompact ? insets.bottom : HEADER_INNER_HEIGHT + theme.spacing[6]),
-    [isCompact, insets.bottom, theme.spacing],
-  );
-  const contentStyle = useMemo(
-    () => getContentStyle({ isCompact, insetBottom: contentBottomInset }),
-    [isCompact, contentBottomInset],
-  );
-
   const agentControlsWithDisabled = useMemo(
     () =>
       composerState
@@ -2379,101 +2368,108 @@ export function NewWorkspaceScreen({
 
   const screenHeaderLeft = useMemo(() => <SidebarMenuToggle />, []);
 
+  const composer = isTerminalLaunch ? (
+    <Composer
+      key="terminal"
+      inputMode="terminal"
+      readOnly={!terminalTakesPrompt}
+      placeholder={terminalPlaceholder}
+      submitLabel={terminalSubmitLabel}
+      agentId={draftKey}
+      serverId={selectedServerId}
+      isPaneFocused={true}
+      onSubmitMessage={handleSubmitTerminalLaunch}
+      allowEmptySubmit={true}
+      submitButtonAccessibilityLabel={t("newWorkspace.launch.submit")}
+      submitButtonTestID="new-workspace-launch-submit"
+      isSubmitLoading={isPending}
+      submitBehavior="preserve-and-lock"
+      blurOnSubmit={true}
+      textSource={terminalTextSource}
+      onChangeText={setTerminalPromptText}
+      textReplacement={terminalTextReplacement}
+      attachments={NO_TERMINAL_ATTACHMENTS}
+      onChangeAttachments={noopChangeAttachments}
+      cwd={selectedSourceDirectory ?? ""}
+      clearDraft={noopClearDraft}
+      autoFocus={terminalTakesPrompt}
+      autoFocusKey={launchFocusKey}
+    />
+  ) : (
+    <Composer
+      key="chat"
+      agentId={draftKey}
+      serverId={selectedServerId}
+      isPaneFocused={true}
+      onSubmitMessage={handleSubmitNewWorkspace}
+      allowEmptySubmit={true}
+      submitButtonAccessibilityLabel={t("newWorkspace.create")}
+      submitButtonTestID="workspace-create-submit"
+      submitIcon="return"
+      isSubmitLoading={isPending}
+      waitForForgeAutoAttachOnSubmit
+      submitBehavior="preserve-and-lock"
+      blurOnSubmit={true}
+      textSource={chatDraft.textSource}
+      onChangeText={chatDraft.editText}
+      textReplacement={chatDraft.textReplacement}
+      attachments={chatDraft.attachments}
+      attachmentScopeKeys={visibleDraftContextScopeKeys}
+      onChangeAttachments={chatDraft.setAttachments}
+      onForgeChangeRequestDetected={handleForgeChangeRequestDetected}
+      onForgeChangeRequestAutoAttach={handleForgeChangeRequestAutoAttach}
+      cwd={selectedSourceDirectory ?? ""}
+      clearDraft={handleClearDraft}
+      autoFocus
+      autoFocusKey={launchFocusKey}
+      commandDraftConfig={composerState?.commandDraftConfig}
+      agentControls={agentControlsWithDisabled}
+    />
+  );
   return (
     <FileDropZone style={styles.container}>
       <ScreenHeader left={screenHeaderLeft} borderless />
-      <ComposerViewport style={contentStyle} bottomInset={contentBottomInset} centered={!isCompact}>
+      <View style={styles.content}>
         <TitlebarDragRegion />
-        <KeyboardTranslateView style={animatedStaticStyles.centered}>
-          <ComposerViewportContent style={animatedStaticStyles.form}>
-            <ScrollView style={animatedStaticStyles.setup} keyboardShouldPersistTaps="handled">
-              <View style={styles.composerTitleContainer}>
-                <Text style={styles.composerTitle}>{t("newWorkspace.title")}</Text>
-              </View>
-              {formStack}
-            </ScrollView>
-            {isTerminalLaunch ? (
-              <Composer
-                key="terminal"
-                externalKeyboardShift
-                inputMode="terminal"
-                readOnly={!terminalTakesPrompt}
-                placeholder={terminalPlaceholder}
-                submitLabel={terminalSubmitLabel}
-                agentId={draftKey}
-                serverId={selectedServerId}
-                isPaneFocused={true}
-                onSubmitMessage={handleSubmitTerminalLaunch}
-                allowEmptySubmit={true}
-                submitButtonAccessibilityLabel={t("newWorkspace.launch.submit")}
-                submitButtonTestID="new-workspace-launch-submit"
-                isSubmitLoading={isPending}
-                submitBehavior="preserve-and-lock"
-                blurOnSubmit={true}
-                textSource={terminalTextSource}
-                onChangeText={setTerminalPromptText}
-                textReplacement={terminalTextReplacement}
-                attachments={NO_TERMINAL_ATTACHMENTS}
-                onChangeAttachments={noopChangeAttachments}
-                cwd={selectedSourceDirectory ?? ""}
-                clearDraft={noopClearDraft}
-                autoFocus={terminalTakesPrompt}
-                autoFocusKey={launchFocusKey}
-              />
-            ) : (
-              <Composer
-                key="chat"
-                externalKeyboardShift
-                agentId={draftKey}
-                serverId={selectedServerId}
-                isPaneFocused={true}
-                onSubmitMessage={handleSubmitNewWorkspace}
-                allowEmptySubmit={true}
-                submitButtonAccessibilityLabel={t("newWorkspace.create")}
-                submitButtonTestID="workspace-create-submit"
-                submitIcon="return"
-                isSubmitLoading={isPending}
-                waitForForgeAutoAttachOnSubmit
-                submitBehavior="preserve-and-lock"
-                blurOnSubmit={true}
-                textSource={chatDraft.textSource}
-                onChangeText={chatDraft.editText}
-                textReplacement={chatDraft.textReplacement}
-                attachments={chatDraft.attachments}
-                attachmentScopeKeys={visibleDraftContextScopeKeys}
-                onChangeAttachments={chatDraft.setAttachments}
-                onForgeChangeRequestDetected={handleForgeChangeRequestDetected}
-                onForgeChangeRequestAutoAttach={handleForgeChangeRequestAutoAttach}
-                cwd={selectedSourceDirectory ?? ""}
-                clearDraft={handleClearDraft}
-                autoFocus
-                autoFocusKey={launchFocusKey}
-                commandDraftConfig={composerState?.commandDraftConfig}
-                agentControls={agentControlsWithDisabled}
-              />
-            )}
-            {errorMessage ? <Text style={styles.errorText}>{errorMessage}</Text> : null}
-          </ComposerViewportContent>
-        </KeyboardTranslateView>
-      </ComposerViewport>
+        <NewWorkspaceLayout
+          isCompact={isCompact}
+          title={t("newWorkspace.title")}
+          formStack={formStack}
+        >
+          {composer}
+          {errorMessage ? <Text style={styles.errorText}>{errorMessage}</Text> : null}
+        </NewWorkspaceLayout>
+      </View>
     </FileDropZone>
   );
 }
 
-const animatedStaticStyles = RNStyleSheet.create({
-  centered: {
-    flexShrink: 1,
-    width: "100%",
-    maxWidth: MAX_CONTENT_WIDTH,
-  },
-  form: {
-    flexShrink: 1,
-  },
-  setup: {
-    flexGrow: 0,
-    flexShrink: 1,
-  },
-});
+function NewWorkspaceLayout({
+  isCompact,
+  title,
+  formStack,
+  children,
+}: {
+  isCompact: boolean;
+  title: string;
+  formStack: ReactNode;
+  children: ReactNode;
+}) {
+  const setupFields = (
+    <>
+      <View style={styles.composerTitleContainer} pointerEvents="none">
+        <Text style={styles.composerTitle}>{title}</Text>
+      </View>
+      {formStack}
+    </>
+  );
+  return (
+    <ComposerDock centered={!isCompact}>
+      {setupFields}
+      {children}
+    </ComposerDock>
+  );
+}
 
 const styles = StyleSheet.create((theme) => ({
   container: {
@@ -2484,13 +2480,6 @@ const styles = StyleSheet.create((theme) => ({
   content: {
     position: "relative",
     flex: 1,
-    alignItems: "center",
-  },
-  contentCentered: {
-    justifyContent: "center",
-  },
-  contentCompact: {
-    justifyContent: "flex-end",
   },
   composerTitleContainer: {
     marginBottom: theme.spacing[8],

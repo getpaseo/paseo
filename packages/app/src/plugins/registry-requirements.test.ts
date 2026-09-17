@@ -1,3 +1,4 @@
+import { createPluginHosts } from "./hosts";
 import { afterEach, expect, it } from "vitest";
 import { createPaseoApi } from "@getpaseo/client";
 import { DaemonClient } from "@getpaseo/client/internal/daemon-client";
@@ -10,9 +11,18 @@ function registry(version: string) {
   let cleanups = 0;
   const result = new PluginRegistry({
     version,
-    createRuntime() {
+    createRuntime(installation) {
       starts++;
       return {
+        hosts: createPluginHosts(
+          {
+            getHosts: () => [],
+            getSnapshot: () => null,
+            subscribeAll: () => () => {},
+            subscribeHostList: () => () => {},
+          },
+          installation.lifetime.signal,
+        ),
         paseo: createPaseoApi(client),
         rpc: async () => {
           throw new Error("No RPC in this plugin");
@@ -61,7 +71,7 @@ it("rejects catalogs without requirements from pre-0.8 daemons", () => {
   result.installCatalog("host", [{ id: "example", clientBundle }], { client });
   expect(starts()).toBe(0);
   expect(result.getEvaluationError("host", "example")).toContain(
-    "https://paseo.sh/docs/plugins/v0.8/migration",
+    "https://paseo.sh/docs/plugins/migration",
   );
 });
 

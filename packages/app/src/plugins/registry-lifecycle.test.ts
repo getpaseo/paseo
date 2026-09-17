@@ -1,3 +1,4 @@
+import { createPluginHosts } from "./hosts";
 import { expect, test } from "vitest";
 import { createPaseoApi } from "@getpaseo/client";
 import { DaemonClient } from "@getpaseo/client/internal/daemon-client";
@@ -11,6 +12,15 @@ function registry() {
     createRuntime: (installation) => {
       const api = createPaseoApi(client);
       return {
+        hosts: createPluginHosts(
+          {
+            getHosts: () => [],
+            getSnapshot: () => null,
+            subscribeAll: () => () => {},
+            subscribeHostList: () => () => {},
+          },
+          installation.lifetime.signal,
+        ),
         paseo: {
           ...api,
           dispose: async () => {

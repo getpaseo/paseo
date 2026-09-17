@@ -3,6 +3,16 @@ import { parsePluginSourceReference } from "./plugin-source-reference.js";
 
 describe("plugin source references", () => {
   it.each([
+    ["npm:review@1.2.0:nested", "npm:review@1.2.0", "nested"],
+    ["npm:review@^1.2.0", "npm:review@^1.2.0", undefined],
+    ["npm:@team/review@next:plugins/main", "npm:@team/review@next", "plugins/main"],
+    ["github:owner/repository", "github:owner/repository", undefined],
+    [
+      "git:git@example.test:owner/repository.git",
+      "git:git@example.test:owner/repository.git",
+      undefined,
+    ],
+    ["git:file:///repo:plugins/main", "git:file:///repo", "plugins/main"],
     ["owner/repository", "owner/repository", undefined],
     ["owner/repository:plugins/review", "owner/repository", "plugins/review"],
     [
