@@ -148,11 +148,12 @@ export class JsonlRpcProcess {
     };
   }
 
-  startRequest(
-    command: { type: string; [key: string]: unknown },
-    timeoutMs?: number | null,
-    requestOptions?: JsonlRpcRequestOptions,
-  ): { id: string; promise: Promise<unknown> } {
+  startRequest(options: {
+    command: { type: string; [key: string]: unknown };
+    timeoutMs?: number | null;
+    requestOptions?: JsonlRpcRequestOptions;
+  }): { id: string; promise: Promise<unknown> } {
+    const { command, timeoutMs, requestOptions } = options;
     if (this.disposed) {
       return {
         id: "",
@@ -183,12 +184,12 @@ export class JsonlRpcProcess {
     return { id, promise };
   }
 
-  request(
-    command: { type: string; [key: string]: unknown },
-    timeoutMs?: number | null,
-    requestOptions?: JsonlRpcRequestOptions,
-  ): Promise<unknown> {
-    return this.startRequest(command, timeoutMs, requestOptions).promise;
+  request(options: {
+    command: { type: string; [key: string]: unknown };
+    timeoutMs?: number | null;
+    requestOptions?: JsonlRpcRequestOptions;
+  }): Promise<unknown> {
+    return this.startRequest(options).promise;
   }
 
   send(message: Record<string, unknown>): void {
