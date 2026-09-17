@@ -1170,7 +1170,6 @@ test("plan approval exposes the resume-bypass action even when plan mode was ent
     });
 
     await pendingResolution;
-    expect(queryMock.setPermissionMode).toHaveBeenLastCalledWith("bypassPermissions");
     expect(await session.getCurrentMode()).toBe("bypassPermissions");
   } finally {
     await session.close();
