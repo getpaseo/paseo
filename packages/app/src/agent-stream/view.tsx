@@ -52,7 +52,7 @@ import type {
 } from "@getpaseo/protocol/agent-types";
 import type { AgentScreenAgent } from "@/hooks/use-agent-screen-state-machine";
 import { useSessionStore } from "@/stores/session-store";
-import { StreamingWords, useWordStream } from "@/word-stream";
+import { useRevealedText } from "@/hooks/use-revealed-text";
 import { useFileExplorerActions } from "@/hooks/use-file-explorer-actions";
 import { useLoadOlderAgentHistory } from "@/hooks/use-load-older-agent-history";
 import { useSettings } from "@/hooks/use-settings";
@@ -1294,7 +1294,7 @@ interface ThoughtSlotProps {
   defaultExpanded: boolean;
 }
 
-// Reasoning text is paced the same way assistant text is; see @/word-stream.
+// Reasoning text is paced the same way assistant text is; see @/hooks/use-revealed-text.
 function ThoughtSlot({
   itemId,
   onInlineDetailsExpandedChangeByItemId,
@@ -1303,21 +1303,18 @@ function ThoughtSlot({
   isLastInSequence,
   defaultExpanded,
 }: ThoughtSlotProps) {
-  const stream = useWordStream(text, status === "ready" ? "complete" : "streaming");
-  const revealedText = stream.text;
+  const revealedText = useRevealedText(text, status === "ready" ? "complete" : "streaming");
   return (
-    <StreamingWords stream={stream}>
-      <ToolCallSlot
-        itemId={itemId}
-        onInlineDetailsExpandedChangeByItemId={onInlineDetailsExpandedChangeByItemId}
-        toolName="thinking"
-        args={revealedText}
-        status={status === "ready" ? "completed" : "executing"}
-        isLastInSequence={isLastInSequence}
-        defaultExpanded={defaultExpanded}
-        forceInline={defaultExpanded}
-      />
-    </StreamingWords>
+    <ToolCallSlot
+      itemId={itemId}
+      onInlineDetailsExpandedChangeByItemId={onInlineDetailsExpandedChangeByItemId}
+      toolName="thinking"
+      args={revealedText}
+      status={status === "ready" ? "completed" : "executing"}
+      isLastInSequence={isLastInSequence}
+      defaultExpanded={defaultExpanded}
+      forceInline={defaultExpanded}
+    />
   );
 }
 
