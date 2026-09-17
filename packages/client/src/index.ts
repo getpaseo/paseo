@@ -48,6 +48,8 @@ export type {
 } from "./terminals/index.js";
 import type { PluginTimelineItem } from "@getpaseo/protocol/agent-types";
 import type {
+  AgentForkContextOptions,
+  AgentForkContextPayload,
   FetchAgentsEntry,
   FetchAgentsOptions,
   FetchAgentsPageInfo,
@@ -300,6 +302,9 @@ export interface PaseoAgentCommandsOptions {
 
 export type PaseoAgentCommandsResult = ListCommandsResponse["payload"];
 
+export type PaseoAgentForkContextOptions = AgentForkContextOptions;
+export type PaseoAgentForkContextResult = AgentForkContextPayload;
+
 export type PaseoAgentUpdate = Extract<SessionOutboundMessage, { type: "agent_update" }>["payload"];
 
 export type PaseoAgentStream = Extract<SessionOutboundMessage, { type: "agent_stream" }>["payload"];
@@ -378,6 +383,11 @@ export interface PaseoAgentHandle {
    * rejecting.
    */
   commands(options?: PaseoAgentCommandsOptions): Promise<PaseoAgentCommandsResult>;
+  /**
+   * Returns Paseo's curated chat-history attachment for another agent.
+   * Omit both boundary fields to include the current in-flight response.
+   */
+  forkContext(options?: PaseoAgentForkContextOptions): Promise<PaseoAgentForkContextResult>;
   archive(): Promise<{ archivedAt: string }>;
   detach(): Promise<void>;
   subscribe(handler: (update: PaseoAgentUpdate) => void): () => void;
@@ -970,6 +980,18 @@ function createAgentHandleFactory(
         return result;
       },
       commands: (options) => daemonClient.listCommands({ agentId: id, ...options }),
+      forkContext: async (options) => {
+        const features = daemonClient.getLastServerInfoMessage()?.features;
+        // COMPAT(agentForkContext): added in v0.1.102, remove gate after 2026-12-28.
+        if (features?.agentForkContext !== true) {
+          throw new Error("Update the host to get agent fork context.");
+        }
+        // COMPAT(agentForkContextCursor): added in v0.1.108, remove gate after 2027-01-14.
+        if (options?.boundaryCursor && features?.agentForkContextCursor !== true) {
+          throw new Error("Update the host to get agent fork context at a timeline cursor.");
+        }
+        return daemonClient.buildAgentForkContext(id, options);
+      },
       archive: async () => {
         const result = await daemonClient.archiveAgent(id);
         if (current) {

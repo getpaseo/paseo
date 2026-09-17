@@ -85,6 +85,39 @@ console.log(result.lastMessage);
 
 `ref()` does not contact the daemon. Call `refresh()` first when you need to know whether the agent still exists; it returns `null` if it does not.
 
+## Reuse curated Fork context
+
+`forkContext()` returns the same curated chat history as Paseo's Fork UI. This is
+Paseo conversation context, not the provider's native session state.
+
+```ts
+const source = client.agents.ref(agentId);
+const context = await source.forkContext({ boundaryCursor: turnBoundary });
+if (!context.attachment) throw new Error("Fork context has no attachment");
+
+await source.refresh();
+if (!source.workspaceId) throw new Error("Source agent has no workspace");
+
+const reviewer = await client.workspaces.ref(source.workspaceId).agents.create({
+  config: { provider: "codex/gpt-5.5" },
+  attachments: [context.attachment],
+  prompt: "Review the work described in the attached chat history.",
+});
+```
+
+For a completed response, pass its timeline cursor (`{ epoch, seq }`) as
+`boundaryCursor`, or its assistant message ID as `boundaryMessageId`. The boundary
+is inclusive; a cursor takes precedence when both are supplied. Omit both fields
+with `source.forkContext()` to capture the timeline up to now, including a response
+that is still streaming. The daemon rejects stale or changed checkpoints.
+
+The result contains a typed `attachment` with `contextKind: "chat_history"`,
+`itemCount`, and the selected boundary metadata. Pass the attachment to agent
+creation as shown above; `prompt` starts the new turn immediately.
+
+The host must advertise `agentForkContext`. Cursor boundaries additionally require
+`agentForkContextCursor`. Unsupported hosts reject with an update-host error.
+
 ## Create a subagent
 
 Create a child through its workspace. The handle owns placement, so the caller does not repeat its directory:

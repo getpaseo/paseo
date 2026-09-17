@@ -1434,6 +1434,134 @@ test("waitForReady reads an older host on the existing connection", async () => 
   await client.close();
 });
 
+test("agent fork context returns the daemon's curated attachment without a boundary", async () => {
+  const { client, ws } = await connectClient({ agentForkContext: true });
+  const contextPromise = client.agents.ref("source-agent").forkContext();
+  const request = parseSentSessionMessage(ws.sent.at(-1));
+  expect(request).toEqual({
+    type: "agent.fork_context.request",
+    agentId: "source-agent",
+    requestId: expect.any(String),
+  });
+  const payload = {
+    requestId: request.requestId,
+    agentId: "source-agent",
+    attachment: {
+      type: "text",
+      mimeType: "text/plain",
+      contextKind: "chat_history",
+      title: "Chat history",
+      text: "<chat-history-summary>Curated context, including the live response.</chat-history-summary>",
+    },
+    itemCount: 3,
+    boundaryCursor: null,
+    boundaryMessageId: null,
+    error: null,
+  };
+  ws.message(sessionMessage({ type: "agent.fork_context.response", payload }));
+  await expect(contextPromise).resolves.toEqual(payload);
+  await client.close();
+});
+
+test.each([
+  { boundaryMessageId: "assistant-message" },
+  { boundaryCursor: { epoch: "timeline-1", seq: 42 } },
+  {
+    boundaryCursor: { epoch: "timeline-1", seq: 42 },
+    boundaryMessageId: "assistant-message",
+  },
+])("agent fork context forwards explicit boundaries: %j", async (boundary) => {
+  const { client, ws } = await connectClient({
+    agentForkContext: true,
+    agentForkContextCursor: Boolean(boundary.boundaryCursor),
+  });
+  const contextPromise = client.agents.ref(createAgent()).forkContext({
+    ...boundary,
+    requestId: "fork-request",
+  });
+  expect(parseSentSessionMessage(ws.sent.at(-1))).toEqual({
+    type: "agent.fork_context.request",
+    agentId: "agent_sdk",
+    requestId: "fork-request",
+    ...boundary,
+  });
+  const payload = {
+    requestId: "fork-request",
+    agentId: "agent_sdk",
+    attachment: {
+      type: "text",
+      mimeType: "text/plain",
+      contextKind: "chat_history",
+      title: "Chat history",
+      text: "<chat-history-summary>Context through the selected response.</chat-history-summary>",
+    },
+    itemCount: 2,
+    boundaryCursor: boundary.boundaryCursor ?? null,
+    boundaryMessageId: boundary.boundaryMessageId ?? null,
+    error: null,
+  };
+  ws.message(sessionMessage({ type: "agent.fork_context.response", payload }));
+  await expect(contextPromise).resolves.toEqual(payload);
+  await client.close();
+});
+
+test.each<Record<string, boolean>>([{}, { agentForkContext: false }])(
+  "agent fork context requires the advertised host capability: %j",
+  async (features) => {
+    const { client, ws } = await connectClient(features);
+    const sentBefore = ws.sent.length;
+    await expect(client.agents.ref("source-agent").forkContext()).rejects.toThrow(
+      "Update the host to get agent fork context.",
+    );
+    expect(ws.sent).toHaveLength(sentBefore);
+    await client.close();
+  },
+);
+
+test.each<Record<string, boolean>>([{}, { agentForkContextCursor: false }])(
+  "agent fork context rejects unsupported cursor boundaries: %j",
+  async (features) => {
+    const { client, ws } = await connectClient({ agentForkContext: true, ...features });
+    const sentBefore = ws.sent.length;
+    await expect(
+      client.agents.ref("source-agent").forkContext({
+        boundaryCursor: { epoch: "timeline-1", seq: 42 },
+        boundaryMessageId: "assistant-message",
+      }),
+    ).rejects.toThrow("Update the host to get agent fork context at a timeline cursor.");
+    expect(ws.sent).toHaveLength(sentBefore);
+    await client.close();
+  },
+);
+
+test("agent fork context propagates daemon boundary errors", async () => {
+  const { client, ws } = await connectClient({
+    agentForkContext: true,
+    agentForkContextCursor: true,
+  });
+  const boundaryCursor = { epoch: "stale-timeline", seq: 42 };
+  const contextPromise = client.agents.ref("source-agent").forkContext({ boundaryCursor });
+  const request = parseSentSessionMessage(ws.sent.at(-1));
+  ws.message(
+    sessionMessage({
+      type: "agent.fork_context.response",
+      payload: {
+        requestId: request.requestId,
+        agentId: "source-agent",
+        attachment: null,
+        itemCount: 0,
+        boundaryCursor,
+        boundaryMessageId: null,
+        error: "Selected timeline position is no longer available.",
+      },
+    }),
+  );
+  await expect(contextPromise).rejects.toThrow(
+    "Selected timeline position is no longer available.",
+  );
+  await client.close();
+});
+
 test("provider usage requires the advertised host capability", async () => {
   const { client, ws } = await connectClient({});
   const sentBeforeUsage = ws.sent.length;
