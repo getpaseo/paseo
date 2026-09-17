@@ -18,12 +18,12 @@ The package ships the existing TypeScript entry and client sources. Paseo compil
 its directory plugin loader; no package build or preparation command is required. React,
 React Native, and `@getpaseo/plugin` are peer contracts supplied by the host. npm is needed for
 installation, not loading or reloading. You can also install this directory while developing.
-See the [source reference](https://paseo.sh/docs/plugins/v0.8/reference#plugin-sources)
+See the [source reference](https://paseo.sh/docs/plugins/reference#plugin-sources)
 for supported identifiers and preparation rules.
 
 The examples demonstrate default and custom padding, a full-width body, author-owned ScrollView and
 FlatList scrolling, horizontal tabs, and clipboard actions with a keyboard-aware input. See the
-[host UI reference](https://paseo.sh/docs/plugins/v0.8/reference#host-ui) for the API contract.
+[host UI reference](https://paseo.sh/docs/plugins/reference#host-ui) for the API contract.
 
 The browser regression installs this exact example in an isolated daemon:
 

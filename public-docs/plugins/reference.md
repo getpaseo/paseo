@@ -8,9 +8,9 @@ category: Plugins
 
 # Plugin reference
 
-> **For Paseo v0.8 beta.** Return to the [v0.8 quickstart](/docs/plugins/v0.8).
+Start with the [plugin quickstart](/docs/plugins) to create your first plugin.
 
-Migrating an existing plugin? Follow the standalone [runtime-entry migration guide](/docs/plugins/v0.8/migration).
+Migrating an existing plugin? Follow the standalone [runtime-entry migration guide](/docs/plugins/migration).
 
 Local plugins are directory sources installed into one Paseo daemon. A plugin can contribute:
 
@@ -78,8 +78,8 @@ Prerelease Paseo versions also satisfy a range their stable core (`major.minor.p
 for typechecking. Raise the minimum when adopting a newer API. Add an upper bound when a later
 release is incompatible; a minimum alone does not promise protection from future breaking changes.
 
-The daemon checks its version before installing, running Git build commands, or loading a plugin,
-and checks again on startup, enable, and reload. A rejected Git update keeps the installed revision.
+The daemon checks its version before installing, running preparation commands, or loading a plugin,
+and checks again on startup, enable, and reload. A rejected update keeps the installed revision.
 Each connected app checks its own version before evaluating client code and shows incompatibility
 in Settings → Plugins. A compatible daemon does not make an older app compatible. A plugin with no
 client entry does not require the connected app to match.
@@ -96,7 +96,7 @@ and cannot show this new diagnostic.
 | `index.server.ts`  | Daemon subprocess     | `PluginServerContext` | When the plugin contributes handlers, hooks, settings persistence, or providers |
 
 At least one entry is required; both accept `.ts` or `.tsx`. A directory that still has only the
-old `index.ts` fails to load and points at the [migration guide](/docs/plugins/v0.8/migration).
+old `index.ts` fails to load and points at the [migration guide](/docs/plugins/migration).
 
 Plugin, surface, sidebar-item, workspace-panel, Command Center item, attachment-source, and
 slash-command IDs start with a lowercase letter and contain lowercase letters, numbers, or hyphens.
@@ -275,7 +275,7 @@ process, credential, and other machine-local work under `server/`. A plugin with
 
 ### Providers
 
-Follow [Build a provider plugin](/docs/plugins/v0.8/providers) for direct and ACP implementations,
+Follow [Build a provider plugin](/docs/plugins/providers) for direct and ACP implementations,
 session lifecycle, composer settings, timeline renderers, testing, and distribution.
 
 Call `server.registerProvider()` with a `ProviderRegistration` from
@@ -1959,24 +1959,8 @@ keeps the complete dependency tree and `package-lock.json` when activating it. T
 package and lockfile provide its current version and artifact integrity. A version, tag, or range
 chooses content for this installation only.
 
-Publish the existing [plugin project format](#project-files): `paseo-plugin.json`, at least one
-`index.server.ts` or `index.client.tsx` entry (either accepts `.ts` or `.tsx`), and every imported
-file and asset under the appropriate `server/`, `client/`, or `shared/` directory. npm's `main` and
-`exports` fields do not select Paseo entry points. Use the package's `files` list to include those
-files and inspect `npm pack --dry-run` before publishing.
-
-- Put non-host runtime dependencies in `dependencies`. npm installs their transitive dependencies.
-- Keep the SDK, React, React Native, TanStack Query, and Zod in `devDependencies` for authoring;
-  Paseo supplies their runtime instances. Development dependencies are not installed for consumers,
-  and npm peer auto-installation is disabled. List required non-host peer modules as dependencies.
-- Package lifecycle scripts (`install`, `postinstall`, `prepare`, and dependency scripts) do not run
-  during acquisition. Declare required installation preparation in the plugin manifest's
-  [`build` argv commands](#cli-reference). Those commands run after the Paseo requirements check.
-  A native dependency that requires rebuilding needs an explicit preparation command.
-- Prefer publishing ready-to-use files. Prebuilt JavaScript belongs under its runtime directory,
-  imported by the normal TypeScript entry. Preserve host module imports and runtime boundaries;
-  Paseo still validates and compiles the entries. A package containing only `dist/index.js` is not
-  a Paseo plugin.
+For package contents, dependencies, preparation, and private registries, see
+[Publish a plugin](/docs/plugins/publishing).
 
 A failed download, dependency installation, manifest check, preparation command, compilation, or
 activation discards the candidate. Other installed plugins keep running. Removing an npm plugin
@@ -2043,10 +2027,7 @@ step:
 {
   "id": "review",
   "requirements": { "paseo": ">=0.8.0" },
-  "build": [
-    ["npm", "ci"],
-    ["npm", "run", "build"]
-  ]
+  "build": [["npm", "ci", "--omit=dev"]]
 }
 ```
 
@@ -2070,7 +2051,7 @@ Use `paseo plugin ls` to read the current status and error.
 
 | Symptom                                                               | Check                                                                                                                                   |
 | --------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| `This plugin was made for an older version of Paseo`                  | The directory has only an `index.ts` entry. Follow the [migration guide](/docs/plugins/v0.8/migration).                                 |
+| `This plugin was made for an older version of Paseo`                  | The directory has only an `index.ts` entry. Follow the [migration guide](/docs/plugins/migration).                                      |
 | `Plugin entry points are missing`                                     | Neither `index.client.tsx` nor `index.server.ts` exists with that exact name.                                                           |
 | `server-only module cannot be imported into the plugin client bundle` | Client code imports `server/`. Move the work behind an RPC and import its contract from `shared/`.                                      |
 | `client-only module cannot be imported into the plugin server bundle` | Server code imports `client/`. Register that contribution from `index.client.tsx` instead.                                              |

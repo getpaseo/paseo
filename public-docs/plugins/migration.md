@@ -2,13 +2,13 @@
 title: Migrate a plugin to runtime entries
 description: Mechanical migration from a mixed plugin entry to explicit client and server entries.
 nav: Migration
-order: 48
+order: 47
 category: Plugins
 ---
 
 # Migrate a plugin to runtime entries
 
-> **For Paseo v0.8 beta.** This migration is not required for Paseo v0.7.
+Use this guide to update plugins written for Paseo 0.7 or earlier to the current client/server entry format, introduced in 0.8.
 
 Give this page to a coding agent with the plugin directory as its working directory. Execute the
 steps in order. Do not keep a compatibility entry.
@@ -285,12 +285,11 @@ After migrating the entries and imports, add the minimum runtime version to `pas
 }
 ```
 
-Keep your existing ID and build commands. Missing `requirements.paseo` means `<0.8.0`, so Paseo 0.8
-rejects the plugin even if its files have been moved. Adding the field alone does not migrate the
+Keep your existing ID and build commands. Missing `requirements.paseo` means `<0.8.0`, so Paseo 0.8 and later
+reject the plugin even if its files have been moved. Adding the field alone does not migrate the
 code. Update the local `@getpaseo/plugin` development dependency to the version you target and
 reinstall dependencies before typechecking.
 
-For a 0.8 beta, use its explicit version in the SDK dependency and `>=0.8.0` in the manifest.
 See [requirements](reference#requirements) for range and prerelease semantics.
 
 ## 8. Verify the migration

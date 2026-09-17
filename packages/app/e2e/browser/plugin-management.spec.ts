@@ -210,7 +210,7 @@ async function expectPluginSourceDocsOpen(page: Page): Promise<void> {
   await page.getByRole("link", { name: "Docs", exact: true }).click();
   const docsPage = await docsPagePromise;
   try {
-    await docsPage.waitForURL("https://paseo.sh/docs/plugins/v0.8/reference#plugin-sources", {
+    await docsPage.waitForURL("https://paseo.sh/docs/plugins/reference#plugin-sources", {
       waitUntil: "commit",
     });
   } finally {

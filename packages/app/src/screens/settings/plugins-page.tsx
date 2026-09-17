@@ -33,7 +33,7 @@ import { settingsStyles } from "@/styles/settings";
 import { confirmDialog } from "@/utils/confirm-dialog";
 
 const pluginQueryKey = (serverId: string) => ["plugins", serverId] as const;
-const PLUGIN_SOURCE_DOCS_URL = "https://paseo.sh/docs/plugins/v0.8/reference#plugin-sources";
+const PLUGIN_SOURCE_DOCS_URL = "https://paseo.sh/docs/plugins/reference#plugin-sources";
 type PluginRowAction = "reload" | "enable" | "disable" | "remove";
 
 function errorMessage(error: unknown): string {
