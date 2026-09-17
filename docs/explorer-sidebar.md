@@ -3,10 +3,10 @@
 The Explorer sidebar and the side pane share panel implementations, but they have different shell
 contracts.
 
-| Surface          | Purpose                      | Lifecycle                                  |
-| ---------------- | ---------------------------- | ------------------------------------------ |
-| Explorer sidebar | Files and Changes navigation | Cmd+E shows or hides the dedicated dock    |
-| Side pane        | Ordinary workspace content   | Created and closed like any workspace pane |
+| Surface          | Purpose                                 | Lifecycle                                  |
+| ---------------- | --------------------------------------- | ------------------------------------------ |
+| Explorer sidebar | Files, Changes, and Chapters navigation | Cmd+E shows or hides the dedicated dock    |
+| Side pane        | Ordinary workspace content              | Created and closed like any workspace pane |
 
 ## Panel host contract
 
@@ -15,7 +15,7 @@ fixed-target labels and icons from that registration, filter by host, and never 
 panel type for another. Tab moves reject unsupported destinations, and placement resolves only to
 a compatible pane.
 
-Files and Changes are the Explorer defaults and its singleton navigation views. Other compatible
+Files, Changes, and Chapters are the Explorer defaults and its singleton navigation views. Other compatible
 tabs, including agents, terminals, files, and diffs, can move between Explorer and main panes.
 **Background activity** opens from the Explorer New Tab launcher. Its list stays in Explorer;
 selecting a request opens or reuses its read-only helper thread in a main pane. Request identity
@@ -23,6 +23,17 @@ controls the scroll destination, while helper identity controls tab reuse. Closi
 changes layout. Compact and wide native Explorer shells expose the same list through their activity
 tab; opening a thread closes the compact overlay. Session retention and delivery are described in
 [timeline sync](timeline-sync.md#background-request-inspection).
+
+Chapters keeps its story outline in Explorer and reuses one main-pane viewer for chapter and
+category selections. Like Background activity, selecting a chapter closes the compact overlay.
+The selected Changes comparison owns the source. Generated stories belong to the checkout;
+selection and layout belong to the workspace.
+
+A story pins the complete source diff so ongoing agent edits cannot move code under the reader.
+Regeneration is explicit, and the previous story stays visible if it fails. Stale stories show
+existing draft comments but disable editing. Chapter drafts are scoped to the source snapshot and
+remain stored after regeneration; they never move onto the replacement story. Chapter sections retain the original diff positions:
+slicing a file must never renumber comment targets or replace source code with model output.
 
 Keep panel implementations independent of either shell. `WorkspacePanelHost` owns mounting and
 retention, while each shell owns its tabs, focus, dragging, resizing, and shortcuts.
@@ -46,7 +57,7 @@ that pane from the workspace split tree and docks it separately. Persisted ident
 literal `"explorer"` pane id and `explorerPaneIdByWorkspace` key for compatibility.
 
 The tab rail’s inline + button and context menu open the same New Tab launcher. The context menu
-also toggles Files, Changes, and Explorer-compatible workspace-scoped plugin panels from the shared
+also toggles Files, Changes, Chapters, and Explorer-compatible workspace-scoped plugin panels from the shared
 launch catalog. Tabs have no inline close controls. Individual tab menus close instances or move
 compatible tabs to main. Explorer tabs can be reordered, but the dock cannot be split. Selecting an Explorer tab does not change workspace
 focus.

@@ -13,6 +13,8 @@ type PanelManifestByKind = {
 };
 
 const manifests = {
+  chapters: { kind: "chapters", supportedHosts: ["explorer"], resourceKey: () => "chapters" },
+  chapter: { kind: "chapter", supportedHosts: ["main"], resourceKey: () => "chapter" },
   background_activity: {
     kind: "background_activity",
     supportedHosts: ["explorer"],

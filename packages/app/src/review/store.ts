@@ -40,6 +40,7 @@ export interface BuildReviewDraftKeyInput {
   mode: ReviewDraftMode;
   baseRef?: string | null;
   ignoreWhitespace: boolean;
+  snapshotFingerprint?: string;
 }
 
 type BuildReviewDraftScopeKeyInput = Omit<BuildReviewDraftKeyInput, "mode">;
@@ -105,9 +106,9 @@ function buildReviewDraftScopeParts(input: BuildReviewDraftScopeKeyInput): strin
 export function buildReviewDraftKey(input: BuildReviewDraftKeyInput): string {
   const [prefix, serverPart, workspacePart, basePart, whitespacePart] =
     buildReviewDraftScopeParts(input);
-  return [prefix, serverPart, workspacePart, `mode=${input.mode}`, basePart, whitespacePart].join(
-    ":",
-  );
+  const parts = [prefix, serverPart, workspacePart, `mode=${input.mode}`, basePart, whitespacePart];
+  if (input.snapshotFingerprint) parts.push(`snapshot=${encodeKeyPart(input.snapshotFingerprint)}`);
+  return parts.join(":");
 }
 
 function createDraftComment(input: ReviewDraftCommentInput): ReviewDraftComment {

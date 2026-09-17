@@ -6,6 +6,7 @@ export const PRIMARY_LAUNCH_ORDER = [
   "files",
   "browser",
   "pullRequest",
+  "chapters",
   "backgroundActivity",
 ] as const;
 
@@ -17,6 +18,7 @@ export const SUPPORTING_LAUNCH_ORDER = [
   "agent",
   "browser",
   "pullRequest",
+  "chapters",
   "backgroundActivity",
 ] as const;
 

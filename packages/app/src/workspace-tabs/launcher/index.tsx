@@ -83,6 +83,7 @@ const BUILT_IN_SELECTIONS = {
   changes: { kind: "target", target: { kind: "changes_tree" } },
   diff: { kind: "target", target: { kind: "working_diff" } },
   files: { kind: "target", target: { kind: "files" } },
+  chapters: { kind: "target", target: { kind: "chapters" } },
   backgroundActivity: { kind: "target", target: { kind: "background_activity" } },
   browser: { kind: "browser" },
   pullRequest: { kind: "target", target: { kind: "pull_request" } },
@@ -122,6 +123,7 @@ export function useWorkspaceTabLaunchCatalog(input: {
     const changesPresentation = getLaunchPresentation("changes_tree");
     const diffPresentation = getLaunchPresentation("working_diff");
     const filesPresentation = getLaunchPresentation("files");
+    const chaptersPresentation = getLaunchPresentation("chapters");
     const backgroundPresentation = getLaunchPresentation("background_activity");
     const pullRequestPresentation = getLaunchPresentation("pull_request");
     const builtIns: Record<BuiltInLaunchItemId, WorkspaceTabLaunchItem & { hidden?: boolean }> = {
@@ -165,6 +167,16 @@ export function useWorkspaceTabLaunchCatalog(input: {
         toggleTarget: null,
         hidden: !launcher.showChanges,
         launch: launchSelection(BUILT_IN_SELECTIONS.diff),
+      },
+      chapters: {
+        id: "chapters",
+        label: chaptersPresentation.label(t),
+        Icon: chaptersPresentation.icon,
+        disabled: false,
+        panelKind: "chapters",
+        hidden: !launcher.showChanges,
+        toggleTarget: BUILT_IN_SELECTIONS.chapters.target,
+        launch: launchSelection(BUILT_IN_SELECTIONS.chapters),
       },
       backgroundActivity: {
         id: "background-activity",

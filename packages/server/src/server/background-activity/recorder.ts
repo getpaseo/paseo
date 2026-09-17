@@ -17,6 +17,7 @@ interface ConversationRecord {
   touched: number;
 }
 interface RequestInput {
+  purpose?: BackgroundRequest["purpose"];
   kind: BackgroundRequest["kind"];
   title: string;
   cwd: string;

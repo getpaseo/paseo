@@ -347,6 +347,7 @@ export function InlineReviewThread({
           <CommentRow
             key={comment.id}
             comment={comment}
+            readOnly={reviewActions.readOnly}
             reviewTarget={reviewTarget}
             onEditComment={reviewActions.onEditComment}
             onDeleteComment={reviewActions.onDeleteComment}
@@ -360,11 +361,13 @@ export function InlineReviewThread({
 
 function CommentRow({
   comment,
+  readOnly = false,
   reviewTarget,
   onEditComment,
   onDeleteComment,
 }: {
   comment: ReviewDraftComment;
+  readOnly?: boolean;
   reviewTarget: ReviewableDiffTarget;
   onEditComment: (target: ReviewableDiffTarget, comment: ReviewDraftComment) => void;
   onDeleteComment: (id: string) => void;
@@ -385,28 +388,30 @@ function CommentRow({
       <Text style={styles.commentBody} numberOfLines={2}>
         {comment.body}
       </Text>
-      <View style={styles.commentActions}>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={t("review.comment.edit")}
-          testID={`review-comment-edit-${comment.id}`}
-          hitSlop={SMALL_ACTION_HIT_SLOP}
-          onPress={handleEdit}
-          style={iconButtonStyle}
-        >
-          <ThemedPencil size={14} uniProps={foregroundMutedIconColorMapping} />
-        </Pressable>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={t("review.comment.delete")}
-          testID={`review-comment-delete-${comment.id}`}
-          hitSlop={SMALL_ACTION_HIT_SLOP}
-          onPress={handleDelete}
-          style={iconButtonDestructiveStyle}
-        >
-          <ThemedTrash2 size={14} uniProps={destructiveIconColorMapping} />
-        </Pressable>
-      </View>
+      {!readOnly ? (
+        <View style={styles.commentActions}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={t("review.comment.edit")}
+            testID={`review-comment-edit-${comment.id}`}
+            hitSlop={SMALL_ACTION_HIT_SLOP}
+            onPress={handleEdit}
+            style={iconButtonStyle}
+          >
+            <ThemedPencil size={14} uniProps={foregroundMutedIconColorMapping} />
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={t("review.comment.delete")}
+            testID={`review-comment-delete-${comment.id}`}
+            hitSlop={SMALL_ACTION_HIT_SLOP}
+            onPress={handleDelete}
+            style={iconButtonDestructiveStyle}
+          >
+            <ThemedTrash2 size={14} uniProps={destructiveIconColorMapping} />
+          </Pressable>
+        </View>
+      ) : null}
     </View>
   );
 }

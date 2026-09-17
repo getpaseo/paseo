@@ -146,6 +146,8 @@ function isReopenableTarget(target: WorkspaceTabTarget, ctx: WorkspaceReplayCont
   switch (target.kind) {
     case "file":
     case "files":
+    case "chapters":
+    case "chapter":
     case "changes_tree":
     case "working_diff":
     case "pull_request":

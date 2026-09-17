@@ -1640,6 +1640,7 @@ export class VoiceAssistantWebSocketServer {
       features: {
         agentRequestReceipts: true,
         toolCallDescriptions: this.agentManager.supportsToolCallSummaries(),
+        chapters: true,
         backgroundActivity: true,
         hubAgentRpc: true,
         // COMPAT(directorySync): added in v0.3.x, remove gate after 2027-02-12.

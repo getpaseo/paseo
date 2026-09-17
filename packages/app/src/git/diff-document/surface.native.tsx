@@ -464,7 +464,8 @@ function NativeFileBody({
         locationY: event.nativeEvent.locationY,
         horizontalOffset: horizontalOffsetForPath(horizontalOffsets.value, file.path),
       });
-      if (hit?.kind === "cell" && hit.target) reviewActions.onStartComment(hit.target);
+      if (hit?.kind === "cell" && hit.target && !reviewActions.readOnly)
+        reviewActions.onStartComment(hit.target);
     },
     [file, horizontalOffsets, model, reviewActions],
   );

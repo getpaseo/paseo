@@ -923,6 +923,7 @@ export const BackgroundAttemptSchema = z.object({
   error: z.string().nullable(),
 });
 export const BackgroundRequestSchema = z.object({
+  purpose: z.literal("chapters").optional(),
   id: z.string(),
   kind: z.enum(["commit", "pull_request", "labels"]),
   title: z.string(),
@@ -2715,6 +2716,8 @@ const HighlightTokenSchema = z.object({
 });
 
 const DiffLineSchema = z.object({
+  sourceHunkIndex: z.number().int().nonnegative().optional(),
+  sourceLineIndex: z.number().int().nonnegative().optional(),
   type: z.enum(["add", "remove", "context", "header"]),
   content: z.string(),
   tokens: z.array(HighlightTokenSchema).optional(),
@@ -2741,6 +2744,74 @@ const ParsedDiffFileSchema = z.object({
   hunks: z.array(DiffHunkSchema),
   status: z.enum(["ok", "too_large", "binary"]).optional(),
 });
+
+export const ChapterComparisonSchema = z.object({
+  mode: z.enum(["uncommitted", "base"]),
+  baseRef: z.string().optional(),
+  ignoreWhitespace: z.boolean().optional(),
+});
+export const ChapterSectionSchema = z.object({
+  fileIndex: z.number().int().nonnegative(),
+  hunkIndex: z.number().int().nonnegative().nullable(),
+  startLine: z.number().int().nonnegative(),
+  endLine: z.number().int().nonnegative(),
+});
+export const ChapterOutlineSchema = z.object({
+  chapters: z
+    .array(
+      z.object({
+        id: z.string().min(1),
+        title: z.string().min(1).max(160),
+        description: z.string().min(1).max(2400),
+        sections: z.array(ChapterSectionSchema).min(1),
+      }),
+    )
+    .min(1),
+  categories: z.array(
+    z.object({
+      id: z.string().min(1),
+      title: z.string().min(1).max(160),
+      description: z.string().min(1).max(2400),
+      chapterIds: z.array(z.string()).min(1),
+    }),
+  ),
+});
+export const ChapterStorySchema = z.object({
+  fingerprint: z.string(),
+  createdAt: z.string(),
+  comparison: ChapterComparisonSchema,
+  files: z.array(ParsedDiffFileSchema),
+  outline: ChapterOutlineSchema,
+});
+export const ChapterStateSchema = z.object({
+  status: z.enum(["empty", "generating", "ready", "error", "unsupported"]),
+  currentFingerprint: z.string(),
+  story: ChapterStorySchema.nullable(),
+  error: z.string().nullable(),
+});
+export const ChaptersGetRequestSchema = z.object({
+  type: z.literal("checkout.chapters.get.request"),
+  knownFingerprint: z.string().optional(),
+  requestId: z.string(),
+  cwd: z.string(),
+  comparison: ChapterComparisonSchema,
+  generate: z.boolean(),
+  regenerate: z.boolean(),
+});
+export const ChaptersGetResponseSchema = z.object({
+  type: z.literal("checkout.chapters.get.response"),
+  payload: z.object({
+    requestId: z.string(),
+    state: ChapterStateSchema.omit({ story: true }).extend({
+      story: ChapterStorySchema.nullable().optional(),
+    }),
+  }),
+});
+export type ChapterComparison = z.infer<typeof ChapterComparisonSchema>;
+export type ChapterSection = z.infer<typeof ChapterSectionSchema>;
+export type ChapterOutline = z.infer<typeof ChapterOutlineSchema>;
+export type ChapterStory = z.infer<typeof ChapterStorySchema>;
+export type ChapterState = z.infer<typeof ChapterStateSchema>;
 
 const FileExplorerEntrySchema = z.object({
   name: z.string(),
@@ -3220,6 +3291,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   PluginCatalogGetRequestSchema,
   PluginListRequestSchema,
   PluginLogsGetRequestSchema,
+  ChaptersGetRequestSchema,
   BackgroundSnapshotRequestSchema,
   BackgroundSubscribeRequestSchema,
   PluginDirectoryInstallRequestSchema,
@@ -3603,6 +3675,7 @@ export const ServerInfoStatusPayloadSchema = z
         pluginManagement: z.boolean().optional(),
         // COMPAT(pluginLogs): added in v0.4.0, remove gate after 2027-08-16.
         pluginLogs: z.boolean().optional(),
+        chapters: z.boolean().optional(),
         backgroundActivity: z.boolean().optional(),
         // COMPAT(pluginGitManagement): added in v0.7.0, remove gate after 2027-08-26.
         pluginGitManagement: z.boolean().optional(),
@@ -6614,6 +6687,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   PluginCatalogGetResponseSchema,
   PluginListResponseSchema,
   PluginLogsGetResponseSchema,
+  ChaptersGetResponseSchema,
   BackgroundSnapshotResponseSchema,
   BackgroundSubscribeResponseSchema,
   BackgroundChangedSchema,

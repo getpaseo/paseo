@@ -114,7 +114,10 @@ function BackgroundThreadPanel() {
       return (
         <View style={styles.attempt}>
           <Text style={styles.title}>
-            {t(`backgroundActivity.kind.${request.kind}`)} · {attempt.provider} /{" "}
+            {request.purpose === "chapters"
+              ? t("chapters.title")
+              : t(`backgroundActivity.kind.${request.kind}`)}{" "}
+            · {attempt.provider} /{" "}
             {attempt.resolvedModel ??
               attempt.configuredModel ??
               t("backgroundActivity.providerDefault")}

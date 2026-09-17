@@ -14,6 +14,7 @@ export interface InlineReviewEditorState {
 }
 
 export interface InlineReviewActions {
+  readOnly?: boolean;
   commentsByTarget: ReadonlyMap<string, ReviewDraftComment[]>;
   editor: InlineReviewEditorState | null;
   onStartComment: (target: ReviewableDiffTarget) => void;

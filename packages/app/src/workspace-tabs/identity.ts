@@ -7,6 +7,10 @@ export function normalizeWorkspaceTabTarget(
   if (!value || typeof value !== "object" || typeof value.kind !== "string") {
     return null;
   }
+  if (value.kind === "chapter") {
+    const selectionId = trimNonEmpty(value.selectionId);
+    return selectionId ? { kind: "chapter", selectionId, category: value.category === true } : null;
+  }
   if (value.kind === "background_thread") {
     const conversationId = trimNonEmpty(value.conversationId);
     return conversationId
@@ -61,6 +65,7 @@ function normalizeSimpleWorkspaceTabTarget(value: WorkspaceTabTarget): Workspace
       const browserId = trimNonEmpty(value.browserId);
       return browserId ? { kind: "browser", browserId } : null;
     }
+    case "chapters":
     case "background_activity":
     case "changes_tree":
     case "files":
@@ -150,7 +155,8 @@ function secondaryWorkspaceTabTargetsEqual(
   left: WorkspaceTabTarget,
   right: WorkspaceTabTarget,
 ): boolean {
-  if (left.kind === "background_activity") return right.kind === "background_activity";
+  if (left.kind === "chapter") return chapterTargetsEqual(left, right);
+  if (["chapters", "background_activity"].includes(left.kind)) return left.kind === right.kind;
   if (left.kind === "browser" && right.kind === "browser") {
     return left.browserId === right.browserId;
   }
@@ -248,6 +254,7 @@ export function buildDeterministicWorkspaceTabId(target: WorkspaceTabTarget): st
       ? `plugin_workspace_${identity}`
       : `plugin_agent_${identity}_${target.agentId.length}_${target.agentId}`;
   }
+  if (target.kind === "chapter" || target.kind === "chapters") return target.kind;
   if (target.kind === "background_activity") return target.kind;
   if (target.kind === "background_thread") return `background_thread_${target.conversationId}`;
   return `file_${target.path}`;
@@ -305,4 +312,15 @@ function trimOptionalString(value: string | null | undefined): string | null {
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function chapterTargetsEqual(
+  left: Extract<WorkspaceTabTarget, { kind: "chapter" }>,
+  right: WorkspaceTabTarget,
+): boolean {
+  return (
+    right.kind === "chapter" &&
+    left.selectionId === right.selectionId &&
+    left.category === right.category
+  );
 }

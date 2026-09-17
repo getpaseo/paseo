@@ -1,3 +1,4 @@
+import { getChaptersService } from "./chapters/generation.js";
 import type { DiffStat } from "@getpaseo/protocol/diff-stat";
 import type { SessionEventSubscription } from "@getpaseo/protocol/messages";
 import type { AgentRequests } from "./agent/requests/index.js";
@@ -2364,6 +2365,50 @@ export class Session {
     });
   }
 
+  private async handleChaptersGet(
+    msg: Extract<SessionInboundMessage, { type: "checkout.chapters.get.request" }>,
+  ): Promise<void> {
+    try {
+      // The daemon-owned service must not retain this client session.
+      const providerSnapshotManager = this.providerSnapshotManager;
+      const daemonConfigStore = this.daemonConfigStore;
+      const service = getChaptersService({
+        manager: this.agentManager,
+        paseoHome: this.paseoHome,
+        git: this.workspaceGitService,
+        providerOptions: (cwd) => ({
+          cwd,
+          providerSnapshotManager,
+          daemonConfig: { metadataGeneration: daemonConfigStore.get().metadataGeneration },
+        }),
+      });
+      const state = await service.get(msg);
+      this.emit({
+        type: "checkout.chapters.get.response",
+        payload: {
+          requestId: msg.requestId,
+          state: {
+            ...state,
+            story: state.story?.fingerprint === msg.knownFingerprint ? undefined : state.story,
+          },
+        },
+      });
+    } catch (error) {
+      this.emit({
+        type: "checkout.chapters.get.response",
+        payload: {
+          requestId: msg.requestId,
+          state: {
+            status: "error",
+            currentFingerprint: "",
+            story: null,
+            error: error instanceof Error ? error.message : String(error),
+          },
+        },
+      });
+    }
+  }
+
   private dispatchAgentTimelineMessage(
     msg: SessionInboundMessage,
     source?: object,
@@ -2542,6 +2587,8 @@ export class Session {
   // eslint-disable-next-line complexity
   private dispatchCheckoutMessage(msg: SessionInboundMessage): Promise<void> | undefined {
     switch (msg.type) {
+      case "checkout.chapters.get.request":
+        return this.handleChaptersGet(msg);
       case "checkout_status_request":
         return this.checkoutSession.handleStatusRequest(msg);
       case "checkout.commits.list.request":

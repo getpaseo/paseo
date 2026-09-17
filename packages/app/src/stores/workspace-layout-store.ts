@@ -199,6 +199,8 @@ const WorkspaceTabTargetStorageSchema = z.discriminatedUnion("kind", [
   }),
   z.strictObject({ kind: z.literal("terminal"), terminalId: z.string() }),
   z.strictObject({ kind: z.literal("browser"), browserId: z.string() }),
+  z.strictObject({ kind: z.literal("chapters") }),
+  z.strictObject({ kind: z.literal("chapter"), selectionId: z.string(), category: z.boolean() }),
   z.strictObject({ kind: z.literal("changes_tree") }),
   z.strictObject({ kind: z.literal("files") }),
   z.strictObject({ kind: z.literal("pull_request") }),
@@ -407,7 +409,8 @@ function migrateVersionOneWorkspaceLayout(input: {
     (tab) =>
       legacyExplorerPane.tabIds.includes(tab.tabId) &&
       tab.target.kind !== "files" &&
-      tab.target.kind !== "changes_tree",
+      tab.target.kind !== "changes_tree" &&
+      tab.target.kind !== "chapters",
   );
   const preservedSide = preserveVersionOneSideTabs({
     layout: strippedLayout,

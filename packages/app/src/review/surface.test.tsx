@@ -50,6 +50,14 @@ const { theme, pressablePropsByLabel } = vi.hoisted(() => {
   };
 });
 
+vi.mock("@react-native-async-storage/async-storage", () => ({
+  default: {
+    getItem: async () => null,
+    setItem: async () => {},
+    removeItem: async () => {},
+  },
+}));
+
 vi.mock("react-native", async (importOriginal) => {
   const ReactModule = await import("react");
   const actual = await importOriginal<typeof import("react-native")>();
@@ -447,6 +455,24 @@ describe("InlineReviewThread", () => {
   afterEach(() => {
     cleanup();
     vi.clearAllMocks();
+  });
+
+  it("keeps stale comments visible without edit or delete actions", () => {
+    const actions = buildReviewActions({
+      commentsByTarget: groupInlineReviewCommentsByTarget([comment()]),
+      readOnly: true,
+    });
+    const { getByText, queryByTestId } = render(
+      <InlineReviewThread
+        reviewTarget={target()}
+        reviewActions={actions}
+        height={76}
+        testID="thread"
+      />,
+    );
+    expect(getByText("Please simplify this.")).toBeTruthy();
+    expect(queryByTestId("review-comment-edit-comment-1")).toBeNull();
+    expect(queryByTestId("review-comment-delete-comment-1")).toBeNull();
   });
 
   it("exposes edit and delete actions for existing comments", () => {

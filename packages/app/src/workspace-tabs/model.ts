@@ -33,6 +33,8 @@ export type PluginWorkspaceTabTarget =
     };
 
 export type WorkspaceTabTarget =
+  | { kind: "chapters" }
+  | { kind: "chapter"; selectionId: string; category: boolean }
   | { kind: "background_activity" }
   | { kind: "background_thread"; conversationId: string; requestId?: string }
   | { kind: "new_tab" }

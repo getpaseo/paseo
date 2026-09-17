@@ -11,6 +11,7 @@ describe("getBuiltInLaunchOrder", () => {
       "files",
       "browser",
       "pullRequest",
+      "chapters",
       "backgroundActivity",
     ]);
   });
@@ -24,6 +25,7 @@ describe("getBuiltInLaunchOrder", () => {
       "agent",
       "browser",
       "pullRequest",
+      "chapters",
       "backgroundActivity",
     ]);
   });

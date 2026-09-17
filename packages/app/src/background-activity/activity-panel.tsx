@@ -32,7 +32,9 @@ function RequestRow({
       testID="background-request"
     >
       <Text style={styles.title}>
-        {t(`backgroundActivity.kind.${request.kind}`)}
+        {request.purpose === "chapters"
+          ? t("chapters.title")
+          : t(`backgroundActivity.kind.${request.kind}`)}
         {request.kind === "labels" ? ` · ${request.count}` : ""}
       </Text>
       <Text style={styles.muted} numberOfLines={1}>

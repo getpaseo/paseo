@@ -306,6 +306,7 @@ function useSyncWorkspaceActiveBrowser(input: {
 function getFallbackTabOptionLabel(
   tab: WorkspaceTabDescriptor,
   labels: {
+    chapters: string;
     backgroundActivity: string;
     newTab: string;
     newAgent: string;
@@ -350,12 +351,14 @@ function getFallbackTabOptionLabel(
   }
   if (tab.target.kind === "background_activity" || tab.target.kind === "background_thread")
     return labels.backgroundActivity;
+  if (tab.target.kind === "chapter" || tab.target.kind === "chapters") return labels.chapters;
   return labels.agent;
 }
 
 function getFallbackTabOptionDescription(
   tab: WorkspaceTabDescriptor,
   labels: {
+    chapters: string;
     backgroundActivity: string;
     newTab: string;
     newAgent: string;
@@ -406,6 +409,7 @@ function getFallbackTabOptionDescription(
   }
   if (tab.target.kind === "background_activity" || tab.target.kind === "background_thread")
     return labels.backgroundActivity;
+  if (tab.target.kind === "chapter" || tab.target.kind === "chapters") return labels.chapters;
   return tab.target.path;
 }
 
@@ -596,6 +600,7 @@ function MobileWorkspaceTabOption({
 
   const fallbackLabels = useMemo(
     () => ({
+      chapters: t("chapters.title"),
       backgroundActivity: t("backgroundActivity.title"),
       newTab: t("workspace.tabs.actions.newTab"),
       newAgent: t("workspace.tabs.fallback.newAgent"),
@@ -2415,6 +2420,7 @@ function WorkspaceScreenContent({
   const activeTabKey = useMemo(() => activeTabId ?? "", [activeTabId]);
   const tabFallbackLabels = useMemo(
     () => ({
+      chapters: t("chapters.title"),
       backgroundActivity: t("backgroundActivity.title"),
       newTab: t("workspace.tabs.actions.newTab"),
       newAgent: t("workspace.tabs.fallback.newAgent"),
@@ -3582,7 +3588,8 @@ function WorkspaceScreenContent({
             return;
           }
           let destinationPane = input.focusPaneBeforeOpen ? input.paneId : null;
-          if (target.kind === "background_thread") destinationPane = lastMainPaneId;
+          if (target.kind === "background_thread" || target.kind === "chapter")
+            destinationPane = lastMainPaneId;
           const tabId = revealWorkspaceChildTab(
             persistenceKey,
             target,
@@ -3591,7 +3598,8 @@ function WorkspaceScreenContent({
           );
           if (tabId) {
             navigateToTabId(tabId);
-            if (isMobile && target.kind === "background_thread") showMobileAgent();
+            if (isMobile && (target.kind === "background_thread" || target.kind === "chapter"))
+              showMobileAgent();
           }
         },
         onOpenPreferredTarget: (target, source) => {

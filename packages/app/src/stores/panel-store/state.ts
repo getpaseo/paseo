@@ -116,7 +116,7 @@ export function buildToggleFileExplorerPatch(
   return { mobilePanel: setMobilePanelTarget(state.mobilePanel, "agent") };
 }
 
-const ExplorerTabSchema = z.enum(["changes", "files", "pr", "activity"]);
+const ExplorerTabSchema = z.enum(["changes", "files", "pr", "activity", "chapters"]);
 const DesktopSidebarStorageSchema = z.strictObject({
   agentListOpen: z.boolean().optional(),
   focusModeEnabled: z.boolean().optional(),

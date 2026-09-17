@@ -125,13 +125,15 @@ function getHunkHeader(hunk: ParsedDiffFile["hunks"][number]): string {
 
 export function buildNumberedDiffHunks(file: ParsedDiffFile): NumberedDiffHunk[] {
   const numberedHunks: NumberedDiffHunk[] = [];
-  for (const [hunkIndex, hunk] of file.hunks.entries()) {
+  for (const [displayHunkIndex, hunk] of file.hunks.entries()) {
+    const hunkIndex = hunk.lines[0]?.sourceHunkIndex ?? displayHunkIndex;
     let oldLineNo = hunk.oldStart;
     let newLineNo = hunk.newStart;
     const hunkHeader = getHunkHeader(hunk);
     const lines: NumberedDiffLine[] = [];
 
-    for (const [lineIndex, line] of hunk.lines.entries()) {
+    for (const [displayLineIndex, line] of hunk.lines.entries()) {
+      const lineIndex = line.sourceLineIndex ?? displayLineIndex;
       let oldLineNumber: number | null = null;
       let newLineNumber: number | null = null;
 
@@ -170,7 +172,8 @@ export function buildNumberedDiffHunks(file: ParsedDiffFile): NumberedDiffHunk[]
       });
 
       lines.push({
-        key: `${hunkIndex}-${lineIndex}`,
+        // Display sections can share source context without sharing a rendered row key.
+        key: `${displayHunkIndex}-${displayLineIndex}`,
         filePath: file.path,
         hunkHeader,
         hunkIndex,

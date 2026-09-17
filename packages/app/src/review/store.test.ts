@@ -73,6 +73,20 @@ function createMemoryStorage(): StateStorage & { values: Map<string, string> } {
 }
 
 describe("buildReviewDraftKey", () => {
+  it("keeps chapter drafts attached to their source snapshot", () => {
+    const scope = {
+      serverId: "local",
+      cwd: "/repo",
+      mode: "base" as const,
+      ignoreWhitespace: false,
+    };
+    const first = buildReviewDraftKey({ ...scope, snapshotFingerprint: "first" });
+    const next = buildReviewDraftKey({ ...scope, snapshotFingerprint: "next" });
+    expect(first).not.toBe(next);
+    expect(first).not.toBe(buildReviewDraftKey(scope));
+    expect(buildReviewDraftKey({ ...scope, snapshotFingerprint: "first" })).toBe(first);
+  });
+
   it("scopes by server, workspace-or-cwd, diff mode, base ref, and whitespace mode", () => {
     const base = buildReviewDraftKey({
       serverId: " local ",

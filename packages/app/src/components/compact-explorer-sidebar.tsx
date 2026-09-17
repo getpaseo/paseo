@@ -1,3 +1,4 @@
+import { ChaptersContent } from "@/chapters/panels";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { View, Text, Pressable } from "react-native";
 import { Gesture } from "react-native-gesture-handler";
@@ -333,12 +334,15 @@ function ExplorerSidebarContent({
     timelineEnabled: activeTab === "pr",
   });
   const requestedTab: ExplorerTab =
-    !isGit && (activeTab === "changes" || activeTab === "pr") ? "files" : activeTab;
+    !isGit && ["changes", "pr", "chapters"].includes(activeTab) ? "files" : activeTab;
   const resolvedTab: ExplorerTab = requestedTab === "pr" && !showPrTab ? "changes" : requestedTab;
   const prTabLabel = formatPrTabLabel(prPane.prNumber);
+  const showChapters = Boolean(isGit && onOpenBackground);
+  const chapterWorkspaceId = workspaceId ?? workspaceRoot;
   const availableTabs = useMemo<ExplorerTab[]>(() => {
     const tabs: ExplorerTab[] = isGit ? ["changes", "files"] : ["files"];
     if (isGit && showPrTab) tabs.push("pr");
+    if (isGit && onOpenBackground) tabs.push("chapters");
     if (onOpenBackground) tabs.push("activity");
     return tabs;
   }, [isGit, showPrTab, onOpenBackground]);
@@ -392,6 +396,15 @@ function ExplorerSidebarContent({
               />
             </ExplorerTabButton>
           )}
+          {showChapters ? (
+            <ExplorerTabButton
+              tab="chapters"
+              active={resolvedTab === "chapters"}
+              label={t("chapters.title")}
+              onTabPress={onTabPress}
+              testID="explorer-tab-chapters"
+            />
+          ) : null}
           {onOpenBackground ? (
             <ExplorerTabButton
               tab="activity"
@@ -430,6 +443,16 @@ function ExplorerSidebarContent({
 
       {/* Content based on active tab */}
       <View style={styles.contentArea} testID="explorer-content-area">
+        {mountedTabIds.has("chapters") && onOpenBackground ? (
+          <RetainedPanel active={resolvedTab === "chapters"}>
+            <ChaptersContent
+              serverId={serverId}
+              workspaceId={chapterWorkspaceId}
+              cwd={workspaceRoot}
+              openTab={onOpenBackground}
+            />
+          </RetainedPanel>
+        ) : null}
         {mountedTabIds.has("activity") && onOpenBackground ? (
           <RetainedPanel active={resolvedTab === "activity"}>
             <BackgroundActivityContent

@@ -1,3 +1,4 @@
+import { chaptersPanelRegistration, chapterPanelRegistration } from "@/chapters/panels";
 import {
   backgroundActivityPanelRegistration,
   backgroundThreadPanelRegistration,
@@ -26,6 +27,8 @@ export function ensurePanelsRegistered(): void {
   if (panelsRegistered) {
     return;
   }
+  registerPanel(chaptersPanelRegistration);
+  registerPanel(chapterPanelRegistration);
   registerPanel(backgroundActivityPanelRegistration);
   registerPanel(backgroundThreadPanelRegistration);
   registerPanel(draftPanelRegistration);

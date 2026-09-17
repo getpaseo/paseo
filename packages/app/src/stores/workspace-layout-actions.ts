@@ -1146,6 +1146,7 @@ function restoreEmptyPanesInNode(
             node.pane.id === explorerSidebarPaneId
               ? createDefaultExplorerSidebarTabs()
               : [createNewWorkspaceTab()],
+          focusedTabId: buildDeterministicWorkspaceTabId({ kind: "changes_tree" }),
           hidden: node.pane.hidden,
         });
   }
@@ -1193,7 +1194,7 @@ export function createDefaultLayout(): WorkspaceLayout {
 
 function createDefaultExplorerSidebarTabs(): WorkspaceTab[] {
   const createdAt = Date.now();
-  const targets = [{ kind: "files" }, { kind: "changes_tree" }] as const;
+  const targets = [{ kind: "files" }, { kind: "changes_tree" }, { kind: "chapters" }] as const;
   return targets.map((target) => ({
     tabId: buildDeterministicWorkspaceTabId(target),
     target,
@@ -1212,6 +1213,7 @@ export function createWorkspaceLayoutWithExplorerSidebar(): WorkspaceLayout {
         createPaneNode({
           id: EXPLORER_SIDEBAR_PANE_ID,
           tabs: createDefaultExplorerSidebarTabs(),
+          focusedTabId: buildDeterministicWorkspaceTabId({ kind: "changes_tree" }),
           hidden: true,
         }),
       ],

@@ -692,7 +692,7 @@ export function DiffSurface(props: DiffSurfaceProps) {
         reviewActions
       ) {
         setSelection(null);
-        reviewActions.onStartComment(hit.target);
+        if (!reviewActions.readOnly) reviewActions.onStartComment(hit.target);
       }
     },
     [pointHit, reviewActions, setSelection],
@@ -782,7 +782,7 @@ export function DiffSurface(props: DiffSurfaceProps) {
   );
   const addHoveredComment = useCallback(() => {
     const target = hoveredAffordance?.hit.target;
-    if (target) reviewActions?.onStartComment(target);
+    if (target && !reviewActions?.readOnly) reviewActions?.onStartComment(target);
   }, [hoveredAffordance?.hit.target, reviewActions]);
   const canvasStyle = useMemo<React.CSSProperties>(
     () => ({
@@ -867,7 +867,7 @@ export function DiffSurface(props: DiffSurfaceProps) {
         </div>
       </div>
       <DomOverlayScrollbar scrollContainerRef={scrollRef} onUserScrollUp={noop} />
-      {hoveredAffordance?.hit.target && reviewActions ? (
+      {hoveredAffordance?.hit.target && reviewActions && !reviewActions.readOnly ? (
         <InlineReviewAddButton onPress={addHoveredComment} style={affordanceStyle} />
       ) : null}
     </div>

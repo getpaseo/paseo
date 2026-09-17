@@ -25,7 +25,7 @@ import { RenderProfile } from "@/utils/render-profiler";
 const ThemedFileDiff = withUnistyles(FileDiff);
 const ThemedGitCommitHorizontal = withUnistyles(GitCommitHorizontal);
 
-function useDiffPanelPreferences() {
+export function useDiffPanelPreferences() {
   const { settings } = useAppSettings();
   const { preferences, updatePreferences } = useChangesPreferences();
   const isCompact = useIsCompactFormFactor();

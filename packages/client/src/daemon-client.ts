@@ -1,3 +1,4 @@
+import type { ChapterComparison, ChapterStory, ChapterState } from "@getpaseo/protocol/messages";
 import { ProviderSnapshotUpdates } from "./provider-snapshots/index.js";
 import type { SessionEventSubscription } from "@getpaseo/protocol/messages";
 import {
@@ -5066,6 +5067,31 @@ export class DaemonClient {
       responseType: "plugin.list.response",
     });
     return payload.plugins;
+  }
+
+  async getChapters(input: {
+    cwd: string;
+    comparison: ChapterComparison;
+    generate: boolean;
+    regenerate: boolean;
+    knownStory?: ChapterStory;
+  }): Promise<ChapterState> {
+    const { knownStory, ...request } = input;
+    const requestId = this.createRequestId();
+    const result = await this.sendCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "checkout.chapters.get.request",
+        requestId,
+        ...request,
+        knownFingerprint: knownStory?.fingerprint,
+      },
+      responseType: "checkout.chapters.get.response",
+    });
+    if (result.state.status === "error" && !result.state.currentFingerprint)
+      throw new Error(result.state.error ?? "Chapter request failed");
+    const story = result.state.story === undefined ? (knownStory ?? null) : result.state.story;
+    return { ...result.state, story };
   }
 
   async getBackgroundActivity(conversationId?: string, afterSeq?: number) {
