@@ -486,6 +486,58 @@ describe("OMP agent client and session", () => {
     });
   });
 
+  test("reads OMP history with a temporary runtime but no interactive session setup", async () => {
+    const omp = new OmpHarness();
+
+    const history = await omp.readPersistedHistory(
+      {
+        user: { id: "user-history", text: "continue the audit" },
+        assistant: { id: "assistant-history", text: "audit context restored" },
+      },
+      { cwd: "/workspace/resumed", modeId: "ask", thinkingOptionId: "high" },
+      createToolCatalog(),
+    );
+
+    expect(history.flatMap((event) => (event.type === "timeline" ? [event.item] : []))).toEqual([
+      { type: "user_message", text: "continue the audit", messageId: "user-history" },
+      {
+        type: "assistant_message",
+        text: "audit context restored",
+        messageId: "assistant-history",
+      },
+    ]);
+    expect(omp.launchConfiguration()).toMatchObject({
+      cwd: "/workspace/resumed",
+      protocolMode: "rpc-ui",
+      session: expect.stringMatching(/[\\/]paseo-omp-resume-.*[\\/]session\.jsonl$/),
+    });
+    const historyLaunch = omp.launchConfiguration();
+    expect(historyLaunch.modeId).toBeUndefined();
+    expect(historyLaunch.argv).not.toContain("--approval-mode");
+    expect(historyLaunch.argv).not.toContain("--model");
+    expect(historyLaunch.argv).not.toContain("--thinking");
+    expect(historyLaunch.argv).not.toContain("--append-system-prompt");
+    expect(omp.registeredHostTools()).toEqual([]);
+    expect(omp.subagentSubscriptionRequests()).toEqual([]);
+    expect(omp.runtimeClosed()).toBe(true);
+  });
+
+  test("closes the temporary OMP runtime when history state loading fails", async () => {
+    const omp = new OmpHarness();
+    omp.failNextHistoryStateRead(new Error("OMP history state unavailable"));
+
+    await expect(
+      omp.readPersistedHistory({
+        user: { id: "user-history", text: "continue the audit" },
+        assistant: { id: "assistant-history", text: "audit context restored" },
+      }),
+    ).rejects.toThrow("OMP history state unavailable");
+
+    expect(omp.runtimeClosed()).toBe(true);
+    expect(omp.registeredHostTools()).toEqual([]);
+    expect(omp.subagentSubscriptionRequests()).toEqual([]);
+  });
+
   test("resumes an OMP session and replays its history", async () => {
     const omp = new OmpHarness();
     await omp.resume(

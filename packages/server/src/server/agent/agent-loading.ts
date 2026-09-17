@@ -26,7 +26,16 @@ export type AgentLoaderManager = Pick<
   | "hydrateTimelineFromProvider"
   | "resumeAgentFromPersistence"
 > &
-  Partial<Pick<AgentManager, "waitForAgentClose">>;
+  Partial<
+    Pick<
+      AgentManager,
+      | "getHistorySnapshot"
+      | "readAgentHistoryFromPersistence"
+      | "releaseHistorySnapshot"
+      | "discardHistoryState"
+      | "waitForAgentClose"
+    >
+  >;
 
 export interface EnsureAgentLoadedDeps {
   agentManager: AgentLoaderManager;
@@ -47,7 +56,17 @@ export async function ensureUnarchivedAgentLoaded(
     throw new Error(`Agent is archived: ${agentId}`);
   }
 
-  const agent = await ensureAgentLoaded(agentId, deps);
+  let agent: ManagedAgent;
+  try {
+    agent = await ensureAgentLoaded(agentId, deps);
+  } catch (error) {
+    // An archive can land while this load waits in the lifecycle queue. The load
+    // then falls back to a history read; report the archive, not that read's failure.
+    if ((await deps.agentStorage.get(agentId))?.archivedAt) {
+      throw new Error(`Agent is archived: ${agentId}`, { cause: error });
+    }
+    throw error;
+  }
   const latestRecord = await deps.agentStorage.get(agentId);
   if (latestRecord?.archivedAt) {
     await deps.agentManager.closeAgent(agentId).catch((error: unknown) => {
@@ -74,6 +93,10 @@ export async function ensureAgentLoaded(
   const existing = deps.agentManager.getAgent(agentId);
   if (existing) {
     return existing;
+  }
+  const historySnapshot = deps.agentManager.getHistorySnapshot?.(agentId);
+  if (historySnapshot) {
+    return historySnapshot;
   }
 
   // A close may have started after the first barrier observed no in-flight
@@ -104,13 +127,72 @@ export async function ensureAgentLoaded(
     const handle = toAgentPersistenceHandle(validProviders, record.persistence);
 
     let snapshot: ManagedAgent;
-    if (handle) {
+    if (record.archivedAt) {
+      if (!handle) {
+        throw new Error(`Archived agent history is unavailable without persistence: ${agentId}`);
+      }
+      if (!deps.agentManager.readAgentHistoryFromPersistence) {
+        throw new Error(`Agent manager cannot read archived provider history for ${agentId}`);
+      }
+
+      let loadedHistorySnapshot: ManagedAgent | null = null;
+      let historyReadFailed = false;
+      let historyReadError: unknown;
+      try {
+        loadedHistorySnapshot = await deps.agentManager.readAgentHistoryFromPersistence(
+          handle,
+          buildConfigOverrides(record),
+          agentId,
+          extractTimestamps(record),
+          { broadcast: () => pendingOptions.broadcastTimeline },
+        );
+        deps.logger.info(
+          { agentId, provider: record.provider },
+          "Agent history read from persistence",
+        );
+      } catch (error) {
+        historyReadFailed = true;
+        historyReadError = error;
+      }
+
+      const latestRecord = await deps.agentStorage.get(agentId);
+      if (!latestRecord) {
+        deps.agentManager.discardHistoryState?.(agentId);
+        throw new Error(`Agent not found: ${agentId}`);
+      }
+      if (latestRecord.archivedAt) {
+        if (historyReadFailed) {
+          throw historyReadError;
+        }
+        if (!loadedHistorySnapshot) {
+          throw new Error(`Archived agent history read returned no snapshot: ${agentId}`);
+        }
+        return loadedHistorySnapshot;
+      }
+
+      deps.agentManager.releaseHistorySnapshot?.(agentId);
+      if (historyReadFailed) {
+        deps.logger.info(
+          { agentId, provider: latestRecord.provider, err: historyReadError },
+          "Archived history read failed after concurrent unarchive; resuming interactively",
+        );
+      }
+      snapshot = await deps.agentManager.resumeAgentFromPersistence(
+        handle,
+        buildConfigOverrides(latestRecord),
+        agentId,
+        extractTimestamps(latestRecord),
+      );
+      deps.logger.info(
+        { agentId, provider: latestRecord.provider },
+        "Agent resumed after concurrent unarchive",
+      );
+    } else if (handle) {
       snapshot = await deps.agentManager.resumeAgentFromPersistence(
         handle,
         buildConfigOverrides(record),
         agentId,
         extractTimestamps(record),
-        record.archivedAt ? { purpose: "history" } : undefined,
       );
       deps.logger.info({ agentId, provider: record.provider }, "Agent resumed from persistence");
     } else {
@@ -128,6 +210,12 @@ export async function ensureAgentLoaded(
       deps.logger.info({ agentId, provider: record.provider }, "Agent created from stored config");
     }
 
+    // An archive can win the lifecycle lane before a queued resume runs. The
+    // manager then serves the read-only history instead of a live runtime.
+    const laneHistorySnapshot = deps.agentManager.getHistorySnapshot?.(agentId);
+    if (laneHistorySnapshot) {
+      return laneHistorySnapshot;
+    }
     await deps.agentManager.hydrateTimelineFromProvider(agentId, {
       broadcast: () => pendingOptions.broadcastTimeline,
     });
