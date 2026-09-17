@@ -123,3 +123,34 @@ export function getComboboxFallbackIndex(
   }
   return optionsPosition === "above-search" ? itemCount - 1 : 0;
 }
+
+export interface ResolveInitialComboboxActiveIndexInput {
+  /** Options in display order. */
+  options: ComboboxOptionModel[];
+  optionsPosition: "below-search" | "above-search";
+  hasSearch: boolean;
+  selectedValue: string;
+  /** The custom row's id, or null when the custom row is not shown. */
+  customOptionId: string | null;
+}
+
+export function resolveInitialComboboxActiveIndex(
+  input: ResolveInitialComboboxActiveIndexInput,
+): number {
+  const { options, optionsPosition, hasSearch, selectedValue, customOptionId } = input;
+  if (options.length === 0) return -1;
+  const fallbackIndex = getComboboxFallbackIndex(options.length, optionsPosition);
+  if (hasSearch) {
+    // The custom row is always first in logical order, so the fallback index points at it.
+    // Default to the real match beside it instead: pressing Enter should pick the searched
+    // branch or PR, not create a branch named after the query.
+    if (customOptionId !== null) {
+      const adjacentIndex =
+        optionsPosition === "above-search" ? fallbackIndex - 1 : fallbackIndex + 1;
+      if (adjacentIndex >= 0 && adjacentIndex < options.length) return adjacentIndex;
+    }
+    return fallbackIndex;
+  }
+  const selectedIndex = options.findIndex((option) => option.id === selectedValue);
+  return selectedIndex >= 0 ? selectedIndex : fallbackIndex;
+}
