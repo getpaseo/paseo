@@ -242,6 +242,8 @@ export const ko: TranslationResources = {
       implement: "구현",
       question: "어떻게 진행할까요?",
       proposedPlan: "제안된 계획",
+      chooseMode: "구현 후 모드 선택",
+      modeLabel: "모드:",
     },
   },
   agentPanel: {
@@ -2486,6 +2488,9 @@ export const ko: TranslationResources = {
         removeConfirmMessage: '"{{name}}"을(를) 제거할까요?',
         moveUp: "위로 이동",
         moveDown: "아래로 이동",
+        setDefault: "새 워크스페이스의 기본값으로 설정",
+        unsetDefault: "기본값 해제",
+        defaultBadge: "기본값",
       },
       daemon: {
         rename: {
@@ -2607,6 +2612,12 @@ export const ko: TranslationResources = {
         discovered: "발견됨",
         custom: "사용자 지정 모델",
         updated: "{{time}} 업데이트됨",
+      },
+      planAcceptMode: {
+        sectionTitle: "플랜 승인 모드",
+        rowTitle: "플랜 승인 후 기본 모드",
+        pickerLabel: "기본 플랜 승인 모드 선택",
+        unset: "설정 안 됨",
       },
       diagnostic: {
         title: "진단",

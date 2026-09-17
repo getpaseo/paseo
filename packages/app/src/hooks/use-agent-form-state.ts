@@ -14,6 +14,7 @@ import {
 import { filterSelectableModels } from "@/provider-selection/model-catalog";
 import { OptimisticFormPreferences } from "@/create-agent-preferences/optimistic-preferences";
 import { applyAgentProfilePreferences } from "@/create-agent-preferences/preferences";
+import { materializeAgentProfile, useAgentProfiles } from "@/agent-profiles";
 import { useProvidersSnapshot } from "./use-providers-snapshot";
 import {
   useFormPreferences,
@@ -364,6 +365,36 @@ export function useAgentFormState(options: UseAgentFormStateOptions): UseAgentFo
       userModified,
     ],
   );
+
+  const { profiles } = useAgentProfiles(serverId);
+
+  useEffect(() => {
+    if (!isCreateFlow || resolution.status !== "completed" || profiles === null) return;
+    // A seeded draft (fork/handoff) or a user pick made while profiles were still
+    // loading both carry more intent than "brand new, nothing chosen yet" — the
+    // default profile must not clobber either. `applyProfileFromUser` marks every
+    // field as user-modified, so a successful apply here is naturally one-shot;
+    // this re-checks (rather than latching a ref) so a default profile whose
+    // provider is still loading gets applied once that provider becomes
+    // selectable, instead of being permanently skipped.
+    if (initialValues || Object.values(userModified).some(Boolean)) return;
+    const defaultProfile = profiles.find((profile) => profile.isDefault) ?? null;
+    if (
+      !defaultProfile ||
+      !selectableProviderDefinitionMap.has(defaultProfile.provider as AgentProvider)
+    ) {
+      return;
+    }
+    applyProfileFromUser(materializeAgentProfile(defaultProfile));
+  }, [
+    isCreateFlow,
+    resolution.status,
+    profiles,
+    selectableProviderDefinitionMap,
+    applyProfileFromUser,
+    initialValues,
+    userModified,
+  ]);
 
   const setModeFromUser = useCallback(
     (modeId: string) => {

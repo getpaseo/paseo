@@ -1,5 +1,7 @@
 import { describe, expect, test } from "vitest";
 import {
+  AgentPermissionResponseSchema,
+  AgentProfileSchema,
   FileExplorerRequestSchema,
   PaseoWorktreeArchiveRequestSchema,
   parseServerInfoStatusPayload,
@@ -518,5 +520,35 @@ describe("viewed timeline subscription messages", () => {
         },
       },
     });
+  });
+});
+
+describe("agent profile default flag", () => {
+  test("round-trips without isDefault", () => {
+    const profile = AgentProfileSchema.parse({ id: "p1", name: "UI work", provider: "claude" });
+    expect(profile.isDefault).toBeUndefined();
+  });
+
+  test("round-trips with isDefault", () => {
+    const profile = AgentProfileSchema.parse({
+      id: "p1",
+      name: "UI work",
+      provider: "claude",
+      isDefault: true,
+    });
+    expect(profile.isDefault).toBe(true);
+  });
+});
+
+describe("plan-accept mode selection", () => {
+  test("allow response accepts an optional targetModeId", () => {
+    const withoutMode = AgentPermissionResponseSchema.parse({ behavior: "allow" });
+    expect(withoutMode).toEqual({ behavior: "allow" });
+
+    const withMode = AgentPermissionResponseSchema.parse({
+      behavior: "allow",
+      targetModeId: "acceptEdits",
+    });
+    expect(withMode.behavior === "allow" && withMode.targetModeId).toBe("acceptEdits");
   });
 });

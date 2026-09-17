@@ -4629,6 +4629,14 @@ export class CodexAppServerAgentSession implements AgentSession {
     const { requestId, response, pending, pendingRequest } = params;
     let followUpPrompt: string | undefined;
     if (response.behavior === "allow") {
+      if (response.targetModeId) {
+        this.setMode(response.targetModeId).catch((error) => {
+          this.logger.warn(
+            { err: error, targetModeId: response.targetModeId },
+            "Requested plan-accept mode is unavailable, leaving current mode unchanged",
+          );
+        });
+      }
       followUpPrompt = this.preparePlanImplementation({
         planText: pending.plan?.text ?? pendingRequest?.metadata?.planText,
       });

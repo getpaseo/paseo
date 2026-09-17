@@ -2599,10 +2599,22 @@ class ClaudeAgentSession implements AgentSession {
         const selectedActionId = response.selectedActionId;
         const shouldResumePriorMode =
           selectedActionId === "implement_resume" && this.planResumeMode === "bypassPermissions";
-        const targetMode: PermissionMode = shouldResumePriorMode
+        const fallbackMode: PermissionMode = shouldResumePriorMode
           ? "bypassPermissions"
           : "acceptEdits";
-        await this.setMode(targetMode);
+        if (response.targetModeId && response.targetModeId !== "plan") {
+          try {
+            await this.setMode(response.targetModeId);
+          } catch (error) {
+            this.logger.warn(
+              { err: error, targetModeId: response.targetModeId },
+              "Requested plan-accept mode is unavailable, falling back to default",
+            );
+            await this.setMode(fallbackMode);
+          }
+        } else {
+          await this.setMode(fallbackMode);
+        }
         this.pushToolCall(
           mapClaudeCompletedToolCall({
             name: "ExitPlanMode",

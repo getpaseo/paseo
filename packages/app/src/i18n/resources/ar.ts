@@ -242,6 +242,8 @@ export const ar: TranslationResources = {
       implement: "ينفذ",
       question: "كيف تريد المتابعة؟",
       proposedPlan: "الخطة المقترحة",
+      chooseMode: "اختر الوضع بعد التنفيذ",
+      modeLabel: "الوضع:",
     },
   },
   agentPanel: {
@@ -2474,6 +2476,9 @@ export const ar: TranslationResources = {
         removeConfirmMessage: 'إزالة "{{name}}"؟',
         moveUp: "نقل لأعلى",
         moveDown: "نقل لأسفل",
+        setDefault: "تعيين كافتراضي لمساحات العمل الجديدة",
+        unsetDefault: "إزالة كافتراضي لمساحات العمل الجديدة",
+        defaultBadge: "افتراضي",
       },
       daemon: {
         rename: {
@@ -2592,6 +2597,12 @@ export const ar: TranslationResources = {
         discovered: "اكتشف",
         custom: "نماذج مخصصة",
         updated: "تم تحديث{{time}}",
+      },
+      planAcceptMode: {
+        sectionTitle: "وضع قبول الخطة",
+        rowTitle: "الوضع الافتراضي بعد قبول خطة",
+        pickerLabel: "اختر وضع قبول الخطة الافتراضي",
+        unset: "غير محدد",
       },
       diagnostic: {
         title: "التشخيص",

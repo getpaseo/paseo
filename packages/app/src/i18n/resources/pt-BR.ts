@@ -243,6 +243,8 @@ export const ptBR: TranslationResources = {
       implement: "Implementar",
       question: "Como você quer prosseguir?",
       proposedPlan: "Plano proposto",
+      chooseMode: "Escolher modo após implementar",
+      modeLabel: "Modo:",
     },
   },
   agentPanel: {
@@ -2514,6 +2516,9 @@ export const ptBR: TranslationResources = {
         removeConfirmMessage: 'Remover "{{name}}"?',
         moveUp: "Mover para cima",
         moveDown: "Mover para baixo",
+        setDefault: "Definir como padrão para novos espaços de trabalho",
+        unsetDefault: "Remover como padrão para novos espaços de trabalho",
+        defaultBadge: "Padrão",
       },
       daemon: {
         rename: {
@@ -2634,6 +2639,12 @@ export const ptBR: TranslationResources = {
         discovered: "Descobertos",
         custom: "Modelos personalizados",
         updated: "Atualizado {{time}}",
+      },
+      planAcceptMode: {
+        sectionTitle: "Modo de aceitação de plano",
+        rowTitle: "Modo padrão após aceitar um plano",
+        pickerLabel: "Escolha o modo padrão de aceitação de plano",
+        unset: "Não definido",
       },
       diagnostic: {
         title: "Diagnóstico",

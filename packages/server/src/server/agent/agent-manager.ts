@@ -305,6 +305,7 @@ export interface AgentManagerOptions {
   paseoToolsEnabled?: boolean;
   paseoToolCatalogFactory?: PaseoToolCatalogFactory;
   resolvePaseoToolPolicy?: (provider: AgentProvider) => ProviderPaseoToolsPolicy | undefined;
+  resolvePlanAcceptModeDefault?: (provider: AgentProvider) => string | undefined;
   appendSystemPrompt?: string;
   agentStreamCoalesceWindowMs?: number;
   rescueTimeouts?: AgentManagerRescueTimeouts;
@@ -690,6 +691,12 @@ function detachedAgentLabelPatch(labels: Record<string, string>): AgentLabelPatc
   return patch;
 }
 
+function resolvePlanAcceptModeDefaultOption(
+  options: AgentManagerOptions,
+): (provider: AgentProvider) => string | undefined {
+  return options.resolvePlanAcceptModeDefault ?? (() => undefined);
+}
+
 export class AgentManager {
   private readonly pluginLifecycle: PluginLifecycle | undefined;
   private readonly clients = new Map<AgentProvider, AgentClient>();
@@ -722,6 +729,7 @@ export class AgentManager {
   private readonly resolvePaseoToolPolicy: (
     provider: AgentProvider,
   ) => ProviderPaseoToolsPolicy | undefined;
+  private readonly resolvePlanAcceptModeDefault: (provider: AgentProvider) => string | undefined;
   private appendSystemPrompt: string;
   private onAgentAttention?: AgentAttentionCallback;
   private onAgentArchived?: AgentArchivedCallback;
@@ -742,6 +750,7 @@ export class AgentManager {
     this.mcpAuthToken = options?.mcpAuthToken ?? null;
     this.configurePaseoTools(options);
     this.resolvePaseoToolPolicy = options.resolvePaseoToolPolicy ?? (() => undefined);
+    this.resolvePlanAcceptModeDefault = resolvePlanAcceptModeDefaultOption(options);
     this.appendSystemPrompt = options.appendSystemPrompt ?? "";
     this.logger = options.logger.child({ module: "agent", component: "agent-manager" });
     this.rescueTimeouts = {
@@ -2947,8 +2956,21 @@ export class AgentManager {
     }
     agent.inFlightPermissionResponses.add(requestId);
 
+    let effectiveResponse = response;
+    const isUnresolvedPlanAccept =
+      response.behavior === "allow" &&
+      response.targetModeId === undefined &&
+      response.selectedActionId !== "implement_resume" &&
+      agent.pendingPermissions.get(requestId)?.kind === "plan";
+    if (isUnresolvedPlanAccept) {
+      const defaultModeId = this.resolvePlanAcceptModeDefault(agent.session.provider);
+      if (defaultModeId) {
+        effectiveResponse = { ...response, targetModeId: defaultModeId };
+      }
+    }
+
     try {
-      const result = await agent.session.respondToPermission(requestId, response);
+      const result = await agent.session.respondToPermission(requestId, effectiveResponse);
       agent.pendingPermissions.delete(requestId);
 
       try {

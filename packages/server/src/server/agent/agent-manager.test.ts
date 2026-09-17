@@ -33,9 +33,10 @@ import type {
   AgentCreateSessionOptions,
   AgentFeature,
   AgentLaunchContext,
+  AgentPermissionResponse,
+  AgentPersistenceHandle,
   AgentPromptInput,
   AgentProvider,
-  AgentPersistenceHandle,
   AgentRunOptions,
   AgentResumeSessionOptions,
   AgentRunResult,
@@ -9194,6 +9195,155 @@ test("respondToPermission refreshes features and runtime info after provider-man
     createFeature({ id: "fast_mode", label: "Fast", value: true }),
     createFeature({ id: "plan_mode", label: "Plan", value: false }),
   ]);
+});
+
+test("respondToPermission injects the daemon-configured plan-accept mode default when the client sends none", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
+  const storagePath = join(workdir, "agents");
+  const storage = new AgentStorage(storagePath, logger);
+
+  const receivedResponses: AgentPermissionResponse[] = [];
+
+  class RecordingPermissionSession extends TestAgentSession {
+    override getPendingPermissions() {
+      return [];
+    }
+    override async respondToPermission(
+      _requestId: string,
+      response: AgentPermissionResponse,
+    ): Promise<void> {
+      receivedResponses.push(response);
+    }
+  }
+
+  class RecordingPermissionClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return new RecordingPermissionSession(config);
+    }
+  }
+
+  const manager = new AgentManager({
+    clients: { codex: new RecordingPermissionClient() },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000141",
+    resolvePlanAcceptModeDefault: (provider) => (provider === "codex" ? "full-access" : undefined),
+  });
+
+  const snapshot = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  const agent = manager.getAgent(snapshot.id);
+  if (!agent) {
+    throw new Error("Expected managed agent");
+  }
+  agent.pendingPermissions.set("perm-plan-1", {
+    id: "perm-plan-1",
+    provider: "codex",
+    name: "ExitPlanMode",
+    kind: "plan",
+    input: { plan: "- Implement the feature" },
+  });
+
+  await manager.respondToPermission(snapshot.id, "perm-plan-1", {
+    behavior: "allow",
+    selectedActionId: "implement",
+  });
+
+  expect(receivedResponses).toEqual([
+    { behavior: "allow", selectedActionId: "implement", targetModeId: "full-access" },
+  ]);
+
+  agent.pendingPermissions.set("perm-plan-2", {
+    id: "perm-plan-2",
+    provider: "codex",
+    name: "ExitPlanMode",
+    kind: "plan",
+    input: { plan: "- Implement another feature" },
+  });
+
+  await manager.respondToPermission(snapshot.id, "perm-plan-2", {
+    behavior: "allow",
+    selectedActionId: "implement",
+    targetModeId: "auto",
+  });
+
+  expect(receivedResponses[1]).toEqual({
+    behavior: "allow",
+    selectedActionId: "implement",
+    targetModeId: "auto",
+  });
+});
+
+test("respondToPermission does not inject the plan-accept default for non-plan permissions or a resume-bypass action", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
+  const storagePath = join(workdir, "agents");
+  const storage = new AgentStorage(storagePath, logger);
+
+  const receivedResponses: AgentPermissionResponse[] = [];
+
+  class RecordingPermissionSession extends TestAgentSession {
+    override getPendingPermissions() {
+      return [];
+    }
+    override async respondToPermission(
+      _requestId: string,
+      response: AgentPermissionResponse,
+    ): Promise<void> {
+      receivedResponses.push(response);
+    }
+  }
+
+  class RecordingPermissionClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return new RecordingPermissionSession(config);
+    }
+  }
+
+  const manager = new AgentManager({
+    clients: { codex: new RecordingPermissionClient() },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000142",
+    resolvePlanAcceptModeDefault: (provider) => (provider === "codex" ? "full-access" : undefined),
+  });
+
+  const snapshot = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  const agent = manager.getAgent(snapshot.id);
+  if (!agent) {
+    throw new Error("Expected managed agent");
+  }
+
+  agent.pendingPermissions.set("perm-tool-1", {
+    id: "perm-tool-1",
+    provider: "codex",
+    name: "run_command",
+    kind: "command",
+    input: { command: "ls" },
+  });
+  await manager.respondToPermission(snapshot.id, "perm-tool-1", {
+    behavior: "allow",
+    selectedActionId: "allow",
+  });
+  expect(receivedResponses[0]).toEqual({ behavior: "allow", selectedActionId: "allow" });
+
+  agent.pendingPermissions.set("perm-plan-resume", {
+    id: "perm-plan-resume",
+    provider: "codex",
+    name: "ExitPlanMode",
+    kind: "plan",
+    input: { plan: "- Implement the feature" },
+  });
+  await manager.respondToPermission(snapshot.id, "perm-plan-resume", {
+    behavior: "allow",
+    selectedActionId: "implement_resume",
+  });
+  expect(receivedResponses[1]).toEqual({
+    behavior: "allow",
+    selectedActionId: "implement_resume",
+  });
 });
 
 test("respondToPermission emits refreshed state before permission_resolved", async () => {

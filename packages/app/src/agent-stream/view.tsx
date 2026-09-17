@@ -27,6 +27,15 @@ import { MAX_CONTENT_WIDTH, useIsCompactFormFactor } from "@/constants/layout";
 import { useMutation } from "@tanstack/react-query";
 import Animated, { FadeIn, FadeOut } from "react-native-reanimated";
 import { Check, ChevronDown, X } from "lucide-react-native";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { useDaemonConfig } from "@/hooks/use-daemon-config";
+import { useHostFeature } from "@/runtime/host-features";
+import { formatAgentModeLabel } from "@/agent-controls/labels";
+import { PlanAcceptModeMenuItem } from "@/components/plan-accept-mode-menu-item";
 import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
 import { openExplorerSidebarView } from "@/workspace-tabs/explorer-sidebar";
 import {
@@ -138,6 +147,7 @@ function BottomOverlayInset({ height }: { height: number }) {
 function renderPendingPermissionsNode(input: {
   pendingPermissions: PendingPermission[];
   client: DaemonClient | null;
+  serverId: string;
 }): ReactNode {
   if (input.pendingPermissions.length === 0) {
     return null;
@@ -145,7 +155,12 @@ function renderPendingPermissionsNode(input: {
   return (
     <View style={stylesheet.permissionsContainer}>
       {input.pendingPermissions.map((permission) => (
-        <PermissionRequestCard key={permission.key} permission={permission} client={input.client} />
+        <PermissionRequestCard
+          key={permission.key}
+          permission={permission}
+          client={input.client}
+          serverId={input.serverId}
+        />
       ))}
     </View>
   );
@@ -935,8 +950,9 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         renderPendingPermissionsNode({
           pendingPermissions: pendingPermissionItems,
           client,
+          serverId: resolvedServerId,
         }),
-      [client, pendingPermissionItems],
+      [client, pendingPermissionItems, resolvedServerId],
     );
     const turnFooterNode = useMemo(
       () =>
@@ -1336,6 +1352,7 @@ function ToolCallSlot({
 const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
 const ThemedCheckIcon = withUnistyles(Check);
 const ThemedXIcon = withUnistyles(X);
+const ThemedChevronDown = withUnistyles(ChevronDown);
 
 const primaryColorMapping = (theme: Theme) => ({
   color: theme.colors.foreground,
@@ -1400,15 +1417,49 @@ function PermissionActionButton({
 function PermissionRequestCard({
   permission,
   client,
+  serverId,
 }: {
   permission: PendingPermission;
   client: DaemonClient | null;
+  serverId: string;
 }) {
   const { t } = useTranslation();
   const isMobile = useIsCompactFormFactor();
 
   const { request } = permission;
   const isPlanRequest = request.kind === "plan";
+  const supportsPlanAcceptModeSelection = useHostFeature(serverId, "planAcceptModeSelection");
+  const availableModes = useSessionStore(
+    (state) => state.sessions[serverId]?.agents?.get(permission.agentId)?.availableModes ?? [],
+  );
+  const planAcceptModes = useMemo(
+    () => availableModes.filter((mode) => mode.id !== "plan"),
+    [availableModes],
+  );
+  const { config: daemonConfig } = useDaemonConfig(serverId);
+  const defaultModeIdForProvider = daemonConfig?.planAcceptModeDefaults?.[request.provider];
+
+  const [selectedModeId, setSelectedModeId] = useState<string | null>(null);
+  useEffect(() => {
+    setSelectedModeId(null);
+  }, [permission.request.id]);
+
+  // No fallback to "the first available mode": absent an explicit in-session pick or a
+  // configured default, sending a targetModeId at all would override whatever
+  // mode-preserving behavior the provider already has for a plain accept.
+  const effectiveModeId = useMemo(
+    () =>
+      [selectedModeId, defaultModeIdForProvider].find(
+        (candidate): candidate is string =>
+          Boolean(candidate) && planAcceptModes.some((mode) => mode.id === candidate),
+      ) ?? null,
+    [selectedModeId, defaultModeIdForProvider, planAcceptModes],
+  );
+
+  const effectiveModeLabel = useMemo(() => {
+    const mode = planAcceptModes.find((entry) => entry.id === effectiveModeId);
+    return mode ? formatAgentModeLabel(mode) : null;
+  }, [planAcceptModes, effectiveModeId]);
   const title = isPlanRequest
     ? t("agentStream.permission.plan")
     : (request.title ?? request.name ?? t("agentStream.permission.required"));
@@ -1509,9 +1560,15 @@ function PermissionRequestCard({
     (action: AgentPermissionAction) => {
       setRespondingActionId(action.id);
       if (action.behavior === "allow") {
+        const appliesModeSelection =
+          isPlanRequest &&
+          supportsPlanAcceptModeSelection &&
+          (action.id === "accept" || action.id === "implement");
+        const targetModeId = appliesModeSelection ? (effectiveModeId ?? undefined) : undefined;
         handleResponse({
           behavior: "allow",
           selectedActionId: action.id,
+          ...(targetModeId ? { targetModeId } : {}),
         });
         return;
       }
@@ -1521,8 +1578,11 @@ function PermissionRequestCard({
         message: "Denied by user",
       });
     },
-    [handleResponse],
+    [effectiveModeId, handleResponse, isPlanRequest, supportsPlanAcceptModeSelection],
   );
+  const handleChangeMode = useCallback((modeId: string) => {
+    setSelectedModeId(modeId);
+  }, []);
 
   const optionsContainerStyle = useMemo(
     () => [
@@ -1572,6 +1632,37 @@ function PermissionRequestCard({
             />
           );
         })}
+        {isPlanRequest && supportsPlanAcceptModeSelection && planAcceptModes.length > 0 ? (
+          <View style={permissionStyles.optionContent}>
+            <Text style={permissionStyles.optionText}>{t("agentStream.permission.modeLabel")}</Text>
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                testID="permission-plan-mode-menu-trigger"
+                style={pressableStyle}
+                accessibilityRole="button"
+                accessibilityLabel={t("agentStream.permission.chooseMode")}
+              >
+                <View style={permissionStyles.optionContent}>
+                  <Text style={permissionStyles.optionText} numberOfLines={1}>
+                    {effectiveModeLabel ?? t("agentStream.permission.chooseMode")}
+                  </Text>
+                  <ThemedChevronDown size={14} uniProps={mutedColorMapping} />
+                </View>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" testID="permission-plan-mode-menu">
+                {planAcceptModes.map((mode) => (
+                  <PlanAcceptModeMenuItem
+                    key={mode.id}
+                    mode={mode}
+                    selected={mode.id === effectiveModeId}
+                    testIdPrefix="permission-plan-mode-item"
+                    onSelect={handleChangeMode}
+                  />
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </View>
+        ) : null}
       </View>
     </>
   );

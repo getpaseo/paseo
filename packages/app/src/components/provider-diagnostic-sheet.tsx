@@ -13,6 +13,11 @@ import {
 import { Button } from "@/components/ui/button";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { ScrollableCodeSurface, SurfaceCard } from "@/components/ui/scrollable-code-surface";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { isWeb } from "@/constants/platform";
 import { useToast } from "@/contexts/toast-context";
@@ -20,11 +25,18 @@ import { CODE_SURFACE_DATASET } from "@/styles/code-surface";
 import { useDaemonConfig } from "@/hooks/use-daemon-config";
 import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
 import { useHostRuntimeClient } from "@/runtime/host-runtime";
+import { useHostFeature } from "@/runtime/host-features";
 import { settingsStyles } from "@/styles/settings";
 import { resolveProviderLabel } from "@/utils/provider-definitions";
 import { formatTimeAgo } from "@/utils/time";
+import { formatAgentModeLabel } from "@/agent-controls/labels";
+import { PlanAcceptModeMenuItem } from "@/components/plan-accept-mode-menu-item";
 import { compareMatchScores, scoreTextFields } from "@getpaseo/protocol/search/text-match";
-import type { AgentModelDefinition, AgentProvider } from "@getpaseo/protocol/agent-types";
+import type {
+  AgentMode,
+  AgentModelDefinition,
+  AgentProvider,
+} from "@getpaseo/protocol/agent-types";
 import type { ProviderProfileModel } from "@getpaseo/protocol/provider-config";
 import {
   resolveProviderDiscoveredModels,
@@ -117,6 +129,56 @@ function CustomModelRow({
       >
         <Trash2 size={theme.iconSize.sm} color={theme.colors.destructive} />
       </Pressable>
+    </View>
+  );
+}
+
+function PlanAcceptModeRow({
+  provider,
+  modes,
+  selectedModeId,
+  onSelect,
+}: {
+  provider: string;
+  modes: AgentMode[];
+  selectedModeId: string | null;
+  onSelect: (modeId: string) => void;
+}) {
+  const { t } = useTranslation();
+  const selectedMode = modes.find((mode) => mode.id === selectedModeId) ?? null;
+
+  return (
+    <View style={settingsStyles.row}>
+      <View style={settingsStyles.rowContent}>
+        <Text style={settingsStyles.rowTitle}>
+          {t("settings.providers.planAcceptMode.rowTitle")}
+        </Text>
+      </View>
+      <DropdownMenu>
+        <DropdownMenuTrigger
+          testID={`provider-plan-accept-mode-trigger-${provider}`}
+          style={sheetStyles.planAcceptModeTrigger}
+          accessibilityRole="button"
+          accessibilityLabel={t("settings.providers.planAcceptMode.pickerLabel")}
+        >
+          <Text style={sheetStyles.planAcceptModeTriggerText} numberOfLines={1}>
+            {selectedMode
+              ? formatAgentModeLabel(selectedMode)
+              : t("settings.providers.planAcceptMode.unset")}
+          </Text>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" testID={`provider-plan-accept-mode-menu-${provider}`}>
+          {modes.map((mode) => (
+            <PlanAcceptModeMenuItem
+              key={mode.id}
+              mode={mode}
+              selected={mode.id === selectedModeId}
+              testIdPrefix="provider-plan-accept-mode-item"
+              onSelect={onSelect}
+            />
+          ))}
+        </DropdownMenuContent>
+      </DropdownMenu>
     </View>
   );
 }
@@ -591,6 +653,20 @@ export function ProviderDiagnosticSheet({
     () => config?.providers?.[provider]?.additionalModels ?? [],
     [config?.providers, provider],
   );
+  const supportsPlanAcceptModeSelection = useHostFeature(serverId, "planAcceptModeSelection");
+  const planAcceptModes = useMemo(
+    () => (providerEntry?.modes ?? []).filter((mode) => mode.id !== "plan"),
+    [providerEntry?.modes],
+  );
+  const handleSelectPlanAcceptMode = useCallback(
+    (modeId: string) => {
+      // Send only this provider's key — the daemon merges it into whatever's
+      // currently persisted, so a stale local snapshot of other providers'
+      // defaults can't clobber a concurrent update from another client.
+      void patchConfig({ planAcceptModeDefaults: { [provider]: modeId } });
+    },
+    [patchConfig, provider],
+  );
   const providerSnapshotRefreshing = providerEntry?.status === "loading";
   const providerErrorMessage =
     providerEntry?.status === "error"
@@ -710,6 +786,19 @@ export function ProviderDiagnosticSheet({
           onDeleteCustom={handleDeleteCustom}
           theme={theme}
         />
+        {supportsPlanAcceptModeSelection && planAcceptModes.length > 0 ? (
+          <View style={sheetStyles.section}>
+            <SectionHeader title={t("settings.providers.planAcceptMode.sectionTitle")} />
+            <View style={settingsStyles.card}>
+              <PlanAcceptModeRow
+                provider={provider}
+                modes={planAcceptModes}
+                selectedModeId={config?.planAcceptModeDefaults?.[provider] ?? null}
+                onSelect={handleSelectPlanAcceptMode}
+              />
+            </View>
+          </View>
+        ) : null}
       </AdaptiveModalSheet>
       <AddCustomModelSubSheet
         provider={provider}
@@ -729,6 +818,16 @@ export function ProviderDiagnosticSheet({
 }
 
 const sheetStyles = StyleSheet.create((theme) => ({
+  planAcceptModeTrigger: {
+    paddingVertical: theme.spacing[2],
+    paddingHorizontal: theme.spacing[3],
+    borderRadius: theme.borderRadius.md,
+    backgroundColor: theme.colors.surface2,
+  },
+  planAcceptModeTriggerText: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.base,
+  },
   mutedText: {
     fontSize: theme.fontSize.base,
     color: theme.colors.foregroundMuted,

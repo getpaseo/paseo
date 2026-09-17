@@ -244,6 +244,8 @@ export const ru: TranslationResources = {
       implement: "Реализовать",
       question: "Как бы вы хотели продолжить?",
       proposedPlan: "Предлагаемый план",
+      chooseMode: "Выбрать режим после реализации",
+      modeLabel: "Режим:",
     },
   },
   agentPanel: {
@@ -2521,6 +2523,9 @@ export const ru: TranslationResources = {
         removeConfirmMessage: "Удалить «{{name}}»?",
         moveUp: "Переместить вверх",
         moveDown: "Переместить вниз",
+        setDefault: "Сделать по умолчанию для новых рабочих пространств",
+        unsetDefault: "Убрать значение по умолчанию",
+        defaultBadge: "По умолчанию",
       },
       daemon: {
         rename: {
@@ -2642,6 +2647,12 @@ export const ru: TranslationResources = {
         discovered: "Обнаруженные модели",
         custom: "Пользовательские модели",
         updated: "Обновлено {{time}}",
+      },
+      planAcceptMode: {
+        sectionTitle: "Режим принятия плана",
+        rowTitle: "Режим по умолчанию после принятия плана",
+        pickerLabel: "Выберите режим принятия плана по умолчанию",
+        unset: "Не задано",
       },
       diagnostic: {
         title: "Диагностика",

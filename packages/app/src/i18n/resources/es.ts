@@ -244,6 +244,8 @@ export const es: TranslationResources = {
       implement: "Implementar",
       question: "¿Cómo le gustaría proceder?",
       proposedPlan: "Plan propuesto",
+      chooseMode: "Elegir modo después de implementar",
+      modeLabel: "Modo:",
     },
   },
   agentPanel: {
@@ -2531,6 +2533,9 @@ export const es: TranslationResources = {
         removeConfirmMessage: '¿Eliminar "{{name}}"?',
         moveUp: "Mover hacia arriba",
         moveDown: "Mover hacia abajo",
+        setDefault: "Establecer como predeterminado para nuevos espacios de trabajo",
+        unsetDefault: "Quitar como predeterminado para nuevos espacios de trabajo",
+        defaultBadge: "Predeterminado",
       },
       daemon: {
         rename: {
@@ -2651,6 +2656,12 @@ export const es: TranslationResources = {
         discovered: "descubierto",
         custom: "Modelos personalizados",
         updated: "{{time}}actualizado",
+      },
+      planAcceptMode: {
+        sectionTitle: "Modo de aceptación de planes",
+        rowTitle: "Modo predeterminado tras aceptar un plan",
+        pickerLabel: "Elige el modo predeterminado de aceptación de planes",
+        unset: "Sin definir",
       },
       diagnostic: {
         title: "Diagnóstico",

@@ -242,6 +242,8 @@ export const zhCN: TranslationResources = {
       implement: "实施",
       question: "你想如何继续？",
       proposedPlan: "建议计划",
+      chooseMode: "实现后选择模式",
+      modeLabel: "模式:",
     },
   },
   agentPanel: {
@@ -2448,6 +2450,9 @@ export const zhCN: TranslationResources = {
         removeConfirmMessage: "移除「{{name}}」？",
         moveUp: "上移",
         moveDown: "下移",
+        setDefault: "设为新工作区的默认配置",
+        unsetDefault: "取消默认配置",
+        defaultBadge: "默认",
       },
       daemon: {
         rename: {
@@ -2561,6 +2566,12 @@ export const zhCN: TranslationResources = {
         discovered: "已发现",
         custom: "自定义 Models",
         updated: "已更新 {{time}}",
+      },
+      planAcceptMode: {
+        sectionTitle: "计划接受模式",
+        rowTitle: "接受计划后的默认模式",
+        pickerLabel: "选择默认的计划接受模式",
+        unset: "未设置",
       },
       diagnostic: {
         title: "诊断",
