@@ -349,6 +349,13 @@ export function TerminalPane({
   );
 
   useEffect(() => {
+    if (!isTerminalPresented) {
+      return;
+    }
+    emulatorRef.current?.restoreSurface();
+  }, [isTerminalPresented]);
+
+  useEffect(() => {
     if (isMobile || !isPaneFocused || !terminalId) {
       lastAutoFocusKeyRef.current = null;
       return;
