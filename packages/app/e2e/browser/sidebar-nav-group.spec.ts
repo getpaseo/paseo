@@ -1,10 +1,14 @@
 import { test } from "../support/fixtures";
 import { gotoAppShell } from "../support/helpers/app";
 import {
+  dragNavigationDivider,
   expectLastNavigationItemReachable,
   expectNavigationGroupFoldedAway,
+  expectNavigationGroupHeight,
   expectNavigationGroupScrollsWithinItsShare,
   expectNavigationGroupShowsItems,
+  expectNavigationGroupTaller,
+  expectStoredNavigationHeight,
   toggleNavigationGroup,
 } from "../support/helpers/sidebar-nav-group";
 
@@ -31,5 +35,20 @@ test.describe("Sidebar navigation group", () => {
 
     await expectNavigationGroupScrollsWithinItsShare(page, SHORT_WINDOW.height);
     await expectLastNavigationItemReachable(page);
+  });
+
+  test("owner drags the navigation group taller and finds it that tall next time", async ({
+    page,
+  }) => {
+    await gotoAppShell(page);
+    await expectNavigationGroupShowsItems(page);
+
+    const startHeight = await dragNavigationDivider(page, 0);
+    await dragNavigationDivider(page, 80);
+    await expectNavigationGroupTaller(page, startHeight);
+
+    const stored = await expectStoredNavigationHeight(page);
+    await page.reload();
+    await expectNavigationGroupHeight(page, stored);
   });
 });

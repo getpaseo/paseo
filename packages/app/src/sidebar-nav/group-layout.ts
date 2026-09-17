@@ -24,3 +24,35 @@ export function resolveSidebarNavGroupMaxHeight(viewportHeight: number): number 
     Math.round(viewportHeight * SIDEBAR_NAV_GROUP_MAX_HEIGHT_FRACTION),
   );
 }
+
+/**
+ * The most of the window a dragged group may take. The default share leaves the
+ * workspace list the bulk of the sidebar; dragging past half of it would put the
+ * navigation rows where the workspaces belong.
+ */
+export const SIDEBAR_NAV_GROUP_DRAGGED_MAX_HEIGHT_FRACTION = 1 / 2;
+
+/**
+ * The height the group's rows render at: what the owner dragged it to, or the default
+ * share of the window until they drag it.
+ */
+export function resolveSidebarNavGroupHeight(input: {
+  requestedHeight: number | null;
+  viewportHeight: number;
+}): number {
+  const defaultHeight = resolveSidebarNavGroupMaxHeight(input.viewportHeight);
+  if (input.requestedHeight === null || !Number.isFinite(input.requestedHeight)) {
+    return defaultHeight;
+  }
+  const maximum = Math.max(
+    defaultHeight,
+    Math.round(
+      (Number.isFinite(input.viewportHeight) ? Math.max(input.viewportHeight, 0) : 0) *
+        SIDEBAR_NAV_GROUP_DRAGGED_MAX_HEIGHT_FRACTION,
+    ),
+  );
+  return Math.min(
+    maximum,
+    Math.max(SIDEBAR_NAV_GROUP_MIN_MAX_HEIGHT, Math.round(input.requestedHeight)),
+  );
+}

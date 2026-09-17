@@ -1,6 +1,6 @@
 import { router, usePathname } from "expo-router";
 import { CalendarClock, History, Plus, Search } from "lucide-react-native";
-import { memo, useCallback, useMemo, type ComponentType } from "react";
+import { memo, useCallback, useMemo, useState, type ComponentType } from "react";
 import { useTranslation } from "react-i18next";
 import {
   ScrollView,
@@ -11,6 +11,7 @@ import {
 } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { SidebarHeaderRow } from "@/components/sidebar/sidebar-header-row";
+import { SidebarNavResizeHandle } from "@/components/sidebar/sidebar-nav-resize-handle";
 import { SidebarSectionHeader } from "@/components/sidebar/sidebar-section-header";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import { PluginSidebarItemRow } from "@/plugins/sidebar-items";
@@ -21,11 +22,12 @@ import {
   builtinSidebarNavShortcutAction,
   type BuiltinSidebarNavId,
 } from "@/sidebar-nav/model";
-import { resolveSidebarNavGroupMaxHeight } from "@/sidebar-nav/group-layout";
+import { resolveSidebarNavGroupHeight } from "@/sidebar-nav/group-layout";
 import { useSidebarNavItems } from "@/sidebar-nav/use-sidebar-nav-items";
 import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
 import { useActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
 import { useWorkspace } from "@/stores/session-store-hooks";
+import { usePanelStore } from "@/stores/panel-store";
 import { useSidebarViewStore } from "@/stores/sidebar-view-store";
 import {
   buildNewWorkspaceRoute,
@@ -56,10 +58,33 @@ export function SidebarNavRows({ style, onBeforeNavigate }: SidebarNavRowsProps)
   const visibleItems = useMemo(() => items.filter((item) => item.visible), [items]);
   const collapsed = useSidebarViewStore((state) => state.navCollapsed);
   const toggleCollapsed = useSidebarViewStore((state) => state.toggleNavCollapsed);
+  const storedHeight = usePanelStore((state) => state.sidebarNavHeight);
+  const setStoredHeight = usePanelStore((state) => state.setSidebarNavHeight);
   const { height: viewportHeight } = useWindowDimensions();
+  // The drag previews at 60Hz; only the released height reaches the store.
+  const [draggedHeight, setDraggedHeight] = useState<number | null>(null);
+  // Until the owner drags it, the group is still only as tall as its rows, capped at
+  // its share of the window. A dragged height is a height, not a ceiling.
+  const requestedHeight = draggedHeight ?? storedHeight;
+  const height = resolveSidebarNavGroupHeight({ requestedHeight, viewportHeight });
+  const [measuredHeight, setMeasuredHeight] = useState<number | null>(null);
   const rowsStyle = useMemo(
-    () => [styles.rows, { maxHeight: resolveSidebarNavGroupMaxHeight(viewportHeight) }],
-    [viewportHeight],
+    () => [styles.rows, requestedHeight === null ? { maxHeight: height } : { height }],
+    [height, requestedHeight],
+  );
+  const handleRowsLayout = useCallback(
+    (event: { nativeEvent: { layout: { height: number } } }) =>
+      setMeasuredHeight(event.nativeEvent.layout.height),
+    [],
+  );
+  const commitHeight = useCallback(
+    (nextHeight: number) => {
+      setStoredHeight(
+        resolveSidebarNavGroupHeight({ requestedHeight: nextHeight, viewportHeight }),
+      );
+      setDraggedHeight(null);
+    },
+    [setStoredHeight, viewportHeight],
   );
 
   if (visibleItems.length === 0) return null;
@@ -73,8 +98,16 @@ export function SidebarNavRows({ style, onBeforeNavigate }: SidebarNavRowsProps)
         testID="sidebar-nav-group-header"
       />
       {collapsed ? null : (
+        <SidebarNavResizeHandle
+          height={measuredHeight ?? height}
+          onPreviewHeight={setDraggedHeight}
+          onCommitHeight={commitHeight}
+        />
+      )}
+      {collapsed ? null : (
         <ScrollView
           style={rowsStyle}
+          onLayout={handleRowsLayout}
           contentContainerStyle={styles.rowsContent}
           showsVerticalScrollIndicator={false}
           testID="sidebar-nav-group-rows"

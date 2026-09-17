@@ -1142,6 +1142,7 @@ export const en = {
     },
     nav: {
       title: "Navigation",
+      resize: "Resize navigation",
     },
     host: {
       noHost: "No host",
