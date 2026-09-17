@@ -849,6 +849,64 @@ describe("sendQueuedComposerMessageNow", () => {
     const state = queue.state.get("agent");
     expect(state?.map((m) => m.id)).toEqual(["msg-1", "msg-2"]);
   });
+
+  it("keeps an unreadable queued image for retry and never sends a text-only downgrade", async () => {
+    const image = imageWithId("queued-image");
+    const queued = {
+      id: "msg-image",
+      text: "inspect this image",
+      attachments: [{ kind: "image" as const, metadata: image }],
+    };
+    const queue = createFakeQueue(new Map([["agent", [queued]]]));
+    const client = createFakeSendClient();
+    const stream = createFakeStream();
+
+    const failed = await sendQueuedComposerMessageNow({
+      agentId: "agent",
+      messageId: queued.id,
+      queue,
+      submitMessage: ({ text, attachments }) =>
+        dispatchComposerAgentMessage({
+          client,
+          agentId: "agent",
+          text,
+          attachments,
+          encodeImages: async () => {
+            throw new Error(
+              "An image attachment could not be read. Reattach the image and try again.",
+            );
+          },
+          submission: stream,
+        }),
+    });
+
+    expect(failed).toEqual({
+      status: "failed",
+      errorMessage: "An image attachment could not be read. Reattach the image and try again.",
+    });
+    expect(client.calls).toEqual([]);
+    expect(queue.state.get("agent")).toEqual([queued]);
+
+    const retried = await sendQueuedComposerMessageNow({
+      agentId: "agent",
+      messageId: queued.id,
+      queue,
+      submitMessage: ({ text, attachments }) =>
+        dispatchComposerAgentMessage({
+          client,
+          agentId: "agent",
+          text,
+          attachments,
+          encodeImages: passthroughEncodeImages,
+          submission: stream,
+        }),
+    });
+
+    expect(retried).toEqual({ status: "submitted" });
+    expect(queue.state.get("agent")).toEqual([]);
+    expect(client.calls).toHaveLength(1);
+    expect(client.calls[0]?.options.images).toEqual([{ data: image.id, mimeType: image.mimeType }]);
+  });
 });
 
 describe("removeComposerAttachmentAtIndex", () => {
