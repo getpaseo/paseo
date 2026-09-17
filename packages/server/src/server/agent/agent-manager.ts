@@ -3580,7 +3580,10 @@ export class AgentManager {
       workspaceId: options?.workspaceId,
       owner: options?.owner,
       session,
-      capabilities: session.capabilities,
+      capabilities: {
+        ...session.capabilities,
+        supportsSteering: typeof session.steerActiveTurn === "function",
+      },
       config,
       runtimeInfo: undefined,
       lifecycle: "initializing",

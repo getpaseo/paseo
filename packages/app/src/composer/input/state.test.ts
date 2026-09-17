@@ -144,6 +144,21 @@ describe("computeCanStartDictation", () => {
   });
 });
 
+describe("active send behavior", () => {
+  it("queues Steer follow-ups when the provider cannot steer", () => {
+    expect(resolveActiveSendBehavior("steer", false, false)).toBe("queue");
+  });
+
+  it("preserves Steer for providers that support it or older daemons", () => {
+    expect(resolveActiveSendBehavior("steer", false, true)).toBe("steer");
+    expect(resolveActiveSendBehavior("steer", false, undefined)).toBe("steer");
+  });
+
+  it("interrupts instead of stranding a fallback queue behind a permission", () => {
+    expect(resolveActiveSendBehavior("steer", true, false)).toBe("interrupt");
+  });
+});
+
 describe("dictation keyboard behavior", () => {
   it("starts dictation again after the previous dictation finishes", () => {
     const keyboard = createDictationKeyboard({ startsRecording: true });
@@ -272,6 +287,19 @@ describe("composer send behavior", () => {
 
     expect(defaultAction.calls).toEqual(["queue"]);
     expect(alternateAction.calls).toEqual(["send"]);
+  });
+
+  it("queues an active follow-up instead of sending a cancel-capable request", () => {
+    const action = actions();
+    runDefaultSendAction({
+      defaultSendBehavior: resolveActiveSendBehavior("steer", false, false),
+      isAgentRunning: true,
+      onQueue: action.onQueue,
+      handleSendMessage: action.handleSendMessage,
+      handleQueueMessage: action.handleQueueMessage,
+    });
+
+    expect(action.calls).toEqual(["queue"]);
   });
 });
 

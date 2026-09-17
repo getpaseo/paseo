@@ -663,6 +663,33 @@ async function startAndSteerThroughManager(
   return { manager, agentId: agent.id, workdir };
 }
 
+test("reports live steering support from the provider session", async () => {
+  const unsupported = new UnsupportedSteeringSession({ provider: "codex", cwd: process.cwd() });
+  const supported = new SteeringTestSession({ provider: "codex", cwd: process.cwd() });
+
+  for (const [session, expected] of [
+    [unsupported, false],
+    [supported, true],
+  ] as const) {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-steering-capability-"));
+    const client = new (class extends TestAgentClient {
+      override async createSession(): Promise<AgentSession> {
+        return session;
+      }
+    })();
+    const manager = new AgentManager({ clients: { codex: client }, logger });
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    try {
+      expect(manager.getAgent(agent.id)?.capabilities.supportsSteering).toBe(expected);
+    } finally {
+      await manager.closeAgent(agent.id);
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  }
+});
+
 test("uses an injected timeline store without making it a production requirement", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-timeline-store-"));
   const store = new RecordingTimelineStore();

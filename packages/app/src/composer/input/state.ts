@@ -8,8 +8,11 @@ export type SendBehavior = ActiveTurnBehavior | "queue";
 export function resolveActiveSendBehavior(
   sendBehavior: SendBehavior,
   hasPendingPermission: boolean,
+  supportsSteering?: boolean,
 ): SendBehavior {
-  return sendBehavior === "queue" && hasPendingPermission ? "interrupt" : sendBehavior;
+  const effectiveBehavior =
+    sendBehavior === "steer" && supportsSteering === false ? "queue" : sendBehavior;
+  return effectiveBehavior === "queue" && hasPendingPermission ? "interrupt" : effectiveBehavior;
 }
 
 interface ComposerSurfaceState {

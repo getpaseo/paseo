@@ -275,6 +275,7 @@ function buildAgentStateSelector(serverId: string, agentId: string) {
       totalCostUsd: agent?.lastUsage?.totalCostUsd ?? null,
       model: agent?.model ?? null,
       provider: agent?.provider ?? null,
+      capabilities: agent?.capabilities ?? null,
     };
   };
 }
@@ -1615,6 +1616,7 @@ function ComposerContentImpl({
   const activeSendBehavior = resolveActiveSendBehavior(
     appSettings.sendBehavior,
     hasPendingPermission,
+    agentState.capabilities?.supportsSteering,
   );
   const hasAgent = agentState.status !== null;
 
