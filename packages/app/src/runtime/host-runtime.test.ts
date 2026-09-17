@@ -2862,10 +2862,14 @@ describe("HostRuntimeStore", () => {
       expect(
         useSessionStore.getState().sessions[host.serverId]?.queuedMessages.get("agent"),
       ).toEqual([
-        { id: "first", text: "retry me", attachments: [] },
+        { id: "first", text: "retry me", attachments: [], sendError: "connection lost" },
         { id: "second", text: "keep me behind", attachments: [] },
       ]);
     });
+
+    store.drainQueuedAgentMessage(host.serverId, "agent");
+    await Promise.resolve();
+    expect(fakeClient.sentAgentMessages).toHaveLength(1);
 
     useSessionStore.getState().clearSession(host.serverId);
   });

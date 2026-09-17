@@ -23,6 +23,7 @@ export interface QueuedComposerMessage {
   id: string;
   text: string;
   attachments: ComposerAttachment[];
+  sendError?: string;
 }
 
 export interface AttachmentPersister {
@@ -320,18 +321,19 @@ export async function sendQueuedComposerMessageNow(
     await input.submitMessage({ text: item.text, attachments: item.attachments });
     return { status: "submitted" };
   } catch (error) {
+    const errorMessage =
+      error instanceof Error
+        ? error.message
+        : (input.failedToSendMessage ?? i18n.t("composer.errors.failedToSend"));
     input.queue.write((prev) => {
       const next = new Map(prev);
-      next.set(input.agentId, [item, ...(prev.get(input.agentId) ?? [])]);
+      next.set(input.agentId, [
+        { ...item, sendError: errorMessage },
+        ...(prev.get(input.agentId) ?? []),
+      ]);
       return next;
     });
-    return {
-      status: "failed",
-      errorMessage:
-        error instanceof Error
-          ? error.message
-          : (input.failedToSendMessage ?? i18n.t("composer.errors.failedToSend")),
-    };
+    return { status: "failed", errorMessage };
   }
 }
 

@@ -848,6 +848,7 @@ describe("sendQueuedComposerMessageNow", () => {
     expect(result).toEqual({ status: "failed", errorMessage: "network down" });
     const state = queue.state.get("agent");
     expect(state?.map((m) => m.id)).toEqual(["msg-1", "msg-2"]);
+    expect(state?.[0]?.sendError).toBe("network down");
   });
 
   it("keeps an unreadable queued image for retry and never sends a text-only downgrade", async () => {
@@ -885,7 +886,12 @@ describe("sendQueuedComposerMessageNow", () => {
       errorMessage: "An image attachment could not be read. Reattach the image and try again.",
     });
     expect(client.calls).toEqual([]);
-    expect(queue.state.get("agent")).toEqual([queued]);
+    expect(queue.state.get("agent")).toEqual([
+      {
+        ...queued,
+        sendError: "An image attachment could not be read. Reattach the image and try again.",
+      },
+    ]);
 
     const retried = await sendQueuedComposerMessageNow({
       agentId: "agent",

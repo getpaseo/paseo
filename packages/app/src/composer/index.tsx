@@ -717,9 +717,16 @@ function QueuedMessageRow({
   }, [onSendNow, item.id]);
   return (
     <View style={styles.queueItem}>
-      <Text style={styles.queueText} numberOfLines={2} ellipsizeMode="tail">
-        {item.text}
-      </Text>
+      <View style={styles.queueCopy}>
+        <Text style={styles.queueText} numberOfLines={2} ellipsizeMode="tail">
+          {item.text}
+        </Text>
+        {item.sendError ? (
+          <Text accessibilityRole="alert" style={styles.queueErrorText}>
+            {item.sendError}
+          </Text>
+        ) : null}
+      </View>
       <View style={styles.queueActions}>
         <Pressable
           onPress={handleEdit}
@@ -2639,9 +2646,16 @@ const styles = StyleSheet.create((theme: Theme) => ({
     gap: theme.spacing[2],
   },
   queueText: {
-    flex: 1,
     color: theme.colors.foreground,
     fontSize: theme.fontSize.base,
+  },
+  queueCopy: {
+    flex: 1,
+    gap: theme.spacing[1],
+  },
+  queueErrorText: {
+    color: theme.colors.palette.red[500],
+    fontSize: theme.fontSize.sm,
   },
   queueActions: {
     flexDirection: "row",
