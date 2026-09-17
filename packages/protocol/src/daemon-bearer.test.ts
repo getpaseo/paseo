@@ -99,6 +99,15 @@ describe("daemon bearer subprotocols", () => {
     expect(extractBearerToken(encoded)).toBe("\uFFFD");
   });
 
+  test("keeps a leading BOM instead of stripping it", () => {
+    // The default decoder consumes a leading U+FEFF, which would compare such a
+    // password against its own tail and reject every legitimate client.
+    for (const password of ["\uFEFF", "\uFEFFsecret", "a\uFEFFb"]) {
+      const [encoded] = buildBearerSubprotocols(password);
+      expect(extractBearerToken(encoded)).toBe(password);
+    }
+  });
+
   test("does not confuse a password that looks like the hex prefix", () => {
     // `paseo.bearer.` and `paseo.bearer-hex.` diverge at the separator, so a
     // verbatim password can never be read as an encoded one.

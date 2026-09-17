@@ -14,8 +14,10 @@
  * alphabet variants to validate against on the receiving end — and encodes with
  * nothing but `TextEncoder`, which browsers, Node and Hermes all provide.
  *
- * Decoding is strict in both directions of that promise: malformed UTF-8 is
- * rejected rather than replaced, so one password never has two spellings.
+ * Decoding holds that promise in both directions: malformed UTF-8 is rejected
+ * rather than replaced, so one password never has two spellings, and a leading
+ * BOM is kept rather than stripped, so a password is never compared against its
+ * own tail.
  */
 
 export const WS_BEARER_PREFIX = "paseo.bearer.";
@@ -65,10 +67,12 @@ function decodeHex(value: string): string | null {
     bytes[index] = Number.parseInt(value.slice(index * 2, index * 2 + 2), 16);
   }
   try {
-    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    // `fatal` because a lenient decoder maps every malformed sequence onto
+    // U+FFFD, so distinct peer-supplied bytes would authenticate a password
+    // containing it. `ignoreBOM` because the default strips a leading U+FEFF,
+    // which would compare a password starting with one against its own tail.
+    return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
   } catch (error) {
-    // A lenient decoder maps every malformed sequence onto U+FFFD, so distinct
-    // peer-supplied bytes would authenticate a password containing it.
     if (error instanceof TypeError) {
       return null;
     }
