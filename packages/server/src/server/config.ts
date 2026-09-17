@@ -499,6 +499,10 @@ function resolveWorktreesRoot(
     : path.resolve(paseoHome, expandedRoot);
 }
 
+function resolveResponseControl(persisted: PersistedConfig): boolean {
+  return persisted.daemon?.responseControl !== false;
+}
+
 function resolveAppendSystemPrompt(persisted: ReturnType<typeof loadPersistedConfig>): string {
   return persisted.daemon?.appendSystemPrompt ?? "";
 }
@@ -619,6 +623,7 @@ export function resolveConfigFromPersisted(
     autoArchiveAfterMerge,
     preventSleepWhileAgentsRun,
     enableTerminalAgentHooks: persisted.daemon?.enableTerminalAgentHooks ?? false,
+    responseControl: resolveResponseControl(persisted),
     appendSystemPrompt,
     terminalProfiles,
     agentProfiles,

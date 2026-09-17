@@ -12,6 +12,23 @@ initializing → idle → running → idle (or error → closed)
 
 Each live agent in `AgentManager` carries a `lastStatus` of `initializing`, `idle`, `running`, or `error`. `closed` is the persisted, resumable state for an agent record that has no live provider runtime. State transitions persist to disk and stream to subscribed clients via WebSocket.
 
+## Response control
+
+Response control uses the final response of a successful live turn for automatic chat naming and
+the completion notification summary. Keep the original footer in durable history; strip it only in
+the shared transcript projection. Replaying history must never rename a chat or send a notification.
+Persist metadata before creating completion attention, and associate summaries with their turn so
+a footerless response cannot reuse an earlier summary.
+
+Manual naming freezes both the title and emoji while automatic suggestions continue to accumulate.
+**Use automatic naming** applies the latest suggestion and resumes updates. Treat existing records
+without naming provenance as manually named to preserve user choices.
+
+The host's **Response control** switch applies when a supported provider session next opens or
+resumes. Compose its instructions at that boundary; never store them in the user's appended prompt
+or interrupt a running turn to change them. Internal generators and provider-owned subagents do not
+participate.
+
 ## Runtime residency
 
 An unarchived agent may be `closed` without being deleted or archived. Closing releases its provider

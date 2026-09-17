@@ -14,6 +14,7 @@ export interface PanelIconProps {
 }
 
 export interface PanelDescriptor {
+  emoji?: string;
   label: string;
   subtitle: string;
   tooltip: string;

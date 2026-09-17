@@ -1,3 +1,4 @@
+import { responseDisplayText } from "@getpaseo/protocol/response-control/footer";
 import type { TurnTiming } from "@/timeline/turn-time";
 import type { StreamItem } from "@/types/stream";
 import { getAssistantBlockSpacing, getGapBetweenStreamItems } from "./spacing";
@@ -279,6 +280,25 @@ function layoutSegment(input: LayoutSegmentInput): StreamLayoutItem[] {
   return input.items.map((item, index) => layoutSegmentItem(input, item, index));
 }
 
+const displayItemCache = new WeakMap<StreamItem, Map<string, StreamItem>>();
+
+function displayResponseItem(item: StreamItem, streaming: boolean): StreamItem {
+  if (item.kind !== "assistant_message") return item;
+  const text = responseDisplayText(item.text, streaming);
+  if (text === item.text) return item;
+  let cached = displayItemCache.get(item);
+  if (!cached) {
+    cached = new Map();
+    displayItemCache.set(item, cached);
+  }
+  let displayed = cached.get(text);
+  if (!displayed) {
+    displayed = { ...item, text };
+    cached.set(text, displayed);
+  }
+  return displayed;
+}
+
 function layoutSegmentItem(
   input: LayoutSegmentInput,
   item: StreamItem,
@@ -318,8 +338,12 @@ function layoutSegmentItem(
     hasFooterBelow: completedFooter !== null || (input.hasAuxiliaryFooter && belowItem === null),
   });
 
+  const isFinalResponse = belowItem === null || !continuesTurn(item, belowItem);
+  const displayedItem = isFinalResponse
+    ? displayResponseItem(item, input.phase === "streaming")
+    : item;
   return shareLayoutItem({
-    item,
+    item: displayedItem,
     aboveItem,
     belowItem,
     gapBelow: completedFooter ? 0 : getGapBetweenStreamItems(item, belowItem),

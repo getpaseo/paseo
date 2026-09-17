@@ -71,6 +71,8 @@ export interface AgentRuntimeInfo {
 }
 
 export interface Agent {
+  icon?: string;
+  responseMetadata?: import("@getpaseo/protocol/messages").AgentResponseMetadata;
   serverId: string;
   id: string;
   provider: AgentProvider;

@@ -95,6 +95,9 @@
             "appendSystemPrompt": {
               "type": "string"
             },
+            "responseControl": {
+              "type": "boolean"
+            },
             "cors": {
               "type": "object",
               "properties": {

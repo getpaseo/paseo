@@ -547,3 +547,41 @@ describe("layoutStream", () => {
     },
   );
 });
+
+it.each(["web", "android"] as const)(
+  "hides final response metadata in %s layout without modifying source text",
+  (platform) => {
+    const strategy = resolveStreamRenderStrategy({
+      platform,
+      isMobileBreakpoint: platform === "android",
+    });
+    const original = {
+      ...assistantMessage("answer", 1, undefined, "turn"),
+      text: 'Done.\n<paseo-meta message="Done." title="Tests" />',
+    };
+    const result = layoutStream({
+      strategy,
+      isTurnActive: false,
+      history: strategy.orderTail([original]),
+      liveHead: [],
+      timingByAssistantId: new Map(),
+    });
+    expect(result.history[0].item).toMatchObject({ text: "Done." });
+    expect(original.text).toContain("paseo-meta");
+  },
+);
+
+it("withholds a partial footer during streaming and releases it when the turn ends", () => {
+  const strategy = resolveStreamRenderStrategy({ platform: "web", isMobileBreakpoint: false });
+  const item = {
+    ...assistantMessage("answer", 1, undefined, "turn"),
+    text: 'Done.\n<paseo-meta message="',
+  };
+  const input = { strategy, history: [], liveHead: [item], timingByAssistantId: new Map() };
+  expect(layoutStream({ ...input, isTurnActive: true }).liveHead[0].item).toMatchObject({
+    text: "Done.",
+  });
+  expect(layoutStream({ ...input, isTurnActive: false }).liveHead[0].item).toMatchObject({
+    text: item.text,
+  });
+});

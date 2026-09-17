@@ -22,6 +22,7 @@ import type { Theme } from "@/styles/theme";
 import { usePanelInstanceAttributes } from "@/panels/panel-instance-attributes";
 
 export interface WorkspaceTabPresentation {
+  emoji?: string;
   key: string;
   kind: WorkspaceTabDescriptor["kind"];
   label: string;
@@ -95,11 +96,13 @@ function WorkspaceTabPresentationResolverInner({
       modified: attributes.modified,
       titleState: descriptor.titleState,
       icon: descriptor.icon,
+      emoji: descriptor.emoji,
       statusBucket: descriptor.statusBucket,
       attentionTimestamp: descriptor.attentionTimestamp,
     }),
     [
       descriptor.icon,
+      descriptor.emoji,
       descriptor.label,
       descriptor.tooltip,
       descriptor.statusBucket,
@@ -154,6 +157,7 @@ export function WorkspaceTabIcon({
   if (bucket === "failed") statusDotColor = styles.statusDotFailed.color;
   else if (bucket === "attention") statusDotColor = styles.statusDotAttention.color;
   const showNeedsInputAlert = bucket === "needs_input";
+  const emojiStyle = useMemo(() => ({ fontSize: size, lineHeight: size + 2 }), [size]);
   const Icon = presentation.icon;
   const agentIconWrapperStyle = useMemo(
     () => [styles.agentIconWrapper, { width: size, height: size }],
@@ -172,7 +176,13 @@ export function WorkspaceTabIcon({
 
   return (
     <View style={agentIconWrapperStyle}>
-      <Icon size={size} color={iconColor} strokeWidth={strokeWidth} />
+      {presentation.emoji ? (
+        <Text style={emojiStyle} accessibilityLabel={presentation.emoji}>
+          {presentation.emoji}
+        </Text>
+      ) : (
+        <Icon size={size} color={iconColor} strokeWidth={strokeWidth} />
+      )}
       {isRunning ? (
         <View
           style={styles.statusRing}

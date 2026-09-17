@@ -1,4 +1,13 @@
 export const en = {
+  responseControl: {
+    title: "Response control",
+    hint: "Use final responses for chat names, icons, and completion summaries. Applies when an agent session next opens or resumes. Supports Claude, Codex, OpenCode, and Pi.",
+    automaticNaming: "Use automatic naming",
+    updating: "Updating chat name…",
+    retry: "Retry",
+    dismiss: "Dismiss",
+  },
+
   changeStats: {
     title: "Change breakdown",
     code: "Code",
