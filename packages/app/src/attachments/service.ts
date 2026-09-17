@@ -118,7 +118,15 @@ export async function encodeAttachmentsForSend(
     }),
   );
 
-  const failureCount = results.filter((result) => !result.ok).length;
+  const encoded: Array<{ data: string; mimeType: string }> = [];
+  let failureCount = 0;
+  for (const result of results) {
+    if (result.ok) {
+      encoded.push(result.value);
+    } else {
+      failureCount += 1;
+    }
+  }
   if (failureCount > 0) {
     throw new Error(
       failureCount === 1
@@ -127,12 +135,7 @@ export async function encodeAttachmentsForSend(
     );
   }
 
-  return results.map((result) => {
-    if (!result.ok) {
-      throw new Error("Unreachable attachment encoding failure.");
-    }
-    return result.value;
-  });
+  return encoded;
 }
 
 export async function resolveAttachmentPreviewUrl(attachment: AttachmentMetadata): Promise<string> {
