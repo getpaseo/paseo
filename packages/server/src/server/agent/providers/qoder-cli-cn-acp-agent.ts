@@ -42,7 +42,7 @@ export async function resolveQoderCliCnCatalogModels({
     return models;
   }
   const modelOption = findSelectConfigOption({ configOptions, category: "model" });
-  if (!modelOption || !findSelectConfigOption({ configOptions, category: "thought_level" })) {
+  if (!modelOption) {
     return models;
   }
 
@@ -67,9 +67,13 @@ export async function resolveQoderCliCnCatalogModels({
     } catch (error) {
       logger.warn(
         { modelId: model.id, error: toDiagnosticErrorMessage(error) },
-        `${provider} catalog probe could not resolve thinking options for model "${model.id}"; keeping its default options`,
+        `${provider} catalog probe could not resolve thinking options for model "${model.id}"; clearing thinking options`,
       );
-      resolved.push(model);
+      resolved.push({
+        ...model,
+        thinkingOptions: undefined,
+        defaultThinkingOptionId: undefined,
+      });
     }
   }
   return resolved;
