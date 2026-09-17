@@ -74,3 +74,11 @@ export declare function copyText(text: string): Promise<void>;
 export declare const TextInput: ForwardRefExoticComponent<
   TextInputProps & RefAttributes<NativeTextInput>
 >;
+
+/** Renders an SVG document string. Narrower than react-native-svg's XmlProps by design. */
+export declare const SvgXml: ComponentType<{
+  xml: string | null;
+  width?: number | string;
+  height?: number | string;
+  color?: string;
+}>;
