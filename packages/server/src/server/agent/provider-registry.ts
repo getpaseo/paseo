@@ -45,6 +45,7 @@ import { OpenCodeAgentClient } from "./providers/opencode-agent.js";
 import { OmpAgentClient } from "./providers/omp/agent.js";
 import type { OmpRuntime } from "./providers/omp/runtime.js";
 import { PiRpcAgentClient } from "./providers/pi/agent.js";
+import { QoderCliCnACPAgentClient } from "./providers/qoder-cli-cn-acp-agent.js";
 import { TraeACPAgentClient } from "./providers/trae-acp-agent.js";
 import { MockLoadTestAgentClient } from "./providers/mock-load-test-agent.js";
 import { MockSlowProviderClient } from "./providers/mock-slow-provider.js";
@@ -57,6 +58,7 @@ import {
   BUILTIN_PROVIDER_IDS,
   DEV_AGENT_PROVIDER_DEFINITIONS,
   getAgentProviderDefinition,
+  QODER_CLI_CN_MODES,
   type AgentProviderDefinition,
 } from "@getpaseo/protocol/provider-manifest";
 
@@ -770,7 +772,7 @@ function addDerivedProviders(
             label: override.label ?? providerId,
             description: override.description ?? "Custom ACP provider",
             defaultModeId: null,
-            modes: [],
+            modes: providerId === "qoder-cli-cn" ? QODER_CLI_CN_MODES : [],
           },
           override,
         ),
@@ -801,6 +803,9 @@ function addDerivedProviders(
           }
           if (providerId === "traecli") {
             return new TraeACPAgentClient(acpOptions);
+          }
+          if (providerId === "qoder-cli-cn") {
+            return new QoderCliCnACPAgentClient(acpOptions);
           }
           return new GenericACPAgentClient(acpOptions);
         },

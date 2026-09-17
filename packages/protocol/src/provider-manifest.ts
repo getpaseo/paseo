@@ -167,6 +167,45 @@ export const OMP_MODES: AgentProviderModeDefinition[] = [
   },
 ];
 
+export const QODER_CLI_CN_MODES: AgentProviderModeDefinition[] = [
+  {
+    id: "plan",
+    label: "Plan Mode",
+    description: "Analyze the codebase without executing tools or edits",
+    icon: "ShieldEllipsis",
+    colorTier: "planning",
+  },
+  {
+    id: "default",
+    label: "Always Ask",
+    description: "Prompts for permission on sensitive operations",
+    icon: "Shield",
+    colorTier: "safe",
+  },
+  {
+    id: "accept_edits",
+    label: "Accept File Edits",
+    description: "Auto-approves file edits within the working directory",
+    icon: "ShieldPlus",
+    colorTier: "moderate",
+  },
+  {
+    id: "auto",
+    label: "Auto Mode",
+    description: "Model classifier reviews permission prompts automatically",
+    icon: "ShieldCheck",
+    colorTier: "moderate",
+  },
+  {
+    id: "bypass_permissions",
+    label: "Bypass (YOLO)",
+    description: "Skip all permission prompts (use with caution)",
+    icon: "ShieldOff",
+    colorTier: "dangerous",
+    isUnattended: true,
+  },
+];
+
 const MOCK_LOAD_TEST_MODES: AgentProviderModeDefinition[] = [
   {
     id: "load-test",
