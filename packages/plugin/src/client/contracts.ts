@@ -17,6 +17,7 @@ import type {
   PluginTimelineTransformResult,
   PluginCleanup,
 } from "../contracts.js";
+import type { PluginForgeClientProviderContribution } from "../forge.js";
 
 export interface PluginHostProps {
   theme: PluginTheme;
@@ -44,8 +45,71 @@ interface PluginNavigableHostProps extends PluginHostProps {
       readonly workspaceId: string;
       readonly serverId?: string;
     }) => void;
+    readonly openAgentLaunch?: (
+      request: PluginAgentLaunchRequest,
+    ) => Promise<PluginAgentLaunchOpenResult>;
   };
 }
+
+export interface PluginAgentLaunchRequest {
+  launchId: string;
+  documentIncarnationId: string;
+  requestFingerprint: string;
+  projectId: string;
+  defaultWorkspaceId?: string;
+  title?: string;
+  seedPrompt: string;
+  clientMessageId: string;
+  labels: Readonly<Record<string, string>>;
+  expectedClientInstanceId?: string;
+  workspace: {
+    allowExisting: boolean;
+    allowCreate: boolean;
+  };
+  onEvent?: (event: PluginAgentLaunchEvent) => void;
+}
+
+export type PluginAgentLaunchOpenResult =
+  | {
+      status: "opened" | "restored";
+      clientInstanceId: string;
+      journalVersion: number;
+      submissionState: "editable" | "outcome_unknown_readonly";
+    }
+  | {
+      status: "completed";
+      clientInstanceId: string;
+      journalVersion: number;
+      terminalOutcome: "agent_known" | "discarded";
+      workspaceId?: string;
+      agentId?: string;
+    }
+  | {
+      status: "rejected";
+      code:
+        | "wrong_device"
+        | "launch_key_conflict"
+        | "journal_invalid"
+        | "journal_persist_failed"
+        | "no_eligible_workspace";
+      message: string;
+    };
+
+export type PluginAgentLaunchEvent =
+  | { type: "journal_ready"; clientInstanceId: string; journalVersion: number }
+  | { type: "workspace_request_started"; journalVersion: number }
+  | { type: "workspace_created"; workspaceId: string; journalVersion: number }
+  | { type: "agent_request_started"; workspaceId: string; journalVersion: number }
+  | { type: "agent_created"; workspaceId: string; agentId: string; journalVersion: number }
+  | { type: "discarded"; certainty: "not_submitted"; journalVersion: number }
+  | {
+      type: "failed";
+      stage: "journal" | "open" | "workspace_create" | "agent_create";
+      certainty: "not_submitted" | "outcome_unknown";
+      message: string;
+      workspaceId?: string;
+      journalVersion?: number;
+    };
 
 export interface PluginSurfaceProps extends PluginNavigableHostProps {}
 
@@ -101,6 +165,7 @@ export interface PluginClientContext extends PluginCommandCapabilities {
   addTimelineRenderer<Schema extends ZodType>(
     contribution: PluginTimelineRendererContribution<Schema>,
   ): PluginCleanup;
+  addForgeClientProvider(contribution: PluginForgeClientProviderContribution): PluginCleanup;
   openPanel(id: string, options: PluginClientOpenPanelOptions): void;
 }
 

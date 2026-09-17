@@ -314,6 +314,110 @@ describe("evaluatePluginClientBundle", () => {
     }
   });
 
+  it("collects a declarative Forge client provider", () => {
+    const plugin = evaluatePluginClientBundle(
+      "acme",
+      bundle(`
+        plugin.addForgeClientProvider({
+          definition: {
+            id: "acme",
+            displayName: " Acme ",
+            changeRequestAbbrev: "MR",
+            changeRequestNoun: "merge request",
+            changeRequestNumberPrefix: "!",
+            issueNumberPrefix: "#",
+            signIn: { cli: "aliyun", command: "aliyun configure" },
+            cloudHosts: ["forge.example.com"],
+          },
+          view: {
+            icon: { kind: "svg-path", viewBox: [0, 0, 24, 24], path: "M0 0h24v24H0z" },
+            brandColor: { light: "#ff6a00", dark: "#ff6a00" },
+          },
+        });
+      `),
+    );
+
+    expect(plugin.forgeClientProviders).toEqual([
+      expect.objectContaining({
+        definition: expect.objectContaining({ id: "acme", displayName: "Acme" }),
+      }),
+    ]);
+  });
+
+  it("accepts daemon-compatible Forge ids and normalizes facts families and cloud hosts", () => {
+    const plugin = evaluatePluginClientBundle(
+      "acme",
+      bundle(`
+        plugin.addForgeClientProvider({
+          definition: {
+            id: " 1.acme_forge ",
+            displayName: "Acme",
+            changeRequestAbbrev: "CR",
+            changeRequestNoun: "change request",
+            changeRequestNumberPrefix: "!",
+            issueNumberPrefix: "#",
+            signIn: null,
+            cloudHosts: [" Code.Acme.Test. ", "ssh.code.acme.test"],
+          },
+          facts: {
+            family: " 2.shared_facts ",
+            schema: { safeParse(value) { return { success: true, data: value }; } },
+          },
+        });
+      `),
+    );
+
+    expect(plugin.forgeClientProviders[0]?.definition).toMatchObject({
+      id: "1.acme_forge",
+      cloudHosts: ["code.acme.test", "ssh.code.acme.test"],
+    });
+    expect(plugin.forgeClientProviders[0]?.facts?.family).toBe("2.shared_facts");
+  });
+
+  it("rejects Forge cloud hosts that collide after normalization", () => {
+    expect(() =>
+      evaluatePluginClientBundle(
+        "acme",
+        bundle(`
+          plugin.addForgeClientProvider({
+            definition: {
+              id: "acme",
+              displayName: "Acme",
+              changeRequestAbbrev: "CR",
+              changeRequestNoun: "change request",
+              changeRequestNumberPrefix: "!",
+              issueNumberPrefix: "#",
+              signIn: null,
+              cloudHosts: ["Code.Acme.Test.", "code.acme.test"],
+            },
+          });
+        `),
+      ),
+    ).toThrow("duplicate cloud hosts");
+  });
+
+  it("rejects malformed Forge client contributions", () => {
+    expect(() =>
+      evaluatePluginClientBundle(
+        "acme",
+        bundle(`
+          plugin.addForgeClientProvider({
+            definition: {
+              id: "acme",
+              displayName: "Acme",
+              changeRequestAbbrev: "MR",
+              changeRequestNoun: "merge request",
+              changeRequestNumberPrefix: "!",
+              issueNumberPrefix: "#",
+              signIn: null,
+            },
+            view: { icon: { kind: "svg-path", viewBox: [0, 0, 0, 24], path: "M0 0" } },
+          });
+        `),
+      ),
+    ).toThrow("invalid SVG path icon");
+  });
+
   it("rejects duplicate workspace panel and Command Center ids", () => {
     expect(() =>
       evaluatePluginClientBundle(
@@ -537,6 +641,7 @@ describe("evaluatePluginClientBundle", () => {
     "@getpaseo/plugin/server",
     "@getpaseo/plugin/server/provider",
     "@getpaseo/plugin/server/acp",
+    "@getpaseo/plugin/server/forge-toolkit",
     "@getpaseo/plugin/client/host",
     "@getpaseo/plugin/react-native",
     "@getpaseo/plugin/ui",
@@ -574,6 +679,32 @@ describe("evaluatePluginClientBundle", () => {
     );
 
     expect(plugin.attachmentSources.map((source) => source.search.name)).toEqual(["issues.search"]);
+  });
+
+  it("provides Forge helpers through the shared SDK runtime", () => {
+    const plugin = evaluatePluginClientBundle(
+      "acme",
+      `(function(require) {
+        const shared = require("@getpaseo/plugin");
+        const definition = shared.defineForgeClientProvider({
+          definition: {
+            id: "acme",
+            displayName: "Acme",
+            changeRequestAbbrev: "CR",
+            changeRequestNoun: "change request",
+            changeRequestNumberPrefix: "!",
+            issueNumberPrefix: "#",
+            signIn: null,
+          },
+        });
+        return { default: function(plugin) {
+          plugin.addForgeClientProvider(definition);
+          return function() {};
+        } };
+      })`,
+    );
+
+    expect(plugin.forgeClientProviders[0]?.definition.displayName).toBe("Acme");
   });
 
   it("rejects modules that are not part of the client runtime", () => {

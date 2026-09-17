@@ -89,6 +89,7 @@ import {
   type ProviderSubagentStoreEvent,
 } from "./provider-subagents/store.js";
 import { withTimeout } from "../../utils/promise-timeout.js";
+import { renderForgePromptAttachments, type ForgeDefinitionLookup } from "./prompt-attachments.js";
 
 const RELOAD_SESSION_CLOSE_TIMEOUT_MS = 3_000;
 const INTERRUPT_SESSION_TIMEOUT_MS = 2_000;
@@ -312,6 +313,7 @@ export interface AgentManagerOptions {
     agentId: string;
     expectedTurnId: string;
   }) => Promise<void>;
+  forgeDefinitionLookup?: ForgeDefinitionLookup;
   logger: Logger;
 }
 
@@ -729,6 +731,7 @@ export class AgentManager {
   private logger: Logger;
   private readonly rescueTimeouts: Required<AgentManagerRescueTimeouts>;
   private readonly beforeSteerUnavailableFallback?: AgentManagerOptions["beforeSteerUnavailableFallback"];
+  private readonly forgeDefinitionLookup?: ForgeDefinitionLookup;
   private acceptingAgentRegistrations = true;
 
   constructor(options: AgentManagerOptions) {
@@ -751,6 +754,7 @@ export class AgentManager {
         options.rescueTimeouts?.interruptSessionMs ?? INTERRUPT_SESSION_TIMEOUT_MS,
     };
     this.beforeSteerUnavailableFallback = options.beforeSteerUnavailableFallback;
+    this.forgeDefinitionLookup = options.forgeDefinitionLookup;
     this.agentStreamCoalescer = new AgentStreamCoalescer({
       windowMs: options.agentStreamCoalesceWindowMs ?? AGENT_STREAM_COALESCE_DEFAULT_WINDOW_MS,
       timers: { setTimeout, clearTimeout },
@@ -2310,6 +2314,12 @@ export class AgentManager {
     };
   }
 
+  private preparePromptForProvider(prompt: AgentPromptInput): AgentPromptInput {
+    return this.forgeDefinitionLookup
+      ? renderForgePromptAttachments(prompt, this.forgeDefinitionLookup)
+      : prompt;
+  }
+
   /**
    * Try to run a prompt out-of-band — i.e. without allocating a foreground turn
    * and without canceling any active turn. Returns true when the session
@@ -2319,7 +2329,7 @@ export class AgentManager {
    */
   tryRunOutOfBand(agentId: string, prompt: AgentPromptInput, options?: AgentRunOptions): boolean {
     const agent = this.requireSessionAgent(agentId);
-    const handler = agent.session.tryHandleOutOfBand?.(prompt);
+    const handler = agent.session.tryHandleOutOfBand?.(this.preparePromptForProvider(prompt));
     if (!handler) {
       return false;
     }
@@ -2479,7 +2489,7 @@ export class AgentManager {
         agent,
         agentId,
         pendingRun,
-        prompt,
+        prompt: this.preparePromptForProvider(prompt),
         options,
       });
 
@@ -2671,10 +2681,13 @@ export class AgentManager {
       return { status: "unavailable" };
     }
     const result = await this.runSteerAdmission(agent, expectedTurnId, async () => {
-      const admission = await agent.session.steerActiveTurn!(prompt, {
-        ...options,
-        expectedTurnId,
-      });
+      const admission = await agent.session.steerActiveTurn!(
+        this.preparePromptForProvider(prompt),
+        {
+          ...options,
+          expectedTurnId,
+        },
+      );
       if (admission.status === "accepted") {
         await this.recordAcceptedSteer(agent, prompt, options?.clientMessageId, expectedTurnId);
       }
@@ -2701,10 +2714,13 @@ export class AgentManager {
 
     const result = agent.session.steerActiveTurn
       ? await this.runSteerAdmission(agent, expectedTurnId, async () => {
-          const admission = await agent.session.steerActiveTurn!(prompt, {
-            ...options,
-            expectedTurnId,
-          });
+          const admission = await agent.session.steerActiveTurn!(
+            this.preparePromptForProvider(prompt),
+            {
+              ...options,
+              expectedTurnId,
+            },
+          );
           if (admission.status === "accepted") {
             await this.recordAcceptedSteer(agent, prompt, options?.clientMessageId, expectedTurnId);
           }

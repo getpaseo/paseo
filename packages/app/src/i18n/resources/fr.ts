@@ -1060,6 +1060,7 @@ export const fr: TranslationResources = {
         installCli: "Installez la CLI {{cli}} pour utiliser les fonctionnalités {{brand}}.",
         signIn: "Exécutez {{command}} pour utiliser les fonctionnalités {{brand}}.",
         generic: "Configurez {{brand}} sur cet hôte pour utiliser ses fonctionnalités.",
+        openSettings: "Ouvrez les paramètres {{brand}} pour terminer la configuration.",
       },
     },
   },

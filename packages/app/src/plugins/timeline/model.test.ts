@@ -33,6 +33,7 @@ function plugin(input: {
       },
     ],
     timelineRenderers: [],
+    forgeClientProviders: [],
   };
 }
 

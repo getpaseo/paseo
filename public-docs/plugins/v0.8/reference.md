@@ -257,10 +257,26 @@ Use `openSettings`, `openSurface`, and `openPanel` for your own registered contr
 ### Server runtime
 
 Paseo provides `@getpaseo/plugin`, `@getpaseo/plugin/server`,
-`@getpaseo/plugin/server/provider`, `@getpaseo/plugin/server/acp`, and `zod` to server code. Backend
+`@getpaseo/plugin/server/provider`, `@getpaseo/plugin/server/acp`,
+`@getpaseo/plugin/server/forge-toolkit`, and `zod` to server code. Backend
 contributions run in a daemon subprocess with Node access to the host machine. Keep filesystem,
 process, credential, and other machine-local work under `server/`. A plugin without
 `index.server.ts` starts no subprocess.
+
+`server.secrets` holds values that must stay on the daemon host — API tokens above all. Settings
+documents are served to clients over `settings.<id>.read`, so a token placed there reaches every
+connected app; `server.secrets` publishes no RPC and writes an owner-only file next to them.
+
+```ts
+await server.secrets.set("api-token", token);
+const token = await server.secrets.get("api-token"); // string | null
+await server.secrets.has("api-token");
+await server.secrets.keys(); // names only
+await server.secrets.delete("api-token");
+```
+
+Keys match `^[a-z0-9][a-z0-9._-]*$`. To collect a token from a settings screen, expose your own
+write-only RPC and a status RPC that returns whether a value exists, never the value.
 
 ### Providers
 
@@ -687,14 +703,68 @@ export default function contribute(client: PluginClientContext) {
 
 `PluginSurfaceProps` contains:
 
-| Field        | Meaning                                                                                                                                                                                                                                                                                                                           |
-| ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `theme`      | Typed `PluginTheme` color tokens for the active Paseo theme.                                                                                                                                                                                                                                                                      |
-| `host`       | Selected host `id` and display `label`.                                                                                                                                                                                                                                                                                           |
-| `layout`     | `compact` and the `ios`, `android`, or `web` platform.                                                                                                                                                                                                                                                                            |
-| `navigation` | Optional client navigation. `openAgent({ agentId, serverId? })` and `openWorkspace({ workspaceId, serverId? })` open targets on `serverId`, or on the selected host when omitted. `openBrowser({ url, workspaceId, serverId? })` is available only on Electron; see [links and browsers](#external-links-and-workspace-browsers). |
+| Field        | Meaning                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `theme`      | Typed `PluginTheme` color tokens for the active Paseo theme.                                                                                                                                                                                                                                                                                                                                                                |
+| `host`       | Selected host `id` and display `label`.                                                                                                                                                                                                                                                                                                                                                                                     |
+| `layout`     | `compact` and the `ios`, `android`, or `web` platform.                                                                                                                                                                                                                                                                                                                                                                      |
+| `navigation` | Optional client navigation. `openAgent({ agentId, serverId? })` and `openWorkspace({ workspaceId, serverId? })` open targets on `serverId`, or on the selected host when omitted. `openBrowser({ url, workspaceId, serverId? })` is available only on Electron; see [links and browsers](#external-links-and-workspace-browsers). `openAgentLaunch` opens or restores a Host-owned native launch journal and composer flow. |
 
 Paseo owns the route, header, close action, host picker, error boundary, and query client. The plugin owns the surface body.
+
+## Native agent launch
+
+`navigation.openAgentLaunch(request)` on surface and panel props opens the existing workspace draft or
+`/new` flow seeded with a prompt, immutable correlation labels, and a stable `clientMessageId`. The
+user still chooses provider, model, mode, thinking, isolation, and branch in the native composer and
+submits explicitly; the plugin never creates the agent itself. The capability is optional: an older
+client omits it, and the plugin must show an upgrade notice instead of writing any claim.
+
+```ts
+const result = await navigation.openAgentLaunch({
+  launchId: attemptId,
+  documentIncarnationId,
+  requestFingerprint,
+  projectId,
+  defaultWorkspaceId,
+  title,
+  seedPrompt,
+  clientMessageId,
+  labels,
+  expectedClientInstanceId,
+  workspace: { allowExisting: true, allowCreate: false },
+  onEvent(event) {
+    // best effort; persist your own facts from these
+  },
+});
+```
+
+| Field                               | Contract                                                                                                                                                       |
+| ----------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `launchId`, `documentIncarnationId` | Together with the host and plugin IDs they key one device-local journal. A reset that changes the incarnation never resumes an old journal.                    |
+| `requestFingerprint`                | Immutable identity of this launch (project, labels, `clientMessageId`, seed). A different fingerprint for the same key is rejected with `launch_key_conflict`. |
+| `projectId`, `defaultWorkspaceId`   | Existing targets are limited to unarchived workspaces of that project; an invalid default is ignored with a diagnostic.                                        |
+| `seedPrompt`, `title`               | Stored in the persisted draft, never in a route URL, and cleared once the launch is terminal. The final composer text is not reported back.                    |
+| `labels`, `clientMessageId`         | Attached to `create_agent_request` on every path: the workspace draft, `/new`, and the background handoff after leaving `/new`.                                |
+| `expectedClientInstanceId`          | Pass the instance returned earlier to resume on the same installation; another device gets `wrong_device` and creates nothing.                                 |
+| `workspace`                         | `allowExisting` opens the draft tab of a same-project workspace; `allowCreate` opens `/new`. Neither available returns `no_eligible_workspace`.                |
+
+Results are `opened`, `restored` (same key reopened; `submissionState` is `editable` or
+`outcome_unknown_readonly`), `completed` (`terminalOutcome` is `agent_known` or `discarded`, with the
+known IDs), or `rejected` with `wrong_device`, `launch_key_conflict`, `journal_invalid`,
+`journal_persist_failed`, or `no_eligible_workspace`. An invalid journal is never deleted silently.
+
+Events are `journal_ready`, `workspace_request_started`, `workspace_created`,
+`agent_request_started`, `agent_created`, `discarded` (`not_submitted`), and `failed` with a `stage`
+and `certainty`. `discarded` means the user closed the launch's workspace draft tab before any
+request-start; clearing the composer's text or attachments does not discard a launch. Each request-start is persisted before the daemon request is sent. After a stage's
+request-start, every timeout, disconnect, error, or negative daemon response for that stage is
+`outcome_unknown`: the seeded composer becomes read-only, ordinary retry is disabled, and the
+plugin must offer status checks or an explicit new attempt instead. A stage that never started stays
+`not_submitted`. Reopening the same key replays the journal's facts to `onEvent`; a thrown callback is
+logged and never breaks the native flow. Same-key calls are serialized within one JavaScript runtime
+only; multiple browser tabs or Electron renderers sharing storage are not fenced. Removing the plugin
+clears journals on connected clients; offline devices clean up on reconnect or local GC.
 
 ## Host UI
 
@@ -1156,18 +1226,39 @@ Call `useSettings(preferences)` in any contributed component. It returns a discr
 | `invalid` | `error` and `revision`; stored data is preserved.                        |
 | `error`   | `error` from the read/connection.                                        |
 
-The server handle exposes `read()` and `subscribe()`. `read()` returns the same `ready` or
-`invalid` state as the client hook, including the opaque revision. `subscribe()` returns a cleanup
-function and receives a new `ready` state after a successful save, reset, or migration. Invalid
-writes and revision conflicts do not notify subscribers. Listener failures are logged without
-turning a committed write into a failed save.
+The server handle exposes `read()`, `subscribe()`, and `update()`. `read()` returns the same `ready`
+or `invalid` state as the client hook, including the opaque revision; an `invalid` state also has a
+stable `code`. `subscribe()` returns a cleanup function and receives a new `ready` state after a
+successful save, reset, migration, or server update. Invalid writes and revision conflicts do not
+notify subscribers. Listener failures are logged without turning a committed write into a failed
+save.
 
 ```ts
 const current = await settings.read();
 if (current.status === "ready") {
   // Use current.values and current.revision.
 }
+
+const updated = await settings.update((current) => ({
+  status: "commit",
+  values: { ...current, showMetadata: !current.showMetadata },
+  result: null,
+}));
+if (updated.status === "invalid") {
+  console.warn("Settings require explicit recovery", { code: updated.code });
+}
 ```
+
+`update()` returns `saved` or `unchanged` with `values`, `revision`, and the mutator's `result`,
+or `invalid` with `error` and `code`. The mutator runs synchronously with a deeply frozen detached
+value and must return `commit` or `unchanged`; do not perform I/O or call the same document
+recursively. Server updates, client CAS writes, reset, and migration use one serialized queue, so a
+client save with an older revision is rejected after a server update. Migration plus mutation writes
+and notifies at most once. Stable codes are `stored_invalid`, `migration_failed`, `mutator_threw`,
+`thenable_returned`, `reentrant_access`, `next_invalid`, and `store_poisoned`. A storage operation
+that never settles poisons the store; later access reports `store_poisoned` until plugin reload.
+`server.paseo` exposes the contribution's already-connected daemon SDK, so startup recovery does
+not depend on a first RPC or lifecycle event.
 
 Every state also exposes `saving`, `saveError`, and these actions:
 
@@ -1747,6 +1838,134 @@ export default function contribute(server: PluginServerContext) {
 Inputs and outputs are validated on both sides. RPC names start with a lowercase letter and contain lowercase letters, numbers, dots, hyphens, or underscores. `useRpc()` returns a typed async function. Use TanStack Query for request state, caching, and mutations.
 
 Backend handlers receive the same `PaseoApi` as `{ paseo }`. Their connection belongs to the subprocess and closes when the plugin stops. It does not subscribe to timelines or catalog events until plugin code subscribes. Follow the [SDK event contract](../../sdk/events.md) for cleanup and timeline replacements. Backend code can use Node APIs and dependencies installed in the plugin directory.
+
+## Add a Git Forge provider
+
+A Forge provider uses one shared definition and separate server and client registrations. Keep
+runtime code under its matching directory and wire it from the matching entry:
+
+```ts
+// index.server.ts
+import type { PluginServerContext } from "@getpaseo/plugin/server";
+import { acmeServerProvider } from "./server/acme";
+
+export default function contribute(server: PluginServerContext) {
+  server.addForgeServerProvider(acmeServerProvider);
+  return () => {};
+}
+```
+
+```ts
+// index.client.ts
+import type { PluginClientContext } from "@getpaseo/plugin/client";
+import { acmeClientProvider } from "./client/acme";
+
+export default function contribute(client: PluginClientContext) {
+  client.addForgeClientProvider(acmeClientProvider);
+  return () => {};
+}
+```
+
+The server provider lives under `server/`:
+
+```ts
+import { defineForgeServerProvider } from "@getpaseo/plugin/server";
+import { acmeDefinition } from "../shared/acme-definition";
+import { createAcmeService } from "./acme-service";
+
+export const acmeServerProvider = defineForgeServerProvider({
+  definition: acmeDefinition,
+  service: createAcmeService(),
+});
+```
+
+`service` implements `PluginForgeServerService`. It owns authentication, vendor API or CLI calls,
+change-request status and search, checks, activity, create/merge commands, and checkout targets.
+The complete interface is required; reject an unsupported command with a clear error. Throw
+`ForgeCliMissingError`, `ForgeAuthenticationError`, or `ForgeCommandError` from
+`@getpaseo/plugin/server` when the daemon must distinguish setup and authentication failures. If
+`isAuthenticated()` throws those classified errors, set `authProbeCanThrow: true`; otherwise return
+`false` on authentication failure. Return explicit `checkoutRefs` for cross-repository heads. Set
+`supportsCrossRepoCheckoutWithoutRefs: true` only when the Forge exposes a universal fetch ref that
+does not need those entries.
+
+A CLI-backed provider builds that service on `@getpaseo/plugin/server/forge-toolkit`, which is
+vendor-neutral:
+
+```ts
+import {
+  createCachedCliPathResolver,
+  createForgeCliRunner,
+  createForgePageGuard,
+  findExecutable,
+  parseCliJsonOutput,
+  parseGitRemoteLocation,
+  redactCommandArgs,
+} from "@getpaseo/plugin/server/forge-toolkit";
+```
+
+`createForgeCliRunner` returns `run` and `normalizeError`. Spawn through `run`, then pass anything
+it throws to `normalizeError`, which maps `ENOENT`, authentication text, timeouts, and non-zero
+exits onto the classified errors above so auth state stays correct across the subprocess boundary. `findExecutable` and `createCachedCliPathResolver` resolve the binary once per process.
+`parseCliJsonOutput` validates `--json` output through a Zod schema. `redactCommandArgs` strips
+flag values that carry user text before a failure is reported. `parseGitRemoteLocation` reads the
+transport, host, port, and path out of a remote URL. `createForgePageGuard` stops a page walk that
+repeats a page or runs without a reported total. Supply the binary name and command shapes; the
+toolkit holds no vendor strings.
+
+The client provider stays under `client/` and contains no Node imports. Put its Zod facts schema and
+provider definition under `shared/`:
+
+```ts
+import { defineForgeClientProvider, defineForgeFacts } from "@getpaseo/plugin";
+import { acmeDefinition } from "../shared/acme-definition";
+import { AcmeFactsSchema } from "../shared/acme-facts";
+
+const facts = defineForgeFacts({
+  family: "acme",
+  schema: AcmeFactsSchema,
+  deriveMergeCapability: ({ ready }) => ({
+    directMergeReady: ready,
+    canEnableAutoMerge: false,
+    autoMergeEnabled: false,
+    canDisableAutoMerge: false,
+    mergeBlockedByQueue: false,
+    allowedMethods: ["merge"],
+    preferredMethod: "merge",
+  }),
+});
+
+export const acmeClientProvider = defineForgeClientProvider({
+  definition: acmeDefinition,
+  facts,
+  view: {
+    icon: { kind: "svg-path", viewBox: [0, 0, 24, 24], path: "..." },
+    brandColor: { light: "#7C3AED", dark: "#A78BFA" },
+  },
+});
+```
+
+The optional client fields are:
+
+- `facts`: Zod validation and merge-capability derivation for the open `forgeSpecific` envelope;
+- `urlGrammar`: tree, blob, line-anchor, checks-page, and pasted-reference syntax. `lineAnchor` is a
+  template pair, `{ single, range }`, with `{start}` and `{end}` substituted — `GITHUB_LINE_ANCHOR`
+  (`#L12-L20`) and `GITLAB_LINE_ANCHOR` (`#L12-20`) ship for the two common shapes, and any other
+  spelling is expressible without a Paseo change. Omit `range` when the forge cannot anchor one;
+- `view`: one validated SVG path and light/dark brand colors;
+- `setup`: `{ screenId }` naming a settings screen this plugin registered. Set it when
+  `definition.signIn` is null — a token-authenticated forge has no CLI to install and no command to
+  run, so the PR pane's setup callout opens that screen instead of showing untargeted guidance.
+
+Provider IDs and facts families match `^[a-z0-9][a-z0-9._-]*$`. The provider ID must not collide
+with a built-in or another plugin provider on that host. `cloudHosts` lists known public hosts. Add
+`probeHost` to the server provider only when a self-hosted host can be recognized through existing
+local authentication; do not send credentials or anonymous probes to a remote-derived hostname.
+
+Forge contributions are scoped to their daemon. Reload, disable, removal, subprocess failure, and
+the global plugin switch unregister the adapter, stop status polling, clear resolver state, and
+remove its client presentation. Cross-repository checkout refs can set `remoteUrl` when the head is
+not fetchable through an existing Git remote.
 
 ## Debug backend output
 

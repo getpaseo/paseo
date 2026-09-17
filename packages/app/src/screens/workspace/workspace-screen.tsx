@@ -110,6 +110,7 @@ import { useArchiveAgent } from "@/hooks/use-archive-agent";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import { removeResidentBrowserWebview } from "@/desktop/browser/resident-webviews";
 import { createWorkspaceBrowser, useBrowserStore } from "@/desktop/browser/store";
+import { discardAgentLaunchForClosedDraft } from "@/plugins/agent-launch/journal";
 import { getDesktopHost } from "@/desktop/host";
 import { buildProviderCommand } from "@/utils/provider-command-templates";
 import { generateDraftId } from "@/stores/draft-keys";
@@ -1898,6 +1899,9 @@ function WorkspaceScreenContent({
       if (input.target?.kind === "agent") {
         unpinWorkspaceAgent(persistenceKey, input.target.agentId);
         hideWorkspaceAgent(persistenceKey, input.target.agentId);
+      }
+      if (input.target?.kind === "draft") {
+        void discardAgentLaunchForClosedDraft(input.target.draftId).catch(() => undefined);
       }
       if (input.target?.kind === "browser") {
         const { browserId } = input.target;

@@ -1,8 +1,9 @@
 # Plugins
 
 Local plugins contribute daemon RPCs, native app surfaces, workspace panels, Command Center items,
-client slash commands, timeline items, header buttons, composer pills, app themes, composer attachment sources, and settings screens.
-Paseo executes `index.server.ts` in a subprocess and `index.client.tsx` in every connected app.
+client slash commands, timeline items, header buttons, composer pills, app themes, composer attachment sources,
+settings screens, and Git Forge providers. Paseo executes `index.server.ts` in a subprocess and
+`index.client.tsx` in every connected app.
 
 > **Trust every plugin you add.** `paseo plugin add` and `paseo plugin install` mean “I trust this codebase.” Plugins are unsandboxed: server code and Git preparation commands run with the daemon user's access on the daemon host, and client contributions run inside Paseo. The repository's dependencies and future updates are part of that trust decision. With `--host`, preparation runs on that remote daemon host.
 
@@ -288,6 +289,20 @@ belongs to the app; plugins do not receive Expo Router or workspace-layout store
 See the public [navigation fields](../public-docs/plugins/v0.8/reference.md#surfaces-and-sidebar-items)
 and [external links and workspace browsers](../public-docs/plugins/v0.8/reference.md#external-links-and-workspace-browsers)
 for the author-facing contract.
+Surface and panel props also expose optional
+`openAgentLaunch`, a Host-owned operation that seeds the existing native workspace draft or
+`/new` flow with immutable labels and a stable message ID. Its local journal is scoped by host,
+plugin, document incarnation, and launch ID; request-start is persisted before daemon effects,
+drafts survive app restart, and completed tombstones prevent ordinary replay. Same-key
+serialization covers one JavaScript runtime only, not multiple browser tabs or Electron renderers.
+The capability's absence is the compatibility gate for older clients. The seed prompt is not proof
+of final composer content. The journal lives in `packages/app/src/plugins/agent-launch/`; its
+draft binding is the `agentLaunch` record on the draft store (v6). Journal-backed drafts skip the
+ordinary `CREATE_FAILED → draft` restore after a request-start. Closing a journal-backed workspace draft
+tab before any request-start is the only explicit discard; emptying the composer keeps the draft
+active and bound, because the draft store's `abandoned` lifecycle also means "content emptied" and
+finalized drafts are pruned. The public contract, including the `no_eligible_workspace`
+rejection, is in the reference under "Native agent launch".
 
 ## Lifecycle hooks
 
@@ -439,6 +454,68 @@ the agent. Built-in client commands win name and alias collisions, plugin comman
 provider-command collisions, and the first plugin in stable catalog order wins collisions between
 plugins. Plugin slash commands do not run when the composer has attachments.
 
+## Contribute a Git Forge
+
+A Forge plugin registers the same provider ID from separate runtime entries. Keep the provider
+definition under `shared/` so the client and server cannot drift:
+
+```ts
+// index.server.ts
+import type { PluginServerContext } from "@getpaseo/plugin/server";
+import { acmeServerProvider } from "./server/acme";
+
+export default function contribute(server: PluginServerContext) {
+  server.addForgeServerProvider(acmeServerProvider);
+  return () => {};
+}
+```
+
+```ts
+// index.client.ts
+import type { PluginClientContext } from "@getpaseo/plugin/client";
+import { acmeClientProvider } from "./client/acme";
+
+export default function contribute(client: PluginClientContext) {
+  client.addForgeClientProvider(acmeClientProvider);
+  return () => {};
+}
+```
+
+The server provider implements `PluginForgeServerService`. It owns authentication, API/CLI calls,
+search, status, checks, timeline, create/merge commands, and change-request checkout targets. Use
+the exported `ForgeCliMissingError`, `ForgeAuthenticationError`, and `ForgeCommandError` classes so
+the daemon preserves setup and auth failure states across the subprocess boundary. If
+`isAuthenticated()` throws those classified errors, set `authProbeCanThrow: true`; otherwise return
+`false` on authentication failure. Return explicit `checkoutRefs` for cross-repository heads. Set
+`supportsCrossRepoCheckoutWithoutRefs: true` only when the forge exposes a universal fetch ref that
+does not need those entries. Take the CLI plumbing from
+`@getpaseo/plugin/server/forge-toolkit` rather than writing it again — see
+[the plugin toolkit](forge-providers.md#the-plugin-toolkit).
+
+A forge with no CLI sets `signIn: null` and names a `setup` screen instead: the PR pane's setup
+callout then opens that screen rather than telling the user to "set up" the forge with no further
+detail. Paseo fills in the owning plugin, so a provider cannot point setup at another plugin's
+screen.
+
+The client provider contributes the shared definition plus optional facts parsing, merge-capability
+derivation, source URL grammar, a declarative SVG path, and brand colors. Client contributions are
+scoped to the daemon that supplied the plugin catalog. Do not put them in a process-global Forge
+map; one app can connect to hosts with different installed providers.
+
+Provider IDs and facts families match `^[a-z0-9][a-z0-9._-]*$`. They cannot replace an existing
+registration on the same host, and built-in Forge IDs are reserved. `cloudHosts` is the bounded list
+of public hosts. Use `probeHost` only for a self-hosted forge that can recognize a host through
+existing local authentication without sending credentials or anonymous requests to a
+remote-derived host.
+
+Reload, disable, removal, subprocess failure, and the global plugin switch unregister the server
+adapter and client contribution. Registry changes stop active status polls, discard cached adapter
+resolution, and refresh affected workspaces. Async `invalidate`, `defaultCheckoutRefs`, and
+`buildPrLocalBranchName` calls finish through the subprocess proxy before the next dependent read.
+
+The generic Forge architecture and the built-in path are documented in
+[forge-providers.md](forge-providers.md).
+
 ## Contribute composer attachments
 
 Register a declarative attachment source backed by a plugin RPC. Paseo owns the attachment menu,
@@ -485,9 +562,41 @@ Its writer lives with the plugin subprocess, while its directory lives outside m
 so updates and reloads retain values. Settings-change notifications must not enter the catalog
 reload path: that path disposes the plugin and would destroy open drafts after every save.
 
-`server.registerSettings(definition)` returns a server-side handle. Use `read()` for the current
-`ready` or `invalid` state and `subscribe()` for successful saves, resets, and migrations. The
-subscription cleanup belongs in the plugin's contribution cleanup when it outlives the entry.
+`server.registerSettings(definition)` returns a server-side handle for the same document. Use
+`read()` for the current `ready` or `invalid` state (invalid states carry a stable `code`),
+`subscribe()` for successful saves, resets, migrations, and server updates, and `update(mutator)` for
+a serialized read-modify-write. Mutators are synchronous, receive a deeply frozen detached value, and
+return `commit` or `unchanged`. Server updates, client CAS writes, reset, and migration share one
+installation queue and one atomic file, and every commit notifies subscribers and clients once.
+Reentry, thenables, invalid values, and mutator throws do not write; only watchdog poisoning blocks
+later access until plugin reload. The subscription cleanup belongs in the plugin's contribution
+cleanup when it outlives the entry. `server.paseo` is the already-connected owner-authority daemon
+SDK and is available during contribution startup as well as handlers and lifecycle callbacks.
+
+## Keep secrets on the daemon
+
+**Never put an API token in a settings document.** `settings.<id>.read` is an ordinary RPC and the
+id is derivable from the plugin, so any connected client can fetch that document — the token would
+reach every phone attached to the daemon, and it is cached there.
+
+`server.secrets` stores values that never leave the daemon host: `get`, `has`, `keys`, `set`,
+`delete`, keyed by `^[a-z0-9][a-z0-9._-]*$`. It writes `_secrets.json` beside the settings documents
+with owner-only permissions and publishes no RPC handler at all. The leading underscore matters: a
+settings id must start with a letter, so a plugin's `secrets` settings document, which any client can
+overwrite or reset, can never share that file.
+
+Give the user a UI by pairing it with your own RPCs — one that only accepts a value, one that only
+reports whether a value exists:
+
+```ts
+server.handle(setTokenRpc, async ({ token }) => {
+  await server.secrets.set("api-token", token);
+  return { ok: true };
+});
+server.handle(tokenStatusRpc, async () => ({ configured: await server.secrets.has("api-token") }));
+```
+
+Settings then hold only the non-secret half: base URL, self-hosted host, which account to use.
 
 ## Contribute a theme
 

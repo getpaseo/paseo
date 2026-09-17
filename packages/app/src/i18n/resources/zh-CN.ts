@@ -1020,6 +1020,7 @@ export const zhCN: TranslationResources = {
         installCli: "安装 {{cli}} CLI 以使用 {{brand}} 功能。",
         signIn: "运行 {{command}} 以使用 {{brand}} 功能。",
         generic: "在此主机上设置 {{brand}} 以使用其功能。",
+        openSettings: "打开 {{brand}} 设置以完成配置。",
       },
     },
   },

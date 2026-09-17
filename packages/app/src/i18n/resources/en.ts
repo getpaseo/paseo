@@ -1036,6 +1036,7 @@ export const en = {
         installCli: "Install the {{cli}} CLI to use {{brand}} features.",
         signIn: "Run {{command}} to use {{brand}} features.",
         generic: "Set up {{brand}} on this host to use its features.",
+        openSettings: "Open {{brand}} settings to finish setup.",
       },
     },
   },

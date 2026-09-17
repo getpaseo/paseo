@@ -4,6 +4,7 @@ import { resolveWorkspaceMapKeyByIdentity } from "@/utils/workspace-identity";
 import { useMemo } from "react";
 import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
 import { navigateToAgent } from "@/utils/navigate-to-agent";
+import { openPluginAgentLaunch } from "./agent-launch";
 
 import { getIsElectron } from "@/constants/platform";
 import { createWorkspaceBrowser } from "@/desktop/browser/store";
@@ -11,10 +12,11 @@ import { createPluginHostNavigation } from "./host-navigation-model";
 
 export function usePluginHostNavigation(
   serverId: string,
+  pluginId: string,
 ): NonNullable<PluginSurfaceProps["navigation"]> {
   return useMemo(
-    () =>
-      createPluginHostNavigation(serverId, {
+    () => ({
+      ...createPluginHostNavigation(serverId, {
         browserAvailable: getIsElectron(),
         openAgent: navigateToAgent,
         openWorkspace: navigateToWorkspace,
@@ -25,6 +27,8 @@ export function usePluginHostNavigation(
             workspaceId,
           }),
       }),
-    [serverId],
+      openAgentLaunch: (request) => openPluginAgentLaunch({ serverId, pluginId, request }),
+    }),
+    [pluginId, serverId],
   );
 }

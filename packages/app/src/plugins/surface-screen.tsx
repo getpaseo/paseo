@@ -68,7 +68,7 @@ function SurfaceRenderer({
   host: PluginSurfaceProps["host"];
   theme: PluginTheme;
 }) {
-  const navigation = usePluginHostNavigation(host.id);
+  const navigation = usePluginHostNavigation(host.id, plugin.id);
   return (
     <PluginRuntimeBoundary plugin={plugin} client={client}>
       <Surface theme={theme} host={host} layout={layout} navigation={navigation} />

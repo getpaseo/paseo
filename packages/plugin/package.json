@@ -28,6 +28,11 @@
       "source": "./src/server/acp.ts",
       "default": "./dist/server/acp.js"
     },
+    "./server/forge-toolkit": {
+      "types": "./dist/server/forge-toolkit.d.ts",
+      "source": "./src/server/forge-toolkit.ts",
+      "default": "./dist/server/forge-toolkit.js"
+    },
     "./client/react-native": {
       "types": "./dist/client/react-native.d.ts",
       "source": "./src/client/react-native.ts",

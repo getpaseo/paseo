@@ -3,6 +3,8 @@ import path from "node:path";
 import { stat, rm } from "node:fs/promises";
 import type pino from "pino";
 import type { ProviderRegistration } from "@getpaseo/plugin/server/provider";
+import type { ForgeDefinition } from "@getpaseo/protocol/forge-manifest";
+import { normalizeHost } from "@getpaseo/protocol/git-remote";
 import {
   PluginIdSchema,
   type PluginLogEntry,
@@ -14,10 +16,16 @@ import {
 import { parsePluginSourceReference } from "@getpaseo/protocol/plugin-source-reference";
 import { assertPluginCompatibility } from "@getpaseo/protocol/plugin-requirements";
 import { BUILTIN_PROVIDER_IDS } from "@getpaseo/protocol/provider-manifest";
+import type {
+  PluginForgeServerProviderDescriptor,
+  PluginForgeServiceMethod,
+} from "@getpaseo/plugin/server";
 import type { DaemonConfigStore } from "../daemon-config-store.js";
 import { type ManagedPluginCandidate, ManagedPluginSources } from "./managed-source.js";
+import { createDefaultForgeRegistry, type ForgeRegistry } from "../../services/forge-registry.js";
 import { readPluginManifest } from "./manifest.js";
 import { runPluginBuild } from "./preparation.js";
+import { createPluginForgeServiceProxy } from "./forge-service-proxy.js";
 import { PluginRuntime } from "./runtime.js";
 import type { PluginProviderMetadata } from "./plugin-process-protocol.js";
 import { readPluginProviderIcon } from "./provider-icon.js";
@@ -28,7 +36,14 @@ interface PluginRuntimePort {
   emit?: PluginLifecycle["emit"];
   before?: PluginLifecycle["before"];
   catalog: PluginRuntime["catalog"];
+  forgeProviders?(pluginId: string): readonly PluginForgeServerProviderDescriptor[];
   invoke(pluginId: string, method: string, input: unknown): Promise<unknown>;
+  invokeForge?(
+    pluginId: string,
+    providerId: string,
+    method: PluginForgeServiceMethod | "probeHost",
+    input: unknown,
+  ): Promise<unknown>;
   getLogs(pluginId: string): PluginLogEntry[];
   clearLogs(pluginId: string): void;
   getProviderRegistrations?(pluginId: string): readonly PluginProviderMetadata[];
@@ -46,6 +61,7 @@ interface PluginServiceDependencies {
   settingsDirectory?: string;
   runtime?: PluginRuntimePort;
   managedSources?: ManagedPluginSources;
+  forgeRegistry?: ForgeRegistry;
 }
 
 function resolvePluginStatus(input: {
@@ -57,11 +73,29 @@ function resolvePluginStatus(input: {
   return input.running ? "running" : "failed";
 }
 
+function toForgeDefinition(
+  definition: PluginForgeServerProviderDescriptor["definition"],
+): ForgeDefinition {
+  return {
+    id: definition.id,
+    displayName: definition.displayName,
+    changeRequestAbbrev: definition.changeRequestAbbrev,
+    changeRequestNoun: definition.changeRequestNoun,
+    changeRequestNumberPrefix: definition.changeRequestNumberPrefix,
+    issueNumberPrefix: definition.issueNumberPrefix,
+    iconKind: "git",
+    signIn: definition.signIn ? { ...definition.signIn } : null,
+    ...(definition.cloudHosts ? { cloudHosts: [...definition.cloudHosts] } : {}),
+  };
+}
+
 export class PluginService {
   private readonly runtime: PluginRuntimePort;
   private readonly managedSources: ManagedPluginSources | null;
   private readonly logger: pino.Logger;
   private readonly errors = new Map<string, string>();
+  private readonly forgeRegistry: ForgeRegistry;
+  private readonly forgeProviderUnregisters = new Map<string, Array<() => void>>();
   private readonly listeners = new Set<(pluginId: string) => void>();
   private readonly providers = new Map<string, ProviderRegistration>();
   private readonly providerIdsByPlugin = new Map<string, readonly string[]>();
@@ -87,8 +121,10 @@ export class PluginService {
         },
       });
     this.managedSources = dependencies.managedSources ?? null;
+    this.forgeRegistry = dependencies.forgeRegistry ?? createDefaultForgeRegistry();
     this.runtime.subscribe((pluginId, error) => {
       this.removeProviderRegistrations(pluginId);
+      this.unregisterPluginForgeProviders(pluginId);
       if (error) this.errors.set(pluginId, error);
       this.notify(pluginId);
     });
@@ -305,7 +341,9 @@ export class PluginService {
         throw new Error("Plugins are globally disabled");
       }
       this.errors.delete(pluginId);
-      await this.stopPlugin(pluginId);
+      const stopping = this.stopPlugin(pluginId);
+      this.notify(pluginId);
+      await stopping;
       await this.startExplicit(pluginId, source.path);
       this.notify(pluginId);
       return this.requireItem(pluginId);
@@ -329,11 +367,11 @@ export class PluginService {
   async disablePlugin(pluginId: string): Promise<PluginListItem> {
     const source = this.requireSource(pluginId);
     this.patchSource(pluginId, { ...source, enabled: false });
+    this.errors.delete(pluginId);
     const stopping = this.stopPlugin(pluginId);
+    this.notify(pluginId);
     return this.enqueue(async () => {
       await stopping;
-      this.errors.delete(pluginId);
-      this.notify(pluginId);
       return this.requireItem(pluginId);
     });
   }
@@ -344,6 +382,8 @@ export class PluginService {
     const sources = { ...this.configStore.get().plugins };
     delete sources[pluginId];
     this.configStore.patch({ plugins: sources });
+    this.errors.delete(pluginId);
+    this.notify(pluginId);
     await this.enqueue(async () => {
       await stopping;
       this.runtime.clearLogs(pluginId);
@@ -427,9 +467,11 @@ export class PluginService {
     await this.runtime.startPlugin(pluginId, sourcePath, () => this.canPublish(pluginId));
     try {
       await this.publishProviderRegistrations(pluginId, sourcePath);
+      this.registerPluginForgeProviders(pluginId);
     } catch (error) {
       try {
         this.removeProviderRegistrations(pluginId);
+        this.unregisterPluginForgeProviders(pluginId);
       } finally {
         await this.runtime.stopPluginById(pluginId);
       }
@@ -439,6 +481,7 @@ export class PluginService {
 
   private stopPlugin(pluginId: string): Promise<boolean> {
     this.removeProviderRegistrations(pluginId);
+    this.unregisterPluginForgeProviders(pluginId);
     return this.runtime.stopPluginById(pluginId);
   }
 
@@ -446,6 +489,7 @@ export class PluginService {
     for (const pluginId of this.providerIdsByPlugin.keys()) {
       this.removeProviderRegistrations(pluginId);
     }
+    this.unregisterAllForgeProviders();
     await this.runtime.stopAll();
   }
 
@@ -613,6 +657,63 @@ export class PluginService {
   private requireManagedSources(): ManagedPluginSources {
     if (!this.managedSources) throw new Error("Git plugin management is unavailable");
     return this.managedSources;
+  }
+
+  /** Register a plugin's server-side Forge adapters only after its process is ready. */
+  private registerPluginForgeProviders(pluginId: string): void {
+    const descriptors = this.runtime.forgeProviders?.(pluginId) ?? [];
+    if (descriptors.length === 0) return;
+    const invoker = this.runtime.invokeForge;
+    if (!invoker) {
+      throw new Error(`Plugin runtime does not support Forge providers: ${pluginId}`);
+    }
+    const unregisters: Array<() => void> = [];
+    try {
+      for (const descriptor of descriptors) {
+        const providerId = descriptor.definition.id;
+        const proxy = createPluginForgeServiceProxy({
+          pluginId,
+          descriptor,
+          invoker: {
+            invokeForge: (currentPluginId, currentProviderId, method, input) =>
+              invoker.call(this.runtime, currentPluginId, currentProviderId, method, input),
+          },
+          logger: this.logger,
+        });
+        const cloudHosts = new Set(
+          (descriptor.definition.cloudHosts ?? [])
+            .map((host) => normalizeHost(host))
+            .filter(Boolean),
+        );
+        unregisters.push(
+          this.forgeRegistry.register(providerId, {
+            createService: () => proxy.service,
+            definition: toForgeDefinition(descriptor.definition),
+            ...(cloudHosts.size > 0
+              ? { matchesHost: (host: string) => cloudHosts.has(normalizeHost(host)) }
+              : {}),
+            ...(proxy.probeHost ? { probeHost: proxy.probeHost } : {}),
+          }),
+        );
+      }
+    } catch (error) {
+      for (const unregister of unregisters.toReversed()) unregister();
+      throw error;
+    }
+    this.forgeProviderUnregisters.set(pluginId, unregisters);
+  }
+
+  private unregisterPluginForgeProviders(pluginId: string): void {
+    const unregisters = this.forgeProviderUnregisters.get(pluginId);
+    if (!unregisters) return;
+    this.forgeProviderUnregisters.delete(pluginId);
+    for (const unregister of unregisters.toReversed()) unregister();
+  }
+
+  private unregisterAllForgeProviders(): void {
+    for (const pluginId of this.forgeProviderUnregisters.keys()) {
+      this.unregisterPluginForgeProviders(pluginId);
+    }
   }
 
   private requireSource(pluginId: string): PluginSource {
