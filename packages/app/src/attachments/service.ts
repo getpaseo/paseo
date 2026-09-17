@@ -1,6 +1,7 @@
 import { collectRetainedAttachmentIds } from "@/attachments/gc-retention";
 import { getAttachmentStore } from "@/attachments/store";
 import type { AttachmentMetadata, SaveAttachmentInput } from "@/attachments/types";
+import { ManualRetryRequiredError } from "@/composer/send-error";
 
 const activePersistence = new Set<Promise<AttachmentMetadata>>();
 const persistedDuringGarbageCollection = new Set<string>();
@@ -128,7 +129,7 @@ export async function encodeAttachmentsForSend(
     }
   }
   if (failureCount > 0) {
-    throw new Error(
+    throw new ManualRetryRequiredError(
       failureCount === 1
         ? "An image attachment could not be read. Reattach the image and try again."
         : `${failureCount} image attachments could not be read. Reattach the images and try again.`,

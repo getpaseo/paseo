@@ -18,12 +18,14 @@ import { createUserMessage, generateMessageId, type UserMessageItem } from "@/ty
 import type { MessageSubmissionRejectionOutcome } from "@/composer/submission/model";
 import type { PickedImageAttachmentInput } from "@/hooks/image-attachment-picker";
 import { i18n } from "@/i18n/i18next";
+import { requiresManualRetry } from "@/composer/send-error";
 
 export interface QueuedComposerMessage {
   id: string;
   text: string;
   attachments: ComposerAttachment[];
   sendError?: string;
+  retryMode?: "manual";
 }
 
 export interface AttachmentPersister {
@@ -328,7 +330,13 @@ export async function sendQueuedComposerMessageNow(
     input.queue.write((prev) => {
       const next = new Map(prev);
       next.set(input.agentId, [
-        { ...item, sendError: errorMessage },
+        {
+          id: item.id,
+          text: item.text,
+          attachments: item.attachments,
+          sendError: errorMessage,
+          ...(requiresManualRetry(error) ? { retryMode: "manual" as const } : {}),
+        },
         ...(prev.get(input.agentId) ?? []),
       ]);
       return next;

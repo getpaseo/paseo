@@ -2178,7 +2178,7 @@ export class HostRuntimeStore {
     }
     this.queuedAgentDrainInFlight.add(drainKey);
     const next = queue[0];
-    if (next.sendError) {
+    if (next.retryMode === "manual") {
       this.queuedAgentDrainInFlight.delete(drainKey);
       return;
     }

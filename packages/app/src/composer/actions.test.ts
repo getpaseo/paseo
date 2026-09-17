@@ -38,6 +38,7 @@ import {
   type QueueWriter,
   type QueuedComposerMessage,
 } from "./actions";
+import { ManualRetryRequiredError } from "./send-error";
 
 const imageMetadata: AttachmentMetadata = {
   id: "img-1",
@@ -873,7 +874,7 @@ describe("sendQueuedComposerMessageNow", () => {
           text,
           attachments,
           encodeImages: async () => {
-            throw new Error(
+            throw new ManualRetryRequiredError(
               "An image attachment could not be read. Reattach the image and try again.",
             );
           },
@@ -890,6 +891,7 @@ describe("sendQueuedComposerMessageNow", () => {
       {
         ...queued,
         sendError: "An image attachment could not be read. Reattach the image and try again.",
+        retryMode: "manual",
       },
     ]);
 

@@ -2868,8 +2868,66 @@ describe("HostRuntimeStore", () => {
     });
 
     store.drainQueuedAgentMessage(host.serverId, "agent");
+    await vi.waitFor(() => {
+      expect(fakeClient.sentAgentMessages).toHaveLength(2);
+      expect(
+        useSessionStore.getState().sessions[host.serverId]?.queuedMessages.get("agent"),
+      ).toEqual([{ id: "second", text: "keep me behind", attachments: [] }]);
+    });
+
     await Promise.resolve();
-    expect(fakeClient.sentAgentMessages).toHaveLength(1);
+    store.drainQueuedAgentMessage(host.serverId, "agent");
+    await vi.waitFor(() => {
+      expect(fakeClient.sentAgentMessages).toHaveLength(3);
+      expect(
+        useSessionStore.getState().sessions[host.serverId]?.queuedMessages.get("agent"),
+      ).toEqual([]);
+    });
+
+    useSessionStore.getState().clearSession(host.serverId);
+  });
+
+  it("leaves a queued message requiring user action for Edit or Send Now", async () => {
+    const host = makeHost({ serverId: "srv_manual_queue_retry" });
+    const fakeClient = new FakeDaemonClient();
+    const store = new HostRuntimeStore({
+      deps: {
+        createClient: () => fakeClient as unknown as DaemonClient,
+        connectToDaemon: async () => ({
+          client: fakeClient as unknown as DaemonClient,
+          serverId: host.serverId,
+          hostname: null,
+        }),
+        getClientId: async () => "cid_manual_queue_retry",
+      },
+    });
+    const sessionStore = useSessionStore.getState();
+    sessionStore.initializeSession(host.serverId, fakeClient as unknown as DaemonClient, 1);
+    sessionStore.setQueuedMessages(
+      host.serverId,
+      new Map([
+        [
+          "agent",
+          [
+            {
+              id: "reattach-image",
+              text: "inspect this",
+              attachments: [],
+              sendError: "Reattach the image and try again.",
+              retryMode: "manual" as const,
+            },
+          ],
+        ],
+      ]),
+    );
+
+    store.drainQueuedAgentMessage(host.serverId, "agent");
+    await Promise.resolve();
+
+    expect(fakeClient.sentAgentMessages).toEqual([]);
+    expect(
+      useSessionStore.getState().sessions[host.serverId]?.queuedMessages.get("agent"),
+    ).toHaveLength(1);
 
     useSessionStore.getState().clearSession(host.serverId);
   });
