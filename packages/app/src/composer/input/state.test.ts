@@ -146,16 +146,40 @@ describe("computeCanStartDictation", () => {
 
 describe("active send behavior", () => {
   it("queues Steer follow-ups when the provider cannot steer", () => {
-    expect(resolveActiveSendBehavior("steer", false, false)).toBe("queue");
+    expect(
+      resolveActiveSendBehavior({
+        sendBehavior: "steer",
+        hasPendingPermission: false,
+        supportsSteering: false,
+      }),
+    ).toBe("queue");
   });
 
   it("preserves Steer for providers that support it or older daemons", () => {
-    expect(resolveActiveSendBehavior("steer", false, true)).toBe("steer");
-    expect(resolveActiveSendBehavior("steer", false, undefined)).toBe("steer");
+    expect(
+      resolveActiveSendBehavior({
+        sendBehavior: "steer",
+        hasPendingPermission: false,
+        supportsSteering: true,
+      }),
+    ).toBe("steer");
+    expect(
+      resolveActiveSendBehavior({
+        sendBehavior: "steer",
+        hasPendingPermission: false,
+        supportsSteering: undefined,
+      }),
+    ).toBe("steer");
   });
 
   it("interrupts instead of stranding a fallback queue behind a permission", () => {
-    expect(resolveActiveSendBehavior("steer", true, false)).toBe("interrupt");
+    expect(
+      resolveActiveSendBehavior({
+        sendBehavior: "steer",
+        hasPendingPermission: true,
+        supportsSteering: false,
+      }),
+    ).toBe("interrupt");
   });
 });
 
@@ -205,9 +229,15 @@ describe("dictation transcript behavior", () => {
 
 describe("composer send behavior", () => {
   it("sends immediately when queue mode cannot advance past a permission", () => {
-    expect(resolveActiveSendBehavior("queue", true)).toBe("interrupt");
-    expect(resolveActiveSendBehavior("queue", false)).toBe("queue");
-    expect(resolveActiveSendBehavior("steer", true)).toBe("steer");
+    expect(resolveActiveSendBehavior({ sendBehavior: "queue", hasPendingPermission: true })).toBe(
+      "interrupt",
+    );
+    expect(resolveActiveSendBehavior({ sendBehavior: "queue", hasPendingPermission: false })).toBe(
+      "queue",
+    );
+    expect(resolveActiveSendBehavior({ sendBehavior: "steer", hasPendingPermission: true })).toBe(
+      "steer",
+    );
   });
 
   function actions() {
@@ -292,7 +322,11 @@ describe("composer send behavior", () => {
   it("queues an active follow-up instead of sending a cancel-capable request", () => {
     const action = actions();
     runDefaultSendAction({
-      defaultSendBehavior: resolveActiveSendBehavior("steer", false, false),
+      defaultSendBehavior: resolveActiveSendBehavior({
+        sendBehavior: "steer",
+        hasPendingPermission: false,
+        supportsSteering: false,
+      }),
       isAgentRunning: true,
       onQueue: action.onQueue,
       handleSendMessage: action.handleSendMessage,

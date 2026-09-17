@@ -268,14 +268,25 @@ function buildRealtimeVoiceButtonStyle(
 function buildAgentStateSelector(serverId: string, agentId: string) {
   return (state: ReturnType<typeof useSessionStore.getState>) => {
     const agent = state.sessions[serverId]?.agents?.get(agentId) ?? null;
+    if (!agent) {
+      return {
+        status: null,
+        contextWindowMaxTokens: null,
+        contextWindowUsedTokens: null,
+        totalCostUsd: null,
+        model: null,
+        provider: null,
+        capabilities: null,
+      };
+    }
     return {
-      status: agent?.status ?? null,
-      contextWindowMaxTokens: agent?.lastUsage?.contextWindowMaxTokens ?? null,
-      contextWindowUsedTokens: agent?.lastUsage?.contextWindowUsedTokens ?? null,
-      totalCostUsd: agent?.lastUsage?.totalCostUsd ?? null,
-      model: agent?.model ?? null,
-      provider: agent?.provider ?? null,
-      capabilities: agent?.capabilities ?? null,
+      status: agent.status,
+      contextWindowMaxTokens: agent.lastUsage?.contextWindowMaxTokens ?? null,
+      contextWindowUsedTokens: agent.lastUsage?.contextWindowUsedTokens ?? null,
+      totalCostUsd: agent.lastUsage?.totalCostUsd ?? null,
+      model: agent.model ?? null,
+      provider: agent.provider,
+      capabilities: agent.capabilities ?? null,
     };
   };
 }
@@ -1613,11 +1624,11 @@ function ComposerContentImpl({
     }
     return false;
   });
-  const activeSendBehavior = resolveActiveSendBehavior(
-    appSettings.sendBehavior,
+  const activeSendBehavior = resolveActiveSendBehavior({
+    sendBehavior: appSettings.sendBehavior,
     hasPendingPermission,
-    agentState.capabilities?.supportsSteering,
-  );
+    supportsSteering: agentState.capabilities?.supportsSteering,
+  });
   const hasAgent = agentState.status !== null;
 
   const queueWriter = useMemo<QueueWriter>(
