@@ -3112,7 +3112,7 @@ describe("create_agent MCP tool", () => {
     await rm(baseDir, { recursive: true, force: true });
   });
 
-  it("rejects background from caller agents and defaults notify-on-finish on", async () => {
+  it("accepts background from legacy-placement caller agents and defaults notify-on-finish on", async () => {
     const { agentManager, agentStorage, spies } = createTestDeps();
     spies.agentManager.getAgent.mockReturnValue({
       id: "parent-agent",
@@ -3131,16 +3131,6 @@ describe("create_agent MCP tool", () => {
     });
 
     const tool = registeredTool(server, "create_agent");
-    await expect(
-      tool.handler({
-        ...subagentCurrentWorkspace(),
-        title: "Child",
-        provider: "codex/gpt-5.4",
-        initialPrompt: "Do work",
-        background: false,
-      }),
-    ).rejects.toThrow(/Unrecognized key/);
-
     const parsed = await tool.inputSchema.safeParseAsync({
       ...subagentCurrentWorkspace(),
       title: "Child",
@@ -3154,8 +3144,148 @@ describe("create_agent MCP tool", () => {
     expect(parsed.data).toMatchObject({
       relationship: { kind: "subagent" },
       workspace: { kind: "current" },
+      background: true,
       notifyOnFinish: true,
     });
+
+    const explicit = await tool.inputSchema.safeParseAsync({
+      ...subagentCurrentWorkspace(),
+      title: "Child",
+      provider: "codex/gpt-5.4",
+      initialPrompt: "Do work",
+      background: false,
+    });
+    expect(explicit.success).toBe(true);
+    if (!explicit.success) {
+      throw new Error("Expected legacy caller create_agent background to parse");
+    }
+    expect(explicit.data).toMatchObject({ background: false });
+  });
+
+  it("defaults agent-scoped creation to background and accepts an explicit background", async () => {
+    const { agentManager, agentStorage } = createTestDeps();
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      callerAgentId: "parent-agent",
+      logger,
+    });
+
+    const tool = registeredTool(server, "create_agent");
+    const defaulted = await tool.inputSchema.safeParseAsync({
+      title: "Child",
+      provider: "codex/gpt-5.4",
+      initialPrompt: "Do work",
+    });
+    expect(defaulted.success).toBe(true);
+    if (!defaulted.success) {
+      throw new Error("Expected caller create_agent input to parse");
+    }
+    expect(defaulted.data).toMatchObject({
+      background: true,
+      notifyOnFinish: true,
+    });
+
+    const explicit = await tool.inputSchema.safeParseAsync({
+      title: "Child",
+      provider: "codex/gpt-5.4",
+      initialPrompt: "Do work",
+      background: false,
+    });
+    expect(explicit.success).toBe(true);
+    if (!explicit.success) {
+      throw new Error("Expected caller create_agent background to parse");
+    }
+    expect(explicit.data).toMatchObject({ background: false });
+  });
+
+  it("blocks agent-scoped creation when background is false", async () => {
+    const { agentManager, agentStorage, spies } = createTestDeps();
+    const parentAgent = {
+      id: "parent-agent",
+      cwd: existingCwd,
+      workspaceId: "wks_parent",
+      provider: "codex",
+      currentModeId: "full-access",
+    } as ManagedAgent;
+    const childAgent = {
+      id: "child-agent",
+      cwd: existingCwd,
+      lifecycle: "idle",
+      currentModeId: null,
+      availableModes: [],
+      config: { title: "Child" },
+    } as ManagedAgent;
+    spies.agentManager.getAgent.mockImplementation((agentId: string) => {
+      if (agentId === "parent-agent") return parentAgent;
+      if (agentId === "child-agent") return childAgent;
+      return null;
+    });
+    spies.agentManager.createAgent.mockResolvedValue(childAgent);
+
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      callerAgentId: "parent-agent",
+      logger,
+    });
+
+    const tool = registeredTool(server, "create_agent");
+    await invokeToolWithParsedInput(tool, {
+      title: "Child",
+      provider: "codex/gpt-5.4",
+      initialPrompt: "Do work",
+      background: false,
+    });
+
+    expect(spies.agentManager.waitForAgentEvent).toHaveBeenCalledWith(
+      "child-agent",
+      expect.objectContaining({ waitForActive: true }),
+    );
+  });
+
+  it("keeps agent-scoped creation non-blocking by default", async () => {
+    const { agentManager, agentStorage, spies } = createTestDeps();
+    const parentAgent = {
+      id: "parent-agent",
+      cwd: existingCwd,
+      workspaceId: "wks_parent",
+      provider: "codex",
+      currentModeId: "full-access",
+    } as ManagedAgent;
+    const childAgent = {
+      id: "child-agent",
+      cwd: existingCwd,
+      lifecycle: "idle",
+      currentModeId: null,
+      availableModes: [],
+      config: { title: "Child" },
+    } as ManagedAgent;
+    spies.agentManager.getAgent.mockImplementation((agentId: string) => {
+      if (agentId === "parent-agent") return parentAgent;
+      if (agentId === "child-agent") return childAgent;
+      return null;
+    });
+    spies.agentManager.createAgent.mockResolvedValue(childAgent);
+
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      callerAgentId: "parent-agent",
+      logger,
+    });
+
+    const tool = registeredTool(server, "create_agent");
+    await invokeToolWithParsedInput(tool, {
+      title: "Child",
+      provider: "codex/gpt-5.4",
+      initialPrompt: "Do work",
+    });
+
+    expect(spies.agentManager.waitForAgentEvent).not.toHaveBeenCalled();
   });
 
   it("returns notify-on-finish guidance for caller-created agents", async () => {
