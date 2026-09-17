@@ -143,9 +143,11 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
     images?: Array<{ type: "image"; data: string; mimeType: string }>,
   ): Promise<OmpPromptAck> {
     const { id: requestId, promise } = this.process.startRequest({
-      type: "prompt",
-      message,
-      ...(images?.length ? { images } : {}),
+      command: {
+        type: "prompt",
+        message,
+        ...(images?.length ? { images } : {}),
+      },
     });
     const ack = OmpPromptAckSchema.parse(await promise) ?? {};
     return { requestId, ...ack };
@@ -201,7 +203,11 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
       return messages;
     } catch (error) {
       const code = error && typeof error === "object" && "code" in error ? error.code : undefined;
-      if (code === "session_busy" || code === "stale_cursor") {
+      const message = error instanceof Error ? error.message : String(error);
+      if (code === "session_busy" || code === "stale_cursor" || message === "unknown command") {
+        // Protocol-v1 runtimes lack get_messages_page entirely; pin to legacy
+        // and serve this call from it so the first history load still works.
+        this.pagingUnsupported = true;
         return this.getMessagesLegacy();
       }
       this.pagingUnsupported = true;
@@ -336,7 +342,10 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
   }
 
   private request(command: OmpRpcCommand, timeoutMs?: number | null): Promise<unknown> {
-    return this.process.request(OmpRpcCommandSchema.parse(command), timeoutMs);
+    return this.process.request({
+      command: OmpRpcCommandSchema.parse(command),
+      timeoutMs,
+    });
   }
 
   private requestStopWork(
@@ -344,11 +353,11 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
     timeoutMs?: number | null,
     requestOptions?: JsonlRpcRequestOptions,
   ): Promise<void> {
-    return this.process.requestStopWork(
-      OmpRpcCommandSchema.parse(command),
+    return this.process.requestStopWork({
+      command: OmpRpcCommandSchema.parse(command),
       timeoutMs,
       requestOptions,
-    );
+    });
   }
 
   private emit(event: OmpRuntimeEvent): void {
