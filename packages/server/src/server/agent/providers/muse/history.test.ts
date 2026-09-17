@@ -133,4 +133,44 @@ describe("pageMuseHistoryEvents", () => {
 
     expect(command).toHaveBeenCalledTimes(2);
   });
+
+  test("collects subagent track events from paged frames", async () => {
+    const command = vi.fn(async () => ({
+      events: [
+        {
+          method: "item/completed",
+          params: {
+            item: {
+              itemId: "sub-1",
+              revision: 1,
+              kind: "subagent",
+              turnId: "t1",
+              status: "completed",
+              role: "researcher",
+              subagentId: "child-1",
+              result: { summary: "Found it" },
+            },
+          },
+        },
+      ],
+      nextCursor: null,
+    }));
+
+    const events = await pageMuseHistoryEvents(
+      { command: command as never },
+      "session-1",
+      "muse",
+    );
+
+    expect(events.map((event) => event.type)).toEqual([
+      "provider_subagent",
+      "provider_subagent",
+    ]);
+    expect(events[0]).toMatchObject({
+      event: { type: "upsert", id: "child-1", status: "completed" },
+    });
+    expect(events[1]).toMatchObject({
+      event: { type: "timeline", id: "child-1", item: { text: "Found it" } },
+    });
+  });
 });

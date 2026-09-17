@@ -46,6 +46,7 @@ import {
   type MusePendingRequest,
 } from "./permissions.js";
 import { convertMusePromptInput } from "./prompts.js";
+import { mapMuseSubagentEvents } from "./subagents.js";
 import { mapMuseMcpServers } from "./mcps.js";
 import { resolveMuseRewindCutPoint } from "./rewind.js";
 import { composeSystemPromptParts } from "../../system-prompt.js";
@@ -192,6 +193,7 @@ export class MuseAgentSession implements AgentSession {
         if (event) {
           yield event;
         }
+        yield* mapMuseSubagentEvents(item, this.provider, { terminal: true });
       }
       return;
     }

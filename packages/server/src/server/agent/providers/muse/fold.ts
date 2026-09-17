@@ -8,6 +8,7 @@ import type {
 } from "../../agent-sdk-types.js";
 import type { MuseHostNotification } from "./host.js";
 import { asMuseViewItem, isRecord, type MuseViewItem } from "./items.js";
+import { mapMuseSubagentEvents } from "./subagents.js";
 import { mapMuseToolCall } from "./tools.js";
 
 export interface MuseFoldCallbacks {
@@ -90,6 +91,14 @@ export class MuseNotificationFold {
     }
     const outcome = this.items.apply(item);
     if (outcome.kind === "ignoredStaleRevision") {
+      return;
+    }
+    if (item.kind === "subagent" || item.kind === "reminderChild" || item.kind === "workflow") {
+      for (const event of mapMuseSubagentEvents(item, this.provider, {
+        terminal: method === "item/completed",
+      })) {
+        this.callbacks.onEvent(event);
+      }
       return;
     }
     const turnId = typeof item.turnId === "string" ? item.turnId : undefined;

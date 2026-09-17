@@ -354,6 +354,54 @@ describe("MuseAgentSession", () => {
     expect(events[0]).not.toHaveProperty("clientMessageId");
   });
 
+  test("streamHistory replays subagent track events alongside the timeline", async () => {
+    const { session, routes } = createHarness();
+    routes.set("session/resume", () => ({
+      history: {
+        mode: "inline",
+        items: [
+          {
+            itemId: "u1",
+            revision: 1,
+            kind: "userMessage",
+            turnId: "t0",
+            status: "completed",
+            text: "past",
+          },
+          {
+            itemId: "sub-1",
+            revision: 2,
+            kind: "subagent",
+            turnId: "t0",
+            status: "completed",
+            role: "researcher",
+            objective: "Find the bug",
+            subagentId: "child-1",
+            result: { summary: "Found it" },
+          },
+        ],
+      },
+    }));
+
+    const events: AgentStreamEvent[] = [];
+    for await (const event of session.streamHistory()) {
+      events.push(event);
+    }
+
+    expect(events.map((event) => event.type)).toEqual([
+      "timeline",
+      "provider_subagent",
+      "provider_subagent",
+    ]);
+    expect(events[1]).toMatchObject({
+      provider: "muse",
+      event: { type: "upsert", id: "child-1", status: "completed" },
+    });
+    expect(events[2]).toMatchObject({
+      event: { type: "timeline", id: "child-1", item: { text: "Found it" } },
+    });
+  });
+
   test("tracks model and mode changes", async () => {
     const { session, emit, events } = createHarness();
 

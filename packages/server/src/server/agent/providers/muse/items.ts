@@ -22,6 +22,18 @@ export interface MuseViewItem {
   readonly commandText?: unknown;
   readonly exitCode?: unknown;
   readonly trigger?: unknown;
+  readonly objective?: unknown;
+  readonly role?: unknown;
+  readonly subagentId?: unknown;
+  readonly childSessionId?: unknown;
+  readonly fallbackText?: unknown;
+  readonly result?: unknown;
+  readonly workflowRunId?: unknown;
+  readonly message?: unknown;
+  readonly scriptId?: unknown;
+  readonly entryId?: unknown;
+  readonly taskId?: unknown;
+  readonly reminderAgentId?: unknown;
 }
 
 export function isRecord(value: unknown): value is Record<string, unknown> {

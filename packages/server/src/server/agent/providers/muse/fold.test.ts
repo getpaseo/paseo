@@ -290,4 +290,89 @@ describe("MuseNotificationFold", () => {
     fold.apply(completed);
     expect(events).toHaveLength(2);
   });
+
+  test("emits subagent track upserts without timeline rows", () => {
+    const { fold, events } = createFold();
+    const item = {
+      itemId: "sub-1",
+      revision: 1,
+      kind: "subagent",
+      turnId: "t1",
+      status: "inProgress",
+      role: "researcher",
+      objective: "Find the bug",
+      subagentId: "child-1",
+    };
+
+    fold.apply(frame("item/started", item));
+    fold.apply(frame("item/updated", { ...item, revision: 2 }));
+
+    expect(events).toEqual([
+      {
+        type: "provider_subagent",
+        provider: "muse",
+        event: {
+          type: "upsert",
+          id: "child-1",
+          title: "researcher",
+          description: "Find the bug",
+          status: "running",
+        },
+      },
+      {
+        type: "provider_subagent",
+        provider: "muse",
+        event: {
+          type: "upsert",
+          id: "child-1",
+          title: "researcher",
+          description: "Find the bug",
+          status: "running",
+        },
+      },
+    ]);
+  });
+
+  test("emits the subagent result row on completion only", () => {
+    const { fold, events } = createFold();
+    const completed = {
+      itemId: "sub-1",
+      revision: 2,
+      kind: "subagent",
+      turnId: "t1",
+      status: "completed",
+      role: "researcher",
+      subagentId: "child-1",
+      result: { summary: "Found it" },
+    };
+
+    fold.apply(frame("item/completed", completed));
+
+    expect(events).toEqual([
+      {
+        type: "provider_subagent",
+        provider: "muse",
+        event: {
+          type: "upsert",
+          id: "child-1",
+          title: "researcher",
+          description: null,
+          status: "completed",
+        },
+      },
+      {
+        type: "provider_subagent",
+        provider: "muse",
+        event: {
+          type: "timeline",
+          id: "child-1",
+          item: { type: "assistant_message", text: "Found it", messageId: "sub-1" },
+        },
+      },
+    ]);
+
+    // A stale re-emission of the same revision emits nothing.
+    fold.apply(frame("item/completed", completed));
+    expect(events).toHaveLength(2);
+  });
 });

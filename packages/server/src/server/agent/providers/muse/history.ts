@@ -110,7 +110,7 @@ export async function pageMuseHistoryEvents(
 ): Promise<AgentStreamEvent[]> {
   const fold = new MuseNotificationFold(provider, {
     onEvent: (event) => {
-      if (event.type === "timeline") {
+      if (event.type === "timeline" || event.type === "provider_subagent") {
         collected.push(event);
       }
     },
