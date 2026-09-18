@@ -1,3 +1,4 @@
+import { type SessionConfigOption } from "@agentclientprotocol/sdk";
 import { zSessionConfigOption } from "@agentclientprotocol/sdk/dist/schema/zod.gen.js";
 import type { Logger } from "pino";
 import { z } from "zod";
@@ -7,6 +8,7 @@ import {
   deriveSelectorOptions,
   type ACPCatalogModelResolverContext,
   type ACPConfigFeatureOption,
+  type ACPModelConfigOptionsResolverContext,
 } from "./acp-agent.js";
 import { GenericACPAgentClient } from "./generic-acp-agent.js";
 
@@ -68,7 +70,26 @@ export async function resolveCursorCatalogModels({
   });
 }
 
-async function fetchCursorModelCatalog(connection: ACPCatalogModelResolverContext["connection"]) {
+// `fast` is a per-model parameter: Cursor only offers it for models that have a fast
+// variant. The probe session reports one model's options, so read the drafted model's
+// options out of the catalog instead of whatever the CLI last persisted.
+export async function resolveCursorModelConfigOptions({
+  connection,
+  modelId,
+  runRequest,
+  transformConfigOptions,
+}: ACPModelConfigOptionsResolverContext): Promise<SessionConfigOption[] | null> {
+  const catalog = await runRequest(() => fetchCursorModelCatalog(connection));
+  const model = catalog.models.find((entry) => entry.value === modelId);
+  if (!model) {
+    return null;
+  }
+  return transformConfigOptions(model.configOptions);
+}
+
+async function fetchCursorModelCatalog(
+  connection: ACPModelConfigOptionsResolverContext["connection"],
+) {
   try {
     const response = await connection.extMethod("cursor/list_available_models", {});
     return CursorModelCatalogSchema.parse(response);
@@ -100,6 +121,7 @@ export class CursorACPAgentClient extends GenericACPAgentClient {
       clientCapabilityMeta: CURSOR_CLIENT_CAPABILITY_META,
       configFeatureOptions: [CURSOR_FAST_FEATURE_OPTION],
       catalogModelResolver: resolveCursorCatalogModels,
+      modelConfigOptionsResolver: resolveCursorModelConfigOptions,
     });
   }
 }

@@ -17,16 +17,36 @@ describe("CursorACPAgentClient model discovery", () => {
       ],
     };
   }
+  function reasoningConfigOption() {
+    return {
+      id: "reasoning",
+      name: "Reasoning",
+      category: "thought_level",
+      type: "select" as const,
+      currentValue: "max",
+      options: [
+        { value: "low", name: "Low" },
+        { value: "max", name: "Max" },
+      ],
+    };
+  }
+  interface CursorCatalogEntry {
+    value: string;
+    name: string;
+    configOptions: unknown[];
+  }
   class TestCursorACPAgentClient extends CursorACPAgentClient {
-    constructor(response: SessionStateResponse) {
+    constructor(response: SessionStateResponse, catalog?: CursorCatalogEntry[]) {
       super({
         logger: createTestLogger(),
         command: ["cursor-agent", "acp"],
       });
       this.response = response;
+      this.catalog = catalog;
     }
 
     private readonly response: SessionStateResponse;
+    private readonly catalog?: CursorCatalogEntry[];
 
     protected override async spawnProcess(): Promise<SpawnedACPProcess> {
       return {
@@ -34,11 +54,13 @@ describe("CursorACPAgentClient model discovery", () => {
         connection: {
           newSession: vi.fn().mockResolvedValue(this.response),
           extMethod: async () => ({
-            models: (this.response.models?.availableModels ?? []).map((model) => ({
-              value: model.modelId,
-              name: model.name,
-              configOptions: [],
-            })),
+            models:
+              this.catalog ??
+              (this.response.models?.availableModels ?? []).map((model) => ({
+                value: model.modelId,
+                name: model.name,
+                configOptions: [],
+              })),
           }),
         },
         initialize: { agentCapabilities: {} },
@@ -178,6 +200,83 @@ describe("CursorACPAgentClient model discovery", () => {
           },
         ],
       },
+    ]);
+  });
+
+  test("hides Cursor fast mode for a drafted model that has no fast variant", async () => {
+    const client = new TestCursorACPAgentClient(
+      {
+        sessionId: "session-1",
+        models: null,
+        configOptions: [fastConfigOption("true")],
+      },
+      [
+        {
+          value: "composer-2.5",
+          name: "Composer 2.5",
+          configOptions: [fastConfigOption("true")],
+        },
+        { value: "kimi-k3", name: "Kimi K3", configOptions: [reasoningConfigOption()] },
+      ],
+    );
+
+    await expect(
+      client.listFeatures({
+        provider: "acp",
+        cwd: "/tmp/cursor",
+        model: "kimi-k3",
+      }),
+    ).resolves.toEqual([expect.objectContaining({ id: "auto_accept" })]);
+  });
+
+  test("keeps Cursor fast mode for a drafted model that has a fast variant", async () => {
+    const client = new TestCursorACPAgentClient(
+      {
+        sessionId: "session-1",
+        models: null,
+        configOptions: [reasoningConfigOption()],
+      },
+      [
+        {
+          value: "composer-2.5",
+          name: "Composer 2.5",
+          configOptions: [fastConfigOption("true")],
+        },
+        { value: "kimi-k3", name: "Kimi K3", configOptions: [reasoningConfigOption()] },
+      ],
+    );
+
+    await expect(
+      client.listFeatures({
+        provider: "acp",
+        cwd: "/tmp/cursor",
+        model: "composer-2.5",
+      }),
+    ).resolves.toEqual([
+      expect.objectContaining({ id: "auto_accept" }),
+      expect.objectContaining({ id: CURSOR_FAST_FEATURE_OPTION.id, value: "true" }),
+    ]);
+  });
+
+  test("falls back to the probe session options when the catalog does not know the model", async () => {
+    const client = new TestCursorACPAgentClient(
+      {
+        sessionId: "session-1",
+        models: null,
+        configOptions: [fastConfigOption("false")],
+      },
+      [{ value: "kimi-k3", name: "Kimi K3", configOptions: [reasoningConfigOption()] }],
+    );
+
+    await expect(
+      client.listFeatures({
+        provider: "acp",
+        cwd: "/tmp/cursor",
+        model: "gpt-5.4[context=272k,reasoning=medium,fast=false]",
+      }),
+    ).resolves.toEqual([
+      expect.objectContaining({ id: "auto_accept" }),
+      expect.objectContaining({ id: CURSOR_FAST_FEATURE_OPTION.id, value: "false" }),
     ]);
   });
 });

@@ -144,6 +144,15 @@ function isACPError(value: unknown): value is ACPError {
   return isRecord(value) && typeof value.message === "string" && typeof value.code === "number";
 }
 
+// Cursor answers a write for a parameter the current model lacks with
+// `-32602 Invalid params | data.message="Unknown model config option: fast"`; a provider
+// without config-option support answers `-32601`. Both mean the option is not writable here.
+const ACP_CONFIG_OPTION_REJECTION_CODES = new Set([-32601, -32602]);
+
+function isACPConfigOptionRejection(error: unknown): boolean {
+  return isACPError(error) && ACP_CONFIG_OPTION_REJECTION_CODES.has(error.code);
+}
+
 function extractACPErrorDataMessage(data: unknown): string | null {
   if (!isRecord(data)) {
     return null;
@@ -412,6 +421,31 @@ export type ACPCatalogModelResolver = (
   context: ACPCatalogModelResolverContext,
 ) => Promise<AgentModelDefinition[]>;
 
+/**
+ * Context handed to an {@link ACPModelConfigOptionsResolver} while answering a draft
+ * feature listing. `configOptions` is what the probe session reported, i.e. the options
+ * of whatever model the provider CLI last persisted.
+ */
+export interface ACPModelConfigOptionsResolverContext {
+  connection: Pick<ClientSideConnection, "extMethod">;
+  modelId: string;
+  configOptions: SessionConfigOption[] | null | undefined;
+  runRequest: <T>(request: () => Promise<T>) => Promise<T>;
+  transformConfigOptions: (configOptions: SessionConfigOption[]) => SessionConfigOption[];
+  logger: Logger;
+  provider: string;
+}
+
+/**
+ * Providers whose session config options depend on the selected model own this hook. A
+ * probe session only reports one model's options, so without a resolver Paseo would offer
+ * features the drafted model does not have. Return null when the model is unknown, which
+ * leaves the probe session's options in place.
+ */
+export type ACPModelConfigOptionsResolver = (
+  context: ACPModelConfigOptionsResolverContext,
+) => Promise<SessionConfigOption[] | null>;
+
 interface ACPAgentClientOptions {
   provider: string;
   logger: Logger;
@@ -419,6 +453,7 @@ interface ACPAgentClientOptions {
   defaultCommand: [string, ...string[]];
   defaultModes?: AgentMode[];
   catalogModelResolver?: ACPCatalogModelResolver;
+  modelConfigOptionsResolver?: ACPModelConfigOptionsResolver;
   modelTransformer?: (models: AgentModelDefinition[]) => AgentModelDefinition[];
   sessionResponseTransformer?: (response: SessionStateResponse) => SessionStateResponse;
   configOptionsTransformer?: (configOptions: SessionConfigOption[]) => SessionConfigOption[];
@@ -875,6 +910,7 @@ export class ACPAgentClient implements AgentClient {
   protected readonly defaultCommand: [string, ...string[]];
   protected readonly defaultModes: AgentMode[];
   private readonly catalogModelResolver?: ACPCatalogModelResolver;
+  private readonly modelConfigOptionsResolver?: ACPModelConfigOptionsResolver;
   private readonly modelTransformer?: (models: AgentModelDefinition[]) => AgentModelDefinition[];
   private readonly sessionResponseTransformer?: (
     response: SessionStateResponse,
@@ -917,6 +953,7 @@ export class ACPAgentClient implements AgentClient {
     this.defaultCommand = options.defaultCommand;
     this.defaultModes = options.defaultModes ?? [];
     this.catalogModelResolver = options.catalogModelResolver;
+    this.modelConfigOptionsResolver = options.modelConfigOptionsResolver;
     this.modelTransformer = options.modelTransformer;
     this.sessionResponseTransformer = options.sessionResponseTransformer;
     this.configOptionsTransformer = options.configOptionsTransformer;
@@ -1137,13 +1174,45 @@ export class ACPAgentClient implements AgentClient {
       );
       probeSessionId = response.sessionId;
       const transformed = this.transformSessionResponse(response);
+      const configOptions = await this.resolveModelConfigOptions({
+        connection: probe.connection,
+        model: config.model,
+        sessionConfigOptions: transformed.configOptions,
+      });
       return [
         autoAcceptFeature,
-        ...deriveFeaturesFromACP(transformed.configOptions, this.configFeatureOptions),
+        ...deriveFeaturesFromACP(configOptions, this.configFeatureOptions),
       ];
     } finally {
       await this.closeProbe(probe, probeSessionId);
     }
+  }
+
+  // A probe session reports the config options of whichever model the provider CLI last
+  // persisted, so a provider whose options are per-model (Cursor's `fast` exists only for
+  // models with a fast variant) has to answer for the model the draft actually selected.
+  private async resolveModelConfigOptions(input: {
+    connection: Pick<ClientSideConnection, "extMethod">;
+    model: string | undefined;
+    sessionConfigOptions: SessionConfigOption[] | null | undefined;
+  }): Promise<SessionConfigOption[] | null | undefined> {
+    if (!this.modelConfigOptionsResolver || !input.model) {
+      return input.sessionConfigOptions;
+    }
+
+    const resolved = await this.modelConfigOptionsResolver({
+      connection: input.connection,
+      modelId: input.model,
+      configOptions: input.sessionConfigOptions,
+      runRequest: (request) => this.runACPRequest(request),
+      transformConfigOptions: (configOptions) =>
+        this.configOptionsTransformer
+          ? this.configOptionsTransformer(configOptions)
+          : configOptions,
+      logger: this.logger,
+      provider: this.provider,
+    });
+    return resolved ?? input.sessionConfigOptions;
   }
 
   async listImportableSessions(
@@ -1674,6 +1743,11 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private currentTitle: string | null = null;
   private lastActivityAt: string | null = null;
   private configOptions: SessionConfigOption[] = [];
+  // `session/set_model` answers with an empty response, so a model switch leaves
+  // `configOptions` describing the previous model until a write response or a
+  // config_option_update refreshes it. Only the provider knows which options the new model
+  // has, so the cache must not veto writes while it is stale.
+  private configOptionsStale = false;
   private cachedCommands: AgentSlashCommand[] = [];
   private commandsReadyDeferred: { promise: Promise<void>; resolve: () => void } | null = null;
   private commandsReadySettled = false;
@@ -2013,7 +2087,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     if (providerResult.handled) {
       this.currentMode = providerResult.currentModeId ?? modeId;
       if (providerResult.configOptions) {
-        this.configOptions = this.transformConfigOptions(providerResult.configOptions);
+        this.setConfigOptions(providerResult.configOptions);
       }
       this.availableModes = deriveModesFromACP(this.defaultModes, null, this.configOptions).modes;
       this.pushEvent({
@@ -2056,7 +2130,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     if (this.beforeModeWriter) {
       const beforeResult = await this.beforeModeWriter(context);
       if (beforeResult?.configOptions) {
-        this.configOptions = this.transformConfigOptions(beforeResult.configOptions);
+        this.setConfigOptions(beforeResult.configOptions);
       }
     }
 
@@ -2165,6 +2239,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
           modelId,
         });
         this.currentModel = modelId;
+        this.configOptionsStale = true;
         this.pushEvent({
           type: "model_changed",
           provider: this.provider,
@@ -2276,31 +2351,34 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     }
 
     const option = findSelectConfigFeatureOption(this.configOptions, featureOption);
-    if (!option) {
-      throw new Error(`${this.provider} does not expose ACP feature '${featureId}'`);
+    if (!option && !this.configOptionsStale) {
+      throw new Error(this.featureUnavailableMessage(featureId));
     }
 
     const requestedValue = normalizeConfigFeatureValue(value);
-    const choice = findSelectConfigChoice({ option, value: requestedValue });
-    if (!choice) {
-      throw new Error(
-        `${this.provider} feature '${featureId}' does not include option '${requestedValue}'`,
-      );
+    if (option && !findSelectConfigChoice({ option, value: requestedValue })) {
+      throw new Error(this.featureValueUnavailableMessage(featureId, requestedValue));
     }
 
     const response = await this.connection.setSessionConfigOption({
       sessionId: this.sessionId,
-      configId: option.id,
+      configId: featureOption.configId,
       value: requestedValue,
     });
     const currentValue = this.applyConfigOptionResponse({
       response,
-      configId: option.id,
+      configId: featureOption.configId,
       category: featureOption.category,
       requestedValue,
       label: featureOption.label,
     });
     this.config.featureValues = { ...this.config.featureValues, [featureId]: currentValue };
+  }
+
+  // Every refresh of the cached options comes from the provider, so it also ends staleness.
+  private setConfigOptions(configOptions: SessionConfigOption[]): void {
+    this.configOptions = this.transformConfigOptions(configOptions);
+    this.configOptionsStale = false;
   }
 
   private applyConfigOptionResponse({
@@ -2316,7 +2394,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     requestedValue: string;
     label: string;
   }): string {
-    this.configOptions = this.transformConfigOptions(response.configOptions);
+    this.setConfigOptions(response.configOptions);
     const responseOption =
       category === undefined
         ? findSelectConfigOptionById({ configOptions: this.configOptions, id: configId })
@@ -2780,7 +2858,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       ? this.sessionResponseTransformer(response)
       : response;
 
-    this.configOptions = this.transformConfigOptions(transformed.configOptions ?? []);
+    this.setConfigOptions(transformed.configOptions ?? []);
 
     const modeInfo = deriveModesFromACP(this.defaultModes, transformed.modes, this.configOptions);
     this.availableModes = modeInfo.modes;
@@ -2835,13 +2913,64 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     if (this.config.thinkingOptionId && this.config.thinkingOptionId !== this.thinkingOptionId) {
       await this.setThinkingOption(this.config.thinkingOptionId);
     }
+    await this.applyConfiguredFeatureValues();
+  }
+
+  // Feature values are stored per provider while some providers expose a feature only for
+  // certain models (Cursor's `fast`). A stored value the selected model cannot take must not
+  // fail session start, the same way an inapplicable stored model does not.
+  private async applyConfiguredFeatureValues(): Promise<void> {
     const configuredFeatureValues = this.config.featureValues ?? {};
     for (const featureOption of this.configFeatureOptions) {
       if (!Object.prototype.hasOwnProperty.call(configuredFeatureValues, featureOption.id)) {
         continue;
       }
-      await this.setFeature(featureOption.id, configuredFeatureValues[featureOption.id]);
+      const value = configuredFeatureValues[featureOption.id];
+      try {
+        await this.setFeature(featureOption.id, value);
+      } catch (error) {
+        if (!this.isFeatureInapplicableError({ error, featureId: featureOption.id, value })) {
+          throw error;
+        }
+        this.logger.warn(
+          { err: error, featureId: featureOption.id, model: this.currentModel },
+          `${this.provider} cannot apply ACP feature '${featureOption.id}' to the current model; leaving it at the provider default`,
+        );
+      }
     }
+  }
+
+  // Only two failures mean "the selected model cannot take this stored value": the option is
+  // missing from the session's options, or the provider refuses the write because its options
+  // predate a model switch. Transport and protocol failures still fail session start.
+  private isFeatureInapplicableError({
+    error,
+    featureId,
+    value,
+  }: {
+    error: unknown;
+    featureId: string;
+    value: unknown;
+  }): boolean {
+    if (isACPConfigOptionRejection(error)) {
+      return true;
+    }
+    if (!(error instanceof Error)) {
+      return false;
+    }
+    return (
+      error.message === this.featureUnavailableMessage(featureId) ||
+      error.message ===
+        this.featureValueUnavailableMessage(featureId, normalizeConfigFeatureValue(value))
+    );
+  }
+
+  private featureUnavailableMessage(featureId: string): string {
+    return `${this.provider} does not expose ACP feature '${featureId}'`;
+  }
+
+  private featureValueUnavailableMessage(featureId: string, value: string): string {
+    return `${this.provider} feature '${featureId}' does not include option '${value}'`;
   }
 
   private warnInvalidSelection(value: string, message: string): void {
@@ -3022,7 +3151,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   }
 
   private handleConfigOptionUpdate(update: ConfigOptionUpdate): AgentStreamEvent[] {
-    this.configOptions = this.transformConfigOptions(update.configOptions);
+    this.setConfigOptions(update.configOptions);
     const modeInfo = deriveModesFromACP(this.defaultModes, null, this.configOptions);
     const nextMode = modeInfo.currentModeId;
     const nextModel = deriveCurrentConfigValue(this.configOptions, "model");

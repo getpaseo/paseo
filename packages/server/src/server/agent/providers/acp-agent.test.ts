@@ -18,6 +18,7 @@ import {
 import {
   ACPAgentClient,
   ACPAgentSession,
+  type ACPConfigFeatureOption,
   type SpawnedACPProcess,
   type SessionStateResponse,
   buildACPClientCapabilities,
@@ -183,6 +184,7 @@ function createSessionWithConfig(
     modeId?: string | null;
     model?: string | null;
     featureValues?: Record<string, unknown>;
+    configFeatureOptions?: ACPConfigFeatureOption[];
   } = {},
   logger: ReturnType<typeof createTestLogger> = createTestLogger(),
 ): ACPAgentSession {
@@ -199,6 +201,7 @@ function createSessionWithConfig(
       logger,
       defaultCommand: ["claude", "--acp"],
       defaultModes: [],
+      ...(config.configFeatureOptions ? { configFeatureOptions: config.configFeatureOptions } : {}),
       capabilities: {
         supportsStreaming: true,
         supportsSessionPersistence: true,
@@ -279,6 +282,26 @@ function selectConfigOption(
     type: "select",
     currentValue,
     options: values.map((value) => ({ value, name: value })),
+  };
+}
+
+// Stand-in for a provider feature that only some models expose, like Cursor's `fast`.
+const PER_MODEL_FEATURE_OPTION: ACPConfigFeatureOption = {
+  id: "fast",
+  configId: "fast",
+  label: "Fast",
+};
+
+function fastConfigOption(currentValue: "false" | "true"): SessionConfigOption {
+  return {
+    id: "fast",
+    name: "Fast",
+    type: "select",
+    currentValue,
+    options: [
+      { value: "false", name: "Off" },
+      { value: "true", name: "Fast" },
+    ],
   };
 }
 
@@ -948,6 +971,136 @@ describe("ACPAgentSession Zed parity", () => {
       { value: "deepseek/v4" },
       "deepseek-tui does not expose ACP model selection; using provider default model",
     );
+  });
+
+  test("does not fail session start when the selected model has no option for a stored feature", async () => {
+    const logger = createTestLogger();
+    const childLogger = { trace: vi.fn(), warn: vi.fn() };
+    vi.spyOn(logger, "child").mockReturnValue(asInternals<typeof logger>(childLogger));
+    const session = createSessionWithConfig(
+      {
+        provider: "acp",
+        model: "kimi-k3",
+        featureValues: { fast: "true" },
+        configFeatureOptions: [PER_MODEL_FEATURE_OPTION],
+      },
+      logger,
+    );
+    const { internals, setSessionConfigOption } = prepareConfiguredOverrideSession(session, {
+      currentModel: "kimi-k3",
+      availableModels: [{ modelId: "kimi-k3", name: "Kimi K3" }],
+      configOptions: [selectConfigOption("thought_level", ["low", "max"], "max")],
+    });
+
+    await expect(internals.applyConfiguredOverrides()).resolves.toBeUndefined();
+    expect(setSessionConfigOption).not.toHaveBeenCalled();
+    expect(childLogger.warn).toHaveBeenCalledWith(
+      { err: expect.any(Error), featureId: "fast", model: "kimi-k3" },
+      "acp cannot apply ACP feature 'fast' to the current model; leaving it at the provider default",
+    );
+  });
+
+  test("does not fail session start when the provider rejects a stored feature write", async () => {
+    const logger = createTestLogger();
+    const childLogger = { trace: vi.fn(), warn: vi.fn() };
+    vi.spyOn(logger, "child").mockReturnValue(asInternals<typeof logger>(childLogger));
+    const session = createSessionWithConfig(
+      {
+        provider: "acp",
+        model: "kimi-k3",
+        featureValues: { fast: "true" },
+        configFeatureOptions: [PER_MODEL_FEATURE_OPTION],
+      },
+      logger,
+    );
+    // What cursor-agent answers for a parameter the current model does not have.
+    const rejection = {
+      code: -32602,
+      message: "Invalid params",
+      data: { message: "Unknown model config option: fast" },
+    };
+    const setSessionConfigOption = vi.fn(async () => {
+      throw rejection;
+    });
+    const { internals } = prepareConfiguredOverrideSession(session, {
+      currentModel: "kimi-k3",
+      availableModels: [{ modelId: "kimi-k3", name: "Kimi K3" }],
+      configOptions: [fastConfigOption("false")],
+      connection: { setSessionConfigOption },
+    });
+
+    await expect(internals.applyConfiguredOverrides()).resolves.toBeUndefined();
+    expect(setSessionConfigOption).toHaveBeenCalledWith({
+      sessionId: "session-1",
+      configId: "fast",
+      value: "true",
+    });
+    expect(childLogger.warn).toHaveBeenCalledWith(
+      { err: rejection, featureId: "fast", model: "kimi-k3" },
+      "acp cannot apply ACP feature 'fast' to the current model; leaving it at the provider default",
+    );
+  });
+
+  test("fails session start when a stored feature write fails for an unrelated reason", async () => {
+    const session = createSessionWithConfig({
+      provider: "acp",
+      model: "kimi-k3",
+      featureValues: { fast: "true" },
+      configFeatureOptions: [PER_MODEL_FEATURE_OPTION],
+    });
+    const setSessionConfigOption = vi.fn(async () => {
+      throw new Error("write EPIPE");
+    });
+    const { internals } = prepareConfiguredOverrideSession(session, {
+      currentModel: "kimi-k3",
+      availableModels: [{ modelId: "kimi-k3", name: "Kimi K3" }],
+      configOptions: [fastConfigOption("false")],
+      connection: { setSessionConfigOption },
+    });
+
+    await expect(internals.applyConfiguredOverrides()).rejects.toThrow("write EPIPE");
+  });
+
+  test("applies a stored feature value the provider accepts after a model switch left stale options", async () => {
+    const logger = createTestLogger();
+    const childLogger = { trace: vi.fn(), warn: vi.fn() };
+    vi.spyOn(logger, "child").mockReturnValue(asInternals<typeof logger>(childLogger));
+    const session = createSessionWithConfig(
+      {
+        provider: "acp",
+        model: "composer-2.5",
+        featureValues: { fast: "true" },
+        configFeatureOptions: [PER_MODEL_FEATURE_OPTION],
+      },
+      logger,
+    );
+    // `unstable_setSessionModel` answers with an empty response, so the session still holds
+    // the options of the model `session/new` reported — Kimi K3, which has no `fast`.
+    const setSessionConfigOption = vi.fn(async () => ({
+      configOptions: [fastConfigOption("true")],
+    }));
+    const { internals, unstableSetSessionModel } = prepareConfiguredOverrideSession(session, {
+      currentModel: "kimi-k3",
+      availableModels: [
+        { modelId: "kimi-k3", name: "Kimi K3" },
+        { modelId: "composer-2.5", name: "Composer 2.5" },
+      ],
+      configOptions: [selectConfigOption("thought_level", ["low", "max"], "max")],
+      connection: { setSessionConfigOption },
+    });
+
+    await expect(internals.applyConfiguredOverrides()).resolves.toBeUndefined();
+    expect(unstableSetSessionModel).toHaveBeenCalledWith({
+      sessionId: "session-1",
+      modelId: "composer-2.5",
+    });
+    expect(setSessionConfigOption).toHaveBeenCalledWith({
+      sessionId: "session-1",
+      configId: "fast",
+      value: "true",
+    });
+    expect(internals.configOptions).toEqual([fastConfigOption("true")]);
+    expect(childLogger.warn).not.toHaveBeenCalled();
   });
 
   test("routes config_option_update and refreshes derived mode, model, and thinking state", async () => {
