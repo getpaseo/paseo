@@ -2076,6 +2076,7 @@ export const ko: TranslationResources = {
         label: "언어",
         description: "앱 언어",
         options: {
+          it: "Italiano",
           system: "시스템",
           ar: "العربية",
           en: "English",

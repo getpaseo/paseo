@@ -1,10 +1,16 @@
+import { addProjectEn, addProjectIt } from "./resources/add-project";
+import { providerDescriptionsIt } from "./resources/provider-descriptions";
+import { terminalSettingsEn, terminalSettingsIt } from "./resources/terminal-settings";
+import { workspaceSettingsEn, workspaceSettingsIt } from "./resources/workspace-settings";
 import { createInstance } from "i18next";
 import { initReactI18next } from "react-i18next";
 import { observeI18nInit } from "./init";
 import { ar } from "./resources/ar";
+import { browserToolsEn, browserToolsIt } from "./resources/browser-tools";
 import { en } from "./resources/en";
 import { es } from "./resources/es";
 import { fr } from "./resources/fr";
+import { it } from "./resources/it";
 import { ja } from "./resources/ja";
 import { ko } from "./resources/ko";
 import { ptBR } from "./resources/pt-BR";
@@ -20,9 +26,23 @@ observeI18nInit(
     lng: "en",
     resources: {
       ar: { translation: ar },
-      en: { translation: en },
+      en: {
+        translation: en,
+        browserTools: browserToolsEn,
+        workspaceSettings: workspaceSettingsEn,
+        terminalSettings: terminalSettingsEn,
+        addProject: addProjectEn,
+      },
       es: { translation: es },
       fr: { translation: fr },
+      it: {
+        translation: it,
+        browserTools: browserToolsIt,
+        providerDescriptions: providerDescriptionsIt,
+        workspaceSettings: workspaceSettingsIt,
+        terminalSettings: terminalSettingsIt,
+        addProject: addProjectIt,
+      },
       ja: { translation: ja },
       ko: { translation: ko },
       "pt-BR": { translation: ptBR },
