@@ -73,6 +73,7 @@ import {
 import { registerWorkspaceRouteNavigationRef } from "@/navigation/workspace-route-navigation";
 import { ThemedStack } from "@/navigation/themed-stack";
 import { shouldUseDesktopDaemon } from "@/desktop/daemon/desktop-daemon";
+import { useApplyDesktopDaemonStarts } from "@/hooks/use-is-local-daemon";
 import { AgentNavigationListener } from "@/desktop/agent-navigation";
 import { LegacyAgentSkillsMigration } from "@/agent-skills/legacy-migration";
 import { legacyFavoriteProfileMigration } from "@/agent-profiles/migration";
@@ -373,6 +374,8 @@ function HostRuntimeBootstrapProvider({ children }: { children: ReactNode }) {
     const store = getHostRuntimeStore();
     return bindHostRuntimeAppState(store, AppState);
   }, []);
+
+  useApplyDesktopDaemonStarts();
 
   useEffect(() => {
     const store = getHostRuntimeStore();

@@ -1,30 +1,27 @@
-import { useQuery } from "@tanstack/react-query";
-import { getDesktopDaemonStatus, shouldUseDesktopDaemon } from "@/desktop/daemon/desktop-daemon";
-
-const DESKTOP_DAEMON_SERVER_ID_QUERY_KEY = ["desktop-daemon-server-id"] as const;
-
-interface DesktopDaemonServerIdResult {
-  serverId: string | null;
-}
-
-async function loadDesktopDaemonServerId(): Promise<DesktopDaemonServerIdResult> {
-  const status = await getDesktopDaemonStatus();
-  const serverId = status.serverId.trim();
-  return {
-    serverId: serverId.length > 0 ? serverId : null,
-  };
-}
+import { useEffect } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  getDesktopDaemonStatus,
+  listenToDesktopDaemonStarted,
+  shouldUseDesktopDaemon,
+} from "@/desktop/daemon/desktop-daemon";
+import {
+  LOCAL_DAEMON_SERVER_ID_QUERY_KEY,
+  applyStartedLocalDaemon,
+  probeLocalDaemonServerId,
+  resolveLocalDaemonServerIdRefetchInterval,
+} from "@/desktop/daemon/local-daemon-server-id";
 
 function useLocalDaemonServerIdQuery() {
   const isDesktopApp = shouldUseDesktopDaemon();
 
   return useQuery({
-    queryKey: DESKTOP_DAEMON_SERVER_ID_QUERY_KEY,
-    queryFn: loadDesktopDaemonServerId,
+    queryKey: LOCAL_DAEMON_SERVER_ID_QUERY_KEY,
+    queryFn: ({ client }) => probeLocalDaemonServerId(client, getDesktopDaemonStatus),
     enabled: isDesktopApp,
     staleTime: Infinity,
     gcTime: Infinity,
-    refetchInterval: (activeQuery) => (activeQuery.state.data?.serverId ? false : 1000),
+    refetchInterval: (activeQuery) => resolveLocalDaemonServerIdRefetchInterval(activeQuery.state),
     refetchOnMount: false,
     refetchOnReconnect: false,
     refetchOnWindowFocus: false,
@@ -73,4 +70,33 @@ export function useIsLocalDaemon(serverId: string): boolean {
   }
 
   return localServerId === normalizedServerId;
+}
+
+// Mount once per window. A daemon started from another window never runs this window's start call,
+// and the stopped local server id query doesn't poll.
+export function useApplyDesktopDaemonStarts(): void {
+  const queryClient = useQueryClient();
+
+  useEffect(() => {
+    if (!shouldUseDesktopDaemon()) return;
+
+    let cancelled = false;
+    let unlisten: (() => void) | null = null;
+
+    void listenToDesktopDaemonStarted((status) => {
+      void applyStartedLocalDaemon(queryClient, status);
+    }).then((fn) => {
+      if (cancelled) {
+        fn();
+      } else {
+        unlisten = fn;
+      }
+      return undefined;
+    });
+
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, [queryClient]);
 }

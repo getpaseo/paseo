@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { app, ipcMain, powerMonitor } from "electron";
+import { app, BrowserWindow, ipcMain, powerMonitor } from "electron";
 import log from "electron-log/main";
 import {
   resolvePaseoHome,
@@ -399,7 +399,15 @@ export function createDaemonCommandHandlers(): Record<string, DesktopCommandHand
       runningUnderARM64Translation: isRunningUnderARM64Translation(),
     }),
     desktop_daemon_status: () => resolveDesktopDaemonStatus(),
-    start_desktop_daemon: () => startDaemon(),
+    start_desktop_daemon: async () => {
+      const status = await startDaemon();
+      // Each window caches the local server id and only polls while a daemon is coming up, so
+      // windows other than the caller learn about this start from the event.
+      for (const win of BrowserWindow.getAllWindows()) {
+        win.webContents.send("paseo:event:desktop-daemon-started", status);
+      }
+      return status;
+    },
     stop_desktop_daemon: (args) =>
       stopDesktopDaemon(
         parseDesktopDaemonStopReason(args),
