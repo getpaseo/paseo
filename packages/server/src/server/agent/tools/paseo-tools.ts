@@ -139,6 +139,15 @@ export interface PaseoToolHostDependencies {
    */
   callerAgentId?: string;
   /**
+   * Schema scope for advertised tool definitions. Defaults to "agent" when
+   * callerAgentId is set, "top-level" otherwise. The OpenCode bridge manifest
+   * sets this to "agent" explicitly: the manifest is served globally without a
+   * caller, but every session that executes bridge tools is bound to one, so a
+   * top-level manifest advertises keys (e.g. create_agent.background) that
+   * agent-scoped validation rejects.
+   */
+  toolScope?: "agent" | "top-level";
+  /**
    * Optional resolver for session-bound speak handlers.
    * Used by hidden voice agents to narrate through daemon-managed TTS.
    */
@@ -557,6 +566,11 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
   } = options;
   const childLogger = logger.child({ module: "agent", component: "paseo-tool-catalog" });
   const callerContext = callerAgentId ? (resolveCallerContext?.(callerAgentId) ?? null) : null;
+  // Schema scope drives advertised definitions only; handlers keep using
+  // callerAgentId directly. Scope defaults from caller identity, but the
+  // OpenCode bridge manifest overrides it to "agent" (see toolScope docs).
+  const isAgentScope =
+    options.toolScope !== undefined ? options.toolScope === "agent" : callerAgentId !== undefined;
 
   const parseToolInput = async (tool: PaseoToolDefinition, input: unknown): Promise<unknown> => {
     const inputSchema = tool.inputSchema;
@@ -1095,7 +1109,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       .describe("Legacy GitHub PR number. Prefer workspace.source.target.githubPrNumber."),
   };
   const createAgentInputSchema = z
-    .object(callerAgentId ? agentToAgentInputSchema : canonicalTopLevelInputSchema)
+    .object(isAgentScope ? agentToAgentInputSchema : canonicalTopLevelInputSchema)
     .passthrough();
   const agentToAgentCreateAgentArgsSchema = z.object(agentToAgentInputSchema).strict();
   const legacyAgentToAgentCreateAgentArgsSchema = z.object(legacyAgentToAgentInputSchema).strict();
@@ -1142,7 +1156,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
         "Agent-scoped only: get notified when the prompted agent finishes, errors, or needs permission.",
       ),
   };
-  const sendAgentPromptInputSchema = callerAgentId
+  const sendAgentPromptInputSchema = isAgentScope
     ? agentToAgentSendAgentPromptInputSchema
     : topLevelSendAgentPromptInputSchema;
   const inspectProviderInputSchema = {
@@ -2530,7 +2544,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
           .optional()
           .describe("IANA time zone for the cron cadence. For example: America/New_York."),
         name: z.string().optional(),
-        provider: (callerAgentId ? AgentProviderEnum.optional() : AgentProviderEnum).describe(
+        provider: (isAgentScope ? AgentProviderEnum.optional() : AgentProviderEnum).describe(
           "Provider, or provider/model (for example: codex or codex/gpt-5.4). Defaults to the caller's provider in an agent-scoped session.",
         ),
         cwd: z.string().optional(),
