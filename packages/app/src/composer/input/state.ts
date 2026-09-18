@@ -5,11 +5,21 @@ import type { MessageInputKeyboardActionKind } from "@/keyboard/actions";
 
 export type SendBehavior = ActiveTurnBehavior | "queue";
 
-export function resolveActiveSendBehavior(
-  sendBehavior: SendBehavior,
-  hasPendingPermission: boolean,
-): SendBehavior {
-  return sendBehavior === "queue" && hasPendingPermission ? "interrupt" : sendBehavior;
+interface ActiveSendBehaviorContext {
+  sendBehavior: SendBehavior;
+  hasPendingPermission: boolean;
+  supportsSteering?: boolean;
+}
+
+export function resolveActiveSendBehavior({
+  sendBehavior,
+  hasPendingPermission,
+  supportsSteering,
+}: ActiveSendBehaviorContext): SendBehavior {
+  // COMPAT(agentSteeringCapability): added in v0.8.0, remove after 2027-03-17 once daemon floor >= v0.8.0.
+  const effectiveBehavior =
+    sendBehavior === "steer" && supportsSteering === false ? "queue" : sendBehavior;
+  return effectiveBehavior === "queue" && hasPendingPermission ? "interrupt" : effectiveBehavior;
 }
 
 interface ComposerSurfaceState {
