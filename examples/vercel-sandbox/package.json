@@ -1,0 +1,37 @@
+{
+  "name": "@elisabethrulke/paseo-vercel-sandbox",
+  "version": "0.1.0",
+  "description": "Run Paseo coding agents inside a persistent Vercel Sandbox",
+  "license": "Apache-2.0",
+  "bin": {
+    "paseo-sandbox": "./dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "fixture",
+    "README.md",
+    "LICENSE"
+  ],
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit",
+    "test": "npm run build && node --test test/*.test.mjs",
+    "test:package": "node scripts/test-package.mjs",
+    "test:docs": "node scripts/test-docs.mjs",
+    "test:live": "node scripts/live.mjs"
+  },
+  "dependencies": {
+    "@getpaseo/client": "0.8.0",
+    "@vercel/oidc": "3.2.0",
+    "@vercel/sandbox": "3.3.0",
+    "commander": "^12.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.9.0"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

@@ -30,7 +30,8 @@ us, so read a plugin's source before installing it.
 
 ## Hosting and infrastructure
 
-| Project                                                            | What it does                                                                                         |
-| ------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------- |
-| [Paseo Self-hosted](https://github.com/blockfeed/paseo-selfhosted) | Packages the Paseo web UI and a local daemon as a Docker deployment.                                 |
-| [Devbox Fleet](https://github.com/omrihaviv/devbox-fleet)          | Provisions and maintains per-developer GCP devboxes with Paseo, coding agents, and Tailscale access. |
+| Project                                                                               | What it does                                                                                                              |
+| ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| [Paseo Self-hosted](https://github.com/blockfeed/paseo-selfhosted)                    | Packages the Paseo web UI and a local daemon as a Docker deployment.                                                      |
+| [Devbox Fleet](https://github.com/omrihaviv/devbox-fleet)                             | Provisions and maintains per-developer GCP devboxes with Paseo, coding agents, and Tailscale access.                      |
+| [Vercel Sandbox](https://github.com/getpaseo/paseo/tree/main/examples/vercel-sandbox) | Runs a Paseo daemon and coding agents in a persistent Vercel Sandbox, with AI Gateway model access and snapshot recovery. |

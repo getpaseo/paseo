@@ -1,0 +1,10 @@
+node_modules/
+dist/
+*.tgz
+.env
+.env.*
+
+.vercel/
+results/
+state/
+*.log
