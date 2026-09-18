@@ -127,7 +127,7 @@ const helper = await workspace.agents.create({
 const result = await helper.waitForFinish(60_000);
 ```
 
-An internal agent is never written to agent storage, so it cannot be resumed after the daemon restarts, and its provider session is not kept either. Plugin lifecycle hooks do not fire for it. Older hosts reject the call; check `features.internalAgents` in `server_info` when you need to degrade.
+An internal agent is never written to agent storage, so it cannot be resumed after the daemon restarts, and its provider session is not kept either. After it is archived, its final snapshot and last message stay readable by id for ten minutes, so `waitForFinish()` and `refresh()` still answer when the helper finished and auto-archived before you asked. Plugin lifecycle hooks do not fire for it. Older hosts reject the call; check `features.internalAgents` in `server_info` when you need to degrade.
 
 ## Request structured output
 

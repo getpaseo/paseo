@@ -93,7 +93,11 @@ lists, global subscriptions, attention tracking, notifications, and plugin lifec
 provider session is not kept (`persistSession: false`, which for Claude means the transcript is
 deleted on close). Lookups by id still work, so `waitForFinish`, the timeline, and archive keep
 working for the caller that created it. Archiving one is closing it: there is no record to mark, so
-the runtime is closed, the committed timeline is dropped, and `getAgent` returns null from then on.
+the runtime is closed, the committed timeline is dropped, attached children are archived as for any
+parent, and `getAgent` returns null from then on. The archived snapshot and last message stay
+readable by exact id for ten minutes (`AgentManager.getRetiredInternalAgent`), which is what keeps
+create-then-`waitForFinish` working for a helper that finishes and auto-archives before the wait
+arrives; storage plays that role for public agents.
 
 The flag lives on `create_agent_request`, not in `AgentSessionConfig` on the wire, because that
 config schema is reused for update overrides. The `agent.create` transform hook cannot set it

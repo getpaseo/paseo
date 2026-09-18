@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, expect, test } from "vitest";
@@ -413,3 +413,85 @@ test("create_agent_request fails cleanly when worktree creation cannot resolve t
   await expectActiveAgentListEmpty();
   await expectWorktreeListEmpty(repoDir);
 });
+
+/** Every agent id with a record under `$PASEO_HOME/agents`, whatever its cwd bucket. */
+function storedAgentIds(): string[] {
+  const root = path.join(ctx.daemon.paseoHome, "agents");
+  if (!existsSync(root)) return [];
+  return readdirSync(root, { recursive: true, encoding: "utf8" })
+    .filter((entry) => entry.endsWith(".json"))
+    .map((entry) => path.basename(entry, ".json"));
+}
+
+async function listedAgentIds(includeArchived: boolean): Promise<string[]> {
+  const payload = await ctx.client.fetchAgents(
+    includeArchived ? { filter: { includeArchived } } : {},
+  );
+  return payload.entries.map((entry) => entry.agent.id);
+}
+
+async function historyAgentIds(): Promise<string[]> {
+  const payload = await ctx.client.fetchAgentHistory({ page: { limit: 50 } });
+  return payload.entries.map((entry) => entry.agent.id);
+}
+
+test("create_agent_request with internal runs the agent for its caller but keeps it out of every list, History, and storage", async () => {
+  const cwd = createGitRepo();
+  const config = { ...getFullAccessConfig("codex"), cwd };
+  const visible = await ctx.client.createAgent({ config, initialPrompt: "Say done." });
+  const hidden = await ctx.client.createAgent({
+    config,
+    internal: true,
+    initialPrompt: "Say done.",
+  });
+  expect(hidden.id).not.toBe(visible.id);
+  expect(hidden.cwd).toBe(visible.cwd);
+
+  // The caller can still drive it by id.
+  const finished = await ctx.client.waitForFinish(hidden.id, 10_000);
+  expect(finished).toMatchObject({ status: "idle", error: null });
+  await ctx.client.waitForFinish(visible.id, 10_000);
+
+  await expect
+    .poll(() => storedAgentIds(), { timeout: 10_000, interval: 100 })
+    .toContain(visible.id);
+  expect(storedAgentIds()).not.toContain(hidden.id);
+
+  expect(await listedAgentIds(false)).toContain(visible.id);
+  expect(await listedAgentIds(false)).not.toContain(hidden.id);
+  expect(await listedAgentIds(true)).not.toContain(hidden.id);
+
+  expect(await historyAgentIds()).toContain(visible.id);
+  expect(await historyAgentIds()).not.toContain(hidden.id);
+}, 30_000);
+
+test("create_agent_request with internal and autoArchive keeps the result readable by id after archive", async () => {
+  const cwd = createGitRepo();
+  const hidden = await ctx.client.createAgent({
+    config: { ...getFullAccessConfig("codex"), cwd },
+    internal: true,
+    autoArchive: true,
+    initialPrompt: "Say done.",
+  });
+
+  // Whether this arrives before or after the auto-archive, it is the finished turn.
+  const finished = await ctx.client.waitForFinish(hidden.id, 10_000);
+  expect(finished).toMatchObject({ status: "idle", error: null });
+
+  // Archived internal agents leave no record on disk; the archived snapshot is
+  // served from memory for a while so a slow caller still gets the result.
+  await expect
+    .poll(async () => (await ctx.client.fetchAgent(hidden.id))?.agent.archivedAt ?? null, {
+      timeout: 10_000,
+      interval: 100,
+    })
+    .toEqual(expect.any(String));
+  const afterArchive = await ctx.client.waitForFinish(hidden.id, 10_000);
+  expect(afterArchive.status).toBe("idle");
+  expect(afterArchive.final?.archivedAt).toEqual(expect.any(String));
+  expect(afterArchive.lastMessage).toEqual(finished.lastMessage);
+
+  expect(await listedAgentIds(true)).not.toContain(hidden.id);
+  expect(await historyAgentIds()).not.toContain(hidden.id);
+  expect(storedAgentIds()).not.toContain(hidden.id);
+}, 30_000);
