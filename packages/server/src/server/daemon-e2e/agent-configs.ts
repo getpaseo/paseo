@@ -57,6 +57,14 @@ export const agentConfigs = {
     provider: "pi",
     thinkingOptionId: "medium",
   },
+  muse: {
+    provider: "muse",
+    model: "muse-spark-1.2",
+    modes: {
+      full: "allowAll",
+      ask: "promptUnmatched",
+    },
+  },
   omp: {
     provider: "omp",
     thinkingOptionId: "medium",
@@ -101,4 +109,4 @@ export function getAskModeConfig(provider: AgentProvider) {
 /**
  * Helper to run a test for each provider.
  */
-export const allProviders: AgentProvider[] = ["claude", "codex", "opencode", "pi", "omp"];
+export const allProviders: AgentProvider[] = ["claude", "codex", "opencode", "pi", "omp", "muse"];
