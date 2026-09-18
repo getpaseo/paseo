@@ -1373,6 +1373,7 @@ export class AgentManager {
     return this.registerSession(session, storedConfig, resolvedAgentId, {
       ...options,
       persistence: handle,
+      restoring: true,
     });
   }
 
@@ -1562,6 +1563,7 @@ export class AgentManager {
         lastUsage: preservedLastUsage,
         lastError: preservedLastError,
         attention: preservedAttention,
+        restoring: true,
       });
     } catch (error) {
       if (closedExisting) {
@@ -3410,6 +3412,12 @@ export class AgentManager {
       lastUsage?: AgentUsage;
       lastError?: string;
       attention?: AttentionState;
+      /**
+       * Bringing a known agent back, rather than starting a new one. Its timestamps and
+       * attention come from what was already recorded, and installing the session is not
+       * activity in it.
+       */
+      restoring?: boolean;
       initialTitle?: string | null;
       publishWhenReady?: boolean;
       workspaceId?: string;
@@ -3463,10 +3471,10 @@ export class AgentManager {
       await this.refreshSessionState(managed, { emit: false });
       this.assertAgentRegistrationActive(managed);
       managed.lifecycle = "idle";
-      // A caller that supplies `updatedAt` is restoring a persisted agent, and restoring is
-      // not activity. Stamping now over it rewrote the workspace's "last used" every time a
-      // chat was reopened. Fresh registrations have no stored time to preserve.
-      if (!options?.updatedAt) {
+      // Stamping now over a restored timestamp rewrote the workspace's "last used" in the
+      // sidebar every time a chat was reopened, because workspace `statusEnteredAt` is
+      // re-derived from persisted agent `updatedAt` on every daemon start.
+      if (!options?.restoring) {
         this.touchUpdatedAt(managed);
       }
       await this.persistSnapshot(managed);
