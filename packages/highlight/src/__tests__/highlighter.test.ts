@@ -144,6 +144,43 @@ const title = "Hello";
     );
   });
 
+  it("highlights Vue SFCs across script, template, and style", () => {
+    const code = [
+      '<script lang="ts">',
+      "  let count: number = 1;",
+      "</script>",
+      "",
+      "<template>",
+      '  <p v-if="count > 0" :class="badge">{{ { count: 1 } }}</p>',
+      "  <span>{{ 'a}}b' }} {{ { inner: 2 }}}</span>",
+      "</template>",
+      "",
+      "<style>",
+      "  .badge {",
+      "    color: red;",
+      "  }",
+      "</style>",
+    ].join("\n");
+
+    const tokens = highlightCode(code, "Counter.vue").flat();
+
+    expect(tokens).toEqual(
+      expect.arrayContaining([
+        { text: "let", style: "keyword" },
+        { text: "number", style: "type" },
+        { text: "template", style: "tag" },
+        { text: "v-if", style: "attribute" },
+        { text: "count", style: "definition" },
+        { text: "1", style: "number" },
+        { text: "'a}}b'", style: "string" },
+        { text: "inner", style: "definition" },
+        { text: "2", style: "number" },
+        { text: "badge", style: "class" },
+        { text: "color", style: "property" },
+      ]),
+    );
+  });
+
   it("highlights TSX code with correct dialect", () => {
     const code = 'const el = <div className="test">hello</div>;';
     const result = highlightCode(code, "test.tsx");
