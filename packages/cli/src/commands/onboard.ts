@@ -2,12 +2,15 @@ import { addLocalDaemonOptions } from "../utils/command-options.js";
 import { cancel, confirm, intro, isCancel, log, note, outro } from "@clack/prompts";
 import { Command, Option } from "commander";
 import {
-  daemonLogPath,
   readPersistedConfig as loadPersistedConfig,
   savePersistedConfig,
   type PersistedConfig,
 } from "@getpaseo/server/configuration";
-import { readDaemonInstance, waitForDaemonReady } from "@getpaseo/server/daemon-control";
+import {
+  daemonLogPath,
+  readDaemonInstance,
+  waitForDaemonReady,
+} from "@getpaseo/server/daemon-control";
 import { withGlobalOptions } from "../utils/command-options.js";
 import type { CommandOptions } from "../output/index.js";
 import { launchLocalDaemon, parseTimeoutMs } from "./daemon/local-daemon.js";
