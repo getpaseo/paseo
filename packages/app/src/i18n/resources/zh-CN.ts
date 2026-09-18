@@ -1270,6 +1270,8 @@ export const zhCN: TranslationResources = {
       noMatchingRefs: "没有匹配的 refs。",
       searchPlaceholder: "搜索分支和 PR",
       title: "起始位置",
+      createBranch: "创建分支",
+      newBranchFrom: "从默认分支创建新分支",
     },
     launch: {
       title: "What to launch",

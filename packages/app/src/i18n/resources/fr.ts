@@ -1317,6 +1317,8 @@ export const fr: TranslationResources = {
       noMatchingRefs: "Aucune référence correspondante.",
       searchPlaceholder: "Rechercher des succursales et des PR",
       title: "Commencer à partir de",
+      createBranch: "Créer une branche",
+      newBranchFrom: "Nouvelle branche depuis la branche par défaut",
     },
     launch: {
       title: "What to launch",
