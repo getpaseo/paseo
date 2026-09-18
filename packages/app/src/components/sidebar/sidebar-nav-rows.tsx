@@ -2,8 +2,16 @@ import { router, usePathname } from "expo-router";
 import { CalendarClock, History, Plus, Search } from "lucide-react-native";
 import { memo, useCallback, useMemo, type ComponentType } from "react";
 import { useTranslation } from "react-i18next";
-import { View, type StyleProp, type ViewStyle } from "react-native";
+import {
+  ScrollView,
+  useWindowDimensions,
+  View,
+  type StyleProp,
+  type ViewStyle,
+} from "react-native";
+import { StyleSheet } from "react-native-unistyles";
 import { SidebarHeaderRow } from "@/components/sidebar/sidebar-header-row";
+import { SidebarSectionHeader } from "@/components/sidebar/sidebar-section-header";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import { PluginSidebarItemRow } from "@/plugins/sidebar-items";
 import { canCreateWorktreeForProjectKind } from "@/projects/host-projects";
@@ -13,10 +21,12 @@ import {
   builtinSidebarNavShortcutAction,
   type BuiltinSidebarNavId,
 } from "@/sidebar-nav/model";
+import { resolveSidebarNavGroupMaxHeight } from "@/sidebar-nav/group-layout";
 import { useSidebarNavItems } from "@/sidebar-nav/use-sidebar-nav-items";
 import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
 import { useActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
 import { useWorkspace } from "@/stores/session-store-hooks";
+import { useSidebarViewStore } from "@/stores/sidebar-view-store";
 import {
   buildNewWorkspaceRoute,
   buildSchedulesRoute,
@@ -36,28 +46,54 @@ interface SidebarNavRowsProps extends SidebarNavRowProps {
  * Top-level sidebar navigation, ordered and filtered by the user's
  * `sidebarNavItems` preference. Renders nothing — not even the bordered group
  * wrapper — when every item is hidden.
+ *
+ * The group folds down to its header on demand and its rows scroll inside a cap,
+ * so plugin contributions never push the workspace list off the sidebar.
  */
 export function SidebarNavRows({ style, onBeforeNavigate }: SidebarNavRowsProps) {
+  const { t } = useTranslation();
   const { items } = useSidebarNavItems();
   const visibleItems = useMemo(() => items.filter((item) => item.visible), [items]);
+  const collapsed = useSidebarViewStore((state) => state.navCollapsed);
+  const toggleCollapsed = useSidebarViewStore((state) => state.toggleNavCollapsed);
+  const { height: viewportHeight } = useWindowDimensions();
+  const rowsStyle = useMemo(
+    () => [styles.rows, { maxHeight: resolveSidebarNavGroupMaxHeight(viewportHeight) }],
+    [viewportHeight],
+  );
 
   if (visibleItems.length === 0) return null;
 
   return (
-    <View style={style}>
-      {visibleItems.map((item) => {
-        if (item.kind === "plugin") {
-          return (
-            <PluginSidebarItemRow
-              key={item.key}
-              group={item.group}
-              onBeforeNavigate={onBeforeNavigate}
-            />
-          );
-        }
-        const Row = BUILTIN_ROWS[item.id];
-        return <Row key={item.key} onBeforeNavigate={onBeforeNavigate} />;
-      })}
+    <View style={style} testID="sidebar-nav-group">
+      <SidebarSectionHeader
+        title={t("sidebar.nav.title")}
+        collapsed={collapsed}
+        onToggle={toggleCollapsed}
+        testID="sidebar-nav-group-header"
+      />
+      {collapsed ? null : (
+        <ScrollView
+          style={rowsStyle}
+          contentContainerStyle={styles.rowsContent}
+          showsVerticalScrollIndicator={false}
+          testID="sidebar-nav-group-rows"
+        >
+          {visibleItems.map((item) => {
+            if (item.kind === "plugin") {
+              return (
+                <PluginSidebarItemRow
+                  key={item.key}
+                  group={item.group}
+                  onBeforeNavigate={onBeforeNavigate}
+                />
+              );
+            }
+            const Row = BUILTIN_ROWS[item.id];
+            return <Row key={item.key} onBeforeNavigate={onBeforeNavigate} />;
+          })}
+        </ScrollView>
+      )}
     </View>
   );
 }
@@ -176,3 +212,14 @@ const BUILTIN_ROWS: Record<BuiltinSidebarNavId, ComponentType<SidebarNavRowProps
   search: SidebarSearchRow,
   schedules: SidebarSchedulesRow,
 };
+
+const styles = StyleSheet.create(() => ({
+  rows: {
+    flexGrow: 0,
+    flexShrink: 1,
+  },
+  // Same row rhythm the wrapper used before the rows moved inside the scroller.
+  rowsContent: {
+    gap: 2,
+  },
+}));

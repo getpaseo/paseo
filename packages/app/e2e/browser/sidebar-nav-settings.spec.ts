@@ -12,6 +12,15 @@ import {
   seedSidebarNavPreferences,
   setSidebarNavItemVisible,
 } from "../support/helpers/sidebar-nav-settings";
+import {
+  expectLastNavigationItemReachable,
+  expectNavigationGroupFoldedAway,
+  expectNavigationGroupScrollsWithinItsShare,
+  expectNavigationGroupShowsItems,
+  toggleNavigationGroup,
+} from "../support/helpers/sidebar-nav-group";
+
+const SHORT_WINDOW = { width: 1200, height: 360 };
 
 test.describe("Sidebar items in Appearance settings", () => {
   test("owner reorders and hides top-level sidebar items", async ({ page }) => {
@@ -104,5 +113,29 @@ test.describe("Sidebar items in Appearance settings", () => {
     await expectSidebarItemHidden(page, "history");
     await expectSidebarItemHidden(page, "search");
     await expectSidebarItemHidden(page, "schedules");
+  });
+});
+
+test.describe("The sidebar items group", () => {
+  test("owner folds the navigation group away and finds it folded next time", async ({ page }) => {
+    await gotoAppShell(page);
+    await expectNavigationGroupShowsItems(page);
+
+    await toggleNavigationGroup(page);
+    await expectNavigationGroupFoldedAway(page);
+
+    await page.reload();
+    await expectNavigationGroupFoldedAway(page);
+
+    await toggleNavigationGroup(page);
+    await expectNavigationGroupShowsItems(page);
+  });
+
+  test("navigation items scroll in place on a short window", async ({ page }) => {
+    await page.setViewportSize(SHORT_WINDOW);
+    await gotoAppShell(page);
+
+    await expectNavigationGroupScrollsWithinItsShare(page, SHORT_WINDOW.height);
+    await expectLastNavigationItemReachable(page);
   });
 });
