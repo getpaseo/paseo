@@ -16,17 +16,19 @@ const foregroundMutedColorMapping = (theme: Theme) => ({
  * A muted section title that collapses the rows under it. The chevron shows on hover
  * where hover exists and always where it does not, so touch users still see the toggle.
  */
+interface SidebarSectionHeaderProps {
+  title: string;
+  collapsed: boolean;
+  onToggle: () => void;
+  testID: string;
+}
+
 export function SidebarSectionHeader({
   title,
   collapsed,
   onToggle,
   testID,
-}: {
-  title: string;
-  collapsed: boolean;
-  onToggle: () => void;
-  testID: string;
-}) {
+}: SidebarSectionHeaderProps) {
   const isCompact = useIsCompactFormFactor();
   const accessibilityState = useMemo(() => ({ expanded: !collapsed }), [collapsed]);
   // react-native-web does not carry `accessibilityState.expanded` through to the DOM,
