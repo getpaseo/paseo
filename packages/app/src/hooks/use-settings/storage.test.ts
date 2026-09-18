@@ -169,6 +169,15 @@ describe("loadAppSettingsFromStorage", () => {
     expect(result.language).toBe("system");
   });
 
+  it("retains Italian as a saved language", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({ language: "it" }),
+      }),
+    });
+    expect((await loadAppSettingsFromStorage(deps)).language).toBe("it");
+  });
+
   it("defaults workspace title source to title when storage is empty", async () => {
     const deps = makeDeps();
 

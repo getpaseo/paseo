@@ -2185,6 +2185,7 @@ export const en = {
         label: "Language",
         description: "App language",
         options: {
+          it: "Italiano",
           system: "System",
           ar: "Arabic",
           en: "English",
