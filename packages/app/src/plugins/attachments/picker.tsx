@@ -74,6 +74,72 @@ function attachmentOptions(items: PluginAttachmentItem[]): ComboboxOption[] {
   }));
 }
 
+function PluginAttachmentPicker({
+  input,
+  active,
+  onSelect,
+  onOpenChange,
+}: {
+  input: PluginAttachmentPickerInput;
+  active: InstalledAttachmentSource;
+  onSelect: (item: PluginAttachmentItem) => void;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const [query, setQuery] = useState("");
+  const trimmedQuery = query.trim();
+  const search = useFetchQuery(
+    {
+      queryKey: [
+        "plugin-attachment-search",
+        input.serverId,
+        active.plugin.id,
+        active.source.id,
+        trimmedQuery,
+      ],
+      queryFn: async () => {
+        if (!input.client) throw new Error("Plugin host is offline");
+        const client = input.client;
+        return searchPluginAttachments(
+          active.source,
+          (method, rpcInput) => client.invokePluginRpc(active.plugin.id, method, rpcInput),
+          trimmedQuery,
+        );
+      },
+      enabled: input.connected,
+      dataShape: "list",
+      staleTimeMs: SEARCH_STALE_TIME_MS,
+    },
+    active.plugin.queryClient,
+  );
+  const items = search.error
+    ? EMPTY_ATTACHMENT_ITEMS
+    : (search.data?.items ?? EMPTY_ATTACHMENT_ITEMS);
+  const options = useMemo(() => attachmentOptions(items), [items]);
+  const handleSelect = useCallback(
+    (itemId: string) => {
+      const item = items.find((candidate) => candidate.id === itemId);
+      if (item) onSelect(item);
+    },
+    [items, onSelect],
+  );
+  return (
+    <Combobox
+      options={options}
+      value=""
+      onSelect={handleSelect}
+      searchable
+      searchPlaceholder={active.source.searchPlaceholder}
+      title={active.source.pickerTitle}
+      open
+      onOpenChange={onOpenChange}
+      onSearchQueryChange={setQuery}
+      desktopPlacement="top-start"
+      anchorRef={input.anchorRef}
+      emptyText={searchEmptyText(search.error, search.isFetching)}
+    />
+  );
+}
+
 export function usePluginAttachmentPicker(
   input: PluginAttachmentPickerInput,
 ): PluginAttachmentPickerBinding {
@@ -83,40 +149,9 @@ export function usePluginAttachmentPicker(
     [input.serverId, plugins],
   );
   const [activeKey, setActiveKey] = useState<string | null>(null);
-  const [query, setQuery] = useState("");
   const active = sources.find((candidate) => candidate.key === activeKey) ?? null;
-  const trimmedQuery = query.trim();
-  const search = useFetchQuery(
-    {
-      queryKey: [
-        "plugin-attachment-search",
-        input.serverId,
-        active?.plugin.id ?? "",
-        active?.source.id ?? "",
-        trimmedQuery,
-      ],
-      queryFn: async () => {
-        if (!input.client || !active) throw new Error("Plugin host is offline");
-        const client = input.client;
-        return searchPluginAttachments(
-          active.source,
-          (method, rpcInput) => client.invokePluginRpc(active.plugin.id, method, rpcInput),
-          trimmedQuery,
-        );
-      },
-      enabled: input.connected && active !== null,
-      dataShape: "list",
-      staleTimeMs: SEARCH_STALE_TIME_MS,
-    },
-    active?.plugin.queryClient,
-  );
-  const items = search.error
-    ? EMPTY_ATTACHMENT_ITEMS
-    : (search.data?.items ?? EMPTY_ATTACHMENT_ITEMS);
-  const options = useMemo(() => attachmentOptions(items), [items]);
   const close = useCallback(() => {
     setActiveKey(null);
-    setQuery("");
   }, []);
   const handleOpenChange = useCallback(
     (open: boolean) => {
@@ -125,10 +160,8 @@ export function usePluginAttachmentPicker(
     [close],
   );
   const handleSelect = useCallback(
-    (itemId: string) => {
+    (item: PluginAttachmentItem) => {
       if (!active) return;
-      const item = items.find((candidate) => candidate.id === itemId);
-      if (!item) return;
       const attachment = createPluginResourceAttachment(
         {
           pluginId: active.plugin.id,
@@ -138,10 +171,29 @@ export function usePluginAttachmentPicker(
         },
         item,
       );
-      input.onChangeAttachments(togglePluginResourceAttachment(input.attachments, attachment));
+      const attachments = togglePluginResourceAttachment(input.attachments, attachment);
+      input.onChangeAttachments(attachments);
       close();
+      const onSelect = active.source.onSelect;
+      if (attachments.length > input.attachments.length && onSelect) {
+        void Promise.resolve()
+          .then(() => onSelect({ ...item }))
+          .then(() =>
+            active.plugin.queryClient.invalidateQueries({
+              queryKey: [
+                "plugin-attachment-search",
+                input.serverId,
+                active.plugin.id,
+                active.source.id,
+              ],
+            }),
+          )
+          .catch((error: unknown) => {
+            console.warn(`[Plugins] Attachment selection callback failed for ${active.key}`, error);
+          });
+      }
     },
-    [active, close, input, items],
+    [active, close, input],
   );
   const menuItems = useMemo(
     () =>
@@ -160,19 +212,12 @@ export function usePluginAttachmentPicker(
   return {
     menuItems,
     picker: (
-      <Combobox
-        options={options}
-        value=""
+      <PluginAttachmentPicker
+        key={active.key}
+        input={input}
+        active={active}
         onSelect={handleSelect}
-        searchable
-        searchPlaceholder={active.source.searchPlaceholder}
-        title={active.source.pickerTitle}
-        open
         onOpenChange={handleOpenChange}
-        onSearchQueryChange={setQuery}
-        desktopPlacement="top-start"
-        anchorRef={input.anchorRef}
-        emptyText={searchEmptyText(search.error, search.isFetching)}
       />
     ),
   };

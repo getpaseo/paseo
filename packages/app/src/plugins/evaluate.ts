@@ -295,6 +295,9 @@ export function runPluginClientBundle(
         throw new Error(`Attachment source ${normalizedId} has no search placeholder`);
       }
       if (!method) throw new Error(`Attachment source ${normalizedId} has no search RPC`);
+      if (contribution.onSelect !== undefined && typeof contribution.onSelect !== "function") {
+        throw new Error(`Attachment source ${normalizedId} has invalid onSelect callback`);
+      }
       resolvePluginIcon(icon);
       attachmentSourceIds.add(normalizedId);
       return register(
@@ -306,6 +309,7 @@ export function runPluginClientBundle(
           pickerTitle,
           searchPlaceholder,
           search: { ...contribution.search, name: method },
+          ...(contribution.onSelect ? { onSelect: contribution.onSelect } : {}),
         },
         () => attachmentSourceIds.delete(normalizedId),
       );

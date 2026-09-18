@@ -1872,6 +1872,29 @@ export default function contribute(server: PluginServerContext) {
 
 Paseo owns the composer menu, search picker, selected pill, draft state, and submission. The `text` value is the complete snapshot sent to the agent.
 
+To remember recently attached resources, add an optional client-side `onSelect` callback when
+registering the source. Use a plugin RPC to persist the selection in the backend:
+
+```ts
+client.addAttachmentSource({
+  ...issues,
+  async onSelect(item) {
+    await client.rpc(rememberIssue, { id: item.id });
+  },
+});
+```
+
+Define and handle `rememberIssue` like any other plugin RPC. `onSelect` receives a copy of the
+selected `PluginAttachmentItem` after the picker adds it to the draft and closes. Search,
+cancellation, removal, draft restoration, and message submission do not call it. Removing and
+then attaching the same resource calls it again.
+
+The callback is best-effort: Paseo does not wait for it, retry it, or roll back the attachment if
+it throws or rejects. Failures are logged. After it succeeds, Paseo invalidates that source's
+search cache so subsequent results can reflect recently used resources. Keep synchronous work
+short and await persistence before returning. This callback is a draft interaction, not proof
+that the resource was sent to an agent. Sources without `onSelect` keep their existing behavior.
+
 ## Hosts and lifecycle
 
 Plugins are installed per daemon. When the same contribution exists on several connected hosts, Paseo shows one sidebar item and adds a host picker. The selected host supplies the bundle, Paseo API, RPC transport, and query cache. Calls never fall through to another host when the selected host is offline.

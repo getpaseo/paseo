@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { runPluginClientBundle, type PluginClientRuntime } from "./evaluate";
 
 const runtime = {
@@ -223,6 +223,58 @@ describe("evaluatePluginClientBundle", () => {
       },
     ]);
   });
+
+  it("preserves attachment selection callbacks with access to plugin RPC", async () => {
+    const rpc = vi.fn().mockResolvedValue(undefined);
+    const plugin = runPluginClientBundle(
+      "issues",
+      bundle(`
+        plugin.addAttachmentSource({
+          id: "issues", title: "Issues", icon: "CircleDot",
+          pickerTitle: "Attach issue", searchPlaceholder: "Search issues",
+          search: { name: "issues.search", input: {}, output: {} },
+          async onSelect(item) {
+            await plugin.rpc({ name: "issues.remember", input: {}, output: {} }, { id: item.id });
+          },
+        });
+      `),
+      { ...runtime, rpc },
+    );
+
+    const onSelect = plugin.attachmentSources[0].onSelect;
+    expect(onSelect).toBeTypeOf("function");
+    await onSelect?.({
+      id: "issue-1",
+      identifier: "ISSUE-1",
+      title: "Selected issue",
+      url: "https://example.com/issues/1",
+      text: "Issue details",
+      resourceType: "issue",
+    });
+    expect(rpc).toHaveBeenCalledExactlyOnceWith(
+      { name: "issues.remember", input: {}, output: {} },
+      { id: "issue-1" },
+    );
+  });
+
+  it.each(["null", '"issues.remember"'])(
+    "rejects invalid attachment selection callback %s",
+    (onSelect) => {
+      expect(() =>
+        evaluatePluginClientBundle(
+          "issues",
+          bundle(`
+      plugin.addAttachmentSource({
+        id: "issues", title: "Issues", icon: "CircleDot",
+        pickerTitle: "Attach issue", searchPlaceholder: "Search issues",
+        search: { name: "issues.search", input: {}, output: {} },
+        onSelect: ${onSelect},
+      });
+    `),
+        ),
+      ).toThrow("Attachment source issues has invalid onSelect callback");
+    },
+  );
 
   it("collects contextual workspace panels and Command Center items", () => {
     const plugin = evaluatePluginClientBundle(
