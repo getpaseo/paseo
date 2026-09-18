@@ -4,6 +4,7 @@ export const BUILTIN_PROVIDER_ICON_NAMES = [
   "copilot",
   "kiro",
   "minimax",
+  "muse",
   "omp",
   "opencode",
   "pi",
