@@ -66,38 +66,70 @@ function navDivider(page: Page): Locator {
   return navGroup(page).getByRole("separator", { name: "Resize navigation" });
 }
 
-async function navRowsHeight(page: Page): Promise<number> {
+export async function navigationGroupHeight(page: Page): Promise<number> {
   const box = await navRows(page).boundingBox();
   expect(box).not.toBeNull();
   return box!.height;
 }
 
-/** Drags the divider by `offset` points and answers the height the group ends up at. */
-export async function dragNavigationDivider(page: Page, offset: number): Promise<number> {
+/** The touch build offers a grab strip rather than the fine pointer's hairline. */
+export async function expectTouchNavigationDivider(page: Page): Promise<void> {
   const divider = navDivider(page);
   await expect(divider).toBeVisible({ timeout: 30_000 });
   const box = await divider.boundingBox();
   expect(box).not.toBeNull();
-  const x = box!.x + box!.width / 2;
-  const y = box!.y + box!.height / 2;
+  expect(box!.height).toBeGreaterThan(10);
+}
+
+async function navDividerCentre(page: Page): Promise<{ x: number; y: number }> {
+  const divider = navDivider(page);
+  await expect(divider).toBeVisible({ timeout: 30_000 });
+  const box = await divider.boundingBox();
+  expect(box).not.toBeNull();
+  return { x: box!.x + box!.width / 2, y: box!.y + box!.height / 2 };
+}
+
+/** Drags the divider by `offset` points and answers the height the group ends up at. */
+export async function dragNavigationDivider(page: Page, offset: number): Promise<number> {
+  const { x, y } = await navDividerCentre(page);
   await page.mouse.move(x, y);
   await page.mouse.down();
   // Several steps: a single jump is one pointermove, which some drag implementations drop.
   await page.mouse.move(x, y + offset, { steps: 10 });
   await page.mouse.up();
-  await page.waitForTimeout(150);
-  return navRowsHeight(page);
+  // The release is observable in the store, so wait for that instead of for a delay.
+  await expect.poll(() => storedNavigationHeight(page)).not.toBeNull();
+  return navigationGroupHeight(page);
+}
+
+/** The same drag as a finger makes it: the touch build's Pan sees touch events only. */
+export async function touchDragNavigationDivider(page: Page, offset: number): Promise<void> {
+  const { x, y } = await navDividerCentre(page);
+  const steps = 10;
+  const cdp = await page.context().newCDPSession(page);
+  try {
+    await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x, y }] });
+    for (let step = 1; step <= steps; step += 1) {
+      await cdp.send("Input.dispatchTouchEvent", {
+        type: "touchMove",
+        touchPoints: [{ x, y: y + (offset * step) / steps }],
+      });
+    }
+    await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+  } finally {
+    await cdp.detach();
+  }
 }
 
 export async function expectNavigationGroupTaller(
   page: Page,
   previousHeight: number,
 ): Promise<void> {
-  await expect.poll(() => navRowsHeight(page)).toBeGreaterThan(previousHeight);
+  await expect.poll(() => navigationGroupHeight(page)).toBeGreaterThan(previousHeight);
 }
 
-export async function expectStoredNavigationHeight(page: Page): Promise<number> {
-  const stored = await page.evaluate((key) => {
+function storedNavigationHeight(page: Page): Promise<number | null> {
+  return page.evaluate((key) => {
     const raw = localStorage.getItem(key);
     if (!raw) return null;
     return (
@@ -105,10 +137,13 @@ export async function expectStoredNavigationHeight(page: Page): Promise<number> 
         ?.sidebarNavHeight ?? null
     );
   }, PANEL_STATE_KEY);
-  expect(stored).not.toBeNull();
-  return stored as number;
+}
+
+export async function expectStoredNavigationHeight(page: Page): Promise<number> {
+  await expect.poll(() => storedNavigationHeight(page)).not.toBeNull();
+  return (await storedNavigationHeight(page)) as number;
 }
 
 export async function expectNavigationGroupHeight(page: Page, height: number): Promise<void> {
-  await expect.poll(() => navRowsHeight(page)).toBeCloseTo(height, 0);
+  await expect.poll(() => navigationGroupHeight(page)).toBeCloseTo(height, 0);
 }

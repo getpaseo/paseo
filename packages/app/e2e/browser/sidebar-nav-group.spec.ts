@@ -9,7 +9,10 @@ import {
   expectNavigationGroupShowsItems,
   expectNavigationGroupTaller,
   expectStoredNavigationHeight,
+  expectTouchNavigationDivider,
+  navigationGroupHeight,
   toggleNavigationGroup,
+  touchDragNavigationDivider,
 } from "../support/helpers/sidebar-nav-group";
 
 const SHORT_WINDOW = { width: 1200, height: 360 };
@@ -50,5 +53,24 @@ test.describe("Sidebar navigation group", () => {
     const stored = await expectStoredNavigationHeight(page);
     await page.reload();
     await expectNavigationGroupHeight(page, stored);
+  });
+
+  // A wide window with a coarse pointer: the desktop sidebar, driven by a finger.
+  test.describe("on a touch screen", () => {
+    test.use({ viewport: { width: 1200, height: 800 }, isMobile: true, hasTouch: true });
+
+    test("owner drags the navigation group taller with a finger", async ({ page }) => {
+      await gotoAppShell(page);
+      await expectNavigationGroupShowsItems(page);
+      await expectTouchNavigationDivider(page);
+
+      const startHeight = await navigationGroupHeight(page);
+      await touchDragNavigationDivider(page, 80);
+      await expectNavigationGroupTaller(page, startHeight);
+
+      const stored = await expectStoredNavigationHeight(page);
+      await page.reload();
+      await expectNavigationGroupHeight(page, stored);
+    });
   });
 });

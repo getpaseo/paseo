@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  SIDEBAR_NAV_GROUP_CHROME_RESERVE,
   SIDEBAR_NAV_GROUP_MIN_MAX_HEIGHT,
   resolveSidebarNavGroupHeight,
   resolveSidebarNavGroupMaxHeight,
@@ -40,10 +41,19 @@ describe("resolveSidebarNavGroupHeight", () => {
     );
   });
 
+  it("leaves the sidebar's own chrome room on a short window", () => {
+    // A 200px window can spare 200 minus the header, footer and one workspace row.
+    expect(resolveSidebarNavGroupHeight({ requestedHeight: 900, viewportHeight: 200 })).toBe(
+      200 - SIDEBAR_NAV_GROUP_CHROME_RESERVE,
+    );
+    expect(resolveSidebarNavGroupHeight({ requestedHeight: 900, viewportHeight: 900 })).toBe(450);
+  });
+
   it("never lets the ceiling fall below the default share", () => {
-    // Half of a 100px window is still more than its default share, so half is the ceiling.
-    expect(resolveSidebarNavGroupHeight({ requestedHeight: 900, viewportHeight: 100 })).toBe(50);
-    // Half of a 60px window is less than one row, so the default share holds the ceiling up.
+    // Windows this short have no chrome budget at all, so the default share holds.
+    expect(resolveSidebarNavGroupHeight({ requestedHeight: 900, viewportHeight: 100 })).toBe(
+      resolveSidebarNavGroupMaxHeight(100),
+    );
     expect(resolveSidebarNavGroupHeight({ requestedHeight: 900, viewportHeight: 60 })).toBe(
       resolveSidebarNavGroupMaxHeight(60),
     );

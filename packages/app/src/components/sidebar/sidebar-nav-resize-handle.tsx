@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { View, type PointerEvent as RNPointerEvent } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import { StyleSheet } from "react-native-unistyles";
+import { isWeb } from "@/constants/platform";
 import { useHasFinePointer } from "@/hooks/use-fine-pointer";
 
 interface SidebarNavResizeHandleProps {
@@ -106,7 +107,9 @@ export function SidebarNavResizeHandle({
     [],
   );
 
-  if (finePointer) {
+  // The pointer path reads `window` and captures on a DOM node, so it is gated on web
+  // rather than on `finePointer` alone.
+  if (isWeb && finePointer) {
     return (
       <View
         role="separator"

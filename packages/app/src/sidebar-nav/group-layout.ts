@@ -32,6 +32,17 @@ export function resolveSidebarNavGroupMaxHeight(viewportHeight: number): number 
  */
 export const SIDEBAR_NAV_GROUP_DRAGGED_MAX_HEIGHT_FRACTION = 1 / 2;
 
+/** The group's own header, `sidebarFooter`, and one workspace row. */
+const SIDEBAR_NAV_GROUP_HEADER_HEIGHT = 36;
+const SIDEBAR_FOOTER_HEIGHT = 57;
+
+/**
+ * The sidebar chrome a dragged group has to leave behind. Half of a short window is
+ * more than the sidebar can spare, and the list below would reach zero height.
+ */
+export const SIDEBAR_NAV_GROUP_CHROME_RESERVE =
+  SIDEBAR_NAV_GROUP_HEADER_HEIGHT + SIDEBAR_FOOTER_HEIGHT + SIDEBAR_NAV_GROUP_MIN_MAX_HEIGHT;
+
 /**
  * The height the group's rows render at: what the owner dragged it to, or the default
  * share of the window until they drag it.
@@ -44,11 +55,16 @@ export function resolveSidebarNavGroupHeight(input: {
   if (input.requestedHeight === null || !Number.isFinite(input.requestedHeight)) {
     return defaultHeight;
   }
+  const viewportHeight = Number.isFinite(input.viewportHeight)
+    ? Math.max(input.viewportHeight, 0)
+    : 0;
+  // The default share is the floor: dragging may never cost the list more than not
+  // dragging at all, however short the window is.
   const maximum = Math.max(
     defaultHeight,
-    Math.round(
-      (Number.isFinite(input.viewportHeight) ? Math.max(input.viewportHeight, 0) : 0) *
-        SIDEBAR_NAV_GROUP_DRAGGED_MAX_HEIGHT_FRACTION,
+    Math.min(
+      Math.round(viewportHeight * SIDEBAR_NAV_GROUP_DRAGGED_MAX_HEIGHT_FRACTION),
+      viewportHeight - SIDEBAR_NAV_GROUP_CHROME_RESERVE,
     ),
   );
   return Math.min(
