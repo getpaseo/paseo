@@ -83,6 +83,28 @@ Each entry accepts:
 
 The Settings screen replaces only the first entry and preserves the rest of a custom list. Restart the daemon after editing the file directly.
 
+## A different model per kind
+
+The list above is shared by every kind of metadata. To give one kind its own models, add an entry named after it next to `providers`. Its list replaces the shared one for that kind only; everything else, including the built-in defaults and the last-resort model, still applies.
+
+```json
+{
+  "agents": {
+    "metadataGeneration": {
+      "providers": [{ "provider": "claude", "model": "claude-haiku-4-5-20251001" }],
+      "promptSuggestions": {
+        "providers": [{ "provider": "opencode", "model": "minimax-m3" }]
+      },
+      "pullRequest": {
+        "providers": [{ "provider": "codex", "model": "gpt-6-astra" }]
+      }
+    }
+  }
+}
+```
+
+The keys are `title`, `branchName`, `commitMessage`, `pullRequest`, and `promptSuggestions` — the same names used for per-project instructions below. A workspace title and its branch name come from one call, so it uses `title` when that key is set and `branchName` otherwise. The Settings screen edits the shared list only, and leaves per-kind entries alone.
+
 ## Per-project instructions
 
 You can steer the wording of each kind of metadata per repository with a `paseo.json` file at your repo root. Paseo reads it from the committed version of the base branch, the same way it reads worktree config.

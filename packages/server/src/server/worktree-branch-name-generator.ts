@@ -107,6 +107,7 @@ export async function generateBranchNameFromFirstAgentContext(
           cwd: options.cwd,
           providerSnapshotManager: options.providerSnapshotManager,
           daemonConfig: options.daemonConfig,
+          configKey: ["title", "branchName"],
           currentSelection: options.currentSelection,
         })
       : [];

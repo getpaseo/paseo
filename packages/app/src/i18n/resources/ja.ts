@@ -2019,7 +2019,7 @@ export const ja: TranslationResources = {
     metadataGeneration: {
       title: "メタデータ生成",
       description:
-        "ワークスペースのタイトル、ブランチ名、コミットメッセージ、プルリクエストの下書きに使用するモデルを選択します",
+        "ワークスペースのタイトル、ブランチ名、コミットメッセージ、プルリクエストの下書き、プロンプト候補に使用するモデルを選択します",
       selection: "モデル選択",
       automatic: "自動",
       preferred: "手動",

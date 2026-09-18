@@ -16,6 +16,7 @@ export interface PromptSuggestionGeneration {
     schema: typeof PROMPT_SUGGESTIONS_SCHEMA;
     schemaName: string;
     agentTitle: string;
+    configKey?: "promptSuggestions";
     currentSelection?: { provider?: string | null; model?: string | null };
   }): Promise<PromptSuggestionsResponse>;
 }
@@ -216,6 +217,7 @@ export class PromptSuggestionService {
         schema: PROMPT_SUGGESTIONS_SCHEMA,
         schemaName: PROMPT_SUGGESTIONS_SCHEMA_NAME,
         agentTitle: "Prompt suggestions",
+        configKey: "promptSuggestions",
         // When the metadata chain has nothing usable, fall back to the agent's own
         // model: it has already seen this conversation, so nothing new leaves.
         currentSelection: { provider: agent.provider, model: agent.config?.model ?? null },

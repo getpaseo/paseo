@@ -2120,7 +2120,7 @@ export const en = {
     metadataGeneration: {
       title: "Metadata generation",
       description:
-        "Choose the model Paseo uses for workspace titles, branch names, commit messages, and pull request drafts",
+        "Choose the model Paseo uses for workspace titles, branch names, commit messages, pull request drafts, and prompt suggestions",
       selection: "Model selection",
       automatic: "Automatic",
       preferred: "Manual",

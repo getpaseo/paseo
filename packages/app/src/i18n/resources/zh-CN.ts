@@ -1977,7 +1977,7 @@ export const zhCN: TranslationResources = {
     plugins: pluginSettings["zh-CN"],
     metadataGeneration: {
       title: "元数据生成",
-      description: "选择 Paseo 用于工作区标题、分支名称、提交消息和拉取请求草稿的模型",
+      description: "选择 Paseo 用于工作区标题、分支名称、提交消息、拉取请求草稿和提示建议的模型",
       selection: "模型选择",
       automatic: "自动",
       preferred: "手动",

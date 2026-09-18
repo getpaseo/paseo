@@ -2009,7 +2009,7 @@ export const ko: TranslationResources = {
     metadataGeneration: {
       title: "메타데이터 생성",
       description:
-        "워크스페이스 제목, 브랜치 이름, 커밋 메시지 및 풀 리퀘스트 초안에 사용할 모델을 선택하세요",
+        "워크스페이스 제목, 브랜치 이름, 커밋 메시지, 풀 리퀘스트 초안 및 프롬프트 제안에 사용할 모델을 선택하세요",
       selection: "모델 선택",
       automatic: "자동",
       preferred: "수동",

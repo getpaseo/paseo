@@ -51,6 +51,7 @@ export interface StructuredTextGenerationRequest<T> {
   agentTitle: string;
   // The last-resort model; defaults to whatever is focused for this cwd.
   currentSelection?: ResolveStructuredGenerationProvidersOptions["currentSelection"];
+  configKey?: ResolveStructuredGenerationProvidersOptions["configKey"];
 }
 
 type GitMetadataDiffSource = Pick<WorkspaceGitService, "getCheckoutDiff" | "resolveRepoRoot">;
@@ -132,6 +133,7 @@ export function createGitMetadataGenerator(deps: {
           schema: COMMIT_MESSAGE_SCHEMA,
           schemaName: "CommitMessage",
           agentTitle: "Commit generator",
+          configKey: "commitMessage",
         });
         return result.message;
       } catch (error) {
@@ -159,6 +161,7 @@ export function createGitMetadataGenerator(deps: {
           schema: PULL_REQUEST_SCHEMA,
           schemaName: "PullRequest",
           agentTitle: "PR generator",
+          configKey: "pullRequest",
         });
       } catch (error) {
         if (isStructuredGenerationFailure(error)) {
@@ -184,11 +187,12 @@ export function createAgentStructuredTextGeneration(deps: {
   ) => ResolveStructuredGenerationProvidersOptions["currentSelection"];
 }): StructuredTextGeneration {
   return {
-    async generate({ cwd, prompt, schema, schemaName, agentTitle, currentSelection }) {
+    async generate({ cwd, prompt, schema, schemaName, agentTitle, currentSelection, configKey }) {
       const providers = await resolveStructuredGenerationProviders({
         cwd,
         providerSnapshotManager: deps.providerSnapshotManager,
         daemonConfig: deps.readDaemonConfig(),
+        ...(configKey ? { configKey } : {}),
         currentSelection: currentSelection ?? deps.getFocusedSelection(cwd),
       });
       return generateStructuredAgentResponseWithFallback({

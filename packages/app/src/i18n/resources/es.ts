@@ -2047,7 +2047,7 @@ export const es: TranslationResources = {
     metadataGeneration: {
       title: "Generación de metadatos",
       description:
-        "Elige el modelo que Paseo usa para títulos de espacios de trabajo, nombres de ramas, mensajes de commit y borradores de pull requests",
+        "Elige el modelo que Paseo usa para títulos de espacios de trabajo, nombres de ramas, mensajes de commit, borradores de pull requests y sugerencias de prompts",
       selection: "Selección de modelo",
       automatic: "Automática",
       preferred: "Manual",

@@ -2052,7 +2052,7 @@ export const fr: TranslationResources = {
     metadataGeneration: {
       title: "Génération de métadonnées",
       description:
-        "Choisissez le modèle utilisé par Paseo pour les titres d’espaces de travail, les noms de branches, les messages de commit et les brouillons de pull request",
+        "Choisissez le modèle utilisé par Paseo pour les titres d’espaces de travail, les noms de branches, les messages de commit, les brouillons de pull request et les suggestions de prompts",
       selection: "Sélection du modèle",
       automatic: "Automatique",
       preferred: "Manuel",

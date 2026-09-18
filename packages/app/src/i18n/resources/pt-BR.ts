@@ -2032,7 +2032,7 @@ export const ptBR: TranslationResources = {
     metadataGeneration: {
       title: "Geração de metadados",
       description:
-        "Escolha o modelo usado pelo Paseo para títulos de espaços de trabalho, nomes de branches, mensagens de commit e rascunhos de pull request",
+        "Escolha o modelo usado pelo Paseo para títulos de espaços de trabalho, nomes de branches, mensagens de commit, rascunhos de pull request e sugestões de prompts",
       selection: "Seleção de modelo",
       automatic: "Automática",
       preferred: "Manual",
