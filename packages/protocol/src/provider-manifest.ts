@@ -167,6 +167,38 @@ export const OMP_MODES: AgentProviderModeDefinition[] = [
   },
 ];
 
+const MUSE_MODES: AgentProviderModeDefinition[] = [
+  {
+    id: "onRequest",
+    label: "On Request",
+    description: "Approves only on request; unmatched subjects follow the host default",
+    icon: "Shield",
+    colorTier: "moderate",
+  },
+  {
+    id: "promptUnmatched",
+    label: "Always Ask",
+    description: "Every unmatched subject stops for review",
+    icon: "ShieldCheck",
+    colorTier: "safe",
+  },
+  {
+    id: "denyUnmatched",
+    label: "Auto Deny",
+    description: "Unmatched subjects fail with a typed denial instead of prompting",
+    icon: "ShieldAlert",
+    colorTier: "safe",
+  },
+  {
+    id: "allowAll",
+    label: "Allow All",
+    description: "Automatically approves all Muse tool, path, and URL requests.",
+    icon: "ShieldOff",
+    colorTier: "dangerous",
+    isUnattended: true,
+  },
+];
+
 const MOCK_LOAD_TEST_MODES: AgentProviderModeDefinition[] = [
   {
     id: "load-test",
@@ -254,6 +286,14 @@ export const AGENT_PROVIDER_DEFINITIONS: AgentProviderDefinition[] = [
     enabledByDefault: false,
     defaultModeId: "full",
     modes: OMP_MODES,
+  },
+  {
+    id: "muse",
+    label: "Muse",
+    description: "Meta's terminal coding agent over the Muse Session Protocol",
+    enabledByDefault: false,
+    defaultModeId: "onRequest",
+    modes: MUSE_MODES,
   },
 ];
 
