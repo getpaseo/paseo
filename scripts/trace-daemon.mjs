@@ -65,10 +65,11 @@ const additionalInputs = [
   "packages/cli/bin/paseo",
   // node-pty's compiled native addon. nft can't trace it because
   // node-pty loads it via `require(path.join(__dirname, 'prebuilds/<plat>/pty.node'))`
-  // with a runtime-computed platform suffix. Pin to the host platform —
-  // the Nix derivation builds for one platform at a time and ships only
-  // its own binaries.
-  `node_modules/node-pty/prebuilds/${process.platform}-${process.arch}/**`,
+  // with a runtime-computed platform suffix. Pin to the host platform — the
+  // Nix derivation builds for one platform at a time and ships only its own
+  // binaries. The brace covers both places npm might hoist node-pty to —
+  // that choice has flipped before on a plain version bump (see f842537).
+  `{node_modules,packages/server/node_modules}/node-pty/prebuilds/${process.platform}-${process.arch}/**`,
   // sherpa-onnx-node dynamically resolves a platform-specific native package.
   // Copy the wrapper plus the host platform package explicitly.
   "node_modules/sherpa-onnx-node/**",
@@ -122,12 +123,19 @@ for (const w of warnings) {
   console.error("trace warning:", msg);
 }
 
-// Expand globs in additionalInputs.
+// Expand globs in additionalInputs. A glob matching nothing usually means
+// a dependency moved (see the node-pty path above) and would otherwise
+// silently ship a daemon missing that file, so treat it as a build error.
 const expanded = new Set(fileList);
 for (const pattern of additionalInputs) {
   if (pattern.includes("*")) {
+    let matched = false;
     for await (const file of glob(pattern, { cwd: REPO_ROOT })) {
       expanded.add(file);
+      matched = true;
+    }
+    if (!matched) {
+      throw new Error(`additionalInputs glob matched no files: ${pattern}`);
     }
   } else {
     expanded.add(pattern);
