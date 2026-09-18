@@ -2526,6 +2526,14 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
       return { success: true };
     },
 
+    async markPullRequestReady(input) {
+      await run(["pr", "ready", String(input.prNumber)], {
+        cwd: input.cwd,
+        envOverlay: { GH_PROMPT_DISABLED: "1" },
+      });
+      return { success: true };
+    },
+
     isAuthenticated(input) {
       return cached({
         cwd: input.cwd,
