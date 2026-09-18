@@ -68,6 +68,7 @@ You need at least one agent CLI installed and configured with your credentials:
 - [GitHub Copilot](https://github.com/features/copilot/cli/)
 - [OpenCode](https://github.com/anomalyco/opencode)
 - [Pi](https://pi.dev)
+- [MiniMax Code](https://agent.minimax.io) — add it from the ACP provider catalog after [installing the CLI](https://www.npmjs.com/package/@minimax-ai/code) and running `mcode login`.
 
 ### Desktop app (recommended)
 

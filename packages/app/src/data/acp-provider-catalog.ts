@@ -278,10 +278,12 @@ const CATALOG_DATA = [
     id: "minimax-code",
     title: "MiniMax Code",
     description: "MiniMax's coding agent for the terminal",
-    version: "0.1.2",
+    version: "0.4.5",
     iconId: "minimax-code",
     installLink: "https://agent.minimax.io",
-    command: ["npx", "-y", "@minimax-ai/code@0.1.2", "acp"],
+    // Keep this array valid JSON for the catalog version checker.
+    // prettier-ignore
+    command: ["npx", "-y", "--allow-scripts=@minimax-ai/code,better-sqlite3", "--package", "@minimax-ai/code@0.4.5", "mcode", "acp"],
   },
   {
     id: "minion-code",
