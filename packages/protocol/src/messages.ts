@@ -238,7 +238,13 @@ export const MutableDaemonConfigPatchSchema = z
       .record(z.string(), MutableDaemonProviderConfigSchema.partial().passthrough())
       .optional(),
     removeProviders: z.array(z.string().min(1)).optional(),
-    metadataGeneration: MutableMetadataGenerationConfigSchema.partial().optional(),
+    // Zod 4 still applies a default inside .partial(), which would turn a patch that
+    // names only one kind into "shared providers = []"; the patch must omit it instead.
+    metadataGeneration: MutableMetadataGenerationConfigSchema.extend({
+      providers: z.array(MutableStructuredGenerationProviderSchema).optional(),
+    })
+      .partial()
+      .optional(),
     promptSuggestions: MutablePromptSuggestionsConfigSchema.partial().optional(),
     autoArchiveAfterMerge: z.boolean().optional(),
     enableTerminalAgentHooks: z.boolean().optional(),
