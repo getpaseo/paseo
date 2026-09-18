@@ -40,6 +40,7 @@ import { useSidebarModel } from "@/components/sidebar/sidebar-model";
 import type { PinnedSidebarGroups } from "@/hooks/use-sidebar-pins";
 import { RetainedPanelActivity } from "@/components/retained-panel";
 import type { SidebarWorkspaceGroup } from "@/components/sidebar/sidebar-labels";
+import type { SidebarHostSection } from "@/components/sidebar/sidebar-host-sections";
 import type { SidebarProjectIconTarget } from "@/utils/sidebar-project-row-model";
 import { type SidebarGroupMode, useSidebarViewStore } from "@/stores/sidebar-view-store";
 import { useHosts } from "@/runtime/host-runtime";
@@ -60,6 +61,7 @@ const DEV_BUILD_LABEL = process.env.EXPO_PUBLIC_PASEO_DEV_BUILD_LABEL?.trim() ||
 interface SidebarSharedProps {
   theme: SidebarTheme;
   workspaceGroups: SidebarWorkspaceGroup[];
+  hostSections: SidebarHostSection[];
   projectIconTargets: SidebarProjectIconTarget[];
   pinnedGroups: PinnedSidebarGroups;
   projects: SidebarProjectEntry[];
@@ -119,6 +121,7 @@ export const LeftSidebar = memo(function LeftSidebar({ active }: { active: boole
     isRevalidating,
     refreshAll,
     workspaceGroups,
+    hostSections,
     projectIconTargets,
     pinnedGroups,
     collapsedProjectKeys,
@@ -203,6 +206,7 @@ export const LeftSidebar = memo(function LeftSidebar({ active }: { active: boole
   const sharedProps = {
     theme,
     workspaceGroups,
+    hostSections,
     projectIconTargets,
     pinnedGroups,
     projects,
@@ -507,6 +511,7 @@ function MobileSidebar({
   active,
   theme,
   workspaceGroups,
+  hostSections,
   projectIconTargets,
   pinnedGroups,
   projects,
@@ -585,6 +590,7 @@ function MobileSidebar({
             shortcutIndexByWorkspaceKey={shortcutIndexByWorkspaceKey}
             groupMode={groupMode}
             workspaceGroups={workspaceGroups}
+            hostSections={hostSections}
             projectIconTargets={projectIconTargets}
             pinnedGroups={pinnedGroups}
             projects={projects}
@@ -619,6 +625,7 @@ function MobileSidebar({
 function DesktopSidebar({
   theme,
   workspaceGroups,
+  hostSections,
   projectIconTargets,
   pinnedGroups,
   projects,
@@ -763,6 +770,7 @@ function DesktopSidebar({
             shortcutIndexByWorkspaceKey={shortcutIndexByWorkspaceKey}
             groupMode={groupMode}
             workspaceGroups={workspaceGroups}
+            hostSections={hostSections}
             projectIconTargets={projectIconTargets}
             pinnedGroups={pinnedGroups}
             projects={projects}

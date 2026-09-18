@@ -4,6 +4,7 @@ import {
   useMemo,
   useState,
   type MutableRefObject,
+  type ReactElement,
   type ReactNode,
   type Ref,
 } from "react";
@@ -23,6 +24,8 @@ import { useActiveWorkspaceSelection } from "@/stores/navigation-active-workspac
 import { type SidebarWorkspaceEntry } from "@/hooks/use-sidebar-workspaces-list";
 import type { StatusBucket } from "@/hooks/sidebar-status-view-model";
 import type { SidebarWorkspaceGroup } from "@/components/sidebar/sidebar-labels";
+import type { SidebarHostSection } from "@/components/sidebar/sidebar-host-sections";
+import { SidebarHostSectionHeader } from "@/components/sidebar/sidebar-host-section-header";
 import { SidebarFilterEmptyState } from "@/components/sidebar/empty-states";
 import type { HostBadgeModel } from "@/hosts/appearance";
 import { isWeb as platformIsWeb, isNative as platformIsNative } from "@/constants/platform";
@@ -114,6 +117,8 @@ function statusWorkspaceKeyExtractor(workspace: SidebarWorkspaceEntry): string {
 
 interface StatusWorkspaceListProps {
   groups: SidebarWorkspaceGroup[];
+  /** Always-on host sections, empty while the sidebar spans a single host. */
+  hostSections: SidebarHostSection[];
   pinnedWorkspaces: SidebarWorkspaceEntry[];
   projectIconByProjectViewKey: ReadonlyMap<string, string | null>;
   shortcutIndexByWorkspaceKey: Map<string, number>;
@@ -132,6 +137,7 @@ interface StatusWorkspaceListProps {
 
 export function SidebarStatusWorkspaceList({
   groups,
+  hostSections,
   pinnedWorkspaces,
   projectIconByProjectViewKey,
   shortcutIndexByWorkspaceKey,
@@ -198,6 +204,52 @@ export function SidebarStatusWorkspaceList({
       supportsPinningByServerId,
     ],
   );
+  let groupsBody: ReactElement;
+  if (sidebarFilterEmpty) {
+    groupsBody = <SidebarFilterEmptyState />;
+  } else if (hostSections.length > 0) {
+    groupsBody = (
+      <>
+        {hostSections
+          // A host with no workspace in any status bucket has nothing to head here. Project mode
+          // still shows its project row, which owns New workspace, but status mode only lists rows.
+          .filter((section) => section.workspaceGroups.length > 0)
+          .map((section) => (
+            <View key={section.key} testID={`sidebar-host-section-${section.key}`}>
+              <SidebarHostSectionHeader
+                label={section.label}
+                testID={`sidebar-host-section-header-${section.key}`}
+              />
+              <StatusGroupList
+                groups={section.workspaceGroups}
+                collapsedWorkspaceGroupKeys={collapsedWorkspaceGroupKeys}
+                projectIconByProjectViewKey={projectIconByProjectViewKey}
+                shortcutIndex={statusShortcutIndex}
+                showShortcutBadges={showShortcutBadges}
+                onWorkspacePress={onWorkspacePress}
+                hostBadgeByServerId={hostBadgeByServerId}
+                supportsPinningByServerId={supportsPinningByServerId}
+                onToggleWorkspacePin={onToggleWorkspacePin}
+              />
+            </View>
+          ))}
+      </>
+    );
+  } else {
+    groupsBody = (
+      <StatusGroupList
+        groups={groups}
+        collapsedWorkspaceGroupKeys={collapsedWorkspaceGroupKeys}
+        projectIconByProjectViewKey={projectIconByProjectViewKey}
+        shortcutIndex={statusShortcutIndex}
+        showShortcutBadges={showShortcutBadges}
+        onWorkspacePress={onWorkspacePress}
+        hostBadgeByServerId={hostBadgeByServerId}
+        supportsPinningByServerId={supportsPinningByServerId}
+        onToggleWorkspacePin={onToggleWorkspacePin}
+      />
+    );
+  }
   const content = (
     <>
       {pinnedWorkspaces.length > 0 ? (
@@ -229,21 +281,7 @@ export function SidebarStatusWorkspaceList({
         </View>
       ) : null}
       {listHeaderComponent}
-      {sidebarFilterEmpty ? (
-        <SidebarFilterEmptyState />
-      ) : (
-        <StatusGroupList
-          groups={groups}
-          collapsedWorkspaceGroupKeys={collapsedWorkspaceGroupKeys}
-          projectIconByProjectViewKey={projectIconByProjectViewKey}
-          shortcutIndex={statusShortcutIndex}
-          showShortcutBadges={showShortcutBadges}
-          onWorkspacePress={onWorkspacePress}
-          hostBadgeByServerId={hostBadgeByServerId}
-          supportsPinningByServerId={supportsPinningByServerId}
-          onToggleWorkspacePin={onToggleWorkspacePin}
-        />
-      )}
+      {groupsBody}
     </>
   );
 
