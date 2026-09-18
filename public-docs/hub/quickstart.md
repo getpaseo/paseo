@@ -8,7 +8,7 @@ category: Hub
 
 # Hub quickstart
 
-Run Hub on your machine, connect it to Slack without a public server, and answer a mention with an agent in your repository. Hub's browser setup hands off to your terminal, and guided setup writes and deploys the workflow for you.
+Run Hub on your machine, connect it to Slack without a public server, and answer a mention with an agent in your repository. Hub's browser setup hands off to your terminal, and `paseo hub init` writes and deploys a starter trigger for you.
 
 You need [Paseo installed and running](/docs), Node.js, and a Slack workspace where you can create an app.
 
@@ -20,7 +20,7 @@ npx @getpaseo/hub
 
 Open the address it prints, normally <http://localhost:3000>, and create the operator account Hub asks for.
 
-The first run needs no database, Docker, environment variables, or API keys. Hub creates an embedded database, your organization, and a **Default** project. You never create a project by hand.
+The first run needs no database, Docker, environment variables, or API keys. Hub creates an embedded database and your organization.
 
 ## 2. Connect Slack
 
@@ -42,37 +42,39 @@ GitHub and Discord can wait. Their setup stays available under **Apps**.
 paseo hub login http://localhost:3000
 ```
 
-Run it on the machine where your code lives, in the repository the agent should work in. Guided setup records that directory as the workflow's working directory.
+Run it on the machine where your code lives, in the repository the agent should work in. Run the initializer below from that directory so it becomes the trigger's working directory.
 
-Approve the login in the browser tab that opens. Leave the Hub tab open: it watches for the daemon and shows **Daemon connected** by itself. **Continue** and **Do this later** both land in the Default project.
+Approve the login in the browser tab that opens. Leave the Hub tab open: it watches for the daemon and shows **Daemon connected** by itself. Choose **Continue** when the daemon is connected.
 
-## 4. Answer the setup questions
+## 4. Create the starter trigger
 
-Your terminal confirms the login, then picks up where the browser left off. Most questions arrive with a default or a suggested answer; only your Slack member ID has to be typed.
+After approving login, answer **Yes** to **Connect this daemon to Paseo Hub?** and **Allow Hub automations to run agents on this daemon?**. Execution permission defaults to no, so enable it explicitly for this setup.
 
-| Question                                  | What it wants                                                                           |
-| ----------------------------------------- | --------------------------------------------------------------------------------------- |
-| Connect this daemon to this Hub?          | Yes. This enrolls the machine you are on.                                               |
-| Initialize and deploy a starter workflow? | Yes.                                                                                    |
-| Starter agent provider, model, and mode   | What your daemon reports it can run. Suggested model and mode entries are its defaults. |
-| Your Slack member ID                      | `U01234567`, the only account allowed to trigger the bot.                               |
+Then run:
 
-Setup lists the app connections ready for this workflow. Because you connected one Slack workspace in step 2, it selects that connection automatically instead of asking you to choose Slack. If several usable connections exist, setup asks for the **Trigger connection**. If none is ready, it sends you to **Hub → Apps** and stops before asking about the agent or writing files.
+```sh
+paseo hub init
+```
 
-The agent provider list contains only runtimes the daemon can use; it does not suggest one arbitrarily. Suggested model and mode entries are defaults reported by the daemon. A provider that has modes but no default mode is still offered; setup asks you to pick the mode instead of guessing one.
+Choose **Custom endpoint** and confirm `http://localhost:3000`. Setup reuses your login and daemon connection, then lists the app connections ready for this trigger. With one Slack workspace connected, it selects that connection automatically. With several usable connections, choose the **Trigger connection**. If none is ready, setup sends you to **Hub → Apps** and stops before selecting an agent or writing files.
 
-[Find your Slack IDs](/docs/hub/triggers/slack#find-your-slack-ids) has the two clicks that copy your member ID. The Slack workspace comes from the app you connected in step 2, so setup does not ask for it.
+| Question                                | What it wants                                                                          |
+| --------------------------------------- | -------------------------------------------------------------------------------------- |
+| Starter agent provider, model, and mode | A runtime available on your daemon. Suggested model and mode entries are its defaults. |
+| Your Slack member ID                    | `U01234567`, the only account allowed to trigger the bot.                              |
+| Deploy now?                             | Yes, to activate this trigger in Hub.                                                  |
 
-Setup then validates the bundle, writes it, and deploys:
+Providers must expose a selectable model and execution mode. If there is no default mode, choose the one the agent should use. [Find your Slack IDs](/docs/hub/triggers/slack#find-your-slack-ids) explains how to copy your member ID. The Slack workspace comes from the selected app connection.
+
+Setup validates the trigger and writes:
 
 ```text
 .paseo/
-├── hub.yml
-└── workflows/
+└── triggers/
     └── slack-help.yml
 ```
 
-If `.paseo/` already exists, setup asks before replacing it. Declining the daemon connection prints `paseo hub connect <hub>; then paseo hub init` — both commands, because connecting alone does not create the workflow. Declining only the starter workflow prints `paseo hub init`.
+If `slack-help.yml` already exists, setup asks before replacing that file. Other files remain in place. If you decline deployment, run `paseo hub deploy` from this repository when ready.
 
 ## 5. Mention the bot
 
@@ -82,12 +84,12 @@ In the channel you invited the bot to:
 @Paseo have a look
 ```
 
-Hub starts the agent on your daemon and posts its reply in the Slack thread. The terminal prints the project's Activity URL, where the run appears. If nothing runs, [Activity](/docs/hub/activity) tells a filtered mention from one that never matched a workflow.
+Hub starts the agent on your daemon and posts its reply in the Slack thread. The terminal links to **Triggers**, where you can manage the trigger and inspect its runs. If nothing runs, [Activity](/docs/hub/activity) tells a filtered mention from one that never matched a trigger.
 
 ## Next
 
 - [How Hub works](/docs/hub/concepts) — how an event becomes a workflow run on your daemon.
-- [Generated starter bundle](/docs/hub/configuration#generated-starter-bundle) — the two files setup wrote, field by field.
+- [Generated starter trigger](/docs/hub/configuration#generated-starter-trigger) — the file setup wrote, field by field.
 - [Workflows](/docs/hub/workflows) — routing, prompts, and provider replies.
 - [Hub security](/docs/hub/security) — read this before widening `from_users` or giving an agent GitHub authority.
 

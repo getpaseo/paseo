@@ -1,3 +1,5 @@
+import { i18n } from "@/i18n/i18next";
+import { confirmDialog } from "@/utils/confirm-dialog";
 import { getDesktopHost, isElectronRuntime } from "@/desktop/host";
 import { invokeDesktopCommand } from "@/desktop/electron/invoke";
 import type { AgentSkillSelection } from "@getpaseo/protocol/messages";
@@ -21,6 +23,8 @@ export interface DesktopDaemonStatus {
   home: string;
   version: string | null;
   desktopManaged: boolean;
+  ownedByDesktop: boolean;
+  startedAt: string | null;
   error: string | null;
 }
 
@@ -128,6 +132,8 @@ function parseDesktopDaemonStatus(raw: unknown): DesktopDaemonStatus {
     home: toStringOrNull(raw.home) ?? "",
     version: toStringOrNull(raw.version),
     desktopManaged: raw.desktopManaged === true,
+    ownedByDesktop: raw.ownedByDesktop === true,
+    startedAt: typeof raw.startedAt === "string" ? raw.startedAt : null,
     error: toStringOrNull(raw.error),
   };
 }
@@ -188,6 +194,33 @@ export async function stopDesktopDaemon(
   reason: DesktopDaemonStopReason = "manual_ipc",
 ): Promise<DesktopDaemonStatus> {
   return parseDesktopDaemonStatus(await invokeDesktopCommand("stop_desktop_daemon", { reason }));
+}
+
+export async function confirmAndStopDesktopDaemon(): Promise<DesktopDaemonStatus | null> {
+  const captured = await getDesktopDaemonStatus();
+  if (!captured.pid || !captured.startedAt) return captured;
+  const ownership = captured.ownedByDesktop
+    ? i18n.t("desktop.daemon.lifecycle.ownedMessage")
+    : i18n.t("desktop.daemon.lifecycle.attachedMessage");
+  const confirmed = await confirmDialog({
+    title: i18n.t("desktop.daemon.lifecycle.stopTitle"),
+    message: i18n.t("desktop.daemon.lifecycle.stopMessage", {
+      ownership,
+      home: captured.home,
+      pid: captured.pid,
+    }),
+    confirmLabel: i18n.t("desktop.daemon.lifecycle.stop"),
+    cancelLabel: i18n.t("common.actions.cancel"),
+    destructive: true,
+  });
+  if (!confirmed) return null;
+  return parseDesktopDaemonStatus(
+    await invokeDesktopCommand("stop_desktop_daemon", {
+      reason: "manual_ipc",
+      pid: captured.pid,
+      startedAt: captured.startedAt,
+    }),
+  );
 }
 
 export async function restartDesktopDaemon(): Promise<DesktopDaemonStatus> {
@@ -301,4 +334,21 @@ export function readLegacySkillSelection(): Promise<AgentSkillSelection | null> 
 // COMPAT(desktopSkillSelectionMigration): added in v0.4.0; remove after 2027-02-16.
 export async function deleteLegacySkillSelection(): Promise<void> {
   await invokeDesktopCommand("delete_legacy_skill_selection");
+}
+
+export interface DesktopSandboxDiagnostics {
+  enabled: boolean;
+  reason: string;
+}
+
+export async function getDesktopSandboxDiagnostics(): Promise<DesktopSandboxDiagnostics> {
+  const result: unknown = await invokeDesktopCommand("desktop_sandbox_diagnostics");
+  if (
+    !isRecord(result) ||
+    typeof result.enabled !== "boolean" ||
+    typeof result.reason !== "string"
+  ) {
+    throw new Error("Unexpected desktop sandbox diagnostics response.");
+  }
+  return { enabled: result.enabled, reason: result.reason };
 }

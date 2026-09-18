@@ -1,7 +1,6 @@
 import path from "node:path";
 import type { Command } from "commander";
-import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
-import { connectToDaemon, getDaemonHost } from "../../utils/client.js";
+import { connectToDaemon } from "../../utils/client.js";
 import type { CommandError, OutputSchema, SingleResult } from "../../output/index.js";
 import { buildCreateWorktreeRequest, type WorktreeCreateOptions } from "./create-input.js";
 
@@ -31,18 +30,7 @@ export async function runCreateCommand(
   const cwd = options.cwd ?? process.cwd();
   const request = buildCreateWorktreeRequest(options, cwd);
 
-  const host = getDaemonHost({ host: options.host });
-  let client: DaemonClient;
-  try {
-    client = await connectToDaemon({ host: options.host });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    throw cmdError(
-      "DAEMON_NOT_RUNNING",
-      `Cannot connect to daemon at ${host}: ${message}`,
-      "Start the daemon with: paseo daemon start",
-    );
-  }
+  const client = await connectToDaemon({ target: options.daemonTarget });
 
   try {
     const response = await client.createPaseoWorktree(request);

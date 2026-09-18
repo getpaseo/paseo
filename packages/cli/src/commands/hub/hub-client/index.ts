@@ -8,15 +8,17 @@ import {
   installResponseSchema,
   projectsResponseSchema,
   triggersResponseSchema,
+  triggerInstallationResponseSchema,
+  triggerValidationResponseSchema,
   validationResponseSchema,
   type CliAuthorization,
   type CliAuthorizationPoll,
   type HubInstallResult,
   type HubConfigurationResources,
-  setupResourcesSchema,
-  type HubSetupResources,
   type HubProject,
   type HubTrigger,
+  type HubTriggerInstallationResult,
+  type HubTriggerValidationResult,
   type HubValidationResult,
 } from "./internal/contracts.js";
 import { requestHub } from "./internal/transport.js";
@@ -26,9 +28,10 @@ export type {
   CliAuthorizationPoll,
   HubInstallResult,
   HubConfigurationResources,
-  HubSetupResources,
   HubProject,
   HubTrigger,
+  HubTriggerInstallationResult,
+  HubTriggerValidationResult,
   HubValidationResult,
 } from "./internal/contracts.js";
 
@@ -102,6 +105,40 @@ export class HubHttpClient {
     return response.triggers;
   }
 
+  validateTrigger(
+    origin: string,
+    apiKey: string,
+    yaml: string,
+  ): Promise<HubTriggerValidationResult> {
+    return requestHub({
+      origin,
+      path: "/api/v1/triggers/validate",
+      method: "POST",
+      apiKey,
+      body: { yaml },
+      successStatus: 200,
+      schema: triggerValidationResponseSchema,
+      failureMessage: "Hub trigger validation failed",
+    });
+  }
+
+  installTrigger(
+    origin: string,
+    apiKey: string,
+    yaml: string,
+  ): Promise<HubTriggerInstallationResult> {
+    return requestHub({
+      origin,
+      path: "/api/v1/triggers/install",
+      method: "POST",
+      apiKey,
+      body: { yaml },
+      successStatus: 201,
+      schema: triggerInstallationResponseSchema,
+      failureMessage: "Hub trigger deployment failed",
+    });
+  }
+
   listConfigurationResources(origin: string, apiKey: string): Promise<HubConfigurationResources> {
     return requestHub({
       origin,
@@ -111,18 +148,6 @@ export class HubHttpClient {
       successStatus: 200,
       schema: configurationResourcesSchema,
       failureMessage: "Hub configuration resource listing failed",
-    });
-  }
-
-  listSetupResources(origin: string, apiKey: string): Promise<HubSetupResources> {
-    return requestHub({
-      origin,
-      path: "/api/v1/setup-resources",
-      method: "GET",
-      apiKey,
-      successStatus: 200,
-      schema: setupResourcesSchema,
-      failureMessage: "Hub guided setup resource listing failed",
     });
   }
 

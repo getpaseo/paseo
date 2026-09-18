@@ -6,7 +6,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildRelayWebSocketUrl } from "@getpaseo/protocol/daemon-endpoints";
 import { parseConnectionOfferFromUrl } from "@getpaseo/protocol/connection-offer";
-import { generateLocalPairingOffer } from "@getpaseo/server";
+import { generateLocalPairingOffer } from "@getpaseo/server/pairing";
 import { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { WebSocket } from "ws";
 import { getAvailablePort } from "../helpers/network.ts";

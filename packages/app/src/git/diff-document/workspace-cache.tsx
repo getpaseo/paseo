@@ -13,6 +13,7 @@ const MAX_MODEL_VARIANTS = 4;
 const MAX_TYPOGRAPHY_RESOURCES = 4;
 
 interface ModelVariant {
+  measureText: TextMeasurer;
   key: string;
   exactKey: string;
   model: DiffDocumentModel;
@@ -38,23 +39,29 @@ export interface DiffDocumentWorkspaceCache {
 }
 
 export function createDiffDocumentWorkspaceCache(): DiffDocumentWorkspaceCache {
-  const variantsByFiles = new WeakMap<BuildDiffDocumentModelInput["files"], ModelVariant[]>();
+  let variants: ModelVariant[] = [];
   const typographyResources = new Map<string, DiffTypographyResource>();
 
   return {
     buildModel(input) {
       const key = modelVariantKey(input);
       const exactKey = exactModelKey(input);
-      const variants = variantsByFiles.get(input.files) ?? [];
-      const variantIndex = variants.findIndex((candidate) => candidate.key === key);
+      const variantIndex = variants.findIndex(
+        (candidate) => candidate.key === key && candidate.measureText === input.measureText,
+      );
       const variant = variantIndex === -1 ? undefined : variants[variantIndex];
-      if (variant?.exactKey === exactKey) {
+      if (
+        variant?.exactKey === exactKey &&
+        variant.model.files.length === input.files.length &&
+        variant.model.files.every((file, index) => file.file === input.files[index])
+      ) {
         variants.splice(variantIndex, 1);
         variants.unshift(variant);
         return variant.model;
       }
       const model = buildDiffDocumentModel({ ...input, reuseFrom: variant?.models });
       const nextVariant = {
+        measureText: input.measureText,
         key,
         exactKey,
         model,
@@ -62,7 +69,7 @@ export function createDiffDocumentWorkspaceCache(): DiffDocumentWorkspaceCache {
       };
       if (variantIndex !== -1) variants.splice(variantIndex, 1);
       variants.unshift(nextVariant);
-      variantsByFiles.set(input.files, variants.slice(0, MAX_MODEL_VARIANTS));
+      variants = variants.slice(0, MAX_MODEL_VARIANTS);
       return model;
     },
     typography(input) {

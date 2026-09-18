@@ -13,7 +13,7 @@ export async function runLsCommand(
   options: ScheduleCommandOptions,
   _command: Command,
 ): Promise<ListResult<ScheduleRow>> {
-  const { client } = await connectScheduleClient(options.host);
+  const { client } = await connectScheduleClient(options.daemonTarget);
   try {
     const payload = await client.scheduleList();
     if (payload.error) {

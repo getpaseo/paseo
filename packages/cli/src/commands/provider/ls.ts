@@ -1,8 +1,7 @@
 import type { Command } from "commander";
 import type { CommandOptions, ListResult, OutputSchema } from "../../output/index.js";
 import type { ProviderSnapshotEntry } from "@getpaseo/protocol/agent-types";
-import { AGENT_PROVIDER_DEFINITIONS } from "@getpaseo/protocol/provider-manifest";
-import { tryConnectToDaemon } from "../../utils/client.js";
+import { connectToDaemon } from "../../utils/client.js";
 
 export interface ProviderListItem {
   provider: ProviderSnapshotEntry["provider"];
@@ -11,20 +10,6 @@ export interface ProviderListItem {
   enabled: "Enabled" | "Disabled";
   defaultMode: string;
   modes: string;
-}
-
-/** Derive provider list from the manifest — single source of truth */
-const PROVIDERS: ProviderListItem[] = AGENT_PROVIDER_DEFINITIONS.map((def) => ({
-  provider: def.id,
-  label: def.label,
-  status: "available",
-  enabled: def.enabledByDefault === false ? "Disabled" : "Enabled",
-  defaultMode: def.defaultModeId ?? "-",
-  modes: def.modes.length > 0 ? def.modes.map((m) => m.label).join(", ") : "-",
-}));
-
-function getStaticProviders(): ProviderListItem[] {
-  return PROVIDERS;
 }
 
 /** Schema for provider ls output */
@@ -59,15 +44,7 @@ export async function runLsCommand(
   options: ProviderLsOptions,
   _command: Command,
 ): Promise<ProviderLsResult> {
-  const client = await tryConnectToDaemon({ host: options.host });
-
-  if (!client) {
-    return {
-      type: "list",
-      data: getStaticProviders(),
-      schema: providerLsSchema,
-    };
-  }
+  const client = await connectToDaemon({ target: options.daemonTarget });
 
   try {
     const snapshot = await client.getProvidersSnapshot();
@@ -81,12 +58,6 @@ export async function runLsCommand(
         defaultMode: entry.defaultModeId ?? "default",
         modes: (entry.modes ?? []).map((mode) => mode.label).join(", "),
       })),
-      schema: providerLsSchema,
-    };
-  } catch {
-    return {
-      type: "list",
-      data: getStaticProviders(),
       schema: providerLsSchema,
     };
   } finally {

@@ -1,7 +1,7 @@
 import type { ForgeService, PullRequestCheckoutTarget } from "../services/forge-service.js";
 import type { WorktreeSource } from "../utils/worktree.js";
 
-export type WorktreeCreationIntent = WorktreeSource;
+export type WorktreeCreationIntent = Exclude<WorktreeSource, { kind: "restore" }>;
 
 export interface ResolveWorktreeCreationIntentInput {
   worktreeSlug?: string;

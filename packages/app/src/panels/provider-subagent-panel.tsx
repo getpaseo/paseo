@@ -21,6 +21,7 @@ import {
   providerSubagentKey,
   providerSubagentLifecycleStatus,
   refreshProviderSubagents,
+  observeProviderSubagentTimeline,
   useProviderSubagentStore,
 } from "@/subagents/provider-store";
 import { useTranslation } from "react-i18next";
@@ -126,8 +127,8 @@ function ProviderSubagentPanel() {
   );
   const client = useSessionStore((state) => state.sessions[serverId]?.client ?? null);
   const serverInfo = useSessionStore((state) => state.sessions[serverId]?.serverInfo ?? null);
-  // COMPAT(providerSubagents): added in v0.2.11, remove after 2027-01-12.
-  const supported = serverInfo?.features?.providerSubagents === true;
+  // COMPAT(projectedSubagentTimeline): added after v0.8.0, remove after 2027-03-14.
+  const supported = serverInfo?.features?.projectedSubagentTimeline === true;
   const [isLoadingOlder, setIsLoadingOlder] = useState(false);
   const isCompact = useIsCompactFormFactor();
   const childRows = useSubagentsForParent({
@@ -150,23 +151,28 @@ function ProviderSubagentPanel() {
 
   useEffect(() => {
     if (!client || !supported) return;
-    void client
-      .fetchProviderSubagentTimeline(target.parentAgentId, target.subagentId, {
-        direction: "tail",
-        limit: TIMELINE_FETCH_PAGE_SIZE,
-      })
-      .then((payload) => {
-        useProviderSubagentStore.getState().replaceTimeline(serverId, payload);
-        return undefined;
-      })
-      .catch(() => undefined);
-  }, [client, serverId, supported, target.parentAgentId, target.subagentId]);
+    return observeProviderSubagentTimeline({
+      client,
+      serverId,
+      parentAgentId: target.parentAgentId,
+      subagentId: target.subagentId,
+      limit: TIMELINE_FETCH_PAGE_SIZE,
+      reportError: (error) => {
+        console.error("[ProviderSubagentTimeline] Failed to refresh child history", {
+          error,
+          serverId,
+          parentAgentId: target.parentAgentId,
+          subagentId: target.subagentId,
+        });
+      },
+    });
+  }, [client, supported, serverId, target.parentAgentId, target.subagentId]);
 
   const loadOlder = useCallback((): boolean => {
     if (!client || !supported || isLoadingOlder || !timeline?.hasOlder || !timeline.epoch) {
       return false;
     }
-    const firstSeq = timeline.rows.size ? Math.min(...timeline.rows.keys()) : null;
+    const firstSeq = timeline.cursor?.startSeq ?? null;
     if (firstSeq === null) return false;
     setIsLoadingOlder(true);
     void client
@@ -191,7 +197,7 @@ function ProviderSubagentPanel() {
     target.subagentId,
     timeline,
   ]);
-  const firstTimelineSeq = timeline?.rows.size ? Math.min(...timeline.rows.keys()) : null;
+  const firstTimelineSeq = timeline?.cursor?.startSeq ?? null;
   const progressKey =
     timeline?.epoch && firstTimelineSeq !== null ? `${timeline.epoch}:${firstTimelineSeq}` : null;
   const subtitle = descriptor?.subtitle?.trim();

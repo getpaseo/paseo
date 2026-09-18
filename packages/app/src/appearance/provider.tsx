@@ -1,4 +1,12 @@
-import { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo } from "react";
+import {
+  createContext,
+  type ReactNode,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import { UnistylesRuntime } from "react-native-unistyles";
 import { DEFAULT_THEME_PREFERENCE, useAppSettings, type AppSettings } from "@/hooks/use-settings";
 import {
@@ -44,6 +52,7 @@ function applyTheme({ preference, contributedTheme }: ApplyThemeInput): void {
 
 export function AppearanceProvider({ children }: { children: ReactNode }) {
   const { settings, updateSettings, isLoading } = useAppSettings();
+  const [hasAppliedAppearance, setHasAppliedAppearance] = useState(false);
   const options = usePluginThemeCatalog();
   const selected = useMemo(() => {
     if (settings.theme !== PLUGIN_THEME_PREFERENCE) return null;
@@ -61,6 +70,7 @@ export function AppearanceProvider({ children }: { children: ReactNode }) {
       codeFontSize: settings.codeFontSize,
       syntaxTheme: settings.syntaxTheme,
     });
+    setHasAppliedAppearance(true);
   }, [
     isLoading,
     selected,
@@ -84,6 +94,10 @@ export function AppearanceProvider({ children }: { children: ReactNode }) {
     [updateSettings],
   );
   const value = useMemo(() => ({ options, selected, select }), [options, selected, select]);
+
+  // The first settings load changes appearance keys. Mount screens only after applying it
+  // so startup does not destroy and recreate an already-visible workspace.
+  if (!hasAppliedAppearance) return null;
 
   return (
     <ContributedThemesContext.Provider value={value}>{children}</ContributedThemesContext.Provider>

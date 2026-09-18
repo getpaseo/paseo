@@ -11,6 +11,7 @@ function plugin(input: {
     id: input.id,
     serverId: "host-1",
     clientBundle: "bundle",
+    lifetime: new AbortController(),
     queryClient: new QueryClient(),
     cleanup: () => {},
     settingsScreens: [],

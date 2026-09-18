@@ -62,7 +62,7 @@ test("an empty project becomes Git without changing its identity or creating a w
   const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
   cleanupClients.add(client);
   await client.connect();
-  await client.fetchAgents({ subscribe: { subscriptionId: "project-becomes-git" } });
+  await client.fetchAgents({ subscribe: {} });
 
   const added = await client.addProject(projectRoot);
 

@@ -69,7 +69,7 @@ function useTerminalPanelDescriptor(
     label,
     subtitle: t("workspace.tabs.fallback.terminal"),
     tooltip: label,
-    titleState: "ready",
+    titleState: terminalsQuery.isPending ? "loading" : "ready",
     icon: Terminal,
     statusBucket: deriveTerminalActivityStatusBucket(terminal?.activity),
   };

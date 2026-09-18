@@ -196,12 +196,17 @@ async function runSingleTest(testFile: string): Promise<TestOutcome> {
   const testName = testFile.replace(/\.test\.ts$/, "");
   const startedAt = Date.now();
   const npmCache = await mkdtemp(join(tmpdir(), "paseo-cli-test-npm-cache-"));
+  const osHome = await mkdtemp(join(tmpdir(), "paseo-cli-test-os-home-"));
 
   try {
     return await new Promise<TestOutcome>((resolve) => {
       const proc = spawn("npx", ["tsx", testPath], {
         env: {
-          ...process.env,
+          ...Object.fromEntries(
+            Object.entries(process.env).filter(([key]) => !key.startsWith("PASEO_")),
+          ),
+          HOME: osHome,
+          USERPROFILE: osHome,
           PATH: [rootNodeModulesBin, process.env.PATH].filter(Boolean).join(delimiter),
           npm_config_cache: npmCache,
           PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD: testEnvDefaults.PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD,
@@ -249,6 +254,7 @@ async function runSingleTest(testFile: string): Promise<TestOutcome> {
     });
   } finally {
     await rm(npmCache, { recursive: true, force: true });
+    await rm(osHome, { recursive: true, force: true });
   }
 }
 

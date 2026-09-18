@@ -48,6 +48,20 @@ const triggerSchema = z
 
 export const triggersResponseSchema = z.object({ triggers: z.array(triggerSchema) }).strict();
 
+export const triggerValidationResponseSchema = z
+  .object({ name: z.string().regex(/^[a-z][a-z0-9_-]*$/u), valid: z.literal(true) })
+  .strict();
+
+export const triggerInstallationResponseSchema = z
+  .object({
+    triggerId: z.string().uuid(),
+    name: z.string().regex(/^[a-z][a-z0-9_-]*$/u),
+    revisionId: z.string().uuid(),
+    version: z.number().int().positive(),
+    active: z.literal(true),
+  })
+  .strict();
+
 export const configurationResourcesSchema = z
   .object({
     daemons: z.array(z.object({ id: z.string().uuid(), slug: z.string().min(1) }).strict()),
@@ -63,25 +77,9 @@ export const configurationResourcesSchema = z
     ),
     discord: z.array(z.object({ slug: z.string().min(1), guildName: z.string().min(1) }).strict()),
     slack: z.array(z.object({ slug: z.string().min(1), teamName: z.string().min(1) }).strict()),
-  })
-  .strict();
-
-export const setupResourcesSchema = z
-  .object({
-    github: z.array(
-      z
-        .object({
-          slug: z.string().min(1),
-          accountLogin: z.string().min(1),
-          accountType: z.string().min(1),
-          repositories: z.array(z.string().min(1)),
-        })
-        .strict(),
+    linear: z.array(
+      z.object({ slug: z.string().min(1), organizationName: z.string().min(1) }).strict(),
     ),
-    discord: z.array(
-      z.object({ guildId: z.string().min(1), guildName: z.string().min(1) }).strict(),
-    ),
-    slack: z.array(z.object({ teamId: z.string().min(1), teamName: z.string().min(1) }).strict()),
   })
   .strict();
 
@@ -106,7 +104,8 @@ export type CliAuthorization = z.infer<typeof authorizationSchema>;
 export type CliAuthorizationPoll = z.infer<typeof authorizationPollSchema>;
 export type HubProject = z.infer<typeof projectSchema>;
 export type HubTrigger = z.infer<typeof triggerSchema>;
+export type HubTriggerValidationResult = z.infer<typeof triggerValidationResponseSchema>;
+export type HubTriggerInstallationResult = z.infer<typeof triggerInstallationResponseSchema>;
 export type HubConfigurationResources = z.infer<typeof configurationResourcesSchema>;
-export type HubSetupResources = z.infer<typeof setupResourcesSchema>;
 export type HubInstallResult = z.infer<typeof installResponseSchema>;
 export type HubValidationResult = z.infer<typeof validationResponseSchema>;

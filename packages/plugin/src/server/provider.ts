@@ -531,7 +531,10 @@ export type ProviderEvent =
       type: "session.opened";
       requestId?: string;
       sessionId: string;
+      /** Direct parent in the provider session ID namespace. */
       parentSessionId?: string;
+      /** ID of the spawning tool call in the direct parent's timeline. */
+      toolCallId?: string;
       capabilities: readonly string[];
       restoration: "core" | "parent";
       persistence?: ProviderPersistence;
@@ -1278,6 +1281,7 @@ export const ProviderEventSchema: z.ZodType<ProviderEvent> = z.discriminatedUnio
       requestId: idSchema.optional(),
       sessionId: idSchema,
       parentSessionId: idSchema.optional(),
+      toolCallId: idSchema.optional(),
       capabilities: z.array(z.string()),
       restoration: z.enum(["core", "parent"]),
       persistence: persistenceSchema.optional(),

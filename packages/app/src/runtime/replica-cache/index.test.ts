@@ -110,6 +110,12 @@ function createCache(storage: MemoryStorage, maxBytes?: number): ReplicaCache {
   return cache;
 }
 
+function requireTimelineRow(storage: MemoryStorage): ReplicaRow {
+  const row = [...storage.rows.values()].find((candidate) => candidate.kind === "timeline");
+  if (!row) throw new Error("timeline row was not written");
+  return row;
+}
+
 function agent(id = "agent-1"): Agent {
   return {
     ...normalizeAgentSnapshot(
@@ -501,10 +507,25 @@ describe("ReplicaCache", () => {
       hasOlder: true,
     });
     await writer.flush();
-    const row = [...storage.rows.values()].find((candidate) => candidate.kind === "timeline");
-    if (!row) throw new Error("timeline row was not written");
+    const row = requireTimelineRow(storage);
     const payload = JSON.parse(row.payload) as { items: Array<Record<string, unknown>> };
     delete payload.items[0]?.pluginItemId;
+    storage.rows.set(`${row.serverId}:${row.kind}:${row.id}`, {
+      ...row,
+      payload: JSON.stringify(payload),
+    });
+
+    expect(await createCache(storage).readTimeline(SERVER_ID, "agent-1")).toBeUndefined();
+  });
+
+  it("refetches old cached Markdown fragments instead of offering them as whole messages", async () => {
+    const storage = new MemoryStorage();
+    const writer = createCache(storage);
+    writer.commitTimeline(SERVER_ID, "agent-1", timeline());
+    await writer.flush();
+    const row = requireTimelineRow(storage);
+    const payload = JSON.parse(row.payload) as { items: Array<Record<string, unknown>> };
+    Object.assign(payload.items[0]!, { blockGroupId: "message-1", blockIndex: 0 });
     storage.rows.set(`${row.serverId}:${row.kind}:${row.id}`, {
       ...row,
       payload: JSON.stringify(payload),

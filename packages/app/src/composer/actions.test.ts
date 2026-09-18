@@ -18,6 +18,7 @@ import {
   type MessageSubmissionRecord,
 } from "@/composer/submission/model";
 import {
+  uploadFileAttachments,
   cancelComposerAgent,
   dispatchComposerAgentMessage,
   editQueuedComposerMessage,
@@ -1038,4 +1039,87 @@ describe("findForgeItemByOption / isAttachmentSelectedForForgeItem", () => {
     expect(isAttachmentSelectedForForgeItem(attachments, issueItem)).toBe(true);
     expect(isAttachmentSelectedForForgeItem(attachments, prItem)).toBe(false);
   });
+});
+
+describe("file upload preparation", () => {
+  it("waits for file bytes and daemon acknowledgement before returning the attachment", async () => {
+    let resolveRead!: (bytes: Uint8Array) => void;
+    const read = new Promise<Uint8Array>((resolve) => {
+      resolveRead = resolve;
+    });
+    let acknowledge!: (result: Awaited<ReturnType<ComposerSendClient["uploadFile"]>>) => void;
+    const response = new Promise<Awaited<ReturnType<ComposerSendClient["uploadFile"]>>>(
+      (resolve) => {
+        acknowledge = resolve;
+      },
+    );
+    const sent: string[] = [];
+    const upload = uploadFileAttachments({
+      client: {
+        sendAgentMessage: async () => {},
+        uploadFile: async (file) => {
+          sent.push(file.fileName);
+          expect(file.bytes).toEqual(new Uint8Array([1, 2]));
+          return response;
+        },
+      },
+      files: [
+        { fileName: "sample.bin", mimeType: "application/octet-stream", readBytes: () => read },
+      ],
+    });
+    let completed = false;
+    void upload.then(() => {
+      completed = true;
+      return undefined;
+    });
+    expect(sent).toEqual([]);
+    resolveRead(new Uint8Array([1, 2]));
+    await Promise.resolve();
+    expect(sent).toEqual(["sample.bin"]);
+    expect(completed).toBe(false);
+    const file = {
+      type: "uploaded_file" as const,
+      id: "file-1",
+      fileName: "sample.bin",
+      mimeType: "application/octet-stream",
+      size: 2,
+      path: "/uploads/sample.bin",
+    };
+    acknowledge({ requestId: "req-1", file, error: null });
+    await expect(upload).resolves.toEqual([{ kind: "file", attachment: file }]);
+  });
+
+  it.each(["unreadable", "oversized"])(
+    "does not upload a batch containing a later %s file",
+    async (failure) => {
+      let sends = 0;
+      await expect(
+        uploadFileAttachments({
+          client: {
+            sendAgentMessage: async () => {},
+            uploadFile: async () => {
+              sends++;
+              throw new Error("unexpected send");
+            },
+          },
+          files: [
+            {
+              fileName: "valid.bin",
+              mimeType: "application/octet-stream",
+              readBytes: async () => new Uint8Array([1]),
+            },
+            {
+              fileName: "missing.bin",
+              mimeType: "application/octet-stream",
+              readBytes: async () => {
+                if (failure === "oversized") return new Uint8Array(50 * 1024 * 1024 + 1);
+                throw new Error("read failed");
+              },
+            },
+          ],
+        }),
+      ).rejects.toThrow(failure === "unreadable" ? "read failed" : "too large");
+      expect(sends).toBe(0);
+    },
+  );
 });

@@ -1507,8 +1507,7 @@ const x = 1;
     expect(diff.diff).toContain(`-export const value = "old";`);
     expect(diff.diff).toContain(`+export const value = "new";`);
     expect(commands).toContain("diff --numstat HEAD");
-    expect(commands).toContain("diff HEAD -- generated.js");
-    expect(commands).toContain("diff HEAD -- small.ts");
+    expect(commands).toContain("diff HEAD -- :(literal)generated.js :(literal)small.ts");
     expect(metrics.maxConcurrent).toBeLessThanOrEqual(8);
   });
 
@@ -2989,6 +2988,36 @@ const x = 1;
     expect(lookupTarget).toMatchObject({
       headRef: "topic",
       headRepositoryOwner: "contributor",
+    });
+  });
+
+  it.each([
+    "git@github.com:contributor/paseo.git",
+    "https://github.com/contributor/paseo.git",
+    "ssh://git@github.com/contributor/paseo.git",
+  ])("preserves fork PR identity with branch.remote=%s", async (branchRemote) => {
+    execFileSync("git", ["remote", "add", "origin", "git@github.com:getpaseo/paseo.git"], {
+      cwd: repoDir,
+    });
+    execFileSync("git", ["checkout", "-b", "topic"], { cwd: repoDir });
+    execFileSync("git", ["config", "branch.topic.remote", branchRemote], {
+      cwd: repoDir,
+    });
+    execFileSync("git", ["config", "branch.topic.pushRemote", branchRemote], {
+      cwd: repoDir,
+    });
+    execFileSync("git", ["config", "branch.topic.merge", "refs/heads/topic"], {
+      cwd: repoDir,
+    });
+    const headSha = execFileSync("git", ["rev-parse", "HEAD"], {
+      cwd: repoDir,
+      encoding: "utf8",
+    }).trim();
+
+    expect(await readPullRequestLookupTargetFromFacts(repoDir, paseoHome)).toEqual({
+      headRef: "topic",
+      headRepositoryOwner: "contributor",
+      headSha,
     });
   });
 
