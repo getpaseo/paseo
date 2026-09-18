@@ -147,6 +147,16 @@ export async function scaffoldPluginDirectory(
     name: id,
     private: true,
     version: "0.0.0",
+    files: [
+      "paseo-plugin.json",
+      "index.client.ts",
+      "index.client.tsx",
+      "index.server.ts",
+      "index.server.tsx",
+      "client/",
+      "server/",
+      "shared/",
+    ],
     scripts: { typecheck: "tsc --noEmit" },
     devDependencies: {
       "@getpaseo/plugin": version,

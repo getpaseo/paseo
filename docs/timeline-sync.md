@@ -5,8 +5,10 @@ Agent chat delivery has two paths:
 1. **Live stream** — `agent_stream` WebSocket messages for immediacy. These may be delta-shaped lifecycle updates.
 2. **Authoritative history** — `fetch_agent_timeline_request` for correctness. This always returns full projected timeline items, never lifecycle deltas.
 
-The daemon keeps canonical rows only for its runtime. Provider history is the durable transcript
-authority and repopulates those rows when an agent resumes.
+The daemon retains projected items in memory. Each source event advances the stream sequence,
+then replaces the previous tool state or merges into the current text item. Intermediate payloads
+are never retained for history or catch-up. Provider history is the durable transcript authority
+and rebuilds the projection when an agent resumes.
 
 The invariants are:
 
@@ -67,14 +69,26 @@ Provider message IDs are not guaranteed for every displayed item. Paseo-generate
 
 Actions that address a point in chat history, such as Fork, use the daemon timeline `epoch` plus the projected item's `seqEnd`. The app carries that position on the rendered assistant item for both live and fetched history. When adjacent projected chunks merge, the merged item retains the newer chunk's position.
 
-The daemon validates that the epoch is current and the exact source sequence still exists before slicing rows. It slices before projection so later lifecycle updates cannot leak into the selected context.
+The daemon validates the epoch and locates the projected item at the selected position. A fork
+includes projected items through that checkpoint. If an item spans the checkpoint and changed
+afterward, the daemon refuses that fork with an actionable error: discarded historical payloads
+cannot be reconstructed from sequence metadata. Forking the current context remains available.
 
 ## Resume behavior
 
-Opening, reconnecting, or revisiting after a selective-delivery coverage gap fetches the latest tail
-page.
-Focus alone does not mutate timeline state; the tail response is compared with the local
+Opening, reconnecting, and returning from app background establish the current timeline through
+bounded catch-up. Switching between continuously subscribed open chats needs no fetch.
+Focus alone does not mutate timeline state; the response is compared with the local
 authoritative range first.
+
+Cached history remains readable during recovery. The chat shows Reconnecting to host while the host is
+offline, then Updating messages until authoritative catch-up completes. Socket connectivity alone cannot
+certify that the displayed conversation is current. The timeline owner publishes freshness; the
+view renders it without a toast timer or a separate resume workflow.
+
+Foregrounding probes a nominally connected session immediately. A healthy response preserves the
+socket; a failed three-second probe starts reconnecting without waiting for the background heartbeat
+or retry backoff. This cannot keep a mobile socket alive after the operating system suspends it.
 
 - The same epoch and `window.maxSeq` is an exact display no-op. The app advances synchronization
   bookkeeping without replacing timeline arrays, preserving an upward-scrolled viewport.
@@ -92,6 +106,20 @@ A plan approval keeps the original proposal's tool-call identity through resolut
 history replay. The pending approval UI can hide that tool from presentation, but the client model
 must retain its position. Creating a new history card on rejection places it after the prompt that
 rejected it; changing steer-event ordering would also put new assistant output before that prompt.
+
+## Provider child history
+
+Child transcripts use the same projected-page reconciliation as the main conversation. The client
+retains rendered items and sequence cursors, never a second cache of source events. Pagination
+uses the projected display anchor; live updates advance the source cursor without moving tools.
+
+Clients advertising `projected_subagent_timeline` receive child streams and projected fetches.
+Updated clients require `features.projectedSubagentTimeline` for child history; older hosts show
+an update-host notice for that pane.
+Older clients retain child names/status and receive an upgrade message when opening a child
+conversation. This gate affects only the child transcript; it does not gate the connection,
+main conversation, or current-context forks. A legacy `canonical` root request still receives
+projected items.
 
 ## Client replica lifetime
 
@@ -138,14 +166,14 @@ replica cache.
 
 The app chooses one delivery policy from `server_info.features.selectiveAgentTimeline`:
 
-- Selective daemons receive every agent visible in any pane plus the most recently viewed hidden
-  agents, up to five subscribed agents. Visible agents always win: if more than five are visible,
-  they all remain subscribed and no hidden agent does. Switching and app backgrounding preserve
-  this connection-scoped hot set, so returning to an agent still covered by it needs no catch-up.
-  Losing window keyboard focus does not make a selected pane invisible. Disconnecting clears hidden
-  hot agents; reconnect restores the currently visible set before authoritative catch-up. Revisiting
-  an evicted retained timeline displays its cached state immediately while authoritative catch-up
-  advances it to the current tail.
+- Selective daemons receive every open workspace chat plus any visible agent pane. Workspace layout
+  owns open-chat lifetime, independently of mounted or retained React views. Switching workspaces,
+  evicting a retained view, and app backgrounding preserve that demand; closing the chat releases it.
+  Reconnect restores the open set and gives visible chats the first catch-up attempt. Hidden chats
+  follow when those attempts settle, including failures, so a failed visible chat does not starve
+  background recovery. Split panes catch up together. Hidden chats update the replica; on web their
+  retained presentation stays suspended until revealed, on native it keeps rendering. Revealing a
+  chat reads the current store and preserves its local UI state. There is no recent-agent limit.
 - Legacy daemons keep globally streaming agent timelines. Visibility still triggers the existing
   authoritative catch-up, but the app does not issue selective-subscription RPCs.
 

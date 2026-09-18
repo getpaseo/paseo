@@ -521,7 +521,9 @@ describe("evaluatePluginClientBundle", () => {
         `(function(require) {
       const shared = require("@getpaseo/plugin");
       const client = require("@getpaseo/plugin/client");
-      for (const name of ["usePaseo", "useRpc", "useSettings", "useAgent", "useWorkspace"]) {
+      const { ExternalLink } = require("@getpaseo/plugin/client/ui");
+      if (typeof ExternalLink !== "function") throw new Error("ExternalLink");
+      for (const name of ["usePaseo", "useRpc", "useSettings", "useAgent", "useWorkspace", "openExternalUrl"]) {
         if (name in shared || typeof client[name] !== "function") throw new Error(name);
       }
       if ("Icon" in shared || typeof shared.PluginAttachmentItemSchema.parse !== "function") throw new Error("shared exports");
@@ -599,4 +601,40 @@ describe("evaluatePluginClientBundle", () => {
       ),
     ).toThrow("setup exploded");
   });
+});
+
+it("binds imported getters to each originating installation across delayed callbacks", async () => {
+  const calls: string[] = [];
+  const hostRuntime = (installation: string): PluginClientRuntime => ({
+    ...runtime,
+    hosts: {
+      getSnapshot: () => [],
+      subscribe: () => () => {},
+      getPaseoClient(serverId) {
+        calls.push(`${installation}/${serverId}`);
+        return runtime.paseo;
+      },
+    },
+  });
+  const source = bundle(`
+    const { getPaseoClient } = require("@getpaseo/plugin/client");
+    getPaseoClient("entry-host");
+    plugin.addCommandCenterItem({
+      id: "read", title: "Read", icon: "Server", context: "global",
+      onSelect: async () => { await Promise.resolve(); getPaseoClient("target-host"); },
+    });
+  `);
+  const first = runPluginClientBundle("same-id", source, hostRuntime("first"));
+  const second = runPluginClientBundle("same-id", source, hostRuntime("second"));
+  // Both callbacks run after the second bundle has evaluated.
+  await first.commandCenterItems[0].onSelect({} as never);
+  await second.commandCenterItems[0].onSelect({} as never);
+  expect(calls).toEqual([
+    "first/entry-host",
+    "second/entry-host",
+    "first/target-host",
+    "second/target-host",
+  ]);
+  await first.cleanup();
+  await second.cleanup();
 });
