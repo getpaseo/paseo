@@ -245,6 +245,31 @@ describe("OMP agent client and session", () => {
     expect(omp.completedTurnCount()).toBe(1);
   });
 
+  test("does not complete a replacement before its OMP user echo", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+
+    await expect(
+      omp.runPromptAfterStaleAgentEnd("replacement prompt", "replacement completed"),
+    ).resolves.toMatchObject({ finalText: "replacement completed" });
+
+    expect(omp.timeline()).toEqual([
+      {
+        type: "user_message",
+        text: "replacement prompt",
+        messageId: "user-replacement",
+        clientMessageId: "client-replacement",
+      },
+      {
+        type: "assistant_message",
+        text: "replacement completed",
+        messageId: "omp-assistant-1",
+      },
+    ]);
+    expect(omp.canceledTurnCount()).toBe(1);
+    expect(omp.completedTurnCount()).toBe(1);
+  });
+
   test("starts and stops context usage polling with the active turn", async () => {
     const scheduler = new ManualUsagePollScheduler();
     const omp = new OmpHarness({ usagePollScheduler: scheduler });

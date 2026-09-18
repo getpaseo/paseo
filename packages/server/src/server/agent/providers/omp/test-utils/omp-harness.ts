@@ -204,6 +204,27 @@ export class OmpHarness {
     return { completion };
   }
 
+  async runPromptAfterStaleAgentEnd(input: string, output: string): Promise<unknown> {
+    const session = this.requireSession();
+    const runtime = this.omp.latestSession();
+
+    const firstPromptStarted = runtime.nextPrompt();
+    await session.startTurn("interrupted prompt", { clientMessageId: "client-interrupted" });
+    await firstPromptStarted;
+    await session.interrupt();
+
+    const promptStarted = runtime.nextPrompt();
+    const run = session.run(input, { clientMessageId: "client-replacement" });
+    await promptStarted;
+    runtime.beginTurn();
+    runtime.finishTurn({ role: "assistant", content: [] });
+    await waitForImmediate();
+    runtime.acceptPrompt(input, "user-replacement");
+    runtime.streamAssistantText(output);
+    runtime.finishTurn();
+    return await run;
+  }
+
   async runPromptAfterExtensionNotice(
     input: string,
     output: string,

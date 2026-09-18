@@ -4341,6 +4341,22 @@ export class AgentManager {
       return;
     }
 
+    if (
+      agent.provider === "omp" &&
+      !options?.fromHistory &&
+      event.item.type === "user_message" &&
+      !event.item.clientMessageId &&
+      this.reconcileOmpSubmittedPromptEcho({
+        agent,
+        item: event.item,
+        turnId: event.turnId,
+      })
+    ) {
+      flags.shouldDispatchEvent = false;
+      flags.shouldNotifyWaiters = false;
+      return;
+    }
+
     if (options?.fromHistory) {
       this.recordTimeline(
         agent.id,
@@ -4639,6 +4655,51 @@ export class AgentManager {
         agent.id,
         clientMessageId,
         messageId,
+      );
+      if (enriched) this.enqueueDurableTimelineUpdate(agent.id, enriched);
+    }
+    return existing;
+  }
+
+  private reconcileOmpSubmittedPromptEcho({
+    agent,
+    item,
+    turnId,
+  }: {
+    agent: ActiveManagedAgent;
+    item: Extract<AgentTimelineItem, { type: "user_message" }>;
+    turnId?: string;
+  }): AgentTimelineRow | null {
+    if (!turnId) return null;
+
+    const candidates = this.timelineStore.getRows(agent.id).filter((row) => {
+      const candidate = row.item;
+      if (row.turnId !== turnId || candidate.type !== "user_message") {
+        return false;
+      }
+      return (
+        candidate.clientMessageId !== undefined &&
+        candidate.text === item.text &&
+        candidate.messageId === candidate.clientMessageId
+      );
+    });
+    if (candidates.length !== 1) {
+      return null;
+    }
+
+    const existing = candidates[0];
+    if (!existing || existing.item.type !== "user_message") {
+      return null;
+    }
+    const clientMessageId = existing.item.clientMessageId;
+    if (!clientMessageId) {
+      return null;
+    }
+    if (item.messageId && !existing.providerMessageId) {
+      const enriched = this.timelineStore.enrichSubmittedUserMessage(
+        agent.id,
+        clientMessageId,
+        item.messageId,
       );
       if (enriched) this.enqueueDurableTimelineUpdate(agent.id, enriched);
     }
