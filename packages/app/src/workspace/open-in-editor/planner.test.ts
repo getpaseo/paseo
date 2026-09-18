@@ -184,6 +184,36 @@ describe("planWorkspaceOpenTargets", () => {
     ]);
   });
 
+  it.each(["gitea", "forgejo", "codeberg"])(
+    "uses the canonical repository URL for %s branch and file links",
+    (forge) => {
+      const input = {
+        workspaceDirectory: "/repo",
+        desktopTargets: [],
+        canUseDesktopBridge: false,
+        isLocalExecution: false,
+        checkoutStatus: {
+          isGit: true,
+          remoteUrl: "ssh://git@git.example.com:7998/Acme/main.git",
+          currentBranch: "feature/web links",
+        },
+        forge,
+        repositoryWebUrl: "https://projects.example.com/Acme/main",
+      };
+      expect(
+        planWorkspaceOpenTargets(input).map((target) => target.source === "forge" && target.url),
+      ).toEqual(["https://projects.example.com/Acme/main/src/branch/feature/web%20links"]);
+      expect(
+        planWorkspaceOpenTargets({
+          ...input,
+          activeFile: { path: "src/my file.ts", lineStart: 3, lineEnd: 5 },
+        }).map((target) => target.source === "forge" && target.url),
+      ).toEqual([
+        "https://projects.example.com/Acme/main/src/branch/feature/web%20links/src/my%20file.ts#L3-L5",
+      ]);
+    },
+  );
+
   it("infers the forge from the remote URL when the forge input is null", () => {
     const targets = planWorkspaceOpenTargets({
       workspaceDirectory: "/repo",
