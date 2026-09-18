@@ -7,6 +7,13 @@ import { agentCommandsQueryKey, type AgentCommandsDraftConfig } from "@/hooks/ag
 
 const DRAFT_COMMANDS_STALE_TIME = Number.POSITIVE_INFINITY;
 const SESSION_COMMANDS_STALE_TIME = 60_000;
+/**
+ * A draft config the daemon could not service — no model resolved yet, provider
+ * snapshot still loading — comes back as an empty list. Caching that forever
+ * leaves the composer with no commands for the rest of the session, so let an
+ * empty result go stale and be retried.
+ */
+const EMPTY_DRAFT_COMMANDS_STALE_TIME = 5_000;
 
 export interface AgentSlashCommand {
   name: string;
@@ -35,7 +42,25 @@ export async function fetchAgentCommands(input: {
     agentId: input.agentId,
     draftConfig: input.draftConfig,
   });
+  // A draft composer has nothing to show but provider commands, so a failure has
+  // to surface. A running agent still has client commands to fall back on, and
+  // some providers legitimately report that they cannot list commands at all.
+  if (input.draftConfig && response.error) {
+    throw new Error(response.error);
+  }
   return response.commands as AgentSlashCommand[];
+}
+
+export function resolveCommandsStaleTime(input: {
+  isDraft: boolean;
+  commands: readonly AgentSlashCommand[] | undefined;
+}): number {
+  if (!input.isDraft) {
+    return SESSION_COMMANDS_STALE_TIME;
+  }
+  return (input.commands?.length ?? 0) > 0
+    ? DRAFT_COMMANDS_STALE_TIME
+    : EMPTY_DRAFT_COMMANDS_STALE_TIME;
 }
 
 interface UseAgentCommandsQueryOptions {
@@ -66,7 +91,11 @@ export function useAgentCommandsQuery({
       return fetchAgentCommands({ client, agentId, draftConfig });
     },
     enabled: queryEnabled && !!client && isConnected && (!!agentId || !!draftConfig),
-    staleTime: draftConfig ? DRAFT_COMMANDS_STALE_TIME : SESSION_COMMANDS_STALE_TIME,
+    staleTime: (commandsQuery) =>
+      resolveCommandsStaleTime({
+        isDraft: Boolean(draftConfig),
+        commands: commandsQuery.state.data,
+      }),
     retry: 3,
     retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 5000),
   });
