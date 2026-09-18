@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.9.0-beta.2 - 2026-09-18
+
+### Fixed
+
+- Fixed every workspace showing the restart time as its last activity after relaunching ([#5040](https://github.com/getpaseo/paseo/pull/5040))
+- Fixed finished chats dropping out of Ready to review after a restart ([#5040](https://github.com/getpaseo/paseo/pull/5040))
+- Fixed launch resuming a provider session for every chat ever opened on the host ([#5040](https://github.com/getpaseo/paseo/pull/5040))
+
 ## 0.9.0-beta.1 - 2026-09-17
 
 ### Added
