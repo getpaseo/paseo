@@ -68,10 +68,22 @@ test("commit history shows dates and shares diff layout preferences", async ({
   await expect(panel.getByTestId("git-diff-canvas")).toBeVisible({ timeout: 30_000 });
   await expectCommitDiffHeaderGeometry(panel);
 
+  await panel.getByTestId("git-diff-scroll").click({ position: { x: 10, y: 65 } });
+  await page.keyboard.press("ControlOrMeta+f");
+  const find = panel.getByTestId("diff-find");
+  await find.getByRole("textbox").fill("before");
+  await expect(find.getByRole("status")).toHaveText("1 of 1");
+  await expect(find.getByTestId("diff-find-active-file")).toHaveText("feature.txt");
+  await expect(find.getByRole("button", { name: "Toggle replace" })).toHaveCount(0);
+
   await layoutToggle.click();
   await expect(layoutToggle).toHaveAccessibleName("Switch to unified diff");
   await expect(panel.locator('[data-testid^="diff-code-row-"]')).toHaveCount(0);
   await expect(panel.getByTestId("diff-file-0-body")).toBeVisible();
+  await expect(find.getByRole("status")).toHaveText("1 of 1");
+  await find.getByRole("textbox").press("Escape");
+  await expect(find).toHaveCount(0);
+  await expect(panel.getByTestId("git-diff-scroll")).toBeFocused();
 
   await page.getByTestId(/^workspace-tab-commit_diff_/).hover();
   await page.getByTestId(/^workspace-commit-diff-close-/).click();
@@ -85,6 +97,16 @@ test("commit history shows dates and shares diff layout preferences", async ({
   await page.setViewportSize({ width: 480, height: 900 });
   await expect(panel.getByTestId("commit-diff-toolbar")).toHaveCount(0);
   await expect(panel.getByTestId("git-diff-canvas")).toBeVisible();
+  await panel.getByTestId("git-diff-scroll").click({ position: { x: 10, y: 65 } });
+  await page.keyboard.press("ControlOrMeta+f");
+  await find.getByRole("textbox").fill("after");
+  await expect(find.getByRole("status")).toHaveText("1 of 1");
+  const findBox = await find.boundingBox();
+  const panelBox = await panel.boundingBox();
+  expect(findBox).not.toBeNull();
+  expect(panelBox).not.toBeNull();
+  expect(findBox!.x).toBeGreaterThanOrEqual(panelBox!.x);
+  expect(findBox!.x + findBox!.width).toBeLessThanOrEqual(panelBox!.x + panelBox!.width);
 });
 
 async function createFeatureCommit(repoPath: string): Promise<void> {

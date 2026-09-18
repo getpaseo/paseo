@@ -25,6 +25,12 @@ export const ptBR: TranslationResources = {
     position: "{{current}} de {{total}}",
     total: "{{total}} correspondências",
   },
+  diffFind: {
+    title: "Buscar no diff",
+    searching: "Buscando...",
+    scope: "Somente o texto do diff atual",
+    skipped: "{{count}} arquivos binários ou grandes demais excluídos",
+  },
   common: {
     back: "Voltar",
     loading: "Carregando...",

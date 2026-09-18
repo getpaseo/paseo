@@ -20,6 +20,12 @@ export const en = {
     position: "{{current}} of {{total}}",
     total: "{{total}} matches",
   },
+  diffFind: {
+    title: "Find in diff",
+    searching: "Searching...",
+    scope: "Current diff text only",
+    skipped: "{{count}} binary or oversized files excluded",
+  },
   common: {
     back: "Back",
     loading: "Loading...",

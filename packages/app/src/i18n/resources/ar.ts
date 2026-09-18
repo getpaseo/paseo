@@ -24,6 +24,12 @@ export const ar: TranslationResources = {
     position: "{{current}} من {{total}}",
     total: "{{total}} تطابقات",
   },
+  diffFind: {
+    title: "البحث في الفروق",
+    searching: "جارٍ البحث...",
+    scope: "نص الفروق الحالية فقط",
+    skipped: "تم استبعاد {{count}} ملفات ثنائية أو كبيرة جدًا",
+  },
   common: {
     back: "خلف",
     loading: "تحميل...",

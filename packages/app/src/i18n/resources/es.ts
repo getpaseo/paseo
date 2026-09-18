@@ -25,6 +25,12 @@ export const es: TranslationResources = {
     position: "{{current}} de {{total}}",
     total: "{{total}} coincidencias",
   },
+  diffFind: {
+    title: "Buscar en el diff",
+    searching: "Buscando...",
+    scope: "Solo el texto del diff actual",
+    skipped: "{{count}} archivos binarios o demasiado grandes excluidos",
+  },
   common: {
     back: "Atrás",
     loading: "Cargando...",

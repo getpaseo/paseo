@@ -24,6 +24,12 @@ export const ko: TranslationResources = {
     position: "{{current}} / {{total}}",
     total: "일치 항목 {{total}}개",
   },
+  diffFind: {
+    title: "차이점에서 찾기",
+    searching: "검색 중...",
+    scope: "현재 차이점 텍스트만 검색",
+    skipped: "바이너리 또는 너무 큰 파일 {{count}}개 제외",
+  },
   common: {
     back: "뒤로",
     loading: "불러오는 중...",

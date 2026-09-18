@@ -25,6 +25,12 @@ export const fr: TranslationResources = {
     position: "{{current}} sur {{total}}",
     total: "{{total}} résultats",
   },
+  diffFind: {
+    title: "Rechercher dans le diff",
+    searching: "Recherche...",
+    scope: "Texte du diff actuel uniquement",
+    skipped: "{{count}} fichiers binaires ou trop volumineux exclus",
+  },
   common: {
     back: "Dos",
     loading: "Chargement...",

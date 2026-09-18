@@ -25,6 +25,12 @@ export const ja: TranslationResources = {
     position: "{{current}} / {{total}}",
     total: "{{total}} 件の一致",
   },
+  diffFind: {
+    title: "差分内を検索",
+    searching: "検索中...",
+    scope: "現在の差分テキストのみ",
+    skipped: "バイナリまたは大きすぎるファイル {{count}} 件を除外",
+  },
   common: {
     back: "戻る",
     loading: "読み込み中...",
