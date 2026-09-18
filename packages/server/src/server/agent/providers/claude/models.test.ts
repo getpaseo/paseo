@@ -13,7 +13,12 @@ import {
   parseClaudeCodeVersion,
   resolveClaudeDisabledThinkingForModel,
 } from "./model-manifest.js";
-import { findClaudeModel, getClaudeModels, normalizeClaudeRuntimeModelId } from "./models.js";
+import {
+  findClaudeModel,
+  getClaudeModels,
+  normalizeClaudeRuntimeModelId,
+  resolveClaudeSdkModelId,
+} from "./models.js";
 
 const createdClaudeConfigDirs: string[] = [];
 
@@ -527,5 +532,36 @@ describe("claudeManifestModelSupportsFastMode", () => {
     expect(claudeManifestModelSupportsFastMode("claude-sonnet-5")).toBe(false);
     expect(claudeManifestModelSupportsFastMode("claude-fable-5")).toBe(false);
     expect(claudeManifestModelSupportsFastMode("claude-fable-5-1")).toBe(false);
+  });
+});
+
+describe("resolveClaudeSdkModelId", () => {
+  it("appends [1m] for catalog models with a 1M context window", () => {
+    expect(resolveClaudeSdkModelId("claude-opus-5")).toBe("claude-opus-5[1m]");
+    expect(resolveClaudeSdkModelId("claude-fable-5")).toBe("claude-fable-5[1m]");
+    expect(resolveClaudeSdkModelId("claude-fable-5-1")).toBe("claude-fable-5-1[1m]");
+  });
+
+  it("keeps the suffix when it is already present", () => {
+    expect(resolveClaudeSdkModelId("claude-fable-5[1m]")).toBe("claude-fable-5[1m]");
+    expect(resolveClaudeSdkModelId("claude-opus-4-6[1m]")).toBe("claude-opus-4-6[1m]");
+  });
+
+  it("leaves 200k catalog models and unknown model IDs unchanged", () => {
+    expect(resolveClaudeSdkModelId("claude-sonnet-5")).toBe("claude-sonnet-5");
+    expect(resolveClaudeSdkModelId("claude-opus-4-8")).toBe("claude-opus-4-8");
+    expect(resolveClaudeSdkModelId("claude-haiku-4-5")).toBe("claude-haiku-4-5");
+    expect(resolveClaudeSdkModelId("glm-4.6")).toBe("glm-4.6");
+  });
+
+  it("suffixes runtime spellings of 1M models", () => {
+    expect(resolveClaudeSdkModelId("claude-opus-5-20260724")).toBe("claude-opus-5-20260724[1m]");
+  });
+
+  it("returns undefined for empty values", () => {
+    expect(resolveClaudeSdkModelId(null)).toBeUndefined();
+    expect(resolveClaudeSdkModelId(undefined)).toBeUndefined();
+    expect(resolveClaudeSdkModelId("")).toBeUndefined();
+    expect(resolveClaudeSdkModelId("  ")).toBeUndefined();
   });
 });
