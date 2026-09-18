@@ -18,6 +18,7 @@ type OptionalAgentSessionMethodName = {
 }[keyof AgentSession];
 
 const OPTIONAL_AGENT_SESSION_METHOD_NAMES = [
+  "steerActiveTurn",
   "listCommands",
   "setModel",
   "setThinkingOption",
@@ -69,6 +70,11 @@ class FakeSession implements AgentSession {
   async startTurn() {
     this.recordedCalls.push("startTurn");
     return { turnId: "turn-1" };
+  }
+
+  async steerActiveTurn() {
+    this.recordedCalls.push("steerActiveTurn");
+    return { status: "accepted" } as const;
   }
 
   subscribe(_callback: (event: AgentStreamEvent) => void) {
