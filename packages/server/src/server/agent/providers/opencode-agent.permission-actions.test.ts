@@ -101,7 +101,7 @@ describe("OpenCode permission actions", () => {
 describe("OpenCode v2 questions", () => {
   test("maps selected labels to native values and parses numeric and boolean answers", async () => {
     const harness = new V2Harness();
-    harness.api.form.list = async () => [
+    harness.api.session.form.list = async () => [
       {
         id: "question",
         sessionID: "session",
@@ -118,8 +118,8 @@ describe("OpenCode v2 questions", () => {
         ],
       },
     ];
-    const answers: Parameters<V2Api["form"]["reply"]>[0][] = [];
-    harness.api.form.reply = async (input) => {
+    const answers: Parameters<V2Api["session"]["form"]["reply"]>[0][] = [];
+    harness.api.session.form.reply = async (input) => {
       answers.push(input);
     };
     const client = new OpenCodeV2AgentClient({
@@ -185,7 +185,9 @@ test("OpenCode v2 routes a child approval back to its owning session", async () 
       behavior: "allow",
       selectedActionId: "once",
     });
-    expect(replies).toEqual([{ sessionID: "child", requestID: "child-permission", reply: "once" }]);
+    expect(replies).toEqual([
+      { sessionID: "child", requestID: "child-permission", decision: "once" },
+    ]);
   } finally {
     await session.close();
   }

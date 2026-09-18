@@ -103,8 +103,8 @@ export class OpenCodeV2AgentClient implements AgentClient {
     const activity = <T>(name: string, operation: () => Promise<T>) =>
       context ? context.runActivity(name, operation) : operation();
     try {
-      await activity("plugin.awaitActivation", () =>
-        connection.client.plugin.awaitActivation({ location }, request),
+      await activity("plugin.list", () =>
+        waitForLocationReady(connection.client, location, request.signal),
       );
       const [models, agents, providers] = await Promise.all([
         activity("model.list", () => connection.client.model.list({ location }, request)),
@@ -210,17 +210,14 @@ export class OpenCodeV2AgentClient implements AgentClient {
       config,
       this.options.logger,
       persist,
+      Boolean(this.options.bridge),
       releaseBindings,
       bindChild,
     );
     try {
       if (this.options.bridge) {
         const location = { directory: config.cwd };
-        await connection.client.plugin.awaitActivation({ location });
-        const plugins = await connection.client.plugin.list({ location });
-        if (
-          !plugins.data.some((plugin) => plugin.id === "paseo" && plugin.state.status === "active")
-        )
+        if (!(await awaitPaseoPlugin(connection.client, location)))
           throw new Error("OpenCode v2 did not activate the Paseo tool bridge plugin");
       }
       await session.initialize(launch);
@@ -350,8 +347,64 @@ async function applyResumeOverrides(
   }
 }
 
+// OpenCode v2.0.4 removed the plugin await-activation endpoint that used to
+// gate a cold location. Its config-derived commands, skills, and providers are
+// registered asynchronously, and plugin.list reports an empty inventory until
+// that first activation batch runs. Poll until the inventory is populated.
+async function waitForLocationReady(
+  client: V2Api,
+  location: { directory: string },
+  signal?: AbortSignal,
+): Promise<void> {
+  const deadline = Date.now() + 30_000;
+  while (Date.now() < deadline) {
+    signal?.throwIfAborted();
+    try {
+      const plugins = await client.plugin.list(
+        { location },
+        { signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(5_000)]) : undefined },
+      );
+      if (plugins.data.length > 0) return;
+    } catch (error) {
+      // A location can block plugin.list while its first activation batch runs.
+      // Retry until the deadline unless the caller aborted.
+      if (signal?.aborted) throw error;
+    }
+    await delay(50, undefined, { signal });
+  }
+}
+
+// OpenCode v2.0.4 removed the plugin activation endpoint, so wait for the
+// bridge plugin to appear in the inventory instead of calling awaitActivation.
+async function awaitPaseoPlugin(
+  client: V2Api,
+  location: { directory: string },
+  signal?: AbortSignal,
+): Promise<boolean> {
+  const deadline = Date.now() + 30_000;
+  while (Date.now() < deadline) {
+    signal?.throwIfAborted();
+    let plugins: Awaited<ReturnType<V2Api["plugin"]["list"]>> | undefined;
+    try {
+      plugins = await client.plugin.list(
+        { location },
+        { signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(5_000)]) : undefined },
+      );
+    } catch (error) {
+      if (signal?.aborted) throw error;
+    }
+    const entry = plugins?.data.find((plugin) => plugin.id === "paseo");
+    if (entry?.state.status === "active") return true;
+    if (entry && entry.state.status === "failed")
+      throw new Error(`OpenCode v2 Paseo tool bridge plugin failed: ${entry.state.error}`);
+    await delay(100, undefined, { signal });
+  }
+  return false;
+}
+
 async function commands(client: V2Api, directory: string): Promise<AgentSlashCommand[]> {
   const location = { directory };
+  await waitForLocationReady(client, location);
   const [configured, skills] = await Promise.all([
     client.command.list({ location }),
     client.skill.list({ location }),
@@ -372,7 +425,7 @@ async function commands(client: V2Api, directory: string): Promise<AgentSlashCom
       kind: "command",
     });
   for (const skill of skills.data) {
-    if (skill.slash === false || result.has(skill.id)) continue;
+    if (result.has(skill.id)) continue;
     result.set(skill.id, {
       name: skill.id,
       description: skill.description ?? "",
@@ -431,6 +484,7 @@ export class OpenCodeV2Session implements AgentSession {
     private readonly config: AgentSessionConfig,
     private readonly logger: Logger,
     private readonly persist: boolean,
+    private readonly requiresPaseoPlugin: boolean,
     private readonly unbind?: () => void,
     private readonly bindChild?: (id: string) => void,
   ) {}
@@ -459,7 +513,12 @@ export class OpenCodeV2Session implements AgentSession {
       return undefined;
     });
     const location = { directory: this.config.cwd };
-    await this.client.plugin.awaitActivation({ location }, { signal: this.abort.signal });
+    await waitForLocationReady(this.client, location, this.abort.signal);
+    if (
+      this.requiresPaseoPlugin &&
+      !(await awaitPaseoPlugin(this.client, location, this.abort.signal))
+    )
+      throw new Error("OpenCode v2 did not activate the Paseo tool bridge plugin");
     if (launch?.env)
       await this.client.session.environment({ sessionID: this.id, variables: launch.env });
     for (const [server, config] of Object.entries(this.config.mcpServers ?? {})) {
@@ -691,7 +750,7 @@ export class OpenCodeV2Session implements AgentSession {
     if (selected && selected.kind !== "skill") {
       await this.client.session.command({
         sessionID: this.id,
-        command: selected.name,
+        name: selected.name,
         text: command?.[2] ?? "",
         files: input.files,
       });
@@ -820,7 +879,7 @@ export class OpenCodeV2Session implements AgentSession {
     const form = this.forms.get(requestId);
     if (form) {
       if (response.behavior === "deny")
-        await this.client.form.cancel({ sessionID: form.sessionID, formID: form.id });
+        await this.client.session.form.cancel({ sessionID: form.sessionID, formID: form.id });
       else {
         const raw = response.updatedInput?.answers;
         const answer: Record<string, FormValue> = {};
@@ -832,14 +891,18 @@ export class OpenCodeV2Session implements AgentSession {
           const normalized = formAnswer(field, value);
           if (normalized !== undefined) answer[field.key] = normalized;
         }
-        await this.client.form.reply({ sessionID: form.sessionID, formID: form.id, answer });
+        await this.client.session.form.reply({
+          sessionID: form.sessionID,
+          formID: form.id,
+          answer,
+        });
       }
       this.forms.delete(requestId);
     } else {
       await this.client.permission.reply({
         sessionID: this.permissionOwners.get(requestId) ?? this.id,
         requestID: requestId,
-        reply: permissionReply(response),
+        decision: permissionReply(response),
       });
     }
     this.resolvePending(requestId, response);
@@ -857,7 +920,7 @@ export class OpenCodeV2Session implements AgentSession {
   private async reconcilePermissions(sessionID: string) {
     const [permissions, forms] = await Promise.all([
       this.client.permission.list({ sessionID }),
-      this.client.form.list({ sessionID }),
+      this.client.session.form.list({ sessionID }),
     ]);
     for (const request of permissions) {
       if (this.pending.has(request.id)) continue;

@@ -42,8 +42,15 @@ export class V2Harness {
   }
 
   readonly api: V2Api = {
-    health: { get: unexpected },
-    plugin: { awaitActivation: async () => undefined, list: unexpected },
+    server: { info: unexpected },
+    plugin: {
+      list: async () => ({
+        location: { directory: this.info.location.directory },
+        data: [
+          { id: "paseo", source: { type: "builtin" }, features: {}, state: { status: "active" } },
+        ],
+      }),
+    },
     agent: {
       list: async () => ({
         location: {
@@ -64,9 +71,9 @@ export class V2Harness {
         return { data: [...this.history], cursor: {} };
       },
     },
-    permission: { list: async () => [], reply: unexpected, rules: unexpected },
-    form: { list: async () => [], reply: unexpected, cancel: unexpected },
+    permission: { list: async () => [], reply: unexpected },
     session: {
+      form: { list: async () => [], reply: unexpected, cancel: unexpected },
       create: async (input = {}) => {
         this.creates.push(input);
         return this.info;

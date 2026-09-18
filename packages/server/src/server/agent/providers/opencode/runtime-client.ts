@@ -20,12 +20,25 @@ import { execCommand } from "../../../../utils/spawn.js";
 import { OpenCodeAgentClient } from "../opencode-agent.js";
 import { OpenCodeV2AgentClient } from "./v2/agent.js";
 
+// OpenCode 2.0.4 removed the /api/health and plugin await-activation endpoints
+// the v2 adapter needs, so versions before that fail with opaque 404s.
+const MINIMUM_V2: readonly [number, number] = [0, 4];
+
 export function openCodeMajorVersion(output: string): 1 | 2 {
-  const version = output.trim().match(/^(?:opencode\s+)?v?(\d+)\.\d+\.\d+(?:[-+][\w.-]+)?$/i);
+  const version = output.trim().match(/^(?:opencode\s+)?v?(\d+)\.(\d+)\.(\d+)(?:[-+][\w.-]+)?$/i);
   if (!version)
     throw new Error("Could not identify OpenCode version; check the configured command");
   if (version[1] === "1") return 1;
-  if (version[1] === "2") return 2;
+  if (version[1] === "2") {
+    const [minimumMinor, minimumPatch] = MINIMUM_V2;
+    const minor = Number(version[2]);
+    const patch = Number(version[3]);
+    if (minor < minimumMinor || (minor === minimumMinor && patch < minimumPatch))
+      throw new Error(
+        `OpenCode ${version[0]} is not supported; update to 2.${minimumMinor}.${minimumPatch} or newer`,
+      );
+    return 2;
+  }
   throw new Error(
     `Unsupported OpenCode major version ${version[1]}; supported versions are 1 and 2`,
   );

@@ -244,7 +244,7 @@ export class V2Runtime {
           return response;
         },
       });
-      await client.health.get({ signal: AbortSignal.timeout(Math.max(1, deadline - Date.now())) });
+      await client.server.info({ signal: AbortSignal.timeout(Math.max(1, deadline - Date.now())) });
       const generation: Generation = { client, users: 0, stop, exited };
       this.generations.add(generation);
       process.once("exit", () => {
