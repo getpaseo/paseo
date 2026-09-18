@@ -34,6 +34,13 @@ interface OmpResumeHistory {
   assistant: OmpHistoryMessage;
 }
 
+interface OmpPromptWithCustomMessageBeforeUserOptions {
+  input: string;
+  customMessage: Extract<OmpAgentMessage, { role: "custom" }>;
+  output: string;
+  clientMessageId?: string;
+}
+
 async function writeOmpHistory(history: OmpResumeHistory): Promise<string> {
   const directory = await mkdtemp(join(tmpdir(), "paseo-omp-resume-"));
   const sessionFile = join(directory, "session.jsonl");
@@ -183,6 +190,25 @@ export class OmpHarness {
     runtime.beginTurn();
     runtime.acceptPrompt(input, "user-1");
     runtime.emit({ type: "message_end", message: customMessage });
+    runtime.streamAssistantText(output);
+    runtime.finishTurn();
+    return await run;
+  }
+
+  async runPromptWithCustomMessageBeforeUser({
+    input,
+    customMessage,
+    output,
+    clientMessageId = "client-1",
+  }: OmpPromptWithCustomMessageBeforeUserOptions): Promise<unknown> {
+    const session = this.requireSession();
+    const promptStarted = this.omp.latestSession().nextPrompt();
+    const run = session.run(input, { clientMessageId });
+    await promptStarted;
+    const runtime = this.omp.latestSession();
+    runtime.beginTurn();
+    runtime.emit({ type: "message_end", message: customMessage });
+    runtime.acceptPrompt(input, "user-1");
     runtime.streamAssistantText(output);
     runtime.finishTurn();
     return await run;

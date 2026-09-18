@@ -67,7 +67,7 @@ import {
 } from "./provider-config.js";
 export { formatOmpVersionSupport, resolveOmpDiagnosticPaths } from "./provider-config.js";
 import { OmpSubagentCardTracker, type OmpSubagentCardScheduler } from "./subagent-card-tracker.js";
-import { shouldDisplayOmpCustomMessage } from "./custom-message.js";
+import { isOmpDynamicDeviceMountNotice, shouldDisplayOmpCustomMessage } from "./custom-message.js";
 import { getUserMessageText } from "./message-history.js";
 import { mapOmpSystemNoticeToNotification } from "./system-notice.js";
 import { materializeProviderImage } from "../provider-image-output.js";
@@ -2014,8 +2014,15 @@ export class OmpAgentSession implements AgentSession {
       return;
     }
     if (event.message.role === "custom") {
+      const text = getUserMessageText(event.message.content);
+      if (isOmpDynamicDeviceMountNotice(event.message, text)) {
+        // Dynamic tool inventory is an out-of-band OMP event. It must not
+        // complete a prompt before OMP emits the corresponding user echo,
+        // otherwise the client correlation id is cleared and the echo is
+        // appended as a second user message.
+        return;
+      }
       if (shouldDisplayOmpCustomMessage(event.message)) {
-        const text = getUserMessageText(event.message.content);
         if (text) {
           const item =
             mapOmpAdvisorMessageToToolCall(event.message, text) ??
