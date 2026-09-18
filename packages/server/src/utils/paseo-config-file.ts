@@ -54,6 +54,13 @@ export function readPaseoConfigJson(repoRoot: string): unknown {
   return JSON.parse(readFileSync(configPath, "utf8"));
 }
 
+export function getWorktreeProjectEnv(cwd: string): Record<string, string> {
+  const json = readPaseoConfigJson(cwd);
+  if (json === null) return {};
+  const config = PaseoConfigRawSchema.parse(json);
+  return { ...config.worktree?.env };
+}
+
 export function readPaseoConfigForEdit(repoRoot: string): ReadPaseoConfigForEditResult {
   try {
     const json = readPaseoConfigJson(repoRoot);

@@ -973,6 +973,34 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
       expect(progressEvents.some((event) => event.type === "command_completed")).toBe(true);
     });
 
+    it("adds configured project env to setup commands without caching it in runtime env", async () => {
+      const paseoConfig = {
+        worktree: {
+          env: {
+            PROJECT_FLAG: "configured",
+            PASEO_BRANCH_NAME: "cannot-override-runtime",
+          },
+          setup: ['echo "$PROJECT_FLAG" > project-env.log'],
+        },
+      };
+      writeFileSync(join(repoDir, "paseo.json"), JSON.stringify(paseoConfig));
+
+      const runtimeEnv = await resolveWorktreeRuntimeEnv({
+        worktreePath: repoDir,
+        branchName: "main",
+      });
+      expect(runtimeEnv.PROJECT_FLAG).toBeUndefined();
+      expect(runtimeEnv.PASEO_BRANCH_NAME).toBe("main");
+
+      await runWorktreeSetupCommands({
+        worktreePath: repoDir,
+        branchName: "main",
+        cleanupOnFailure: false,
+        runtimeEnv,
+      });
+      expect(readFileSync(join(repoDir, "project-env.log"), "utf8").trim()).toBe("configured");
+    });
+
     it("reuses persisted worktree runtime port across resolutions", async () => {
       const result = await createLegacyWorktreeForTest({
         branchName: "main",
@@ -1427,12 +1455,14 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
     it("runs teardown commands from paseo.json before deleting a worktree", async () => {
       const paseoConfig = {
         worktree: {
+          env: { PROJECT_TEARDOWN_FLAG: "configured" },
           teardown: [
             'echo "source=$PASEO_SOURCE_CHECKOUT_PATH" > "$PASEO_SOURCE_CHECKOUT_PATH/teardown.log"',
             'echo "root_alias=$PASEO_ROOT_PATH" >> "$PASEO_SOURCE_CHECKOUT_PATH/teardown.log"',
             'echo "worktree=$PASEO_WORKTREE_PATH" >> "$PASEO_SOURCE_CHECKOUT_PATH/teardown.log"',
             'echo "branch=$PASEO_BRANCH_NAME" >> "$PASEO_SOURCE_CHECKOUT_PATH/teardown.log"',
             'echo "port=$PASEO_WORKTREE_PORT" >> "$PASEO_SOURCE_CHECKOUT_PATH/teardown.log"',
+            'echo "project_env=$PROJECT_TEARDOWN_FLAG" >> "$PASEO_SOURCE_CHECKOUT_PATH/teardown.log"',
           ],
         },
       };
@@ -1463,6 +1493,7 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
       expect(teardownLog).toContain(`worktree=${created.worktreePath}`);
       expect(teardownLog).toContain("branch=teardown-branch");
       expect(teardownLog).toContain(`port=${runtimeEnv.PASEO_WORKTREE_PORT}`);
+      expect(teardownLog).toContain("project_env=configured");
     });
 
     it("runs string teardown scripts from paseo.json as a single shell command", async () => {
