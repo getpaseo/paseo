@@ -33,7 +33,11 @@ export function createScheduleCommand(): Command {
         "Provider-specific mode (e.g. claude bypassPermissions, opencode build)",
       )
       .option("--thinking <id>", "Thinking option ID for new-agent runs")
-      .option("--cwd <path>", "Working directory (default: current; required with --host)")
+      .option(
+        "--cwd <path>",
+        "Working directory (default: current; required with --host unless --workspace is set)",
+      )
+      .option("--workspace <id>", "Run each fresh agent in an existing workspace")
       .option("--run-now", "Fire one immediate run on creation")
       .option("--max-runs <n>", "Maximum number of runs")
       .option("--expires-in <duration>", "Time to live for the schedule"),
@@ -93,6 +97,8 @@ export function createScheduleCommand(): Command {
       .option("--model <model>", "New agent model (only for new-agent target)")
       .option("--mode <mode>", "New agent provider mode (only for new-agent target)")
       .option("--cwd <path>", "New working directory (only for new-agent target)")
+      .option("--workspace <id>", "Run each fresh agent in an existing workspace")
+      .option("--clear-workspace", "Return to creating a workspace for each run (requires --cwd)")
       .option("--max-runs <n>", "Set or change maximum number of runs")
       .option("--no-max-runs", "Clear the max-runs limit")
       .option("--expires-in <duration>", "Set or change time to live for the schedule")

@@ -2,6 +2,13 @@ import type { ProjectSummary } from "@/utils/projects";
 import { shortenPath } from "@/utils/shorten-path";
 
 export const PROJECT_OPTION_PREFIX = "project:";
+export const NEW_SCHEDULE_WORKSPACE_OPTION_ID = "new-workspace-each-run";
+
+export interface ScheduleWorkspaceTarget {
+  workspaceId: string;
+  workspaceName: string;
+  cwd: string;
+}
 
 export interface ScheduleProjectTarget {
   optionId: string;
@@ -11,6 +18,7 @@ export interface ScheduleProjectTarget {
   projectName: string;
   cwd: string;
   isGit: boolean;
+  workspaces: ScheduleWorkspaceTarget[];
 }
 
 export function buildProjectOptionId(serverId: string, projectViewKey: string): string {
@@ -40,6 +48,19 @@ export function buildScheduleProjectTargets(
         projectName: host.projectName,
         cwd,
         isGit: Boolean(host.gitRuntime),
+        workspaces: host.workspaces.flatMap((workspace) => {
+          const workspaceCwd = workspace.workspaceDirectory?.trim() ?? "";
+          if (!workspaceCwd || workspace.archivingAt) {
+            return [];
+          }
+          return [
+            {
+              workspaceId: workspace.id,
+              workspaceName: workspace.title?.trim() || workspace.name,
+              cwd: workspaceCwd,
+            },
+          ];
+        }),
       });
     }
   }

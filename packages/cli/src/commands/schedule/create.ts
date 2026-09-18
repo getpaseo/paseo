@@ -4,6 +4,7 @@ import { scheduleSchema } from "./schema.js";
 import {
   connectScheduleClient,
   parseScheduleCreateInput,
+  requireScheduleExistingWorkspaceSupport,
   toScheduleCommandError,
   toScheduleRow,
   type ScheduleCommandOptions,
@@ -20,6 +21,7 @@ export interface ScheduleCreateOptions extends ScheduleCommandOptions {
   mode?: string;
   thinking?: string;
   cwd?: string;
+  workspace?: string;
   maxRuns?: string;
   expiresIn?: string;
   runNow?: boolean;
@@ -43,6 +45,7 @@ export async function runCreateCommand(
     mode: options.mode,
     thinking: options.thinking,
     cwd: options.cwd,
+    workspace: options.workspace,
     daemonTarget: options.daemonTarget,
     maxRuns: options.maxRuns,
     expiresIn: options.expiresIn,
@@ -50,6 +53,9 @@ export async function runCreateCommand(
   });
   const { client } = await connectScheduleClient(options.daemonTarget);
   try {
+    if (input.target.type === "new-agent" && input.target.config.workspaceId) {
+      requireScheduleExistingWorkspaceSupport(client);
+    }
     const payload = await client.scheduleCreate(input);
     if (payload.error || !payload.schedule) {
       throw new Error(payload.error ?? "Schedule creation failed");

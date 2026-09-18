@@ -27,7 +27,11 @@ import {
 import { buildProviderDefinitions } from "@/utils/provider-definitions";
 import { shortenPath } from "@/utils/shorten-path";
 import { normalizeScheduleFormCadence } from "./schedule-cadence-options";
-import { PROJECT_OPTION_PREFIX, type ScheduleProjectTarget } from "./schedule-project-targets";
+import {
+  PROJECT_OPTION_PREFIX,
+  type ScheduleProjectTarget,
+  type ScheduleWorkspaceTarget,
+} from "./schedule-project-targets";
 
 export interface ScheduleFormDisplay {
   label: string;
@@ -38,6 +42,7 @@ export interface ScheduleFormHost {
   serverId: string;
   label: string;
   supportsWorkspaceMultiplicity?: boolean;
+  supportsScheduleExistingWorkspace?: boolean;
 }
 
 export interface ScheduleFormSnapshot {
@@ -58,6 +63,7 @@ export interface ScheduleFormProviderSnapshot {
 
 export interface ScheduleDisclosureState {
   showProjectField: boolean;
+  showWorkspaceField: boolean;
   showModelField: boolean;
   showThinkingField: boolean;
   showModeField: boolean;
@@ -77,6 +83,14 @@ export interface ScheduleFormProjectOption {
   testID: string;
 }
 
+export interface ScheduleFormWorkspaceOption {
+  id: string;
+  value: string;
+  label: string;
+  description: string;
+  testID: string;
+}
+
 export type ScheduleFormTargetKind = "agent" | "new-agent";
 type CronCadence = Extract<ScheduleCadence, { type: "cron" }>;
 type ProviderResolutionStatus = "idle" | "pending" | "complete";
@@ -91,6 +105,7 @@ export interface ScheduleFormState {
   submitCadence: CronCadence | undefined;
   hosts: ScheduleFormHost[];
   projectOptions: ScheduleFormProjectOption[];
+  workspaceOptions: ScheduleFormWorkspaceOption[];
   selectedServerId: string | null;
   selectedProvider: AgentProvider | null;
   selectedModel: string;
@@ -99,6 +114,8 @@ export interface ScheduleFormState {
   workingDir: string;
   projectDisplay: ScheduleFormDisplay | null;
   selectedProjectOptionId: string;
+  selectedWorkspaceId: string | null;
+  selectedWorkspaceDisplay: ScheduleFormDisplay;
   selectedModelDisplay: ScheduleFormDisplay | null;
   selectedModeDisplay: ScheduleFormDisplay;
   selectedThinkingDisplay: ScheduleFormDisplay | null;
@@ -110,6 +127,7 @@ export interface ScheduleFormState {
   effectiveIsolation: "local" | "worktree";
   submitArchiveOnFinish: boolean | undefined;
   submitIsolation: "local" | "worktree" | undefined;
+  submitWorkspaceId: string | null | undefined;
   canUseWorktreeIsolation: boolean;
   providerResolutionByServerId: Record<string, ProviderResolutionStatus>;
   providerSnapshotRequest: ScheduleProviderSnapshotRequest | null;
@@ -128,6 +146,7 @@ export interface ScheduleFormModel {
   applyProviderSnapshot: (serverId: string, snapshot: ScheduleFormProviderSnapshot) => void;
   setHost: (serverId: string | null) => void;
   setProject: (optionId: string, display: ScheduleFormDisplay) => void;
+  setWorkspace: (workspaceId: string | null) => void;
   setModel: (provider: AgentProvider, modelId: string) => void;
   setThinking: (thinkingOptionId: string) => void;
   setSessionMode: (modeId: string) => void;
@@ -140,7 +159,10 @@ export interface ScheduleFormModel {
   setSubmitError: (value: string | null) => void;
 }
 
-const DEFAULT_CADENCE: ScheduleCadence = { type: "every", everyMs: 60 * 60 * 1000 };
+const DEFAULT_CADENCE: ScheduleCadence = {
+  type: "every",
+  everyMs: 60 * 60 * 1000,
+};
 const DEFAULT_TIMEZONE = "UTC";
 
 type ThinkingOption = NonNullable<AgentModelDefinition["thinkingOptions"]>[number];
@@ -186,6 +208,18 @@ function buildProjectOptions(
     }));
 }
 
+function buildWorkspaceOptions(
+  projectTarget: ScheduleProjectTarget | null,
+): ScheduleFormWorkspaceOption[] {
+  return (projectTarget?.workspaces ?? []).map((target) => ({
+    id: target.workspaceId,
+    value: target.workspaceId,
+    label: target.workspaceName,
+    description: shortenPath(target.cwd),
+    testID: `schedule-workspace-option-${target.workspaceId}`,
+  }));
+}
+
 function resolveProjectTarget(input: {
   targets: readonly ScheduleProjectTarget[];
   serverId: string | null;
@@ -205,6 +239,30 @@ function findProjectTargetByOptionId(
   optionId: string,
 ): ScheduleProjectTarget | null {
   return targets.find((target) => target.optionId === optionId) ?? null;
+}
+
+function findWorkspaceSelectionById(
+  targets: readonly ScheduleProjectTarget[],
+  workspaceId: string | null | undefined,
+): { projectTarget: ScheduleProjectTarget; workspaceTarget: ScheduleWorkspaceTarget } | null {
+  if (!workspaceId) {
+    return null;
+  }
+  for (const projectTarget of targets) {
+    const workspaceTarget = projectTarget.workspaces.find(
+      (target) => target.workspaceId === workspaceId,
+    );
+    if (workspaceTarget) {
+      return { projectTarget, workspaceTarget };
+    }
+  }
+  return null;
+}
+
+function buildWorkspaceDisplay(target: ScheduleWorkspaceTarget | null): ScheduleFormDisplay {
+  return target
+    ? { label: target.workspaceName, description: shortenPath(target.cwd) }
+    : { label: "New workspace each run" };
 }
 
 function resolveProjectDisplay(input: {
@@ -300,7 +358,9 @@ function resolveModeDisplay(input: {
   if (!modeId) {
     return { label: "Default mode" };
   }
-  return { label: input.modeOptions.find((mode) => mode.id === modeId)?.label ?? modeId };
+  return {
+    label: input.modeOptions.find((mode) => mode.id === modeId)?.label ?? modeId,
+  };
 }
 
 function resolveThinkingDisplay(input: {
@@ -427,6 +487,44 @@ function buildInitialThinkingDisplay(thinkingOptionId: string): ScheduleFormDisp
   return { label: formatThinkingOptionLabel({ id: thinkingOptionId }) };
 }
 
+function buildInitialWorkspaceState(input: {
+  snapshot: ScheduleFormSnapshot;
+  config: ReturnType<typeof newAgentConfig>;
+  selectedServerId: string | null;
+  workingDir: string;
+}) {
+  const selectedWorkspaceId = input.config?.workspaceId ?? null;
+  const workspaceSelection = findWorkspaceSelectionById(
+    input.snapshot.defaults.projectTargets,
+    selectedWorkspaceId,
+  );
+  const selectedProjectTarget = workspaceSelection
+    ? workspaceSelection.projectTarget
+    : resolveProjectTarget({
+        targets: input.snapshot.defaults.projectTargets,
+        serverId: input.selectedServerId,
+        cwd: input.workingDir,
+      });
+  let selectedWorkspaceDisplay = buildWorkspaceDisplay(workspaceSelection?.workspaceTarget ?? null);
+  if (!workspaceSelection && selectedWorkspaceId) {
+    selectedWorkspaceDisplay = { label: selectedWorkspaceId };
+  }
+  const selectedProjectOptionId = resolveSelectedProjectOptionId(selectedProjectTarget);
+  return {
+    selectedWorkspaceId,
+    selectedWorkspaceDisplay,
+    selectedProjectOptionId,
+    selectedProjectDisplay: selectedProjectTarget
+      ? buildProjectDisplay(selectedProjectTarget)
+      : buildInitialProjectDisplay({
+          config: input.config,
+          targets: input.snapshot.defaults.projectTargets,
+          selectedServerId: input.selectedServerId,
+        }),
+    workspaceOptions: buildWorkspaceOptions(selectedProjectTarget),
+  };
+}
+
 function formatInitialMaxRuns(schedule: ScheduleFormSnapshot["schedule"]): string {
   if (schedule?.maxRuns == null) {
     return "";
@@ -465,10 +563,13 @@ function buildInitialProviderResolution(
 }
 
 function resolveCanUseWorktreeIsolation(input: {
-  state: Pick<ScheduleFormState, "selectedServerId" | "workingDir">;
+  state: Pick<ScheduleFormState, "selectedServerId" | "workingDir" | "selectedWorkspaceId">;
   hosts: readonly ScheduleFormHost[];
   targets: readonly ScheduleProjectTarget[];
 }): boolean {
+  if (input.state.selectedWorkspaceId) {
+    return false;
+  }
   const target = resolveProjectTarget({
     targets: input.targets,
     serverId: input.state.selectedServerId,
@@ -485,6 +586,16 @@ function selectedHostSupportsWorkspaceMultiplicity(input: {
   return (
     input.hosts.find((entry) => entry.serverId === input.selectedServerId)
       ?.supportsWorkspaceMultiplicity === true
+  );
+}
+
+function selectedHostSupportsScheduleExistingWorkspace(input: {
+  hosts: readonly ScheduleFormHost[];
+  selectedServerId: string | null;
+}): boolean {
+  return (
+    input.hosts.find((entry) => entry.serverId === input.selectedServerId)
+      ?.supportsScheduleExistingWorkspace === true
   );
 }
 
@@ -513,6 +624,7 @@ function resolveDisclosure(state: ScheduleFormState): ScheduleDisclosureState {
   if (state.targetKind === "agent") {
     return {
       showProjectField: false,
+      showWorkspaceField: false,
       showModelField: false,
       showThinkingField: false,
       showModeField: false,
@@ -528,11 +640,17 @@ function resolveDisclosure(state: ScheduleFormState): ScheduleDisclosureState {
   const showModelField = hasProject;
   return {
     showProjectField,
+    showWorkspaceField:
+      hasProject &&
+      selectedHostSupportsScheduleExistingWorkspace({
+        hosts: state.hosts,
+        selectedServerId: state.selectedServerId,
+      }),
     showModelField,
     showThinkingField:
       showModelField && hasSelectedModel && state.availableThinkingOptions.length > 0,
     showModeField: showModelField && hasSelectedProvider && state.modeOptions.length > 0,
-    showIsolationField: hasProject && state.canUseWorktreeIsolation,
+    showIsolationField: hasProject && !state.selectedWorkspaceId && state.canUseWorktreeIsolation,
     showArchiveOnFinishField:
       hasProject &&
       selectedHostSupportsWorkspaceMultiplicity({
@@ -596,22 +714,43 @@ function updateDerivedState(input: {
     serverId: input.state.selectedServerId,
     cwd: input.state.workingDir,
   });
+  const workspaceSelection = findWorkspaceSelectionById(
+    input.targets,
+    input.state.selectedWorkspaceId,
+  );
+  const selectedProjectTarget =
+    workspaceSelection?.projectTarget ??
+    findProjectTargetByOptionId(input.targets, input.state.selectedProjectOptionId);
+  const selectedProjectOptionId =
+    selectedProjectTarget?.serverId === input.state.selectedServerId
+      ? selectedProjectTarget.optionId
+      : (projectTarget?.optionId ?? "");
   const nextState: ScheduleFormState = {
     ...input.state,
     hosts: [...input.hosts],
     projectOptions: buildProjectOptions(input.targets, input.state.selectedServerId),
-    projectDisplay: resolveProjectDisplay({
-      targets: input.targets,
-      serverId: input.state.selectedServerId,
-      cwd: input.state.workingDir,
-    }),
-    selectedProjectOptionId: projectTarget?.optionId ?? input.state.selectedProjectOptionId,
+    workspaceOptions: buildWorkspaceOptions(selectedProjectTarget),
+    projectDisplay: selectedProjectTarget
+      ? buildProjectDisplay(selectedProjectTarget)
+      : resolveProjectDisplay({
+          targets: input.targets,
+          serverId: input.state.selectedServerId,
+          cwd: input.state.workingDir,
+        }),
+    selectedProjectOptionId,
+    selectedWorkspaceDisplay: workspaceSelection
+      ? buildWorkspaceDisplay(workspaceSelection.workspaceTarget)
+      : input.state.selectedWorkspaceDisplay,
+    workingDir: workspaceSelection?.workspaceTarget.cwd ?? input.state.workingDir,
     selectedModelDisplay: resolveModelDisplay({
       entries: input.providerEntries,
       provider: input.state.selectedProvider,
       modelId: input.state.selectedModel,
     }),
-    selectedModeDisplay: resolveModeDisplay({ modeOptions, modeId: input.state.selectedMode }),
+    selectedModeDisplay: resolveModeDisplay({
+      modeOptions,
+      modeId: input.state.selectedMode,
+    }),
     selectedThinkingDisplay: resolveThinkingDisplay({
       options: availableThinkingOptions,
       thinkingOptionId: input.state.selectedThinkingOptionId,
@@ -623,10 +762,21 @@ function updateDerivedState(input: {
     submitArchiveOnFinish: canSubmitWorkspaceLifecycleOptions
       ? input.state.archiveOnFinish
       : undefined,
-    submitIsolation: canSubmitWorkspaceLifecycleOptions ? effectiveIsolation : undefined,
+    submitIsolation:
+      canSubmitWorkspaceLifecycleOptions && !input.state.selectedWorkspaceId
+        ? effectiveIsolation
+        : undefined,
+    submitWorkspaceId:
+      input.state.mode === "edit"
+        ? input.state.selectedWorkspaceId
+        : (input.state.selectedWorkspaceId ?? undefined),
   };
   const disclosure = resolveDisclosure(nextState);
-  return { ...nextState, disclosure, canSubmit: resolveCanSubmit({ ...nextState, disclosure }) };
+  return {
+    ...nextState,
+    disclosure,
+    canSubmit: resolveCanSubmit({ ...nextState, disclosure }),
+  };
 }
 
 function buildInitialState(snapshot: ScheduleFormSnapshot): ScheduleFormState {
@@ -634,10 +784,11 @@ function buildInitialState(snapshot: ScheduleFormSnapshot): ScheduleFormState {
   const config = newAgentConfig(snapshot.schedule);
   const targetKind = resolveTargetKind(snapshot);
   const workingDir = config?.cwd ?? "";
-  const selectedProjectTarget = resolveProjectTarget({
-    targets: snapshot.defaults.projectTargets,
-    serverId: selectedServerId,
-    cwd: workingDir,
+  const initialWorkspace = buildInitialWorkspaceState({
+    snapshot,
+    config,
+    selectedServerId,
+    workingDir,
   });
   const providerSnapshotRequest = buildProviderSnapshotRequest({
     targetKind,
@@ -661,18 +812,17 @@ function buildInitialState(snapshot: ScheduleFormSnapshot): ScheduleFormState {
     submitCadence: resolveInitialSubmitCadence(snapshot.schedule, initialCadence),
     hosts: [...snapshot.hosts],
     projectOptions: buildProjectOptions(snapshot.defaults.projectTargets, selectedServerId),
+    workspaceOptions: initialWorkspace.workspaceOptions,
     selectedServerId,
     selectedProvider: config?.provider ?? null,
     selectedModel: initialModel,
     selectedMode: initialMode,
     selectedThinkingOptionId: initialThinking,
     workingDir,
-    projectDisplay: buildInitialProjectDisplay({
-      config,
-      targets: snapshot.defaults.projectTargets,
-      selectedServerId,
-    }),
-    selectedProjectOptionId: resolveSelectedProjectOptionId(selectedProjectTarget),
+    projectDisplay: initialWorkspace.selectedProjectDisplay,
+    selectedProjectOptionId: initialWorkspace.selectedProjectOptionId,
+    selectedWorkspaceId: initialWorkspace.selectedWorkspaceId,
+    selectedWorkspaceDisplay: initialWorkspace.selectedWorkspaceDisplay,
     selectedModelDisplay: buildInitialModelDisplay(initialModel),
     selectedModeDisplay: buildInitialModeDisplay(initialMode),
     selectedThinkingDisplay: buildInitialThinkingDisplay(initialThinking),
@@ -680,15 +830,20 @@ function buildInitialState(snapshot: ScheduleFormSnapshot): ScheduleFormState {
     modeOptions: [],
     availableThinkingOptions: [],
     archiveOnFinish: config?.archiveOnFinish ?? true,
-    isolation: resolveInitialIsolation({ config, preferences: snapshot.defaults.preferences }),
+    isolation: resolveInitialIsolation({
+      config,
+      preferences: snapshot.defaults.preferences,
+    }),
     effectiveIsolation: "local",
     submitArchiveOnFinish: undefined,
     submitIsolation: undefined,
+    submitWorkspaceId: undefined,
     canUseWorktreeIsolation: false,
     providerResolutionByServerId: buildInitialProviderResolution(providerSnapshotRequest),
     providerSnapshotRequest,
     disclosure: {
       showProjectField: false,
+      showWorkspaceField: false,
       showModelField: false,
       showThinkingField: false,
       showModeField: false,
@@ -1016,6 +1171,8 @@ export function openScheduleForm(snapshot: ScheduleFormSnapshot): ScheduleFormMo
           workingDir: "",
           projectDisplay: null,
           selectedProjectOptionId: "",
+          selectedWorkspaceId: null,
+          selectedWorkspaceDisplay: buildWorkspaceDisplay(null),
           providerResolutionByServerId: {},
         }),
       );
@@ -1039,6 +1196,8 @@ export function openScheduleForm(snapshot: ScheduleFormSnapshot): ScheduleFormMo
         workingDir: target.cwd,
         projectDisplay: display,
         selectedProjectOptionId: target.optionId,
+        selectedWorkspaceId: null,
+        selectedWorkspaceDisplay: buildWorkspaceDisplay(null),
       };
       publish(providerScopeChanged ? clearProviderSelection(nextState) : nextState);
       if (!providerScopeChanged) {
@@ -1046,11 +1205,44 @@ export function openScheduleForm(snapshot: ScheduleFormSnapshot): ScheduleFormMo
       }
       requestProviderSnapshot(target.serverId, target.cwd);
     },
+    setWorkspace(workspaceId) {
+      if (closed || state.selectedWorkspaceId === workspaceId) {
+        return;
+      }
+      const workspaceSelection = findWorkspaceSelectionById(projectTargets, workspaceId);
+      const projectTarget = workspaceSelection
+        ? workspaceSelection.projectTarget
+        : findProjectTargetByOptionId(projectTargets, state.selectedProjectOptionId);
+      if (!projectTarget) {
+        return;
+      }
+      const workspaceTarget = workspaceSelection?.workspaceTarget ?? null;
+      const cwd = workspaceTarget?.cwd ?? projectTarget.cwd;
+      const providerScopeChanged =
+        state.selectedServerId !== projectTarget.serverId || state.workingDir !== cwd;
+      const nextState = {
+        ...state,
+        selectedServerId: projectTarget.serverId,
+        selectedProjectOptionId: projectTarget.optionId,
+        projectDisplay: buildProjectDisplay(projectTarget),
+        selectedWorkspaceId: workspaceTarget?.workspaceId ?? null,
+        selectedWorkspaceDisplay: buildWorkspaceDisplay(workspaceTarget),
+        workingDir: cwd,
+      };
+      publish(providerScopeChanged ? clearProviderSelection(nextState) : nextState);
+      if (providerScopeChanged) {
+        requestProviderSnapshot(projectTarget.serverId, cwd);
+      }
+    },
     setModel(provider, modelId) {
       if (closed) {
         return;
       }
-      const selectedModel = pickModelForProvider({ entries: providerEntries, provider, modelId });
+      const selectedModel = pickModelForProvider({
+        entries: providerEntries,
+        provider,
+        modelId,
+      });
       const availableModels = resolveAvailableModels(providerEntries, provider);
       const selectedThinkingOptionId = resolveThinkingOptionId({
         availableModels,

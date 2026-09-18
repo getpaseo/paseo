@@ -33,13 +33,36 @@ function makeHost(overrides: Partial<ProjectSummary["hosts"][number]>) {
   };
 }
 
+function makeWorkspace(
+  overrides: Partial<ProjectSummary["hosts"][number]["workspaces"][number]> = {},
+) {
+  return {
+    id: "wks-a",
+    name: "main",
+    workspaceDirectory: "/tmp/project",
+    workspaceKind: "local_checkout" as const,
+    status: "done" as const,
+    currentBranch: "main",
+    changeRequestNumber: null,
+    ...overrides,
+  };
+}
+
 describe("buildScheduleProjectTargets", () => {
   it("emits one target per online host with a repo root", () => {
     const targets = buildScheduleProjectTargets([
       makeProject({
         projectName: "Alpha",
         hosts: [
-          makeHost({ projectName: "Alpha on Host 1", repoRoot: "/tmp/alpha" }),
+          makeHost({
+            projectName: "Alpha on Host 1",
+            repoRoot: "/tmp/alpha",
+            workspaces: [
+              makeWorkspace({ title: "Daily status", workspaceDirectory: "/tmp/alpha/daily" }),
+              makeWorkspace({ id: "archiving", archivingAt: "2026-01-01T00:00:00.000Z" }),
+              makeWorkspace({ id: "pathless", workspaceDirectory: "" }),
+            ],
+          }),
           makeHost({ serverId: "host-2", projectName: "Alpha on Host 2" }),
         ],
       }),
@@ -49,6 +72,13 @@ describe("buildScheduleProjectTargets", () => {
       serverId: "host-1",
       cwd: "/tmp/alpha",
       projectName: "Alpha on Host 1",
+      workspaces: [
+        {
+          workspaceId: "wks-a",
+          workspaceName: "Daily status",
+          cwd: "/tmp/alpha/daily",
+        },
+      ],
     });
   });
 
