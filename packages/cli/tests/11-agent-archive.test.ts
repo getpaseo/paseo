@@ -18,12 +18,72 @@
 
 import assert from "node:assert";
 import { getAvailablePort } from "./helpers/network.ts";
+import { createTempDirs, runPaseoCli, startTestDaemon } from "./helpers/test-daemon.ts";
 import { $ } from "zx";
-import { mkdtemp, rm } from "fs/promises";
+import { mkdtemp, rm, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
 
 $.verbose = false;
+
+const TARGET_AGENT_ID = "11111111-2222-4333-8444-555555555555";
+
+/**
+ * A PASEO_HOME whose archive-inclusive agent listing overflows one page.
+ * `fetch_agents` answers at most 200 entries, so the older unarchived agent
+ * sits behind 201 newer archived ones and never appears on the first page.
+ */
+async function seedHomePastPageCap(
+  targetAgentId: string,
+): Promise<{ paseoHome: string; workDir: string }> {
+  const dirs = await createTempDirs();
+  const olderAt = "2026-09-03T18:29:21.949Z";
+  const newerAt = "2026-09-10T12:00:00.000Z";
+
+  const writeRecord = (record: Record<string, unknown>) =>
+    writeFile(
+      join(dirs.paseoHome, "agents", `${record.id as string}.json`),
+      JSON.stringify(record, null, 2),
+    );
+
+  await writeRecord({
+    id: targetAgentId,
+    provider: "codex",
+    cwd: dirs.workDir,
+    createdAt: olderAt,
+    updatedAt: olderAt,
+    title: "finished agent",
+    labels: {},
+    lastStatus: "closed",
+    requiresAttention: true,
+    attentionReason: "finished",
+  });
+
+  await Promise.all(
+    Array.from({ length: 201 }, (_unused, index) =>
+      writeRecord({
+        id: `aaaaaaaa-0000-4000-8000-${String(index).padStart(12, "0")}`,
+        provider: "codex",
+        cwd: dirs.workDir,
+        createdAt: newerAt,
+        updatedAt: newerAt,
+        title: `archived ${index}`,
+        labels: {},
+        lastStatus: "closed",
+        archivedAt: newerAt,
+      }),
+    ),
+  );
+
+  return dirs;
+}
+
+/** The CLI writes its JSON error to stderr, after any Node warnings. */
+function parseJsonError(stderr: string): unknown {
+  const start = stderr.indexOf("{");
+  assert(start >= 0, `expected a JSON error, got: ${stderr}`);
+  return JSON.parse(stderr.slice(start));
+}
 
 console.log("=== Agent Archive Command Tests ===\n");
 
@@ -114,6 +174,91 @@ try {
     assert(!output.includes("unknown option"), "should accept -q flag");
     assert(!output.includes("error: option"), "should not have option parsing error");
     console.log("✓ -q (quiet) flag is accepted with agent archive\n");
+  }
+
+  // Test 8: archives an agent that sits past the agent listing page cap
+  {
+    console.log("Test 8: archives an agent past the agent listing page cap");
+    const daemon = await startTestDaemon(await seedHomePastPageCap(TARGET_AGENT_ID));
+    const host = `127.0.0.1:${daemon.port}`;
+    try {
+      const listed = await runPaseoCli(daemon, [
+        "agent",
+        "ls",
+        "--global",
+        "--json",
+        "--host",
+        host,
+      ]);
+      assert.strictEqual(listed.exitCode, 0, listed.stderr);
+      assert(
+        (JSON.parse(listed.stdout) as Array<{ id: string }>).some((a) => a.id === TARGET_AGENT_ID),
+        "the agent should be listed before it is archived",
+      );
+
+      const archived = await runPaseoCli(daemon, [
+        "agent",
+        "archive",
+        TARGET_AGENT_ID,
+        "--json",
+        "--host",
+        host,
+      ]);
+      assert.strictEqual(archived.exitCode, 0, archived.stdout + archived.stderr);
+      const result = JSON.parse(archived.stdout) as { agentId: string; status: string };
+      assert.strictEqual(result.agentId, TARGET_AGENT_ID);
+      assert.strictEqual(result.status, "archived");
+
+      const remaining = await runPaseoCli(daemon, [
+        "agent",
+        "ls",
+        "--global",
+        "--json",
+        "--host",
+        host,
+      ]);
+      assert.strictEqual(remaining.exitCode, 0, remaining.stderr);
+      assert(
+        !(JSON.parse(remaining.stdout) as Array<{ id: string }>).some(
+          (a) => a.id === TARGET_AGENT_ID,
+        ),
+        "the archived agent should leave the active list",
+      );
+
+      const repeated = await runPaseoCli(daemon, [
+        "agent",
+        "archive",
+        TARGET_AGENT_ID,
+        "--json",
+        "--host",
+        host,
+      ]);
+      assert.strictEqual(repeated.exitCode, 1);
+      assert.strictEqual(
+        (parseJsonError(repeated.stderr) as { error: { code: string } }).error.code,
+        "AGENT_ALREADY_ARCHIVED",
+      );
+
+      const missing = await runPaseoCli(daemon, [
+        "agent",
+        "archive",
+        "no-such-agent",
+        "--json",
+        "--host",
+        host,
+      ]);
+      assert.strictEqual(missing.exitCode, 1);
+      assert.deepStrictEqual(parseJsonError(missing.stderr), {
+        error: {
+          code: "AGENT_NOT_FOUND",
+          message: "Agent not found: no-such-agent",
+          details: 'Use "paseo ls" to list available agents',
+        },
+      });
+    } finally {
+      await daemon.stop();
+    }
+    console.log("✓ archives an agent past the agent listing page cap\n");
   }
 } finally {
   // Clean up temp directory
