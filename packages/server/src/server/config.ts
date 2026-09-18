@@ -20,7 +20,8 @@ import type {
 } from "./agent/provider-launch-config.js";
 import { ProviderOverrideSchema } from "./agent/provider-launch-config.js";
 import { AgentProviderSchema } from "@getpaseo/protocol/provider-manifest";
-import { hashDaemonPassword } from "./auth.js";
+import { hashDaemonPassword, isBearerTokenValid } from "./auth.js";
+import { resolveReadyFleetCommitmentLedgerPath } from "./fleet-commitment-control.js";
 import { resolveSpeechConfig } from "./speech/speech-config-resolver.js";
 import type { RequestedSpeechProviders } from "./speech/speech-types.js";
 import { mergeHostnames, parseHostnamesEnv, type HostnamesConfig } from "./hostnames.js";
@@ -484,14 +485,41 @@ function resolveListenAddress(
 function resolveAuthConfig(
   env: NodeJS.ProcessEnv,
   persisted: ReturnType<typeof loadPersistedConfig>,
+  deckCredential?: string,
 ): PaseoDaemonConfig["auth"] {
   const envPassword = env.PASEO_PASSWORD?.trim();
-  if (envPassword) {
-    return { password: hashDaemonPassword(envPassword) };
+  const password = envPassword ? hashDaemonPassword(envPassword) : persisted.daemon?.auth?.password;
+  if (password && deckCredential && isBearerTokenValid({ password, token: deckCredential })) {
+    throw new Error("Owner and Deck credentials must differ");
   }
-  return persisted.daemon?.auth?.password
-    ? { password: persisted.daemon.auth.password }
+  if (!password && !deckCredential) return undefined;
+  return {
+    ...(password ? { password } : {}),
+    ...(deckCredential ? { firstmateDeckCredential: hashDaemonPassword(deckCredential) } : {}),
+  };
+}
+
+function resolveFleetCommitmentControls(
+  ledgerPath: string | undefined,
+  credential: string | undefined,
+): PaseoDaemonConfig["fleetCommitmentControls"] {
+  if (Boolean(ledgerPath) !== Boolean(credential)) {
+    throw new Error("Fleet controls require both ledger path and Deck credential");
+  }
+  return ledgerPath
+    ? { ledgerPath: resolveReadyFleetCommitmentLedgerPath(path.resolve(expandTilde(ledgerPath))) }
     : undefined;
+}
+
+function consumeFleetEnvironment(env: NodeJS.ProcessEnv): {
+  credential: string | undefined;
+  ledgerPath: string | undefined;
+} {
+  const credential = env.PASEO_FIRSTMATE_DECK_CREDENTIAL?.trim() || undefined;
+  const ledgerPath = env.PASEO_FLEET_COMMITMENT_LEDGER_PATH?.trim() || undefined;
+  delete env.PASEO_FIRSTMATE_DECK_CREDENTIAL;
+  delete env.PASEO_FLEET_COMMITMENT_LEDGER_PATH;
+  return { credential, ledgerPath };
 }
 
 function resolveWorktreesRoot(
@@ -564,7 +592,9 @@ export function resolveConfigFromPersisted(
   options?: ResolveConfigFromPersistedOptions,
 ): PaseoDaemonConfig {
   const resolvedOptions = options ?? {};
-  const env = configurationEnvironment(resolvedOptions.env ?? process.env);
+  const sourceEnv = resolvedOptions.env ?? process.env;
+  const fleetEnvironment = consumeFleetEnvironment(sourceEnv);
+  const env = configurationEnvironment(sourceEnv);
   const cli = resolvedOptions.cli;
   const relayEnabledFallback =
     resolvedOptions.relayEnabledFallback ?? persisted.daemon?.relay?.enabled === undefined;
@@ -600,6 +630,10 @@ export function resolveConfigFromPersisted(
   });
 
   const voiceLlm = resolveVoiceLlmConfig(env, persisted);
+  const fleetCommitmentControls = resolveFleetCommitmentControls(
+    fleetEnvironment.ledgerPath,
+    fleetEnvironment.credential,
+  );
   const providerOverrides = extractProviderOverrides(
     persisted.agents?.providers as Record<string, unknown> | undefined,
   );
@@ -640,7 +674,8 @@ export function resolveConfigFromPersisted(
     serviceProxy,
     webUi,
     appBaseUrl,
-    auth: resolveAuthConfig(env, persisted),
+    auth: resolveAuthConfig(env, persisted, fleetEnvironment.credential),
+    fleetCommitmentControls,
     openai,
     speech,
     voiceLlmProvider: voiceLlm.provider,

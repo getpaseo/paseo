@@ -31,6 +31,32 @@ import { stripVTControlCharacters } from "node:util";
 
 const hasZsh = existsSync("/bin/zsh");
 
+it("never passes Fleet secrets to terminal environments", () => {
+  const previousCredential = process.env.PASEO_FIRSTMATE_DECK_CREDENTIAL;
+  const previousLedgerPath = process.env.PASEO_FLEET_COMMITMENT_LEDGER_PATH;
+  process.env.PASEO_FIRSTMATE_DECK_CREDENTIAL = "process-secret";
+  process.env.PASEO_FLEET_COMMITMENT_LEDGER_PATH = "/private/process-ledger.md";
+  try {
+    const env = buildTerminalEnvironment({
+      shell: process.platform === "win32" ? "cmd.exe" : "/bin/sh",
+      env: {
+        PASEO_FIRSTMATE_DECK_CREDENTIAL: "terminal-secret",
+        PASEO_FLEET_COMMITMENT_LEDGER_PATH: "/private/terminal-ledger.md",
+      },
+      paseoCliBinDir: null,
+      paseoHookCliPath: null,
+    });
+
+    expect(env.PASEO_FIRSTMATE_DECK_CREDENTIAL).toBeUndefined();
+    expect(env.PASEO_FLEET_COMMITMENT_LEDGER_PATH).toBeUndefined();
+  } finally {
+    if (previousCredential === undefined) delete process.env.PASEO_FIRSTMATE_DECK_CREDENTIAL;
+    else process.env.PASEO_FIRSTMATE_DECK_CREDENTIAL = previousCredential;
+    if (previousLedgerPath === undefined) delete process.env.PASEO_FLEET_COMMITMENT_LEDGER_PATH;
+    else process.env.PASEO_FLEET_COMMITMENT_LEDGER_PATH = previousLedgerPath;
+  }
+});
+
 type TerminalRow = ReturnType<TerminalSession["getState"]>["grid"][number];
 
 function rowToText(row: TerminalRow): string {

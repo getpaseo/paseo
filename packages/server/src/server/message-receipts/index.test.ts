@@ -3,6 +3,10 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, expect, test } from "vitest";
 import { MessageReceipts } from "./index.js";
+import {
+  FLEET_CONTROL_PORTFOLIO_AGENT_ID,
+  type FleetControlReceipt,
+} from "@getpaseo/protocol/fleet-control";
 
 const directories: string[] = [];
 afterEach(async () => {
@@ -74,4 +78,27 @@ test("failed local message preparation does not leave an ambiguous receipt", asy
   available = false;
   await requests.send(input);
   expect(sends).toBe(1);
+});
+
+test("Fleet lifecycle receipts keep the existing agent-requests owner across restart", async () => {
+  const { requests, directory } = await fixture();
+  const operationRequestId = "728f8f21-98d5-40c8-ae69-95013fe5b120";
+  const commitmentId = "64e89b9a-ff01-4cd8-b3f8-202bd276bc1d";
+  const receipt: FleetControlReceipt = {
+    contractVersion: "fleet-control.v1",
+    operationRequestId,
+    commitmentId,
+    action: "pause",
+    expectedPriorDigest: "0".repeat(64),
+    expectedPortfolioAgentId: FLEET_CONTROL_PORTFOLIO_AGENT_ID,
+    fingerprint: "1".repeat(64),
+    lifecycle: "executing",
+    ledgerWriteStarted: false,
+  };
+
+  await requests.writeFleetControlReceipt(receipt);
+
+  await expect(
+    new MessageReceipts(directory).readFleetControlReceipt(operationRequestId),
+  ).resolves.toEqual(receipt);
 });

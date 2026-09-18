@@ -1,7 +1,16 @@
 import { WebSocket } from "ws";
 import { beforeEach, describe, expect, test, vi } from "vitest";
+import { mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+  FLEET_CONTROL_PORTFOLIO_AGENT_ID,
+  FleetCommitmentReadResponseSchema,
+} from "@getpaseo/protocol/fleet-control";
+import { WSOutboundMessageSchema, type WSOutboundMessage } from "@getpaseo/protocol/messages";
 
 import { createTestPaseoDaemon } from "./test-utils/paseo-daemon.js";
+import { hashDaemonPassword } from "./auth.js";
 
 const originalEnv = { ...process.env };
 const CORRECT_PASSWORD_HASH = "$2b$12$OLxyuuP9uLK30Uzc4wQX0O6liuU/Q1t5P2b0Ebf36mULvpVK3DRZW";
@@ -37,6 +46,38 @@ async function expectWebSocketCloses(params: {
     code: params.code,
     reason: params.reason,
   });
+}
+
+function waitForWsMessage(
+  ws: WebSocket,
+  matches: (message: WSOutboundMessage) => boolean,
+): Promise<WSOutboundMessage> {
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(
+      () => reject(new Error("Timed out waiting for WebSocket message")),
+      5_000,
+    );
+    const listener = (data: WebSocket.RawData) => {
+      const parsed = WSOutboundMessageSchema.safeParse(JSON.parse(data.toString()));
+      if (!parsed.success || !matches(parsed.data)) return;
+      clearTimeout(timeout);
+      ws.off("message", listener);
+      resolve(parsed.data);
+    };
+    ws.on("message", listener);
+  });
+}
+
+async function sendHello(ws: WebSocket, clientId: string): Promise<WSOutboundMessage> {
+  const response = waitForWsMessage(
+    ws,
+    (message) =>
+      message.type === "session" &&
+      message.message.type === "status" &&
+      message.message.payload.status === "server_info",
+  );
+  ws.send(JSON.stringify({ type: "hello", clientId, clientType: "cli", protocolVersion: 1 }));
+  return response;
 }
 
 describe("daemon bearer auth", () => {
@@ -147,6 +188,96 @@ describe("daemon bearer auth", () => {
       });
       expect(protocol).toBe("paseo.bearer.correct-password");
       ws.close();
+    } finally {
+      await daemonHandle.close();
+    }
+  });
+
+  test("admits Deck over a real WebSocket while owner cannot call Fleet handlers", async () => {
+    const paseoHomeRoot = await mkdtemp(join(tmpdir(), "paseo-deck-ws-"));
+    const ledgerPath = join(paseoHomeRoot, "fleet.md");
+    const commitmentId = "64e89b9a-ff01-4cd8-b3f8-202bd276bc1d";
+    await writeFile(
+      ledgerPath,
+      `| ${commitmentId} | Target | owner | active | now | evidence | <!--["fleet-control.v1","${commitmentId}","open",0,null,"${FLEET_CONTROL_PORTFOLIO_AGENT_ID}"]-->remaining |\n`,
+    );
+    const daemonHandle = await createTestPaseoDaemon({
+      paseoHomeRoot,
+      auth: {
+        password: CORRECT_PASSWORD_HASH,
+        firstmateDeckCredential: hashDaemonPassword("deck-password"),
+      },
+      fleetCommitmentControls: { ledgerPath },
+    });
+    try {
+      const { ws: owner } = await connectWebSocket({
+        port: daemonHandle.port,
+        protocol: "paseo.bearer.correct-password",
+      });
+      const ownerInfo = await sendHello(owner, "owner-client");
+      expect(ownerInfo).toMatchObject({
+        type: "session",
+        message: { payload: { permissions: expect.not.arrayContaining(["fleet.control"]) } },
+      });
+      const ownerDenied = waitForWsMessage(
+        owner,
+        (message) =>
+          message.type === "session" &&
+          message.message.type === "rpc_error" &&
+          message.message.payload.requestId === "owner-confirm",
+      );
+      owner.send(
+        JSON.stringify({
+          type: "session",
+          message: {
+            type: "fleet.commitment.confirm.request",
+            requestId: "owner-confirm",
+            operationRequestId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            commitmentId,
+          },
+        }),
+      );
+      await expect(ownerDenied).resolves.toMatchObject({
+        message: { payload: { code: "access_denied" } },
+      });
+
+      const { ws: deck } = await connectWebSocket({
+        port: daemonHandle.port,
+        protocol: "paseo.bearer.deck-password",
+      });
+      const deckInfo = await sendHello(deck, "deck-client");
+      expect(deckInfo).toMatchObject({
+        type: "session",
+        message: {
+          payload: {
+            permissions: ["fleet.control"],
+            features: { fleetCommitmentControls: true },
+          },
+        },
+      });
+      const deckRead = waitForWsMessage(
+        deck,
+        (message) =>
+          message.type === "session" && message.message.type === "fleet.commitment.read.response",
+      );
+      deck.send(
+        JSON.stringify({
+          type: "session",
+          message: {
+            type: "fleet.commitment.read.request",
+            requestId: "deck-read",
+            commitmentId,
+          },
+        }),
+      );
+      const response = await deckRead;
+      if (response.type !== "session") throw new Error("Expected session response");
+      expect(FleetCommitmentReadResponseSchema.parse(response.message).payload).toMatchObject({
+        requestId: "deck-read",
+        commitmentId,
+      });
+      owner.close();
+      deck.close();
     } finally {
       await daemonHandle.close();
     }

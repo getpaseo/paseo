@@ -6,6 +6,24 @@ export const DAEMON_PASSWORD_BCRYPT_COST = 12;
 
 export interface DaemonAuthConfig {
   password?: string;
+  firstmateDeckCredential?: string;
+}
+
+export type DaemonBearerPrincipal = "owner" | "service:firstmate-deck";
+
+export function resolveDaemonBearerPrincipal(
+  auth: DaemonAuthConfig | undefined,
+  token: string | null,
+): DaemonBearerPrincipal | null {
+  const deckMatches = Boolean(
+    auth?.firstmateDeckCredential &&
+    isBearerTokenValid({ password: auth.firstmateDeckCredential, token }),
+  );
+  if (!auth?.password) return deckMatches ? "service:firstmate-deck" : "owner";
+  const ownerMatches = isBearerTokenValid({ password: auth.password, token });
+  if (deckMatches && ownerMatches) return null;
+  if (deckMatches) return "service:firstmate-deck";
+  return ownerMatches ? "owner" : null;
 }
 
 export interface BearerAuthRejectContext {

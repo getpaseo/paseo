@@ -8,6 +8,7 @@ import {
   isAgentMcpRequestAuthorized,
   isBearerTokenValidAsync,
   isBearerTokenValid,
+  resolveDaemonBearerPrincipal,
   shouldBypassBearerAuth,
 } from "./auth.js";
 
@@ -39,6 +40,46 @@ describe("daemon bearer validator", () => {
 
     expect(hash).toMatch(/^\$2[aby]\$12\$/);
     expect(isBearerTokenValid({ password: hash, token: "correct-password" })).toBe(true);
+  });
+
+  test("keeps owner and Deck credentials distinct and rejects ambiguous matches", () => {
+    expect(
+      resolveDaemonBearerPrincipal(
+        {
+          password: CORRECT_PASSWORD_HASH,
+          firstmateDeckCredential: hashDaemonPassword("deck-password"),
+        },
+        "deck-password",
+      ),
+    ).toBe("service:firstmate-deck");
+    expect(
+      resolveDaemonBearerPrincipal(
+        {
+          password: CORRECT_PASSWORD_HASH,
+          firstmateDeckCredential: hashDaemonPassword("deck-password"),
+        },
+        "correct-password",
+      ),
+    ).toBe("owner");
+    expect(
+      resolveDaemonBearerPrincipal(
+        { password: CORRECT_PASSWORD_HASH, firstmateDeckCredential: CORRECT_PASSWORD_HASH },
+        "correct-password",
+      ),
+    ).toBeNull();
+    expect(
+      resolveDaemonBearerPrincipal(
+        { password: CORRECT_PASSWORD_HASH, firstmateDeckCredential: CORRECT_PASSWORD_HASH },
+        "wrong",
+      ),
+    ).toBeNull();
+    expect(resolveDaemonBearerPrincipal(undefined, null)).toBe("owner");
+    expect(
+      resolveDaemonBearerPrincipal(
+        { firstmateDeckCredential: hashDaemonPassword("deck-password") },
+        "ordinary-client-token",
+      ),
+    ).toBe("owner");
   });
 
   test("extracts HTTP bearer tokens", () => {
