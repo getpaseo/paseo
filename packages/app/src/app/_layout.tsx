@@ -89,6 +89,7 @@ import { useFaviconStatus } from "@/hooks/use-favicon-status";
 import { useKeyboardShortcuts } from "@/hooks/use-keyboard-shortcuts";
 import { resolveExplorerSidebarPresentation } from "@/workspace-tabs/explorer-sidebar";
 import { KeyboardShiftProvider } from "@/keyboard/shift";
+import { useAdaptiveOrientation } from "@/hooks/use-adaptive-orientation";
 import { useCompactWebViewportZoomLock } from "@/hooks/use-compact-web-viewport-zoom-lock";
 import { useOpenProject } from "@/hooks/use-open-project";
 import { useAppSettings } from "@/hooks/use-settings";
@@ -473,6 +474,7 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
     void updateSettings({ theme: getNextThemePreference(settings.theme) });
   }, [settings.theme, updateSettings]);
 
+  const isOrientationPolicyApplied = useAdaptiveOrientation();
   const isCompactLayout = useIsCompactFormFactor();
   const explorerSidebarPresentation = resolveExplorerSidebarPresentation({
     isCompact: isCompactLayout,
@@ -622,6 +624,12 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
   ) : (
     surface
   );
+
+  // Hold the first frame until the phone's portrait lock is in place, so a
+  // phone cold-started in landscape never paints the tablet layout.
+  if (!isOrientationPolicyApplied) {
+    return null;
+  }
 
   return <CommandCenterProvider>{content}</CommandCenterProvider>;
 }
