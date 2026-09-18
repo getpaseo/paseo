@@ -69,6 +69,7 @@ export interface CachedTimeline {
 }
 
 const PERSIST_DELAY_MS = 1_000;
+const PERSIST_RETRY_MAX_DELAY_MS = 60_000;
 const MAX_TIMELINE_ITEMS = 50;
 const MAX_CACHE_BYTES = 32 * 1024 * 1024;
 const IsoDateSchema = z.iso.datetime();
@@ -865,7 +866,6 @@ function directoryEntityForRow(row: ReplicaRow): keyof DirectoryCheckpoint | und
 
 export class ReplicaCache {
   private readonly activeServerIds = new Set<string>();
-  private readonly hostRevisions = new Map<string, number>();
   private readonly storedRows = new Map<string, Map<string, ReplicaRow>>();
   private readonly hostBytes = new Map<string, number>();
   private readonly hostWriteOrder = new Map<string, true>();
@@ -876,6 +876,7 @@ export class ReplicaCache {
   private readonly maxBytes: number;
   private totalBytes = 0;
   private persistTimer: ReturnType<typeof setTimeout> | null = null;
+  private persistFailures = 0;
   private writeQueue: Promise<void> = Promise.resolve();
   private preparePromise: Promise<void> | null = null;
   private storedIndexPromise: Promise<void> | null = null;
@@ -974,24 +975,46 @@ export class ReplicaCache {
     }
   }
 
-  private async readRows(
+  // Reads share the write queue, so no drained batch is ever mid-apply while a read runs. Rows
+  // still pending are overlaid from memory instead of forcing a persist: a host with a streaming
+  // agent commits every few dozen milliseconds, and waiting for it to go quiet never ends.
+  private readRows(
     serverId: string,
     kinds: readonly ReplicaRowKind[],
     ids?: readonly string[],
   ): Promise<ReplicaRow[]> {
-    if (!this.activeServerIds.has(serverId)) return [];
-    try {
-      await this.prepareStore();
-      while (this.activeServerIds.has(serverId)) {
-        await this.flush();
-        const revision = this.hostRevisions.get(serverId) ?? 0;
-        const rows = await this.rowStore.read(serverId, kinds, ids);
-        if (this.canReadHostRevision(serverId, revision)) return rows;
-      }
-      return [];
-    } catch {
-      return [];
+    if (!this.activeServerIds.has(serverId)) return Promise.resolve([]);
+    return this.enqueue(async () => {
+      const stored = await this.rowStore.read(serverId, kinds, ids);
+      if (!this.activeServerIds.has(serverId)) return [];
+      return this.overlayPendingRows({ serverId, kinds, ids, stored });
+    }).catch(() => []);
+  }
+
+  private overlayPendingRows(input: {
+    serverId: string;
+    kinds: readonly ReplicaRowKind[];
+    ids?: readonly string[];
+    stored: ReplicaRow[];
+  }): ReplicaRow[] {
+    const { serverId, stored } = input;
+    const requestedKinds = new Set(input.kinds);
+    const requestedIds = input.ids ? new Set(input.ids) : null;
+    const baselinePending = this.pendingBaselines.has(serverId);
+    const rows = new Map<string, ReplicaRow>();
+    for (const row of stored) {
+      if (this.pendingDeletes.has(pendingRowKey(row))) continue;
+      if (baselinePending && row.kind !== "timeline") continue;
+      rows.set(rowKey(row), row);
     }
+    for (const upsert of this.pendingUpserts.values()) {
+      if (upsert.serverId !== serverId || !requestedKinds.has(upsert.kind)) continue;
+      if (requestedIds && !requestedIds.has(upsert.id)) continue;
+      const row = this.materializeUpsert(upsert);
+      if (row) rows.set(rowKey(row), row);
+      else rows.delete(rowKey(upsert));
+    }
+    return [...rows.values()];
   }
 
   private async deleteInvalidRow(row: ReplicaRow): Promise<void> {
@@ -1071,7 +1094,6 @@ export class ReplicaCache {
   ): void {
     if (!this.activeServerIds.has(serverId)) return;
     if (this.invalidatedHosts.has(serverId)) return;
-    this.advanceHostRevision(serverId);
     for (const mutation of mutations) {
       if (mutation.type === "delete") {
         this.queueEntityDelete(serverId, mutation.kind, mutation.id);
@@ -1097,7 +1119,6 @@ export class ReplicaCache {
 
   replaceDirectoryBaseline(serverId: string, directory: CachedDirectory): void {
     if (!this.activeServerIds.has(serverId)) return;
-    this.advanceHostRevision(serverId);
     // Replacing the directory must not discard independently accepted timeline changes.
     for (const [key, row] of this.pendingUpserts) {
       if (row.serverId === serverId && row.kind !== "timeline") this.pendingUpserts.delete(key);
@@ -1129,7 +1150,6 @@ export class ReplicaCache {
   commitTimeline(serverId: string, agentId: string, timeline: CachedTimeline): void {
     if (!this.activeServerIds.has(serverId)) return;
     if (timeline.agentId !== agentId) throw new Error("Timeline cache key does not match payload");
-    this.advanceHostRevision(serverId);
     this.queueUpsert({ serverId, kind: "timeline", id: agentId, value: timeline });
     this.schedulePersist();
   }
@@ -1137,8 +1157,6 @@ export class ReplicaCache {
   setHosts(serverIds: Iterable<string>): void {
     const next = new Set(serverIds);
     const removed = [...this.activeServerIds].filter((serverId) => !next.has(serverId));
-    const added = [...next].filter((serverId) => !this.activeServerIds.has(serverId));
-    for (const serverId of [...removed, ...added]) this.advanceHostRevision(serverId);
     this.activeServerIds.clear();
     for (const serverId of next) this.activeServerIds.add(serverId);
     for (const serverId of removed) {
@@ -1150,8 +1168,6 @@ export class ReplicaCache {
   }
 
   reconcileServerId(oldServerId: string, newServerId: string): void {
-    this.advanceHostRevision(oldServerId);
-    this.advanceHostRevision(newServerId);
     const rows = this.storedRows.get(oldServerId);
     if (rows) {
       const newRows = this.storedRows.get(newServerId) ?? new Map<string, ReplicaRow>();
@@ -1187,30 +1203,35 @@ export class ReplicaCache {
       this.persistTimer = null;
     }
     if (!this.hasPendingChanges()) return;
-    const write = this.writeQueue
-      .catch(() => undefined)
-      .then(async () => {
-        const pending = this.drainPendingChanges();
-        try {
-          await this.prepareStore();
-          await this.ensureStoredIndex();
-          const changes = this.materializePendingChanges(pending);
-          const { changes: boundedChanges, evicted } = await this.fitChangesToBudget(changes);
-          if (boundedChanges.upserts.length > 0 || boundedChanges.deletes.length > 0) {
-            await this.rowStore.apply(boundedChanges);
-            this.applyStoredChanges(boundedChanges);
-          }
-          for (const serverId of pending.baselines) {
-            if (!evicted.has(serverId)) this.invalidatedHosts.delete(serverId);
-          }
-        } catch {
-          this.restorePendingChanges(pending);
-          if (this.hasPendingChanges()) this.schedulePersist();
+    await this.enqueue(async () => {
+      const pending = this.drainPendingChanges();
+      try {
+        await this.ensureStoredIndex();
+        const changes = this.materializePendingChanges(pending);
+        const { changes: boundedChanges, evicted } = await this.fitChangesToBudget(changes);
+        if (boundedChanges.upserts.length > 0 || boundedChanges.deletes.length > 0) {
+          await this.rowStore.apply(boundedChanges);
+          this.applyStoredChanges(boundedChanges);
         }
-        return undefined;
-      });
-    this.writeQueue = write;
-    await write;
+        for (const serverId of pending.baselines) {
+          if (!evicted.has(serverId)) this.invalidatedHosts.delete(serverId);
+        }
+        this.persistFailures = 0;
+      } catch (error) {
+        this.restorePendingChanges(pending);
+        this.persistFailures += 1;
+        const retryDelayMs = Math.min(
+          PERSIST_DELAY_MS * 2 ** (this.persistFailures - 1),
+          PERSIST_RETRY_MAX_DELAY_MS,
+        );
+        console.warn("[ReplicaCache] Failed to persist replica rows", {
+          failures: this.persistFailures,
+          retryDelayMs,
+          error,
+        });
+        if (this.hasPendingChanges()) this.schedulePersist(retryDelayMs);
+      }
+    });
   }
 
   private queueEntityDelete(serverId: string, kind: ReplicaRowKind, id: string): void {
@@ -1233,29 +1254,6 @@ export class ReplicaCache {
     return (
       this.pendingUpserts.size > 0 || this.pendingDeletes.size > 0 || this.pendingBaselines.size > 0
     );
-  }
-
-  private canReadHostRevision(serverId: string, revision: number): boolean {
-    return (
-      this.activeServerIds.has(serverId) &&
-      (this.hostRevisions.get(serverId) ?? 0) === revision &&
-      !this.hasPendingHostChanges(serverId)
-    );
-  }
-
-  private hasPendingHostChanges(serverId: string): boolean {
-    if (this.pendingBaselines.has(serverId)) return true;
-    for (const row of this.pendingUpserts.values()) {
-      if (row.serverId === serverId) return true;
-    }
-    for (const row of this.pendingDeletes.values()) {
-      if (row.serverId === serverId) return true;
-    }
-    return false;
-  }
-
-  private advanceHostRevision(serverId: string): void {
-    this.hostRevisions.set(serverId, (this.hostRevisions.get(serverId) ?? 0) + 1);
   }
 
   private drainPendingChanges(): PendingReplicaChanges {
@@ -1499,23 +1497,29 @@ export class ReplicaCache {
     return this.storedIndexPromise;
   }
 
-  private queueOperation(operation: () => Promise<void>): Promise<void> {
-    this.writeQueue = this.writeQueue
+  private enqueue<Result>(operation: () => Promise<Result>): Promise<Result> {
+    const run = this.writeQueue
       .catch(() => undefined)
       .then(async () => {
         await this.prepareStore();
-        await operation();
-        return undefined;
-      })
-      .catch(() => undefined);
-    return this.writeQueue;
+        return operation();
+      });
+    this.writeQueue = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
   }
 
-  private schedulePersist(): void {
+  private queueOperation(operation: () => Promise<void>): Promise<void> {
+    return this.enqueue(operation).catch(() => undefined);
+  }
+
+  private schedulePersist(delayMs = PERSIST_DELAY_MS): void {
     if (this.persistTimer) return;
     this.persistTimer = setTimeout(() => {
       this.persistTimer = null;
       void this.flushPending();
-    }, PERSIST_DELAY_MS);
+    }, delayMs);
   }
 }
