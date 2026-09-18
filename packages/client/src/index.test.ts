@@ -78,6 +78,7 @@ function parseSentSessionMessage(data: string | ArrayBuffer | Uint8Array | undef
   page?: unknown;
   sync?: unknown;
   text?: string;
+  activeTurnBehavior?: string;
 } {
   if (typeof data !== "string") {
     throw new Error("Expected string WebSocket frame");
@@ -690,6 +691,81 @@ test("plugin-shaped PR workspace create and agent create use the existing daemon
   expect(agent.cwd).toBe("/repo/sdk");
   await client.close();
 });
+
+test.each(["interrupt", "steer", undefined] as const)(
+  "agent send and run forward activeTurnBehavior=%s",
+  async (activeTurnBehavior) => {
+    const { client, ws } = await connectClient();
+    const agent = client.agents.ref("agent_sdk");
+
+    const sendPromise = agent.send("Adjust the task", { activeTurnBehavior });
+    const sendRequest = parseSentSessionMessage(ws.sent.at(-1));
+    expect(sendRequest).toMatchObject({
+      type: "send_agent_message_request",
+      agentId: "agent_sdk",
+      text: "Adjust the task",
+    });
+    expect(sendRequest.activeTurnBehavior).toBe(activeTurnBehavior);
+    expect(Object.hasOwn(sendRequest, "activeTurnBehavior")).toBe(activeTurnBehavior !== undefined);
+    ws.message(
+      sessionMessage({
+        type: "send_agent_message_response",
+        payload: {
+          requestId: sendRequest.requestId,
+          agentId: "agent_sdk",
+          accepted: true,
+          error: null,
+        },
+      }),
+    );
+    await sendPromise;
+
+    const runPromise = agent.run("Finish the task", { activeTurnBehavior, timeoutMs: 30_000 });
+    const runRequest = parseSentSessionMessage(ws.sent.at(-1));
+    expect(runRequest).toMatchObject({
+      type: "send_agent_message_request",
+      agentId: "agent_sdk",
+      text: "Finish the task",
+    });
+    expect(runRequest.activeTurnBehavior).toBe(activeTurnBehavior);
+    expect(Object.hasOwn(runRequest, "activeTurnBehavior")).toBe(activeTurnBehavior !== undefined);
+    expect(Object.hasOwn(runRequest, "timeoutMs")).toBe(false);
+    ws.message(
+      sessionMessage({
+        type: "send_agent_message_response",
+        payload: {
+          requestId: runRequest.requestId,
+          agentId: "agent_sdk",
+          accepted: true,
+          error: null,
+        },
+      }),
+    );
+    await vi.waitFor(() => {
+      expect(parseSentSessionMessage(ws.sent.at(-1))).toMatchObject({
+        type: "wait_for_finish_request",
+        agentId: "agent_sdk",
+        timeoutMs: 30_000,
+      });
+    });
+    const waitRequest = parseSentSessionMessage(ws.sent.at(-1));
+    ws.message(
+      sessionMessage({
+        type: "wait_for_finish_response",
+        payload: {
+          requestId: waitRequest.requestId,
+          agentId: "agent_sdk",
+          status: "idle",
+          final: createAgent(),
+          error: null,
+          lastMessage: "DONE",
+        },
+      }),
+    );
+    await expect(runPromise).resolves.toMatchObject({ status: "idle", lastMessage: "DONE" });
+    await client.close();
+  },
+);
 
 test("agent handles delegate create, send, timeline refetch, archive, and local updates", async () => {
   const { client, ws } = await connectClient();

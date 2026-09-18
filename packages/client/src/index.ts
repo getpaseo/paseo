@@ -278,6 +278,8 @@ export interface PaseoAgentTimelineRefetchOptions {
 
 export interface PaseoAgentSendOptions {
   messageId?: string;
+  /** Defaults to "interrupt". "steer" uses provider steering when available, with replacement fallback. */
+  activeTurnBehavior?: SendAgentMessageRequest["activeTurnBehavior"];
   images?: Array<{ data: string; mimeType: string }>;
   attachments?: SendAgentMessageRequest["attachments"];
 }
