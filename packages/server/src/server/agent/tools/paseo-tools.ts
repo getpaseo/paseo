@@ -71,10 +71,12 @@ import {
 } from "../lifecycle-command.js";
 import type { ForgeService } from "../../../services/forge-service.js";
 import type { WorkspaceGitService } from "../../workspace-git-service.js";
-import type {
-  PersistedWorkspaceRecord,
-  ProjectRegistry,
-  WorkspaceRegistry,
+import {
+  resolveProjectDisplayName,
+  type PersistedProjectRecord,
+  type PersistedWorkspaceRecord,
+  type ProjectRegistry,
+  type WorkspaceRegistry,
 } from "../../workspace-registry.js";
 import { resolveWorktreeSourceCwd } from "../../workspace-source.js";
 import type { WorkspaceScriptsService } from "../../session/workspace-scripts/workspace-scripts-service.js";
@@ -185,6 +187,22 @@ const WorkspaceAutomationSummarySchema = z.object({
   kind: z.enum(["directory", "local_checkout", "worktree"]),
   title: z.string().nullable(),
 });
+
+const ProjectAutomationSummarySchema = z.object({
+  projectId: z.string(),
+  name: z.string(),
+  path: z.string(),
+  kind: z.enum(["git", "non_git"]),
+});
+
+function toProjectAutomationSummary(project: PersistedProjectRecord) {
+  return {
+    projectId: project.projectId,
+    name: resolveProjectDisplayName(project),
+    path: project.rootPath,
+    kind: project.kind,
+  };
+}
 
 function toWorkspaceAutomationSummary(workspace: PersistedWorkspaceRecord) {
   return {
@@ -1334,6 +1352,29 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       return {
         content: [],
         structuredContent: ensureValidJson(toWorkspaceAutomationSummary(workspace)),
+      };
+    },
+  );
+
+  registerTool(
+    "list_projects",
+    {
+      title: "List projects",
+      description:
+        "List active registered projects. Pass a projectId to create_workspace to launch work in that project.",
+      inputSchema: {},
+      outputSchema: { projects: z.array(ProjectAutomationSummarySchema) },
+    },
+    async () => {
+      if (!options.projectRegistry) {
+        throw new Error("Project registry is not configured");
+      }
+      const projects = (await options.projectRegistry.list())
+        .filter((project) => !project.archivedAt)
+        .map(toProjectAutomationSummary);
+      return {
+        content: [],
+        structuredContent: ensureValidJson({ projects }),
       };
     },
   );

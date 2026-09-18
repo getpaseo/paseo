@@ -3034,6 +3034,52 @@ describe("create_agent MCP tool", () => {
     ]);
   });
 
+  it("lists active registered projects for workspace creation", async () => {
+    const { agentManager, agentStorage } = createTestDeps();
+    const activeProject = createPersistedProjectRecord({
+      projectId: "project-active",
+      rootPath: "/tmp/paseo/projects/active",
+      kind: "git",
+      displayName: "derived-name",
+      customName: "Active project",
+      createdAt: "2026-07-17T00:00:00.000Z",
+      updatedAt: "2026-07-17T00:00:00.000Z",
+    });
+    const archivedProject = createPersistedProjectRecord({
+      projectId: "project-archived",
+      rootPath: "/tmp/paseo/projects/archived",
+      kind: "non_git",
+      displayName: "Archived project",
+      createdAt: "2026-07-17T00:00:00.000Z",
+      updatedAt: "2026-07-18T00:00:00.000Z",
+      archivedAt: "2026-07-18T00:00:00.000Z",
+    });
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      projectRegistry: {
+        get: vi.fn(async () => null),
+        list: vi.fn(async () => [activeProject, archivedProject]),
+      },
+      logger,
+    });
+    const tool = registeredTool(server, "list_projects");
+
+    const response = await tool.handler({});
+
+    expect(response.structuredContent).toEqual({
+      projects: [
+        {
+          projectId: "project-active",
+          name: "Active project",
+          path: "/tmp/paseo/projects/active",
+          kind: "git",
+        },
+      ],
+    });
+  });
+
   it("accepts custom provider IDs in create_agent input validation", async () => {
     const { agentManager, agentStorage } = createTestDeps();
     const server = await createAgentMcpServer({
