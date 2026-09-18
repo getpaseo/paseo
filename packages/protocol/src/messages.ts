@@ -152,9 +152,22 @@ const MutableStructuredGenerationProviderSchema = z
   })
   .passthrough();
 
+const MutableMetadataGenerationKindConfigSchema = z
+  .object({
+    providers: z.array(MutableStructuredGenerationProviderSchema).optional(),
+  })
+  .passthrough();
+
+// The per-kind entries override `providers` for one artifact; they travel with the
+// shared list so a settings write cannot silently drop them.
 const MutableMetadataGenerationConfigSchema = z
   .object({
     providers: z.array(MutableStructuredGenerationProviderSchema).default([]),
+    title: MutableMetadataGenerationKindConfigSchema.optional(),
+    branchName: MutableMetadataGenerationKindConfigSchema.optional(),
+    commitMessage: MutableMetadataGenerationKindConfigSchema.optional(),
+    pullRequest: MutableMetadataGenerationKindConfigSchema.optional(),
+    promptSuggestions: MutableMetadataGenerationKindConfigSchema.optional(),
   })
   .passthrough();
 

@@ -22,7 +22,7 @@ interface SupportedMutableConfigPatch {
   browserTools?: { enabled?: boolean };
   providers?: MutableDaemonConfig["providers"];
   removeProviders?: string[];
-  metadataGeneration?: MutableDaemonConfig["metadataGeneration"];
+  metadataGeneration?: MutableDaemonConfigPatch["metadataGeneration"];
   promptSuggestions?: MutableDaemonConfig["promptSuggestions"];
   autoArchiveAfterMerge?: boolean;
   enableTerminalAgentHooks?: boolean;
@@ -263,8 +263,8 @@ function pickSupportedPatchFields(patch: MutableDaemonConfigPatch): SupportedMut
       : {}),
     ...(patch.providers !== undefined ? { providers: patch.providers } : {}),
     ...(patch.removeProviders !== undefined ? { removeProviders: patch.removeProviders } : {}),
-    ...(patch.metadataGeneration?.providers !== undefined
-      ? { metadataGeneration: { providers: patch.metadataGeneration.providers } }
+    ...(patch.metadataGeneration !== undefined
+      ? { metadataGeneration: patch.metadataGeneration }
       : {}),
     ...(patch.promptSuggestions?.enabled !== undefined
       ? { promptSuggestions: { enabled: patch.promptSuggestions.enabled } }
@@ -599,6 +599,56 @@ function mergeMutablePatchIntoPersistedConfig(params: {
   } as PersistedConfig;
 }
 
+type PersistedMetadataGeneration = NonNullable<
+  NonNullable<PersistedConfig["agents"]>["metadataGeneration"]
+>;
+type MetadataGenerationPatch = NonNullable<SupportedMutableConfigPatch["metadataGeneration"]>;
+
+const METADATA_GENERATION_KINDS = [
+  "title",
+  "branchName",
+  "commitMessage",
+  "pullRequest",
+  "promptSuggestions",
+] as const;
+
+function mergeMetadataGeneration(
+  persisted: PersistedMetadataGeneration | undefined,
+  patch: MetadataGenerationPatch | undefined,
+  removeProviders: readonly string[],
+): PersistedMetadataGeneration | undefined {
+  if (!patch && removeProviders.length === 0) {
+    return persisted;
+  }
+
+  const merged: PersistedMetadataGeneration = { ...persisted };
+  if (patch?.providers !== undefined) {
+    merged.providers = patch.providers;
+  }
+  for (const kind of METADATA_GENERATION_KINDS) {
+    const entry = patch?.[kind];
+    if (entry?.providers !== undefined) {
+      merged[kind] = { providers: entry.providers };
+    }
+  }
+
+  if (removeProviders.length > 0) {
+    const removed = new Set(removeProviders);
+    const keep = (entry: { provider: string }): boolean => !removed.has(entry.provider);
+    if (merged.providers) {
+      merged.providers = merged.providers.filter(keep);
+    }
+    for (const kind of METADATA_GENERATION_KINDS) {
+      const entry = merged[kind];
+      if (entry?.providers) {
+        merged[kind] = { providers: entry.providers.filter(keep) };
+      }
+    }
+  }
+
+  return Object.keys(merged).length > 0 ? merged : undefined;
+}
+
 function mergeMutableAgentPatch(
   persistedAgents: PersistedConfig["agents"],
   patch: Omit<SupportedMutableConfigPatch, "removeProviders">,
@@ -626,15 +676,15 @@ function mergeMutableAgentPatch(
   if (providerOverrides) next["providers"] = providerOverrides;
   else delete next["providers"];
 
-  if (patch.metadataGeneration?.providers !== undefined) {
-    next["metadataGeneration"] = { providers: patch.metadataGeneration.providers };
-  } else if (removeProviders.length > 0 && persistedAgents?.metadataGeneration?.providers) {
-    const removed = new Set(removeProviders);
-    next["metadataGeneration"] = {
-      providers: persistedAgents.metadataGeneration.providers.filter(
-        (entry) => !removed.has(entry.provider),
-      ),
-    };
+  // A patch carries only what the writer changed: merging keeps the per-kind
+  // entries a shared-provider write never mentions.
+  const mergedMetadata = mergeMetadataGeneration(
+    persistedAgents?.metadataGeneration,
+    patch.metadataGeneration,
+    removeProviders,
+  );
+  if (mergedMetadata) {
+    next["metadataGeneration"] = mergedMetadata;
   }
 
   if (patch.promptSuggestions?.enabled !== undefined) {

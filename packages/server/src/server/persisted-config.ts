@@ -186,6 +186,8 @@ const AgentMetadataGenerationSchema = z
   })
   .strict();
 
+export type MetadataGenerationConfig = z.infer<typeof AgentMetadataGenerationSchema>;
+
 const AgentPromptSuggestionsSchema = z
   .object({
     enabled: z.boolean().optional(),
