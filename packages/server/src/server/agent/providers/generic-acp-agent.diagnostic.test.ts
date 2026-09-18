@@ -182,6 +182,42 @@ describe("GenericACPAgentClient diagnostics", () => {
     });
   });
 
+  test("signs in with params.authMethod when the agent requires authentication", async () => {
+    await withFakeACPAgent("requires-auth", async (scriptPath, mode, testDir) => {
+      const authTracePath = path.join(testDir, "authenticate.jsonl");
+      const client = new GenericACPAgentClient({
+        logger: createTestLogger(),
+        command: [process.execPath, scriptPath, mode, "", "", "", "", "", authTracePath],
+        providerParams: { authMethod: "api-key" },
+      });
+
+      const session = await client.createSession({ provider: "acp", cwd: testDir });
+      try {
+        expect(session.id).toBe("session-1");
+        await expect(readFile(authTracePath, "utf8")).resolves.toBe(
+          `${JSON.stringify({ methodId: "api-key" })}\n`,
+        );
+      } finally {
+        await session.close();
+      }
+    });
+  });
+
+  test("names the advertised sign-in methods when params.authMethod is unset", async () => {
+    await withFakeACPAgent("requires-auth", async (scriptPath, mode, testDir) => {
+      const authTracePath = path.join(testDir, "authenticate.jsonl");
+      const client = new GenericACPAgentClient({
+        logger: createTestLogger(),
+        command: [process.execPath, scriptPath, mode, "", "", "", "", "", authTracePath],
+      });
+
+      await expect(client.createSession({ provider: "acp", cwd: testDir })).rejects.toThrow(
+        "Set params.authMethod to one of the agent's methods: oauth-personal (Log in with Google), api-key (API key).",
+      );
+      await expect(readFile(authTracePath, "utf8")).rejects.toThrow(/ENOENT/);
+    });
+  });
+
   test("closes the native diagnostic probe session", async () => {
     await withFakeACPAgent("success", async (scriptPath, mode, testDir) => {
       const closeTracePath = path.join(testDir, "session-close.jsonl");
@@ -330,7 +366,8 @@ async function withFakeACPAgent(
     | "hang-session"
     | "history-list"
     | "history-load-failure"
-    | "history-load-failures",
+    | "history-load-failures"
+    | "requires-auth",
   run: (scriptPath: string, mode: string, testDir: string) => Promise<void>,
 ): Promise<void> {
   await withTempDir("paseo-acp-diagnostic-", async (testDir) => {
@@ -382,6 +419,8 @@ const initializeTracePath = process.argv[4];
 const closeTracePath = process.argv[5];
 const sessionCwd = process.argv[6];
 const loadTracePath = process.argv[7];
+const authTracePath = process.argv[8];
+let authenticated = false;
 if (pidPath) {
   fs.writeFileSync(pidPath, String(process.pid));
 }
@@ -413,12 +452,32 @@ rl.on("line", (line) => {
           mode === "history-load-failures",
         sessionCapabilities: { close: {}, list: {} },
       },
+      authMethods:
+        mode === "requires-auth"
+          ? [
+              { id: "oauth-personal", name: "Log in with Google" },
+              { id: "api-key", name: "API key" },
+            ]
+          : [],
     });
+    return;
+  }
+
+  if (message.method === "authenticate") {
+    if (authTracePath) {
+      fs.appendFileSync(authTracePath, JSON.stringify(message.params) + "\\n");
+    }
+    authenticated = true;
+    send(message.id, {});
     return;
   }
 
   if (message.method === "session/new") {
     if (mode === "hang-session") {
+      return;
+    }
+    if (mode === "requires-auth" && !authenticated) {
+      sendError(message.id, -32000, "Authentication required");
       return;
     }
 
