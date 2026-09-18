@@ -197,6 +197,7 @@ interface ImportAgentInputBase {
   cwd?: string;
   workspaceId?: string;
   labels?: Record<string, string>;
+  modeId?: string;
 }
 
 export type ImportAgentInput =
@@ -3070,6 +3071,7 @@ export class DaemonClient {
       ...(input.cwd ? { cwd: input.cwd } : {}),
       ...(input.workspaceId ? { workspaceId: input.workspaceId } : {}),
       ...(input.labels && Object.keys(input.labels).length > 0 ? { labels: input.labels } : {}),
+      ...(input.modeId ? { modeId: input.modeId } : {}),
     });
 
     const status = await this.sendRequest({
