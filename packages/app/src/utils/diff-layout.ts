@@ -253,12 +253,16 @@ export function buildSplitDiffRows(file: ParsedDiffFile): SplitDiffRow[] {
 
   for (const hunk of buildNumberedDiffHunks(file)) {
     const headerLine = hunk.lines.find((line) => line.line.type === "header");
-    rows.push({
-      kind: "header",
-      content: hunk.hunkHeader,
-      hunkIndex: hunk.hunkIndex,
-      lineIndex: headerLine?.lineIndex ?? 0,
-    });
+    // Parsed git hunks always carry a header line. A header-less hunk is a whole-file
+    // expansion (see git/full-file-diff.ts), which reads as one continuous file.
+    if (headerLine) {
+      rows.push({
+        kind: "header",
+        content: hunk.hunkHeader,
+        hunkIndex: hunk.hunkIndex,
+        lineIndex: headerLine.lineIndex,
+      });
+    }
 
     let pendingRemovals: NumberedDiffCell[] = [];
     let pendingAdditions: NumberedDiffCell[] = [];

@@ -932,6 +932,18 @@ export const en = {
         showWhitespace: "Show whitespace",
         scrollLongLines: "Scroll long lines",
         wrapLongLines: "Wrap long lines",
+        showFullFile: "Show full file",
+        showChangesOnly: "Show changes only",
+        previousFile: "Previous file",
+        nextFile: "Next file",
+        minimap: "Minimap",
+        fullFileUnavailable: {
+          outOfSync: "This file changed since the diff was computed. Showing changes only.",
+          missing: "This file could not be read. Showing changes only.",
+          tooLarge: "This file is too large to show in full. Showing changes only.",
+          uncommitted:
+            "This file has uncommitted edits, so its committed version can't be shown in full. Showing changes only.",
+        },
         collapseAllFolders: "Collapse all folders",
         expandAllFolders: "Expand all folders",
         collapseAllFiles: "Collapse all files",

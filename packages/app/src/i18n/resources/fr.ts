@@ -956,6 +956,20 @@ export const fr: TranslationResources = {
         showWhitespace: "Afficher les espaces",
         scrollLongLines: "Faire défiler les longues lignes",
         wrapLongLines: "Enroulez les longues lignes",
+        showFullFile: "Afficher le fichier complet",
+        showChangesOnly: "Afficher uniquement les modifications",
+        previousFile: "Fichier précédent",
+        nextFile: "Fichier suivant",
+        minimap: "Minimap",
+        fullFileUnavailable: {
+          outOfSync:
+            "Ce fichier a changé depuis le calcul du diff. Seules les modifications sont affichées.",
+          missing: "Impossible de lire ce fichier. Seules les modifications sont affichées.",
+          tooLarge:
+            "Ce fichier est trop volumineux pour être affiché en entier. Seules les modifications sont affichées.",
+          uncommitted:
+            "Ce fichier contient des modifications non validées : sa version validée ne peut pas être affichée en entier. Seules les modifications sont affichées.",
+        },
         collapseAllFolders: "Réduire tous les dossiers",
         expandAllFolders: "Développer tous les dossiers",
         collapseAllFiles: "Réduire tous les fichiers",

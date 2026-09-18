@@ -957,6 +957,20 @@ export const es: TranslationResources = {
         showWhitespace: "Mostrar espacios en blanco",
         scrollLongLines: "Desplazarse por largas filas",
         wrapLongLines: "Envolver largas filas",
+        showFullFile: "Mostrar archivo completo",
+        showChangesOnly: "Mostrar solo los cambios",
+        previousFile: "Archivo anterior",
+        nextFile: "Archivo siguiente",
+        minimap: "Minimapa",
+        fullFileUnavailable: {
+          outOfSync:
+            "Este archivo cambió desde que se calculó la diferencia. Se muestran solo los cambios.",
+          missing: "No se pudo leer este archivo. Se muestran solo los cambios.",
+          tooLarge:
+            "Este archivo es demasiado grande para mostrarlo completo. Se muestran solo los cambios.",
+          uncommitted:
+            "Este archivo tiene ediciones sin confirmar, así que su versión confirmada no se puede mostrar completa. Se muestran solo los cambios.",
+        },
         collapseAllFolders: "Contraer todas las carpetas",
         expandAllFolders: "Expandir todas las carpetas",
         collapseAllFiles: "Contraer todos los archivos",

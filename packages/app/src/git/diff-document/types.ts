@@ -12,6 +12,10 @@ interface DiffDocumentBaseProps {
     codeFontSize: number;
     monoFontFamily: string;
   };
+  /** Web: a scaled overview of the document beside the diff that scrolls on press and drag. */
+  minimap?: boolean;
+  /** Web: scroll to the first changed line once the document first lays out. */
+  revealFirstChange?: boolean;
 }
 
 export interface WorkingDiffMode {

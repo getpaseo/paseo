@@ -947,6 +947,20 @@ export const ptBR: TranslationResources = {
         showWhitespace: "Mostrar espaços em branco",
         scrollLongLines: "Rolar linhas longas",
         wrapLongLines: "Quebrar linhas longas",
+        showFullFile: "Mostrar arquivo completo",
+        showChangesOnly: "Mostrar apenas as alterações",
+        previousFile: "Arquivo anterior",
+        nextFile: "Próximo arquivo",
+        minimap: "Minimapa",
+        fullFileUnavailable: {
+          outOfSync:
+            "Este arquivo mudou desde que o diff foi calculado. Mostrando apenas as alterações.",
+          missing: "Não foi possível ler este arquivo. Mostrando apenas as alterações.",
+          tooLarge:
+            "Este arquivo é grande demais para ser exibido por completo. Mostrando apenas as alterações.",
+          uncommitted:
+            "Este arquivo tem edições não commitadas, então a versão commitada não pode ser exibida por completo. Mostrando apenas as alterações.",
+        },
         collapseAllFolders: "Recolher todas as pastas",
         expandAllFolders: "Expandir todas as pastas",
         collapseAllFiles: "Recolher todos os arquivos",

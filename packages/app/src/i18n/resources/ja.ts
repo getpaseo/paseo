@@ -937,6 +937,18 @@ export const ja: TranslationResources = {
         showWhitespace: "空白を表示",
         scrollLongLines: "長い行をスクロール",
         wrapLongLines: "長い行を折り返す",
+        showFullFile: "ファイル全体を表示",
+        showChangesOnly: "変更のみを表示",
+        previousFile: "前のファイル",
+        nextFile: "次のファイル",
+        minimap: "ミニマップ",
+        fullFileUnavailable: {
+          outOfSync: "差分の計算後にこのファイルが変更されました。変更のみを表示しています。",
+          missing: "このファイルを読み込めませんでした。変更のみを表示しています。",
+          tooLarge: "このファイルは大きすぎるため全体を表示できません。変更のみを表示しています。",
+          uncommitted:
+            "このファイルには未コミットの編集があるため、コミット済みの内容を全体表示できません。変更のみを表示しています。",
+        },
         collapseAllFolders: "すべてのフォルダを折りたたむ",
         expandAllFolders: "すべてのフォルダを展開",
         collapseAllFiles: "すべてのファイルを折りたたむ",

@@ -931,6 +931,18 @@ export const ko: TranslationResources = {
         showWhitespace: "공백 표시",
         scrollLongLines: "긴 줄 스크롤",
         wrapLongLines: "긴 줄 줄바꿈",
+        showFullFile: "전체 파일 보기",
+        showChangesOnly: "변경 사항만 보기",
+        previousFile: "이전 파일",
+        nextFile: "다음 파일",
+        minimap: "미니맵",
+        fullFileUnavailable: {
+          outOfSync: "diff를 계산한 뒤 이 파일이 변경되었습니다. 변경 사항만 표시합니다.",
+          missing: "이 파일을 읽을 수 없습니다. 변경 사항만 표시합니다.",
+          tooLarge: "이 파일은 너무 커서 전체를 표시할 수 없습니다. 변경 사항만 표시합니다.",
+          uncommitted:
+            "이 파일에 커밋되지 않은 편집이 있어 커밋된 버전을 전체로 표시할 수 없습니다. 변경 사항만 표시합니다.",
+        },
         collapseAllFolders: "모든 폴더 축소",
         expandAllFolders: "모든 폴더 확장",
         collapseAllFiles: "모든 파일 축소",

@@ -924,6 +924,18 @@ export const ar: TranslationResources = {
         showWhitespace: "إظهار المسافة البيضاء",
         scrollLongLines: "قم بتمرير الخطوط الطويلة",
         wrapLongLines: "لف الخطوط الطويلة",
+        showFullFile: "عرض الملف كاملًا",
+        showChangesOnly: "عرض التغييرات فقط",
+        previousFile: "الملف السابق",
+        nextFile: "الملف التالي",
+        minimap: "الخريطة المصغّرة",
+        fullFileUnavailable: {
+          outOfSync: "تغيّر هذا الملف منذ حساب الفرق. يتم عرض التغييرات فقط.",
+          missing: "تعذّرت قراءة هذا الملف. يتم عرض التغييرات فقط.",
+          tooLarge: "هذا الملف أكبر من أن يُعرض كاملًا. يتم عرض التغييرات فقط.",
+          uncommitted:
+            "يحتوي هذا الملف على تعديلات غير مُثبتة، لذا لا يمكن عرض نسخته المُثبتة كاملة. يتم عرض التغييرات فقط.",
+        },
         collapseAllFolders: "طي كافة المجلدات",
         expandAllFolders: "توسيع كافة المجلدات",
         collapseAllFiles: "طي كافة الملفات",
