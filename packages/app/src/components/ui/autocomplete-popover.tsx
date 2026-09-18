@@ -19,6 +19,12 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet } from "react-native-unistyles";
 import { Autocomplete, type AutocompleteOption } from "@/components/ui/autocomplete";
 import {
+  createMeasurementLoop,
+  type FrameScheduler,
+  type MeasurementLoop,
+  type RelativeAnchorRect,
+} from "@/components/ui/autocomplete-measurement";
+import {
   measureFloatingPanelPortalHost,
   useFloatingPanelPortalHostName,
 } from "@/components/ui/floating-panel-portal";
@@ -28,18 +34,22 @@ import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 
 const OFFSET_FROM_ANCHOR = SPACING[3];
 
+/**
+ * Frames to keep re-measuring while the anchor or the portal host answer with no usable rect.
+ * The retry lifecycle itself lives in `autocomplete-measurement`, which is where it is tested.
+ */
+const MEASUREMENT_RETRY_FRAMES = 12;
+
+const animationFrames: FrameScheduler = {
+  request: (callback) => requestAnimationFrame(callback),
+  cancel: (handle) => cancelAnimationFrame(handle),
+};
+
 interface Rect {
   x: number;
   y: number;
   width: number;
   height: number;
-}
-
-interface RelativeAnchorRect {
-  x: number;
-  y: number;
-  width: number;
-  hostHeight: number;
 }
 
 function measureElement(element: View): Promise<Rect> {
@@ -81,32 +91,30 @@ export function AutocompletePopover({
   const portalHostName = useFloatingPanelPortalHostName();
   const { shift, isMoving } = useKeyboardShift();
   const measuredShift = useSharedValue(0);
-  const measurementGeneration = useRef(0);
+  const loopRef = useRef<MeasurementLoop | null>(null);
+  loopRef.current ??= createMeasurementLoop(animationFrames, MEASUREMENT_RETRY_FRAMES);
+  const loop = loopRef.current;
   const canMeasure = visible && (options.length === 0 || selectedIndex >= 0);
 
   const remeasure = useCallback(() => {
     if (!canMeasure) return;
     const anchorElement = anchorRef.current;
     if (!anchorElement) return;
-    const generation = measurementGeneration.current;
-    void Promise.all([
-      measureElement(anchorElement),
-      measureFloatingPanelPortalHost(portalHostName),
-    ]).then(([anchorRect, hostRect]) => {
-      if (generation !== measurementGeneration.current || !hostRect) return undefined;
-      setRelativeAnchorRect({
-        x: anchorRect.x - hostRect.x,
-        y: anchorRect.y - hostRect.y,
-        width: anchorRect.width,
-        hostHeight: hostRect.height,
-      });
-      measuredShift.value = shift.value;
-      return undefined;
+    loop.run({
+      measure: () =>
+        Promise.all([
+          measureElement(anchorElement),
+          measureFloatingPanelPortalHost(portalHostName),
+        ]),
+      onMeasured: (rect) => {
+        setRelativeAnchorRect(rect);
+        measuredShift.value = shift.value;
+      },
     });
-  }, [anchorRef, canMeasure, measuredShift, portalHostName, shift]);
+  }, [anchorRef, canMeasure, loop, measuredShift, portalHostName, shift]);
 
   useEffect(() => {
-    measurementGeneration.current += 1;
+    loop.reset();
     if (!canMeasure) {
       setRelativeAnchorRect(null);
       return;
@@ -116,10 +124,10 @@ export function AutocompletePopover({
     const raf = requestAnimationFrame(remeasure);
 
     return () => {
-      measurementGeneration.current += 1;
+      loop.stop();
       cancelAnimationFrame(raf);
     };
-  }, [canMeasure, remeasure, windowDimensions.width, windowDimensions.height]);
+  }, [canMeasure, loop, remeasure, windowDimensions.width, windowDimensions.height]);
 
   useAnimatedReaction(
     () => isMoving.value,
