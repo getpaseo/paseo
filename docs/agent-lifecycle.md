@@ -84,6 +84,22 @@ Some providers can create their own child sessions inside one provider runtime. 
 
 The provider still owns the underlying runtime. Paseo keeps an agent record so the child can be opened, tracked, archived, and cascaded with the parent, but prompts and history hydration route through the provider adapter for that native child handle.
 
+## Internal agents
+
+An internal agent is an ephemeral helper: the daemon's own branch-name and commit-message
+generators, and since 0.9 anything a client or plugin creates with `internal: true` on the create
+request. `AgentManager` never persists one, so it is never in History; it is left out of agent
+lists, global subscriptions, attention tracking, notifications, and plugin lifecycle hooks; and the
+provider session is not kept (`persistSession: false`, which for Claude means the transcript is
+deleted on close). Lookups by id still work, so `waitForFinish`, the timeline, and archive keep
+working for the caller that created it. Archiving one is closing it: there is no record to mark, so
+the runtime is closed, the committed timeline is dropped, and `getAgent` returns null from then on.
+
+The flag lives on `create_agent_request`, not in `AgentSessionConfig` on the wire, because that
+config schema is reused for update overrides. The `agent.create` transform hook cannot set it
+either: the manager re-pins `internal` from the original request after the hook runs, so a plugin
+cannot hide an agent another client asked for. Clients gate on `features.internalAgents`.
+
 ## Archive
 
 Archive is a **soft delete**: the agent record stays on disk with `archivedAt` set, the runtime is closed, and the agent disappears from active lists. Archive is **global** — it lives on the server and propagates to every connected client.

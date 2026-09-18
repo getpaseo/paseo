@@ -7454,6 +7454,39 @@ test("getAgent returns internal agents by ID", async () => {
   expect(agent?.internal).toBe(true);
 });
 
+test("archiveAgent closes an internal agent without writing a record", async () => {
+  const internalAgentId = "00000000-0000-4000-8000-000000000108";
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
+  const storagePath = join(workdir, "agents");
+  const storage = new AgentStorage(storagePath, logger);
+  const manager = new AgentManager({
+    clients: {
+      codex: new TestAgentClient(),
+    },
+    registry: storage,
+    logger,
+    idFactory: () => internalAgentId,
+  });
+
+  await manager.createAgent(
+    {
+      provider: "codex",
+      cwd: workdir,
+      title: "Internal Agent",
+      internal: true,
+    },
+    undefined,
+    { workspaceId: undefined },
+  );
+
+  const { archivedAt } = await manager.archiveAgent(internalAgentId);
+
+  expect(Number.isNaN(Date.parse(archivedAt))).toBe(false);
+  expect(manager.getAgent(internalAgentId)).toBeNull();
+  expect(await storage.get(internalAgentId)).toBeNull();
+  expect(await storage.list()).toEqual([]);
+});
+
 test("subscribe does not emit state events for internal agents to global subscribers", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
   const storagePath = join(workdir, "agents");

@@ -1721,6 +1721,15 @@ export class AgentManager {
     requestedArchivedAt?: string,
   ): Promise<{ archivedAt: string }> {
     const agent = this.requireAgent(agentId);
+    if (agent.internal) {
+      // Nothing about an internal agent is on disk, and archiving must not put
+      // it there. Closing the runtime and dropping its committed timeline is
+      // the whole of it; `getAgent` returns null from here on.
+      const archivedAt = requestedArchivedAt ?? new Date().toISOString();
+      await this.closeAgentRuntime(agentId);
+      await this.deleteAgentState(agentId);
+      return { archivedAt };
+    }
     if (!this.registry) {
       throw new Error("Agent storage is not configured");
     }

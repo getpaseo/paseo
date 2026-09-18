@@ -3213,7 +3213,7 @@ export class Session {
       agentId,
     );
 
-    if (this.agentUpdates.hasSubscription()) {
+    if (archivedRecord && this.agentUpdates.hasSubscription()) {
       const payload = await this.agentUpdates.emitStoredRecord(archivedRecord);
       if (payload.workspaceId) {
         await this.emitWorkspaceUpdateForWorkspaceId(payload.workspaceId);
@@ -4151,9 +4151,14 @@ export class Session {
             creation.errorCode ?? "unknown",
             creation.error ?? "Agent creation failed",
           );
-        const record = await this.agentStorage.get(creation.agent.id);
-        if (!record) throw new Error("Previously created agent no longer exists");
-        agent = this.buildStoredAgentPayload(record);
+        if (msg.internal) {
+          // Internal agents are never persisted; the creation snapshot is the only record.
+          agent = creation.agent;
+        } else {
+          const record = await this.agentStorage.get(creation.agent.id);
+          if (!record) throw new Error("Previously created agent no longer exists");
+          agent = this.buildStoredAgentPayload(record);
+        }
       } else {
         agent = await this.createSessionAgent(msg);
       }
@@ -4204,6 +4209,7 @@ export class Session {
       git,
       worktree,
       autoArchive,
+      internal,
       images,
       attachments,
       env,
@@ -4268,7 +4274,7 @@ export class Session {
             await onAgentReady?.(await this.buildAgentPayload(agent));
           },
           agentId,
-          config: resolvedIntent.config,
+          config: internal ? { ...resolvedIntent.config, internal: true } : resolvedIntent.config,
           workspaceId: resolvedIntent.intent.workspaceId,
           worktreeName,
           initialPrompt,
@@ -5202,6 +5208,12 @@ export class Session {
     const trimmed = identifier.trim();
     if (!trimmed) {
       return { ok: false, error: "Agent identifier cannot be empty" };
+    }
+
+    // A live internal agent is addressable by its exact id and nothing else:
+    // the caller that created it holds the id, and no listing ever includes it.
+    if (this.agentManager.getAgent(trimmed)) {
+      return { ok: true, agentId: trimmed };
     }
 
     const stored = await this.agentStorage.list();
