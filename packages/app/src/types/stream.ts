@@ -1766,23 +1766,38 @@ function getActiveAssistantHeadIndex(head: StreamItem[]): number {
   return -1;
 }
 
-function getTailAssistantToResume(params: {
+/**
+ * Pull the newest streamable tail item back into head so an incoming chunk of the
+ * same stream keeps growing it instead of starting a new item. A thought only
+ * resumes while it is still loading: flushing head or completing the turn marks it
+ * ready, and a ready thought belongs to a burst that already closed.
+ */
+function getTailStreamableToResume(params: {
   incomingKind: StreamItem["kind"] | null;
   event: AgentStreamEventPayload;
   nextHead: StreamItem[];
-  tailAssistant: StreamItem | undefined;
-}): AssistantMessageItem | null {
-  if (params.incomingKind !== "assistant_message" || params.nextHead.length !== 0) {
+  tailItem: StreamItem | undefined;
+}): StreamItem | null {
+  if (params.nextHead.length !== 0) {
     return null;
   }
-  if (params.tailAssistant?.kind !== "assistant_message") {
+  if (params.incomingKind === "thought") {
+    if (params.tailItem?.kind !== "thought" || params.tailItem.status === "ready") {
+      return null;
+    }
+    return params.tailItem;
+  }
+  if (params.incomingKind !== "assistant_message") {
+    return null;
+  }
+  if (params.tailItem?.kind !== "assistant_message") {
     return null;
   }
   const incomingMessageId = getIncomingAssistantMessageId(params.event);
-  if (incomingMessageId !== undefined && params.tailAssistant.messageId !== incomingMessageId) {
+  if (incomingMessageId !== undefined && params.tailItem.messageId !== incomingMessageId) {
     return null;
   }
-  return params.tailAssistant;
+  return params.tailItem;
 }
 
 /**
@@ -2011,15 +2026,15 @@ export function applyStreamEvent(params: {
     flushHead();
   }
 
-  const tailAssistant = getTailAssistantToResume({
+  const resumedStreamable = getTailStreamableToResume({
     incomingKind,
     event,
     nextHead,
-    tailAssistant: nextTail.at(-1),
+    tailItem: nextTail.at(-1),
   });
-  if (tailAssistant) {
+  if (resumedStreamable) {
     nextTail = nextTail.slice(0, -1);
-    nextHead = [tailAssistant];
+    nextHead = [resumedStreamable];
     changedTail = true;
     changedHead = true;
   }
