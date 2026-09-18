@@ -15,6 +15,7 @@ interface KeyboardShortcutsState {
   showShortcutBadges: boolean;
   /** Sidebar-visible workspace targets (up to 9), in top-to-bottom visual order. */
   sidebarShortcutWorkspaceTargets: SidebarShortcutWorkspaceTarget[];
+  sidebarWorkspaceTargets: SidebarShortcutWorkspaceTarget[];
 
   setCommandCenterOpen: (open: boolean, scope?: CommandCenterScope) => void;
   setCommandCenterScope: (scope: CommandCenterScope) => void;
@@ -58,6 +59,7 @@ export const useKeyboardShortcutsStore = create<KeyboardShortcutsState>((set, ge
   cmdOrCtrlDown: false,
   showShortcutBadges: false,
   sidebarShortcutWorkspaceTargets: [],
+  sidebarWorkspaceTargets: [],
 
   setCommandCenterOpen: (open, scope = null) =>
     set({ commandCenterOpen: open, commandCenterScope: open ? scope : null }),
