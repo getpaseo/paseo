@@ -1,11 +1,15 @@
-import { useCallback, useMemo } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { Pressable, Text, View, type PressableStateCallbackType } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { ChevronRight } from "lucide-react-native";
 import { useTranslation } from "react-i18next";
 import { ProjectIconView } from "@/components/project-icon-view";
+import { ProjectLinksSheet } from "@/components/project-links-sheet";
+import { Alert } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { useProjects, type ProjectHostError } from "@/hooks/use-projects";
+import { useLocalProjectLinksStore } from "@/projects/local-project-links-store";
 import { useProjectIcons } from "@/projects/icons";
 import { createProjectIconTarget } from "@/projects/icon-target";
 import { settingsStyles } from "@/styles/settings";
@@ -23,7 +27,15 @@ interface HostProject {
 
 export default function ProjectsScreen({ serverId }: ProjectsScreenProps) {
   const { t } = useTranslation();
-  const { projects, hostErrors, isLoading } = useProjects();
+  const [isLinksSheetOpen, setIsLinksSheetOpen] = useState(false);
+  const {
+    projects,
+    hostErrors,
+    isLoading,
+    projectLinkPlacements = [],
+    projectLinkSuggestions = [],
+  } = useProjects();
+  const localProjectLinks = useLocalProjectLinksStore((state) => state.links);
   const hostProjects = useMemo<HostProject[]>(
     () =>
       projects.flatMap((project) =>
@@ -34,6 +46,13 @@ export default function ProjectsScreen({ serverId }: ProjectsScreenProps) {
     [projects, serverId],
   );
   const scopedErrors = hostErrors.filter((error) => error.serverId === serverId);
+  const scopedSuggestions = projectLinkSuggestions.filter((suggestion) =>
+    suggestion.placements.some((placement) => placement.serverId === serverId),
+  );
+  const hasScopedLinks = localProjectLinks.some((link) =>
+    link.members.some((member) => member.serverId === serverId),
+  );
+  const hasProjectLinksToReview = scopedSuggestions.length > 0 || hasScopedLinks;
   const iconTargets = useMemo(
     () =>
       hostProjects.flatMap(({ project, host }) => {
@@ -48,6 +67,8 @@ export default function ProjectsScreen({ serverId }: ProjectsScreenProps) {
   const iconDataByProjectViewKey = useProjectIcons({
     projects: iconTargets,
   });
+  const openLinksSheet = useCallback(() => setIsLinksSheetOpen(true), []);
+  const closeLinksSheet = useCallback(() => setIsLinksSheetOpen(false), []);
 
   if (isLoading && hostProjects.length === 0) {
     return (
@@ -59,8 +80,19 @@ export default function ProjectsScreen({ serverId }: ProjectsScreenProps) {
 
   if (hostProjects.length === 0) {
     return (
-      <View style={styles.centered} testID="projects-list">
-        <Text style={styles.emptyText}>{t("sidebar.project.empty.title")}</Text>
+      <View testID="projects-list">
+        {hasProjectLinksToReview ? (
+          <ProjectLinksBanner suggestionCount={scopedSuggestions.length} onOpen={openLinksSheet} />
+        ) : null}
+        <View style={styles.centered}>
+          <Text style={styles.emptyText}>{t("sidebar.project.empty.title")}</Text>
+        </View>
+        <ProjectLinksSheet
+          visible={isLinksSheetOpen}
+          onClose={closeLinksSheet}
+          placements={projectLinkPlacements}
+          suggestions={projectLinkSuggestions}
+        />
       </View>
     );
   }
@@ -68,6 +100,9 @@ export default function ProjectsScreen({ serverId }: ProjectsScreenProps) {
   return (
     <View testID="projects-list">
       {scopedErrors.length > 0 ? <HostErrorsBanner errors={scopedErrors} /> : null}
+      {hasProjectLinksToReview ? (
+        <ProjectLinksBanner suggestionCount={scopedSuggestions.length} onOpen={openLinksSheet} />
+      ) : null}
       <View style={settingsStyles.card}>
         {hostProjects.map(({ project, host }, index) => (
           <ProjectRow
@@ -79,7 +114,39 @@ export default function ProjectsScreen({ serverId }: ProjectsScreenProps) {
           />
         ))}
       </View>
+      <ProjectLinksSheet
+        visible={isLinksSheetOpen}
+        onClose={closeLinksSheet}
+        placements={projectLinkPlacements}
+        suggestions={projectLinkSuggestions}
+      />
     </View>
+  );
+}
+
+function ProjectLinksBanner({
+  suggestionCount,
+  onOpen,
+}: {
+  suggestionCount: number;
+  onOpen: () => void;
+}) {
+  const { t } = useTranslation();
+  return (
+    <Alert
+      variant="info"
+      title={
+        suggestionCount > 0
+          ? t("settings.projectLinks.banner.matchesTitle", { count: suggestionCount })
+          : t("settings.projectLinks.banner.linkedTitle")
+      }
+      description={t("settings.projectLinks.banner.description")}
+      testID="project-links-banner"
+    >
+      <Button onPress={onOpen} variant="outline" size="sm" testID="project-links-review">
+        {t("settings.projectLinks.banner.review")}
+      </Button>
+    </Alert>
   );
 }
 
