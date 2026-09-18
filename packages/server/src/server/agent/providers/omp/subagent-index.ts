@@ -15,6 +15,7 @@ interface OmpSubagentState {
   resolvedModel: string | null;
   toolCallId: string | null;
   status: "running" | "completed" | "failed" | "canceled";
+  detached: boolean;
   mapper: OmpHistoryMapper;
 }
 
@@ -23,6 +24,9 @@ export class OmpSubagentIndex {
 
   handleLifecycle(parent: object, payload: OmpSubagentLifecyclePayload): AgentStreamEvent[] {
     const state = this.stateFor(parent, payload.id, payload.agent);
+    if (payload.status === "started") {
+      state.detached = payload.detached === true;
+    }
     state.title = payload.agent || state.title;
     state.description = payload.description ?? state.description;
     state.toolCallId = payload.parentToolCallId ?? state.toolCallId;
@@ -33,13 +37,19 @@ export class OmpSubagentIndex {
   handleProgress(parent: object, payload: OmpSubagentProgressPayload): AgentStreamEvent[] {
     const id = payload.progress.id;
     const state = this.stateFor(parent, id, payload.agent);
+    const status = mapProgressStatus(payload.progress.status);
+    // Progress may trail cancellation; only a new started lifecycle reopens the child.
+    if (state.status === "canceled" && status === "running") {
+      return [];
+    }
+    state.detached = payload.detached ?? state.detached;
     state.title = payload.agent || state.title;
     state.description = payload.progress.description ?? payload.assignment ?? state.description;
     if (payload.progress.resolvedModel?.trim()) {
       state.resolvedModel = payload.progress.resolvedModel;
     }
     state.toolCallId = payload.parentToolCallId ?? state.toolCallId;
-    state.status = mapProgressStatus(payload.progress.status);
+    state.status = status;
     return [this.upsert(id, state.status, state)];
   }
 
@@ -64,14 +74,14 @@ export class OmpSubagentIndex {
     );
   }
 
-  terminalizeRunning(parent: object): AgentStreamEvent[] {
+  terminalizeRunning(parent: object, scope: "foreground" | "all"): AgentStreamEvent[] {
     const states = this.statesByParent.get(parent);
     if (!states) {
       return [];
     }
     const events: AgentStreamEvent[] = [];
     for (const [id, state] of states) {
-      if (state.status !== "running") {
+      if (state.status !== "running" || (scope === "foreground" && state.detached)) {
         continue;
       }
       state.status = "canceled";
@@ -94,6 +104,7 @@ export class OmpSubagentIndex {
       resolvedModel: null,
       toolCallId: null,
       status: "running",
+      detached: false,
       mapper: new OmpHistoryMapper("omp", [], OMP_HISTORY_MAPPER_HOOKS),
     };
     states.set(id, state);
