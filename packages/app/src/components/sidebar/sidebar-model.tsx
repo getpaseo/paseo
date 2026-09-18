@@ -1,3 +1,4 @@
+import { isChatsProject } from "@/chats/model";
 import React, { createContext, useContext, useEffect, useMemo, type ReactNode } from "react";
 import {
   useSidebarWorkspacesList,
@@ -117,7 +118,7 @@ export function SidebarModelProvider({
   // a header row you can create your first workspace under. The label filter can only ask about
   // workspaces, so a project it empties has nothing left to show.
   const filteredProjects = useMemo(() => {
-    let projects = list.projects;
+    let projects = list.projects.filter((project) => !isChatsProject(project));
     if (hasActiveProjectFilter) {
       const included = new Set(resolvedProjectFilters);
       projects = projects.filter((project) => included.has(project.viewKey));
@@ -168,9 +169,9 @@ export function SidebarModelProvider({
     () => ({
       ...list,
       projects: filteredProjects,
-      allProjects: list.projects,
+      allProjects: list.projects.filter((project) => !isChatsProject(project)),
       resolvedProjectFilters,
-      hasProjectsBeforeFilter: list.projects.length > 0,
+      hasProjectsBeforeFilter: list.projects.some((project) => !isChatsProject(project)),
       workspaceEntriesByKey: filteredWorkspaceEntriesByKey,
       groupMode,
       workspaceGroups: projection.workspaceGroups,

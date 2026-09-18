@@ -24,7 +24,7 @@ export interface PluginWorkspaceSnapshot {
   readonly projectRootPath: string;
   readonly directory: string;
   readonly projectKind: "git" | "non_git" | "directory";
-  readonly kind: "directory" | "local_checkout" | "checkout" | "worktree";
+  readonly kind: "directory" | "local_checkout" | "checkout" | "worktree" | "chat";
   readonly name: string;
   readonly title: string | null;
   readonly status: "needs_input" | "failed" | "running" | "attention" | "done";

@@ -1285,7 +1285,9 @@ export const fr: TranslationResources = {
   },
   newWorkspace: {
     title: "Nouvel espace de travail",
+    chatTitle: "Nouvelle discussion",
     create: "Créer",
+    startChat: "Démarrer la discussion",
     isolation: {
       local: "Local",
       worktree: "Nouveau worktree",
@@ -1299,6 +1301,7 @@ export const fr: TranslationResources = {
     titlePlaceholder: "Titre (facultatif)",
     errors: {
       hostDisconnected: "Hostn'est pas connecté",
+      chatHostUpgradeRequired: "Mettez à jour l'hôte pour créer des sessions de discussion",
       createWorktreeFailed: "Échec de la création de l'arbre de travail",
       composerStateRequired: "L'état du compositeur est requis",
       selectModel: "Sélectionnez un modèle",

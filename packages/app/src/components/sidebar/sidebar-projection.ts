@@ -1,3 +1,4 @@
+import { isChatWorkspace } from "@/chats/model";
 import { buildStatusGroups } from "@/hooks/sidebar-status-view-model";
 import {
   splitPinnedSidebarGroups,
@@ -55,7 +56,7 @@ export function buildSidebarProjection(input: SidebarProjectionInput): SidebarPr
   });
   const pinnedWorkspaceKeys = new Set(input.pinnedKeys.pinnedWorkspaceKeys);
   const unpinnedWorkspaces = Array.from(input.workspaceEntriesByKey.values()).filter(
-    (workspace) => !pinnedWorkspaceKeys.has(workspace.workspaceKey),
+    (workspace) => !pinnedWorkspaceKeys.has(workspace.workspaceKey) && !isChatWorkspace(workspace),
   );
   // One switch decides both what the list groups by and what the keyboard shortcuts walk, so the
   // two cannot disagree and a new grouping mode is a compile error here rather than a silent

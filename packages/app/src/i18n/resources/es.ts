@@ -1285,7 +1285,9 @@ export const es: TranslationResources = {
   },
   newWorkspace: {
     title: "Nuevo espacio de trabajo",
+    chatTitle: "Nuevo chat",
     create: "Crear",
+    startChat: "Iniciar chat",
     isolation: {
       local: "Local",
       worktree: "Nuevo worktree",
@@ -1299,6 +1301,7 @@ export const es: TranslationResources = {
     titlePlaceholder: "Título (opcional)",
     errors: {
       hostDisconnected: "Hostno está conectado",
+      chatHostUpgradeRequired: "Actualiza el host para crear sesiones de chat",
       createWorktreeFailed: "No se pudo crear el árbol de trabajo",
       composerStateRequired: "Se requiere el estado del compositor",
       selectModel: "Selecciona un modelo",

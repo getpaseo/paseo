@@ -1238,7 +1238,9 @@ export const zhCN: TranslationResources = {
   },
   newWorkspace: {
     title: "新建 workspace",
+    chatTitle: "新建对话",
     create: "创建",
+    startChat: "开始对话",
     isolation: {
       local: "本地",
       worktree: "新建 worktree",
@@ -1252,6 +1254,7 @@ export const zhCN: TranslationResources = {
     titlePlaceholder: "标题（可选）",
     errors: {
       hostDisconnected: "Host 未连接",
+      chatHostUpgradeRequired: "更新 Host 以支持创建对话",
       createWorktreeFailed: "创建 worktree 失败",
       composerStateRequired: "Composer 状态必填",
       selectModel: "请选择模型",

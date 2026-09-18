@@ -1,3 +1,4 @@
+import { isChatsProject } from "@/chats/model";
 import { useCallback, useMemo } from "react";
 import { Pressable, Text, View, type PressableStateCallbackType } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
@@ -26,11 +27,13 @@ export default function ProjectsScreen({ serverId }: ProjectsScreenProps) {
   const { projects, hostErrors, isLoading } = useProjects();
   const hostProjects = useMemo<HostProject[]>(
     () =>
-      projects.flatMap((project) =>
-        project.hosts
-          .filter((host) => host.serverId === serverId)
-          .map((host) => ({ project, host })),
-      ),
+      projects
+        .filter((project) => !isChatsProject(project))
+        .flatMap((project) =>
+          project.hosts
+            .filter((host) => host.serverId === serverId)
+            .map((host) => ({ project, host })),
+        ),
     [projects, serverId],
   );
   const scopedErrors = hostErrors.filter((error) => error.serverId === serverId);

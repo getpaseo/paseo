@@ -70,6 +70,10 @@ import {
   createWorkspaceScriptsService,
   type WorkspaceScriptsService,
 } from "./session/workspace-scripts/workspace-scripts-service.js";
+import {
+  resolvePaseoChatsDirectory,
+  ensureChatSessionDirectory,
+} from "./session/chat-directory.js";
 import type { DaemonConfigStore } from "./daemon-config-store.js";
 import { loadPersistedConfig } from "./persisted-config.js";
 import { releaseWorkspaceServicePortPlan } from "./workspace-service-port-registry.js";
@@ -674,7 +678,7 @@ export class Session {
         );
       } else this.emitBinary(frame);
     },
-    (source, message) => this.workspaceSetupMessageForClient(message, source),
+    (source, message) => this.adaptOutboundMessageForClient(message, source),
     (request, message) =>
       this.sessionLogger.warn(
         {
@@ -4067,10 +4071,14 @@ export class Session {
             ? async (id, workspace, onReady) => {
                 if (!workspace?.workspaceDirectory)
                   throw new Error("Created workspace has no directory");
-                const sourceCwd =
-                  request.source.kind === "directory"
-                    ? request.source.path
-                    : await resolveWorktreeSourceCwd(request.source, this.projectRegistry);
+                let sourceCwd: string;
+                if (request.source.kind === "directory") {
+                  sourceCwd = request.source.path;
+                } else if (request.source.kind === "worktree") {
+                  sourceCwd = await resolveWorktreeSourceCwd(request.source, this.projectRegistry);
+                } else {
+                  sourceCwd = workspace.workspaceDirectory;
+                }
                 const relativeCwd = relative(resolve(sourceCwd), resolve(agentInput.config.cwd));
                 if (
                   relativeCwd === ".." ||
@@ -5642,7 +5650,11 @@ export class Session {
     projectRecord?: PersistedProjectRecord | null;
     includeGitData: boolean;
   }): Promise<WorkspaceDescriptorPayload> {
-    if (input.includeGitData && input.workspace.kind !== "directory") {
+    if (
+      input.includeGitData &&
+      input.workspace.kind !== "directory" &&
+      input.workspace.kind !== "chat"
+    ) {
       return this.describeWorkspaceRecordWithGitData(input.workspace, input.projectRecord);
     }
     return this.describeWorkspaceRecord(input.workspace, input.projectRecord);
@@ -6605,6 +6617,9 @@ export class Session {
       const transformed = await this.pluginRuntime.before("workspace.create", input);
       creationRequest = { ...transformed, type, requestId };
     }
+    if (creationRequest.source.kind === "chat") {
+      return this.handleWorkspaceCreateChat(creationRequest, workspaceId);
+    }
     return creationRequest.source.kind === "directory"
       ? this.handleWorkspaceCreateLocal(creationRequest, workspaceId)
       : this.handleWorkspaceCreateWorktree(creationRequest, workspaceId);
@@ -6646,6 +6661,49 @@ export class Session {
           "Background snapshot refresh failed after workspace.create",
         );
       });
+    if (request.firstAgentContext) {
+      const firstAgentContext = request.firstAgentContext;
+      this.workspaceAutoName.scheduleForDirectory(
+        {
+          workspaceId: workspace.workspaceId,
+          cwd: workspace.cwd,
+          firstAgentContext,
+        },
+        { currentSelection: this.getFocusedAgentSelectionForCwd(workspace.cwd) },
+      );
+    }
+    return descriptor;
+  }
+
+  private async handleWorkspaceCreateChat(
+    request: Extract<SessionInboundMessage, { type: "workspace.create.request" }>,
+    workspaceId?: string,
+  ): Promise<WorkspaceDescriptorPayload> {
+    if (request.source.kind !== "chat") {
+      throw new Error("Unexpected workspace source");
+    }
+
+    const baseDir = resolvePaseoChatsDirectory(this.paseoHome, request.source.chatsDirectory);
+    const { chatDir, sessionId } = await ensureChatSessionDirectory(
+      baseDir,
+      request.source.sessionId,
+    );
+
+    const explicitTitle = request.title?.trim() || null;
+    const promptTitle = resolveFirstAgentPromptTitle(request.firstAgentContext);
+    const workspace = await this.workspaceProvisioning.createWorkspaceForChat({
+      cwd: chatDir,
+      sessionId,
+      title: explicitTitle ?? promptTitle,
+      expectsInitialAgent: Boolean(request.firstAgentContext),
+      workspaceId,
+    });
+
+    const descriptor = await this.describeWorkspaceRecord(workspace);
+    await this.emitCreatedWorkspaceUpdate(
+      descriptor,
+      request.firstAgentContext ? "running" : undefined,
+    );
     if (request.firstAgentContext) {
       const firstAgentContext = request.firstAgentContext;
       this.workspaceAutoName.scheduleForDirectory(
@@ -8311,19 +8369,35 @@ export class Session {
           !this.delivery.isModern(source) &&
           this.wantsEvent(event, source)
         )
-          this.onMessageToSource(source, this.workspaceSetupMessageForClient(message, source));
+          this.onMessageToSource(source, this.adaptOutboundMessageForClient(message, source));
       }
-    } else if (delivered.size === 0 && this.wantsEvent(event)) this.onMessage(message);
+    } else if (delivered.size === 0 && this.wantsEvent(event))
+      this.onMessage(this.adaptOutboundMessageForClient(message));
     return true;
+  }
+
+  private adaptOutboundMessageForClient(
+    msg: SessionOutboundMessage,
+    source?: object,
+  ): SessionOutboundMessage {
+    if (msg.type === "workspace_setup_progress" || msg.type === "workspace_setup_status_response") {
+      return this.workspaceSetupMessageForClient(msg, source);
+    }
+    if (
+      msg.type === "fetch_workspaces_response" ||
+      msg.type === "workspace_update" ||
+      msg.type === "workspace.create.response" ||
+      msg.type === "open_project_response"
+    ) {
+      return this.sanitizeWorkspaceMessageForClient(msg, source);
+    }
+    return msg;
   }
 
   private emit(msg: SessionOutboundMessage): void {
     if (!this.authorization.allowsOutbound(msg)) return;
     if (this.delivery.reply(msg)) return;
     if (this.emitSubscribedEvent(msg)) return;
-    // JSON.stringify(msg) is only computed when trace is enabled — it runs for
-    // every outbound message otherwise, and trace is disabled by default.
-    // Optional-chained because test logger stubs don't implement isLevelEnabled.
     if (this.sessionLogger.isLevelEnabled?.("trace")) {
       this.sessionLogger.trace(
         {
@@ -8333,16 +8407,13 @@ export class Session {
         "agent.session.outbound",
       );
     }
-    if (msg.type === "workspace_setup_progress" || msg.type === "workspace_setup_status_response") {
-      if (this.clientSources.size > 0 && this.onMessageToSource) {
-        for (const [source] of this.clientSources) {
-          this.onMessageToSource(source, this.workspaceSetupMessageForClient(msg, source));
-        }
-        return;
+    if (this.clientSources.size > 0 && this.onMessageToSource) {
+      for (const [source] of this.clientSources) {
+        this.onMessageToSource(source, this.adaptOutboundMessageForClient(msg, source));
       }
-      msg = this.workspaceSetupMessageForClient(msg);
+      return;
     }
-    this.onMessage(msg);
+    this.onMessage(this.adaptOutboundMessageForClient(msg));
   }
 
   // COMPAT(workspaceSetupBlocked): added in v0.8.0, remove after 2027-03-07 once client floor >= v0.8.0.
@@ -8372,6 +8443,84 @@ export class Session {
       : { ...message, payload: { ...message.payload, snapshot: legacySnapshot } };
   }
 
+  // COMPAT(chatWorkspaces): added in v0.9.0, remove after 2027-03-10 once client floor >= v0.9.0.
+  // Older clients fail closed-enum validation if workspaceKind is "chat". Downgrade to "directory"
+  // when client does not advertise chatWorkspaces capability.
+  private sanitizeWorkspaceMessageForClient(
+    message: SessionOutboundMessage,
+    source?: object,
+  ): SessionOutboundMessage {
+    const supportsChat = source
+      ? this.supportsForSource(CLIENT_CAPS.chatWorkspaces, source)
+      : this.supports(CLIENT_CAPS.chatWorkspaces);
+    if (supportsChat) {
+      return message;
+    }
+
+    if (message.type === "fetch_workspaces_response") {
+      return {
+        ...message,
+        payload: {
+          ...message.payload,
+          entries: message.payload.entries.map((entry) =>
+            entry.workspaceKind === "chat"
+              ? { ...entry, workspaceKind: "directory" as const }
+              : entry,
+          ),
+        },
+      };
+    }
+
+    if (message.type === "workspace_update") {
+      if (message.payload.kind === "upsert" && message.payload.workspace.workspaceKind === "chat") {
+        return {
+          ...message,
+          payload: {
+            ...message.payload,
+            workspace: {
+              ...message.payload.workspace,
+              workspaceKind: "directory",
+            },
+          },
+        };
+      }
+      return message;
+    }
+
+    if (message.type === "workspace.create.response") {
+      if (message.payload.workspace && message.payload.workspace.workspaceKind === "chat") {
+        return {
+          ...message,
+          payload: {
+            ...message.payload,
+            workspace: {
+              ...message.payload.workspace,
+              workspaceKind: "directory",
+            },
+          },
+        };
+      }
+      return message;
+    }
+
+    if (message.type === "open_project_response") {
+      if (message.payload.workspace && message.payload.workspace.workspaceKind === "chat") {
+        return {
+          ...message,
+          payload: {
+            ...message.payload,
+            workspace: {
+              ...message.payload.workspace,
+              workspaceKind: "directory",
+            },
+          },
+        };
+      }
+      return message;
+    }
+    return message;
+  }
+
   private emitBinary(frame: Uint8Array): void {
     if (!this.onBinaryMessage) {
       return;
@@ -8393,12 +8542,13 @@ export class Session {
   }
 
   private emitForSource(msg: SessionOutboundMessage, source?: object): void {
+    const adapted = this.adaptOutboundMessageForClient(msg, source);
     if (source && this.onMessageToSource) {
-      msg = this.delivery.authorizeReply(msg, source);
-      this.onMessageToSource(source, msg);
+      const authorized = this.delivery.authorizeReply(adapted, source);
+      this.onMessageToSource(source, authorized);
       return;
     }
-    this.emit(msg);
+    this.emit(adapted);
   }
 
   /**

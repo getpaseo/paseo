@@ -173,4 +173,40 @@ describe("buildWorkspaceStructureProjects", () => {
       placementShapedKey,
     );
   });
+
+  test("sorts Chats project to the very top", () => {
+    const result = buildWorkspaceStructureProjects({
+      sessions: [
+        {
+          serverId: "host-a",
+          projects: [
+            project({ id: "prj_a", key: "repo-a", root: "/repos/a", name: "Alpha" }),
+            project({ id: "prj_chats", key: "__chats__", root: "/chats", name: "Chats" }),
+            project({ id: "prj_b", key: "repo-b", root: "/repos/b", name: "Beta" }),
+          ],
+          workspaces: [],
+        },
+      ],
+    });
+
+    expect(result.map((p) => p.projectName)).toEqual(["Chats", "Alpha", "Beta"]);
+  });
+
+  test("sorts ordinary projects in alphabetical order", () => {
+    const result = buildWorkspaceStructureProjects({
+      sessions: [
+        {
+          serverId: "host-a",
+          projects: [
+            project({ id: "prj_c", key: "repo-c", root: "/repos/c", name: "Gamma" }),
+            project({ id: "prj_a", key: "repo-a", root: "/repos/a", name: "Alpha" }),
+            project({ id: "prj_b", key: "repo-b", root: "/repos/b", name: "Beta" }),
+          ],
+          workspaces: [],
+        },
+      ],
+    });
+
+    expect(result.map((p) => p.projectName)).toEqual(["Alpha", "Beta", "Gamma"]);
+  });
 });

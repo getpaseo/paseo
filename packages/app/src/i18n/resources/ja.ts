@@ -1263,7 +1263,9 @@ export const ja: TranslationResources = {
   },
   newWorkspace: {
     title: "新しいワークスペース",
+    chatTitle: "新しいチャット",
     create: "作成",
+    startChat: "チャットを開始",
     isolation: {
       local: "ローカル",
       worktree: "新しいワークツリー",
@@ -1277,6 +1279,7 @@ export const ja: TranslationResources = {
     titlePlaceholder: "タイトル（任意）",
     errors: {
       hostDisconnected: "ホストが接続されていません",
+      chatHostUpgradeRequired: "チャットセッションを作成するにはホストを更新してください",
       createWorktreeFailed: "ワークツリーの作成に失敗しました",
       composerStateRequired: "コンポーザーの状態が必要です",
       selectModel: "モデルを選択してください",

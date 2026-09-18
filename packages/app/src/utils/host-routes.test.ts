@@ -241,6 +241,15 @@ describe("global routes", () => {
       }),
     ).toBe("/new?serverId=local&dir=%2Frepo%2Fproject&draftId=draft-1");
   });
+
+  it("buildNewWorkspaceRoute accepts kind: chat", () => {
+    expect(
+      buildNewWorkspaceRoute({
+        serverId: "local",
+        kind: "chat",
+      }),
+    ).toBe("/new?serverId=local&kind=chat");
+  });
 });
 
 describe("host settings section slugs", () => {

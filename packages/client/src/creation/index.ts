@@ -63,8 +63,12 @@ export class CreationClient {
       if (request.workspaceId || request.agent?.agentId)
         throw new Error("Update the host to use caller-selected creation IDs.");
       const { agent, ...workspaceInput } = request;
-      const sourceCwd =
-        request.source.kind === "directory" ? request.source.path : request.source.cwd;
+      let sourceCwd: string | undefined;
+      if (request.source.kind === "directory") {
+        sourceCwd = request.source.path;
+      } else if (request.source.kind === "worktree") {
+        sourceCwd = request.source.cwd;
+      }
       const relativeCwd =
         agent && sourceCwd ? relativeDirectory(agent.config!.cwd, sourceCwd) : undefined;
       const workspace = await this.deps.legacyWorkspace(workspaceInput);

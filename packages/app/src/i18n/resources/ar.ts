@@ -1249,7 +1249,9 @@ export const ar: TranslationResources = {
   },
   newWorkspace: {
     title: "مساحة عمل جديدة",
+    chatTitle: "دردشة جديدة",
     create: "يخلق",
+    startChat: "بدء الدردشة",
     isolation: {
       local: "محلي",
       worktree: "شجرة عمل جديدة",
@@ -1263,6 +1265,7 @@ export const ar: TranslationResources = {
     titlePlaceholder: "العنوان (اختياري)",
     errors: {
       hostDisconnected: "Host غير متصل",
+      chatHostUpgradeRequired: "قم بتحديث المضيف لإنشاء جلسات الدردشة",
       createWorktreeFailed: "فشل في إنشاء شجرة العمل",
       composerStateRequired: "حالة الملحن مطلوبة",
       selectModel: "اختر نموذجا",
