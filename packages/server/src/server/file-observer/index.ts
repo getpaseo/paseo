@@ -29,6 +29,7 @@ export interface FileObserverDiagnostics {
   nativeTrackedFileCount: number;
   pendingEventCount: number;
   pendingReconciliationWorkCount: number;
+  pendingClassificationCount: number;
   reconciliationInFlightCount: number;
   reconciliationCount: number;
   scopedReconciliationCount: number;
@@ -120,6 +121,7 @@ class FileObserverService implements FileObserver {
     let nativeTrackedFileCount = 0;
     let pendingEventCount = 0;
     let pendingReconciliationWorkCount = 0;
+    let pendingClassificationCount = 0;
     let reconciliationInFlightCount = 0;
     for (const observation of observations) {
       const diagnostics = observation.getDiagnostics();
@@ -127,6 +129,7 @@ class FileObserverService implements FileObserver {
       nativeTrackedFileCount += diagnostics.nativeTrackedFileCount;
       pendingEventCount += diagnostics.pendingEventCount;
       pendingReconciliationWorkCount += diagnostics.pendingReconciliationWorkCount;
+      pendingClassificationCount += diagnostics.pendingClassificationCount;
       reconciliationInFlightCount += Number(diagnostics.reconciliationInFlight);
     }
     return {
@@ -135,6 +138,7 @@ class FileObserverService implements FileObserver {
       nativeTrackedFileCount,
       pendingEventCount,
       pendingReconciliationWorkCount,
+      pendingClassificationCount,
       reconciliationInFlightCount,
       ...metrics,
     };
@@ -178,6 +182,7 @@ function emptyDiagnostics(): FileObserverDiagnostics {
     nativeTrackedFileCount: 0,
     pendingEventCount: 0,
     pendingReconciliationWorkCount: 0,
+    pendingClassificationCount: 0,
     reconciliationInFlightCount: 0,
     ...createObserverMetrics(),
   };
