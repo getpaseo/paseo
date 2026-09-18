@@ -4033,3 +4033,204 @@ describe("ACP session/load invariant — cwd and mcpServers always passed", () =
     });
   });
 });
+
+describe("ACPAgentSession provider session recovery", () => {
+  function findEvent(
+    events: AgentStreamEvent[],
+    type: AgentStreamEvent["type"],
+  ): AgentStreamEvent | undefined {
+    return events.find((event) => event.type === type);
+  }
+
+  async function waitForEvent(
+    events: AgentStreamEvent[],
+    type: AgentStreamEvent["type"],
+  ): Promise<void> {
+    await vi.waitFor(() => {
+      expect(findEvent(events, type)).toBeTruthy();
+    });
+  }
+
+  const SESSION_INVALID_ERROR = new Error(
+    "runtime acp:session_1e02711b does not exist in workspace wd_clinicalextractor_46f49d607365",
+  );
+
+  interface RecoverySessionInternals {
+    sessionId: string | null;
+    child: ChildProcessWithoutNullStreams | null;
+    connection: ClientSideConnection;
+    activeForegroundTurnId: string | null;
+  }
+
+  function makeRecoverySession(args: {
+    firstPrompt: (...args: unknown[]) => Promise<PromptResponse>;
+    spawnError?: Error;
+  }) {
+    const loadSession = vi.fn().mockResolvedValue({
+      sessionId: "session-1",
+      modes: null,
+      models: null,
+      configOptions: [],
+    });
+    const rebuiltPrompt = vi
+      .fn()
+      .mockResolvedValue({ stopReason: "end_turn", usage: { outputTokens: 1 } });
+    let spawnCount = 0;
+
+    class TestSession extends ACPAgentSession {
+      protected override async spawnProcess(): Promise<SpawnedACPProcess> {
+        spawnCount += 1;
+        if (args.spawnError) {
+          throw args.spawnError;
+        }
+        return {
+          child: createProbeChildStub(),
+          connection: {
+            prompt: rebuiltPrompt,
+            loadSession,
+          } as unknown as ClientSideConnection,
+          initialize: { agentCapabilities: { loadSession: true } },
+        } as SpawnedACPProcess;
+      }
+    }
+
+    const terminator = new FakeTerminator();
+    const session = new TestSession(
+      { provider: "claude-acp", cwd: "/tmp/paseo-acp-test" },
+      {
+        provider: "claude-acp",
+        logger: createTestLogger(),
+        defaultCommand: ["claude", "--acp"],
+        defaultModes: [],
+        capabilities: {
+          supportsStreaming: true,
+          supportsSessionPersistence: true,
+          supportsDynamicModes: true,
+          supportsMcpServers: true,
+          supportsReasoningStream: true,
+          supportsToolInvocations: true,
+        },
+        terminateProcess: terminator.terminate,
+      },
+    );
+
+    const firstConnection = { prompt: vi.fn(args.firstPrompt) };
+    const internals = asInternals<RecoverySessionInternals>(session);
+    internals.sessionId = "session-1";
+    internals.child = createProbeChildStub();
+    internals.connection = firstConnection as unknown as ClientSideConnection;
+
+    return {
+      session,
+      terminator,
+      firstConnection,
+      loadSession,
+      rebuiltPrompt,
+      getSpawnCount: () => spawnCount,
+    };
+  }
+
+  test("rebuilds the provider process and re-prompts once when the prompt fails with a session-invalid error", async () => {
+    const { session, terminator, loadSession, rebuiltPrompt, getSpawnCount } = makeRecoverySession({
+      firstPrompt: () => Promise.reject(SESSION_INVALID_ERROR),
+    });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    const { turnId } = await session.startTurn("hello");
+
+    await waitForEvent(events, "turn_completed");
+
+    expect(loadSession).toHaveBeenCalledWith({
+      sessionId: "session-1",
+      cwd: "/tmp/paseo-acp-test",
+      mcpServers: [],
+    });
+    expect(rebuiltPrompt).toHaveBeenCalledTimes(1);
+    expect(getSpawnCount()).toBe(1);
+    expect(terminator.terminated).toHaveLength(1);
+    expect(findEvent(events, "turn_failed")).toBeUndefined();
+    expect(findEvent(events, "turn_started")).toMatchObject({ turnId });
+    expect(findEvent(events, "turn_completed")).toMatchObject({ turnId });
+    expect(asInternals<RecoverySessionInternals>(session).activeForegroundTurnId).toBeNull();
+  });
+
+  test("fails the turn without rebuilding when the prompt error is not session-invalid", async () => {
+    const { session, loadSession, getSpawnCount } = makeRecoverySession({
+      firstPrompt: () => Promise.reject(new Error("session prompt failed")),
+    });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    const { turnId } = await session.startTurn("hello");
+
+    await waitForEvent(events, "turn_failed");
+
+    expect(findEvent(events, "turn_failed")).toMatchObject({
+      turnId,
+      error: "session prompt failed",
+    });
+    expect(getSpawnCount()).toBe(0);
+    expect(loadSession).not.toHaveBeenCalled();
+  });
+
+  test("fails the turn with the original error when the recovery rebuild fails", async () => {
+    const { session, getSpawnCount } = makeRecoverySession({
+      firstPrompt: () => Promise.reject(SESSION_INVALID_ERROR),
+      spawnError: new Error("spawn failed"),
+    });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    const { turnId } = await session.startTurn("hello");
+
+    await waitForEvent(events, "turn_failed");
+
+    const failed = events.find((event) => event.type === "turn_failed") as Extract<
+      AgentStreamEvent,
+      { type: "turn_failed" }
+    >;
+    expect(failed.turnId).toBe(turnId);
+    expect(failed.error).toContain("does not exist in workspace");
+    expect(getSpawnCount()).toBe(1);
+  });
+
+  test("settles an in-band session-invalid message as a failed turn and rebuilds before the next turn", async () => {
+    const { session, loadSession, rebuiltPrompt, getSpawnCount } = makeRecoverySession({
+      firstPrompt: () => new Promise<PromptResponse>(() => {}),
+    });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    const { turnId } = await session.startTurn("hello");
+
+    await session.sessionUpdate({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "agent_message_chunk",
+        content: {
+          type: "text",
+          text: "Error: [internal] runtime acp:session_x does not exist in workspace wd_y",
+        },
+      } as SessionUpdate,
+    });
+
+    await waitForEvent(events, "turn_failed");
+
+    expect(findEvent(events, "turn_failed")).toMatchObject({ turnId });
+    const chunk = events
+      .filter((event) => event.type === "timeline")
+      .map((event) => (event as Extract<AgentStreamEvent, { type: "timeline" }>).item)
+      .find((item) => item.type === "assistant_message");
+    expect(chunk).toMatchObject({
+      type: "assistant_message",
+      text: "Error: [internal] runtime acp:session_x does not exist in workspace wd_y",
+    });
+
+    await session.startTurn("again");
+
+    await vi.waitFor(() => expect(rebuiltPrompt).toHaveBeenCalledTimes(1));
+    expect(loadSession).toHaveBeenCalledTimes(1);
+    expect(getSpawnCount()).toBe(1);
+  });
+});

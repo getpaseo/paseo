@@ -124,6 +124,10 @@ import {
   toDiagnosticErrorMessage,
   truncateForDiagnostic,
 } from "./diagnostic-utils.js";
+import {
+  isACPProviderSessionInvalidError,
+  isACPProviderSessionInvalidText,
+} from "./acp-session-invalid.js";
 import { withTimeout } from "../../../utils/promise-timeout.js";
 
 const ACP_AUTO_ACCEPT_FEATURE_ID = "auto_accept";
@@ -1687,6 +1691,13 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private historyPending = false;
   private replayingHistory = false;
   private bootstrapThreadEventPending = false;
+  // Set when the provider reports the live session as invalid (lost runtime
+  // binding, unknown session id). The current turn fails; the next startTurn
+  // rebuilds the provider process and re-loads the persisted session.
+  private sessionTransportInvalid = false;
+  // Guards the same-turn recovery in handlePromptFailure: one rebuild attempt
+  // per turn, so a provider that keeps rejecting cannot loop rebuilds.
+  private turnRecoveryAttempted = false;
   private readonly terminateProcess: ProcessTerminator;
 
   constructor(config: AgentSessionConfig, options: ACPAgentSessionOptions) {
@@ -1845,12 +1856,21 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       throw new Error("A foreground turn is already active");
     }
 
+    if (this.sessionTransportInvalid && !this.closed) {
+      // The provider reported this session as invalid during a previous turn.
+      // Rebuild the process before starting so the new turn lands on a fresh,
+      // correctly bound transport instead of failing the same way again.
+      this.sessionTransportInvalid = false;
+      await this.rebuildTransportFromPersistence();
+    }
+
     this.deliverTranslatedEvents(this.flushPendingUserMessage());
     const turnId = randomUUID();
     const messageId = options?.clientMessageId ?? randomUUID();
     this.activeForegroundTurnId = turnId;
     this.fallbackAssistantMessageId = null;
     this.submittedUserMessageTurnId = null;
+    this.turnRecoveryAttempted = false;
     this.emitBootstrapThreadEvent();
     this.pushEvent({ type: "turn_started", provider: this.provider, turnId });
     this.emitSubmittedUserMessage(prompt, messageId, turnId, options?.clientMessageId);
@@ -1866,18 +1886,178 @@ export class ACPAgentSession implements AgentSession, ACPClient {
         return;
       })
       .catch((error) => {
-        const summary = summarizeACPRequestError(error);
-        this.finishTurn({
-          type: "turn_failed",
-          provider: this.provider,
-          error: summary.message,
-          code: summary.code,
-          diagnostic: this.collectDiagnostic(summary.diagnostic ?? summary.message),
-          turnId,
-        });
+        this.handlePromptFailure(error, { turnId, messageId, prompt });
       });
 
     return { turnId };
+  }
+
+  /**
+   * Prompt failure path. A provider that reports the live session as invalid
+   * (lost runtime binding, unknown session id) is recovered in place once per
+   * turn: the provider process is replaced and the persisted session is
+   * re-loaded, which re-registers what the provider dropped, then the same
+   * prompt is re-issued for the same turn. Any other failure — or a recovery
+   * that itself fails — settles the turn as failed.
+   */
+  private handlePromptFailure(
+    error: unknown,
+    turn: { turnId: string; messageId: string; prompt: AgentPromptInput },
+  ): void {
+    const summary = summarizeACPRequestError(error);
+    if (this.turnRecoveryAttempted || !isACPProviderSessionInvalidError(error)) {
+      this.finishTurn({
+        type: "turn_failed",
+        provider: this.provider,
+        error: summary.message,
+        code: summary.code,
+        diagnostic: this.collectDiagnostic(summary.diagnostic ?? summary.message),
+        turnId: turn.turnId,
+      });
+      return;
+    }
+    this.turnRecoveryAttempted = true;
+    this.logger.warn(
+      { err: error, provider: this.provider, sessionId: this.sessionId, turnId: turn.turnId },
+      "ACP provider reported the session as invalid; rebuilding the provider process and resuming from persistence",
+    );
+    void this.recoverAndReprompt(turn, summary);
+  }
+
+  private async recoverAndReprompt(
+    turn: { turnId: string; messageId: string; prompt: AgentPromptInput },
+    summary: ReturnType<typeof summarizeACPRequestError>,
+  ): Promise<void> {
+    const finishFailed = (): void => {
+      this.finishTurn({
+        type: "turn_failed",
+        provider: this.provider,
+        error: summary.message,
+        code: summary.code,
+        diagnostic: this.collectDiagnostic(summary.diagnostic ?? summary.message),
+        turnId: turn.turnId,
+      });
+    };
+
+    try {
+      await this.rebuildTransportFromPersistence();
+    } catch (recoveryError) {
+      this.logger.warn(
+        { err: recoveryError, provider: this.provider, sessionId: this.sessionId },
+        "ACP session recovery failed",
+      );
+      finishFailed();
+      return;
+    }
+
+    const connection = this.connection;
+    const sessionId = this.sessionId;
+    if (!connection || !sessionId) {
+      finishFailed();
+      return;
+    }
+    try {
+      const response = await connection.prompt({
+        sessionId,
+        messageId: turn.messageId,
+        prompt: toACPContentBlocks(turn.prompt),
+      });
+      this.handlePromptResponse(response, turn.turnId);
+    } catch (retryError) {
+      // Recovery already attempted for this turn; the retry failure settles
+      // the turn as failed.
+      this.handlePromptFailure(retryError, turn);
+    }
+  }
+
+  /**
+   * Replace the provider process and re-load the persisted session. Used when
+   * a provider reports the live session as invalid: a fresh process
+   * re-registers what the dropped state lost. The timeline already holds the
+   * conversation history, so the reload's replay is captured and discarded
+   * rather than re-emitted.
+   */
+  private async rebuildTransportFromPersistence(): Promise<void> {
+    const handle = this.describePersistence();
+    if (!handle) {
+      throw new Error(`${this.provider} session has no persistence handle to resume from`);
+    }
+
+    await this.teardownTransport();
+
+    const spawned = await this.spawnProcess();
+    this.child = spawned.child;
+    this.connection = spawned.connection;
+    this.agentCapabilities = spawned.initialize.agentCapabilities ?? null;
+    this.sessionId = handle.sessionId;
+
+    if (this.agentCapabilities?.loadSession) {
+      this.replayingHistory = true;
+      try {
+        const response = await this.runACPRequest(() =>
+          this.connection!.loadSession({
+            sessionId: handle.sessionId,
+            cwd: this.config.cwd,
+            mcpServers: this.acpMcpServers(),
+          }),
+        );
+        this.applySessionState(response);
+      } finally {
+        this.replayingHistory = false;
+        this.persistedHistory.length = 0;
+        this.historyPending = false;
+      }
+    } else if (this.agentCapabilities?.sessionCapabilities?.resume) {
+      const response = await this.runACPRequest(() =>
+        this.connection!.unstable_resumeSession({
+          sessionId: handle.sessionId,
+          cwd: this.config.cwd,
+          mcpServers: this.acpMcpServers(),
+        }),
+      );
+      this.applySessionState(response);
+    } else {
+      throw new Error(`${this.provider} does not support ACP session resume`);
+    }
+
+    await this.applyConfiguredOverrides();
+  }
+
+  // Guards the child exit listener during teardownTransport so a planned kill
+  // is not reported as "ACP agent exited unexpectedly" mid-turn.
+  private tearingDownTransport = false;
+
+  // Kill the provider process and its terminals without closing the session:
+  // unlike close(), subscribers and the active turn stay intact so the turn
+  // can continue on the rebuilt transport.
+  private async teardownTransport(): Promise<void> {
+    this.tearingDownTransport = true;
+    try {
+      for (const pending of this.pendingPermissions.values()) {
+        pending.resolve({ outcome: { outcome: "cancelled" } });
+      }
+      this.pendingPermissions.clear();
+
+      const terminalTerminations = Array.from(this.terminalEntries.values(), (terminal) =>
+        this.terminateProcess(terminal.child, {
+          gracefulTimeoutMs: 2_000,
+          forceTimeoutMs: 2_000,
+        }),
+      );
+      await Promise.all(terminalTerminations);
+      this.terminalEntries.clear();
+
+      if (this.child) {
+        await this.terminateProcess(this.child, {
+          gracefulTimeoutMs: 2_000,
+          forceTimeoutMs: 2_000,
+        });
+      }
+    } finally {
+      this.tearingDownTransport = false;
+    }
+    this.child = null;
+    this.connection = null;
   }
 
   subscribe(callback: (event: AgentStreamEvent) => void): () => void {
@@ -2724,7 +2904,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       stderrChunks.push(chunk.toString());
     });
     child.once("exit", (code, signal) => {
-      if (this.closed) {
+      if (this.closed || this.tearingDownTransport) {
         return;
       }
       if (this.activeForegroundTurnId) {
@@ -2865,6 +3045,26 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     switch (update.sessionUpdate) {
       case "agent_message_chunk": {
         const item = this.createMessageTimelineItem("assistant_message", update);
+        if (item && this.activeForegroundTurnId && isACPProviderSessionInvalidText(item.text)) {
+          // Some providers surface a failed turn in-band: the prompt resolves
+          // `end_turn` and the error text arrives as assistant content. Keep
+          // the chunk in the timeline, but settle the turn as failed and mark
+          // the transport for a rebuild before the next turn. Deferred so the
+          // chunk is delivered before the terminal event ends the stream.
+          const failedTurnId = this.activeForegroundTurnId;
+          this.sessionTransportInvalid = true;
+          queueMicrotask(() => {
+            if (this.activeForegroundTurnId === failedTurnId) {
+              this.finishTurn({
+                type: "turn_failed",
+                provider: this.provider,
+                error: item.text,
+                diagnostic: this.collectDiagnostic(item.text),
+                turnId: failedTurnId,
+              });
+            }
+          });
+        }
         return item ? [...pendingUserEvents, this.wrapTimeline(item)] : pendingUserEvents;
       }
       case "agent_thought_chunk": {
