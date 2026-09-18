@@ -536,6 +536,30 @@ container. When delegating filesystem operations to Paseo (`fs.readTextFile: tru
 or `fs.writeTextFile: true`), ensure the agent and Paseo share equivalent
 absolute workspace paths.
 
+Like Cursor, Kiro, and Trae, Paseo waits for a generic ACP agent's initial
+`available_commands_update` before answering the slash palette, because that
+notification can arrive after `session/new`. An agent that never sends the
+optional notification waits out a 1.5-second timeout on the first palette
+request. Set `params.waitForInitialCommands: false` for those agents to answer
+immediately:
+
+```json
+{
+  "agents": {
+    "providers": {
+      "my-agent": {
+        "extends": "acp",
+        "label": "My Agent",
+        "command": ["my-agent", "acp"],
+        "params": {
+          "waitForInitialCommands": false
+        }
+      }
+    }
+  }
+}
+```
+
 ### Generic ACP diagnostics
 
 Paseo diagnostics for `extends: "acp"` providers report the configured command, resolved launcher binary, version output, ACP `initialize`, ACP `session/new`, model count, modes, and final status.

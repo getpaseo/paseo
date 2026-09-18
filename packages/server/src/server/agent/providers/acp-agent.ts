@@ -2914,7 +2914,14 @@ export class ACPAgentSession implements AgentSession, ACPClient {
           name: command.name,
           description: command.description,
           argumentHint: "",
-          kind: "command",
+          // ACP has no first-class command kind. Generic agents whose published
+          // commands are skills (dsh) tag them in the reserved `_meta` bag; the
+          // composer only offers `kind: "skill"` entries inline mid-prompt, so
+          // an untagged command would match at the prompt start only.
+          kind:
+            (command._meta as { kind?: unknown } | null | undefined)?.kind === "skill"
+              ? "skill"
+              : "command",
         }));
         this.settleCommandsReady();
         return pendingUserEvents;
