@@ -13,10 +13,35 @@ export const JSONL_RPC_DEFAULT_TIMEOUT_MS = 30_000;
  * Use for long-running blocking RPCs (e.g. LLM-backed compact).
  */
 export const JSONL_RPC_NO_TIMEOUT = null;
+/** Abort must settle quickly; a child that cannot acknowledge it is not reusable. */
+export const JSONL_RPC_ABORT_TIMEOUT_MS = 5_000;
 
 const STDERR_BUFFER_LIMIT = 8192;
 const GRACEFUL_SHUTDOWN_TIMEOUT_MS = 2_000;
 const FORCE_SHUTDOWN_TIMEOUT_MS = 1_000;
+export class JsonlRpcTimeoutError extends Error {
+  readonly operation: string;
+  readonly elapsedMs: number;
+  readonly timeoutMs: number | null;
+  readonly stderrTail: string;
+
+  constructor(args: {
+    diagnosticName: string;
+    operation: string;
+    elapsedMs: number;
+    timeoutMs: number | null;
+    stderrTail: string;
+  }) {
+    super(
+      `${args.diagnosticName} request timed out phase=${args.operation} elapsedMs=${args.elapsedMs} timeoutMs=${args.timeoutMs}\n${args.stderrTail}`.trim(),
+    );
+    this.name = "JsonlRpcTimeoutError";
+    this.operation = args.operation;
+    this.elapsedMs = args.elapsedMs;
+    this.timeoutMs = args.timeoutMs;
+    this.stderrTail = args.stderrTail;
+  }
+}
 
 export interface JsonlRpcLaunch {
   command: string;
@@ -32,12 +57,27 @@ interface JsonlRpcResponse {
   success?: boolean;
   data?: unknown;
   error?: string;
+  code?: string;
 }
 
 interface PendingRequest {
   resolve: (value: unknown) => void;
   reject: (error: Error) => void;
   timer: NodeJS.Timeout | null;
+}
+
+export interface JsonlRpcRequestOptions {
+  /**
+   * Close the entire transport when this request times out. This is reserved for
+   * control operations whose timeout means the child can no longer be trusted
+   * (for example, abort acknowledgements).
+   */
+  closeOnTimeout?: boolean;
+}
+export interface JsonlRpcRequestArgs {
+  command: { type: string; [key: string]: unknown };
+  timeoutMs?: number | null;
+  requestOptions?: JsonlRpcRequestOptions;
 }
 
 export interface JsonlRpcExit {
@@ -136,10 +176,8 @@ export class JsonlRpcProcess {
     };
   }
 
-  startRequest(
-    command: { type: string; [key: string]: unknown },
-    timeoutMs?: number | null,
-  ): { id: string; promise: Promise<unknown> } {
+  startRequest(options: JsonlRpcRequestArgs): { id: string; promise: Promise<unknown> } {
+    const { command, timeoutMs, requestOptions } = options;
     if (this.disposed) {
       return {
         id: "",
@@ -156,11 +194,17 @@ export class JsonlRpcProcess {
     const promise = new Promise<unknown>((resolve, reject) => {
       const timer = createRequestTimeout(requestTimeoutMs, () => {
         this.pending.delete(id);
-        reject(
-          new Error(
-            `${this.diagnosticName} request timed out phase=${command.type} elapsedMs=${Date.now() - startedAt} timeoutMs=${requestTimeoutMs}\n${this.stderrBuffer}`.trim(),
-          ),
-        );
+        const timeoutError = new JsonlRpcTimeoutError({
+          diagnosticName: this.diagnosticName,
+          operation: command.type,
+          elapsedMs: Date.now() - startedAt,
+          timeoutMs: requestTimeoutMs,
+          stderrTail: this.stderrBuffer,
+        });
+        reject(timeoutError);
+        if (requestOptions?.closeOnTimeout) {
+          void this.close(timeoutError).catch(() => undefined);
+        }
       });
       this.pending.set(id, { resolve, reject, timer });
       this.send({ ...command, id });
@@ -168,11 +212,8 @@ export class JsonlRpcProcess {
     return { id, promise };
   }
 
-  request(
-    command: { type: string; [key: string]: unknown },
-    timeoutMs?: number | null,
-  ): Promise<unknown> {
-    return this.startRequest(command, timeoutMs).promise;
+  request(options: JsonlRpcRequestArgs): Promise<unknown> {
+    return this.startRequest(options).promise;
   }
 
   send(message: Record<string, unknown>): void {
@@ -244,11 +285,13 @@ export class JsonlRpcProcess {
     }
     this.pending.delete(response.id);
     if (!response.success) {
-      pending.reject(
-        new Error(
-          response.error ?? `${this.diagnosticName} ${response.command ?? "request"} failed`,
-        ),
+      const error = new Error(
+        response.error ?? `${this.diagnosticName} ${response.command ?? "request"} failed`,
       );
+      if (response.code) {
+        Object.assign(error, { code: response.code });
+      }
+      pending.reject(error);
       return;
     }
     pending.resolve(response.data);

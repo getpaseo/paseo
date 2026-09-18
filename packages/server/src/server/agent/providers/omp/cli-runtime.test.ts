@@ -92,6 +92,39 @@ function replyToCommands(
     }
   });
 }
+type CommandOutcome = { ok: true; data: unknown } | { ok: false; error: string; code?: string };
+
+function replyCommandOutcomes(
+  child: OmpChild,
+  handler: (command: Record<string, unknown>) => CommandOutcome,
+): void {
+  let buffer = "";
+  child.stdin.on("data", (chunk) => {
+    buffer += chunk.toString();
+    for (;;) {
+      const newlineIndex = buffer.indexOf("\n");
+      if (newlineIndex === -1) break;
+      const line = buffer.slice(0, newlineIndex);
+      buffer = buffer.slice(newlineIndex + 1);
+      const command = JSON.parse(line) as Record<string, unknown>;
+      const outcome = handler(command);
+      child.stdout.write(
+        `${JSON.stringify({
+          id: command.id,
+          type: "response",
+          command: command.type,
+          ...(outcome.ok
+            ? { success: true, data: outcome.data }
+            : {
+                success: false,
+                error: outcome.error,
+                ...(outcome.code ? { code: outcome.code } : {}),
+              }),
+        })}\n`,
+      );
+    }
+  });
+}
 
 function withoutRequestId(command: Record<string, unknown>): Record<string, unknown> {
   const { id: _id, ...rest } = command;
@@ -417,5 +450,145 @@ describe("OMP CLI runtime", () => {
     const result = await session.getAvailableModels();
     expect(result).toHaveLength(2_000);
     expect(result[0]).toEqual(expect.objectContaining({ id: "model-0" }));
+  });
+
+  test("drains get_messages_page in order without the legacy snapshot", async () => {
+    const child = createOmpChild({ supportedProtocolVersions: [1, 2] });
+    const seen: Record<string, unknown>[] = [];
+    replyCommandOutcomes(child, (command) => {
+      seen.push(command);
+      if (command.type === "negotiate_protocol") return { ok: true, data: { protocolVersion: 2 } };
+      if (command.type === "get_messages_page") {
+        if (command.cursor === undefined) {
+          return {
+            ok: true,
+            data: {
+              messages: [{ role: "user", content: "first" }],
+              totalMessages: 2,
+              nextCursor: "c1",
+            },
+          };
+        }
+        if (command.cursor === "c1") {
+          return {
+            ok: true,
+            data: { messages: [{ role: "user", content: "second" }], totalMessages: 2 },
+          };
+        }
+        return { ok: false, error: `unexpected cursor ${String(command.cursor)}` };
+      }
+      return { ok: false, error: `unexpected command ${String(command.type)}` };
+    });
+    const session = await createRuntime(child).startSession({ cwd: "/workspace/project" });
+
+    await expect(session.getMessages()).resolves.toEqual([
+      { role: "user", content: "first" },
+      { role: "user", content: "second" },
+    ]);
+    expect(seen.map((command) => command.type)).not.toContain("get_messages");
+    await session.close();
+  });
+
+  test("discards partial pages and falls back when a cursor goes stale", async () => {
+    const child = createOmpChild({ supportedProtocolVersions: [1, 2] });
+    replyCommandOutcomes(child, (command) => {
+      if (command.type === "negotiate_protocol") return { ok: true, data: { protocolVersion: 2 } };
+      if (command.type === "get_messages_page") {
+        if (command.cursor === undefined) {
+          return {
+            ok: true,
+            data: {
+              messages: [{ role: "user", content: "partial" }],
+              totalMessages: 2,
+              nextCursor: "stale",
+            },
+          };
+        }
+        return { ok: false, error: "snapshot changed", code: "stale_cursor" };
+      }
+      if (command.type === "get_messages") {
+        return { ok: true, data: { messages: [{ role: "user", content: "full" }] } };
+      }
+      return { ok: false, error: `unexpected command ${String(command.type)}` };
+    });
+    const session = await createRuntime(child).startSession({ cwd: "/workspace/project" });
+
+    await expect(session.getMessages()).resolves.toEqual([{ role: "user", content: "full" }]);
+    await session.close();
+  });
+
+  test("falls back to the legacy snapshot while the session is busy", async () => {
+    const child = createOmpChild({ supportedProtocolVersions: [1, 2] });
+    replyCommandOutcomes(child, (command) => {
+      if (command.type === "negotiate_protocol") return { ok: true, data: { protocolVersion: 2 } };
+      if (command.type === "get_messages_page") {
+        return { ok: false, error: "session is streaming", code: "session_busy" };
+      }
+      if (command.type === "get_messages") {
+        return { ok: true, data: { messages: [{ role: "user", content: "busy-fallback" }] } };
+      }
+      return { ok: false, error: `unexpected command ${String(command.type)}` };
+    });
+    const session = await createRuntime(child).startSession({ cwd: "/workspace/project" });
+
+    await expect(session.getMessages()).resolves.toEqual([
+      { role: "user", content: "busy-fallback" },
+    ]);
+    await session.close();
+  });
+
+  test("propagates page failures that carry no busy/stale code", async () => {
+    const child = createOmpChild({ supportedProtocolVersions: [1, 2] });
+    replyCommandOutcomes(child, (command) => {
+      if (command.type === "negotiate_protocol") return { ok: true, data: { protocolVersion: 2 } };
+      if (command.type === "get_messages_page") {
+        return { ok: false, error: "boom" };
+      }
+      return { ok: false, error: `unexpected command ${String(command.type)}` };
+    });
+    const session = await createRuntime(child).startSession({ cwd: "/workspace/project" });
+
+    await expect(session.getMessages()).rejects.toThrow("boom");
+    await session.close();
+  });
+
+  test("falls back to legacy on unknown command and pins pagingUnsupported", async () => {
+    const child = createOmpChild({ supportedProtocolVersions: [1, 2] });
+    const seen: string[] = [];
+    replyCommandOutcomes(child, (command) => {
+      seen.push(command.type as string);
+      if (command.type === "negotiate_protocol") return { ok: true, data: { protocolVersion: 2 } };
+      if (command.type === "get_messages_page") {
+        return { ok: false, error: "unknown command" };
+      }
+      if (command.type === "get_messages") {
+        return { ok: true, data: { messages: [{ role: "user", content: "fallback" }] } };
+      }
+      return { ok: false, error: `unexpected command ${String(command.type)}` };
+    });
+    const session = await createRuntime(child).startSession({ cwd: "/workspace/project" });
+
+    // First load must succeed via legacy even though paging is unsupported.
+    await expect(session.getMessages()).resolves.toEqual([{ role: "user", content: "fallback" }]);
+    await expect(session.getMessages()).resolves.toEqual([{ role: "user", content: "fallback" }]);
+    expect(seen.filter((type) => type === "get_messages_page")).toHaveLength(1);
+    expect(seen.filter((type) => type === "get_messages")).toHaveLength(2);
+    await session.close();
+  });
+
+  test("sends native set_fast_mode RPC and parses enabled versus active", async () => {
+    const child = createOmpChild();
+    const commands: Record<string, unknown>[] = [];
+    replyToCommands(child, (command) => {
+      commands.push(command);
+      return { enabled: true, active: false };
+    });
+    const session = await createRuntime(child).startSession({ cwd: "/workspace/project" });
+
+    await expect(session.setFastMode(true)).resolves.toEqual({
+      enabled: true,
+      active: false,
+    });
+    expect(commands.map(withoutRequestId)).toEqual([{ type: "set_fast_mode", enabled: true }]);
   });
 });

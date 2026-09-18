@@ -3,6 +3,7 @@ import {
   JSONL_RPC_DEFAULT_TIMEOUT_MS,
   supportsJsonlRpcProtocolV2,
   type JsonlRpcExit,
+  type JsonlRpcRequestArgs,
 } from "../jsonl-rpc-process.js";
 
 const OMP_READY_TIMEOUT_MS = 20_000;
@@ -10,7 +11,7 @@ const OMP_READY_TIMEOUT_MS = 20_000;
 export interface OmpProtocolTransport {
   onMessage(callback: (message: Record<string, unknown>) => void): () => void;
   onExit(callback: (exit: JsonlRpcExit) => void): () => void;
-  request(command: Record<string, unknown>, timeoutMs: number | null): Promise<unknown>;
+  request(options: JsonlRpcRequestArgs): Promise<unknown>;
 }
 
 export interface OmpProtocolTimeouts {
@@ -22,17 +23,18 @@ export async function establishOmpProtocol(
   transport: OmpProtocolTransport,
   logger: Logger,
   timeouts: OmpProtocolTimeouts = {},
-): Promise<void> {
+): Promise<boolean> {
   const readyTimeoutMs = timeouts.readyTimeoutMs ?? OMP_READY_TIMEOUT_MS;
   const requestTimeoutMs = timeouts.requestTimeoutMs ?? JSONL_RPC_DEFAULT_TIMEOUT_MS;
   const ready = await waitForReady(transport, readyTimeoutMs);
-  if (!supportsJsonlRpcProtocolV2(ready)) return;
-  const response = (await transport.request(
-    { type: "negotiate_protocol", protocolVersion: 2 },
-    requestTimeoutMs,
-  )) as { protocolVersion?: unknown } | undefined;
+  if (!supportsJsonlRpcProtocolV2(ready)) return false;
+  const response = (await transport.request({
+    command: { type: "negotiate_protocol", protocolVersion: 2 },
+    timeoutMs: requestTimeoutMs,
+  })) as { protocolVersion?: unknown } | undefined;
   if (response?.protocolVersion !== 2) throw new Error("OMP did not accept RPC protocol v2");
   logger.debug({}, "Negotiated OMP RPC protocol v2 (chunked frame transport)");
+  return true;
 }
 
 function waitForReady(

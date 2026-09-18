@@ -3,6 +3,7 @@ import type { Logger } from "pino";
 
 import type { ProviderRuntimeSettings } from "../../provider-launch-config.js";
 import {
+  JSONL_RPC_ABORT_TIMEOUT_MS,
   JSONL_RPC_NO_TIMEOUT,
   JsonlRpcProcess,
   type JsonlRpcLaunch,
@@ -107,9 +108,11 @@ class PiCliRuntimeSession implements PiRuntimeSession {
     images?: Array<{ type: "image"; data: string; mimeType: string }>,
   ): Promise<PiPromptAck> {
     const { id: requestId, promise } = this.process.startRequest({
-      type: "prompt",
-      message,
-      ...(images?.length ? { images } : {}),
+      command: {
+        type: "prompt",
+        message,
+        ...(images?.length ? { images } : {}),
+      },
     });
     const data = await promise;
     if (typeof data === "object" && data !== null && !Array.isArray(data)) {
@@ -148,7 +151,11 @@ class PiCliRuntimeSession implements PiRuntimeSession {
   }
 
   async abort(): Promise<void> {
-    await this.request({ type: "abort" });
+    await this.process.request({
+      command: { type: "abort" },
+      timeoutMs: JSONL_RPC_ABORT_TIMEOUT_MS,
+      requestOptions: { closeOnTimeout: true },
+    });
   }
 
   async getState(): Promise<PiSessionState> {
@@ -234,14 +241,14 @@ class PiCliRuntimeSession implements PiRuntimeSession {
   }
 
   request(command: PiRpcCommand, timeoutMs?: number | null): Promise<unknown> {
-    return this.process.request(command, timeoutMs);
+    return this.process.request({ command, timeoutMs });
   }
 
   private async waitForCompletion(command: PiRpcCommand): Promise<void> {
     // Pi only replies after its compaction work is durable. Its child process and
     // session close paths already reject pending RPCs, so no elapsed-time failure
     // is useful here.
-    await this.process.request(command, JSONL_RPC_NO_TIMEOUT);
+    await this.process.request({ command, timeoutMs: JSONL_RPC_NO_TIMEOUT });
   }
 
   private emit(event: PiRuntimeEvent): void {

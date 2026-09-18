@@ -2,7 +2,11 @@ import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import type { Logger } from "pino";
 
 import type { ProviderRuntimeSettings } from "../../provider-launch-config.js";
-import { JsonlRpcProcess, type JsonlRpcLaunch } from "../jsonl-rpc-process.js";
+import {
+  JSONL_RPC_ABORT_TIMEOUT_MS,
+  JsonlRpcProcess,
+  type JsonlRpcLaunch,
+} from "../jsonl-rpc-process.js";
 import { establishOmpProtocol } from "./protocol-session.js";
 import {
   buildOmpLaunch,
@@ -17,9 +21,11 @@ import {
   OmpCommandsResultSchema,
   OmpHostToolsResultSchema,
   OmpMessagesResultSchema,
+  OmpMessagesPageResultSchema,
   OmpModelSchema,
   OmpModelsResultSchema,
   OmpPromptAckSchema,
+  OmpFastModeResultSchema,
   OmpRpcCommandSchema,
   OmpRuntimeEventSchema,
   OmpSessionStateSchema,
@@ -88,12 +94,12 @@ export class OmpCliRuntime implements OmpRuntime {
     const handleAbort = () => void process.close(input.signal?.reason).catch(() => undefined);
     input.signal?.addEventListener("abort", handleAbort, { once: true });
     try {
-      await establishOmpProtocol(process, this.options.logger, {
+      const protocolV2 = await establishOmpProtocol(process, this.options.logger, {
         readyTimeoutMs: this.options.readyTimeoutMs,
         requestTimeoutMs: this.options.requestTimeoutMs,
       });
       input.signal?.throwIfAborted();
-      return new OmpCliRuntimeSession(process, this.commandsRpcName);
+      return new OmpCliRuntimeSession(process, this.commandsRpcName, !protocolV2);
     } catch (error) {
       const startupError = error instanceof Error ? error : new Error(String(error));
       await process.close(startupError);
@@ -106,12 +112,15 @@ export class OmpCliRuntime implements OmpRuntime {
 
 class OmpCliRuntimeSession implements OmpRuntimeSession {
   private readonly subscribers = new Set<(event: OmpRuntimeEvent) => void>();
+  private pagingUnsupported = false;
   activeBranchEntryId?: string;
 
   constructor(
     private readonly process: JsonlRpcProcess,
     private readonly commandsRpcName: "get_available_commands",
+    pagingUnsupported = false,
   ) {
+    this.pagingUnsupported = pagingUnsupported;
     process.onMessage((message) => {
       const event = OmpRuntimeEventSchema.safeParse(message);
       if (event.success) {
@@ -135,9 +144,11 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
     images?: Array<{ type: "image"; data: string; mimeType: string }>,
   ): Promise<OmpPromptAck> {
     const { id: requestId, promise } = this.process.startRequest({
-      type: "prompt",
-      message,
-      ...(images?.length ? { images } : {}),
+      command: {
+        type: "prompt",
+        message,
+        ...(images?.length ? { images } : {}),
+      },
     });
     const ack = OmpPromptAckSchema.parse(await promise) ?? {};
     return { requestId, ...ack };
@@ -155,14 +166,63 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
   }
 
   async abort(): Promise<void> {
-    await this.request({ type: "abort" });
+    await this.process.request({
+      command: { type: "abort" },
+      timeoutMs: JSONL_RPC_ABORT_TIMEOUT_MS,
+      requestOptions: { closeOnTimeout: true },
+    });
   }
 
   async getState(): Promise<OmpSessionState> {
     return OmpSessionStateSchema.parse(await this.request({ type: "get_state" }));
   }
 
+  async setFastMode(enabled: boolean) {
+    return OmpFastModeResultSchema.parse(await this.request({ type: "set_fast_mode", enabled }));
+  }
+
   async getMessages(): Promise<OmpAgentMessage[]> {
+    if (this.pagingUnsupported) {
+      return this.getMessagesLegacy();
+    }
+    try {
+      const messages: OmpAgentMessage[] = [];
+      let cursor: string | undefined = undefined;
+      for (;;) {
+        const pageData = await this.request({
+          type: "get_messages_page",
+          limit: 256,
+          ...(cursor !== undefined ? { cursor } : {}),
+        });
+        const page = OmpMessagesPageResultSchema.parse(pageData);
+        if (page.messages) {
+          messages.push(...page.messages);
+        }
+        if (!page.nextCursor) {
+          break;
+        }
+        cursor = page.nextCursor;
+      }
+      return messages;
+    } catch (error) {
+      const code = error && typeof error === "object" && "code" in error ? error.code : undefined;
+      const message = error instanceof Error ? error.message : String(error);
+      if (
+        code === "session_busy" ||
+        code === "stale_cursor" ||
+        message.toLowerCase().includes("unknown command")
+      ) {
+        // Protocol-v1 runtimes lack get_messages_page entirely; pin to legacy
+        // and serve this call from it so the first history load still works.
+        this.pagingUnsupported = true;
+        return this.getMessagesLegacy();
+      }
+      this.pagingUnsupported = true;
+      throw error;
+    }
+  }
+
+  private async getMessagesLegacy(): Promise<OmpAgentMessage[]> {
     const data = OmpMessagesResultSchema.parse(await this.request({ type: "get_messages" }));
     return data.messages ?? [];
   }
@@ -289,7 +349,10 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
   }
 
   private request(command: OmpRpcCommand, timeoutMs?: number | null): Promise<unknown> {
-    return this.process.request(OmpRpcCommandSchema.parse(command), timeoutMs);
+    return this.process.request({
+      command: OmpRpcCommandSchema.parse(command),
+      timeoutMs,
+    });
   }
 
   private emit(event: OmpRuntimeEvent): void {

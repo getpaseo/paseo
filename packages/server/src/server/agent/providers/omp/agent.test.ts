@@ -118,6 +118,18 @@ function createToolCatalog(): PaseoToolCatalog {
   };
 }
 
+function createFastModeHarness(version = "18.1.14"): OmpHarness {
+  const versionOutput = JSON.stringify(`omp ${version}`);
+  return new OmpHarness({
+    runtimeSettings: {
+      command: {
+        mode: "replace",
+        argv: [process.execPath, "-e", `process.stdout.write(${versionOutput})`, "--"],
+      },
+    },
+  });
+}
+
 describe("OMP agent client and session", () => {
   test("owns launch configuration and registers native host tools", async () => {
     const omp = new OmpHarness();
@@ -339,6 +351,34 @@ describe("OMP agent client and session", () => {
     omp.reportProviderState({ isStreaming: false, isCompacting: false });
     scheduler.retry();
     await expect(completion).resolves.toMatchObject({ finalText: "first done" });
+  });
+
+  test("fails the turn when OMP never reports idle after agent_end", async () => {
+    const scheduler = new ManualIdleScheduler();
+    const omp = new OmpHarness({
+      providerIdleScheduler: scheduler,
+      providerIdleDeadlineMs: 0,
+    });
+    await omp.start();
+
+    const { completion } = await omp.startPromptUntilProviderIdle("first", "first done", {
+      isStreaming: true,
+      isCompacting: false,
+    });
+    await omp.waitForProviderStateChecks(1);
+    await expect(completion).rejects.toThrow(/did not report idle/);
+    expect(omp.completedTurnCount()).toBe(0);
+    expect(omp.failedTurnCount()).toBe(1);
+  });
+
+  test("does not complete the turn on a custom notice before the prompt's user message", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+
+    await expect(
+      omp.runPromptAfterEarlyCustomNotice("hello OMP", "late model turn completed"),
+    ).resolves.toMatchObject({ finalText: expect.stringContaining("late model turn completed") });
+    expect(omp.completedTurnCount()).toBe(1);
   });
 
   test("does not complete on OMP's extension-notice agent_end", async () => {
@@ -659,5 +699,286 @@ describe("OMP agent client and session", () => {
     expect(omp.timeline().filter((item) => item.type === "user_message")).toEqual([
       { type: "user_message", text: "hello OMP", messageId: "user-1" },
     ]);
+  });
+
+  test("advertises Fast only for supported Codex models and runtimes", async () => {
+    const omp = createFastModeHarness();
+    await omp.start({ model: "openai-codex/gpt-5.6-luna" });
+
+    expect(omp.features()).toMatchObject([{ type: "toggle", id: "fast_mode", value: false }]);
+    await expect(omp.clientFeatures({ model: "openai-codex/gpt-5.6-luna" })).resolves.toMatchObject(
+      [{ id: "fast_mode", value: false }],
+    );
+    await expect(omp.clientFeatures({ model: "anthropic/claude-sonnet-4" })).resolves.toEqual([]);
+  });
+
+  test("applies Fast through native RPC and preserves enabled versus active", async () => {
+    const omp = createFastModeHarness();
+    await omp.start({ model: "openai-codex/gpt-5.6-luna" });
+    const runtime = omp.runtime();
+    runtime.setFastModeResult = { enabled: true, active: false };
+
+    await omp.setFeature("fast_mode", true);
+
+    expect(runtime.setFastModeRequests).toEqual([true]);
+    expect(runtime.state.fastModeEnabled).toBe(true);
+    expect(runtime.state.fastModeActive).toBe(false);
+    expect(omp.features()).toMatchObject([{ id: "fast_mode", value: true }]);
+  });
+
+  test("hides Fast when an older OMP state omits its state fields", async () => {
+    const omp = createFastModeHarness();
+    await omp.start({ model: "openai-codex/gpt-5.6-luna" });
+    const runtime = omp.runtime();
+    delete runtime.state.fastModeEnabled;
+    delete runtime.state.fastModeActive;
+
+    expect(omp.features()).toEqual([]);
+    runtime.setFastModeError = new Error("set_fast_mode is not supported");
+    await expect(omp.setFeature("fast_mode", true)).rejects.toThrow(
+      "set_fast_mode is not supported",
+    );
+  });
+
+  test("restores persisted Fast state for create and resume", async () => {
+    const created = createFastModeHarness();
+    await created.start({
+      model: "openai-codex/gpt-5.6-luna",
+      featureValues: { fast_mode: true },
+    });
+    expect(created.runtime().setFastModeRequests).toEqual([true]);
+    expect(created.runtime().getStateRequestCount).toBe(2);
+
+    const resumed = createFastModeHarness();
+    resumed.queueInitialState({
+      model: { provider: "openai-codex", id: "gpt-5.6-luna" },
+    });
+    await resumed.resume(
+      {
+        user: { id: "user-history", text: "continue" },
+        assistant: { id: "assistant-history", text: "context" },
+      },
+      {
+        model: "openai-codex/gpt-5.6-luna",
+        featureValues: { fast_mode: true },
+      },
+    );
+    expect(resumed.runtime().setFastModeRequests).toEqual([true]);
+    expect(resumed.runtime().getStateRequestCount).toBe(2);
+  });
+
+  test("restores persisted Fast from the runtime model when create config omits model", async () => {
+    const omp = createFastModeHarness();
+    omp.queueInitialState({
+      model: { provider: "openai-codex", id: "gpt-5.6-luna" },
+    });
+    await omp.start({ featureValues: { fast_mode: true } });
+
+    expect(omp.runtime().setFastModeRequests).toEqual([true]);
+    expect(omp.features()).toMatchObject([{ id: "fast_mode", value: true }]);
+  });
+
+  test("does not restore or expose Fast for unsupported models or old runtimes", async () => {
+    const unsupportedModel = createFastModeHarness();
+    await unsupportedModel.start({
+      model: "anthropic/claude-sonnet-4",
+      featureValues: { fast_mode: true },
+    });
+    expect(unsupportedModel.runtime().setFastModeRequests).toEqual([]);
+    expect(unsupportedModel.features()).toEqual([]);
+
+    const oldRuntime = createFastModeHarness("18.0.9");
+    await oldRuntime.start({
+      model: "openai-codex/gpt-5.6-luna",
+      featureValues: { fast_mode: true },
+    });
+    expect(oldRuntime.runtime().setFastModeRequests).toEqual([]);
+    expect(oldRuntime.features()).toEqual([]);
+    await expect(
+      oldRuntime.clientFeatures({ model: "openai-codex/gpt-5.6-luna" }),
+    ).resolves.toEqual([]);
+  });
+
+  test("rejects invalid Fast values before issuing native RPC", async () => {
+    const omp = createFastModeHarness();
+    await omp.start({ model: "openai-codex/gpt-5.6-luna" });
+
+    await expect(omp.setFeature("fast_mode", "true")).rejects.toThrow("requires a boolean");
+    await expect(omp.setFeature("unknown", true)).rejects.toThrow("Unknown OMP feature");
+    expect(omp.runtime().setFastModeRequests).toEqual([]);
+  });
+
+  test("clears Fast when explicitly switching to an unsupported model", async () => {
+    const omp = createFastModeHarness();
+    await omp.start({
+      model: "openai-codex/gpt-5.6-luna",
+      featureValues: { fast_mode: true },
+    });
+    const runtime = omp.runtime();
+    runtime.setModelResult = {
+      provider: "nvidia",
+      id: "minimaxai/minimax-m3",
+    };
+
+    await omp.setModel("nvidia/minimaxai/minimax-m3");
+
+    expect(runtime.setModelRequests).toEqual([
+      { provider: "nvidia", modelId: "minimaxai/minimax-m3" },
+    ]);
+    expect(runtime.getStateRequestCount).toBe(3);
+    expect(omp.features()).toEqual([]);
+    await expect(omp.setFeature("fast_mode", true)).rejects.toThrow("not available");
+  });
+
+  test("clears Fast when native fallback changes to an unsupported model", async () => {
+    const omp = createFastModeHarness();
+    await omp.start({
+      model: "openai-codex/gpt-5.6-luna",
+      featureValues: { fast_mode: true },
+    });
+
+    omp.runtime().emit({
+      type: "retry_fallback_succeeded",
+      model: "anthropic/claude-sonnet-4",
+      role: "default",
+    });
+
+    expect(omp.features()).toEqual([]);
+    await expect(omp.setFeature("fast_mode", true)).rejects.toThrow("not available");
+    expect(omp.eventTypes()).toContain("model_changed");
+  });
+
+  test("refreshes state and emits model_changed for native model changes", async () => {
+    const omp = createFastModeHarness();
+    await omp.start({ model: "openai-codex/gpt-5.6-luna" });
+    const runtime = omp.runtime();
+    runtime.state = {
+      ...runtime.state,
+      model: { provider: "openai-codex", id: "gpt-5.5" },
+    };
+
+    runtime.emit({ type: "model_changed" });
+    await waitForImmediate();
+
+    await expect(omp.requireRuntimeInfo()).resolves.toMatchObject({
+      model: "openai-codex/gpt-5.5",
+    });
+    expect(omp.eventTypes()).toContain("model_changed");
+  });
+});
+
+describe("OmpAgentSession steering", () => {
+  async function startActiveTurn(clientMessageId: string | null = "client-prompt-1") {
+    const omp = new OmpHarness();
+    await omp.start();
+    const runtime = omp.runtime();
+    const promptStarted = runtime.nextPrompt();
+    const { turnId } = await omp
+      .agentSession()
+      .startTurn("fix the tests", clientMessageId ? { clientMessageId } : undefined);
+    await promptStarted;
+    runtime.beginTurn();
+    runtime.acceptPrompt("fix the tests", "user-1");
+    return { omp, runtime, turnId };
+  }
+
+  test("steers the active OMP turn and correlates the echoed user message", async () => {
+    const { omp, runtime, turnId } = await startActiveTurn();
+
+    const result = await omp.agentSession().steerActiveTurn("steer this turn", {
+      expectedTurnId: turnId,
+      clientMessageId: "client-steer-1",
+    });
+
+    expect(result).toEqual({ status: "accepted" });
+    expect(omp.steerRequests()).toEqual([{ message: "steer this turn", imageCount: 0 }]);
+
+    runtime.acceptPrompt("steer this turn", "entry-steer-1");
+    await waitForImmediate();
+
+    expect(omp.timeline().filter((item) => item.type === "user_message")).toEqual([
+      {
+        type: "user_message",
+        text: "fix the tests",
+        messageId: "user-1",
+        clientMessageId: "client-prompt-1",
+      },
+      {
+        type: "user_message",
+        text: "steer this turn",
+        messageId: "entry-steer-1",
+        clientMessageId: "client-steer-1",
+      },
+    ]);
+  });
+
+  test("reports steering unavailable without an active turn", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+
+    const result = await omp.agentSession().steerActiveTurn("steer this turn", {
+      expectedTurnId: "turn-that-ended",
+    });
+
+    expect(result).toEqual({ status: "unavailable" });
+    expect(omp.steerRequests()).toEqual([]);
+  });
+
+  test("reports steering unavailable for a stale turn", async () => {
+    const { omp, turnId } = await startActiveTurn();
+    expect(turnId).not.toBe("turn-that-ended");
+
+    const result = await omp.agentSession().steerActiveTurn("steer this turn", {
+      expectedTurnId: "turn-that-ended",
+    });
+
+    expect(result).toEqual({ status: "unavailable" });
+    expect(omp.steerRequests()).toEqual([]);
+  });
+
+  test("keeps slash inputs on the interrupt-and-replace path", async () => {
+    const { omp, turnId } = await startActiveTurn();
+
+    const result = await omp.agentSession().steerActiveTurn("/model", { expectedTurnId: turnId });
+
+    expect(result).toEqual({ status: "unavailable" });
+    expect(omp.steerRequests()).toEqual([]);
+  });
+
+  test("does not attach a client ID to a steer without one", async () => {
+    const { omp, runtime, turnId } = await startActiveTurn();
+
+    const result = await omp.agentSession().steerActiveTurn("steer without a client ID", {
+      expectedTurnId: turnId,
+    });
+
+    expect(result).toEqual({ status: "accepted" });
+    runtime.acceptPrompt("steer without a client ID", "entry-steer-1");
+    await waitForImmediate();
+
+    expect(omp.timeline().filter((item) => item.type === "user_message")).toEqual([
+      {
+        type: "user_message",
+        text: "fix the tests",
+        messageId: "user-1",
+        clientMessageId: "client-prompt-1",
+      },
+      { type: "user_message", text: "steer without a client ID", messageId: "entry-steer-1" },
+    ]);
+  });
+
+  test("denies pending permissions when steering with clearPendingPermissions", async () => {
+    const { omp, turnId } = await startActiveTurn();
+    omp.requestToolApproval({ id: "perm-1", tool: "bash", detail: "ls" });
+    expect(omp.pendingPermissions()).toHaveLength(1);
+
+    const result = await omp.agentSession().steerActiveTurn("steer instead", {
+      expectedTurnId: turnId,
+      clearPendingPermissions: true,
+    });
+
+    expect(result).toEqual({ status: "accepted" });
+    expect(omp.pendingPermissions()).toHaveLength(0);
+    expect(omp.extensionUiResponses()).toHaveLength(1);
   });
 });
