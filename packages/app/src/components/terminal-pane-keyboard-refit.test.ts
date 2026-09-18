@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { shouldPublishSettledKeyboardShift } from "@/hooks/keyboard-shift-policy";
+import { shouldPublishSettledKeyboardShift } from "@/keyboard/shift/internal/policy";
 import {
   TERMINAL_KEYBOARD_REFIT_DELAYS_MS,
   createTerminalKeyboardRefitScheduler,
