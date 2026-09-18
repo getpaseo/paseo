@@ -24,6 +24,7 @@ function reloadableConfig(
     browserTools: { enabled: daemon.browserTools?.enabled ?? false },
     providers: (agents.providers ?? {}) as MutableDaemonConfig["providers"],
     metadataGeneration: { providers: agents.metadataGeneration?.providers ?? [] },
+    promptSuggestions: promptSuggestionsFrom(agents),
     autoArchiveAfterMerge: daemon.autoArchiveAfterMerge ?? false,
     enableTerminalAgentHooks: daemon.enableTerminalAgentHooks ?? false,
     appendSystemPrompt: daemon.appendSystemPrompt ?? "",
@@ -39,6 +40,12 @@ function reloadableConfig(
     pluginsEnabled: persisted.pluginsEnabled ?? false,
     plugins: persisted.plugins ?? {},
   };
+}
+
+function promptSuggestionsFrom(
+  agents: NonNullable<PersistedConfig["agents"]>,
+): MutableDaemonConfig["promptSuggestions"] {
+  return { enabled: agents.promptSuggestions?.enabled ?? true };
 }
 
 describe("applyMutableProviderConfigToOverrides", () => {
@@ -118,6 +125,30 @@ describe("DaemonConfigStore", () => {
 
     expect(changes).toEqual([true]);
     expect(loadPersistedConfig(paseoHome).daemon?.relay?.enabled).toBe(true);
+  });
+
+  test("patch persists the prompt-suggestions switch and emits its field change", () => {
+    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
+    tempDirs.push(paseoHome);
+    const store = new DaemonConfigStore(paseoHome, {
+      relay: { enabled: false },
+      mcp: { injectIntoAgents: false },
+      browserTools: { enabled: false },
+      providers: {},
+      metadataGeneration: { providers: [] },
+      promptSuggestions: { enabled: true },
+      autoArchiveAfterMerge: false,
+      enableTerminalAgentHooks: false,
+      appendSystemPrompt: "",
+    });
+    const changes: unknown[] = [];
+    store.onFieldChange("promptSuggestions.enabled", (value) => changes.push(value));
+
+    store.patch({ promptSuggestions: { enabled: false } });
+
+    expect(changes).toEqual([false]);
+    expect(store.get().promptSuggestions?.enabled).toBe(false);
+    expect(loadPersistedConfig(paseoHome).agents?.promptSuggestions?.enabled).toBe(false);
   });
 
   test("patch round-trips agent profiles through the strictly-parsed persisted config", () => {

@@ -207,6 +207,8 @@ import {
 } from "./auth.js";
 import { createWebUiMiddleware } from "./web-ui.js";
 import { WorkspaceAutoName } from "./workspace-auto-name.js";
+import { PromptSuggestionService } from "./agent/prompt-suggestions/service.js";
+import { createAgentStructuredTextGeneration } from "./session/checkout/git-metadata-generator.js";
 import { createGitMutationService } from "./session/git-mutation/git-mutation-service.js";
 import { workspaceIdsOnCheckout } from "./workspace-directory.js";
 import { configureGitProcessPolicy } from "../utils/run-git-command.js";
@@ -445,6 +447,7 @@ export interface PaseoDaemonConfig {
       thinkingOptionId?: string;
     }>;
   };
+  promptSuggestions?: { enabled?: boolean };
   providerOverrides?: Record<string, ProviderOverride>;
   log?: PersistedConfig["log"];
   onLifecycleIntent?: (intent: DaemonLifecycleIntent) => void;
@@ -524,6 +527,10 @@ function resolveExpressTrustProxySetting(config: PaseoDaemonConfig): true | stri
   return config.trustedProxies ?? ["loopback"];
 }
 
+function resolvePromptSuggestionsConfig(config: PaseoDaemonConfig): { enabled: boolean } {
+  return { enabled: config.promptSuggestions?.enabled ?? true };
+}
+
 function createInitialMutableDaemonConfig(config: PaseoDaemonConfig): MutableDaemonConfig {
   const providers = config.providerOverrides ?? {};
 
@@ -546,6 +553,7 @@ function createInitialMutableDaemonConfig(config: PaseoDaemonConfig): MutableDae
     metadataGeneration: {
       providers: config.metadataGeneration?.providers ?? [],
     },
+    promptSuggestions: resolvePromptSuggestionsConfig(config),
     autoArchiveAfterMerge: config.autoArchiveAfterMerge ?? false,
     enableTerminalAgentHooks: config.enableTerminalAgentHooks ?? false,
     appendSystemPrompt: config.appendSystemPrompt ?? "",
@@ -1086,6 +1094,22 @@ export async function createPaseoDaemon(
     },
     logger,
   });
+
+  const promptSuggestions = new PromptSuggestionService({
+    agents: agentManager,
+    generation: createAgentStructuredTextGeneration({
+      agentManager,
+      providerSnapshotManager,
+      readDaemonConfig: () => ({ metadataGeneration: daemonConfigStore.get().metadataGeneration }),
+      getFocusedSelection: () => undefined,
+    }),
+    emit: emitExternalSessionMessage,
+    workspaceGitService,
+    isEnabled: () => daemonConfigStore.get().promptSuggestions?.enabled !== false,
+    hasListeners: () => (wsServer?.listSessions().length ?? 0) > 0,
+    logger,
+  });
+  promptSuggestions.start();
 
   setupAutoArchiveOnMerge({
     paseoHome: config.paseoHome,
@@ -1776,6 +1800,7 @@ export async function createPaseoDaemon(
   };
 
   const stop = async () => {
+    promptSuggestions.stop();
     await pluginRuntime.stopAllPlugins();
     unsubscribePluginProviders();
     await hubRelationships.stop();

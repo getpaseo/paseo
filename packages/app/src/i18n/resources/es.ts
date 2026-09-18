@@ -119,6 +119,10 @@ export const es: TranslationResources = {
       fallback: "Mensaje...",
       terminal: "Prompt",
     },
+    promptSuggestions: {
+      a11yLabel: "Sugerencia de mensaje, pulsa Tab para aceptar",
+      chipAccessibilityLabel: "Usar sugerencia: {{text}}",
+    },
     input: {
       accessibilityLabel: "Agente de mensajes...",
       terminalAccessibilityLabel: "Terminal prompt",
@@ -2452,6 +2456,11 @@ export const es: TranslationResources = {
           title: "Habilitar herramientasPaseo",
           hint: "Los agentes podrán gestionar árboles de trabajo, agentes y horarios.",
           accessibilityLabel: "Inyectar herramientasPaseo",
+        },
+        promptSuggestions: {
+          title: "Sugerir próximos mensajes",
+          hint: "Cuando un agente termina, sugerir qué pedir a continuación",
+          accessibilityLabel: "Sugerir próximos mensajes",
         },
         systemPrompt: {
           title: "Aviso del sistema",

@@ -119,6 +119,10 @@ export const ptBR: TranslationResources = {
       fallback: "Mensagem...",
       terminal: "Prompt",
     },
+    promptSuggestions: {
+      a11yLabel: "Sugestão de mensagem, pressione Tab para aceitar",
+      chipAccessibilityLabel: "Usar sugestão: {{text}}",
+    },
     input: {
       accessibilityLabel: "Enviar mensagem ao agente...",
       terminalAccessibilityLabel: "Terminal prompt",
@@ -2434,6 +2438,11 @@ export const ptBR: TranslationResources = {
           title: "Ativar ferramentas do Paseo",
           hint: "Agentes poderão gerenciar worktrees, agentes e agendamentos",
           accessibilityLabel: "Injetar ferramentas do Paseo",
+        },
+        promptSuggestions: {
+          title: "Sugerir próximas mensagens",
+          hint: "Quando um agente terminar, sugerir o que pedir em seguida",
+          accessibilityLabel: "Sugerir próximas mensagens",
         },
         systemPrompt: {
           title: "Prompt do sistema",

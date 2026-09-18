@@ -118,6 +118,10 @@ export const ar: TranslationResources = {
       fallback: "رسالة...",
       terminal: "Prompt",
     },
+    promptSuggestions: {
+      a11yLabel: "اقتراح رسالة، اضغط Tab للقبول",
+      chipAccessibilityLabel: "استخدام الاقتراح: {{text}}",
+    },
     input: {
       accessibilityLabel: "وكيل الرسائل...",
       terminalAccessibilityLabel: "Terminal prompt",
@@ -2396,6 +2400,11 @@ export const ar: TranslationResources = {
           title: "تمكين أدوات Paseo",
           hint: "سيتمكن الوكلاء من إدارة أشجار العمل والوكلاء والجداول الزمنية",
           accessibilityLabel: "حقن أدوات Paseo",
+        },
+        promptSuggestions: {
+          title: "اقتراح الرسائل التالية",
+          hint: "بعد انتهاء الوكيل، اقترح ما يمكن طلبه بعد ذلك",
+          accessibilityLabel: "اقتراح الرسائل التالية",
         },
         systemPrompt: {
           title: "موجه النظام",

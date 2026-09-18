@@ -1,6 +1,6 @@
 ---
 title: Metadata generation
-description: How Paseo uses providers to generate branch names, commit messages, and pull request text, and how to configure them.
+description: How Paseo uses providers to generate branch names, commit messages, pull request text, and prompt suggestions, and how to configure them.
 nav: Metadata generation
 order: 42
 category: Configuration
@@ -16,8 +16,25 @@ Paseo generates these kinds of metadata:
 - **Worktree branch names** — a slug for a new worktree-isolated workspace's branch.
 - **Commit messages** — a concise message for the changes you're committing.
 - **Pull request title and body** — drafted from the diff when you open a PR.
+- **Prompt suggestions** — up to three next prompts proposed in the composer when an agent finishes a turn.
 
 A workspace title and its branch name are produced together from the same prompt, but you configure their wording independently (see below).
+
+## Prompt suggestions
+
+When an agent finishes a turn and its composer is empty, Paseo proposes what you might send next. The strongest suggestion appears as ghost text in the input: <kbd>Tab</kbd> accepts it into the composer, <kbd>Enter</kbd> sends it, and <kbd>Esc</kbd> dismisses it. The others appear as chips above the composer; selecting one fills the input without sending. A suggestion disappears as soon as the agent does anything new.
+
+The suggestion model only sees the recent user and assistant messages of that conversation. Tool calls, command output, sub-agent logs, and attachments are never included.
+
+Suggestions cost one generation per finished turn. To turn them off, open **Settings → Host** and turn off **Suggest next prompts**, or set it in `~/.paseo/config.json`:
+
+```json
+{
+  "agents": {
+    "promptSuggestions": { "enabled": false }
+  }
+}
+```
 
 ## How a model is chosen
 
@@ -76,7 +93,10 @@ You can steer the wording of each kind of metadata per repository with a `paseo.
     "title": { "instructions": "Keep titles to a few words, no leading verb." },
     "branchName": { "instructions": "Use the format <type>/<scope>-<short-desc>." },
     "commitMessage": { "instructions": "Follow Conventional Commits." },
-    "pullRequest": { "instructions": "Include a Testing section in the body." }
+    "pullRequest": { "instructions": "Include a Testing section in the body." },
+    "promptSuggestions": {
+      "instructions": "Suggest in Romanian. Never suggest pushing or merging."
+    }
   }
 }
 ```

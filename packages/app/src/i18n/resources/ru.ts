@@ -119,6 +119,10 @@ export const ru: TranslationResources = {
       fallback: "Сообщение...",
       terminal: "Prompt",
     },
+    promptSuggestions: {
+      a11yLabel: "Предлагаемое сообщение, нажмите Tab, чтобы принять",
+      chipAccessibilityLabel: "Использовать подсказку: {{text}}",
+    },
     input: {
       accessibilityLabel: "Написать агенту...",
       terminalAccessibilityLabel: "Terminal prompt",
@@ -2441,6 +2445,11 @@ export const ru: TranslationResources = {
           title: "Включить инструменты Paseo",
           hint: "Агенты смогут управлять worktree, агентами и расписаниями.",
           accessibilityLabel: "Добавить инструменты Paseo",
+        },
+        promptSuggestions: {
+          title: "Предлагать следующие сообщения",
+          hint: "Когда агент завершает ход, предлагать, что спросить дальше",
+          accessibilityLabel: "Предлагать следующие сообщения",
         },
         systemPrompt: {
           title: "Системный промпт",

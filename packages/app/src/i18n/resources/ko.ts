@@ -118,6 +118,10 @@ export const ko: TranslationResources = {
       fallback: "메시지...",
       terminal: "Prompt",
     },
+    promptSuggestions: {
+      a11yLabel: "제안된 프롬프트, Tab 키로 적용",
+      chipAccessibilityLabel: "제안 사용: {{text}}",
+    },
     input: {
       accessibilityLabel: "에이전트에게 메시지...",
       terminalAccessibilityLabel: "Terminal prompt",
@@ -2407,6 +2411,11 @@ export const ko: TranslationResources = {
           title: "Paseo 도구 활성화",
           hint: "에이전트가 워크트리, 에이전트, 일정을 관리할 수 있습니다",
           accessibilityLabel: "Paseo 도구 주입",
+        },
+        promptSuggestions: {
+          title: "다음 프롬프트 제안",
+          hint: "에이전트가 응답을 마치면 다음에 무엇을 요청할지 제안합니다",
+          accessibilityLabel: "다음 프롬프트 제안",
         },
         systemPrompt: {
           title: "시스템 프롬프트",

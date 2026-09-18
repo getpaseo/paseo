@@ -14,6 +14,7 @@ function makeConfig(browserToolsEnabled = false): MutableDaemonConfig {
     browserTools: { enabled: browserToolsEnabled },
     providers: {},
     metadataGeneration: { providers: [] },
+    promptSuggestions: { enabled: true },
     autoArchiveAfterMerge: false,
     enableTerminalAgentHooks: false,
     appendSystemPrompt: "",

@@ -39,6 +39,7 @@ import type {
   ServerCapabilities,
   WorkspaceDescriptorPayload,
   WorkspaceProjectDescriptorPayload,
+  PromptSuggestion,
 } from "@getpaseo/protocol/messages";
 import {
   normalizeWorkspaceOpaqueId,
@@ -421,7 +422,20 @@ export interface SessionState {
     string,
     Array<{ id: string; text: string; attachments: ComposerAttachment[] }>
   >;
+
+  // Prompt suggestions, keyed by agent id
+  promptSuggestions: Map<string, AgentPromptSuggestionsState>;
 }
+
+export interface AgentPromptSuggestionsState {
+  turnSeq: number;
+  suggestions: PromptSuggestion[];
+  generatedAt: string;
+}
+
+// Suggestions arrive for every agent that finishes a turn, whether or not its
+// composer is ever opened, so the map keeps only the newest few.
+const MAX_PROMPT_SUGGESTION_ENTRIES = 32;
 
 // Global store state
 interface SessionStoreState {
@@ -601,6 +615,12 @@ interface SessionStoreActions {
         ) => Map<string, Array<{ id: string; text: string; attachments: ComposerAttachment[] }>>),
   ) => void;
 
+  setPromptSuggestions: (
+    serverId: string,
+    next: AgentPromptSuggestionsState & { agentId: string },
+  ) => void;
+  clearPromptSuggestions: (serverId: string, agentId: string) => void;
+
   // Hydration
   setHasHydratedAgents: (serverId: string, hydrated: boolean) => void;
   setHasHydratedWorkspaces: (serverId: string, hydrated: boolean) => void;
@@ -653,6 +673,7 @@ function createInitialSessionState(
     pendingPermissions: new Map(),
     fileExplorer: new Map(),
     queuedMessages: new Map(),
+    promptSuggestions: new Map(),
   };
 }
 
@@ -1794,6 +1815,51 @@ export const useSessionStore = create<SessionStore>()(
               ...prev.sessions,
               [serverId]: { ...session, queuedMessages: nextValue },
             },
+          };
+        });
+      },
+
+      setPromptSuggestions: (serverId, next) => {
+        set((prev) => {
+          const session = prev.sessions[serverId];
+          if (!session) {
+            return prev;
+          }
+          const current = session.promptSuggestions.get(next.agentId);
+          // A payload from a turn the client has already moved past is stale.
+          if (current && current.turnSeq > next.turnSeq) {
+            return prev;
+          }
+          const promptSuggestions = new Map(session.promptSuggestions);
+          promptSuggestions.delete(next.agentId);
+          promptSuggestions.set(next.agentId, {
+            turnSeq: next.turnSeq,
+            suggestions: next.suggestions,
+            generatedAt: next.generatedAt,
+          });
+          while (promptSuggestions.size > MAX_PROMPT_SUGGESTION_ENTRIES) {
+            const oldest = promptSuggestions.keys().next();
+            if (oldest.done) break;
+            promptSuggestions.delete(oldest.value);
+          }
+          return {
+            ...prev,
+            sessions: { ...prev.sessions, [serverId]: { ...session, promptSuggestions } },
+          };
+        });
+      },
+
+      clearPromptSuggestions: (serverId, agentId) => {
+        set((prev) => {
+          const session = prev.sessions[serverId];
+          if (!session?.promptSuggestions.has(agentId)) {
+            return prev;
+          }
+          const promptSuggestions = new Map(session.promptSuggestions);
+          promptSuggestions.delete(agentId);
+          return {
+            ...prev,
+            sessions: { ...prev.sessions, [serverId]: { ...session, promptSuggestions } },
           };
         });
       },

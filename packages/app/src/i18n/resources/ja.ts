@@ -119,6 +119,10 @@ export const ja: TranslationResources = {
       fallback: "メッセージ...",
       terminal: "Prompt",
     },
+    promptSuggestions: {
+      a11yLabel: "候補のプロンプト、Tab キーで採用",
+      chipAccessibilityLabel: "候補を使用: {{text}}",
+    },
     input: {
       accessibilityLabel: "エージェントにメッセージ...",
       terminalAccessibilityLabel: "Terminal prompt",
@@ -2419,6 +2423,11 @@ export const ja: TranslationResources = {
           title: "Paseoツールを有効にする",
           hint: "エージェントがワークツリー、エージェント、スケジュールを管理できるようになります",
           accessibilityLabel: "Paseoツールを有効にする",
+        },
+        promptSuggestions: {
+          title: "次のプロンプトを提案",
+          hint: "エージェントの応答が終わったら、次に依頼する内容を提案します",
+          accessibilityLabel: "次のプロンプトを提案",
         },
         systemPrompt: {
           title: "システムプロンプト",

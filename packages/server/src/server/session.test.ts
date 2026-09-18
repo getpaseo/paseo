@@ -5239,6 +5239,48 @@ test("acknowledges a timeline subscription only to its socket source", async () 
   ]);
 });
 
+test("withholds prompt suggestions from a subscriber that never advertised the capability", async () => {
+  const messages: SessionOutboundMessage[] = [];
+  const targetedMessages: Array<{ source: object; message: SessionOutboundMessage }> = [];
+  const session = createSessionForTest({ messages, targetedMessages });
+  const capable = {};
+  const uninformed = {};
+  session.updateClientCapabilities(
+    { [CLIENT_CAPS.explicitEventSubscriptions]: true, [CLIENT_CAPS.promptSuggestions]: true },
+    capable,
+  );
+  session.updateClientCapabilities({ [CLIENT_CAPS.explicitEventSubscriptions]: true }, uninformed);
+
+  for (const [requestId, source] of [
+    ["subscribe-capable", capable],
+    ["subscribe-uninformed", uninformed],
+  ] as const) {
+    await session.handleMessage(
+      {
+        type: "session.events.set_subscription.request",
+        requestId,
+        events: ["agent_prompt_suggestions"],
+      },
+      source,
+    );
+  }
+  messages.length = 0;
+  targetedMessages.length = 0;
+
+  session.publish({
+    type: "agent_prompt_suggestions",
+    payload: {
+      agentId: "11111111-1111-4111-8111-111111111111",
+      turnSeq: 1,
+      suggestions: [{ id: "s1", text: "open a PR for the auth fix" }],
+      generatedAt: "2026-09-18T10:00:00.000Z",
+    },
+  });
+
+  expect(targetedMessages.map((entry) => entry.source)).toEqual([capable]);
+  expect(messages).toEqual([]);
+});
+
 test("unions viewed timelines across socket sources and removes detached sources", async () => {
   const messages: SessionOutboundMessage[] = [];
   const agentEventListeners: Array<(event: AgentManagerEvent) => void> = [];

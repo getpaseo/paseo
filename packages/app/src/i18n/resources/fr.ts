@@ -121,6 +121,10 @@ export const fr: TranslationResources = {
       fallback: "Message...",
       terminal: "Prompt",
     },
+    promptSuggestions: {
+      a11yLabel: "Suggestion de message, appuyez sur Tab pour accepter",
+      chipAccessibilityLabel: "Utiliser la suggestion : {{text}}",
+    },
     input: {
       accessibilityLabel: "Agent de messagerie...",
       terminalAccessibilityLabel: "Terminal prompt",
@@ -2457,6 +2461,11 @@ export const fr: TranslationResources = {
           title: "Activer les outilsPaseo",
           hint: "Les agents pourront gérer les arbres de travail, les agents et les horaires",
           accessibilityLabel: "Injecter les outilsPaseo",
+        },
+        promptSuggestions: {
+          title: "Suggérer les prochains messages",
+          hint: "Quand un agent a terminé, proposer quoi demander ensuite",
+          accessibilityLabel: "Suggérer les prochains messages",
         },
         systemPrompt: {
           title: "Invite système",

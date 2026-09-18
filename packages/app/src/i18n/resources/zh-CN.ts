@@ -118,6 +118,10 @@ export const zhCN: TranslationResources = {
       fallback: "输入消息...",
       terminal: "Prompt",
     },
+    promptSuggestions: {
+      a11yLabel: "建议的提示词，按 Tab 采用",
+      chipAccessibilityLabel: "使用建议：{{text}}",
+    },
     input: {
       accessibilityLabel: "给 Agent 发消息...",
       terminalAccessibilityLabel: "Terminal prompt",
@@ -2370,6 +2374,11 @@ export const zhCN: TranslationResources = {
           title: "启用 Paseo tools",
           hint: "Agent 将能够管理 worktree、Agent 和计划",
           accessibilityLabel: "注入 Paseo tools",
+        },
+        promptSuggestions: {
+          title: "建议下一条提示",
+          hint: "Agent 完成后，建议接下来可以问什么",
+          accessibilityLabel: "建议下一条提示",
         },
         systemPrompt: {
           title: "System prompt",
