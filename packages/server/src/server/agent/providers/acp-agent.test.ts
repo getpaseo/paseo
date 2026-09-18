@@ -706,6 +706,46 @@ describe("mapACPUsage", () => {
   });
 });
 
+describe("ACP context-window usage", () => {
+  async function emitUsageUpdate(update: {
+    used: number;
+    size: number;
+  }): Promise<{ events: unknown[] }> {
+    const session = createSessionWithConfig({ provider: "dsh" });
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    const events: unknown[] = [];
+    session.subscribe((event) => {
+      if (event.type === "usage_updated") events.push(event);
+    });
+    await session.sessionUpdate({
+      sessionId: "session-1",
+      update: { sessionUpdate: "usage_update", used: update.used, size: update.size },
+    });
+    return { events };
+  }
+
+  test("forwards usage_update as context-window usage state", async () => {
+    const { events } = await emitUsageUpdate({ used: 13_759, size: 1_000_000 });
+
+    expect(events).toEqual([
+      {
+        type: "usage_updated",
+        provider: "dsh",
+        usage: { contextWindowMaxTokens: 1_000_000, contextWindowUsedTokens: 13_759 },
+      },
+    ]);
+  });
+
+  test("emits nothing when size and used cannot both drive a meter", async () => {
+    await expect(
+      emitUsageUpdate({ used: -1, size: 0 }).then((result) => result.events),
+    ).resolves.toEqual([]);
+    await expect(
+      emitUsageUpdate({ used: 13_759, size: 0 }).then((result) => result.events),
+    ).resolves.toEqual([]);
+  });
+});
+
 describe("deriveModesFromACP", () => {
   test("prefers explicit ACP mode state", () => {
     const result = deriveModesFromACP(
