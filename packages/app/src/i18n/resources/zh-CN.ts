@@ -1124,6 +1124,10 @@ export const zhCN: TranslationResources = {
     pinned: {
       title: "已置顶",
     },
+    nav: {
+      title: "导航",
+      resize: "调整导航大小",
+    },
     host: {
       noHost: "没有 Host",
       switchTitle: "切换 Host",

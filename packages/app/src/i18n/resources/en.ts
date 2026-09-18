@@ -1140,6 +1140,10 @@ export const en = {
     pinned: {
       title: "Pinned",
     },
+    nav: {
+      title: "Navigation",
+      resize: "Resize navigation",
+    },
     host: {
       noHost: "No host",
       switchTitle: "Switch host",

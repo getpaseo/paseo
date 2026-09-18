@@ -1139,6 +1139,10 @@ export const ko: TranslationResources = {
     pinned: {
       title: "고정됨",
     },
+    nav: {
+      title: "탐색",
+      resize: "탐색 크기 조절",
+    },
     host: {
       noHost: "호스트 없음",
       switchTitle: "호스트 전환",
