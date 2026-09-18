@@ -4,6 +4,7 @@ import {
   beginMessageSubmission,
   getActiveMessageSubmissions,
   getSendingClientMessageIds,
+  hasActiveMessageSubmissions,
   observeMessageSubmissionCanonical,
   rejectMessageSubmission,
 } from "./model";
@@ -51,6 +52,21 @@ describe("message submission transactions", () => {
       "client-1",
     ]);
     expect(observeMessageSubmissionCanonical(accepted, ["client-1"])).toEqual([]);
+  });
+
+  it("reports activity until every submission is provider acknowledged", () => {
+    const both = beginMessageSubmission(
+      beginMessageSubmission([], { clientMessageId: "client-1" }),
+      { clientMessageId: "client-2" },
+    );
+    const oneAcknowledged = observeMessageSubmissionCanonical(both, ["client-1"]);
+
+    expect(hasActiveMessageSubmissions(undefined)).toBe(false);
+    expect(hasActiveMessageSubmissions(both)).toBe(true);
+    expect(hasActiveMessageSubmissions(oneAcknowledged)).toBe(true);
+    expect(
+      hasActiveMessageSubmissions(observeMessageSubmissionCanonical(oneAcknowledged, ["client-2"])),
+    ).toBe(false);
   });
 
   it("records provider acknowledgement without settling another transaction", () => {

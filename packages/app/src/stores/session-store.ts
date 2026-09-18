@@ -15,7 +15,7 @@ import {
 import {
   acceptMessageSubmission,
   beginMessageSubmission,
-  getActiveMessageSubmissions,
+  hasActiveMessageSubmissions,
   observeMessageSubmissionCanonical,
   rejectMessageSubmission,
   type MessageSubmissionRecord,
@@ -333,7 +333,7 @@ export function selectAgentTurnPresentation(
     session?.agents.get(agentId)?.turn ??
       session?.agentDetails.get(agentId)?.turn ??
       TURN_LIVENESS_IDLE,
-    getActiveMessageSubmissions(session?.messageSubmissions.get(agentId)).length > 0,
+    hasActiveMessageSubmissions(session?.messageSubmissions.get(agentId)),
   );
 }
 
