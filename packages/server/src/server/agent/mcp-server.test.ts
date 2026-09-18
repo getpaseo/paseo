@@ -219,6 +219,7 @@ function buildAgentManagerSpies() {
     appendTimelineItem: vi.fn().mockResolvedValue(undefined),
     emitLiveTimelineItem: vi.fn().mockResolvedValue(undefined),
     hasInFlightRun: vi.fn().mockReturnValue(false),
+    steerOrReplaceActiveTurn: vi.fn().mockResolvedValue({ status: "inactive" }),
     tryRunOutOfBand: vi.fn().mockReturnValue(false),
     subscribe: vi.fn().mockReturnValue(() => {}),
     streamAgent: vi.fn(() => (async function* noop() {})()),
@@ -3719,6 +3720,40 @@ describe("send_agent_prompt MCP tool", () => {
     expect(response.structuredContent.guidance).toBe(
       "You will get notified when the prompted agent finishes, errors, or needs permission. Do not poll for status; continue with other work until the notification arrives.",
     );
+  });
+
+  it("steers agent messages into the running turn instead of replacing compaction", async () => {
+    const { agentManager, agentStorage, spies } = createTestDeps();
+    spies.agentManager.getAgent.mockReturnValue({
+      id: "child-agent",
+      cwd: existingCwd,
+      lifecycle: "running",
+      currentModeId: null,
+      availableModes: [],
+      config: { title: "Child" },
+    } as ManagedAgent);
+    spies.agentManager.steerOrReplaceActiveTurn.mockResolvedValue({ status: "steered" });
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      callerAgentId: "parent-agent",
+      logger,
+    });
+    const tool = registeredTool(server, "send_agent_prompt");
+    for (const prompt of ["First result", "Second result"]) {
+      await invokeToolWithParsedInput(tool, {
+        agentId: "child-agent",
+        prompt,
+        notifyOnFinish: false,
+      });
+    }
+    expect(spies.agentManager.steerOrReplaceActiveTurn.mock.calls).toEqual([
+      ["child-agent", "First result", undefined],
+      ["child-agent", "Second result", undefined],
+    ]);
+    expect(spies.agentManager.streamAgent).not.toHaveBeenCalled();
+    expect(spies.agentManager.cancelAgentRun).not.toHaveBeenCalled();
   });
 
   it("keeps top-level prompts blocking by default", async () => {

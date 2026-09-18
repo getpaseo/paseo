@@ -1895,6 +1895,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
         agentId,
         prompt,
         sessionMode,
+        activeTurnBehavior: callerAgentId ? "steer" : undefined,
         logger: childLogger,
       });
 
