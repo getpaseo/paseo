@@ -605,13 +605,16 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     const handleTimelineHistoryLoadError = useCallback(() => {
       toast?.error(t("agentStream.historyLoadFailed"));
     }, [t, toast]);
-    const visibleHistoryItemIds = useMemo(
-      () =>
-        new Set(
-          [...baseRenderModel.history, ...baseRenderModel.segments.liveHead].map((item) => item.id),
-        ),
-      [baseRenderModel.history, baseRenderModel.segments.liveHead],
+    const mountedHistoryItemIds = useMemo(
+      () => new Set(baseRenderModel.history.map((item) => item.id)),
+      [baseRenderModel.history],
     );
+    const mountedItemIds = useMemo(() => {
+      const liveHeadItemIds = new Set(baseRenderModel.segments.liveHead.map((item) => item.id));
+      return {
+        has: (itemId: string) => mountedHistoryItemIds.has(itemId) || liveHeadItemIds.has(itemId),
+      };
+    }, [baseRenderModel.segments.liveHead, mountedHistoryItemIds]);
     const chatOutline = useChatOutline({
       agentId,
       serverId: resolvedServerId,
@@ -621,7 +624,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       enabled: supportsChatOutline && chatOutlineEnabled,
       viewportRef,
       onJumpError: handleTimelineHistoryLoadError,
-      visibleItemIds: visibleHistoryItemIds,
+      mountedHistoryItemIds,
       revealLoadedItem: revealLoadedHistory,
     });
 
@@ -1099,7 +1102,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         items={findItems}
         viewportRef={viewportRef}
         revealLoadedItem={revealLoadedHistory}
-        visibleItemIds={visibleHistoryItemIds}
+        visibleItemIds={mountedItemIds}
       >
         <ToolCallSheetProvider>
           <AssistantSelectionCopySurface style={stylesheet.container}>
