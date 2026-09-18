@@ -184,6 +184,76 @@ function createProviderWithFakeAppServer(appServer: FakeCodexAppServer): CodexAp
   return provider;
 }
 
+describe("native turn diff", () => {
+  test.each([
+    { status: "completed", eventType: "turn_completed" },
+    { status: "failed", eventType: "turn_failed" },
+    { status: "interrupted", eventType: "turn_canceled" },
+  ] as const)(
+    "retains only the latest diff on a $status turn without creating a tool call",
+    async ({ status, eventType }) => {
+      const appServer = createFakeCodexAppServer();
+      const session = new CodexAppServerAgentSession(
+        createConfig({ cwd: "/workspace/project" }),
+        null,
+        createTestLogger(),
+        async () => appServer.child,
+      );
+      const events: AgentStreamEvent[] = [];
+      let terminal = deferred<TurnTerminalEvent>();
+      const unsubscribe = session.subscribe((event) => {
+        events.push(event);
+        const isTerminal =
+          event.type === "turn_completed" ||
+          event.type === "turn_failed" ||
+          event.type === "turn_canceled";
+        if (isTerminal) terminal.resolve(event);
+      });
+      try {
+        await session.startTurn("edit a file");
+        appServer.startsTurn({ threadId: "thread-1", turnId: "provider-turn-1" });
+        appServer.updatesDiff({
+          threadId: "thread-1",
+          turnId: "provider-turn-1",
+          diff: "first diff",
+        });
+        appServer.updatesDiff({
+          threadId: "thread-1",
+          turnId: "provider-turn-1",
+          diff: "final diff",
+        });
+        appServer.updatesDiff({
+          threadId: "thread-1",
+          turnId: "older-turn",
+          diff: "stale diff",
+        });
+        appServer.completeTurn({ status });
+        await expect(terminal.promise).resolves.toMatchObject({
+          type: eventType,
+          nativeDiff: "final diff",
+        });
+
+        terminal = deferred<TurnTerminalEvent>();
+        await session.startTurn("make no changes");
+        appServer.startsTurn({ threadId: "thread-1", turnId: "provider-turn-2" });
+        appServer.completeTurn();
+        await expect(terminal.promise).resolves.toMatchObject({
+          type: "turn_completed",
+          nativeDiff: null,
+        });
+        const extraTimelineEvents = events.filter(
+          (event) => event.type === "timeline" && event.item.type !== "user_message",
+        );
+        expect(extraTimelineEvents).toEqual([]);
+        appServer.assertNoErrors();
+      } finally {
+        unsubscribe();
+        await session.close();
+      }
+    },
+  );
+});
+
 async function startPublicSteeringSession(
   appServer: FakeCodexAppServer,
   resolveSlashCommandInvocation?: (prompt: AgentPromptInput) => Promise<{
@@ -5069,6 +5139,7 @@ describe("Codex app-server provider", () => {
       type: "turn_completed",
       provider: "codex",
       turnId: "test-turn",
+      nativeDiff: null,
       usage: undefined,
     });
   });
@@ -5564,6 +5635,7 @@ describe("Codex app-server provider", () => {
         type: "turn_completed",
         provider: "codex",
         turnId: "test-turn",
+        nativeDiff: null,
         usage: undefined,
       },
     ]);
@@ -5605,6 +5677,7 @@ describe("Codex app-server provider", () => {
       type: "turn_completed",
       provider: "codex",
       turnId: "test-turn",
+      nativeDiff: null,
       usage: {
         inputTokens: 30000,
         cachedInputTokens: 5000,

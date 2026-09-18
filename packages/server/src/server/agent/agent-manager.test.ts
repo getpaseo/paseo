@@ -6537,6 +6537,75 @@ test("replaceAgentRun stays running when a stale old terminal arrives before the
   unsubscribe();
 });
 
+test.each([
+  { label: "unsupported", fields: {} },
+  { label: "explicitly undefined", fields: { nativeDiff: undefined } },
+  { label: "no changes", fields: { nativeDiff: null } },
+  { label: "changed files", fields: { nativeDiff: "--- a/file.txt\n+++ b/file.txt\n" } },
+])("keeps native turn diffs in plugin hooks only: $label", async ({ fields }) => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-native-diff-"));
+  const client = new SessionRecordingAgentClient();
+  const turnEnded: unknown[] = [];
+  const manager = new AgentManager({
+    clients: { codex: client },
+    logger,
+    pluginLifecycle: {
+      emit(name, event) {
+        if (name === "agent.turn_ended") turnEnded.push(event);
+      },
+      async before(_name, request) {
+        return request;
+      },
+    },
+  });
+  const publicEvents: AgentStreamEvent[] = [];
+  const unsubscribe = manager.subscribe(
+    (event) => {
+      if (event.type === "agent_stream") publicEvents.push(event.event);
+    },
+    { replayState: false },
+  );
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    const [session] = client.sessions;
+    const terminalCases = [
+      { event: { type: "turn_completed" }, outcome: { kind: "completed" } },
+      {
+        event: { type: "turn_failed", error: "provider failed", code: "test_failure" },
+        outcome: { kind: "failed", error: { message: "provider failed", code: "test_failure" } },
+      },
+      {
+        event: { type: "turn_canceled", reason: "user canceled" },
+        outcome: { kind: "canceled", reason: "user canceled" },
+      },
+    ] as const;
+    for (const { event, outcome } of terminalCases) {
+      const publicTerminal = { ...event, provider: "codex", turnId: event.type } as const;
+      session.pushEvent({ type: "turn_started", provider: "codex", turnId: event.type });
+      session.pushEvent({ ...publicTerminal, ...fields });
+      await manager.flush();
+      expect(publicEvents.filter((item) => item.type === event.type)).toStrictEqual([
+        publicTerminal,
+      ]);
+      expect(turnEnded.at(-1)).toStrictEqual({
+        agent: expect.objectContaining({ id: agent.id }),
+        turnId: event.type,
+        outcome,
+        timeline: expect.any(Array),
+        nativeDiff: fields.nativeDiff,
+      });
+    }
+    expect(turnEnded).toHaveLength(3);
+  } finally {
+    unsubscribe();
+    for (const agent of manager.listAgents()) await manager.closeAgent(agent.id);
+    await manager.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("applies live autonomous events and preserves usage omitted from completion", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-live-events-"));
   const storagePath = join(workdir, "agents");
