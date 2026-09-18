@@ -392,6 +392,7 @@ export interface CreateAgentRequestOptions extends AgentConfigOverrides {
   git?: GitSetupOptions;
   worktree?: CreateAgentRequestMessage["worktree"];
   autoArchive?: CreateAgentRequestMessage["autoArchive"];
+  internal?: CreateAgentRequestMessage["internal"];
   // COMPAT(createAgentWorktree): low-level old callers may still send the
   // create-agent worktree field. Added in v0.2.0; remove after 2027-01-17.
   worktreeName?: string;
@@ -2752,7 +2753,15 @@ export class DaemonClient {
     legacyWorkspace: (input) => this.createLegacyWorkspace(input, input.requestId),
   });
 
+  // COMPAT(internalAgents): added in v0.9.0; remove gate after 2027-03-17.
+  private requireInternalAgents(): void {
+    if (this.lastServerInfoMessage?.features?.internalAgents !== true) {
+      throw new Error("Update the host to create internal agents.");
+    }
+  }
+
   async createAgent(options: CreateAgentRequestOptions): Promise<AgentSnapshotPayload> {
+    if (options.internal) this.requireInternalAgents();
     const result = await this.creations.createAgent({
       ...options,
       config: resolveAgentConfig(options),
@@ -2785,6 +2794,7 @@ export class DaemonClient {
       ...(options.git ? { git: options.git } : {}),
       ...(options.worktree ? { worktree: options.worktree } : {}),
       ...(options.autoArchive !== undefined ? { autoArchive: options.autoArchive } : {}),
+      ...(options.internal !== undefined ? { internal: options.internal } : {}),
       ...(options.worktreeName ? { worktreeName: options.worktreeName } : {}),
       ...(options.labels && Object.keys(options.labels).length > 0
         ? { labels: options.labels }
@@ -4452,6 +4462,7 @@ export class DaemonClient {
     requestId?: string,
   ): Promise<WorkspaceCreatePayload> {
     const resolvedRequestId = this.createRequestId(requestId ?? input.requestId);
+    if (input.agent?.internal) this.requireInternalAgents();
     const result = await this.creations.createWorkspace({
       ...input,
       requestId: resolvedRequestId,
@@ -6707,6 +6718,7 @@ function resolveAgentConfig(options: CreateAgentRequestOptions): AgentSessionCon
     attachments: _attachments,
     worktree: _worktree,
     autoArchive: _autoArchive,
+    internal: _internal,
     env: _env,
     workspaceId: _workspaceId,
     initialPrompt: _initialPrompt,

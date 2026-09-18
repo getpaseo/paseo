@@ -11,6 +11,7 @@ import { AgentStorage } from "../agent-storage.js";
 import type { CreatePaseoWorktreeWorkflowResult } from "../../worktree-session.js";
 import { createAgentCommand } from "./create.js";
 import type { ManagedAgent } from "../agent-manager.js";
+import type { AgentSessionConfig } from "../agent-sdk-types.js";
 
 const logger = createTestLogger();
 
@@ -470,4 +471,48 @@ test("session create keeps an explicit title after the initial prompt settles", 
   } finally {
     await removeRealAgentManagerWorkdir({ agentManager, storage, workdir });
   }
+});
+
+test("session create with an internal config skips provider session persistence", async () => {
+  const snapshot = {
+    id: "agent-1",
+    provider: "codex",
+    cwd: "/tmp/paseo-create-test",
+    runtimeInfo: null,
+  } as ManagedAgent;
+  const createAgent = vi.fn(async () => snapshot);
+  const dependencies: Parameters<typeof createAgentCommand>[0] = {
+    agentManager: {
+      createAgent,
+    } as unknown as Parameters<typeof createAgentCommand>[0]["agentManager"],
+    agentStorage: {} as Parameters<typeof createAgentCommand>[0]["agentStorage"],
+    logger: createTestLogger(),
+    providerSnapshotManager: createProviderSnapshotManagerStub().manager,
+  };
+  const input = {
+    kind: "session" as const,
+    workspaceId: "ws-create-test",
+    labels: {},
+    provisionalTitle: null,
+    firstAgentContext: { attachments: [] },
+    buildSessionConfig: async (config: AgentSessionConfig) => ({ sessionConfig: config }),
+  };
+
+  await createAgentCommand(dependencies, {
+    ...input,
+    config: { provider: "codex", cwd: "/tmp/paseo-create-test", internal: true },
+  });
+  await createAgentCommand(dependencies, {
+    ...input,
+    config: { provider: "codex", cwd: "/tmp/paseo-create-test" },
+  });
+
+  expect(createAgent).toHaveBeenNthCalledWith(
+    1,
+    expect.objectContaining({ provider: "codex", internal: true }),
+    undefined,
+    expect.objectContaining({ persistSession: false }),
+  );
+  expect(createAgent.mock.calls[1]?.[0]).not.toHaveProperty("internal");
+  expect(createAgent.mock.calls[1]?.[2]).not.toHaveProperty("persistSession");
 });

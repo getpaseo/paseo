@@ -257,6 +257,12 @@ export interface PaseoAgentCreateOptions {
   git?: CreateAgentRequestMessage["git"];
   worktree?: CreateAgentRequestMessage["worktree"];
   autoArchive?: CreateAgentRequestMessage["autoArchive"];
+  /**
+   * An ephemeral helper. The daemon never persists, lists, flags or announces
+   * an internal agent, plugin lifecycle hooks skip it, and its provider session
+   * is not kept. Requires a host that advertises `features.internalAgents`.
+   */
+  internal?: CreateAgentRequestMessage["internal"];
   requestId?: string;
   labels?: Record<string, string>;
 }

@@ -54,6 +54,7 @@ import {
   type ListImportableSessionsOptions,
 } from "./agent-sdk-types.js";
 import { buildArchivedAgentRecord, type ArchivedStoredAgentRecord } from "./agent-archive.js";
+import { toStoredAgentRecord } from "./agent-projections.js";
 import type { StoredAgentRecord, AgentStorage } from "./agent-storage.js";
 import type { AgentOwner } from "./agent-owner.js";
 import {
@@ -670,7 +671,7 @@ function getFirstUserMessageTextFromRows(rows: readonly AgentTimelineRow[]): str
 }
 
 function shouldDetachFromArchivedParent(
-  parent: StoredAgentRecord,
+  parent: Pick<StoredAgentRecord, "workspaceId">,
   child: StoredAgentRecord,
 ): boolean {
   const isCrossWorkspace =
@@ -690,8 +691,25 @@ function detachedAgentLabelPatch(labels: Record<string, string>): AgentLabelPatc
   return patch;
 }
 
+/**
+ * How long an archived internal agent stays readable by id. Storage plays this
+ * role for public agents; internal agents never reach it, and a one-shot helper
+ * can finish and auto-archive before its creator's `waitForFinish` arrives.
+ */
+const RETIRED_INTERNAL_AGENT_TTL_MS = 10 * 60 * 1000;
+const RETIRED_INTERNAL_AGENT_LIMIT = 500;
+
+export interface RetiredInternalAgent {
+  record: ArchivedStoredAgentRecord;
+  lastMessage: string | null;
+}
+
 export class AgentManager {
   private readonly pluginLifecycle: PluginLifecycle | undefined;
+  private readonly retiredInternalAgents = new Map<
+    string,
+    RetiredInternalAgent & { expiresAt: number }
+  >();
   private readonly clients = new Map<AgentProvider, AgentClient>();
   private readonly providerEnabled = new Map<AgentProvider, boolean>();
   private readonly providerDefinitions = new Map<AgentProvider, ProviderEnabledFlag>();
@@ -1636,6 +1654,42 @@ export class AgentManager {
     }
   }
 
+  /**
+   * The archived snapshot of an internal agent, for a while after archive.
+   * Null once it has expired or was never an internal agent.
+   */
+  getRetiredInternalAgent(agentId: string): RetiredInternalAgent | null {
+    const entry = this.retiredInternalAgents.get(agentId);
+    if (!entry) {
+      return null;
+    }
+    if (entry.expiresAt <= Date.now()) {
+      this.retiredInternalAgents.delete(agentId);
+      return null;
+    }
+    return { record: entry.record, lastMessage: entry.lastMessage };
+  }
+
+  private retireInternalAgent(entry: RetiredInternalAgent): void {
+    const now = Date.now();
+    for (const [agentId, retired] of this.retiredInternalAgents) {
+      if (retired.expiresAt <= now) {
+        this.retiredInternalAgents.delete(agentId);
+      }
+    }
+    while (this.retiredInternalAgents.size >= RETIRED_INTERNAL_AGENT_LIMIT) {
+      const oldest = this.retiredInternalAgents.keys().next().value;
+      if (oldest === undefined) {
+        break;
+      }
+      this.retiredInternalAgents.delete(oldest);
+    }
+    this.retiredInternalAgents.set(entry.record.id, {
+      ...entry,
+      expiresAt: now + RETIRED_INTERNAL_AGENT_TTL_MS,
+    });
+  }
+
   closeAgent(agentId: string): Promise<void> {
     const existing = this.inFlightAgentCloses.get(agentId);
     if (existing) {
@@ -1721,6 +1775,23 @@ export class AgentManager {
     requestedArchivedAt?: string,
   ): Promise<{ archivedAt: string }> {
     const agent = this.requireAgent(agentId);
+    if (agent.internal) {
+      // Nothing about an internal agent is on disk, and archiving must not put
+      // it there. Its final snapshot is kept in memory for a while (see
+      // getRetiredInternalAgent); the runtime is closed and the committed
+      // timeline dropped, so `getAgent` returns null from here on.
+      const archivedAt = requestedArchivedAt ?? new Date().toISOString();
+      const lastMessage = await this.getLastAssistantMessage(agentId);
+      const record = buildArchivedAgentRecord(
+        toStoredAgentRecord(agent, { title: agent.config.title ?? null, internal: true }),
+        { archivedAt, updatedAt: archivedAt },
+      );
+      await this.closeAgentRuntime(agentId);
+      await this.deleteAgentState(agentId);
+      this.retireInternalAgent({ record, lastMessage });
+      await this.cascadeArchiveChildren(record);
+      return { archivedAt };
+    }
     if (!this.registry) {
       throw new Error("Agent storage is not configured");
     }
@@ -1739,7 +1810,7 @@ export class AgentManager {
     await this.syncNativeArchiveState(stored.provider, stored.persistence, "archive");
     this.discardRetainedAgentState(agentId);
 
-    await this.cascadeArchiveChildren(agentId);
+    await this.cascadeArchiveChildren(stored);
 
     return { archivedAt };
   }
@@ -1748,16 +1819,15 @@ export class AgentManager {
   // label pointing back at the caller. Archiving the parent cascades to those
   // children so subagent fleets don't outlive their orchestrator. Detached
   // handoff agents omit this label, so they stand outside the cascade.
-  private async cascadeArchiveChildren(parentAgentId: string): Promise<void> {
+  private async cascadeArchiveChildren(
+    parent: Pick<StoredAgentRecord, "id" | "workspaceId">,
+  ): Promise<void> {
     const registry = this.registry;
     if (!registry) {
       return;
     }
+    const parentAgentId = parent.id;
     const records = await registry.list();
-    const parent = records.find((record) => record.id === parentAgentId);
-    if (!parent) {
-      throw new Error(`Archived parent ${parentAgentId} not found in storage`);
-    }
     for (const record of records) {
       if (record.archivedAt) {
         continue;
@@ -2162,7 +2232,7 @@ export class AgentManager {
     if (!nextRecord.internal) this.dispatchStoredAgentState(nextRecord);
 
     await this.fireAgentArchived(agentId);
-    await this.cascadeArchiveChildren(agentId);
+    await this.cascadeArchiveChildren(record);
 
     return nextRecord;
   }

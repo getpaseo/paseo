@@ -1698,6 +1698,11 @@ export const CreateAgentRequestMessageSchema = z.object({
   git: GitSetupOptionsSchema.optional(),
   worktree: CreateAgentWorktreeTargetSchema.optional(),
   autoArchive: z.boolean().optional(),
+  // An ephemeral helper: the daemon never persists, lists, flags or announces
+  // it, and plugin lifecycle hooks skip it. Lives on the request rather than
+  // in the config schema, which is reused for updates. Gated on
+  // server_info.features.internalAgents.
+  internal: z.boolean().optional(),
   labels: z.record(z.string(), z.string()).default({}),
   requestId: z.string(),
 });
@@ -3532,6 +3537,8 @@ export const ServerInfoStatusPayloadSchema = z
         creationLifecycle: z.boolean().optional(),
         // COMPAT(hubAgentRpc): added in v0.8.0; remove gate after 2027-03-05.
         hubAgentRpc: z.boolean().optional(),
+        // COMPAT(internalAgents): added in v0.9.0; remove gate after 2027-03-17.
+        internalAgents: z.boolean().optional(),
         providersSnapshot: z.boolean().optional(),
         // COMPAT(providersSnapshotCwd): added in v0.3.2, remove gate after 2027-02-10.
         providersSnapshotCwd: z.boolean().optional(),
