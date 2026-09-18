@@ -1944,6 +1944,7 @@ export const ru: TranslationResources = {
     used: "Использовано: {{percentage}}%",
     tokens: "Токены: {{used}} / {{max}}",
     sessionCost: "Стоимость сессии: {{cost}}",
+    pending: "Данные об использовании ещё не получены",
     accessibility: "Использовано {{percentage}}% контекстного окна",
   },
   review: {

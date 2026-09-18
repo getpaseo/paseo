@@ -9,6 +9,8 @@ export interface ProviderUsageServiceOptions {
   fetchers?: ProviderUsageFetcher[];
   fetch?: ProviderApiFetch;
   cacheTtlMs?: number;
+  /** Floor a forced refresh still respects, so UI-driven refreshes cannot hammer provider APIs. */
+  forceRefreshMinIntervalMs?: number;
   now?: () => number;
 }
 
@@ -18,11 +20,13 @@ export interface ProviderUsageListResult {
 }
 
 const DEFAULT_PROVIDER_USAGE_CACHE_TTL_MS = 5 * 60 * 1000;
+const DEFAULT_FORCE_REFRESH_MIN_INTERVAL_MS = 15 * 1000;
 
 export class ProviderUsageService {
   private readonly logger: Logger;
   private readonly fetchers: ProviderUsageFetcher[];
   private readonly cacheTtlMs: number;
+  private readonly forceRefreshMinIntervalMs: number;
   private readonly now: () => number;
   private cached: { fetchedAtMs: number; result: ProviderUsageListResult } | null = null;
   private inFlight: Promise<ProviderUsageListResult> | null = null;
@@ -36,16 +40,18 @@ export class ProviderUsageService {
         fetch: options.fetch,
       });
     this.cacheTtlMs = options.cacheTtlMs ?? DEFAULT_PROVIDER_USAGE_CACHE_TTL_MS;
+    this.forceRefreshMinIntervalMs =
+      options.forceRefreshMinIntervalMs ?? DEFAULT_FORCE_REFRESH_MIN_INTERVAL_MS;
     this.now = options.now ?? Date.now;
   }
 
   async listUsage(options?: { forceRefresh?: boolean }): Promise<ProviderUsageListResult> {
     const nowMs = this.now();
-    if (
-      !options?.forceRefresh &&
-      this.cached &&
-      nowMs - this.cached.fetchedAtMs < this.cacheTtlMs
-    ) {
+    // A forced refresh bypasses the cache TTL but still honors a short floor:
+    // it exists for a user explicitly asking "now", not for a hover loop to
+    // fan out to every provider API on each open.
+    const maxAgeMs = options?.forceRefresh ? this.forceRefreshMinIntervalMs : this.cacheTtlMs;
+    if (this.cached && nowMs - this.cached.fetchedAtMs < maxAgeMs) {
       return this.cached.result;
     }
 
