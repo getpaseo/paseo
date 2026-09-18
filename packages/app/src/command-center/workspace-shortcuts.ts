@@ -36,5 +36,7 @@ export function resolveWorkspaceCommandCenterShortcuts({
       resolveShortcutKeysForAction("toggle-right-sidebar", overrides, platform) ?? undefined,
     // Workspace management shortcuts
     pinWorkspace: resolveShortcutKeysForAction("pin-workspace", overrides, platform) ?? undefined,
+    renameWorkspace:
+      resolveShortcutKeysForAction("rename-workspace", overrides, platform) ?? undefined,
   };
 }
