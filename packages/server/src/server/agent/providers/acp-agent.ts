@@ -1681,6 +1681,9 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private initialCommandsWaitTimeoutMs: number;
   private readonly extensionCommandsParser?: ACPExtensionCommandsParser;
   private currentTurnUsage: AgentUsage | undefined;
+  private contextWindowUsage:
+    | Pick<AgentUsage, "contextWindowMaxTokens" | "contextWindowUsedTokens">
+    | undefined;
   private activeForegroundTurnId: string | null = null;
   private fallbackAssistantMessageId: string | null = null;
   private closed = false;
@@ -2907,8 +2910,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
         this.handleSessionInfoUpdate(update);
         return pendingUserEvents;
       case "usage_update":
-        this.handleUsageUpdate(update);
-        return pendingUserEvents;
+        return [...pendingUserEvents, ...this.handleUsageUpdate(update)];
       case "available_commands_update":
         this.cachedCommands = update.availableCommands.map((command) => ({
           name: command.name,
@@ -3068,8 +3070,34 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     }
   }
 
-  private handleUsageUpdate(update: UsageUpdate): void {
-    void update;
+  private handleUsageUpdate(update: UsageUpdate): AgentStreamEvent[] {
+    const contextWindowMaxTokens =
+      Number.isFinite(update.size) && update.size > 0 ? update.size : undefined;
+    const contextWindowUsedTokens =
+      Number.isFinite(update.used) && update.used >= 0 ? update.used : undefined;
+    if (contextWindowMaxTokens === undefined && contextWindowUsedTokens === undefined) {
+      return [];
+    }
+    this.contextWindowUsage = {
+      ...this.contextWindowUsage,
+      ...(contextWindowMaxTokens !== undefined ? { contextWindowMaxTokens } : {}),
+      ...(contextWindowUsedTokens !== undefined ? { contextWindowUsedTokens } : {}),
+    };
+    return [
+      {
+        type: "usage_updated",
+        provider: this.provider,
+        usage: { ...this.currentTurnUsage, ...this.contextWindowUsage },
+        ...(this.activeForegroundTurnId ? { turnId: this.activeForegroundTurnId } : {}),
+      },
+    ];
+  }
+
+  private usageWithContextWindow(): AgentUsage | undefined {
+    if (!this.contextWindowUsage) {
+      return this.currentTurnUsage;
+    }
+    return { ...this.currentTurnUsage, ...this.contextWindowUsage };
   }
 
   private handlePromptResponse(response: PromptResponse, turnId: string): void {
@@ -3093,7 +3121,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
         this.finishTurn({
           type: "turn_completed",
           provider: this.provider,
-          usage: this.currentTurnUsage,
+          usage: this.usageWithContextWindow(),
           turnId,
         });
         break;
