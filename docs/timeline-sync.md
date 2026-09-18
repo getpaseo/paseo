@@ -166,14 +166,19 @@ replica cache.
 
 The app chooses one delivery policy from `server_info.features.selectiveAgentTimeline`:
 
-- Selective daemons receive every open workspace chat plus any visible agent pane. Workspace layout
-  owns open-chat lifetime, independently of mounted or retained React views. Switching workspaces,
-  evicting a retained view, and app backgrounding preserve that demand; closing the chat releases it.
-  Reconnect restores the open set and gives visible chats the first catch-up attempt. Hidden chats
-  follow when those attempts settle, including failures, so a failed visible chat does not starve
-  background recovery. Split panes catch up together. Hidden chats update the replica; on web their
-  retained presentation stays suspended until revealed, on native it keeps rendering. Revealing a
-  chat reads the current store and preserves its local UI state. There is no recent-agent limit.
+- Selective daemons receive the chats this session has opened, plus any visible agent pane. A chat
+  enters that set the first time the user opens it and leaves when its tab closes or the session
+  ends, independently of mounted or retained React views: switching workspaces, evicting a retained
+  view, app backgrounding, and reconnect all preserve the demand. There is no recent-agent limit.
+  Restored workspace layout is a release signal, never a source. It carries a tab for every chat the
+  user has ever opened on the host, and a catch-up fetch resumes its agent on the daemon, so
+  subscribing from layout spawns a provider session per historical tab at every launch and stamps
+  every one of those workspaces as just used (see
+  [agent lifecycle](agent-lifecycle.md#workspace-activity)). Visible chats get the first catch-up
+  attempt; the rest follow when those attempts settle, including failures, so a failed visible chat
+  does not starve background recovery. Split panes catch up together. Hidden chats update the
+  replica; on web their retained presentation stays suspended until revealed, on native it keeps
+  rendering. Revealing a chat reads the current store and preserves its local UI state.
 - Legacy daemons keep globally streaming agent timelines. Visibility still triggers the existing
   authoritative catch-up, but the app does not issue selective-subscription RPCs.
 
