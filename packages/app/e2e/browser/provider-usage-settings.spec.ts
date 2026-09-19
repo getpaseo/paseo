@@ -1,6 +1,9 @@
 import { expect, test } from "../support/fixtures";
 import { gotoAppShell, openSettings } from "../support/helpers/app";
-import { installProviderUsageFixture } from "../support/helpers/provider-usage";
+import {
+  expectProviderUsageBalanceWithinCard,
+  installProviderUsageFixture,
+} from "../support/helpers/provider-usage";
 import { getServerId } from "../support/helpers/server-id";
 import { openSettingsHostSection } from "../support/helpers/settings";
 
@@ -116,43 +119,25 @@ test.describe("provider usage settings", () => {
   test("keeps localized balance resets within the usage card", async ({ page }) => {
     test.setTimeout(120_000);
     await page.setViewportSize({ width: 320, height: 844 });
-    const serverId = getServerId();
-    await installProviderUsageFixture(page, [
+    await expectProviderUsageBalanceWithinCard(
+      page,
       {
-        fetchedAt: "2026-06-19T00:00:00.000Z",
-        providers: [
+        providerId: "glm",
+        displayName: "GLM coding plan",
+        status: "available",
+        planLabel: "GLM coding plan",
+        windows: [],
+        balances: [
           {
-            providerId: "glm",
-            displayName: "GLM coding plan",
-            status: "available",
-            planLabel: "GLM coding plan",
-            windows: [],
-            balances: [
-              {
-                id: "credits",
-                label: "Credits available for additional usage",
-                remaining: 999_999_999_999_999,
-                unit: "credits",
-                resetsAt: "2026-12-31T23:59:00.000Z",
-              },
-            ],
+            id: "credits",
+            label: "Credits available for additional usage",
+            remaining: 999_999_999_999_999,
+            unit: "credits",
+            resetsAt: "2026-12-31T23:59:00.000Z",
           },
         ],
       },
-    ]);
-
-    await gotoAppShell(page);
-    await openSettings(page);
-    await openSettingsHostSection(page, serverId, "usage");
-
-    const card = page.getByTestId("provider-usage-card");
-    const value = page.getByTestId("provider-usage-balance-credits-value");
-    await expect(value).toBeVisible({ timeout: 10_000 });
-    const [cardBox, valueBox] = await Promise.all([card.boundingBox(), value.boundingBox()]);
-    expect(cardBox).not.toBeNull();
-    expect(valueBox).not.toBeNull();
-    expect((valueBox?.x ?? 0) + (valueBox?.width ?? 0)).toBeLessThanOrEqual(
-      (cardBox?.x ?? 0) + (cardBox?.width ?? 0),
+      "credits",
     );
   });
 

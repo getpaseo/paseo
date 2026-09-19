@@ -1,6 +1,9 @@
-import type { Page } from "@playwright/test";
+import { expect, type Page } from "@playwright/test";
 import type { ProviderUsage } from "@getpaseo/protocol/messages";
+import { gotoAppShell, openSettings } from "./app";
 import { daemonWsRoutePattern } from "./daemon-port";
+import { getServerId } from "./server-id";
+import { openSettingsHostSection } from "./settings";
 
 interface ProviderUsageFixturePayload {
   fetchedAt: string;
@@ -11,6 +14,33 @@ export interface ProviderUsageFixture {
   requestCount(): number;
   releaseNextResponse(): void;
   waitForRequestCount(count: number): Promise<void>;
+}
+
+export async function expectProviderUsageBalanceWithinCard(
+  page: Page,
+  provider: ProviderUsage,
+  balanceId: string,
+): Promise<void> {
+  const serverId = getServerId();
+  await installProviderUsageFixture(page, [
+    {
+      fetchedAt: "2026-06-19T00:00:00.000Z",
+      providers: [provider],
+    },
+  ]);
+  await gotoAppShell(page);
+  await openSettings(page);
+  await openSettingsHostSection(page, serverId, "usage");
+
+  const card = page.getByTestId("provider-usage-card");
+  const value = page.getByTestId(`provider-usage-balance-${balanceId}-value`);
+  await expect(value).toBeVisible({ timeout: 10_000 });
+  const [cardBox, valueBox] = await Promise.all([card.boundingBox(), value.boundingBox()]);
+  expect(cardBox).not.toBeNull();
+  expect(valueBox).not.toBeNull();
+  expect((valueBox?.x ?? 0) + (valueBox?.width ?? 0)).toBeLessThanOrEqual(
+    (cardBox?.x ?? 0) + (cardBox?.width ?? 0),
+  );
 }
 
 interface ProviderUsageFixtureOptions {

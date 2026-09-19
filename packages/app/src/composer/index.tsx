@@ -2090,9 +2090,7 @@ function ComposerContentImpl({
   const contextWindowPending = agentState.status === "initializing" || isAgentRunning;
   const contextWindowMeterGlyphSize = isCompactLayout ? ICON_SIZE.md : buttonIconSize;
   const contextWindowAgentKey = `${serverId}:${agentId}`;
-  const [reservedCompactContextWindowAgentKey, setReservedCompactContextWindowAgentKey] = useState<
-    string | null
-  >(null);
+  const reservedCompactContextWindowAgentKey = useRef<string | null>(null);
 
   const contextWindowMeter = useMemo(
     () =>
@@ -2121,20 +2119,16 @@ function ComposerContentImpl({
     () => resolveContextWindowPlacement(contextWindowMeter, hasAgent, isCompactLayout),
     [contextWindowMeter, hasAgent, isCompactLayout],
   );
+  if (isCompactLayout && hasAgent && contextWindowMeter !== null) {
+    reservedCompactContextWindowAgentKey.current = contextWindowAgentKey;
+  }
   const shouldReserveCompactContextWindowSlot = shouldRenderCompactContextWindowSlot({
     isCompactLayout,
     hasAgent,
     hasMeter: contextWindowMeter !== null,
     activeAgentKey: contextWindowAgentKey,
-    reservedAgentKey: reservedCompactContextWindowAgentKey,
+    reservedAgentKey: reservedCompactContextWindowAgentKey.current,
   });
-
-  useEffect(() => {
-    if (!isCompactLayout || !hasAgent || contextWindowMeter === null) return;
-    setReservedCompactContextWindowAgentKey((current) =>
-      current === contextWindowAgentKey ? current : contextWindowAgentKey,
-    );
-  }, [contextWindowAgentKey, contextWindowMeter, hasAgent, isCompactLayout]);
 
   const hasGithubAttachment = useMemo(
     () =>
