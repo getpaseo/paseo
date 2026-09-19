@@ -16,7 +16,7 @@ in `packages/app/app.config.js`.
 | `paseo://` links                           | `VIEW` with the `paseo` scheme                        | Routes below. Also used by launcher shortcuts.                                            |
 | Static launcher shortcuts                  | long-press the app icon                               | New workspace, Open project, History. Declared by the config plugin.                      |
 | Dynamic launcher shortcut                  | long-press the app icon                               | "Resume <workspace>" for the last workspace the user opened. Set from the app at runtime. |
-| Assistant catalog provider                 | query `content://sh.paseo.assistant/…`                | Read-only workspace and agent listing for on-device assistants. See below.                |
+| Assistant catalog provider                 | query `content://sh.paseo.assistant/…`                | Read-only workspace, agent, and message listing for on-device assistants. See below.      |
 | Pairing offer                              | any URL with `#offer=`                                | Adds the host. See `OfferLinkListener` in `packages/app/src/app/_layout.tsx`.             |
 
 Shares and selections always go to the New workspace composer. It is the one
@@ -78,21 +78,45 @@ form.
 ## Assistant catalog provider
 
 Links let another app act, but not look. The app exports a read-only content
-provider (`AssistantContentProvider` in the native module) with two tables:
+provider (`AssistantContentProvider` in the native module) with three tables:
 
-| URI                                                          | Columns                                                                                 |
-| ------------------------------------------------------------ | --------------------------------------------------------------------------------------- |
-| `content://sh.paseo.assistant/workspaces?q=&limit=`          | `id`, `serverId`, `name`, `project`, `branch`, `status`, `agentCount`, `lastActivityAt` |
-| `content://sh.paseo.assistant/agents?workspaceId=&q=&limit=` | `id`, `serverId`, `workspaceId`, `name`, `provider`, `status`, `lastActivityAt`         |
+| URI                                                                  | Columns                                                                                 |
+| -------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| `content://sh.paseo.assistant/workspaces?q=&limit=`                  | `id`, `serverId`, `name`, `project`, `branch`, `status`, `agentCount`, `lastActivityAt` |
+| `content://sh.paseo.assistant/agents?workspaceId=&q=&limit=`         | `id`, `serverId`, `workspaceId`, `name`, `provider`, `status`, `lastActivityAt`         |
+| `content://sh.paseo.assistant/messages?agentId=&workspaceId=&limit=` | `id`, `serverId`, `workspaceId`, `agentId`, `agentName`, `kind`, `createdAt`, `text`    |
 
-Rows come from a catalog the app publishes whenever hosts, workspaces, or
-agents change: ids, names, status, and activity, most recent first, capped at
-100 workspaces and 200 agents. Paths, prompts, and transcripts are never in
-it. The provider reads a file, so it works without starting React Native and
-answers as of the last time the app was open. `q` is a case-insensitive
-substring match over the row's columns, `limit` is 1 to 100 (default 25), and
-a SQL selection or sort order is refused rather than ignored. Only callers in
-the `com.colonelpanic.eva` package family are served.
+`workspaces` and `agents` come from a catalog the app publishes whenever hosts,
+workspaces, or agents change: ids, names, status, and activity, most recent
+first, capped at 100 workspaces and 200 agents. Paths, prompts, and transcripts
+are never in it. Those two tables read a file, so they work without starting
+React Native and answer as of the last time the app was open. `q` is a
+case-insensitive substring match over the row's columns and `limit` is 1 to 100
+(default 25).
+
+On every table a SQL selection or sort order is refused rather than ignored, and
+only callers in the `com.colonelpanic.eva` package family are served.
+
+### Messages
+
+`messages` is the transcript, so it cannot come from a file. Pass exactly one of
+`agentId` or `workspaceId` — `agentId` wins when both are set, neither is an
+error — and `limit` 1 to 50 (default 10). Rows are newest first, `kind` is
+`user`, `assistant`, `tool`, or `notice`, and `text` is plain text clipped to
+1000 characters. A `workspaceId` fans out over that workspace's non-archived
+top-level agents on every host that owns it and merges them by time.
+
+This table needs the app process alive. The provider's binder thread posts an
+`onAssistantQuery` event through `AssistantQueryBridge` and parks for about
+seven seconds; `AndroidAssistantQueryListener` fetches the timelines from the
+daemon and answers with `resolveAssistantQuery`. Reasoning, todos, and tool
+internals are dropped on the way, because an assistant reads these out loud.
+
+Anything that keeps the app from answering — Paseo not running, a host offline,
+an unknown id, a timeout, a failed fetch — comes back as one `kind=notice` row
+whose `text` is a sentence the assistant can read, not an exception. Only a
+request the provider cannot parse throws. A workspace whose agents have said
+nothing yet returns no rows.
 
 The authority is `sh.paseo.assistant` for release builds and
 `<package>.assistant` for the debug variant, declared by
