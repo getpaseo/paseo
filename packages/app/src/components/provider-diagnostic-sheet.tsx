@@ -18,6 +18,12 @@ import { isWeb } from "@/constants/platform";
 import { useToast } from "@/contexts/toast-context";
 import { CODE_SURFACE_DATASET } from "@/styles/code-surface";
 import { useDaemonConfig } from "@/hooks/use-daemon-config";
+import { useModelVisibility } from "@/hooks/use-model-visibility";
+import { retryModelSelection } from "@/provider-selection/model-visibility";
+import { isModelVisible } from "@/provider-selection/model-visibility";
+import { switchGeometry } from "@/components/ui/control-geometry";
+import { Switch } from "@/components/ui/switch";
+import { toErrorMessage } from "@/utils/error-messages";
 import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
 import { useHostRuntimeClient } from "@/runtime/host-runtime";
 import { settingsStyles } from "@/styles/settings";
@@ -30,6 +36,8 @@ import {
   resolveProviderDiscoveredModels,
   type ProviderDiscoveredModelsCache,
 } from "./provider-diagnostic-models";
+
+const MODEL_ROW_ICON_BUTTON_SIZE = 28;
 
 interface ProviderDiagnosticSheetProps {
   provider: string;
@@ -49,7 +57,42 @@ function rankModels<T>(items: T[], query: string, fields: (item: T) => string[])
   return scored.map((entry) => entry.item);
 }
 
-function DiscoveredModelRow({ model }: { model: AgentModelDefinition }) {
+interface ModelVisibilityToggleProps {
+  modelId: string;
+  visible: boolean;
+  disabled: boolean;
+  onToggle: (modelId: string, visible: boolean) => void;
+}
+
+function ModelVisibilityToggle({
+  modelId,
+  visible,
+  disabled,
+  onToggle,
+}: ModelVisibilityToggleProps) {
+  const { t } = useTranslation();
+  const handleValueChange = useCallback(
+    (next: boolean) => onToggle(modelId, next),
+    [modelId, onToggle],
+  );
+  return (
+    <Switch
+      value={visible}
+      onValueChange={handleValueChange}
+      disabled={disabled}
+      accessibilityLabel={t("settings.providers.models.visibilityToggle", { id: modelId })}
+      testID={`provider-model-visibility-${modelId}`}
+    />
+  );
+}
+
+function DiscoveredModelRow({
+  model,
+  visibility,
+}: {
+  model: AgentModelDefinition;
+  visibility: ModelRowVisibility | null;
+}) {
   return (
     <View style={sheetStyles.modelRow}>
       <Text style={sheetStyles.modelTitle} numberOfLines={1}>
@@ -67,6 +110,20 @@ function DiscoveredModelRow({ model }: { model: AgentModelDefinition }) {
         <Text style={sheetStyles.descriptionInline} numberOfLines={1}>
           {model.description}
         </Text>
+      ) : (
+        // The description already flexes. Only a row without one needs a filler
+        // to keep the switch on the right edge.
+        <View style={sheetStyles.modelRowFiller} />
+      )}
+      {visibility ? (
+        <View style={sheetStyles.modelRowControls} testID={`provider-model-controls-${model.id}`}>
+          <ModelVisibilityToggle
+            modelId={model.id}
+            visible={visibility.isVisible(model.id)}
+            disabled={visibility.disabled}
+            onToggle={visibility.onToggle}
+          />
+        </View>
       ) : null}
     </View>
   );
@@ -76,10 +133,12 @@ function CustomModelRow({
   model,
   deleting,
   onDelete,
+  visibility,
 }: {
   model: ProviderProfileModel;
   deleting: boolean;
   onDelete: (modelId: string) => void;
+  visibility: ModelRowVisibility | null;
 }) {
   const { t } = useTranslation();
   const { theme } = useUnistyles();
@@ -107,16 +166,28 @@ function CustomModelRow({
         {model.id}
       </Text>
       <View style={sheetStyles.modelRowFiller} />
-      <Pressable
-        onPress={handleDelete}
-        disabled={deleting}
-        hitSlop={8}
-        style={deleteButtonStyle}
-        accessibilityRole="button"
-        accessibilityLabel={t("settings.providers.models.removeModel", { id: model.id })}
-      >
-        <Trash2 size={theme.iconSize.sm} color={theme.colors.destructive} />
-      </Pressable>
+      {/* Delete sits before the switch so the switch keeps the same right edge as discovered rows. */}
+      <View style={sheetStyles.modelRowControls} testID={`provider-model-controls-${model.id}`}>
+        <Pressable
+          onPress={handleDelete}
+          disabled={deleting}
+          hitSlop={8}
+          style={deleteButtonStyle}
+          accessibilityRole="button"
+          accessibilityLabel={t("settings.providers.models.removeModel", { id: model.id })}
+          testID={`provider-model-remove-${model.id}`}
+        >
+          <Trash2 size={theme.iconSize.sm} color={theme.colors.destructive} />
+        </Pressable>
+        {visibility ? (
+          <ModelVisibilityToggle
+            modelId={model.id}
+            visible={visibility.isVisible(model.id)}
+            disabled={visibility.disabled}
+            onToggle={visibility.onToggle}
+          />
+        ) : null}
+      </View>
     </View>
   );
 }
@@ -405,7 +476,18 @@ interface ProviderModalBodyProps {
   deletingModelId: string | null;
   onRefresh: () => void;
   onDeleteCustom: (modelId: string) => void;
+  visibility: ModelRowVisibility | null;
+  visibilityStatus: "unavailable" | "loading" | "error";
+  onRetryVisibility: (() => void) | null;
+  visibilityError: string | null;
   theme: { iconSize: { md: number }; colors: { foregroundMuted: string } };
+}
+
+/** Everything a model row needs to render and drive its visibility switch. */
+export interface ModelRowVisibility {
+  isVisible: (modelId: string) => boolean;
+  disabled: boolean;
+  onToggle: (modelId: string, visible: boolean) => void;
 }
 
 interface ProviderSheetFooterInput {
@@ -491,6 +573,10 @@ function ProviderModalBody(props: ProviderModalBodyProps) {
     deletingModelId,
     onRefresh,
     onDeleteCustom,
+    visibility,
+    visibilityStatus,
+    onRetryVisibility,
+    visibilityError,
     theme,
   } = props;
 
@@ -531,6 +617,26 @@ function ProviderModalBody(props: ProviderModalBodyProps) {
   }
   return (
     <>
+      <Text style={sheetStyles.visibilityHint}>
+        {visibility
+          ? t("settings.providers.models.visibilityHint")
+          : t(`settings.providers.models.visibility.${visibilityStatus}`)}
+      </Text>
+      {visibilityStatus === "error" && onRetryVisibility ? (
+        // This screen is where the user is sent to recover, so it has to be able
+        // to recover itself rather than only naming the problem.
+        <View style={sheetStyles.visibilityRetryRow}>
+          <Button
+            variant="secondary"
+            size="sm"
+            onPress={onRetryVisibility}
+            testID="provider-model-visibility-retry"
+          >
+            {t("settings.providers.models.retry")}
+          </Button>
+        </View>
+      ) : null}
+      {visibilityError ? <Text style={sheetStyles.visibilityError}>{visibilityError}</Text> : null}
       {filteredDiscovered.length > 0 ? (
         <View style={sheetStyles.section}>
           <SectionHeader
@@ -539,7 +645,7 @@ function ProviderModalBody(props: ProviderModalBodyProps) {
           />
           <View style={settingsStyles.card}>
             {filteredDiscovered.map((model) => (
-              <DiscoveredModelRow key={model.id} model={model} />
+              <DiscoveredModelRow key={model.id} model={model} visibility={visibility} />
             ))}
           </View>
         </View>
@@ -557,6 +663,7 @@ function ProviderModalBody(props: ProviderModalBodyProps) {
                 model={model}
                 deleting={deletingModelId === model.id}
                 onDelete={onDeleteCustom}
+                visibility={visibility}
               />
             ))}
           </View>
@@ -626,6 +733,7 @@ export function ProviderDiagnosticSheet({
       setQuery("");
       setAddSheetOpen(false);
       setDiagSheetOpen(false);
+      setVisibilityError(null);
     }
   }, [visible]);
 
@@ -642,6 +750,55 @@ export function ProviderDiagnosticSheet({
   const handleRefreshModels = useCallback(() => {
     void refresh([provider]);
   }, [provider, refresh]);
+
+  const modelVisibility = useModelVisibility(serverId);
+  const [pendingVisibilityModelId, setPendingVisibilityModelId] = useState<string | null>(null);
+  const [visibilityError, setVisibilityError] = useState<string | null>(null);
+  const providerVisibility = modelVisibility.visibilityByProvider?.[provider];
+
+  const handleToggleVisibility = useCallback(
+    (modelId: string, nextVisible: boolean) => {
+      setPendingVisibilityModelId(modelId);
+      setVisibilityError(null);
+      // Only one toggle is in flight at a time, so a slow response cannot land
+      // after a newer one and resurrect the older value.
+      void modelVisibility
+        .setModelVisible(provider, modelId, nextVisible)
+        .catch((error: unknown) => {
+          setVisibilityError(
+            t("settings.providers.models.visibilitySaveFailed", { error: toErrorMessage(error) }),
+          );
+        })
+        .finally(() => {
+          setPendingVisibilityModelId((current) => (current === modelId ? null : current));
+        });
+    },
+    [modelVisibility, provider, t],
+  );
+
+  const rowVisibility = useMemo<ModelRowVisibility | null>(() => {
+    if (modelVisibility.status !== "ready") return null;
+    return {
+      // Rendered from the config the daemon acknowledged, never from local
+      // optimism, so a rejected save shows the state that actually persisted.
+      isVisible: (modelId: string) => isModelVisible(providerVisibility, modelId),
+      disabled: pendingVisibilityModelId !== null,
+      onToggle: handleToggleVisibility,
+    };
+  }, [
+    handleToggleVisibility,
+    modelVisibility.status,
+    pendingVisibilityModelId,
+    providerVisibility,
+  ]);
+
+  const handleRetryVisibility = useCallback(() => {
+    retryModelSelection({
+      status: modelVisibility.status,
+      retryVisibility: modelVisibility.retry,
+      refreshDiscovery: () => refresh([provider]),
+    });
+  }, [modelVisibility.retry, modelVisibility.status, provider, refresh]);
 
   const handleOpenAddSheet = useCallback(() => setAddSheetOpen(true), []);
   const handleCloseAddSheet = useCallback(() => setAddSheetOpen(false), []);
@@ -708,6 +865,12 @@ export function ProviderDiagnosticSheet({
           deletingModelId={deletingModelId}
           onRefresh={handleRefreshModels}
           onDeleteCustom={handleDeleteCustom}
+          visibility={rowVisibility}
+          visibilityStatus={
+            modelVisibility.status === "ready" ? "unavailable" : modelVisibility.status
+          }
+          onRetryVisibility={modelVisibility.status === "error" ? handleRetryVisibility : null}
+          visibilityError={visibilityError}
           theme={theme}
         />
       </AdaptiveModalSheet>
@@ -737,10 +900,16 @@ const sheetStyles = StyleSheet.create((theme) => ({
     fontFamily: theme.fontFamily.mono,
     fontSize: theme.fontSize.code,
     color: theme.colors.foregroundMuted,
-    flexShrink: 0,
+    // Shrink is weighted by basis, so a heavy factor makes the ID give up
+    // nearly all of the loss before the human label starts to truncate.
+    flexShrink: 4,
+    minWidth: 0,
   },
   descriptionInline: {
     flex: 1,
+    // A flex child defaults to min-width auto, which refuses to shrink below
+    // its content and is enough on its own to overflow the row.
+    minWidth: 0,
     fontSize: theme.fontSize.sm,
     color: theme.colors.foregroundMuted,
   },
@@ -759,8 +928,8 @@ const sheetStyles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.base,
   },
   iconButton: {
-    width: 28,
-    height: 28,
+    width: MODEL_ROW_ICON_BUTTON_SIZE,
+    height: MODEL_ROW_ICON_BUTTON_SIZE,
     borderRadius: theme.borderRadius.full,
     alignItems: "center",
     justifyContent: "center",
@@ -800,14 +969,44 @@ const sheetStyles = StyleSheet.create((theme) => ({
     gap: theme.spacing[3],
     borderTopWidth: 1,
     borderTopColor: theme.colors.border,
+    // Guard only: the children below are sized so nothing should reach here.
+    overflow: "hidden",
   },
   modelTitle: {
     color: theme.colors.foreground,
     fontSize: theme.fontSize.base,
-    flexShrink: 0,
+    flexShrink: 1,
+    minWidth: 0,
   },
   modelRowFiller: {
     flex: 1,
+  },
+  modelRowControls: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "flex-end",
+    gap: theme.spacing[2],
+    flexShrink: 0,
+    // Same width for discovered (switch only) and custom (delete + switch)
+    // rows so the switch's right edge lines up across sections.
+    width: MODEL_ROW_ICON_BUTTON_SIZE + theme.spacing[2] + switchGeometry.trackWidth,
+  },
+  visibilityHint: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
+    paddingHorizontal: theme.spacing[4],
+    paddingTop: theme.spacing[3],
+  },
+  visibilityRetryRow: {
+    paddingHorizontal: theme.spacing[4],
+    paddingTop: theme.spacing[2],
+    alignItems: "flex-start",
+  },
+  visibilityError: {
+    color: theme.colors.destructive,
+    fontSize: theme.fontSize.sm,
+    paddingHorizontal: theme.spacing[4],
+    paddingTop: theme.spacing[2],
   },
   emptyState: {
     paddingVertical: theme.spacing[8],

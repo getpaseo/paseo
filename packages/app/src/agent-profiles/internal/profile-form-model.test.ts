@@ -476,3 +476,169 @@ describe("buildFeatureRequestKey", () => {
     );
   });
 });
+
+describe("model visibility in the profile model field", () => {
+  const hideOpus = {
+    status: "ready" as const,
+    visibilityByProvider: { claude: { "claude-opus-5": false } },
+  };
+
+  it("drops hidden models from the picker", () => {
+    const model = openWithCatalog({ mode: "create" });
+    model.applyModelVisibility(hideOpus);
+    selectClaude(model);
+
+    expect(optionValues(model.getState().modelOptions)).toEqual(["claude-haiku-4-5"]);
+  });
+
+  it("keeps a saved profile on its hidden model, with its label and thinking options", () => {
+    const model = openAgentProfileForm({
+      mode: "edit",
+      profile: {
+        id: "p1",
+        name: "Deep work",
+        provider: "claude",
+        model: "claude-opus-5",
+        thinkingOptionId: "think-hard",
+      },
+    });
+    model.applyProviderCatalog(ENTRIES);
+    model.applyModelVisibility(hideOpus);
+
+    const state = model.getState();
+    expect(state.modelId).toBe("claude-opus-5");
+    expect(state.modelDisplay).toEqual({ label: "Opus 5" });
+    expect(state.thinkingOptionId).toBe("think-hard");
+    // The hidden current model is not re-added to the menu just to keep its label.
+    expect(optionValues(state.modelOptions)).toEqual(["claude-haiku-4-5"]);
+  });
+
+  it("offers nothing while a supported host has not reported visibility yet", () => {
+    const model = openWithCatalog({ mode: "create" });
+    model.applyModelVisibility({ status: "loading", visibilityByProvider: undefined });
+    selectClaude(model);
+
+    expect(optionValues(model.getState().modelOptions)).toEqual([]);
+  });
+
+  it("reports the error state so the field can offer a retry", () => {
+    const model = openWithCatalog({ mode: "create" });
+    model.applyModelVisibility({ status: "error", visibilityByProvider: undefined });
+    selectClaude(model);
+
+    expect(model.getState().modelOptionsState).toBe("error");
+    expect(optionValues(model.getState().modelOptions)).toEqual([]);
+    expect(model.getState().canSubmit).toBe(false);
+  });
+
+  it("reports ready for a provider that genuinely has no models", () => {
+    const model = openWithCatalog({ mode: "create" });
+    model.applyModelVisibility({ status: "error", visibilityByProvider: undefined });
+    model.setProvider("pi", { label: "Pi" });
+
+    expect(model.getState().modelOptionsState).toBe("ready");
+  });
+
+  it("keeps every model when the host does not support the preference", () => {
+    const model = openWithCatalog({ mode: "create" });
+    model.applyModelVisibility({ status: "unavailable", visibilityByProvider: undefined });
+    selectClaude(model);
+
+    expect(optionValues(model.getState().modelOptions)).toEqual([
+      "claude-opus-5",
+      "claude-haiku-4-5",
+    ]);
+  });
+
+  it("hides nothing for a provider whose models were not touched", () => {
+    const model = openWithCatalog({ mode: "create" });
+    model.applyModelVisibility(hideOpus);
+    model.setProvider("codex", { label: "Codex" });
+
+    expect(optionValues(model.getState().modelOptions)).toEqual(["gpt-5.2-codex"]);
+  });
+});
+
+describe("model visibility and profile defaults (R1)", () => {
+  const hideOpus = {
+    status: "ready" as const,
+    visibilityByProvider: { claude: { "claude-opus-5": false } },
+  };
+  const hideAll = {
+    status: "ready" as const,
+    visibilityByProvider: {
+      claude: { "claude-opus-5": false, "claude-haiku-4-5": false },
+    },
+  };
+
+  it("seeds a visible model when the provider default is hidden, catalog first", () => {
+    const model = openWithCatalog({ mode: "create" });
+    selectClaude(model);
+    model.applyModelVisibility(hideOpus);
+    model.setName("Visible default");
+
+    expect(model.getState().modelId).toBe("claude-haiku-4-5");
+    expect(model.getState().submitValue?.model).toBe("claude-haiku-4-5");
+  });
+
+  it("seeds a visible model when visibility arrives before the catalog", () => {
+    const model = openAgentProfileForm({ mode: "create" });
+    model.applyModelVisibility(hideOpus);
+    model.applyProviderCatalog(ENTRIES);
+    selectClaude(model);
+    model.setName("Visibility first");
+
+    expect(model.getState().modelId).toBe("claude-haiku-4-5");
+    expect(model.getState().submitValue?.model).toBe("claude-haiku-4-5");
+  });
+
+  it("cannot submit a fresh profile while every model is hidden", () => {
+    const model = openWithCatalog({ mode: "create" });
+    model.applyModelVisibility(hideAll);
+    selectClaude(model);
+    model.setName("Nothing visible");
+
+    expect(model.getState().modelId).toBe("");
+    expect(model.getState().canSubmit).toBe(false);
+    expect(model.getState().submitValue).toBeNull();
+    expect(model.getState().modelOptionsState).toBe("all-hidden");
+  });
+
+  it("cannot submit a fresh profile while visibility is still loading", () => {
+    const model = openWithCatalog({ mode: "create" });
+    model.applyModelVisibility({ status: "loading", visibilityByProvider: undefined });
+    selectClaude(model);
+    model.setName("Still loading");
+
+    expect(model.getState().canSubmit).toBe(false);
+    expect(model.getState().modelOptionsState).toBe("loading");
+  });
+
+  it("still submits a saved profile whose model is now hidden", () => {
+    const model = openAgentProfileForm({
+      mode: "edit",
+      profile: {
+        id: "p1",
+        name: "Deep work",
+        provider: "claude",
+        model: "claude-opus-5",
+        thinkingOptionId: "think-hard",
+      },
+    });
+    model.applyProviderCatalog(ENTRIES);
+    model.applyModelVisibility(hideAll);
+
+    expect(model.getState().canSubmit).toBe(true);
+    expect(model.getState().submitValue?.model).toBe("claude-opus-5");
+    expect(model.getState().submitValue?.thinkingOptionId).toBe("think-hard");
+  });
+
+  it("keeps submitting a provider that genuinely discovered no models", () => {
+    const model = openWithCatalog({ mode: "create" });
+    model.applyModelVisibility(hideAll);
+    model.setProvider("pi", { label: "Pi" });
+    model.setName("Empty catalog");
+
+    expect(model.getState().canSubmit).toBe(true);
+  });
+});

@@ -889,7 +889,9 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
     action: "shortcuts.dialog.toggle",
     combo: "Shift+?",
     repeat: false,
-    when: { focusScope: "other" },
+    // "control" keeps this reachable from a focused switch or button, where it
+    // conflicts with nothing. Only Space is withheld from focused controls.
+    when: { focusScope: ["other", "control"] },
     help: {
       id: "show-shortcuts",
       section: "general",
@@ -1139,7 +1141,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
     id: "agent-interrupt",
     action: "agent.interrupt",
     combo: "Escape",
-    when: { commandCenter: false, focusScope: ["message-input", "other"] },
+    when: { commandCenter: false, focusScope: ["message-input", "other", "control"] },
     preventDefault: false,
     stopPropagation: false,
     help: {
