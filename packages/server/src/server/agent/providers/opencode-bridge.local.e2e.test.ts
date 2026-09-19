@@ -1,3 +1,5 @@
+import { V2Runtime } from "./opencode/v2/runtime.js";
+import type { V2Api } from "./opencode/v2/api.js";
 import { execCommand } from "../../../utils/spawn.js";
 import { z } from "zod";
 import { OpenCodeRuntimeClient } from "./opencode/runtime-client.js";
@@ -302,6 +304,43 @@ test("versioned runtime discovers models and preserves a native session handle",
   }
 }, 60_000);
 
+test("v2 shares a helper across agent identities and keeps the remaining session alive", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "paseo-opencode-v2-shared-"));
+  const runtime = new V2Runtime({ logger: createTestLogger() });
+  const clients = new Set<V2Api>();
+  const client = new OpenCodeV2AgentClient({
+    logger: createTestLogger(),
+    runtime: {
+      acquire: async (input) => {
+        const connection = await runtime.acquire(input);
+        clients.add(connection.client);
+        return connection;
+      },
+      shutdown: () => runtime.shutdown(),
+    },
+  });
+  const sessions: Awaited<ReturnType<typeof client.createSession>>[] = [];
+  try {
+    for (const agentId of ["first", "second"]) {
+      sessions.push(
+        await client.createSession(
+          { provider: "opencode", cwd: root },
+          { agentId, env: { PASEO_AGENT_ID: agentId, PASEO_AGENT_CWD: root } },
+          { persistSession: false },
+        ),
+      );
+    }
+    expect(clients.size).toBe(1);
+    expect(sessions[0].id).not.toBe(sessions[1].id);
+    await sessions[0].close();
+    expect((await sessions[1].getRuntimeInfo()).sessionId).toBe(sessions[1].id);
+  } finally {
+    for (const session of sessions) await session.close();
+    await client.shutdown();
+    await rm(root, { recursive: true, force: true });
+  }
+}, 60_000);
+
 test("v2 structured output survives history and does not affect the next ordinary turn", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "paseo-opencode-v2-schema-"));
   const client = new OpenCodeV2AgentClient({ logger: createTestLogger() });
@@ -337,6 +376,45 @@ test("v2 structured output survives history and does not affect the next ordinar
     );
     const ordinary = await session.run("Reply with exactly ORDINARY, without using tools.");
     expect(ordinary.finalText.trim()).toBe("ORDINARY");
+  } finally {
+    await session?.interrupt();
+    await session?.close();
+    await client.shutdown();
+    await rm(root, { recursive: true, force: true });
+  }
+}, 120_000);
+
+test("v2 preserves final text without duplicating streamed content", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "paseo-opencode-v2-stream-"));
+  const client = new OpenCodeV2AgentClient({ logger: createTestLogger() });
+  let session: Awaited<ReturnType<typeof client.createSession>> | undefined;
+  try {
+    session = await client.createSession(
+      {
+        provider: "opencode",
+        cwd: root,
+        model: process.env.OPENCODE_TEST_MODEL ?? "openai/gpt-6-astra",
+      },
+      undefined,
+      { persistSession: false },
+    );
+    const chunks: string[] = [];
+    session.subscribe((event) => {
+      if (event.type === "timeline" && event.item.type === "assistant_message")
+        chunks.push(event.item.text);
+    });
+    const result = await session.run("Count from one to five, one word per line, with no tools.");
+    // Delta granularity is the provider's: some coalesce a whole reply into a
+    // single `session.text.delta`. Assert delivery happened and, critically,
+    // that the post-turn snapshot did not replay delivered content.
+    expect(chunks.length).toBeGreaterThanOrEqual(1);
+    const persistedText: string[] = [];
+    for await (const event of session.streamHistory!()) {
+      if (event.type === "timeline" && event.item.type === "assistant_message")
+        persistedText.push(event.item.text);
+    }
+    expect(chunks.join("")).toBe(persistedText.join(""));
+    expect(result.finalText).toBe(persistedText.join(""));
   } finally {
     await session?.interrupt();
     await session?.close();

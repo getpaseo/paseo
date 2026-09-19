@@ -1,5 +1,5 @@
 import type { SessionMessageAssistant, SessionMessageUser } from "@opencode/client";
-import { V2Timeline } from "./v2/mapping.js";
+import { V2Timeline } from "./v2/timeline.js";
 import { describe, expect, it } from "vitest";
 
 import { translateOpenCodeEvent, type OpenCodeEventTranslationState } from "../opencode-agent.js";

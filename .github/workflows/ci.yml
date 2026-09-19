@@ -140,7 +140,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        opencode: ["opencode-ai@1.14.46", "@opencode/cli@2.0.7"]
+        opencode: ["opencode-ai@1.14.46", "@opencode/cli@2.0.10"]
     steps: &server_test_steps
       - uses: actions/checkout@v4
         with:
@@ -185,7 +185,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        opencode: ["opencode-ai@1.14.46", "@opencode/cli@2.0.7"]
+        opencode: ["opencode-ai@1.14.46", "@opencode/cli@2.0.10"]
     steps: *server_test_steps
 
   # native-recursive.ts serves darwin and win32, but windows-latest above is the only

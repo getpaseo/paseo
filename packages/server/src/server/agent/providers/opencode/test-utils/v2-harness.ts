@@ -25,6 +25,8 @@ export class V2Harness {
   readonly history: SessionMessageInfo[] = [];
   readonly creates: SessionCreateInput[] = [];
   readonly prompts: string[] = [];
+  readonly environments: Array<{ sessionID: string; variables: Record<string, string> }> = [];
+  readonly mcpAdds: string[] = [];
   releases = 0;
   prompt: V2Api["session"]["prompt"] = async (input) => {
     this.prompts.push(input.text);
@@ -64,7 +66,18 @@ export class V2Harness {
     provider: { list: unexpected },
     command: { list: unexpected },
     skill: { list: unexpected },
-    mcp: { add: unexpected, list: unexpected },
+    mcp: {
+      add: async (input) => {
+        this.mcpAdds.push(input.server);
+      },
+      list: async (input) => ({
+        location: { directory: input?.location?.directory ?? this.info.location.directory },
+        data: this.mcpAdds.map((name) => ({
+          name,
+          status: { status: "connected" as const },
+        })),
+      }),
+    },
     message: {
       list: async (input) => {
         if (input.cursor && input.order) throw new Error("cursor cannot be combined with order");
@@ -84,7 +97,9 @@ export class V2Harness {
       remove: async () => undefined,
       switchAgent: unexpected,
       switchModel: unexpected,
-      environment: unexpected,
+      environment: async (input) => {
+        this.environments.push(input);
+      },
       instructions: { entry: { list: unexpected, put: unexpected, remove: unexpected } },
       prompt: (input, options) => this.prompt(input, options),
       wait: (input, options) => this.wait(input, options),

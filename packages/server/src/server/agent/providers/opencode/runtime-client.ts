@@ -20,9 +20,8 @@ import { execCommand } from "../../../../utils/spawn.js";
 import { OpenCodeAgentClient } from "../opencode-agent.js";
 import { OpenCodeV2AgentClient } from "./v2/agent.js";
 
-// OpenCode 2.0.4 removed the /api/health and plugin await-activation endpoints
-// the v2 adapter needs, so versions before that fail with opaque 404s.
-const MINIMUM_V2: readonly [number, number] = [0, 4];
+// Keep the minimum aligned with the SDK and binary exercised by CI.
+const MINIMUM_V2: readonly [number, number] = [0, 10];
 
 export function openCodeMajorVersion(output: string): 1 | 2 {
   const version = output.trim().match(/^(?:opencode\s+)?v?(\d+)\.(\d+)\.(\d+)(?:[-+][\w.-]+)?$/i);

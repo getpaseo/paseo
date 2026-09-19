@@ -1,3 +1,7 @@
+import {
+  waitForLocationReady,
+  OpenCodeLocationReadyTimeoutError,
+} from "./opencode/v2/readiness.js";
 import type { SessionMessageInfo } from "@opencode/client";
 import { OpenCodeV2AgentClient } from "./opencode/v2/agent.js";
 import { V2Harness } from "./opencode/test-utils/v2-harness.js";
@@ -870,6 +874,97 @@ describe("OpenCode v2 lifecycle", () => {
     } finally {
       await session.close();
     }
+  });
+
+  test("reuses the shared helper for sessions whose env is only agent identity", async () => {
+    const harness = new V2Harness();
+    const acquires: Array<{ env?: Record<string, string>; dedicated?: boolean }> = [];
+    const runtime = {
+      acquire: async (input: { env?: Record<string, string>; dedicated?: boolean } = {}) => {
+        acquires.push(input);
+        return harness.connection;
+      },
+      shutdown: async () => undefined,
+    };
+    const client = new OpenCodeV2AgentClient({ logger: createTestLogger(), runtime });
+    const session = await client.createSession(
+      { provider: "opencode", cwd: "/tmp/project" },
+      { agentId: "agent", env: { PASEO_AGENT_ID: "agent", PASEO_AGENT_CWD: "/tmp/project" } },
+    );
+    try {
+      expect(acquires).toEqual([{}]);
+      expect(harness.environments).toEqual([
+        {
+          sessionID: "session",
+          variables: { PASEO_AGENT_ID: "agent", PASEO_AGENT_CWD: "/tmp/project" },
+        },
+      ]);
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("starts a dedicated helper when the session carries custom MCP", async () => {
+    const harness = new V2Harness();
+    const acquires: Array<{ env?: Record<string, string>; dedicated?: boolean }> = [];
+    const runtime = {
+      acquire: async (input: { env?: Record<string, string>; dedicated?: boolean } = {}) => {
+        acquires.push(input);
+        return harness.connection;
+      },
+      shutdown: async () => undefined,
+    };
+    const client = new OpenCodeV2AgentClient({ logger: createTestLogger(), runtime });
+    const session = await client.createSession(
+      {
+        provider: "opencode",
+        cwd: "/tmp/project",
+        mcpServers: { custom: { type: "stdio", command: "custom", args: [] } },
+      },
+      { agentId: "agent", env: { PASEO_AGENT_ID: "agent", PASEO_AGENT_CWD: "/tmp/project" } },
+    );
+    try {
+      expect(acquires).toHaveLength(1);
+      expect(acquires[0]?.dedicated).toBe(true);
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("fails location readiness when the plugin inventory never populates", async () => {
+    await expect(
+      waitForLocationReady({
+        client: { plugin: { list: async () => ({ location: { directory: "/tmp" }, data: [] }) } },
+        location: { directory: "/tmp" },
+        timeoutMs: 25,
+      }),
+    ).rejects.toBeInstanceOf(OpenCodeLocationReadyTimeoutError);
+  });
+
+  test("bounds location readiness even when the inventory request never settles", async () => {
+    await expect(
+      waitForLocationReady({
+        client: { plugin: { list: () => new Promise(() => undefined) } },
+        location: { directory: "/tmp" },
+        timeoutMs: 25,
+      }),
+    ).rejects.toBeInstanceOf(OpenCodeLocationReadyTimeoutError);
+  });
+
+  test("preserves inventory errors instead of reporting a readiness timeout", async () => {
+    const error = new Error("inventory unavailable");
+    await expect(
+      waitForLocationReady({
+        client: {
+          plugin: {
+            list: async () => {
+              throw error;
+            },
+          },
+        },
+        location: { directory: "/tmp" },
+      }),
+    ).rejects.toBe(error);
   });
 
   test("refuses replacement work after a failed stop until Stop succeeds", async () => {
