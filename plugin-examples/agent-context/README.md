@@ -7,9 +7,10 @@ host disconnects.
 
 The daemon creates the snapshot through the Paseo SDK. The generic attachment-source UI owns the
 picker, pill, draft persistence, and submission; this plugin adds no composer-specific UI or
-protocol fields.
+protocol fields. It marks the snapshot as chat history so Paseo places it before the new user
+instruction.
 
-Install it on Paseo 0.8 or newer:
+Install it on Paseo 0.9 or newer:
 
 ```bash
 paseo plugin add getpaseo/paseo:plugin-examples/agent-context
@@ -25,7 +26,7 @@ excluded. Each snapshot is limited to 128 KiB and keeps the most recent context 
 timeline is larger.
 
 Opening the picker does not read agent history. Enter a specific query before Paseo asks the
-matching agents for snapshots. On current 0.8 daemons, timeline retrieval can hydrate an inactive
+matching agents for snapshots. On current 0.9 daemons, timeline retrieval can hydrate an inactive
 retained provider session; it does not start a turn.
 
 Attachment sources are scoped to the composer's host, so this example does not transfer context

@@ -1,5 +1,4 @@
 import type { PluginAttachmentSearchPayload, RpcInput } from "@getpaseo/plugin";
-import type { PluginHandlerContext } from "@getpaseo/plugin/server";
 import { searchAgentTranscriptsRpc } from "../shared/agent-context";
 
 const DIRECTORY_PAGE_SIZE = 200;
@@ -8,7 +7,7 @@ const MAX_SEARCH_RESULTS = 5;
 const TIMELINE_PAGE_SIZE = 200;
 const MAX_TIMELINE_ITEMS_SCANNED = 5_000;
 const MAX_TIMELINE_PAGES_SCANNED = 25;
-export const MAX_TRANSCRIPT_BYTES = 128 * 1024;
+const MAX_TRANSCRIPT_BYTES = 128 * 1024;
 const PARENT_AGENT_ID_LABEL = "paseo.parent-agent-id";
 const PLUGIN_DOCUMENTATION_URL =
   "https://github.com/getpaseo/paseo/tree/main/plugin-examples/agent-context";
@@ -52,7 +51,7 @@ interface TimelinePage {
   error: string | null;
 }
 
-export interface AgentContextSearchDependencies {
+interface AgentContextSearchDependencies {
   listAgents(options: {
     sort: Array<{ key: "updated_at"; direction: "desc" }>;
     page: { limit: number; cursor?: string };
@@ -304,7 +303,7 @@ function transcriptHeader(metadata: TranscriptMetadata, truncated: boolean): str
   return `${lines.join("\n")}\n\n`;
 }
 
-export function buildTranscriptSnapshot(input: {
+function buildTranscriptSnapshot(input: {
   items: unknown[];
   metadata: TranscriptMetadata;
   olderItemsOmitted?: boolean;
@@ -432,7 +431,7 @@ async function mapWithConcurrency<Input, Output>(
   });
 }
 
-export function createAgentTranscriptSearch(dependencies: AgentContextSearchDependencies) {
+function createAgentTranscriptSearch(dependencies: AgentContextSearchDependencies) {
   return async ({
     query,
   }: RpcInput<typeof searchAgentTranscriptsRpc>): Promise<PluginAttachmentSearchPayload> => {
@@ -456,6 +455,7 @@ export function createAgentTranscriptSearch(dependencies: AgentContextSearchDepe
           olderItemsOmitted: timeline.olderItemsOmitted,
         }),
         resourceType: "agent transcript",
+        contextKind: "chat_history" as const,
       };
     });
     const items = snapshots.flatMap((result) =>
@@ -471,9 +471,24 @@ export function createAgentTranscriptSearch(dependencies: AgentContextSearchDepe
   };
 }
 
+interface AgentContextHandlerContext {
+  paseo: {
+    agents: {
+      list: AgentContextSearchDependencies["listAgents"];
+      ref(agentId: string): {
+        timeline: {
+          refetch(
+            options: Parameters<AgentContextSearchDependencies["fetchTimeline"]>[1],
+          ): Promise<TimelinePage>;
+        };
+      };
+    };
+  };
+}
+
 export async function searchAgentTranscripts(
   input: RpcInput<typeof searchAgentTranscriptsRpc>,
-  { paseo }: PluginHandlerContext,
+  { paseo }: AgentContextHandlerContext,
 ): Promise<PluginAttachmentSearchPayload> {
   const search = createAgentTranscriptSearch({
     listAgents: (options) => paseo.agents.list(options),
