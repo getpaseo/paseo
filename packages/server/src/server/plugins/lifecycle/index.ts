@@ -28,7 +28,11 @@ export const lifecycleEventNames = [
 export const beforeHookNames = ["agent.create", "agent.session_open", "workspace.create"] as const;
 
 const beforeSchemas = {
-  "agent.create": CreateAgentRequestMessageSchema.pick({ config: true, env: true }).strict(),
+  "agent.create": CreateAgentRequestMessageSchema.pick({
+    config: true,
+    env: true,
+    initialPrompt: true,
+  }).strict(),
   "agent.session_open": z
     .object({
       agentId: z.string(),
@@ -154,6 +158,13 @@ export function validateBeforeResult<Name extends keyof PluginBeforeRequests>(
     const next = beforeSchemas["agent.create"].parse(result);
     if (previous.config.cwd !== next.config.cwd) {
       throw new Error("agent.create hooks cannot change the workspace directory");
+    }
+    if (next.initialPrompt !== undefined && next.initialPrompt !== previous.initialPrompt) {
+      throw new Error("agent.create hooks cannot change the initial prompt");
+    }
+    // Hooks written before initialPrompt existed return requests without it.
+    if (next.initialPrompt === undefined && previous.initialPrompt !== undefined) {
+      return { ...next, initialPrompt: previous.initialPrompt } as PluginBeforeRequests[Name];
     }
   }
   return result;
