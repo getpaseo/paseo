@@ -38,12 +38,12 @@ vi.mock("electron-updater", () => ({
 
 import {
   bucketFromStagingUserId,
+  canInstallAppUpdateOnStartup,
   checkForAppUpdate,
   createAppUpdateLifecycleLogger,
   resolveStagingUserId,
   rolloutManifestSchema,
   shouldAdmitToRollout,
-  shouldInstallAppUpdateOnQuit,
 } from "./auto-updater";
 
 describe("checkForAppUpdate", () => {
@@ -142,12 +142,12 @@ describe("checkForAppUpdate", () => {
   });
 });
 
-describe("shouldInstallAppUpdateOnQuit", () => {
+describe("canInstallAppUpdateOnStartup", () => {
   it("keeps Linux AppImage updates on the manual install path", () => {
-    expect(shouldInstallAppUpdateOnQuit({ platform: "linux", isAppImage: true })).toBe(false);
-    expect(shouldInstallAppUpdateOnQuit({ platform: "linux", isAppImage: false })).toBe(true);
-    expect(shouldInstallAppUpdateOnQuit({ platform: "darwin", isAppImage: false })).toBe(true);
-    expect(shouldInstallAppUpdateOnQuit({ platform: "win32", isAppImage: false })).toBe(true);
+    expect(canInstallAppUpdateOnStartup({ platform: "linux", isAppImage: true })).toBe(false);
+    expect(canInstallAppUpdateOnStartup({ platform: "linux", isAppImage: false })).toBe(true);
+    expect(canInstallAppUpdateOnStartup({ platform: "darwin", isAppImage: false })).toBe(true);
+    expect(canInstallAppUpdateOnStartup({ platform: "win32", isAppImage: false })).toBe(true);
   });
 });
 
