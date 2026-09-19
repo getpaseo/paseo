@@ -119,6 +119,10 @@ export const ru: TranslationResources = {
       fallback: "Сообщение...",
       terminal: "Prompt",
     },
+    promptSuggestions: {
+      a11yLabel: "Предлагаемое сообщение, нажмите Tab, чтобы принять",
+      chipAccessibilityLabel: "Использовать подсказку: {{text}}",
+    },
     input: {
       accessibilityLabel: "Написать агенту...",
       terminalAccessibilityLabel: "Terminal prompt",
@@ -2028,7 +2032,7 @@ export const ru: TranslationResources = {
     metadataGeneration: {
       title: "Генерация метаданных",
       description:
-        "Выберите модель, которую Paseo будет использовать для названий рабочих пространств и веток, сообщений коммитов и черновиков PR",
+        "Выберите модель, которую Paseo будет использовать для названий рабочих пространств и веток, сообщений коммитов, черновиков PR и подсказок для запросов",
       selection: "Выбор модели",
       automatic: "Автоматически",
       preferred: "Вручную",
@@ -2038,6 +2042,9 @@ export const ru: TranslationResources = {
       fallbackHint: "Если она недоступна, Paseo использует другую доступную модель",
       docs: "Документация",
       saveError: "Не удалось обновить настройки генерации метаданных",
+      suggestionSection: "Подсказки сообщений",
+      suggestionSharedHint: "Подсказки используют модель генерации метаданных",
+      suggestionCustomHint: "Подсказки сообщений используют эту модель",
     },
     general: {
       title: "Основные",
@@ -2441,6 +2448,11 @@ export const ru: TranslationResources = {
           title: "Включить инструменты Paseo",
           hint: "Агенты смогут управлять worktree, агентами и расписаниями.",
           accessibilityLabel: "Добавить инструменты Paseo",
+        },
+        promptSuggestions: {
+          title: "Предлагать следующие сообщения",
+          hint: "Когда агент завершает ход, предлагать, что спросить дальше",
+          accessibilityLabel: "Предлагать следующие сообщения",
         },
         systemPrompt: {
           title: "Системный промпт",
