@@ -2006,8 +2006,10 @@ export const ru: TranslationResources = {
     labels: {
       session: "Сессия",
       weekly: "Еженедельно",
+      monthly: "Ежемесячно",
       codeReview: "Проверка кода",
       credits: "Кредиты",
+      monthlyCredits: "Ежемесячные кредиты",
     },
     duration: {
       days: "{{value}} дн.",

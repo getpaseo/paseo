@@ -2006,8 +2006,10 @@ export const ptBR: TranslationResources = {
     labels: {
       session: "Sessão",
       weekly: "Semanal",
+      monthly: "Mensal",
       codeReview: "Revisão de código",
       credits: "Créditos",
+      monthlyCredits: "Créditos mensais",
     },
     duration: {
       days: "{{value}} d",
