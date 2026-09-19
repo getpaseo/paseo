@@ -9,9 +9,9 @@ import type { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
 import type { buildSelectableProviderSelectorProviders } from "@/provider-selection/provider-selection";
 import { SettingsSection } from "@/components/settings/headings/settings-section";
 import { settingsStyles } from "@/styles/settings";
+import { buildSuggestionModelPatch, type SuggestionModelChoice } from "./suggestion-model-patch";
 
 type SuggestionMode = "shared" | "custom";
-type ProviderEntry = MutableDaemonConfig["metadataGeneration"]["providers"][number];
 
 interface SuggestionModelSectionProps {
   serverId: string;
@@ -43,17 +43,25 @@ export function SuggestionModelSection({
 
   const modeOptions = useMemo(
     () => [
-      { value: "shared" as const, label: t("settings.metadataGeneration.automatic") },
-      { value: "custom" as const, label: t("settings.metadataGeneration.preferred") },
+      {
+        value: "shared" as const,
+        label: t("settings.metadataGeneration.automatic"),
+        testID: "suggestion-model-automatic",
+      },
+      {
+        value: "custom" as const,
+        label: t("settings.metadataGeneration.preferred"),
+        testID: "suggestion-model-manual",
+      },
     ],
     [t],
   );
 
   const save = useCallback(
-    async (entries: ProviderEntry[]) => {
+    async (choice: SuggestionModelChoice | null) => {
       setIsSaving(true);
       try {
-        await patchConfig({ metadataGeneration: { promptSuggestions: { providers: entries } } });
+        await patchConfig(buildSuggestionModelPatch(choice, configuredList));
       } catch (error) {
         setDraftMode(null);
         Alert.alert(
@@ -64,14 +72,14 @@ export function SuggestionModelSection({
         setIsSaving(false);
       }
     },
-    [patchConfig, t],
+    [configuredList, patchConfig, t],
   );
 
   const handleModeChange = useCallback(
     (next: SuggestionMode) => {
       setDraftMode(next);
       if (next === "shared") {
-        void save([]);
+        void save(null);
       }
     },
     [save],
@@ -80,9 +88,9 @@ export function SuggestionModelSection({
   const handleModelSelect = useCallback(
     (provider: AgentProvider, model: string) => {
       setDraftMode("custom");
-      void save([{ provider, ...(model ? { model } : {}) }, ...(configuredList?.slice(1) ?? [])]);
+      void save({ provider, model });
     },
-    [configuredList, save],
+    [save],
   );
 
   const handleSelectorOpen = useCallback(() => {
