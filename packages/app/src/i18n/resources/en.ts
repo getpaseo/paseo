@@ -2594,6 +2594,7 @@ export const en = {
         notesHint: "Helps agents choose this profile when starting another agent.",
         save: "Save",
         saving: "Saving...",
+        applyFailed: "Couldn't apply agent profile. Try again.",
         remove: "Remove",
         removeConfirmTitle: "Remove profile?",
         removeConfirmMessage: 'Remove "{{name}}"?',

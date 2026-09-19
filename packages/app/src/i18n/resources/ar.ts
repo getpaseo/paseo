@@ -2471,6 +2471,7 @@ export const ar: TranslationResources = {
         notesHint: "يساعد الوكلاء على اختيار ملف التعريف هذا عند بدء وكيل آخر.",
         save: "حفظ",
         saving: "جارٍ الحفظ...",
+        applyFailed: "تعذر تطبيق ملف تعريف الوكيل. حاول مرة أخرى.",
         remove: "إزالة",
         removeConfirmTitle: "إزالة الملف؟",
         removeConfirmMessage: 'إزالة "{{name}}"؟',

@@ -2518,6 +2518,7 @@ export const ru: TranslationResources = {
         notesHint: "Помогает агентам выбрать этот профиль при запуске другого агента.",
         save: "Сохранить",
         saving: "Сохранение...",
+        applyFailed: "Не удалось применить профиль агента. Повторите попытку.",
         remove: "Удалить",
         removeConfirmTitle: "Удалить профиль?",
         removeConfirmMessage: "Удалить «{{name}}»?",

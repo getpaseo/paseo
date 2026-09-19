@@ -17,6 +17,26 @@ export interface AgentProfileCommandCenterIcons {
   glyph?(profile: Pick<AgentProfile, "icon" | "color">): CommandCenterIcon | undefined;
 }
 
+export interface AgentProfileCommandCenterHostResolution {
+  activeServerId: string | null;
+  lastServerId: string | null;
+  hosts: readonly AgentProfileCommandCenterHost[];
+}
+
+/**
+ * Select only from online hosts. The active workspace wins, followed by the
+ * last workspace; with no valid selection, a sole online host is unambiguous.
+ */
+export function resolveAgentProfileCommandCenterHost(
+  input: AgentProfileCommandCenterHostResolution,
+): string | null {
+  const selectedServerId = input.activeServerId ?? input.lastServerId;
+  if (selectedServerId && input.hosts.some((host) => host.serverId === selectedServerId)) {
+    return selectedServerId;
+  }
+  return input.hosts.length === 1 ? (input.hosts[0]?.serverId ?? null) : null;
+}
+
 export interface AgentProfileCommandCenterSource {
   /**
    * The host the palette acts on: the active workspace's host, else the last

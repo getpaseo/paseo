@@ -2496,6 +2496,7 @@ export const ja: TranslationResources = {
         notesHint: "別のエージェントを起動するとき、このプロファイルを選ぶために使用されます。",
         save: "保存",
         saving: "保存中...",
+        applyFailed: "エージェントプロファイルを適用できませんでした。もう一度お試しください。",
         remove: "削除",
         removeConfirmTitle: "プロファイルを削除しますか？",
         removeConfirmMessage: '"{{name}}"を削除しますか？',

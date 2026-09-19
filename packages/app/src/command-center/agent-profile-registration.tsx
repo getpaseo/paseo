@@ -3,11 +3,12 @@ import { router, type Href } from "expo-router";
 import { useTranslation } from "react-i18next";
 import { Bot } from "lucide-react-native";
 import { AgentProfileGlyph, materializeAgentProfile, useAgentProfiles } from "@/agent-profiles";
+import { useToast } from "@/contexts/toast-context";
 import { mergeCreateAgentSelectionPreferences } from "@/create-agent-preferences/preferences";
 import { useFormPreferences } from "@/hooks/use-form-preferences";
 import { canCreateWorktreeForProjectKind } from "@/projects/host-projects";
 import { useHostFeature } from "@/runtime/host-features";
-import { useHosts } from "@/runtime/host-runtime";
+import { useHostRuntimeConnectionStatuses, useHosts } from "@/runtime/host-runtime";
 import {
   useActiveWorkspaceSelection,
   useLastWorkspaceSelection,
@@ -19,6 +20,7 @@ import type { CommandCenterIcon, CommandCenterIconProps } from "./contributions"
 import { useCommandCenterActions } from "./provider";
 import {
   buildAgentProfileCommandCenterContributions,
+  resolveAgentProfileCommandCenterHost,
   type AgentProfileCommandCenterHost,
 } from "./agent-profile-contributions";
 import { getCommandCenterIcon } from "./icon";
@@ -50,25 +52,29 @@ function agentProfileGlyphIcon(icon: string | undefined, color: string | undefin
  */
 export function useAgentProfileCommandCenterActions(): void {
   const { t } = useTranslation();
+  const toast = useToast();
   const { updatePreferences } = useFormPreferences();
   const hosts = useHosts();
+  const hostServerIds = useMemo(() => hosts.map((host) => host.serverId), [hosts]);
+  const connectionStatuses = useHostRuntimeConnectionStatuses(hostServerIds);
+  const connectedHosts = useMemo(
+    () => hosts.filter((host) => connectionStatuses.get(host.serverId) === "online"),
+    [connectionStatuses, hosts],
+  );
   const activeSelection = useActiveWorkspaceSelection();
   const lastSelection = useLastWorkspaceSelection();
 
   const activeServerId = activeSelection?.serverId ?? null;
   const activeWorkspaceId = activeSelection?.workspaceId ?? null;
-  const serverId = useMemo(() => {
-    const selected = activeServerId ?? lastSelection?.serverId ?? null;
-    if (selected && hosts.some((host) => host.serverId === selected)) {
-      return selected;
-    }
-    // A stale last-workspace selection (or several hosts with no selection at
-    // all) must not resolve to an unknown id; with one host it is unambiguous.
-    if (hosts.length === 1) {
-      return hosts[0]?.serverId ?? null;
-    }
-    return null;
-  }, [activeServerId, hosts, lastSelection?.serverId]);
+  const serverId = useMemo(
+    () =>
+      resolveAgentProfileCommandCenterHost({
+        activeServerId,
+        lastServerId: lastSelection?.serverId ?? null,
+        hosts: connectedHosts,
+      }),
+    [activeServerId, connectedHosts, lastSelection?.serverId],
+  );
 
   const { profiles, isSupported } = useAgentProfiles(serverId);
 
@@ -103,8 +109,9 @@ export function useAgentProfileCommandCenterActions(): void {
                 : {}),
             }),
           );
-        } catch (error) {
-          console.warn("[CommandCenter] Failed to remember agent profile selection", error);
+        } catch {
+          toast.error(t("settings.host.agentProfiles.applyFailed"));
+          return;
         }
         router.navigate(
           (serverId
@@ -121,7 +128,15 @@ export function useAgentProfileCommandCenterActions(): void {
         );
       })();
     },
-    [activeWorkspace, canUseActiveWorkspaceContext, profiles, serverId, updatePreferences],
+    [
+      activeWorkspace,
+      canUseActiveWorkspaceContext,
+      profiles,
+      serverId,
+      t,
+      toast,
+      updatePreferences,
+    ],
   );
 
   const openAgentProfiles = useCallback(() => {
@@ -141,7 +156,7 @@ export function useAgentProfileCommandCenterActions(): void {
     () =>
       buildAgentProfileCommandCenterContributions({
         serverId,
-        hosts: hosts.map(
+        hosts: connectedHosts.map(
           (host): AgentProfileCommandCenterHost => ({
             serverId: host.serverId,
             label: host.label,
@@ -164,7 +179,7 @@ export function useAgentProfileCommandCenterActions(): void {
         openHostAgentProfiles,
       }),
     [
-      hosts,
+      connectedHosts,
       isSupported,
       openAgentProfiles,
       openHostAgentProfiles,
@@ -175,7 +190,11 @@ export function useAgentProfileCommandCenterActions(): void {
     ],
   );
 
-  useCommandCenterActions({ sourceId: "agent-profiles", enabled: hosts.length > 0, actions });
+  useCommandCenterActions({
+    sourceId: "agent-profiles",
+    enabled: connectedHosts.length > 0,
+    actions,
+  });
 }
 
 export function CommandCenterAgentProfileActions() {

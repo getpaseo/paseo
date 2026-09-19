@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { AgentProfile } from "@getpaseo/protocol/messages";
 import {
   buildAgentProfileCommandCenterContributions,
+  resolveAgentProfileCommandCenterHost,
   type AgentProfileCommandCenterSource,
 } from "./agent-profile-contributions";
 
@@ -47,6 +48,44 @@ function source(overrides: Partial<AgentProfileCommandCenterSource> = {}): {
     },
   };
 }
+
+describe("agent profile command center host resolution", () => {
+  it("falls back to the only online host when the last host is offline", () => {
+    expect(
+      resolveAgentProfileCommandCenterHost({
+        activeServerId: null,
+        lastServerId: "offline-host",
+        hosts: [{ serverId: "online-host", label: "Online" }],
+      }),
+    ).toBe("online-host");
+  });
+
+  it("does not select a configured offline host among several online hosts", () => {
+    expect(
+      resolveAgentProfileCommandCenterHost({
+        activeServerId: null,
+        lastServerId: "offline-host",
+        hosts: [
+          { serverId: "online-a", label: "Online A" },
+          { serverId: "online-b", label: "Online B" },
+        ],
+      }),
+    ).toBeNull();
+  });
+
+  it("prefers the active online workspace host", () => {
+    expect(
+      resolveAgentProfileCommandCenterHost({
+        activeServerId: "online-b",
+        lastServerId: "online-a",
+        hosts: [
+          { serverId: "online-a", label: "Online A" },
+          { serverId: "online-b", label: "Online B" },
+        ],
+      }),
+    ).toBe("online-b");
+  });
+});
 
 describe("agent profile command center contributions", () => {
   it("lists one start entry per profile plus a manage entry", () => {

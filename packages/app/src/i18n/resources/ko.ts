@@ -2483,6 +2483,7 @@ export const ko: TranslationResources = {
         notesHint: "에이전트가 다른 에이전트를 시작할 때 이 프로필을 선택하는 데 사용됩니다.",
         save: "저장",
         saving: "저장하는 중...",
+        applyFailed: "에이전트 프로필을 적용하지 못했습니다. 다시 시도하세요.",
         remove: "제거",
         removeConfirmTitle: "프로필을 제거할까요?",
         removeConfirmMessage: '"{{name}}"을(를) 제거할까요?',

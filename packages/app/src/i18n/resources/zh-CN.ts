@@ -2445,6 +2445,7 @@ export const zhCN: TranslationResources = {
         notesHint: "帮助 Agent 在启动另一个 Agent 时选择此配置。",
         save: "保存",
         saving: "保存中...",
+        applyFailed: "无法应用 Agent 配置。请重试。",
         remove: "移除",
         removeConfirmTitle: "移除配置？",
         removeConfirmMessage: "移除「{{name}}」？",

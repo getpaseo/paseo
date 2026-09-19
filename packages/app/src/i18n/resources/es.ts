@@ -2528,6 +2528,7 @@ export const es: TranslationResources = {
         notesHint: "Ayuda a los agentes a elegir este perfil al iniciar otro agente.",
         save: "Guardar",
         saving: "Guardando...",
+        applyFailed: "No se pudo aplicar el perfil de agente. Inténtalo de nuevo.",
         remove: "Eliminar",
         removeConfirmTitle: "¿Eliminar perfil?",
         removeConfirmMessage: '¿Eliminar "{{name}}"?',
