@@ -2341,7 +2341,7 @@ test("file context action RPCs correlate success and error responses", async () 
   });
 });
 
-test("serializes plugin source suffixes through the legacy path field", async () => {
+test("sends plugin source identifiers unchanged for daemon-host resolution", async () => {
   const mock = createMockTransport();
   const client = new DaemonClient({
     url: "ws://test",
@@ -2353,7 +2353,7 @@ test("serializes plugin source suffixes through the legacy path field", async ()
   clients.push(client);
 
   const connectPromise = client.connect();
-  mock.triggerOpen();
+  mock.triggerOpen({ features: { pluginSourceInstallation: true } });
   await connectPromise;
 
   const installPromise = client.installPluginSource({
@@ -2363,8 +2363,7 @@ test("serializes plugin source suffixes through the legacy path field", async ()
   expect(request).toEqual({
     type: "plugin.source.install.request",
     requestId: expect.any(String),
-    source: "owner/repository",
-    pluginPath: "plugins/review",
+    source: "owner/repository:plugins/review",
   });
   mock.triggerMessage(
     wrapSessionMessage({
@@ -2687,6 +2686,17 @@ test("uploadFile sends metadata request and file bytes as binary chunks", async 
     modifiedAt: "2026-05-02T00:00:00.000Z",
     requestId: "req-upload",
     chunkSize: 5,
+  });
+
+  // Other tasks must run before a multi-chunk upload has queued all its bytes.
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const framesDuringUpload = mock.sent.slice(1).map(assertUint8Array).map(decodeFileTransferFrame);
+  expect(framesDuringUpload.some((frame) => frame.opcode === FileTransferOpcode.FileEnd)).toBe(
+    false,
+  );
+  await vi.waitFor(() => {
+    const frames = mock.sent.slice(1).map(assertUint8Array).map(decodeFileTransferFrame);
+    expect(frames.at(-1)?.opcode).toBe(FileTransferOpcode.FileEnd);
   });
 
   expect(JSON.parse(assertStr(mock.sent[0]))).toEqual({
@@ -6757,4 +6767,135 @@ test("creation reconnect observation uses connection-owned subscriptions and rel
     }),
   );
   expect(phases).toEqual(["accepted", "failed"]);
+});
+
+test("uploadFile stops sending chunks when the connection closes between sends", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "upload-interrupted",
+    logger: createMockLogger(),
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+  const connection = client.connect();
+  mock.triggerOpen();
+  await connection;
+  const upload = client.uploadFile({
+    fileName: "test.bin",
+    mimeType: "application/octet-stream",
+    bytes: new Uint8Array(1024 * 1024),
+  });
+  const rejection = expect(upload).rejects.toThrow();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const beforeClose = mock.sent.length;
+  mock.triggerClose();
+  await rejection;
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  expect(mock.sent).toHaveLength(beforeClose);
+  expect(
+    mock.sent
+      .filter((frame) => typeof frame !== "string")
+      .map(assertUint8Array)
+      .map(decodeFileTransferFrame)
+      .some((frame) => frame.opcode === FileTransferOpcode.FileEnd),
+  ).toBe(false);
+});
+
+test("rejects source installation on an older host before sending a request", async () => {
+  const transport = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "source-gate",
+    logger: createMockLogger(),
+    reconnect: { enabled: false },
+    transportFactory: () => transport.transport,
+  });
+  clients.push(client);
+  const connecting = client.connect();
+  transport.triggerOpen({ features: { pluginGitManagement: true } });
+  await connecting;
+  const sentBefore = transport.sent.length;
+  await expect(client.installPluginSource({ source: "npm:review" })).rejects.toThrow(
+    "Update the host",
+  );
+  expect(transport.sent.length).toBe(sentBefore);
+});
+
+test("reviewed plugin updates gate before requests and preserve exact proposal data", async () => {
+  for (const supported of [false, true]) {
+    const transport = createMockTransport();
+    const client = new DaemonClient({
+      url: "ws://test",
+      clientId: "reviewed-updates",
+      logger: createMockLogger(),
+      reconnect: { enabled: false },
+      transportFactory: () => transport.transport,
+    });
+    clients.push(client);
+    const connecting = client.connect();
+    transport.triggerOpen({
+      features: {
+        pluginGitManagement: true,
+        pluginSourceInstallation: true,
+        pluginSourceUpdates: supported,
+      },
+    });
+    await connecting;
+    const proposal = {
+      id: "review",
+      expected: {
+        identity: { kind: "npm" as const, packageName: "review", pluginPath: "." },
+        installationRoot: "/plugins/review/version-root",
+        revision: "1.0.0",
+      },
+      target: {
+        kind: "npm" as const,
+        version: "1.1.0",
+        resolved: "https://registry.npmjs.org/review/-/review-1.1.0.tgz",
+        integrity: "sha512-test",
+      },
+    };
+    if (!supported) {
+      const sent = transport.sent.length;
+      await expect(client.previewPluginUpdates()).rejects.toThrow("Update the host");
+      await expect(client.applyPluginUpdates([proposal])).rejects.toThrow("Update the host");
+      expect(transport.sent.length).toBe(sent);
+      continue;
+    }
+    const checking = client.previewPluginUpdates({ pluginId: "review" });
+    const check = parseSentFrame(transport.sent.at(-1));
+    expect(check).toMatchObject({
+      type: "plugin.source.update.preview.request",
+      pluginId: "review",
+    });
+    const preview = { id: "review", outcome: "update", links: [], proposal };
+    transport.triggerMessage(
+      wrapSessionMessage({
+        type: "plugin.source.update.preview.response",
+        payload: { requestId: check.requestId, plugins: [preview] },
+      }),
+    );
+    await expect(checking).resolves.toEqual([preview]);
+    const applying = client.applyPluginUpdates([proposal]);
+    const apply = parseSentFrame(transport.sent.at(-1));
+    expect(apply).toEqual({
+      type: "plugin.source.update.apply.request",
+      requestId: expect.any(String),
+      proposals: [proposal],
+    });
+    transport.triggerMessage(
+      wrapSessionMessage({
+        type: "plugin.source.update.apply.response",
+        payload: {
+          requestId: apply.requestId,
+          plugins: [{ id: "review", outcome: "error", error: "changed since review" }],
+        },
+      }),
+    );
+    await expect(applying).resolves.toEqual([
+      { id: "review", outcome: "error", error: "changed since review" },
+    ]);
+  }
 });

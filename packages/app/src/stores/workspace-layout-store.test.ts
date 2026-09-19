@@ -16,6 +16,7 @@ vi.mock("@react-native-async-storage/async-storage", () => {
 });
 
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { createViewedTimelineSync } from "@/timeline/viewed-timeline-sync";
 import { buildWorkspaceTabPersistenceKey, type WorkspaceTab } from "@/workspace-tabs/model";
 import { defaultChangesState, type ChangesState } from "@/panels/changes/state";
 import { defaultFileState, type FileState } from "@/panels/file/state";
@@ -105,6 +106,58 @@ it("observes open chats across unmounted workspaces until their tabs close", () 
     intent: "reveal",
   });
   expect(received).toEqual([[], ["agent-a"], ["agent-a", "agent-b"], ["agent-b"]]);
+});
+
+it("feeds restored layout to timeline sync as a release signal, not a subscription source", async () => {
+  const store = createWorkspaceLayoutStore(workspaceLayoutIds);
+  store.setState({ layoutByWorkspace: {} });
+  // Launch: layout rehydrates tabs the user opened in earlier sessions.
+  const restored = store.getState().openTab({
+    workspaceKey: "server-1:workspace-a",
+    target: { kind: "agent", agentId: "agent-a" },
+    intent: "reveal",
+  });
+  store.getState().openTab({
+    workspaceKey: "server-1:workspace-b",
+    target: { kind: "agent", agentId: "agent-b" },
+    intent: "background",
+  });
+
+  const observed: string[][] = [];
+  const sync = createViewedTimelineSync({
+    replaceDemandedAgentIds: () => undefined,
+    prepare: async () => undefined,
+    observe: (agentIds) => {
+      observed.push(agentIds);
+      return { ready: Promise.resolve(), release: async () => undefined };
+    },
+    readCursor: () => undefined,
+    fetchPage: async () => ({ hasNewer: false, endCursor: null }),
+    fetchLatestTail: async () => ({ hasNewer: false, endCursor: null }),
+    reportError: () => undefined,
+    schedule: () => () => undefined,
+  });
+  // The edge session-context.tsx owns. Pointing it at subscription instead would resume every
+  // agent behind a restored tab on the daemon.
+  const stop = observeOpenWorkspaceAgentIds(
+    "server-1",
+    (agentIds) => sync.replaceOpenTabAgentIds(agentIds),
+    store,
+  );
+
+  sync.setConnected(true);
+  expect(observed).toEqual([]);
+
+  sync.replaceVisibleAgentIds("workspace", ["agent-a"]);
+  await vi.waitFor(() => expect(observed).toEqual([["agent-a"]]));
+
+  if (!restored) throw new Error("Expected an open agent tab");
+  store.getState().closeTab("server-1:workspace-a", restored);
+  sync.replaceVisibleAgentIds("workspace", []);
+  await vi.waitFor(() => expect(observed.at(-1)).toEqual([]));
+
+  stop();
+  sync.dispose();
 });
 
 function useWorkspaceLayoutIds(...values: string[]) {
@@ -498,6 +551,7 @@ describe("workspace-layout-store version 2 migration", () => {
         "explorerSidebarWidthByWorkspace",
         "layoutByWorkspace",
         "pinnedAgentIdsByWorkspace",
+        "pullRequestTabAutoOpenedByWorkspace",
         "sidePaneIdByWorkspace",
         "splitSizesByWorkspace",
       ]);
@@ -3091,6 +3145,7 @@ describe("workspace-layout-store actions", () => {
       splitSizesByWorkspace: currentState.splitSizesByWorkspace,
       explorerSidebarWidthByWorkspace: currentState.explorerSidebarWidthByWorkspace,
       explorerPaneIdByWorkspace: {},
+      pullRequestTabAutoOpenedByWorkspace: currentState.pullRequestTabAutoOpenedByWorkspace,
       sidePaneIdByWorkspace: currentState.sidePaneIdByWorkspace,
     });
     expect(layout && collectAllTabs(layout.root).map((tab) => tab.target)).toEqual([
@@ -3319,6 +3374,7 @@ describe("workspace-layout-store actions", () => {
     const partialize = workspaceLayoutStore.persist.getOptions().partialize;
     expect(partialize).toBeTypeOf("function");
     expect(partialize?.(state)).toEqual({
+      pullRequestTabAutoOpenedByWorkspace: {},
       layoutByWorkspace: {},
       pinnedAgentIdsByWorkspace: {},
       splitSizesByWorkspace: {},
@@ -4358,4 +4414,26 @@ describe("workspace-layout-store actions", () => {
     expect(findPaneById(layout.root, "main")?.tabIds).toEqual([agentTabId]);
     expect(collectAllPanes(layout.root).map((pane) => pane.id)).toEqual(["main"]);
   });
+});
+
+it("persists the once-only PR add after closing, and clears it when purging the workspace", async () => {
+  await AsyncStorage.removeItem("workspace-layout-state");
+  const source = createWorkspaceLayoutStore(workspaceLayoutIds);
+  await source.persist.rehydrate();
+  const workspaceKey = "server-1:pr-once";
+  const placement = () => ({ placement: { mode: "prefer" as const, paneId: "explorer" } });
+  source.getState().autoOpenPullRequestTab(workspaceKey, placement);
+  source.getState().closeTab(workspaceKey, "pull_request");
+  const restored = createWorkspaceLayoutStore(workspaceLayoutIds);
+  await restored.persist.rehydrate();
+  expect(restored.getState().pullRequestTabAutoOpenedByWorkspace[workspaceKey]).toBe(true);
+  expect(restored.getState().autoOpenPullRequestTab(workspaceKey, placement)).toBeNull();
+  expect(
+    collectAllTabs(restored.getState().layoutByWorkspace[workspaceKey].root).map(
+      (tab) => tab.target.kind,
+    ),
+  ).not.toContain("pull_request");
+  restored.getState().purgeWorkspace(workspaceKey);
+  expect(restored.getState().pullRequestTabAutoOpenedByWorkspace[workspaceKey]).toBeUndefined();
+  expect(restored.getState().autoOpenPullRequestTab(workspaceKey, placement)).toBe("pull_request");
 });

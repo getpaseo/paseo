@@ -4,8 +4,8 @@ import { Platform, Text, View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { router } from "expo-router";
 import type { PluginHostProps } from "@getpaseo/plugin/client";
-import { SettingsAction } from "@/components/settings";
 import { Button } from "@/components/ui/button";
+import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { useHostFeature } from "@/runtime/host-features";
 import { useHostRuntimeClient, useHostRuntimeIsConnected, useHosts } from "@/runtime/host-runtime";
@@ -22,35 +22,42 @@ interface SettingsIdentity {
   screenId: string;
 }
 
-function SettingsLink({
+function PluginSettingsMenuItem({
   serverId,
   pluginId,
   screenId,
   title,
-}: SettingsIdentity & { title: string }) {
-  const { t } = useTranslation();
+  disabled,
+}: SettingsIdentity & { title: string; disabled?: boolean }) {
   const open = useCallback(
     () => router.push(buildPluginSettingsRoute(serverId, pluginId, screenId)),
     [serverId, pluginId, screenId],
   );
   return (
-    <SettingsAction label={title} actionLabel={t("settings.plugins.screens.open")} onPress={open} />
+    <DropdownMenuItem onSelect={open} disabled={disabled}>
+      {title}
+    </DropdownMenuItem>
   );
 }
 
-export function PluginSettingsLinks({ serverId, pluginId }: Omit<SettingsIdentity, "screenId">) {
+export function PluginSettingsMenuItems({
+  serverId,
+  pluginId,
+  disabled,
+}: Omit<SettingsIdentity, "screenId"> & { disabled?: boolean }) {
   const plugin = useInstalledPlugin(serverId, pluginId);
   const supported = useHostFeature(serverId, "pluginSettings");
   if (!supported || !plugin) return null;
   return (
     <>
       {plugin.settingsScreens.map((screen) => (
-        <SettingsLink
+        <PluginSettingsMenuItem
           key={screen.id}
           serverId={serverId}
           pluginId={pluginId}
           screenId={screen.id}
           title={screen.title}
+          disabled={disabled}
         />
       ))}
     </>

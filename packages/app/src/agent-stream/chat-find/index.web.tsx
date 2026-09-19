@@ -103,8 +103,9 @@ export function ChatFind({
         widget.current?.focus();
       }
     };
-    document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
+    // React Native TextInput stops bubbling key events, including from the composer.
+    document.addEventListener("keydown", onKeyDown, true);
+    return () => document.removeEventListener("keydown", onKeyDown, true);
   }, [active, isInteractive, model]);
   const close = useCallback(() => {
     model.close();
