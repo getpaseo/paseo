@@ -96,6 +96,8 @@ export const ptBR: TranslationResources = {
       openInFocusedPane: "Abrir {{name}} no painel em foco",
       addProject: "Adicionar projeto",
       home: "Início",
+      manageAgentProfiles: "Gerenciar perfis de agente",
+      agentProfilesForHost: "Perfis de agente ({{name}})",
       groupByProject: "Agrupar por projeto",
       groupByStatus: "Agrupar por status",
       modelGroupLabel: "Modelo",

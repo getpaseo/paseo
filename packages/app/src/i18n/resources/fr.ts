@@ -97,6 +97,8 @@ export const fr: TranslationResources = {
       openInFocusedPane: "Ouvrir {{name}} dans le volet actif",
       addProject: "Ajouter un projet",
       home: "Maison",
+      manageAgentProfiles: "Gérer les profils d'agent",
+      agentProfilesForHost: "Profils d'agent ({{name}})",
       groupByProject: "Grouper par projet",
       groupByStatus: "Grouper par statut",
       modelGroupLabel: "Modèle",

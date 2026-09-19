@@ -96,6 +96,8 @@ export const ja: TranslationResources = {
       openInFocusedPane: "{{name}}をフォーカス中のペインで開く",
       addProject: "プロジェクトを追加",
       home: "ホーム",
+      manageAgentProfiles: "エージェントプロファイルを管理",
+      agentProfilesForHost: "エージェントプロファイル ({{name}})",
       groupByProject: "プロジェクトでグループ化",
       groupByStatus: "ステータスでグループ化",
       modelGroupLabel: "モデル",

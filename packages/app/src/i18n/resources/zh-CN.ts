@@ -95,6 +95,8 @@ export const zhCN: TranslationResources = {
       openInFocusedPane: "在当前窗格中打开{{name}}",
       addProject: "添加 project",
       home: "首页",
+      manageAgentProfiles: "管理 Agent 配置",
+      agentProfilesForHost: "Agent 配置 ({{name}})",
       groupByProject: "按项目分组",
       groupByStatus: "按状态分组",
       modelGroupLabel: "模型",

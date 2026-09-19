@@ -95,6 +95,8 @@ export const ko: TranslationResources = {
       openInFocusedPane: "포커스된 창에서 {{name}} 열기",
       addProject: "프로젝트 추가",
       home: "홈",
+      manageAgentProfiles: "에이전트 프로필 관리",
+      agentProfilesForHost: "에이전트 프로필 ({{name}})",
       groupByProject: "프로젝트별 그룹화",
       groupByStatus: "상태별 그룹화",
       modelGroupLabel: "모델",

@@ -96,6 +96,8 @@ export const es: TranslationResources = {
       openInFocusedPane: "Abrir {{name}} en el panel enfocado",
       addProject: "Agregar proyecto",
       home: "Hogar",
+      manageAgentProfiles: "Gestionar perfiles de agente",
+      agentProfilesForHost: "Perfiles de agente ({{name}})",
       groupByProject: "Agrupar por proyecto",
       groupByStatus: "Agrupar por estado",
       modelGroupLabel: "Modelo",

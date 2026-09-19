@@ -95,6 +95,8 @@ export const ar: TranslationResources = {
       openInFocusedPane: "فتح {{name}} في الجزء النشط",
       addProject: "إضافة مشروع",
       home: "بيت",
+      manageAgentProfiles: "إدارة ملفات تعريف الوكيل",
+      agentProfilesForHost: "ملفات تعريف الوكيل ({{name}})",
       groupByProject: "تجميع حسب المشروع",
       groupByStatus: "تجميع حسب الحالة",
       modelGroupLabel: "النموذج",

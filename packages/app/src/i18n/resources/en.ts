@@ -91,6 +91,8 @@ export const en = {
       openInFocusedPane: "Open {{name}} in focused pane",
       addProject: "Add project",
       home: "Home",
+      manageAgentProfiles: "Manage agent profiles",
+      agentProfilesForHost: "Agent profiles ({{name}})",
       groupByProject: "Group by project",
       groupByStatus: "Group by status",
       modelGroupLabel: "Model",

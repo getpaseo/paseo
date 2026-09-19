@@ -96,6 +96,8 @@ export const ru: TranslationResources = {
       openInFocusedPane: "Открыть {{name}} в активной области",
       addProject: "Добавить проект",
       home: "Главная",
+      manageAgentProfiles: "Управление профилями агентов",
+      agentProfilesForHost: "Профили агентов ({{name}})",
       groupByProject: "Группировать по проекту",
       groupByStatus: "Группировать по статусу",
       modelGroupLabel: "Модель",
