@@ -2019,6 +2019,9 @@ export const ko: TranslationResources = {
       fallbackHint: "사용할 수 없으면 Paseo가 다른 사용 가능한 모델을 사용합니다",
       docs: "문서",
       saveError: "메타데이터 생성을 업데이트할 수 없습니다",
+      suggestionSection: "메시지 제안",
+      suggestionSharedHint: "제안에 메타데이터 생성 모델을 사용합니다",
+      suggestionCustomHint: "메시지 제안에 이 모델을 사용합니다",
     },
     general: {
       title: "일반",

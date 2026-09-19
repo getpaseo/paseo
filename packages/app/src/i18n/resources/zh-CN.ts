@@ -1987,6 +1987,9 @@ export const zhCN: TranslationResources = {
       fallbackHint: "如果不可用，Paseo 会改用其他可用模型",
       docs: "文档",
       saveError: "无法更新元数据生成设置",
+      suggestionSection: "消息建议",
+      suggestionSharedHint: "建议使用元数据生成模型",
+      suggestionCustomHint: "消息建议使用此模型",
     },
     general: {
       title: "通用",

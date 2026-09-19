@@ -2130,6 +2130,9 @@ export const en = {
       fallbackHint: "If it is unavailable, Paseo falls back to another available model",
       docs: "Docs",
       saveError: "Unable to update metadata generation",
+      suggestionSection: "Prompt suggestions",
+      suggestionSharedHint: "Suggestions use the metadata generation model",
+      suggestionCustomHint: "Prompt suggestions use this model",
     },
     general: {
       title: "General",

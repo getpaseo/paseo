@@ -2062,6 +2062,9 @@ export const fr: TranslationResources = {
       fallbackHint: "S’il est indisponible, Paseo utilise un autre modèle disponible",
       docs: "Documentation",
       saveError: "Impossible de mettre à jour la génération de métadonnées",
+      suggestionSection: "Suggestions de messages",
+      suggestionSharedHint: "Les suggestions utilisent le modèle de génération de métadonnées",
+      suggestionCustomHint: "Les suggestions de messages utilisent ce modèle",
     },
     general: {
       title: "Général",
