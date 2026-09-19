@@ -21,9 +21,10 @@ import {
   type StyleProp,
   type ViewStyle,
 } from "react-native";
-import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useShallow } from "zustand/shallow";
 import { Settings2 } from "lucide-react-native";
+import type { Theme } from "@/styles/theme";
 import { getAgentFeatureIcon, ThinkingIcon } from "@/agent-controls/icons";
 import { formatThinkingOptionLabel } from "@/agent-controls/labels";
 import { ComboboxTrigger } from "@/components/ui/combobox-trigger";
@@ -210,30 +211,38 @@ function getModeProviderDefinitions(modeControl: AgentModeControlValue | null) {
   return modeControl?.providerDefinitions ?? EMPTY_AGENT_PROVIDER_DEFINITIONS;
 }
 
-function getFeatureIconColor(
-  featureId: string,
-  enabled: boolean,
-  palette: {
-    blue: { 400: string };
-    green: { 400: string };
-    yellow: { 400: string };
-  },
-  foregroundMuted: string,
-): string {
+const ThemedSettings2 = withUnistyles(Settings2);
+const ThemedThinkingIcon = withUnistyles(ThinkingIcon);
+
+function foregroundIconColor(theme: Theme) {
+  return { color: theme.colors.foreground };
+}
+
+function mutedIconColor(theme: Theme) {
+  return { color: theme.colors.foregroundMuted };
+}
+
+function getFeatureIconColor(featureId: string, enabled: boolean, theme: Theme): string {
   if (!enabled) {
-    return foregroundMuted;
+    return theme.colors.foregroundMuted;
   }
 
   switch (getFeatureHighlightColor(featureId)) {
     case "blue":
-      return palette.blue[400];
+      return theme.colors.palette.blue[400];
     case "green":
-      return palette.green[400];
+      return theme.colors.palette.green[400];
     case "yellow":
-      return palette.yellow[400];
+      return theme.colors.palette.yellow[400];
     default:
-      return foregroundMuted;
+      return theme.colors.foregroundMuted;
   }
+}
+
+function useFeatureIconColor(feature: AgentFeature): (theme: Theme) => string {
+  const { id } = feature;
+  const enabled = feature.value === true;
+  return useCallback((theme: Theme) => getFeatureIconColor(id, enabled, theme), [enabled, id]);
 }
 
 type ActiveSheet = "thinking" | "features" | null;
@@ -501,7 +510,6 @@ function ControlledAgentControls({
   modelSelectorServerId = null,
   isCompactLayout,
 }: ControlledAgentControlsProps) {
-  const { theme } = useUnistyles();
   const { t } = useTranslation();
   const isCompactFormFactor = useIsCompactFormFactor();
   const isCompact = isCompactLayout ?? isCompactFormFactor;
@@ -631,10 +639,9 @@ function ControlledAgentControls({
         selected={args.selected}
         active={args.active}
         onPress={args.onPress}
-        iconColor={theme.colors.foreground}
       />
     ),
-    [theme.colors.foreground],
+    [],
   );
 
   const handleOpenChange = useCallback(
@@ -889,7 +896,6 @@ interface DesktopAgentControlsContentProps {
 const DESKTOP_SEARCH_THRESHOLD = 6;
 
 function DesktopAgentControlsContent(props: DesktopAgentControlsContentProps) {
-  const { theme } = useUnistyles();
   const { t } = useTranslation();
   const {
     provider,
@@ -1066,7 +1072,7 @@ function DesktopAgentControlsContent(props: DesktopAgentControlsContentProps) {
             testID="agent-controls-features"
           >
             <ComposerToolbarGlyph size={glyphSize}>
-              <Settings2 size={glyphSize} color={theme.colors.foregroundMuted} />
+              <ThemedSettings2 size={glyphSize} uniProps={mutedIconColor} />
             </ComposerToolbarGlyph>
           </Pressable>
           <AdaptiveModalSheet
@@ -1291,7 +1297,7 @@ function DesktopFeatureItem({
   onSetFeature?: (featureId: string, value: unknown) => void;
   onActionComplete?: () => void;
 }) {
-  const { theme } = useUnistyles();
+  const featureIconColor = useFeatureIconColor(feature);
   const featureSelector: AgentControlSelector = `feature-${feature.id}`;
   const featureAnchorRef = useRef<View>(null);
 
@@ -1332,12 +1338,7 @@ function DesktopFeatureItem({
         <TooltipTrigger asChild triggerRefProp="ref">
           <AgentControlTrigger
             icon={FeatureIcon}
-            iconColor={getFeatureIconColor(
-              feature.id,
-              feature.value,
-              theme.colors.palette,
-              theme.colors.foregroundMuted,
-            )}
+            iconColor={featureIconColor}
             surface="toolbar"
             label={feature.label}
             showToolbarLabel={false}
@@ -1407,7 +1408,7 @@ function SheetFeatureItem({
   handleOpenChange: (selector: AgentControlSelector) => (nextOpen: boolean) => void;
   onSetFeature?: (featureId: string, value: unknown) => void;
 }) {
-  const { theme } = useUnistyles();
+  const featureIconColor = useFeatureIconColor(feature);
   const { t } = useTranslation();
   const featureSelector: AgentControlSelector = `feature-${feature.id}`;
   const featureAnchorRef = useRef<View>(null);
@@ -1445,12 +1446,7 @@ function SheetFeatureItem({
         <AgentControlTrigger
           ref={featureAnchorRef}
           icon={FeatureIcon}
-          iconColor={getFeatureIconColor(
-            feature.id,
-            feature.value,
-            theme.colors.palette,
-            theme.colors.foregroundMuted,
-          )}
+          iconColor={featureIconColor}
           surface="sheet"
           label={feature.label}
           value={feature.value ? t("agentControls.features.on") : t("agentControls.features.off")}
@@ -1514,15 +1510,16 @@ function ThinkingComboboxOption({
   selected,
   active,
   onPress,
-  iconColor,
 }: {
   option: ComboboxOption;
   selected: boolean;
   active: boolean;
   onPress: () => void;
-  iconColor: string;
 }) {
-  const leadingSlot = useMemo(() => <ThinkingIcon size={16} color={iconColor} />, [iconColor]);
+  const leadingSlot = useMemo(
+    () => <ThemedThinkingIcon size={16} uniProps={foregroundIconColor} />,
+    [],
+  );
   return (
     <ComboboxItem
       label={option.label}
