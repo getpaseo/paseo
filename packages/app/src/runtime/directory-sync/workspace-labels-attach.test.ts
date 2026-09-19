@@ -48,6 +48,14 @@ class SupportedDirectoryClient {
     };
   }
 
+  observeAgents(options: Parameters<DaemonClient["observeAgents"]>[0]) {
+    return subscriptionFixture(this.fetchAgents({ ...options, subscribe: {} }), () => () => {});
+  }
+
+  observeWorkspaces(options: Parameters<DaemonClient["observeWorkspaces"]>[0]) {
+    return subscriptionFixture(this.fetchWorkspaces(options), () => () => {});
+  }
+
   async listProjects(): Promise<ProjectListResult> {
     return { requestId: "projects", projects: [] };
   }
@@ -148,6 +156,50 @@ describe("DirectorySync workspace label attachment", () => {
     await flushAsyncWork();
 
     expect(client.listWorkspaceLabelsCalls).toBeGreaterThan(0);
+    expect(useWorkspaceLabels.getState().hosts[serverId]?.status).toBe("online");
+    directory.dispose();
+  });
+
+  it("does not publish offline while refreshing an existing label connection", async () => {
+    const serverId = "workspace-labels-refresh-no-flicker";
+    const { client, directory } = createDirectory(serverId);
+
+    directory.setDemand({}, true);
+    await flushAsyncWork();
+    const callsBeforeRefresh = client.listWorkspaceLabelsCalls;
+
+    const statuses: string[] = [];
+    const unsubscribe = useWorkspaceLabels.subscribe((state) => {
+      const status = state.hosts[serverId]?.status;
+      if (status) statuses.push(status);
+    });
+
+    await directory.refreshDemand();
+
+    expect(client.listWorkspaceLabelsCalls).toBeGreaterThan(callsBeforeRefresh);
+    expect(statuses).not.toContain("offline");
+    unsubscribe();
+    directory.dispose();
+  });
+
+  it("reattaches labels after a connection is restored", async () => {
+    const serverId = "workspace-labels-reconnect";
+    const { client, directory } = createDirectory(serverId);
+
+    directory.setDemand({}, true);
+    await flushAsyncWork();
+    directory.connectionChanged({
+      client: null,
+      status: "offline",
+      source: { clientGeneration: 1, connectionEpoch: 1 },
+    });
+    directory.connectionChanged({
+      client: client as unknown as DaemonClient,
+      status: "online",
+      source: { clientGeneration: 1, connectionEpoch: 2 },
+    });
+    await flushAsyncWork();
+
     expect(useWorkspaceLabels.getState().hosts[serverId]?.status).toBe("online");
     directory.dispose();
   });
