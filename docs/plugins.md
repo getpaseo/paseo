@@ -272,6 +272,10 @@ RPC contracts validate inputs and outputs in both the app and plugin subprocess.
 typed async function. Use the host-provided `@tanstack/react-query` for request state and caching;
 Paseo gives each plugin installation its own query client.
 
+`defineRpc()` names identify methods inside the existing `plugin.rpc.invoke.request` and
+`plugin.rpc.invoke.response` WebSocket pair. Do not add `.request` or `.response` to a plugin method
+name; those direction suffixes belong to the transport messages, not the method routed inside them.
+
 `usePaseo()` and the handler's `{ paseo }` context expose the same `PaseoApi`: projects,
 workspaces, agents, terminals, providers, and daemon config. They do not expose connection lifecycle. A surface borrows the
 selected host's existing connection; switching the screen's host changes both `usePaseo()` and
@@ -499,6 +503,10 @@ on several hosts are not coalesced. The selected snapshot submits as a text atta
 external-resource presentation, so it remains readable if the plugin is removed or an older peer
 drops the optional presentation fields.
 
+Set an item's optional `contextKind` to `"chat_history"` when its text is an earlier conversation.
+Paseo then places that snapshot before the new user instruction instead of appending it as an
+ordinary resource.
+
 ## Contribute settings
 
 Register ordinary components with `client.addSettingsScreen` and open them with `openSettings`.
@@ -540,6 +548,7 @@ preference instead of painting the reserved slot's placeholder colors.
 
 Existing plugin authors should follow the standalone [v0.8 runtime-entry migration guide](../public-docs/plugins/migration.md).
 
-See `plugin-examples/local-plugin` for a native surface, `plugin-examples/linear` for a complete
-attachment-source example, `plugin-examples/timeline-items` for timeline projection, and
-`plugin-examples/catppuccin` for a theme.
+See `plugin-examples/local-plugin` for a native surface, `plugin-examples/linear` for a
+vendor-backed attachment source, `plugin-examples/agent-context` for a Paseo SDK-backed transcript
+snapshot, `plugin-examples/timeline-items` for timeline projection, and `plugin-examples/catppuccin`
+for a theme.
