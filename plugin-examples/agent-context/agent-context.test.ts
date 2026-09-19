@@ -1,10 +1,53 @@
+import type { RpcInput, RpcOutput } from "@getpaseo/plugin";
+import type { PluginServerContext } from "@getpaseo/plugin/server";
 import { describe, expect, it, vi } from "vitest";
-import {
-  buildTranscriptSnapshot,
-  createAgentTranscriptSearch,
-  MAX_TRANSCRIPT_BYTES,
-  type AgentContextSearchDependencies,
-} from "./server/agent-context";
+import contribute from "./index.server";
+import { searchAgentTranscriptsRpc } from "./shared/agent-context";
+
+const MAX_EXPECTED_TRANSCRIPT_BYTES = 128 * 1024;
+interface TimelinePage {
+  epoch: string;
+  staleCursor: boolean;
+  hasOlder: boolean;
+  startCursor: { epoch: string; seq: number } | null;
+  entries: Array<{ item: unknown }>;
+  error: string | null;
+}
+interface SearchContext {
+  paseo: {
+    agents: {
+      list(options: {
+        sort: Array<{ key: "updated_at"; direction: "desc" }>;
+        page: { limit: number; cursor?: string };
+      }): Promise<{
+        entries: Array<ReturnType<typeof entry>>;
+        pageInfo: { nextCursor: string | null };
+      }>;
+      ref(agentId: string): {
+        timeline: {
+          refetch(options: {
+            direction: "tail" | "before";
+            cursor?: { epoch: string; seq: number };
+            limit: number;
+            projection: "projected";
+          }): Promise<TimelinePage>;
+        };
+      };
+    };
+  };
+}
+type ListAgents = SearchContext["paseo"]["agents"]["list"];
+type TimelineRefetch = ReturnType<SearchContext["paseo"]["agents"]["ref"]>["timeline"]["refetch"];
+type FetchTimeline = (
+  agentId: string,
+  options: Parameters<TimelineRefetch>[0],
+) => Promise<TimelinePage>;
+type SearchHandler = (
+  input: RpcInput<typeof searchAgentTranscriptsRpc>,
+  context: SearchContext,
+) =>
+  | RpcOutput<typeof searchAgentTranscriptsRpc>
+  | Promise<RpcOutput<typeof searchAgentTranscriptsRpc>>;
 
 function entry(
   id: string,
@@ -41,25 +84,61 @@ function entry(
 function dependencies(input: {
   entries: ReturnType<typeof entry>[];
   timeline?: unknown[];
-  fetchTimeline?: AgentContextSearchDependencies["fetchTimeline"];
-}): AgentContextSearchDependencies {
-  return {
-    listAgents: vi.fn(async () => ({
+  listAgents?: ListAgents;
+  fetchTimeline?: FetchTimeline;
+}) {
+  const listAgents =
+    input.listAgents ??
+    vi.fn<ListAgents>(async () => ({
       entries: input.entries,
       pageInfo: { nextCursor: null },
-    })),
-    fetchTimeline:
-      input.fetchTimeline ??
-      vi.fn(async () => ({
-        epoch: "epoch-1",
-        staleCursor: false,
-        hasOlder: false,
-        startCursor: null,
-        entries: (input.timeline ?? []).map((item) => ({ item })),
-        error: null,
-      })),
-    now: () => new Date("2026-09-10T12:00:00.000Z"),
+    }));
+  const fetchTimeline =
+    input.fetchTimeline ??
+    vi.fn<FetchTimeline>(async () => ({
+      epoch: "epoch-1",
+      staleCursor: false,
+      hasOlder: false,
+      startCursor: null,
+      entries: (input.timeline ?? []).map((item) => ({ item })),
+      error: null,
+    }));
+  return {
+    context: {
+      paseo: {
+        agents: {
+          list: listAgents,
+          ref: (agentId: string) => ({
+            timeline: {
+              refetch: (options: Parameters<TimelineRefetch>[0]) => fetchTimeline(agentId, options),
+            },
+          }),
+        },
+      },
+    },
+    listAgents,
+    fetchTimeline,
   };
+}
+
+function registeredSearchHandler(): SearchHandler {
+  let search: SearchHandler | undefined;
+  contribute({
+    handle(contract, handler) {
+      expect(contract).toBe(searchAgentTranscriptsRpc);
+      search = handler as unknown as SearchHandler;
+    },
+  } as PluginServerContext);
+  if (!search) throw new Error("Agent transcript search handler was not registered");
+  return search;
+}
+
+const searchAgentTranscripts = registeredSearchHandler();
+
+async function invokeSearch(source: ReturnType<typeof dependencies>, query: string) {
+  const input = searchAgentTranscriptsRpc.input.parse({ query });
+  const output = await searchAgentTranscripts(input, source.context);
+  return searchAgentTranscriptsRpc.output.parse(output);
 }
 
 describe("agent transcript attachment source", () => {
@@ -91,7 +170,7 @@ describe("agent transcript attachment source", () => {
       ],
     });
 
-    const result = await createAgentTranscriptSearch(source)({ query: "checkout" });
+    const result = await invokeSearch(source, "checkout");
 
     expect(result.items).toHaveLength(1);
     expect(result.items[0]).toMatchObject({
@@ -100,8 +179,9 @@ describe("agent transcript attachment source", () => {
       title: "Checkout review",
       subtitle: "payments · Paseo · codex",
       resourceType: "agent transcript",
+      contextKind: "chat_history",
     });
-    expect(result.items[0]?.text).toContain("Captured: 2026-09-10T12:00:00.000Z");
+    expect(result.items[0]?.text).toMatch(/Captured: \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z/);
     expect(result.items[0]?.text).toContain("[User] Review checkout.");
     expect(result.items[0]?.text).toContain("[Tool: Shell]");
     expect(result.items[0]?.text).toContain("[Tool: Subagent]");
@@ -121,7 +201,7 @@ describe("agent transcript attachment source", () => {
 
   it("pages backward to build one chronological snapshot", async () => {
     const fetchTimeline = vi
-      .fn<AgentContextSearchDependencies["fetchTimeline"]>()
+      .fn<FetchTimeline>()
       .mockResolvedValueOnce({
         epoch: "epoch-1",
         staleCursor: false,
@@ -140,7 +220,7 @@ describe("agent transcript attachment source", () => {
       });
     const source = dependencies({ entries: [entry("agent-1")], fetchTimeline });
 
-    const result = await createAgentTranscriptSearch(source)({ query: "agent" });
+    const result = await invokeSearch(source, "agent");
 
     const text = result.items[0]?.text ?? "";
     expect(text.indexOf("[User] Older question.")).toBeLessThan(
@@ -155,9 +235,8 @@ describe("agent transcript attachment source", () => {
   });
 
   it("continues directory search across pages before snapshotting matches", async () => {
-    const source = dependencies({ entries: [] });
-    source.listAgents = vi
-      .fn<AgentContextSearchDependencies["listAgents"]>()
+    const listAgents = vi
+      .fn<ListAgents>()
       .mockResolvedValueOnce({
         entries: [entry("first", { title: "Unrelated" })],
         pageInfo: { nextCursor: "next-page" },
@@ -166,8 +245,9 @@ describe("agent transcript attachment source", () => {
         entries: [entry("second", { title: "Payments handoff" })],
         pageInfo: { nextCursor: null },
       });
+    const source = dependencies({ entries: [], listAgents });
 
-    const result = await createAgentTranscriptSearch(source)({ query: "payments" });
+    const result = await invokeSearch(source, "payments");
 
     expect(result.items.map((item) => item.id)).toEqual(["second"]);
     expect(source.listAgents).toHaveBeenNthCalledWith(2, {
@@ -183,7 +263,7 @@ describe("agent transcript attachment source", () => {
       entries: Array.from({ length: 7 }, (_, index) => entry(`agent-${index}`)),
     });
 
-    const result = await createAgentTranscriptSearch(source)({ query: "agent" });
+    const result = await invokeSearch(source, "agent");
 
     expect(result.items.map((item) => item.id)).toEqual([
       "agent-0",
@@ -195,20 +275,20 @@ describe("agent transcript attachment source", () => {
     expect(source.fetchTimeline).toHaveBeenCalledTimes(5);
   });
 
-  it("keeps a UTF-8-safe recent suffix within the snapshot byte limit", () => {
-    const snapshot = buildTranscriptSnapshot({
-      metadata: {
-        agent: entry("agent-1").agent,
-        project: entry("agent-1").project,
-        capturedAt: new Date("2026-09-10T12:00:00.000Z"),
-      },
-      items: [
+  it("keeps a UTF-8-safe recent suffix within the snapshot byte limit", async () => {
+    const source = dependencies({
+      entries: [entry("agent-1")],
+      timeline: [
         { type: "user_message", text: "old context" },
-        { type: "assistant_message", text: "😀".repeat(MAX_TRANSCRIPT_BYTES) },
+        { type: "assistant_message", text: "😀".repeat(MAX_EXPECTED_TRANSCRIPT_BYTES) },
       ],
     });
+    const result = await invokeSearch(source, "agent-1");
+    const snapshot = result.items[0]?.text ?? "";
 
-    expect(new TextEncoder().encode(snapshot).byteLength).toBeLessThanOrEqual(MAX_TRANSCRIPT_BYTES);
+    expect(new TextEncoder().encode(snapshot).byteLength).toBeLessThanOrEqual(
+      MAX_EXPECTED_TRANSCRIPT_BYTES,
+    );
     expect(snapshot).toContain("Earlier context was omitted");
     expect(snapshot).toContain("[Earlier content in this message omitted]");
     expect(snapshot).not.toContain("�");
@@ -217,7 +297,7 @@ describe("agent transcript attachment source", () => {
 
   it("bounds timeline paging when projected pages contain no shareable rows", async () => {
     let sequence = 1_000;
-    const fetchTimeline = vi.fn<AgentContextSearchDependencies["fetchTimeline"]>(async () => ({
+    const fetchTimeline = vi.fn<FetchTimeline>(async () => ({
       epoch: "epoch-1",
       staleCursor: false,
       hasOlder: true,
@@ -227,7 +307,7 @@ describe("agent transcript attachment source", () => {
     }));
     const source = dependencies({ entries: [entry("agent-1")], fetchTimeline });
 
-    const result = await createAgentTranscriptSearch(source)({ query: "agent" });
+    const result = await invokeSearch(source, "agent");
 
     expect(fetchTimeline).toHaveBeenCalledTimes(25);
     expect(result.items[0]?.text).toContain(
@@ -251,7 +331,7 @@ describe("agent transcript attachment source", () => {
       }),
     });
 
-    const result = await createAgentTranscriptSearch(source)({ query: "agent" });
+    const result = await invokeSearch(source, "agent");
 
     expect(result.items.map((item) => item.id)).toEqual(["available"]);
   });
@@ -264,15 +344,13 @@ describe("agent transcript attachment source", () => {
       }),
     });
 
-    await expect(createAgentTranscriptSearch(source)({ query: "missing" })).rejects.toThrow(
-      "Agent not found",
-    );
+    await expect(invokeSearch(source, "missing")).rejects.toThrow("Agent not found");
   });
 
   it("does not read agent history before the user enters a search", async () => {
     const source = dependencies({ entries: [entry("agent-1")] });
 
-    await expect(createAgentTranscriptSearch(source)({ query: "  " })).resolves.toEqual({
+    await expect(invokeSearch(source, "  ")).resolves.toEqual({
       items: [],
     });
     expect(source.listAgents).not.toHaveBeenCalled();

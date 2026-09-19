@@ -57,6 +57,7 @@ export function pluginResourceAttachmentToAgentAttachment(
     mimeType: "text/plain",
     title: `${attachment.item.identifier} ${attachment.item.title}`,
     text: attachment.item.text,
+    ...(attachment.item.contextKind ? { contextKind: attachment.item.contextKind } : {}),
     externalResource: {
       provider: attachment.pluginId,
       providerLabel: attachment.sourceTitle,
