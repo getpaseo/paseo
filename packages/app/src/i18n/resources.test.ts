@@ -21,6 +21,15 @@ function flattenKeys(value: unknown, prefix = ""): string[] {
 }
 
 const pluralSuffixPattern = /_(zero|one|two|few|many|other)$/;
+const arabicPluralSuffixes = ["zero", "one", "two", "few", "many", "other"] as const;
+const arabicProviderUsagePluralKeys = [
+  "providerUsage.duration.days",
+  "providerUsage.duration.hours",
+  "providerUsage.duration.minutes",
+  "providerUsage.timing.daysAgo",
+  "providerUsage.timing.hoursAgo",
+  "providerUsage.timing.minutesAgo",
+] as const;
 
 function canonicalKeys(value: unknown): string[] {
   const keys = flattenKeys(value);
@@ -129,6 +138,15 @@ describe("translation resources", () => {
     expect(canonicalKeys(ptBR)).toEqual(englishKeys);
     expect(canonicalKeys(ru)).toEqual(englishKeys);
     expect(canonicalKeys(zhCN)).toEqual(englishKeys);
+  });
+
+  it("includes every Arabic form for provider-usage durations", () => {
+    const arabicStrings = flattenStrings(ar);
+    for (const key of arabicProviderUsagePluralKeys) {
+      for (const suffix of arabicPluralSuffixes) {
+        expect(arabicStrings[`${key}_${suffix}`]).toBeTypeOf("string");
+      }
+    }
   });
 
   it("keeps non-English supported languages translated beyond fallback labels", () => {
