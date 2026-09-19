@@ -34,28 +34,31 @@ test.describe("provider usage tooltip", () => {
     page,
   }) => {
     test.setTimeout(180_000);
-    const usageFixture = await installProviderUsageFixture(page, [
-      {
-        fetchedAt: "2026-06-19T00:00:00.000Z",
-        providers: [
-          {
-            providerId: "mock",
-            displayName: "Mock provider",
-            status: "available",
-            planLabel: "Test plan",
-            windows: [
-              {
-                id: "session",
-                label: "Session",
-                usedPct: 42,
-                remainingPct: 58,
-                resetsAt: "2026-06-19T05:00:00.000Z",
-              },
-            ],
-          },
-        ],
-      },
-    ]);
+    const usageFixture = await installProviderUsageFixture({
+      page,
+      payloads: [
+        {
+          fetchedAt: "2026-06-19T00:00:00.000Z",
+          providers: [
+            {
+              providerId: "mock",
+              displayName: "Mock provider",
+              status: "available",
+              planLabel: "Test plan",
+              windows: [
+                {
+                  id: "session",
+                  label: "Session",
+                  usedPct: 42,
+                  remainingPct: 58,
+                  resetsAt: "2026-06-19T05:00:00.000Z",
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    });
     const session = await openMockAgent(page);
     try {
       expect(usageFixture.requestCount()).toBe(0);
@@ -76,20 +79,23 @@ test.describe("provider usage tooltip", () => {
 
   test("does not show provider usage without context telemetry", async ({ page }) => {
     test.setTimeout(180_000);
-    const usageFixture = await installProviderUsageFixture(page, [
-      {
-        fetchedAt: "2026-06-19T00:00:00.000Z",
-        providers: [
-          {
-            providerId: "mock",
-            displayName: "Mock provider",
-            status: "available",
-            planLabel: "Test plan",
-            windows: [{ id: "session", label: "Session", usedPct: 37 }],
-          },
-        ],
-      },
-    ]);
+    const usageFixture = await installProviderUsageFixture({
+      page,
+      payloads: [
+        {
+          fetchedAt: "2026-06-19T00:00:00.000Z",
+          providers: [
+            {
+              providerId: "mock",
+              displayName: "Mock provider",
+              status: "available",
+              planLabel: "Test plan",
+              windows: [{ id: "session", label: "Session", usedPct: 37 }],
+            },
+          ],
+        },
+      ],
+    });
     const session = await openMockAgentWithoutContextTelemetry(page);
     try {
       await expect(page.getByTestId("context-window-meter")).toHaveCount(0);

@@ -11,43 +11,46 @@ test.describe("provider usage settings", () => {
   test("renders every provider returned by the daemon usage RPC", async ({ page }) => {
     test.setTimeout(120_000);
     const serverId = getServerId();
-    const usageFixture = await installProviderUsageFixture(page, [
-      {
-        fetchedAt: "2026-06-19T00:00:00.000Z",
-        providers: [
-          {
-            providerId: "claude",
-            displayName: "Claude",
-            status: "available",
-            planLabel: "Max 20x",
-            windows: [{ id: "session", label: "Session", usedPct: 7 }],
-          },
-          {
-            providerId: "codex",
-            displayName: "Codex",
-            status: "available",
-            planLabel: "Pro 20x",
-            windows: [{ id: "weekly", label: "Weekly", usedPct: 29 }],
-          },
-          {
-            providerId: "glm",
-            displayName: "GLM coding plan",
-            status: "available",
-            planLabel: "GLM coding plan",
-            sourceLabel: "OpenUsage 0.6.27",
-            windows: [
-              { id: "biweekly", label: "Biweekly", usedPct: 23 },
-              { id: "daily", label: "Daily", remainingPct: 30 },
-            ],
-            balances: [
-              { id: "credits", label: "Credits", remaining: 1234, unit: "credits" },
-              { id: "extra", label: "Extra usage", used: 5, limit: 20, unit: "usd" },
-            ],
-            details: [{ id: "valid", label: "Valid until", value: "2026-12-31" }],
-          },
-        ],
-      },
-    ]);
+    const usageFixture = await installProviderUsageFixture({
+      page,
+      payloads: [
+        {
+          fetchedAt: "2026-06-19T00:00:00.000Z",
+          providers: [
+            {
+              providerId: "claude",
+              displayName: "Claude",
+              status: "available",
+              planLabel: "Max 20x",
+              windows: [{ id: "session", label: "Session", usedPct: 7 }],
+            },
+            {
+              providerId: "codex",
+              displayName: "Codex",
+              status: "available",
+              planLabel: "Pro 20x",
+              windows: [{ id: "weekly", label: "Weekly", usedPct: 29 }],
+            },
+            {
+              providerId: "glm",
+              displayName: "GLM coding plan",
+              status: "available",
+              planLabel: "GLM coding plan",
+              sourceLabel: "OpenUsage 0.6.27",
+              windows: [
+                { id: "biweekly", label: "Biweekly", usedPct: 23 },
+                { id: "daily", label: "Daily", remainingPct: 30 },
+              ],
+              balances: [
+                { id: "credits", label: "Credits", remaining: 1234, unit: "credits" },
+                { id: "extra", label: "Extra usage", used: 5, limit: 20, unit: "usd" },
+              ],
+              details: [{ id: "valid", label: "Valid until", value: "2026-12-31" }],
+            },
+          ],
+        },
+      ],
+    });
 
     await gotoAppShell(page);
     await openSettings(page);
@@ -76,32 +79,35 @@ test.describe("provider usage settings", () => {
   test("refresh invalidates and refetches usage", async ({ page }) => {
     test.setTimeout(120_000);
     const serverId = getServerId();
-    const usageFixture = await installProviderUsageFixture(page, [
-      {
-        fetchedAt: "2026-06-19T00:00:00.000Z",
-        providers: [
-          {
-            providerId: "glm",
-            displayName: "GLM coding plan",
-            status: "available",
-            planLabel: "GLM coding plan",
-            windows: [{ id: "biweekly", label: "Biweekly", usedPct: 23 }],
-          },
-        ],
-      },
-      {
-        fetchedAt: "2026-06-19T00:01:00.000Z",
-        providers: [
-          {
-            providerId: "glm",
-            displayName: "GLM coding plan",
-            status: "available",
-            planLabel: "GLM coding plan",
-            windows: [{ id: "biweekly", label: "Biweekly", usedPct: 64 }],
-          },
-        ],
-      },
-    ]);
+    const usageFixture = await installProviderUsageFixture({
+      page,
+      payloads: [
+        {
+          fetchedAt: "2026-06-19T00:00:00.000Z",
+          providers: [
+            {
+              providerId: "glm",
+              displayName: "GLM coding plan",
+              status: "available",
+              planLabel: "GLM coding plan",
+              windows: [{ id: "biweekly", label: "Biweekly", usedPct: 23 }],
+            },
+          ],
+        },
+        {
+          fetchedAt: "2026-06-19T00:01:00.000Z",
+          providers: [
+            {
+              providerId: "glm",
+              displayName: "GLM coding plan",
+              status: "available",
+              planLabel: "GLM coding plan",
+              windows: [{ id: "biweekly", label: "Biweekly", usedPct: 64 }],
+            },
+          ],
+        },
+      ],
+    });
 
     await gotoAppShell(page);
     await openSettings(page);
@@ -119,9 +125,9 @@ test.describe("provider usage settings", () => {
   test("keeps localized balance resets within the usage card", async ({ page }) => {
     test.setTimeout(120_000);
     await page.setViewportSize({ width: 320, height: 844 });
-    await expectProviderUsageBalanceWithinCard(
+    await expectProviderUsageBalanceWithinCard({
       page,
-      {
+      provider: {
         providerId: "glm",
         displayName: "GLM coding plan",
         status: "available",
@@ -137,35 +143,38 @@ test.describe("provider usage settings", () => {
           },
         ],
       },
-      "credits",
-    );
+      balanceId: "credits",
+    });
   });
 
   test("one provider error does not collapse the usage list", async ({ page }) => {
     test.setTimeout(120_000);
     const serverId = getServerId();
-    await installProviderUsageFixture(page, [
-      {
-        fetchedAt: "2026-06-19T00:00:00.000Z",
-        providers: [
-          {
-            providerId: "claude",
-            displayName: "Claude",
-            status: "error",
-            planLabel: null,
-            windows: [],
-            error: "Claude auth expired",
-          },
-          {
-            providerId: "codex",
-            displayName: "Codex",
-            status: "available",
-            planLabel: "Pro 20x",
-            windows: [{ id: "weekly", label: "Weekly", usedPct: 71 }],
-          },
-        ],
-      },
-    ]);
+    await installProviderUsageFixture({
+      page,
+      payloads: [
+        {
+          fetchedAt: "2026-06-19T00:00:00.000Z",
+          providers: [
+            {
+              providerId: "claude",
+              displayName: "Claude",
+              status: "error",
+              planLabel: null,
+              windows: [],
+              error: "Claude auth expired",
+            },
+            {
+              providerId: "codex",
+              displayName: "Codex",
+              status: "available",
+              planLabel: "Pro 20x",
+              windows: [{ id: "weekly", label: "Weekly", usedPct: 71 }],
+            },
+          ],
+        },
+      ],
+    });
 
     await gotoAppShell(page);
     await openSettings(page);

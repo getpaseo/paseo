@@ -16,18 +16,27 @@ export interface ProviderUsageFixture {
   waitForRequestCount(count: number): Promise<void>;
 }
 
-export async function expectProviderUsageBalanceWithinCard(
-  page: Page,
-  provider: ProviderUsage,
-  balanceId: string,
-): Promise<void> {
+interface ProviderUsageBalanceWithinCardInput {
+  page: Page;
+  provider: ProviderUsage;
+  balanceId: string;
+}
+
+export async function expectProviderUsageBalanceWithinCard({
+  page,
+  provider,
+  balanceId,
+}: ProviderUsageBalanceWithinCardInput): Promise<void> {
   const serverId = getServerId();
-  await installProviderUsageFixture(page, [
-    {
-      fetchedAt: "2026-06-19T00:00:00.000Z",
-      providers: [provider],
-    },
-  ]);
+  await installProviderUsageFixture({
+    page,
+    payloads: [
+      {
+        fetchedAt: "2026-06-19T00:00:00.000Z",
+        providers: [provider],
+      },
+    ],
+  });
   await gotoAppShell(page);
   await openSettings(page);
   await openSettingsHostSection(page, serverId, "usage");
@@ -43,7 +52,9 @@ export async function expectProviderUsageBalanceWithinCard(
   );
 }
 
-interface ProviderUsageFixtureOptions {
+interface ProviderUsageFixtureInput {
+  page: Page;
+  payloads: ProviderUsageFixturePayload[];
   deferResponses?: boolean;
 }
 
@@ -110,11 +121,11 @@ function withProviderUsageFeature(message: WebSocketMessage): string | null {
   });
 }
 
-export async function installProviderUsageFixture(
-  page: Page,
-  payloads: ProviderUsageFixturePayload[],
-  options: ProviderUsageFixtureOptions = {},
-): Promise<ProviderUsageFixture> {
+export async function installProviderUsageFixture({
+  page,
+  payloads,
+  deferResponses = false,
+}: ProviderUsageFixtureInput): Promise<ProviderUsageFixture> {
   let requests = 0;
   const waiters: Array<{ count: number; resolve: () => void }> = [];
   const pendingResponses: Array<() => void> = [];
@@ -166,7 +177,7 @@ export async function installProviderUsageFixture(
             }),
           );
         };
-        if (options.deferResponses) {
+        if (deferResponses) {
           pendingResponses.push(sendResponse);
         } else {
           sendResponse();
