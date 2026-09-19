@@ -3078,6 +3078,7 @@ export const ToolCall = memo(function ToolCall({
     }
     return undefined;
   }, [detail, args, result]);
+  const rawInput = metadata?.rawInput;
 
   const presentation = useMemo(
     () =>
@@ -3107,6 +3108,7 @@ export const ToolCall = memo(function ToolCall({
         displayName: presentation.displayName,
         summary: presentation.summary,
         detail: effectiveDetail,
+        rawInput,
         errorText: presentation.errorText,
         icon: presentation.icon,
         showLoadingSkeleton: presentation.isLoadingDetails,
@@ -3124,6 +3126,7 @@ export const ToolCall = memo(function ToolCall({
     presentation.icon,
     presentation.isLoadingDetails,
     effectiveDetail,
+    rawInput,
   ]);
 
   useEffect(() => {
@@ -3160,6 +3163,7 @@ export const ToolCall = memo(function ToolCall({
       <ToolCallDetailsContent
         toolName={toolName}
         detail={effectiveDetail}
+        rawInput={rawInput}
         errorText={presentation.errorText}
         maxHeight={maxDetailHeight}
         showLoadingSkeleton={presentation.isLoadingDetails}
@@ -3169,6 +3173,7 @@ export const ToolCall = memo(function ToolCall({
     shouldRenderInline,
     toolName,
     effectiveDetail,
+    rawInput,
     presentation.errorText,
     presentation.isLoadingDetails,
     maxDetailHeight,
