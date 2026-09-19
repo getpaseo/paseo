@@ -90,6 +90,7 @@ import {
   type OpenCodeEventSourceInput,
 } from "./opencode/event-consumer.js";
 import { resolveOpenCodeHomeDir } from "./opencode/paths.js";
+import { OpenCodeHttpError } from "./opencode/http-error.js";
 import {
   formatProviderDiagnostic,
   formatProviderDiagnosticError,
@@ -1803,8 +1804,9 @@ export class OpenCodeAgentClient implements AgentClient {
       ),
     );
 
-    if (response.error) {
-      throw new Error(`Failed to fetch OpenCode providers: ${JSON.stringify(response.error)}`);
+    const html = response.response?.headers?.get("content-type")?.includes("text/html") ?? false;
+    if (response.error || html) {
+      throw new OpenCodeHttpError("provider.list", response.response?.status, html);
     }
 
     const providers = response.data;

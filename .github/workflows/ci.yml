@@ -133,10 +133,14 @@ jobs:
           npm pack --dry-run --ignore-scripts --workspace=@getpaseo/server
 
   server-tests-ubuntu:
-    name: server-tests (ubuntu-latest)
+    name: server-tests (ubuntu-latest, ${{ matrix.opencode }})
     needs: changes
     if: ${{ !cancelled() && (needs.changes.outputs.full != 'false' || needs.changes.outputs.server != 'false' || needs.changes.outputs.hub != 'false') }}
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        opencode: ["opencode-ai@1.14.46", "@opencode/cli@2.0.10"]
     steps: &server_test_steps
       - uses: actions/checkout@v4
         with:
@@ -156,7 +160,7 @@ jobs:
 
       - name: Install agent CLIs for provider tests
         if: ${{ needs.changes.outputs.full != 'false' || needs.changes.outputs.server != 'false' }}
-        run: node scripts/npm-retry.mjs install -g @anthropic-ai/claude-code opencode-ai
+        run: node scripts/npm-retry.mjs install -g @anthropic-ai/claude-code ${{ matrix.opencode }}
 
       - name: Build server dependencies
         run: npm run build:server-deps
@@ -174,10 +178,14 @@ jobs:
         run: npm run test:hub-cli-contract --workspace=@getpaseo/server
 
   server-tests-windows:
-    name: server-tests (windows-latest)
+    name: server-tests (windows-latest, ${{ matrix.opencode }})
     needs: changes
     if: ${{ !cancelled() && (needs.changes.outputs.full != 'false' || needs.changes.outputs.server != 'false' || needs.changes.outputs.hub != 'false') }}
     runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        opencode: ["opencode-ai@1.14.46", "@opencode/cli@2.0.10"]
     steps: *server_test_steps
 
   desktop-tests-ubuntu:
@@ -358,7 +366,7 @@ jobs:
         run: npm run build --workspace=@getpaseo/expo-two-way-audio
 
       - name: Install agent CLIs for provider tests
-        run: node scripts/npm-retry.mjs install -g @anthropic-ai/claude-code @openai/codex@0.105.0 opencode-ai
+        run: node scripts/npm-retry.mjs install -g @anthropic-ai/claude-code @openai/codex@0.105.0 opencode-ai@1.14.46
 
       - name: Run Playwright E2E tests
         run: npm run test:e2e --workspace=@getpaseo/app -- --shard=${{ env.PLAYWRIGHT_SHARD }}
@@ -453,7 +461,7 @@ jobs:
         run: node scripts/npm-retry.mjs ci
 
       - name: Install agent CLIs for provider tests
-        run: node scripts/npm-retry.mjs install -g @anthropic-ai/claude-code @openai/codex@0.105.0 opencode-ai
+        run: node scripts/npm-retry.mjs install -g @anthropic-ai/claude-code @openai/codex@0.105.0 opencode-ai@1.14.46
 
       # The local runner builds its dependencies and shards its own E2E files.
       - name: Run CLI E2E tests
