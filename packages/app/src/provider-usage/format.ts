@@ -5,8 +5,10 @@ const providerUsageLabelKeys = {
   session: "providerUsage.labels.session",
   five_hour: "providerUsage.labels.session",
   weekly: "providerUsage.labels.weekly",
+  monthly: "providerUsage.labels.monthly",
   code_review: "providerUsage.labels.codeReview",
   credits: "providerUsage.labels.credits",
+  monthly_credits: "providerUsage.labels.monthlyCredits",
 } as const;
 
 export function formatProviderUsageLabel(id: string, fallback: string): string {
@@ -31,8 +33,8 @@ function formatCount(value: number): string {
   return new Intl.NumberFormat(i18n.resolvedLanguage).format(value);
 }
 
-function relativeDuration(iso: string): RelativeDuration | null {
-  const diffMs = new Date(iso).getTime() - Date.now();
+function relativeDuration(iso: string, now: number): RelativeDuration | null {
+  const diffMs = new Date(iso).getTime() - now;
   if (!Number.isFinite(diffMs)) return null;
   if (diffMs <= 0) return { unit: "now" };
   const diffMinutes = Math.floor(diffMs / 60_000);
@@ -65,27 +67,30 @@ function formatRelativeDuration(duration: RelativeDuration): string | null {
   }
 }
 
-export function formatResetLabel(iso: string | null | undefined): string | null {
+export function formatResetLabel(iso: string | null | undefined, now = Date.now()): string | null {
   if (!iso) return null;
-  const rel = relativeDuration(iso);
+  const rel = relativeDuration(iso, now);
   if (!rel) return null;
   if (rel.unit === "now") return i18n.t("providerUsage.timing.resettingNow");
   const duration = formatRelativeDuration(rel);
   return duration ? i18n.t("providerUsage.timing.resetsIn", { duration }) : null;
 }
 
-export function formatRunsOutLabel(iso: string | null | undefined): string | null {
+export function formatRunsOutLabel(
+  iso: string | null | undefined,
+  now = Date.now(),
+): string | null {
   if (!iso) return null;
-  const rel = relativeDuration(iso);
+  const rel = relativeDuration(iso, now);
   if (!rel) return null;
   if (rel.unit === "now") return i18n.t("providerUsage.timing.runsOutNow");
   const duration = formatRelativeDuration(rel);
   return duration ? i18n.t("providerUsage.timing.runsOutIn", { duration }) : null;
 }
 
-export function formatAgo(iso: string | null | undefined): string | null {
+export function formatAgo(iso: string | null | undefined, now = Date.now()): string | null {
   if (!iso) return null;
-  const diffMs = Date.now() - new Date(iso).getTime();
+  const diffMs = now - new Date(iso).getTime();
   if (!Number.isFinite(diffMs)) return null;
   if (diffMs < 60_000) return i18n.t("providerUsage.timing.justNow");
   const diffMinutes = Math.floor(diffMs / 60_000);

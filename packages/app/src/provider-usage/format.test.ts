@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { i18n } from "@/i18n/i18next";
 import {
   formatAgo,
@@ -13,12 +13,7 @@ const NOW = Date.parse("2026-07-19T00:00:00.000Z");
 
 describe("provider usage formatting", () => {
   beforeEach(async () => {
-    vi.spyOn(Date, "now").mockReturnValue(NOW);
     await i18n.changeLanguage("en");
-  });
-
-  afterEach(() => {
-    vi.restoreAllMocks();
   });
 
   it("labels English usage values and timing consistently", () => {
@@ -26,8 +21,8 @@ describe("provider usage formatting", () => {
 
     expect(formatPct(7, "en")).toBe("7%");
     expect(formatAmount(5, "usd", "en")).toBe("$5.00");
-    expect(formatResetLabel(twoHoursFromNow)).toBe("resets 2h");
-    expect(formatRunsOutLabel(twoHoursFromNow)).toBe("runs out 2h");
+    expect(formatResetLabel(twoHoursFromNow, NOW)).toBe("resets 2h");
+    expect(formatRunsOutLabel(twoHoursFromNow, NOW)).toBe("runs out 2h");
   });
 
   it("formats percentages with locale-specific spacing", () => {
@@ -39,9 +34,9 @@ describe("provider usage formatting", () => {
     const twoHoursFromNow = new Date(NOW + 2 * 60 * 60 * 1000).toISOString();
     const threeDaysAgo = new Date(NOW - 3 * 24 * 60 * 60 * 1000).toISOString();
 
-    expect(formatResetLabel(twoHoursFromNow)).toBe("2時間後にリセット");
-    expect(formatRunsOutLabel(twoHoursFromNow)).toBe("2時間後に上限に到達");
-    expect(formatAgo(threeDaysAgo)).toBe("3日前");
+    expect(formatResetLabel(twoHoursFromNow, NOW)).toBe("2時間後にリセット");
+    expect(formatRunsOutLabel(twoHoursFromNow, NOW)).toBe("2時間後に上限に到達");
+    expect(formatAgo(threeDaysAgo, NOW)).toBe("3日前");
   });
 
   it("formats relative-time counts with the active locale", async () => {
@@ -50,9 +45,9 @@ describe("provider usage formatting", () => {
     const daysFromNow = new Date(NOW + days * 24 * 60 * 60 * 1000).toISOString();
     const daysAgo = new Date(NOW - days * 24 * 60 * 60 * 1000).toISOString();
 
-    expect(formatResetLabel(daysFromNow)).toBe("se réinitialise dans 1\u202f234 j");
-    expect(formatRunsOutLabel(daysFromNow)).toBe("s’épuise dans 1\u202f234 j");
-    expect(formatAgo(daysAgo)).toBe("il y a 1\u202f234 j");
+    expect(formatResetLabel(daysFromNow, NOW)).toBe("se réinitialise dans 1\u202f234 j");
+    expect(formatRunsOutLabel(daysFromNow, NOW)).toBe("s’épuise dans 1\u202f234 j");
+    expect(formatAgo(daysAgo, NOW)).toBe("il y a 1\u202f234 j");
   });
 
   it("selects Arabic plural forms for relative durations", async () => {
@@ -61,9 +56,9 @@ describe("provider usage formatting", () => {
     const threeHoursFromNow = new Date(NOW + 3 * 60 * 60 * 1000).toISOString();
     const twoDaysAgo = new Date(NOW - 2 * 24 * 60 * 60 * 1000).toISOString();
 
-    expect(formatResetLabel(twoHoursFromNow)).toBe("تتم إعادة التعيين خلال ساعتين");
-    expect(formatRunsOutLabel(threeHoursFromNow)).toBe("ينفد خلال 3 ساعات");
-    expect(formatAgo(twoDaysAgo)).toBe("قبل يومين");
+    expect(formatResetLabel(twoHoursFromNow, NOW)).toBe("تتم إعادة التعيين خلال ساعتين");
+    expect(formatRunsOutLabel(threeHoursFromNow, NOW)).toBe("ينفد خلال 3 ساعات");
+    expect(formatAgo(twoDaysAgo, NOW)).toBe("قبل يومين");
   });
 
   it("uses locale-aware compact notation for token balances", () => {
@@ -76,7 +71,9 @@ describe("provider usage formatting", () => {
 
     expect(formatProviderUsageLabel("session", "Session")).toBe("세션");
     expect(formatProviderUsageLabel("five_hour", "Session")).toBe("세션");
+    expect(formatProviderUsageLabel("monthly", "Monthly")).toBe("월간");
     expect(formatProviderUsageLabel("credits", "Credits")).toBe("크레딧");
+    expect(formatProviderUsageLabel("monthly_credits", "Monthly credits")).toBe("월간 크레딧");
     expect(formatProviderUsageLabel("custom_limit", "Custom limit")).toBe("Custom limit");
   });
 });

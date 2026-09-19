@@ -1974,8 +1974,10 @@ export const ja: TranslationResources = {
     labels: {
       session: "セッション",
       weekly: "週間",
+      monthly: "月間",
       codeReview: "コードレビュー",
       credits: "クレジット",
+      monthlyCredits: "月間クレジット",
     },
     duration: {
       days: "{{value}}日",

@@ -1964,8 +1964,10 @@ export const ko: TranslationResources = {
     labels: {
       session: "세션",
       weekly: "주간",
+      monthly: "월간",
       codeReview: "코드 검토",
       credits: "크레딧",
+      monthlyCredits: "월간 크레딧",
     },
     duration: {
       days: "{{value}}일",

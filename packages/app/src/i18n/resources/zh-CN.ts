@@ -1933,8 +1933,10 @@ export const zhCN: TranslationResources = {
     labels: {
       session: "会话",
       weekly: "每周",
+      monthly: "每月",
       codeReview: "代码审查",
       credits: "积分",
+      monthlyCredits: "每月积分",
     },
     duration: {
       days: "{{value}}天",

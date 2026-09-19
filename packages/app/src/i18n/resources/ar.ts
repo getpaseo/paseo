@@ -1954,8 +1954,10 @@ export const ar: TranslationResources = {
     labels: {
       session: "الجلسة",
       weekly: "أسبوعي",
+      monthly: "شهري",
       codeReview: "مراجعة التعليمات البرمجية",
       credits: "الأرصدة",
+      monthlyCredits: "أرصدة شهرية",
     },
     duration: {
       days: "{{value}} يوم",

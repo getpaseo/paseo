@@ -2002,8 +2002,10 @@ export const es: TranslationResources = {
     labels: {
       session: "Sesión",
       weekly: "Semanal",
+      monthly: "Mensual",
       codeReview: "Revisión de código",
       credits: "Créditos",
+      monthlyCredits: "Créditos mensuales",
     },
     duration: {
       days: "{{value}} d",
