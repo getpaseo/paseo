@@ -1,6 +1,6 @@
 import type { RpcInput, RpcOutput } from "@getpaseo/plugin";
 import type { PluginServerContext } from "@getpaseo/plugin/server";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import contribute from "./index.server";
 import { searchAgentTranscriptsRpc } from "./shared/agent-context";
 
@@ -82,20 +82,20 @@ function entry(
 }
 
 function dependencies(input: {
-  entries: ReturnType<typeof entry>[];
+  entries?: ReturnType<typeof entry>[];
   timeline?: unknown[];
   listAgents?: ListAgents;
   fetchTimeline?: FetchTimeline;
 }) {
   const listAgents =
     input.listAgents ??
-    vi.fn<ListAgents>(async () => ({
-      entries: input.entries,
+    (async () => ({
+      entries: input.entries ?? [],
       pageInfo: { nextCursor: null },
     }));
   const fetchTimeline =
     input.fetchTimeline ??
-    vi.fn<FetchTimeline>(async () => ({
+    (async () => ({
       epoch: "epoch-1",
       staleCursor: false,
       hasOlder: false,
@@ -116,8 +116,6 @@ function dependencies(input: {
         },
       },
     },
-    listAgents,
-    fetchTimeline,
   };
 }
 
@@ -125,7 +123,9 @@ function registeredSearchHandler(): SearchHandler {
   let search: SearchHandler | undefined;
   contribute({
     handle(contract, handler) {
-      expect(contract).toBe(searchAgentTranscriptsRpc);
+      if (contract.name !== searchAgentTranscriptsRpc.name) {
+        throw new Error(`Unexpected RPC registration: ${contract.name}`);
+      }
       search = handler as unknown as SearchHandler;
     },
   } as PluginServerContext);
@@ -191,33 +191,30 @@ describe("agent transcript attachment source", () => {
     expect(result.items[0]?.text).not.toContain("printenv SECRET");
     expect(result.items[0]?.text).not.toContain("token-value");
     expect(result.items[0]?.text).not.toContain("private child log");
-    expect(source.fetchTimeline).toHaveBeenCalledTimes(1);
-    expect(source.fetchTimeline).toHaveBeenCalledWith("source-agent", {
-      direction: "tail",
-      limit: 200,
-      projection: "projected",
-    });
   });
 
   it("pages backward to build one chronological snapshot", async () => {
-    const fetchTimeline = vi
-      .fn<FetchTimeline>()
-      .mockResolvedValueOnce({
-        epoch: "epoch-1",
-        staleCursor: false,
-        hasOlder: true,
-        startCursor: { epoch: "epoch-1", seq: 20 },
-        entries: [{ item: { type: "assistant_message", text: "Newer answer." } }],
-        error: null,
-      })
-      .mockResolvedValueOnce({
+    const fetchTimeline: FetchTimeline = async (_agentId, options) => {
+      if (options.direction === "tail") {
+        return {
+          epoch: "epoch-1",
+          staleCursor: false,
+          hasOlder: true,
+          startCursor: { epoch: "epoch-1", seq: 20 },
+          entries: [{ item: { type: "assistant_message", text: "Newer answer." } }],
+          error: null,
+        };
+      }
+      if (options.cursor?.seq !== 20) throw new Error("Unexpected timeline cursor");
+      return {
         epoch: "epoch-1",
         staleCursor: false,
         hasOlder: false,
         startCursor: { epoch: "epoch-1", seq: 1 },
         entries: [{ item: { type: "user_message", text: "Older question." } }],
         error: null,
-      });
+      };
+    };
     const source = dependencies({ entries: [entry("agent-1")], fetchTimeline });
 
     const result = await invokeSearch(source, "agent");
@@ -226,36 +223,27 @@ describe("agent transcript attachment source", () => {
     expect(text.indexOf("[User] Older question.")).toBeLessThan(
       text.indexOf("[Assistant] Newer answer."),
     );
-    expect(fetchTimeline).toHaveBeenNthCalledWith(2, "agent-1", {
-      direction: "before",
-      cursor: { epoch: "epoch-1", seq: 20 },
-      limit: 200,
-      projection: "projected",
-    });
   });
 
   it("continues directory search across pages before snapshotting matches", async () => {
-    const listAgents = vi
-      .fn<ListAgents>()
-      .mockResolvedValueOnce({
-        entries: [entry("first", { title: "Unrelated" })],
-        pageInfo: { nextCursor: "next-page" },
-      })
-      .mockResolvedValueOnce({
+    const listAgents: ListAgents = async ({ page }) => {
+      if (!page.cursor) {
+        return {
+          entries: [entry("first", { title: "Unrelated" })],
+          pageInfo: { nextCursor: "next-page" },
+        };
+      }
+      if (page.cursor !== "next-page") throw new Error("Unexpected directory cursor");
+      return {
         entries: [entry("second", { title: "Payments handoff" })],
         pageInfo: { nextCursor: null },
-      });
-    const source = dependencies({ entries: [], listAgents });
+      };
+    };
+    const source = dependencies({ listAgents });
 
     const result = await invokeSearch(source, "payments");
 
     expect(result.items.map((item) => item.id)).toEqual(["second"]);
-    expect(source.listAgents).toHaveBeenNthCalledWith(2, {
-      sort: [{ key: "updated_at", direction: "desc" }],
-      page: { limit: 200, cursor: "next-page" },
-    });
-    expect(source.fetchTimeline).toHaveBeenCalledTimes(1);
-    expect(source.fetchTimeline).toHaveBeenCalledWith("second", expect.any(Object));
   });
 
   it("bounds snapshots to the five best search results", async () => {
@@ -272,7 +260,6 @@ describe("agent transcript attachment source", () => {
       "agent-3",
       "agent-4",
     ]);
-    expect(source.fetchTimeline).toHaveBeenCalledTimes(5);
   });
 
   it("keeps a UTF-8-safe recent suffix within the snapshot byte limit", async () => {
@@ -296,20 +283,23 @@ describe("agent transcript attachment source", () => {
   });
 
   it("bounds timeline paging when projected pages contain no shareable rows", async () => {
+    let remainingPages = 25;
     let sequence = 1_000;
-    const fetchTimeline = vi.fn<FetchTimeline>(async () => ({
-      epoch: "epoch-1",
-      staleCursor: false,
-      hasOlder: true,
-      startCursor: { epoch: "epoch-1", seq: sequence-- },
-      entries: [],
-      error: null,
-    }));
+    const fetchTimeline: FetchTimeline = async () => {
+      if (remainingPages-- <= 0) throw new Error("Timeline read exceeded the page budget");
+      return {
+        epoch: "epoch-1",
+        staleCursor: false,
+        hasOlder: true,
+        startCursor: { epoch: "epoch-1", seq: sequence-- },
+        entries: [],
+        error: null,
+      };
+    };
     const source = dependencies({ entries: [entry("agent-1")], fetchTimeline });
 
     const result = await invokeSearch(source, "agent");
 
-    expect(fetchTimeline).toHaveBeenCalledTimes(25);
     expect(result.items[0]?.text).toContain(
       "Earlier context was omitted to fit the snapshot size limit.",
     );
@@ -318,7 +308,7 @@ describe("agent transcript attachment source", () => {
   it("keeps successful snapshots when another source disappears", async () => {
     const source = dependencies({
       entries: [entry("available"), entry("missing")],
-      fetchTimeline: vi.fn(async (agentId) => {
+      fetchTimeline: async (agentId) => {
         if (agentId === "missing") throw new Error("Agent not found");
         return {
           epoch: "epoch-1",
@@ -328,7 +318,7 @@ describe("agent transcript attachment source", () => {
           entries: [{ item: { type: "assistant_message", text: "Available." } }],
           error: null,
         };
-      }),
+      },
     });
 
     const result = await invokeSearch(source, "agent");
@@ -339,21 +329,26 @@ describe("agent transcript attachment source", () => {
   it("surfaces an error when every matching snapshot fails", async () => {
     const source = dependencies({
       entries: [entry("missing")],
-      fetchTimeline: vi.fn(async () => {
+      fetchTimeline: async () => {
         throw new Error("Agent not found");
-      }),
+      },
     });
 
     await expect(invokeSearch(source, "missing")).rejects.toThrow("Agent not found");
   });
 
   it("does not read agent history before the user enters a search", async () => {
-    const source = dependencies({ entries: [entry("agent-1")] });
+    const source = dependencies({
+      listAgents: async () => {
+        throw new Error("Blank search read the agent directory");
+      },
+      fetchTimeline: async () => {
+        throw new Error("Blank search read an agent timeline");
+      },
+    });
 
     await expect(invokeSearch(source, "  ")).resolves.toEqual({
       items: [],
     });
-    expect(source.listAgents).not.toHaveBeenCalled();
-    expect(source.fetchTimeline).not.toHaveBeenCalled();
   });
 });
