@@ -6,15 +6,23 @@ import type { Agent } from "@/stores/session-store";
 import { normalizeAgentSnapshot, projectAgentSnapshot } from "@/utils/agent-snapshots";
 import { type AgentDirectoryDelta } from "@/utils/agent-directory-sync";
 import { reconcileAgentDirectory } from "@/utils/agent-directory-reconciliation";
+import { resolveProjectPlacement } from "@/utils/project-placement";
 import { applyLegacyDaemonWorkspaceOwnership } from "@/workspace/legacy-daemon-workspaces";
 import type { DirectoryReplicaMutation } from "@/runtime/replica-cache";
 import type { TurnLivenessTransition } from "@/timeline/turn-liveness";
 import { AgentStoreProjection } from "./internal/agent-store";
 
-function projectAgentDirectoryEntry(agent: Agent): FetchAgentsEntry | null {
-  return agent.projectPlacement
-    ? { agent: projectAgentSnapshot(agent), project: agent.projectPlacement }
-    : null;
+function projectAgentDirectoryEntry(agent: Agent): FetchAgentsEntry {
+  // A member hydrated from its timeline carries no placement. Dropping it here
+  // would delete it from the directory on the next sequenced catch-up, which is
+  // how a conversation disappears from the sidebar until the next full snapshot.
+  return {
+    agent: projectAgentSnapshot(agent),
+    project: resolveProjectPlacement({
+      projectPlacement: agent.projectPlacement,
+      cwd: agent.cwd,
+    }),
+  };
 }
 
 export interface AgentLifecycleToken {
@@ -164,8 +172,7 @@ export class AgentDirectoryReplica {
     const previous = this.storeProjection.snapshot();
     const merged = new Map<string, FetchAgentsEntry>();
     for (const agent of previous.values()) {
-      const entry = projectAgentDirectoryEntry(agent);
-      if (entry) merged.set(agent.id, entry);
+      merged.set(agent.id, projectAgentDirectoryEntry(agent));
     }
     for (const entry of entries) merged.set(entry.agent.id, entry);
     const removalsAsDeltas: AgentDirectoryDelta[] = removals.map(({ id }) => ({
