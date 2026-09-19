@@ -5,7 +5,11 @@ interface PaseoAndroidIntentsModule {
   setResumeShortcut(id: string, label: string, uri: string): void;
   clearDynamicShortcuts(): void;
   publishAssistantCatalog(json: string): void;
-  addListener(eventName: "onIntent", listener: (payload: unknown) => void): EventSubscription;
+  resolveAssistantQuery(requestId: string, json: string): void;
+  addListener(
+    eventName: "onIntent" | "onAssistantQuery",
+    listener: (payload: unknown) => void,
+  ): EventSubscription;
 }
 
 const nativeModule = requireOptionalNativeModule<PaseoAndroidIntentsModule>("PaseoAndroidIntents");
@@ -31,5 +35,11 @@ export const androidIntents = {
   },
   publishAssistantCatalog(json: string): void {
     nativeModule?.publishAssistantCatalog(json);
+  },
+  addAssistantQueryListener(listener: (payload: unknown) => void): EventSubscription | null {
+    return nativeModule?.addListener("onAssistantQuery", listener) ?? null;
+  },
+  resolveAssistantQuery(requestId: string, json: string): void {
+    nativeModule?.resolveAssistantQuery(requestId, json);
   },
 };

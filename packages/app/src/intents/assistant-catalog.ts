@@ -53,6 +53,11 @@ function clip(value: string | null | undefined): string {
   return (value ?? "").trim().slice(0, MAX_LABEL_LENGTH);
 }
 
+/** The agent label the assistant reads out: its title, else its directory. */
+export function assistantAgentName(agent: Agent): string {
+  return clip(agent.title) || clip(agent.cwd.split("/").pop()) || agent.id;
+}
+
 function toArray<T>(value: readonly T[] | ReadonlyMap<string, T>): T[] {
   return Array.isArray(value) ? [...value] : [...(value as ReadonlyMap<string, T>).values()];
 }
@@ -112,7 +117,7 @@ export function buildAssistantCatalog(input: AssistantCatalogInput): AssistantCa
       id: agent.id,
       serverId: agent.serverId,
       workspaceId: agent.workspaceId ?? null,
-      name: clip(agent.title) || clip(agent.cwd.split("/").pop()) || agent.id,
+      name: assistantAgentName(agent),
       provider: agent.provider,
       status: agent.status,
       lastActivityAt: agent.lastActivityAt.toISOString(),

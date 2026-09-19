@@ -14,6 +14,7 @@ import java.io.File
 import java.util.UUID
 
 private const val EVENT_INTENT = "onIntent"
+private const val EVENT_ASSISTANT_QUERY = "onAssistantQuery"
 private const val MAX_FILES = 16
 private const val MAX_FILE_BYTES = 25L * 1024 * 1024
 private const val MAX_TEXT_LENGTH = 100_000
@@ -22,15 +23,15 @@ private const val SHORTCUT_URI_SCHEME = "paseo"
 
 /**
  * Hands share-sheet and PROCESS_TEXT intents to JavaScript, publishes the
- * dynamic launcher shortcut, and stores the assistant catalog. Expo's linking
- * layer only sees ACTION_VIEW data URIs, so intents are read off the activity
- * here.
+ * dynamic launcher shortcut, stores the assistant catalog, and answers the
+ * content provider's live message queries. Expo's linking layer only sees
+ * ACTION_VIEW data URIs, so intents are read off the activity here.
  */
 class PaseoAndroidIntentsModule : Module() {
   override fun definition() = ModuleDefinition {
     Name("PaseoAndroidIntents")
 
-    Events(EVENT_INTENT)
+    Events(EVENT_INTENT, EVENT_ASSISTANT_QUERY)
 
     OnNewIntent { intent ->
       val payload = extract(intent) ?: return@OnNewIntent
@@ -63,6 +64,24 @@ class PaseoAndroidIntentsModule : Module() {
 
     Function("publishAssistantCatalog") { json: String ->
       AssistantCatalogStore.write(requireContext(), json)
+    }
+
+    // The provider's binder thread is parked while this runs, so hop to the JS
+    // thread to emit and let JavaScript answer through resolveAssistantQuery.
+    OnStartObserving(EVENT_ASSISTANT_QUERY) {
+      AssistantQueryBridge.setDispatch { requestId, params ->
+        appContext.executeOnJavaScriptThread {
+          sendEvent(EVENT_ASSISTANT_QUERY, params + mapOf("requestId" to requestId))
+        }
+      }
+    }
+
+    OnStopObserving(EVENT_ASSISTANT_QUERY) { AssistantQueryBridge.setDispatch(null) }
+
+    OnDestroy { AssistantQueryBridge.setDispatch(null) }
+
+    Function("resolveAssistantQuery") { requestId: String, json: String ->
+      AssistantQueryBridge.resolve(requestId, json)
     }
   }
 
