@@ -2010,6 +2010,8 @@ export const ptBR: TranslationResources = {
         needsReviewDescription:
           "Os dados mais recentes do Git não confirmam mais este vínculo, então o Paseo mantém estes projetos separados.",
         projectUnavailable: "Este projeto não está disponível no momento.",
+        saving: "Salvando o vínculo do projeto…",
+        saveFailed: "Não foi possível salvar o vínculo do projeto. Tente novamente.",
         unlink: "Desvincular",
       },
       toasts: {

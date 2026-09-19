@@ -1975,6 +1975,8 @@ export const ar: TranslationResources = {
         needsReviewDescription:
           "لم تعد أحدث معلومات Git تؤكد هذا الرابط، لذلك يبقي Paseo هذه المشاريع منفصلة.",
         projectUnavailable: "هذا المشروع غير متاح حاليًا.",
+        saving: "جارٍ حفظ رابط المشروع…",
+        saveFailed: "تعذر حفظ رابط المشروع. حاول مرة أخرى.",
         unlink: "إلغاء الربط",
       },
       toasts: {

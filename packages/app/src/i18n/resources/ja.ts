@@ -1996,6 +1996,8 @@ export const ja: TranslationResources = {
         needsReviewDescription:
           "最新の Git 情報ではこのリンクを確認できないため、Paseo はこれらのプロジェクトを別々に保持します。",
         projectUnavailable: "このプロジェクトは現在利用できません。",
+        saving: "プロジェクトリンクを保存しています…",
+        saveFailed: "プロジェクトリンクを保存できませんでした。もう一度お試しください。",
         unlink: "リンクを解除",
       },
       toasts: {

@@ -1,6 +1,6 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { create } from "zustand";
-import { persist } from "zustand/middleware";
+import { persist, type PersistStorage } from "zustand/middleware";
 import { z } from "zod";
 import { createValidatedPersistStorage } from "@/storage/validated-persist-storage";
 import {
@@ -39,9 +39,11 @@ interface LocalProjectLinksStoreState {
   linkProjects: (input: {
     members: ProjectLinkPlacementRef[];
     identity: LocalProjectLinkIdentity;
-  }) => void;
-  unlinkProject: (placement: ProjectLinkPlacementRef) => void;
+  }) => Promise<void>;
+  unlinkProject: (placement: ProjectLinkPlacementRef) => Promise<void>;
 }
+
+export type LocalProjectLinksPersistedState = z.infer<typeof LocalProjectLinksPersistedStateSchema>;
 
 export function createLocalProjectLinkId(): string {
   return `local-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
@@ -96,25 +98,46 @@ export function unlinkLocalProject(input: {
   });
 }
 
-export const useLocalProjectLinksStore = create<LocalProjectLinksStoreState>()(
-  persist(
-    (set) => ({
-      links: [],
-      linkProjects: (input) =>
-        set((state) => ({
-          links: linkLocalProjects({ ...input, links: state.links }),
-        })),
-      unlinkProject: (placement) =>
-        set((state) => ({
-          links: unlinkLocalProject({ links: state.links, placement }),
-        })),
-    }),
-    {
-      name: LOCAL_PROJECT_LINKS_STORAGE_KEY,
-      storage: createValidatedPersistStorage(AsyncStorage, LocalProjectLinksPersistedStateSchema),
-      partialize: (state) => ({ links: state.links }),
-    },
-  ),
+export function createLocalProjectLinksStore(
+  storage: PersistStorage<LocalProjectLinksPersistedState>,
+) {
+  return create<LocalProjectLinksStoreState>()(
+    persist(
+      (set, get) => {
+        const updateLinks = async (
+          update: (links: readonly LocalProjectLink[]) => LocalProjectLink[],
+        ): Promise<void> => {
+          const previousLinks = get().links;
+          try {
+            // Zustand's persist middleware returns the storage write from this wrapped set call.
+            // Await it so callers do not acknowledge a device-local link before it is durable.
+            await Promise.resolve(set({ links: update(previousLinks) }));
+          } catch (error) {
+            // The storage still holds the prior value when its write rejects. Restore the in-memory
+            // view as well, and ignore a second storage failure while preserving the original error.
+            await Promise.resolve(set({ links: previousLinks })).catch(() => undefined);
+            throw error;
+          }
+        };
+
+        return {
+          links: [],
+          linkProjects: (input) => updateLinks((links) => linkLocalProjects({ ...input, links })),
+          unlinkProject: (placement) =>
+            updateLinks((links) => unlinkLocalProject({ links, placement })),
+        };
+      },
+      {
+        name: LOCAL_PROJECT_LINKS_STORAGE_KEY,
+        storage,
+        partialize: (state) => ({ links: state.links }),
+      },
+    ),
+  );
+}
+
+export const useLocalProjectLinksStore = createLocalProjectLinksStore(
+  createValidatedPersistStorage(AsyncStorage, LocalProjectLinksPersistedStateSchema),
 );
 
 function normalizeMembers(members: readonly ProjectLinkPlacementRef[]): ProjectLinkPlacementRef[] {

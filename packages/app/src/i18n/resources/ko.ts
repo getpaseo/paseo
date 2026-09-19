@@ -1986,6 +1986,8 @@ export const ko: TranslationResources = {
         needsReviewDescription:
           "최신 Git 정보가 더 이상 이 연결을 확인하지 못하므로 Paseo는 이 프로젝트들을 분리된 상태로 유지합니다.",
         projectUnavailable: "이 프로젝트는 현재 사용할 수 없습니다.",
+        saving: "프로젝트 링크를 저장하는 중…",
+        saveFailed: "프로젝트 링크를 저장하지 못했습니다. 다시 시도하세요.",
         unlink: "연결 해제",
       },
       toasts: {

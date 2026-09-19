@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
@@ -34,6 +34,9 @@ export function ProjectLinksSheet({
   const links = useLocalProjectLinksStore((state) => state.links);
   const linkProjects = useLocalProjectLinksStore((state) => state.linkProjects);
   const unlinkProject = useLocalProjectLinksStore((state) => state.unlinkProject);
+  const [pendingOperationKey, setPendingOperationKey] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState(false);
+  const pendingOperationRef = useRef<string | null>(null);
   const placementsByKey = useMemo(
     () => new Map(placements.map((placement) => [projectLinkPlacementKey(placement), placement])),
     [placements],
@@ -42,44 +45,117 @@ export function ProjectLinksSheet({
     () => ({ title: t("settings.projectLinks.sheet.title") }),
     [t],
   );
+  const handleClose = useCallback(() => {
+    if (pendingOperationRef.current === null) onClose();
+  }, [onClose]);
+  const dismissSaveError = useCallback(() => setSaveError(false), []);
+  const runProjectLinkMutation = useCallback(
+    async ({
+      operationKey,
+      save,
+      successMessage,
+    }: {
+      operationKey: string;
+      save: () => Promise<void>;
+      successMessage: string;
+    }) => {
+      if (pendingOperationRef.current !== null) return;
+
+      pendingOperationRef.current = operationKey;
+      setPendingOperationKey(operationKey);
+      setSaveError(false);
+      try {
+        await save();
+        toast.show(successMessage, { variant: "success" });
+      } catch {
+        setSaveError(true);
+      } finally {
+        pendingOperationRef.current = null;
+        setPendingOperationKey(null);
+      }
+    },
+    [toast],
+  );
   const footer = useMemo(
     () => (
-      <Button onPress={onClose} variant="ghost" size="md" testID="project-links-close">
+      <Button
+        onPress={handleClose}
+        variant="ghost"
+        size="md"
+        disabled={pendingOperationKey !== null}
+        testID="project-links-close"
+      >
         {t("common.actions.close")}
       </Button>
     ),
-    [onClose, t],
+    [handleClose, pendingOperationKey, t],
   );
 
   const handleLink = useCallback(
     (suggestion: ProjectLinkSuggestion) => {
-      linkProjects({
-        members: suggestion.placements.map(({ serverId, projectId }) => ({ serverId, projectId })),
-        identity: suggestion.identity,
+      void runProjectLinkMutation({
+        operationKey: `link:${projectLinkSuggestionKey(suggestion)}`,
+        save: () =>
+          linkProjects({
+            members: suggestion.placements.map(({ serverId, projectId }) => ({
+              serverId,
+              projectId,
+            })),
+            identity: suggestion.identity,
+          }),
+        successMessage: t("settings.projectLinks.toasts.linked"),
       });
-      toast.show(t("settings.projectLinks.toasts.linked"), { variant: "success" });
     },
-    [linkProjects, t, toast],
+    [linkProjects, runProjectLinkMutation, t],
   );
 
   const handleUnlink = useCallback(
     (placement: Pick<ProjectLinkPlacement, "serverId" | "projectId">) => {
-      unlinkProject(placement);
-      toast.show(t("settings.projectLinks.toasts.unlinked"), { variant: "success" });
+      void runProjectLinkMutation({
+        operationKey: `unlink:${projectLinkPlacementKey(placement)}`,
+        save: () => unlinkProject(placement),
+        successMessage: t("settings.projectLinks.toasts.unlinked"),
+      });
     },
-    [t, toast, unlinkProject],
+    [runProjectLinkMutation, t, unlinkProject],
   );
 
   return (
     <AdaptiveModalSheet
       visible={visible}
       header={header}
-      onClose={onClose}
+      onClose={handleClose}
       testID="project-links-sheet"
       desktopMaxWidth={620}
       footer={footer}
     >
       <View style={styles.content}>
+        {pendingOperationKey !== null ? (
+          <Alert
+            variant="info"
+            title={t("settings.projectLinks.sheet.saving")}
+            testID="project-links-saving"
+          />
+        ) : null}
+
+        {saveError ? (
+          <Alert
+            variant="error"
+            title={t("common.errors.unableToSave")}
+            description={t("settings.projectLinks.sheet.saveFailed")}
+            testID="project-links-save-error"
+          >
+            <Button
+              onPress={dismissSaveError}
+              variant="outline"
+              size="sm"
+              testID="project-links-save-error-dismiss"
+            >
+              {t("common.actions.dismiss")}
+            </Button>
+          </Alert>
+        ) : null}
+
         <Alert
           variant="info"
           description={t("settings.projectLinks.sheet.deviceOnly")}
@@ -97,6 +173,7 @@ export function ProjectLinksSheet({
                 key={JSON.stringify(suggestion.placements.map(projectLinkPlacementKey))}
                 suggestion={suggestion}
                 onLink={handleLink}
+                pendingOperationKey={pendingOperationKey}
               />
             ))}
           </View>
@@ -111,6 +188,7 @@ export function ProjectLinksSheet({
                 link={link}
                 placementsByKey={placementsByKey}
                 onUnlink={handleUnlink}
+                pendingOperationKey={pendingOperationKey}
               />
             ))}
           </View>
@@ -131,12 +209,15 @@ export function ProjectLinksSheet({
 function ProjectLinkSuggestionCard({
   suggestion,
   onLink,
+  pendingOperationKey,
 }: {
   suggestion: ProjectLinkSuggestion;
   onLink: (suggestion: ProjectLinkSuggestion) => void;
+  pendingOperationKey: string | null;
 }) {
   const { t } = useTranslation();
   const handleLink = useCallback(() => onLink(suggestion), [onLink, suggestion]);
+  const operationKey = `link:${projectLinkSuggestionKey(suggestion)}`;
   return (
     <View style={styles.card} testID="project-link-suggestion">
       <ProjectIdentityRows
@@ -154,6 +235,8 @@ function ProjectLinkSuggestionCard({
         onPress={handleLink}
         variant="outline"
         size="sm"
+        disabled={pendingOperationKey !== null}
+        loading={pendingOperationKey === operationKey}
         testID={`project-link-${suggestion.placements.map(projectLinkPlacementKey).join("-")}`}
       >
         {t("settings.projectLinks.sheet.linkProjects", { count: suggestion.placements.length })}
@@ -166,10 +249,12 @@ function LinkedProjectCard({
   link,
   placementsByKey,
   onUnlink,
+  pendingOperationKey,
 }: {
   link: LocalProjectLink;
   placementsByKey: ReadonlyMap<string, ProjectLinkPlacement>;
   onUnlink: (placement: Pick<ProjectLinkPlacement, "serverId" | "projectId">) => void;
+  pendingOperationKey: string | null;
 }) {
   const { t } = useTranslation();
   const valid = isValidLocalProjectLink(link, placementsByKey);
@@ -195,6 +280,7 @@ function LinkedProjectCard({
               member={member}
               placement={placement ?? null}
               onUnlink={onUnlink}
+              pendingOperationKey={pendingOperationKey}
             />
           );
         })}
@@ -207,13 +293,16 @@ function LinkedProjectMember({
   member,
   placement,
   onUnlink,
+  pendingOperationKey,
 }: {
   member: Pick<ProjectLinkPlacement, "serverId" | "projectId">;
   placement: ProjectLinkPlacement | null;
   onUnlink: (placement: Pick<ProjectLinkPlacement, "serverId" | "projectId">) => void;
+  pendingOperationKey: string | null;
 }) {
   const { t } = useTranslation();
   const handleUnlink = useCallback(() => onUnlink(member), [member, onUnlink]);
+  const operationKey = `unlink:${projectLinkPlacementKey(member)}`;
   return (
     <View style={styles.linkedHostRow}>
       {placement ? (
@@ -230,12 +319,18 @@ function LinkedProjectMember({
         onPress={handleUnlink}
         variant="ghost"
         size="sm"
+        disabled={pendingOperationKey !== null}
+        loading={pendingOperationKey === operationKey}
         testID={`project-unlink-${projectLinkPlacementKey(member)}`}
       >
         {t("settings.projectLinks.sheet.unlink")}
       </Button>
     </View>
   );
+}
+
+function projectLinkSuggestionKey(suggestion: ProjectLinkSuggestion): string {
+  return JSON.stringify(suggestion.placements.map(projectLinkPlacementKey));
 }
 
 function ProjectIdentityRows({

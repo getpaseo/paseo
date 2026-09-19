@@ -2010,6 +2010,8 @@ export const ru: TranslationResources = {
         needsReviewDescription:
           "Последние данные Git больше не подтверждают эту связь, поэтому Paseo сохраняет эти проекты раздельно.",
         projectUnavailable: "Этот проект сейчас недоступен.",
+        saving: "Сохранение связи проекта…",
+        saveFailed: "Не удалось сохранить связь проекта. Повторите попытку.",
         unlink: "Отвязать",
       },
       toasts: {

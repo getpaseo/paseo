@@ -2001,6 +2001,8 @@ export const en = {
         needsReviewDescription:
           "The latest Git facts no longer confirm this link, so Paseo keeps these projects separate.",
         projectUnavailable: "This project is not currently available.",
+        saving: "Saving project link…",
+        saveFailed: "Couldn't save the project link. Try again.",
         unlink: "Unlink",
       },
       toasts: {

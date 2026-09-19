@@ -2025,6 +2025,8 @@ export const es: TranslationResources = {
         needsReviewDescription:
           "Los datos de Git más recientes ya no confirman este enlace, así que Paseo mantiene estos proyectos separados.",
         projectUnavailable: "Este proyecto no está disponible actualmente.",
+        saving: "Guardando el enlace del proyecto…",
+        saveFailed: "No se pudo guardar el enlace del proyecto. Inténtalo de nuevo.",
         unlink: "Desenlazar",
       },
       toasts: {

@@ -1952,6 +1952,8 @@ export const zhCN: TranslationResources = {
         needsReviewTitle: "需要查看",
         needsReviewDescription: "最新的 Git 信息已无法确认此链接，因此 Paseo 会保持这些项目分开。",
         projectUnavailable: "此项目当前不可用。",
+        saving: "正在保存项目链接…",
+        saveFailed: "无法保存项目链接。请重试。",
         unlink: "取消链接",
       },
       toasts: {

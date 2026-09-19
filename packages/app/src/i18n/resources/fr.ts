@@ -2030,6 +2030,8 @@ export const fr: TranslationResources = {
         needsReviewDescription:
           "Les dernières informations Git ne confirment plus ce lien ; Paseo garde donc ces projets séparés.",
         projectUnavailable: "Ce projet n'est pas disponible actuellement.",
+        saving: "Enregistrement du lien du projet…",
+        saveFailed: "Impossible d’enregistrer le lien du projet. Réessayez.",
         unlink: "Délier",
       },
       toasts: {

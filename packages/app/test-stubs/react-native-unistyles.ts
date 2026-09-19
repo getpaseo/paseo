@@ -30,6 +30,7 @@ const testTheme = {
       blue: { 300: "#93c5fd" },
       green: { 500: "#22c55e" },
       red: { 300: "#fca5a5" },
+      zinc: { 600: "#52525b" },
       white: "#ffffff",
     },
   },
