@@ -9,16 +9,18 @@ import {
   type PromptSuggestionsResponse,
 } from "./types.js";
 
+export interface PromptSuggestionGenerationRequest {
+  cwd: string;
+  prompt: string;
+  schema: typeof PROMPT_SUGGESTIONS_SCHEMA;
+  schemaName: string;
+  agentTitle: string;
+  configKey?: "promptSuggestions";
+  currentSelection?: { provider?: string | null; model?: string | null };
+}
+
 export interface PromptSuggestionGeneration {
-  generate(request: {
-    cwd: string;
-    prompt: string;
-    schema: typeof PROMPT_SUGGESTIONS_SCHEMA;
-    schemaName: string;
-    agentTitle: string;
-    configKey?: "promptSuggestions";
-    currentSelection?: { provider?: string | null; model?: string | null };
-  }): Promise<PromptSuggestionsResponse>;
+  generate(request: PromptSuggestionGenerationRequest): Promise<PromptSuggestionsResponse>;
 }
 
 interface LoggerLike {
