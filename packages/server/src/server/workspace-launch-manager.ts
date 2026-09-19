@@ -20,7 +20,10 @@ import {
 import type { ScriptHealthState } from "./script-health-monitor.js";
 import type { ServiceProxySubsystem } from "./service-proxy.js";
 import { getAllReservedWorkspaceServicePorts } from "./workspace-service-port-registry.js";
-import { buildStringCommandShellInvocation } from "../utils/string-command-shell.js";
+import {
+  buildStringCommandShellInvocation,
+  type StringCommandShellInvocation,
+} from "../utils/string-command-shell.js";
 import type { WorkspaceScriptRuntimeStore } from "./workspace-script-runtime-store.js";
 import type {
   WorkspaceRuntimeEnvironment,
@@ -49,6 +52,7 @@ export interface WorkspaceLaunchContext {
 
 interface WorkspaceLaunchRuntime {
   launchName: string;
+  command: string;
   lifecycle: "running" | "stopped";
   terminalId: string | null;
   exitCode: number | null;
@@ -64,6 +68,14 @@ interface LaunchEndpointRuntime {
   protocol: "http" | "tcp";
   scriptName: string | null;
   httpRetry?: { delayMs: number; retryAt: number };
+}
+
+interface PreparedWorkspaceLaunch {
+  launchName: string;
+  command: string;
+  invocation: StringCommandShellInvocation;
+  environment: WorkspaceRuntimeEnvironment;
+  context: WorkspaceLaunchContext;
 }
 
 export interface WorkspaceLaunchEndpointProbe {
@@ -165,8 +177,63 @@ export class WorkspaceLaunchManager {
       allocation: configResult.config?.worktree?.servicePorts ?? this.deps.globalServicePorts,
       excludedPorts: () => this.getExcludedServicePorts(context, configResult.config),
     });
-    const invocation = buildStringCommandShellInvocation({ command: config.command });
-    const terminal = await this.deps.terminalManager.createTerminal({
+    const preparedLaunch: PreparedWorkspaceLaunch = {
+      launchName,
+      command: config.command,
+      invocation: buildStringCommandShellInvocation({ command: config.command }),
+      environment,
+      context,
+    };
+    const supersededLaunch =
+      activeLaunchName && activeRuntime?.lifecycle === "running"
+        ? {
+            launchName: activeRuntime.launchName,
+            command: activeRuntime.command,
+            invocation: buildStringCommandShellInvocation({ command: activeRuntime.command }),
+            environment: activeRuntime.environment,
+            context: activeRuntime.context,
+          }
+        : null;
+
+    return await this.switchPreparedLaunch(preparedLaunch, supersededLaunch, activeRuntime);
+  }
+
+  private async switchPreparedLaunch(
+    prepared: PreparedWorkspaceLaunch,
+    superseded: PreparedWorkspaceLaunch | null,
+    activeRuntime: WorkspaceLaunchRuntime | null | undefined,
+  ): Promise<WorkspaceLaunchPayload> {
+    if (activeRuntime?.lifecycle === "running") {
+      await this.stopRuntime(activeRuntime);
+    }
+
+    try {
+      return await this.startPreparedLaunch(prepared);
+    } catch (error) {
+      if (!superseded) {
+        throw error;
+      }
+      try {
+        await this.startPreparedLaunch(superseded);
+      } catch (restoreError) {
+        throw new Error(
+          `Failed to start launch '${prepared.launchName}' (${String(error)}) and restore launch '${superseded.launchName}'`,
+          { cause: restoreError },
+        );
+      }
+      throw error;
+    }
+  }
+
+  private async startPreparedLaunch(
+    prepared: PreparedWorkspaceLaunch,
+  ): Promise<WorkspaceLaunchPayload> {
+    const { context, launchName, command, invocation, environment } = prepared;
+    const terminalManager = this.deps.terminalManager;
+    if (!terminalManager) {
+      throw new Error("Workspace launches are not available on this daemon");
+    }
+    const terminal = await terminalManager.createTerminal({
       cwd: context.workspaceDirectory,
       workspaceId: context.workspaceId,
       name: `launch:${launchName}`,
@@ -176,16 +243,9 @@ export class WorkspaceLaunchManager {
       // Non-interactive Bash must not source an inherited BASH_ENV startup script.
       env: { ...environment.env, PASEO_LAUNCH_NAME: launchName, BASH_ENV: "" },
     });
-    if (activeLaunchName && activeRuntime?.lifecycle === "running") {
-      try {
-        await this.stopRuntime(activeRuntime);
-      } catch (error) {
-        await this.deps.terminalManager.killTerminalAndWait(terminal.id).catch(() => {});
-        throw error;
-      }
-    }
     const runtime: WorkspaceLaunchRuntime = {
       launchName,
+      command,
       lifecycle: "running",
       terminalId: terminal.id,
       exitCode: null,

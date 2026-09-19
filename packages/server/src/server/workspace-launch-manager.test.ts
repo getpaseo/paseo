@@ -82,16 +82,20 @@ describe("WorkspaceLaunchManager", () => {
 
     terminalManager.failNextCreate();
     await expect(manager.start(context, "full")).rejects.toThrow("Failed to create terminal");
-    expect(terminalManager.killed).toEqual([]);
+    expect(terminalManager.killed).toEqual([dev.terminalId]);
     expect(manager.buildSnapshot(context)).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ launchName: "dev", lifecycle: "running", active: true }),
         expect.objectContaining({ launchName: "full", lifecycle: "stopped", active: false }),
       ]),
     );
+    const restoredDev = manager
+      .buildSnapshot(context)
+      .find((launch) => launch.launchName === "dev");
+    expect(restoredDev?.terminalId).not.toBe(dev.terminalId);
 
     const full = await manager.start(context, "full");
-    expect(terminalManager.killed).toEqual([dev.terminalId]);
+    expect(terminalManager.killed).toEqual([dev.terminalId, restoredDev?.terminalId]);
     expect(full).toMatchObject({
       launchName: "full",
       lifecycle: "running",
@@ -118,6 +122,59 @@ describe("WorkspaceLaunchManager", () => {
       ]),
     );
     await manager.disposeWorkspace(context.workspaceId);
+  });
+
+  it("releases the shared port before starting a replacement launch", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "paseo-workspace-launch-switch-port-"));
+    tempDirs.push(directory);
+    const port = await getFreePort();
+    const command =
+      "node -e \"const net=require('node:net');const server=net.createServer((socket)=>socket.end(process.env.PASEO_LAUNCH_NAME));server.listen(Number(process.env.PASEO_PORT_BASE),'127.0.0.1')\"";
+    writeFileSync(
+      join(directory, "paseo.json"),
+      JSON.stringify({
+        worktree: { servicePorts: { range: `${port}-${port}`, blockSize: 1 } },
+        launches: {
+          dev: { command },
+          full: { command },
+        },
+      }),
+    );
+
+    const terminalManager = createRealTerminalManager();
+    const manager = new WorkspaceLaunchManager({
+      terminalManager,
+      serviceProxy: createServiceProxySubsystem({ logger: pino({ level: "silent" }) }),
+      workspaceRuntimeEnvironment: new WorkspaceRuntimeEnvironmentService(),
+      getDaemonTcpPort: () => 6767,
+      serviceProxyPublicBaseUrl: null,
+      resolveScriptHealth: null,
+      emitWorkspaceUpdates: async () => {},
+      logger: pino({ level: "silent" }),
+    });
+    const context = {
+      workspaceId: "workspace-launch-switch-port",
+      workspaceDirectory: directory,
+      projectSlug: "example-project",
+      branchName: "feature/launch",
+    };
+
+    try {
+      await manager.start(context, "dev");
+      await expect.poll(() => readTcpMessage(port), { timeout: 10_000 }).toBe("dev");
+
+      await manager.start(context, "full");
+      await expect.poll(() => readTcpMessage(port), { timeout: 10_000 }).toBe("full");
+      expect(manager.buildSnapshot(context)).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ launchName: "dev", lifecycle: "stopped", active: false }),
+          expect.objectContaining({ launchName: "full", lifecycle: "running", active: true }),
+        ]),
+      );
+    } finally {
+      await manager.disposeWorkspace(context.workspaceId);
+      terminalManager.killAll();
+    }
   });
 
   it("uses the project launch definition and replaces a same-named legacy service", async () => {
@@ -988,6 +1045,21 @@ async function getFreePort(): Promise<number> {
     });
   });
   return address.port;
+}
+
+async function readTcpMessage(port: number): Promise<string> {
+  return await new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    const socket = net.createConnection({ host: "127.0.0.1", port });
+    socket.on("data", (chunk: Buffer) => chunks.push(chunk));
+    socket.once("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
+    socket.once("error", reject);
+    socket.once("timeout", () => {
+      socket.destroy();
+      reject(new Error(`Timed out reading launch listener on port ${port}`));
+    });
+    socket.setTimeout(500);
+  });
 }
 
 async function getFreePortBlock(count: number): Promise<number> {
