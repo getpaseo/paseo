@@ -444,6 +444,42 @@ test.describe("Sidebar project grouping", () => {
     await expect(page.getByTestId("project-links-banner")).toHaveCount(0);
   });
 
+  test("keeps a project link available to retry when local persistence fails", async ({
+    page,
+    crossHostProject,
+  }) => {
+    await openScenario(page, crossHostProject);
+    await reloadWithLocalProjectLinks(page, crossHostProject, [
+      localProjectLinkFor(crossHostProject),
+    ]);
+    await openProjectsSettings(page, getServerId());
+    await page.getByTestId("project-links-review").click();
+
+    const sheet = page.getByTestId("project-links-sheet");
+    const primaryUnlink = page.getByTestId(
+      projectUnlinkTestId(getServerId(), crossHostProject.primaryProjectId),
+    );
+    await expect(primaryUnlink).toBeVisible();
+    await page.evaluate(() => {
+      const originalSetItem = Storage.prototype.setItem;
+      Storage.prototype.setItem = function setItem(key, value) {
+        if (key === "local-project-links") {
+          throw new DOMException(
+            "Local storage is unavailable for this test.",
+            "QuotaExceededError",
+          );
+        }
+        return originalSetItem.call(this, key, value);
+      };
+    });
+
+    await primaryUnlink.click();
+
+    await expect(sheet.getByTestId("project-links-save-error")).toBeVisible();
+    await expect(sheet.getByTestId("project-link-project-link-e2e")).toBeVisible();
+    await expect(primaryUnlink).toBeEnabled();
+  });
+
   test("keeps saved project links reachable after their host project is removed", async ({
     page,
     crossHostProject,
