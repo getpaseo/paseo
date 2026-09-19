@@ -647,7 +647,7 @@ describe("useAgentInputDraft live contract", () => {
       await waitForPaint();
     });
     expect(writes.texts).toEqual(["hello"]);
-    expect(getLatest().text).toBe("hello");
+    expect(getLatest().textSource.getSnapshot()).toBe("hello");
 
     act(() => {
       getLatest().editText("hello world");
