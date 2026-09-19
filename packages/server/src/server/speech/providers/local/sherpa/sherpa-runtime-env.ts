@@ -47,9 +47,21 @@ export function prependEnvPath(existing: string | undefined, value: string): str
   return [value, ...parts].join(path.delimiter);
 }
 
+/**
+ * Inside packaged Electron, module resolution returns paths inside the
+ * `app.asar` archive file. The native libraries live in `app.asar.unpacked`,
+ * and a loader path inside a file is unusable for the OS loader and for child
+ * processes — on Windows, Git Bash truncates the PATH it hands to native
+ * executables at such an entry.
+ */
+function toUnpackedAsarPath(dir: string): string {
+  return dir.replace(/([\\/])app\.asar(?=[\\/]|$)/, "$1app.asar.unpacked");
+}
+
 export function resolveSherpaLoaderEnv(
   platform: NodeJS.Platform = process.platform,
   arch: string = process.arch,
+  resolvePackageJson: (id: string) => string = createRequire(import.meta.url).resolve,
 ): SherpaLoaderEnvResolution | null {
   const key = sherpaLoaderEnvKey(platform);
   if (!key) {
@@ -57,12 +69,11 @@ export function resolveSherpaLoaderEnv(
   }
 
   const packageName = sherpaPlatformPackageName(platform, arch);
-  const require = createRequire(import.meta.url);
   try {
-    const pkgJson = require.resolve(`${packageName}/package.json`);
+    const pkgJson = resolvePackageJson(`${packageName}/package.json`);
     return {
       key,
-      libDir: path.dirname(pkgJson),
+      libDir: toUnpackedAsarPath(path.dirname(pkgJson)),
       packageName,
     };
   } catch {
