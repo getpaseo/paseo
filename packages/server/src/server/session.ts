@@ -48,6 +48,7 @@ import type { TurnDetectionProvider } from "./speech/turn-detection-provider.js"
 import {
   buildConfigOverrides,
   isStoredAgentProviderAvailable,
+  resolveStoredAgentUpdatedAt,
   toAgentPersistenceHandle,
 } from "./persistence-hooks.js";
 import { ensureAgentLoaded, ensureUnarchivedAgentLoaded } from "./agent/agent-loading.js";
@@ -113,11 +114,7 @@ import {
   setAgentModeCommand,
   updateAgentCommand,
 } from "./agent/lifecycle-command.js";
-import {
-  buildStoredAgentPayload,
-  resolveStoredAgentPayloadUpdatedAt,
-  toAgentPayload,
-} from "./agent/agent-projections.js";
+import { buildStoredAgentPayload, toAgentPayload } from "./agent/agent-projections.js";
 import {
   appendTimelineItemIfAgentKnown,
   emitLiveTimelineItemIfAgentKnown,
@@ -3331,8 +3328,8 @@ export class Session {
         return candidate;
       }
       const updatedDelta =
-        Date.parse(resolveStoredAgentPayloadUpdatedAt(candidate)) -
-        Date.parse(resolveStoredAgentPayloadUpdatedAt(latest));
+        Date.parse(resolveStoredAgentUpdatedAt(candidate)) -
+        Date.parse(resolveStoredAgentUpdatedAt(latest));
       if (updatedDelta !== 0) {
         return updatedDelta > 0 ? candidate : latest;
       }
