@@ -1,0 +1,52 @@
+name: Publish prepared German translation
+
+on:
+  push:
+    branches: [chore/german-language-upload]
+    paths:
+      - .github/workflows/publish-german-language.yml
+      - .german-language.patch.bz2.base64
+
+permissions:
+  contents: write
+
+concurrency:
+  group: publish-german-language
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.repository == 'Livvux/paseo'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Apply the prepared patch on the clean upstream base
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ ! -f .german-language.patch.bz2.base64 ]; then
+            echo 'Patch payload is not uploaded yet.'
+            exit 0
+          fi
+          python3 - <<'PY'
+          import base64, bz2, hashlib
+          from pathlib import Path
+          patch = bz2.decompress(base64.b64decode(Path('.german-language.patch.bz2.base64').read_text(), validate=False))
+          Path('/tmp/paseo-german.patch').write_bytes(patch)
+          print('Patch SHA-256:', hashlib.sha256(patch).hexdigest())
+          PY
+          git switch --detach d636abd7a4ce302e7ccb9eb6074f637c6dd4d83b
+          git apply --check /tmp/paseo-german.patch
+          git apply /tmp/paseo-german.patch
+          git add -- docs/i18n.md packages/app/src/i18n packages/app/src/hooks/use-settings/storage.ts packages/app/src/hooks/use-settings/storage.test.ts
+          test "$(git diff --cached --name-only | wc -l)" -eq 17
+          git diff --cached --check
+          git diff --cached --stat
+          git config user.name 'Livvux'
+          git config user.email '63063345+Livvux@users.noreply.github.com'
+          git -c core.hooksPath=/dev/null commit -m 'feat(i18n): add German language support'
+          git push origin HEAD:refs/heads/feat/german-language
+          echo "Published commit: $(git rev-parse HEAD)" >> "$GITHUB_STEP_SUMMARY"
