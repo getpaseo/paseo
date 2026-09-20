@@ -1546,6 +1546,53 @@ describe("ACPAgentSession Zed parity", () => {
     });
   });
 
+  test("cancels question form submissions when answer labels do not match options", async () => {
+    const session = createSessionWithConfig({
+      provider: "kimi-acp",
+      modeId: "https://agentclientprotocol.com/protocol/session-modes#agent",
+    });
+    const events: AgentStreamEvent[] = [];
+
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    session.subscribe((event) => events.push(event));
+
+    const permission = session.requestPermission({
+      sessionId: "session-1",
+      toolCall: {
+        toolCallId: "question-1",
+        title: "AskUserQuestion",
+        status: "pending",
+        rawInput: {
+          questions: [
+            {
+              question: "Which path should Paseo take?",
+              header: "Approach",
+              options: [{ label: "Narrow fix" }, { label: "Protocol fix" }],
+            },
+          ],
+        },
+      },
+      options: [
+        { optionId: "q0_opt_0", name: "Narrow fix", kind: "allow_once" },
+        { optionId: "q0_opt_1", name: "Protocol fix", kind: "allow_once" },
+        { optionId: "q0_skip", name: "Skip", kind: "reject_once" },
+      ],
+    } satisfies RequestPermissionRequest);
+
+    await Promise.resolve();
+
+    const requested = findPermissionRequest(events);
+
+    await session.respondToPermission(requested.request.id, {
+      behavior: "allow",
+      updatedInput: { answers: { Approach: "Unknown label" } },
+    });
+
+    await expect(permission).resolves.toEqual({
+      outcome: { outcome: "cancelled" },
+    });
+  });
+
   test("preserves ACP permission requests after invalid selected actions", async () => {
     const session = createSessionWithConfig({ provider: "generic-acp" });
     const events: AgentStreamEvent[] = [];
