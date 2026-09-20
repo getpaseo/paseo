@@ -123,6 +123,7 @@ import { assertPluginTimelineDataSize } from "./agent/agent-timeline-content.js"
 import { parsePluginClientId } from "./plugins/plugin-session-identity.js";
 import { buildAgentForkContextAttachment } from "./agent/activity-curator.js";
 import { buildAgentPrompt } from "./agent/prompt-attachments.js";
+import { preprocessImages } from "./agent/preprocess-image.js";
 import type { StructuredGenerationDaemonConfig } from "./agent/structured-generation-providers.js";
 import {
   getAgentStreamEventTurnId,
@@ -3848,7 +3849,11 @@ export class Session {
     );
 
     const promptText = options?.spokenInput ? wrapSpokenInput(text) : text;
-    const prompt = buildAgentPrompt(promptText, images, attachments);
+    const prompt = buildAgentPrompt(
+      promptText,
+      await preprocessImages(images, this.sessionLogger),
+      attachments,
+    );
 
     try {
       await sendPromptToAgent({
@@ -8050,7 +8055,11 @@ export class Session {
     try {
       const agentId = resolved.agentId;
 
-      const prompt = buildAgentPrompt(msg.text, msg.images, msg.attachments);
+      const prompt = buildAgentPrompt(
+        msg.text,
+        await preprocessImages(msg.images, this.sessionLogger),
+        msg.attachments,
+      );
       this.sessionLogger.trace(
         {
           agentId,
