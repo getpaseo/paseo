@@ -64,6 +64,65 @@ test("workspace.create worktree source forwards action=checkout + refName into t
   }
 }, 180000);
 
+test("workspace.create opens the worktree.terminals from paseo.json in the new worktree", async () => {
+  const daemon = await createTestPaseoDaemon();
+  const { repoDir, tempRoot } = createGitRepoWithBranch();
+  writeFileSync(
+    path.join(repoDir, "paseo.json"),
+    JSON.stringify({
+      worktree: { terminals: [{ name: "preview", command: "echo paseo-auto-terminal" }] },
+    }),
+  );
+  execFileSync("git", ["add", "paseo.json"], { cwd: repoDir, stdio: "pipe" });
+  execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "add paseo.json"], {
+    cwd: repoDir,
+    stdio: "pipe",
+  });
+  const client = new DaemonClient({
+    url: `ws://127.0.0.1:${daemon.port}/ws`,
+    appVersion: "0.1.82",
+  });
+
+  try {
+    await client.connect();
+
+    // This is the request the New Workspace screen sends: the workspace is
+    // created on its own, with no agent in the same request.
+    const result = await client.createWorkspace({
+      source: {
+        kind: "worktree",
+        cwd: repoDir,
+        action: "branch-off",
+        branchName: "feature/auto-terminals",
+        worktreeSlug: "feature-auto-terminals",
+        baseBranch: "main",
+      },
+    });
+
+    expect(result.error).toBeNull();
+    const workspace = result.workspace;
+    if (!workspace) {
+      throw new Error("Expected a created workspace");
+    }
+
+    await expect
+      .poll(
+        async () =>
+          (
+            await client.listTerminals(workspace.workspaceDirectory, undefined, {
+              workspaceId: workspace.id,
+            })
+          ).terminals.map((terminal) => terminal.name),
+        { timeout: 30000 },
+      )
+      .toContain("preview");
+  } finally {
+    await client.close().catch(() => undefined);
+    await daemon.close();
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
+}, 180000);
+
 test("workspace.create keeps a branch-off name separate from its worktree slug", async () => {
   const daemon = await createTestPaseoDaemon();
   const { repoDir, tempRoot } = createGitRepoWithBranch();
