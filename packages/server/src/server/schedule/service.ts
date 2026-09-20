@@ -28,7 +28,7 @@ import type {
   UpdateScheduleNewAgentConfig,
 } from "@getpaseo/protocol/schedule/types";
 import type { FirstAgentContext } from "@getpaseo/protocol/messages";
-import { getErrorMessage } from "@getpaseo/protocol/error-utils";
+import { getErrorMessage } from "../../../../protocol/src/error-utils.js";
 
 const SCHEDULE_TICK_INTERVAL_MS = 1000;
 

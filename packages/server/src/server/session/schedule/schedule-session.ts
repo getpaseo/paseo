@@ -1,5 +1,5 @@
 import type pino from "pino";
-import { getErrorMessage } from "@getpaseo/protocol/error-utils";
+import { getErrorMessage } from "../../../../../protocol/src/error-utils.js";
 import type { SessionInboundMessage, SessionOutboundMessage } from "../../messages.js";
 import type { ScheduleService } from "../../schedule/service.js";
 
