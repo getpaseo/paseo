@@ -196,7 +196,18 @@ paseo ls --host 'https://app.paseo.sh/#offer=eyJ2IjoyLC...'
 paseo run --host "$OFFER_URL" "fix the failing tests"
 ```
 
-You can also set it once via `PASEO_HOST` instead of passing `--host` on every command.
+Persist a shared daemon as the CLI default instead of passing `--host` on every command:
+
+```bash
+paseo target set "$OFFER_URL"
+paseo target show
+paseo run --workspace <workspace-id> --background "fix the failing tests"
+```
+
+The target is stored in `$PASEO_HOME/cli.json`. An explicit `--host` has highest precedence,
+followed by `PASEO_HOST`, the persisted target, and finally local daemon discovery. Run
+`paseo target clear` to return to local discovery. See [Always-on daemon](/docs/always-on-daemon)
+for the complete phone and multi-computer setup.
 
 ## Multi-agent workflows
 

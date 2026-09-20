@@ -401,6 +401,12 @@ Use `--host <host:port>` to point the CLI at a different daemon:
 npm run cli -- --host localhost:7777 ls -a
 ```
 
+For a durable remote default, `paseo target set <host-or-offer>` stores the target in
+`$PASEO_HOME/cli.json`. CLI target precedence is explicit `--host`, `PASEO_HOST`, persisted target,
+then local IPC/configured TCP/localhost discovery. A persisted target is authoritative rather than
+a fallback: if the shared daemon is offline, commands fail instead of silently creating agents on a
+local daemon. `paseo target clear` restores local discovery.
+
 Desktop integrations can focus an existing agent without creating one or
 sending a message. Use `paseo://h/<server-id>/agent/<agent-id>`, or run
 `paseo agent open <agent-id>`. The CLI reads the local daemon's server ID by

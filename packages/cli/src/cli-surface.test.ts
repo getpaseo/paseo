@@ -2,6 +2,11 @@ import { describe, expect, it } from "vitest";
 import { createCli } from "./cli.js";
 
 describe("canonical CLI surface", () => {
+  it("exposes persistent daemon target management", () => {
+    const target = createCli().commands.find((command) => command.name() === "target");
+    expect(target?.commands.map((command) => command.name())).toEqual(["set", "show", "clear"]);
+  });
+
   it("shows workspace and heartbeat commands while hiding worktree compatibility", () => {
     const cli = createCli();
     const help = cli.helpInformation();

@@ -16,6 +16,7 @@ import path from "node:path";
 import { WebSocket } from "ws";
 import { getOrCreateCliClientId } from "./client-id.js";
 import { resolveCliVersion } from "../version.js";
+import { readDefaultDaemonTarget } from "./client-target.js";
 
 export interface ConnectOptions {
   host?: string;
@@ -171,6 +172,11 @@ function resolveConfiguredTcpDaemonHost(env: NodeJS.ProcessEnv, paseoHome: strin
 
 export function resolveDefaultDaemonHosts(env: NodeJS.ProcessEnv = process.env): string[] {
   const paseoHome = resolvePaseoHome(env);
+  const persistedTarget = readDefaultDaemonTarget(paseoHome);
+  if (persistedTarget) {
+    return [persistedTarget];
+  }
+
   const candidates: string[] = [];
   const configuredIpcHost = resolveConfiguredIpcDaemonHost(env, paseoHome);
   if (configuredIpcHost) {

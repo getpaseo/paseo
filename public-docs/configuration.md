@@ -20,6 +20,10 @@ By default, Paseo uses `~/.paseo` as its home directory. The configuration file 
 
 You can change the home directory by setting `PASEO_HOME` or passing `--home` to `paseo daemon start`.
 
+CLI-only connection settings are separate from daemon configuration. `paseo target set <target>`
+writes the default remote daemon target to `$PASEO_HOME/cli.json`; `paseo target clear` removes it.
+This keeps a relay pairing link out of the daemon's runtime configuration.
+
 ## Precedence
 
 Paseo merges configuration in this order:
@@ -190,6 +194,7 @@ In the mobile app, enter the password in the direct connection setup screen.
 ## Common env vars
 
 - `PASEO_HOME`, set Paseo home directory
+- `PASEO_HOST`, override the CLI daemon target for the current process (takes precedence over the target saved by `paseo target set`)
 - `PASEO_PASSWORD`, on the daemon, the password to require (plaintext, hashed at startup); on the CLI, the password used to connect when the host URI doesn't include one
 - `PASEO_LISTEN`, override `daemon.listen`
 - `PASEO_HOSTNAMES`, override/extend `daemon.hostnames`

@@ -4,6 +4,11 @@ Paseo is a client-server system for monitoring and controlling local AI coding a
 
 Your code never leaves your machine. Paseo is local-first.
 
+The daemon is the synchronization boundary. Clients connected to one daemon share its workspaces,
+agents, archive state, and live streams; separate daemons do not replicate those records. An
+always-on topology therefore uses one authoritative daemon, relay or direct connections for every
+graphical client, and the CLI's persisted `paseo target` setting on other machines.
+
 ## System overview
 
 ```
