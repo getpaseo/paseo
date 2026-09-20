@@ -1,4 +1,5 @@
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
+import { AUTO_OPEN_AGENT_TAB_LABEL, PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   buildWorkspaceTabSnapshot,
@@ -167,6 +168,43 @@ describe("workspace subagents integration", () => {
         new Set(),
       ).map((row) => row.id),
     ).toEqual(["child-agent"]);
+  });
+
+  it("opens a hinted CLI child as a tab while retaining its parent relationship", () => {
+    const workspaceKey = buildWorkspaceTabPersistenceKey({
+      serverId: SERVER_ID,
+      workspaceId: WORKSPACE_ID,
+    });
+    expect(workspaceKey).toBeTruthy();
+
+    const parent = makeAgent({
+      id: "parent-agent",
+      title: "Parent agent",
+    });
+    const cliChild = makeAgent({
+      id: "cli-child",
+      parentAgentId: parent.id,
+      title: "CLI child",
+      labels: {
+        [AUTO_OPEN_AGENT_TAB_LABEL]: "true",
+        [PARENT_AGENT_ID_LABEL]: parent.id,
+      },
+    });
+
+    initializeAgents([parent, cliChild]);
+    reconcileWorkspaceTabs(workspaceKey!, deriveVisibilityFromSession());
+
+    expect(getWorkspaceTabIds(workspaceKey!)).toEqual(["agent_cli-child", "agent_parent-agent"]);
+    expect(
+      selectSubagentsForParent(
+        useSessionStore.getState(),
+        {
+          serverId: SERVER_ID,
+          parentAgentId: parent.id,
+        },
+        new Set(),
+      ).map((row) => row.id),
+    ).toEqual([cliChild.id]);
   });
 
   it("moves a detached child out of the parent section and back into normal workspace tabs", () => {

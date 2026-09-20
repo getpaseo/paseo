@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { AUTO_OPEN_AGENT_TAB_LABEL } from "@getpaseo/protocol/agent-labels";
 import type { Agent } from "@/stores/session-store";
 import {
   buildWorkspaceTabSnapshot,
@@ -15,6 +16,7 @@ function makeAgent(input: {
   archivedAt?: Date | null;
   createdAt?: Date;
   lastActivityAt?: Date;
+  labels?: Record<string, string>;
 }): Agent {
   const createdAt = input.createdAt ?? new Date("2026-03-04T00:00:00.000Z");
   const lastActivityAt = input.lastActivityAt ?? createdAt;
@@ -49,7 +51,7 @@ function makeAgent(input: {
     model: null,
     thinkingOptionId: null,
     parentAgentId: input.parentAgentId ?? null,
-    labels: {},
+    labels: input.labels ?? {},
     requiresAttention: false,
     attentionReason: null,
     attentionTimestamp: null,
@@ -84,6 +86,33 @@ describe("workspace agent visibility", () => {
     expect(result.activeAgentIds).toEqual(new Set(["parent-agent", "child-agent"]));
     expect(result.autoOpenAgentIds).toEqual(new Set(["parent-agent"]));
     expect(result.knownAgentIds).toEqual(new Set(["parent-agent", "child-agent"]));
+  });
+
+  it("auto-opens a same-workspace child carrying the cross-client tab hint", () => {
+    const parent = makeAgent({
+      id: "parent-agent",
+      cwd: "/repo/worktree",
+      workspaceId: WORKSPACE_ID,
+    });
+    const cliChild = makeAgent({
+      id: "cli-child",
+      cwd: "/repo/worktree",
+      workspaceId: WORKSPACE_ID,
+      parentAgentId: parent.id,
+      labels: { [AUTO_OPEN_AGENT_TAB_LABEL]: "true" },
+    });
+
+    const result = deriveWorkspaceAgentVisibility({
+      sessionAgents: new Map<string, Agent>([
+        [parent.id, parent],
+        [cliChild.id, cliChild],
+      ]),
+      workspaceId: WORKSPACE_ID,
+    });
+
+    expect(result.activeAgentIds).toEqual(new Set(["parent-agent", "cli-child"]));
+    expect(result.autoOpenAgentIds).toEqual(new Set(["parent-agent", "cli-child"]));
+    expect(result.knownAgentIds).toEqual(new Set(["parent-agent", "cli-child"]));
   });
 
   it("keeps archived subagents known but excludes them from active and auto-open", () => {

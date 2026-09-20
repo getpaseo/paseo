@@ -1,5 +1,6 @@
 import type { Agent } from "@/stores/session-store";
 import type { WorkspaceTabSnapshot } from "@/stores/workspace-layout-actions";
+import { shouldAutoOpenAgentTab } from "@getpaseo/protocol/agent-labels";
 import { isWorkspaceRootAgent } from "@/subagents/policies";
 import { normalizeWorkspaceOpaqueId } from "@/utils/workspace-identity";
 
@@ -43,7 +44,7 @@ export function deriveWorkspaceAgentVisibility(input: {
     if (!agent.archivedAt) {
       activeAgentIds.add(agent.id);
       const parentAgent = agent.parentAgentId ? agentsById.get(agent.parentAgentId) : undefined;
-      if (isWorkspaceRootAgent(agent, parentAgent)) {
+      if (isWorkspaceRootAgent(agent, parentAgent) || shouldAutoOpenAgentTab(agent)) {
         autoOpenAgentIds.add(agent.id);
       }
     }

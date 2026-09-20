@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { AUTO_OPEN_AGENT_TAB_LABEL } from "@getpaseo/protocol/agent-labels";
 import {
+  buildRunAgentLabels,
   resolveExistingRunWorkspace,
   resolveRunCallerAgentId,
   runRunCommand,
@@ -13,6 +15,21 @@ describe("managed agent caller context", () => {
 
   it("omits blank caller ids", () => {
     expect(resolveRunCallerAgentId({ PASEO_AGENT_ID: "   " })).toBeUndefined();
+  });
+});
+
+describe("run agent labels", () => {
+  it("marks every CLI-created agent for cross-client tab auto-open", () => {
+    expect(buildRunAgentLabels(["team=infra"])).toEqual({
+      team: "infra",
+      [AUTO_OPEN_AGENT_TAB_LABEL]: "true",
+    });
+  });
+
+  it("keeps the CLI placement marker authoritative over user labels", () => {
+    expect(buildRunAgentLabels([`${AUTO_OPEN_AGENT_TAB_LABEL}=false`])).toEqual({
+      [AUTO_OPEN_AGENT_TAB_LABEL]: "true",
+    });
   });
 });
 

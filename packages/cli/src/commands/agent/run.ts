@@ -1,5 +1,6 @@
 import { Command, Option } from "commander";
 import { getStructuredAgentResponse, StructuredAgentResponseError } from "@getpaseo/server";
+import { AUTO_OPEN_AGENT_TAB_LABEL } from "@getpaseo/protocol/agent-labels";
 import type { AgentSnapshotPayload } from "@getpaseo/protocol/messages";
 import { connectToDaemon, getDaemonHost } from "../../utils/client.js";
 import type {
@@ -447,6 +448,13 @@ function parseRunLabels(labelFlags: string[] | undefined): Record<string, string
   });
 }
 
+export function buildRunAgentLabels(labelFlags: string[] | undefined): Record<string, string> {
+  return {
+    ...parseRunLabels(labelFlags),
+    [AUTO_OPEN_AGENT_TAB_LABEL]: "true",
+  };
+}
+
 function parseRunEnv(envFlags: string[] | undefined): Record<string, string> {
   return parseKeyValueFlags(envFlags, {
     flagName: "--env",
@@ -613,7 +621,7 @@ export async function runRunCommand(
 
     const images = loadRunImages(options.image);
 
-    const labels = parseRunLabels(options.label);
+    const labels = buildRunAgentLabels(options.label);
     const env = parseRunEnv(options.env);
     const requestEnv = Object.keys(env).length > 0 ? env : undefined;
 

@@ -102,6 +102,8 @@ Closing a tab on a **subagent** (any agent with `parentAgentId`) is **layout-onl
 
 The asymmetry is intentional: a subagent's persistent relationship lives in the parent's track. Same-workspace subagents are not auto-opened as tabs; the user opens one from that track when needed. A cross-workspace subagent is also auto-opened as a tab in its own workspace so opening that workspace does not appear empty. It remains in the parent's track until it is actually detached.
 
+An agent carrying `paseo.auto-open-agent-tab=true` is also auto-opened in its workspace while retaining its normal lifecycle relationship. `paseo run` stamps this placement hint so a CLI-created session becomes a tab from both live directory updates and reconnect snapshots in every client. The hint affects tab placement only; a same-workspace child remains in its parent's track, and closing its tab remains layout-only.
+
 ## Workspace activity
 
 Agent lifecycle status stays literal: a parent agent is `idle` when its own turn is idle, even if a child is running.
@@ -162,11 +164,12 @@ $PASEO_HOME/agents/{cwd-with-dashes}/{agent-id}.json
 
 Each agent is a single JSON file. Fields relevant to this doc:
 
-| Field                             | Type          | Meaning                                                                            |
-| --------------------------------- | ------------- | ---------------------------------------------------------------------------------- |
-| `id`                              | `string`      | Stable identifier                                                                  |
-| `archivedAt`                      | `string?`     | Soft-delete timestamp (ISO 8601)                                                   |
-| `labels["paseo.parent-agent-id"]` | `string?`     | Parent agent ID, set automatically for agent-scoped creation and removed by detach |
-| `lastStatus`                      | `AgentStatus` | `initializing` / `idle` / `running` / `error` / `closed`                           |
+| Field                                 | Type          | Meaning                                                                            |
+| ------------------------------------- | ------------- | ---------------------------------------------------------------------------------- |
+| `id`                                  | `string`      | Stable identifier                                                                  |
+| `archivedAt`                          | `string?`     | Soft-delete timestamp (ISO 8601)                                                   |
+| `labels["paseo.parent-agent-id"]`     | `string?`     | Parent agent ID, set automatically for agent-scoped creation and removed by detach |
+| `labels["paseo.auto-open-agent-tab"]` | `"true"?`     | Cross-client hint to auto-open the active agent as a workspace tab                 |
+| `lastStatus`                          | `AgentStatus` | `initializing` / `idle` / `running` / `error` / `closed`                           |
 
 See [`docs/data-model.md`](./data-model.md) for the full agent record.
