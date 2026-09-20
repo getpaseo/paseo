@@ -1,0 +1,503 @@
+diff --git a/packages/app/src/i18n/i18next.ts b/packages/app/src/i18n/i18next.ts
+--- a/packages/app/src/i18n/i18next.ts
++++ b/packages/app/src/i18n/i18next.ts
+@@ -2,6 +2,7 @@
+ import { initReactI18next } from "react-i18next";
+ import { observeI18nInit } from "./init";
+ import { ar } from "./resources/ar";
++import { de } from "./resources/de";
+ import { en } from "./resources/en";
+ import { es } from "./resources/es";
+ import { fr } from "./resources/fr";
+@@ -20,6 +21,7 @@
+     lng: "en",
+     resources: {
+       ar: { translation: ar },
++      de: { translation: de },
+       en: { translation: en },
+       es: { translation: es },
+       fr: { translation: fr },
+diff --git a/packages/app/src/i18n/locales.test.ts b/packages/app/src/i18n/locales.test.ts
+--- a/packages/app/src/i18n/locales.test.ts
++++ b/packages/app/src/i18n/locales.test.ts
+@@ -9,19 +9,21 @@
+ describe("parseAppLanguage", () => {
+   it("accepts system and all supported language locales", () => {
+     expect(
+-      ["system", "ar", "en", "es", "fr", "ja", "ko", "pt-BR", "ru", "zh-CN"].map(parseAppLanguage),
+-    ).toEqual(["system", "ar", "en", "es", "fr", "ja", "ko", "pt-BR", "ru", "zh-CN"]);
++      ["system", "ar", "de", "en", "es", "fr", "ja", "ko", "pt-BR", "ru", "zh-CN"].map(parseAppLanguage),
++    ).toEqual(["system", "ar", "de", "en", "es", "fr", "ja", "ko", "pt-BR", "ru", "zh-CN"]);
+   });
+ 
+   it("returns null for unknown values", () => {
+-    expect(parseAppLanguage("de")).toBeNull();
++    expect(parseAppLanguage("it")).toBeNull();
+     expect(parseAppLanguage(null)).toBeNull();
++    expect(parseAppLanguage("de-DE")).toBeNull();
+   });
+ 
+   it("offers system plus all supported languages", () => {
+     expect(LANGUAGE_OPTIONS.map((option) => option.value)).toEqual([
+       "system",
+       "ar",
++      "de",
+       "en",
+       "es",
+       "fr",
+@@ -35,6 +37,31 @@
+ });
+ 
+ describe("formatLanguageOptionLabel", () => {
++  it("shows German in English UI and uses its native name in German UI", () => {
++    const german = LANGUAGE_OPTIONS.find((option) => option.value === "de");
++
++    expect(formatLanguageOptionLabel(german!, "en", "System")).toBe("Deutsch - German");
++    expect(formatLanguageOptionLabel(german!, "de", "System")).toBe("Deutsch");
++  });
++
++  it("labels every language option in German UI", () => {
++    expect(
++      LANGUAGE_OPTIONS.map((option) => formatLanguageOptionLabel(option, "de", "System")),
++    ).toEqual([
++      "System",
++      "العربية - Arabisch",
++      "Deutsch",
++      "English - Englisch",
++      "Español - Spanisch",
++      "Français - Französisch",
++      "日本語 - Japanisch",
++      "한국어 - Koreanisch",
++      "Português brasileiro - Brasilianisches Portugiesisch",
++      "Русский - Russisch",
++      "简体中文 - Vereinfachtes Chinesisch",
++    ]);
++  });
++
+   it("shows the native language name and English name in English UI", () => {
+     const arabic = LANGUAGE_OPTIONS.find((option) => option.value === "ar");
+     const japanese = LANGUAGE_OPTIONS.find((option) => option.value === "ja");
+@@ -92,6 +119,21 @@
+ });
+ 
+ describe("resolveSupportedLocale", () => {
++  it.each(["de", "de-DE", "de-AT", "de-CH", "de-LI", "de-LU", "DE-de", "de-DE-u-co-phonebk"])(
++    "maps German system locale %s to German",
++    (locale) => {
++      expect(resolveSupportedLocale("system", [locale])).toBe("de");
++    },
++  );
++
++  it("respects German selection and system language priority", () => {
++    expect(resolveSupportedLocale("de", ["en-US"])).toBe("de");
++    expect(resolveSupportedLocale("en", ["de-DE"])).toBe("en");
++    expect(resolveSupportedLocale("system", ["en-US", "de-DE"])).toBe("en");
++    expect(resolveSupportedLocale("system", ["de-CH", "en-US"])).toBe("de");
++    expect(resolveSupportedLocale("system", ["it-IT", "de-AT"])).toBe("de");
++  });
++
+   it("respects explicit language choices", () => {
+     expect(resolveSupportedLocale("ar", ["en-US"])).toBe("ar");
+     expect(resolveSupportedLocale("en", ["zh-CN"])).toBe("en");
+@@ -144,7 +186,7 @@
+   });
+ 
+   it("maps unsupported or missing system locales to English", () => {
+-    expect(resolveSupportedLocale("system", ["de-DE"])).toBe("en");
++    expect(resolveSupportedLocale("system", ["it-IT"])).toBe("en");
+     expect(resolveSupportedLocale("system", [])).toBe("en");
+   });
+ });
+diff --git a/packages/app/src/i18n/locales.ts b/packages/app/src/i18n/locales.ts
+--- a/packages/app/src/i18n/locales.ts
++++ b/packages/app/src/i18n/locales.ts
+@@ -1,4 +1,14 @@
+-export type SupportedLocale = "ar" | "en" | "es" | "fr" | "ja" | "ko" | "pt-BR" | "ru" | "zh-CN";
++export type SupportedLocale =
++  | "ar"
++  | "de"
++  | "en"
++  | "es"
++  | "fr"
++  | "ja"
++  | "ko"
++  | "pt-BR"
++  | "ru"
++  | "zh-CN";
+ export type AppLanguage = "system" | SupportedLocale;
+ 
+ export interface LanguageOption {
+@@ -11,6 +21,7 @@
+ export const LANGUAGE_OPTIONS: LanguageOption[] = [
+   { value: "system", labelKey: "settings.general.language.options.system" },
+   { value: "ar", labelKey: "settings.general.language.options.ar" },
++  { value: "de", labelKey: "settings.general.language.options.de" },
+   { value: "en", labelKey: "settings.general.language.options.en" },
+   { value: "es", labelKey: "settings.general.language.options.es" },
+   { value: "fr", labelKey: "settings.general.language.options.fr" },
+@@ -24,6 +35,7 @@
+ const SUPPORTED_LANGUAGES = new Set<AppLanguage>([
+   "system",
+   "ar",
++  "de",
+   "en",
+   "es",
+   "fr",
+@@ -35,6 +47,7 @@
+ ]);
+ const LANGUAGE_NATIVE_NAMES: Record<SupportedLocale, string> = {
+   ar: "العربية",
++  de: "Deutsch",
+   en: "English",
+   es: "Español",
+   fr: "Français",
+@@ -47,6 +60,7 @@
+ const LANGUAGE_NAMES_BY_LOCALE: Record<SupportedLocale, Record<SupportedLocale, string>> = {
+   ar: {
+     ar: "العربية",
++    de: "الألمانية",
+     en: "الإنجليزية",
+     es: "الإسبانية",
+     fr: "الفرنسية",
+@@ -56,8 +70,21 @@
+     ru: "الروسية",
+     "zh-CN": "الصينية المبسطة",
+   },
++  de: {
++    ar: "Arabisch",
++    de: "Deutsch",
++    en: "Englisch",
++    es: "Spanisch",
++    fr: "Französisch",
++    ja: "Japanisch",
++    ko: "Koreanisch",
++    "pt-BR": "Brasilianisches Portugiesisch",
++    ru: "Russisch",
++    "zh-CN": "Vereinfachtes Chinesisch",
++  },
+   en: {
+     ar: "Arabic",
++    de: "German",
+     en: "English",
+     es: "Spanish",
+     fr: "French",
+@@ -69,6 +96,7 @@
+   },
+   es: {
+     ar: "árabe",
++    de: "alemán",
+     en: "inglés",
+     es: "español",
+     fr: "francés",
+@@ -80,6 +108,7 @@
+   },
+   fr: {
+     ar: "arabe",
++    de: "allemand",
+     en: "anglais",
+     es: "espagnol",
+     fr: "français",
+@@ -91,6 +120,7 @@
+   },
+   ja: {
+     ar: "アラビア語",
++    de: "ドイツ語",
+     en: "英語",
+     es: "スペイン語",
+     fr: "フランス語",
+@@ -102,6 +132,7 @@
+   },
+   ko: {
+     ar: "아랍어",
++    de: "독일어",
+     en: "영어",
+     es: "스페인어",
+     fr: "프랑스어",
+@@ -113,6 +144,7 @@
+   },
+   "pt-BR": {
+     ar: "árabe",
++    de: "alemão",
+     en: "inglês",
+     es: "espanhol",
+     fr: "francês",
+@@ -124,6 +156,7 @@
+   },
+   ru: {
+     ar: "арабский",
++    de: "немецкий",
+     en: "английский",
+     es: "испанский",
+     fr: "французский",
+@@ -135,6 +168,7 @@
+   },
+   "zh-CN": {
+     ar: "阿拉伯语",
++    de: "德语",
+     en: "英语",
+     es: "西班牙语",
+     fr: "法语",
+@@ -148,6 +182,7 @@
+ 
+ const REGIONAL_LANGUAGE_LOCALES: Readonly<Record<string, SupportedLocale>> = {
+   ar: "ar",
++  de: "de",
+   en: "en",
+   es: "es",
+   fr: "fr",
+diff --git a/packages/app/src/i18n/resources/en.ts b/packages/app/src/i18n/resources/en.ts
+--- a/packages/app/src/i18n/resources/en.ts
++++ b/packages/app/src/i18n/resources/en.ts
+@@ -2187,6 +2187,7 @@
+         options: {
+           system: "System",
+           ar: "Arabic",
++          de: "German",
+           en: "English",
+           es: "Spanish",
+           fr: "French",
+diff --git a/docs/i18n.md b/docs/i18n.md
+--- a/docs/i18n.md
++++ b/docs/i18n.md
+@@ -6,6 +6,7 @@
+ 
+ - `en`
+ - `ar`
++- `de`
+ - `es`
+ - `fr`
+ - `ja`
+@@ -14,7 +15,7 @@
+ - `ru`
+ - `zh-CN`
+ 
+-The persisted app language setting is `"system" | "ar" | "en" | "es" | "fr" | "ja" | "ko" | "pt-BR" | "ru" | "zh-CN"`. `"system"` follows the device or browser locale when it maps to a supported locale; unsupported system locales fall back to English. Japanese maps from system locales `ja` and Japanese regional locales. Korean maps from system locales `ko` and Korean regional locales. Brazilian Portuguese maps from system locales `pt-BR` and bare `pt`; other Portuguese regional locales remain unsupported until explicitly added.
++The persisted app language setting is `"system" | "ar" | "de" | "en" | "es" | "fr" | "ja" | "ko" | "pt-BR" | "ru" | "zh-CN"`. `"system"` follows the device or browser locale when it maps to a supported locale; unsupported system locales fall back to English. German maps from system locales `de` and German regional locales such as `de-DE`, `de-AT`, and `de-CH`. Japanese maps from system locales `ja` and Japanese regional locales. Korean maps from system locales `ko` and Korean regional locales. Brazilian Portuguese maps from system locales `pt-BR` and bare `pt`; other Portuguese regional locales remain unsupported until explicitly added.
+ 
+ ## Translation Scope
+ 
+diff --git a/packages/app/src/hooks/use-settings/storage.test.ts b/packages/app/src/hooks/use-settings/storage.test.ts
+--- a/packages/app/src/hooks/use-settings/storage.test.ts
++++ b/packages/app/src/hooks/use-settings/storage.test.ts
+@@ -398,13 +398,13 @@
+-  it("loads a persisted explicit language", async () => {
++  it.each(["de", "zh-CN"])("loads a persisted explicit language (%s)", async (language) => {
+     const deps = makeDeps({
+       storage: createInMemoryKeyValueStorage({
+-        [APP_SETTINGS_KEY]: JSON.stringify({ language: "zh-CN" }),
++        [APP_SETTINGS_KEY]: JSON.stringify({ language }),
+       }),
+     });
+ 
+     const result = await loadAppSettingsFromStorage(deps);
+ 
+-    expect(result.language).toBe("zh-CN");
++    expect(result.language).toBe(language);
+   });
+ 
+   it("drops an unknown persisted language back to system", async () => {
+@@ -422,6 +422,24 @@
+ });
+ 
+ describe("saveAppSettings", () => {
++  it("persists German across a save and a fresh storage read", async () => {
++    const deps = makeDeps();
++    const queryClient = new QueryClient();
++
++    try {
++      await saveAppSettings({ queryClient, updates: { language: "de" }, deps });
++
++      expect(queryClient.getQueryData(APP_SETTINGS_QUERY_KEY)).toMatchObject({ language: "de" });
++      expect(JSON.parse(deps.storage.entries.get(APP_SETTINGS_KEY) ?? "null")).toMatchObject({
++        language: "de",
++      });
++      queryClient.clear();
++      expect((await loadAppSettingsFromStorage(deps)).language).toBe("de");
++    } finally {
++      queryClient.clear();
++    }
++  });
++
+   it("applies consecutive functional updates to the latest cached settings", async () => {
+     const deps = makeDeps();
+     const queryClient = new QueryClient();
+diff --git a/packages/app/src/hooks/use-settings/storage.ts b/packages/app/src/hooks/use-settings/storage.ts
+--- a/packages/app/src/hooks/use-settings/storage.ts
++++ b/packages/app/src/hooks/use-settings/storage.ts
+@@ -196,7 +196,7 @@
+     theme: ThemePreferenceSchema.catch(DEFAULT_THEME_PREFERENCE),
+     pluginThemeId: z.string().nullable().catch(null),
+     language: z
+-      .enum(["system", "ar", "en", "es", "fr", "ja", "ko", "pt-BR", "ru", "zh-CN"])
++      .enum(["system", "ar", "de", "en", "es", "fr", "ja", "ko", "pt-BR", "ru", "zh-CN"])
+       .catch("system"),
+     sendBehavior: z.enum(["interrupt", "steer", "queue"]).catch("steer"),
+     serviceUrlBehavior: z.enum(["ask", "in-app", "external"]).catch("ask"),
+diff --git a/packages/app/src/i18n/resources.test.ts b/packages/app/src/i18n/resources.test.ts
+--- a/packages/app/src/i18n/resources.test.ts
++++ b/packages/app/src/i18n/resources.test.ts
+@@ -1,7 +1,9 @@
+ import { readdirSync, readFileSync } from "node:fs";
+ import { join, relative } from "node:path";
++import { createInstance } from "i18next";
+ import { describe, expect, it } from "vitest";
+ import { ar } from "./resources/ar";
++import { de } from "./resources/de";
+ import { en } from "./resources/en";
+ import { es } from "./resources/es";
+ import { fr } from "./resources/fr";
+@@ -110,6 +112,7 @@
+   it("keeps all supported language keys in sync with English", () => {
+     const englishKeys = flattenKeys(en).sort();
+     expect(flattenKeys(ar).sort()).toEqual(englishKeys);
++    expect(flattenKeys(de).sort()).toEqual(englishKeys);
+     expect(flattenKeys(es).sort()).toEqual(englishKeys);
+     expect(flattenKeys(fr).sort()).toEqual(englishKeys);
+     expect(flattenKeys(ja).sort()).toEqual(englishKeys);
+@@ -123,6 +126,7 @@
+     const totalStrings = Object.keys(flattenStrings(en)).length;
+     const maxFallbackStrings = Math.floor(totalStrings * 0.25);
+     expect(countMatchingEnglishStrings(ar)).toBeLessThan(maxFallbackStrings);
++    expect(countMatchingEnglishStrings(de)).toBeLessThan(maxFallbackStrings);
+     expect(countMatchingEnglishStrings(es)).toBeLessThan(maxFallbackStrings);
+     expect(countMatchingEnglishStrings(fr)).toBeLessThan(maxFallbackStrings);
+     expect(countMatchingEnglishStrings(ja)).toBeLessThan(maxFallbackStrings);
+@@ -133,7 +137,7 @@
+   });
+ 
+   it("localizes the pull request empty state in every supported language", () => {
+-    for (const resource of [ar, es, fr, ja, ko, ptBR, ru, zhCN]) {
++    for (const resource of [ar, de, es, fr, ja, ko, ptBR, ru, zhCN]) {
+       expect(resource.panels.pullRequest.emptyTitle).not.toBe(en.panels.pullRequest.emptyTitle);
+       expect(resource.panels.pullRequest.emptyDescription).not.toBe(
+         en.panels.pullRequest.emptyDescription,
+@@ -143,6 +147,7 @@
+ 
+   it("preserves interpolation placeholders in every language", () => {
+     expect(findInterpolationMismatches(ar)).toEqual([]);
++    expect(findInterpolationMismatches(de)).toEqual([]);
+     expect(findInterpolationMismatches(es)).toEqual([]);
+     expect(findInterpolationMismatches(fr)).toEqual([]);
+     expect(findInterpolationMismatches(ja)).toEqual([]);
+@@ -152,6 +157,33 @@
+     expect(findInterpolationMismatches(zhCN)).toEqual([]);
+   });
+ 
++  it("resolves German interpolation, plurals, and merge-request context", async () => {
++    const instance = createInstance();
++    await instance.init({
++      lng: "de",
++      fallbackLng: "en",
++      resources: { en: { translation: en }, de: { translation: de } },
++      interpolation: { escapeValue: false },
++    });
++
++    expect(instance.t("common.actions.cancel")).toBe("Abbrechen");
++    expect(instance.t("common.states.copiedLabel", { label: "Dateipfad" })).toBe("Dateipfad kopiert");
++    expect(instance.t("workspaceLabels.manage.deleteMessage", { count: 1 })).toBe(
++      "Dadurch wird das Label von 1 Arbeitsbereich auf diesem Host entfernt.",
++    );
++    expect(instance.t("workspaceLabels.manage.deleteMessage", { count: 2 })).toBe(
++      "Dadurch wird das Label von 2 Arbeitsbereichen auf diesem Host entfernt.",
++    );
++    expect(instance.t("workspace.git.actions.createPr.label")).toBe("PR erstellen");
++    expect(instance.t("workspace.git.actions.createPr.label", { context: "mr" })).toBe("MR erstellen");
++  });
++
++  it("keeps German open states distinct from open actions", () => {
++    expect(de.workspace.git.pr.states.open).toBe("Offen");
++    expect(de.workspace.git.openInEditor.open).toBe("Öffnen");
++    expect(de.settings.general.language.options.de).toBe("Deutsch");
++  });
++
+   it("keeps reported Spanish settings and scripts labels clean", () => {
+     expect(es.workspace.scripts.title).toBe("Scripts");
+     expect(es.settings.general.terminalScrollback.label).toBe("Historial de terminal");
+diff --git a/packages/app/src/i18n/resources/ar.ts b/packages/app/src/i18n/resources/ar.ts
+--- a/packages/app/src/i18n/resources/ar.ts
++++ b/packages/app/src/i18n/resources/ar.ts
+@@ -2200,6 +2200,7 @@
+           fr: "Français",
+           ja: "日本語",
+           ko: "한국어",
++          de: "الألمانية",
+           ptBR: "Português brasileiro",
+           ru: "Русский",
+           zhCN: "中文",
+diff --git a/packages/app/src/i18n/resources/es.ts b/packages/app/src/i18n/resources/es.ts
+--- a/packages/app/src/i18n/resources/es.ts
++++ b/packages/app/src/i18n/resources/es.ts
+@@ -2200,6 +2200,7 @@
+           fr: "Français",
+           ja: "日本語",
+           ko: "한국어",
++          de: "alemán",
+           ptBR: "Português brasileiro",
+           ru: "Русский",
+           zhCN: "中文",
+diff --git a/packages/app/src/i18n/resources/fr.ts b/packages/app/src/i18n/resources/fr.ts
+--- a/packages/app/src/i18n/resources/fr.ts
++++ b/packages/app/src/i18n/resources/fr.ts
+@@ -2200,6 +2200,7 @@
+           fr: "Français",
+           ja: "日本語",
+           ko: "한국어",
++          de: "allemand",
+           ptBR: "Português brasileiro",
+           ru: "Русский",
+           zhCN: "中文",
+diff --git a/packages/app/src/i18n/resources/ja.ts b/packages/app/src/i18n/resources/ja.ts
+--- a/packages/app/src/i18n/resources/ja.ts
++++ b/packages/app/src/i18n/resources/ja.ts
+@@ -2200,6 +2200,7 @@
+           fr: "フランス語",
+           ja: "日本語",
+           ko: "韓国語",
++          de: "ドイツ語",
+           ptBR: "ブラジルポルトガル語",
+           ru: "ロシア語",
+           zhCN: "簡体字中国語",
+diff --git a/packages/app/src/i18n/resources/ko.ts b/packages/app/src/i18n/resources/ko.ts
+--- a/packages/app/src/i18n/resources/ko.ts
++++ b/packages/app/src/i18n/resources/ko.ts
+@@ -2200,6 +2200,7 @@
+           fr: "Français",
+           ja: "일본어",
+           ko: "한국어",
++          de: "독일어",
+           ptBR: "브라질 포르투갈어",
+           ru: "Русский",
+           zhCN: "简体中文",
+diff --git a/packages/app/src/i18n/resources/pt-BR.ts b/packages/app/src/i18n/resources/pt-BR.ts
+--- a/packages/app/src/i18n/resources/pt-BR.ts
++++ b/packages/app/src/i18n/resources/pt-BR.ts
+@@ -2107,6 +2107,7 @@
+           fr: "Francês",
+           ja: "Japonês",
+           ko: "Coreano",
++          de: "Alemão",
+           ptBR: "Português brasileiro",
+           ru: "Russo",
+           zhCN: "Chinês simplificado",
+diff --git a/packages/app/src/i18n/resources/ru.ts b/packages/app/src/i18n/resources/ru.ts
+--- a/packages/app/src/i18n/resources/ru.ts
++++ b/packages/app/src/i18n/resources/ru.ts
+@@ -2200,6 +2200,7 @@
+           fr: "Français",
+           ja: "日本語",
+           ko: "한국어",
++          de: "немецкий",
+           ptBR: "Português brasileiro",
+           ru: "Русский",
+           zhCN: "简体中文",
+diff --git a/packages/app/src/i18n/resources/zh-CN.ts b/packages/app/src/i18n/resources/zh-CN.ts
+--- a/packages/app/src/i18n/resources/zh-CN.ts
++++ b/packages/app/src/i18n/resources/zh-CN.ts
+@@ -2200,6 +2200,7 @@
+           fr: "Français",
+           ja: "日本語",
+           ko: "한국어",
++          de: "德语",
+           ptBR: "Português brasileiro",
+           ru: "Русский",
+           zhCN: "简体中文",

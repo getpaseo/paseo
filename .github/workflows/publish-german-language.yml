@@ -5,7 +5,7 @@ on:
     branches: [chore/german-language-upload]
     paths:
       - .github/workflows/publish-german-language.yml
-      - .german-language.patch.bz2.base64
+      - .german-language-payload/**
 
 permissions:
   contents: write
@@ -18,30 +18,98 @@ jobs:
   publish:
     if: github.repository == 'Livvux/paseo'
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 12
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Apply the prepared patch on the clean upstream base
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify plain-text payload and apply to upstream base
         shell: bash
         run: |
           set -euo pipefail
-          if [ ! -f .german-language.patch.bz2.base64 ]; then
-            echo 'Patch payload is not uploaded yet.'
-            exit 0
-          fi
           python3 - <<'PY'
-          import base64, bz2, hashlib
+          import hashlib
           from pathlib import Path
-          patch = bz2.decompress(base64.b64decode(Path('.german-language.patch.bz2.base64').read_text(), validate=False))
-          Path('/tmp/paseo-german.patch').write_bytes(patch)
-          print('Patch SHA-256:', hashlib.sha256(patch).hexdigest())
+          source = Path('.german-language-payload')
+          chunks = sorted(source.glob('de-*.txt'))
+          assert len(chunks) == 6, 'Expected six plain-text source chunks'
+          german = b''.join(path.read_bytes() for path in chunks)
+          patch = (source / 'integration.patch').read_bytes()
+          assert hashlib.sha256(german).hexdigest() == '683de22709f066c61c4d2e6b9c0b77ddd20e4a7b7c22767112357fe410894a40'
+          assert hashlib.sha256(patch).hexdigest() == 'ead69399777076f2c9e540bcc0f289ac3b860721acf153fc4c7acf4f730d9a20'
+          Path('/tmp/paseo-de.ts').write_bytes(german)
+          Path('/tmp/paseo-integration.patch').write_bytes(patch)
+          print('Both SHA-256 integrity checks passed')
           PY
           git switch --detach d636abd7a4ce302e7ccb9eb6074f637c6dd4d83b
-          git apply --check /tmp/paseo-german.patch
-          git apply /tmp/paseo-german.patch
+          git apply --check /tmp/paseo-integration.patch
+          git apply /tmp/paseo-integration.patch
+          cp /tmp/paseo-de.ts packages/app/src/i18n/resources/de.ts
           git add -- docs/i18n.md packages/app/src/i18n packages/app/src/hooks/use-settings/storage.ts packages/app/src/hooks/use-settings/storage.test.ts
+          test "$(git diff --cached --name-only | wc -l)" -eq 17
+          git diff --cached --check
+          git diff --cached --name-only > "$RUNNER_TEMP/german-changed-files.txt"
+          git diff --cached --stat
+      - name: Install isolated verification tools at repository lockfile versions
+        shell: bash
+        run: |
+          set -euo pipefail
+          TOOLS="$RUNNER_TEMP/german-tools"
+          mkdir -p "$TOOLS"
+          node - <<'JS'
+          const fs = require('node:fs');
+          const path = require('node:path');
+          const lock = JSON.parse(fs.readFileSync('package-lock.json', 'utf8'));
+          const names = ['oxfmt', 'oxlint', 'typescript', 'vitest', 'i18next'];
+          const dependencies = Object.fromEntries(names.map(name => {
+            const info = lock.packages['node_modules/' + name] ?? lock.packages['packages/app/node_modules/' + name];
+            if (!info?.version) throw new Error('Missing lockfile version: ' + name);
+            return [name, info.version];
+          }));
+          fs.writeFileSync(path.join(process.env.RUNNER_TEMP, 'german-tools/package.json'), JSON.stringify({private:true, dependencies}));
+          console.log(dependencies);
+          JS
+          npm install --prefix "$TOOLS" --ignore-scripts --no-audit --no-fund
+          ln -s "$TOOLS/node_modules" node_modules
+          echo "$TOOLS/node_modules/.bin" >> "$GITHUB_PATH"
+      - name: Format the changed files using the repository script
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t files < "$RUNNER_TEMP/german-changed-files.txt"
+          npm run format:files -- "${files[@]}"
+          npm run format:check:files -- "${files[@]}"
+      - name: Lint the changed TypeScript files using the repository script
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t files < <(grep '\.ts$' "$RUNNER_TEMP/german-changed-files.txt")
+          npm run lint -- "${files[@]}"
+      - name: Strict isolated typecheck of locale logic and all translation catalogs
+        shell: bash
+        run: |
+          set -euo pipefail
+          tsc --noEmit --strict --skipLibCheck --target ES2022 --module ESNext --moduleResolution bundler packages/app/src/i18n/locales.ts packages/app/src/i18n/resources/*.ts
+      - name: Run the two changed i18n Vitest suites
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > "$RUNNER_TEMP/german-vitest.config.mjs" <<'JS'
+          export default {
+            esbuild: { tsconfigRaw: { compilerOptions: { target: 'ES2022' } } },
+            test: { environment: 'node', maxWorkers: 1 },
+          };
+          JS
+          npx --no-install vitest run packages/app/src/i18n/locales.test.ts packages/app/src/i18n/resources.test.ts --bail=1 --config "$RUNNER_TEMP/german-vitest.config.mjs"
+      - name: Publish only the 17 intended files to the feature branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t files < "$RUNNER_TEMP/german-changed-files.txt"
+          git add -- "${files[@]}"
           test "$(git diff --cached --name-only | wc -l)" -eq 17
           git diff --cached --check
           git diff --cached --stat
@@ -49,4 +117,8 @@ jobs:
           git config user.email '63063345+Livvux@users.noreply.github.com'
           git -c core.hooksPath=/dev/null commit -m 'feat(i18n): add German language support'
           git push origin HEAD:refs/heads/feat/german-language
-          echo "Published commit: $(git rev-parse HEAD)" >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "Published commit: $(git rev-parse HEAD)"
+            echo 'Passed: patch integrity, full-checkout patch application, targeted formatting/lint, isolated locale/catalog typecheck, and two i18n Vitest suites.'
+            echo 'Not run: full workspace typecheck/build, storage integration suite, and web/desktop/mobile visual QA.'
+          } >> "$GITHUB_STEP_SUMMARY"

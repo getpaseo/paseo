@@ -1,0 +1,550 @@
+      deleteMessage_one:
+        "Dadurch wird das Label von {{count}} Arbeitsbereich auf diesem Host entfernt.",
+      deleteMessage_other:
+        "Dadurch wird das Label von {{count}} Arbeitsbereichen auf diesem Host entfernt.",
+      offline: "Dieser Host ist offline.",
+      updateHost: "Aktualisiere diesen Host, um Labels zu verwalten.",
+    },
+  },
+  changelog: {
+    title: "Neuigkeiten",
+    installed: "Installiert",
+    showMore: "Mehr anzeigen",
+    openWebsite: "Vollständiges Änderungsprotokoll",
+    error: {
+      title: "Änderungsprotokoll konnte nicht geladen werden",
+      description: "Prüfe deine Verbindung und versuche es erneut.",
+    },
+  },
+  sidebar: {
+    display: {
+      trigger: "Anzeigeeinstellungen",
+      heading: "Anzeige",
+      grouping: {
+        label: "Gruppierung",
+        project: "Projekt",
+        status: "Status",
+        labels: "Labels",
+      },
+      titleSource: {
+        label: "Titel",
+        title: "Titel",
+        branch: "Branch-Name",
+      },
+      show: {
+        label: "Anzeigen",
+        branch: "Branch",
+        project: "Projekt",
+        host: "Host",
+        changeRequest: "Pull Request",
+        checks: "Prüfungen",
+        services: "Dienste",
+        labels: "Labels",
+        diff: "Diff-Statistik",
+        timestamp: "Letzte Aktivität",
+      },
+      checks: {
+        iconAndText: "Symbol und Text",
+        icon: "Nur Symbol",
+        none: "Ausgeblendet",
+      },
+      hostFilter: {
+        label: "Host",
+        all: "Alle Hosts",
+      },
+      projectFilter: {
+        label: "Projekt",
+        all: "Alle Projekte",
+      },
+    },
+    filterEmpty: {
+      title: "Keine passenden Arbeitsbereiche",
+      description:
+        "Ändere oder entferne die Filter der Seitenleiste, um Arbeitsbereiche anzuzeigen.",
+      clear: "Filter zurücksetzen",
+    },
+    pinned: {
+      title: "Angeheftet",
+    },
+    host: {
+      noHost: "Kein Host",
+      switchTitle: "Host wechseln",
+      searchPlaceholder: "Hosts suchen...",
+    },
+    actions: {
+      addProject: "Projekt hinzufügen",
+      newWorkspace: "Neuer Arbeitsbereich",
+      hosts: "Hosts",
+      settings: "Einstellungen",
+      closeSidebar: "Seitenleiste schließen",
+    },
+    help: {
+      trigger: "Hilfe und Support",
+      sectionHelp: "Hilfe",
+      diagnostics: "Diagnose ausführen",
+      shortcuts: "Tastenkombinationen",
+      reportIssue: "Problem melden",
+      discord: "Discord",
+      github: "GitHub-Issue erstellen",
+      whatsNew: "Neuigkeiten",
+      appName: "Paseo",
+    },
+    sections: {
+      sessions: "Verlauf",
+      search: "Suchen",
+      schedules: "Zeitpläne",
+    },
+    worktreeSetup: {
+      title: "Worktree-Skripte einrichten",
+      description:
+        "Füge Einrichtungsbefehle hinzu, damit neue Worktrees Abhängigkeiten installieren und sich automatisch vorbereiten können.",
+      openProjectSettings: "Projekteinstellungen öffnen",
+    },
+    project: {
+      actions: {
+        menu: "Projektaktionen",
+        openSettings: "Projekteinstellungen öffnen",
+        openNewWindow: "In neuem Fenster öffnen",
+        openNewWindowFailed: "Neues Fenster konnte nicht geöffnet werden",
+        openFolder: "Im Dateimanager öffnen",
+        openFolderFailed: "Ordner konnte nicht geöffnet werden",
+        remove: "Projekt entfernen",
+        removing: "Wird entfernt...",
+      },
+      confirmations: {
+        removeTitle: "Projekt entfernen?",
+        removeMessage:
+          "„{{projectName}}“ aus der Seitenleiste entfernen?\n\nDateien auf dem Datenträger werden nicht verändert.",
+        removeConfirm: "Entfernen",
+        cancel: "Abbrechen",
+      },
+      toasts: {
+        hostDisconnected: "Host ist nicht verbunden",
+        removeFailed: "Einige Arbeitsbereiche konnten nicht entfernt werden",
+        updateHostToRemove: "Aktualisiere den Host, um Projekte zu entfernen.",
+      },
+      empty: {
+        title: "Noch keine Projekte",
+        description: "Füge ein Projekt hinzu, um loszulegen",
+      },
+    },
+    workspace: {
+      status: {
+        serviceRunning: "Dienst {{name}} läuft",
+        serviceUnhealthy: "Dienst {{name}} meldet einen fehlerhaften Zustand",
+        creating: "Wird erstellt...",
+      },
+      checks: {
+        passed: "Bestanden: {{count}}",
+        failed: "Fehlgeschlagen: {{count}}",
+        warning: "Warnungen: {{count}}",
+        actionRequired: "Aktion erforderlich: {{count}}",
+        manual: "Manuell: {{count}}",
+        pending: "Ausstehend: {{count}}",
+      },
+      actions: {
+        menu: "Aktionen für den Arbeitsbereich",
+        newWorkspace: "Neuer Arbeitsbereich",
+        showMore: "Mehr anzeigen",
+        showLess: "Weniger anzeigen",
+        createWorkspaceFor: "Neuen Arbeitsbereich für {{projectName}} erstellen",
+        copyPath: "Pfad kopieren",
+        copyBranchName: "Branch-Namen kopieren",
+        rename: "Arbeitsbereich umbenennen",
+        pin: "Oben anheften",
+        unpin: "Anheften aufheben",
+        archive: "Archivieren",
+        archiveWorkspace: "Arbeitsbereich archivieren",
+        hideFromSidebar: "Aus Seitenleiste ausblenden",
+        archiving: "Wird archiviert...",
+        hiding: "Wird ausgeblendet...",
+      },
+      confirmations: {
+        hideTitle: "Arbeitsbereich ausblenden?",
+        hideMessage:
+          "„{{workspaceName}}“ aus der Seitenleiste ausblenden?\n\nDateien auf dem Datenträger werden nicht verändert.",
+        hideConfirm: "Ausblenden",
+        cancel: "Abbrechen",
+      },
+      rename: {
+        title: "Arbeitsbereich umbenennen",
+        submit: "Umbenennen",
+        invalidBranchName: "Ungültiger Branch-Name",
+      },
+      toasts: {
+        workspacePathUnavailable: "Pfad des Arbeitsbereichs nicht verfügbar",
+        pathCopied: "Pfad kopiert",
+        branchNameCopied: "Branch-Name kopiert",
+        hostDisconnected: "Host ist nicht verbunden",
+        hideFailed: "Arbeitsbereich konnte nicht ausgeblendet werden",
+        archiveFailed: "Arbeitsbereich konnte nicht archiviert werden",
+      },
+    },
+  },
+  newWorkspace: {
+    title: "Neuer Arbeitsbereich",
+    create: "Erstellen",
+    isolation: {
+      local: "Lokal",
+      worktree: "Neuer Worktree",
+      label: "Isolation",
+    },
+    fields: {
+      project: "Projekt",
+      base: "Basis",
+      baseNotApplicable: "Nicht zutreffend",
+    },
+    titlePlaceholder: "Titel (optional)",
+    errors: {
+      hostDisconnected: "Host ist nicht verbunden",
+      createWorktreeFailed: "Worktree konnte nicht erstellt werden",
+      composerStateRequired: "Zustand des Eingabefelds erforderlich",
+      selectModel: "Wähle ein Modell aus",
+    },
+    tooltips: {
+      project: "Projekt auswählen",
+      host: "Host auswählen",
+      isolation: "Isolationsstufe auswählen",
+      startingRef: "Ausgangspunkt auswählen",
+      launch: "Auswählen, was gestartet werden soll",
+    },
+    refPicker: {
+      startingRef: "Ausgangsreferenz",
+      intoBase: "in {{baseRef}}",
+      searching: "Suche läuft...",
+      noMatchingRefs: "Keine passenden Referenzen.",
+      searchPlaceholder: "Branches und PRs suchen",
+      title: "Starten von",
+    },
+    launch: {
+      title: "Was soll gestartet werden?",
+      chat: "Chat",
+      terminal: "Terminal",
+      manageProfiles: "Profile verwalten",
+      submit: "Starten",
+      promptPlaceholder: "Prompt für {{name}}",
+      commandPlaceholder: "Befehl ausführen oder für ein leeres Terminal frei lassen",
+    },
+  },
+  desktop: {
+    windowControls: {
+      minimize: "Fenster minimieren",
+      maximize: "Fenster maximieren",
+      restore: "Fenster wiederherstellen",
+      close: "Fenster schließen",
+    },
+    quitting: {
+      title: "Paseo wird beendet...",
+      detail: "Lokaler Daemon wird gestoppt.",
+    },
+    daemon: {
+      title: "Daemon",
+      lifecycle: {
+        owned: "Von dieser Desktop-Sitzung gestartet",
+        attached: "Mit einem vorhandenen Daemon verbunden",
+        ownedMessage: "Dieser Daemon wurde von dieser Desktop-Sitzung gestartet.",
+        attachedMessage: "Dieser Daemon wurde nicht von dieser Desktop-Sitzung gestartet.",
+        stopTitle: "Lokalen Daemon stoppen?",
+        stopMessage:
+          "{{ownership}}\nHome: {{home}}\nSupervisor-PID: {{pid}}\nLaufende Agentenaufgaben werden unterbrochen.",
+        stop: "Daemon stoppen",
+        stopping: "Wird gestoppt…",
+        stopFailed: "Daemon konnte nicht gestoppt werden",
+        pauseAttached:
+          "Automatische Daemon-Verwaltung pausieren? Der verbundene Daemon läuft weiter.",
+        pause: "Verwaltung pausieren",
+        workerUpdated: "Worker auf {{version}} aktualisiert",
+        supervisorRefresh:
+          "Der laufende Supervisor behält seinen ursprünglichen Code bei. Sein Startprogramm muss ihn stoppen und erneut starten, um ihn zu aktualisieren.",
+      },
+      status: {
+        title: "Status",
+        builtInOnly: "Hier wird nur der integrierte Desktop-Daemon angezeigt",
+        running: "wird ausgeführt",
+        notRunning: "läuft nicht",
+        pid: "PID {{pid}}",
+      },
+      management: {
+        title: "Integrierten Daemon verwalten",
+        hint: "Paseo darf den integrierten Daemon starten und stoppen",
+        pauseTitle: "Integrierten Daemon pausieren",
+        pauseMessage:
+          "Der integrierte Daemon wird sofort gestoppt. Laufende Agenten und Terminals, die mit ihm verbunden sind, werden ebenfalls gestoppt.",
+        pauseAndStop: "Pausieren und stoppen",
+        registrationFailed:
+          "Der integrierte Daemon wurde gestartet, aber Paseo konnte die localhost-Verbindung nicht speichern. Schalte die Daemon-Verwaltung aus und wieder ein oder füge localhost manuell hinzu.",
+        pausedStopFailed:
+          "Die Verwaltung des integrierten Daemons wurde pausiert, aber Paseo konnte den Daemon nicht stoppen.",
+        updateFailed: "Verwaltung des integrierten Daemons konnte nicht aktualisiert werden.",
+      },
+      keepRunning: {
+        title: "Daemon nach dem Beenden weiterlaufen lassen",
+        hint: "Der Daemon läuft weiter, wenn du Paseo beendest",
+      },
+      logs: {
+        title: "Protokolldatei",
+        modalTitle: "Daemon-Protokolle",
+        unavailable: "Protokollpfad nicht verfügbar",
+        empty: "(Protokolldatei ist leer)",
+        copied: "Protokollpfad kopiert.",
+        copyFailed: "Protokollpfad konnte nicht kopiert werden.",
+        open: "Protokolle öffnen",
+        copyPath: "Pfad kopieren",
+      },
+      fullStatus: {
+        title: "Vollständiger Status",
+        modalTitle: "Daemon-Status",
+        hint: "Führt `paseo daemon status` aus und zeigt die Ausgabe",
+        view: "Status anzeigen",
+        copied: "Status in die Zwischenablage kopiert.",
+        fetchFailed: "Daemon-Status konnte nicht abgerufen werden: {{message}}",
+      },
+      advancedSettings: "Erweiterte Einstellungen",
+      openAdvancedSettings: "Erweiterte Daemon-Einstellungen öffnen",
+      versionMismatch:
+        "Die Versionen von App und Daemon stimmen nicht überein. Aktualisiere beide auf dieselbe Version, damit sie optimal zusammenarbeiten.",
+      loadFailed: "Status des Desktop-Daemons konnte nicht geladen werden.",
+    },
+    updates: {
+      status: {
+        checking: "App-Updates werden gesucht...",
+        installing: "App-Update wird installiert...",
+        upToDate: "Die App ist aktuell.",
+        upToDateWithLastChecked: "Aktuell. Zuletzt um {{time}} geprüft.",
+        pending: "Du wirst benachrichtigt, sobald das Update bereit ist.",
+        pendingWithLastChecked:
+          "Du wirst benachrichtigt, sobald das Update bereit ist. Zuletzt um {{time}} geprüft.",
+        pendingWithVersion: "Update gefunden: {{version}}. Wird heruntergeladen...",
+        pendingWithVersionAndLastChecked:
+          "Update gefunden: {{version}}. Wird heruntergeladen... Zuletzt um {{time}} geprüft.",
+        availableWithVersion: "Update bereit: {{version}}",
+        availableWithVersionAndLastChecked:
+          "Update bereit: {{version}}. Zuletzt um {{time}} geprüft.",
+        available: "Ein App-Update kann installiert werden.",
+        availableWithLastChecked:
+          "Ein App-Update kann installiert werden. Zuletzt um {{time}} geprüft.",
+        installed: "App-Update installiert. Neustart erforderlich.",
+        failed: "App konnte nicht aktualisiert werden.",
+        idle: "Update-Status wurde noch nicht geprüft.",
+      },
+      installError: "Update der Desktop-App konnte nicht installiert werden.",
+      callout: {
+        installingTitle: "Update wird installiert",
+        failedTitle: "Update fehlgeschlagen",
+        availableTitle: "Update verfügbar",
+        genericError: "Ein Fehler ist aufgetreten.",
+        whatsNew: "Neuigkeiten",
+        installingAction: "Wird installiert...",
+        installAndRestart: "Installieren und neu starten",
+        installingDescription: "Wird installiert und neu gestartet...",
+        versionReady: "{{version}} kann installiert werden.",
+        newVersionReady: "Eine neue Version kann installiert werden.",
+        restartWarning:
+          "Beim Aktualisieren der App werden laufende Agenten gestoppt und Terminalsitzungen geschlossen.",
+      },
+    },
+    settings: {
+      loadFailed: "Desktop-Einstellungen konnten nicht geladen werden.",
+      saveFailed: "Desktop-Einstellungen konnten nicht gespeichert werden.",
+    },
+    rosetta: {
+      title: "Version für Apple Silicon herunterladen",
+      runningIntel:
+        "Du nutzt die Intel-Version von Paseo über Rosetta auf einem Mac mit Apple Silicon.",
+      highCpu:
+        "Das verursacht eine hohe CPU-Auslastung. Lade die Version für Apple Silicon herunter, um das zu beheben.",
+      download: "Herunterladen",
+    },
+    permissions: {
+      notifications: {
+        allowed: "Benachrichtigungen sind vom Betriebssystem erlaubt.",
+        denied: "Benachrichtigungen sind in den Systemeinstellungen nicht erlaubt.",
+        notGranted: "Benachrichtigungen wurden noch nicht erlaubt.",
+        webOnly: "Der Status von Desktop-Benachrichtigungen ist nur in der Web-Laufzeit verfügbar.",
+        supported: "Desktop-Benachrichtigungen werden unterstützt.",
+        unsupported: "Desktop-Benachrichtigungen werden auf dieser Plattform nicht unterstützt.",
+        apiUnavailable: "Die Web Notification API ist in dieser Umgebung nicht verfügbar.",
+        requestsWebOnly:
+          "Desktop-Benachrichtigungen können nur in der Web-Laufzeit angefordert werden.",
+        requestUnavailable: "requestPermission() der Web Notification API ist nicht verfügbar.",
+        requestFailed:
+          "Berechtigung für Benachrichtigungen konnte nicht angefordert werden: {{message}}",
+        unexpectedState: "Unerwarteter Berechtigungsstatus für Benachrichtigungen: {{state}}",
+      },
+      microphone: {
+        webOnly: "Der Status des Desktop-Mikrofons ist nur in der Web-Laufzeit verfügbar.",
+        navigatorUnavailable: "Navigator ist in dieser Umgebung nicht verfügbar.",
+        granted: "Mikrofonzugriff ist erlaubt.",
+        denied: "Mikrofonzugriff ist in den Systemeinstellungen nicht erlaubt.",
+        notGranted: "Mikrofonzugriff wurde noch nicht erlaubt.",
+        unexpectedState: "Unerwarteter Berechtigungsstatus für das Mikrofon: {{state}}",
+        statusApiUnavailable:
+          "Die API für den Mikrofonstatus ist in dieser Laufzeit nicht verfügbar. Wähle „Anfordern“, um den Zugriff zu prüfen.",
+        queryFailed: "Mikrofonstatus konnte nicht abgefragt werden: {{message}}",
+        captureUnavailable: "Mikrofonaufnahme ist in dieser Umgebung nicht verfügbar.",
+        permissionApiUnavailable:
+          "Die API für den Berechtigungsstatus ist nicht verfügbar. Wähle „Anfordern“, um den Zugriff zu prüfen.",
+        requestsWebOnly: "Desktop-Mikrofonzugriff kann nur in der Web-Laufzeit angefordert werden.",
+        captureApiUnavailable:
+          "Die API für Mikrofonaufnahmen ist in dieser Umgebung nicht verfügbar.",
+        requestDenied: "Mikrofonzugriff wurde vom Benutzer oder vom System verweigert.",
+        noDevice: "Kein Mikrofon gefunden.",
+        requestFailed: "Mikrofonberechtigung konnte nicht angefordert werden: {{message}}",
+      },
+      empty: {
+        notifications: "Benachrichtigungsstatus wurde noch nicht geprüft.",
+        microphone: "Mikrofonstatus wurde noch nicht geprüft.",
+      },
+      testNotification: {
+        title: "Paseo-Testbenachrichtigung",
+        body: "Wenn du das siehst, funktionieren Desktop-Benachrichtigungen.",
+        notDelivered:
+          "Benachrichtigung wurde nicht zugestellt. Prüfe Systemeinstellungen > Benachrichtigungen.",
+        failed: "Benachrichtigung konnte nicht gesendet werden.",
+      },
+    },
+    integrations: {
+      cli: {
+        statusFailed: "CLI-Installationsstatus konnte nicht geprüft werden.",
+        installFailed: "Paseo-CLI konnte nicht installiert werden.",
+      },
+    },
+  },
+  rootError: {
+    title: "In Paseo ist ein Problem aufgetreten.",
+    body:
+      "Versuche es erneut, um die App neu zu laden. Falls das Problem weiterhin auftritt, füge deiner Fehlermeldung die folgenden Details bei.",
+    details: "Details",
+  },
+  startup: {
+    errorTitle: "Ein Fehler ist aufgetreten",
+    errorDescription:
+      "Der lokale Server konnte nicht gestartet werden. Falls das Problem weiterhin auftritt, melde es auf GitHub und füge die folgenden Protokolle bei.",
+    logs: {
+      loading: "Daemon-Protokolle werden geladen...",
+      unavailable: "Keine Daemon-Protokolle verfügbar.",
+      loadFailed: "Daemon-Protokolle konnten nicht geladen werden: {{message}}",
+    },
+  },
+  openProject: {
+    tiles: {
+      addProject: {
+        title: "Projekt hinzufügen",
+        description: "Ordner auf deinem Computer öffnen",
+      },
+      importSession: {
+        title: "Sitzung importieren",
+        description:
+          "Öffne eine Sitzung von Claude Code, Codex oder einem anderen Agenten, die du in einem Terminal gestartet hast",
+      },
+      setupProviders: {
+        title: "Anbieter einrichten",
+        description: "Claude Code, Codex und weitere Anbieter konfigurieren",
+      },
+      pairDevice: {
+        title: "Gerät koppeln",
+        description: "Verbinde dein Smartphone mit diesem Daemon",
+      },
+    },
+  },
+  projectPicker: {
+    placeholder: "Zum Suchen tippen...",
+    browse: "Durchsuchen…",
+    opening: "Projekt wird geöffnet...",
+    searching: "Suche läuft...",
+    empty: "Gib einen Pfad ein",
+    errors: {
+      directory_not_found: "Verzeichnis nicht gefunden.",
+      open_failed: "Projekt konnte nicht geöffnet werden.",
+    },
+    openPath: "Pfad öffnen",
+  },
+  branchSwitcher: {
+    triggerTooltip: "Branch des Arbeitsbereichs wechseln",
+    currentBranch: "Aktueller Branch: {{branchName}}. Zum Wechseln drücken.",
+    placeholder: "Branch wechseln...",
+    searchPlaceholder: "Branches filtern...",
+    empty: "Keine Branches gefunden.",
+    title: "Branch wechseln",
+    uncommittedTitle: "Nicht committete Änderungen",
+    uncommittedMessage:
+      "Du hast nicht committete Änderungen. Vor dem Branch-Wechsel im Stash sichern?",
+    stashAndSwitch: "Im Stash sichern und wechseln",
+    failedToStash: "Änderungen konnten nicht im Stash gesichert werden",
+    failedToSwitch: "Branch konnte nicht gewechselt werden",
+    restoreStashTitle: "Änderungen aus dem Stash wiederherstellen?",
+    restoreStashMessage:
+      "Dieser Branch enthält Änderungen aus einer vorherigen Sitzung im Stash. Möchtest du sie wiederherstellen?",
+    restore: "Wiederherstellen",
+    later: "Später",
+    stashRestored: "Änderungen aus dem Stash wiederhergestellt",
+  },
+  agentAutocomplete: {
+    searchingWorkspace: "Arbeitsbereich wird durchsucht...",
+    loadingCommands: "Befehle werden geladen...",
+    noFiles: "Keine Dateien oder Verzeichnisse gefunden",
+    noCommands: "Keine Befehle gefunden",
+    failedToLoad: "Laden fehlgeschlagen",
+  },
+  loadOlderHistory: {
+    failed: "Älterer Verlauf konnte nicht geladen werden",
+  },
+  imageAttachmentPicker: {
+    permissionTitle: "Berechtigung erforderlich",
+    permissionMessage: "Erlaube den Zugriff auf deine Fotomediathek, um Bilder anzuhängen.",
+    errorTitle: "Fehler",
+    failedToSelect: "Bild konnte nicht ausgewählt werden",
+    dialogTitle: "Bilder anhängen",
+    dialogFilterName: "Bilder",
+  },
+  workspaceSetup: {
+    title: "Arbeitsbereich erstellen",
+    errors: {
+      failedCreateWorktree: "Worktree konnte nicht erstellt werden",
+      failedOpenProject: "Projekt konnte nicht geöffnet werden",
+      selectModel: "Wähle ein Modell aus",
+      hostDisconnected: "Host ist nicht verbunden",
+      pendingRequired: "Keine Einrichtung eines Arbeitsbereichs ausstehend",
+      composerStateRequired:
+        "Zustand des Eingabefelds zur Einrichtung des Arbeitsbereichs erforderlich",
+    },
+  },
+  onboarding: {
+    title: "Willkommen bei Paseo",
+    subtitle: "Verbinde deinen Computer, um loszulegen",
+    actions: {
+      settings: "Einstellungen",
+    },
+  },
+  modelSelector: {
+    title: "Anbieter auswählen",
+    selectModel: "Modell auswählen",
+    selectedModel: "Modell auswählen ({{model}})",
+    loading: "Wird geladen...",
+    loadingShort: "Wird geladen",
+    loadingSelector: "Modellauswahl wird geladen...",
+    error: "Fehler",
+    defaultModel: "Standard",
+    profiles: "Profile",
+    providers: "Anbieter",
+    model: "Modell",
+    editProfiles: "Bearbeiten",
+    editProfilesLabel: "Agentenprofile bearbeiten",
+    createProfile: "Profil erstellen",
+    createProfileFromModel: "Profil aus diesem Modell erstellen",
+    editProfileLabel: "{{name}} bearbeiten",
+    editProfilesCount: "Profile bearbeiten ({{count}})",
+    modelCount: "{{count}} Modell",
+    modelCountPlural: "{{count}} Modelle",
+    retry: "Erneut versuchen",
+    retrying: "Erneuter Versuch...",
+    noMatches: "Keine Modelle entsprechen deiner Suche",
+    noMatchesForQuery: "Keine Modelle entsprechen „{{query}}“",
+    searchAllPlaceholder: "Alle Modelle suchen...",
+    searchPlaceholder: "Modelle suchen...",
+    openProviderSettings: "Einstellungen für {{provider}} öffnen",
+  },
+  providerCatalog: {
+    title: "Anbieter hinzufügen",
+    search: "Anbieter suchen",
+    noProviders: "Keine Anbieter gefunden",
