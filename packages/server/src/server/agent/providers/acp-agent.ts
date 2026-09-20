@@ -3809,7 +3809,10 @@ function extractACPQuestionForm(
       // The client question form requires a non-empty header per question.
       header: readString(question, ["header"]) ?? `Question ${index + 1}`,
       options,
-      multiSelect: question.multiSelect === true,
+      // ACP permission responses carry a single optionId, so a multi-select
+      // answer can never be returned in full. Render single-select to keep
+      // every offered selection answerable.
+      multiSelect: false,
     });
   }
   return filterToAnswerableQuestions(questions, params.options);

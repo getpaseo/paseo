@@ -211,6 +211,16 @@ function createSessionWithConfig(
   );
 }
 
+function findPermissionRequest(
+  events: AgentStreamEvent[],
+): Extract<AgentStreamEvent, { type: "permission_requested" }> {
+  const requested = events.find((event) => event.type === "permission_requested");
+  if (requested?.type !== "permission_requested") {
+    throw new Error("Expected permission request");
+  }
+  return requested;
+}
+
 function createKiroSession(
   options: { waitForInitialCommands?: boolean; initialCommandsWaitTimeoutMs?: number } = {},
   logger: ReturnType<typeof createTestLogger> = createTestLogger(),
@@ -1277,7 +1287,7 @@ describe("ACPAgentSession Zed parity", () => {
 
     await Promise.resolve();
 
-    const requested = events.find((event) => event.type === "permission_requested");
+    const requested = findPermissionRequest(events);
     expect(requested).toMatchObject({
       type: "permission_requested",
       request: {
@@ -1297,13 +1307,69 @@ describe("ACPAgentSession Zed parity", () => {
         },
       },
     });
-    if (requested?.type !== "permission_requested") {
-      throw new Error("Expected permission request");
-    }
 
     await session.respondToPermission(requested.request.id, {
       behavior: "allow",
       updatedInput: { answers: { Approach: "Protocol fix" } },
+    });
+
+    await expect(permission).resolves.toEqual({
+      outcome: { outcome: "selected", optionId: "q0_opt_1" },
+    });
+  });
+
+  test("renders multi-select questions as single-select", async () => {
+    const session = createSessionWithConfig({
+      provider: "kimi-acp",
+      modeId: "https://agentclientprotocol.com/protocol/session-modes#agent",
+    });
+    const events: AgentStreamEvent[] = [];
+
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    session.subscribe((event) => events.push(event));
+
+    // ACP permission responses carry a single optionId, so multi-select answers
+    // could never be returned in full; the form must offer single-select only.
+    const permission = session.requestPermission({
+      sessionId: "session-1",
+      toolCall: {
+        toolCallId: "question-1",
+        title: "AskUserQuestion",
+        status: "pending",
+        rawInput: {
+          questions: [
+            {
+              question: "Which features?",
+              header: "Features",
+              options: [{ label: "Autocomplete" }, { label: "Refactor" }],
+              multiSelect: true,
+            },
+          ],
+        },
+      },
+      options: [
+        { optionId: "q0_opt_0", name: "Autocomplete", kind: "allow_once" },
+        { optionId: "q0_opt_1", name: "Refactor", kind: "allow_once" },
+        { optionId: "q0_skip", name: "Skip", kind: "reject_once" },
+      ],
+    } satisfies RequestPermissionRequest);
+
+    await Promise.resolve();
+
+    const requested = findPermissionRequest(events);
+    expect(requested).toMatchObject({
+      type: "permission_requested",
+      request: {
+        kind: "question",
+        input: {
+          questions: [{ question: "Which features?", multiSelect: false }],
+        },
+      },
+    });
+
+    await session.respondToPermission(requested.request.id, {
+      behavior: "allow",
+      updatedInput: { answers: { Features: "Refactor" } },
     });
 
     await expect(permission).resolves.toEqual({
@@ -1353,7 +1419,7 @@ describe("ACPAgentSession Zed parity", () => {
 
     await Promise.resolve();
 
-    const requested = events.find((event) => event.type === "permission_requested");
+    const requested = findPermissionRequest(events);
     expect(requested).toMatchObject({
       type: "permission_requested",
       request: {
@@ -1363,9 +1429,6 @@ describe("ACPAgentSession Zed parity", () => {
         },
       },
     });
-    if (requested?.type !== "permission_requested") {
-      throw new Error("Expected permission request");
-    }
     const input = requested.request.input as { questions: unknown[] };
     expect(input.questions).toHaveLength(1);
 
@@ -1413,7 +1476,7 @@ describe("ACPAgentSession Zed parity", () => {
 
     await Promise.resolve();
 
-    const requested = events.find((event) => event.type === "permission_requested");
+    const requested = findPermissionRequest(events);
     // A missing rawInput header falls back to a generated one so the client form parses.
     expect(requested).toMatchObject({
       type: "permission_requested",
@@ -1424,9 +1487,6 @@ describe("ACPAgentSession Zed parity", () => {
         },
       },
     });
-    if (requested?.type !== "permission_requested") {
-      throw new Error("Expected permission request");
-    }
 
     await session.respondToPermission(requested.request.id, {
       behavior: "deny",
@@ -1470,14 +1530,11 @@ describe("ACPAgentSession Zed parity", () => {
 
     await Promise.resolve();
 
-    const requested = events.find((event) => event.type === "permission_requested");
+    const requested = findPermissionRequest(events);
     expect(requested).toMatchObject({
       type: "permission_requested",
       request: { kind: "question" },
     });
-    if (requested?.type !== "permission_requested") {
-      throw new Error("Expected permission request");
-    }
 
     await session.respondToPermission(requested.request.id, {
       behavior: "allow",
