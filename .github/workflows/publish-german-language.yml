@@ -73,6 +73,11 @@ jobs:
           console.log(dependencies);
           JS
           (cd "$TOOLS" && npm install --workspaces=false --legacy-peer-deps --ignore-scripts --no-audit --no-fund)
+          EXPO_VERSION=$(node -p "require('./package-lock.json').packages['node_modules/expo'].version")
+          (cd "$TOOLS" && npm pack "expo@$EXPO_VERSION" --ignore-scripts --json > expo-pack.json)
+          EXPO_ARCHIVE=$(node -p "require('$TOOLS/expo-pack.json')[0].filename")
+          mkdir -p "$TOOLS/node_modules/expo"
+          tar -xzf "$TOOLS/$EXPO_ARCHIVE" -C "$TOOLS/node_modules/expo" --strip-components=1 package/package.json package/tsconfig.base.json
           ln -s "$TOOLS/node_modules" node_modules
           echo "$TOOLS/node_modules/.bin" >> "$GITHUB_PATH"
       - name: Format the changed files using the repository script
@@ -98,10 +103,7 @@ jobs:
         run: |
           set -euo pipefail
           cat > "$RUNNER_TEMP/german-vitest.config.mjs" <<'JS'
-          export default {
-            esbuild: { tsconfigRaw: { compilerOptions: { target: 'ES2022' } } },
-            test: { environment: 'node', maxWorkers: 1 },
-          };
+          export default { test: { environment: 'node', maxWorkers: 1 } };
           JS
           npx --no-install vitest run packages/app/src/i18n/locales.test.ts packages/app/src/i18n/resources.test.ts --bail=1 --config "$RUNNER_TEMP/german-vitest.config.mjs"
       - name: Publish only the 17 intended files to the feature branch
