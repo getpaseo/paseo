@@ -2126,6 +2126,7 @@ function ComposerContentImpl({
       };
     },
     [agentId, contextWindowMeter, hasAgent, isCompactLayout, serverId],
+  );
 
   const hasGithubAttachment = useMemo(
     () =>
