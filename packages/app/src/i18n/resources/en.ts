@@ -2187,6 +2187,7 @@ export const en = {
         options: {
           system: "System",
           ar: "Arabic",
+          de: "German",
           en: "English",
           es: "Spanish",
           fr: "French",

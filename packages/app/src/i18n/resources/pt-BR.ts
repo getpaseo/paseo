@@ -2107,6 +2107,7 @@ export const ptBR: TranslationResources = {
           fr: "Francês",
           ja: "Japonês",
           ko: "Coreano",
+          de: "Alemão",
           ptBR: "Português brasileiro",
           ru: "Russo",
           zhCN: "Chinês simplificado",

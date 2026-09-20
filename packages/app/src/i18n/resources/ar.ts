@@ -2072,6 +2072,7 @@ export const ar: TranslationResources = {
           fr: "Français",
           ja: "日本語",
           ko: "한국어",
+          de: "الألمانية",
           ptBR: "Português brasileiro",
           ru: "Русский",
           zhCN: "中文",
