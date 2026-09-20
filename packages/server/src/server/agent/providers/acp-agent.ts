@@ -163,13 +163,13 @@ const RETRIABLE_HTTP2_CANCEL =
   /\[canceled\].*http\/2 stream closed with error code CANCEL \(0x8\)/i;
 
 /** CANCEL (0x8) replay: handshake/read-only/resume vs session create and other mutations. */
-export type AcpCancelReplay = "safe" | "never";
+type AcpCancelReplay = "safe" | "never";
 
-export function isRetriableAcpStreamCancel(error: unknown): boolean {
+function isRetriableAcpStreamCancel(error: unknown): boolean {
   return RETRIABLE_HTTP2_CANCEL.test(toDiagnosticErrorMessage(error));
 }
 
-export function shouldReplayCanceledAcpRequest(input: {
+function shouldReplayCanceledAcpRequest(input: {
   error: unknown;
   replay: AcpCancelReplay;
   observedRemoteWork?: boolean;

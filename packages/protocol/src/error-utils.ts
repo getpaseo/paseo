@@ -58,11 +58,9 @@ function serializeUnknownErrorJson(error: unknown): string | null {
     }
     return null;
   } catch (serializationError) {
-    // Cycles and throwing toJSON fail here; try String() next.
-    if (serializationError instanceof Error || typeof serializationError === "string") {
-      return null;
-    }
-    return "Unknown error";
+    // Cycles and throwing toJSON fail here; try String() next regardless of throw shape.
+    void serializationError;
+    return null;
   }
 }
 

@@ -30,6 +30,20 @@ describe("getErrorMessage", () => {
     expect(getErrorMessage({})).toBe("Unknown error");
   });
 
+  it("uses toString when toJSON throws a non-Error", () => {
+    const thrown = {
+      toJSON() {
+        throw { reason: "not an Error" };
+      },
+      toString() {
+        return "useful diagnostic from toString";
+      },
+    };
+    expect(() => getErrorMessage(thrown)).not.toThrow();
+    expect(getErrorMessage(thrown)).toBe("useful diagnostic from toString");
+    expect(getErrorMessageOr(thrown, "fallback")).toBe("useful diagnostic from toString");
+  });
+
   it("never throws when toJSON or primitive coercion throws", () => {
     const throwingToJson = {
       toJSON() {

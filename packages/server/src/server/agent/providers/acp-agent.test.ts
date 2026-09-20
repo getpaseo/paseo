@@ -27,8 +27,6 @@ import {
   mapACPUsage,
   resolveACPModeSelection,
   resolveACPModelSelection,
-  isRetriableAcpStreamCancel,
-  shouldReplayCanceledAcpRequest,
   summarizeACPRequestError,
 } from "./acp-agent.js";
 import type { ProcessTerminator, TreeKillTarget } from "../../../utils/tree-kill.js";
@@ -128,6 +126,14 @@ interface ACPConfiguredOverrideInternals {
   currentMode: string | null;
   currentModel: string | null;
   applyConfiguredOverrides(): Promise<void>;
+}
+
+function createAcpCancelError(): Error {
+  const error = new Error(
+    "RetriableError: [canceled] http/2 stream closed with error code CANCEL (0x8)",
+  );
+  error.name = "RetriableError";
+  return error;
 }
 
 function createSession(terminateProcess?: ProcessTerminator): ACPAgentSession {
@@ -2015,6 +2021,37 @@ describe("ACPAgentClient config features", () => {
       }),
     ]);
   });
+
+  test("does not retry session/new after an http/2 CANCEL stream close", async () => {
+    const newSession = vi.fn().mockRejectedValue(createAcpCancelError());
+
+    class TestACPAgentClient extends ACPAgentClient {
+      protected override async spawnProcess(): Promise<SpawnedACPProcess> {
+        return {
+          child: { kill: vi.fn(), exitCode: 0, signalCode: null, once: vi.fn() },
+          connection: { newSession },
+          initialize: { agentCapabilities: {} },
+        } as SpawnedACPProcess;
+      }
+
+      protected override async closeProbe(): Promise<void> {}
+    }
+
+    const client = new TestACPAgentClient({
+      provider: "copilot",
+      logger: createTestLogger(),
+      defaultCommand: ["copilot", "--acp"],
+      configFeatureOptions: [COPILOT_AGENT_FEATURE_OPTION],
+    });
+
+    await expect(
+      client.listFeatures({
+        provider: "copilot",
+        cwd: "/tmp/acp-features",
+      }),
+    ).rejects.toThrow(/CANCEL \(0x8\)/);
+    expect(newSession).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("ACPAgentClient sessionResponseTransformer", () => {
@@ -2250,6 +2287,27 @@ describe("ACPAgentClient listImportableSessions", () => {
       cwd: "/Users/moonshot",
     });
   });
+
+  test("retries session/list once after an http/2 CANCEL stream close", async () => {
+    const listSessions = vi
+      .fn()
+      .mockRejectedValueOnce(createAcpCancelError())
+      .mockResolvedValueOnce({ sessions: [], nextCursor: null });
+    const client = makeClient({ listSessions });
+
+    await expect(client.listImportableSessions({ limit: 20 })).resolves.toEqual([]);
+    expect(listSessions).toHaveBeenCalledTimes(2);
+  });
+
+  test("does not retry session/list after a non-CANCEL failure", async () => {
+    const listSessions = vi.fn().mockRejectedValue(new Error("Authentication failed"));
+    const client = makeClient({ listSessions });
+
+    await expect(client.listImportableSessions({ limit: 20 })).rejects.toThrow(
+      "Authentication failed",
+    );
+    expect(listSessions).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("ACP providers advertise session listing", () => {
@@ -2468,13 +2526,9 @@ describe("ACPAgentSession", () => {
 
   test("retries an ACP prompt once after an http/2 CANCEL stream close", async () => {
     const session = createSession();
-    const cancelError = new Error(
-      "RetriableError: [canceled] http/2 stream closed with error code CANCEL (0x8)",
-    );
-    cancelError.name = "RetriableError";
     const prompt = vi
       .fn()
-      .mockRejectedValueOnce(cancelError)
+      .mockRejectedValueOnce(createAcpCancelError())
       .mockResolvedValueOnce({ stopReason: "end_turn" });
 
     asInternals<ACPSessionInternals>(session).sessionId = "session-1";
@@ -2497,10 +2551,6 @@ describe("ACPAgentSession", () => {
 
   test("does not retry an ACP prompt after CANCEL once the remote has started work", async () => {
     const session = createSession();
-    const cancelError = new Error(
-      "RetriableError: [canceled] http/2 stream closed with error code CANCEL (0x8)",
-    );
-    cancelError.name = "RetriableError";
     let rejectFirst!: (error: Error) => void;
     const prompt = vi.fn(
       () =>
@@ -2531,39 +2581,34 @@ describe("ACPAgentSession", () => {
         content: { type: "text", text: "Working" },
       } as SessionUpdate,
     });
-    rejectFirst(cancelError);
+    rejectFirst(createAcpCancelError());
     await expect(turnFailed).resolves.toMatchObject({ type: "turn_failed" });
     expect(prompt).toHaveBeenCalledTimes(1);
   });
 
-  test("detects Cursor http/2 CANCEL stream closures as retriable", () => {
-    expect(
-      isRetriableAcpStreamCancel(
-        new Error("RetriableError: [canceled] http/2 stream closed with error code CANCEL (0x8)"),
-      ),
-    ).toBe(true);
-    expect(isRetriableAcpStreamCancel(new Error("Authentication failed"))).toBe(false);
-  });
+  test("does not retry an ACP prompt after a non-CANCEL failure", async () => {
+    const session = createSession();
+    const prompt = vi.fn().mockRejectedValue(new Error("Authentication failed"));
 
-  test("limits CANCEL replay to replay-safe ACP operations", () => {
-    const cancel = new Error(
-      "RetriableError: [canceled] http/2 stream closed with error code CANCEL (0x8)",
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    asInternals<ACPSessionInternals>(session).connection = { prompt };
+
+    const turnFailed = new Promise<Extract<AgentStreamEvent, { type: "turn_failed" }>>(
+      (resolve) => {
+        session.subscribe((event) => {
+          if (event.type === "turn_failed") {
+            resolve(event);
+          }
+        });
+      },
     );
-    expect(shouldReplayCanceledAcpRequest({ error: cancel, replay: "safe" })).toBe(true);
-    expect(shouldReplayCanceledAcpRequest({ error: cancel, replay: "never" })).toBe(false);
-    expect(
-      shouldReplayCanceledAcpRequest({
-        error: cancel,
-        replay: "safe",
-        observedRemoteWork: true,
-      }),
-    ).toBe(false);
-    expect(
-      shouldReplayCanceledAcpRequest({
-        error: new Error("Authentication failed"),
-        replay: "safe",
-      }),
-    ).toBe(false);
+
+    await session.startTurn("hello");
+    await expect(turnFailed).resolves.toMatchObject({
+      type: "turn_failed",
+      error: "Authentication failed",
+    });
+    expect(prompt).toHaveBeenCalledTimes(1);
   });
 
   test("summarizes JSON-RPC error details without stringifying objects", () => {
