@@ -1621,7 +1621,7 @@ describe("ScheduleService", () => {
     expect(storedAgent?.archivedAt).toBeTruthy();
   });
 
-  test("records prompt-start failures as failed and archives the scheduled agent", async () => {
+  test("records prompt-start failures as failed and keeps the scheduled agent inspectable", async () => {
     class StartFailureScheduleSession implements AgentSession {
       readonly provider = "claude";
       readonly capabilities = SCHEDULE_TEST_CAPABILITIES;
@@ -1731,9 +1731,7 @@ describe("ScheduleService", () => {
     const storedAgents = await agentStorage.list();
     expect(storedAgents).toHaveLength(1);
     expect(inspected.runs[0]?.agentId).toBe(storedAgents[0]?.id);
-    expect(storedAgents[0]).toMatchObject({
-      archivedAt: expect.any(String),
-    });
+    expect(storedAgents[0]?.archivedAt ?? null).toBeNull();
   });
 
   test("defaults new-agent modeId to provider's unattended mode", async () => {

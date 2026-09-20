@@ -166,23 +166,19 @@ export function isRetriableAcpStreamCancel(error: unknown): boolean {
   return RETRIABLE_HTTP2_CANCEL.test(toDiagnosticErrorMessage(error));
 }
 
-async function runAcpRequestWithCancelRetry<T>(
+function runAcpRequestWithCancelRetry<T>(
   request: () => Promise<T>,
   onRetry?: (error: unknown) => void,
 ): Promise<T> {
-  try {
-    return await request();
-  } catch (error) {
+  return request().catch((error) => {
     if (!isRetriableAcpStreamCancel(error)) {
       throw toACPRequestError(error);
     }
     onRetry?.(error);
-    try {
-      return await request();
-    } catch (retryError) {
+    return request().catch((retryError: unknown) => {
       throw toACPRequestError(retryError);
-    }
-  }
+    });
+  });
 }
 
 export function summarizeACPRequestError(error: unknown): {
@@ -1882,25 +1878,43 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.pushEvent({ type: "turn_started", provider: this.provider, turnId });
     this.emitSubmittedUserMessage(prompt, messageId, turnId, options?.clientMessageId);
 
-    void this.promptWithCancelRetry({
-      sessionId: this.sessionId,
+    const connection = this.connection;
+    const sessionId = this.sessionId;
+    const promptParams = {
+      sessionId,
       messageId,
       prompt: toACPContentBlocks(prompt),
-    })
+    };
+    const failTurn = (error: unknown): void => {
+      const summary = summarizeACPRequestError(error);
+      this.finishTurn({
+        type: "turn_failed",
+        provider: this.provider,
+        error: summary.message,
+        code: summary.code,
+        diagnostic: this.collectDiagnostic(summary.diagnostic ?? summary.message),
+        turnId,
+      });
+    };
+    void connection
+      .prompt(promptParams)
       .then((response) => {
         this.handlePromptResponse(response, turnId);
         return;
       })
       .catch((error) => {
-        const summary = summarizeACPRequestError(error);
-        this.finishTurn({
-          type: "turn_failed",
-          provider: this.provider,
-          error: summary.message,
-          code: summary.code,
-          diagnostic: this.collectDiagnostic(summary.diagnostic ?? summary.message),
-          turnId,
-        });
+        if (!isRetriableAcpStreamCancel(error)) {
+          failTurn(error);
+          return;
+        }
+        this.logger.warn(
+          { err: error, provider: this.provider, sessionId },
+          "ACP prompt stream canceled; retrying once",
+        );
+        return connection.prompt(promptParams).then((response) => {
+            this.handlePromptResponse(response, turnId);
+            return;
+          }, failTurn);
       });
 
     return { turnId };
@@ -2787,26 +2801,6 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     );
 
     return { child, connection, initialize };
-  }
-
-  private async promptWithCancelRetry(params: {
-    sessionId: string;
-    messageId: string;
-    prompt: ContentBlock[];
-  }): Promise<PromptResponse> {
-    const connection = this.connection;
-    if (!connection) {
-      throw new Error(`${this.provider} session is not initialized`);
-    }
-    return runAcpRequestWithCancelRetry(
-      () => connection.prompt(params),
-      (error) => {
-        this.logger.warn(
-          { err: error, provider: this.provider, sessionId: params.sessionId },
-          "ACP prompt stream canceled; retrying once",
-        );
-      },
-    );
   }
 
   private async runACPRequest<T>(request: () => Promise<T>): Promise<T> {
