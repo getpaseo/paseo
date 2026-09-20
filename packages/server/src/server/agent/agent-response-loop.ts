@@ -1,6 +1,6 @@
 import { z } from "zod";
 import Ajv, { type ErrorObject, type Options as AjvOptions } from "ajv";
-import { getErrorMessage } from "../../../../protocol/src/error-utils.js";
+import { getErrorMessage } from "@getpaseo/protocol/error-utils";
 import type { AgentProvider, AgentSessionConfig } from "./agent-sdk-types.js";
 import type { AgentManager } from "./agent-manager.js";
 
