@@ -69,10 +69,10 @@ jobs:
             if (!info?.version) throw new Error('Missing lockfile version: ' + name);
             return [name, info.version];
           }));
-          fs.writeFileSync(path.join(process.env.RUNNER_TEMP, 'german-tools/package.json'), JSON.stringify({private:true, dependencies}));
+          fs.writeFileSync(path.join(process.env.RUNNER_TEMP, 'german-tools/package.json'), JSON.stringify({name:'paseo-german-verification',version:'1.0.0',private:true, dependencies}));
           console.log(dependencies);
           JS
-          npm install --prefix "$TOOLS" --ignore-scripts --no-audit --no-fund
+          (cd "$TOOLS" && npm install --workspaces=false --legacy-peer-deps --ignore-scripts --no-audit --no-fund)
           ln -s "$TOOLS/node_modules" node_modules
           echo "$TOOLS/node_modules/.bin" >> "$GITHUB_PATH"
       - name: Format the changed files using the repository script
