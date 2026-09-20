@@ -28,6 +28,7 @@ import type {
   UpdateScheduleNewAgentConfig,
 } from "@getpaseo/protocol/schedule/types";
 import type { FirstAgentContext } from "@getpaseo/protocol/messages";
+import { getErrorMessage } from "@getpaseo/protocol/error-utils";
 
 const SCHEDULE_TICK_INTERVAL_MS = 1000;
 
@@ -133,7 +134,11 @@ function countCompletedRuns(schedule: StoredSchedule): number {
 function shouldArchiveScheduleRunWorkspace(input: {
   agentId: string | null;
   archiveOnFinish?: boolean;
+  failed?: boolean;
 }): boolean {
+  if (input.failed && input.agentId !== null) {
+    return false;
+  }
   return input.agentId === null || (input.archiveOnFinish ?? true);
 }
 
@@ -726,7 +731,7 @@ export class ScheduleService {
         status: "failed",
         agentId: null,
         output: null,
-        error: error instanceof Error ? error.message : String(error),
+        error: getErrorMessage(error),
         targetGone: error instanceof ScheduleTargetGoneError,
         manual,
       });
@@ -838,46 +843,62 @@ export class ScheduleService {
     runId: string,
   ): Promise<ScheduleExecutionResult> {
     if (schedule.target.type === "agent") {
-      const wrappedPrompt = formatSystemNotificationPrompt(buildScheduleFireBody(schedule, runId));
-      const record = await this.agentStorage.get(schedule.target.agentId);
-      if (!record) {
-        throw new ScheduleTargetGoneError(`Agent ${schedule.target.agentId} no longer exists`);
-      }
-      if (record.archivedAt) {
-        throw new ScheduleTargetGoneError(`Agent ${schedule.target.agentId} is archived`);
-      }
+      return this.executeAgentTargetSchedule(schedule, runId);
+    }
+    return this.executeNewAgentSchedule(schedule, runId);
+  }
 
-      const agent = await ensureAgentLoaded(schedule.target.agentId, {
-        agentManager: this.agentManager,
-        agentStorage: this.agentStorage,
-        logger: this.logger,
-      });
-      if (this.agentManager.hasInFlightRun(agent.id)) {
-        throw new Error(`Agent ${agent.id} already has an active run`);
-      }
-      await startAgentRun(this.agentManager, agent.id, wrappedPrompt, this.logger, {
-        replaceRunning: true,
-        activeTurnBehavior: "steer",
-      });
-      const waitResult = await this.agentManager.waitForAgentEvent(agent.id, {
-        waitForActive: true,
-      });
-      if (waitResult.permission) {
-        throw new Error(`Scheduled agent ${agent.id} is waiting for permission`);
-      }
-      if (waitResult.status === "error") {
-        throw new Error(waitResult.lastMessage ?? `Scheduled agent ${agent.id} failed`);
-      }
-      return {
-        agentId: agent.id,
-        output: buildRunOutput({
-          output: null,
-          timelineText: "",
-          finalText: waitResult.lastMessage ?? "",
-        }),
-      };
+  private async executeAgentTargetSchedule(
+    schedule: StoredSchedule,
+    runId: string,
+  ): Promise<ScheduleExecutionResult> {
+    if (schedule.target.type !== "agent") {
+      throw new Error(`Schedule ${schedule.id} target changed during execution`);
+    }
+    const wrappedPrompt = formatSystemNotificationPrompt(buildScheduleFireBody(schedule, runId));
+    const record = await this.agentStorage.get(schedule.target.agentId);
+    if (!record) {
+      throw new ScheduleTargetGoneError(`Agent ${schedule.target.agentId} no longer exists`);
+    }
+    if (record.archivedAt) {
+      throw new ScheduleTargetGoneError(`Agent ${schedule.target.agentId} is archived`);
     }
 
+    const agent = await ensureAgentLoaded(schedule.target.agentId, {
+      agentManager: this.agentManager,
+      agentStorage: this.agentStorage,
+      logger: this.logger,
+    });
+    if (this.agentManager.hasInFlightRun(agent.id)) {
+      throw new Error(`Agent ${agent.id} already has an active run`);
+    }
+    await startAgentRun(this.agentManager, agent.id, wrappedPrompt, this.logger, {
+      replaceRunning: true,
+      activeTurnBehavior: "steer",
+    });
+    const waitResult = await this.agentManager.waitForAgentEvent(agent.id, {
+      waitForActive: true,
+    });
+    if (waitResult.permission) {
+      throw new Error(`Scheduled agent ${agent.id} is waiting for permission`);
+    }
+    if (waitResult.status === "error") {
+      throw new Error(waitResult.lastMessage ?? `Scheduled agent ${agent.id} failed`);
+    }
+    return {
+      agentId: agent.id,
+      output: buildRunOutput({
+        output: null,
+        timelineText: "",
+        finalText: waitResult.lastMessage ?? "",
+      }),
+    };
+  }
+
+  private async executeNewAgentSchedule(
+    schedule: StoredSchedule,
+    runId: string,
+  ): Promise<ScheduleExecutionResult> {
     const config = schedule.target.type === "new-agent" ? schedule.target.config : null;
     if (!config) {
       throw new Error(`Schedule ${schedule.id} target changed during execution`);
@@ -885,6 +906,7 @@ export class ScheduleService {
     await this.assertNewAgentCwdDirectory(config.cwd);
     let workspace: PersistedWorkspaceRecord | null = null;
     let agentId: string | null = null;
+    let failed = false;
     try {
       workspace = await this.createScheduleRunWorkspace(config, schedule.prompt);
       await this.recordRunWorkspace({
@@ -912,6 +934,9 @@ export class ScheduleService {
         promptFailure: "return-error",
         background: true,
         notifyOnFinish: false,
+        onCreated: ({ agentId: createdAgentId }) => {
+          agentId = createdAgentId;
+        },
       });
       const agent = created.snapshot;
       agentId = agent.id;
@@ -946,26 +971,60 @@ export class ScheduleService {
           finalText: result.finalText,
         }),
       };
-    } finally {
-      if (
-        workspace &&
-        shouldArchiveScheduleRunWorkspace({ agentId, archiveOnFinish: config.archiveOnFinish })
-      ) {
-        try {
-          await this.archiveWorkspace(workspace.workspaceId);
-        } catch (error) {
-          this.logger.warn(
-            {
-              err: error,
-              agentId,
-              workspaceId: workspace.workspaceId,
-              scheduleId: schedule.id,
-              runId,
-            },
-            "Failed to archive scheduled workspace after run",
-          );
-        }
+    } catch (error) {
+      failed = true;
+      if (workspace && agentId) {
+        await this.recordRunWorkspace({
+          scheduleId: schedule.id,
+          runId,
+          workspaceId: workspace.workspaceId,
+          agentId,
+        });
       }
+      throw error;
+    } finally {
+      await this.maybeArchiveScheduleRunWorkspace({
+        workspace,
+        agentId,
+        archiveOnFinish: config.archiveOnFinish,
+        failed,
+        scheduleId: schedule.id,
+        runId,
+      });
+    }
+  }
+
+  private async maybeArchiveScheduleRunWorkspace(params: {
+    workspace: PersistedWorkspaceRecord | null;
+    agentId: string | null;
+    archiveOnFinish?: boolean;
+    failed: boolean;
+    scheduleId: string;
+    runId: string;
+  }): Promise<void> {
+    if (
+      !params.workspace ||
+      !shouldArchiveScheduleRunWorkspace({
+        agentId: params.agentId,
+        archiveOnFinish: params.archiveOnFinish,
+        failed: params.failed,
+      })
+    ) {
+      return;
+    }
+    try {
+      await this.archiveWorkspace(params.workspace.workspaceId);
+    } catch (error) {
+      this.logger.warn(
+        {
+          err: error,
+          agentId: params.agentId,
+          workspaceId: params.workspace.workspaceId,
+          scheduleId: params.scheduleId,
+          runId: params.runId,
+        },
+        "Failed to archive scheduled workspace after run",
+      );
     }
   }
 

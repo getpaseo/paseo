@@ -27,6 +27,7 @@ import {
   mapACPUsage,
   resolveACPModeSelection,
   resolveACPModelSelection,
+  isRetriableAcpStreamCancel,
   summarizeACPRequestError,
 } from "./acp-agent.js";
 import type { ProcessTerminator, TreeKillTarget } from "../../../utils/tree-kill.js";
@@ -2452,6 +2453,54 @@ describe("ACPAgentSession", () => {
     );
 
     expect(asInternals<ACPSessionInternals>(session).acpMcpServers()).toEqual([]);
+  });
+
+  test("summarizes a thrown object instead of [object Object]", () => {
+    const summary = summarizeACPRequestError({
+      name: "RetriableError",
+      message: "[canceled] http/2 stream closed with error code CANCEL (0x8)",
+    });
+
+    expect(summary.message).toContain("CANCEL (0x8)");
+    expect(summary.message).not.toBe("[object Object]");
+  });
+
+  test("retries an ACP prompt once after an http/2 CANCEL stream close", async () => {
+    const session = createSession();
+    const cancelError = new Error(
+      "RetriableError: [canceled] http/2 stream closed with error code CANCEL (0x8)",
+    );
+    cancelError.name = "RetriableError";
+    const prompt = vi
+      .fn()
+      .mockRejectedValueOnce(cancelError)
+      .mockResolvedValueOnce({ stopReason: "end_turn" });
+
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    asInternals<ACPSessionInternals>(session).connection = { prompt };
+
+    const turnCompleted = new Promise<Extract<AgentStreamEvent, { type: "turn_completed" }>>(
+      (resolve) => {
+        session.subscribe((event) => {
+          if (event.type === "turn_completed") {
+            resolve(event);
+          }
+        });
+      },
+    );
+
+    await session.startTurn("hello");
+    await expect(turnCompleted).resolves.toMatchObject({ type: "turn_completed" });
+    expect(prompt).toHaveBeenCalledTimes(2);
+  });
+
+  test("detects Cursor http/2 CANCEL stream closures as retriable", () => {
+    expect(
+      isRetriableAcpStreamCancel(
+        new Error("RetriableError: [canceled] http/2 stream closed with error code CANCEL (0x8)"),
+      ),
+    ).toBe(true);
+    expect(isRetriableAcpStreamCancel(new Error("Authentication failed"))).toBe(false);
   });
 
   test("summarizes JSON-RPC error details without stringifying objects", () => {

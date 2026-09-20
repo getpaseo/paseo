@@ -1,4 +1,5 @@
 import type pino from "pino";
+import { getErrorMessage } from "@getpaseo/protocol/error-utils";
 import type { SessionInboundMessage, SessionOutboundMessage } from "../../messages.js";
 import type { ScheduleService } from "../../schedule/service.js";
 
@@ -51,7 +52,7 @@ export class ScheduleSession {
     >,
     error: unknown,
   ): void {
-    const message = error instanceof Error ? error.message : String(error);
+    const message = getErrorMessage(error);
     this.logger.error({ err: error, requestType: request.type }, "Schedule request failed");
     this.host.emit({
       type: "rpc_error",

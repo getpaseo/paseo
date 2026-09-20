@@ -159,6 +159,32 @@ function extractACPErrorDataMessage(data: unknown): string | null {
   return extractACPErrorDataMessage(data.error);
 }
 
+const RETRIABLE_HTTP2_CANCEL =
+  /\[canceled\].*http\/2 stream closed with error code CANCEL \(0x8\)/i;
+
+export function isRetriableAcpStreamCancel(error: unknown): boolean {
+  return RETRIABLE_HTTP2_CANCEL.test(toDiagnosticErrorMessage(error));
+}
+
+async function runAcpRequestWithCancelRetry<T>(
+  request: () => Promise<T>,
+  onRetry?: (error: unknown) => void,
+): Promise<T> {
+  try {
+    return await request();
+  } catch (error) {
+    if (!isRetriableAcpStreamCancel(error)) {
+      throw toACPRequestError(error);
+    }
+    onRetry?.(error);
+    try {
+      return await request();
+    } catch (retryError) {
+      throw toACPRequestError(retryError);
+    }
+  }
+}
+
 export function summarizeACPRequestError(error: unknown): {
   message: string;
   code?: string;
@@ -182,12 +208,12 @@ export function summarizeACPRequestError(error: unknown): {
     return { message: error.message };
   }
 
-  return { message: String(error) };
+  return { message: toDiagnosticErrorMessage(error) };
 }
 
 function toACPRequestError(error: unknown): Error {
   if (!isACPError(error)) {
-    return error instanceof Error ? error : new Error(String(error));
+    return error instanceof Error ? error : new Error(toDiagnosticErrorMessage(error));
   }
 
   const summary = summarizeACPRequestError(error);
@@ -1458,11 +1484,12 @@ export class ACPAgentClient implements AgentClient {
   }
 
   protected async runACPRequest<T>(request: () => Promise<T>): Promise<T> {
-    try {
-      return await request();
-    } catch (error) {
-      throw toACPRequestError(error);
-    }
+    return runAcpRequestWithCancelRetry(request, (error) => {
+      this.logger.warn(
+        { err: error, provider: this.provider },
+        "ACP request stream canceled; retrying once",
+      );
+    });
   }
 
   protected async buildACPProbeDiagnosticRows(
@@ -1855,12 +1882,11 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.pushEvent({ type: "turn_started", provider: this.provider, turnId });
     this.emitSubmittedUserMessage(prompt, messageId, turnId, options?.clientMessageId);
 
-    void this.connection
-      .prompt({
-        sessionId: this.sessionId,
-        messageId,
-        prompt: toACPContentBlocks(prompt),
-      })
+    void this.promptWithCancelRetry({
+      sessionId: this.sessionId,
+      messageId,
+      prompt: toACPContentBlocks(prompt),
+    })
       .then((response) => {
         this.handlePromptResponse(response, turnId);
         return;
@@ -2763,12 +2789,33 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     return { child, connection, initialize };
   }
 
-  private async runACPRequest<T>(request: () => Promise<T>): Promise<T> {
-    try {
-      return await request();
-    } catch (error) {
-      throw toACPRequestError(error);
+  private async promptWithCancelRetry(params: {
+    sessionId: string;
+    messageId: string;
+    prompt: ContentBlock[];
+  }): Promise<PromptResponse> {
+    const connection = this.connection;
+    if (!connection) {
+      throw new Error(`${this.provider} session is not initialized`);
     }
+    return runAcpRequestWithCancelRetry(
+      () => connection.prompt(params),
+      (error) => {
+        this.logger.warn(
+          { err: error, provider: this.provider, sessionId: params.sessionId },
+          "ACP prompt stream canceled; retrying once",
+        );
+      },
+    );
+  }
+
+  private async runACPRequest<T>(request: () => Promise<T>): Promise<T> {
+    return runAcpRequestWithCancelRetry(request, (error) => {
+      this.logger.warn(
+        { err: error, provider: this.provider },
+        "ACP request stream canceled; retrying once",
+      );
+    });
   }
 
   private acpMcpServers(): McpServer[] {
