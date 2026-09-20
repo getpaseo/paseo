@@ -162,19 +162,41 @@ function extractACPErrorDataMessage(data: unknown): string | null {
 const RETRIABLE_HTTP2_CANCEL =
   /\[canceled\].*http\/2 stream closed with error code CANCEL \(0x8\)/i;
 
+/** CANCEL (0x8) replay: handshake/read-only/resume vs session create and other mutations. */
+export type AcpCancelReplay = "safe" | "never";
+
 export function isRetriableAcpStreamCancel(error: unknown): boolean {
   return RETRIABLE_HTTP2_CANCEL.test(toDiagnosticErrorMessage(error));
 }
 
+export function shouldReplayCanceledAcpRequest(input: {
+  error: unknown;
+  replay: AcpCancelReplay;
+  observedRemoteWork?: boolean;
+}): boolean {
+  if (input.replay === "never" || input.observedRemoteWork === true) {
+    return false;
+  }
+  return isRetriableAcpStreamCancel(input.error);
+}
+
 function runAcpRequestWithCancelRetry<T>(
   request: () => Promise<T>,
-  onRetry?: (error: unknown) => void,
+  options: {
+    replay: AcpCancelReplay;
+    onRetry?: (error: unknown) => void;
+  },
 ): Promise<T> {
   return request().catch((error) => {
-    if (!isRetriableAcpStreamCancel(error)) {
+    if (
+      !shouldReplayCanceledAcpRequest({
+        error,
+        replay: options.replay,
+      })
+    ) {
       throw toACPRequestError(error);
     }
-    onRetry?.(error);
+    options.onRetry?.(error);
     return request().catch((retryError: unknown) => {
       throw toACPRequestError(retryError);
     });
@@ -1090,11 +1112,13 @@ export class ACPAgentClient implements AgentClient {
         ),
       );
       probe = initializedProbe;
-      probeSessionPromise = this.runACPRequest(() =>
-        initializedProbe.connection.newSession({
-          cwd,
-          mcpServers: [],
-        }),
+      probeSessionPromise = this.runACPRequest(
+        () =>
+          initializedProbe.connection.newSession({
+            cwd,
+            mcpServers: [],
+          }),
+        "never",
       );
       const response = await runProviderRefreshActivity(context, "session/new", () =>
         raceProviderRefreshAbort(context?.signal, probeSessionPromise!),
@@ -1115,7 +1139,7 @@ export class ACPAgentClient implements AgentClient {
                 sessionId: response.sessionId,
                 models: derivedModels,
                 configOptions: transformed.configOptions,
-                runRequest: (request) => this.runACPRequest(request),
+                runRequest: (request) => this.runACPRequest(request, "never"),
                 transformConfigOptions: (configOptions) =>
                   this.configOptionsTransformer
                     ? this.configOptionsTransformer(configOptions)
@@ -1151,11 +1175,13 @@ export class ACPAgentClient implements AgentClient {
     const probe = await this.spawnProcess(PROBE_ENV);
     let probeSessionId: string | null = null;
     try {
-      const response = await this.runACPRequest(() =>
-        probe.connection.newSession({
-          cwd: config.cwd,
-          mcpServers: [],
-        }),
+      const response = await this.runACPRequest(
+        () =>
+          probe.connection.newSession({
+            cwd: config.cwd,
+            mcpServers: [],
+          }),
+        "never",
       );
       probeSessionId = response.sessionId;
       const transformed = this.transformSessionResponse(response);
@@ -1188,8 +1214,9 @@ export class ACPAgentClient implements AgentClient {
       let scanned = 0;
       let cursor: string | null | undefined;
       for (;;) {
-        const page: ListSessionsResponse = await this.runACPRequest(() =>
-          probe.connection.listSessions(acpSessionListRequest(cursor, options?.cwd)),
+        const page: ListSessionsResponse = await this.runACPRequest(
+          () => probe.connection.listSessions(acpSessionListRequest(cursor, options?.cwd)),
+          "safe",
         );
         for (const session of page.sessions) {
           if (scanned >= scanLimit || sessions.length >= resultLimit) break;
@@ -1258,12 +1285,14 @@ export class ACPAgentClient implements AgentClient {
     history.begin(session.sessionId);
     try {
       await withTimeout(
-        this.runACPRequest(() =>
-          probe.connection.loadSession({
-            sessionId: session.sessionId,
-            cwd: session.cwd,
-            mcpServers: [],
-          }),
+        this.runACPRequest(
+          () =>
+            probe.connection.loadSession({
+              sessionId: session.sessionId,
+              cwd: session.cwd,
+              mcpServers: [],
+            }),
+          "safe",
         ),
         loadTimeoutMs,
         `ACP import history load timed out after ${loadTimeoutMs}ms`,
@@ -1414,19 +1443,21 @@ export class ACPAgentClient implements AgentClient {
       : null;
 
     try {
-      return await this.runACPRequest(() =>
-        Promise.race([
-          transport.connection.initialize({
-            protocolVersion: PROTOCOL_VERSION,
-            clientCapabilities: buildACPClientCapabilities(
-              this.clientCapabilityMeta,
-              this.clientCapabilities,
-            ),
-            clientInfo: { name: "Paseo", version: "dev" },
-          }),
-          transport.spawnError,
-          ...(initializeTimeoutPromise ? [initializeTimeoutPromise] : []),
-        ]),
+      return await this.runACPRequest(
+        () =>
+          Promise.race([
+            transport.connection.initialize({
+              protocolVersion: PROTOCOL_VERSION,
+              clientCapabilities: buildACPClientCapabilities(
+                this.clientCapabilityMeta,
+                this.clientCapabilities,
+              ),
+              clientInfo: { name: "Paseo", version: "dev" },
+            }),
+            transport.spawnError,
+            ...(initializeTimeoutPromise ? [initializeTimeoutPromise] : []),
+          ]),
+        "safe",
       );
     } finally {
       if (timeout) {
@@ -1479,12 +1510,15 @@ export class ACPAgentClient implements AgentClient {
     }
   }
 
-  protected async runACPRequest<T>(request: () => Promise<T>): Promise<T> {
-    return runAcpRequestWithCancelRetry(request, (error) => {
-      this.logger.warn(
-        { err: error, provider: this.provider },
-        "ACP request stream canceled; retrying once",
-      );
+  protected async runACPRequest<T>(request: () => Promise<T>, replay: AcpCancelReplay): Promise<T> {
+    return runAcpRequestWithCancelRetry(request, {
+      replay,
+      onRetry: (error) => {
+        this.logger.warn(
+          { err: error, provider: this.provider },
+          "ACP request stream canceled; retrying once",
+        );
+      },
     });
   }
 
@@ -1542,11 +1576,13 @@ export class ACPAgentClient implements AgentClient {
       const sessionStartedAt = Date.now();
       try {
         const response = await withTimeout(
-          this.runACPRequest(() =>
-            activeTransport.connection.newSession({
-              cwd,
-              mcpServers: [],
-            }),
+          this.runACPRequest(
+            () =>
+              activeTransport.connection.newSession({
+                cwd,
+                mcpServers: [],
+              }),
+            "never",
           ),
           phaseTimeoutMs,
           `ACP session/new timed out after ${phaseTimeoutMs}ms`,
@@ -1705,6 +1741,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private readonly extensionCommandsParser?: ACPExtensionCommandsParser;
   private currentTurnUsage: AgentUsage | undefined;
   private activeForegroundTurnId: string | null = null;
+  private turnObservedRemoteWork = false;
   private fallbackAssistantMessageId: string | null = null;
   private closed = false;
   private historyPending = false;
@@ -1756,11 +1793,13 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       this.connection = spawned.connection;
       this.agentCapabilities = spawned.initialize.agentCapabilities ?? null;
 
-      const response = await this.runACPRequest(() =>
-        this.connection!.newSession({
-          cwd: this.config.cwd,
-          mcpServers: this.acpMcpServers(),
-        }),
+      const response = await this.runACPRequest(
+        () =>
+          this.connection!.newSession({
+            cwd: this.config.cwd,
+            mcpServers: this.acpMcpServers(),
+          }),
+        "never",
       );
       this.sessionId = response.sessionId;
       this.bootstrapThreadEventPending = true;
@@ -1795,24 +1834,28 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       const sessionCapabilities = this.agentCapabilities?.sessionCapabilities;
       if (this.agentCapabilities?.loadSession) {
         this.replayingHistory = true;
-        const response = await this.runACPRequest(() =>
-          this.connection!.loadSession({
-            sessionId: handle.sessionId,
-            cwd: this.config.cwd,
-            mcpServers: this.acpMcpServers(),
-          }),
+        const response = await this.runACPRequest(
+          () =>
+            this.connection!.loadSession({
+              sessionId: handle.sessionId,
+              cwd: this.config.cwd,
+              mcpServers: this.acpMcpServers(),
+            }),
+          "safe",
         );
         this.deliverTranslatedEvents(this.flushPendingUserMessage());
         this.replayingHistory = false;
         this.historyPending = this.persistedHistory.length > 0;
         this.applySessionState(response);
       } else if (sessionCapabilities?.resume) {
-        const response = await this.runACPRequest(() =>
-          this.connection!.unstable_resumeSession({
-            sessionId: handle.sessionId,
-            cwd: this.config.cwd,
-            mcpServers: this.acpMcpServers(),
-          }),
+        const response = await this.runACPRequest(
+          () =>
+            this.connection!.unstable_resumeSession({
+              sessionId: handle.sessionId,
+              cwd: this.config.cwd,
+              mcpServers: this.acpMcpServers(),
+            }),
+          "safe",
         );
         this.applySessionState(response);
       } else {
@@ -1872,6 +1915,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     const turnId = randomUUID();
     const messageId = options?.clientMessageId ?? randomUUID();
     this.activeForegroundTurnId = turnId;
+    this.turnObservedRemoteWork = false;
     this.fallbackAssistantMessageId = null;
     this.submittedUserMessageTurnId = null;
     this.emitBootstrapThreadEvent();
@@ -1903,7 +1947,13 @@ export class ACPAgentSession implements AgentSession, ACPClient {
         return;
       })
       .catch((error) => {
-        if (!isRetriableAcpStreamCancel(error)) {
+        if (
+          !shouldReplayCanceledAcpRequest({
+            error,
+            replay: "safe",
+            observedRemoteWork: this.turnObservedRemoteWork,
+          })
+        ) {
           failTurn(error);
           return;
         }
@@ -1912,9 +1962,9 @@ export class ACPAgentSession implements AgentSession, ACPClient {
           "ACP prompt stream canceled; retrying once",
         );
         return connection.prompt(promptParams).then((response) => {
-            this.handlePromptResponse(response, turnId);
-            return;
-          }, failTurn);
+          this.handlePromptResponse(response, turnId);
+          return;
+        }, failTurn);
       });
 
     return { turnId };
@@ -2554,6 +2604,9 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     if (params.sessionId !== this.sessionId) {
       return;
     }
+    if (this.activeForegroundTurnId) {
+      this.turnObservedRemoteWork = true;
+    }
 
     const events = this.translateSessionUpdate(params.update);
     this.logger.trace(
@@ -2789,26 +2842,31 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     // close the process even when the ACP handshake itself rejects.
     this.child = child;
     this.connection = connection;
-    const initialize = await this.runACPRequest(() =>
-      connection.initialize({
-        protocolVersion: PROTOCOL_VERSION,
-        clientCapabilities: buildACPClientCapabilities(
-          this.clientCapabilityMeta,
-          this.clientCapabilities,
-        ),
-        clientInfo: { name: "Paseo", version: "dev" },
-      }),
+    const initialize = await this.runACPRequest(
+      () =>
+        connection.initialize({
+          protocolVersion: PROTOCOL_VERSION,
+          clientCapabilities: buildACPClientCapabilities(
+            this.clientCapabilityMeta,
+            this.clientCapabilities,
+          ),
+          clientInfo: { name: "Paseo", version: "dev" },
+        }),
+      "safe",
     );
 
     return { child, connection, initialize };
   }
 
-  private async runACPRequest<T>(request: () => Promise<T>): Promise<T> {
-    return runAcpRequestWithCancelRetry(request, (error) => {
-      this.logger.warn(
-        { err: error, provider: this.provider },
-        "ACP request stream canceled; retrying once",
-      );
+  private async runACPRequest<T>(request: () => Promise<T>, replay: AcpCancelReplay): Promise<T> {
+    return runAcpRequestWithCancelRetry(request, {
+      replay,
+      onRetry: (error) => {
+        this.logger.warn(
+          { err: error, provider: this.provider },
+          "ACP request stream canceled; retrying once",
+        );
+      },
     });
   }
 

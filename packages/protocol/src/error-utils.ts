@@ -38,18 +38,44 @@ export function getErrorMessageOr(error: unknown, fallback: string): string {
 }
 
 function stringifyUnknownError(error: unknown): string {
+  const serialized = serializeUnknownErrorJson(error);
+  if (serialized) {
+    return serialized;
+  }
+
+  const coerced = coerceUnknownErrorToString(error);
+  if (coerced.length > 0 && coerced !== "[object Object]") {
+    return coerced;
+  }
+  return "Unknown error";
+}
+
+function serializeUnknownErrorJson(error: unknown): string | null {
   try {
     const serialized = JSON.stringify(error);
     if (serialized && serialized !== "{}" && serialized !== '""') {
       return serialized;
     }
-  } catch {
-    // circular refs, bigint, etc.
+    return null;
+  } catch (serializationError) {
+    // Cycles and throwing toJSON fail here; try String() next.
+    if (serializationError instanceof Error || typeof serializationError === "string") {
+      return null;
+    }
+    return "Unknown error";
   }
+}
 
-  const stringified = String(error);
-  if (stringified.length > 0 && stringified !== "[object Object]") {
-    return stringified;
+function coerceUnknownErrorToString(error: unknown): string {
+  try {
+    return String(error);
+  } catch (coercionError) {
+    if (coercionError instanceof Error && coercionError.message.trim().length > 0) {
+      return `Unknown error (${coercionError.message})`;
+    }
+    if (typeof coercionError === "string" && coercionError.trim().length > 0) {
+      return `Unknown error (${coercionError})`;
+    }
+    return "Unknown error";
   }
-  return "Unknown error";
 }

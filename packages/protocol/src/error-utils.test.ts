@@ -29,6 +29,42 @@ describe("getErrorMessage", () => {
   it("falls back when JSON.stringify produces an empty object", () => {
     expect(getErrorMessage({})).toBe("Unknown error");
   });
+
+  it("never throws when toJSON or primitive coercion throws", () => {
+    const throwingToJson = {
+      toJSON() {
+        throw new Error("toJSON failed");
+      },
+    };
+    expect(() => getErrorMessage(throwingToJson)).not.toThrow();
+    expect(getErrorMessage(throwingToJson)).toBe("Unknown error");
+
+    const throwingCoercion = {
+      toJSON() {
+        throw new Error("toJSON failed");
+      },
+      toString() {
+        throw new Error("toString failed");
+      },
+      valueOf() {
+        throw new Error("valueOf failed");
+      },
+    };
+    expect(() => getErrorMessage(throwingCoercion)).not.toThrow();
+    expect(getErrorMessage(throwingCoercion)).toBe("Unknown error (toString failed)");
+
+    const throwingPrimitive = {
+      [Symbol.toPrimitive]() {
+        throw {
+          toString() {
+            throw new Error("nested");
+          },
+        };
+      },
+    };
+    expect(() => getErrorMessage(throwingPrimitive)).not.toThrow();
+    expect(getErrorMessage(throwingPrimitive)).toBe("Unknown error");
+  });
 });
 
 describe("getErrorMessageOr", () => {
@@ -50,5 +86,18 @@ describe("getErrorMessageOr", () => {
 
   it("returns the fallback for empty objects", () => {
     expect(getErrorMessageOr({}, "fallback")).toBe("fallback");
+  });
+
+  it("never throws when serialization and coercion both fail", () => {
+    const throwingCoercion = {
+      toJSON() {
+        throw new Error("toJSON failed");
+      },
+      toString() {
+        throw new Error("toString failed");
+      },
+    };
+    expect(() => getErrorMessageOr(throwingCoercion, "fallback")).not.toThrow();
+    expect(getErrorMessageOr(throwingCoercion, "fallback")).toBe("Unknown error (toString failed)");
   });
 });

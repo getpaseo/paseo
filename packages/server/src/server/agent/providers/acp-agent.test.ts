@@ -28,6 +28,7 @@ import {
   resolveACPModeSelection,
   resolveACPModelSelection,
   isRetriableAcpStreamCancel,
+  shouldReplayCanceledAcpRequest,
   summarizeACPRequestError,
 } from "./acp-agent.js";
 import type { ProcessTerminator, TreeKillTarget } from "../../../utils/tree-kill.js";
@@ -2494,6 +2495,47 @@ describe("ACPAgentSession", () => {
     expect(prompt).toHaveBeenCalledTimes(2);
   });
 
+  test("does not retry an ACP prompt after CANCEL once the remote has started work", async () => {
+    const session = createSession();
+    const cancelError = new Error(
+      "RetriableError: [canceled] http/2 stream closed with error code CANCEL (0x8)",
+    );
+    cancelError.name = "RetriableError";
+    let rejectFirst!: (error: Error) => void;
+    const prompt = vi.fn(
+      () =>
+        new Promise<PromptResponse>((_resolve, reject) => {
+          rejectFirst = reject;
+        }),
+    );
+
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    asInternals<ACPSessionInternals>(session).connection = { prompt };
+
+    const turnFailed = new Promise<Extract<AgentStreamEvent, { type: "turn_failed" }>>(
+      (resolve) => {
+        session.subscribe((event) => {
+          if (event.type === "turn_failed") {
+            resolve(event);
+          }
+        });
+      },
+    );
+
+    await session.startTurn("hello");
+    await session.sessionUpdate({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "agent_message_chunk",
+        messageId: "assistant-1",
+        content: { type: "text", text: "Working" },
+      } as SessionUpdate,
+    });
+    rejectFirst(cancelError);
+    await expect(turnFailed).resolves.toMatchObject({ type: "turn_failed" });
+    expect(prompt).toHaveBeenCalledTimes(1);
+  });
+
   test("detects Cursor http/2 CANCEL stream closures as retriable", () => {
     expect(
       isRetriableAcpStreamCancel(
@@ -2501,6 +2543,27 @@ describe("ACPAgentSession", () => {
       ),
     ).toBe(true);
     expect(isRetriableAcpStreamCancel(new Error("Authentication failed"))).toBe(false);
+  });
+
+  test("limits CANCEL replay to replay-safe ACP operations", () => {
+    const cancel = new Error(
+      "RetriableError: [canceled] http/2 stream closed with error code CANCEL (0x8)",
+    );
+    expect(shouldReplayCanceledAcpRequest({ error: cancel, replay: "safe" })).toBe(true);
+    expect(shouldReplayCanceledAcpRequest({ error: cancel, replay: "never" })).toBe(false);
+    expect(
+      shouldReplayCanceledAcpRequest({
+        error: cancel,
+        replay: "safe",
+        observedRemoteWork: true,
+      }),
+    ).toBe(false);
+    expect(
+      shouldReplayCanceledAcpRequest({
+        error: new Error("Authentication failed"),
+        replay: "safe",
+      }),
+    ).toBe(false);
   });
 
   test("summarizes JSON-RPC error details without stringifying objects", () => {
