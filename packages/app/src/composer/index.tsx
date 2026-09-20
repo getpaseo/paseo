@@ -49,7 +49,6 @@ import {
 } from "@/composer/agent-controls";
 import { ContextWindowMeter } from "@/components/context-window-meter";
 import { KeyboardTranslateView } from "@/components/keyboard-translate-view";
-import { shouldRenderCompactContextWindowSlot } from "./context-window-slot";
 import { useImageAttachmentPicker } from "@/hooks/use-image-attachment-picker";
 import { selectAgentTurnPresentation, useSessionStore } from "@/stores/session-store";
 import { useFilePicker } from "@/hooks/use-file-picker";
@@ -2117,11 +2116,6 @@ function ComposerContentImpl({
     () => resolveContextWindowPlacement(contextWindowMeter, hasAgent, isCompactLayout),
     [contextWindowMeter, hasAgent, isCompactLayout],
   );
-  const shouldReserveCompactContextWindowSlot = shouldRenderCompactContextWindowSlot({
-    isCompactLayout,
-    hasAgent,
-  });
-
   const hasGithubAttachment = useMemo(
     () =>
       selectedAttachments.some(
@@ -2502,7 +2496,7 @@ function ComposerContentImpl({
                   submitLabel={submitLabel}
                 />
               </RenderProfile>
-              {shouldReserveCompactContextWindowSlot ? (
+              {compactContextWindowContent ? (
                 <View style={styles.contextWindowMeterCompactSlot}>
                   {compactContextWindowContent}
                 </View>
