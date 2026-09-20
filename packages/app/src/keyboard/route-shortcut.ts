@@ -8,7 +8,6 @@ import {
 
 export interface ShortcutRoutingContext {
   pathname: string;
-  isMobile: boolean;
   sidebarShortcutTargets: ReadonlyArray<SidebarShortcutWorkspaceTarget>;
   navigationActiveWorkspace: SidebarShortcutWorkspaceTarget | null;
   commandCenterOpen: boolean;
@@ -20,15 +19,16 @@ export interface ShortcutRoutingInput {
   payload: KeyboardShortcutPayload;
 }
 
-export type ShortcutCallbackName = "toggle-agent-list" | "toggle-both-sidebars" | "cycle-theme";
+export type ShortcutCallbackName =
+  | "toggle-agent-list"
+  | "toggle-both-sidebars"
+  | "cycle-theme"
+  | "navigate-back";
 
 export type ShortcutAction =
   | { kind: "none" }
   | { kind: "dispatch"; action: KeyboardActionDefinition }
   | { kind: "navigate-workspace"; serverId: string; workspaceId: string }
-  | { kind: "navigate-last-workspace" }
-  | { kind: "router-replace"; route: string }
-  | { kind: "router-back" }
   | { kind: "router-push"; route: string }
   | { kind: "open-project-picker" }
   | { kind: "callback"; name: ShortcutCallbackName }
@@ -63,6 +63,7 @@ const PASSTHROUGH_DISPATCH: Record<string, KeyboardActionDefinition> = {
 };
 
 const SIMPLE_CALLBACKS: Record<string, ShortcutCallbackName> = {
+  "navigation.back": "navigate-back",
   "sidebar.toggle.left": "toggle-agent-list",
   "sidebar.toggle.both": "toggle-both-sidebars",
   "theme.cycle": "cycle-theme",
@@ -160,10 +161,7 @@ function routeSettingsToggle(ctx: ShortcutRoutingContext): ShortcutAction {
   if (!ctx.pathname.startsWith("/settings")) {
     return { kind: "router-push", route: buildSettingsRoute() };
   }
-  if (!ctx.isMobile) {
-    return { kind: "navigate-last-workspace" };
-  }
-  return { kind: "router-back" };
+  return { kind: "callback", name: "navigate-back" };
 }
 
 export function routeKeyboardShortcut(

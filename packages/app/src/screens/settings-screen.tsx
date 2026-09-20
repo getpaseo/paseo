@@ -119,6 +119,7 @@ import {
   type SettingsSectionSlug,
 } from "@/utils/host-routes";
 import { navigateToLastWorkspace } from "@/stores/navigation-active-workspace-store";
+import { navigateBackInFocusHistory } from "@/navigation/focus-history-runtime";
 
 // ---------------------------------------------------------------------------
 // View model
@@ -1343,19 +1344,25 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
   }, [isCompactLayout, router]);
 
   const handleBackToRoot = useCallback(() => {
+    if (navigateBackInFocusHistory({ isCompact: isCompactLayout })) {
+      return;
+    }
     if (router.canGoBack()) {
       router.back();
     } else {
       router.replace("/settings");
     }
-  }, [router]);
+  }, [isCompactLayout, router]);
 
   const handleBackToWorkspace = useCallback(() => {
+    if (navigateBackInFocusHistory({ isCompact: isCompactLayout })) {
+      return;
+    }
     if (navigateToLastWorkspace()) {
       return;
     }
     router.replace(buildOpenProjectRoute());
-  }, [router]);
+  }, [isCompactLayout, router]);
 
   const detailHeader = ((): {
     title: string;

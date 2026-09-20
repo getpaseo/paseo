@@ -6,6 +6,8 @@ import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { ArrowLeft } from "lucide-react-native";
 import { ScreenHeader } from "./screen-header";
 import { ScreenTitle } from "./screen-title";
+import { useIsCompactFormFactor } from "@/constants/layout";
+import { navigateBackInFocusHistory } from "@/navigation/focus-history-runtime";
 
 interface BackHeaderProps {
   title?: string;
@@ -14,20 +16,19 @@ interface BackHeaderProps {
   onBack?: () => void;
 }
 
-function goBack(): void {
-  router.back();
-}
-
 export function BackHeader({ title, titleAccessory, rightContent, onBack }: BackHeaderProps) {
   const { theme } = useUnistyles();
   const { t } = useTranslation();
+  const isCompact = useIsCompactFormFactor();
   const handleBack = useCallback(() => {
     if (onBack) {
       onBack();
       return;
     }
-    goBack();
-  }, [onBack]);
+    if (!navigateBackInFocusHistory({ isCompact })) {
+      router.back();
+    }
+  }, [isCompact, onBack]);
 
   return (
     <ScreenHeader

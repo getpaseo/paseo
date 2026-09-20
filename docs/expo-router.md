@@ -73,6 +73,22 @@ only use local param fallback during cold mount (`/` or empty pathname), or a
 hidden workspace can overwrite the remembered workspace before Settings or
 History returns.
 
+## Focus History
+
+The Expo Router stack is not the user-facing Back history. Workspace tab and
+pane focus, plus the compact/desktop explorer view, live in Zustand stores and
+do not create routes. `src/navigation/focus-history.ts` therefore owns the
+in-memory recency stack, while `focus-history-runtime.tsx` observes the active
+route and those existing stores and restores through their normal actions.
+
+Keep the location observer at the app shell so workspace switches and app-wide
+routes share one history. Do not record the compact agent-list drawer as a
+location: it is transient navigation chrome, and selecting a workspace from it
+must return Back to the prior workspace rather than reopen the drawer. Recent
+workspace deck entries and tab panels remain mounted, so restoring their focus
+also preserves live scroll and selection state without duplicating that state
+in the history stack.
+
 ## Agent Targets
 
 Notifications and agent URLs enter the router with different authoritative

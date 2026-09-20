@@ -16,7 +16,6 @@ const SIDEBAR_TARGETS = [
 function makeCtx(overrides: Partial<ShortcutRoutingContext> = {}): ShortcutRoutingContext {
   return {
     pathname: "/h/srv/workspace/ws-2",
-    isMobile: false,
     sidebarShortcutTargets: SIDEBAR_TARGETS,
     navigationActiveWorkspace: null,
     commandCenterOpen: false,
@@ -305,33 +304,21 @@ describe("routeKeyboardShortcut — settings.toggle", () => {
     ).toEqual<ShortcutAction>({ kind: "router-push", route: "/settings" });
   });
 
-  it("navigates to the last workspace when leaving settings on desktop", () => {
+  it("navigates back through focus history when leaving settings", () => {
     expect(
       routeKeyboardShortcut(
         { action: "settings.toggle", payload: null },
         makeCtx({
           pathname: "/settings/general",
-          isMobile: false,
         }),
       ),
-    ).toEqual<ShortcutAction>({ kind: "navigate-last-workspace" });
-  });
-
-  it("falls back to router.back() on mobile", () => {
-    expect(
-      routeKeyboardShortcut(
-        { action: "settings.toggle", payload: null },
-        makeCtx({
-          pathname: "/settings/general",
-          isMobile: true,
-        }),
-      ),
-    ).toEqual<ShortcutAction>({ kind: "router-back" });
+    ).toEqual<ShortcutAction>({ kind: "callback", name: "navigate-back" });
   });
 });
 
 describe("routeKeyboardShortcut — callbacks and pickers", () => {
   it.each([
+    ["navigation.back", "navigate-back"],
     ["sidebar.toggle.left", "toggle-agent-list"],
     ["sidebar.toggle.both", "toggle-both-sidebars"],
     ["theme.cycle", "cycle-theme"],

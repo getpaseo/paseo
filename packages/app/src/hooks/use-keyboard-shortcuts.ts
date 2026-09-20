@@ -36,6 +36,7 @@ import {
   navigateToLastWorkspace,
   useActiveWorkspaceSelection,
 } from "@/stores/navigation-active-workspace-store";
+import { navigateBackInFocusHistory } from "@/navigation/focus-history-runtime";
 
 export function useKeyboardShortcuts({
   enabled,
@@ -132,6 +133,16 @@ export function useKeyboardShortcuts({
     };
 
     const callbacksByName: Record<ShortcutCallbackName, (() => void) | undefined> = {
+      "navigate-back": () => {
+        if (navigateBackInFocusHistory({ isCompact: isMobile })) {
+          return;
+        }
+        if (isMobile) {
+          router.back();
+          return;
+        }
+        navigateToLastWorkspace();
+      },
       "toggle-agent-list": toggleAgentList,
       "toggle-both-sidebars": toggleBothSidebars,
       "cycle-theme": cycleTheme,
@@ -153,14 +164,6 @@ export function useKeyboardShortcuts({
             workspaceId: action.workspaceId,
           };
           navigateToWorkspace({ serverId: action.serverId, workspaceId: action.workspaceId });
-          return true;
-        case "navigate-last-workspace":
-          return navigateToLastWorkspace();
-        case "router-replace":
-          router.replace(action.route as Parameters<typeof router.replace>[0]);
-          return true;
-        case "router-back":
-          router.back();
           return true;
         case "router-push":
           router.push(action.route as Parameters<typeof router.push>[0]);
@@ -199,7 +202,6 @@ export function useKeyboardShortcuts({
         { action: input.action, payload: input.payload },
         {
           pathname,
-          isMobile,
           sidebarShortcutTargets: store.sidebarShortcutWorkspaceTargets,
           navigationActiveWorkspace:
             keyboardWorkspaceSelectionRef.current ?? activeWorkspaceSelection,
