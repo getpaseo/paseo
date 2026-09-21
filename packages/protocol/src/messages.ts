@@ -1385,6 +1385,9 @@ export const FetchAgentTimelineRequestMessageSchema = z.object({
   projection: z.enum(["projected", "canonical"]).optional(),
 });
 
+
+export const AgentTimelineSearchRequestMessageSchema = z.object({ type: z.literal('agent.timeline.search.request'), requestId: z.string(), agentId: z.string(), query: z.string(), limit: z.number().int().positive().optional(), continuation: z.string().optional() });
+export const AgentTimelineWindowRequestMessageSchema = z.object({ type: z.literal('agent.timeline.window.request'), requestId: z.string(), agentId: z.string(), epoch: z.string(), centerSeq: z.number().int().nonnegative(), limit: z.number().int().positive().optional(), projection: z.enum(['projected', 'canonical']).optional() });
 export const ProviderSubagentListRequestMessageSchema = z.object({
   type: z.literal("agent.provider_subagents.list.request"),
   parentAgentId: z.string(),
@@ -2467,6 +2470,8 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   RestartServerRequestMessageSchema,
   DaemonUpdateRequestMessageSchema,
   FetchAgentTimelineRequestMessageSchema,
+  AgentTimelineSearchRequestMessageSchema,
+  AgentTimelineWindowRequestMessageSchema,
   ProviderSubagentListRequestMessageSchema,
   ProviderSubagentTimelineRequestMessageSchema,
   SetAgentTimelineSubscriptionRequestMessageSchema,
@@ -2764,6 +2769,8 @@ export const ServerInfoStatusPayloadSchema = z
         workspaceFileEditing: z.boolean().optional(),
         // COMPAT(artifactFeed): added in v0.2.0, remove after 2027-01-22 once daemon floor >= v0.2.0.
         artifactFeed: z.boolean().optional(),
+        // COMPAT(chatHistorySearch): added in v0.2.0.
+        chatHistorySearch: z.boolean().optional(),
         // COMPAT(providerUsageList): added in v0.1.98, drop the gate when daemon floor >= v0.1.98.
         providerUsageList: z.boolean().optional(),
         // COMPAT(agentDetach): added in v0.1.98, remove gate after 2026-12-19 once daemon floor >= v0.1.98.
@@ -3475,6 +3482,10 @@ export const FetchAgentTimelineResponseMessageSchema = z.object({
   }),
 });
 
+
+export const AgentTimelineSearchMatchSchema = z.object({ epoch: z.string(), seq: z.number().int().nonnegative(), kind: z.string(), snippet: z.string(), occurrences: z.array(z.object({ startOffset: z.number().int().nonnegative(), endOffset: z.number().int().nonnegative() })) });
+export const AgentTimelineSearchResponseMessageSchema = z.object({ type: z.literal('agent.timeline.search.response'), payload: z.object({ requestId: z.string(), agentId: z.string(), epoch: z.string(), snapshotUpperSeq: z.number().int().nonnegative(), matches: z.array(AgentTimelineSearchMatchSchema), continuation: z.string().nullable(), isComplete: z.boolean(), error: z.string().nullable() }) });
+export const AgentTimelineWindowResponseMessageSchema = z.object({ type: z.literal('agent.timeline.window.response'), payload: z.object({ requestId: z.string(), agentId: z.string(), epoch: z.string(), centerSeq: z.number().int().nonnegative(), entries: z.array(AgentTimelineEntryPayloadSchema), hasOlder: z.boolean(), hasNewer: z.boolean(), error: z.string().nullable() }) });
 export const ProviderSubagentDescriptorPayloadSchema = z.object({
   id: z.string(),
   parentAgentId: z.string(),
@@ -5135,6 +5146,8 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   ArchiveWorkspaceResponseMessageSchema,
   FetchAgentResponseMessageSchema,
   FetchAgentTimelineResponseMessageSchema,
+  AgentTimelineSearchResponseMessageSchema,
+  AgentTimelineWindowResponseMessageSchema,
   ProviderSubagentListResponseMessageSchema,
   ProviderSubagentTimelineResponseMessageSchema,
   ProviderSubagentUpdateMessageSchema,

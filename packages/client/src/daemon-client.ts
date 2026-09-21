@@ -2648,6 +2648,67 @@ export class DaemonClient {
     });
   }
 
+
+  async searchAgentTimeline(
+    agentId: string,
+    query: string,
+    options: { limit?: number; continuation?: string; requestId?: string; timeout?: number } = {},
+  ) {
+    const resolvedRequestId = this.createRequestId(options.requestId);
+    const message = SessionInboundMessageSchema.parse({
+      type: 'agent.timeline.search.request',
+      agentId,
+      requestId: resolvedRequestId,
+      query,
+      ...(typeof options.limit === 'number' ? { limit: options.limit } : {}),
+      ...(options.continuation ? { continuation: options.continuation } : {}),
+    });
+    const payload = await this.sendRequest({
+      requestId: resolvedRequestId,
+      message,
+      timeout: options.timeout,
+      options: { skipQueue: true },
+      select: (msg) => {
+        if (msg.type !== 'agent.timeline.search.response') return null;
+        if (msg.payload.requestId !== resolvedRequestId) return null;
+        return msg.payload;
+      },
+    });
+    if (payload.error) throw new Error(payload.error);
+    return payload;
+  }
+
+  async fetchAgentTimelineWindow(
+    agentId: string,
+    epoch: string,
+    centerSeq: number,
+    options: { limit?: number; projection?: 'projected' | 'canonical'; requestId?: string; timeout?: number } = {},
+  ) {
+    const resolvedRequestId = this.createRequestId(options.requestId);
+    const message = SessionInboundMessageSchema.parse({
+      type: 'agent.timeline.window.request',
+      agentId,
+      requestId: resolvedRequestId,
+      epoch,
+      centerSeq,
+      ...(typeof options.limit === 'number' ? { limit: options.limit } : {}),
+      ...(options.projection ? { projection: options.projection } : {}),
+    });
+    const payload = await this.sendRequest({
+      requestId: resolvedRequestId,
+      message,
+      timeout: options.timeout,
+      options: { skipQueue: true },
+      select: (msg) => {
+        if (msg.type !== 'agent.timeline.window.response') return null;
+        if (msg.payload.requestId !== resolvedRequestId) return null;
+        return msg.payload;
+      },
+    });
+    if (payload.error) throw new Error(payload.error);
+    return payload;
+  }
+
   async fetchAgentTimeline(
     agentId: string,
     options: FetchAgentTimelineOptions = {},

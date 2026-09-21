@@ -1,9 +1,9 @@
 import { create } from "zustand";
 
 interface AgentViewStoreState {
-  selectedViews: Record<string, "chat" | "artifacts">;
-  setSelectedView: (serverId: string, agentId: string, view: "chat" | "artifacts") => void;
-  getSelectedView: (serverId: string, agentId: string) => "chat" | "artifacts";
+  selectedViews: Record<string, "chat" | "artifacts" | "find">;
+  setSelectedView: (serverId: string, agentId: string, view: "chat" | "artifacts" | "find") => void;
+  getSelectedView: (serverId: string, agentId: string) => "chat" | "artifacts" | "find";
 }
 
 export const useAgentViewStore = create<AgentViewStoreState>()((set, get) => ({

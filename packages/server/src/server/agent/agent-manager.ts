@@ -1,3 +1,5 @@
+import { searchTimeline } from "./timeline-search.js";
+import { selectProjectedTimelinePage } from "./timeline-projection.js";
 import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
 import { stat } from "node:fs/promises";
@@ -991,6 +993,29 @@ export class AgentManager {
   getTimeline(id: string): AgentTimelineItem[] {
     this.requireAgent(id);
     return this.timelineStore.getItems(id);
+  }
+
+
+  async searchAgentTimeline(id: string, query: string, continuation?: string | null, limit?: number) {
+    this.requireAgent(id);
+    const rows = await this.getTimelineRows(id);
+    const result = searchTimeline(rows, query, continuation, limit);
+    const epoch = this.fetchTimeline(id, { limit: 1 }).epoch;
+    result.matches.forEach(m => m.epoch = epoch);
+    return result;
+  }
+
+  async getAgentTimelineWindow(id: string, centerSeq: number, limit: number = 20) {
+    this.requireAgent(id);
+    const rows = await this.getTimelineRows(id);
+    // Bounded context: we want 'limit' projected entries before centerSeq, the entry overlapping centerSeq, and 'limit' entries after.
+    const before = selectProjectedTimelinePage({ rows, direction: 'before', cursorSeq: centerSeq + 1, limit });
+    const after = selectProjectedTimelinePage({ rows, direction: 'after', cursorSeq: centerSeq, limit });
+    const entries = [...before.entries, ...after.entries];
+    // Deduplicate entries by seqStart (since before might include the center, and after might too)
+    const uniqueEntries = Array.from(new Map(entries.map(e => [e.seqStart, e])).values());
+    uniqueEntries.sort((a, b) => a.seqStart - b.seqStart);
+    return { entries: uniqueEntries, hasOlder: before.hasOlder, hasNewer: after.hasNewer };
   }
 
   async getTimelineRows(id: string): Promise<AgentTimelineRow[]> {
