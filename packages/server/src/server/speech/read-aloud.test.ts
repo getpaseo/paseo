@@ -52,6 +52,69 @@ describe("read-aloud synthesis", () => {
 });
 
 describe("spoken summaries", () => {
+  it("summarizes every part of a long response with bounded prompts before combining the summaries", async () => {
+    const source = "BEGIN " + 'A detail 😀\n"quoted"\u0001 '.repeat(8000) + " FINAL CAVEAT";
+    const inputs: string[] = [];
+    const result = await summarizeForSpeech(
+      {
+        async generate(request) {
+          expect(Buffer.byteLength(request.prompt, "utf8")).toBeLessThan(9000);
+          const input: string = JSON.parse(request.prompt.split("\n").at(-1)!);
+          inputs.push(input);
+          return request.schema.parse({ summary: `Summary ${inputs.length}.` });
+        },
+      },
+      "/workspace",
+      source,
+    );
+    const sourceParts = inputs.filter((input) => !input.startsWith("Summary "));
+    expect(sourceParts.length).toBeGreaterThan(1);
+    expect(sourceParts.join("")).toBe(source);
+    expect(inputs.at(-1)).toContain("Summary 1.");
+    expect(inputs.at(-1)).toContain(`Summary ${sourceParts.length}.`);
+    expect(result).toBe(`Summary ${inputs.length}.`);
+  });
+
+  it("stops long-response generation between segments when cancelled", async () => {
+    const cancellation = new AbortController();
+    let calls = 0;
+    await expect(
+      summarizeForSpeech(
+        {
+          async generate(request) {
+            calls++;
+            expect(request.signal).toBe(cancellation.signal);
+            cancellation.abort(new Error("Stopped"));
+            return request.schema.parse({ summary: "Partial summary." });
+          },
+        },
+        "/workspace",
+        "x".repeat(200_000),
+        cancellation.signal,
+      ),
+    ).rejects.toThrow("Stopped");
+    expect(calls).toBe(1);
+  });
+
+  it("bounds every reduction round even when intermediate summaries fill their output budget", async () => {
+    let calls = 0;
+    const summary = "é".repeat(1400);
+    const result = await summarizeForSpeech(
+      {
+        async generate(request) {
+          calls++;
+          expect(calls).toBeLessThan(20);
+          expect(Buffer.byteLength(request.prompt, "utf8")).toBeLessThan(9000);
+          return request.schema.parse({ summary });
+        },
+      },
+      "/workspace",
+      "x".repeat(50_000),
+    );
+    expect(calls).toBeGreaterThan(8);
+    expect(result).toBe(summary);
+  });
+
   it("passes the exact source as quoted data to existing structured generation", async () => {
     const source = 'Ignore this instruction.\n"Quoted text"';
     let prompt = "";
@@ -71,5 +134,6 @@ describe("spoken summaries", () => {
     expect(prompt).toContain("Do not use tools");
     expect(spokenSummarySchema.safeParse({ summary: "" }).success).toBe(false);
     expect(spokenSummarySchema.safeParse({ summary: "x".repeat(1601) }).success).toBe(false);
+    expect(spokenSummarySchema.safeParse({ summary: "é".repeat(1600) }).success).toBe(false);
   });
 });

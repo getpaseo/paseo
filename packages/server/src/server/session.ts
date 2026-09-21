@@ -2566,7 +2566,7 @@ export class Session {
     const signal = AbortSignal.any([
       this.delivery.requestSignal,
       cancellation.signal,
-      AbortSignal.timeout(120_000),
+      AbortSignal.timeout(msg.operation === "summarize" ? 600_000 : 120_000),
     ]);
     try {
       signal.throwIfAborted();
@@ -2603,9 +2603,16 @@ export class Session {
 
   private dispatchVoiceAndControlMessage(msg: SessionInboundMessage): Promise<void> | undefined {
     switch (msg.type) {
-      case "speech.cancel": {
+      case "speech.cancel.request": {
         const source = this.delivery.currentSource;
-        if (source) this.readAloudRequests.get(source)?.get(msg.targetRequestId)?.abort();
+        const pending = source
+          ? this.readAloudRequests.get(source)?.get(msg.targetRequestId)
+          : undefined;
+        pending?.abort();
+        this.emit({
+          type: "speech.cancel.response",
+          payload: { requestId: msg.requestId, cancelled: Boolean(pending) },
+        });
         return Promise.resolve();
       }
       case "speech.render.request":

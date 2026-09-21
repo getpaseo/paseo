@@ -6933,10 +6933,24 @@ test("read-aloud requests stay correlated and cancellation never enables voice",
     cancellation.signal,
   );
   const rejected = expect(cancelled).rejects.toThrow("cancelled");
+  const summaryRequest = mock.sent
+    .map(parseSentFrame)
+    .findLast((frame) => frame.type === "speech.render.request")!;
   cancellation.abort();
   await rejected;
   const types = mock.sent.map((frame) => parseSentFrame(frame).type);
-  expect(types).toContain("speech.cancel");
+  expect(types).toContain("speech.cancel.request");
+  const cancelRequest = mock.sent
+    .map(parseSentFrame)
+    .find((frame) => frame.type === "speech.cancel.request")!;
+  expect(cancelRequest.targetRequestId).toBe(summaryRequest.requestId);
+  expect(cancelRequest.requestId).not.toBe(cancelRequest.targetRequestId);
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "speech.cancel.response",
+      payload: { requestId: cancelRequest.requestId, cancelled: true },
+    }),
+  );
   expect(types).not.toContain("set_voice_mode");
   expect(types).not.toContain("voice_audio_chunk");
 });

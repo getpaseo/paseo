@@ -1601,8 +1601,11 @@ microphone input. Conversational voice must be ended first; starting it cancels 
 Disconnected hosts and hosts lacking `server_info.features.readAloud` report an error.
 
 Full mode chunks all supplied text without LLM processing or silent truncation. Summary mode uses
-Paseo's existing structured generation with an internal ephemeral agent. Input is capped at 200,000
-characters. Speech uses the live configured TTS provider; audio responses and cancellation are
+Paseo's existing structured generation with internal ephemeral agents. Long responses are summarized
+in bounded segments, then reduced into one spoken summary; no source segment is silently dropped.
+Each prompt contains at most 8,000 encoded source bytes, including JSON escaping, and intermediate
+summaries are bounded so reduction converges. Summary requests have a ten-minute deadline and
+remain cancellable between generations. Input is capped at 200,000 characters. Speech uses the live configured TTS provider; audio responses and cancellation are
 scoped to the requesting socket. Only a single short TTS chunk is requested at a time. Cancellation
 prevents any late result from being played even if the provider's native synthesis cannot be interrupted.
 

@@ -3696,7 +3696,22 @@ export class DaemonClient {
     });
     const abort = () => {
       try {
-        this.sendSessionMessageStrict({ type: "speech.cancel", targetRequestId: requestId });
+        const cancelRequestId = this.createRequestId();
+        // Cancellation is a separate correlated RPC; its acknowledgement must not
+        // keep the aborted render (or the local audio controls) waiting.
+        void this.sendRequest({
+          requestId: cancelRequestId,
+          message: {
+            type: "speech.cancel.request",
+            requestId: cancelRequestId,
+            targetRequestId: requestId,
+          },
+          options: { skipQueue: true },
+          select: (msg) =>
+            msg.type === "speech.cancel.response" && msg.payload.requestId === cancelRequestId
+              ? msg.payload
+              : null,
+        }).catch(() => undefined);
       } catch {
         /* disconnected */
       }
@@ -3707,7 +3722,7 @@ export class DaemonClient {
         requestId,
         message,
         signal,
-        timeout: 125_000,
+        timeout: input.operation === "summarize" ? 605_000 : 125_000,
         options: { skipQueue: true },
         select: (msg) =>
           msg.type === "speech.render.response" && msg.payload.requestId === requestId

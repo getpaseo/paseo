@@ -5898,9 +5898,29 @@ describe("read-aloud RPC", () => {
       source,
     );
     await vi.waitFor(() => expect(synthesizeSpeech).toHaveBeenCalled());
-    await session.handleMessage({ type: "speech.cancel", targetRequestId: "cancel-me" }, other);
+    await session.handleMessage(
+      { type: "speech.cancel.request", requestId: "other-cancel", targetRequestId: "cancel-me" },
+      other,
+    );
+    expect(targetedMessages).toContainEqual({
+      source: other,
+      message: {
+        type: "speech.cancel.response",
+        payload: { requestId: "other-cancel", cancelled: false },
+      },
+    });
     expect(stream.destroyed).toBe(false);
-    await session.handleMessage({ type: "speech.cancel", targetRequestId: "cancel-me" }, source);
+    await session.handleMessage(
+      { type: "speech.cancel.request", requestId: "owner-cancel", targetRequestId: "cancel-me" },
+      source,
+    );
+    expect(targetedMessages).toContainEqual({
+      source,
+      message: {
+        type: "speech.cancel.response",
+        payload: { requestId: "owner-cancel", cancelled: true },
+      },
+    });
     await pending;
     expect(stream.destroyed).toBe(true);
     expect(targetedMessages.some(({ message }) => message.type === "speech.render.response")).toBe(

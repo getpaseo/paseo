@@ -3167,9 +3167,19 @@ export const SpeechRenderResponseSchema = z.object({
   }),
 });
 
+export const SpeechCancelRequestSchema = z.object({
+  type: z.literal("speech.cancel.request"),
+  requestId: z.string(),
+  targetRequestId: z.string().min(1),
+});
+export const SpeechCancelResponseSchema = z.object({
+  type: z.literal("speech.cancel.response"),
+  payload: z.object({ requestId: z.string(), cancelled: z.boolean() }),
+});
+
 export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   SpeechRenderRequestSchema,
-  z.object({ type: z.literal("speech.cancel"), targetRequestId: z.string().min(1) }),
+  SpeechCancelRequestSchema,
   BrowserHostRegisterRequestSchema,
   SubscriptionReleaseRequestSchema,
   SessionEventsSetSubscriptionRequestSchema,
@@ -6737,6 +6747,7 @@ export const AgentSkillsImportLegacySelectionResponseSchema = z.object({
 });
 
 export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
+  SpeechCancelResponseSchema,
   SpeechRenderResponseSchema,
   BrowserHostRegisterResponseSchema,
   SubscriptionReleaseResponseSchema,
