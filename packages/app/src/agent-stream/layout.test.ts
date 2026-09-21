@@ -266,16 +266,13 @@ describe("layoutStream", () => {
         head: [headBlock],
         timingIds: [historyBlock.id, headBlock.id],
       });
-      const host = layout.auxiliaryTurnFooter;
-      if (!host) {
-        throw new Error("Expected an auxiliary turn footer");
-      }
 
+      expect(layout.auxiliaryTurnFooter?.itemId).toBe(headBlock.id);
       expect(
         collectAssistantResponseContentForStreamRenderStrategy({
           strategy: strategyFor(platform),
-          items: host.items,
-          startIndex: host.startIndex,
+          items: layout.auxiliaryTurnFooter?.items ?? [],
+          startIndex: layout.auxiliaryTurnFooter?.startIndex ?? -1,
         }),
       ).toBe("What is live today.\n\nWhat I need from you");
     },
