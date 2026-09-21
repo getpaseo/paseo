@@ -1574,6 +1574,38 @@ an action already in progress.
 the plugin installation or host connection is torn down. Return cleanup from the client entry for
 your subscriptions, timers, and other resources.
 
+## Response actions and read-aloud
+
+`client.addResponseAction({ id, title, icon, items(context), activity?(context) })` registers an icon in completed
+assistant-response footers, after Fork conversation. It does not transform or replace the assistant's content.
+It returns an idempotent remover; plugin teardown removes registrations automatically.
+
+`items` is a synchronous, pure projection returning `{ id, title, icon?, disabled?, onSelect }`
+entries. Paseo owns the cross-platform dropdown, theme, error reporting and dismissal. The callback
+receives `{ agentId, responseId, getContent, speech }`. `getContent()` uses the same complete response
+as Copy, including historical responses, rather than reading the latest agent output.
+
+`activity` is an optional synchronous, pure projection returning `{ status: "loading" | "active", label }`
+or `null`. Loading shows a spinner; active highlights the icon. Both show the supplied label beside
+the icon and keep the dropdown usable. Match the speech key to the response before returning activity
+so progress is shown only on the response being read.
+
+`useSpeech()` is also available from `@getpaseo/plugin/client` inside hosted plugin components.
+It returns `{ status, key, error, speak, stop }`. `status` is `idle`, `preparing` or `speaking`.
+Call `speak({ agentId, key, text, mode: "summary" | "full" })` from a user interaction. `key` identifies
+the response for progress UI. The promise settles when playback ends; failures reject and populate
+`error`. A new request replaces previous read-aloud playback on this client. `stop()` cancels it.
+
+Speech uses the component's selected daemon and the app's existing audio engine. It never captures
+microphone input. Conversational voice must be ended first; starting it cancels read-aloud.
+Disconnected hosts and hosts lacking `server_info.features.readAloud` report an error.
+
+Full mode chunks all supplied text without LLM processing or silent truncation. Summary mode uses
+Paseo's existing structured generation with an internal ephemeral agent. Input is capped at 200,000
+characters. Speech uses the live configured TTS provider; audio responses and cancellation are
+scoped to the requesting socket. Only a single short TTS chunk is requested at a time. Cancellation
+prevents any late result from being played even if the provider's native synthesis cannot be interrupted.
+
 ## Use the Paseo SDK
 
 Use `usePaseo()` for ordinary Paseo operations from a surface. It borrows the selected host's existing connection; do not create another client.

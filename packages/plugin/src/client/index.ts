@@ -58,3 +58,12 @@ export declare function useHosts(): readonly PluginHostSummary[];
 export declare function getPaseoClient(serverId: string): import("@getpaseo/client").PaseoApi;
 /** Open an absolute HTTP(S) URL using the client platform’s external opener. */
 export declare function openExternalUrl(url: string): Promise<void>;
+
+export type { PluginSpeech, PluginSpeechInput, PluginSpeechState } from "./speech.js";
+/** Read text aloud using the selected daemon and this client’s existing audio engine. */
+export declare function useSpeech(): import("./speech.js").PluginSpeech;
+export type {
+  PluginResponseActionContribution,
+  PluginResponseActionContext,
+  PluginResponseActionItem,
+} from "./response-actions.js";
