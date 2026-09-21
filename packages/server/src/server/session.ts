@@ -1279,7 +1279,7 @@ export class Session {
       this.sessionLogger.trace(
         {
           agentId,
-          provider: snapshot.provider,
+          provider: snapshot!.provider,
           lifecycle: snapshot.lifecycle,
           hasInFlightRun,
         },
@@ -1718,6 +1718,10 @@ export class Session {
     source?: object,
   ): Promise<void> | undefined {
     switch (msg.type) {
+      case "agent.timeline.search.request":
+        return this.handleAgentTimelineSearchRequest(msg);
+      case "agent.timeline.window.request":
+        return this.handleAgentTimelineWindowRequest(msg);
       case "fetch_agent_timeline_request":
         return this.handleFetchAgentTimelineRequest(msg);
       case "agent.provider_subagents.list.request":
@@ -2924,7 +2928,7 @@ export class Session {
       }
 
       this.sessionLogger.info(
-        { agentId: snapshot.id, provider: snapshot.provider },
+        { agentId: snapshot.id, provider: snapshot!.provider },
         `Created agent ${snapshot.id} (${snapshot.provider})`,
       );
     } catch (error) {
@@ -5786,6 +5790,74 @@ export class Session {
     return this.selectProjectedTimelineProjection(input);
   }
 
+
+  private async handleAgentTimelineSearchRequest(
+    msg: Extract<SessionInboundMessage, { type: 'agent.timeline.search.request' }>,
+  ): Promise<void> {
+    const { agentId, requestId, query, limit, continuation } = msg;
+    
+    try {
+      const result = await this.agentManager.searchAgentTimeline(agentId, query, continuation, limit);
+      const fetchResult = this.agentManager.fetchTimeline(agentId, { limit: 1 }); const epoch = fetchResult.epoch;
+      const snapshotUpperSeq = fetchResult.window.maxSeq;
+      this.emit({
+        type: 'agent.timeline.search.response',
+        payload: {
+          requestId,
+          agentId,
+          epoch,
+          snapshotUpperSeq,
+          matches: result.matches,
+          continuation: result.continuation,
+          isComplete: result.isComplete,
+          error: null,
+        },
+      });
+    } catch (error) {
+      this.sessionLogger.error({ agentId, error }, 'Failed to handle agent.timeline.search.request');
+      this.emit({ type: "agent.timeline.search.response" as const, payload: { requestId, agentId, epoch: "", snapshotUpperSeq: 0, matches: [], continuation: null, isComplete: true, error: String(error) } });
+    }
+  }
+
+  private async handleAgentTimelineWindowRequest(
+    msg: Extract<SessionInboundMessage, { type: 'agent.timeline.window.request' }>,
+  ): Promise<void> {
+    const { agentId, requestId, epoch, centerSeq, limit } = msg;
+    
+    try {
+      const currentEpoch = this.agentManager.fetchTimeline(agentId, { limit: 1 }).epoch;
+      if (currentEpoch !== epoch) {
+        this.emit({ type: 'agent.timeline.window.response', payload: { requestId, agentId, epoch, centerSeq, entries: [], hasOlder: false, hasNewer: false, error: 'Epoch mismatch' } }); return;
+      }
+      const result = await this.agentManager.getAgentTimelineWindow(agentId, centerSeq, limit); const snapshot = this.agentManager.getAgent(agentId);
+      const entryPayloads = result.entries.map((entry: any) => ({
+        provider: snapshot!.provider,
+        item: entry.item,
+        timestamp: entry.timestamp,
+        seqStart: entry.seqStart,
+        seqEnd: entry.seqEnd,
+        sourceSeqRanges: entry.sourceSeqRanges,
+        collapsed: entry.collapsed,
+      }));
+      this.emit({
+        type: 'agent.timeline.window.response',
+        payload: {
+          requestId,
+          agentId,
+          epoch,
+          centerSeq,
+          entries: entryPayloads,
+          hasOlder: result.hasOlder,
+          hasNewer: result.hasNewer,
+          error: null,
+        },
+      });
+    } catch (error) {
+      this.sessionLogger.error({ agentId, error }, 'Failed to handle agent.timeline.window.request');
+      this.emit({ type: "agent.timeline.window.response" as const, payload: { requestId, agentId, epoch: "", centerSeq, entries: [], hasOlder: false, hasNewer: false, error: String(error) } });
+    }
+  }
+
   private async handleFetchAgentTimelineRequest(
     msg: Extract<SessionInboundMessage, { type: "fetch_agent_timeline_request" }>,
   ): Promise<void> {
@@ -5848,7 +5920,7 @@ export class Session {
           hasOlder: selectedTimeline.hasOlder,
           hasNewer: selectedTimeline.hasNewer,
           entries: selectedTimeline.entries.map((entry) => ({
-            provider: snapshot.provider,
+            provider: snapshot!.provider,
             item: entry.item,
             timestamp: entry.timestamp,
             seqStart: entry.seqStart,
