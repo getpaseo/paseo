@@ -3186,4 +3186,42 @@ describe("PiRpcAgentSession resumeSession purpose: history", () => {
     // runtime open on an abandoned read (closeSpy uncalled).
     expect(closeSpy).toHaveBeenCalledTimes(1);
   });
+
+  test("releases the runtime when the entry-capture prompt rejects before the read begins", async () => {
+    const pi = new FakePi();
+    const client = createClient(pi);
+    const session = (await client.resumeSession(
+      {
+        provider: "pi",
+        sessionId: "pi-session-1",
+        nativeHandle: "/tmp/native-pi-session",
+        metadata: { cwd: "/workspace/project" },
+      },
+      undefined,
+      undefined,
+      { purpose: "history" },
+    )) as PiRpcAgentSession;
+    const fakeSession = pi.latestSession();
+    const closeSpy = vi.spyOn(fakeSession, "close");
+    const captureError = new Error("capture prompt rejected");
+
+    fakeSession.holdNextPrompt();
+    const readPromise = (async () => {
+      for await (const _event of session.streamHistory()) {
+        // never reached: the entry-capture prompt rejects before the loop starts
+      }
+    })();
+    // Attach the rejection assertion before failHeldPrompt's internal
+    // setImmediate lets the rejection flush, or Node flags readPromise as
+    // briefly unhandled before this line gets a chance to observe it.
+    const assertion = expect(readPromise).rejects.toThrow(captureError);
+    await fakeSession.failHeldPrompt(captureError);
+
+    // Mutant: awaiting requestEntryCapture("history") outside the try/finally
+    // leaves the runtime open when the capture prompt rejects (closeSpy
+    // uncalled) — the generator exits before ever entering the try, so the
+    // finally that releases the runtime never runs.
+    await assertion;
+    expect(closeSpy).toHaveBeenCalledTimes(1);
+  });
 });
