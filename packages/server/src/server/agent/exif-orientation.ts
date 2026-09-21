@@ -30,20 +30,24 @@ function hasExifHeader(bytes: Uint8Array, offset: number): boolean {
 function readOrientationFromTiff(bytes: Uint8Array, tiffStart: number): number {
   if (tiffStart + 8 > bytes.length) return 1;
   const littleEndian = ((bytes[tiffStart]! << 8) | bytes[tiffStart + 1]!) === 0x4949;
-  const read16 = (pos: number) =>
-    littleEndian ? bytes[pos]! | (bytes[pos + 1]! << 8) : (bytes[pos]! << 8) | bytes[pos + 1]!;
-  const read32 = (pos: number) =>
-    littleEndian
+  function read16(pos: number): number {
+    return littleEndian
+      ? bytes[pos]! | (bytes[pos + 1]! << 8)
+      : (bytes[pos]! << 8) | bytes[pos + 1]!;
+  }
+  function read32(pos: number): number {
+    return littleEndian
       ? (bytes[pos]! |
           (bytes[pos + 1]! << 8) |
           (bytes[pos + 2]! << 16) |
           (bytes[pos + 3]! << 24)) >>>
-        0
+          0
       : ((bytes[pos]! << 24) |
           (bytes[pos + 1]! << 16) |
           (bytes[pos + 2]! << 8) |
           bytes[pos + 3]!) >>>
-        0;
+          0;
+  }
 
   const ifdStart = tiffStart + read32(tiffStart + 4);
   if (ifdStart + 2 > bytes.length) return 1;
@@ -151,16 +155,19 @@ function rotate90(
   return new photon.PhotonImage(dst, h, w);
 }
 
+export interface ApplyExifOrientationOptions {
+  photon: Photon;
+  image: PhotonImage;
+  originalBytes: Uint8Array;
+}
+
 /**
  * Returns `image` itself when nothing needs doing, otherwise a new image. The
  * caller owns both and must free whichever it stops using.
  */
-export function applyExifOrientation(
-  photon: Photon,
-  image: PhotonImage,
-  originalBytes: Uint8Array,
-): PhotonImage {
-  switch (readExifOrientation(originalBytes)) {
+export function applyExifOrientation(options: ApplyExifOrientationOptions): PhotonImage {
+  const { photon, image } = options;
+  switch (readExifOrientation(options.originalBytes)) {
     case 2:
       photon.fliph(image);
       return image;

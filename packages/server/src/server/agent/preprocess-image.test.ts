@@ -76,6 +76,15 @@ function makePngHeader(width: number, height: number, bodyBytes = 0): string {
   return header.toString("base64");
 }
 
+/** A GIF89a logical screen descriptor, with no frames behind it. */
+function makeGifHeader(width: number, height: number, bodyBytes = 0): string {
+  const header = Buffer.alloc(13 + bodyBytes, 0xa5);
+  header.write("GIF89a", 0, "ascii");
+  header.writeUInt16LE(width, 6);
+  header.writeUInt16LE(height, 8);
+  return header.toString("base64");
+}
+
 /** Splice an APP1 EXIF segment carrying `orientation` in after the SOI marker. */
 function withExifOrientation(jpeg: Uint8Array, orientation: number): Uint8Array {
   const tiff = Buffer.alloc(8 + 2 + 12 + 4);
@@ -227,8 +236,8 @@ describe("preprocessImage", () => {
     expect(height).toBe(MAX_IMAGE_DIMENSION);
   });
 
-  test("passes GIF through so animation is not flattened to one frame", async () => {
-    const image = { data: makePng(4000, 4000), mimeType: "image/gif" };
+  test("passes an in-limit GIF through so animation is not flattened to one frame", async () => {
+    const image = { data: makeGifHeader(800, 600), mimeType: "image/gif" };
 
     const result = await preprocessImage({ image });
 
@@ -249,7 +258,7 @@ describe("preprocessImage", () => {
   });
 
   test("honours a mime type that carries parameters", async () => {
-    const image = { data: makePng(4000, 4000), mimeType: "image/gif; charset=binary" };
+    const image = { data: makeGifHeader(800, 600), mimeType: "image/gif; charset=binary" };
 
     const result = await preprocessImage({ image });
 
@@ -303,6 +312,31 @@ describe("resource ceilings", () => {
     // Forwarding it is what poisons the conversation: it is over the provider's
     // budget and there is no readable header to resize from.
     const image = { data: "A".repeat(MAX_IMAGE_BYTES + 1), mimeType: "image/tiff" };
+
+    await expect(preprocessImage({ image })).rejects.toThrow(ImageTooLargeError);
+  });
+
+  test("refuses an oversized GIF instead of forwarding what it cannot resize", async () => {
+    // Re-encoding is off the table, but the provider limit is not: forwarding a
+    // 4000px GIF is the same poisoned conversation the clamp exists to prevent.
+    const image = { data: makeGifHeader(4000, 2000), mimeType: "image/gif" };
+
+    const error = await preprocessImage({ image }).catch((thrown: unknown) => thrown);
+
+    expect(error).toBeInstanceOf(ImageTooLargeError);
+    expect(error).toMatchObject({ width: 4000, height: 2000, mimeType: "image/gif" });
+  });
+
+  test("refuses a passthrough attachment over the provider's byte budget", async () => {
+    const image = { data: makeGifHeader(100, 100, 4096), mimeType: "image/gif" };
+
+    await expect(preprocessImage({ image, limits: { maxBytes: 512 } })).rejects.toThrow(
+      ImageTooLargeError,
+    );
+  });
+
+  test("applies the encoded byte ceiling to a passthrough format too", async () => {
+    const image = { data: "A".repeat(MAX_SOURCE_BYTES + 1), mimeType: "image/svg+xml" };
 
     await expect(preprocessImage({ image })).rejects.toThrow(ImageTooLargeError);
   });

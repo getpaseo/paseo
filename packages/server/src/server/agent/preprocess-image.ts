@@ -166,11 +166,12 @@ export class TooManyImagesError extends Error {
 }
 
 /**
- * Formats whose bytes must survive untouched.
+ * Formats this path must never re-encode.
  *
  * GIF may be animated and re-encoding flattens it to a single frame; SVG is
- * vector and has no pixel dimensions to clamp. Neither can trip the pixel
- * ceiling in a way a raster downscale would fix, so both pass through.
+ * vector and has no pixels to scale. That removes the clamp as an option, not
+ * the limits: one of these is still measured against the same ceilings, and one
+ * that is over them fails the send rather than being forwarded.
  */
 const PASSTHROUGH_MIME_TYPES = new Set(["image/gif", "image/svg+xml"]);
 
@@ -232,19 +233,23 @@ interface Clamped extends Encoded {
   height: number;
 }
 
+interface ClampToBudgetOptions {
+  photon: Photon;
+  decoded: PhotonImage;
+  target: [number, number];
+  maxBytes: number;
+  logger?: Logger;
+}
+
 /**
  * Resize to the target, then keep taking a scale step until some encoding
  * makes budget or the readability floor is reached. Past the floor the
  * smallest JPEG produced is sent anyway: still bounded in pixels, which is the
  * ceiling that poisons a session.
  */
-function clampToBudget(
-  photon: Photon,
-  decoded: PhotonImage,
-  [targetWidth, targetHeight]: [number, number],
-  maxBytes: number,
-  logger?: Logger,
-): Clamped {
+function clampToBudget(options: ClampToBudgetOptions): Clamped {
+  const { photon, decoded, maxBytes, logger } = options;
+  let [targetWidth, targetHeight] = options.target;
   let smallest: Clamped | undefined;
   for (;;) {
     const scaled = photon.resize(
@@ -286,6 +291,7 @@ function clampToBudget(
 }
 
 interface DecodeAndClampOptions {
+  photon: Photon;
   input: Buffer;
   dimensions: ImageDimensions;
   mimeType: string;
@@ -300,21 +306,22 @@ interface DecodeAndClampOptions {
  * provider one. A codec failure here is wrapped rather than swallowed: the
  * caller gets an error naming the attachment instead of Photon's `unreachable`.
  */
-function decodeAndClamp(photon: Photon, options: DecodeAndClampOptions): Clamped {
+function decodeAndClamp(options: DecodeAndClampOptions): Clamped {
+  const { photon, input } = options;
   let decoded: PhotonImage | undefined;
   try {
-    const raw = photon.PhotonImage.new_from_byteslice(options.input);
-    decoded = applyExifOrientation(photon, raw, options.input);
+    const raw = photon.PhotonImage.new_from_byteslice(input);
+    decoded = applyExifOrientation({ photon, image: raw, originalBytes: input });
     if (decoded !== raw) {
       raw.free();
     }
-    return clampToBudget(
+    return clampToBudget({
       photon,
       decoded,
-      fitWithin(decoded.get_width(), decoded.get_height(), options.maxDimension),
-      options.maxBytes,
-      options.logger,
-    );
+      target: fitWithin(decoded.get_width(), decoded.get_height(), options.maxDimension),
+      maxBytes: options.maxBytes,
+      logger: options.logger,
+    });
   } catch (error) {
     throw new ImageDecodeError({
       mimeType: options.mimeType,
@@ -335,19 +342,17 @@ export interface PreprocessImageOptions {
 /**
  * Clamp one attachment to the provider's pixel and byte ceilings.
  *
- * Returns the attachment unchanged when it is already within both, and when
- * its format must not be re-encoded. Throws `ImageTooLargeError` when the
- * attachment is past a resource ceiling and `ImageDecodeError` when the codec
- * cannot handle one that is over a provider ceiling.
+ * Returns the attachment unchanged when it is already within both. Throws
+ * `ImageTooLargeError` when the attachment is past a resource ceiling, or is
+ * over a provider one in a format that cannot be re-encoded, and
+ * `ImageDecodeError` when the codec cannot handle one that is over a provider
+ * ceiling.
  */
 export async function preprocessImage(options: PreprocessImageOptions): Promise<ImageAttachment> {
   const { image, logger } = options;
   const maxDimension = options.limits?.maxDimension ?? MAX_IMAGE_DIMENSION;
   const maxBytes = options.limits?.maxBytes ?? MAX_IMAGE_BYTES;
 
-  if (isPassthrough(image.mimeType)) {
-    return image;
-  }
   if (image.data.length > MAX_SOURCE_BYTES) {
     throw new ImageTooLargeError({
       reason: `its encoded payload is ${image.data.length} bytes, over the ${MAX_SOURCE_BYTES} byte ceiling`,
@@ -359,6 +364,27 @@ export async function preprocessImage(options: PreprocessImageOptions): Promise<
 
   const input = Buffer.from(image.data, "base64");
   const dimensions = readImageDimensions(input);
+  const overBudget = image.data.length > maxBytes;
+
+  if (isPassthrough(image.mimeType)) {
+    const oversizedFrame =
+      dimensions !== null && (dimensions.width > maxDimension || dimensions.height > maxDimension);
+    if (!oversizedFrame && !overBudget) {
+      return image;
+    }
+    // There is no clamped version of these to send: flattening an animation or
+    // rasterising a vector is not the same image. Forwarding one the provider
+    // will reject is what poisons the conversation, so the send fails here.
+    throw new ImageTooLargeError({
+      reason:
+        dimensions && oversizedFrame
+          ? `it is ${dimensions.width}x${dimensions.height}, over the ${maxDimension}px limit, and ${image.mimeType} cannot be resized without changing what it is`
+          : `its encoded payload is ${image.data.length} bytes, over the provider's byte budget, and ${image.mimeType} cannot be re-encoded without changing what it is`,
+      mimeType: image.mimeType,
+      encodedBytes: image.data.length,
+      dimensions,
+    });
+  }
 
   if (!dimensions) {
     // An unreadable container is not a reason to decode and find out; that is
@@ -386,7 +412,6 @@ export async function preprocessImage(options: PreprocessImageOptions): Promise<
   }
 
   const oversized = width > maxDimension || height > maxDimension;
-  const overBudget = image.data.length > maxBytes;
   // Anything already inside both ceilings leaves untouched and undecoded, which
   // is also what keeps a small PNG of flat UI from being transcoded for nothing.
   if (!oversized && !overBudget) {
@@ -394,7 +419,8 @@ export async function preprocessImage(options: PreprocessImageOptions): Promise<
   }
 
   const photon = await loadPhoton();
-  const clamped = decodeAndClamp(photon, {
+  const clamped = decodeAndClamp({
+    photon,
     input,
     dimensions,
     mimeType: image.mimeType,
