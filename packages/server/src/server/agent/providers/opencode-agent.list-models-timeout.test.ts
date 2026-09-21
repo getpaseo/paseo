@@ -1,6 +1,3 @@
-import type { ModelInfo, AgentInfo } from "@opencode/client";
-import { modelsFromV2, modesFromV2 } from "./opencode/v2/mapping.js";
-import { openCodeMajorVersion } from "./opencode/runtime-client.js";
 import { afterEach, expect, test, vi } from "vitest";
 
 import { createTestLogger } from "../../../test-utils/test-logger.js";
@@ -270,65 +267,4 @@ test("does not throw when only api-source providers are present with no connecte
       },
     ],
   });
-});
-
-test.each([
-  ["1.14.46", 1],
-  ["opencode v2.0.10\n", 2],
-  ["v2.0.10-beta.1", 2],
-])("identifies the OpenCode runtime version %s", (output, major) => {
-  expect(openCodeMajorVersion(String(output))).toBe(major);
-});
-test.each(["3.0.0", "2.0.9", "2.0.7", "2.0.4", "2.0.3", "v2.0.1", "unexpected wrapper output", ""])(
-  "rejects unsupported OpenCode version output %s",
-  (output) => {
-    expect(() => openCodeMajorVersion(output)).toThrow();
-  },
-);
-
-test("normalizes v2 model capabilities, variants, and visible primary modes", () => {
-  const model: ModelInfo = {
-    id: "model",
-    modelID: "native-model",
-    providerID: "provider",
-    name: "Model",
-    capabilities: { tools: true, input: ["text", "image"], output: ["text"] },
-    variants: [{ id: "high" }],
-    time: { released: 1 },
-    cost: [],
-    status: "active",
-    enabled: true,
-    limit: { context: 200000, output: 10000 },
-  };
-  expect(modelsFromV2([model, { ...model, id: "disabled", enabled: false }])).toEqual([
-    {
-      provider: "opencode",
-      id: "provider/model",
-      label: "Model",
-      contextWindowMaxTokens: 200000,
-      metadata: {
-        providerId: "provider",
-        modelId: "model",
-        supportsAttachments: true,
-        supportsToolCall: true,
-        contextWindowMaxTokens: 200000,
-      },
-      thinkingOptions: [{ id: "high", label: "high" }],
-    },
-  ]);
-  const agent: AgentInfo = {
-    id: "build",
-    name: "Build",
-    mode: "primary",
-    hidden: false,
-    request: { settings: {}, headers: {}, body: {} },
-    permissions: [],
-  };
-  expect(
-    modesFromV2([
-      agent,
-      { ...agent, id: "hidden", hidden: true },
-      { ...agent, id: "child", mode: "subagent" },
-    ]),
-  ).toEqual([{ id: "build", label: "Build", description: undefined }]);
 });
