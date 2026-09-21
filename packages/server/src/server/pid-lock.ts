@@ -105,7 +105,11 @@ async function clearExistingPidLock(
   existingLock: PidLockInfo,
   lockOwnerPid: number,
 ): Promise<"already_owned" | "cleared"> {
-  const lockOwnerRunning = isPidRunning(existingLock.pid);
+  // PID liveness is only meaningful for a same-host lock. A lock written by
+  // another pod/host names a PID in a different namespace — kill(pid, 0)
+  // would probe an unrelated local process (PID reuse) and pin the lock
+  // forever. Foreign locks are stale from this host's perspective.
+  const lockOwnerRunning = existingLock.hostname === hostname() && isPidRunning(existingLock.pid);
   if (existingLock.pid === lockOwnerPid && lockOwnerRunning) {
     await touchPidLockFile(pidPath);
     return "already_owned";
@@ -339,7 +343,7 @@ export async function isLocked(
   if (!info) {
     return { locked: false };
   }
-  if (!isPidRunning(info.pid)) {
+  if (info.hostname !== hostname() || !isPidRunning(info.pid)) {
     return { locked: false, info };
   }
   return { locked: true, info };

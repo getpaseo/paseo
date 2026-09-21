@@ -1,5 +1,5 @@
 import { mkdtemp, open, rm, stat, utimes, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
 
@@ -74,7 +74,7 @@ describe("pid-lock ownership", () => {
         JSON.stringify({
           pid: process.pid,
           startedAt: "2026-01-01T00:00:00.000Z",
-          hostname: "old-host",
+          hostname: hostname(),
           uid: process.getuid?.() ?? 0,
           listen: "127.0.0.1:6767",
           desktopManaged: true,
@@ -107,7 +107,7 @@ describe("pid-lock ownership", () => {
         JSON.stringify({
           pid: process.pid,
           startedAt: "2026-01-01T00:00:00.000Z",
-          hostname: "old-host",
+          hostname: hostname(),
           uid: process.getuid?.() ?? 0,
           listen: "127.0.0.1:6767",
           desktopManaged: true,
@@ -139,7 +139,7 @@ describe("pid-lock ownership", () => {
         JSON.stringify({
           pid: process.pid,
           startedAt: "2026-01-01T00:00:00.000Z",
-          hostname: "old-host",
+          hostname: hostname(),
           uid: process.getuid?.() ?? 0,
           listen: "127.0.0.1:6767",
           desktopManaged: true,
@@ -170,7 +170,7 @@ describe("pid-lock ownership", () => {
         JSON.stringify({
           pid: process.pid,
           startedAt: "2026-01-01T00:00:00.000Z",
-          hostname: "old-host",
+          hostname: hostname(),
           uid: process.getuid?.() ?? 0,
           listen: "127.0.0.1:6767",
           desktopManaged: true,
@@ -186,6 +186,36 @@ describe("pid-lock ownership", () => {
       const lock = await getPidLockInfo(paseoHome);
       expect(lock?.pid).toBe(process.pid);
       expect(lock?.heartbeat).toBeUndefined();
+    } finally {
+      await rm(paseoHome, { recursive: true, force: true });
+    }
+  });
+
+  test("reclaims a fresh lock written on a different host despite a live local pid", async () => {
+    const paseoHome = await mkdtemp(join(tmpdir(), "paseo-pid-lock-foreign-host-"));
+    const replacementOwnerPid = process.pid + 10_000;
+
+    try {
+      // Pod/container restart: the lock names a PID in a dead PID namespace,
+      // but the number is reused by an unrelated local process here — with a
+      // fresh heartbeat mtime, pure liveness would pin the lock forever.
+      await writeFile(
+        join(paseoHome, "paseo.pid"),
+        JSON.stringify({
+          pid: process.pid,
+          startedAt: "2026-01-01T00:00:00.000Z",
+          hostname: "dead-pod-xyz",
+          uid: process.getuid?.() ?? 0,
+          listen: "127.0.0.1:6767",
+          heartbeat: true,
+        }),
+      );
+
+      await expect(isLocked(paseoHome)).resolves.toMatchObject({ locked: false });
+      await acquirePidLock(paseoHome, null, { ownerPid: replacementOwnerPid });
+
+      const lock = await getPidLockInfo(paseoHome);
+      expect(lock?.pid).toBe(replacementOwnerPid);
     } finally {
       await rm(paseoHome, { recursive: true, force: true });
     }
@@ -237,7 +267,7 @@ describe("pid-lock ownership", () => {
         JSON.stringify({
           pid: process.pid,
           startedAt: new Date().toISOString(),
-          hostname: "current-host",
+          hostname: hostname(),
           uid: process.getuid?.() ?? 0,
           listen: "127.0.0.1:6767",
           desktopManaged: true,
