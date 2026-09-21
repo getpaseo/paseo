@@ -229,10 +229,6 @@ function WorkspaceDeck({
     }
   }, [mountedSelections, nextMountedSelections]);
 
-  if (!activeSelection) {
-    return null;
-  }
-
   return (
     <View style={styles.deck}>
       {renderedSelections.map((selection) => {
@@ -259,7 +255,7 @@ function WorkspaceDeckEntry({
   onUnmountInactive,
 }: {
   selection: ActiveWorkspaceSelection;
-  activeSelection: ActiveWorkspaceSelection;
+  activeSelection: ActiveWorkspaceSelection | null;
   recoveryRequested: boolean;
   recoveryAgentId: string | null;
   onUnmountInactive: (selection: ActiveWorkspaceSelection) => void;

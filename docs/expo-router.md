@@ -73,6 +73,12 @@ only use local param fallback during cold mount (`/` or empty pathname), or a
 hidden workspace can overwrite the remembered workspace before Settings or
 History returns.
 
+Settings' explicit **Back to workspace** action uses the remembered workspace,
+not the generic focus-history Back action, which may target an earlier tab or
+workspace. Keep retained workspace entries mounted (and inactive) while an
+app-wide route clears the active selection; returning `null` for the whole deck
+would discard chat drafts and expanded diff state despite retaining the IDs.
+
 ## Focus History
 
 The Expo Router stack is not the user-facing Back history. Workspace tab and

@@ -3,7 +3,7 @@ import { useChatSearchController } from "../chat-search/controller";
 import { SearchBar } from "../chat-search/search-bar";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { TFunction } from "i18next";
-import { FileCode2, MessageSquare, SquarePen } from "lucide-react-native";
+import { ListFilter, MessageSquare, SquarePen } from "lucide-react-native";
 import React, {
   memo,
   useCallback,
@@ -23,9 +23,14 @@ import { shallow, useShallow } from "zustand/shallow";
 import { useStoreWithEqualityFn } from "zustand/traditional";
 import { AgentStreamView, type AgentStreamViewHandle } from "@/agent-stream/view";
 import { ArchivedAgentCallout } from "@/components/archived-agent-callout";
-import { ArtifactFeed } from "@/artifacts/feed";
+import { CompanionFeed } from "@/companion-stream/feed";
+import type { CompanionEntry } from "@getpaseo/protocol/companion-stream";
 import { FileDropZone } from "@/components/file-drop/file-drop-zone";
-import { useRetainedPanelActive } from "@/components/retained-panel";
+import {
+  RetainedPanel,
+  RetainedPanelActivity,
+  useRetainedPanelActive,
+} from "@/components/retained-panel";
 import { SidebarCallout } from "@/components/sidebar-callout";
 import { SegmentedControl } from "@/components/ui/segmented-control";
 import { Composer } from "@/composer";
@@ -114,6 +119,7 @@ interface ChatAgentStateShape {
   features?: Agent["features"];
   lastError?: Agent["lastError"] | null;
   artifacts?: Agent["artifacts"];
+  companionEntries?: Agent["companionEntries"];
 }
 
 interface ChatAgentSelectedState extends ChatAgentStateShape {
@@ -165,6 +171,7 @@ function selectChatAgentState(
     features: agent.features,
     lastError: agent.lastError ?? null,
     artifacts: agent.artifacts,
+    companionEntries: agent.companionEntries,
     archivedAt: agent.archivedAt ?? null,
     requiresAttention: agent.requiresAttention ?? false,
     attentionReason: agent.attentionReason ?? null,
@@ -503,7 +510,7 @@ function AgentPanelContent({
   onOpenWorkspaceFile?: (request: WorkspaceFileOpenRequest) => void;
 }) {
   const { t } = useTranslation();
-    const resolvedAgentId = agentId.trim() || undefined;
+  const resolvedAgentId = agentId.trim() || undefined;
   const resolvedServerId = serverId.trim() || undefined;
   const daemons = useHosts();
   const runtimeServerId = resolvedServerId ?? "";
@@ -1115,6 +1122,8 @@ function ChatAgentContent({
   );
 }
 
+const EMPTY_COMPANION_ENTRIES: readonly CompanionEntry[] = [];
+
 const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
   serverId,
   agentId,
@@ -1165,13 +1174,27 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
     (state) => state.selectedViews[`${serverId}:${agentId}`] || "chat",
   );
   const setSelectedView = useAgentViewStore((state) => state.setSelectedView);
-    const client = useHostRuntimeClient(serverId);
-  const searchController = useChatSearchController(agentId || "", client);
-  const handleSetSelectedView = useCallback((view: "chat" | "artifacts" | "find") => { if (view === "find") searchController.startSearch(); else searchController.closeSearch(); setSelectedView(serverId, agentId || "", view as any); }, [serverId, agentId, setSelectedView, searchController]);
+  const client = useHostRuntimeClient(serverId);
+  const isCompact = useIsCompactFormFactor();
+  const searchController = useChatSearchController(agentId, client);
+  const handleSetSelectedView = useCallback(
+    (view: "chat" | "artifacts" | "find") => {
+      if (view === "find") searchController.startSearch();
+      else searchController.closeSearch();
+      setSelectedView(serverId, agentId, view);
+    },
+    [serverId, agentId, setSelectedView, searchController],
+  );
   const handleReturnToChat = useCallback(() => {
     handleSetSelectedView("chat");
   }, [handleSetSelectedView]);
+  const handleReplyInChat = useCallback(() => {
+    handleReturnToChat();
+    streamViewRef.current?.scrollToBottom("jump-to-bottom");
+  }, [handleReturnToChat, streamViewRef]);
   const artifactFeedSupported = useHostFeature(serverId, "artifactFeed");
+  // COMPAT(companionStream): added in v0.2.0, remove gate after 2027-03-21 when floor >= v0.2.0.
+  const companionStreamSupported = useHostFeature(serverId, "companionStream");
   const rawAgentInputDraft = useAgentInputDraft({
     draftKey: buildDraftStoreKey({
       serverId,
@@ -1231,7 +1254,7 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
       <AgentComposerSection
         agentId={agentId}
         serverId={serverId}
-        isPaneFocused={isPaneFocused}
+        isPaneFocused={isPaneFocused && selectedView !== "artifacts"}
         isArchivingCurrentAgent={isArchivingCurrentAgent}
         archivedAt={agentState.archivedAt}
         cwd={cwd}
@@ -1260,9 +1283,9 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
       },
       {
         value: "artifacts" as const,
-        label: t("agentPanel.artifacts.tab", { count: artifacts.length }),
+        label: t("agentPanel.stream.tab"),
         icon: ({ color, size }: { color: string; size: number }) => (
-          <FileCode2 color={color} size={size} />
+          <ListFilter color={color} size={size} />
         ),
         testID: "agent-view-artifacts",
       },
@@ -1275,25 +1298,28 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
         testID: "agent-view-find",
       },
     ],
-    [artifacts.length, t],
+    [t],
   );
+  const isChatVisible = selectedView !== "artifacts";
   const contentContainer = (
     <View style={styles.contentContainer}>
-      {selectedView === "chat" || selectedView === "find" ? (
-        <React.Fragment>
-          <SearchBar controller={searchController} onClose={() => handleSetSelectedView("chat")} />
-          {streamContent}
-        </React.Fragment>
-      ) : (
-        <ArtifactFeed
+      <RetainedPanel active={isChatVisible}>
+        <SearchBar controller={searchController} onClose={handleReturnToChat} />
+        {streamContent}
+      </RetainedPanel>
+      {!isChatVisible ? (
+        <CompanionFeed
           serverId={serverId}
           cwd={cwd}
+          entries={agentState.companionEntries ?? EMPTY_COMPANION_ENTRIES}
           artifacts={artifacts}
-          isSupported={artifactFeedSupported}
+          isSupported={companionStreamSupported}
+          artifactsSupported={artifactFeedSupported}
           onOpenWorkspaceFile={onOpenWorkspaceFile}
           onReturnToChat={handleReturnToChat}
+          onReplyInChat={handleReplyInChat}
         />
-      )}
+      ) : null}
     </View>
   );
 
@@ -1306,10 +1332,11 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
               options={viewOptions}
               value={selectedView}
               onValueChange={handleSetSelectedView}
-              size={isWeb ? "xs" : "md"}
-              textWrap={!isWeb}
+              size={isCompact ? "md" : "xs"}
+              textWrap={isCompact}
               testID="agent-view-switcher"
-              style={isWeb ? undefined : styles.mobileSegmentedControl}
+              style={isCompact ? styles.mobileSegmentedControl : undefined}
+              segmentStyle={isCompact ? styles.compactSegment : undefined}
             />
           </View>
           {contentContainer}
@@ -1322,7 +1349,11 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
             />
           ) : null}
 
-          {selectedView === "chat" || selectedView === "find" ? composerSection : null}
+          <RetainedPanelActivity active={isChatVisible}>
+            <View collapsable={false} style={!isChatVisible ? styles.hiddenPane : undefined}>
+              {composerSection}
+            </View>
+          </RetainedPanelActivity>
 
           {(selectedView === "chat" || selectedView === "find") && showHistorySyncOverlay ? (
             <View style={styles.historySyncOverlay} testID="agent-history-overlay">
@@ -1754,8 +1785,10 @@ const styles = StyleSheet.create((theme) => ({
     overflow: "hidden",
     ...(isWeb ? { userSelect: "none" as const } : {}),
   },
+  hiddenPane: { display: "none" },
+  compactSegment: { minHeight: 44 },
   viewSwitcher: {
-    minHeight: isWeb ? 40 : 56,
+    minHeight: 40,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",

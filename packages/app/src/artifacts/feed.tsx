@@ -138,7 +138,7 @@ export function ArtifactFeed({
   );
 }
 
-function ArtifactCard({ artifact, serverId, cwd, onOpen }: ArtifactCardProps) {
+export function ArtifactCard({ artifact, serverId, cwd, onOpen }: ArtifactCardProps) {
   const { t } = useTranslation();
   const handlePress = useCallback(() => onOpen(artifact), [artifact, onOpen]);
   const pressableStyle = useCallback(

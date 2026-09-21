@@ -663,7 +663,7 @@ function MobileWorkspaceTabOption({
       reloadAgent: t("workspace.tabs.menu.reloadAgent"),
       reloadAgentTooltip: t("workspace.tabs.menu.reloadAgentTooltip"),
       close: t("workspace.tabs.menu.close"),
-      viewArtifacts: t("workspace.tabs.menu.viewArtifacts", { defaultValue: "View artifacts" }),
+      viewArtifacts: t("agentPanel.stream.viewStream"),
     }),
     [t],
   );

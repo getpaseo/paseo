@@ -1355,14 +1355,11 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
   }, [isCompactLayout, router]);
 
   const handleBackToWorkspace = useCallback(() => {
-    if (navigateBackInFocusHistory({ isCompact: isCompactLayout })) {
-      return;
-    }
     if (navigateToLastWorkspace()) {
       return;
     }
     router.replace(buildOpenProjectRoute());
-  }, [isCompactLayout, router]);
+  }, [router]);
 
   const detailHeader = ((): {
     title: string;

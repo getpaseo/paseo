@@ -1,6 +1,7 @@
 import { promises as fs, type Dirent } from "node:fs";
 import path from "node:path";
 import { z } from "zod";
+import { CompanionEntrySchema } from "@getpaseo/protocol/companion-stream";
 import type { Logger } from "pino";
 
 import { writeJsonFileAtomic } from "../atomic-file.js";
@@ -67,6 +68,7 @@ const STORED_AGENT_SCHEMA = z.object({
   archivedAt: z.string().nullable().optional(),
   owner: AgentOwnerSchema.optional(),
   artifacts: z.array(AgentArtifactSchema).optional(),
+  companionEntries: z.array(CompanionEntrySchema).optional(),
 });
 
 export type SerializableAgentConfig = Pick<

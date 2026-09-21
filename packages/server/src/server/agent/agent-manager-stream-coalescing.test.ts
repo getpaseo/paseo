@@ -1,3 +1,6 @@
+import { toAgentPayload, toStoredAgentRecord } from "./agent-projections.js";
+import { parseStoredAgentRecord } from "./agent-storage.js";
+import { AgentSnapshotPayloadSchema } from "../messages.js";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -1318,4 +1321,37 @@ describe("target coalesced behavior", () => {
       harness.cleanup();
     }
   });
+});
+
+test("companion responses survive coalescing and snapshot serialization without polluting chat", async () => {
+  const harness = createHarness();
+  try {
+    const { agentId, session } = await createManagedSession(harness);
+    session.pushEvent({ type: "turn_started", provider: "codex", turnId: "review" });
+    session.pushEvent(assistant("Review ", "codex", "review"));
+    session.pushEvent(assistant("complete.", "codex", "review"));
+    session.pushEvent(terminalEvent("turn_completed", "review"));
+    await waitForSessionEventQueue();
+    const agent = harness.manager.getAgent(agentId);
+    if (!agent) throw new Error("Expected managed agent");
+    expect(agent.companionEntries).toEqual([
+      {
+        id: "turn:review",
+        kind: "outcome",
+        text: "Review complete.",
+        status: "completed",
+        timestamp: expect.any(String),
+        truncated: false,
+      },
+    ]);
+    const stored = parseStoredAgentRecord(JSON.parse(JSON.stringify(toStoredAgentRecord(agent))));
+    const snapshot = AgentSnapshotPayloadSchema.parse(toAgentPayload(agent));
+    expect(stored.companionEntries).toEqual(agent.companionEntries);
+    expect(snapshot.companionEntries).toEqual(agent.companionEntries);
+    expect(getTimelineItems(await harness.manager.getTimelineRows(agentId))).toEqual([
+      { type: "assistant_message", text: "Review complete." },
+    ]);
+  } finally {
+    harness.cleanup();
+  }
 });

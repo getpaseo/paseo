@@ -5790,18 +5790,23 @@ export class Session {
     return this.selectProjectedTimelineProjection(input);
   }
 
-
   private async handleAgentTimelineSearchRequest(
-    msg: Extract<SessionInboundMessage, { type: 'agent.timeline.search.request' }>,
+    msg: Extract<SessionInboundMessage, { type: "agent.timeline.search.request" }>,
   ): Promise<void> {
     const { agentId, requestId, query, limit, continuation } = msg;
-    
+
     try {
-      const result = await this.agentManager.searchAgentTimeline(agentId, query, continuation, limit);
-      const fetchResult = this.agentManager.fetchTimeline(agentId, { limit: 1 }); const epoch = fetchResult.epoch;
+      const result = await this.agentManager.searchAgentTimeline(
+        agentId,
+        query,
+        continuation,
+        limit,
+      );
+      const fetchResult = this.agentManager.fetchTimeline(agentId, { limit: 1 });
+      const epoch = fetchResult.epoch;
       const snapshotUpperSeq = fetchResult.window.maxSeq;
       this.emit({
-        type: 'agent.timeline.search.response',
+        type: "agent.timeline.search.response",
         payload: {
           requestId,
           agentId,
@@ -5814,23 +5819,52 @@ export class Session {
         },
       });
     } catch (error) {
-      this.sessionLogger.error({ agentId, error }, 'Failed to handle agent.timeline.search.request');
-      this.emit({ type: "agent.timeline.search.response" as const, payload: { requestId, agentId, epoch: "", snapshotUpperSeq: 0, matches: [], continuation: null, isComplete: true, error: String(error) } });
+      this.sessionLogger.error(
+        { agentId, error },
+        "Failed to handle agent.timeline.search.request",
+      );
+      this.emit({
+        type: "agent.timeline.search.response" as const,
+        payload: {
+          requestId,
+          agentId,
+          epoch: "",
+          snapshotUpperSeq: 0,
+          matches: [],
+          continuation: null,
+          isComplete: true,
+          error: String(error),
+        },
+      });
     }
   }
 
   private async handleAgentTimelineWindowRequest(
-    msg: Extract<SessionInboundMessage, { type: 'agent.timeline.window.request' }>,
+    msg: Extract<SessionInboundMessage, { type: "agent.timeline.window.request" }>,
   ): Promise<void> {
     const { agentId, requestId, epoch, centerSeq, limit } = msg;
-    
+
     try {
       const currentEpoch = this.agentManager.fetchTimeline(agentId, { limit: 1 }).epoch;
       if (currentEpoch !== epoch) {
-        this.emit({ type: 'agent.timeline.window.response', payload: { requestId, agentId, epoch, centerSeq, entries: [], hasOlder: false, hasNewer: false, error: 'Epoch mismatch' } }); return;
+        this.emit({
+          type: "agent.timeline.window.response",
+          payload: {
+            requestId,
+            agentId,
+            epoch,
+            centerSeq,
+            entries: [],
+            hasOlder: false,
+            hasNewer: false,
+            error: "Epoch mismatch",
+          },
+        });
+        return;
       }
-      const result = await this.agentManager.getAgentTimelineWindow(agentId, centerSeq, limit); const snapshot = this.agentManager.getAgent(agentId);
-      const entryPayloads = result.entries.map((entry: any) => ({
+      const result = await this.agentManager.getAgentTimelineWindow(agentId, centerSeq, limit);
+      const snapshot = this.agentManager.getAgent(agentId);
+      const entryPayloads = result.entries.map((entry) => ({
         provider: snapshot!.provider,
         item: entry.item,
         timestamp: entry.timestamp,
@@ -5840,7 +5874,7 @@ export class Session {
         collapsed: entry.collapsed,
       }));
       this.emit({
-        type: 'agent.timeline.window.response',
+        type: "agent.timeline.window.response",
         payload: {
           requestId,
           agentId,
@@ -5853,8 +5887,23 @@ export class Session {
         },
       });
     } catch (error) {
-      this.sessionLogger.error({ agentId, error }, 'Failed to handle agent.timeline.window.request');
-      this.emit({ type: "agent.timeline.window.response" as const, payload: { requestId, agentId, epoch: "", centerSeq, entries: [], hasOlder: false, hasNewer: false, error: String(error) } });
+      this.sessionLogger.error(
+        { agentId, error },
+        "Failed to handle agent.timeline.window.request",
+      );
+      this.emit({
+        type: "agent.timeline.window.response" as const,
+        payload: {
+          requestId,
+          agentId,
+          epoch: "",
+          centerSeq,
+          entries: [],
+          hasOlder: false,
+          hasNewer: false,
+          error: String(error),
+        },
+      });
     }
   }
 

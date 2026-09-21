@@ -40,5 +40,26 @@ describe("agent artifact snapshots", () => {
     });
 
     expect(snapshot.artifacts?.[0]?.path).toBe("report.html");
+    expect(snapshot.companionEntries).toBeUndefined();
+    const upgraded = {
+      ...snapshot,
+      companionEntries: [
+        {
+          id: "turn:one",
+          kind: "outcome",
+          status: "completed",
+          text: "Report is ready",
+          timestamp: "2026-09-21T12:00:00.000Z",
+          truncated: false,
+        },
+      ],
+    };
+    expect(AgentSnapshotPayloadSchema.parse(upgraded).companionEntries).toEqual(
+      upgraded.companionEntries,
+    );
+    // The previous wire shape ignores the additive field and still parses the snapshot.
+    expect(AgentSnapshotPayloadSchema.omit({ companionEntries: true }).parse(upgraded)).toEqual(
+      snapshot,
+    );
   });
 });

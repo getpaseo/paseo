@@ -1329,7 +1329,10 @@ export class HubRelationshipHarness {
         return;
       } catch (error) {
         const code = (error as NodeJS.ErrnoException).code;
-        if ((code !== "ENOTEMPTY" && code !== "EBUSY" && code !== "ENOENT") || attempt === attempts) {
+        if (
+          (code !== "ENOTEMPTY" && code !== "EBUSY" && code !== "ENOENT") ||
+          attempt === attempts
+        ) {
           if (code === "ENOENT") return;
           throw error;
         }

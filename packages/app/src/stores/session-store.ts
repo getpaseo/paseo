@@ -1,3 +1,4 @@
+import type { CompanionEntry } from "@getpaseo/protocol/companion-stream";
 import equal from "fast-deep-equal";
 import { create } from "zustand";
 import { subscribeWithSelector } from "zustand/middleware";
@@ -124,6 +125,7 @@ export interface Agent {
   labels: Record<string, string>;
   projectPlacement?: ProjectPlacementPayload | null;
   artifacts?: AgentArtifact[];
+  companionEntries?: CompanionEntry[];
 }
 
 export interface WorkspaceDescriptor {

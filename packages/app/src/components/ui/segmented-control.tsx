@@ -27,6 +27,7 @@ interface SegmentedControlProps<T extends string> {
   hideLabels?: boolean;
   textWrap?: boolean;
   style?: StyleProp<ViewStyle>;
+  segmentStyle?: StyleProp<ViewStyle>;
   testID?: string;
 }
 
@@ -53,6 +54,7 @@ export function SegmentedControl<T extends string>({
   hideLabels = false,
   textWrap = false,
   style,
+  segmentStyle,
   testID,
 }: SegmentedControlProps<T>) {
   const sizeStyles = {
@@ -61,7 +63,10 @@ export function SegmentedControl<T extends string>({
     md: { container: styles.containerMd, segment: styles.segmentMd, label: styles.labelMd },
   }[size];
   const containerSizeStyle = sizeStyles.container;
-  const segmentSizeStyle = sizeStyles.segment;
+  const segmentSizeStyle = useMemo(
+    () => [sizeStyles.segment, segmentStyle],
+    [sizeStyles.segment, segmentStyle],
+  );
   const labelSizeStyle = sizeStyles.label;
   const iconSize = segmentedIconSize[size];
 

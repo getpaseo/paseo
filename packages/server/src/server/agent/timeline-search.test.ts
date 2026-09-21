@@ -1,19 +1,20 @@
+import type { AgentTimelineRow } from "./agent-timeline-store-types.js";
 import { describe, it, expect } from "vitest";
 import { searchTimeline } from "./timeline-search.js";
 
 describe("searchTimeline", () => {
   it("finds matches in user and assistant messages", () => {
-    const rows = [
+    const rows: AgentTimelineRow[] = [
       {
         seq: 1,
         timestamp: "2026-09-21T00:00:00Z",
-        item: { type: "user_message", text: "Hello world" } as any,
+        item: { type: "user_message", text: "Hello world" },
       },
       {
         seq: 2,
         timestamp: "2026-09-21T00:01:00Z",
-        item: { type: "assistant_message", text: "Hello back, testing world search" } as any,
-      }
+        item: { type: "assistant_message", text: "Hello back, testing world search" },
+      },
     ];
 
     const result = searchTimeline(rows, "world");
