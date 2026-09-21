@@ -271,7 +271,7 @@ async function resolveSessionCreateAgent(
   };
   const prompt = buildAgentPrompt(
     trimmedPrompt ?? "",
-    await preprocessImages(input.images, dependencies.logger),
+    await preprocessImages({ images: input.images, logger: dependencies.logger }),
     input.attachments,
   );
   const hasPromptContent = Array.isArray(prompt) ? prompt.length > 0 : prompt.length > 0;

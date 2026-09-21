@@ -123,6 +123,7 @@ import { assertPluginTimelineDataSize } from "./agent/agent-timeline-content.js"
 import { parsePluginClientId } from "./plugins/plugin-session-identity.js";
 import { buildAgentForkContextAttachment } from "./agent/activity-curator.js";
 import { buildAgentPrompt } from "./agent/prompt-attachments.js";
+import type { AgentPromptInput } from "./agent/agent-sdk-types.js";
 import { preprocessImages } from "./agent/preprocess-image.js";
 import type { StructuredGenerationDaemonConfig } from "./agent/structured-generation-providers.js";
 import {
@@ -3849,11 +3850,22 @@ export class Session {
     );
 
     const promptText = options?.spokenInput ? wrapSpokenInput(text) : text;
-    const prompt = buildAgentPrompt(
-      promptText,
-      await preprocessImages(images, this.sessionLogger),
-      attachments,
-    );
+    let prompt: AgentPromptInput;
+    try {
+      prompt = buildAgentPrompt(
+        promptText,
+        await preprocessImages({ images, logger: this.sessionLogger }),
+        attachments,
+      );
+    } catch (error) {
+      // A refused attachment fails this send and nothing else. Letting it
+      // through would fail every later turn instead.
+      this.sessionLogger.warn(
+        { err: error, agentId },
+        "session: rejected an image attachment before sending",
+      );
+      return { ok: false, error: errorToFriendlyMessage(error) };
+    }
 
     try {
       await sendPromptToAgent({
@@ -8057,7 +8069,7 @@ export class Session {
 
       const prompt = buildAgentPrompt(
         msg.text,
-        await preprocessImages(msg.images, this.sessionLogger),
+        await preprocessImages({ images: msg.images, logger: this.sessionLogger }),
         msg.attachments,
       );
       this.sessionLogger.trace(

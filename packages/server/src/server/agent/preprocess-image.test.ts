@@ -3,8 +3,14 @@ import photon from "@silvia-odwyer/photon-node";
 import {
   preprocessImage,
   preprocessImages,
+  ImageDecodeError,
+  ImageTooLargeError,
+  TooManyImagesError,
   MAX_IMAGE_DIMENSION,
   MAX_IMAGE_BYTES,
+  MAX_IMAGES_PER_PROMPT,
+  MAX_SOURCE_BYTES,
+  MAX_SOURCE_PIXELS,
 } from "./preprocess-image.js";
 
 // The decoder is a declared dependency, so a failed import is a hard failure
@@ -56,6 +62,20 @@ function makeJpeg(width: number, height: number, fill: Fill = "flat"): Uint8Arra
   }
 }
 
+/**
+ * A PNG header and nothing else. What a client claims its image is, without
+ * the pixels to back it up — which is the shape a decompression bomb arrives in.
+ */
+function makePngHeader(width: number, height: number, bodyBytes = 0): string {
+  const header = Buffer.alloc(24 + bodyBytes, 0xa5);
+  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(header, 0);
+  header.writeUInt32BE(13, 8);
+  header.write("IHDR", 12, "ascii");
+  header.writeUInt32BE(width, 16);
+  header.writeUInt32BE(height, 20);
+  return header.toString("base64");
+}
+
 /** Splice an APP1 EXIF segment carrying `orientation` in after the SOI marker. */
 function withExifOrientation(jpeg: Uint8Array, orientation: number): Uint8Array {
   const tiff = Buffer.alloc(8 + 2 + 12 + 4);
@@ -99,7 +119,7 @@ describe("preprocessImage", () => {
   test("leaves an image that is already within both ceilings byte-identical", async () => {
     const image = { data: makePng(800, 600), mimeType: "image/png" };
 
-    const result = await preprocessImage(image);
+    const result = await preprocessImage({ image });
 
     expect(result).toBe(image);
   });
@@ -107,7 +127,7 @@ describe("preprocessImage", () => {
   test("clamps the reported 4864x2524 screenshot under the pixel ceiling, as PNG", async () => {
     const image = { data: makePng(4864, 2524), mimeType: "image/png" };
 
-    const result = await preprocessImage(image);
+    const result = await preprocessImage({ image });
 
     const { width, height } = decode(result.data);
     expect(Math.max(width, height)).toBeLessThanOrEqual(MAX_IMAGE_DIMENSION);
@@ -118,7 +138,7 @@ describe("preprocessImage", () => {
   test("preserves aspect ratio when clamping", async () => {
     const image = { data: makePng(4000, 1000), mimeType: "image/png" };
 
-    const result = await preprocessImage(image);
+    const result = await preprocessImage({ image });
 
     const { width, height } = decode(result.data);
     expect(width).toBe(MAX_IMAGE_DIMENSION);
@@ -128,7 +148,7 @@ describe("preprocessImage", () => {
   test("keeps transparency through a downscale", async () => {
     const image = { data: makePng(3000, 3000, "transparent"), mimeType: "image/png" };
 
-    const result = await preprocessImage(image);
+    const result = await preprocessImage({ image });
 
     const { width, alphaAt } = decode(result.data);
     expect(result.mimeType).toBe("image/png");
@@ -140,7 +160,10 @@ describe("preprocessImage", () => {
     const data = makePng(1200, 1200, "noise");
     const maxBytes = Math.floor(data.length / 4);
 
-    const result = await preprocessImage({ data, mimeType: "image/png" }, undefined, { maxBytes });
+    const result = await preprocessImage({
+      image: { data, mimeType: "image/png" },
+      limits: { maxBytes },
+    });
 
     expect(result.data.length).toBeLessThanOrEqual(maxBytes);
   });
@@ -151,7 +174,10 @@ describe("preprocessImage", () => {
     const data = makePng(1200, 1200, "noise");
     const maxBytes = Math.floor(data.length / 4);
 
-    const result = await preprocessImage({ data, mimeType: "image/png" }, undefined, { maxBytes });
+    const result = await preprocessImage({
+      image: { data, mimeType: "image/png" },
+      limits: { maxBytes },
+    });
 
     expect(result.mimeType).toBe("image/jpeg");
   });
@@ -159,7 +185,7 @@ describe("preprocessImage", () => {
   test("never transcodes a PNG that is inside both ceilings", async () => {
     const image = { data: makePng(1000, 1000), mimeType: "image/png" };
 
-    const result = await preprocessImage(image);
+    const result = await preprocessImage({ image });
 
     expect(result).toBe(image);
     expect(result.mimeType).toBe("image/png");
@@ -169,7 +195,10 @@ describe("preprocessImage", () => {
     const data = makePng(1200, 1200, "noise");
     const maxBytes = Math.floor(data.length / 40);
 
-    const result = await preprocessImage({ data, mimeType: "image/png" }, undefined, { maxBytes });
+    const result = await preprocessImage({
+      image: { data, mimeType: "image/png" },
+      limits: { maxBytes },
+    });
 
     const { width } = decode(result.data);
     expect(result.data.length).toBeLessThanOrEqual(maxBytes);
@@ -180,7 +209,7 @@ describe("preprocessImage", () => {
     // The pixel ceiling is the bug being fixed, so it outranks byte thriftiness.
     const image = { data: makePng(2400, 2400), mimeType: "image/png" };
 
-    const result = await preprocessImage(image);
+    const result = await preprocessImage({ image });
 
     const { width } = decode(result.data);
     expect(width).toBe(MAX_IMAGE_DIMENSION);
@@ -191,7 +220,7 @@ describe("preprocessImage", () => {
     const jpeg = withExifOrientation(makeJpeg(3000, 1500), 6);
     const image = { data: Buffer.from(jpeg).toString("base64"), mimeType: "image/jpeg" };
 
-    const result = await preprocessImage(image);
+    const result = await preprocessImage({ image });
 
     const { width, height } = decode(result.data);
     expect(width).toBe(1000);
@@ -201,7 +230,7 @@ describe("preprocessImage", () => {
   test("passes GIF through so animation is not flattened to one frame", async () => {
     const image = { data: makePng(4000, 4000), mimeType: "image/gif" };
 
-    const result = await preprocessImage(image);
+    const result = await preprocessImage({ image });
 
     expect(result).toBe(image);
   });
@@ -214,7 +243,7 @@ describe("preprocessImage", () => {
       mimeType: "image/svg+xml",
     };
 
-    const result = await preprocessImage(image);
+    const result = await preprocessImage({ image });
 
     expect(result).toBe(image);
   });
@@ -222,31 +251,108 @@ describe("preprocessImage", () => {
   test("honours a mime type that carries parameters", async () => {
     const image = { data: makePng(4000, 4000), mimeType: "image/gif; charset=binary" };
 
-    const result = await preprocessImage(image);
+    const result = await preprocessImage({ image });
 
     expect(result).toBe(image);
   });
 
-  test("forwards an undecodable attachment rather than dropping it", async () => {
+  test("forwards an in-budget attachment it cannot read rather than dropping it", async () => {
+    // Nothing here says the image is oversized, and a format this daemon cannot
+    // parse may still be one the provider accepts.
     const image = { data: "not-valid-base64!!!", mimeType: "image/png" };
 
-    const result = await preprocessImage(image);
+    const result = await preprocessImage({ image });
 
     expect(result).toBe(image);
+  });
+});
+
+describe("resource ceilings", () => {
+  test("refuses a decompression bomb from its header, without decoding it", async () => {
+    // 3.6 gigapixels declared in 24 bytes. Decoding first to measure it is the
+    // allocation this ceiling exists to refuse.
+    const image = { data: makePngHeader(60_000, 60_000), mimeType: "image/png" };
+
+    await expect(preprocessImage({ image })).rejects.toThrow(ImageTooLargeError);
+  });
+
+  test("names the declared size when refusing a bomb", async () => {
+    const image = { data: makePngHeader(60_000, 60_000), mimeType: "image/png" };
+
+    const error = await preprocessImage({ image }).catch((thrown: unknown) => thrown);
+
+    expect(error).toBeInstanceOf(ImageTooLargeError);
+    expect(error).toMatchObject({ width: 60_000, height: 60_000, mimeType: "image/png" });
+  });
+
+  test("accepts a large image that stays under the decode ceiling", async () => {
+    const image = { data: makePng(3000, 2000), mimeType: "image/png" };
+
+    const result = await preprocessImage({ image });
+
+    expect(decode(result.data).width).toBe(MAX_IMAGE_DIMENSION);
+  });
+
+  test("refuses a payload past the encoded byte ceiling before decoding it", async () => {
+    const image = { data: "A".repeat(MAX_SOURCE_BYTES + 1), mimeType: "image/png" };
+
+    await expect(preprocessImage({ image })).rejects.toThrow(ImageTooLargeError);
+  });
+
+  test("refuses an over-budget attachment whose container it cannot read", async () => {
+    // Forwarding it is what poisons the conversation: it is over the provider's
+    // budget and there is no readable header to resize from.
+    const image = { data: "A".repeat(MAX_IMAGE_BYTES + 1), mimeType: "image/tiff" };
+
+    await expect(preprocessImage({ image })).rejects.toThrow(ImageTooLargeError);
+  });
+
+  test("does not decode an attachment that is already within both ceilings", async () => {
+    // A valid header over a body no decoder could read: reaching the decoder at
+    // all would throw, so passing proves the fast path never got there.
+    const image = { data: makePngHeader(800, 600, 512), mimeType: "image/png" };
+
+    const result = await preprocessImage({ image });
+
+    expect(result).toBe(image);
+  });
+
+  test("reports a codec failure on an oversized attachment instead of forwarding it", async () => {
+    const image = { data: makePngHeader(4864, 2524, 512), mimeType: "image/png" };
+
+    await expect(preprocessImage({ image })).rejects.toThrow(ImageDecodeError);
+  });
+
+  test("still clamps normally after a codec failure", async () => {
+    // A trap inside the WASM decoder must not leave the module unusable for
+    // every later attachment.
+    await preprocessImage({
+      image: { data: makePngHeader(4864, 2524, 512), mimeType: "image/png" },
+    }).catch(() => undefined);
+
+    const result = await preprocessImage({
+      image: { data: makePng(3000, 1200), mimeType: "image/png" },
+    });
+
+    expect(decode(result.data).width).toBe(MAX_IMAGE_DIMENSION);
   });
 
   test("exposes a byte ceiling below the 5MB provider limit", () => {
     expect(MAX_IMAGE_BYTES).toBeLessThan(5 * 1024 * 1024);
   });
+
+  test("exposes a decode ceiling that still clears a 48MP phone photo", () => {
+    expect(MAX_SOURCE_PIXELS).toBeGreaterThan(48_000_000);
+  });
 });
 
 describe("preprocessImages", () => {
   test("returns undefined for undefined input", async () => {
-    expect(await preprocessImages(undefined)).toBeUndefined();
+    expect(await preprocessImages({ images: undefined })).toBeUndefined();
   });
 
   test("returns an empty array unchanged", async () => {
-    expect(await preprocessImages([])).toEqual([]);
+    expect(await preprocessImages({ images: [] })).toEqual([]);
   });
 
   test("clamps every oversized attachment in one prompt", async () => {
@@ -256,7 +362,7 @@ describe("preprocessImages", () => {
       { data: makePng(2500, 1000), mimeType: "image/png" },
     ];
 
-    const result = await preprocessImages(images);
+    const result = await preprocessImages({ images });
 
     expect(result).toHaveLength(3);
     for (const entry of result!) {
@@ -264,5 +370,23 @@ describe("preprocessImages", () => {
       expect(Math.max(width, height)).toBeLessThanOrEqual(MAX_IMAGE_DIMENSION);
     }
     expect(result![1]).toBe(images[1]);
+  });
+
+  test("refuses a prompt carrying more images than any provider accepts", async () => {
+    const images = Array.from({ length: MAX_IMAGES_PER_PROMPT + 1 }, () => ({
+      data: makePng(8, 8),
+      mimeType: "image/png",
+    }));
+
+    await expect(preprocessImages({ images })).rejects.toThrow(TooManyImagesError);
+  });
+
+  test("accepts a prompt at the image limit", async () => {
+    const images = Array.from({ length: MAX_IMAGES_PER_PROMPT }, () => ({
+      data: makePng(8, 8),
+      mimeType: "image/png",
+    }));
+
+    expect(await preprocessImages({ images })).toHaveLength(MAX_IMAGES_PER_PROMPT);
   });
 });
