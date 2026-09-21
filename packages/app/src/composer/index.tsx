@@ -2122,6 +2122,8 @@ export function Composer({
                 voiceServerId={serverId}
                 voiceAgentId={agentId}
                 isAgentRunning={isAgentRunning}
+                isCancellingAgent={isCancellingAgent}
+                onCancelAgent={handleCancelAgent}
                 defaultSendBehavior={appSettings.sendBehavior}
                 onQueue={handleQueue}
                 onSubmitLoadingPress={submitLoadingPressHandler}

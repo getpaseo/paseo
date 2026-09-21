@@ -509,6 +509,7 @@ export class VoiceSession {
 
   private async disableVoiceModeForActiveAgent(restoreAgentConfig: boolean): Promise<void> {
     await this.stopVoiceTurnController();
+    this.ttsManager.cancelPendingPlaybacks("voice mode disabled");
 
     const agentId = this.voiceModeAgentId;
     if (!agentId) {
