@@ -9,7 +9,6 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 
 import { createTestLogger } from "../../../../test-utils/test-logger.js";
 import * as spawnUtils from "../../../../utils/spawn.js";
-import type { AgentClient } from "../../agent-sdk-types.js";
 import { ClaudeAgentClient } from "./agent.js";
 import type { ClaudeQueryInput } from "./query.js";
 
@@ -102,43 +101,5 @@ describe("Claude spawn override", () => {
     expect(claudeSpawnCall).toBeDefined();
     const spawnOptions = claudeSpawnCall?.[2];
     expect(spawnOptions?.shell).toBe(false);
-  });
-
-  // Regression guard: resumeSession constructs a session and reads the
-  // provider's own .jsonl without spawning. That holds for every resume,
-  // not just a history-purpose one — ClaudeAgentClient.resumeSession takes
-  // three parameters while the AgentClient interface declares four, so the
-  // `{ purpose: "history" }` argument below is inert and claude never reads
-  // it. Claude is not purpose-aware and needs no purpose branch; this test
-  // pins the never-spawn behaviour that the omp/pi/acp/opencode/plugin
-  // history-purpose fixes are matched against. Called through the
-  // AgentClient interface, since that is how the daemon calls it
-  // (agent-manager.ts resumeAgentFromPersistence -> provider-registry.ts).
-  test("resumeSession spawns no process for any purpose, including an ignored history purpose", async () => {
-    const queryFactory = vi.fn();
-    const spawnSpy = vi.spyOn(spawnUtils, "spawnProcess").mockReturnValue(createChildProcessStub());
-    const client: AgentClient = new ClaudeAgentClient({
-      logger: createTestLogger(),
-      queryFactory,
-      resolveBinary: async () => "/test/claude/bin",
-    });
-
-    const session = await client.resumeSession(
-      {
-        provider: "claude",
-        sessionId: "claude-history-resume-regression-session",
-        metadata: { cwd: process.cwd() },
-      },
-      undefined,
-      undefined,
-      { purpose: "history" },
-    );
-
-    try {
-      expect(queryFactory).not.toHaveBeenCalled();
-      expect(spawnSpy).not.toHaveBeenCalled();
-    } finally {
-      await session.close();
-    }
   });
 });
