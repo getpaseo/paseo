@@ -33,4 +33,4 @@ Claude agent.
 See [agent configuration](../agent-configuration) for a focused example that injects MCP servers and
 changes Codex sandbox and approval options while preserving other settings.
 
-See the [lifecycle reference](../../public-docs/plugins/v0.8/reference.md#lifecycle-hooks) for the API.
+See the [lifecycle reference](../../public-docs/plugins/reference.md#lifecycle-hooks) for the API.

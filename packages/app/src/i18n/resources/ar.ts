@@ -3,6 +3,15 @@ import { pluginSettings } from "./plugin-settings";
 
 export const ar: TranslationResources = {
   paneFind: {
+    connectionFailure: "تعذر البحث في هذه المحادثة. تحقق من الاتصال بالمضيف وأعد المحاولة.",
+    historyChangedFailure: "تغيّرت المحادثة أثناء البحث. أعد البحث.",
+    revealFailure: "تعذر عرض هذا التطابق. أعد المحاولة.",
+    searching: "جارٍ البحث…",
+    loading: "جارٍ التحميل…",
+    failed: "فشل",
+    retry: "إعادة المحاولة",
+    chatPosition: "{{current}} من {{total}} في الرسالة",
+
     title: "بحث",
     placeholder: "بحث في اللوحة",
     close: "إغلاق البحث",

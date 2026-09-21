@@ -3,6 +3,16 @@ import { pluginSettings } from "./plugin-settings";
 
 export const ja: TranslationResources = {
   paneFind: {
+    connectionFailure:
+      "このチャットを検索できませんでした。ホストへの接続を確認して再試行してください。",
+    historyChangedFailure: "検索中にチャットが変更されました。もう一度検索してください。",
+    revealFailure: "この一致を表示できませんでした。再試行してください。",
+    searching: "検索中…",
+    loading: "読み込み中…",
+    failed: "失敗",
+    retry: "再試行",
+    chatPosition: "メッセージ内 {{current}} / {{total}}",
+
     title: "検索",
     placeholder: "ペイン内を検索",
     close: "検索を閉じる",

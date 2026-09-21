@@ -1,9 +1,17 @@
+import type { PluginInstallation } from "./messages.js";
 export interface PluginSourceReference {
   source: string;
   pluginPath: string | undefined;
 }
 
 export function parsePluginSourceReference(reference: string): PluginSourceReference {
+  const prefix = /^(npm:|github:|git:(?!\/\/))/.exec(reference)?.[0];
+  const source = prefix ? reference.slice(prefix.length) : reference;
+  const parsed = splitPluginPath(source, { scp: prefix !== "npm:" });
+  return { ...parsed, source: `${prefix ?? ""}${parsed.source}` };
+}
+
+function splitPluginPath(reference: string, options: { scp: boolean }): PluginSourceReference {
   const separator = reference.lastIndexOf(":");
   if (separator === -1) return { source: reference, pluginPath: undefined };
 
@@ -18,7 +26,7 @@ export function parsePluginSourceReference(reference: string): PluginSourceRefer
     if (pathStart === -1 || separator < pathStart) {
       return { source: reference, pluginPath: undefined };
     }
-  } else {
+  } else if (options.scp) {
     const scpSeparator = reference.match(/^[^/@\s]+@[^:\s]+:/)?.[0].length;
     if (scpSeparator !== undefined && separator === scpSeparator - 1) {
       return { source: reference, pluginPath: undefined };
@@ -44,4 +52,18 @@ function isPortableRelativePluginPath(pluginPath: string): boolean {
   if (!pluginPath || pluginPath.startsWith("/") || pluginPath.startsWith("\\")) return false;
   if (/^[A-Za-z]:/.test(pluginPath) || pluginPath.includes(":")) return false;
   return pluginPath.split(/[\\/]/).every((part) => part !== "" && part !== "." && part !== "..");
+}
+
+export function formatPluginIdentity(identity: PluginInstallation["identity"]): string {
+  if (identity.kind === "directory") return identity.path;
+  const source = identity.kind === "npm" ? `npm:${identity.packageName}` : `git:${identity.remote}`;
+  return identity.pluginPath === "." ? source : `${source}:${identity.pluginPath}`;
+}
+export function formatPluginInstallation(installation: PluginInstallation): string {
+  const identity = formatPluginIdentity(installation.identity);
+  const revision =
+    installation.identity.kind === "git"
+      ? installation.currentRevision?.slice(0, 12)
+      : installation.currentRevision;
+  return revision ? `${identity} · ${revision}` : identity;
 }

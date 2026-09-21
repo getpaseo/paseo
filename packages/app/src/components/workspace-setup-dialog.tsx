@@ -1,3 +1,4 @@
+import { KeyboardTranslateView } from "@/keyboard/shift";
 import type { CreateWorkspaceRequestOptions } from "@getpaseo/client/internal/daemon-client";
 import type { AgentSnapshotPayload } from "@getpaseo/protocol/messages";
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
@@ -445,25 +446,27 @@ export function WorkspaceSetupDialog() {
       desktopMaxWidth={640}
     >
       <FileDropZone style={styles.section}>
-        <Composer
-          agentId={`workspace-setup:${serverId}:${sourceDirectory}`}
-          serverId={serverId}
-          isPaneFocused={true}
-          onSubmitMessage={handleCreateChatAgent}
-          isSubmitLoading={pendingAction === "chat"}
-          blurOnSubmit={true}
-          value={chatDraft.text}
-          onChangeText={chatDraft.editText}
-          textReplacement={chatDraft.textReplacement}
-          attachments={chatDraft.attachments}
-          onChangeAttachments={chatDraft.setAttachments}
-          cwd={sourceDirectory}
-          clearDraft={chatDraft.clear}
-          autoFocus
-          commandDraftConfig={composerState?.commandDraftConfig}
-          agentControls={agentControlsWithDisabled}
-          inputWrapperStyle={styles.composerInputWrapper}
-        />
+        <KeyboardTranslateView>
+          <Composer
+            agentId={`workspace-setup:${serverId}:${sourceDirectory}`}
+            serverId={serverId}
+            isPaneFocused={true}
+            onSubmitMessage={handleCreateChatAgent}
+            isSubmitLoading={pendingAction === "chat"}
+            blurOnSubmit={true}
+            textSource={chatDraft.textSource}
+            onChangeText={chatDraft.editText}
+            textReplacement={chatDraft.textReplacement}
+            attachments={chatDraft.attachments}
+            onChangeAttachments={chatDraft.setAttachments}
+            cwd={sourceDirectory}
+            clearDraft={chatDraft.clear}
+            autoFocus
+            commandDraftConfig={composerState?.commandDraftConfig}
+            agentControls={agentControlsWithDisabled}
+            inputWrapperStyle={styles.composerInputWrapper}
+          />
+        </KeyboardTranslateView>
       </FileDropZone>
 
       {errorMessage ? <Text style={styles.errorText}>{errorMessage}</Text> : null}

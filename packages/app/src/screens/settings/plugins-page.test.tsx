@@ -26,8 +26,10 @@ vi.mock("@/runtime/host-runtime", () => ({
 }));
 
 vi.mock("@/runtime/host-features", () => ({
-  useHostFeature: (_serverId: string, feature: string) =>
-    feature === "pluginLogs" ? runtime.logsSupported : runtime.supported,
+  useHostFeature: (_serverId: string, feature: string) => {
+    if (feature === "pluginLogs") return runtime.logsSupported;
+    return runtime.supported;
+  },
 }));
 
 vi.mock("@/components/adaptive-modal-sheet", async () => {
@@ -89,17 +91,19 @@ vi.mock("react-native-safe-area-context", () => ({
   useSafeAreaInsets: () => ({ top: 0, right: 0, bottom: 0, left: 0 }),
 }));
 
-function never<T>(): Promise<T> {
-  return new Promise<T>(() => undefined);
-}
-
 function plugin(enabled = true): PluginListItem {
   return {
     id: "example",
+    description: "Reviews changes before merge",
     path: "/plugins/example",
     enabled,
     status: enabled ? "running" : "disabled",
   };
+}
+
+async function selectPluginAction(action: string): Promise<void> {
+  fireEvent.click(await screen.findByRole("button", { name: "Actions for example" }));
+  fireEvent.click(await screen.findByRole("menuitem", { name: action }));
 }
 
 function createClient() {
@@ -112,8 +116,7 @@ function createClient() {
     getDaemonConfig: vi.fn(async () => ({ config: { pluginsEnabled: true } })),
     patchDaemonConfig: vi.fn(async () => ({ config: { pluginsEnabled: true } })),
     listPlugins: vi.fn(async (): Promise<PluginListItem[]> => []),
-    inspectDirectoryPlugin: vi.fn(async () => ({ id: "example" })),
-    installDirectoryPlugin: vi.fn(async () => plugin()),
+    installPluginSource: vi.fn(async () => plugin()),
     reloadPlugin: vi.fn(async () => plugin()),
     enablePlugin: vi.fn(async () => plugin()),
     disablePlugin: vi.fn(async () => plugin(false)),
@@ -180,36 +183,16 @@ describe("HostPluginsPage", () => {
   });
 
   it.each([
-    ["reloadPlugin", "Reload", "Reloading…", true],
-    ["disablePlugin", "Disable", "Disabling…", true],
-    ["enablePlugin", "Enable", "Enabling…", false],
-    ["removePlugin", "Remove", "Removing…", true],
-  ] as const)("renders %s pending on its plugin row", async (method, trigger, pending, enabled) => {
+    ["reloadPlugin", "Reload"],
+    ["removePlugin", "Remove"],
+  ] as const)("runs %s from the plugin actions menu", async (method, action) => {
     const client = createClient();
-    client.listPlugins.mockResolvedValue([plugin(enabled)]);
-    client[method].mockImplementation(() => never<never>());
+    client.listPlugins.mockResolvedValue([plugin()]);
     renderPage(client);
 
-    fireEvent.click(await screen.findByRole("button", { name: trigger }));
+    await selectPluginAction(action);
 
-    const pendingControl = await screen.findByRole("button", { name: pending });
-    expect(pendingControl.getAttribute("aria-disabled")).toBe("true");
-    expect(client[method]).toHaveBeenCalledTimes(1);
-  });
-
-  it("renders install pending through the real form and mutation", async () => {
-    const client = createClient();
-    client.installDirectoryPlugin.mockImplementation(() => never<never>());
-    renderPage(client);
-
-    fireEvent.change(screen.getByLabelText("Plugin directory"), {
-      target: { value: "/plugins/example" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Install directory" }));
-
-    const pendingControl = await screen.findByRole("button", { name: "Installing…" });
-    expect(pendingControl.getAttribute("aria-disabled")).toBe("true");
-    expect(client.installDirectoryPlugin).toHaveBeenCalledWith("/plugins/example", undefined);
+    await waitFor(() => expect(client[method]).toHaveBeenCalledTimes(1));
   });
 
   it("hides the logs action when the host does not advertise support", async () => {
@@ -219,7 +202,8 @@ describe("HostPluginsPage", () => {
     renderPage(client);
 
     await screen.findByText("example");
-    expect(screen.queryByRole("button", { name: "Logs" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Actions for example" }));
+    expect(screen.queryByRole("menuitem", { name: "Logs" })).toBeNull();
   });
 
   it("opens readable stdout and stderr logs and refreshes them", async () => {
@@ -241,7 +225,7 @@ describe("HostPluginsPage", () => {
     ]);
     renderPage(client);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Logs" }));
+    await selectPluginAction("Logs");
 
     expect(await screen.findByRole("dialog")).toBeDefined();
     expect(screen.getByText("Logs: example")).toBeDefined();
@@ -260,7 +244,7 @@ describe("HostPluginsPage", () => {
     client.getPluginLogs.mockRejectedValueOnce(new Error("logs exploded"));
     renderPage(client);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Logs" }));
+    await selectPluginAction("Logs");
     expect(await screen.findByText("Unable to load plugin logs")).toBeDefined();
     expect(screen.getByText("logs exploded")).toBeDefined();
 

@@ -12,10 +12,6 @@ const patchedPackages = [
     nodeModulesPath: "node_modules/react-native-markdown-display",
     patchPrefix: "react-native-markdown-display+",
   },
-  {
-    nodeModulesPath: "node_modules/react-native",
-    patchPrefix: "react-native+",
-  },
   // Remove after react-native-unistyles ships
   // https://github.com/jpudysz/react-native-unistyles/pull/1203.
   {

@@ -2,7 +2,7 @@ import { Command, Option } from "commander";
 import { existsSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
-import { startDaemonInstance, resolvePaseoHome } from "@getpaseo/server";
+import { startDaemonInstance, resolvePaseoHome } from "@getpaseo/server/daemon-control";
 const require = createRequire(import.meta.url);
 function resolveServerRunnerFromDir(currentDir: string): string | null {
   const packageJsonPath = path.join(currentDir, "package.json");

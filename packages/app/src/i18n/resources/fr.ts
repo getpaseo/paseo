@@ -3,6 +3,16 @@ import { pluginSettings } from "./plugin-settings";
 
 export const fr: TranslationResources = {
   paneFind: {
+    connectionFailure:
+      "Impossible de rechercher dans cette conversation. Vérifiez la connexion à l’hôte et réessayez.",
+    historyChangedFailure: "La conversation a changé pendant la recherche. Relancez la recherche.",
+    revealFailure: "Impossible d’afficher ce résultat. Réessayez.",
+    searching: "Recherche…",
+    loading: "Chargement…",
+    failed: "Échec",
+    retry: "Réessayer",
+    chatPosition: "{{current}} sur {{total}} dans le message",
+
     title: "Rechercher",
     placeholder: "Rechercher dans le panneau",
     close: "Fermer la recherche",
