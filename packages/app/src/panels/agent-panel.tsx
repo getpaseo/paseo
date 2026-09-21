@@ -1,3 +1,6 @@
+import { Search } from "lucide-react-native";
+import { useChatSearchController } from "../chat-search/controller";
+import { SearchBar } from "../chat-search/search-bar";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { TFunction } from "i18next";
 import { FileCode2, MessageSquare, SquarePen } from "lucide-react-native";
@@ -500,7 +503,7 @@ function AgentPanelContent({
   onOpenWorkspaceFile?: (request: WorkspaceFileOpenRequest) => void;
 }) {
   const { t } = useTranslation();
-  const resolvedAgentId = agentId.trim() || undefined;
+    const resolvedAgentId = agentId.trim() || undefined;
   const resolvedServerId = serverId.trim() || undefined;
   const daemons = useHosts();
   const runtimeServerId = resolvedServerId ?? "";
@@ -1162,12 +1165,9 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
     (state) => state.selectedViews[`${serverId}:${agentId}`] || "chat",
   );
   const setSelectedView = useAgentViewStore((state) => state.setSelectedView);
-  const handleSetSelectedView = useCallback(
-    (view: "chat" | "artifacts") => {
-      setSelectedView(serverId, agentId, view);
-    },
-    [serverId, agentId, setSelectedView],
-  );
+    const client = useHostRuntimeClient(serverId);
+  const searchController = useChatSearchController(agentId || "", client);
+  const handleSetSelectedView = useCallback((view: "chat" | "artifacts" | "find") => { if (view === "find") searchController.startSearch(); else searchController.closeSearch(); setSelectedView(serverId, agentId || "", view as any); }, [serverId, agentId, setSelectedView, searchController]);
   const handleReturnToChat = useCallback(() => {
     handleSetSelectedView("chat");
   }, [handleSetSelectedView]);
@@ -1266,13 +1266,24 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
         ),
         testID: "agent-view-artifacts",
       },
+      {
+        value: "find" as const,
+        label: t("agentPanel.find.tab", "Find in chat"),
+        icon: ({ color, size }: { color: string; size: number }) => (
+          <Search color={color} size={size} />
+        ),
+        testID: "agent-view-find",
+      },
     ],
     [artifacts.length, t],
   );
   const contentContainer = (
     <View style={styles.contentContainer}>
-      {selectedView === "chat" ? (
-        streamContent
+      {selectedView === "chat" || selectedView === "find" ? (
+        <React.Fragment>
+          <SearchBar controller={searchController} onClose={() => handleSetSelectedView("chat")} />
+          {streamContent}
+        </React.Fragment>
       ) : (
         <ArtifactFeed
           serverId={serverId}
@@ -1303,7 +1314,7 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
           </View>
           {contentContainer}
 
-          {selectedView === "chat" && showHistorySyncError ? (
+          {(selectedView === "chat" || selectedView === "find") && showHistorySyncError ? (
             <SidebarCallout
               title={t("agentPanel.states.timelineSyncFailed")}
               variant="error"
@@ -1311,9 +1322,9 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
             />
           ) : null}
 
-          {selectedView === "chat" ? composerSection : null}
+          {selectedView === "chat" || selectedView === "find" ? composerSection : null}
 
-          {selectedView === "chat" && showHistorySyncOverlay ? (
+          {(selectedView === "chat" || selectedView === "find") && showHistorySyncOverlay ? (
             <View style={styles.historySyncOverlay} testID="agent-history-overlay">
               <ThemedActivityIndicator size="large" uniProps={foregroundMutedColorMapping} />
             </View>
