@@ -222,43 +222,19 @@ describe("composer send behavior", () => {
 });
 
 describe("stopRealtimeVoice", () => {
-  it("keeps voice mode active when the running agent refuses cancellation", async () => {
-    const cancellationError = new Error("active run cancellation was not acknowledged");
-    const cancelAgent = vi.fn().mockRejectedValue(cancellationError);
+  it("stops voice mode without cancelling the running agent", async () => {
+    const cancelAgent = vi.fn().mockResolvedValue(undefined);
     const stopVoice = vi.fn().mockResolvedValue(undefined);
 
-    await expect(
-      stopRealtimeVoice({
-        voice: { stopVoice },
-        isRealtimeVoiceForCurrentAgent: true,
-        isAgentRunning: true,
-        client: { cancelAgent },
-        voiceAgentId: "agent-1",
-      }),
-    ).rejects.toBe(cancellationError);
-
-    expect(stopVoice).not.toHaveBeenCalled();
-  });
-
-  it("stops voice mode after the running agent acknowledges cancellation", async () => {
-    const calls: string[] = [];
-
     await stopRealtimeVoice({
-      voice: {
-        stopVoice: async () => {
-          calls.push("stop voice");
-        },
-      },
+      voice: { stopVoice },
       isRealtimeVoiceForCurrentAgent: true,
       isAgentRunning: true,
-      client: {
-        cancelAgent: async () => {
-          calls.push("cancel agent");
-        },
-      },
+      client: { cancelAgent },
       voiceAgentId: "agent-1",
     });
 
-    expect(calls).toEqual(["cancel agent", "stop voice"]);
+    expect(stopVoice).toHaveBeenCalled();
+    expect(cancelAgent).not.toHaveBeenCalled();
   });
 });

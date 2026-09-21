@@ -126,6 +126,8 @@ export interface MessageInputProps {
   voiceAgentId?: string;
   /** When true and there's sendable content, calls onQueue instead of onSubmit */
   isAgentRunning?: boolean;
+  isCancellingAgent?: boolean;
+  onCancelAgent?: () => void;
   /** Controls what the default send action (Enter, send button, dictation) does
    *  when the agent is running. "interrupt" sends immediately, "queue" queues. */
   defaultSendBehavior?: "interrupt" | "queue";
@@ -614,6 +616,9 @@ function MessageInputOverlay({
   onRetryFailedRecording,
   onDiscardFailedRecording,
   onRealtimeVoiceStop,
+  isAgentRunning,
+  isCancellingAgent,
+  onCancelAgent,
 }: {
   showDictationOverlay: boolean;
   showRealtimeOverlay: boolean;
@@ -631,6 +636,9 @@ function MessageInputOverlay({
   isDictationProcessing: boolean;
   dictationStatus: React.ComponentProps<typeof DictationOverlay>["status"];
   dictationError: string | null;
+  isAgentRunning?: boolean;
+  isCancellingAgent?: boolean;
+  onCancelAgent?: () => void;
   onCancelRecording: () => Promise<void>;
   onAcceptRecording: () => Promise<void>;
   onAcceptAndSendRecording: () => Promise<void>;
@@ -660,8 +668,11 @@ function MessageInputOverlay({
       <RealtimeVoiceOverlay
         isMuted={voice.isMuted}
         isSwitching={voice.isVoiceSwitching}
+        isAgentRunning={isAgentRunning}
+        isCancellingAgent={isCancellingAgent}
         onToggleMute={voice.toggleMute}
         onStop={onRealtimeVoiceStop}
+        onCancelAgent={onCancelAgent}
       />
     );
   }
@@ -1830,6 +1841,9 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
             onRetryFailedRecording={handleRetryFailedRecording}
             onDiscardFailedRecording={handleDiscardFailedRecording}
             onRealtimeVoiceStop={handleRealtimeVoiceStop}
+            isAgentRunning={isAgentRunning}
+            isCancellingAgent={props.isCancellingAgent}
+            onCancelAgent={props.onCancelAgent}
           />
         </View>
       </View>

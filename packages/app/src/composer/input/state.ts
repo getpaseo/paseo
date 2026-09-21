@@ -137,12 +137,5 @@ export function runMessageInputKeyboardAction(
 export async function stopRealtimeVoice(ctx: StopRealtimeVoiceContext): Promise<void> {
   if (!ctx.voice || !ctx.isRealtimeVoiceForCurrentAgent) return;
 
-  if (ctx.isAgentRunning) {
-    if (!ctx.client || !ctx.voiceAgentId) {
-      throw new Error("Cannot stop the running voice agent while the host is unavailable");
-    }
-    await ctx.client.cancelAgent(ctx.voiceAgentId);
-  }
-
   await ctx.voice.stopVoice();
 }
