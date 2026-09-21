@@ -3,6 +3,7 @@ interface ComposerGeometry {
   bottomInset: number;
   keyboardShift: number;
   centered: boolean;
+  compact: boolean;
 }
 
 export interface ComposerCapacity {
@@ -20,7 +21,7 @@ export function resolveComposerCapacity(input: ComposerGeometry): number {
   const clearance = input.keyboardShift + 5;
   const reservedSpace = input.centered ? clearance * 2 : clearance;
   const available = Math.max(0, input.height - input.bottomInset - reservedSpace);
-  if (input.centered) return available;
+  if (input.centered || !input.compact) return available;
   return Math.min(available, CHAT_COMPOSER_MAX_HEIGHT);
 }
 
