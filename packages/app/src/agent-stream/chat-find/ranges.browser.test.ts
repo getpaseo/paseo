@@ -1,5 +1,5 @@
 import { afterEach, expect, it } from "vitest";
-import { findRenderedMatches } from "./ranges.web";
+import { findMessageMatches, findRenderedMatches } from "./ranges.web";
 
 afterEach(() => {
   document.body.replaceChildren();
@@ -10,6 +10,36 @@ function content(html: string) {
   document.body.append(row);
   return row;
 }
+function message(messageId: string, ...blocks: string[]) {
+  const root = document.createElement("div");
+  for (const block of blocks) {
+    const row = document.createElement("div");
+    row.dataset.messageId = messageId;
+    row.innerHTML = `<div data-message-text="true"><div data-paseo-markdown-tag="p">${block}</div></div>`;
+    root.append(row);
+  }
+  document.body.append(root);
+  return root;
+}
+it("collects a message's occurrences across its block rows in row order", () => {
+  const root = message("message-1", "alpha one", "beta", "alpha two");
+  const other = document.createElement("div");
+  other.dataset.messageId = "message-2";
+  other.innerHTML =
+    '<div data-message-text="true"><div data-paseo-markdown-tag="p">alpha three</div></div>';
+  root.append(other);
+  expect(findMessageMatches(root, "message-1", "alpha").map((range) => range.toString())).toEqual([
+    "alpha",
+    "alpha",
+  ]);
+  expect(
+    findMessageMatches(root, "message-1", "alpha").map(
+      (range) => range.startContainer.parentElement?.textContent,
+    ),
+  ).toEqual(["alpha one", "alpha two"]);
+  expect(findMessageMatches(root, "message-2", "alpha")).toHaveLength(1);
+  expect(findMessageMatches(null, "message-1", "alpha")).toEqual([]);
+});
 it("finds each actual occurrence across inline formatting with original Unicode offsets", () => {
   const row = content(
     '<div data-paseo-markdown-tag="p">İ😀hello <strong>world</strong> then <em>hello</em> world</div>',

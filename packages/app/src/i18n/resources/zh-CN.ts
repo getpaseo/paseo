@@ -3,7 +3,9 @@ import { pluginSettings } from "./plugin-settings";
 
 export const zhCN: TranslationResources = {
   paneFind: {
-    searchFailed: "无法搜索此聊天。请检查主机连接后重试。",
+    connectionFailure: "无法搜索此聊天。请检查主机连接后重试。",
+    historyChangedFailure: "搜索期间聊天已更改。请重新搜索。",
+    revealFailure: "无法显示此匹配项。请重试。",
     searching: "搜索中…",
     loading: "加载中…",
     failed: "失败",

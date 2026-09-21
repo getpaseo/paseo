@@ -4,6 +4,36 @@ import MarkdownIt from "markdown-it";
 const markdownBlockParser = new MarkdownIt();
 markdownBlockParser.core.ruler.disable("inline");
 
+// CommonMark link reference definition: `[label]: destination "optional title"`,
+// with up to three leading spaces and either a bare or an angle-bracketed destination.
+const LINK_REFERENCE_DEFINITION =
+  /^ {0,3}\[(?:[^[\]\\]|\\.)+\]:[ \t]*(?:<[^<>\n]*>|\S+)(?:[ \t]+(?:"[^"]*"|'[^']*'|\([^()]*\)))?[ \t]*$/;
+
+function isLinkReferenceDefinitionBlock(block: string): boolean {
+  return block.split("\n").every((line) => LINK_REFERENCE_DEFINITION.test(line));
+}
+
+/**
+ * Definitions render nothing and resolve nothing on their own, so a block made only of
+ * them would paint an empty row and break every reference that pointed at it. Fold it
+ * into the block it belongs to: the one above, or the one below when it leads.
+ */
+function foldLinkReferenceDefinitions(blocks: string[]): string[] {
+  const folded: string[] = [];
+  let leading: string[] = [];
+  for (const block of blocks) {
+    if (isLinkReferenceDefinitionBlock(block)) {
+      if (folded.length > 0) folded[folded.length - 1] += `\n\n${block}`;
+      else leading.push(block);
+      continue;
+    }
+    folded.push([...leading, block].join("\n\n"));
+    leading = [];
+  }
+  if (leading.length > 0) folded.push(leading.join("\n\n"));
+  return folded;
+}
+
 export function splitMarkdownBlocks(text: string): string[] {
   if (text.length === 0) {
     return [];
@@ -43,7 +73,7 @@ export function splitMarkdownBlocks(text: string): string[] {
     blocks.push(currentLines.join("\n"));
   }
 
-  return blocks.filter((block) => block.length > 0);
+  return foldLinkReferenceDefinitions(blocks.filter((block) => block.length > 0));
 }
 
 function getStructuralBlankLines(text: string, lines: string[]): Set<number> {

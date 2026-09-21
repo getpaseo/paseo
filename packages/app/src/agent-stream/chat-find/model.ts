@@ -7,6 +7,30 @@ interface Target {
   seq: number;
   before: number;
 }
+/**
+ * Why a search stopped, so the widget can say something true. `connection` is the
+ * host call itself failing, `historyChanged` is the timeline moving under a result
+ * set, and `reveal` is a located match that never made it onto the screen.
+ */
+export type ChatFindFailure = "connection" | "historyChanged" | "reveal";
+
+class ChatFindFailureError extends Error {
+  constructor(
+    readonly failure: ChatFindFailure,
+    options?: { cause: unknown },
+  ) {
+    super(`Chat find failed: ${failure}`, options);
+  }
+}
+
+function tagged<T>(failure: ChatFindFailure, operation: Promise<T>): Promise<T> {
+  return operation.catch((cause: unknown) => {
+    throw cause instanceof ChatFindFailureError
+      ? cause
+      : new ChatFindFailureError(failure, { cause });
+  });
+}
+
 interface Snapshot {
   open: boolean;
   query: string;
@@ -14,13 +38,13 @@ interface Snapshot {
   selectedItemId: string | null;
   occurrence: number;
   count: number;
-  error: string | null;
+  failure: ChatFindFailure | null;
 }
 export interface ChatFindOperations {
   search(query: string, cursor?: number): Promise<AgentTimelineSearchPayload>;
   load(epoch: string, seq: number): Promise<unknown>;
   reveal(
-    itemId: string,
+    messageId: string,
     query: string,
     occurrence: number,
     signal: AbortSignal,
@@ -36,7 +60,7 @@ export class ChatFindModel {
     selectedItemId: null,
     occurrence: 0,
     count: 0,
-    error: null,
+    failure: null,
   };
   private listeners = new Set<() => void>();
   private historyListeners = new Set<() => void>();
@@ -73,7 +97,7 @@ export class ChatFindModel {
   };
   readonly close = () => {
     this.cancel();
-    this.publish({ open: false, phase: "idle", selectedItemId: null, count: 0, error: null });
+    this.publish({ open: false, phase: "idle", selectedItemId: null, count: 0, failure: null });
   };
   readonly setQuery = (query: string) => {
     this.cancel();
@@ -87,7 +111,7 @@ export class ChatFindModel {
       selectedItemId: null,
       occurrence: 0,
       count: 0,
-      error: null,
+      failure: null,
     });
     if (!query.trim()) return;
     const signal = this.abort.signal;
@@ -102,18 +126,21 @@ export class ChatFindModel {
     this.publish({
       phase: "error",
       selectedItemId: null,
-      error: error instanceof Error ? error.message : String(error),
+      // Every operation call site is tagged, so an untagged failure is a bug here
+      // rather than a known outcome; `connection` is the least misleading thing to
+      // say about one, and its copy already asks the reader to check and retry.
+      failure: error instanceof ChatFindFailureError ? error.failure : "connection",
     });
   }
   private async search(signal: AbortSignal) {
     try {
       let cursor: number | undefined;
       do {
-        const result = await this.operations.search(this.state.query, cursor);
+        const result = await tagged("connection", this.operations.search(this.state.query, cursor));
         if (signal.aborted) return;
         const historyChanged = this.epoch !== null && result.epoch !== this.epoch;
         const searchChanged = this.resultEpoch !== null && result.epoch !== this.resultEpoch;
-        if (historyChanged || searchChanged) throw new Error("History changed; search again");
+        if (historyChanged || searchChanged) throw new ChatFindFailureError("historyChanged");
         this.resultEpoch = result.epoch;
         this.locations.push(...result.locations);
         cursor = result.nextCursor ?? undefined;
@@ -130,7 +157,7 @@ export class ChatFindModel {
       epoch !== this.resultEpoch &&
       this.state.open
     ) {
-      this.fail(new Error("History changed; search again"), this.abort.signal);
+      this.fail(new ChatFindFailureError("historyChanged"), this.abort.signal);
     }
     this.epoch = epoch;
     this.items = items;
@@ -159,7 +186,7 @@ export class ChatFindModel {
         this.historyListeners.delete(check);
         signal.removeEventListener("abort", cancelled);
         if (target) resolve(target);
-        else reject(new Error("Could not load this search location; retry"));
+        else reject(new ChatFindFailureError("reveal"));
       };
       const check = () => {
         const target = this.target(location, false);
@@ -176,7 +203,7 @@ export class ChatFindModel {
   private async navigate(index: number, direction: 1 | -1, signal: AbortSignal) {
     const epoch = this.resultEpoch;
     if (epoch === null) return;
-    this.publish({ phase: "loading", error: null });
+    this.publish({ phase: "loading", failure: null });
     let remaining = this.locations.length;
     while (remaining-- > 0 && this.locations.length) {
       index = (index + this.locations.length) % this.locations.length;
@@ -187,7 +214,7 @@ export class ChatFindModel {
         this.items.some((item) => item.id === cached.id && item.timelineCursor?.seq === cached.seq);
       let target = stillLoaded ? cached : this.target(location, true);
       if (!target) {
-        await this.operations.load(epoch, location.seq);
+        await tagged("connection", this.operations.load(epoch, location.seq));
         if (signal.aborted) return;
         target = await this.waitForTarget(location, signal);
       }
@@ -204,11 +231,9 @@ export class ChatFindModel {
       );
       index = this.locations.indexOf(location);
       this.publish({ selectedItemId: target.id });
-      const result = await this.operations.reveal(
-        target.id,
-        this.state.query,
-        direction === 1 ? 0 : -1,
-        signal,
+      const result = await tagged(
+        "reveal",
+        this.operations.reveal(target.id, this.state.query, direction === 1 ? 0 : -1, signal),
       );
       if (signal.aborted) return;
       if (result.count) {
@@ -230,11 +255,9 @@ export class ChatFindModel {
       const occurrence = this.state.occurrence + direction;
       if (occurrence >= 0 && occurrence < this.state.count && this.state.selectedItemId) {
         this.publish({ phase: "loading" });
-        const result = await this.operations.reveal(
-          this.state.selectedItemId,
-          this.state.query,
-          occurrence,
-          signal,
+        const result = await tagged(
+          "reveal",
+          this.operations.reveal(this.state.selectedItemId, this.state.query, occurrence, signal),
         );
         if (signal.aborted) return;
         if (result.count) {

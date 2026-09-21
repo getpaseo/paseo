@@ -19,8 +19,24 @@ import { openCommandCenter, closeCommandCenter } from "../support/helpers/comman
 const MAC_USER_AGENT =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36";
 
+const FILLER = Array.from({ length: 400 }, (_, index) => `filler${index}`).join(" ");
+const STREAMED_RESPONSE = [
+  "First paragraph with alpha-needle and pair-needle inside.",
+  "Second paragraph with beta-needle and pair-needle inside.",
+  `Third paragraph ${FILLER}`,
+].join("\n\n");
+
 const RESPONSE =
   'İ😀hello **world**; hello *world*.\n\n[hello &amp; world](https://example.com/hidden-destination)\n\n```ts\nconst a = "a.b";\n```\n\n- first cell\n- second cell';
+
+// One message far taller than the viewport, so its first and last paragraph rows are
+// never in the virtualizer's window at the same time.
+const PARAGRAPH_PADDING = Array.from({ length: 40 }, (_, index) => `padding${index}`).join(" ");
+const TALL_RESPONSE = Array.from({ length: 30 }, (_, index) => {
+  if (index === 0) return `Opening paragraph with span-needle. ${PARAGRAPH_PADDING}`;
+  if (index === 29) return `Closing paragraph with span-needle. ${PARAGRAPH_PADDING}`;
+  return `Paragraph ${index}. ${PARAGRAPH_PADDING}`;
+}).join("\n\n");
 
 function query(page: Page) {
   return page.getByRole("textbox", { name: "Find in pane", exact: true });
@@ -140,7 +156,7 @@ test("rejects invisible source matches and ignores a late reply after closing", 
     await agent.client.waitForFinish(agent.agentId, 15_000);
     const gate = await installDaemonWebSocketGate(page);
     await openAgentRoute(page, agent);
-    await expect(page.getByTestId("assistant-message")).toBeVisible();
+    await expect(page.getByTestId("assistant-message").first()).toBeVisible();
     await searchChat(page, "hidden-destination");
     await expect(status(page)).toHaveText("No matches");
     await query(page).fill("first cell second cell");
@@ -170,7 +186,7 @@ test("shows a disconnected search failure and recovers with Retry", async ({ pag
     await agent.client.waitForFinish(agent.agentId, 15_000);
     const gate = await installDaemonWebSocketGate(page);
     await openAgentRoute(page, agent);
-    await expect(page.getByTestId("assistant-message")).toBeVisible();
+    await expect(page.getByTestId("assistant-message").first()).toBeVisible();
     await gate.drop();
     await expectReconnectingToastVisible(page);
     await searchChat(page, "hello world");
@@ -190,6 +206,72 @@ test("shows a disconnected search failure and recovers with Retry", async ({ pag
   }
 });
 
+test("finds a hit in a message that streamed while the chat was open", async ({ page }) => {
+  test.setTimeout(120_000);
+  const agent = await seedMockAgentWorkspace({
+    repoPrefix: "chat-find-live-blocks-",
+    title: "Chat Find live blocks",
+    featureValues: {
+      mockStreamingAssistantResponse: STREAMED_RESPONSE,
+      mockStreamingAssistantIntervalMs: 60,
+    },
+  });
+  try {
+    await openAgentRoute(page, agent);
+    await agent.client.sendAgentMessage(agent.agentId, "Stream a multi block answer");
+    await expect(page.getByText("beta-needle", { exact: false }).last()).toBeVisible({
+      timeout: 30_000,
+    });
+    // The only hit is in the first paragraph, which is no longer the row that grows.
+    await searchChat(page, "alpha-needle");
+    await expect(status(page)).toHaveText("1 of 1 in message", { timeout: 10_000 });
+    await agent.client.waitForFinish(agent.agentId, 60_000);
+    await query(page).fill("beta-needle");
+    await expect(status(page)).toHaveText("1 of 1 in message", { timeout: 10_000 });
+    // One message, two Markdown blocks, one count across both.
+    await query(page).fill("pair-needle");
+    await expect(status(page)).toHaveText("1 of 2 in message", { timeout: 10_000 });
+    await nextMatch(page);
+    await expect(status(page)).toHaveText("2 of 2 in message");
+    await expectHighlight(page, "pair-needle");
+    await closeFind(page);
+  } finally {
+    await agent.cleanup();
+  }
+});
+
+// Every block row of the selected message must be mounted for Find to see it, whatever
+// the virtualizer's scroll window holds. Otherwise a hit in a far paragraph is missing
+// from the count and Next walks off to the next message instead.
+test("counts every occurrence of a virtualized message and steps between them", async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  const agent = await seedMockAgentWorkspace({
+    repoPrefix: "chat-find-virtualized-",
+    title: "Chat Find virtualized message",
+    featureValues: { mockAssistantResponse: TALL_RESPONSE },
+  });
+  try {
+    for (let index = 0; index < 6; index++) {
+      await agent.client.sendAgentMessage(agent.agentId, `Prompt number ${index}`);
+      await agent.client.waitForFinish(agent.agentId, 15_000);
+    }
+    await openAgentRoute(page, agent);
+    await expect(page.getByText("Prompt number 5", { exact: true })).toBeVisible();
+    await expect(page.getByText("Prompt number 0", { exact: true })).toHaveCount(0);
+    await searchChat(page, "span-needle");
+    await expect(status(page)).toHaveText("1 of 2 in message", { timeout: 15_000 });
+    await expectHighlight(page, "span-needle");
+    await nextMatch(page);
+    await expect(status(page)).toHaveText("2 of 2 in message");
+    await expectHighlight(page, "span-needle");
+    await closeFind(page);
+  } finally {
+    await agent.cleanup();
+  }
+});
+
 test("finds text beyond the normal render cap and restores the cap when Find closes", async ({
   page,
 }) => {
@@ -198,7 +280,8 @@ test("finds text beyond the normal render cap and restores the cap when Find clo
     repoPrefix: "chat-find-cap-",
     title: "Chat Find long message",
     initialPrompt: "Render a long response",
-    featureValues: { mockAssistantResponse: `${"background ".repeat(3100)}\n\n${tail}` },
+    // One paragraph, so the needle is past the render cap of the row that holds it.
+    featureValues: { mockAssistantResponse: `${"background ".repeat(3100)}${tail}` },
   });
   try {
     await agent.client.waitForFinish(agent.agentId, 15_000);

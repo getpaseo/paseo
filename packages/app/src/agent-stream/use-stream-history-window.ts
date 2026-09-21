@@ -1,13 +1,20 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { StreamItem } from "@/types/stream";
 import { findMountedWindowStart, getMountedRecentStreamItems } from "./history-window";
+import { getStreamItemMessageId } from "./presentation";
+
+// Callers reveal a message, not a row: an assistant message is several block rows and
+// the window has to open at the first of them.
+function findMessageRowIndex(items: StreamItem[], messageId: string): number {
+  return items.findIndex((item) => getStreamItemMessageId(item) === messageId);
+}
 
 function findEarlierHistoryWindowStart(input: {
   items: StreamItem[];
   start: number;
   itemId: string | undefined;
 }): number {
-  const targetIndex = input.itemId ? input.items.findIndex((item) => item.id === input.itemId) : -1;
+  const targetIndex = input.itemId ? findMessageRowIndex(input.items, input.itemId) : -1;
   const targetStart = targetIndex >= 0 && targetIndex < input.start ? targetIndex : input.start;
   if (!input.itemId) {
     return findMountedWindowStart({
@@ -90,7 +97,7 @@ export function useStreamHistoryWindow(input: {
 
   const revealLoadedHistory = useCallback(
     (itemId?: string): boolean => {
-      const targetIndex = itemId ? items.findIndex((item) => item.id === itemId) : -1;
+      const targetIndex = itemId ? findMessageRowIndex(items, itemId) : -1;
       if (start === 0 || (itemId !== undefined && (targetIndex < 0 || targetIndex >= start))) {
         return false;
       }

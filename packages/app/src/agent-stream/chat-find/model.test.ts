@@ -159,11 +159,60 @@ it("retains a failed search for retry and distinguishes failure from zero matche
     model.open();
     model.setQuery("target");
     await expect.poll(() => model.getSnapshot().phase).toBe("error");
-    expect(model.getSnapshot().error).toBe("Host disconnected");
+    expect(model.getSnapshot().failure).toBe("connection");
     disconnected = false;
     model.retry();
     await expect.poll(() => model.getSnapshot().phase).toBe("ready");
-    expect(model.getSnapshot()).toMatchObject({ count: 0, error: null });
+    expect(model.getSnapshot()).toMatchObject({ count: 0, failure: null });
+  } finally {
+    model.close();
+  }
+});
+
+// `load` is a host RPC like `search`, so its failure is a connection failure and the
+// widget must say so rather than blaming the reveal.
+it("reports a failed timeline load as a connection failure", async () => {
+  const model = new ChatFindModel({
+    async search() {
+      return response([{ seq: 1, role: "assistant" }]);
+    },
+    async load() {
+      throw new Error("Host disconnected");
+    },
+    async reveal() {
+      return { count: 1, occurrence: 0 };
+    },
+    clear() {},
+  });
+  try {
+    model.updateHistory("epoch", []);
+    model.open();
+    model.setQuery("target");
+    await expect.poll(() => model.getSnapshot().phase).toBe("error");
+    expect(model.getSnapshot().failure).toBe("connection");
+  } finally {
+    model.close();
+  }
+});
+
+it("reports a search result that outlived its epoch as a changed history", async () => {
+  const model = new ChatFindModel({
+    async search() {
+      return response([{ seq: 1, role: "assistant" }]);
+    },
+    async load() {},
+    async reveal() {
+      return { count: 1, occurrence: 0 };
+    },
+    clear() {},
+  });
+  try {
+    model.updateHistory("epoch", [message(1)]);
+    model.open();
+    model.setQuery("target");
+    await expect.poll(() => model.getSnapshot().phase).toBe("ready");
+    model.updateHistory("epoch-2", [message(1)]);
+    expect(model.getSnapshot()).toMatchObject({ phase: "error", failure: "historyChanged" });
   } finally {
     model.close();
   }
@@ -187,7 +236,7 @@ it("can load a search location before the initial chat history has arrived", asy
     model.open();
     model.setQuery("target");
     await expect.poll(() => model.getSnapshot().phase).toBe("ready");
-    expect(model.getSnapshot()).toMatchObject({ selectedItemId: "row-1", count: 1, error: null });
+    expect(model.getSnapshot()).toMatchObject({ selectedItemId: "row-1", count: 1, failure: null });
   } finally {
     model.close();
   }
