@@ -11,6 +11,7 @@ const PluginBuildCommandSchema = z
 const PluginManifestSchema = z
   .object({
     id: PluginIdSchema,
+    description: z.string().trim().min(1).optional(),
     requirements: PluginRequirementsSchema.strict().optional(),
     build: z.array(PluginBuildCommandSchema).min(1).optional(),
   })

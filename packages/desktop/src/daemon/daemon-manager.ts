@@ -10,7 +10,7 @@ import {
   readDaemonInstance,
   isSameDaemonInstance,
   type DaemonInstance,
-} from "@getpaseo/server";
+} from "@getpaseo/server/daemon-control";
 import {
   copyAttachmentFileToManagedStorage,
   deleteManagedAttachmentFile,

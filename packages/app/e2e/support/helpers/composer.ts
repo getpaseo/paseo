@@ -8,6 +8,16 @@ import { selectWorkspaceInSidebar } from "./sidebar";
 import { getServerId } from "./server-id";
 import { waitForTabBar } from "./launcher";
 import { waitForSettledPosition } from "./sheet-layout";
+import { installDaemonWebSocketGate } from "./daemon-websocket-gate";
+
+export async function controlFileUploadCompletion(page: Page) {
+  const gate = await installDaemonWebSocketGate(page);
+  return {
+    hold: () => gate.holdNextServerMessage("file.upload.response"),
+    waitForUpload: () => gate.waitForHeldServerMessage("file.upload.response"),
+    complete: () => gate.releaseHeldServerMessage("file.upload.response"),
+  };
+}
 
 function composerInput(page: Page) {
   return page.getByRole("textbox", { name: "Message agent..." }).first();
@@ -125,6 +135,16 @@ export async function expectAttachmentPill(page: Page, testID: string): Promise<
   await expect(page.getByTestId(testID).first()).toBeVisible({ timeout: 10_000 });
 }
 
+export async function attachFileFromMenu(
+  page: Page,
+  file: { name: string; mimeType: string; buffer: Buffer },
+): Promise<void> {
+  await openAttachmentMenu(page);
+  const chooserPromise = page.waitForEvent("filechooser");
+  await page.getByRole("menuitem", { name: "Upload file", exact: true }).click();
+  await (await chooserPromise).setFiles(file);
+}
+
 export async function dropFileOnComposer(
   page: Page,
   file: { name: string; mimeType: string; buffer: Buffer },
@@ -166,7 +186,7 @@ export async function expectGithubAttachmentPill(
   page: Page,
   input: { number: number; title: string },
 ): Promise<void> {
-  const pill = page.getByTestId("composer-github-attachment-pill").first();
+  const pill = page.getByTestId("composer-github-attachment-pill").filter({ hasText: input.title });
   await expect(pill).toBeVisible({ timeout: 10_000 });
   await expect(pill).toContainText(`#${input.number}`);
   await expect(pill).toContainText(input.title);
@@ -188,7 +208,7 @@ export async function openGithubPickerFromMenu(page: Page): Promise<void> {
   await expect(page.getByTestId("combobox-desktop-container")).toBeVisible({ timeout: 5_000 });
 }
 
-/** Open picker, type a query, wait for the matching option by id (e.g. "issue:3", "pr:1"), and click it. */
+/** Open picker, type a query, wait for the matching option by id (e.g. "issue:3", "change_request:1"), and click it. */
 export async function selectGithubOption(
   page: Page,
   searchTerm: string,

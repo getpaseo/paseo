@@ -2,6 +2,30 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const zhCN: TranslationResources = {
+  paneFind: {
+    connectionFailure: "无法搜索此聊天。请检查主机连接后重试。",
+    historyChangedFailure: "搜索期间聊天已更改。请重新搜索。",
+    revealFailure: "无法显示此匹配项。请重试。",
+    searching: "搜索中…",
+    loading: "加载中…",
+    failed: "失败",
+    retry: "重试",
+    chatPosition: "消息内第 {{current}} 项，共 {{total}} 项",
+
+    title: "查找",
+    placeholder: "在窗格中查找",
+    close: "关闭查找",
+    matches: "查找结果",
+    previous: "上一个匹配项",
+    next: "下一个匹配项",
+    toggleReplace: "切换替换",
+    replaceWith: "替换为",
+    replace: "替换",
+    replaceAll: "全部替换",
+    noMatches: "无匹配项",
+    position: "{{current}} / {{total}}",
+    total: "{{total}} 个匹配项",
+  },
   common: {
     back: "返回",
     loading: "加载中...",
@@ -226,7 +250,8 @@ export const zhCN: TranslationResources = {
     states: {
       notFound: "未找到 Agent",
       failedToLoad: "加载 Agent 失败",
-      reconnecting: "正在重连",
+      reconnecting: "正在重新连接主机",
+      updating: "正在更新消息",
       timelineSyncFailed: "无法刷新代理历史记录。",
       timelineSyncRetrying: "正在重试…",
       archivingTitle: "正在归档 Agent...",

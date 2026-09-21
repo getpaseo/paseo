@@ -1211,8 +1211,9 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     const selectionRef = useRef({ start: value.length, end: value.length });
     const appliedTextReplacementKeyRef = useRef(textReplacement.key);
     const webTextareaRef = useRef<HTMLElement | null>(null);
+    const getLiveText = useCallback(() => valueRef.current, []);
     const composerHeight = useComposerHeight({
-      value,
+      getText: getLiveText,
       textareaRef: webTextareaRef,
       minHeight: MIN_INPUT_HEIGHT,
       maxHeight: maxInputHeight,
@@ -1960,9 +1961,13 @@ const styles = StyleSheet.create((theme: Theme) => ({
     color: theme.colors.foreground,
     fontSize: theme.fontSize.content,
     fontWeight: theme.fontWeight.normal,
-    lineHeight: theme.fontSize.content * 1.4,
+    // No lineHeight on native. React Native applies it as a span over the text, and an
+    // empty trailing line is laid out from the font's own metrics on some devices, so
+    // the input jumps when the first character lands on a new line. The font's natural
+    // line box is the same for every line. Web keeps the CSS value.
     ...(isWeb
       ? ({
+          lineHeight: theme.fontSize.content * 1.4,
           outlineStyle: "none",
           outlineWidth: 0,
           outlineColor: "transparent",

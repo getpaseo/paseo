@@ -1,0 +1,90 @@
+name: Desktop Packages
+
+on:
+  push:
+    branches: [main]
+  # Packaging leaves ordinary PR CI, but a PR that changes what gets packaged
+  # or how it is smoked still proves the real artifacts before merge.
+  pull_request:
+    branches: [main]
+    paths:
+      - "packages/desktop/**"
+      - "nix/**"
+      - ".github/workflows/desktop-packages.yml"
+
+concurrency:
+  group: desktop-packages-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  ONNXRUNTIME_NODE_INSTALL: skip
+
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: node scripts/npm-retry.mjs ci
+
+      - name: Install package smoke dependencies
+        run: sudo apt-get update && sudo apt-get install -y xvfb xauth rpm
+
+      - name: Build Linux desktop artifacts
+        # Smoke package contents and installation without spending minutes on xz compression.
+        run: |
+          printf '{"extends":"%s/packages/desktop/electron-builder.yml","deb":{"compression":"gz"},"rpm":{"fpm":["--rpm-compression=gzip"]}}' "$GITHUB_WORKSPACE" > "$RUNNER_TEMP/desktop-smoke-builder.json"
+          npm run build:desktop -- --publish never --linux --x64 --config "$RUNNER_TEMP/desktop-smoke-builder.json"
+        env:
+          EP_GH_IGNORE_TIME: true
+          PASEO_DESKTOP_SMOKE_ARTIFACT_DIR: ${{ runner.temp }}/desktop-smoke
+
+      - name: Smoke installed artifacts with restricted user namespaces
+        run: |
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=1
+          if unshare --user --map-root-user --net true; then
+            echo "Expected the launching user's namespace probe to be denied"
+            exit 1
+          fi
+          sudo apt-get install -y ./packages/desktop/release/*.deb
+          node packages/desktop/e2e/linux-artifact-smoke.js packages/desktop/release disabled
+        env:
+          PASEO_DESKTOP_SMOKE_ARTIFACT_DIR: ${{ runner.temp }}/desktop-smoke/restricted
+
+      - name: Smoke sandbox-preserving portable launches
+        run: |
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          unshare --user --map-root-user --net true
+          node packages/desktop/e2e/linux-artifact-smoke.js packages/desktop/release enabled
+        env:
+          PASEO_DESKTOP_SMOKE_ARTIFACT_DIR: ${{ runner.temp }}/desktop-smoke/userns
+
+      - name: Smoke installed RPM with restricted user namespaces
+        run: |
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=1
+          sudo dpkg --remove paseo
+          # Ubuntu supplies the runtime libraries under Debian package names.
+          # RPM still performs the real payload installation and postinstall.
+          sudo rpm --install --nodeps packages/desktop/release/*.rpm
+          node packages/desktop/e2e/linux-artifact-smoke.js packages/desktop/release disabled --installed-only
+        env:
+          PASEO_DESKTOP_SMOKE_ARTIFACT_DIR: ${{ runner.temp }}/desktop-smoke/rpm
+
+      - name: Upload packaged smoke diagnostics
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ !cancelled() }}
+        with:
+          name: desktop-packaged-smoke-linux-x64
+          path: ${{ runner.temp }}/desktop-smoke
+          if-no-files-found: ignore
+          retention-days: 7

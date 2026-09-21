@@ -2,6 +2,30 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const ko: TranslationResources = {
+  paneFind: {
+    connectionFailure: "이 채팅을 검색할 수 없습니다. 호스트 연결을 확인하고 다시 시도하세요.",
+    historyChangedFailure: "검색 중에 채팅이 변경되었습니다. 다시 검색하세요.",
+    revealFailure: "이 일치 항목을 표시할 수 없습니다. 다시 시도하세요.",
+    searching: "검색 중…",
+    loading: "불러오는 중…",
+    failed: "실패",
+    retry: "다시 시도",
+    chatPosition: "메시지 내 {{current}} / {{total}}",
+
+    title: "찾기",
+    placeholder: "패널에서 찾기",
+    close: "찾기 닫기",
+    matches: "검색 결과",
+    previous: "이전 일치 항목",
+    next: "다음 일치 항목",
+    toggleReplace: "바꾸기 표시 전환",
+    replaceWith: "바꿀 내용",
+    replace: "바꾸기",
+    replaceAll: "모두 바꾸기",
+    noMatches: "일치 항목 없음",
+    position: "{{current}} / {{total}}",
+    total: "일치 항목 {{total}}개",
+  },
   common: {
     back: "뒤로",
     loading: "불러오는 중...",
@@ -226,7 +250,8 @@ export const ko: TranslationResources = {
     states: {
       notFound: "에이전트를 찾을 수 없습니다",
       failedToLoad: "에이전트를 불러오지 못했습니다",
-      reconnecting: "다시 연결하는 중",
+      reconnecting: "호스트에 다시 연결하는 중",
+      updating: "메시지 업데이트 중",
       timelineSyncFailed: "에이전트 기록을 새로고침할 수 없습니다.",
       timelineSyncRetrying: "재시도 중…",
       archivingTitle: "에이전트 보관 중...",

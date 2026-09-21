@@ -53,13 +53,13 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     justifyContent: "center",
     borderRadius: theme.borderRadius.full,
-    backgroundColor: theme.colors.accent,
+    backgroundColor: theme.colors.surface3,
     ...theme.shadow.md,
   },
   pressed: {
     backgroundColor: theme.colors.interactionHighlight,
   },
   glyph: {
-    color: theme.colors.accentForeground,
+    color: theme.colors.foreground,
   },
 }));

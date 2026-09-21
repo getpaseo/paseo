@@ -2,6 +2,31 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const ptBR: TranslationResources = {
+  paneFind: {
+    connectionFailure:
+      "Não foi possível pesquisar nesta conversa. Verifique a conexão com o host e tente novamente.",
+    historyChangedFailure: "A conversa mudou durante a busca. Busque novamente.",
+    revealFailure: "Não foi possível mostrar esta correspondência. Tente novamente.",
+    searching: "Buscando…",
+    loading: "Carregando…",
+    failed: "Falhou",
+    retry: "Tentar novamente",
+    chatPosition: "{{current}} de {{total}} na mensagem",
+
+    title: "Buscar",
+    placeholder: "Buscar no painel",
+    close: "Fechar busca",
+    matches: "Correspondências",
+    previous: "Correspondência anterior",
+    next: "Próxima correspondência",
+    toggleReplace: "Mostrar substituição",
+    replaceWith: "Substituir por",
+    replace: "Substituir",
+    replaceAll: "Substituir tudo",
+    noMatches: "Nenhuma correspondência",
+    position: "{{current}} de {{total}}",
+    total: "{{total}} correspondências",
+  },
   common: {
     back: "Voltar",
     loading: "Carregando...",
@@ -226,7 +251,8 @@ export const ptBR: TranslationResources = {
     states: {
       notFound: "Agente não encontrado",
       failedToLoad: "Falha ao carregar agente",
-      reconnecting: "Reconectando",
+      reconnecting: "Reconectando ao host",
+      updating: "Atualizando mensagens",
       timelineSyncFailed: "Não foi possível atualizar o histórico do agente.",
       timelineSyncRetrying: "Tentando novamente…",
       archivingTitle: "Arquivando agente...",

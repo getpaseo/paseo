@@ -32,6 +32,21 @@ export interface DraftRecord {
   version: number;
 }
 
+export function editDraftRecordText(
+  record: DraftRecord | undefined,
+  text: string,
+  now: number,
+): DraftRecord {
+  if (record?.lifecycle === "active" && record.input.text === text) return record;
+  const attachments = record?.lifecycle === "active" ? record.input.attachments : [];
+  return {
+    input: { text, attachments },
+    lifecycle: text.length > 0 || attachments.length > 0 ? "active" : "abandoned",
+    updatedAt: now,
+    version: (record?.version ?? 0) + 1,
+  };
+}
+
 export interface DraftStoreState {
   drafts: Record<string, DraftRecord>;
   createModalDraft: DraftRecord | null;

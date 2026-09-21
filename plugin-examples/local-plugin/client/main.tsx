@@ -8,6 +8,7 @@ import {
 } from "@getpaseo/plugin/client";
 import { useCallback, useMemo } from "react";
 import { Pressable, Text, View } from "react-native";
+import { ExternalLink } from "@getpaseo/plugin/client/ui";
 import { incrementRpc } from "../shared/increment";
 
 export function contributeClient(client: PluginClientContext) {
@@ -69,7 +70,12 @@ export function contributeClient(client: PluginClientContext) {
   };
 }
 
-export function ExamplePanel({ theme, layout, workspaceId }: PluginWorkspacePanelProps) {
+export function ExamplePanel({
+  theme,
+  layout,
+  workspaceId,
+  navigation,
+}: PluginWorkspacePanelProps) {
   const workspace = useWorkspace(workspaceId, ({ name }) => ({ name }));
   const callIncrement = useRpc(incrementRpc);
   const { data, error, isPending, mutate } = useMutation({ mutationFn: callIncrement });
@@ -94,9 +100,20 @@ export function ExamplePanel({ theme, layout, workspaceId }: PluginWorkspacePane
     mutate({ value });
   }, [mutate, value]);
 
+  const openBrowser = navigation?.openBrowser;
+  const handleOpenBrowser = useCallback(() => {
+    openBrowser?.({ url: "https://paseo.sh/docs/plugins", workspaceId });
+  }, [openBrowser, workspaceId]);
+
   return (
     <View style={styles.screen}>
       <Text style={styles.title}>Workspace plugin panel</Text>
+      <ExternalLink href="https://paseo.sh/docs/plugins">Plugin documentation</ExternalLink>
+      {openBrowser ? (
+        <Pressable accessibilityRole="button" onPress={handleOpenBrowser} style={styles.button}>
+          <Text style={styles.buttonText}>Read in workspace browser</Text>
+        </Pressable>
+      ) : null}
       <Text style={styles.detail}>{workspace?.name}</Text>
       <Text style={styles.detail}>{data?.handledBy ?? "The RPC has not run yet."}</Text>
       <Pressable

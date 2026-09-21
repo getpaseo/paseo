@@ -740,6 +740,7 @@ function TabChip({
   dragHandleProps: DraggableListDragHandleProps | undefined;
 }) {
   const { closeButtonTestId, contextMenuTestId, menuEntries } = resolvedTab;
+  const { t } = useTranslation();
   const middleClickRef = useMiddleClickClose(
     useCallback(() => void onCloseTab(tab.tabId), [onCloseTab, tab.tabId]),
   );
@@ -889,6 +890,8 @@ function TabChip({
             <Pressable
               {...(closeButtonDragBlockers as object | undefined)}
               testID={closeButtonTestId}
+              accessibilityRole="button"
+              accessibilityLabel={t("workspace.tabs.menu.close")}
               disabled={isClosingTab}
               onPressIn={handleCloseButtonPressIn}
               onHoverIn={handleCloseButtonHoverIn}

@@ -2,6 +2,30 @@ import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const ar: TranslationResources = {
+  paneFind: {
+    connectionFailure: "تعذر البحث في هذه المحادثة. تحقق من الاتصال بالمضيف وأعد المحاولة.",
+    historyChangedFailure: "تغيّرت المحادثة أثناء البحث. أعد البحث.",
+    revealFailure: "تعذر عرض هذا التطابق. أعد المحاولة.",
+    searching: "جارٍ البحث…",
+    loading: "جارٍ التحميل…",
+    failed: "فشل",
+    retry: "إعادة المحاولة",
+    chatPosition: "{{current}} من {{total}} في الرسالة",
+
+    title: "بحث",
+    placeholder: "بحث في اللوحة",
+    close: "إغلاق البحث",
+    matches: "نتائج البحث",
+    previous: "التطابق السابق",
+    next: "التطابق التالي",
+    toggleReplace: "إظهار الاستبدال",
+    replaceWith: "استبدال بـ",
+    replace: "استبدال",
+    replaceAll: "استبدال الكل",
+    noMatches: "لا توجد تطابقات",
+    position: "{{current}} من {{total}}",
+    total: "{{total}} تطابقات",
+  },
   common: {
     back: "خلف",
     loading: "تحميل...",
@@ -226,7 +250,8 @@ export const ar: TranslationResources = {
     states: {
       notFound: "لم يتم العثور على Agent",
       failedToLoad: "فشل تحميل الوكيل",
-      reconnecting: "جارٍ إعادة الاتصال",
+      reconnecting: "جارٍ إعادة الاتصال بالمضيف",
+      updating: "جارٍ تحديث الرسائل",
       timelineSyncFailed: "تعذر تحديث سجل الوكيل.",
       timelineSyncRetrying: "جارٍ إعادة المحاولة…",
       archivingTitle: "وكيل الارشيف...",

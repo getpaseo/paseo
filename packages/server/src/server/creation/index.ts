@@ -9,7 +9,7 @@ import {
   type CreationSnapshot,
   type WorkspaceDescriptorPayload,
 } from "@getpaseo/protocol/messages";
-import { writeJsonFileAtomic } from "../atomic-file.js";
+import { writeFileAtomic } from "../atomic-file.js";
 import { generateWorkspaceId } from "../workspace-registry-model.js";
 
 type Observer = (snapshot: CreationSnapshot) => void;
@@ -46,6 +46,7 @@ type Record = z.infer<typeof RecordSchema>;
 export class CreationService {
   private admission: Promise<unknown> = Promise.resolve();
   private readonly active = new Map<string, Promise<CreationSnapshot>>();
+  private readonly receiptOperations = new Map<string, Promise<void>>();
   private readonly observers = new Map<string, Set<Observer>>();
   constructor(
     private readonly directory: string,
@@ -305,11 +306,32 @@ export class CreationService {
       this.notify(observer, record.snapshot);
   }
   private write(identity: string, record: Record): Promise<void> {
-    return writeJsonFileAtomic(join(this.directory, `${identity}.json`), record);
+    // Serialize now: the runner mutates the record after queueing this write.
+    const contents = JSON.stringify(record, null, 2);
+    return this.accessReceipt(identity, () =>
+      writeFileAtomic(join(this.directory, `${identity}.json`), contents),
+    );
   }
-  private async read(identity: string): Promise<Record | null> {
-    const text = await readOptional(join(this.directory, `${identity}.json`));
-    return text === null ? null : RecordSchema.parse(JSON.parse(text));
+  private read(identity: string): Promise<Record | null> {
+    return this.accessReceipt(identity, async () => {
+      const text = await readOptional(join(this.directory, `${identity}.json`));
+      return text === null ? null : RecordSchema.parse(JSON.parse(text));
+    });
+  }
+  private accessReceipt<T>(identity: string, access: () => Promise<T>): Promise<T> {
+    // Admission and the runner progress independently. Keep this owner from
+    // holding a receipt read open while atomically replacing the same file.
+    const previous = this.receiptOperations.get(identity) ?? Promise.resolve();
+    const result = previous.then(access);
+    const settled = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    this.receiptOperations.set(identity, settled);
+    void settled.finally(() => {
+      if (this.receiptOperations.get(identity) === settled) this.receiptOperations.delete(identity);
+    });
+    return result;
   }
 }
 function initialRecord(input: CreationInput, fingerprint: string): Record {
