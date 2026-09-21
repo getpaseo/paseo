@@ -10,13 +10,18 @@ export interface ComposerCapacity {
   capacity: number;
 }
 
+/** 10 content lines plus compact padding, gap, and toolbar. */
+const CHAT_COMPOSER_MAX_HEIGHT = 268;
+
 export function resolveComposerCapacity(input: ComposerGeometry): number {
   "worklet";
   // A centered form grows upward by half its height. Reserve both halves so
   // translating it still leaves five layout points below the header.
   const clearance = input.keyboardShift + 5;
   const reservedSpace = input.centered ? clearance * 2 : clearance;
-  return Math.max(0, input.height - input.bottomInset - reservedSpace);
+  const available = Math.max(0, input.height - input.bottomInset - reservedSpace);
+  if (input.centered) return available;
+  return Math.min(available, CHAT_COMPOSER_MAX_HEIGHT);
 }
 
 export function updateComposerCapacity(

@@ -8,7 +8,7 @@ describe("composer viewport", () => {
     const closed = updateComposerCapacity(open, { ...viewport, keyboardShift: 0 });
     expect(open.capacity).toBe(245);
     expect(closed.capacity).toBe(open.capacity);
-    expect(updateComposerCapacity(closed, { ...viewport, keyboardShift: 250 }).capacity).toBe(303);
+    expect(updateComposerCapacity(closed, { ...viewport, keyboardShift: 250 }).capacity).toBe(268);
   });
 
   it("remeasures the viewport without forgetting the keyboard reservation", () => {
@@ -25,7 +25,7 @@ describe("composer viewport", () => {
         centered: false,
         keyboardShift: 0,
       }).capacity,
-    ).toBe(313);
+    ).toBe(268);
     expect(
       updateComposerCapacity(open, {
         height: 0,
@@ -60,9 +60,20 @@ describe("composer viewport", () => {
   it("uses the measured viewport before the first keyboard opening", () => {
     expect(
       resolveComposerCapacity({ height: 582, bottomInset: 24, keyboardShift: 0, centered: false }),
-    ).toBe(553);
+    ).toBe(268);
     expect(
       resolveComposerCapacity({ height: 300, bottomInset: 0, keyboardShift: 200, centered: false }),
     ).toBe(95);
+  });
+
+  it("stops a chat composer around 10 lines so the timeline stays on screen", () => {
+    expect(
+      resolveComposerCapacity({
+        height: 852,
+        bottomInset: 34,
+        keyboardShift: 0,
+        centered: false,
+      }),
+    ).toBe(268);
   });
 });
