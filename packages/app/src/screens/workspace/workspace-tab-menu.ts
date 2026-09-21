@@ -18,6 +18,7 @@ export interface WorkspaceTabMenuLabels {
   reloadAgent: string;
   reloadAgentTooltip: string;
   close: string;
+  viewArtifacts: string;
 }
 
 export const DEFAULT_WORKSPACE_TAB_MENU_LABELS: WorkspaceTabMenuLabels = {
@@ -33,6 +34,7 @@ export const DEFAULT_WORKSPACE_TAB_MENU_LABELS: WorkspaceTabMenuLabels = {
   reloadAgent: i18n.t("workspace.tabs.menu.reloadAgent"),
   reloadAgentTooltip: i18n.t("workspace.tabs.menu.reloadAgentTooltip"),
   close: i18n.t("workspace.tabs.menu.close"),
+  viewArtifacts: i18n.t("workspace.tabs.menu.viewArtifacts", { defaultValue: "View artifacts" }),
 };
 
 export type WorkspaceTabMenuEntry =
@@ -47,7 +49,8 @@ export type WorkspaceTabMenuEntry =
         | "arrow-right-to-line"
         | "copy-x"
         | "pencil"
-        | "x";
+        | "x"
+        | "file-code-2";
       hint?: string;
       tooltip?: string;
       disabled?: boolean;
@@ -75,6 +78,7 @@ interface BuildWorkspaceTabMenuEntriesInput {
   onCloseTabsBefore: (tabId: string) => Promise<void> | void;
   onCloseTabsAfter: (tabId: string) => Promise<void> | void;
   onCloseOtherTabs: (tabId: string) => Promise<void> | void;
+  onViewArtifacts?: (agentId: string) => void;
   labels?: WorkspaceTabMenuLabels;
 }
 
@@ -177,6 +181,22 @@ export function buildWorkspaceTabMenuEntries(
 
   if (tab.target.kind === "agent") {
     const { agentId } = tab.target;
+    if (surface === "mobile" && input.onViewArtifacts) {
+      entries.push({
+        kind: "item",
+        key: "view-artifacts",
+        label: labels.viewArtifacts,
+        icon: "file-code-2",
+        testID: `${menuTestIDBase}-view-artifacts`,
+        onSelect: () => {
+          input.onViewArtifacts?.(agentId);
+        },
+      });
+      entries.push({
+        kind: "separator",
+        key: "view-artifacts-separator",
+      });
+    }
     entries.push({
       kind: "item",
       key: "copy-resume-command",

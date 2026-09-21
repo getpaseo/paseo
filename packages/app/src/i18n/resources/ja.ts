@@ -195,6 +195,8 @@ export const ja: TranslationResources = {
       timelineSyncFailed: "エージェントの履歴を更新できませんでした。再試行しています…",
       archivingTitle: "エージェントをアーカイブ中...",
       archivingSubtitle: "このエージェントをアーカイブするまでお待ちください。",
+      offline: "Offline",
+      offlineDescription: "Cannot connect to the host.",
     },
     unavailable: {
       selectedHost: "選択中のホスト",
@@ -221,6 +223,7 @@ export const ja: TranslationResources = {
       emptyDescription: "このエージェントが作成したファイルがここに表示されます。",
       updateHostTitle: "成果物を使うにはホストを更新してください",
       updateHostDescription: "このホストはチャットごとの成果物にまだ対応していません。",
+      previewMissing: "Preview unavailable",
       open: "{{name}}を開く",
       openLabel: "開く",
     },
@@ -517,6 +520,7 @@ export const ja: TranslationResources = {
         reloadAgentTooltip:
           "スキル、MCP、ログイン状態を更新するためにエージェントを再読み込みします。",
         close: "閉じる",
+        viewArtifacts: "View artifacts",
         renameTerminal: "ターミナルの名前を変更",
         renameAgent: "エージェントの名前を変更",
       },

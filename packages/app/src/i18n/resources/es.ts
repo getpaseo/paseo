@@ -195,6 +195,8 @@ export const es: TranslationResources = {
       timelineSyncFailed: "No se pudo actualizar el historial del agente. Reintentando…",
       archivingTitle: "Agente de archivo...",
       archivingSubtitle: "Espere mientras archivamos este agente.",
+      offline: "Offline",
+      offlineDescription: "Cannot connect to the host.",
     },
     unavailable: {
       selectedHost: "Anfitrión seleccionado",
@@ -221,6 +223,7 @@ export const es: TranslationResources = {
       emptyDescription: "Los archivos que cree este agente aparecerán aquí.",
       updateHostTitle: "Actualiza el host para usar artefactos",
       updateHostDescription: "Este host aún no admite artefactos por chat.",
+      previewMissing: "Preview unavailable",
       open: "Abrir {{name}}",
       openLabel: "Abrir",
     },
@@ -517,6 +520,7 @@ export const es: TranslationResources = {
         reloadAgentTooltip:
           "Vuelva a cargar el agente para actualizar habilidades, MCP o estado de inicio de sesión.",
         close: "Cerca",
+        viewArtifacts: "View artifacts",
         renameTerminal: "Cambiar nombre de terminal",
         renameAgent: "Cambiar nombre del agente",
       },

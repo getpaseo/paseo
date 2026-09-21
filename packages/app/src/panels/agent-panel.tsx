@@ -72,6 +72,7 @@ import {
 } from "@/screens/agent/agent-ready-screen-bottom-anchor";
 import { WorkspaceDraftAgentTab } from "@/composer/draft/workspace-tab";
 import { useCreateFlowStore } from "@/stores/create-flow-store";
+import { useAgentViewStore } from "@/stores/agent-view-store";
 import { buildDraftStoreKey, generateDraftId } from "@/stores/draft-keys";
 import { usePanelStore } from "@/stores/panel-store";
 import { type Agent, useSessionStore } from "@/stores/session-store";
@@ -1157,7 +1158,19 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
   onOpenWorkspaceFile?: (request: WorkspaceFileOpenRequest) => void;
 }) {
   const { t } = useTranslation();
-  const [selectedView, setSelectedView] = useState<"chat" | "artifacts">("chat");
+  const selectedView = useAgentViewStore(
+    (state) => state.selectedViews[`${serverId}:${agentId}`] || "chat",
+  );
+  const setSelectedView = useAgentViewStore((state) => state.setSelectedView);
+  const handleSetSelectedView = useCallback(
+    (view: "chat" | "artifacts") => {
+      setSelectedView(serverId, agentId, view);
+    },
+    [serverId, agentId, setSelectedView],
+  );
+  const handleReturnToChat = useCallback(() => {
+    handleSetSelectedView("chat");
+  }, [handleSetSelectedView]);
   const artifactFeedSupported = useHostFeature(serverId, "artifactFeed");
   const rawAgentInputDraft = useAgentInputDraft({
     draftKey: buildDraftStoreKey({
@@ -1267,6 +1280,7 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
           artifacts={artifacts}
           isSupported={artifactFeedSupported}
           onOpenWorkspaceFile={onOpenWorkspaceFile}
+          onReturnToChat={handleReturnToChat}
         />
       )}
     </View>
@@ -1280,9 +1294,11 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
             <SegmentedControl
               options={viewOptions}
               value={selectedView}
-              onValueChange={setSelectedView}
-              size="xs"
+              onValueChange={handleSetSelectedView}
+              size={isWeb ? "xs" : "md"}
+              textWrap={!isWeb}
               testID="agent-view-switcher"
+              style={isWeb ? undefined : styles.mobileSegmentedControl}
             />
           </View>
           {contentContainer}
@@ -1728,13 +1744,17 @@ const styles = StyleSheet.create((theme) => ({
     ...(isWeb ? { userSelect: "none" as const } : {}),
   },
   viewSwitcher: {
-    minHeight: 40,
+    minHeight: isWeb ? 40 : 56,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: theme.spacing[3],
+    paddingVertical: theme.spacing[2],
     borderBottomWidth: 1,
     borderBottomColor: theme.colors.border,
+  },
+  mobileSegmentedControl: {
+    flex: 1,
   },
   historySyncOverlay: {
     position: "absolute",

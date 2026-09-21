@@ -10,7 +10,7 @@ import { createPreviewAttachmentId, getFileNameFromPath } from "@/attachments/ut
 import { useAttachmentPreviewUrl } from "@/attachments/use-attachment-preview-url";
 import type { AttachmentMetadata } from "@/attachments/types";
 import { useFetchQuery } from "@/data/query";
-import { useHostRuntimeClient } from "@/runtime/host-runtime";
+import { useHostRuntimeClient, useHostRuntimeConnectionStatus } from "@/runtime/host-runtime";
 import { formatMessageTimestamp } from "@/utils/time";
 import type { WorkspaceFileOpenRequest } from "@/workspace/file-open";
 import type { Theme } from "@/styles/theme";
@@ -21,6 +21,7 @@ interface ArtifactFeedProps {
   artifacts: readonly AgentArtifact[];
   isSupported: boolean;
   onOpenWorkspaceFile?: (request: WorkspaceFileOpenRequest) => void;
+  onReturnToChat?: () => void;
 }
 
 interface ArtifactCardProps {
@@ -64,17 +65,41 @@ export function ArtifactFeed({
   artifacts,
   isSupported,
   onOpenWorkspaceFile,
+  onReturnToChat,
 }: ArtifactFeedProps) {
   const { t } = useTranslation();
+  const connectionStatus = useHostRuntimeConnectionStatus(serverId);
+
   const handleOpen = useCallback(
     (artifact: AgentArtifact) => {
       onOpenWorkspaceFile?.({
         location: { path: artifact.path },
         disposition: "side",
       });
+      onReturnToChat?.();
     },
-    [onOpenWorkspaceFile],
+    [onOpenWorkspaceFile, onReturnToChat],
   );
+
+  if (connectionStatus === "connecting") {
+    return (
+      <View style={styles.emptyState} testID="artifact-feed-loading">
+        <ActivityIndicator size="large" />
+      </View>
+    );
+  }
+
+  if (connectionStatus === "offline" || connectionStatus === "error") {
+    return (
+      <View style={styles.emptyState} testID="artifact-feed-offline">
+        <ThemedArtifactKindIcon kind="html" size={22} uniProps={mutedIconMapping} />
+        <Text style={styles.emptyTitle}>{t("agentPanel.states.offline") || "Offline"}</Text>
+        <Text style={styles.emptyDescription}>
+          {t("agentPanel.states.offlineDescription") || "Cannot connect to the host."}
+        </Text>
+      </View>
+    );
+  }
 
   if (!isSupported) {
     return (
@@ -165,6 +190,7 @@ function ArtifactImage({
   serverId: string;
   cwd: string;
 }) {
+  const { t } = useTranslation();
   const client = useHostRuntimeClient(serverId);
   const query = useFetchQuery<AttachmentMetadata | null>({
     queryKey: ["artifactPreview", serverId, cwd, artifact.path, artifact.updatedAt],
@@ -203,8 +229,15 @@ function ArtifactImage({
       </View>
     );
   }
-  if (!previewUrl) {
-    return null;
+  if (query.isError || !previewUrl) {
+    return (
+      <View style={styles.previewState}>
+        <ThemedArtifactKindIcon kind="image" size={24} uniProps={mutedIconMapping} />
+        <Text style={styles.missingPreviewText}>
+          {t("agentPanel.artifacts.previewMissing") || "Preview unavailable"}
+        </Text>
+      </View>
+    );
   }
   return (
     <View style={styles.preview}>
@@ -265,6 +298,11 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: theme.colors.surface2,
+    gap: theme.spacing[2],
+  },
+  missingPreviewText: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
   },
   cardBody: {
     flexDirection: "row",
