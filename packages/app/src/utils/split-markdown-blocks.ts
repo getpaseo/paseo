@@ -33,6 +33,13 @@ function foldLinkReferenceDefinitions(blocks: string[]): string[] {
   return folded;
 }
 
+export interface MarkdownSelectionGroup {
+  kind: "prose" | "other";
+  text: string;
+}
+
+const PROSE_TOKEN_TYPES = new Set(["paragraph_open"]);
+
 export function splitMarkdownBlocks(text: string): string[] {
   if (text.length === 0) {
     return [];
@@ -73,6 +80,97 @@ export function splitMarkdownBlocks(text: string): string[] {
   }
 
   return foldLinkReferenceDefinitions(blocks.filter((block) => block.length > 0));
+}
+
+export function groupMarkdownForNativeSelection(text: string): MarkdownSelectionGroup[] {
+  if (text.length === 0) {
+    return [];
+  }
+
+  const lines = text.split("\n");
+  const groups: MarkdownSelectionGroup[] = [];
+  let proseStart: number | null = null;
+  let proseEnd = 0;
+  let lineCursor = 0;
+  const leadingDefinitions: string[] = [];
+
+  function takeSlice(start: number, end: number): string | null {
+    const grouped = lines.slice(start, end).join("\n");
+    return grouped.trim().length > 0 ? grouped : null;
+  }
+
+  function withLeadingDefinitions(grouped: string): string {
+    if (leadingDefinitions.length === 0) {
+      return grouped;
+    }
+    const prefix = leadingDefinitions.join("\n\n");
+    leadingDefinitions.length = 0;
+    return `${prefix}\n\n${grouped}`;
+  }
+
+  // A reference definition emits no token, so the line range between tokens would
+  // otherwise be dropped and the link it defines would stop resolving.
+  function absorbDefinitionGap(nextLine: number) {
+    if (nextLine < lineCursor) {
+      return;
+    }
+    const gap = lines.slice(lineCursor, nextLine).join("\n");
+    lineCursor = nextLine;
+    if (!isLinkReferenceDefinitionBlock(gap)) {
+      return;
+    }
+    if (proseStart !== null) {
+      proseEnd = nextLine;
+      return;
+    }
+    const definition = gap.trim();
+    const last = groups[groups.length - 1];
+    if (last) {
+      last.text = `${last.text}\n\n${definition}`;
+      return;
+    }
+    leadingDefinitions.push(definition);
+  }
+
+  function flushProse() {
+    if (proseStart === null) {
+      return;
+    }
+    const grouped = takeSlice(proseStart, proseEnd);
+    proseStart = null;
+    if (grouped) {
+      groups.push({ kind: "prose", text: withLeadingDefinitions(grouped) });
+    }
+  }
+
+  for (const token of markdownBlockParser.parse(text, {})) {
+    if (token.level !== 0 || !token.map) {
+      continue;
+    }
+    const [start, end] = token.map;
+    absorbDefinitionGap(start);
+    if (PROSE_TOKEN_TYPES.has(token.type)) {
+      if (proseStart === null) {
+        proseStart = start;
+      }
+      proseEnd = end;
+      lineCursor = end;
+      continue;
+    }
+    flushProse();
+    const grouped = takeSlice(start, end);
+    if (grouped) {
+      groups.push({ kind: "other", text: withLeadingDefinitions(grouped) });
+    }
+    lineCursor = end;
+  }
+
+  absorbDefinitionGap(lines.length);
+  flushProse();
+  if (leadingDefinitions.length > 0) {
+    groups.push({ kind: "prose", text: leadingDefinitions.join("\n\n") });
+  }
+  return groups;
 }
 
 function getStructuralBlankLines(text: string, lines: string[]): Set<number> {

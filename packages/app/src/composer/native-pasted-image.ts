@@ -33,3 +33,21 @@ export function normalizeNativePastedImages(
     };
   });
 }
+
+export async function resolveNativePasteImages(input: {
+  files: readonly NativePastedFile[];
+  readClipboardImage: () => Promise<PickedImageAttachmentInput | null>;
+}): Promise<PickedImageAttachmentInput[]> {
+  try {
+    const fromFiles = normalizeNativePastedImages(input.files);
+    if (fromFiles.length > 0) {
+      return fromFiles;
+    }
+  } catch {
+    // Native paste often reports a UTI we cannot persist. The clipboard reader
+    // handles more image representations, including iOS screenshot pastes.
+  }
+
+  const image = await input.readClipboardImage();
+  return image ? [image] : [];
+}

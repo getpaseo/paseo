@@ -5,6 +5,7 @@ import {
   Text,
   Image,
   Pressable,
+  Platform,
   type GestureResponderEvent,
   type LayoutChangeEvent,
   StyleProp,
@@ -12,7 +13,11 @@ import {
   type TextStyle,
 } from "react-native";
 import { useTranslation } from "react-i18next";
-import { MarkdownParagraphView, MarkdownTextSpan } from "@/components/markdown-text";
+import {
+  MarkdownParagraphView,
+  MarkdownSelectableRoot,
+  MarkdownTextSpan,
+} from "@/components/markdown-text";
 import { MarkdownTableCellText } from "@/components/markdown-text-selection";
 import * as React from "react";
 import {
@@ -68,7 +73,10 @@ import { useStableEvent } from "@/hooks/use-stable-event";
 import { HighlightedCodeBlock } from "@/components/highlighted-code-block";
 import { MarkdownFenceBlock } from "@/components/markdown/fence";
 import type { MarkdownPhase } from "@/components/markdown/fence/types";
-import { splitMarkdownBlocks } from "@/utils/split-markdown-blocks";
+import {
+  groupMarkdownForNativeSelection,
+  splitMarkdownBlocks,
+} from "@/utils/split-markdown-blocks";
 import { useRevealedText } from "@/hooks/use-revealed-text";
 import { colorMarkdownLinkChildren } from "@/components/markdown/link-children";
 import { createAssistantMarkdownParser } from "@/utils/assistant-markdown-parser";
@@ -1958,11 +1966,31 @@ export const AssistantMessage = memo(function AssistantMessage({
     };
   }, [client, fileLinkActions, markdownParser, occurrenceKey, phase, serverId, workspaceRoot]);
 
-  const blocks = useMemo(() => splitMarkdownBlocks(revealedMessage), [revealedMessage]);
-  const keyedBlocks = useMemo(
-    () => blocks.map((block, index) => ({ key: `block:${index}`, block })),
-    [blocks],
+  const iosProseRules = useMemo<RenderRules>(
+    () => ({
+      ...markdownRules,
+      body: (node: ASTNode, children: ReactNode[], _parent: ASTNode[], styles: MarkdownStyles) => (
+        <MarkdownSelectableRoot key={node.key} style={styles.body}>
+          {children}
+        </MarkdownSelectableRoot>
+      ),
+    }),
+    [markdownRules],
   );
+  const blocks = useMemo(() => {
+    if (Platform.OS === "ios") {
+      return groupMarkdownForNativeSelection(revealedMessage).map((group, index) => ({
+        key: `block:${group.kind}:${index}`,
+        block: group.text,
+        prose: group.kind === "prose",
+      }));
+    }
+    return splitMarkdownBlocks(revealedMessage).map((block, index) => ({
+      key: `block:${index}`,
+      block,
+      prose: false,
+    }));
+  }, [revealedMessage]);
 
   const assistantContainerStyle = useMemo(
     () => [
@@ -1988,17 +2016,17 @@ export const AssistantMessage = memo(function AssistantMessage({
 
   return (
     <View testID="assistant-message" dataSet={revealDataSet} style={assistantContainerStyle}>
-      {keyedBlocks.map(({ key, block }, index) => (
+      {blocks.map(({ key, block, prose }, index) => (
         <AssistantMessageBlockContainer
           key={key}
           block={block}
-          marginBottom={index < keyedBlocks.length - 1 ? 12 : 0}
+          marginBottom={index < blocks.length - 1 ? 12 : 0}
         >
           <MemoizedMarkdownBlock
             text={block}
-            rules={markdownRules}
+            rules={prose ? iosProseRules : markdownRules}
             parser={
-              phase === "streaming" && index === keyedBlocks.length - 1
+              phase === "streaming" && index === blocks.length - 1
                 ? streamingMarkdownParser
                 : markdownParser
             }
