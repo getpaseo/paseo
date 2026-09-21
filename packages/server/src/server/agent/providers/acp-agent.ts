@@ -412,6 +412,16 @@ export type ACPCatalogModelResolver = (
   context: ACPCatalogModelResolverContext,
 ) => Promise<AgentModelDefinition[]>;
 
+export interface ACPModelConfigOptionsResolverContext {
+  connection: ClientSideConnection;
+  sessionId: string;
+  modelId: string;
+}
+
+export type ACPModelConfigOptionsResolver = (
+  context: ACPModelConfigOptionsResolverContext,
+) => Promise<SessionConfigOption[]>;
+
 interface ACPAgentClientOptions {
   provider: string;
   logger: Logger;
@@ -419,6 +429,7 @@ interface ACPAgentClientOptions {
   defaultCommand: [string, ...string[]];
   defaultModes?: AgentMode[];
   catalogModelResolver?: ACPCatalogModelResolver;
+  modelConfigOptionsResolver?: ACPModelConfigOptionsResolver;
   modelTransformer?: (models: AgentModelDefinition[]) => AgentModelDefinition[];
   sessionResponseTransformer?: (response: SessionStateResponse) => SessionStateResponse;
   configOptionsTransformer?: (configOptions: SessionConfigOption[]) => SessionConfigOption[];
@@ -450,6 +461,7 @@ interface ACPAgentSessionOptions {
   runtimeSettings?: ProviderRuntimeSettings;
   defaultCommand: [string, ...string[]];
   defaultModes: AgentMode[];
+  modelConfigOptionsResolver?: ACPModelConfigOptionsResolver;
   modelTransformer?: (models: AgentModelDefinition[]) => AgentModelDefinition[];
   sessionResponseTransformer?: (response: SessionStateResponse) => SessionStateResponse;
   configOptionsTransformer?: (configOptions: SessionConfigOption[]) => SessionConfigOption[];
@@ -875,6 +887,7 @@ export class ACPAgentClient implements AgentClient {
   protected readonly defaultCommand: [string, ...string[]];
   protected readonly defaultModes: AgentMode[];
   private readonly catalogModelResolver?: ACPCatalogModelResolver;
+  private readonly modelConfigOptionsResolver?: ACPModelConfigOptionsResolver;
   private readonly modelTransformer?: (models: AgentModelDefinition[]) => AgentModelDefinition[];
   private readonly sessionResponseTransformer?: (
     response: SessionStateResponse,
@@ -917,6 +930,7 @@ export class ACPAgentClient implements AgentClient {
     this.defaultCommand = options.defaultCommand;
     this.defaultModes = options.defaultModes ?? [];
     this.catalogModelResolver = options.catalogModelResolver;
+    this.modelConfigOptionsResolver = options.modelConfigOptionsResolver;
     this.modelTransformer = options.modelTransformer;
     this.sessionResponseTransformer = options.sessionResponseTransformer;
     this.configOptionsTransformer = options.configOptionsTransformer;
@@ -947,6 +961,7 @@ export class ACPAgentClient implements AgentClient {
         runtimeSettings: this.runtimeSettings,
         defaultCommand: this.defaultCommand,
         defaultModes: this.defaultModes,
+        modelConfigOptionsResolver: this.modelConfigOptionsResolver,
         modelTransformer: this.modelTransformer,
         sessionResponseTransformer: this.sessionResponseTransformer,
         configOptionsTransformer: this.configOptionsTransformer,
@@ -997,6 +1012,7 @@ export class ACPAgentClient implements AgentClient {
       runtimeSettings: this.runtimeSettings,
       defaultCommand: this.defaultCommand,
       defaultModes: this.defaultModes,
+      modelConfigOptionsResolver: this.modelConfigOptionsResolver,
       modelTransformer: this.modelTransformer,
       sessionResponseTransformer: this.sessionResponseTransformer,
       configOptionsTransformer: this.configOptionsTransformer,
@@ -1627,6 +1643,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private readonly runtimeSettings?: ProviderRuntimeSettings;
   private readonly defaultCommand: [string, ...string[]];
   private readonly defaultModes: AgentMode[];
+  private readonly modelConfigOptionsResolver?: ACPModelConfigOptionsResolver;
   protected readonly modelTransformer?: (models: AgentModelDefinition[]) => AgentModelDefinition[];
   private readonly sessionResponseTransformer?: (
     response: SessionStateResponse,
@@ -1697,6 +1714,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.runtimeSettings = options.runtimeSettings;
     this.defaultCommand = options.defaultCommand;
     this.defaultModes = options.defaultModes;
+    this.modelConfigOptionsResolver = options.modelConfigOptionsResolver;
     this.modelTransformer = options.modelTransformer;
     this.sessionResponseTransformer = options.sessionResponseTransformer;
     this.configOptionsTransformer = options.configOptionsTransformer;
@@ -2008,7 +2026,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
 
     const context = this.createProviderModeWriterContext(modeId, selection);
     const providerResult = this.providerModeWriter
-      ? await this.providerModeWriter(context)
+      ? await this.runACPRequest(() => this.providerModeWriter!(context))
       : { handled: false };
     if (providerResult.handled) {
       this.currentMode = providerResult.currentModeId ?? modeId;
@@ -2054,14 +2072,16 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     }
 
     if (this.beforeModeWriter) {
-      const beforeResult = await this.beforeModeWriter(context);
+      const beforeResult = await this.runACPRequest(() => this.beforeModeWriter!(context));
       if (beforeResult?.configOptions) {
         this.configOptions = this.transformConfigOptions(beforeResult.configOptions);
       }
     }
 
     if (selection.hasAvailableModes) {
-      await this.connection.setSessionMode({ sessionId: this.sessionId, modeId });
+      await this.runACPRequest(() =>
+        this.connection!.setSessionMode({ sessionId: this.sessionId!, modeId }),
+      );
       this.currentMode = modeId;
       this.pushEvent({
         type: "mode_changed",
@@ -2077,11 +2097,13 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       throw new Error(`${this.provider} does not expose ACP mode switching`);
     }
 
-    const response = await this.connection.setSessionConfigOption({
-      sessionId: this.sessionId,
-      configId: modeOption.id,
-      value: modeId,
-    });
+    const response = await this.runACPRequest(() =>
+      this.connection!.setSessionConfigOption({
+        sessionId: this.sessionId!,
+        configId: modeOption.id,
+        value: modeId,
+      }),
+    );
     this.currentMode = this.applyConfigOptionResponse({
       response,
       configId: modeOption.id,
@@ -2159,11 +2181,32 @@ export class ACPAgentSession implements AgentSession, ACPClient {
         throw new Error(this.modelSelectionUnavailableMessage());
       }
 
+      let switchedWithModelApi = false;
       try {
-        await this.connection.unstable_setSessionModel({
-          sessionId: this.sessionId,
-          modelId,
-        });
+        await this.runACPRequest(() =>
+          this.connection!.unstable_setSessionModel!({
+            sessionId: this.sessionId!,
+            modelId,
+          }),
+        );
+        switchedWithModelApi = true;
+      } catch {
+        // Fall through to config option path.
+      }
+
+      if (switchedWithModelApi) {
+        if (this.modelConfigOptionsResolver) {
+          this.configOptions = this.transformConfigOptions(
+            await this.runACPRequest(() =>
+              this.modelConfigOptionsResolver!({
+                connection: this.connection!,
+                sessionId: this.sessionId!,
+                modelId,
+              }),
+            ),
+          );
+          this.thinkingOptionId = deriveCurrentConfigValue(this.configOptions, "thought_level");
+        }
         this.currentModel = modelId;
         this.pushEvent({
           type: "model_changed",
@@ -2171,8 +2214,6 @@ export class ACPAgentSession implements AgentSession, ACPClient {
           runtimeInfo: this.runtimeInfo(),
         });
         return;
-      } catch {
-        // Fall through to config option path.
       }
     }
 
@@ -2192,11 +2233,13 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       return;
     }
 
-    const response = await this.connection.setSessionConfigOption({
-      sessionId: this.sessionId,
-      configId: modelOption.id,
-      value: modelId,
-    });
+    const response = await this.runACPRequest(() =>
+      this.connection!.setSessionConfigOption({
+        sessionId: this.sessionId!,
+        configId: modelOption.id,
+        value: modelId,
+      }),
+    );
     this.currentModel = this.applyConfigOptionResponse({
       response,
       configId: modelOption.id,
@@ -2221,7 +2264,9 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     }
 
     if (this.thinkingOptionWriter) {
-      await this.thinkingOptionWriter(this.connection, this.sessionId, thinkingOptionId);
+      await this.runACPRequest(() =>
+        this.thinkingOptionWriter!(this.connection!, this.sessionId!, thinkingOptionId),
+      );
       this.thinkingOptionId = thinkingOptionId;
       this.pushEvent({
         type: "thinking_option_changed",
@@ -2231,17 +2276,32 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       return;
     }
 
-    const option = findSelectConfigOption({
+    const option = findConfigOption({
       configOptions: this.configOptions,
       category: "thought_level",
     });
     if (!option) {
       throw new Error(`${this.provider} does not expose ACP thought-level selection`);
     }
-    const response = await this.connection.setSessionConfigOption({
-      sessionId: this.sessionId,
-      configId: option.id,
-      value: thinkingOptionId,
+    const response = await this.runACPRequest(() => {
+      if (option.type === "boolean") {
+        if (thinkingOptionId !== "true" && thinkingOptionId !== "false") {
+          throw new Error(
+            `${this.provider} thought-level boolean option must be 'true' or 'false'`,
+          );
+        }
+        return this.connection!.setSessionConfigOption({
+          sessionId: this.sessionId!,
+          configId: option.id,
+          type: "boolean",
+          value: thinkingOptionId === "true",
+        });
+      }
+      return this.connection!.setSessionConfigOption({
+        sessionId: this.sessionId!,
+        configId: option.id,
+        value: thinkingOptionId,
+      });
     });
     this.thinkingOptionId = this.applyConfigOptionResponse({
       response,
@@ -2288,11 +2348,13 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       );
     }
 
-    const response = await this.connection.setSessionConfigOption({
-      sessionId: this.sessionId,
-      configId: option.id,
-      value: requestedValue,
-    });
+    const response = await this.runACPRequest(() =>
+      this.connection!.setSessionConfigOption({
+        sessionId: this.sessionId!,
+        configId: option.id,
+        value: requestedValue,
+      }),
+    );
     const currentValue = this.applyConfigOptionResponse({
       response,
       configId: option.id,
@@ -2319,14 +2381,10 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.configOptions = this.transformConfigOptions(response.configOptions);
     const responseOption =
       category === undefined
-        ? findSelectConfigOptionById({ configOptions: this.configOptions, id: configId })
-        : findSelectConfigOption({
-            configOptions: this.configOptions,
-            category,
-            id: configId,
-          });
+        ? findConfigOptionById({ configOptions: this.configOptions, id: configId })
+        : findConfigOption({ configOptions: this.configOptions, category, id: configId });
     if (responseOption?.currentValue != null) {
-      return responseOption.currentValue;
+      return String(responseOption.currentValue);
     }
     this.logger.warn(
       { configId, value: requestedValue },
@@ -3238,17 +3296,30 @@ export function findSelectConfigOption({
   return option ?? null;
 }
 
-function findSelectConfigOptionById({
+function findConfigOption({
+  configOptions,
+  category,
+  id,
+}: {
+  configOptions: SessionConfigOption[] | null | undefined;
+  category: string;
+  id?: string;
+}): SessionConfigOption | null {
+  return (
+    configOptions?.find(
+      (entry) => entry.category === category && (id === undefined || entry.id === id),
+    ) ?? null
+  );
+}
+
+function findConfigOptionById({
   configOptions,
   id,
 }: {
   configOptions: SessionConfigOption[] | null | undefined;
   id: string;
-}): SelectConfigOption | null {
-  const option = configOptions?.find(
-    (entry): entry is SelectConfigOption => entry.type === "select" && entry.id === id,
-  );
-  return option ?? null;
+}): SessionConfigOption | null {
+  return configOptions?.find((entry) => entry.id === id) ?? null;
 }
 
 function findSelectConfigFeatureOption(
@@ -3332,9 +3403,16 @@ export function deriveSelectorOptions(
   configOptions: SessionConfigOption[] | null | undefined,
   category: string,
 ): ConfigOptionSelector[] {
-  const option = findSelectConfigOption({ configOptions, category });
+  const option = findConfigOption({ configOptions, category });
   if (!option) {
     return [];
+  }
+
+  if (option.type === "boolean") {
+    return [
+      { id: "false", label: "Off", isDefault: option.currentValue === false },
+      { id: "true", label: "On", isDefault: option.currentValue === true },
+    ];
   }
 
   return flattenSelectOptions(option.options).map((value) => ({
@@ -3350,11 +3428,8 @@ function deriveCurrentConfigValue(
   configOptions: SessionConfigOption[] | null | undefined,
   category: string,
 ): string | null {
-  const option = configOptions?.find(
-    (entry): entry is Extract<SessionConfigOption, { type: "select" }> =>
-      entry.type === "select" && entry.category === category,
-  );
-  return option?.currentValue ?? null;
+  const option = findConfigOption({ configOptions, category });
+  return option ? String(option.currentValue) : null;
 }
 
 function normalizeMcpServers(servers?: Record<string, McpServerConfig>): McpServer[] {
