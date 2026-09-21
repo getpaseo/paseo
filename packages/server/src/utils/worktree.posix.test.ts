@@ -659,12 +659,10 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
         }),
       );
 
-      const originalHome = process.env.HOME;
       const originalPath = process.env.PATH;
-      const originalBashEnv = process.env.BASH_ENV;
-      process.env.HOME = home;
-      process.env.PATH = `${binDir}${delimiter}${originalPath ?? "/usr/bin:/bin"}`;
-      process.env.BASH_ENV = bashEnvPath;
+      vi.stubEnv("HOME", home);
+      vi.stubEnv("PATH", `${binDir}${delimiter}${originalPath ?? "/usr/bin:/bin"}`);
+      vi.stubEnv("BASH_ENV", bashEnvPath);
 
       try {
         await runWorktreeSetupCommands({
@@ -680,21 +678,7 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
           },
         });
       } finally {
-        if (originalHome === undefined) {
-          delete process.env.HOME;
-        } else {
-          process.env.HOME = originalHome;
-        }
-        if (originalPath === undefined) {
-          delete process.env.PATH;
-        } else {
-          process.env.PATH = originalPath;
-        }
-        if (originalBashEnv === undefined) {
-          delete process.env.BASH_ENV;
-        } else {
-          process.env.BASH_ENV = originalBashEnv;
-        }
+        vi.unstubAllEnvs();
       }
 
       expect(readFileSync(join(repoDir, "setup-path.log"), "utf8").trim()).toBe("shim:ok");

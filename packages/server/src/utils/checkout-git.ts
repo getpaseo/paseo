@@ -811,6 +811,13 @@ export type CheckoutSnapshotFacts =
     };
 
 function isNotGitRepositoryError(error: unknown): boolean {
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    (error as NodeJS.ErrnoException).code === "ENOENT"
+  ) {
+    return true; // A missing directory (or missing git executable) cannot be a valid worktree.
+  }
   return error instanceof Error && /not a git repository/i.test(error.message);
 }
 

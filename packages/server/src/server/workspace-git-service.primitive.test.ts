@@ -440,9 +440,8 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
 
   test("getSnapshot reports an unresolved self-hosted remote as neutral unauthenticated", async () => {
     vi.useRealTimers();
-    const previousPath = process.env.PATH;
     const emptyPathDir = mkdtempSync(join(tmpdir(), "workspace-git-no-forge-cli-"));
-    process.env.PATH = emptyPathDir;
+    vi.stubEnv("PATH", emptyPathDir);
     const remoteUrl = "https://git.internal/acme/repo.git";
     const getPullRequestStatus = vi.fn(async () => createPullRequestStatusResult());
     const service = createService({
@@ -472,11 +471,7 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
       expect(getPullRequestStatus).not.toHaveBeenCalled();
     } finally {
       service.dispose();
-      if (previousPath === undefined) {
-        delete process.env.PATH;
-      } else {
-        process.env.PATH = previousPath;
-      }
+      vi.unstubAllEnvs();
       rmSync(emptyPathDir, { recursive: true, force: true });
     }
   });

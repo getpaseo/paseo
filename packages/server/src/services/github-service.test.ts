@@ -117,7 +117,6 @@ function createFakeGitHubCliFixture(input: {
   authStatusMode?: "success" | "unauthenticated" | "transient-once";
 }): FakeGitHubCliFixture {
   const previousPath = process.env.PATH;
-  const previousLog = process.env.GH_TEST_LOG;
   const tempDir = mkdtempSync(join(tmpdir(), "github-service-gh-host-"));
   const repoDir = join(tempDir, "repo");
   const binDir = join(tempDir, "bin");
@@ -173,22 +172,13 @@ exit 1
 `,
   );
   chmodSync(ghPath, 0o755);
-  process.env.PATH = [binDir, previousPath].filter(Boolean).join(delimiter);
-  process.env.GH_TEST_LOG = logPath;
+  vi.stubEnv("PATH", [binDir, previousPath].filter(Boolean).join(delimiter));
+  vi.stubEnv("GH_TEST_LOG", logPath);
   return {
     cwd: repoDir,
     logPath,
     dispose: () => {
-      if (previousPath === undefined) {
-        delete process.env.PATH;
-      } else {
-        process.env.PATH = previousPath;
-      }
-      if (previousLog === undefined) {
-        delete process.env.GH_TEST_LOG;
-      } else {
-        process.env.GH_TEST_LOG = previousLog;
-      }
+      vi.unstubAllEnvs();
       rmSync(tempDir, { recursive: true, force: true });
     },
   };
