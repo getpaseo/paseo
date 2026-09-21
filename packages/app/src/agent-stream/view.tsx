@@ -65,6 +65,7 @@ import { ToolCallSheetProvider } from "@/components/tool-call-sheet";
 import { createStreamPresentation } from "./presentation";
 import { OverviewToolCallGroupView } from "@/tool-calls/detail-level/overview/view";
 import { type AgentStreamRenderModel, buildAgentStreamRenderModel } from "./model";
+import { resolveAssistantBlockRender } from "./assistant-block-render";
 import { resolveStreamRenderStrategy } from "./strategy-resolver";
 import { type StreamSegmentRenderers, type StreamViewportHandle } from "./strategy";
 import { ChatOutlineRail } from "@/agent-stream/chat-outline/rail";
@@ -710,6 +711,24 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
 
     const renderAssistantMessageItem = useCallback(
       (layoutItem: StreamLayoutItem, item: Extract<StreamItem, { kind: "assistant_message" }>) => {
+        const blockRender = resolveAssistantBlockRender({
+          item,
+          aboveItem: layoutItem.aboveItem,
+          belowItem: layoutItem.belowItem,
+          phase: layoutItem.phase,
+          getAboveItem: (id) => {
+            for (const row of streamLayout.history) {
+              if (row.item.id === id) return row.aboveItem;
+            }
+            for (const row of streamLayout.liveHead) {
+              if (row.item.id === id) return row.aboveItem;
+            }
+            return null;
+          },
+        });
+        if (blockRender.kind === "skip") {
+          return null;
+        }
         return (
           <AssistantFileLinkResolverProvider
             client={client}
@@ -723,7 +742,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
                 <AssistantMessage
                   renderFullContent={renderFullContent}
                   occurrenceKey={createAssistantImageOccurrenceKey({ agentId, itemId: item.id })}
-                  message={item.text}
+                  message={blockRender.text}
                   timestamp={item.timestamp.getTime()}
                   workspaceRoot={workspaceRoot}
                   serverId={resolvedServerId}
@@ -736,7 +755,16 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
           </AssistantFileLinkResolverProvider>
         );
       },
-      [agentId, client, handleInlinePathPress, resolvedServerId, toast, workspaceRoot],
+      [
+        agentId,
+        client,
+        handleInlinePathPress,
+        resolvedServerId,
+        streamLayout.history,
+        streamLayout.liveHead,
+        toast,
+        workspaceRoot,
+      ],
     );
 
     const renderThoughtItem = useCallback(

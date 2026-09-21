@@ -4,6 +4,13 @@ import MarkdownIt from "markdown-it";
 const markdownBlockParser = new MarkdownIt();
 markdownBlockParser.core.ruler.disable("inline");
 
+export interface MarkdownSelectionGroup {
+  kind: "prose" | "other";
+  text: string;
+}
+
+const PROSE_TOKEN_TYPES = new Set(["paragraph_open"]);
+
 export function splitMarkdownBlocks(text: string): string[] {
   if (text.length === 0) {
     return [];
@@ -44,6 +51,55 @@ export function splitMarkdownBlocks(text: string): string[] {
   }
 
   return blocks.filter((block) => block.length > 0);
+}
+
+export function groupMarkdownForNativeSelection(text: string): MarkdownSelectionGroup[] {
+  if (text.length === 0) {
+    return [];
+  }
+
+  const lines = text.split("\n");
+  const groups: MarkdownSelectionGroup[] = [];
+  let proseStart: number | null = null;
+  let proseEnd = 0;
+
+  function takeSlice(start: number, end: number): string | null {
+    const grouped = lines.slice(start, end).join("\n");
+    return grouped.trim().length > 0 ? grouped : null;
+  }
+
+  function flushProse() {
+    if (proseStart === null) {
+      return;
+    }
+    const grouped = takeSlice(proseStart, proseEnd);
+    if (grouped) {
+      groups.push({ kind: "prose", text: grouped });
+    }
+    proseStart = null;
+  }
+
+  for (const token of markdownBlockParser.parse(text, {})) {
+    if (token.level !== 0 || !token.map) {
+      continue;
+    }
+    const [start, end] = token.map;
+    if (PROSE_TOKEN_TYPES.has(token.type)) {
+      if (proseStart === null) {
+        proseStart = start;
+      }
+      proseEnd = end;
+      continue;
+    }
+    flushProse();
+    const grouped = takeSlice(start, end);
+    if (grouped) {
+      groups.push({ kind: "other", text: grouped });
+    }
+  }
+
+  flushProse();
+  return groups;
 }
 
 function getStructuralBlankLines(text: string, lines: string[]): Set<number> {

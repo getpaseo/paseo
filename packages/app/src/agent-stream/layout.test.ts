@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { TurnTiming } from "@/timeline/turn-time";
 import type { StreamItem } from "@/types/stream";
 import {
+  collectAssistantResponseContentForStreamRenderStrategy,
   orderHeadForStreamRenderStrategy,
   orderTailForStreamRenderStrategy,
   type StreamStrategy,
@@ -245,6 +246,35 @@ describe("layoutStream", () => {
       expect(findLayoutItem(splitLayout, secondBlock.id).gapBelow).toBe(
         findLayoutItem(unsplitLayout, secondBlock.id).gapBelow,
       );
+    },
+  );
+
+  it.each(["web", "android"] as const)(
+    "copies assistant text from history and live head together on %s",
+    (platform) => {
+      const historyBlock = {
+        ...assistantMessage("turn:block:0", 2, { groupId: "turn", index: 0 }),
+        text: "What is live today.",
+      };
+      const headBlock = {
+        ...assistantMessage("turn:head", 3, { groupId: "turn", index: 1 }),
+        text: "What I need from you",
+      };
+      const layout = layoutFor({
+        platform,
+        tail: [userMessage("u1", 1), historyBlock],
+        head: [headBlock],
+        timingIds: [historyBlock.id, headBlock.id],
+      });
+
+      expect(layout.auxiliaryTurnFooter?.itemId).toBe(headBlock.id);
+      expect(
+        collectAssistantResponseContentForStreamRenderStrategy({
+          strategy: strategyFor(platform),
+          items: layout.auxiliaryTurnFooter?.items ?? [],
+          startIndex: layout.auxiliaryTurnFooter?.startIndex ?? -1,
+        }),
+      ).toBe("What is live today.\n\nWhat I need from you");
     },
   );
 

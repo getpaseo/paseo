@@ -214,6 +214,28 @@ describe("neighbor and traversal semantics", () => {
     ).toBe("assistant-1\n\nassistant-2");
   });
 
+  it("concatenates live head in front of history on native inverted streams", () => {
+    const history: StreamItem[] = [
+      assistantMessage("history", "history-block", 1),
+      userMessage("u1", "user-1", 0),
+    ];
+    const liveHead: StreamItem[] = [assistantMessage("head", "head-block", 2)];
+    const inverted = resolveStreamRenderStrategy({
+      platform: "ios",
+      isMobileBreakpoint: false,
+    });
+    const items = inverted.concatStreamSegments(history, liveHead);
+
+    expect(items.map((item) => item.id)).toEqual(["head", "history", "u1"]);
+    expect(
+      collectAssistantResponseContentForStreamRenderStrategy({
+        strategy: inverted,
+        items,
+        startIndex: 0,
+      }),
+    ).toBe("history-block\n\nhead-block");
+  });
+
   it("collects copy content across adjacent turns without a visible prompt", () => {
     const chronological: StreamItem[] = [
       { ...assistantMessage("a1", "first turn", 1), turnId: "turn-1" },

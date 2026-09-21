@@ -149,7 +149,7 @@ import { getForgePresentation } from "@/git/forge";
 import { ForgeBrandIcon } from "@/git/forge-icon";
 import { useComposerForgeAutoAttach } from "./forge-auto-attach";
 import { readClipboardImage } from "./clipboard-image";
-import { normalizeNativePastedImages, type NativePastedFile } from "./native-pasted-image";
+import { resolveNativePasteImages, type NativePastedFile } from "./native-pasted-image";
 import { PluginResourceAttachmentPill, usePluginAttachmentPicker } from "@/plugins";
 import { resolveClientSlashCommand, type ClientSlashCommand } from "@/client-slash-commands";
 import {
@@ -1776,7 +1776,11 @@ function ComposerContentImpl({
     (files: readonly NativePastedFile[]) => {
       setPendingNativeImagePastes((pending) => pending + 1);
       void pickAndPersistImages({
-        pickImages: async () => normalizeNativePastedImages(files),
+        pickImages: async () =>
+          resolveNativePasteImages({
+            files,
+            readClipboardImage: () => readClipboardImage(Clipboard),
+          }),
         persister: composerImageAttachmentPersister,
       })
         .then((newImages) => {

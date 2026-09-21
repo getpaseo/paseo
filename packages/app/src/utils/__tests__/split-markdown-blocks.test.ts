@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { splitMarkdownBlocks } from "../split-markdown-blocks";
+import { groupMarkdownForNativeSelection, splitMarkdownBlocks } from "../split-markdown-blocks";
 
 describe("splitMarkdownBlocks", () => {
   it("returns a single block for a single paragraph", () => {
@@ -80,5 +80,46 @@ describe("splitMarkdownBlocks", () => {
       "First paragraph",
       "Second paragraph",
     ]);
+  });
+});
+
+describe("groupMarkdownForNativeSelection", () => {
+  it("keeps consecutive paragraphs in one prose group", () => {
+    expect(groupMarkdownForNativeSelection("First paragraph\n\nSecond paragraph")).toEqual([
+      { kind: "prose", text: "First paragraph\n\nSecond paragraph" },
+    ]);
+  });
+
+  it("keeps a heading as its own group so paragraph selection stays a UITextView", () => {
+    expect(
+      groupMarkdownForNativeSelection("# Heading\n\nFirst paragraph\n\nSecond paragraph"),
+    ).toEqual([
+      { kind: "other", text: "# Heading" },
+      { kind: "prose", text: "First paragraph\n\nSecond paragraph" },
+    ]);
+  });
+
+  it("splits prose around a fenced code block", () => {
+    expect(
+      groupMarkdownForNativeSelection(
+        "Intro paragraph\n\n```ts\nconst a = 1;\n```\n\nOutro paragraph",
+      ),
+    ).toEqual([
+      { kind: "prose", text: "Intro paragraph" },
+      { kind: "other", text: "```ts\nconst a = 1;\n```" },
+      { kind: "prose", text: "Outro paragraph" },
+    ]);
+  });
+
+  it("keeps indentation on a four-space code block", () => {
+    expect(groupMarkdownForNativeSelection("Before\n\n    const value = 1\n\nAfter")).toEqual([
+      { kind: "prose", text: "Before" },
+      { kind: "other", text: "    const value = 1" },
+      { kind: "prose", text: "After" },
+    ]);
+  });
+
+  it("returns an empty array for empty input", () => {
+    expect(groupMarkdownForNativeSelection("")).toEqual([]);
   });
 });
