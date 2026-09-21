@@ -135,6 +135,7 @@ export default {
     ios: {
       supportsTablet: true,
       infoPlist: {
+        UIBackgroundModes: ["audio"],
         NSMicrophoneUsageDescription: "This app needs access to the microphone for voice commands.",
         ITSAppUsesNonExemptEncryption: false,
       },

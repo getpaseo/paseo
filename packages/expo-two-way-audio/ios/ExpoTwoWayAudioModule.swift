@@ -5,6 +5,7 @@ let ON_INPUT_VOLUME_LEVEL_EVENT_NAME = "onInputVolumeLevelData"
 let ON_OUTPUT_VOLUME_LEVEL_EVENT_NAME = "onOutputVolumeLevelData"
 let ON_RECORDING_CHANGE_EVENT_NAME = "onRecordingChange"
 let ON_AUDIO_INTERRUPTION_EVENT_NAME = "onAudioInterruption"
+let ON_PLAYBACK_COMPLETE_EVENT_NAME = "onPlaybackComplete"
 
 public class ExpoTwoWayAudioModule: Module {
     private var audioEngine: AudioEngine?
@@ -32,6 +33,7 @@ public class ExpoTwoWayAudioModule: Module {
                 self.setupInputAudioLevelCallback()
                 self.setupOutputAudioLevelCallback()
                 self.setupAudioInterruptionCallback()
+                self.setupPlaybackCompleteCallback()
                 return true
             } catch {
                 print("Failed to initialize AudioEngine: \(error)")
@@ -155,6 +157,7 @@ public class ExpoTwoWayAudioModule: Module {
             ON_OUTPUT_VOLUME_LEVEL_EVENT_NAME,
             ON_RECORDING_CHANGE_EVENT_NAME,
             ON_AUDIO_INTERRUPTION_EVENT_NAME,
+            ON_PLAYBACK_COMPLETE_EVENT_NAME,
         ])
     }
 
@@ -184,6 +187,16 @@ public class ExpoTwoWayAudioModule: Module {
                 ON_OUTPUT_VOLUME_LEVEL_EVENT_NAME,
                 [
                     "data": level
+                ])
+        }
+    }
+
+        private func setupPlaybackCompleteCallback() {
+        audioEngine?.onPlaybackCompleteCallback = { [weak self] in
+            self?.sendEvent(
+                ON_PLAYBACK_COMPLETE_EVENT_NAME,
+                [
+                    "data": true
                 ])
         }
     }

@@ -15,6 +15,7 @@ class AudioEngine {
     public var onInputVolumeCallback: ((Float) -> Void)?
     public var onOutputVolumeCallback: ((Float) -> Void)?
     public var onAudioInterruptionCallback: ((String) -> Void)?
+    public var onPlaybackCompleteCallback: (() -> Void)?
     
     private var inputLevelTimer: Timer?
     private var outputLevelTimer: Timer?
@@ -200,7 +201,11 @@ class AudioEngine {
             print("Failed to create audio buffer")
             return
         }
-        speechPlayer.scheduleBuffer(buffer)
+        speechPlayer.scheduleBuffer(buffer, completionHandler: { [weak self] in
+            DispatchQueue.main.async {
+                self?.onPlaybackCompleteCallback?()
+            }
+        })
         
         if !speechPlayer.isPlaying {
             speechPlayer.play()

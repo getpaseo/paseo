@@ -83,6 +83,7 @@ export function createAudioEngine(
       resolve: (duration: number) => void;
       reject: (error: Error) => void;
       settled: boolean;
+      durationSec: number;
     } | null;
     destroyed: boolean;
   } = {
@@ -116,6 +117,20 @@ export function createAudioEngine(
       callbacks.onVolumeLevel(level);
     },
   );
+  const playbackCompleteSubscription = native.addExpoTwoWayAudioEventListener(
+    "onPlaybackComplete",
+    () => {
+      clearPlaybackTimeout();
+      const active = refs.activePlayback;
+      if (!active || active.settled) {
+        return;
+      }
+      active.settled = true;
+      refs.activePlayback = null;
+      active.resolve(active.durationSec);
+    },
+  );
+
   const interruptionSubscription = native.addExpoTwoWayAudioEventListener(
     "onAudioInterruption",
     (event: { data: string }) => {
@@ -166,7 +181,7 @@ export function createAudioEngine(
     await ensureInitialized();
 
     return await new Promise<number>((resolve, reject) => {
-      refs.activePlayback = { resolve, reject, settled: false };
+      refs.activePlayback = { resolve, reject, settled: false, durationSec: 0 };
 
       audio
         .arrayBuffer()
@@ -177,21 +192,29 @@ export function createAudioEngine(
           // Native AudioEngine expects 16kHz PCM16
           const pcm16k = resamplePcm16(pcm, inputRate, 16000);
           const durationSec = pcm16k.length / 2 / 16000;
+          if (refs.activePlayback) {
+            refs.activePlayback.durationSec = durationSec;
+          }
 
           native.resumePlayback();
           native.playPCMData(pcm16k);
 
           clearPlaybackTimeout();
-          refs.playbackTimeout = setTimeout(() => {
-            clearPlaybackTimeout();
-            const active = refs.activePlayback;
-            if (!active || active.settled) {
-              return;
-            }
-            active.settled = true;
-            refs.activePlayback = null;
-            resolve(durationSec);
-          }, durationSec * 1000);
+          // Fallback timeout in case native event doesn't fire (e.g. Android or old native builds)
+          // Pad it heavily (2x + 10s) because native event should always fire first in foreground.
+          refs.playbackTimeout = setTimeout(
+            () => {
+              clearPlaybackTimeout();
+              const active = refs.activePlayback;
+              if (!active || active.settled) {
+                return;
+              }
+              active.settled = true;
+              refs.activePlayback = null;
+              resolve(durationSec);
+            },
+            durationSec * 1000 * 2 + 10000,
+          );
           return undefined;
         })
         .catch((error: unknown) => {
@@ -249,6 +272,7 @@ export function createAudioEngine(
       }
       microphoneSubscription.remove();
       volumeSubscription.remove();
+      playbackCompleteSubscription.remove();
       interruptionSubscription.remove();
     },
 
