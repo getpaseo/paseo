@@ -4,13 +4,12 @@ import MarkdownIt from "markdown-it";
 const markdownBlockParser = new MarkdownIt();
 markdownBlockParser.core.ruler.disable("inline");
 
-// CommonMark link reference definition: `[label]: destination "optional title"`,
-// with up to three leading spaces and either a bare or an angle-bracketed destination.
-const LINK_REFERENCE_DEFINITION =
-  /^ {0,3}\[(?:[^[\]\\]|\\.)+\]:[ \t]*(?:<[^<>\n]*>|\S+)(?:[ \t]+(?:"[^"]*"|'[^']*'|\([^()]*\)))?[ \t]*$/;
-
+// The renderer decides what counts as a definition, so ask the same parser: a block
+// that produces no tokens but registers references is nothing but definitions.
 function isLinkReferenceDefinitionBlock(block: string): boolean {
-  return block.split("\n").every((line) => LINK_REFERENCE_DEFINITION.test(line));
+  const env: { references?: Record<string, unknown> } = {};
+  const tokens = markdownBlockParser.parse(block, env);
+  return tokens.length === 0 && Object.keys(env.references ?? {}).length > 0;
 }
 
 /**

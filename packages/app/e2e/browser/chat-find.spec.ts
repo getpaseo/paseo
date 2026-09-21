@@ -1,6 +1,10 @@
 import type { TestInfo } from "@playwright/test";
 import { expect, test, type Page } from "../support/fixtures";
-import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-agent";
+import {
+  openAgentRoute,
+  seedMockAgentWorkspace,
+  type MockAgentWorkspace,
+} from "../support/helpers/mock-agent";
 import { installDaemonWebSocketGate } from "../support/helpers/daemon-websocket-gate";
 import {
   expectReconnectingToastGone,
@@ -44,10 +48,13 @@ function query(page: Page) {
 function status(page: Page) {
   return page.getByRole("status", { name: "Find matches" });
 }
-async function searchChat(page: Page, text: string) {
+async function openChatFind(page: Page) {
   await page.getByTestId("assistant-message").filter({ visible: true }).last().click();
   await page.keyboard.press("ControlOrMeta+f");
   await expect(query(page)).toBeFocused();
+}
+async function searchChat(page: Page, text: string) {
+  await openChatFind(page);
   await query(page).fill(text);
 }
 async function expectHighlight(page: Page, text: string) {
@@ -90,6 +97,15 @@ async function nextMatch(page: Page) {
 }
 async function previousMatch(page: Page) {
   await query(page).press("Shift+Enter");
+}
+async function expectFindStatus(page: Page, search: string, matches: string) {
+  await query(page).fill(search);
+  await expect(status(page)).toHaveText(matches, { timeout: 15_000 });
+}
+async function expectNextMatch(page: Page, matches: string, highlighted: string) {
+  await nextMatch(page);
+  await expect(status(page)).toHaveText(matches);
+  await expectHighlight(page, highlighted);
 }
 async function closeFind(page: Page) {
   await query(page).press("Escape");
@@ -206,8 +222,16 @@ test("shows a disconnected search failure and recovers with Retry", async ({ pag
   }
 });
 
-test("finds a hit in a message that streamed while the chat was open", async ({ page }) => {
-  test.setTimeout(120_000);
+interface StreamedReplyChat extends MockAgentWorkspace {
+  /** Resolves once the streamed reply has finished arriving. */
+  replyFinished(): Promise<void>;
+}
+
+/**
+ * Opens the chat first, then streams a multi-block reply into it and waits for a
+ * later block, so the block holding the early needles is no longer the growing row.
+ */
+async function openChatStreamingMultiBlockReply(page: Page): Promise<StreamedReplyChat> {
   const agent = await seedMockAgentWorkspace({
     repoPrefix: "chat-find-live-blocks-",
     title: "Chat Find live blocks",
@@ -222,31 +246,41 @@ test("finds a hit in a message that streamed while the chat was open", async ({ 
     await expect(page.getByText("beta-needle", { exact: false }).last()).toBeVisible({
       timeout: 30_000,
     });
+    return {
+      ...agent,
+      replyFinished: async () => {
+        await agent.client.waitForFinish(agent.agentId, 60_000);
+      },
+    };
+  } catch (error) {
+    await agent.cleanup();
+    throw error;
+  }
+}
+
+test("finds a hit in a message that streamed while the chat was open", async ({ page }) => {
+  test.setTimeout(120_000);
+  const chat = await openChatStreamingMultiBlockReply(page);
+  try {
+    await openChatFind(page);
     // The only hit is in the first paragraph, which is no longer the row that grows.
-    await searchChat(page, "alpha-needle");
-    await expect(status(page)).toHaveText("1 of 1 in message", { timeout: 10_000 });
-    await agent.client.waitForFinish(agent.agentId, 60_000);
-    await query(page).fill("beta-needle");
-    await expect(status(page)).toHaveText("1 of 1 in message", { timeout: 10_000 });
+    await expectFindStatus(page, "alpha-needle", "1 of 1 in message");
+    await chat.replyFinished();
+    await expectFindStatus(page, "beta-needle", "1 of 1 in message");
     // One message, two Markdown blocks, one count across both.
-    await query(page).fill("pair-needle");
-    await expect(status(page)).toHaveText("1 of 2 in message", { timeout: 10_000 });
-    await nextMatch(page);
-    await expect(status(page)).toHaveText("2 of 2 in message");
-    await expectHighlight(page, "pair-needle");
+    await expectFindStatus(page, "pair-needle", "1 of 2 in message");
+    await expectNextMatch(page, "2 of 2 in message", "pair-needle");
     await closeFind(page);
   } finally {
-    await agent.cleanup();
+    await chat.cleanup();
   }
 });
 
-// Every block row of the selected message must be mounted for Find to see it, whatever
-// the virtualizer's scroll window holds. Otherwise a hit in a far paragraph is missing
-// from the count and Next walks off to the next message instead.
-test("counts every occurrence of a virtualized message and steps between them", async ({
-  page,
-}) => {
-  test.setTimeout(120_000);
+/**
+ * Opens a chat whose newest reply is a single message far taller than the viewport,
+ * behind enough older turns that the oldest one is not hydrated yet.
+ */
+async function openChatWithVirtualizedTallMessage(page: Page): Promise<MockAgentWorkspace> {
   const agent = await seedMockAgentWorkspace({
     repoPrefix: "chat-find-virtualized-",
     title: "Chat Find virtualized message",
@@ -260,15 +294,29 @@ test("counts every occurrence of a virtualized message and steps between them", 
     await openAgentRoute(page, agent);
     await expect(page.getByText("Prompt number 5", { exact: true })).toBeVisible();
     await expect(page.getByText("Prompt number 0", { exact: true })).toHaveCount(0);
-    await searchChat(page, "span-needle");
-    await expect(status(page)).toHaveText("1 of 2 in message", { timeout: 15_000 });
+    return agent;
+  } catch (error) {
+    await agent.cleanup();
+    throw error;
+  }
+}
+
+// Every block row of the selected message must be mounted for Find to see it, whatever
+// the virtualizer's scroll window holds. Otherwise a hit in a far paragraph is missing
+// from the count and Next walks off to the next message instead.
+test("counts every occurrence of a virtualized message and steps between them", async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  const chat = await openChatWithVirtualizedTallMessage(page);
+  try {
+    await openChatFind(page);
+    await expectFindStatus(page, "span-needle", "1 of 2 in message");
     await expectHighlight(page, "span-needle");
-    await nextMatch(page);
-    await expect(status(page)).toHaveText("2 of 2 in message");
-    await expectHighlight(page, "span-needle");
+    await expectNextMatch(page, "2 of 2 in message", "span-needle");
     await closeFind(page);
   } finally {
-    await agent.cleanup();
+    await chat.cleanup();
   }
 });
 
