@@ -14,7 +14,7 @@ import path from "node:path";
 import pino from "pino";
 import { setImmediate as waitForImmediate } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
-import { describe, expect, onTestFinished, test } from "vitest";
+import { describe, expect, onTestFinished, test, vi } from "vitest";
 
 import type { AgentSession, AgentSessionConfig, AgentStreamEvent } from "../../agent-sdk-types.js";
 import {
@@ -3047,5 +3047,143 @@ describe("transformPiModels", () => {
         description: "openrouter/OpenAI: GPT-5.5",
       },
     ]);
+  });
+});
+
+describe("PiRpcAgentSession resumeSession purpose: history", () => {
+  test("releases the runtime after the first streamHistory() read, and replays cached events afterward", async () => {
+    const pi = new FakePi();
+    const client = createClient(pi);
+    const session = (await client.resumeSession(
+      {
+        provider: "pi",
+        sessionId: "pi-session-1",
+        nativeHandle: "/tmp/native-pi-session",
+        metadata: { cwd: "/workspace/project" },
+      },
+      undefined,
+      undefined,
+      { purpose: "history" },
+    )) as PiRpcAgentSession;
+    const fakeSession = pi.latestSession();
+    fakeSession.messages = [{ role: "assistant", content: [{ type: "text", text: "restored" }] }];
+    const closeSpy = vi.spyOn(fakeSession, "close");
+
+    const firstRead: AgentStreamEvent[] = [];
+    for await (const event of session.streamHistory()) {
+      firstRead.push(event);
+    }
+    expect(firstRead).toEqual([
+      {
+        type: "timeline",
+        provider: "pi",
+        item: { type: "assistant_message", text: "restored", messageId: expect.any(String) },
+      },
+    ]);
+
+    // Mutant: dropping the `resumePurpose === "history"` release branch in
+    // streamHistory() leaves the runtime open — this assertion fails
+    // (closeSpy uncalled) without it.
+    expect(closeSpy).toHaveBeenCalledTimes(1);
+
+    // A second read (hydrateTimelineFromProvider calls streamHistory() once
+    // more after resumeSession returns) must replay the cache rather than
+    // issuing a second get_messages RPC against the now-closed runtime.
+    fakeSession.messages = [];
+    const secondRead: AgentStreamEvent[] = [];
+    for await (const event of session.streamHistory()) {
+      secondRead.push(event);
+    }
+    expect(secondRead).toEqual(firstRead);
+
+    // Anything that later calls close() on this session (e.g. a normal
+    // teardown of the resumed agent record) must find a harmless no-op,
+    // not a second release.
+    await session.close();
+    expect(closeSpy).toHaveBeenCalledTimes(1);
+  });
+
+  test("an interactive resume (no purpose) does not release the runtime after a history read", async () => {
+    const pi = new FakePi();
+    const client = createClient(pi);
+    const session = (await client.resumeSession({
+      provider: "pi",
+      sessionId: "pi-session-1",
+      nativeHandle: "/tmp/native-pi-session",
+      metadata: { cwd: "/workspace/project" },
+    })) as PiRpcAgentSession;
+    const fakeSession = pi.latestSession();
+    const closeSpy = vi.spyOn(fakeSession, "close");
+
+    for await (const _event of session.streamHistory()) {
+      // drain
+    }
+
+    expect(closeSpy).not.toHaveBeenCalled();
+    await session.close();
+  });
+
+  test("releases the runtime when the history read throws mid-fetch", async () => {
+    const pi = new FakePi();
+    const client = createClient(pi);
+    const session = (await client.resumeSession(
+      {
+        provider: "pi",
+        sessionId: "pi-session-1",
+        nativeHandle: "/tmp/native-pi-session",
+        metadata: { cwd: "/workspace/project" },
+      },
+      undefined,
+      undefined,
+      { purpose: "history" },
+    )) as PiRpcAgentSession;
+    const fakeSession = pi.latestSession();
+    const closeSpy = vi.spyOn(fakeSession, "close");
+    const readError = new Error("get_messages RPC failed");
+    vi.spyOn(fakeSession, "getMessages").mockRejectedValueOnce(readError);
+
+    await expect(async () => {
+      for await (const _event of session.streamHistory()) {
+        // never reached
+      }
+    }).rejects.toThrow(readError);
+
+    // Mutant: a streamHistory() that only releases after the loop completes
+    // normally leaves the runtime open on this path (closeSpy uncalled).
+    expect(closeSpy).toHaveBeenCalledTimes(1);
+  });
+
+  test("releases the runtime when the history read is abandoned before it completes", async () => {
+    const pi = new FakePi();
+    const client = createClient(pi);
+    const session = (await client.resumeSession(
+      {
+        provider: "pi",
+        sessionId: "pi-session-1",
+        nativeHandle: "/tmp/native-pi-session",
+        metadata: { cwd: "/workspace/project" },
+      },
+      undefined,
+      undefined,
+      { purpose: "history" },
+    )) as PiRpcAgentSession;
+    const fakeSession = pi.latestSession();
+    fakeSession.messages = [
+      { role: "assistant", content: [{ type: "text", text: "first" }] },
+      { role: "assistant", content: [{ type: "text", text: "second" }] },
+    ];
+    const closeSpy = vi.spyOn(fakeSession, "close");
+
+    for await (const _event of session.streamHistory()) {
+      // Stop after the first event: the for-await-of loop calls .return() on
+      // the generator, which resumes the suspended yield as a return
+      // completion and runs the enclosing finally without reaching the code
+      // after the loop.
+      break;
+    }
+
+    // Mutant: releasing only after the loop finishes normally leaves the
+    // runtime open on an abandoned read (closeSpy uncalled).
+    expect(closeSpy).toHaveBeenCalledTimes(1);
   });
 });

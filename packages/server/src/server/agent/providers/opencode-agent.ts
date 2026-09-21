@@ -33,6 +33,7 @@ import {
   type AgentPermissionResponse,
   type AgentPersistenceHandle,
   type AgentPromptInput,
+  type AgentResumeSessionOptions,
   type AgentRunOptions,
   type AgentRunResult,
   type AgentRuntimeInfo,
@@ -1508,6 +1509,7 @@ export class OpenCodeAgentClient implements AgentClient {
     handle: AgentPersistenceHandle,
     overrides?: Partial<AgentSessionConfig>,
     launchContext?: AgentLaunchContext,
+    options?: AgentResumeSessionOptions,
   ): Promise<AgentSession> {
     const metadata = (handle.metadata ?? {}) as Partial<AgentSessionConfig>;
     const cwd = overrides?.cwd ?? metadata.cwd;
@@ -1551,6 +1553,7 @@ export class OpenCodeAgentClient implements AgentClient {
         registeredAcquisition !== null,
         unbindBridge,
         connectServer,
+        options?.purpose ?? "interactive",
       );
     } catch (error) {
       await connection.release();
@@ -3436,6 +3439,7 @@ class OpenCodeAgentSession implements AgentSession {
     private readonly externallyDriven = false,
     releaseBridge?: () => void,
     connectServer?: () => Promise<OpenCodeServerConnection>,
+    private readonly purpose: "interactive" | "history" = "interactive",
   ) {
     this.config = config;
     this.server = { client, events, url: serverUrl ?? "", release: releaseServer };
@@ -3462,6 +3466,14 @@ class OpenCodeAgentSession implements AgentSession {
   }
 
   private subscribeServerEvents(): void {
+    if (this.purpose === "history") {
+      // A history-purpose session only ever calls streamHistory(), which
+      // reads via HTTP (session.messages) — attaching here would put this
+      // session on the shared server's live event stream, and close() below
+      // must not abort that stream's underlying session for a read that
+      // never touched it.
+      return;
+    }
     this.unsubscribeEvents = this.events.subscribe((input) => {
       if ("type" in input && input.type === "server-exited") {
         this.recoveryAbortController.abort(input.error);
@@ -5005,6 +5017,15 @@ class OpenCodeAgentSession implements AgentSession {
       this.unsubscribeEvents = null;
       await this.ingress.catch(() => undefined);
       this.subscribers.clear();
+      if (this.purpose === "history") {
+        // A history-purpose session never started a turn (abortController
+        // above is already null on this path) and never attached to the
+        // shared server's event stream (subscribeServerEvents(), above).
+        // Calling session.abort() on the server would abort the *live*
+        // session this history read is a read-only view of — upstream
+        // issue #3358.
+        return;
+      }
       await abortOpenCodeSession({
         client: this.client,
         sessionId: this.sessionId,

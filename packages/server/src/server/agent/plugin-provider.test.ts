@@ -279,6 +279,59 @@ function expectNestedChildren(events: AgentStreamEvent[]) {
     );
   }
 }
+function createLateEventHarness(id: string) {
+  let listener: ((event: ProviderEvent) => void) | null = null;
+  const emit = (event: ProviderEvent) => listener?.(event);
+  const inputs: ProviderInput[] = [];
+  const connection: ProviderConnection = {
+    version: 1,
+    capabilities: ["session.persistence"],
+    async send(input) {
+      inputs.push(input);
+      if (input.type === "session.open") {
+        emit({
+          type: "session.opened",
+          requestId: input.requestId,
+          sessionId: input.sessionId,
+          capabilities: ["session.persistence"],
+          restoration: "core",
+          persistence: { version: 1, data: { token: "root" } },
+          cwd: input.config.cwd,
+        });
+        emit({ type: "session.ready", requestId: input.requestId, sessionId: input.sessionId });
+        return;
+      }
+      if (input.type === "session.close") {
+        emit({ type: "session.closed", sessionId: input.sessionId });
+        return;
+      }
+      if ("requestId" in input) {
+        emit({ type: "request.completed", requestId: input.requestId });
+      }
+    },
+    onEvent(nextListener) {
+      listener = nextListener;
+      return () => {
+        if (listener === nextListener) listener = null;
+      };
+    },
+    async close() {},
+  };
+  const registration: ProviderRegistration = {
+    id,
+    label: id,
+    async connect() {
+      return connection;
+    },
+  };
+  return { registration, emit, inputs };
+}
+
+const PLUGIN_ROOT_PERSISTENCE = { version: 1, data: { token: "root" } };
+const PLUGIN_ROOT_HANDLE = {
+  sessionId: 'plugin:{"version":1,"data":{"token":"root"}}',
+  metadata: { pluginProviderPersistence: PLUGIN_ROOT_PERSISTENCE },
+};
 
 describe("PluginAgentClientRegistry", () => {
   test.each([false, true])(
@@ -594,6 +647,88 @@ describe("PluginAgentClientRegistry", () => {
     registry.replace([]);
     await expect.poll(harness.closeCount).toBe(1);
     expect(harness.inputs.map((input) => input.type)).toContain("session.close");
+  });
+
+  test("purpose: history does not attach the resumed session to the provider's live event stream", async () => {
+    const harness = createLateEventHarness("plugin-history-purpose");
+    const registry = new PluginAgentClientRegistry(createTestLogger());
+    try {
+      registry.replace([harness.registration]);
+      const client = registry.clients()[harness.registration.id]!;
+
+      const historySession = await client.resumeSession(
+        { provider: harness.registration.id, ...PLUGIN_ROOT_HANDLE },
+        { cwd: "/workspace" },
+        undefined,
+        { purpose: "history" },
+      );
+      const events: AgentStreamEvent[] = [];
+      historySession.subscribe((event) => events.push(event));
+
+      const openInput = harness.inputs.find((input) => input.type === "session.open");
+      const sessionId = openInput && "sessionId" in openInput ? openInput.sessionId : undefined;
+      expect(sessionId).toBeDefined();
+
+      // Mutant: dropping the `historyPurpose` guard around the
+      // `bridge.onEvent` subscription in the PluginAgentSession constructor
+      // makes this arrive — this assertion fails without the guard.
+      harness.emit({
+        type: "timeline.item",
+        sessionId: sessionId!,
+        item: { type: "assistant_message", id: "late", text: "late arrival" },
+      });
+
+      expect(events).toEqual([]);
+      const history: AgentStreamEvent[] = [];
+      for await (const event of historySession.streamHistory()) history.push(event);
+      expect(history).not.toContainEqual(
+        expect.objectContaining({
+          type: "timeline",
+          item: expect.objectContaining({ messageId: "late" }),
+        }),
+      );
+
+      await historySession.close();
+    } finally {
+      await registry.shutdown();
+    }
+  });
+
+  test("an interactive resume (no purpose) still receives live events after resume", async () => {
+    const harness = createLateEventHarness("plugin-interactive-resume");
+    const registry = new PluginAgentClientRegistry(createTestLogger());
+    try {
+      registry.replace([harness.registration]);
+      const client = registry.clients()[harness.registration.id]!;
+
+      const session = await client.resumeSession(
+        { provider: harness.registration.id, ...PLUGIN_ROOT_HANDLE },
+        { cwd: "/workspace" },
+      );
+      const events: AgentStreamEvent[] = [];
+      session.subscribe((event) => events.push(event));
+
+      const openInput = harness.inputs.find((input) => input.type === "session.open");
+      const sessionId = openInput && "sessionId" in openInput ? openInput.sessionId : undefined;
+      expect(sessionId).toBeDefined();
+
+      harness.emit({
+        type: "timeline.item",
+        sessionId: sessionId!,
+        item: { type: "assistant_message", id: "late", text: "late arrival" },
+      });
+
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: "timeline",
+          item: expect.objectContaining({ messageId: "late" }),
+        }),
+      );
+
+      await session.close();
+    } finally {
+      await registry.shutdown();
+    }
   });
 });
 

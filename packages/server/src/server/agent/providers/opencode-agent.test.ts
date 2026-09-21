@@ -354,6 +354,49 @@ describe("OpenCodeAgentClient adapter smoke tests", () => {
     rmSync(cwd, { recursive: true, force: true });
   }, 60_000);
 
+  // Mutant: taking the abort() branch in close() for a history-purpose
+  // session would call session.abort on the shared server — aborting the
+  // *live* session this history read is a read-only view of. That is
+  // upstream issue #3358, "opening archived history attaches to and aborts
+  // the live session".
+  test("a history-purpose resume does not attach the event stream, and its close does not abort the session", async () => {
+    const cwd = tmpCwd();
+    const runtime = new TestOpenCodeHarness();
+    const openCode = new TestOpenCodeClient();
+    runtime.enqueueClient(openCode);
+    const client = new OpenCodeAgentClient(logger, undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+    });
+
+    const session = await client.resumeSession(
+      {
+        provider: "opencode",
+        sessionId: "history-session-1",
+        nativeHandle: "history-session-1",
+        metadata: { cwd },
+      },
+      undefined,
+      undefined,
+      { purpose: "history" },
+    );
+
+    expect(runtime.eventListenerCount).toBe(0);
+
+    const events = [];
+    for await (const event of session.streamHistory()) {
+      events.push(event);
+    }
+    expect(openCode.calls.sessionMessages).toEqual([
+      { sessionID: "history-session-1", directory: cwd },
+    ]);
+
+    await session.close();
+    expect(openCode.calls.sessionAbort).toEqual([]);
+
+    rmSync(cwd, { recursive: true, force: true });
+  }, 60_000);
+
   test("creates a session when session.create needs more than ten seconds", async () => {
     vi.useFakeTimers();
     const cwd = tmpCwd();

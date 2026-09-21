@@ -19,6 +19,7 @@ import {
   type AgentPersistenceHandle,
   type AgentPromptInput,
   type AgentProvider,
+  type AgentResumeSessionOptions,
   type AgentRunOptions,
   type AgentRunResult,
   type AgentRuntimeInfo,
@@ -869,6 +870,108 @@ function createRuntime(
     readyTimeoutMs: providerParams.readyTimeoutMs,
     requestTimeoutMs: providerParams.rpcTimeoutMs,
   });
+}
+
+/**
+ * A history-purpose resume: no OMP process is started. `streamHistory` reads
+ * the session file directly (streamOmpHistory needs no runtime for that),
+ * and every other member is a stub or throws — the manager tolerates
+ * failures from getRuntimeInfo/getAvailableModes/getCurrentMode/
+ * getPendingPermissions during registration, and nothing else should be
+ * called on a session opened only to read history.
+ */
+class OmpHistorySession implements AgentSession {
+  readonly provider: AgentProvider;
+  readonly capabilities: AgentCapabilityFlags = withOmpCapabilities();
+
+  private readonly handle: AgentPersistenceHandle;
+  private readonly resumeConfig: OmpResumeConfig;
+  private readonly sessionFile: string;
+
+  constructor(options: {
+    handle: AgentPersistenceHandle;
+    resumeConfig: OmpResumeConfig;
+    sessionFile: string;
+    provider: AgentProvider;
+  }) {
+    this.handle = options.handle;
+    this.resumeConfig = options.resumeConfig;
+    this.sessionFile = options.sessionFile;
+    this.provider = options.provider;
+  }
+
+  get id(): string | null {
+    return this.handle.sessionId ?? null;
+  }
+
+  async run(): Promise<AgentRunResult> {
+    throw new Error("OMP history session cannot start a turn");
+  }
+
+  async startTurn(): Promise<StartTurnResult> {
+    throw new Error("OMP history session cannot start a turn");
+  }
+
+  subscribe(_callback: (event: AgentStreamEvent) => void): () => void {
+    return () => undefined;
+  }
+
+  async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+    yield* streamOmpHistory({
+      sessionFile: this.sessionFile,
+      provider: this.provider,
+    });
+  }
+
+  async getRuntimeInfo(): Promise<AgentRuntimeInfo> {
+    return {
+      provider: this.provider,
+      sessionId: this.handle.sessionId ?? null,
+      model: this.resumeConfig.model ?? null,
+      thinkingOptionId: this.resumeConfig.thinkingOptionId ?? null,
+      modeId: this.resumeConfig.modeId ?? null,
+    };
+  }
+
+  async getAvailableModes(): Promise<AgentMode[]> {
+    return [...OMP_MODES];
+  }
+
+  async getCurrentMode(): Promise<string | null> {
+    return this.resumeConfig.modeId ?? null;
+  }
+
+  async setMode(): Promise<void | AgentProviderNotice> {
+    throw new Error("OMP history session cannot change mode");
+  }
+
+  getPendingPermissions(): AgentPermissionRequest[] {
+    return [];
+  }
+
+  async respondToPermission(): Promise<void> {
+    throw new Error("OMP history session has no pending permissions");
+  }
+
+  describePersistence(): AgentPersistenceHandle | null {
+    return {
+      provider: this.provider,
+      sessionId: this.handle.sessionId,
+      nativeHandle: this.sessionFile,
+      metadata: {
+        cwd: this.resumeConfig.cwd,
+        ...(this.resumeConfig.model ? { model: this.resumeConfig.model } : {}),
+        ...(this.resumeConfig.thinkingOptionId
+          ? { thinkingOptionId: this.resumeConfig.thinkingOptionId }
+          : {}),
+        ...(this.resumeConfig.modeId ? { modeId: this.resumeConfig.modeId } : {}),
+      },
+    };
+  }
+
+  async interrupt(): Promise<void> {}
+
+  async close(): Promise<void> {}
 }
 
 export class OmpAgentSession implements AgentSession {
@@ -2315,6 +2418,7 @@ export class OmpAgentClient implements AgentClient {
     handle: AgentPersistenceHandle,
     overrides?: Partial<AgentSessionConfig>,
     launchContext?: AgentLaunchContext,
+    options?: AgentResumeSessionOptions,
   ): Promise<AgentSession> {
     const sessionFile = handle.nativeHandle;
     if (!sessionFile) {
@@ -2323,6 +2427,13 @@ export class OmpAgentClient implements AgentClient {
 
     const persistenceMetadata = parsePersistenceMetadata(handle.metadata);
     const resumeConfig = buildResumeConfig(persistenceMetadata, overrides, this.provider);
+
+    if (options?.purpose === "history") {
+      // A history read only needs `streamHistory`, which replays the session
+      // file directly (see streamOmpHistory) — starting the OMP runtime here
+      // would spawn a process (and its own MCP children) that nothing closes.
+      return new OmpHistorySession({ handle, resumeConfig, sessionFile, provider: this.provider });
+    }
 
     const launchMode = this.resolveLaunchMode(resumeConfig.modeId);
     const runtimeSession = await this.runtime.startSession(

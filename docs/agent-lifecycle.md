@@ -132,6 +132,31 @@ including legacy records whose native archive failed. The retained history sessi
 the read results. Interactive resume remains responsible for repairing a provider session archived
 outside Paseo while its Paseo agent is active.
 
+That purpose is a per-provider contract, not a generic release: each provider decides for itself
+whether serving the read needs a live process, and if it does, releases it once the read completes.
+Nothing else releases it afterward — the `ManagedAgent` entry for the archived agent stays resident
+in `AgentManager`'s map for the rest of the daemon's life once resumed this way, on every provider.
+Claude and OMP never acquire anything: Claude's history comes from the session's `.jsonl`, OMP's
+`streamHistory` reads the session file directly, neither starts a runtime. Pi and the ACP-based
+providers (`acp-agent.ts`, and the adapters built on it) spawn to serve the read and terminate that
+process themselves once history is captured, as Codex does above. Plugin-provider and OpenCode do
+not release. Plugin-provider opens a provider session over its plugin's shared connection
+(`runtime.openSession`) and nothing closes it, leaving that session registered on the connection for
+as long as the connection lives — `getConnection` only ever lazy-connects, so whether the leftover
+registration keeps the plugin host process itself alive is up to that host's own lifecycle, external
+to this tree, not something `plugin-provider.ts` enforces. OpenCode's resume holds an acquisition — a
+refcount on the shared OpenCode server, or a whole dedicated process when one is required — that only
+its own `close()` releases, and nothing calls `close()` on a history-purpose OpenCode session;
+`server-manager.ts` gates `killServer` on that refcount reaching zero, so a leaked refcount there
+does block the shared server from ever idling down, and a leaked dedicated server (born `retired`)
+leaks a full process every time. Neither leak is a new process on every read: it is a held reference
+or registration that outlives the read which acquired it. What the purpose buys on those two is
+narrower — the read no longer attaches to the provider's live event stream, and OpenCode no longer
+aborts the live session it is only reading. On a provider that does release (Codex, Pi, ACP), a
+mutation issued afterward against that same archived-but-loaded agent — `agent.rewind.request`, for
+example — now errors instead of silently reaching the archived native session the leak used to leave
+open.
+
 Provider session connection owns every process it spawns until the session is registered with
 `AgentManager`. If initialization, persisted-session resume, or initial history hydration fails,
 `connect()` must dispose that process before rethrowing; the manager cannot clean up a session it never
