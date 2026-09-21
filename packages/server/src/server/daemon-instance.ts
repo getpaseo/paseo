@@ -4,6 +4,7 @@ import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import {
   getPidLockInfo,
+  isLocalPidLockRunning,
   isPidRunning,
   isSamePidLock,
   releasePidLock,
@@ -44,7 +45,7 @@ export class DaemonInstanceError extends Error {
 
 export async function readDaemonInstance(home: string): Promise<PidLockInfo | null> {
   const lock = await getPidLockInfo(home);
-  return lock && isPidRunning(lock.pid) ? lock : null;
+  return lock && isLocalPidLockRunning(lock) ? lock : null;
 }
 
 export function daemonLogPath(home: string): string {
@@ -160,7 +161,7 @@ export async function stopDaemonInstance(
       `Supervisor changed for ${home}; refusing to stop PID ${instance.pid}.`,
     );
   }
-  if (!instance || !isPidRunning(instance.pid)) {
+  if (!instance || !isLocalPidLockRunning(instance)) {
     if (instance)
       await releasePidLock(home, { ownerPid: instance.pid, startedAt: instance.startedAt });
     return {

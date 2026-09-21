@@ -93,6 +93,14 @@ export function isSamePidLock(left: PidLockInfo, right: PidLockInfo): boolean {
   return left.pid === right.pid && left.startedAt === right.startedAt;
 }
 
+// PID liveness is only meaningful for a same-host lock. A lock written by
+// another pod/host names a PID in a different namespace — kill(pid, 0)
+// would probe an unrelated local process (PID reuse). Foreign locks are
+// stale from this host's perspective.
+export function isLocalPidLockRunning(lock: PidLockInfo): boolean {
+  return lock.hostname === hostname() && isPidRunning(lock.pid);
+}
+
 function createLockHeldError(lock: PidLockInfo): PidLockError {
   return new PidLockError(
     `Another Paseo daemon is already running (PID ${lock.pid}, started ${lock.startedAt})`,
@@ -109,7 +117,7 @@ async function clearExistingPidLock(
   // another pod/host names a PID in a different namespace — kill(pid, 0)
   // would probe an unrelated local process (PID reuse) and pin the lock
   // forever. Foreign locks are stale from this host's perspective.
-  const lockOwnerRunning = existingLock.hostname === hostname() && isPidRunning(existingLock.pid);
+  const lockOwnerRunning = isLocalPidLockRunning(existingLock);
   if (existingLock.pid === lockOwnerPid && lockOwnerRunning) {
     await touchPidLockFile(pidPath);
     return "already_owned";
@@ -120,7 +128,7 @@ async function clearExistingPidLock(
   if (
     !confirmedLock ||
     !isSamePidLock(existingLock, confirmedLock) ||
-    isPidRunning(confirmedLock.pid)
+    isLocalPidLockRunning(confirmedLock)
   ) {
     throw new PidLockError("PID lock changed while checking whether it was abandoned");
   }
@@ -343,7 +351,7 @@ export async function isLocked(
   if (!info) {
     return { locked: false };
   }
-  if (info.hostname !== hostname() || !isPidRunning(info.pid)) {
+  if (!isLocalPidLockRunning(info)) {
     return { locked: false, info };
   }
   return { locked: true, info };
