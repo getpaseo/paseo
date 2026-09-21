@@ -21,52 +21,47 @@ import {
 } from "../support/helpers/settings";
 
 test.describe("Settings host page", () => {
-  test("connections section shows the seeded connection endpoint", async ({ page }) => {
+  test("visits host settings and opens the label editor", async ({ page }) => {
     const serverId = getServerId();
     const port = getE2EDaemonPort();
-
     await gotoAppShell(page);
     await openSettings(page);
     await openSettingsHost(page, serverId);
+    await test.step("connections section shows the seeded connection endpoint", async () => {
+      await expectSettingsHeader(page, "Connections");
+      await expectHostConnectionsCard(page, port);
+    });
+    await test.step("agents section shows the inject MCP toggle", async () => {
+      await openHostSection(page, serverId, "agents");
+      await expectSettingsHeader(page, "Agents");
+      await expectHostInjectMcpCard(page);
+    });
+    await test.step("providers section shows the providers card", async () => {
+      await expectHostProvidersCard(page, serverId);
+      await expectSettingsHeader(page, "Providers");
+    });
+    await test.step("host section shows the host label and restart/remove action cards", async () => {
+      await openHostSection(page, serverId, "host");
+      await expectSettingsHeader(page, "Overview");
+      await expectHostLabelDisplayed(page);
+      await expectHostActionCards(page, serverId);
+    });
+    await test.step("clicking the label pencil reveals the inline editor", async () => {
+      await openHostSection(page, serverId, "host");
 
-    await expectSettingsHeader(page, "Connections");
-    await expectHostConnectionsCard(page, port);
-  });
+      await expectHostLabelDisplayed(page);
+      await clickEditHostLabel(page);
+      await expectHostLabelEditMode(page, TEST_HOST_LABEL);
+      await page.keyboard.press("Escape");
+    });
+    await test.step("host section does not render daemon lifecycle controls for a remote daemon", async () => {
+      await openHostSection(page, serverId, "host");
 
-  test("agents section shows the inject MCP toggle", async ({ page }) => {
-    const serverId = getServerId();
-
-    await gotoAppShell(page);
-    await openSettings(page);
-    await openSettingsHost(page, serverId);
-
-    await openHostSection(page, serverId, "agents");
-    await expectSettingsHeader(page, "Agents");
-    await expectHostInjectMcpCard(page);
-  });
-
-  test("providers section shows the providers card", async ({ page }) => {
-    const serverId = getServerId();
-
-    await gotoAppShell(page);
-    await openSettings(page);
-    await openSettingsHost(page, serverId);
-
-    await expectHostProvidersCard(page, serverId);
-    await expectSettingsHeader(page, "Providers");
-  });
-
-  test("host section shows the host label and restart/remove action cards", async ({ page }) => {
-    const serverId = getServerId();
-
-    await gotoAppShell(page);
-    await openSettings(page);
-    await openSettingsHost(page, serverId);
-
-    await openHostSection(page, serverId, "host");
-    await expectSettingsHeader(page, "Overview");
-    await expectHostLabelDisplayed(page);
-    await expectHostActionCards(page, serverId);
+      await expectHostNoDaemonLifecycleRow(page);
+    });
+    await test.step("settings sidebar exposes the flat App and Host section rows", async () => {
+      await expectRetiredSidebarSectionsAbsent(page);
+    });
   });
 
   test("a failed remote daemon update remains visible in the host UI", async ({
@@ -92,40 +87,6 @@ test.describe("Settings host page", () => {
     await expect(updateFailure).toContainText("Update failed");
     await expect(updateFailure).toContainText("Failed to update the daemon:");
     await expect(updateButton).toBeEnabled();
-  });
-
-  test("clicking the label pencil reveals the inline editor", async ({ page }) => {
-    const serverId = getServerId();
-
-    await gotoAppShell(page);
-    await openSettings(page);
-    await openSettingsHost(page, serverId);
-    await openHostSection(page, serverId, "host");
-
-    await expectHostLabelDisplayed(page);
-    await clickEditHostLabel(page);
-    await expectHostLabelEditMode(page, TEST_HOST_LABEL);
-  });
-
-  test("host section does not render daemon lifecycle controls for a remote daemon", async ({
-    page,
-  }) => {
-    const serverId = getServerId();
-
-    await gotoAppShell(page);
-    await openSettings(page);
-    await openSettingsHost(page, serverId);
-    await openHostSection(page, serverId, "host");
-
-    // TODO: add a local-daemon fixture for positive daemon lifecycle coverage.
-    await expectHostNoDaemonLifecycleRow(page);
-  });
-
-  test("settings sidebar exposes the flat App and Host section rows", async ({ page }) => {
-    await gotoAppShell(page);
-    await openSettings(page);
-
-    await expectRetiredSidebarSectionsAbsent(page);
   });
 
   test("navigating to /settings/hosts/[serverId] redirects to the connections section", async ({

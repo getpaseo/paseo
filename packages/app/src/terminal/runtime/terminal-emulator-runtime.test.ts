@@ -192,6 +192,63 @@ describe("terminal-emulator-runtime", () => {
     vi.useRealTimers();
   });
 
+  it.each([
+    { isMac: true, ctrlKey: true, metaKey: false, opensFind: false },
+    { isMac: true, ctrlKey: false, metaKey: true, opensFind: true },
+    { isMac: false, ctrlKey: true, metaKey: false, opensFind: true },
+    { isMac: false, ctrlKey: false, metaKey: true, opensFind: false },
+    { isMac: true, ctrlKey: false, metaKey: true, shiftKey: true, opensFind: false },
+    { isMac: true, ctrlKey: false, metaKey: true, altKey: true, opensFind: false },
+    { isMac: false, ctrlKey: true, metaKey: false, shiftKey: true, opensFind: false },
+    { isMac: false, ctrlKey: true, metaKey: false, altKey: true, opensFind: false },
+    { isMac: true, ctrlKey: true, metaKey: true, opensFind: false },
+    { isMac: false, ctrlKey: true, metaKey: true, opensFind: false },
+  ])(
+    "routes Find with isMac=$isMac ctrl=$ctrlKey meta=$metaKey shift=$shiftKey alt=$altKey",
+    ({ isMac, ctrlKey, metaKey, shiftKey = false, altKey = false, opensFind }) => {
+      const runtime = new TerminalEmulatorRuntime({ isMac });
+      let findRequests = 0;
+      let prevented = false;
+      let stopped = false;
+      runtime.setCallbacks({
+        callbacks: {
+          onFindRequest: () => {
+            findRequests += 1;
+          },
+        },
+      });
+      const event = {
+        type: "keydown",
+        key: "f",
+        ctrlKey,
+        metaKey,
+        shiftKey,
+        altKey,
+        isComposing: false,
+        preventDefault: () => {
+          prevented = true;
+        },
+        stopPropagation: () => {
+          stopped = true;
+        },
+      } as KeyboardEvent;
+
+      let passedToXterm: boolean | undefined;
+      runtime.attachKeyEventHandler({
+        attachCustomKeyEventHandler: (handler) => {
+          passedToXterm = handler(event);
+        },
+        hasSelection: () => false,
+        getSelection: () => "",
+        paste: () => {},
+      });
+      expect(passedToXterm).toBe(!opensFind);
+      expect(findRequests).toBe(opensFind ? 1 : 0);
+      expect(prevented).toBe(opensFind);
+      expect(stopped).toBe(opensFind);
+    },
+  );
+
   it("drains contiguous plain writes without waiting for each commit, gating a clear behind them", () => {
     const { runtime, terminal, writeCallbacks, writeTexts } = createRuntimeWithTerminal();
     const committed: string[] = [];
@@ -302,9 +359,10 @@ describe("terminal-emulator-runtime", () => {
       { kittyKeyboardFlags: 7, win32InputMode: false, bracketedPaste: false },
     ]);
 
-    // The plain write carries no onCommitted, so it registers no callback; writeCallbacks[0]
-    // is the barrier gate sentinel.
-    writeCallbacks[0]?.();
+    // Commit the plain write, then the sentinel that gates the snapshot.
+    writeCallbacks[0]();
+    expect(inputModeChanges).toHaveLength(1);
+    writeCallbacks[1]();
 
     expect(inputModeChanges).toEqual([
       { kittyKeyboardFlags: 7, win32InputMode: false, bracketedPaste: false },
@@ -413,14 +471,15 @@ describe("terminal-emulator-runtime", () => {
     runtime.write({ data: terminalOutput("output") });
     runtime.restoreOutput({ data: terminalOutput("snapshot") });
 
-    // The plain write carries no onCommitted so it registers no callback; writeCallbacks[0]
-    // is the sentinel gate. suppressInput only flips once the gate resolves the barrier.
+    // The plain write commits first. Only the following sentinel opens the barrier.
     expect(readSuppressInput()).toBe(false);
-    writeCallbacks[0]?.();
+    writeCallbacks[0]();
+    expect(readSuppressInput()).toBe(false);
+    writeCallbacks[1]();
     expect(readSuppressInput()).toBe(true);
 
-    // writeCallbacks[1] is the barrier's own snapshot write; committing it restores input.
-    writeCallbacks[1]?.();
+    // Committing the barrier's snapshot write restores input.
+    writeCallbacks[2]();
     expect(readSuppressInput()).toBe(false);
   });
 

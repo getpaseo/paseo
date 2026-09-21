@@ -1,6 +1,6 @@
 import { addLocalDaemonOptions } from "../../utils/command-options.js";
 import { Command } from "commander";
-import { daemonLogPath } from "@getpaseo/server";
+import { daemonLogPath } from "@getpaseo/server/daemon-control";
 import { launchLocalDaemon, parseTimeoutMs, rejectRemovedLaunchFlags } from "./local-daemon.js";
 import { withOutput, type CommandOptions } from "../../output/index.js";
 

@@ -18,6 +18,7 @@ import {
   TerminalStreamOpcode,
 } from "@getpaseo/protocol/terminal-stream-protocol";
 import { CLIENT_CAPS } from "@getpaseo/protocol/client-capabilities";
+import { APPLICATION_SOCKET_LEASE_MS } from "./websocket/physical-socket.js";
 
 type SocketListener = (...args: unknown[]) => void;
 
@@ -543,6 +544,32 @@ describe("relay external socket reconnect behavior", () => {
     secondSocket.emit("close", 1000, "plugin stopped");
     await secondAttachment.closed;
     expect(sessionMock.instances[1]?.cleanup).toHaveBeenCalledOnce();
+    await server.close();
+  });
+
+  test("keeps a plugin socket whose heartbeat stalls past the application lease", async () => {
+    const server = createServer();
+    const socket = new MockSocket();
+    await server.attachPluginSocket("stalled", socket);
+    socket.emit("message", JSON.stringify(createHelloMessage("plugin:stalled")));
+    socket.emit("message", JSON.stringify({ type: "ping" }));
+
+    // Event loop starved past the lease: no further ping arrives.
+    await vi.advanceTimersByTimeAsync(APPLICATION_SOCKET_LEASE_MS * 2);
+
+    expect(socket.readyState).toBe(1);
+    await server.close();
+  });
+
+  test("still reaps an ordinary socket whose heartbeat stalls past the application lease", async () => {
+    const server = createServer();
+    const socket = new MockSocket();
+    await attachRelayAndHello({ server, socket, clientId: "cid-stalled" });
+    socket.emit("message", JSON.stringify({ type: "ping" }));
+
+    await vi.advanceTimersByTimeAsync(APPLICATION_SOCKET_LEASE_MS * 2);
+
+    expect(socket.readyState).toBe(3);
     await server.close();
   });
 

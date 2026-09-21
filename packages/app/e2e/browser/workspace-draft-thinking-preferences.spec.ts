@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "../support/fixtures";
-import { clickNewChat, gotoWorkspace } from "../support/helpers/launcher";
+import { gotoWorkspace } from "../support/helpers/launcher";
 import { seedWorkspace } from "../support/helpers/seed-client";
 import {
   chooseCommandCenterAgentControl,
@@ -7,13 +7,15 @@ import {
   waitForDraftComposer,
 } from "../support/helpers/command-center-agent-controls";
 import { openCommandCenter } from "../support/helpers/command-center";
+import { runWorkspaceActionFromCommandCenter } from "../support/helpers/command-center-workspace-actions";
 import { selectModel } from "../support/helpers/app";
 
 const DISABLE_DEFAULT_SEED_ONCE_KEY = "@paseo:e2e-disable-default-seed-once";
 const SEED_NONCE_KEY = "@paseo:e2e-seed-nonce";
 
 async function openNewAgentTab(page: Page): Promise<void> {
-  await clickNewChat(page);
+  // Preference persistence does not depend on the animated tab-creation menu.
+  await runWorkspaceActionFromCommandCenter(page, "New agent");
   await waitForDraftComposer(page);
 }
 

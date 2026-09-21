@@ -18,11 +18,8 @@ export interface MatchOptions {
   /** Omit or pass null to match exactly. `fuzzyPolicyForToken` picks a policy. */
   fuzzy?: FuzzyPolicy | null;
   /**
-   * Match characters that appear in order but not adjacently, so `pasbab` finds
-   * `paseo-babysit`. Defaults to on. Turn it off where a near miss has to read as
-   * no match at all: it widens far enough that most typos hit something, and a
-   * list that preselects its first row would then act on that row when the user
-   * presses Enter expecting nothing to happen.
+   * Match characters in order within one whitespace-delimited word, so `pasbab`
+   * finds `paseo-babysit`, but `labdes` cannot join "Label as Design". Defaults to on.
    */
   subsequence?: boolean;
 }
@@ -74,6 +71,12 @@ function scoreSubsequenceMatch(query: string, text: string): MatchScore | null {
   let firstIndex = -1;
   let lastIndex = -1;
   for (let textIndex = 0; textIndex < text.length && queryIndex < query.length; textIndex += 1) {
+    if (/\s/u.test(text[textIndex])) {
+      queryIndex = 0;
+      firstIndex = -1;
+      lastIndex = -1;
+      continue;
+    }
     if (text[textIndex] !== query[queryIndex]) continue;
     if (firstIndex === -1) firstIndex = textIndex;
     lastIndex = textIndex;
@@ -286,7 +289,11 @@ export function matchRanges(query: string, text: string, score: MatchScore): Mat
   if (score.tier === TIER_SUBSEQUENCE) {
     const indices: number[] = [];
     let queryIndex = 0;
-    for (let textIndex = 0; textIndex < t.length && queryIndex < q.length; textIndex += 1) {
+    for (
+      let textIndex = score.offset;
+      textIndex < t.length && queryIndex < q.length;
+      textIndex += 1
+    ) {
       if (t[textIndex] !== q[queryIndex]) continue;
       indices.push(textIndex);
       queryIndex += 1;

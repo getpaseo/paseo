@@ -806,11 +806,14 @@ function buildOpenCodeModelDefinition(
   },
 ): AgentModelDefinition {
   const rawVariants = model.variants ? Object.keys(model.variants) : [];
-  // OpenCode lists only overrides; its base model behavior is selected by omitting `variant`.
+  // Like OpenCode's web UI, Default omits `variant` and lets OpenCode resolve it.
+  // Reserve that choice instead of exposing a second upstream `default` entry.
   const thinkingOptions = rawVariants.length
     ? [
         { id: OPENCODE_DEFAULT_VARIANT_ID, label: "Default", isDefault: true },
-        ...rawVariants.map((id) => ({ id, label: id })),
+        ...rawVariants
+          .filter((id) => id !== OPENCODE_DEFAULT_VARIANT_ID)
+          .map((id) => ({ id, label: id })),
       ]
     : [];
 
