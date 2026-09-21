@@ -1,0 +1,66 @@
+{
+  "plans": [
+    {
+      "slug": "free",
+      "name": "Free",
+      "billing": {
+        "model": "per_unit",
+        "unit": {
+          "key": "seat",
+          "label": "seat"
+        }
+      },
+      "included": {
+        "seats": 1,
+        "executionsPerMonth": 50
+      },
+      "features": [
+        {
+          "key": "daemon-location",
+          "label": "Daemons run on your machines",
+          "tooltip": null
+        }
+      ],
+      "prices": [
+        {
+          "interval": "monthly",
+          "intervalCount": 1,
+          "unitAmount": 0,
+          "currency": "eur",
+          "tooltip": null
+        }
+      ]
+    },
+    {
+      "slug": "hosted",
+      "name": "Pro",
+      "billing": {
+        "model": "per_unit",
+        "unit": {
+          "key": "seat",
+          "label": "seat"
+        }
+      },
+      "included": {
+        "seats": null,
+        "executionsPerMonth": null
+      },
+      "features": [
+        {
+          "key": "hub-operation",
+          "label": "Paseo operates Hub",
+          "tooltip": null
+        }
+      ],
+      "prices": [
+        {
+          "interval": "monthly",
+          "intervalCount": 1,
+          "unitAmount": 1500,
+          "currency": "eur",
+          "tooltip": "Seats are Hub members and pending invitations. People who only trigger agents through GitHub, Slack, or Discord do not count as seats."
+        }
+      ]
+    }
+  ]
+}
