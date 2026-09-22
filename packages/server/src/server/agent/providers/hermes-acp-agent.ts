@@ -15,11 +15,36 @@ export interface HermesACPAgentClientOptions {
 
 const multiplexManagers = new Map<string, ACPMultiplexConnectionManager>();
 
+const SESSION_EPHEMERAL_ENV_PREFIXES = ["PASEO_AGENT_", "PASEO_SESSION_"];
+const SESSION_EPHEMERAL_ENV_KEYS = new Set([
+  "PASEO_AGENT_ID",
+  "PASEO_AGENT_CWD",
+  "PASEO_SESSION_ID",
+]);
+
+export function filterTransportEnv(
+  env?: Record<string, string>,
+): Record<string, string> | undefined {
+  if (!env) return undefined;
+  const filtered: Record<string, string> = {};
+  for (const [key, value] of Object.entries(env)) {
+    if (
+      SESSION_EPHEMERAL_ENV_KEYS.has(key) ||
+      SESSION_EPHEMERAL_ENV_PREFIXES.some((prefix) => key.startsWith(prefix))
+    ) {
+      continue;
+    }
+    filtered[key] = value;
+  }
+  return Object.keys(filtered).length > 0 ? filtered : undefined;
+}
+
 function buildManagerKey(command: string[], env?: Record<string, string>): string {
-  if (!env || Object.keys(env).length === 0) {
+  const filtered = filterTransportEnv(env);
+  if (!filtered || Object.keys(filtered).length === 0) {
     return command.join(" ");
   }
-  const envPairs = Object.entries(env)
+  const envPairs = Object.entries(filtered)
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([k, v]) => `${k}=${v}`)
     .join(";");
@@ -74,7 +99,10 @@ export class HermesACPAgentClient extends GenericACPAgentClient {
       ...options,
       providerParams,
       transportAcquirer: (opts) => {
-        const effectiveEnv = opts.launchEnv ? { ...options.env, ...opts.launchEnv } : options.env;
+        const filteredLaunchEnv = filterTransportEnv(opts.launchEnv);
+        const effectiveEnv = filteredLaunchEnv
+          ? { ...options.env, ...filteredLaunchEnv }
+          : options.env;
         const targetManager =
           options.multiplexManager ??
           getHermesMultiplexManager(options.logger, options.command, effectiveEnv);
