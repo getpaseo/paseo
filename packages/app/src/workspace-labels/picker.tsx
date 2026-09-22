@@ -159,8 +159,8 @@ function WorkspaceLabelPickerPage({
       >
         {t("workspaceLabels.create")}
       </MenuSubTrigger>
-      {snapshot.error ? (
-        <MenuHint testID="workspace-label-picker-error">{snapshot.error}</MenuHint>
+      {(snapshot.error ?? host?.error) ? (
+        <MenuHint testID="workspace-label-picker-error">{snapshot.error ?? host?.error}</MenuHint>
       ) : null}
       {host?.status === "unsupported" ? (
         <MenuHint>{t("workspaceLabels.updateHostUse")}</MenuHint>
