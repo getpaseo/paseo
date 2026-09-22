@@ -128,6 +128,14 @@ interface ACPConfiguredOverrideInternals {
   applyConfiguredOverrides(): Promise<void>;
 }
 
+function createAcpCancelError(): Error {
+  const error = new Error(
+    "RetriableError: [canceled] http/2 stream closed with error code CANCEL (0x8)",
+  );
+  error.name = "RetriableError";
+  return error;
+}
+
 function createSession(terminateProcess?: ProcessTerminator): ACPAgentSession {
   return new ACPAgentSession(
     {
@@ -2013,6 +2021,37 @@ describe("ACPAgentClient config features", () => {
       }),
     ]);
   });
+
+  test("does not retry session/new after an http/2 CANCEL stream close", async () => {
+    const newSession = vi.fn().mockRejectedValue(createAcpCancelError());
+
+    class TestACPAgentClient extends ACPAgentClient {
+      protected override async spawnProcess(): Promise<SpawnedACPProcess> {
+        return {
+          child: { kill: vi.fn(), exitCode: 0, signalCode: null, once: vi.fn() },
+          connection: { newSession },
+          initialize: { agentCapabilities: {} },
+        } as SpawnedACPProcess;
+      }
+
+      protected override async closeProbe(): Promise<void> {}
+    }
+
+    const client = new TestACPAgentClient({
+      provider: "copilot",
+      logger: createTestLogger(),
+      defaultCommand: ["copilot", "--acp"],
+      configFeatureOptions: [COPILOT_AGENT_FEATURE_OPTION],
+    });
+
+    await expect(
+      client.listFeatures({
+        provider: "copilot",
+        cwd: "/tmp/acp-features",
+      }),
+    ).rejects.toThrow(/CANCEL \(0x8\)/);
+    expect(newSession).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("ACPAgentClient sessionResponseTransformer", () => {
@@ -2248,6 +2287,27 @@ describe("ACPAgentClient listImportableSessions", () => {
       cwd: "/Users/moonshot",
     });
   });
+
+  test("retries session/list once after an http/2 CANCEL stream close", async () => {
+    const listSessions = vi
+      .fn()
+      .mockRejectedValueOnce(createAcpCancelError())
+      .mockResolvedValueOnce({ sessions: [], nextCursor: null });
+    const client = makeClient({ listSessions });
+
+    await expect(client.listImportableSessions({ limit: 20 })).resolves.toEqual([]);
+    expect(listSessions).toHaveBeenCalledTimes(2);
+  });
+
+  test("does not retry session/list after a non-CANCEL failure", async () => {
+    const listSessions = vi.fn().mockRejectedValue(new Error("Authentication failed"));
+    const client = makeClient({ listSessions });
+
+    await expect(client.listImportableSessions({ limit: 20 })).rejects.toThrow(
+      "Authentication failed",
+    );
+    expect(listSessions).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("ACP providers advertise session listing", () => {
@@ -2452,6 +2512,103 @@ describe("ACPAgentSession", () => {
     );
 
     expect(asInternals<ACPSessionInternals>(session).acpMcpServers()).toEqual([]);
+  });
+
+  test("summarizes a thrown object instead of [object Object]", () => {
+    const summary = summarizeACPRequestError({
+      name: "RetriableError",
+      message: "[canceled] http/2 stream closed with error code CANCEL (0x8)",
+    });
+
+    expect(summary.message).toContain("CANCEL (0x8)");
+    expect(summary.message).not.toBe("[object Object]");
+  });
+
+  test("retries an ACP prompt once after an http/2 CANCEL stream close", async () => {
+    const session = createSession();
+    const prompt = vi
+      .fn()
+      .mockRejectedValueOnce(createAcpCancelError())
+      .mockResolvedValueOnce({ stopReason: "end_turn" });
+
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    asInternals<ACPSessionInternals>(session).connection = { prompt };
+
+    const turnCompleted = new Promise<Extract<AgentStreamEvent, { type: "turn_completed" }>>(
+      (resolve) => {
+        session.subscribe((event) => {
+          if (event.type === "turn_completed") {
+            resolve(event);
+          }
+        });
+      },
+    );
+
+    await session.startTurn("hello");
+    await expect(turnCompleted).resolves.toMatchObject({ type: "turn_completed" });
+    expect(prompt).toHaveBeenCalledTimes(2);
+  });
+
+  test("does not retry an ACP prompt after CANCEL once the remote has started work", async () => {
+    const session = createSession();
+    let rejectFirst!: (error: Error) => void;
+    const prompt = vi.fn(
+      () =>
+        new Promise<PromptResponse>((_resolve, reject) => {
+          rejectFirst = reject;
+        }),
+    );
+
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    asInternals<ACPSessionInternals>(session).connection = { prompt };
+
+    const turnFailed = new Promise<Extract<AgentStreamEvent, { type: "turn_failed" }>>(
+      (resolve) => {
+        session.subscribe((event) => {
+          if (event.type === "turn_failed") {
+            resolve(event);
+          }
+        });
+      },
+    );
+
+    await session.startTurn("hello");
+    await session.sessionUpdate({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "agent_message_chunk",
+        messageId: "assistant-1",
+        content: { type: "text", text: "Working" },
+      } as SessionUpdate,
+    });
+    rejectFirst(createAcpCancelError());
+    await expect(turnFailed).resolves.toMatchObject({ type: "turn_failed" });
+    expect(prompt).toHaveBeenCalledTimes(1);
+  });
+
+  test("does not retry an ACP prompt after a non-CANCEL failure", async () => {
+    const session = createSession();
+    const prompt = vi.fn().mockRejectedValue(new Error("Authentication failed"));
+
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    asInternals<ACPSessionInternals>(session).connection = { prompt };
+
+    const turnFailed = new Promise<Extract<AgentStreamEvent, { type: "turn_failed" }>>(
+      (resolve) => {
+        session.subscribe((event) => {
+          if (event.type === "turn_failed") {
+            resolve(event);
+          }
+        });
+      },
+    );
+
+    await session.startTurn("hello");
+    await expect(turnFailed).resolves.toMatchObject({
+      type: "turn_failed",
+      error: "Authentication failed",
+    });
+    expect(prompt).toHaveBeenCalledTimes(1);
   });
 
   test("summarizes JSON-RPC error details without stringifying objects", () => {

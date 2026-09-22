@@ -115,6 +115,29 @@ describe("getStructuredAgentResponse", () => {
     expect(result).toEqual({ message: "hello" });
   });
 
+  it("rejects session-limit prose instead of treating it as BranchName JSON", async () => {
+    const schema = z.object({
+      title: z.string().min(1),
+      branch: z.string().min(1),
+    });
+    const lastResponse = "You've hit your session limit · resets 5:30am (America/Sao_Paulo)";
+    const { caller } = createScriptedCaller([lastResponse]);
+
+    await expect(
+      getStructuredAgentResponse({
+        caller,
+        prompt: "Provide a title and branch",
+        schema,
+        schemaName: "BranchName",
+        maxRetries: 0,
+      }),
+    ).rejects.toMatchObject({
+      name: "StructuredAgentResponseError",
+      lastResponse,
+      validationErrors: [expect.stringContaining("Invalid JSON")],
+    });
+  });
+
   it("extracts JSON from plain code fences", async () => {
     const schema = z.object({ value: z.number() });
     const { caller } = createScriptedCaller(['```\n{"value": 42}\n```']);
@@ -252,6 +275,40 @@ describe("generateStructuredAgentResponseWithFallback", () => {
       { provider: "codex", model: "gpt-5.4-mini" },
     ]);
     expect(manager.checkedProviders).toEqual(["claude", "codex"]);
+  });
+
+  it("serializes a non-Error throw instead of [object Object]", async () => {
+    const manager = createManager([{ provider: "cursor", available: true, error: null }]);
+
+    try {
+      await generateStructuredAgentResponseWithFallback({
+        manager,
+        cwd: "/tmp/project",
+        prompt: "Return JSON",
+        schema,
+        providers: [{ provider: "cursor", model: "gpt-5.4-mini" }],
+        runner: async () => {
+          throw {
+            name: "RetriableError",
+            message: "[canceled] http/2 stream closed with error code CANCEL (0x8)",
+          };
+        },
+      });
+      throw new Error("Expected generateStructuredAgentResponseWithFallback to throw");
+    } catch (error) {
+      expect(error).toBeInstanceOf(StructuredAgentFallbackError);
+      expect(error).toMatchObject({
+        attempts: [
+          {
+            provider: "cursor",
+            model: "gpt-5.4-mini",
+            available: true,
+            error: expect.stringContaining("CANCEL (0x8)"),
+          },
+        ],
+      });
+      expect(String(error)).not.toContain("[object Object]");
+    }
   });
 
   it("throws a fallback error when all providers are unavailable or fail", async () => {

@@ -1,5 +1,6 @@
 import { z } from "zod";
 import Ajv, { type ErrorObject, type Options as AjvOptions } from "ajv";
+import { getErrorMessage } from "@getpaseo/protocol/error-utils";
 import type { AgentProvider, AgentSessionConfig } from "./agent-sdk-types.js";
 import type { AgentManager } from "./agent-manager.js";
 
@@ -324,7 +325,7 @@ export async function getStructuredAgentResponse<T>(
     try {
       parsed = JSON.parse(jsonText);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = getErrorMessage(error);
       lastErrors = [`Invalid JSON: ${message}`];
       if (attempt === maxRetries) {
         break;
@@ -386,13 +387,6 @@ export async function generateStructuredAgentResponse<T>(
       await manager.deleteAgentState(agent.id).catch(() => undefined);
     }
   }
-}
-
-function errorMessage(error: unknown): string {
-  if (error instanceof Error) {
-    return error.message;
-  }
-  return String(error);
 }
 
 export async function generateStructuredAgentResponseWithFallback<T>(
@@ -471,7 +465,7 @@ export async function generateStructuredAgentResponseWithFallback<T>(
         provider: candidate.provider,
         model: candidate.model ?? null,
         available: true,
-        error: errorMessage(error),
+        error: getErrorMessage(error),
       });
       logger?.warn(
         { err: error, provider: candidate.provider, model: candidate.model, schemaName },
