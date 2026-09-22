@@ -2,9 +2,12 @@ import { describe, expect, it } from "vitest";
 
 import {
   getTerminalVirtualKeyboardControlId,
+  isTouchTerminalSurface,
+  resolveTerminalVirtualKeyboardRows,
   shouldShowTerminalFloatingCopyAction,
   shouldShowTerminalPasteAction,
   TERMINAL_VIRTUAL_KEYBOARD_ROWS,
+  TERMINAL_VIRTUAL_KEYBOARD_WIDE_ROWS,
   type TerminalVirtualKeyboardControl,
 } from "./terminal-virtual-keyboard";
 
@@ -13,10 +16,10 @@ interface ControlPosition {
   col: number;
 }
 
-function controlIds(): string[] {
-  return TERMINAL_VIRTUAL_KEYBOARD_ROWS.flatMap((row) =>
-    row.map((control) => getTerminalVirtualKeyboardControlId(control)),
-  );
+function controlIds(
+  rows: readonly (readonly TerminalVirtualKeyboardControl[])[] = TERMINAL_VIRTUAL_KEYBOARD_ROWS,
+): string[] {
+  return rows.flatMap((row) => row.map((control) => getTerminalVirtualKeyboardControlId(control)));
 }
 
 function controlPositions(): Map<string, ControlPosition> {
@@ -104,5 +107,43 @@ describe("terminal virtual keyboard policy", () => {
   it("keeps Paste native-gated", () => {
     expect(shouldShowTerminalPasteAction({ isNative: true })).toBe(true);
     expect(shouldShowTerminalPasteAction({ isNative: false })).toBe(false);
+  });
+
+  it("offers the same controls in both layouts", () => {
+    const wideIds = controlIds(TERMINAL_VIRTUAL_KEYBOARD_WIDE_ROWS);
+
+    expect([...wideIds].sort()).toEqual([...controlIds()].sort());
+  });
+
+  it("collapses to a single row only when the bar itself is wide enough", () => {
+    expect(TERMINAL_VIRTUAL_KEYBOARD_WIDE_ROWS).toHaveLength(1);
+    expect(resolveTerminalVirtualKeyboardRows({ isCompact: false, availableWidth: 900 })).toBe(
+      TERMINAL_VIRTUAL_KEYBOARD_WIDE_ROWS,
+    );
+    // A 13" portrait pane with the sidebar open: measured at 698pt, every label fits.
+    expect(resolveTerminalVirtualKeyboardRows({ isCompact: false, availableWidth: 698 })).toBe(
+      TERMINAL_VIRTUAL_KEYBOARD_WIDE_ROWS,
+    );
+    // An 11" portrait pane with the sidebar open: a tablet window, but only ~515pt of bar.
+    expect(resolveTerminalVirtualKeyboardRows({ isCompact: false, availableWidth: 515 })).toBe(
+      TERMINAL_VIRTUAL_KEYBOARD_ROWS,
+    );
+    // Not laid out yet. Two rows fit everywhere, so they are the safe default.
+    expect(resolveTerminalVirtualKeyboardRows({ isCompact: false, availableWidth: 0 })).toBe(
+      TERMINAL_VIRTUAL_KEYBOARD_ROWS,
+    );
+    // Compact never gets the single row regardless of a stale wide measurement.
+    expect(resolveTerminalVirtualKeyboardRows({ isCompact: true, availableWidth: 900 })).toBe(
+      TERMINAL_VIRTUAL_KEYBOARD_ROWS,
+    );
+  });
+
+  it("treats every native surface as touch, not just compact widths", () => {
+    // A tablet: wide enough to miss the compact breakpoint, still without a physical Esc.
+    expect(isTouchTerminalSurface({ isNative: true, isCompact: false })).toBe(true);
+    expect(isTouchTerminalSurface({ isNative: true, isCompact: true })).toBe(true);
+    // A narrow browser window still gets the bar; a desktop-width one does not.
+    expect(isTouchTerminalSurface({ isNative: false, isCompact: true })).toBe(true);
+    expect(isTouchTerminalSurface({ isNative: false, isCompact: false })).toBe(false);
   });
 });
