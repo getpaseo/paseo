@@ -55,7 +55,7 @@ const EXPECTED_CLAUDE_MODELS = [
   {
     id: "claude-opus-5",
     model: "Opus 5",
-    descriptionFragment: "Latest release",
+    descriptionFragment: "Previous release",
   },
   {
     id: "claude-fable-5-1",
