@@ -268,11 +268,37 @@ test("v2 native tool bridge preserves caller identity", async () => {
 }, 120_000);
 
 test.each([
-  { major: 1, package: "opencode-ai@1.14.46" },
-  { major: 2, package: "@opencode/cli@2.0.10" },
+  {
+    major: 1,
+    package: "opencode-ai@1.14.46",
+    windowsPackage: "opencode-windows",
+    expectedTimeline: [],
+    expectedInitialTimeline: undefined,
+    expectedNotices: undefined,
+  },
+  {
+    major: 2,
+    package: "@opencode/cli@2.0.10",
+    windowsPackage: "@opencode/cli-windows",
+    expectedTimeline: [
+      { type: "notification", level: "info", message: "This chat uses OpenCode v2." },
+    ],
+    expectedInitialTimeline: [
+      expect.objectContaining({
+        item: { type: "notification", level: "info", message: "This chat uses OpenCode v2." },
+      }),
+    ],
+    expectedNotices: [expect.objectContaining({ major: 2 })],
+  },
 ])(
   "versioned runtime v$major discovers models and preserves a native session handle",
-  async ({ major, package: cliPackage }) => {
+  async ({
+    package: cliPackage,
+    windowsPackage,
+    expectedTimeline,
+    expectedInitialTimeline,
+    expectedNotices,
+  }) => {
     const root = await mkdtemp(path.join(os.tmpdir(), "paseo-opencode-versioned-"));
     const client = new OpenCodeRuntimeClient(createTestLogger(), {
       command: {
@@ -282,9 +308,7 @@ test.each([
             ? path.join(
                 root,
                 "node_modules",
-                major === 1
-                  ? `opencode-windows-${process.arch}`
-                  : `@opencode/cli-windows-${process.arch}`,
+                `${windowsPackage}-${process.arch}`,
                 "bin",
                 "opencode.exe",
               )
@@ -318,21 +342,15 @@ test.each([
         { persistSession: false },
       );
       const handle = await original.describePersistence();
+      expect(original.initialTimeline).toEqual(expectedInitialTimeline);
+      expect(handle.metadata?.openCodeRuntimeNotices).toEqual(expectedNotices);
       resumed = await client.resumeSession(handle, { cwd: root });
       expect((await resumed.describePersistence()).nativeHandle).toBe(handle.nativeHandle);
       expect(
         (await drainPersistedTimeline(resumed)).map((event) =>
           event.type === "timeline" ? event.item : event,
         ),
-      ).toEqual(
-        major === 2
-          ? [{ type: "notification", level: "info", message: "This chat uses OpenCode v2." }]
-          : [],
-      );
-      if (major === 1) {
-        expect(original.initialTimeline).toBeUndefined();
-        expect(handle.metadata?.openCodeRuntimeNotices).toBeUndefined();
-      }
+      ).toEqual(expectedTimeline);
     } finally {
       await resumed?.close();
       await original?.close();

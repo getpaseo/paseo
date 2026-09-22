@@ -82,6 +82,35 @@ test("retries a rejected version probe after the configured binary changes", asy
   }
 });
 
+test.each([
+  ["console.log('wrapper output')", "unrecognized output"],
+  ["process.exit(1)", "failed command"],
+])("retries a %s version probe after updating to v2 (%s)", async (initialSource) => {
+  const { mkdtemp, writeFile, rm } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { OpenCodeRuntimeClient } = await import("./runtime-client.js");
+  const { createTestLogger } = await import("../../../../test-utils/test-logger.js");
+  const root = await mkdtemp(join(tmpdir(), "opencode-version-retry-"));
+  const script = join(root, "version.cjs");
+  const client = new OpenCodeRuntimeClient(createTestLogger(), {
+    command: { mode: "replace", argv: [process.execPath, script] },
+  });
+  try {
+    await writeFile(script, initialSource);
+    expect((await client.listFeatures({ provider: "opencode", cwd: root }))[0]?.label).toBe(
+      "Auto Accept",
+    );
+    await writeFile(script, 'console.log("opencode v2.0.10")');
+    expect((await client.listFeatures({ provider: "opencode", cwd: root }))[0]?.label).toBe(
+      "Auto-accept",
+    );
+  } finally {
+    await client.shutdown();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("appends a first notice after old history and records a changed major version", async () => {
   const { withOpenCodeRuntimeNotice } = await import("./runtime-notice.js");
   const { V2Harness } = await import("./test-utils/v2-harness.js");
