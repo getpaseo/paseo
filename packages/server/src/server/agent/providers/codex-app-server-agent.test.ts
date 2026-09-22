@@ -5991,6 +5991,100 @@ describe("Codex app-server provider", () => {
 });
 
 describe("Codex importable sessions", () => {
+  const CODEX_THREAD_PAGE_CAP = 100;
+
+  // Codex answers thread/list with at most 100 rows per response whatever limit
+  // the caller asks for, and hands back a cursor for the remaining threads.
+  function cappedThreadListHandler(threads: Array<Record<string, unknown>>) {
+    return (input: unknown) => {
+      const params = (input ?? {}) as {
+        limit?: number;
+        cursor?: string;
+        cwd?: string;
+        sortKey?: string;
+      };
+      const recencyKey = params.sortKey === "updated_at" ? "updatedAt" : "createdAt";
+      const matching = threads
+        .filter((thread) => !params.cwd || thread.cwd === params.cwd)
+        .sort((a, b) => Number(b[recencyKey]) - Number(a[recencyKey]));
+      const offset = Number(params.cursor ?? 0);
+      const page = matching.slice(
+        offset,
+        offset + Math.min(params.limit ?? CODEX_THREAD_PAGE_CAP, CODEX_THREAD_PAGE_CAP),
+      );
+      const nextOffset = offset + page.length;
+      return {
+        data: page,
+        nextCursor: nextOffset < matching.length ? String(nextOffset) : null,
+      };
+    };
+  }
+
+  function threadsUsedInReverseCreationOrder(count: number) {
+    // The most recently used thread is also the oldest one created, so a scan
+    // that follows Codex's creation-time page order misses it.
+    return Array.from({ length: count }, (_, index) => ({
+      id: `thread-${index}`,
+      cwd: "/workspace/project-a",
+      preview: `Session ${index}`,
+      createdAt: index,
+      updatedAt: count - index,
+    }));
+  }
+
+  test("fills the requested window across the pages Codex caps at 100 rows", async () => {
+    const threads = threadsUsedInReverseCreationOrder(250);
+    const appServer = createFakeCodexAppServer({
+      "thread/list": cappedThreadListHandler([
+        ...threads,
+        { id: "other-project", cwd: "/workspace/project-b", createdAt: 9000, updatedAt: 9000 },
+      ]),
+    });
+    const provider = createProviderWithFakeAppServer(appServer);
+
+    const sessions = await provider.listImportableSessions({
+      limit: 240,
+      cwd: "/workspace/project-a",
+    });
+
+    expect(sessions.map((session) => session.providerHandleId)).toEqual(
+      threads.slice(0, 240).map((thread) => thread.id),
+    );
+    appServer.assertNoErrors();
+  });
+
+  test("keeps the scanned window on the most recently used threads", async () => {
+    const threads = threadsUsedInReverseCreationOrder(550);
+    const appServer = createFakeCodexAppServer({
+      "thread/list": cappedThreadListHandler(threads),
+    });
+    const provider = createProviderWithFakeAppServer(appServer);
+
+    const sessions = await provider.listImportableSessions({ limit: 500, scanLimit: 700 });
+
+    expect(sessions.map((session) => session.providerHandleId)).toEqual(
+      threads.slice(0, 500).map((thread) => thread.id),
+    );
+    appServer.assertNoErrors();
+  });
+
+  test("stops scanning when Codex hands back a cursor it already served", async () => {
+    const appServer = createFakeCodexAppServer({
+      "thread/list": (input) => {
+        const { cursor } = (input ?? {}) as { cursor?: string };
+        return cursor
+          ? { data: [], nextCursor: cursor }
+          : { data: [{ id: "thread-1", cwd: "/workspace/project-a" }], nextCursor: "stuck" };
+      },
+    });
+    const provider = createProviderWithFakeAppServer(appServer);
+
+    const sessions = await provider.listImportableSessions({ limit: 500, scanLimit: 500 });
+
+    expect(sessions.map((session) => session.providerHandleId)).toEqual(["thread-1"]);
+    appServer.assertNoErrors();
+  });
+
   test("listImportableSessions uses thread list metadata without hydrating thread history", async () => {
     const allThreads = [
       {
@@ -6071,7 +6165,10 @@ describe("Codex importable sessions", () => {
           capabilities: { experimentalApi: true, mcpServerOpenaiFormElicitation: true },
         },
       },
-      { method: "thread/list", params: { limit: 50, cwd: "/workspace/project-a" } },
+      {
+        method: "thread/list",
+        params: { limit: 50, sortKey: "updated_at", cwd: "/workspace/project-a" },
+      },
     ]);
   });
 });

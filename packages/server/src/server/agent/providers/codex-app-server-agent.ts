@@ -914,6 +914,48 @@ const CodexModelListResponseSchema = z.object({
     .optional(),
 });
 
+/**
+ * Read the newest `window.limit` threads Codex knows about.
+ *
+ * Codex caps every `thread/list` response at 100 rows whatever limit it is
+ * given (codex-cli 0.153 and 0.155), so one request only ever sees the newest
+ * page and hands back a cursor for the rest. Follow that cursor until the
+ * caller's window is full or Codex runs out of threads.
+ */
+async function readCodexThreadWindow(
+  client: Pick<CodexAppServerClientLike, "request">,
+  logger: Logger,
+  window: { limit: number; cwd?: string },
+): Promise<Array<Record<string, unknown>>> {
+  const threads: Array<Record<string, unknown>> = [];
+  let cursor: string | undefined;
+  while (threads.length < window.limit) {
+    const response = toObjectRecord(
+      await client.request("thread/list", {
+        limit: window.limit - threads.length,
+        // Rank the window by last use. Codex pages by creation time by default,
+        // which drops an old conversation that is still being worked in.
+        // Older Codex builds ignore the unknown key and keep that order.
+        sortKey: "updated_at",
+        ...(window.cwd ? { cwd: window.cwd } : {}),
+        ...(cursor ? { cursor } : {}),
+      }),
+    );
+    threads.push(...(Array.isArray(response?.data) ? response.data.filter(isRecord) : []));
+    const nextCursor = typeof response?.nextCursor === "string" ? response.nextCursor : undefined;
+    if (!nextCursor) break;
+    if (nextCursor === cursor) {
+      logger.warn(
+        { cursor: nextCursor },
+        "codex thread/list repeated its page cursor, stopping the session scan",
+      );
+      break;
+    }
+    cursor = nextCursor;
+  }
+  return threads;
+}
+
 function filterCodexThreadsByCwd(
   threads: Array<Record<string, unknown>>,
   cwd: string | undefined,
@@ -7143,13 +7185,10 @@ export class CodexAppServerAgentClient implements AgentClient {
       // filtering since most threads will be from other cwds, then keep the
       // local realpath-aware filter for symlink-equivalent workspace paths.
       const listLimit = options?.cwd ? Math.max(scanLimit, 50) : scanLimit;
-      const response = toObjectRecord(
-        await client.request("thread/list", {
-          limit: listLimit,
-          ...(options?.cwd ? { cwd: options.cwd } : {}),
-        }),
-      );
-      const allThreads = Array.isArray(response?.data) ? response.data.filter(isRecord) : [];
+      const allThreads = await readCodexThreadWindow(client, this.logger, {
+        limit: listLimit,
+        cwd: options?.cwd,
+      });
       const threads = filterCodexThreadsByCwd(allThreads, options?.cwd);
       return threads.slice(0, limit).map((thread) => {
         const threadId = typeof thread.id === "string" ? thread.id : "";
