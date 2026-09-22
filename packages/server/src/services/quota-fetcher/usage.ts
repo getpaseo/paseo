@@ -144,7 +144,7 @@ export function createPluginUsageFetcher(
         const result = await Promise.race([provider.fetchUsage(), timeoutPromise]).finally(() => {
           if (timer) clearTimeout(timer);
         });
-        return normalizePluginUsage(provider, result);
+        return normalizePluginUsage({ provider, snapshot: result });
       } catch (error) {
         logger.debug({ err: error, providerId: provider.id }, "Plugin provider usage fetch failed");
         return unavailableUsage({
@@ -157,10 +157,13 @@ export function createPluginUsageFetcher(
   };
 }
 
-export function normalizePluginUsage(
-  provider: { id: string; label: string },
-  snapshot: ProviderQuotaSnapshot,
-): ProviderUsage {
+export interface NormalizePluginUsageOptions {
+  provider: { id: string; label: string };
+  snapshot: ProviderQuotaSnapshot;
+}
+
+export function normalizePluginUsage(options: NormalizePluginUsageOptions): ProviderUsage {
+  const { provider, snapshot } = options;
   return {
     providerId: provider.id,
     displayName: snapshot.displayName || provider.label,
