@@ -223,15 +223,18 @@ export class WorkspaceReconciliationService {
 
     const activeProjects = allProjects.filter((p) => !p.archivedAt);
     const activeWorkspaces = allWorkspaces.filter((w) => !w.archivedAt);
+    const workspaceDirectoryStates = activeWorkspaces.map((workspace) => ({
+      workspace,
+      state: this.inspectDirectory(workspace.cwd),
+    }));
+    // Project roots are read after the workspace directories, so a volume that
+    // goes away mid-pass leaves its project unreachable rather than its workspaces
+    // alone. The skew can only withhold an archive, never produce one.
     const reachableProjectIds = new Set(
       activeProjects
         .filter((project) => this.inspectDirectory(project.rootPath) === "directory")
         .map((project) => project.projectId),
     );
-    const workspaceDirectoryStates = activeWorkspaces.map((workspace) => ({
-      workspace,
-      state: this.inspectDirectory(workspace.cwd),
-    }));
 
     const workspacesByProject = new Map<string, PersistedWorkspaceRecord[]>();
     for (const { workspace, state } of workspaceDirectoryStates) {
