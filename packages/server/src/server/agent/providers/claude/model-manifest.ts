@@ -35,9 +35,19 @@ export const CLAUDE_ULTRACODE_THINKING_OPTION_ID = "ultracode";
 
 export const CLAUDE_MODEL_MANIFEST = [
   {
+    id: "claude-opus-5-5",
+    label: "Opus 5.5",
+    description: "Opus 5.5 · Latest release",
+    defaultPriority: 3,
+    minimumClaudeCodeVersion: "2.1.280",
+    contextWindowMaxTokens: 1_000_000,
+    effortLevels: CLAUDE_EFFORT_LEVELS.xhigh,
+    supportsFastMode: true,
+  },
+  {
     id: "claude-opus-5",
     label: "Opus 5",
-    description: "Opus 5 · Latest release",
+    description: "Opus 5 · Previous release",
     defaultPriority: 2,
     minimumClaudeCodeVersion: "2.1.219",
     contextWindowMaxTokens: 1_000_000,
