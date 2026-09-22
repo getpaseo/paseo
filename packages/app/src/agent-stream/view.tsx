@@ -144,6 +144,7 @@ function renderStreamItemWithTurnFooter(input: {
   strategy: TurnContentStrategy;
   supportsTimelineCursor: boolean;
   onForkAssistantTurn?: AssistantTurnForkHandler;
+  onPin?: (text: string) => void;
 }): ReactNode {
   if (!input.content) {
     return null;
@@ -158,6 +159,7 @@ function renderStreamItemWithTurnFooter(input: {
       startIndex={footerHost.startIndex}
       supportsTimelineCursor={input.supportsTimelineCursor}
       onForkAssistantTurn={input.onForkAssistantTurn}
+      onPin={input.onPin}
     />
   ) : null;
   const content = (
@@ -411,6 +413,14 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       setExpandedToolCallGroupIds(new Set());
     }, [agentId]);
 
+    const handlePin = useCallback(
+      (text: string) => {
+        if (!agentId || !client) return;
+        client.updateCompanionEntry({ agentId, action: "add_pin", text }).catch(() => {});
+      },
+      [agentId, client]
+    );
+
     const handleInlinePathPress = useStableEvent(
       (target: InlinePathTarget, disposition: OpenFileDisposition) => {
         if (!target.path) {
@@ -663,10 +673,11 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
             client={client}
             isFirstInGroup={layoutItem.isFirstInUserGroup}
             isLastInGroup={layoutItem.isLastInUserGroup}
+            onPin={handlePin}
           />
         );
       },
-      [context.capabilities, agentId, client, resolvedServerId],
+      [context.capabilities, agentId, client, resolvedServerId, handlePin],
     );
 
     const renderAssistantMessageItem = useCallback(
@@ -860,10 +871,12 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
           strategy: streamRenderStrategy,
           supportsTimelineCursor: supportsAgentForkContextCursor,
           onForkAssistantTurn: readOnly ? undefined : handleForkAssistantTurn,
+          onPin: handlePin,
         });
       },
       [
         handleForkAssistantTurn,
+        handlePin,
         readOnly,
         renderStreamItemContent,
         streamRenderStrategy,
@@ -895,10 +908,12 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
             strategy={streamRenderStrategy}
             supportsTimelineCursor={supportsAgentForkContextCursor}
             onForkAssistantTurn={readOnly ? undefined : handleForkAssistantTurn}
+            onPin={handlePin}
           />
         ) : null,
       [
         handleForkAssistantTurn,
+        handlePin,
         readOnly,
         showRunningTurnFooter,
         baseRenderModel.turnTiming.runningStartedAt,

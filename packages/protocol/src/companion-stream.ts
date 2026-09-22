@@ -11,7 +11,12 @@ export const CompanionEntrySchema = z.discriminatedUnion("kind", [
   z.object({
     ...common,
     kind: z.literal("question"),
-    status: z.enum(["open", "reply_sent"]),
+    status: z.enum(["open", "reviewed", "done", "reply_sent"]),
+  }),
+  z.object({
+    ...common,
+    kind: z.literal("feature_request"),
+    status: z.enum(["open", "reviewed", "done"]),
   }),
   z.object({
     ...common,
@@ -25,6 +30,11 @@ export const CompanionEntrySchema = z.discriminatedUnion("kind", [
     kind: z.literal("outcome"),
     status: z.enum(["completed", "failed", "canceled"]),
   }),
+  z.object({
+    ...common,
+    kind: z.literal("pin"),
+    sourceId: z.string().optional(),
+  }),
 ]);
 
 export type CompanionEntry = z.infer<typeof CompanionEntrySchema>;
@@ -32,6 +42,7 @@ export type CompanionEntry = z.infer<typeof CompanionEntrySchema>;
 export function isCompanionEntryPending(entry: CompanionEntry): boolean {
   return (
     (entry.kind === "question" && entry.status === "open") ||
+    (entry.kind === "feature_request" && entry.status === "open") ||
     (entry.kind === "permission" && entry.status === "pending")
   );
 }

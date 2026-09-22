@@ -2444,6 +2444,28 @@ export class DaemonClient {
     }
   }
 
+  async updateCompanionEntry(input: {
+    agentId: string;
+    entryId?: string;
+    action: "update_status" | "add_pin" | "remove_pin";
+    status?: "open" | "reviewed" | "done";
+    text?: string;
+    sourceId?: string;
+  }): Promise<void> {
+    const requestId = this.createRequestId();
+    const message = SessionInboundMessageSchema.parse({
+      type: "update_companion_entry_request",
+      agentId: input.agentId,
+      entryId: input.entryId,
+      action: input.action,
+      status: input.status,
+      text: input.text,
+      sourceId: input.sourceId,
+      requestId,
+    });
+    this.send(message);
+  }
+
   async renameProject(
     projectId: string,
     customName: string | null,

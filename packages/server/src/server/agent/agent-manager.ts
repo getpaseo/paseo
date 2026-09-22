@@ -438,6 +438,7 @@ interface WriteLabelsResult {
 interface AgentMetadataPatch {
   title?: string;
   labels?: AgentLabelPatch;
+  companionEntries?: CompanionEntry[];
 }
 
 const SYSTEM_ERROR_PREFIX = "[System Error]";
@@ -1767,6 +1768,7 @@ export class AgentManager {
       ...record,
       ...(patch.title ? { title: patch.title } : {}),
       ...(patch.labels ? { labels: applyLabelPatch(record.labels, patch.labels) } : {}),
+      ...(patch.companionEntries ? { companionEntries: patch.companionEntries } : {}),
       updatedAt: this.nextStoredUpdatedAt(record),
     };
     await registry.upsert(nextRecord);
@@ -1926,6 +1928,49 @@ export class AgentManager {
     }
 
     await this.writeStoredMetadata(agentId, updates);
+  }
+
+  async updateCompanionEntry(input: {
+    agentId: string;
+    entryId?: string;
+    action: "update_status" | "add_pin" | "remove_pin";
+    status?: "open" | "reviewed" | "done";
+    text?: string;
+    sourceId?: string;
+  }): Promise<void> {
+    const liveAgent = this.getAgent(input.agentId);
+    let entries = liveAgent?.companionEntries;
+    if (!liveAgent) {
+      if (!this.registry) return;
+      const stored = await this.registry.get(input.agentId);
+      if (!stored) return;
+      entries = restoreCompanionEntries({ companionEntries: stored.companionEntries });
+    } else {
+      entries = entries ?? [];
+    }
+
+    if (!entries) return;
+    let next = [...entries];
+
+    if (input.action === "update_status" && input.entryId && input.status) {
+      next = next.map((e) =>
+        e.id === input.entryId && (e.kind === "question" || e.kind === "feature_request")
+          ? { ...e, status: input.status as any }
+          : e
+      );
+    } else if (input.action === "add_pin") {
+      const pinId = `pin:${Date.now()}:${Math.random().toString(36).slice(2)}`;
+      next.push({ id: pinId, kind: "pin", timestamp: new Date().toISOString(), text: input.text ?? "", truncated: false, sourceId: input.sourceId });
+    } else if (input.action === "remove_pin" && input.entryId) {
+      next = next.filter((e) => !(e.id === input.entryId && e.kind === "pin"));
+    }
+
+    if (liveAgent) {
+      liveAgent.companionEntries = next;
+      this.emitState(liveAgent, { persist: true });
+    } else {
+      await this.writeStoredMetadata(input.agentId, { companionEntries: next });
+    }
   }
 
   async runAgent(

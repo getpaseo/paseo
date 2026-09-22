@@ -113,6 +113,7 @@ import { AttachmentLightbox } from "@/components/attachment-lightbox";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { isWeb, isNative } from "@/constants/platform";
 import type { AgentCapabilityFlags } from "@getpaseo/protocol/agent-types";
+import { Pin } from "lucide-react-native";
 import { RewindMenu, type RewindMode } from "@/components/rewind/rewind-menu";
 import { useRewindAgentMutation } from "@/components/rewind/use-rewind-agent-mutation";
 import { AssistantForkMenu, type AssistantForkTarget } from "@/components/assistant-fork-menu";
@@ -128,6 +129,7 @@ interface UserMessageProps {
   images?: UserMessageImageAttachment[];
   attachments?: AgentAttachment[];
   timestamp: number;
+  onPin?: (text: string) => void;
   capabilities?: AgentCapabilityFlags;
   client?: DaemonClient | null;
   isFirstInGroup?: boolean;
@@ -425,6 +427,7 @@ export const UserMessage = memo(function UserMessage({
   images = [],
   attachments = [],
   timestamp,
+  onPin,
   capabilities,
   client,
   isFirstInGroup = true,
@@ -547,6 +550,12 @@ export const UserMessage = memo(function UserMessage({
                 onRewind={handleRewind}
               />
             ) : null}
+            {onPin ? (
+              <TurnPinButton
+                onPin={() => onPin(message)}
+                containerStyle={userMessageStylesheet.copyButton}
+              />
+            ) : null}
             <TurnCopyButton
               getContent={getMessageContent}
               containerStyle={userMessageStylesheet.copyButton}
@@ -565,6 +574,7 @@ interface AssistantTurnFooterProps {
   completedAt?: Date;
   durationMs?: number;
   onFork?: (target: AssistantForkTarget) => Promise<void> | void;
+  onPin?: (text: string) => void;
 }
 
 const assistantTurnFooterStylesheet = StyleSheet.create((theme) => ({
@@ -610,6 +620,7 @@ export const AssistantTurnFooter = memo(function AssistantTurnFooter({
   completedAt,
   durationMs,
   onFork,
+  onPin,
 }: AssistantTurnFooterProps) {
   const [hovered, setHovered] = useState(false);
   const [pressedReveal, setPressedReveal] = useState(false);
@@ -659,6 +670,12 @@ export const AssistantTurnFooter = memo(function AssistantTurnFooter({
 
   return (
     <View style={assistantTurnFooterStylesheet.container}>
+      {onPin ? (
+        <TurnPinButton
+          onPin={() => onPin(getContent())}
+          containerStyle={assistantTurnFooterStylesheet.copyButton}
+        />
+      ) : null}
       <TurnCopyButton
         getContent={getContent}
         containerStyle={assistantTurnFooterStylesheet.copyButton}
@@ -1121,6 +1138,36 @@ const turnCopyButtonStylesheet = StyleSheet.create((theme) => ({
     color: theme.colors.foreground,
   },
 }));
+
+interface TurnPinButtonProps {
+  onPin: () => void;
+  containerStyle?: StyleProp<ViewStyle>;
+}
+
+export const TurnPinButton = memo(function TurnPinButton({
+  onPin,
+  containerStyle,
+}: TurnPinButtonProps) {
+  const pressableStyle = useCallback(
+    ({ pressed, hovered }: PressableStateCallbackType & { hovered?: boolean }) => [
+      containerStyle,
+      hovered && userMessageStylesheet.copyButtonHovered,
+      pressed && userMessageStylesheet.copyButtonPressed,
+    ],
+    [containerStyle],
+  );
+
+  return (
+    <Pressable
+      accessibilityRole="button"
+      style={pressableStyle}
+      onPress={onPin}
+      accessibilityLabel="Pin to stream"
+    >
+      <ThemedIcon icon={Pin} size={14} uniProps={iconUniProps} />
+    </Pressable>
+  );
+});
 
 interface TurnCopyButtonProps {
   getContent: () => string;

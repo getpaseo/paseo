@@ -230,3 +230,25 @@ async function archiveStoredAgent(
   const archivedAt = new Date().toISOString();
   return dependencies.agentManager.archiveSnapshot(agentId, archivedAt);
 }
+
+export async function updateCompanionEntryCommand(
+  dependencies: Pick<AgentLifecycleCommandDependencies, "agentManager">,
+  input: {
+    agentId: string;
+    entryId?: string;
+    action: "update_status" | "add_pin" | "remove_pin";
+    status?: "open" | "reviewed" | "done";
+    text?: string;
+    sourceId?: string;
+  },
+): Promise<{ accepted: boolean; error?: string }> {
+  try {
+    await dependencies.agentManager.updateCompanionEntry(input);
+    return { accepted: true };
+  } catch (error) {
+    return {
+      accepted: false,
+      error: error instanceof Error ? error.message : "Failed to update companion entry",
+    };
+  }
+}
