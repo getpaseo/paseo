@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import type { StateStorage } from "zustand/middleware";
 import {
   createSidebarViewStorage,
@@ -7,14 +7,6 @@ import {
   SIDEBAR_UNLABELLED_LABEL_KEY,
   useSidebarViewStore,
 } from "./sidebar-view-store";
-
-vi.mock("@react-native-async-storage/async-storage", () => ({
-  default: {
-    getItem: vi.fn().mockResolvedValue(null),
-    setItem: vi.fn().mockResolvedValue(undefined),
-    removeItem: vi.fn().mockResolvedValue(undefined),
-  },
-}));
 
 interface MemoryStorage extends StateStorage<Promise<void>> {
   reads: string[];
