@@ -2885,6 +2885,10 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     if (this.closed) {
       return;
     }
+    this.closed = true;
+    this.connection = null;
+    this.child = null;
+    this.transportAcquisition = null;
     if (this.activeForegroundTurnId) {
       this.synthesizeCanceledToolCalls();
       this.finishTurn({
@@ -2893,6 +2897,16 @@ export class ACPAgentSession implements AgentSession, ACPClient {
         error: `ACP agent exited unexpectedly (${code ?? "null"}${signal ? `, ${signal}` : ""})`,
         diagnostic: diagnostic || undefined,
         turnId: this.activeForegroundTurnId,
+      });
+    } else {
+      this.pushEvent({
+        type: "timeline",
+        provider: this.provider,
+        item: {
+          type: "notification",
+          level: "error",
+          message: `ACP agent process exited unexpectedly (${code ?? "null"}${signal ? `, ${signal}` : ""})`,
+        },
       });
     }
   }

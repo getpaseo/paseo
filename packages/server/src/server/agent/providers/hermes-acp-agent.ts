@@ -15,13 +15,23 @@ export interface HermesACPAgentClientOptions {
 
 const multiplexManagers = new Map<string, ACPMultiplexConnectionManager>();
 
+function buildManagerKey(command: string[], env?: Record<string, string>): string {
+  if (!env || Object.keys(env).length === 0) {
+    return command.join(" ");
+  }
+  const envPairs = Object.entries(env)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([k, v]) => `${k}=${v}`)
+    .join(";");
+  return `${command.join(" ")}::${envPairs}`;
+}
+
 export function getHermesMultiplexManager(
   logger: Logger,
   command: [string, ...string[]],
   env?: Record<string, string>,
 ): ACPMultiplexConnectionManager {
-  const profileKey = env?.HERMES_PROFILE || env?.HERMES_HOME || "default";
-  const managerKey = `${command.join(" ")}::${profileKey}`;
+  const managerKey = buildManagerKey(command, env);
   let manager = multiplexManagers.get(managerKey);
   if (!manager) {
     manager = new ACPMultiplexConnectionManager({
@@ -63,7 +73,13 @@ export class HermesACPAgentClient extends GenericACPAgentClient {
     super({
       ...options,
       providerParams,
-      transportAcquirer: (opts) => manager.acquire(opts),
+      transportAcquirer: (opts) => {
+        const effectiveEnv = opts.launchEnv ? { ...options.env, ...opts.launchEnv } : options.env;
+        const targetManager =
+          options.multiplexManager ??
+          getHermesMultiplexManager(options.logger, options.command, effectiveEnv);
+        return targetManager.acquire(opts);
+      },
     });
     this.multiplexManager = manager;
     this.providerParams = providerParams;

@@ -58,6 +58,7 @@ export class ACPMultiplexConnectionManager {
   private initializeResponse: InitializeResponse | null = null;
   private readonly activeSessions = new Map<string, ACPAgentSession>();
   private readonly terminalSessions = new Map<string, ACPAgentSession>();
+  clientDispatcher: ACPClient | null = null;
   private activeAcquisitions = 0;
   private startPromise: Promise<void> | null = null;
   private idleTimer: NodeJS.Timeout | null = null;
@@ -96,7 +97,7 @@ export class ACPMultiplexConnectionManager {
       clearTimeout(this.idleTimer);
       this.idleTimer = null;
     }
-    await this.ensureStarted(options?.cwd);
+    await this.ensureStarted(options?.cwd, options?.launchEnv);
     this.activeAcquisitions++;
 
     return {
@@ -126,19 +127,22 @@ export class ACPMultiplexConnectionManager {
     };
   }
 
-  private ensureStarted(cwd?: string): Promise<void> {
+  private ensureStarted(cwd?: string, requestEnv?: Record<string, string>): Promise<void> {
     if (this.connection && this.initializeResponse) {
       return Promise.resolve();
     }
     if (!this.startPromise) {
-      this.startPromise = this.startProcess(cwd).finally(() => {
+      this.startPromise = this.startProcess(cwd, requestEnv).finally(() => {
         this.startPromise = null;
       });
     }
     return this.startPromise;
   }
 
-  private async startProcess(spawnCwd?: string): Promise<void> {
+  private async startProcess(
+    spawnCwd?: string,
+    requestEnv?: Record<string, string>,
+  ): Promise<void> {
     const prefix = await resolveProviderLaunch({
       commandConfig: this.runtimeSettings?.command,
       defaultBinary: this.defaultCommand[0],
@@ -150,11 +154,14 @@ export class ACPMultiplexConnectionManager {
 
     const command = prefix.command;
     const args = [...prefix.args, ...this.defaultCommand.slice(1)];
+    const envOverlays = [this.launchEnv, requestEnv].filter(Boolean) as Array<
+      Record<string, string>
+    >;
     const child = spawnProcess(command, args, {
       cwd: spawnCwd ?? homedir(),
       ...createProviderEnvSpec({
         runtimeSettings: this.runtimeSettings,
-        overlays: [this.launchEnv],
+        overlays: envOverlays,
       }),
       stdio: ["pipe", "pipe", "pipe"],
     });
@@ -277,6 +284,7 @@ export class ACPMultiplexConnectionManager {
       },
     };
 
+    this.clientDispatcher = router;
     const connection = new ClientSideConnection(() => router, stream);
     this.child = child;
     this.connection = connection;
@@ -330,6 +338,7 @@ export class ACPMultiplexConnectionManager {
     this.child = null;
     this.connection = null;
     this.initializeResponse = null;
+    this.clientDispatcher = null;
     this.activeSessions.clear();
     this.terminalSessions.clear();
     this.activeAcquisitions = 0;
