@@ -35,9 +35,19 @@ export const CLAUDE_ULTRACODE_THINKING_OPTION_ID = "ultracode";
 
 export const CLAUDE_MODEL_MANIFEST = [
   {
+    id: "claude-opus-5-5",
+    label: "Opus 5.5",
+    description: "Opus 5.5 · Latest release",
+    defaultPriority: 3,
+    minimumClaudeCodeVersion: "2.1.280",
+    contextWindowMaxTokens: 1_000_000,
+    effortLevels: CLAUDE_EFFORT_LEVELS.xhigh,
+    supportsFastMode: true,
+  },
+  {
     id: "claude-opus-5",
     label: "Opus 5",
-    description: "Opus 5 · Latest release",
+    description: "Opus 5 · Previous release",
     defaultPriority: 2,
     minimumClaudeCodeVersion: "2.1.219",
     contextWindowMaxTokens: 1_000_000,
@@ -350,7 +360,9 @@ export function normalizeClaudeManifestModelId(value: string | null | undefined)
 /**
  * Normalize a Claude Code runtime/config model string to a known manifest ID.
  * Runtime metadata may include provider prefixes such as Bedrock model IDs; feature
- * gates should use normalizeClaudeManifestModelId instead.
+ * gates should use normalizeClaudeManifestModelId instead. The prefixed matches are
+ * unanchored, so major-minor runs first: "claude-opus-5-5" would otherwise stop at the
+ * "claude-opus-5" entry.
  */
 export function normalizeClaudeRuntimeModelId(value: string | null | undefined): string | null {
   const normalizedManifestModelId = normalizeClaudeManifestModelId(value);
@@ -363,13 +375,14 @@ export function normalizeClaudeRuntimeModelId(value: string | null | undefined):
     return null;
   }
 
-  const singleSegmentMatch = trimmed.match(
-    /claude[-_ ](fable|opus|sonnet|haiku)[-_ ]+(\d+)(\[1m\])?/i,
+  const runtimeMatch = trimmed.match(
+    /claude[-_ ](fable|opus|sonnet|haiku)[-_ ]+(\d+)[-.](\d+)(\[1m\])?/i,
   );
-  if (singleSegmentMatch) {
-    const normalizedModelId = normalizeSingleSegmentClaudeModelId(
-      singleSegmentMatch[1],
-      singleSegmentMatch[2],
+  if (runtimeMatch) {
+    const normalizedModelId = normalizeMajorMinorClaudeModelId(
+      runtimeMatch[1],
+      runtimeMatch[2],
+      runtimeMatch[3],
       trimmed.toLowerCase().includes("[1m]"),
     );
     if (normalizedModelId) {
@@ -377,17 +390,16 @@ export function normalizeClaudeRuntimeModelId(value: string | null | undefined):
     }
   }
 
-  const runtimeMatch = trimmed.match(
-    /claude[-_ ](fable|opus|sonnet|haiku)[-_ ]+(\d+)[-.](\d+)(\[1m\])?/i,
+  const singleSegmentMatch = trimmed.match(
+    /claude[-_ ](fable|opus|sonnet|haiku)[-_ ]+(\d+)(\[1m\])?/i,
   );
-  if (!runtimeMatch) {
+  if (!singleSegmentMatch) {
     return null;
   }
 
-  return normalizeMajorMinorClaudeModelId(
-    runtimeMatch[1],
-    runtimeMatch[2],
-    runtimeMatch[3],
+  return normalizeSingleSegmentClaudeModelId(
+    singleSegmentMatch[1],
+    singleSegmentMatch[2],
     trimmed.toLowerCase().includes("[1m]"),
   );
 }

@@ -39,7 +39,7 @@ async function createClaudeConfigDirWithRawSettings(settings: string): Promise<s
   return configDir;
 }
 
-function createCatalogClient(claudeCodeVersion = "2.1.219"): ClaudeAgentClient {
+function createCatalogClient(claudeCodeVersion = "2.1.280"): ClaudeAgentClient {
   return new ClaudeAgentClient({
     logger: createTestLogger(),
     resolveVersion: async () => claudeCodeVersion,
@@ -50,6 +50,7 @@ describe("getClaudeModels", () => {
   it("returns all claude models", () => {
     const models = getClaudeModels();
     expect(models.map((m) => m.id)).toEqual([
+      "claude-opus-5-5",
       "claude-opus-5",
       "claude-fable-5-1",
       "claude-fable-5",
@@ -72,7 +73,7 @@ describe("getClaudeModels", () => {
     const models = getClaudeModels();
     const defaults = models.filter((m) => m.isDefault);
     expect(defaults).toHaveLength(1);
-    expect(defaults[0].id).toBe("claude-opus-5");
+    expect(defaults[0].id).toBe("claude-opus-5-5");
   });
 
   it("defines context window sizes in the catalog", () => {
@@ -82,6 +83,7 @@ describe("getClaudeModels", () => {
 
     expect(contextWindows).toEqual(
       new Map([
+        ["claude-opus-5-5", 1_000_000],
         ["claude-opus-5", 1_000_000],
         ["claude-fable-5-1", 1_000_000],
         ["claude-fable-5", 1_000_000],
@@ -109,6 +111,11 @@ describe("getClaudeModels", () => {
 
     expect(getClaudeModels("2.1.168").map((model) => model.id)).not.toContain("claude-fable-5");
     expect(getClaudeModels("2.1.169").map((model) => model.id)).toContain("claude-fable-5");
+
+    expect(getClaudeModels("2.1.279").map((model) => model.id)).not.toContain("claude-opus-5-5");
+    expect(getClaudeModels("2.1.279").find((model) => model.isDefault)?.id).toBe("claude-opus-5");
+    expect(getClaudeModels("2.1.280").map((model) => model.id)).toContain("claude-opus-5-5");
+    expect(getClaudeModels("2.1.280").find((model) => model.isDefault)?.id).toBe("claude-opus-5-5");
   });
 
   it("derives thinking options from model effort capabilities", () => {
@@ -169,6 +176,8 @@ describe("getClaudeModels", () => {
   });
 
   it.each([
+    ["claude-opus-5-5", false, "high"],
+    ["claude-opus-5-5-20260401", false, "high"],
     ["claude-opus-5", true, "high"],
     ["claude-opus-5-20260724", true, "high"],
     ["claude-sonnet-5", true, "high"],
@@ -417,6 +426,19 @@ describe("normalizeClaudeRuntimeModelId", () => {
       "claude-opus-4-8",
     );
   });
+
+  it("does not collapse a prefixed minor release onto the major it extends", () => {
+    expect(normalizeClaudeRuntimeModelId("anthropic/claude-opus-5-5")).toBe("claude-opus-5-5");
+    expect(normalizeClaudeRuntimeModelId("us.anthropic.claude-opus-5-5-20260401-v1:0")).toBe(
+      "claude-opus-5-5",
+    );
+    expect(normalizeClaudeRuntimeModelId("openrouter/anthropic/claude-fable-5-1")).toBe(
+      "claude-fable-5-1",
+    );
+    expect(normalizeClaudeRuntimeModelId("us.anthropic.claude-opus-5-20260724-v1:0")).toBe(
+      "claude-opus-5",
+    );
+  });
 });
 
 describe("parseClaudeCodeVersion", () => {
@@ -438,7 +460,7 @@ describe("findClaudeModel", () => {
 describe("Claude Opus 5 catalog", () => {
   it("offers a single Opus 5 entry with a 1M context window", () => {
     const opus5Models = getClaudeModels()
-      .filter((model) => model.id.startsWith("claude-opus-5"))
+      .filter((model) => /^claude-opus-5(\[1m\])?$/.test(model.id))
       .map(({ id, label, contextWindowMaxTokens }) => ({ id, label, contextWindowMaxTokens }));
 
     expect(opus5Models).toEqual([
@@ -515,6 +537,38 @@ describe("Claude Fable 5.1 catalog", () => {
   });
 });
 
+describe("Claude Opus 5.5 catalog", () => {
+  it("offers one Opus 5.5 entry with a 1M context window", () => {
+    const opus55Models = getClaudeModels()
+      .filter((model) => model.id.startsWith("claude-opus-5-5"))
+      .map(({ id, label, contextWindowMaxTokens }) => ({ id, label, contextWindowMaxTokens }));
+
+    expect(opus55Models).toEqual([
+      { id: "claude-opus-5-5", label: "Opus 5.5", contextWindowMaxTokens: 1_000_000 },
+    ]);
+  });
+
+  it("offers every effort level except off, because Opus 5.5 cannot disable thinking", () => {
+    const opus55 = getClaudeModels().find((model) => model.id === "claude-opus-5-5");
+
+    expect(opus55?.thinkingOptions?.map((option) => option.id)).toEqual([
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max",
+      CLAUDE_ULTRACODE_THINKING_OPTION_ID,
+    ]);
+    expect(opus55?.defaultThinkingOptionId).toBe("high");
+  });
+
+  it("resolves suffixed and dated Opus 5.5 IDs to the catalog entry", () => {
+    expect(findClaudeModel("claude-opus-5-5[1m]")?.id).toBe("claude-opus-5-5");
+    expect(findClaudeModel("claude-opus-5-5-20260401")?.id).toBe("claude-opus-5-5");
+    expect(findClaudeModel("claude-opus-5-5-20260401[1m]")?.id).toBe("claude-opus-5-5");
+  });
+});
+
 describe("claudeManifestModelSupportsFastMode", () => {
   it("keeps fast mode strict to first-party manifest model IDs", () => {
     expect(normalizeClaudeManifestModelId("openrouter/anthropic/claude-opus-4-8")).toBeNull();
@@ -523,6 +577,7 @@ describe("claudeManifestModelSupportsFastMode", () => {
   });
 
   it("supports fast mode on Opus 5 but not on other Claude 5 models", () => {
+    expect(claudeManifestModelSupportsFastMode("claude-opus-5-5")).toBe(true);
     expect(claudeManifestModelSupportsFastMode("claude-opus-5")).toBe(true);
     expect(claudeManifestModelSupportsFastMode("claude-sonnet-5")).toBe(false);
     expect(claudeManifestModelSupportsFastMode("claude-fable-5")).toBe(false);
