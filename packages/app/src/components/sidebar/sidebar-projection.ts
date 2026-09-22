@@ -1,3 +1,4 @@
+import type { WorkspaceLabelDefinition } from "@getpaseo/protocol/workspace-labels";
 import { buildStatusGroups } from "@/hooks/sidebar-status-view-model";
 import {
   splitPinnedSidebarGroups,
@@ -18,7 +19,11 @@ import {
   type SidebarShortcutModel,
   type SidebarShortcutSection,
 } from "@/utils/sidebar-shortcuts";
-import { statusWorkspaceGroups, type SidebarWorkspaceGroup } from "./sidebar-labels";
+import {
+  labelWorkspaceGroups,
+  statusWorkspaceGroups,
+  type SidebarWorkspaceGroup,
+} from "./sidebar-labels";
 
 export interface SidebarProjection {
   pinnedGroups: PinnedSidebarGroups;
@@ -45,6 +50,10 @@ export interface SidebarProjectionInput {
   pinnedCollapsed: boolean;
   collapsedProjectKeys: ReadonlySet<string>;
   collapsedWorkspaceGroupKeys: ReadonlySet<string>;
+  /** The merged label catalog, in the order the Labels page lists it. Only label mode reads it. */
+  labelDefinitions: readonly WorkspaceLabelDefinition[];
+  /** What the leftover group is called, already translated: this module holds no strings. */
+  unlabelledLabel: string;
 }
 
 export function buildSidebarProjection(input: SidebarProjectionInput): SidebarProjection {
@@ -90,7 +99,9 @@ export function buildSidebarProjection(input: SidebarProjectionInput): SidebarPr
   };
 }
 
-/** Project mode keeps its project headers and groups nothing; status mode groups the rows. */
+/**
+ * Project mode keeps its project headers and groups nothing; status and label mode group the rows.
+ */
 function buildWorkspaceGroups(
   input: SidebarProjectionInput,
   unpinnedWorkspaces: SidebarWorkspaceEntry[],
@@ -102,5 +113,11 @@ function buildWorkspaceGroups(
       return statusWorkspaceGroups(
         buildStatusGroups(unpinnedWorkspaces, input.projectNamesByViewKey),
       );
+    case "label":
+      return labelWorkspaceGroups({
+        workspaces: unpinnedWorkspaces,
+        definitions: input.labelDefinitions,
+        unlabelledLabel: input.unlabelledLabel,
+      });
   }
 }

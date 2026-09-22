@@ -4,6 +4,7 @@ import type {
   SidebarWorkspaceEntry,
   SidebarWorkspacePlacement,
 } from "@/hooks/use-sidebar-workspaces-list";
+import type { SidebarGroupMode } from "@/stores/sidebar-view-store";
 import { buildSidebarProjection } from "./sidebar-projection";
 
 function makeWorkspace(
@@ -63,10 +64,7 @@ function makeProject(
   };
 }
 
-function projectionInput(options?: {
-  groupMode?: "project" | "status";
-  pinnedCollapsed?: boolean;
-}) {
+function projectionInput(options?: { groupMode?: SidebarGroupMode; pinnedCollapsed?: boolean }) {
   const pinned = makeWorkspace("pinned", "running");
   const unpinned = makeWorkspace("unpinned", "needs_input");
   return {
@@ -82,6 +80,11 @@ function projectionInput(options?: {
     ]),
     projectNamesByViewKey: new Map([["project", "Project"]]),
     groupMode: options?.groupMode ?? ("project" as const),
+    labelDefinitions: [
+      { name: "Urgent", color: "red" as const },
+      { name: "Backend", color: "teal" as const },
+    ],
+    unlabelledLabel: "Unlabelled",
     pinnedCollapsed: options?.pinnedCollapsed ?? false,
     collapsedProjectKeys: new Set<string>(),
     collapsedWorkspaceGroupKeys: new Set<string>(),
@@ -92,7 +95,7 @@ function projectionInput(options?: {
  * Two projects, one workspace each, both labelled — so every grouping mode puts rows from more
  * than one project on screen, and a mode that asked for fewer icons than it renders would show it.
  */
-function twoProjectInput(groupMode: "project" | "status") {
+function twoProjectInput(groupMode: SidebarGroupMode) {
   const first = makeWorkspace("first", "running", ["Urgent"], "project");
   const second = makeWorkspace("second", "needs_input", ["Backend"], "other-project");
   return {
@@ -113,7 +116,7 @@ function twoProjectInput(groupMode: "project" | "status") {
 describe("buildSidebarProjection", () => {
   // The rule that outlived the bug it was written for: a project icon is fetched per project, so
   // whatever a mode groups by, the rows it produces can only reference projects already covered.
-  for (const groupMode of ["project", "status"] as const) {
+  for (const groupMode of ["project", "status", "label"] as const) {
     it(`covers every row ${groupMode} grouping renders with a project icon target`, () => {
       const projection = buildSidebarProjection(twoProjectInput(groupMode));
       const covered = new Set(projection.projectIconTargets.map((target) => target.projectViewKey));

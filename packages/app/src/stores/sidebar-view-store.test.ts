@@ -127,6 +127,15 @@ describe("sidebar view store", () => {
     });
   });
 
+  it("keeps a persisted label grouping rather than rewriting it to project", () => {
+    expect(migrateSidebarViewState({ groupMode: "label" })).toEqual({
+      groupMode: "label",
+      hostFilters: [],
+      projectFilters: [],
+      labelFilter: { labels: [] },
+    });
+  });
+
   it("clears only the label facet", () => {
     useSidebarViewStore.setState({
       groupMode: "status",

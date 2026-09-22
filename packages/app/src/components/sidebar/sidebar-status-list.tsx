@@ -38,7 +38,9 @@ import {
   CircleCheck,
   CircleDot,
   CircleX,
+  Tag,
 } from "lucide-react-native";
+import { WorkspaceLabelDot } from "@/workspace-labels/swatch";
 import { useToast } from "@/contexts/toast-context";
 import { WorkspaceRenameModal } from "@/components/workspace-rename-modal";
 import { useWorkspaceClipboardActions } from "@/hooks/use-workspace-clipboard-actions";
@@ -106,6 +108,7 @@ const ThemedCircleAlert = withUnistyles(CircleAlert);
 const ThemedCircleCheck = withUnistyles(CircleCheck);
 const ThemedCircleDot = withUnistyles(CircleDot);
 const ThemedCircleX = withUnistyles(CircleX);
+const ThemedTag = withUnistyles(Tag);
 const EMPTY_SHORTCUT_INDEX = new Map<string, number>();
 
 function statusWorkspaceKeyExtractor(workspace: SidebarWorkspaceEntry): string {
@@ -466,7 +469,7 @@ function StatusGroupLeadingVisual({
   showChevron: boolean;
 }) {
   if (!showChevron) {
-    return <StatusGroupIcon bucket={leading.bucket} />;
+    return <GroupLeadingIcon leading={leading} />;
   }
   if (collapsed) {
     return <ThemedChevronRight size={14} uniProps={foregroundMutedColorMapping} />;
@@ -487,6 +490,22 @@ function StatusGroupIcon({ bucket }: { bucket: StatusBucket }) {
     case "done":
       return <ThemedCircleCheck size={14} uniProps={foregroundMutedColorMapping} />;
   }
+}
+
+/**
+ * The mark a group is known by: a status glyph, or the label's own color.
+ *
+ * A label the merged catalog cannot colour falls back to the tag outline rather than to a dot in
+ * some default colour, which would read as a colour the manager chose.
+ */
+function GroupLeadingIcon({ leading }: { leading: SidebarWorkspaceGroup["leading"] }) {
+  if (leading.kind === "label") {
+    if (leading.color === null) {
+      return <ThemedTag size={14} uniProps={foregroundMutedColorMapping} />;
+    }
+    return <WorkspaceLabelDot color={leading.color} />;
+  }
+  return <StatusGroupIcon bucket={leading.bucket} />;
 }
 
 const StatusWorkspaceRow = memo(function StatusWorkspaceRow({

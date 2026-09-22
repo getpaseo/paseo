@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useEffect, useMemo, type ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 import {
   useSidebarWorkspacesList,
   type SidebarProjectEntry,
@@ -54,12 +55,13 @@ export function SidebarModelProvider({
   active?: boolean;
   children: ReactNode;
 }) {
+  const { t } = useTranslation();
   const list = useSidebarWorkspacesList({ enabled: active });
   const groupMode = useSidebarViewStore((state) => state.groupMode);
   const labelFilter = useSidebarViewStore((state) => state.labelFilter);
   const projectFilters = useSidebarViewStore((state) => state.projectFilters);
   const reconcileLabelFilter = useSidebarViewStore((state) => state.reconcileLabelFilter);
-  const { hosts: labelHosts } = useWorkspaceLabelProjection();
+  const { hosts: labelHosts, labels: labelDefinitions } = useWorkspaceLabelProjection();
   const collapsedProjectKeys = useSidebarCollapsedSectionsStore(
     (state) => state.collapsedProjectKeys,
   );
@@ -139,6 +141,7 @@ export function SidebarModelProvider({
     visibleWorkspaceKeys,
   ]);
   const pinnedKeys = usePinnedSidebarKeys(filteredProjects);
+  const unlabelledLabel = t("workspaceLabels.unlabelled");
   const projectionInput = useMemo(
     () => ({
       projects: filteredProjects,
@@ -150,16 +153,20 @@ export function SidebarModelProvider({
       pinnedCollapsed,
       collapsedProjectKeys,
       collapsedWorkspaceGroupKeys,
+      labelDefinitions,
+      unlabelledLabel,
     }),
     [
       collapsedProjectKeys,
       collapsedWorkspaceGroupKeys,
       groupMode,
+      labelDefinitions,
       list.projectNamesByViewKey,
       filteredProjects,
       pinnedCollapsed,
       pinnedKeys,
       pinnedWorkspaceOrder,
+      unlabelledLabel,
       filteredWorkspaceEntriesByKey,
     ],
   );
