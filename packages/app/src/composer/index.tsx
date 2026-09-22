@@ -286,6 +286,7 @@ function renderContextWindowMeter(
   showPercentage: boolean,
   serverId: string,
   provider: string | null,
+  model: string | null,
   pending: boolean,
   glyphSize: number,
 ): ReactElement | null {
@@ -301,6 +302,7 @@ function renderContextWindowMeter(
       showPercentage={showPercentage}
       serverId={serverId}
       provider={provider}
+      model={model}
       pending={pending}
       glyphSize={glyphSize}
     />
@@ -2087,6 +2089,7 @@ function ComposerContentImpl({
         false,
         serverId,
         agentState.provider,
+        agentState.model,
         contextWindowPending,
         contextWindowMeterGlyphSize,
       ),
@@ -2096,6 +2099,7 @@ function ComposerContentImpl({
       agentState.totalCostUsd,
       serverId,
       agentState.provider,
+      agentState.model,
       contextWindowPending,
       contextWindowMeterGlyphSize,
     ],

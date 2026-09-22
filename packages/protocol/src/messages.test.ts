@@ -6,6 +6,7 @@ import {
   SessionInboundMessageSchema,
   SessionOutboundMessageSchema,
   WorkspaceProjectDescriptorPayloadSchema,
+  ProviderUsageWindowSchema,
 } from "./messages.js";
 
 function workspaceDescriptor(overrides: Record<string, unknown> = {}) {
@@ -170,6 +171,16 @@ describe("workspace descriptor message compatibility", () => {
 });
 
 describe("provider usage list message contract", () => {
+  test("preserves per-window counts and partial refill timestamps without requiring them", () => {
+    const legacy = { id: "session", label: "Session", usedPct: 10 };
+    expect(ProviderUsageWindowSchema.parse(legacy)).toEqual(legacy);
+    const rolling = {
+      ...legacy,
+      detail: "75 / 750 requests",
+      refillsAt: "2026-09-17T12:15:00Z",
+    };
+    expect(ProviderUsageWindowSchema.parse(rolling)).toEqual(rolling);
+  });
   test("accepts the usage list request as a namespaced correlated RPC", () => {
     const parsed = SessionInboundMessageSchema.parse({
       type: "provider.usage.list.request",

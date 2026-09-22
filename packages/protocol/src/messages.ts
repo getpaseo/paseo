@@ -6178,6 +6178,9 @@ export const ProviderUsageStatusSchema = z.enum(["available", "unavailable", "er
 export const ProviderUsageWindowSchema = z.object({
   id: z.string(),
   label: z.string(),
+  detail: z.string().optional(),
+  // Partial quota replenishment; distinct from a full window reset.
+  refillsAt: z.string().optional(),
   usedPct: z.number().nullable().optional(),
   remainingPct: z.number().nullable().optional(),
   resetsAt: z.string().nullable().optional(),

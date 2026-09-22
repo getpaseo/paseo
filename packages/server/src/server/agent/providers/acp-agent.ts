@@ -1685,6 +1685,12 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private initialCommandsWaitTimeoutMs: number;
   private readonly extensionCommandsParser?: ACPExtensionCommandsParser;
   private currentTurnUsage: AgentUsage | undefined;
+  // Context window and cumulative cost arrive on their own `usage_update`
+  // notification, separate from the per-prompt `PromptResponse.usage` token
+  // counts. Keep them here so every usage event carries a complete picture.
+  private contextWindowMaxTokens: number | undefined;
+  private contextWindowUsedTokens: number | undefined;
+  private sessionCostUsd: number | undefined;
   private activeForegroundTurnId: string | null = null;
   private fallbackAssistantMessageId: string | null = null;
   private closed = false;
@@ -2954,9 +2960,12 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       case "session_info_update":
         this.handleSessionInfoUpdate(update);
         return pendingUserEvents;
-      case "usage_update":
+      case "usage_update": {
         this.handleUsageUpdate(update);
-        return pendingUserEvents;
+        const usage = this.buildUsage();
+        if (!usage) return pendingUserEvents;
+        return [...pendingUserEvents, { type: "usage_updated", provider: this.provider, usage }];
+      }
       case "available_commands_update":
         this.cachedCommands = update.availableCommands.map((command) => ({
           name: command.name,
@@ -3117,7 +3126,38 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   }
 
   private handleUsageUpdate(update: UsageUpdate): void {
-    void update;
+    if (typeof update.size === "number" && Number.isFinite(update.size) && update.size > 0) {
+      this.contextWindowMaxTokens = update.size;
+    }
+    if (typeof update.used === "number" && Number.isFinite(update.used) && update.used >= 0) {
+      this.contextWindowUsedTokens = update.used;
+    }
+    const costAmount = update.cost?.amount;
+    if (
+      update.cost?.currency === "USD" &&
+      typeof costAmount === "number" &&
+      Number.isFinite(costAmount) &&
+      costAmount >= 0
+    ) {
+      this.sessionCostUsd = costAmount;
+    }
+  }
+
+  // Merges the token counts known for the current turn with the context window
+  // and cost reported by `usage_update`. Agent lastUsage is replaced wholesale by
+  // each usage event, so every event has to carry the full set of fields.
+  private buildUsage(): AgentUsage | undefined {
+    const usage: AgentUsage = { ...this.currentTurnUsage };
+    if (this.contextWindowMaxTokens !== undefined) {
+      usage.contextWindowMaxTokens = this.contextWindowMaxTokens;
+    }
+    if (this.contextWindowUsedTokens !== undefined) {
+      usage.contextWindowUsedTokens = this.contextWindowUsedTokens;
+    }
+    if (this.sessionCostUsd !== undefined) {
+      usage.totalCostUsd = this.sessionCostUsd;
+    }
+    return Object.keys(usage).length > 0 ? usage : undefined;
   }
 
   private handlePromptResponse(response: PromptResponse, turnId: string): void {
@@ -3141,7 +3181,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
         this.finishTurn({
           type: "turn_completed",
           provider: this.provider,
-          usage: this.currentTurnUsage,
+          usage: this.buildUsage(),
           turnId,
         });
         break;

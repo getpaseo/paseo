@@ -1,10 +1,32 @@
 import { expect, test } from "../support/fixtures";
 import { gotoAppShell, openSettings } from "../support/helpers/app";
-import { installProviderUsageFixture } from "../support/helpers/provider-usage";
+import {
+  captureProviderUsageCard,
+  expectRequestCountsAboveWeeklyWindow,
+  expectSyntheticUsageWindows,
+  expectSyntheticUsageWindowsAtCompactWidth,
+  installProviderUsageFixture,
+  installSyntheticUsageFixture,
+  openProviderUsageSettings,
+  providerUsageCard,
+} from "../support/helpers/provider-usage";
 import { getServerId } from "../support/helpers/server-id";
 import { openSettingsHostSection } from "../support/helpers/settings";
 
 test.describe("provider usage settings", () => {
+  test("keeps request counts with their window and distinguishes partial refills", async ({
+    page,
+  }, testInfo) => {
+    test.setTimeout(120_000);
+    await installSyntheticUsageFixture(page);
+    await openProviderUsageSettings(page);
+    await expectSyntheticUsageWindows(page);
+    await expectRequestCountsAboveWeeklyWindow(page);
+    await captureProviderUsageCard(page, testInfo, "synthetic-desktop");
+    await expectSyntheticUsageWindowsAtCompactWidth(page);
+    await captureProviderUsageCard(page, testInfo, "synthetic-compact");
+  });
+
   test("renders every provider returned by the daemon usage RPC", async ({ page }) => {
     test.setTimeout(120_000);
     const serverId = getServerId();
@@ -52,7 +74,7 @@ test.describe("provider usage settings", () => {
     await openSettingsHostSection(page, serverId, "usage");
     await usageFixture.waitForRequestCount(1);
 
-    const card = page.getByTestId("provider-usage-card");
+    const card = providerUsageCard(page);
     await expect(card).toBeVisible({ timeout: 10_000 });
     await expect(card.getByText("Claude", { exact: true })).toBeVisible();
     await expect(card.getByText("Codex", { exact: true })).toBeVisible();
@@ -142,7 +164,7 @@ test.describe("provider usage settings", () => {
     await openSettings(page);
     await openSettingsHostSection(page, serverId, "usage");
 
-    const card = page.getByTestId("provider-usage-card");
+    const card = providerUsageCard(page);
     await expect(card).toBeVisible({ timeout: 10_000 });
     await expect(card.getByText("Error", { exact: true })).toBeVisible();
     await expect(card.getByText("Claude auth expired", { exact: true })).toBeVisible();
