@@ -52,6 +52,30 @@ export interface ACPMultiplexConnectionManagerOptions {
   idleTimeoutMs?: number;
 }
 
+const SESSION_EPHEMERAL_ENV_PREFIXES = ["PASEO_AGENT_", "PASEO_SESSION_"];
+const SESSION_EPHEMERAL_ENV_KEYS = new Set([
+  "PASEO_AGENT_ID",
+  "PASEO_AGENT_CWD",
+  "PASEO_SESSION_ID",
+]);
+
+export function filterTransportEnv(
+  env?: Record<string, string>,
+): Record<string, string> | undefined {
+  if (!env) return undefined;
+  const filtered: Record<string, string> = {};
+  for (const [key, value] of Object.entries(env)) {
+    if (
+      SESSION_EPHEMERAL_ENV_KEYS.has(key) ||
+      SESSION_EPHEMERAL_ENV_PREFIXES.some((prefix) => key.startsWith(prefix))
+    ) {
+      continue;
+    }
+    filtered[key] = value;
+  }
+  return Object.keys(filtered).length > 0 ? filtered : undefined;
+}
+
 export class ACPMultiplexConnectionManager {
   private child: ChildProcessWithoutNullStreams | null = null;
   private connection: ClientSideConnection | null = null;
@@ -154,7 +178,8 @@ export class ACPMultiplexConnectionManager {
 
     const command = prefix.command;
     const args = [...prefix.args, ...this.defaultCommand.slice(1)];
-    const envOverlays = [this.launchEnv, requestEnv].filter(Boolean) as Array<
+    const filteredRequestEnv = filterTransportEnv(requestEnv);
+    const envOverlays = [this.launchEnv, filteredRequestEnv].filter(Boolean) as Array<
       Record<string, string>
     >;
     const child = spawnProcess(command, args, {
