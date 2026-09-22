@@ -11249,6 +11249,23 @@ test("commits startup notices once on create and after restored history", async 
   const workdir = mkdtempSync(join(tmpdir(), "agent-startup-notice-"));
   const notice: AgentTimelineItem = { type: "notification", level: "info", message: "Runtime v2" };
   const history: AgentTimelineItem = { type: "assistant_message", text: "Existing conversation" };
+  const toolOutput: AgentTimelineItem = {
+    type: "tool_call",
+    callId: "startup-output",
+    name: "shell",
+    status: "completed",
+    error: null,
+    detail: {
+      type: "shell",
+      command: "print output",
+      output: "x".repeat(1024 * 1024),
+      exitCode: 0,
+    },
+  };
+  const limitedToolOutput: AgentTimelineItem = {
+    ...toolOutput,
+    detail: { type: "shell", command: "print output", output: "x".repeat(64 * 1024), exitCode: 0 },
+  };
   class NotifyingSession extends TestAgentSession {
     readonly initialTimeline = [{ item: notice, timestamp: "2026-09-22T00:00:00.000Z" }];
     override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
@@ -11257,6 +11274,12 @@ test("commits startup notices once on create and after restored history", async 
         provider: "codex",
         item: history,
         timestamp: "2026-09-21T00:00:00.000Z",
+      };
+      yield {
+        type: "timeline",
+        provider: "codex",
+        item: toolOutput,
+        timestamp: "2026-09-21T01:00:00.000Z",
       };
       yield { type: "timeline", provider: "codex", ...this.initialTimeline[0] };
     }
@@ -11289,11 +11312,13 @@ test("commits startup notices once on create and after restored history", async 
     await manager.hydrateTimelineFromProvider(resumed.id);
     expect((await manager.getTimelineRows(resumed.id)).map((row) => row.item)).toEqual([
       history,
+      limitedToolOutput,
       notice,
     ]);
     await manager.hydrateTimelineFromProvider(resumed.id, { force: true });
     expect((await manager.getTimelineRows(resumed.id)).map((row) => row.item)).toEqual([
       history,
+      limitedToolOutput,
       notice,
     ]);
     await manager.flush();

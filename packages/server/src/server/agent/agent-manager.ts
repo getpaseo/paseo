@@ -3493,7 +3493,7 @@ export class AgentManager {
       const startupHistory: AgentStreamEvent[] = [];
       if (session.initialTimeline?.length && !managed.historyPrimed) {
         for await (const event of session.streamHistory()) {
-          startupHistory.push(event);
+          startupHistory.push(limitAgentStreamEventContent(event));
         }
       }
 
