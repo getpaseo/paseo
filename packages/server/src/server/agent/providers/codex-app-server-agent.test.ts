@@ -1435,7 +1435,7 @@ describe("Codex app-server provider", () => {
       purpose: "history",
     });
 
-    expect(threadRequests).toEqual(["thread/read"]);
+    expect(threadRequests).toEqual(["thread/read", "thread/read"]);
     await session.close();
     appServer.assertNoErrors();
   });
@@ -1474,6 +1474,7 @@ describe("Codex app-server provider", () => {
       "thread/resume",
       "thread/unarchive",
       "thread/resume",
+      "thread/read",
       "thread/read",
     ]);
     await session.close();
@@ -1685,6 +1686,8 @@ describe("Codex app-server provider", () => {
       "thread/read": () => ({
         thread: { id: "thread-1", historyMode: "paginated", turns: [] },
       }),
+      "thread/turns/list": () => ({ data: [], nextCursor: null }),
+      "thread/items/list": () => ({ data: [], nextCursor: null }),
       "thread/rollback": () => {
         throw new Error("paginated threads do not support thread/rollback");
       },
@@ -3907,6 +3910,9 @@ describe("Codex app-server provider", () => {
         if (method !== "thread/read") {
           return {};
         }
+        if (!(params as { includeTurns?: boolean }).includeTurns) {
+          return { thread: { historyMode: "legacy", turns: [] } };
+        }
         return {
           thread: {
             turns: [
@@ -3939,6 +3945,7 @@ describe("Codex app-server provider", () => {
     }
 
     expect(requests.map((request) => [request.method, request.params])).toEqual([
+      ["thread/read", { threadId: "test-thread", includeTurns: false }],
       ["thread/read", { threadId: "test-thread", includeTurns: true }],
     ]);
     expect(history).toEqual([
@@ -3959,6 +3966,146 @@ describe("Codex app-server provider", () => {
         item: {
           type: "compaction",
           status: "completed",
+        },
+      },
+    ]);
+  });
+
+  test("loads paginated Codex history without full thread hydration", async () => {
+    const session = createSession();
+    const requests: Array<{ method: string; params: unknown }> = [];
+    session.client = {
+      request: vi.fn(async (method: string, params: unknown) => {
+        requests.push({ method, params });
+        if (method === "thread/read") {
+          return { thread: { historyMode: "paginated", turns: [] } };
+        }
+        if (method === "thread/turns/list") {
+          const hasCursor = Object.hasOwn(params as object, "cursor");
+          return hasCursor
+            ? {
+                data: [
+                  {
+                    id: "turn-2",
+                    items: [],
+                    itemsView: "notLoaded",
+                    status: "completed",
+                    completedAt: 1_778_833_094,
+                  },
+                ],
+                nextCursor: null,
+              }
+            : {
+                data: [
+                  {
+                    id: "turn-1",
+                    items: [],
+                    itemsView: "notLoaded",
+                    status: "completed",
+                    startedAt: 1_778_832_941,
+                  },
+                ],
+                nextCursor: "",
+              };
+        }
+        if (method === "thread/items/list") {
+          const hasCursor = Object.hasOwn(params as object, "cursor");
+          return hasCursor
+            ? {
+                data: [
+                  {
+                    turnId: "turn-2",
+                    item: {
+                      type: "agentMessage",
+                      id: "assistant-history",
+                      text: "History loaded.",
+                    },
+                  },
+                ],
+                nextCursor: null,
+              }
+            : {
+                data: [
+                  {
+                    turnId: "turn-1",
+                    item: {
+                      type: "userMessage",
+                      id: "user-history",
+                      content: [{ type: "text", text: "Load every history page." }],
+                    },
+                  },
+                ],
+                nextCursor: "",
+              };
+        }
+        throw new Error(`Unexpected request: ${method}`);
+      }),
+    };
+
+    await asInternals(session).loadPersistedHistory(session.client);
+
+    const history: AgentStreamEvent[] = [];
+    for await (const event of session.streamHistory()) {
+      history.push(event);
+    }
+
+    expect(requests).toEqual([
+      {
+        method: "thread/read",
+        params: { threadId: "test-thread", includeTurns: false },
+      },
+      {
+        method: "thread/turns/list",
+        params: {
+          threadId: "test-thread",
+          limit: 256,
+          sortDirection: "asc",
+          itemsView: "notLoaded",
+        },
+      },
+      {
+        method: "thread/turns/list",
+        params: {
+          threadId: "test-thread",
+          limit: 256,
+          sortDirection: "asc",
+          itemsView: "notLoaded",
+          cursor: "",
+        },
+      },
+      {
+        method: "thread/items/list",
+        params: { threadId: "test-thread", limit: 64, sortDirection: "asc" },
+      },
+      {
+        method: "thread/items/list",
+        params: {
+          threadId: "test-thread",
+          limit: 64,
+          sortDirection: "asc",
+          cursor: "",
+        },
+      },
+    ]);
+    expect(history).toEqual([
+      {
+        type: "timeline",
+        provider: "codex",
+        timestamp: "2026-05-15T08:15:41.000Z",
+        item: {
+          type: "user_message",
+          text: "Load every history page.",
+          messageId: "user-history",
+        },
+      },
+      {
+        type: "timeline",
+        provider: "codex",
+        timestamp: "2026-05-15T08:18:14.000Z",
+        item: {
+          type: "assistant_message",
+          text: "History loaded.",
+          messageId: "assistant-history",
         },
       },
     ]);
@@ -4809,7 +4956,10 @@ describe("Codex app-server provider", () => {
     expect(session.currentThreadId).toBe("archived-thread-id");
     expect(requests).toEqual([
       { method: "thread/loaded/list", params: {} },
-      { method: "thread/resume", params: { threadId: "archived-thread-id" } },
+      {
+        method: "thread/resume",
+        params: { threadId: "archived-thread-id", excludeTurns: true },
+      },
     ]);
   });
 
