@@ -744,6 +744,47 @@ describe("Codex app-server provider", () => {
     });
   });
 
+  test("Default Permissions sends the user reviewer to thread/start", async () => {
+    const requests: Array<{ method: string; params: unknown }> = [];
+    const session = createSession({ modeId: "auto", thinkingOptionId: "medium" });
+    session.currentThreadId = null;
+    session.activeForegroundTurnId = null;
+    session.client = {
+      request: vi.fn(async (method: string, params: unknown) => {
+        requests.push({ method, params });
+        if (method === "thread/start") return { thread: { id: "default-thread" } };
+        if (method === "turn/start") return {};
+        throw new Error(`Unexpected request: ${method}`);
+      }),
+    };
+
+    await session.startTurn("create a default thread");
+
+    expect(requests.find((request) => request.method === "thread/start")?.params).toMatchObject({
+      approvalPolicy: "on-request",
+      sandbox: "workspace-write",
+      approvalsReviewer: "user",
+    });
+  });
+
+  test("unloaded Default Permissions resume resets the native reviewer", async () => {
+    const session = createSession({ modeId: "auto" });
+    session.activeForegroundTurnId = null;
+    const request = vi.fn(async (method: string) => {
+      if (method === "thread/loaded/list") return { data: [] };
+      if (method === "thread/resume") return { thread: { id: "test-thread" } };
+      throw new Error(`Unexpected request: ${method}`);
+    });
+    session.client = createStub<CodexClientLike>({ request });
+
+    await asInternals(session).ensureThreadLoaded();
+
+    expect(request.mock.calls).toEqual([
+      ["thread/loaded/list", {}],
+      ["thread/resume", { threadId: "test-thread", approvalsReviewer: "user" }],
+    ]);
+  });
+
   test("setMode and setThinkingOption return a next-turn notice while a turn is active", async () => {
     const session = createSession({ modeId: "auto", thinkingOptionId: "medium" });
 
@@ -815,6 +856,27 @@ describe("Codex app-server provider", () => {
       expect.objectContaining({
         approvalPolicy: "on-request",
         approvalsReviewer: "auto_review",
+      }),
+    );
+  });
+
+  test("loaded Default Permissions thread resets the reviewer on its next turn", async () => {
+    const session = createSession({ modeId: "auto" });
+    const request = vi.fn(async (method: string) => {
+      if (method === "thread/loaded/list") return { data: ["test-thread"] };
+      if (method === "turn/start") return {};
+      throw new Error(`Unexpected request: ${method}`);
+    });
+    session.activeForegroundTurnId = null;
+    session.client = createStub<CodexClientLike>({ request });
+
+    await session.startTurn("reset reviewer on the supported next-turn path");
+
+    expect(request.mock.calls.find(([method]) => method === "turn/start")?.[1]).toEqual(
+      expect.objectContaining({
+        approvalPolicy: "on-request",
+        sandboxPolicy: expect.objectContaining({ type: "workspaceWrite" }),
+        approvalsReviewer: "user",
       }),
     );
   });
@@ -4809,7 +4871,10 @@ describe("Codex app-server provider", () => {
     expect(session.currentThreadId).toBe("archived-thread-id");
     expect(requests).toEqual([
       { method: "thread/loaded/list", params: {} },
-      { method: "thread/resume", params: { threadId: "archived-thread-id" } },
+      {
+        method: "thread/resume",
+        params: { threadId: "archived-thread-id", approvalsReviewer: "user" },
+      },
     ]);
   });
 

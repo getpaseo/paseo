@@ -273,7 +273,7 @@ interface CodexAppServerAgentDeps {
 interface CodexModePreset {
   approvalPolicy: string;
   sandbox: string;
-  approvalsReviewer?: "auto_review";
+  approvalsReviewer?: "user" | "auto_review";
 }
 
 const MODE_PRESETS: Record<string, CodexModePreset> = {
@@ -284,6 +284,7 @@ const MODE_PRESETS: Record<string, CodexModePreset> = {
   auto: {
     approvalPolicy: "on-request",
     sandbox: "workspace-write",
+    approvalsReviewer: "user",
   },
   "auto-review": {
     approvalPolicy: "on-request",
@@ -3949,6 +3950,10 @@ export class CodexAppServerAgentSession implements AgentSession {
   private async ensureThreadLoaded(): Promise<void> {
     if (!this.client || !this.currentThreadId) return;
     const params: Record<string, unknown> = { threadId: this.currentThreadId };
+    if (this.hasWorkflowModeOverride) {
+      const preset = MODE_PRESETS[this.currentMode] ?? MODE_PRESETS[DEFAULT_CODEX_MODE_ID];
+      applyApprovalsReviewerParam(params, preset);
+    }
     const developerInstructions = composeSystemPromptParts(
       this.config.systemPrompt,
       this.config.daemonAppendSystemPrompt,
