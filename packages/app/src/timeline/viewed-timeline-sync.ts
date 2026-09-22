@@ -247,9 +247,6 @@ function finalizeProcessedTimeline(input: {
     clearAgentInitializingFlag(input.serverId, input.agentId);
   }
   if (input.synchronized) {
-    useCreateFlowStore
-      .getState()
-      .clearByAgent({ serverId: input.serverId, agentId: input.agentId });
     const session = useSessionStore.getState().sessions[input.serverId];
     const agent = session?.agents.get(input.agentId) ?? session?.agentDetails.get(input.agentId);
     if (agent && agent.turn.phase === "idle") input.drainQueuedAgentMessage(input.agentId);
@@ -317,6 +314,8 @@ export interface ViewedTimelineSyncPorts {
     request: ProjectedTimelineForwardFetchPlan,
   ): Promise<TimelinePageResult>;
   fetchLatestTail(agentId: string): Promise<TimelinePageResult>;
+  /** The chat is current: catch-up has nothing left to fetch and no page is parked. */
+  onTimelineCurrent(agentId: string): void;
   reportError(error: unknown): void;
   schedule(task: () => void, delayMs: number): () => void;
 }
@@ -346,7 +345,7 @@ export interface ViewedTimelineSync extends ViewedTimelineUiBridge {
 
 export type ViewedTimelineOwnerPorts = Omit<
   ViewedTimelineSyncPorts,
-  "prepare" | "replaceDemandedAgentIds"
+  "prepare" | "replaceDemandedAgentIds" | "onTimelineCurrent"
 >;
 
 export interface ViewedTimelineOwner extends ViewedTimelineSync {
@@ -376,6 +375,8 @@ export function createViewedTimelineOwner(input: {
     prepare: (agentId) => input.replica.prepare(agentId),
     readCursor: (agentId) => input.replica.readCursor(agentId) ?? input.ports.readCursor(agentId),
     replaceDemandedAgentIds: input.replaceDemandedAgentIds,
+    onTimelineCurrent: (agentId) =>
+      useCreateFlowStore.getState().clearByAgent({ serverId: input.serverId, agentId }),
   });
   const streamQueue = createSessionAgentStreamReducerQueue({
     serverId: input.serverId,
@@ -530,6 +531,7 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
     const wasPending = visibilityCatchUpPending.delete(agentId);
     const hadError = visibilityCatchUpErrors.delete(agentId);
     const wasRetrying = manualRetries.delete(agentId);
+    ports.onTimelineCurrent(agentId);
     if (wasPending || hadError || wasRetrying) notifyListeners();
   };
 
