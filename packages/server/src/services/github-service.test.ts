@@ -25,7 +25,7 @@ const EXPECTED_GITHUB_ERROR_BACKOFF_CAP_MS = 300_000;
 const CURRENT_PR_STATUS_BASE_FIELDS =
   "number,url,title,state,isDraft,baseRefName,headRefName,headRefOid,mergedAt,reviewDecision,mergeable,headRepositoryOwner";
 const CURRENT_PR_STATUS_FIELDS = `${CURRENT_PR_STATUS_BASE_FIELDS},statusCheckRollup`;
-const FORK_PR_QUERY = "state=all&per_page=3&head=forkOwner%3Afeature%2Ffork";
+const FORK_PR_QUERY = "state=all&per_page=100&head=forkOwner%3Afeature%2Ffork";
 
 interface RunnerCall {
   args: string[];
@@ -3378,6 +3378,96 @@ describe("ForgeService", () => {
       ["pr", "view", "41", "--repo", "parentOwner/parentRepo", "--json", CURRENT_PR_STATUS_FIELDS],
       ["pr", "view", "42", "--repo", "parentOwner/parentRepo", "--json", CURRENT_PR_STATUS_FIELDS],
     ]);
+  });
+
+  it("reads the fork PR carrying the checked-out commit past newer attempts on the branch", async () => {
+    const checkoutSha = "3333333333333333333333333333333333333333";
+    const viewed: number[] = [];
+    const runner: GitHubCommandRunner = async (args) => {
+      if (args[0] === "repo" && args[1] === "view") {
+        return {
+          stdout: JSON.stringify({
+            owner: { login: "forkOwner" },
+            name: "parentRepo",
+            parent: { owner: { login: "parentOwner" }, name: "parentRepo" },
+          }),
+          stderr: "",
+        };
+      }
+      if (args[0] === "api") {
+        // Newest first, and the checkout is sitting on the oldest attempt.
+        return {
+          stdout: JSON.stringify([
+            { number: 50, head: { sha: "5".repeat(40) } },
+            { number: 49, head: { sha: "4".repeat(40) } },
+            { number: 48, head: { sha: "8".repeat(40) } },
+            { number: 47, head: { sha: checkoutSha } },
+          ]),
+          stderr: "",
+        };
+      }
+      if (args[0] === "pr" && args[1] === "view" && /^\d+$/.test(args[2] ?? "")) {
+        const number = Number(args[2]);
+        viewed.push(number);
+        return {
+          stdout: currentPullRequestJson({
+            number,
+            url: `https://github.com/parentOwner/parentRepo/pull/${number}`,
+            state: "CLOSED",
+            headRefOid: number === 47 ? checkoutSha : `${number}`.repeat(20),
+            headRepositoryOwner: { login: "forkOwner" },
+          }),
+          stderr: "",
+        };
+      }
+      throw noPullRequestError(args);
+    };
+    const service = createGitHubService({
+      runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+      now: () => 100,
+    });
+
+    const status = await service.getCurrentPullRequestStatus({
+      cwd: "/repo",
+      headRef: "feature/fork",
+      headSha: checkoutSha,
+    });
+
+    expect(status).toMatchObject({
+      number: 47,
+      repoOwner: "parentOwner",
+      repoName: "parentRepo",
+    });
+    expect(viewed).toContain(47);
+    expect(viewed).toHaveLength(3);
+  });
+
+  it("propagates a failed fork PR lookup instead of reporting no pull request", async () => {
+    const rateLimitError = new GitHubCommandError({
+      args: ["api", "repos/parentOwner/parentRepo/pulls"],
+      cwd: "/repo",
+      exitCode: 1,
+      stderr: "API rate limit exceeded",
+    });
+    const runner = createScriptedRunner([
+      { error: noPullRequestError() },
+      JSON.stringify({
+        owner: { login: "forkOwner" },
+        name: "parentRepo",
+        parent: { owner: { login: "parentOwner" }, name: "parentRepo" },
+      }),
+      { error: rateLimitError },
+    ]);
+    const service = createGitHubService({
+      runner: runner.runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+      now: () => 100,
+    });
+
+    await expect(
+      service.getCurrentPullRequestStatus({ cwd: "/repo", headRef: "feature/fork" }),
+    ).rejects.toThrow(GitHubCommandError);
   });
 
   it("resolves a fork PR whose branch name is crowded in the parent repository", async () => {

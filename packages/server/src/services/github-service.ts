@@ -117,9 +117,11 @@ export const GITHUB_POLL_ALIGNMENT_MS = 5_000;
 const GITHUB_GRAPHQL_RESERVE_RATIO = 0.4;
 const GITHUB_GRAPHQL_RESET_GRACE_MS = 1_000;
 const BATCH_PR_CANDIDATE_LIMIT = 10;
-// A fork branch's own pull requests, newest first. One is the normal case;
-// the rest are earlier closed attempts on the same branch.
-const FORK_PR_CANDIDATE_LIMIT = 3;
+// How many of a fork branch's own pull requests are read in full. One is the
+// normal case; the rest are earlier attempts on the same branch, and the one
+// carrying the checkout's head commit is read whichever attempt it belongs to.
+const FORK_PR_VIEW_LIMIT = 3;
+const FORK_PR_PAGE_SIZE = 100;
 const FROZEN_PR_CHECKS_CACHE_MAX_ENTRIES = 512;
 const GITHUB_ENV = {
   GIT_TERMINAL_PROMPT: "0",
@@ -460,7 +462,15 @@ const GitHubRepoViewSchema = z.object({
     .optional(),
 });
 
-const ForkPullRequestRefsSchema = z.array(z.object({ number: z.number() }));
+const ForkPullRequestRefsSchema = z.array(
+  z.object({
+    number: z.number(),
+    head: z
+      .object({ sha: z.string().catch("") })
+      .nullable()
+      .optional(),
+  }),
+);
 
 const PullRequestCheckoutTargetSchema = z.object({
   data: z.object({
@@ -3041,35 +3051,36 @@ async function resolveForkPullRequestView(options: {
   return match?.status ?? null;
 }
 
+// The endpoint answers with the fork branch's pull requests, newest first, so
+// a branch reused for several attempts can carry the checkout's head commit on
+// an older one. Those are read first, and the rest of the window is filled
+// newest-first, so the full read stays bounded without dropping the attempt the
+// checkout is actually sitting on.
 async function listForkPullRequestNumbers(options: {
   cwd: string;
   headRef: string;
+  headSha?: string;
   forkOwner: string;
   repo: string;
   run: (args: string[], options: GitHubCommandRunnerOptions) => Promise<string>;
 }): Promise<number[]> {
   const query = new URLSearchParams({
     state: "all",
-    per_page: String(FORK_PR_CANDIDATE_LIMIT),
+    per_page: String(FORK_PR_PAGE_SIZE),
     head: `${options.forkOwner}:${options.headRef}`,
   });
   const args = ["api", `repos/${options.repo}/pulls?${query.toString()}`];
-  try {
-    const stdout = await options.run(args, { cwd: options.cwd });
-    const refs = parseGitHubJsonOutput(stdout, ForkPullRequestRefsSchema, {
-      args,
-      cwd: options.cwd,
-      emptyFallback: "[]",
-    });
-    return refs.map((ref) => ref.number);
-  } catch (error) {
-    // A missing repository or a malformed page is "no pull request"; auth and
-    // CLI failures carry their own classes and stay on their way to the caller.
-    if (error instanceof GitHubCommandError) {
-      return [];
-    }
-    throw error;
-  }
+  const stdout = await options.run(args, { cwd: options.cwd });
+  const refs = parseGitHubJsonOutput(stdout, ForkPullRequestRefsSchema, {
+    args,
+    cwd: options.cwd,
+    emptyFallback: "[]",
+  });
+  const carriesHeadSha = (ref: (typeof refs)[number]): boolean =>
+    options.headSha !== undefined && ref.head?.sha === options.headSha;
+  return [...refs.filter(carriesHeadSha), ...refs.filter((ref) => !carriesHeadSha(ref))]
+    .slice(0, FORK_PR_VIEW_LIMIT)
+    .map((ref) => ref.number);
 }
 
 async function addCurrentPullRequestGithubFacts(options: {
