@@ -426,6 +426,19 @@ describe("normalizeClaudeRuntimeModelId", () => {
       "claude-opus-4-8",
     );
   });
+
+  it("does not collapse a prefixed minor release onto the major it extends", () => {
+    expect(normalizeClaudeRuntimeModelId("anthropic/claude-opus-5-5")).toBe("claude-opus-5-5");
+    expect(normalizeClaudeRuntimeModelId("us.anthropic.claude-opus-5-5-20260401-v1:0")).toBe(
+      "claude-opus-5-5",
+    );
+    expect(normalizeClaudeRuntimeModelId("openrouter/anthropic/claude-fable-5-1")).toBe(
+      "claude-fable-5-1",
+    );
+    expect(normalizeClaudeRuntimeModelId("us.anthropic.claude-opus-5-20260724-v1:0")).toBe(
+      "claude-opus-5",
+    );
+  });
 });
 
 describe("parseClaudeCodeVersion", () => {
