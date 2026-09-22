@@ -129,6 +129,7 @@ function providerMetadata(provider: ProviderRegistration) {
     description: provider.description,
     iconPath: provider.icon,
     hasCatalogCacheKey: provider.getCatalogCacheKey !== undefined,
+    hasFetchUsage: provider.fetchUsage !== undefined,
   };
 }
 
@@ -306,6 +307,42 @@ async function shutdown(): Promise<void> {
   process.disconnect();
 }
 
+function handleStoppingMessage(message: PluginProcessRequest): void {
+  if (message.type === "provider.catalog_key" || message.type === "provider.fetch_usage") {
+    send({ type: "error", requestId: message.requestId, error: "Plugin is stopping" });
+  } else if (message.type === "provider.connect") {
+    send({
+      type: "provider.connect_failed",
+      connectionId: message.connectionId,
+      error: "Plugin is stopping",
+    });
+  } else if (message.type === "provider.send") {
+    send({
+      type: "provider.rejected",
+      connectionId: message.connectionId,
+      acceptanceId: message.acceptanceId,
+      error: "Plugin is stopping",
+    });
+  } else if (message.type === "provider.close") {
+    send({ type: "provider.closed", connectionId: message.connectionId });
+  }
+}
+
+function handleFetchUsage(
+  message: Extract<PluginProcessRequest, { type: "provider.fetch_usage" }>,
+): void {
+  void (async () => {
+    const provider = providers.get(message.providerId);
+    if (!provider) throw new Error(`Unknown provider: ${message.providerId}`);
+    if (!provider.fetchUsage)
+      throw new Error(`Provider ${message.providerId} does not support fetchUsage`);
+    const output = await provider.fetchUsage();
+    send({ type: "result", requestId: message.requestId, output });
+  })().catch((error) =>
+    send({ type: "error", requestId: message.requestId, error: describeError(error) }),
+  );
+}
+
 process.on("message", (rawMessage: unknown) => {
   const parsed = PluginProcessRequestSchema.safeParse(rawMessage);
   if (!parsed.success) {
@@ -340,24 +377,7 @@ process.on("message", (rawMessage: unknown) => {
     return;
   }
   if (stopping) {
-    if (message.type === "provider.catalog_key") {
-      send({ type: "error", requestId: message.requestId, error: "Plugin is stopping" });
-    } else if (message.type === "provider.connect") {
-      send({
-        type: "provider.connect_failed",
-        connectionId: message.connectionId,
-        error: "Plugin is stopping",
-      });
-    } else if (message.type === "provider.send") {
-      send({
-        type: "provider.rejected",
-        connectionId: message.connectionId,
-        acceptanceId: message.acceptanceId,
-        error: "Plugin is stopping",
-      });
-    } else if (message.type === "provider.close") {
-      send({ type: "provider.closed", connectionId: message.connectionId });
-    }
+    handleStoppingMessage(message);
     return;
   }
   if (message.type === "provider.catalog_key") {
@@ -371,6 +391,10 @@ process.on("message", (rawMessage: unknown) => {
     })().catch((error) =>
       send({ type: "error", requestId: message.requestId, error: describeError(error) }),
     );
+    return;
+  }
+  if (message.type === "provider.fetch_usage") {
+    handleFetchUsage(message);
     return;
   }
   if (message.type === "provider.connect") {

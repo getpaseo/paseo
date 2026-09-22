@@ -9,6 +9,7 @@ import { z } from "zod";
 
 export interface PluginProviderMetadata {
   hasCatalogCacheKey?: boolean;
+  hasFetchUsage?: boolean;
   id: string;
   label: string;
   description?: string;
@@ -28,6 +29,11 @@ export type PluginProcessRequest =
       requestId: string;
       providerId: string;
       options: ProviderCatalogOptions;
+    }
+  | {
+      type: "provider.fetch_usage";
+      requestId: string;
+      providerId: string;
     }
   | { type: "hook"; requestId: string; kind: "event" | "before"; name: string; input: unknown }
   | { type: "hook.cancel"; requestId: string }
@@ -89,6 +95,7 @@ const providerMetadataSchema = z
     description: z.string().optional(),
     iconPath: z.string().optional(),
     hasCatalogCacheKey: z.boolean().optional(),
+    hasFetchUsage: z.boolean().optional(),
   })
   .strict();
 const providerConnectRequestSchema = z
@@ -129,6 +136,13 @@ export const PluginProcessRequestSchema: z.ZodType<PluginProcessRequest> = z.dis
             })
             .strict(),
         ]),
+      })
+      .strict(),
+    z
+      .object({
+        type: z.literal("provider.fetch_usage"),
+        requestId: z.string().min(1),
+        providerId: z.string().min(1),
       })
       .strict(),
     z

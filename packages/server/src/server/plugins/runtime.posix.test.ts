@@ -533,6 +533,54 @@ export default function contribute(server: PluginServerContext) {
     await runtime.stopAll();
   });
 
+  it("fetches provider quota usage through the real plugin subprocess boundary", async () => {
+    const directory = await createPlugin(
+      "provider-usage-round-trip",
+      `import type { PluginServerContext } from "@getpaseo/plugin/server";
+
+export default function contribute(server: PluginServerContext) {
+  server.registerProvider({
+    id: "usage-example",
+    label: "Usage Example",
+    fetchUsage: async () => ({
+      planLabel: "Pro Plan",
+      windows: [
+        { id: "rolling_5h", label: "5 Hours", usedPct: 42 },
+      ],
+    }),
+    connect: async () => ({
+      version: 1,
+      capabilities: [],
+      send: async () => {},
+      onEvent: () => () => {},
+      close: async () => {},
+    }),
+  });
+  return () => undefined;
+}
+`,
+    );
+    const runtime = createTestRuntime();
+    try {
+      await runtime.startPlugin("provider-usage-round-trip", directory);
+
+      const [registration] = runtime.getProviderRegistrations("provider-usage-round-trip");
+      expect(registration).toMatchObject({
+        id: "usage-example",
+        label: "Usage Example",
+        hasFetchUsage: true,
+      });
+
+      const usage = await runtime.fetchProviderUsage("provider-usage-round-trip", "usage-example");
+      expect(usage).toEqual({
+        planLabel: "Pro Plan",
+        windows: [{ id: "rolling_5h", label: "5 Hours", usedPct: 42 }],
+      });
+    } finally {
+      await runtime.stopAll();
+    }
+  });
+
   it("adapts an ACP command and example transformer through the AgentClient path", async () => {
     const transformerPath = fileURLToPath(
       new URL(

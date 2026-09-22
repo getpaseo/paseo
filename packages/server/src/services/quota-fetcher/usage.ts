@@ -5,7 +5,9 @@ import type {
   ProviderUsageTone,
   ProviderUsageWindow,
 } from "../../server/messages.js";
-import type { ProviderApiFetch } from "./provider.js";
+import type { Logger } from "pino";
+import type { ProviderRegistration, ProviderQuotaSnapshot } from "@getpaseo/plugin/server/provider";
+import type { ProviderApiFetch, ProviderUsageFetcher } from "./provider.js";
 
 const PROVIDER_HTTP_TIMEOUT_MS = 15_000;
 
@@ -108,4 +110,52 @@ export function usedPctOf(
 export function toIsoStringOrNull(timestampMs: number): string | null {
   const date = new Date(timestampMs);
   return Number.isFinite(date.getTime()) ? date.toISOString() : null;
+}
+
+export function createPluginUsageFetcher(
+  provider: ProviderRegistration,
+  logger: Logger,
+): ProviderUsageFetcher {
+  return {
+    providerId: provider.id,
+    displayName: provider.label,
+    async fetchUsage(): Promise<ProviderUsage> {
+      if (!provider.fetchUsage) {
+        return unavailableUsage({
+          providerId: provider.id,
+          displayName: provider.label,
+        });
+      }
+      try {
+        const result = await provider.fetchUsage();
+        return normalizePluginUsage(provider, result);
+      } catch (error) {
+        logger.debug({ err: error, providerId: provider.id }, "Plugin provider usage fetch failed");
+        return unavailableUsage({
+          providerId: provider.id,
+          displayName: provider.label,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    },
+  };
+}
+
+export function normalizePluginUsage(
+  provider: { id: string; label: string },
+  snapshot: ProviderQuotaSnapshot,
+): ProviderUsage {
+  return {
+    providerId: snapshot.providerId || provider.id,
+    displayName: snapshot.displayName || provider.label,
+    status: snapshot.status ?? (snapshot.error ? "error" : "available"),
+    planLabel: snapshot.planLabel ?? null,
+    sourceLabel: snapshot.sourceLabel ?? null,
+    fetchedAt: snapshot.fetchedAt ?? new Date().toISOString(),
+    nextRefreshAt: snapshot.nextRefreshAt ?? null,
+    windows: snapshot.windows ? [...snapshot.windows] : [],
+    balances: snapshot.balances ? [...snapshot.balances] : [],
+    details: snapshot.details ? [...snapshot.details] : [],
+    error: snapshot.error ?? null,
+  };
 }

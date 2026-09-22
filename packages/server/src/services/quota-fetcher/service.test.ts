@@ -345,6 +345,113 @@ describe("ProviderUsageService", () => {
       ],
     });
   });
+
+  it("fetches and normalizes usage from plugin providers", async () => {
+    let pluginCalls = 0;
+    const service = new ProviderUsageService({
+      logger: createLogger(),
+      now: () => Date.parse("2026-06-19T00:00:00.000Z"),
+      fetchers: [],
+      getPluginProviders: () => [
+        {
+          id: "custom-plugin-provider",
+          label: "Custom Provider",
+          connect: async () => {
+            throw new Error("unused");
+          },
+          fetchUsage: async () => {
+            pluginCalls += 1;
+            return {
+              planLabel: "Enterprise Tier",
+              windows: [{ id: "daily", label: "Daily Limit", usedPct: 45 }],
+            };
+          },
+        },
+        {
+          id: "provider-without-usage",
+          label: "No Usage Hook",
+          connect: async () => {
+            throw new Error("unused");
+          },
+        },
+      ],
+    });
+
+    const result = await service.listUsage();
+    expect(pluginCalls).toBe(1);
+    expect(result).toEqual({
+      fetchedAt: "2026-06-19T00:00:00.000Z",
+      providers: [
+        {
+          providerId: "custom-plugin-provider",
+          displayName: "Custom Provider",
+          status: "available",
+          planLabel: "Enterprise Tier",
+          sourceLabel: null,
+          fetchedAt: expect.any(String),
+          nextRefreshAt: null,
+          windows: [{ id: "daily", label: "Daily Limit", usedPct: 45 }],
+          balances: [],
+          details: [],
+          error: null,
+        },
+      ],
+    });
+
+    // clearCache allows fresh fetch
+    service.clearCache();
+    await service.listUsage();
+    expect(pluginCalls).toBe(2);
+  });
+
+  it("isolates plugin fetchUsage errors without breaking provider list", async () => {
+    const service = new ProviderUsageService({
+      logger: createLogger(),
+      now: () => Date.parse("2026-06-19T00:00:00.000Z"),
+      fetchers: [
+        usageFetcher({
+          providerId: "codex",
+          displayName: "Codex",
+          status: "available",
+          planLabel: "Pro 20x",
+          windows: [{ id: "weekly", label: "Weekly", usedPct: 29 }],
+        }),
+      ],
+      getPluginProviders: () => [
+        {
+          id: "failing-plugin",
+          label: "Failing Plugin",
+          connect: async () => {
+            throw new Error("unused");
+          },
+          fetchUsage: async () => {
+            throw new Error("Plugin daemon disconnected");
+          },
+        },
+      ],
+    });
+
+    const result = await service.listUsage();
+    expect(result.providers).toEqual([
+      {
+        providerId: "codex",
+        displayName: "Codex",
+        status: "available",
+        planLabel: "Pro 20x",
+        windows: [{ id: "weekly", label: "Weekly", usedPct: 29 }],
+      },
+      {
+        providerId: "failing-plugin",
+        displayName: "Failing Plugin",
+        status: "error",
+        planLabel: null,
+        windows: [],
+        balances: [],
+        details: [],
+        error: "Plugin daemon disconnected",
+      },
+    ]);
+  });
 });
 
 describe("real provider usage fetchers", () => {

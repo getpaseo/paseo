@@ -746,15 +746,24 @@ export class VoiceAssistantWebSocketServer {
       });
     });
 
-    this.providerUsageService = new ProviderUsageService({
-      logger: this.logger,
-    });
+    this.providerUsageService = this.createProviderUsageService();
 
     this.wss = this.createWebSocketServer(server, wsConfig, auth);
     this.startRuntimeMetricsInterval();
     this.startApplicationSocketLeaseInterval();
 
     this.logger.info("WebSocket server initialized on /ws");
+  }
+
+  private createProviderUsageService(): ProviderUsageService {
+    const service = new ProviderUsageService({
+      logger: this.logger,
+      getPluginProviders: () => this.pluginRuntime?.getProviderRegistrations?.() ?? [],
+    });
+    this.pluginRuntime?.subscribeProviderRegistrations?.(() => {
+      service.clearCache();
+    });
+    return service;
   }
 
   private assignOptionalServices(params: {

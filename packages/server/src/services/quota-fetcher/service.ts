@@ -2,11 +2,16 @@ import type { Logger } from "pino";
 import type { ProviderUsage } from "../../server/messages.js";
 import { createProviderUsageFetchers } from "./manifest.js";
 import type { ProviderApiFetch, ProviderUsageFetcher } from "./provider.js";
-import { unavailableUsage } from "./usage.js";
+import type { ProviderRegistration } from "@getpaseo/plugin/server/provider";
+import { unavailableUsage, createPluginUsageFetcher } from "./usage.js";
 
 export interface ProviderUsageServiceOptions {
   logger: Logger;
   fetchers?: ProviderUsageFetcher[];
+  dynamicFetchers?: () =>
+    | readonly ProviderUsageFetcher[]
+    | Promise<readonly ProviderUsageFetcher[]>;
+  getPluginProviders?: () => readonly ProviderRegistration[];
   fetch?: ProviderApiFetch;
   cacheTtlMs?: number;
   now?: () => number;
@@ -22,6 +27,10 @@ const DEFAULT_PROVIDER_USAGE_CACHE_TTL_MS = 5 * 60 * 1000;
 export class ProviderUsageService {
   private readonly logger: Logger;
   private readonly fetchers: ProviderUsageFetcher[];
+  private readonly dynamicFetchers?: () =>
+    | readonly ProviderUsageFetcher[]
+    | Promise<readonly ProviderUsageFetcher[]>;
+  private readonly getPluginProviders?: () => readonly ProviderRegistration[];
   private readonly cacheTtlMs: number;
   private readonly now: () => number;
   private cached: { fetchedAtMs: number; result: ProviderUsageListResult } | null = null;
@@ -35,8 +44,14 @@ export class ProviderUsageService {
         logger: this.logger,
         fetch: options.fetch,
       });
+    this.dynamicFetchers = options.dynamicFetchers;
+    this.getPluginProviders = options.getPluginProviders;
     this.cacheTtlMs = options.cacheTtlMs ?? DEFAULT_PROVIDER_USAGE_CACHE_TTL_MS;
     this.now = options.now ?? Date.now;
+  }
+
+  clearCache(): void {
+    this.cached = null;
   }
 
   async listUsage(options?: { forceRefresh?: boolean }): Promise<ProviderUsageListResult> {
@@ -65,9 +80,14 @@ export class ProviderUsageService {
   }
 
   private async fetchFreshUsage(nowMs: number): Promise<ProviderUsageListResult> {
-    const settled = await Promise.allSettled(this.fetchers.map((fetcher) => fetcher.fetchUsage()));
+    const pluginFetchers = (this.getPluginProviders?.() ?? [])
+      .filter((provider) => typeof provider.fetchUsage === "function")
+      .map((provider) => createPluginUsageFetcher(provider, this.logger));
+    const dynamic = this.dynamicFetchers ? await this.dynamicFetchers() : [];
+    const allFetchers = [...this.fetchers, ...pluginFetchers, ...dynamic];
+    const settled = await Promise.allSettled(allFetchers.map((fetcher) => fetcher.fetchUsage()));
     const providers = settled.map((result, index) => {
-      const fetcher = this.fetchers[index];
+      const fetcher = allFetchers[index];
       if (result.status === "fulfilled") {
         return result.value;
       }
