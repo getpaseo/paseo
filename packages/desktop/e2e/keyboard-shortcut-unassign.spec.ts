@@ -146,3 +146,27 @@ test("unassigning a shortcut leaves it inert until it is reset", async ({ page }
   await page.keyboard.press("Escape");
   await expect(dialog).not.toBeVisible({ timeout: 10_000 });
 });
+
+test("binds Backspace to Interrupt agent after clearing Archive workspace", async ({ page }) => {
+  await openShortcutsSettings(page);
+
+  await page.getByRole("button", { name: "Actions for Archive workspace" }).click();
+  await page.getByTestId("shortcut-clear-archive-workspace").click();
+
+  await page.getByRole("button", { name: "Actions for Interrupt agent" }).click();
+  await page.getByTestId("shortcut-bind-agent-interrupt").click();
+  await page.keyboard.press("Meta+Shift+Backspace");
+
+  const interruptRow = page.getByText("Interrupt agent", { exact: true }).locator("..");
+  await expect(interruptRow.getByText("⇧⌘⌫", { exact: true })).toBeVisible();
+  await interruptRow.getByRole("button", { name: "Done" }).click();
+  await expect(interruptRow.getByText("⇧⌘⌫", { exact: true })).toBeVisible();
+
+  await page.getByRole("button", { name: "Actions for Interrupt agent" }).click();
+  await page.getByTestId("shortcut-bind-agent-interrupt").click();
+  await page.keyboard.press("Backspace");
+  await expect(interruptRow.getByText("⌫", { exact: true })).toBeVisible();
+  await expect(interruptRow.getByRole("button", { name: "Done" })).toBeVisible();
+  await interruptRow.getByRole("button", { name: "Cancel" }).click();
+  await expect(interruptRow.getByText("⇧⌘⌫", { exact: true })).toBeVisible();
+});
