@@ -1,5 +1,5 @@
 import type { SessionMessageInfo } from "@opencode/client";
-import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -211,7 +211,7 @@ describe("OpenCodeBridge", () => {
     const release = bridge.bindSession({ sessionId: "parent", env: {}, tools: catalog });
     const releaseDisabled = bridge.bindSession({ sessionId: "disabled", env: {} });
     try {
-      const env = bridge.decorateV2ServerEnv({});
+      const env = await bridge.decorateV2ServerEnv({});
       const config = z
         .object({
           plugins: z.array(
@@ -222,7 +222,7 @@ describe("OpenCodeBridge", () => {
           ),
         })
         .parse(JSON.parse(env.OPENCODE_CONFIG_CONTENT));
-      expect(bridge.decorateV2ServerEnv(env)).toEqual(env);
+      expect(await bridge.decorateV2ServerEnv(env)).toEqual(env);
       const plugin = config.plugins[0]!;
       const tools = new Map<string, V2TestTool>();
       let filter!: (input: V2TestContext) => Promise<void>;
@@ -355,7 +355,12 @@ describe("OpenCodeBridge", () => {
     const bridge = new OpenCodeBridge({ paseoHome, logger: createTestLogger() });
     await bridge.start();
     try {
-      const env = bridge.decorateV2ServerEnv({
+      expect(
+        (await readdir(path.join(paseoHome, "runtime", "opencode"))).filter((name) =>
+          name.startsWith("paseo-v2-"),
+        ),
+      ).toEqual([]);
+      const env = await bridge.decorateV2ServerEnv({
         OPENCODE_CONFIG_CONTENT: JSON.stringify({ plugins: ["user-plugin"] }),
       });
       const config = z

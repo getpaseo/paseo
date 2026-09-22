@@ -59,7 +59,6 @@ export class OpenCodeBridge {
   async start(): Promise<void> {
     if (this.server) return;
     this.pluginUrl = await this.materializePlugin();
-    this.v2PluginUrl = await this.materializePlugin(2);
     const server = createServer((request, response) => {
       void this.route(request, response);
     });
@@ -117,8 +116,8 @@ export class OpenCodeBridge {
     };
   }
 
-  decorateV2ServerEnv(env: Record<string, string>): Record<string, string> {
-    if (!this.v2PluginUrl) throw new Error("OpenCode v2 bridge plugin is not materialized");
+  async decorateV2ServerEnv(env: Record<string, string>): Promise<Record<string, string>> {
+    this.v2PluginUrl ??= await this.materializePlugin(2);
     return decorateOpenCodeV2Env(env, this.v2PluginUrl, {
       baseUrl: this.requireBaseUrl(),
       token: this.token,

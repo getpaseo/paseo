@@ -18,15 +18,15 @@ import {
 } from "../../provider-launch-config.js";
 import { execCommand } from "../../../../utils/spawn.js";
 import { OpenCodeAgentClient } from "../opencode-agent.js";
-import { OpenCodeV2AgentClient } from "./v2/agent.js";
+import type { OpenCodeV2AgentClient } from "./v2/agent.js";
+import { withOpenCodeRuntimeNotice } from "./runtime-notice.js";
 
 // Keep the minimum aligned with the SDK and binary exercised by CI.
 const MINIMUM_V2: readonly [number, number] = [0, 10];
 
 export function openCodeMajorVersion(output: string): 1 | 2 {
   const version = output.trim().match(/^(?:opencode\s+)?v?(\d+)\.(\d+)\.(\d+)(?:[-+][\w.-]+)?$/i);
-  if (!version)
-    throw new Error("Could not identify OpenCode version; check the configured command");
+  if (!version) return 1;
   if (version[1] === "1") return 1;
   if (version[1] === "2") {
     const [minimumMinor, minimumPatch] = MINIMUM_V2;
@@ -54,6 +54,7 @@ export class OpenCodeRuntimeClient implements AgentClient {
   readonly resolveCreateConfig;
   readonly isCreateConfigUnattended;
   private selected: Promise<OpenCodeAgentClient | OpenCodeV2AgentClient> | null = null;
+  private major: 1 | 2 = 1;
   private readonly legacy: OpenCodeAgentClient;
   constructor(
     private readonly logger: Logger,
@@ -67,15 +68,25 @@ export class OpenCodeRuntimeClient implements AgentClient {
   }
   private client(): Promise<OpenCodeAgentClient | OpenCodeV2AgentClient> {
     this.selected ??= (async () => {
-      const launch = await resolveProviderLaunch({
-        commandConfig: this.settings?.command,
-        defaultBinary: "opencode",
-      });
-      const result = await execCommand(launch.command, [...launch.args, "--version"], {
-        ...createProviderEnvSpec({ runtimeSettings: this.settings }),
-        timeout: 5_000,
-      });
-      if (openCodeMajorVersion(result.stdout) === 1) return this.legacy;
+      let output: string;
+      try {
+        const launch = await resolveProviderLaunch({
+          commandConfig: this.settings?.command,
+          defaultBinary: "opencode",
+        });
+        const result = await execCommand(launch.command, [...launch.args, "--version"], {
+          ...createProviderEnvSpec({ runtimeSettings: this.settings }),
+          timeout: 5_000,
+        });
+        output = result.stdout;
+      } catch {
+        // Version discovery is additive: legacy wrappers need not support --version.
+        this.major = 1;
+        return this.legacy;
+      }
+      this.major = openCodeMajorVersion(output);
+      if (this.major === 1) return this.legacy;
+      const { OpenCodeV2AgentClient } = await import("./v2/agent.js");
       return new OpenCodeV2AgentClient({
         logger: this.logger,
         settings: this.settings,
@@ -96,14 +107,18 @@ export class OpenCodeRuntimeClient implements AgentClient {
     launch?: AgentLaunchContext,
     options?: AgentCreateSessionOptions,
   ) {
-    return (await this.client()).createSession(config, launch, options);
+    const client = await this.client();
+    const session = await client.createSession(config, launch, options);
+    return this.major === 2 ? withOpenCodeRuntimeNotice(session, 2) : session;
   }
   async resumeSession(
     handle: AgentPersistenceHandle,
     config?: Partial<AgentSessionConfig>,
     launch?: AgentLaunchContext,
   ) {
-    return (await this.client()).resumeSession(handle, config, launch);
+    const client = await this.client();
+    const session = await client.resumeSession(handle, config, launch);
+    return this.major === 2 ? withOpenCodeRuntimeNotice(session, 2, handle) : session;
   }
   async fetchCatalog(options: FetchCatalogOptions, context?: ProviderRefreshContext) {
     return (await this.client()).fetchCatalog(options, context);
@@ -118,7 +133,11 @@ export class OpenCodeRuntimeClient implements AgentClient {
     return (await this.client()).listImportableSessions(options);
   }
   async importSession(input: ImportProviderSessionInput, context: ImportProviderSessionContext) {
-    return (await this.client()).importSession(input, context);
+    const client = await this.client();
+    const imported = await client.importSession(input, context);
+    return this.major === 2
+      ? { ...imported, session: withOpenCodeRuntimeNotice(imported.session, 2) }
+      : imported;
   }
   async archiveNativeSession(handle: AgentPersistenceHandle) {
     const client = await this.client();

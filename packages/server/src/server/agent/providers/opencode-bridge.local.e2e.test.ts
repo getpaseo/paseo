@@ -324,13 +324,15 @@ test.each([
         (await drainPersistedTimeline(resumed)).map((event) =>
           event.type === "timeline" ? event.item : event,
         ),
-      ).toEqual([
-        {
-          type: "notification",
-          level: "info",
-          message: `This chat uses OpenCode v${major}.`,
-        },
-      ]);
+      ).toEqual(
+        major === 2
+          ? [{ type: "notification", level: "info", message: "This chat uses OpenCode v2." }]
+          : [],
+      );
+      if (major === 1) {
+        expect(original.initialTimeline).toBeUndefined();
+        expect(handle.metadata?.openCodeRuntimeNotices).toBeUndefined();
+      }
     } finally {
       await resumed?.close();
       await original?.close();

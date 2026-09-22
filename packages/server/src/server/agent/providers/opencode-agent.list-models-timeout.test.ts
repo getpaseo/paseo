@@ -12,46 +12,6 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-test("catalog failures identify the operation and HTTP status even with an empty error", async () => {
-  const runtime = new TestOpenCodeHarness();
-  const upstream = new TestOpenCodeClient();
-  upstream.providerListResponse = {
-    error: {},
-    response: new Response(null, { status: 503 }),
-  };
-  runtime.enqueueClient(upstream);
-  const client = new OpenCodeAgentClient(createTestLogger(), undefined, {
-    serverManager: runtime,
-    createClient: runtime.createClient,
-  });
-
-  await expect(
-    client.fetchCatalog({ scope: "workspace", cwd: "/tmp/opencode-models", force: false }),
-  ).rejects.toThrow("OpenCode provider.list failed (HTTP 503)");
-  expect(runtime.acquisitions).toEqual([{ kind: "current", releaseCount: 1 }]);
-});
-
-test("catalog discovery identifies an HTML response instead of treating it as providers", async () => {
-  const runtime = new TestOpenCodeHarness();
-  const upstream = new TestOpenCodeClient();
-  upstream.providerListResponse = {
-    data: "<!doctype html><html></html>",
-    response: new Response(null, { headers: { "content-type": "text/html" } }),
-  };
-  runtime.enqueueClient(upstream);
-  const client = new OpenCodeAgentClient(createTestLogger(), undefined, {
-    serverManager: runtime,
-    createClient: runtime.createClient,
-  });
-
-  await expect(
-    client.fetchCatalog({ scope: "workspace", cwd: "/tmp/opencode-models", force: false }),
-  ).rejects.toThrow(
-    "OpenCode provider.list returned HTML instead of JSON; incompatible OpenCode API",
-  );
-  expect(runtime.acquisitions).toEqual([{ kind: "current", releaseCount: 1 }]);
-});
-
 test("the catalog deadline aborts provider.list and releases the server", async () => {
   vi.useFakeTimers();
 

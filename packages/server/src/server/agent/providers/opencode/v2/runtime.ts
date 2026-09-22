@@ -33,7 +33,7 @@ export interface V2RuntimeOptions {
   logger: Logger;
   settings?: ProviderRuntimeSettings;
   managedProcesses?: ManagedProcessRegistry;
-  decorateEnv?: (env: Record<string, string>) => Record<string, string>;
+  decorateEnv?: (env: Record<string, string>) => Promise<Record<string, string>>;
 }
 
 export interface V2RuntimeAcquireOptions {
@@ -153,7 +153,7 @@ export class V2Runtime {
       ...env,
     };
     const decorated = this.options.decorateEnv
-      ? this.options.decorateEnv(configured)
+      ? await this.options.decorateEnv(configured)
       : decorateOpenCodeV2Env(configured, await materializeOpenCodeV2Plugin(resolvePaseoHome()));
     const args = [...launch.args, "serve", "--hostname", "127.0.0.1", "--port", "0"];
     const process = spawnProcess(launch.command, args, {
