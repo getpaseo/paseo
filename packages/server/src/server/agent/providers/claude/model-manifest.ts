@@ -11,6 +11,7 @@ interface ClaudeModelManifestEntry {
   minimumClaudeCodeVersion?: string;
   contextWindowMaxTokens?: number;
   effortLevels?: readonly ClaudeEffortLevel[];
+  defaultThinkingOptionId?: ClaudeEffortLevel;
   supportsThinkingDisabled?: boolean;
   supportsFastMode?: boolean;
 }
@@ -34,6 +35,17 @@ export const CLAUDE_DISABLED_THINKING_OPTION_ID = "off";
 export const CLAUDE_ULTRACODE_THINKING_OPTION_ID = "ultracode";
 
 export const CLAUDE_MODEL_MANIFEST = [
+  {
+    id: "claude-opus-5-5",
+    label: "Opus 5.5",
+    description: "Opus 5.5 · Latest release",
+    defaultPriority: 3,
+    minimumClaudeCodeVersion: "2.1.280",
+    contextWindowMaxTokens: 1_000_000,
+    effortLevels: CLAUDE_EFFORT_LEVELS.xhigh,
+    defaultThinkingOptionId: "medium",
+    supportsFastMode: true,
+  },
   {
     id: "claude-opus-5",
     label: "Opus 5",
@@ -157,9 +169,14 @@ export const CLAUDE_MODEL_MANIFEST = [
   },
 ] as const satisfies readonly ClaudeModelManifestEntry[];
 
+function getDefaultThinkingOptionId(model: ClaudeModelManifestEntry): ClaudeEffortLevel {
+  return model.defaultThinkingOptionId ?? CLAUDE_DEFAULT_THINKING_OPTION_ID;
+}
+
 function buildThinkingOptions(
   effortLevels: readonly ClaudeEffortLevel[] | undefined,
   supportsThinkingDisabled: boolean,
+  defaultThinkingOptionId: ClaudeEffortLevel,
 ): AgentSelectOption[] | undefined {
   if (!effortLevels) {
     return undefined;
@@ -170,7 +187,7 @@ function buildThinkingOptions(
     ...effortLevels.map((id) => ({
       id,
       label: CLAUDE_EFFORT_LABELS[id],
-      ...(id === CLAUDE_DEFAULT_THINKING_OPTION_ID ? { isDefault: true } : {}),
+      ...(id === defaultThinkingOptionId ? { isDefault: true } : {}),
     })),
   ];
 
@@ -196,6 +213,7 @@ export function getClaudeManifestModels(claudeCodeVersion?: string): AgentModelD
     const thinkingOptions = buildThinkingOptions(
       model.effortLevels,
       model.supportsThinkingDisabled === true,
+      getDefaultThinkingOptionId(model),
     );
     const definition: AgentModelDefinition = {
       provider: "claude",
@@ -214,7 +232,7 @@ export function getClaudeManifestModels(claudeCodeVersion?: string): AgentModelD
     }
     if (thinkingOptions) {
       definition.thinkingOptions = thinkingOptions;
-      definition.defaultThinkingOptionId = CLAUDE_DEFAULT_THINKING_OPTION_ID;
+      definition.defaultThinkingOptionId = getDefaultThinkingOptionId(model);
     }
     definitions.push(definition);
     if (!("aliases" in model) || !model.aliases) {
@@ -286,7 +304,7 @@ export function resolveClaudeDisabledThinkingForModel(
     supported:
       !!model && "supportsThinkingDisabled" in model && model.supportsThinkingDisabled === true,
     fallbackThinkingOptionId:
-      model && "effortLevels" in model ? CLAUDE_DEFAULT_THINKING_OPTION_ID : undefined,
+      model && "effortLevels" in model ? getDefaultThinkingOptionId(model) : undefined,
   };
 }
 

@@ -39,7 +39,7 @@ async function createClaudeConfigDirWithRawSettings(settings: string): Promise<s
   return configDir;
 }
 
-function createCatalogClient(claudeCodeVersion = "2.1.219"): ClaudeAgentClient {
+function createCatalogClient(claudeCodeVersion = "2.1.280"): ClaudeAgentClient {
   return new ClaudeAgentClient({
     logger: createTestLogger(),
     resolveVersion: async () => claudeCodeVersion,
@@ -50,6 +50,7 @@ describe("getClaudeModels", () => {
   it("returns all claude models", () => {
     const models = getClaudeModels();
     expect(models.map((m) => m.id)).toEqual([
+      "claude-opus-5-5",
       "claude-opus-5",
       "claude-fable-5-1",
       "claude-fable-5",
@@ -72,7 +73,7 @@ describe("getClaudeModels", () => {
     const models = getClaudeModels();
     const defaults = models.filter((m) => m.isDefault);
     expect(defaults).toHaveLength(1);
-    expect(defaults[0].id).toBe("claude-opus-5");
+    expect(defaults[0].id).toBe("claude-opus-5-5");
   });
 
   it("defines context window sizes in the catalog", () => {
@@ -82,6 +83,7 @@ describe("getClaudeModels", () => {
 
     expect(contextWindows).toEqual(
       new Map([
+        ["claude-opus-5-5", 1_000_000],
         ["claude-opus-5", 1_000_000],
         ["claude-fable-5-1", 1_000_000],
         ["claude-fable-5", 1_000_000],
@@ -102,6 +104,9 @@ describe("getClaudeModels", () => {
   });
 
   it("filters models by their minimum Claude Code version", () => {
+    expect(getClaudeModels("2.1.279").map((model) => model.id)).not.toContain("claude-opus-5-5");
+    expect(getClaudeModels("2.1.280").map((model) => model.id)).toContain("claude-opus-5-5");
+
     const oldVersionModels = getClaudeModels("2.1.218");
     expect(oldVersionModels.map((model) => model.id)).not.toContain("claude-opus-5");
     expect(oldVersionModels.find((model) => model.isDefault)?.id).toBe("claude-opus-4-8");
@@ -169,6 +174,7 @@ describe("getClaudeModels", () => {
   });
 
   it.each([
+    ["claude-opus-5-5", false, "medium"],
     ["claude-opus-5", true, "high"],
     ["claude-opus-5-20260724", true, "high"],
     ["claude-sonnet-5", true, "high"],
@@ -438,7 +444,7 @@ describe("findClaudeModel", () => {
 describe("Claude Opus 5 catalog", () => {
   it("offers a single Opus 5 entry with a 1M context window", () => {
     const opus5Models = getClaudeModels()
-      .filter((model) => model.id.startsWith("claude-opus-5"))
+      .filter((model) => model.id === "claude-opus-5")
       .map(({ id, label, contextWindowMaxTokens }) => ({ id, label, contextWindowMaxTokens }));
 
     expect(opus5Models).toEqual([
@@ -458,6 +464,31 @@ describe("Claude Opus 5 catalog", () => {
       supported: true,
       fallbackThinkingOptionId: "high",
     });
+  });
+});
+
+describe("Claude Opus 5.5 catalog", () => {
+  it("offers Opus 5.5 as the default 1M model on supported Claude Code versions", () => {
+    const model = getClaudeModels("2.1.280").find(({ id }) => id === "claude-opus-5-5");
+
+    expect(model).toMatchObject({
+      label: "Opus 5.5",
+      isDefault: true,
+      contextWindowMaxTokens: 1_000_000,
+      defaultThinkingOptionId: "medium",
+    });
+    expect(model?.thinkingOptions?.map(({ id }) => id)).not.toContain(
+      CLAUDE_DISABLED_THINKING_OPTION_ID,
+    );
+    expect(model?.thinkingOptions?.map(({ id }) => id)).toEqual([
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max",
+      CLAUDE_ULTRACODE_THINKING_OPTION_ID,
+    ]);
+    expect(findClaudeModel("claude-opus-5-5")?.id).toBe("claude-opus-5-5");
   });
 });
 
@@ -522,7 +553,8 @@ describe("claudeManifestModelSupportsFastMode", () => {
     expect(claudeManifestModelSupportsFastMode("claude-opus-4-8-20260101")).toBe(true);
   });
 
-  it("supports fast mode on Opus 5 but not on other Claude 5 models", () => {
+  it("supports fast mode on Opus 5 generations but not on other Claude 5 models", () => {
+    expect(claudeManifestModelSupportsFastMode("claude-opus-5-5")).toBe(true);
     expect(claudeManifestModelSupportsFastMode("claude-opus-5")).toBe(true);
     expect(claudeManifestModelSupportsFastMode("claude-sonnet-5")).toBe(false);
     expect(claudeManifestModelSupportsFastMode("claude-fable-5")).toBe(false);
