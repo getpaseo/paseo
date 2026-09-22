@@ -51,6 +51,7 @@ describe("provider-owned option schemas", () => {
       ClaudeProviderOptionsSchema.parse({
         allowedTools: ["Read"],
         disallowedTools: ["Bash(rm *)"],
+        extraArgs: { chrome: null, "debug-file": "/tmp/claude-debug.log" },
         sandbox: {
           enabled: true,
           failIfUnavailable: true,
@@ -63,7 +64,10 @@ describe("provider-owned option schemas", () => {
         },
         settings: { permissions: { ask: ["Bash(*)"], deny: ["Edit(.env)"] } },
       }),
-    ).toMatchObject({ sandbox: { enabled: true, failIfUnavailable: true } });
+    ).toMatchObject({
+      extraArgs: { chrome: null, "debug-file": "/tmp/claude-debug.log" },
+      sandbox: { enabled: true, failIfUnavailable: true },
+    });
   });
 
   test("reports the exact invalid Claude option path", () => {

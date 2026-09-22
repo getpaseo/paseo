@@ -19,10 +19,13 @@ This Paseo version accepts these keys:
   `allow_local_binding`, `allow_upstream_proxy`, `dangerously_allow_all_unix_sockets`,
   `dangerously_allow_non_loopback_proxy`, `domains`, and `unix_sockets`. See the
   [Codex configuration reference](https://developers.openai.com/codex/config-reference).
-- **Claude:** `allowedTools`, `disallowedTools`, `additionalDirectories`, `sandbox`, and `settings`.
-  The accepted sandbox fields cover enablement, fail-if-unavailable behavior, excluded and
-  unsandboxed commands, filesystem read/write rules, network domain/socket/local-binding rules,
-  weaker nested sandboxing, ignored violations, and the ripgrep command. `settings` accepts native
+- **Claude:** `allowedTools`, `disallowedTools`, `additionalDirectories`, `extraArgs`, `sandbox`, and
+  `settings`. `extraArgs` uses Claude's native argument map: keys omit the leading `--`, string
+  values supply an argument value, and `null` supplies a boolean flag. For example,
+  `{ "extraArgs": { "chrome": null } }` launches Claude Code with `--chrome`. The accepted sandbox
+  fields cover enablement, fail-if-unavailable behavior, excluded and unsandboxed commands,
+  filesystem read/write rules, network domain/socket/local-binding rules, weaker nested
+  sandboxing, ignored violations, and the ripgrep command. `settings` accepts native
   `permissions.{allow,ask,deny}` and sandbox settings. See the
   [Claude Agent SDK TypeScript reference](https://platform.claude.com/docs/en/agent-sdk/typescript)
   and [Claude settings reference](https://code.claude.com/docs/en/settings).
