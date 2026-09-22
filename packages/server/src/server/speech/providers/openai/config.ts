@@ -12,10 +12,6 @@ export interface OpenAiSpeechProviderConfig {
   tts?: Partial<TTSConfig> & { apiKey?: string };
 }
 
-const OpenAiTtsVoiceSchema = z.enum(["alloy", "echo", "fable", "onyx", "nova", "shimmer"]);
-
-const OpenAiTtsModelSchema = z.enum(["tts-1", "tts-1-hd"]);
-
 const NumberLikeSchema = z.union([z.number(), z.string().trim().min(1)]);
 
 const OptionalFiniteNumberSchema = NumberLikeSchema.pipe(
@@ -44,14 +40,12 @@ const OpenAiSttOptionsSchema = z.object({
   sttModel: OptionalTrimmedStringSchema,
 });
 
+// Voice and model are free-form so a self-hosted server can use its own ids; the
+// OpenAI catalog is only the default. Model ids keep their case (rosters use
+// things like kokoro-v1:Q8_0), voices are lowered to match voice-dir lookups.
 const OpenAiTtsOptionsSchema = z.object({
-  ttsVoice: z.string().trim().toLowerCase().pipe(OpenAiTtsVoiceSchema).default("alloy"),
-  ttsModel: z
-    .string()
-    .trim()
-    .toLowerCase()
-    .pipe(OpenAiTtsModelSchema)
-    .default(DEFAULT_OPENAI_TTS_MODEL),
+  ttsVoice: z.string().trim().toLowerCase().default("alloy"),
+  ttsModel: z.string().trim().default(DEFAULT_OPENAI_TTS_MODEL),
 });
 
 function isOpenAiProviderActive(provider: { enabled?: boolean; provider: string }): boolean {
