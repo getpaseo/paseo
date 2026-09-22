@@ -927,12 +927,15 @@ async function readCodexThreadWindow(
   logger: Logger,
   window: { limit: number; cwd?: string },
 ): Promise<Array<Record<string, unknown>>> {
-  const threads: Array<Record<string, unknown>> = [];
+  // A thread updated while the scan is paging moves under `updated_at` order
+  // and can come back on a later page, so identify each one and keep it once.
+  // A row Codex sends without an id stands for itself.
+  const threads = new Map<unknown, Record<string, unknown>>();
   let cursor: string | undefined;
-  while (threads.length < window.limit) {
+  while (threads.size < window.limit) {
     const response = toObjectRecord(
       await client.request("thread/list", {
-        limit: window.limit - threads.length,
+        limit: window.limit - threads.size,
         // Rank the window by last use. Codex pages by creation time by default,
         // which drops an old conversation that is still being worked in.
         // Older Codex builds ignore the unknown key and keep that order.
@@ -942,23 +945,27 @@ async function readCodexThreadWindow(
       }),
     );
     const page = Array.isArray(response?.data) ? response.data.filter(isRecord) : [];
-    threads.push(...page);
+    const sizeBeforePage = threads.size;
+    for (const thread of page) {
+      const identity = typeof thread.id === "string" ? thread.id : thread;
+      if (!threads.has(identity)) threads.set(identity, thread);
+    }
     const nextCursor = typeof response?.nextCursor === "string" ? response.nextCursor : undefined;
     if (!nextCursor) break;
-    if (page.length === 0) {
-      // Every page that continues the scan carries rows, so the loop is bounded
-      // by the window. A page that carries none would let a Codex-side cursor
-      // bug (a stuck cursor, or a cycle) page for ever behind a caller that has
-      // already timed out.
+    if (threads.size === sizeBeforePage) {
+      // Every page that continues the scan brings a thread the scan has not
+      // seen, so the loop is bounded by the window. A page that brings none
+      // would let a Codex-side cursor bug (a stuck cursor, or a cycle) page for
+      // ever behind a caller that has already timed out.
       logger.warn(
         { cursor: nextCursor },
-        "codex thread/list returned an empty page mid-scan, stopping the session scan",
+        "codex thread/list returned no new threads mid-scan, stopping the session scan",
       );
       break;
     }
     cursor = nextCursor;
   }
-  return threads;
+  return [...threads.values()];
 }
 
 function filterCodexThreadsByCwd(

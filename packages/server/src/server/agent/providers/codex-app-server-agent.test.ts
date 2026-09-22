@@ -6068,15 +6068,51 @@ describe("Codex importable sessions", () => {
     appServer.assertNoErrors();
   });
 
-  test("stops scanning when Codex pages without handing back any thread", async () => {
+  test("keeps a thread once when it moves onto a later page mid-scan", async () => {
+    // A thread used while the scan is paging sorts to the front and comes back
+    // on the next page.
     const appServer = createFakeCodexAppServer({
-      // A cursor cycle: every page after the first is empty and points at the
-      // other empty page, so the scan can never fill its window.
       "thread/list": (input) => {
         const { cursor } = (input ?? {}) as { cursor?: string };
-        if (cursor === "page-a") return { data: [], nextCursor: "page-b" };
-        if (cursor === "page-b") return { data: [], nextCursor: "page-a" };
-        return { data: [{ id: "thread-1", cwd: "/workspace/project-a" }], nextCursor: "page-a" };
+        return cursor
+          ? {
+              data: [
+                { id: "thread-1", cwd: "/workspace/project-a", updatedAt: 9000 },
+                { id: "thread-3", cwd: "/workspace/project-a", updatedAt: 1000 },
+              ],
+              nextCursor: null,
+            }
+          : {
+              data: [
+                { id: "thread-1", cwd: "/workspace/project-a", updatedAt: 3000 },
+                { id: "thread-2", cwd: "/workspace/project-a", updatedAt: 2000 },
+              ],
+              nextCursor: "page-2",
+            };
+      },
+    });
+    const provider = createProviderWithFakeAppServer(appServer);
+
+    const sessions = await provider.listImportableSessions({ limit: 500, scanLimit: 500 });
+
+    expect(sessions.map((session) => session.providerHandleId)).toEqual([
+      "thread-1",
+      "thread-2",
+      "thread-3",
+    ]);
+    appServer.assertNoErrors();
+  });
+
+  test("stops scanning when Codex pages without handing back a new thread", async () => {
+    const appServer = createFakeCodexAppServer({
+      // A cursor cycle: the two pages after the first serve threads the scan
+      // already holds and point at each other, so it can never fill its window.
+      "thread/list": (input) => {
+        const { cursor } = (input ?? {}) as { cursor?: string };
+        const thread = { id: "thread-1", cwd: "/workspace/project-a" };
+        if (cursor === "page-a") return { data: [thread], nextCursor: "page-b" };
+        if (cursor === "page-b") return { data: [thread], nextCursor: "page-a" };
+        return { data: [thread], nextCursor: "page-a" };
       },
     });
     const provider = createProviderWithFakeAppServer(appServer);
