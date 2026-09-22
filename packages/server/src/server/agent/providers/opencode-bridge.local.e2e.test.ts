@@ -6,6 +6,7 @@ import path from "node:path";
 import { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
 import { expect, test } from "vitest";
 
+import { execCommand } from "../../../utils/spawn.js";
 import { createTestLogger } from "../../../test-utils/test-logger.js";
 import type { PaseoToolCatalog } from "../tools/types.js";
 import { OpenCodeAgentClient } from "./opencode-agent.js";
@@ -266,28 +267,71 @@ test("v2 native tool bridge preserves caller identity", async () => {
   }
 }, 120_000);
 
-test("versioned runtime discovers models and preserves a native session handle", async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "paseo-opencode-versioned-"));
-  const client = new OpenCodeRuntimeClient(createTestLogger());
-  let original: Awaited<ReturnType<typeof client.createSession>> | undefined;
-  let resumed: Awaited<ReturnType<typeof client.resumeSession>> | undefined;
-  try {
-    const catalog = await client.fetchCatalog({ scope: "workspace", cwd: root, force: true });
-    expect(catalog.models.length).toBeGreaterThan(0);
-    expect(catalog.modes.map((mode) => mode.id)).toContain("build");
-    original = await client.createSession(
-      { provider: "opencode", cwd: root, modeId: "build" },
-      undefined,
-      { persistSession: false },
-    );
-    const handle = await original.describePersistence();
-    resumed = await client.resumeSession(handle, { cwd: root });
-    expect((await resumed.describePersistence()).nativeHandle).toBe(handle.nativeHandle);
-    expect(await drainPersistedTimeline(resumed)).toEqual([]);
-  } finally {
-    await resumed?.close();
-    await original?.close();
-    await client.shutdown();
-    await rm(root, { recursive: true, force: true });
-  }
-}, 60_000);
+test.each([
+  { major: 1, package: "opencode-ai@1.14.46" },
+  { major: 2, package: "@opencode/cli@2.0.10" },
+])(
+  "versioned runtime v$major discovers models and preserves a native session handle",
+  async ({ major, package: cliPackage }) => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "paseo-opencode-versioned-"));
+    const client = new OpenCodeRuntimeClient(createTestLogger(), {
+      command: {
+        mode: "replace",
+        argv: [
+          path.join(
+            root,
+            "node_modules",
+            ".bin",
+            process.platform === "win32" ? "opencode.cmd" : "opencode",
+          ),
+        ],
+      },
+      env: {
+        XDG_CONFIG_HOME: path.join(root, "config"),
+        XDG_DATA_HOME: path.join(root, "data"),
+        XDG_CACHE_HOME: path.join(root, "cache"),
+        XDG_STATE_HOME: path.join(root, "state"),
+      },
+    });
+    let original: Awaited<ReturnType<typeof client.createSession>> | undefined;
+    let resumed: Awaited<ReturnType<typeof client.resumeSession>> | undefined;
+    try {
+      await execCommand(
+        "npm",
+        ["install", "--prefix", root, "--no-audit", "--no-fund", cliPackage],
+        {
+          cwd: root,
+          timeout: 180_000,
+        },
+      );
+      const catalog = await client.fetchCatalog({ scope: "workspace", cwd: root, force: true });
+      expect(catalog.models.length).toBeGreaterThan(0);
+      expect(catalog.modes.map((mode) => mode.id)).toContain("build");
+      original = await client.createSession(
+        { provider: "opencode", cwd: root, modeId: "build" },
+        undefined,
+        { persistSession: false },
+      );
+      const handle = await original.describePersistence();
+      resumed = await client.resumeSession(handle, { cwd: root });
+      expect((await resumed.describePersistence()).nativeHandle).toBe(handle.nativeHandle);
+      expect(
+        (await drainPersistedTimeline(resumed)).map((event) =>
+          event.type === "timeline" ? event.item : event,
+        ),
+      ).toEqual([
+        {
+          type: "notification",
+          level: "info",
+          message: `This chat uses OpenCode v${major}.`,
+        },
+      ]);
+    } finally {
+      await resumed?.close();
+      await original?.close();
+      await client.shutdown();
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+  240_000,
+);
