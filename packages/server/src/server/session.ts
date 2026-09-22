@@ -1655,7 +1655,9 @@ export class Session {
         this.voiceSession.handleAudioPlayed(msg.id);
         return undefined;
       case "set_voice_mode":
-        return this.voiceSession.handleSetVoiceMode(msg.enabled, msg.agentId, msg.requestId);
+        return this.voiceSession.handleSetVoiceMode(msg.enabled, msg.agentId, msg.requestId, msg);
+      case "voice.input.set_muted.request":
+        return this.voiceSession.handleSetInputMuted(msg);
       case "dictation_stream_start":
         return this.voiceSession.handleDictationStreamStart(msg);
       case "dictation_stream_chunk":

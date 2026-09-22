@@ -1478,10 +1478,17 @@ export const ja: TranslationResources = {
     },
   },
   realtimeVoice: {
+    muted: "エージェントへのマイク入力はミュート中",
+    listening: "マイクはオン",
+    commandHint: "「mute microphone」だけを話すと入力を一時停止します。",
+    mutedHint:
+      "ホスト上で「unmute microphone」だけを認識します。他の発話は破棄されます。マイクをオフにするには音声セッションを終了してください。",
+    commandsUnavailable:
+      "音声ミュートには、更新済みのホストとローカル音声認識が必要です。マイクボタンを使用してください。",
     actions: {
       mute: "リアルタイム音声をミュート",
       unmute: "リアルタイム音声のミュートを解除",
-      stop: "リアルタイム音声を停止してターンを中断",
+      stop: "音声セッションを終了",
     },
   },
   rewind: {

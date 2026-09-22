@@ -626,6 +626,9 @@ function MessageInputOverlay({
     | {
         isMuted: boolean;
         isVoiceSwitching: boolean;
+        voiceCommandsEnabled: boolean;
+        isMuteSwitching: boolean;
+        muteError: string | null;
         toggleMute: () => void;
       }
     | null
@@ -667,6 +670,9 @@ function MessageInputOverlay({
     return (
       <RealtimeVoiceOverlay
         isMuted={voice.isMuted}
+        voiceCommandsEnabled={voice.voiceCommandsEnabled}
+        isMuteSwitching={voice.isMuteSwitching}
+        muteError={voice.muteError}
         isSwitching={voice.isVoiceSwitching}
         isAgentRunning={isAgentRunning}
         isCancellingAgent={isCancellingAgent}
@@ -1693,9 +1699,10 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       () => [
         styles.inputWrapper,
         inputWrapperStyle,
+        showRealtimeOverlay ? styles.inputWrapperBehindVoice : undefined,
         { opacity: surfacePresentation.input.opacity },
       ],
-      [inputWrapperStyle, surfacePresentation.input.opacity],
+      [inputWrapperStyle, surfacePresentation.input.opacity, showRealtimeOverlay],
     );
     const textInputStyle = useMemo(
       () => [styles.textInput, computeTextInputHeightStyle(inputHeight, maxInputHeight)],
@@ -1706,8 +1713,11 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       [isSendButtonDisabled],
     );
     const overlayContainerStyle = useMemo(
-      () => [styles.overlayContainer, { opacity: surfacePresentation.overlay.opacity }],
-      [surfacePresentation.overlay.opacity],
+      () => [
+        showRealtimeOverlay ? styles.voiceOverlayContainer : styles.overlayContainer,
+        { opacity: surfacePresentation.overlay.opacity },
+      ],
+      [surfacePresentation.overlay.opacity, showRealtimeOverlay],
     );
 
     const renderAttachButtonIcon = useCallback(
@@ -1995,6 +2005,8 @@ const styles = StyleSheet.create((theme: Theme) => ({
     fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.normal,
   },
+  inputWrapperBehindVoice: { position: "absolute", left: 0, right: 0 },
+  voiceOverlayContainer: { width: "100%" },
   overlayContainer: {
     position: "absolute",
     display: "flex",

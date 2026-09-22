@@ -22,7 +22,8 @@ function createAudioEngineMock(): AudioEngine {
 function createSessionAdapter(serverId = "server-1"): VoiceSessionAdapter {
   return {
     serverId,
-    setVoiceMode: vi.fn().mockResolvedValue(undefined),
+    setVoiceMode: vi.fn().mockResolvedValue({}),
+    setVoiceInputMuted: vi.fn(async (muted: boolean) => muted),
     sendVoiceAudioChunk: vi.fn().mockResolvedValue(undefined),
     audioPlayed: vi.fn().mockResolvedValue(undefined),
     abortRequest: vi.fn().mockResolvedValue(undefined),
@@ -78,6 +79,104 @@ function createRuntime(options?: {
 }
 
 describe("voice runtime", () => {
+  function createCommandRuntime() {
+    const adapter = createSessionAdapter();
+    vi.mocked(adapter.setVoiceMode).mockResolvedValue({
+      voiceCommandsEnabled: true,
+      isMuted: false,
+    });
+    const { runtime, engine } = createRuntime({
+      getServerInfo: () => ({
+        ...createServerInfo(),
+        features: { voiceVerbalMute: true },
+      }),
+    });
+    runtime.registerSession(adapter);
+    return { runtime, engine, adapter };
+  }
+
+  it("keeps audio capture alive for verbal unmute and confirms state changes once", async () => {
+    const { runtime, engine, adapter } = createCommandRuntime();
+    await runtime.startVoice("server-1", "agent-1");
+    runtime.onInputMutedChanged("server-1", true);
+    runtime.onInputMutedChanged("server-1", true);
+    runtime.handleCapturePcm(new Uint8Array([1, 2]));
+    runtime.onServerSpeechStateChanged("server-1", true);
+    expect(adapter.sendVoiceAudioChunk).toHaveBeenCalledOnce();
+    expect(engine.toggleMute).not.toHaveBeenCalled();
+    expect(engine.stopCapture).not.toHaveBeenCalled();
+    expect(engine.play).toHaveBeenCalledOnce();
+    expect(runtime.getSnapshot().isMuted).toBe(true);
+    expect(runtime.getTelemetrySnapshot().isSpeaking).toBe(false);
+    runtime.onInputMutedChanged("server-1", false);
+    expect(runtime.getSnapshot().isMuted).toBe(false);
+    expect(engine.play).toHaveBeenCalledTimes(2);
+    await runtime.destroy();
+  });
+
+  it("synchronizes tap mute with the host and preserves it across reconnect", async () => {
+    const { runtime, adapter } = createCommandRuntime();
+    await runtime.startVoice("server-1", "agent-1");
+    runtime.toggleMute();
+    runtime.handleCapturePcm(new Uint8Array([1, 2]));
+    expect(adapter.sendVoiceAudioChunk).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(adapter.setVoiceInputMuted).toHaveBeenCalledWith(true);
+    expect(runtime.getSnapshot()).toMatchObject({ isMuted: true, isMuteSwitching: false });
+    runtime.updateSessionConnection("server-1", false);
+    runtime.updateSessionConnection("server-1", true);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(adapter.setVoiceMode).toHaveBeenLastCalledWith(true, "agent-1", {
+      voiceCommandsEnabled: true,
+      isMuted: true,
+    });
+    expect(runtime.getSnapshot().isMuted).toBe(true);
+    await runtime.destroy();
+  });
+
+  it("pauses upload and exposes recovery when mute acknowledgement is lost", async () => {
+    const { runtime, adapter } = createCommandRuntime();
+    await runtime.startVoice("server-1", "agent-1");
+    vi.mocked(adapter.setVoiceInputMuted).mockRejectedValue(new Error("Connection lost"));
+    runtime.toggleMute();
+    await vi.advanceTimersByTimeAsync(0);
+    runtime.handleCapturePcm(new Uint8Array([1, 2]));
+    expect(adapter.sendVoiceAudioChunk).not.toHaveBeenCalled();
+    expect(runtime.getSnapshot()).toMatchObject({
+      isMuteSwitching: false,
+      muteError: "Microphone paused: Connection lost. Stop and restart voice to reconnect.",
+    });
+    await runtime.destroy();
+  });
+
+  it("shows recognition failure and stops uploads instead of leaving verbal unmute silently unavailable", async () => {
+    const { runtime, adapter } = createCommandRuntime();
+    await runtime.startVoice("server-1", "agent-1");
+    runtime.onInputMutedChanged("server-1", true);
+    runtime.onInputError(
+      "server-1",
+      "Speech recognition failed. Stop and restart voice to reconnect.",
+    );
+    runtime.handleCapturePcm(new Uint8Array([1, 2]));
+    expect(adapter.sendVoiceAudioChunk).not.toHaveBeenCalled();
+    expect(runtime.getSnapshot().muteError).toBe(
+      "Speech recognition failed. Stop and restart voice to reconnect.",
+    );
+    await runtime.destroy();
+  });
+
+  it("ignores mute state from another host or a stopped voice session", async () => {
+    const { runtime, engine } = createCommandRuntime();
+    await runtime.startVoice("server-1", "agent-1");
+    runtime.onInputMutedChanged("server-2", true);
+    expect(runtime.getSnapshot().isMuted).toBe(false);
+    await runtime.stopVoice();
+    runtime.onInputMutedChanged("server-1", true);
+    expect(runtime.getSnapshot().isMuted).toBe(false);
+    expect(engine.play).not.toHaveBeenCalled();
+    await runtime.destroy();
+  });
+
   beforeEach(() => {
     vi.useFakeTimers();
   });

@@ -30,6 +30,9 @@ const EMPTY_SNAPSHOT: VoiceRuntimeSnapshot = {
   isVoiceMode: false,
   isVoiceSwitching: false,
   isMuted: false,
+  voiceCommandsEnabled: false,
+  isMuteSwitching: false,
+  muteError: null,
   activeServerId: null,
   activeAgentId: null,
 };

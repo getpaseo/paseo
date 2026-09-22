@@ -1508,10 +1508,17 @@ export const es: TranslationResources = {
     },
   },
   realtimeVoice: {
+    muted: "Micrófono silenciado para el agente",
+    listening: "Micrófono activado",
+    commandHint: "Di «mute microphone» como frase independiente para pausar la entrada.",
+    mutedHint:
+      "Tu equipo escucha solo «unmute microphone». El resto se descarta. Detén la sesión de voz para apagar el micrófono.",
+    commandsUnavailable:
+      "El silencio por voz requiere un equipo actualizado con reconocimiento local. Usa el botón del micrófono.",
     actions: {
       mute: "Silenciar voz en tiempo real",
       unmute: "Activar voz en tiempo real",
-      stop: "Detener la voz en tiempo real e interrumpir el turno.",
+      stop: "Detener la sesión de voz",
     },
   },
   rewind: {

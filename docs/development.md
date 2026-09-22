@@ -483,3 +483,7 @@ Always run typecheck after changes:
 ```bash
 npm run typecheck
 ```
+
+## Verbal microphone mute
+
+See [Voice microphone commands](voice-input.md) for phrases, local recognition, mute semantics, and focused tests.

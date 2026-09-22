@@ -61,6 +61,7 @@ export interface VoiceTurnControllerCallbacks {
 export interface VoiceTurnController {
   start(): Promise<void>;
   stop(): Promise<void>;
+  resetInput(commandOnly?: boolean): Promise<void>;
   appendClientChunk(input: { audioBase64: string; format: string }): Promise<void>;
 }
 
@@ -108,6 +109,11 @@ export function createVoiceTurnController(params: {
   let inputRate = detector.requiredSampleRate;
   let sttInputRate = 0;
   let queued = Promise.resolve();
+  let inputGeneration = 0;
+  let sttGeneration = 0;
+  let commandOnly = false;
+  let commandAudio: Buffer = Buffer.alloc(0);
+  let commandTooLong = false;
   let activeTranscriptSegmentId: string | null = null;
   let partialTranscriptFired = false;
   let reconnectAttemptedForTurn = false;
@@ -124,7 +130,9 @@ export function createVoiceTurnController(params: {
     }
 
     partialTranscriptFired = true;
+    const generation = inputGeneration;
     void runSerial(async () => {
+      if (generation !== inputGeneration) return;
       await params.callbacks.onPartialTranscript({ segmentId, transcript });
     });
   }
@@ -216,7 +224,9 @@ export function createVoiceTurnController(params: {
       );
     }
 
+    const generation = inputGeneration;
     void runSerial(async () => {
+      if (generation !== inputGeneration) return;
       await params.callbacks.onFinalTranscript(finalTranscript);
     });
   }
@@ -235,6 +245,7 @@ export function createVoiceTurnController(params: {
   }
 
   async function reconnectSttSession(): Promise<void> {
+    sttGeneration += 1;
     const previousSession = sttSession;
     sttSession = null;
     sttResampler = null;
@@ -318,12 +329,16 @@ export function createVoiceTurnController(params: {
   }
 
   function createSttSession(): StreamingTranscriptionSession {
+    const generation = ++sttGeneration;
     const session = params.stt.createSession({
       logger: params.logger.child({ component: "stt" }),
       language: params.sttLanguage ?? "en",
     });
-    session.on("transcript", handleSttTranscript);
+    session.on("transcript", (event) => {
+      if (generation === sttGeneration) handleSttTranscript(event);
+    });
     session.on("committed", ({ segmentId }) => {
+      if (generation !== sttGeneration) return;
       sealedTranscriptSegmentIds.add(segmentId);
       if (state.status === "capturing" && !activeTranscriptSegmentId) {
         activeTranscriptSegmentId = segmentId;
@@ -334,15 +349,16 @@ export function createVoiceTurnController(params: {
         maybeFireFinalTranscript(turn);
       }
     });
-    session.on("error", handleSttError);
+    session.on("error", (error) => {
+      if (generation === sttGeneration) handleSttError(error);
+    });
     return session;
   }
 
-  function runSerial(task: () => Promise<void>): Promise<void> {
-    queued = queued.then(task).catch((error) => {
-      fail(error);
-    });
-    return queued;
+  function runSerial(task: () => Promise<void>, propagateError = false): Promise<void> {
+    const result = queued.then(task);
+    queued = result.catch(fail);
+    return propagateError ? result : queued;
   }
 
   function updateDetectorResampler(parsedInputRate: number): void {
@@ -398,6 +414,19 @@ export function createVoiceTurnController(params: {
     return sttResampler.processChunk(pcm16);
   }
 
+  function bufferCommandAudio(pcm16: Buffer, sampleRate: number): void {
+    if (commandTooLong) return;
+    commandAudio = Buffer.concat([commandAudio, pcm16]);
+    const bytesPerSecond = sampleRate * 2;
+    if (state.status === "capturing" && commandAudio.length > bytesPerSecond * 6) {
+      commandTooLong = true;
+      commandAudio = Buffer.alloc(0);
+    } else if (state.status === "listening") {
+      // Retain a short onset buffer because VAD fires after speech has begun.
+      commandAudio = Buffer.from(commandAudio.subarray(-Math.round(bytesPerSecond * 0.75)));
+    }
+  }
+
   async function handleSpeechStarted(): Promise<void> {
     if (state.status === "capturing") {
       return;
@@ -406,6 +435,7 @@ export function createVoiceTurnController(params: {
     await params.callbacks.onSpeechStarted();
 
     const startedAt = Date.now();
+    commandTooLong = false;
     activeTranscriptSegmentId = null;
     partialTranscriptFired = false;
     reconnectAttemptedForTurn = false;
@@ -451,6 +481,12 @@ export function createVoiceTurnController(params: {
 
     detector.reset();
     try {
+      if (commandOnly && !commandTooLong && commandAudio.length > 0) {
+        // Muted mode runs only VAD continuously. Decode one bounded utterance,
+        // reusing the loaded local model instead of continuous partial recognition.
+        sttSession?.appendPcm16(commandAudio);
+      }
+      commandAudio = Buffer.alloc(0);
       sttSession?.commit();
     } catch (error) {
       handleSttError(error);
@@ -482,7 +518,36 @@ export function createVoiceTurnController(params: {
       state = { status: "listening" };
     },
 
+    async resetInput(nextCommandOnly = false): Promise<void> {
+      inputGeneration += 1;
+      commandOnly = nextCommandOnly;
+      sttGeneration += 1;
+      await runSerial(async () => {
+        clearFinalizingTurnTimeout();
+        currentFinalizingTurn = null;
+        activeTranscriptSegmentId = null;
+        partialTranscriptFired = false;
+        commandAudio = Buffer.alloc(0);
+        commandTooLong = false;
+        detector.reset();
+        // Closing a lightweight session also invalidates results already in flight.
+        // The local worker retains the loaded model across sessions.
+        sealedTranscriptSegmentIds.clear();
+        sttSession?.close();
+        sttSession = null;
+        sttResampler = null;
+        sttInputRate = 0;
+        const nextSession = createSttSession();
+        await nextSession.connect();
+        sttSession = nextSession;
+        resampler?.reset();
+        state = { status: "listening" };
+      }, true);
+    },
+
     async stop(): Promise<void> {
+      inputGeneration += 1;
+      sttGeneration += 1;
       await runSerial(async () => {
         clearFinalizingTurnTimeout();
         detector.close();
@@ -532,7 +597,11 @@ export function createVoiceTurnController(params: {
 
         if (sttPcm16 && sttPcm16.length > 0) {
           try {
-            currentSttSession?.appendPcm16(sttPcm16);
+            if (commandOnly) {
+              bufferCommandAudio(sttPcm16, currentSttSession?.requiredSampleRate ?? inputRate);
+            } else {
+              currentSttSession?.appendPcm16(sttPcm16);
+            }
           } catch (error) {
             handleSttError(error);
           }

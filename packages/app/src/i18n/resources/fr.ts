@@ -1511,10 +1511,17 @@ export const fr: TranslationResources = {
     },
   },
   realtimeVoice: {
+    muted: "Micro coupé pour l’agent",
+    listening: "Micro activé",
+    commandHint: "Dites « mute microphone » seul pour suspendre l’entrée.",
+    mutedHint:
+      "Votre hôte écoute uniquement « unmute microphone ». Toute autre parole est ignorée. Arrêtez la session vocale pour couper le micro.",
+    commandsUnavailable:
+      "La commande vocale nécessite un hôte à jour avec reconnaissance locale. Utilisez le bouton du micro.",
     actions: {
       mute: "Couper la voix en temps réel",
       unmute: "Réactiver la voix en temps réel",
-      stop: "Arrêtez la voix en temps réel et interrompez le tour",
+      stop: "Arrêter la session vocale",
     },
   },
   rewind: {

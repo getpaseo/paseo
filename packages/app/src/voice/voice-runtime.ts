@@ -2,6 +2,7 @@ import { Buffer } from "buffer";
 import type { AgentStreamEventPayload, SessionOutboundMessage } from "@getpaseo/protocol/messages";
 import { resolveVoiceUnavailableMessage } from "@/utils/server-info-capabilities";
 import type { DaemonServerInfo } from "@/stores/session-store";
+import { createMicrophoneCue } from "@/voice/microphone-cue";
 import type { AudioEngine } from "@/voice/audio-engine-types";
 import {
   THINKING_TONE_NATIVE_PCM_BASE64,
@@ -35,6 +36,9 @@ export interface VoiceRuntimeSnapshot {
   isVoiceMode: boolean;
   isVoiceSwitching: boolean;
   isMuted: boolean;
+  voiceCommandsEnabled: boolean;
+  isMuteSwitching: boolean;
+  muteError: string | null;
   activeServerId: string | null;
   activeAgentId: string | null;
 }
@@ -47,7 +51,12 @@ export interface VoiceRuntimeTelemetrySnapshot {
 
 export interface VoiceSessionAdapter {
   serverId: string;
-  setVoiceMode(enabled: boolean, agentId?: string): Promise<void>;
+  setVoiceMode(
+    enabled: boolean,
+    agentId?: string,
+    input?: { voiceCommandsEnabled?: boolean; isMuted?: boolean },
+  ): Promise<{ voiceCommandsEnabled?: boolean; isMuted?: boolean }>;
+  setVoiceInputMuted(muted: boolean): Promise<boolean>;
   sendVoiceAudioChunk(audioData: string, mimeType: string): Promise<void>;
   audioPlayed(chunkId: string): Promise<void>;
   abortRequest(): Promise<void>;
@@ -122,6 +131,9 @@ const INITIAL_SNAPSHOT: VoiceRuntimeSnapshot = {
   isVoiceMode: false,
   isVoiceSwitching: false,
   isMuted: false,
+  voiceCommandsEnabled: false,
+  isMuteSwitching: false,
+  muteError: null,
   activeServerId: null,
   activeAgentId: null,
 };
@@ -140,6 +152,9 @@ function snapshotsEqual(left: VoiceRuntimeSnapshot, right: VoiceRuntimeSnapshot)
     left.isVoiceMode === right.isVoiceMode &&
     left.isVoiceSwitching === right.isVoiceSwitching &&
     left.isMuted === right.isMuted &&
+    left.voiceCommandsEnabled === right.voiceCommandsEnabled &&
+    left.isMuteSwitching === right.isMuteSwitching &&
+    left.muteError === right.muteError &&
     left.activeServerId === right.activeServerId &&
     left.activeAgentId === right.activeAgentId
   );
@@ -176,6 +191,8 @@ export interface VoiceRuntime {
   onAssistantAudioFinished(serverId: string): void;
   onTranscriptionResult(serverId: string, text: string): void;
   onServerSpeechStateChanged(serverId: string, isSpeaking: boolean): void;
+  onInputMutedChanged(serverId: string, muted: boolean): void;
+  onInputError(serverId: string, error: string): void;
   onTurnEvent(serverId: string, agentId: string, eventType: TurnEventType): void;
 }
 
@@ -430,7 +447,8 @@ export function createVoiceRuntime(deps: VoiceRuntimeDeps): VoiceRuntime {
     return (
       state.snapshot.isVoiceMode &&
       state.snapshot.phase === "waiting" &&
-      !state.telemetry.isSpeaking
+      !state.telemetry.isSpeaking &&
+      !state.snapshot.isMuted
     );
   }
 
@@ -574,12 +592,29 @@ export function createVoiceRuntime(deps: VoiceRuntimeDeps): VoiceRuntime {
       return;
     }
 
+    const generation = state.generation;
     patchSnapshot((prev) => ({ ...prev, isVoiceSwitching: true }));
     try {
-      await activeSession.adapter.setVoiceMode(true, state.snapshot.activeAgentId);
+      const response = state.snapshot.voiceCommandsEnabled
+        ? await activeSession.adapter.setVoiceMode(true, state.snapshot.activeAgentId, {
+            voiceCommandsEnabled: true,
+            isMuted: state.snapshot.isMuted,
+          })
+        : await activeSession.adapter.setVoiceMode(true, state.snapshot.activeAgentId);
+      if (generation !== state.generation) return;
+      if (state.snapshot.voiceCommandsEnabled && !response.voiceCommandsEnabled) {
+        throw new Error("Local speech recognition is unavailable. Start voice again to reconnect.");
+      }
       state.transportReady = true;
+      patchSnapshot({ muteError: null });
+    } catch (error) {
+      if (generation !== state.generation) return;
+      patchSnapshot({
+        muteError: error instanceof Error ? error.message : "Voice reconnect failed.",
+      });
     } finally {
-      patchSnapshot((prev) => ({ ...prev, isVoiceSwitching: false }));
+      if (generation === state.generation)
+        patchSnapshot((prev) => ({ ...prev, isVoiceSwitching: false }));
     }
   }
 
@@ -632,13 +667,19 @@ export function createVoiceRuntime(deps: VoiceRuntimeDeps): VoiceRuntime {
       }
       if (!connected) {
         state.transportReady = false;
+        patchSnapshot({
+          muteError: "Host disconnected. Microphone input is paused until reconnected.",
+        });
         return;
       }
       void resyncVoiceMode(serverId);
     },
 
     handleCapturePcm(chunk) {
-      if (!state.snapshot.isVoiceMode || state.snapshot.isMuted) {
+      if (
+        !state.snapshot.isVoiceMode ||
+        (state.snapshot.isMuted && !state.snapshot.voiceCommandsEnabled)
+      ) {
         return;
       }
       uploader.pushPcmChunk(chunk);
@@ -759,7 +800,14 @@ export function createVoiceRuntime(deps: VoiceRuntimeDeps): VoiceRuntime {
         });
 
         await deps.engine.initialize();
-        await session.adapter.setVoiceMode(true, agentId);
+        // COMPAT(voiceVerbalMute): added in fork v0.2.0, remove gate after 2027-03-21.
+        const supportsCommands = serverInfo?.features?.voiceVerbalMute === true;
+        const response = supportsCommands
+          ? await session.adapter.setVoiceMode(true, agentId, {
+              voiceCommandsEnabled: true,
+              isMuted: false,
+            })
+          : await session.adapter.setVoiceMode(true, agentId);
         enabledCurrentVoiceMode = true;
         await deps.engine.startCapture();
         if (state.generation !== generation) {
@@ -775,7 +823,10 @@ export function createVoiceRuntime(deps: VoiceRuntimeDeps): VoiceRuntime {
           isVoiceMode: true,
           isVoiceSwitching: false,
           phase: "listening",
-          isMuted: deps.engine.isMuted(),
+          isMuted: response.isMuted ?? deps.engine.isMuted(),
+          voiceCommandsEnabled: response.voiceCommandsEnabled === true,
+          isMuteSwitching: false,
+          muteError: null,
         }));
       } catch (error) {
         if (enabledCurrentVoiceMode) {
@@ -824,20 +875,67 @@ export function createVoiceRuntime(deps: VoiceRuntimeDeps): VoiceRuntime {
       sessions.clear();
     },
 
-    toggleMute() {
-      const nextMuted = deps.engine.toggleMute();
-      if (nextMuted) {
-        uploader.reset();
-        resetCaptureTelemetry();
-        patchSnapshot((prev) => ({
-          ...prev,
-          isMuted: true,
-        }));
-        reconcileCue();
+    async toggleMute() {
+      if (
+        !state.snapshot.isVoiceMode ||
+        state.snapshot.isMuteSwitching ||
+        state.snapshot.isVoiceSwitching
+      )
+        return;
+      if (!state.snapshot.voiceCommandsEnabled) {
+        api.onInputMutedChanged(state.snapshot.activeServerId!, deps.engine.toggleMute());
         return;
       }
+      const session = getActiveSession();
+      if (!session?.connected || !state.transportReady) {
+        patchSnapshot({
+          muteError: "Host disconnected. Reconnect or stop voice to turn off the microphone.",
+        });
+        return;
+      }
+      const serverId = session.adapter.serverId;
+      const generation = state.generation;
+      const nextMuted = !state.snapshot.isMuted;
+      patchSnapshot({ isMuteSwitching: true, muteError: null });
+      // Drop new audio until the host has applied the transition and cleared old input.
+      state.transportReady = false;
+      try {
+        const muted = await session.adapter.setVoiceInputMuted(nextMuted);
+        if (state.generation !== generation) return;
+        api.onInputMutedChanged(serverId, muted);
+        state.transportReady = session.connected;
+      } catch (error) {
+        if (state.generation !== generation) return;
+        // Fail closed: the host may have accepted a request whose acknowledgement was lost.
+        patchSnapshot({
+          muteError: `Microphone paused: ${error instanceof Error ? error.message : "mute change failed"}. Stop and restart voice to reconnect.`,
+        });
+      } finally {
+        if (state.generation === generation) patchSnapshot({ isMuteSwitching: false });
+      }
+    },
 
-      patchSnapshot((prev) => ({ ...prev, isMuted: false }));
+    onInputError(serverId, error) {
+      if (serverId !== state.snapshot.activeServerId || !state.snapshot.isVoiceMode) return;
+      state.transportReady = false;
+      patchSnapshot({ muteError: error });
+    },
+
+    onInputMutedChanged(serverId, muted) {
+      if (
+        serverId !== state.snapshot.activeServerId ||
+        !state.snapshot.isVoiceMode ||
+        state.snapshot.isMuted === muted
+      )
+        return;
+      patchSnapshot({ isMuted: muted });
+      state.serverSpeechDetected = false;
+      resetCaptureTelemetry();
+      stopCue();
+      // Confirmation uses the existing cross-platform PCM player, never agent TTS.
+      void deps.engine.play(createMicrophoneCue(muted)).catch((error) => {
+        console.warn("[VoiceRuntime] Microphone confirmation failed:", error);
+      });
     },
 
     isVoiceModeForAgent(serverId, agentId) {
@@ -887,7 +985,11 @@ export function createVoiceRuntime(deps: VoiceRuntimeDeps): VoiceRuntime {
     },
 
     onTranscriptionResult(serverId, text) {
-      if (serverId !== state.snapshot.activeServerId || !state.snapshot.isVoiceMode) {
+      if (
+        serverId !== state.snapshot.activeServerId ||
+        !state.snapshot.isVoiceMode ||
+        state.snapshot.isMuted
+      ) {
         return;
       }
 
@@ -904,7 +1006,11 @@ export function createVoiceRuntime(deps: VoiceRuntimeDeps): VoiceRuntime {
     },
 
     onServerSpeechStateChanged(serverId, isSpeaking) {
-      if (serverId !== state.snapshot.activeServerId || !state.snapshot.isVoiceMode) {
+      if (
+        serverId !== state.snapshot.activeServerId ||
+        !state.snapshot.isVoiceMode ||
+        state.snapshot.isMuted
+      ) {
         return;
       }
 

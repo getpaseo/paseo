@@ -1,6 +1,6 @@
 import { expect, test, vi } from "vitest";
 import { spawn } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
@@ -7206,6 +7206,58 @@ test("close during in-flight stream does not clear persistence sessionId", async
 
   const persisted = await storage.get(snapshot.id);
   expect(persisted?.persistence?.sessionId).toBe(snapshot.persistence?.sessionId);
+});
+
+test("closeAgent discards unfinished artifact collection before resuming", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-close-artifacts-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const session = new TestAgentSession({ provider: "codex", cwd: workdir });
+  const client = new (class extends TestAgentClient {
+    override async createSession(): Promise<AgentSession> {
+      return session;
+    }
+  })();
+  const manager = new AgentManager({ clients: { codex: client }, registry: storage, logger });
+  const artifactPath = join(workdir, "interrupted.md");
+  writeFileSync(artifactPath, "# Interrupted turn");
+  // Keep this file outside the next turn's recent-file scan. Only the interrupted
+  // turn's completed tool call should have added it to the collector.
+  const oldTimestamp = new Date("2000-01-01T00:00:00Z");
+  utimesSync(artifactPath, oldTimestamp, oldTimestamp);
+
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    session.pushEvent({ type: "turn_started", provider: "codex", turnId: "interrupted" });
+    session.pushEvent({
+      type: "timeline",
+      provider: "codex",
+      turnId: "interrupted",
+      item: {
+        type: "tool_call",
+        callId: "write-interrupted",
+        name: "Write",
+        status: "completed",
+        error: null,
+        detail: { type: "write", filePath: artifactPath },
+      },
+    });
+    await manager.flush();
+    await manager.closeAgent(agent.id);
+
+    await ensureAgentLoaded(agent.id, { agentManager: manager, agentStorage: storage, logger });
+    for await (const _event of manager.streamAgent(agent.id, "Continue without file changes")) {
+      // Consume the resumed turn through completion.
+    }
+    await manager.flush();
+    expect(manager.getAgent(agent.id)?.artifacts).toEqual([]);
+  } finally {
+    await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id)));
+    await manager.flush();
+    await storage.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  }
 });
 
 test("closeAgent persists one final closed snapshot", async () => {

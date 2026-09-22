@@ -3173,11 +3173,16 @@ export class DaemonClient {
   // Audio / Voice
   // ============================================================================
 
-  async setVoiceMode(enabled: boolean, agentId?: string): Promise<SetVoiceModePayload> {
+  async setVoiceMode(
+    enabled: boolean,
+    agentId?: string,
+    input?: { voiceCommandsEnabled?: boolean; isMuted?: boolean },
+  ): Promise<SetVoiceModePayload> {
     const requestId = this.createRequestId();
     const message = SessionInboundMessageSchema.parse({
       type: "set_voice_mode",
       enabled,
+      ...input,
       ...(agentId ? { agentId } : {}),
       requestId,
     });
@@ -3202,6 +3207,20 @@ export class DaemonClient {
       throw new Error((response.error ?? "Failed to set voice mode") + codeSuffix);
     }
     return response;
+  }
+
+  async setVoiceInputMuted(muted: boolean): Promise<boolean> {
+    const requestId = this.createRequestId();
+    const response = await this.sendRequest({
+      requestId,
+      message: { type: "voice.input.set_muted.request", requestId, muted },
+      select: (msg) =>
+        msg.type === "voice.input.set_muted.response" && msg.payload.requestId === requestId
+          ? msg.payload
+          : null,
+    });
+    if (response.error) throw new Error(response.error);
+    return response.muted;
   }
 
   async sendVoiceAudioChunk(audio: string, format: string, isLast = false): Promise<void> {

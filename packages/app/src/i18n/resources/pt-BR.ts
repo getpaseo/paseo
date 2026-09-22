@@ -1494,10 +1494,17 @@ export const ptBR: TranslationResources = {
     },
   },
   realtimeVoice: {
+    muted: "Microfone silenciado para o agente",
+    listening: "Microfone ligado",
+    commandHint: "Diga apenas “mute microphone” para pausar a entrada.",
+    mutedHint:
+      "Seu host escuta apenas “unmute microphone”. As outras falas são descartadas. Encerre a sessão de voz para desligar o microfone.",
+    commandsUnavailable:
+      "O comando de silenciar exige um host atualizado com reconhecimento local. Use o botão do microfone.",
     actions: {
       mute: "Silenciar voz em tempo real",
       unmute: "Ativar voz em tempo real",
-      stop: "Parar voz em tempo real e interromper a resposta",
+      stop: "Encerrar a sessão de voz",
     },
   },
   rewind: {

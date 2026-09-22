@@ -154,6 +154,100 @@ function createControllerHarness(options?: { sttLanguage?: string }) {
 }
 
 describe("voice turn controller", () => {
+  it("reports a recognition reset failure to both the caller and the error callback", async () => {
+    const { controller, onError } = createControllerHarness();
+    await controller.start();
+    const error = new Error("Local recognizer unavailable");
+    const connect = vi.spyOn(FakeSttSession.prototype, "connect").mockRejectedValueOnce(error);
+    try {
+      await expect(controller.resetInput(true)).rejects.toThrow("Local recognizer unavailable");
+      expect(onError).toHaveBeenCalledWith(error);
+    } finally {
+      connect.mockRestore();
+      await controller.stop();
+    }
+  });
+
+  it("rejects delayed recognition from before unmute while a new turn is finalizing", async () => {
+    const { controller, detector, sttSessions, onFinalTranscript } = createControllerHarness();
+    await controller.start();
+    const oldSession = sttSessions[0];
+    await controller.resetInput(false);
+    detector.emit("speech_started");
+    await settleSerialQueue();
+    detector.emit("speech_stopped");
+    await settleSerialQueue();
+    oldSession.emitCommitted({ segmentId: "private", previousSegmentId: null });
+    oldSession.emitTranscript({
+      segmentId: "private",
+      transcript: "private conversation",
+      isFinal: true,
+    });
+    await settleSerialQueue();
+    expect(onFinalTranscript).not.toHaveBeenCalled();
+    const currentSession = sttSessions.at(-1)!;
+    currentSession.emitCommitted({ segmentId: "new", previousSegmentId: null });
+    currentSession.emitTranscript({
+      segmentId: "new",
+      transcript: "continue working",
+      isFinal: true,
+    });
+    await settleSerialQueue();
+    expect(onFinalTranscript).toHaveBeenCalledWith(
+      expect.objectContaining({ transcript: "continue working" }),
+    );
+    await controller.stop();
+  });
+
+  it("uses bounded utterance recognition instead of continuous STT while muted", async () => {
+    const { controller, detector, sttSessions } = createControllerHarness();
+    await controller.start();
+    await controller.resetInput(true);
+    const chunk = Buffer.alloc(3200, 1);
+    await controller.appendClientChunk({
+      audioBase64: chunk.toString("base64"),
+      format: "audio/pcm;rate=16000",
+    });
+    expect(sttSessions[1].appendedChunks).toEqual([]);
+    expect(detector.appendedChunks).toEqual([chunk]);
+    detector.emit("speech_started");
+    await settleSerialQueue();
+    await controller.appendClientChunk({
+      audioBase64: chunk.toString("base64"),
+      format: "audio/pcm;rate=16000",
+    });
+    expect(sttSessions[1].appendedChunks).toEqual([]);
+    detector.emit("speech_stopped");
+    await settleSerialQueue();
+    expect(sttSessions[1].appendedChunks).toEqual([Buffer.concat([chunk, chunk])]);
+    expect(sttSessions[1].commitCount).toBe(1);
+    await controller.stop();
+  });
+
+  it("drops long muted conversations and discards final transcripts pending at a mute transition", async () => {
+    const { controller, detector, sttSessions, onFinalTranscript } = createControllerHarness();
+    await controller.start();
+    await controller.resetInput(true);
+    detector.emit("speech_started");
+    await settleSerialQueue();
+    await controller.appendClientChunk({
+      audioBase64: Buffer.alloc(32000 * 7).toString("base64"),
+      format: "audio/pcm;rate=16000",
+    });
+    detector.emit("speech_stopped");
+    await settleSerialQueue();
+    expect(sttSessions[1].appendedChunks).toEqual([]);
+    sttSessions[1].emitCommitted({ segmentId: "old", previousSegmentId: null });
+    sttSessions[1].emitTranscript({
+      segmentId: "old",
+      transcript: "private speech",
+      isFinal: true,
+    });
+    await controller.resetInput(false);
+    expect(onFinalTranscript).not.toHaveBeenCalled();
+    await controller.stop();
+  });
+
   it("passes configured language to streaming STT", async () => {
     const harness = createControllerHarness({ sttLanguage: "pt" });
 

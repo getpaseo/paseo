@@ -22,6 +22,8 @@ import type { LocalSpeechModelId } from "../../speech/providers/local/models.js"
 import { toResolver, type Resolvable } from "../../speech/provider-resolver.js";
 import type { SpeechReadinessSnapshot, SpeechReadinessState } from "../../speech/speech-runtime.js";
 
+import { isVoiceInputCommandPrefix, parseVoiceInputCommand } from "./voice-input-command.js";
+
 const PCM_SAMPLE_RATE = 16000;
 const PCM_CHANNELS = 1;
 const PCM_BITS_PER_SAMPLE = 16;
@@ -172,6 +174,10 @@ export class VoiceSession {
   private processingPhase: ProcessingPhase = "idle";
 
   private isVoiceMode = false;
+  private voiceCommandsEnabled = false;
+  private controllerSupportsInputCommands = false;
+  private inputMuted = false;
+  private inputRevision = 0;
   private speechInProgress = false;
 
   private readonly dictationStreamManager: DictationStreamManager;
@@ -336,7 +342,12 @@ export class VoiceSession {
   /**
    * Handle voice mode toggle
    */
-  async handleSetVoiceMode(enabled: boolean, agentId?: string, requestId?: string): Promise<void> {
+  async handleSetVoiceMode(
+    enabled: boolean,
+    agentId?: string,
+    requestId?: string,
+    input: { voiceCommandsEnabled?: boolean; isMuted?: boolean } = {},
+  ): Promise<void> {
     const startedAt = Date.now();
     try {
       this.sessionLogger.info(
@@ -390,6 +401,7 @@ export class VoiceSession {
           "set_voice_mode voice turn controller started",
         );
         this.isVoiceMode = true;
+        await this.configureInputCommands(input);
         this.sessionLogger.info(
           {
             agentId: this.voiceModeAgentId,
@@ -403,6 +415,8 @@ export class VoiceSession {
             payload: {
               requestId,
               enabled: true,
+              voiceCommandsEnabled: this.voiceCommandsEnabled,
+              isMuted: this.inputMuted,
               agentId: this.voiceModeAgentId,
               accepted: true,
               error: null,
@@ -418,6 +432,8 @@ export class VoiceSession {
       );
       await this.disableVoiceModeForActiveAgent(true);
       this.isVoiceMode = false;
+      this.voiceCommandsEnabled = false;
+      this.inputMuted = false;
       this.sessionLogger.info({ elapsedMs: Date.now() - startedAt }, "Voice mode disabled");
       if (requestId) {
         this.emit({
@@ -538,6 +554,53 @@ export class VoiceSession {
     this.voiceModeAgentId = null;
   }
 
+  private async configureInputCommands(input: {
+    voiceCommandsEnabled?: boolean;
+    isMuted?: boolean;
+  }): Promise<void> {
+    this.voiceCommandsEnabled =
+      input.voiceCommandsEnabled === true && this.controllerSupportsInputCommands;
+    this.inputMuted = this.voiceCommandsEnabled && input.isMuted === true;
+    this.inputRevision += 1;
+    await this.voiceTurnController?.resetInput(this.inputMuted);
+  }
+
+  async handleSetInputMuted(input: { muted: boolean; requestId: string }): Promise<void> {
+    if (!this.isVoiceMode || !this.voiceCommandsEnabled) {
+      this.emit({
+        type: "voice.input.set_muted.response",
+        payload: {
+          requestId: input.requestId,
+          muted: this.inputMuted,
+          error: "Verbal mute requires an active voice session with local speech recognition.",
+        },
+      });
+      return;
+    }
+    this.setInputMuted(input.muted);
+    let error: string | null = null;
+    try {
+      await this.voiceTurnController?.resetInput(this.inputMuted);
+    } catch (cause) {
+      error = getErrorMessage(cause);
+    }
+    this.emit({
+      type: "voice.input.set_muted.response",
+      payload: { requestId: input.requestId, muted: this.inputMuted, error },
+    });
+  }
+
+  private setInputMuted(muted: boolean): void {
+    this.inputRevision += 1;
+    this.inputMuted = muted;
+    this.pendingAudioSegments = [];
+    this.audioBuffer = null;
+    this.clearBufferTimeout();
+    this.clearSpeechInProgress("microphone mute changed");
+    this.setPhase("idle");
+    this.emit({ type: "voice_input_state", payload: { isSpeaking: false, isMuted: muted } });
+  }
+
   private handleDictationManagerMessage(msg: DictationStreamOutboundMessage): void {
     this.emit(msg as unknown as SessionOutboundMessage);
   }
@@ -572,6 +635,12 @@ export class VoiceSession {
           this.sessionLogger.debug("Voice VAD speech_started");
         },
         onPartialTranscript: async ({ segmentId, transcript }) => {
+          if (
+            this.inputMuted ||
+            (this.voiceCommandsEnabled && isVoiceInputCommandPrefix(transcript))
+          ) {
+            return;
+          }
           this.sessionLogger.info(
             { segmentId, transcriptLength: transcript.trim().length },
             "voice_input_state emitting isSpeaking=true",
@@ -585,6 +654,7 @@ export class VoiceSession {
           await this.handleVoiceSpeechStart();
         },
         onSpeechStopped: async () => {
+          if (this.inputMuted || this.voiceCommandsEnabled) return;
           this.handleVoiceSpeechStopped();
           this.setPhase("transcribing");
           this.emit({
@@ -606,6 +676,19 @@ export class VoiceSession {
         }) => {
           const requestId = uuidv4();
           const transcriptText = isLowConfidence ? "" : transcript.trim();
+          if (this.voiceCommandsEnabled) {
+            const command = parseVoiceInputCommand(transcriptText);
+            if (command || this.inputMuted) {
+              if (command === "unmute" || (command === "mute" && !this.inputMuted)) {
+                this.setInputMuted(command === "mute");
+                // The callback runs inside the controller queue; do not await its reset here.
+                // Reset failures are already surfaced by the controller's onError callback.
+                void this.voiceTurnController?.resetInput(this.inputMuted).catch(() => undefined);
+              }
+              return;
+            }
+          }
+          if (!this.isVoiceMode) return;
           if (isLowConfidence) {
             this.sessionLogger.debug(
               { text: transcript, avgLogprob },
@@ -621,6 +704,12 @@ export class VoiceSession {
             },
             "Transcription result",
           );
+          const revision = this.inputRevision;
+          if (this.voiceCommandsEnabled && transcriptText) {
+            await this.handleVoiceSpeechStart();
+          }
+          if (revision !== this.inputRevision || !this.isVoiceMode) return;
+          this.handleVoiceSpeechStopped();
           await this.handleTranscriptionResultPayload({
             text: transcriptText,
             requestId,
@@ -632,6 +721,16 @@ export class VoiceSession {
         },
         onError: (error) => {
           this.sessionLogger.error({ err: error }, "Voice turn controller failed");
+          if (this.voiceCommandsEnabled) {
+            this.emit({
+              type: "voice_input_state",
+              payload: {
+                isSpeaking: false,
+                isMuted: this.inputMuted,
+                error: "Speech recognition failed. Stop and restart voice to reconnect.",
+              },
+            });
+          }
         },
       },
     });
@@ -639,6 +738,7 @@ export class VoiceSession {
     this.sessionLogger.info("startVoiceTurnController connecting controller");
     await controller.start();
     this.voiceTurnController = controller;
+    this.controllerSupportsInputCommands = stt.id === "local" && turnDetection.id === "local";
     this.sessionLogger.info("startVoiceTurnController connected");
   }
 
@@ -649,6 +749,7 @@ export class VoiceSession {
 
     const controller = this.voiceTurnController;
     this.voiceTurnController = null;
+    this.controllerSupportsInputCommands = false;
     await controller.stop();
   }
 
@@ -943,6 +1044,7 @@ export class VoiceSession {
   private async handleTranscriptionResultPayload(
     result: VoiceTranscriptionResultPayload,
   ): Promise<void> {
+    if (this.inputMuted) return;
     const transcriptText = result.text.trim();
 
     this.emit({

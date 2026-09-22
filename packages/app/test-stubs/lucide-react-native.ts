@@ -64,6 +64,7 @@ export const MessageSquare = StubIcon;
 export const MessageSquarePlus = StubIcon;
 export const Mic = StubIcon;
 export const MicOff = StubIcon;
+export const PhoneOff = StubIcon;
 export const Monitor = StubIcon;
 export const Moon = StubIcon;
 export const MoreHorizontal = StubIcon;

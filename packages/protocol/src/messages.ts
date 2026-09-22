@@ -867,9 +867,26 @@ export const WorkspaceRecoveryRestoreRequestSchema = z.object({
   requestId: z.string(),
 });
 
+export const VoiceInputSetMutedRequestSchema = z.object({
+  type: z.literal("voice.input.set_muted.request"),
+  requestId: z.string(),
+  muted: z.boolean(),
+});
+
+export const VoiceInputSetMutedResponseSchema = z.object({
+  type: z.literal("voice.input.set_muted.response"),
+  payload: z.object({
+    requestId: z.string(),
+    muted: z.boolean(),
+    error: z.string().nullable(),
+  }),
+});
+
 export const SetVoiceModeMessageSchema = z.object({
   type: z.literal("set_voice_mode"),
   enabled: z.boolean(),
+  voiceCommandsEnabled: z.boolean().optional(),
+  isMuted: z.boolean().optional(),
   agentId: z.string().optional(),
   requestId: z.string().optional(),
 });
@@ -1616,6 +1633,8 @@ export const WorkspaceRecoveryRestoreResponseSchema = z.object({
 export const SetVoiceModeResponseMessageSchema = z.object({
   type: z.literal("set_voice_mode_response"),
   payload: z.object({
+    voiceCommandsEnabled: z.boolean().optional(),
+    isMuted: z.boolean().optional(),
     requestId: z.string(),
     enabled: z.boolean(),
     agentId: z.string().nullable(),
@@ -2453,6 +2472,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   WorkspaceRecoveryInspectRequestSchema,
   WorkspaceRecoveryRestoreRequestSchema,
   SetVoiceModeMessageSchema,
+  VoiceInputSetMutedRequestSchema,
   SendAgentMessageRequestSchema,
   WaitForFinishRequestSchema,
   DaemonGetStatusRequestSchema,
@@ -2645,6 +2665,8 @@ export const TranscriptionResultMessageSchema = z.object({
 export const VoiceInputStateMessageSchema = z.object({
   type: z.literal("voice_input_state"),
   payload: z.object({
+    error: z.string().optional(),
+    isMuted: z.boolean().optional(),
     isSpeaking: z.boolean(),
   }),
 });
@@ -2753,6 +2775,7 @@ export const ServerInfoStatusPayloadSchema = z
     features: z
       .object({
         providersSnapshot: z.boolean().optional(),
+        voiceVerbalMute: z.boolean().optional(),
         // COMPAT(checkoutForgeSetAutoMerge): added in v0.1.106, remove old
         // checkoutGithubSetAutoMerge fallback after 2026-12-28.
         checkoutForgeSetAutoMerge: z.boolean().optional(),
@@ -5211,6 +5234,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   WorkspaceClearAttentionResponseSchema,
   SendAgentMessageResponseMessageSchema,
   SetVoiceModeResponseMessageSchema,
+  VoiceInputSetMutedResponseSchema,
   DaemonGetStatusResponseSchema,
   DaemonGetPairingOfferResponseSchema,
   HubManagementDaemonConnectResponseSchema,

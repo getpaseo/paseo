@@ -588,11 +588,15 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
   useEffect(() => {
     const unregister = voiceRuntime?.registerSession({
       serverId,
-      setVoiceMode: async (enabled, agentId) => {
+      setVoiceMode: async (enabled, agentId, input) => {
         if (!client) {
           throw new Error(t("common.errors.daemonUnavailable"));
         }
-        await client.setVoiceMode(enabled, agentId);
+        return client.setVoiceMode(enabled, agentId, input);
+      },
+      setVoiceInputMuted: async (muted) => {
+        if (!client) throw new Error(t("common.errors.daemonUnavailable"));
+        return client.setVoiceInputMuted(muted);
       },
       sendVoiceAudioChunk: async (audioData, mimeType) => {
         if (!client) {
@@ -1121,6 +1125,12 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
 
     const unsubVoiceInputState = client.on("voice_input_state", (message) => {
       if (message.type !== "voice_input_state") return;
+      if (message.payload.isMuted !== undefined) {
+        voiceRuntime?.onInputMutedChanged(serverId, message.payload.isMuted);
+      }
+      if (message.payload.error) {
+        voiceRuntime?.onInputError(serverId, message.payload.error);
+      }
       voiceRuntime?.onServerSpeechStateChanged(serverId, message.payload.isSpeaking);
     });
 

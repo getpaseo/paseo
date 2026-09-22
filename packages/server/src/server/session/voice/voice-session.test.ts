@@ -79,11 +79,11 @@ function createFakeHost(): FakeVoiceHost {
   };
 }
 
-function createVoiceSession() {
+function createVoiceSession(sttProviderId = "local") {
   const detector = new FakeVoiceTurnDetectionSession();
   const sttSession = new FakeVoiceSttSession();
   const stt: SpeechToTextProvider = {
-    id: "local",
+    id: sttProviderId,
     createSession: vi.fn(() => sttSession),
   };
   const turnDetection: TurnDetectionProvider = {
@@ -110,6 +110,115 @@ async function settle(): Promise<void> {
 }
 
 describe("VoiceSession streaming transcription", () => {
+  test.each(["openai", "custom-cloud"])(
+    "never enables verbal mute with %s STT",
+    async (provider) => {
+      const { voiceSession, host } = createVoiceSession(provider);
+      await voiceSession.handleSetVoiceMode(true, VOICE_AGENT_ID, "start", {
+        voiceCommandsEnabled: true,
+      });
+      expect(host.emitted).toContainEqual(
+        expect.objectContaining({
+          type: "set_voice_mode_response",
+          payload: expect.objectContaining({
+            accepted: true,
+            voiceCommandsEnabled: false,
+            isMuted: false,
+          }),
+        }),
+      );
+      await voiceSession.handleSetInputMuted({ muted: true, requestId: "mute" });
+      expect(host.emitted).toContainEqual({
+        type: "voice.input.set_muted.response",
+        payload: {
+          requestId: "mute",
+          muted: false,
+          error: "Verbal mute requires an active voice session with local speech recognition.",
+        },
+      });
+      await voiceSession.cleanup();
+    },
+  );
+
+  test("requires client opt-in and retains muted state on reconnect", async () => {
+    const { voiceSession, host } = createVoiceSession();
+    await voiceSession.handleSetVoiceMode(true, VOICE_AGENT_ID, "old-client");
+    expect(host.emitted).toContainEqual(
+      expect.objectContaining({
+        type: "set_voice_mode_response",
+        payload: expect.objectContaining({ voiceCommandsEnabled: false }),
+      }),
+    );
+    await voiceSession.handleSetVoiceMode(true, VOICE_AGENT_ID, "start", {
+      voiceCommandsEnabled: true,
+    });
+    await voiceSession.handleSetInputMuted({ muted: true, requestId: "mute" });
+    expect(host.emitted).toContainEqual({
+      type: "voice.input.set_muted.response",
+      payload: { requestId: "mute", muted: true, error: null },
+    });
+    await voiceSession.handleSetVoiceMode(true, VOICE_AGENT_ID, "reconnect", {
+      voiceCommandsEnabled: true,
+      isMuted: true,
+    });
+    expect(host.emitted).toContainEqual(
+      expect.objectContaining({
+        type: "set_voice_mode_response",
+        payload: expect.objectContaining({
+          requestId: "reconnect",
+          voiceCommandsEnabled: true,
+          isMuted: true,
+        }),
+      }),
+    );
+    expect(host.spokenInput).toEqual([]);
+    await voiceSession.cleanup();
+  });
+
+  test("verbal mute discards private speech and hears unmute without sending either command", async () => {
+    const { voiceSession, detector, sttSession, host } = createVoiceSession();
+    host.interruptAgentIfRunning = vi.fn(async () => {});
+    await voiceSession.handleSetVoiceMode(true, VOICE_AGENT_ID, "start", {
+      voiceCommandsEnabled: true,
+    });
+    let segment = 0;
+    async function say(transcript: string) {
+      const segmentId = `command-${++segment}`;
+      detector.emit("speech_started");
+      await settle();
+      sttSession.emitTranscript({ segmentId, transcript, isFinal: false });
+      await settle();
+      detector.emit("speech_stopped");
+      await settle();
+      sttSession.emitCommitted({ segmentId, previousSegmentId: null });
+      sttSession.emitTranscript({ segmentId, transcript, isFinal: true });
+      await settle();
+      await settle();
+    }
+
+    await say("Mute microphone.");
+    expect(host.emitted).toContainEqual({
+      type: "voice_input_state",
+      payload: { isSpeaking: false, isMuted: true },
+    });
+    host.emitted.length = 0;
+    await say("private conversation");
+    await say("please explain how to unmute microphone");
+    expect(host.emitted).toEqual([]);
+    expect(host.interruptAgentIfRunning).not.toHaveBeenCalled();
+    expect(host.spokenInput).toEqual([]);
+
+    await say("Unmute microphone!");
+    expect(host.emitted).toContainEqual({
+      type: "voice_input_state",
+      payload: { isSpeaking: false, isMuted: false },
+    });
+    expect(host.spokenInput).toEqual([]);
+    await say("continue working");
+    expect(host.spokenInput).toEqual([{ agentId: VOICE_AGENT_ID, text: "continue working" }]);
+    await voiceSession.cleanup();
+  });
+
   test("surfaces a refused voice-mode agent interruption", async () => {
     const { voiceSession, host } = createVoiceSession();
     host.interruptAgentIfRunning = vi.fn(async () => {

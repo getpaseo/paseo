@@ -1475,10 +1475,17 @@ export const en = {
     },
   },
   realtimeVoice: {
+    muted: "Microphone muted to agent",
+    listening: "Microphone on",
+    commandHint: "Say “mute microphone” on its own to pause input.",
+    mutedHint:
+      "Listening on your host only for “unmute microphone”. Other speech is discarded. Stop voice to turn the mic off.",
+    commandsUnavailable:
+      "Verbal mute needs an updated host with local speech recognition. Use the microphone button here.",
     actions: {
       mute: "Mute realtime voice",
       unmute: "Unmute realtime voice",
-      stop: "Stop realtime voice and interrupt turn",
+      stop: "Stop realtime voice",
     },
   },
   rewind: {
