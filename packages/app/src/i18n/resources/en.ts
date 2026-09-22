@@ -567,6 +567,9 @@ export const en = {
       },
       errors: {
         failedToListDirectory: "Failed to list directory",
+        pathUnavailable: "This path cannot be resolved from the conversation's working directory.",
+        outsideWorkspaceDirectory:
+          "This folder is outside the current workspace. Open it from its source workspace.",
         createFailed: "Failed to create entry",
         renameFailed: "Failed to rename entry",
         duplicateFailed: "Failed to duplicate entry",
