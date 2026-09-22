@@ -1539,6 +1539,47 @@ describe("WorkspaceGitService checkout observation", () => {
     service.dispose();
   });
 
+  test("degraded polling backs off while the snapshot is unchanged and resets on a change", async () => {
+    // A repository large enough to defeat the recursive watcher makes every degraded refresh
+    // expensive, so a fixed cadence keeps the daemon shelling out Git on an untouched workspace.
+    const watcher = createWatcherHarness({ failDirectories: new Set([REPO_CWD]) });
+    let isDirty = false;
+    const getCheckoutStatus = vi.fn(async (cwd: string) => createCheckoutStatus(cwd, { isDirty }));
+    const service = createService(watcher, { getCheckoutStatus });
+    const subscription = service.registerWorkspace({ cwd: REPO_CWD }, vi.fn());
+
+    await vi.waitFor(() => {
+      expect(service.getMetrics().workingTreeWatchTargetCount).toBe(1);
+      expect(getCheckoutStatus).toHaveBeenCalledTimes(1);
+    });
+
+    // Quiet ticks at 5s, 10s, 20s, 40s, then the 60s ceiling.
+    for (const [elapsedMs, expectedCalls] of [
+      [5_000, 2],
+      [10_000, 3],
+      [20_000, 4],
+      [40_000, 5],
+      [60_000, 6],
+      [60_000, 7],
+    ] as const) {
+      await vi.advanceTimersByTimeAsync(elapsedMs);
+      expect(getCheckoutStatus).toHaveBeenCalledTimes(expectedCalls);
+    }
+
+    // A fixed 5s cadence would have run 39 polls over the same 195s.
+    expect(getCheckoutStatus.mock.calls.length).toBeLessThan(10);
+
+    // A real change snaps the loop back to the base interval.
+    isDirty = true;
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(getCheckoutStatus).toHaveBeenCalledTimes(8);
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(getCheckoutStatus).toHaveBeenCalledTimes(9);
+
+    subscription.unsubscribe();
+    service.dispose();
+  });
+
   test("non-Git fallback promotes an externally initialized checkout", async () => {
     const watcher = createWatcherHarness();
     let isGit = false;
@@ -1752,17 +1793,16 @@ describe("WorkspaceGitService checkout observation", () => {
       expect(service.getMetrics().workspaceObservationSetupInFlightCount).toBe(0);
     });
     const statusCallsAfterSetup = getCheckoutStatus.mock.calls.length;
-    await vi.advanceTimersByTimeAsync(5_000);
-    await vi.waitFor(() => {
-      expect(getCheckoutStatus.mock.calls.length).toBeGreaterThan(statusCallsAfterSetup);
-    });
-    await vi.advanceTimersByTimeAsync(24_000);
+    await vi.advanceTimersByTimeAsync(29_000);
     expect(getWatcherSubscribeCallCount(watcher, REPO_CWD)).toBe(1);
     await vi.advanceTimersByTimeAsync(1_000);
     await vi.waitFor(() => {
       expect(getWatcherSubscribeCallCount(watcher, REPO_CWD)).toBe(2);
     });
     expect(erroredUnsubscribe).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => {
+      expect(getCheckoutStatus.mock.calls.length).toBeGreaterThan(statusCallsAfterSetup);
+    });
 
     subscription.unsubscribe();
     service.dispose();
