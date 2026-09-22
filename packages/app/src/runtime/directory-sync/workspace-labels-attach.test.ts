@@ -31,7 +31,7 @@ class SupportedDirectoryClient {
     return () => handlers.delete(registered);
   }
 
-  async fetchAgents(): Promise<AgentFetchResult> {
+  async fetchAgents(_options?: unknown): Promise<AgentFetchResult> {
     return {
       requestId: "agents",
       entries: [],
@@ -39,7 +39,7 @@ class SupportedDirectoryClient {
     };
   }
 
-  async fetchWorkspaces(): Promise<WorkspaceFetchResult> {
+  async fetchWorkspaces(_options?: unknown): Promise<WorkspaceFetchResult> {
     return {
       requestId: "workspaces",
       entries: [],
@@ -144,7 +144,10 @@ describe("DirectorySync workspace label attachment", () => {
     await flushAsyncWork();
 
     expect(client.listWorkspaceLabelsCalls).toBeGreaterThan(0);
-    expect(useWorkspaceLabels.getState().hosts[serverId]?.status).toBe("online");
+    expect(useWorkspaceLabels.getState().hosts[serverId]).toMatchObject({
+      status: "online",
+      labels: [{ name: "Urgent", color: "red" }],
+    });
     directory.dispose();
   });
 
@@ -156,7 +159,10 @@ describe("DirectorySync workspace label attachment", () => {
     await flushAsyncWork();
 
     expect(client.listWorkspaceLabelsCalls).toBeGreaterThan(0);
-    expect(useWorkspaceLabels.getState().hosts[serverId]?.status).toBe("online");
+    expect(useWorkspaceLabels.getState().hosts[serverId]).toMatchObject({
+      status: "online",
+      labels: [{ name: "Urgent", color: "red" }],
+    });
     directory.dispose();
   });
 
@@ -200,7 +206,10 @@ describe("DirectorySync workspace label attachment", () => {
     });
     await flushAsyncWork();
 
-    expect(useWorkspaceLabels.getState().hosts[serverId]?.status).toBe("online");
+    expect(useWorkspaceLabels.getState().hosts[serverId]).toMatchObject({
+      status: "online",
+      labels: [{ name: "Urgent", color: "red" }],
+    });
     directory.dispose();
   });
 });
