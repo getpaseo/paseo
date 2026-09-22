@@ -574,8 +574,8 @@ describe("ProviderUsageService", () => {
   });
 
   it("times out slow plugin fetchUsage and isolates error", async () => {
-    const fetcher = createPluginUsageFetcher(
-      {
+    const fetcher = createPluginUsageFetcher({
+      provider: {
         id: "slow-plugin",
         label: "Slow Plugin",
         connect: async () => {
@@ -586,9 +586,9 @@ describe("ProviderUsageService", () => {
           return { planLabel: "Never Arrives" };
         },
       },
-      createLogger(),
-      50, // 50ms timeout for test
-    );
+      logger: createLogger(),
+      timeoutMs: 50,
+    });
 
     const usage = await fetcher.fetchUsage();
     expect(usage).toMatchObject({

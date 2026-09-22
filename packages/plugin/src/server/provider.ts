@@ -9,26 +9,10 @@ import type {
 } from "@getpaseo/protocol/messages";
 import { z } from "zod";
 
-export type ProviderQuotaUsage = ProtocolProviderUsage;
-
-export interface ProviderQuotaSnapshot {
-  providerId?: string;
-  displayName?: string;
-  status?: ProviderUsageStatus;
-  planLabel?: string | null;
-  sourceLabel?: string | null;
-  fetchedAt?: string | null;
-  nextRefreshAt?: string | null;
-  windows?: readonly ProviderUsageWindow[];
-  balances?: readonly ProviderUsageBalance[];
-  details?: readonly ProviderUsageDetail[];
-  error?: string | null;
-}
-
 export const ProviderUsageToneSchema = z.enum(["default", "ok", "warning", "danger"]);
 export const ProviderUsageStatusSchema = z.enum(["available", "unavailable", "error"]);
 
-export const ProviderUsageWindowSchema: z.ZodType<ProviderUsageWindow> = z
+export const ProviderUsageWindowSchema = z
   .object({
     id: z.string(),
     label: z.string(),
@@ -41,7 +25,7 @@ export const ProviderUsageWindowSchema: z.ZodType<ProviderUsageWindow> = z
   })
   .strip();
 
-export const ProviderUsageBalanceSchema: z.ZodType<ProviderUsageBalance> = z
+export const ProviderUsageBalanceSchema = z
   .object({
     id: z.string(),
     label: z.string(),
@@ -54,7 +38,7 @@ export const ProviderUsageBalanceSchema: z.ZodType<ProviderUsageBalance> = z
   })
   .strip();
 
-export const ProviderUsageDetailSchema: z.ZodType<ProviderUsageDetail> = z
+export const ProviderUsageDetailSchema = z
   .object({
     id: z.string(),
     label: z.string(),
@@ -63,7 +47,7 @@ export const ProviderUsageDetailSchema: z.ZodType<ProviderUsageDetail> = z
   })
   .strip();
 
-export const ProviderQuotaSnapshotSchema: z.ZodType<ProviderQuotaSnapshot> = z
+export const ProviderQuotaSnapshotSchema = z
   .object({
     providerId: z.string().optional(),
     displayName: z.string().optional(),
@@ -78,6 +62,9 @@ export const ProviderQuotaSnapshotSchema: z.ZodType<ProviderQuotaSnapshot> = z
     error: z.string().nullable().optional(),
   })
   .strip();
+
+export type ProviderQuotaSnapshot = z.infer<typeof ProviderQuotaSnapshotSchema>;
+export type ProviderQuotaUsage = ProtocolProviderUsage;
 
 export type {
   ProviderUsageWindow,

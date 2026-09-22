@@ -89,7 +89,7 @@ export class ProviderUsageService {
         continue;
       }
       seenProviderIds.add(provider.id);
-      pluginFetchers.push(createPluginUsageFetcher(provider, this.logger));
+      pluginFetchers.push(createPluginUsageFetcher({ provider, logger: this.logger }));
     }
 
     const allFetchers = [...this.fetchers, ...pluginFetchers];

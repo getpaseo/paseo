@@ -114,11 +114,16 @@ export function toIsoStringOrNull(timestampMs: number): string | null {
 
 export const PLUGIN_USAGE_TIMEOUT_MS = 15_000;
 
+export interface CreatePluginUsageFetcherOptions {
+  provider: ProviderRegistration;
+  logger: Logger;
+  timeoutMs?: number;
+}
+
 export function createPluginUsageFetcher(
-  provider: ProviderRegistration,
-  logger: Logger,
-  timeoutMs = PLUGIN_USAGE_TIMEOUT_MS,
+  options: CreatePluginUsageFetcherOptions,
 ): ProviderUsageFetcher {
+  const { provider, logger, timeoutMs = PLUGIN_USAGE_TIMEOUT_MS } = options;
   return {
     providerId: provider.id,
     displayName: provider.label,
