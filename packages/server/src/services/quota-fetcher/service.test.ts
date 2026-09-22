@@ -411,8 +411,7 @@ describe("ProviderUsageService", () => {
     expect(calls).toBe(2);
   });
 
-  it("handles duplicate IDs, ID spoofing, timeouts, and cache invalidation races", async () => {
-    // Duplicate ID and spoofing prevention
+  it("skips duplicate plugin provider IDs and prevents ID spoofing", async () => {
     const service = new ProviderUsageService({
       logger: createLogger(),
       fetchers: [
@@ -449,8 +448,9 @@ describe("ProviderUsageService", () => {
     expect(res.providers).toHaveLength(2);
     expect(res.providers[0].providerId).toBe("builtin");
     expect(res.providers[1].providerId).toBe("custom"); // Spoofing prevented
+  });
 
-    // Timeout isolation
+  it("times out slow plugin fetchUsage and isolates error", async () => {
     const timeoutFetcher = createPluginUsageFetcher({
       provider: {
         id: "slow",
@@ -471,8 +471,9 @@ describe("ProviderUsageService", () => {
       status: "error",
       error: "Plugin usage fetch timed out after 30ms",
     });
+  });
 
-    // In-flight cache invalidation race
+  it("does not restore stale cache when clearCache is called while a fetch is in flight", async () => {
     let resolveFirst!: () => void;
     let currentProvider = {
       id: "v1",

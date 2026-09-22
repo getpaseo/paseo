@@ -367,7 +367,7 @@ server.registerProvider({
 });
 ```
 
-`fetchUsage()` runs in the plugin subprocess with a 15-second timeout and schema validation; errors are isolated per-provider. Provider IDs are locked to `provider.id` to prevent collision. See [provider usage contract](providers.md#provider-usage-and-quota-contract).
+`fetchUsage()` runs in the plugin subprocess with a 15-second timeout and schema validation; errors are isolated per-provider. Provider IDs are locked to `provider.id` to prevent collision. See [provider usage contract](providers.md#provider-usage-fetchers).
 
 `send()` resolves after acceptance. Publish operation completion, prompt disposition, turn state,
 configuration, permissions, persistence, and complete timeline snapshots through `onEvent()`.

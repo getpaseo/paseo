@@ -551,7 +551,7 @@ export default function contribute(server: PluginServerContext) {
   server.registerProvider({
     id: "invalid",
     label: "Invalid",
-    fetchUsage: async () => ({ windows: "not-an-array" as any }),
+    fetchUsage: async () => ({ windows: "not-an-array" }) as unknown as import("@getpaseo/plugin/server/provider").ProviderQuotaSnapshot,
     connect: async () => ({ version: 1, capabilities: [], send: async () => {}, onEvent: () => () => {}, close: async () => {} }),
   });
   return () => undefined;
