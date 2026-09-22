@@ -1,7 +1,19 @@
 /**
- * Homepage sponsor spots. Edit this file when a company is approved: add it to
- * `HOMEPAGE_SPONSORS` with its logo under `public/sponsors/`. Remove it when
- * the subscription ends.
+ * Homepage sponsor spots. This file is the inventory: the site shows one open
+ * placeholder for every spot not listed in `HOMEPAGE_SPONSORS`.
+ *
+ * Approving a sponsor means three edits, or the site promises something it does
+ * not deliver:
+ *
+ * 1. Add the entry below and drop its logo in `public/sponsors/`.
+ * 2. Add the logo under the `## Sponsors` marker in `README.md`,
+ *    `README.zh-CN.md`, `README.ja.md` and `README.ko.md`, in this same order.
+ * 3. Remove all of it when the subscription ends.
+ *
+ * The Stripe payment link caps itself at `HOMEPAGE_SPOT_COUNT` completed
+ * checkouts, and a checkout you decline and refund still counts against that
+ * cap. When you refund one, raise the link's completed-session limit by one, or
+ * the page will offer a spot the link refuses to sell.
  */
 export interface HomepageSponsor {
   name: string;
