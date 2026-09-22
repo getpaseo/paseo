@@ -640,6 +640,63 @@ describe("DirectorySync session readiness", () => {
     directory.dispose();
   });
 
+  it("reconciles agent changes on top of the accepted cached baseline", async () => {
+    const serverId = "cached-agent-changes";
+    serverIds.add(serverId);
+    const client = new FakeDirectoryClient();
+    const cachedAgent = createAgent(serverId, "cached-agent");
+    const releaseNetwork = client.holdAgentFetch();
+    const directory = new DirectorySync(
+      serverId,
+      {
+        onAgentStoppedRunning: () => undefined,
+        markAgentLoading: () => undefined,
+        markAgentReady: () => undefined,
+        markAgentError: () => undefined,
+      },
+      {
+        readAgent: async () => undefined,
+        readWorkspace: async () => undefined,
+        readDirectory: async () => ({
+          agents: new Map([[cachedAgent.id, cachedAgent]]),
+          workspaces: new Map(),
+          projects: new Map(),
+          checkpoint: { agents: { generation: "g", afterSeq: 7 } },
+        }),
+        commitDirectoryMutations: () => undefined,
+      },
+    );
+    directory.connectionChanged({
+      client: client as unknown as DaemonClient,
+      status: "online",
+      source: { clientGeneration: 1, connectionEpoch: 1 },
+    });
+    const store = useSessionStore.getState();
+    store.initializeSession(serverId, client as unknown as DaemonClient, 1);
+    store.updateSessionServerInfo(serverId, {
+      serverId,
+      hostname: null,
+      version: "test",
+      features: { workspaceMultiplicity: true, directorySync: true },
+    });
+
+    const refresh = directory.refreshAgents();
+    await expect.poll(() => client.fetchAgentsCalls).toBe(1);
+    releaseNetwork({
+      requestId: "agents",
+      entries: [],
+      pageInfo: { hasMore: false, nextCursor: null, prevCursor: null },
+      sync: { generation: "g", headSeq: 7, mode: "changes", removals: [] },
+    });
+    await refresh;
+
+    expect(client.lastAgentOptions).toMatchObject({
+      sync: { generation: "g", afterSeq: 7 },
+    });
+    expect(useSessionStore.getState().sessions[serverId]?.agents.has(cachedAgent.id)).toBe(true);
+    directory.dispose();
+  });
+
   it("does not use a cached checkpoint when the corresponding cache read loses its race", async () => {
     const serverId = "late-directory-cache";
     serverIds.add(serverId);
