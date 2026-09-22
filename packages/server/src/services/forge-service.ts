@@ -519,6 +519,15 @@ export interface ForgeService {
     onStatus?: (status: CurrentPullRequestStatus | null) => void;
     onError?: (error: unknown) => void;
   }): { unsubscribe: () => void };
+  /**
+   * Pull every retained poll forward to now, for adapters that batch their polling across
+   * targets. Called when the user returns to the app: the state they most want fresh is the
+   * one that changed while they were away in a browser merging.
+   *
+   * The adapter owns the rate limiting — it may ignore the call. Only defined by adapters
+   * whose polling is batched service-wide; per-target pollers are driven by the caller.
+   */
+  pollRetainedPullRequestStatusesNow?(): void;
   invalidate(options: { cwd: string }): void;
   dispose?(): void;
 }

@@ -32,7 +32,7 @@ export {
  * running service — so a glyph that differs in size reads as a different rank. The host badge
  * owns the size because it is the one item that also appears off this line.
  */
-const META_ICON_SIZE = HOST_BADGE_ICON_SIZE;
+export const META_ICON_SIZE = HOST_BADGE_ICON_SIZE;
 
 const ThemedExternalLink = withUnistyles(ExternalLink);
 const ThemedFolder = withUnistyles(Folder);

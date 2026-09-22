@@ -728,6 +728,7 @@ export class Session {
     lastActivityAt: Date;
     appVisible: boolean;
     appVisibilityChangedAt: Date;
+    appFocused: boolean;
   } | null = null;
   private registeredPushToken: string | null = null;
   private readonly terminalManager: TerminalManager | null;
@@ -4343,11 +4344,16 @@ export class Session {
     lastActivityAt: string;
     appVisible: boolean;
     appVisibilityChangedAt?: string;
+    appFocused?: boolean;
   }): void {
     const focusedTerminalId = msg.focusedTerminalId?.trim() || null;
     const appVisibilityChangedAt = msg.appVisibilityChangedAt
       ? new Date(msg.appVisibilityChangedAt)
       : new Date(msg.lastActivityAt);
+    // A client too old to report focus only ever reports visibility, so its visibility
+    // transitions stand in for focus and the refresh below still fires.
+    const appFocused = msg.appFocused ?? msg.appVisible;
+    const regainedFocus = appFocused && this.clientActivity?.appFocused === false;
     this.clientActivity = {
       deviceType: msg.deviceType,
       focusedAgentId: msg.focusedAgentId,
@@ -4355,7 +4361,12 @@ export class Session {
       lastActivityAt: new Date(msg.lastActivityAt),
       appVisible: msg.appVisible,
       appVisibilityChangedAt,
+      appFocused,
     };
+    if (regainedFocus) {
+      // The user was away — very likely in a browser, on the change request this refreshes.
+      this.workspaceGitService.pollForgeStatusesNow();
+    }
     if (msg.appVisible && focusedTerminalId) {
       void this.clearFocusedTerminalAttention(focusedTerminalId);
     }

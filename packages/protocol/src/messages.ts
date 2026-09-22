@@ -2896,6 +2896,10 @@ export const ClientHeartbeatMessageSchema = z.object({
   lastActivityAt: z.string(),
   appVisible: z.boolean(),
   appVisibilityChangedAt: z.string().optional(),
+  // Visible but unfocused is a real state on desktop: switching Electron windows never changes
+  // `document.visibilityState`, so `appVisible` stays true while the user is in the browser
+  // merging a PR. Absent from an older client — read it as `appVisible`.
+  appFocused: z.boolean().optional(),
 });
 
 export const PingMessageSchema = z.object({

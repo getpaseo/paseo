@@ -107,6 +107,21 @@ const FAILED_CHECK_JOB_LIMIT = 5;
 export const GITHUB_POLL_FAST_INTERVAL_MS = 20_000;
 export const GITHUB_POLL_SLOW_INTERVAL_MS = 120_000;
 export const GITHUB_POLL_ERROR_BACKOFF_CAP_MS = 300_000;
+// An open PR whose checks have settled sits on its own tier between the two. Merging happens
+// after checks settle, so open → merged is precisely the transition the slow tier reports
+// latest — but it is also visible from the state round alone, which is the cheap half of a
+// poll. The tier only runs that half, and its cadence floats with what the round measured.
+export const GITHUB_POLL_OPEN_SETTLED_MIN_INTERVAL_MS = 30_000;
+// How long a settled open PR's checks may be reused before the checks round runs again. The
+// state round still runs every tick, so a check going back to pending after a rerun surfaces
+// within this window rather than within the state cadence.
+export const GITHUB_POLL_CHECKS_INTERVAL_MS = 120_000;
+// Share of GitHub's 5,000 GraphQL points/hour the settled-open tier will spend on a host.
+// The rest of the quota belongs to `gh` calls agents make, which Paseo cannot see and which
+// share the same token — going over would trip the reserve pause and black out polling
+// entirely (see pauseGitHubPollsAtReserve).
+export const GITHUB_POLL_BUDGET_POINTS_PER_HOUR = 750;
+export const GITHUB_POLL_BUDGET_WINDOW_MS = 3_600_000;
 // GitHub reports no check runs at all between accepting a push and materializing
 // the queued workflow, so an open PR whose CI is about to start looks settled and
 // would drop to the slow interval — showing the first running check up to two
@@ -121,6 +136,10 @@ export const GITHUB_POLL_AWAITING_CHECKS_WINDOW_MS = 300_000;
 // machine-wide (issues #3587 / #2470).
 export const GITHUB_POLL_BATCH_MAX = 25;
 export const GITHUB_POLL_ALIGNMENT_MS = 5_000;
+// Refocusing the app pulls every retained poll forward. The user can alt-tab in and out
+// repeatedly, so the whole host is rate limited to one such round per window — without it,
+// a window switch costs a full batch round every time.
+export const GITHUB_POLL_NOW_MIN_INTERVAL_MS = 30_000;
 const GITHUB_GRAPHQL_RESERVE_RATIO = 0.4;
 const GITHUB_GRAPHQL_RESET_GRACE_MS = 1_000;
 const BATCH_PR_CANDIDATE_LIMIT = 10;
@@ -665,6 +684,8 @@ const GitHubGraphqlRateLimitSchema = z.object({
   limit: z.number(),
   remaining: z.number(),
   resetAt: z.string(),
+  /** Points this query actually cost. Drives the settled-open tier's cadence. */
+  cost: z.number().optional(),
 });
 
 const GitHubRateLimitResponseSchema = z.object({
@@ -800,6 +821,7 @@ function buildBatchPullRequestStatusQuery(
   return `query PaseoBatchPullRequestStatus {
   rateLimit {
     limit
+    cost
     remaining
     resetAt
   }
@@ -857,6 +879,7 @@ function buildBatchPullRequestChecksQuery(
   return `query PaseoBatchPullRequestChecks {
   rateLimit {
     limit
+    cost
     remaining
     resetAt
   }
@@ -1072,6 +1095,13 @@ interface GitHubPollTarget {
   pollCycleStartedAt: number | null;
   /** When this head sha was first retained, bounding the awaiting-checks window. */
   headFirstSeenAt: number;
+  /**
+   * The last checks rollup loaded for this target, with the head it described and when it
+   * was loaded. A settled open PR reuses it so its state ticks skip the checks round.
+   */
+  lastChecksRollup: unknown[] | null;
+  lastChecksHeadRefOid: string | null;
+  lastChecksLoadedAt: number;
   latestStatus: CurrentPullRequestStatus | null;
   consecutiveErrors: number;
   callbacks: Set<(status: CurrentPullRequestStatus | null) => void>;
@@ -1159,6 +1189,17 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
     { owner: string; name: string; headRepositoryOwner: string }
   >();
   const pollPausedUntilByHost = new Map<string, number>();
+  const lastPollNowAtByHost = new Map<string, number>();
+  /** Cost accumulating for the tick currently running on a host, reset when one starts. */
+  const tickGraphqlCostByHost = new Map<string, number>();
+  /**
+   * What a tick on a host costs, and so what its cadence has to pay for. Tracks the running
+   * tick as its rounds land rather than only completed ticks: the reschedule that consumes
+   * this happens inside the tick, so a tick-end-only value would always be one tick stale.
+   */
+  const pacingGraphqlCostByHost = new Map<string, number>();
+  /** Every measured cost inside the budget window, oldest first. */
+  const graphqlCostWindowByHost = new Map<string, Array<{ atMs: number; cost: number }>>();
   const rateLimitResetLoads = new Map<string, Promise<number | null>>();
   let githubPollTimer: NodeJS.Timeout | null = null;
   let api!: GitHubService;
@@ -1385,14 +1426,81 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
     scheduleGitHubPoll(target);
   }
 
+  function recordGraphqlCost(
+    host: string,
+    rateLimit: z.infer<typeof GitHubGraphqlRateLimitSchema> | null,
+  ): void {
+    const cost = rateLimit?.cost;
+    if (cost === undefined || !Number.isFinite(cost) || cost <= 0) {
+      return;
+    }
+    const tickCost = (tickGraphqlCostByHost.get(host) ?? 0) + cost;
+    tickGraphqlCostByHost.set(host, tickCost);
+    pacingGraphqlCostByHost.set(host, tickCost);
+    const window = graphqlCostWindowByHost.get(host) ?? [];
+    window.push({ atMs: deps.now(), cost });
+    graphqlCostWindowByHost.set(host, window);
+  }
+
+  function readRollingGraphqlCost(host: string): number {
+    const window = graphqlCostWindowByHost.get(host);
+    if (!window) {
+      return 0;
+    }
+    const cutoff = deps.now() - GITHUB_POLL_BUDGET_WINDOW_MS;
+    while (window.length > 0 && (window[0]?.atMs ?? 0) < cutoff) {
+      window.shift();
+    }
+    if (window.length === 0) {
+      graphqlCostWindowByHost.delete(host);
+      return 0;
+    }
+    return window.reduce((total, entry) => total + entry.cost, 0);
+  }
+
+  /**
+   * How often a host may run the settled-open tier: fast enough to notice a merge, slow enough
+   * that the tier's spend stays inside its share of the hourly budget. A host with more open
+   * PRs pays more per tick and so gets a longer interval.
+   */
+  function computeOpenSettledInterval(host: string): number {
+    if (readRollingGraphqlCost(host) >= GITHUB_POLL_BUDGET_POINTS_PER_HOUR) {
+      return GITHUB_POLL_SLOW_INTERVAL_MS;
+    }
+    const tickCost = pacingGraphqlCostByHost.get(host) ?? estimateTickGraphqlCost(host);
+    const scaledMs = (GITHUB_POLL_BUDGET_WINDOW_MS * tickCost) / GITHUB_POLL_BUDGET_POINTS_PER_HOUR;
+    return Math.min(
+      GITHUB_POLL_SLOW_INTERVAL_MS,
+      Math.max(GITHUB_POLL_OPEN_SETTLED_MIN_INTERVAL_MS, scaledMs),
+    );
+  }
+
+  /** Stand-in until a tick has measured its own cost: one point per batch of open PRs. */
+  function estimateTickGraphqlCost(host: string): number {
+    let openTargets = 0;
+    for (const target of pollTargets.values()) {
+      if (target.retainCount <= 0 || target.latestStatus?.state !== "open") {
+        continue;
+      }
+      const targetHost = peekRepoHost(target.cwd);
+      if ((targetHost.settled ? (targetHost.value ?? "") : "") === host) {
+        openTargets += 1;
+      }
+    }
+    return Math.max(1, Math.ceil(openTargets / GITHUB_POLL_BATCH_MAX));
+  }
+
   function scheduleGitHubPoll(target: GitHubPollTarget): void {
+    const host = peekRepoHost(target.cwd);
     scheduleGitHubPollAfter(
       target,
-      computeGithubNextInterval(
-        target.latestStatus,
-        target.consecutiveErrors,
-        deps.now() - target.headFirstSeenAt < GITHUB_POLL_AWAITING_CHECKS_WINDOW_MS,
-      ),
+      computeGithubNextInterval({
+        status: target.latestStatus,
+        consecutiveErrors: target.consecutiveErrors,
+        withinAwaitingChecksWindow:
+          deps.now() - target.headFirstSeenAt < GITHUB_POLL_AWAITING_CHECKS_WINDOW_MS,
+        openSettledIntervalMs: computeOpenSettledInterval(host.settled ? (host.value ?? "") : ""),
+      }),
     );
   }
 
@@ -1536,6 +1644,9 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
     entries: GitHubBatchPollEntry[],
     startedAt: number,
   ): Promise<void> {
+    // Cost accrues over the whole tick — every chunk plus whatever checks round it triggered —
+    // because that total is what the next interval has to pay for again.
+    tickGraphqlCostByHost.delete(entries[0]?.host ?? "");
     for (let start = 0; start < entries.length; start += GITHUB_POLL_BATCH_MAX) {
       const chunk = entries.slice(start, start + GITHUB_POLL_BATCH_MAX);
       if ((pollPausedUntilByHost.get(chunk[0]?.host ?? "") ?? 0) > deps.now()) {
@@ -1640,6 +1751,7 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
       return;
     }
     const rateLimit = parseGraphqlBatchRateLimit(response.stdout);
+    recordGraphqlCost(firstEntry.host, rateLimit);
     if (rateLimit && pauseGitHubPollsAtReserve(firstEntry.host, rateLimit)) {
       const error = new GitHubGraphqlPollPausedError(rateLimit);
       reportGitHubBatchError(addressedEntries, error);
@@ -1759,16 +1871,66 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
           rollup: cachedRollup,
           startedAt: input.startedAt,
         });
-      } else {
-        distribution.pendingChecks.push({
+        continue;
+      }
+      const reusableRollup = selectReusableChecksRollup(entry.target, node);
+      if (reusableRollup) {
+        finalizeBatchPollTarget({
           entry,
           node,
           repository: repository.data,
-          cacheKey: frozenKey,
+          rollup: reusableRollup,
+          startedAt: input.startedAt,
         });
+        continue;
       }
+      distribution.pendingChecks.push({
+        entry,
+        node,
+        repository: repository.data,
+        cacheKey: frozenKey,
+      });
     }
     return distribution;
+  }
+
+  /**
+   * The checks round is the expensive half of a poll and the half that rarely changes once a
+   * PR has settled. Reuse the last rollup while the head is unchanged, so a settled open PR's
+   * extra state ticks cost one point per batch instead of two.
+   *
+   * Nothing is reused while checks could still be moving: a pending rollup is what the fast
+   * tier watches, and an open PR inside the awaiting-checks window has CI about to start —
+   * both would otherwise be frozen behind an empty or stale rollup.
+   */
+  function selectReusableChecksRollup(
+    target: GitHubPollTarget,
+    node: BatchPollPrNode,
+  ): unknown[] | null {
+    if (node.state !== "OPEN" || !target.lastChecksRollup) {
+      return null;
+    }
+    if (target.lastChecksHeadRefOid !== node.headRefOid) {
+      return null;
+    }
+    const now = deps.now();
+    if (now - target.lastChecksLoadedAt >= GITHUB_POLL_CHECKS_INTERVAL_MS) {
+      return null;
+    }
+    // An open PR reporting no checks yet may still have CI about to start, and the empty
+    // rollup would otherwise be reused right through the window that exists to catch it.
+    if (
+      target.lastChecksRollup.length === 0 &&
+      now - target.headFirstSeenAt < GITHUB_POLL_AWAITING_CHECKS_WINDOW_MS
+    ) {
+      return null;
+    }
+    if (
+      parseStatusCheckRollup(target.lastChecksRollup).some((check) => check.status === "pending")
+    ) {
+      return null;
+    }
+    return target.lastChecksRollup;
   }
 
   function addressGitHubBatchEntry(entry: GitHubBatchPollEntry): GitHubBatchPollEntry {
@@ -1865,6 +2027,7 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
     }
 
     const rateLimit = parseGraphqlBatchRateLimit(responseStdout);
+    recordGraphqlCost(firstItem.entry.host, rateLimit);
     if (rateLimit) {
       pauseGitHubPollsAtReserve(firstItem.entry.host, rateLimit);
     }
@@ -1898,6 +2061,9 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
       if (item.cacheKey && !hasPendingChecks) {
         rememberFrozenPullRequestChecks(item.cacheKey, rollup);
       }
+      item.entry.target.lastChecksRollup = rollup;
+      item.entry.target.lastChecksHeadRefOid = item.node.headRefOid;
+      item.entry.target.lastChecksLoadedAt = deps.now();
       finalizeBatchPollTarget({
         entry: item.entry,
         node: item.node,
@@ -2583,6 +2749,9 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
           nextDueAt: null,
           pollCycleStartedAt: null,
           headFirstSeenAt: deps.now(),
+          lastChecksRollup: null,
+          lastChecksHeadRefOid: null,
+          lastChecksLoadedAt: 0,
           latestStatus: null,
           consecutiveErrors: 0,
           callbacks: new Set(),
@@ -2633,6 +2802,43 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
       };
     },
 
+    pollRetainedPullRequestStatusesNow() {
+      const now = deps.now();
+      // Group first, then decide per host, so one debounced host doesn't consume the
+      // allowance on behalf of the others and vice versa.
+      const targetsByHost = new Map<string, GitHubPollTarget[]>();
+      for (const target of pollTargets.values()) {
+        if (target.retainCount <= 0 || target.nextDueAt === null) {
+          continue;
+        }
+        // Merged and closed are terminal. Refocus polling exists to catch open → merged,
+        // and a target with no status yet has never resolved one.
+        if (target.latestStatus && target.latestStatus.state !== "open") {
+          continue;
+        }
+        const host = peekRepoHost(target.cwd);
+        const key = host.settled ? (host.value ?? "") : "";
+        const group = targetsByHost.get(key) ?? [];
+        group.push(target);
+        targetsByHost.set(key, group);
+      }
+
+      for (const [host, targets] of targetsByHost) {
+        if ((pollPausedUntilByHost.get(host) ?? 0) > now) {
+          continue;
+        }
+        if (now - (lastPollNowAtByHost.get(host) ?? 0) < GITHUB_POLL_NOW_MIN_INTERVAL_MS) {
+          continue;
+        }
+        lastPollNowAtByHost.set(host, now);
+        // Every target lands on the same due time, so the flush that follows batches them
+        // into one round rather than one request each.
+        for (const target of targets) {
+          scheduleImmediateGitHubPoll(target);
+        }
+      }
+    },
+
     invalidate(input) {
       // Local checkout mutations that can alter the current PR identity or PR status
       // must call this with the affected cwd before broadcasting fresh git state.
@@ -2663,6 +2869,10 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
       pollTargets.clear();
       pollRepositoryRedirects.clear();
       pollPausedUntilByHost.clear();
+      lastPollNowAtByHost.clear();
+      tickGraphqlCostByHost.clear();
+      pacingGraphqlCostByHost.clear();
+      graphqlCostWindowByHost.clear();
       rateLimitResetLoads.clear();
     },
   };
@@ -2765,21 +2975,46 @@ export function isPullRequestMergeMethodAllowed(
   return repository.rebaseMergeAllowed;
 }
 
-export function computeGithubNextInterval(
-  status: CurrentPullRequestStatus | null,
-  consecutiveErrors: number,
-  withinAwaitingChecksWindow = false,
-): number {
-  const baseInterval =
-    isGitHubStatusPending(status) ||
-    (withinAwaitingChecksWindow && isGitHubStatusAwaitingChecks(status))
-      ? GITHUB_POLL_FAST_INTERVAL_MS
-      : GITHUB_POLL_SLOW_INTERVAL_MS;
+export function computeGithubNextInterval(input: {
+  status: CurrentPullRequestStatus | null;
+  consecutiveErrors: number;
+  withinAwaitingChecksWindow?: boolean;
+  /**
+   * Cadence for an open PR whose checks have settled. Passed in rather than computed here so
+   * this stays pure — the caller owns the measured GraphQL budget it derives from.
+   */
+  openSettledIntervalMs?: number;
+}): number {
+  const { consecutiveErrors } = input;
+  const baseInterval = selectGithubBaseInterval(input);
   if (consecutiveErrors <= 1) {
     return baseInterval;
   }
 
   return Math.min(baseInterval * 2 ** (consecutiveErrors - 1), GITHUB_POLL_ERROR_BACKOFF_CAP_MS);
+}
+
+function selectGithubBaseInterval({
+  status,
+  withinAwaitingChecksWindow = false,
+  openSettledIntervalMs,
+}: {
+  status: CurrentPullRequestStatus | null;
+  withinAwaitingChecksWindow?: boolean;
+  openSettledIntervalMs?: number;
+}): number {
+  if (
+    isGitHubStatusPending(status) ||
+    (withinAwaitingChecksWindow && isGitHubStatusAwaitingChecks(status))
+  ) {
+    return GITHUB_POLL_FAST_INTERVAL_MS;
+  }
+  // Merged and closed are terminal and a target with no PR has nothing to watch; only an open
+  // PR earns the middle tier.
+  if (status?.state === "open" && openSettledIntervalMs !== undefined) {
+    return Math.min(GITHUB_POLL_SLOW_INTERVAL_MS, openSettledIntervalMs);
+  }
+  return GITHUB_POLL_SLOW_INTERVAL_MS;
 }
 
 function isGitHubStatusPending(status: CurrentPullRequestStatus | null): boolean {

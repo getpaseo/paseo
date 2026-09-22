@@ -9,6 +9,7 @@ export interface HeartbeatPayload {
   lastActivityAt: string;
   appVisible: boolean;
   appVisibilityChangedAt?: string;
+  appFocused: boolean;
 }
 
 export interface HeartbeatClient {
@@ -22,6 +23,8 @@ export interface ClientActivityTrackerInput {
   initialFocusedAgentId: string | null;
   initialFocusedTerminalId: string | null;
   initialAppVisible: boolean;
+  /** Absent → the platform has no separate focus notion and focus tracks visibility. */
+  initialAppFocused?: boolean;
   now: () => number;
   onAppResumed?: (awayMs: number) => void;
 }
@@ -32,6 +35,7 @@ export interface ClientActivityTracker {
   setFocusedAgentId(id: string | null): void;
   setFocusedTerminalId(id: string | null): void;
   notifyAppVisibility(visible: boolean): { changed: boolean };
+  notifyAppFocus(focused: boolean): { changed: boolean };
   notifySystemIdleMs(idleMs: number | null): void;
   sendHeartbeat(): void;
 }
@@ -42,6 +46,7 @@ export function createClientActivityTracker(
   const { client, deviceType, now, onAppResumed } = input;
   let lastActivityAtMs = now();
   let appVisible = input.initialAppVisible;
+  let appFocused = input.initialAppFocused ?? input.initialAppVisible;
   let appVisibilityChangedAtMs = now();
   let backgroundedAtMs: number | null = appVisible ? null : now();
   let focusedAgentId = input.initialFocusedAgentId;
@@ -57,6 +62,7 @@ export function createClientActivityTracker(
       lastActivityAt: new Date(lastActivityAtMs).toISOString(),
       appVisible,
       appVisibilityChangedAt: new Date(appVisibilityChangedAtMs).toISOString(),
+      appFocused,
     });
   }
 
@@ -101,6 +107,17 @@ export function createClientActivityTracker(
         onAppResumed?.(Math.max(0, now() - at));
       }
       recordUserActivity();
+      return { changed: true };
+    },
+    /**
+     * Focus is reported separately from visibility because on desktop they come apart: an
+     * Electron window the user alt-tabbed away from is still `visible`. Callers on platforms
+     * with no window focus (native) mirror visibility into this.
+     */
+    notifyAppFocus(nextFocused) {
+      if (appFocused === nextFocused) return { changed: false };
+      appFocused = nextFocused;
+      if (nextFocused) recordUserActivity();
       return { changed: true };
     },
     notifySystemIdleMs(idleMs) {
