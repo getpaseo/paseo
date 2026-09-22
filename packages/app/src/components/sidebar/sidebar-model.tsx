@@ -16,6 +16,7 @@ import {
 import { useSidebarOrderStore } from "@/stores/sidebar-order-store";
 import type { SidebarShortcutModel } from "@/utils/sidebar-shortcuts";
 import { buildSidebarProjection } from "./sidebar-projection";
+import type { SidebarProjectWorkspaceSection } from "./sidebar-projection";
 import type { SidebarProjectIconTarget } from "@/utils/sidebar-project-row-model";
 import { filterWorkspacesByLabels, type SidebarWorkspaceGroup } from "./sidebar-labels";
 import { filterWorkspacesByProjects, resolveActiveProjectFilters } from "./sidebar-project-filter";
@@ -42,6 +43,9 @@ interface SidebarModel extends SidebarWorkspacesListResult {
   pinnedGroups: PinnedSidebarGroups;
   collapsedProjectKeys: ReadonlySet<string>;
   toggleProjectCollapsed: (projectViewKey: string) => void;
+  collapsedWorkspaceSectionKeys: ReadonlySet<string>;
+  toggleWorkspaceSectionCollapsed: (workspaceSectionKey: string) => void;
+  projectSections: Map<string, SidebarProjectWorkspaceSection[]>;
   shortcutModel: SidebarShortcutModel;
 }
 
@@ -66,10 +70,19 @@ export function SidebarModelProvider({
   const collapsedWorkspaceGroupKeys = useSidebarCollapsedSectionsStore(
     (state) => state.collapsedWorkspaceGroupKeys,
   );
+  const collapsedWorkspaceSectionKeys = useSidebarCollapsedSectionsStore(
+    (state) => state.collapsedWorkspaceSectionKeys,
+  );
   const pinnedCollapsed = useSidebarCollapsedSectionsStore((state) => state.collapsedPinned);
   const pinnedWorkspaceOrder = useSidebarOrderStore((state) => state.pinnedWorkspaceOrder);
+  const workspaceSectionsByProject = useSidebarOrderStore(
+    (state) => state.workspaceSectionsByProject,
+  );
   const toggleProjectCollapsed = useSidebarCollapsedSectionsStore(
     (state) => state.toggleProjectCollapsed,
+  );
+  const toggleWorkspaceSectionCollapsed = useSidebarCollapsedSectionsStore(
+    (state) => state.toggleWorkspaceSectionCollapsed,
   );
   const availableLabelNames = useMemo(
     () => labelHosts.flatMap((host) => host.labels.map((label) => label.name)),
@@ -150,16 +163,20 @@ export function SidebarModelProvider({
       pinnedCollapsed,
       collapsedProjectKeys,
       collapsedWorkspaceGroupKeys,
+      collapsedWorkspaceSectionKeys,
+      workspaceSectionsByProject,
     }),
     [
       collapsedProjectKeys,
       collapsedWorkspaceGroupKeys,
+      collapsedWorkspaceSectionKeys,
       groupMode,
       list.projectNamesByViewKey,
       filteredProjects,
       pinnedCollapsed,
       pinnedKeys,
       pinnedWorkspaceOrder,
+      workspaceSectionsByProject,
       filteredWorkspaceEntriesByKey,
     ],
   );
@@ -178,16 +195,21 @@ export function SidebarModelProvider({
       pinnedGroups: projection.pinnedGroups,
       collapsedProjectKeys,
       toggleProjectCollapsed,
+      collapsedWorkspaceSectionKeys,
+      toggleWorkspaceSectionCollapsed,
+      projectSections: projection.projectSections,
       shortcutModel: projection.shortcutModel,
     }),
     [
       resolvedProjectFilters,
       collapsedProjectKeys,
+      collapsedWorkspaceSectionKeys,
       groupMode,
       list,
       filteredProjects,
       projection,
       toggleProjectCollapsed,
+      toggleWorkspaceSectionCollapsed,
       filteredWorkspaceEntriesByKey,
     ],
   );
