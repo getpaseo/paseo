@@ -223,6 +223,11 @@ export class WorkspaceReconciliationService {
 
     const activeProjects = allProjects.filter((p) => !p.archivedAt);
     const activeWorkspaces = allWorkspaces.filter((w) => !w.archivedAt);
+    const reachableProjectIds = new Set(
+      activeProjects
+        .filter((project) => this.inspectDirectory(project.rootPath) === "directory")
+        .map((project) => project.projectId),
+    );
     const workspaceDirectoryStates = activeWorkspaces.map((workspace) => ({
       workspace,
       state: this.inspectDirectory(workspace.cwd),
@@ -236,9 +241,16 @@ export class WorkspaceReconciliationService {
       workspacesByProject.set(workspace.projectId, list);
     }
 
-    // 1. Archive workspaces whose directories no longer exist
+    // 1. Archive workspaces whose directories no longer exist, but only when the
+    //    project they belong to is still reachable. A missing project root means the
+    //    whole location is unavailable - an unmounted volume, an offline share, a disk
+    //    that has not appeared yet - and absence there proves nothing about the
+    //    workspace. Projects already persist through that; their workspaces do too.
     const missingWorkspaces = workspaceDirectoryStates
-      .filter(({ state }) => state === "missing")
+      .filter(
+        ({ workspace, state }) =>
+          state === "missing" && reachableProjectIds.has(workspace.projectId),
+      )
       .map(({ workspace }) => workspace);
     await Promise.all(
       missingWorkspaces.map(async (workspace) => {
@@ -265,7 +277,7 @@ export class WorkspaceReconciliationService {
     //    Projects persist until explicitly removed, even when they currently have
     //    zero active workspaces, so they still reconcile their own metadata.
     await this.reconcileGitMetadataForProjects(
-      activeProjects.filter((project) => this.inspectDirectory(project.rootPath) === "directory"),
+      activeProjects.filter((project) => reachableProjectIds.has(project.projectId)),
       workspacesByProject,
       changes,
     );
