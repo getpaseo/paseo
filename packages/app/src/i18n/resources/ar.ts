@@ -1382,6 +1382,10 @@ export const ar: TranslationResources = {
         genericError: "حدث خطأ ما.",
         whatsNew: "ما هو الجديد",
         installingAction: "جارٍ التثبيت...",
+        whenIdle: "عند الخمول",
+        waitingTitle: "بانتظار الوكلاء",
+        waitingDescription:
+          "سيُعاد تشغيل Paseo عندما يصبح الوكلاء في جميع المشاريع المحلية غير نشطين. ستُغلق جلسات الطرفية.",
         installAndRestart: "التثبيت وإعادة التشغيل",
         installingDescription: "التثبيت وإعادة التشغيل...",
         versionReady: "{{version}}جاهز للتثبيت.",

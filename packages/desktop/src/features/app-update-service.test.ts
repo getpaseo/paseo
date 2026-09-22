@@ -476,6 +476,56 @@ describe("app update service", () => {
     expect(runtime.installedVersions).toEqual([]);
   });
 
+  it("keeps the downloaded update when the before-quit wait is cancelled", async () => {
+    const { runtime, service } = createService({ bucket: async () => 0 });
+    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: rolledOutUpdate });
+    let finishWait!: (proceed: boolean) => void;
+    const waiting = new Promise<boolean>((resolve) => {
+      finishWait = resolve;
+    });
+    const installing = service.downloadAndInstallUpdate(
+      { currentVersion: "1.2.3", releaseChannel: "stable" },
+      () => waiting,
+    );
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(runtime.installedVersions).toEqual([]);
+    finishWait(false);
+    expect(await installing).toMatchObject({ installed: false });
+    expect(runtime.installedVersions).toEqual([]);
+  });
+
+  it("installs only after the before-quit idle check allows it", async () => {
+    const { runtime, service } = createService({ bucket: async () => 0 });
+    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: rolledOutUpdate });
+    let finishWait!: (proceed: boolean) => void;
+    const waiting = new Promise<boolean>((resolve) => {
+      finishWait = resolve;
+    });
+    const installing = service.downloadAndInstallUpdate(
+      { currentVersion: "1.2.3", releaseChannel: "stable" },
+      () => waiting,
+    );
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(runtime.installedVersions).toEqual([]);
+    finishWait(true);
+    expect(await installing).toMatchObject({ installed: true });
+    expect(runtime.installedVersions).toEqual([rolledOutUpdate.version]);
+  });
+
+  it("propagates an idle check failure without installing", async () => {
+    const { runtime, service } = createService({ bucket: async () => 0 });
+    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: rolledOutUpdate });
+    await expect(
+      service.downloadAndInstallUpdate(
+        { currentVersion: "1.2.3", releaseChannel: "stable" },
+        async () => {
+          throw new Error("Cannot verify agent activity");
+        },
+      ),
+    ).rejects.toThrow("Cannot verify agent activity");
+    expect(runtime.installedVersions).toEqual([]);
+  });
+
   it("rechecks for the newest release before a manual install", async () => {
     const { runtime, service } = createService({ bucket: async () => 0.99 });
     runtime.nextCheck({ isUpdateAvailable: true, updateInfo: rolledOutUpdate });

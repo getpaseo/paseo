@@ -1407,6 +1407,10 @@ export const en = {
         genericError: "Something went wrong.",
         whatsNew: "What's new",
         installingAction: "Installing...",
+        whenIdle: "When idle",
+        waitingTitle: "Waiting for agents",
+        waitingDescription:
+          "Paseo will restart when agents in all local projects are idle. Terminal sessions will close.",
         installAndRestart: "Install & restart",
         installingDescription: "Installing and restarting...",
         versionReady: "{{version}} is ready to install.",

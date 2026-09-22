@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useSyncExternalStore } from "react";
 import {
+  cancelDesktopAppUpdate,
   checkDesktopAppUpdate,
   formatVersionWithPrefix,
   installDesktopAppUpdate,
@@ -33,7 +34,10 @@ export interface UseDesktopAppUpdaterReturn {
     intent?: DesktopAppUpdateCheckIntent;
     silent?: boolean;
   }) => Promise<DesktopAppUpdateCheckResult | null>;
-  installUpdate: () => Promise<DesktopAppUpdateInstallResult | null>;
+  cancelScheduledUpdate: () => Promise<void>;
+  installUpdate: (options?: {
+    whenIdle?: boolean;
+  }) => Promise<DesktopAppUpdateInstallResult | null>;
 }
 
 export function useDesktopAppUpdater(): UseDesktopAppUpdaterReturn {
@@ -46,6 +50,7 @@ export function useDesktopAppUpdater(): UseDesktopAppUpdaterReturn {
     () =>
       createDesktopAppUpdater({
         port: {
+          cancelDesktopAppUpdate,
           checkDesktopAppUpdate,
           installDesktopAppUpdate,
         },
@@ -75,12 +80,15 @@ export function useDesktopAppUpdater(): UseDesktopAppUpdaterReturn {
     [isDesktopApp, releaseChannel, updater],
   );
 
-  const installUpdate = useCallback(async () => {
-    if (!isDesktopApp) {
-      return null;
-    }
-    return updater.installUpdate({ releaseChannel });
-  }, [isDesktopApp, releaseChannel, updater]);
+  const installUpdate = useCallback(
+    async (options?: { whenIdle?: boolean }) => {
+      if (!isDesktopApp) {
+        return null;
+      }
+      return updater.installUpdate({ releaseChannel, whenIdle: options?.whenIdle });
+    },
+    [isDesktopApp, releaseChannel, updater],
+  );
 
   useEffect(() => {
     if (!isDesktopApp) {
@@ -121,5 +129,6 @@ export function useDesktopAppUpdater(): UseDesktopAppUpdaterReturn {
     isInstalling: snapshot.isInstalling,
     checkForUpdates,
     installUpdate,
+    cancelScheduledUpdate: updater.cancelScheduledUpdate,
   };
 }

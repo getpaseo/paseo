@@ -60,6 +60,8 @@ export interface DesktopRuntimeConfig {
   updateReadyToInstall?: boolean;
   manualUpdateBypassesRollout?: boolean;
   slowInstall?: boolean;
+  waitForIdle?: boolean;
+  installError?: string;
   /** Initial PID reported by desktop_daemon_status. Defaults to null. */
   daemonPid?: number | null;
   daemonHome?: string;
@@ -209,6 +211,31 @@ export async function installDesktopRuntime(
       return buildAppUpdateCheckResult(manualUpdateAdmitted, manualUpdateAdmitted);
     }
 
+    let cancelScheduledInstall: (() => void) | null = null;
+
+    async function installAppUpdate(args?: Record<string, unknown>) {
+      if (cfg.installError) throw new Error(cfg.installError);
+      if (cfg.waitForIdle && args?.whenIdle === true) {
+        await new Promise<void>((resolve) => {
+          cancelScheduledInstall = resolve;
+        });
+        return {
+          installed: false,
+          cancelled: true,
+          version: cfg.latestVersion,
+          message: "Installation cancelled.",
+        };
+      }
+      if (cfg.slowInstall) {
+        await new Promise<void>((resolve) => setTimeout(resolve, 3000));
+      }
+      return {
+        installed: true,
+        version: cfg.latestVersion ?? "1.2.3",
+        message: "App update installed. Restart required.",
+      };
+    }
+
     const desktopBridge: {
       platform: string;
       invoke: (command: string, args?: Record<string, unknown>) => Promise<unknown>;
@@ -229,15 +256,12 @@ export async function installDesktopRuntime(
           return checkAppUpdate(args?.intent);
         }
 
+        if (command === "cancel_app_update") {
+          cancelScheduledInstall?.();
+          return;
+        }
         if (command === "install_app_update") {
-          if (cfg.slowInstall) {
-            await new Promise<void>((resolve) => setTimeout(resolve, 3000));
-          }
-          return {
-            installed: true,
-            version: cfg.latestVersion ?? "1.2.3",
-            message: "App update installed. Restart required.",
-          };
+          return installAppUpdate(args);
         }
 
         if (command === "desktop_daemon_status") {

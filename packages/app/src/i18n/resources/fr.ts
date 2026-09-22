@@ -1421,6 +1421,10 @@ export const fr: TranslationResources = {
         genericError: "Quelque chose s'est mal passé.",
         whatsNew: "Quoi de neuf",
         installingAction: "Installation...",
+        whenIdle: "Quand inactifs",
+        waitingTitle: "En attente des agents",
+        waitingDescription:
+          "Paseo redémarrera lorsque les agents de tous les projets locaux seront inactifs. Les sessions de terminal seront fermées.",
         installAndRestart: "Installer et redémarrer",
         installingDescription: "Installation et redémarrage...",
         versionReady: "{{version}}est prêt à être installé.",

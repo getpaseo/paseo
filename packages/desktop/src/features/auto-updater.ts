@@ -277,7 +277,7 @@ export async function downloadAndInstallUpdate(
     currentVersion: string;
     releaseChannel: AppReleaseChannel;
   },
-  onBeforeQuit?: () => Promise<void>,
+  onBeforeQuit?: () => Promise<boolean>,
 ): Promise<AppUpdateInstallResult> {
   return appUpdateService.downloadAndInstallUpdate(
     { currentVersion, releaseChannel },

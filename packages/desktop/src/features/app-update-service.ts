@@ -17,6 +17,7 @@ export interface AppUpdateCheckResult {
 
 export interface AppUpdateInstallResult {
   installed: boolean;
+  cancelled?: boolean;
   version: string | null;
   message: string;
 }
@@ -65,7 +66,7 @@ export interface AppUpdateService {
       currentVersion: string;
       releaseChannel: AppReleaseChannel;
     },
-    onBeforeQuit?: () => Promise<void>,
+    onBeforeQuit?: () => Promise<boolean>,
   ): Promise<AppUpdateInstallResult>;
   installUpdateOnQuit(input: {
     currentVersion: string;
@@ -112,16 +113,17 @@ async function performQuitAndInstall(
     restart,
   }: {
     targetVersion: string;
-    onBeforeQuit?: () => Promise<void>;
+    onBeforeQuit?: () => Promise<boolean>;
     restart: boolean;
   },
-): Promise<void> {
-  if (onBeforeQuit) await onBeforeQuit();
+): Promise<boolean> {
+  if (onBeforeQuit && (await onBeforeQuit()) === false) return false;
   runtime.quitAndInstall({
     targetVersion,
     isSilent: !restart,
     isForceRunAfter: restart,
   });
+  return true;
 }
 
 function getErrorMessage(error: unknown): string {
@@ -331,7 +333,7 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
       currentVersion: string;
       releaseChannel: AppReleaseChannel;
     },
-    onBeforeQuit?: () => Promise<void>,
+    onBeforeQuit?: () => Promise<boolean>,
   ): Promise<AppUpdateInstallResult> {
     if (!deps.isPackaged()) {
       return {
@@ -399,7 +401,7 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
       signal,
       restart,
     }: {
-      onBeforeQuit?: () => Promise<void>;
+      onBeforeQuit?: () => Promise<boolean>;
       signal?: AbortSignal;
       restart: boolean;
     },
@@ -418,15 +420,18 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
     }
 
     if (isReadyToInstallVersion(readyVersion)) {
-      await performQuitAndInstall(deps.runtime, {
+      const installed = await performQuitAndInstall(deps.runtime, {
         targetVersion: readyVersion,
         onBeforeQuit,
         restart,
       });
       return {
-        installed: true,
+        installed,
+        ...(!installed ? { cancelled: true } : {}),
         version: readyVersion,
-        message: "Update downloaded. The app will restart shortly.",
+        message: installed
+          ? "Update downloaded. The app will restart shortly."
+          : "Installation cancelled.",
       };
     }
 
@@ -442,25 +447,24 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
           message: "A newer update was found and will be installed later.",
         };
       }
-      await performQuitAndInstall(deps.runtime, {
+      const installed = await performQuitAndInstall(deps.runtime, {
         targetVersion: readyVersion,
         onBeforeQuit,
         restart,
       });
 
       return {
-        installed: true,
+        installed,
+        ...(!installed ? { cancelled: true } : {}),
         version: readyVersion,
-        message: "Update downloaded. The app will restart shortly.",
+        message: installed
+          ? "Update downloaded. The app will restart shortly."
+          : "Installation cancelled.",
       };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       deps.reportInstallError?.(message);
-      return {
-        installed: false,
-        version: currentVersion,
-        message: `Update failed: ${message}`,
-      };
+      throw error;
     }
   }
 

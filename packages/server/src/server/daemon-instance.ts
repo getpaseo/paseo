@@ -96,12 +96,15 @@ async function requestInstanceStop(
   instance: PidLockInfo,
   options: {
     force?: boolean;
+    requireLifecycleRpc?: boolean;
     requestShutdown?: (instance: PidLockInfo & { listen: string }) => Promise<void>;
   },
 ) {
   let forced = false;
   let usedLifecycleRpc = false;
-  if (process.platform === "win32") {
+  // POSIX stops signal the supervisor directly. Opt in when the lifecycle RPC
+  // must decide, so a busy refusal cannot fall through to SIGTERM.
+  if (options.requireLifecycleRpc === true || process.platform === "win32") {
     if (instance.listen && options.requestShutdown) {
       try {
         await options.requestShutdown({ ...instance, listen: instance.listen });
@@ -143,6 +146,7 @@ export async function stopDaemonInstance(
     force?: boolean;
     timeoutMs?: number;
     killTimeoutMs?: number;
+    requireLifecycleRpc?: boolean;
     requestShutdown?: (instance: PidLockInfo & { listen: string }) => Promise<void>;
   } = {},
 ): Promise<{

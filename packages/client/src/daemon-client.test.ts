@@ -2,6 +2,7 @@ import { afterEach, expect, expectTypeOf, test, vi } from "vitest";
 import { z } from "zod";
 import {
   DaemonClient,
+  isAgentsBusyShutdownError,
   type DaemonClientTrace,
   type CreateAgentRequestOptions,
   type DaemonTransport,
@@ -3700,6 +3701,64 @@ test("sends explicit shutdown_server_request via shutdownServer", async () => {
     clientId: "clsk_unit_test",
     requestId: "req-shutdown-1",
   });
+});
+
+test("refuses onlyIfIdle before sending when the daemon lacks shutdownIfIdle", async () => {
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  await expect(client.shutdownServer({ onlyIfIdle: true })).rejects.toThrow(
+    "Update the host to stop only when agents are idle.",
+  );
+  expect(mock.sent).toHaveLength(0);
+});
+
+test("sends onlyIfIdle and surfaces AGENTS_BUSY from the daemon", async () => {
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen({ features: { shutdownIfIdle: true } });
+  await connectPromise;
+
+  const promise = client.shutdownServer({ requestId: "req-idle", onlyIfIdle: true });
+  expect(parseSentFrame(mock.sent[0])).toEqual({
+    type: "shutdown_server_request",
+    requestId: "req-idle",
+    onlyIfIdle: true,
+  });
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "rpc_error",
+      payload: {
+        requestId: "req-idle",
+        requestType: "shutdown_server_request",
+        error: "Agents are busy",
+        code: "AGENTS_BUSY",
+      },
+    }),
+  );
+  await expect(promise).rejects.toSatisfy(isAgentsBusyShutdownError);
 });
 
 test("restartServer remains restart-only and sends restart_server_request", async () => {
