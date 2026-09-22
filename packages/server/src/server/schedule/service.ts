@@ -563,6 +563,15 @@ export class ScheduleService {
       if (new Date(schedule.nextRunAt).getTime() > now.getTime()) {
         continue;
       }
+      if (schedule.target.type === "agent") {
+        const agentId = schedule.target.agentId;
+        const agent = this.agentManager.getAgent(agentId);
+        const awaitingPermission = agent !== null && agent.pendingPermissions.size > 0;
+        if (this.agentManager.hasInFlightRun(agentId) || awaitingPermission) {
+          // Keep the due slot pending; busy work is not a delivery attempt.
+          continue;
+        }
+      }
       await this.runSchedule(schedule, now);
     }
   }

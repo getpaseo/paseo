@@ -463,6 +463,69 @@ describe("ScheduleService", () => {
     );
   });
 
+  test("busy heartbeat waits without spending maxRuns and delivers once after idle", async () => {
+    const prompts: AgentPromptInput[] = [];
+    const manager = new AgentManager({
+      logger: createTestLogger(),
+      clients: createTestAgentClients({
+        onStartTurn: (prompt) => prompts.push(prompt),
+      }),
+      registry: agentStorage,
+    });
+    const agent = await manager.createAgent({ provider: "claude", cwd: tempDir }, undefined, {
+      workspaceId: undefined,
+    });
+    const foreground = manager.runAgent(agent.id, "rm -f permission.txt");
+    const waiting = await manager.waitForAgentEvent(agent.id, {
+      waitForActive: true,
+    });
+    if (!waiting.permission) throw new Error("Expected test permission");
+    const permissionId = waiting.permission.id;
+    const service = createScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: manager,
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      now: () => now,
+    });
+    const schedule = await service.create({
+      prompt: "Publish the progress table",
+      cadence: { type: "cron", expression: "*/15 * * * *", timezone: "UTC" },
+      target: { type: "agent", agentId: agent.id },
+      maxRuns: 1,
+    });
+    try {
+      now = new Date("2026-01-01T00:15:00.000Z");
+      await Promise.all([service.tick(), service.tick()]);
+      now = new Date("2026-01-01T00:31:00.000Z");
+      await service.tick();
+      const deferred = await service.inspect(schedule.id);
+      expect(deferred.runs).toEqual([]);
+      expect(deferred.status).toBe("active");
+      expect(deferred.nextRunAt).toBe("2026-01-01T00:15:00.000Z");
+      expect(manager.getAgent(agent.id)?.pendingPermissions.has(permissionId)).toBe(true);
+      expect(prompts).toEqual(["rm -f permission.txt"]);
+    } finally {
+      await manager.respondToPermission(agent.id, permissionId, {
+        behavior: "deny",
+        message: "Fixture finished",
+      });
+      await foreground;
+    }
+    await Promise.all([service.tick(), service.tick()]);
+    const delivered = await service.inspect(schedule.id);
+    expect(delivered.status).toBe("completed");
+    expect(delivered.runs).toHaveLength(1);
+    expect(delivered.runs[0]).toMatchObject({
+      scheduledFor: "2026-01-01T00:15:00.000Z",
+      status: "succeeded",
+      agentId: agent.id,
+    });
+    expect(prompts).toHaveLength(2);
+    await manager.closeAgent(agent.id);
+  });
+
   test("delivers agent-target schedules through the steer-or-interrupt path", async () => {
     const manager = new AgentManager({
       logger: createTestLogger(),
