@@ -161,6 +161,12 @@ test("loads an archived agent's history after its working directory is removed",
       workspaceId: "workspace-worktree",
     });
     await startAgentRun(manager, agent.id, "what did you change", logger, {});
+    // Dispatching a run does not finish it: the provider appends the reply to its
+    // history afterwards, and the turn is finalized only once that append lands.
+    // Archive after the turn is finalized so the transcript this test reads back is
+    // already on disk when the worktree goes away.
+    const finished = await manager.waitForAgentEvent(agent.id);
+    expect(finished.status).toBe("idle");
     await manager.archiveAgent(agent.id);
     await manager.closeAgent(agent.id);
     await manager.flush();
