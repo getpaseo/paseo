@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { expect, test } from "vitest";
@@ -133,6 +133,48 @@ test("resuming a stored agent keeps its unread flag and its last-activity time",
     expect(resumed?.lastActivityAt).toBe(markedUnread);
     expect(manager.getAgent(agentId)?.attention.requiresAttention).toBe(true);
     expect(manager.getAgent(agentId)?.updatedAt.toISOString()).toBe(markedUnread);
+  } finally {
+    await manager.closeAgent(agentId).catch(() => undefined);
+    await manager.flush().catch(() => undefined);
+    await storage.flush().catch(() => undefined);
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("loads an archived agent's history after its working directory is removed", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "agent-loading-missing-cwd-"));
+  const worktree = path.join(root, "managed-worktree");
+  await mkdir(worktree, { recursive: true });
+  const logger = createTestLogger();
+  const storage = new AgentStorage(path.join(root, "agents"), logger);
+  const manager = new AgentManager({
+    clients: createTestAgentClients(),
+    registry: storage,
+    logger,
+  });
+
+  const agentId = "00000000-0000-4000-8000-000000000501";
+
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: worktree }, agentId, {
+      workspaceId: "workspace-worktree",
+    });
+    await manager.archiveAgent(agent.id);
+    await manager.closeAgent(agent.id);
+    await manager.flush();
+    await storage.flush();
+
+    // Archiving the workspace removes the worktree it owned. The agent's history is
+    // persisted and reading it must not depend on that directory still being there.
+    await rm(worktree, { recursive: true, force: true });
+
+    const loaded = await ensureAgentLoaded(agentId, {
+      agentManager: manager,
+      agentStorage: storage,
+      logger,
+    });
+
+    expect(loaded.id).toBe(agentId);
   } finally {
     await manager.closeAgent(agentId).catch(() => undefined);
     await manager.flush().catch(() => undefined);
