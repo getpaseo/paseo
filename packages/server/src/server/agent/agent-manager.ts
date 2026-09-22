@@ -1,3 +1,9 @@
+import type { AgentResponseMetadata } from "@getpaseo/protocol/messages";
+import {
+  RESPONSE_CONTROL_INSTRUCTIONS,
+  ResponseControlSessions,
+  supportsResponseControl,
+} from "./response-control/session.js";
 import { BackgroundActivityRecorder } from "../background-activity/recorder.js";
 import { isSummarizableToolCall, readToolCallSummary } from "@getpaseo/protocol/tool-call-summary";
 import { ToolCallSummaryStore, toolCallSummaryKey } from "./tool-call-summaries/store.js";
@@ -311,6 +317,7 @@ export interface AgentManagerOptions {
   paseoToolsEnabled?: boolean;
   paseoToolCatalogFactory?: PaseoToolCatalogFactory;
   resolvePaseoToolPolicy?: (provider: AgentProvider) => ProviderPaseoToolsPolicy | undefined;
+  responseControl?: boolean;
   appendSystemPrompt?: string;
   agentStreamCoalesceWindowMs?: number;
   rescueTimeouts?: AgentManagerRescueTimeouts;
@@ -377,6 +384,7 @@ interface HandleStreamEventOptions {
 }
 
 interface ManagedAgentBase {
+  responseMetadata?: AgentResponseMetadata;
   id: string;
   provider: AgentProvider;
   cwd: string;
@@ -525,6 +533,7 @@ interface WriteLabelsResult {
 }
 
 interface AgentMetadataPatch {
+  namingMode?: "automatic" | "manual";
   title?: string;
   labels?: AgentLabelPatch;
 }
@@ -733,6 +742,8 @@ export class AgentManager {
     provider: AgentProvider,
   ) => ProviderPaseoToolsPolicy | undefined;
   private appendSystemPrompt: string;
+  private responseControlEnabled: boolean;
+  private readonly responseControlSessions = new ResponseControlSessions();
   private onAgentAttention?: AgentAttentionCallback;
   private onAgentArchived?: AgentArchivedCallback;
   private onWorkspaceStateMayHaveChanged?: (params: { cwd: string }) => void;
@@ -756,6 +767,7 @@ export class AgentManager {
     this.configurePaseoTools(options);
     this.resolvePaseoToolPolicy = options.resolvePaseoToolPolicy ?? (() => undefined);
     this.appendSystemPrompt = options.appendSystemPrompt ?? "";
+    this.responseControlEnabled = options.responseControl !== false;
     this.logger = options.logger.child({ module: "agent", component: "agent-manager" });
     this.rescueTimeouts = {
       reloadSessionCloseMs:
@@ -1930,6 +1942,7 @@ export class AgentManager {
         attention,
         internal: record.internal,
         labels: record.labels,
+        responseMetadata: record.responseMetadata,
       },
     });
   }
@@ -2011,6 +2024,10 @@ export class AgentManager {
   }
 
   async setTitle(agentId: string, title: string): Promise<void> {
+    await this.responseControlSessions.mutate(agentId, () => this.setTitleUnlocked(agentId, title));
+  }
+
+  private async setTitleUnlocked(agentId: string, title: string): Promise<void> {
     const agent = this.requireAgent(agentId);
     const normalizedTitle = title.trim();
     if (!normalizedTitle) {
@@ -2024,7 +2041,11 @@ export class AgentManager {
       return;
     }
     this.touchUpdatedAt(agent);
-    await this.persistSnapshot(agent, { title: normalizedTitle });
+    await this.persistResponseMetadata(
+      agent,
+      { ...agent.responseMetadata, namingMode: "manual" },
+      normalizedTitle,
+    );
     this.emitState(agent, { persist: false });
   }
 
@@ -2060,9 +2081,20 @@ export class AgentManager {
       throw new Error(`Agent not found: ${agentId}`);
     }
 
+    const responseMetadata: AgentResponseMetadata = {
+      ...record.responseMetadata,
+      namingMode:
+        patch.namingMode ??
+        (patch.title ? "manual" : (record.responseMetadata?.namingMode ?? "manual")),
+    };
+    const automatic = responseMetadata.namingMode === "automatic";
+    if (automatic) responseMetadata.icon = responseMetadata.automaticIcon;
     const nextRecord = {
       ...record,
-      ...(patch.title ? { title: patch.title } : {}),
+      responseMetadata,
+      title: automatic
+        ? (responseMetadata.automaticTitle ?? record.title)
+        : (patch.title ?? record.title),
       ...(patch.labels ? { labels: applyLabelPatch(record.labels, patch.labels) } : {}),
       updatedAt: this.nextStoredUpdatedAt(record),
     };
@@ -2257,6 +2289,7 @@ export class AgentManager {
     agentId: string,
     updates: {
       title?: string;
+      namingMode?: "automatic" | "manual";
       labels?: Record<string, string>;
     },
   ): Promise<void> {
@@ -2269,13 +2302,25 @@ export class AgentManager {
     agentId: string,
     updates: {
       title?: string;
+      namingMode?: "automatic" | "manual";
       labels?: Record<string, string>;
     },
   ): Promise<void> {
-    const liveAgent = this.getAgent(agentId);
+    const liveAgent = this.agents.get(agentId);
     if (liveAgent) {
       if (updates.title) {
         await this.setTitle(agentId, updates.title);
+      }
+      if (updates.namingMode) {
+        const namingMode = updates.namingMode;
+        await this.responseControlSessions.mutate(agentId, async () => {
+          const metadata = { ...liveAgent.responseMetadata, namingMode };
+          const automatic = namingMode === "automatic";
+          if (automatic) metadata.icon = metadata.automaticIcon;
+          const title = automatic ? metadata.automaticTitle : undefined;
+          await this.persistResponseMetadata(liveAgent, metadata, title);
+          this.emitState(liveAgent, { persist: false });
+        });
       }
       if (updates.labels) {
         await this.writeLabels(agentId, updates.labels);
@@ -2641,6 +2686,8 @@ export class AgentManager {
   }
 
   private openActiveTurn(agent: ActiveManagedAgent, turnId: string, startedAt: Date): void {
+    if (agent.responseMetadata)
+      agent.responseMetadata = { ...agent.responseMetadata, lastTurn: undefined };
     agent.activeTurnId = turnId;
     agent.activeTurnStartedAt = startedAt;
   }
@@ -3194,6 +3241,7 @@ export class AgentManager {
   }
 
   async deleteAgentState(agentId: string): Promise<void> {
+    this.responseControlSessions.close(agentId);
     this.onToolCallSummaryInvalidated?.(agentId);
     await this.summaryStore?.delete(agentId);
     this.discardRetainedAgentState(agentId);
@@ -3487,6 +3535,10 @@ export class AgentManager {
       });
 
       this.assertAcceptingAgentRegistrations();
+      const priorRecord = await this.registry?.get(resolvedAgentId);
+      managed.responseMetadata = priorRecord?.responseMetadata ?? {
+        namingMode: priorRecord || config.title ? "manual" : "automatic",
+      };
       this.agents.set(resolvedAgentId, managed);
       registered = true;
       // Initialize previousStatus to track transitions
@@ -3861,6 +3913,21 @@ export class AgentManager {
     return explicitTitle ?? fallbackTitle;
   }
 
+  private async persistResponseMetadata(
+    agent: ManagedAgent,
+    metadata: AgentResponseMetadata,
+    title?: string,
+  ): Promise<void> {
+    const previous = agent.responseMetadata;
+    agent.responseMetadata = metadata;
+    try {
+      await this.persistSnapshot(agent, title ? { title } : undefined);
+    } catch (error) {
+      agent.responseMetadata = previous;
+      throw error;
+    }
+  }
+
   private async persistSnapshot(
     agent: ManagedAgent,
     options?: { title?: string | null; internal?: boolean },
@@ -4129,7 +4196,7 @@ export class AgentManager {
     this.traceHandleStreamEventStart(agent, event, eventTurnId, isForegroundEvent);
     if (
       eventTurnId &&
-      isTurnTerminalEvent(event) &&
+      (isTurnTerminalEvent(event) || event.type === "turn_started") &&
       this.runs.hasFinalizedTurn(agent, eventTurnId)
     ) {
       return false;
@@ -4137,6 +4204,8 @@ export class AgentManager {
 
     // Only update timestamp for live events, not history replay
     if (!options?.fromHistory) {
+      this.responseControlSessions.observe(agent.id, event, eventTurnId);
+
       this.touchUpdatedAt(agent);
       if (this.agentStreamCoalescer.handle(agent.id, event)) {
         this.traceCoalescerBuffered(agent, event, eventTurnId);
@@ -4171,6 +4240,8 @@ export class AgentManager {
 
     if (!options?.fromHistory) {
       if (isTurnTerminalEvent(event)) {
+        if (eventTurnId && terminalDisposition === "closed_current")
+          this.runs.rememberFinalizedTurn(agent, eventTurnId);
         this.runs.settleTerminalRun(agent.id, eventTurnId);
         if (isForegroundEvent) {
           this.finalizeForegroundTurn(agent, eventTurnId);
@@ -4301,14 +4372,14 @@ export class AgentManager {
       case "timeline":
         return this.onStreamTimelineEvent({ agent, event, options, flags });
       case "turn_completed":
-        this.onStreamTurnCompleted({
+        return this.onStreamTurnCompleted({
+          options,
           agent,
           event,
           eventTurnId,
           isForegroundEvent,
           terminalDisposition,
         });
-        return undefined;
       case "turn_failed":
         return this.onStreamTurnFailed({
           agent,
@@ -4398,13 +4469,14 @@ export class AgentManager {
     flags.shouldNotifyWaiters = true;
   }
 
-  private onStreamTurnCompleted(params: {
+  private async onStreamTurnCompleted(params: {
+    options?: HandleStreamEventOptions;
     agent: ActiveManagedAgent;
     event: Extract<AgentStreamEvent, { type: "turn_completed" }>;
     eventTurnId: string | undefined;
     isForegroundEvent: boolean;
     terminalDisposition: ActiveTurnTerminalDisposition;
-  }): void {
+  }): Promise<void> {
     const { agent, event, eventTurnId, isForegroundEvent, terminalDisposition } = params;
     this.logger.trace(
       {
@@ -4418,6 +4490,30 @@ export class AgentManager {
       "agent.manager.turn.completed",
     );
     if (terminalDisposition === "stale") return;
+    if (eventTurnId && !params.options?.fromHistory) {
+      const metadata = this.responseControlSessions.complete(agent.id, eventTurnId);
+      await this.responseControlSessions
+        .mutate(agent.id, async () => {
+          const responseMetadata: AgentResponseMetadata = {
+            ...agent.responseMetadata,
+            namingMode: agent.responseMetadata?.namingMode ?? "manual",
+            lastTurn: { turnId: eventTurnId, ...(metadata ? { message: metadata.message } : {}) },
+          };
+          if (metadata?.title) responseMetadata.automaticTitle = metadata.title;
+          if (metadata?.icon) responseMetadata.automaticIcon = metadata.icon;
+          const automatic = responseMetadata.namingMode === "automatic";
+          if (automatic) responseMetadata.icon = responseMetadata.automaticIcon;
+          const title = automatic ? metadata?.title : undefined;
+          await this.persistResponseMetadata(agent, responseMetadata, title);
+        })
+        .catch((error) => {
+          // Metadata storage must not prevent the provider's completed turn from settling.
+          this.logger.error(
+            { err: error, agentId: agent.id, turnId: eventTurnId },
+            "Failed to save response metadata",
+          );
+        });
+    }
     if (event.usage) {
       agent.lastUsage = { ...agent.lastUsage, ...event.usage };
     }
@@ -5163,11 +5259,26 @@ export class AgentManager {
         mcpAuthToken: this.mcpAuthToken,
       }),
     );
+    this.responseControlSessions.open(
+      agentId,
+      this.responseControlEnabled && !config.internal && supportsResponseControl(config.provider),
+    );
     return { storedConfig, launchConfig, paseoToolPolicy };
   }
 
+  setResponseControlEnabled(enabled: boolean): void {
+    this.responseControlEnabled = enabled;
+  }
+
   private applyDaemonAppendSystemPrompt(config: AgentSessionConfig): AgentSessionConfig {
-    const daemonAppendSystemPrompt = this.appendSystemPrompt.trim();
+    const enabled =
+      this.responseControlEnabled && !config.internal && supportsResponseControl(config.provider);
+    const daemonAppendSystemPrompt = [
+      this.appendSystemPrompt.trim(),
+      enabled ? RESPONSE_CONTROL_INSTRUCTIONS : "",
+    ]
+      .filter(Boolean)
+      .join("\n\n");
     const next = { ...config };
     delete next.daemonAppendSystemPrompt;
 

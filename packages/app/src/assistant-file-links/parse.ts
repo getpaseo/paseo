@@ -96,9 +96,13 @@ export type AssistantFileLinkClassification =
       target: InlinePathTarget;
     };
 
-export interface NormalizedInlinePathTarget {
-  directory: string;
-  file?: string;
+export type NormalizedInlinePathTarget =
+  | { directory: string; file?: string }
+  | { error: "outsideWorkspaceDirectory" };
+
+interface NormalizeInlinePathOptions {
+  sourceCwd?: string;
+  workspaceRoot?: string;
 }
 
 function normalizePathToken(value: string): string | null {
@@ -467,47 +471,48 @@ function parseLocalPathParts(
 
 export function normalizeInlinePathTarget(
   rawPath: string,
-  cwd?: string,
+  { sourceCwd, workspaceRoot }: NormalizeInlinePathOptions,
 ): NormalizedInlinePathTarget | null {
-  if (!rawPath) {
-    return null;
-  }
-
   const normalizedInput = normalizePathInput(rawPath);
   if (!normalizedInput) {
     return null;
   }
 
-  let normalized = normalizedInput;
-  const cwdRelative = resolvePathAgainstCwd(normalized, cwd);
-  if (cwdRelative) {
-    normalized = cwdRelative;
+  let sourcePath = normalizedInput;
+  const needsSourceRoot = !isAbsolutePath(sourcePath) && !isHomeRelativePath(sourcePath);
+  if (needsSourceRoot) {
+    const sourceRoot = normalizePathInput(sourceCwd);
+    if (!sourceRoot || !isAbsolutePath(sourceRoot)) {
+      return null;
+    }
+    const resolved = resolveRelativePathUnderRoot(sourcePath, sourceRoot);
+    if (!resolved) {
+      return null;
+    }
+    sourcePath = resolved;
   }
 
-  if (normalized.startsWith("./")) {
-    normalized = normalized.slice(2) || ".";
+  const workspaceRelative = resolvePathAgainstCwd(sourcePath, workspaceRoot);
+  const isDirectory =
+    normalizedInput.endsWith("/") ||
+    resolvePathAgainstCwd(sourcePath, sourceCwd) === "." ||
+    workspaceRelative === ".";
+  if (isDirectory) {
+    const directory = workspaceRelative?.replace(/\/+$/, "") || ".";
+    const belongsToWorkspace =
+      workspaceRoot !== undefined &&
+      workspaceRelative !== null &&
+      resolveRelativePathUnderRoot(directory, workspaceRoot) !== null;
+    if (!belongsToWorkspace) {
+      return { error: "outsideWorkspaceDirectory" };
+    }
+    return { directory };
   }
 
-  if (!normalized.length) {
-    normalized = ".";
-  }
-
-  if (normalized === ".") {
-    return { directory: "." };
-  }
-
-  if (normalized.endsWith("/")) {
-    const dir = normalized.replace(/\/+$/, "");
-    return { directory: dir.length > 0 ? dir : "." };
-  }
-
-  const lastSlash = normalized.lastIndexOf("/");
-  const directory = lastSlash >= 0 ? normalized.slice(0, lastSlash) : ".";
-
-  return {
-    directory: directory.length > 0 ? directory : ".",
-    file: normalized,
-  };
+  const file = workspaceRelative ?? sourcePath;
+  const lastSlash = file.lastIndexOf("/");
+  const directory = lastSlash >= 0 ? file.slice(0, lastSlash) : ".";
+  return { directory: directory || ".", file };
 }
 
 function isAllowedAbsolutePath(pathValue: string, workspaceRoot?: string): boolean {

@@ -1,4 +1,13 @@
 export const en = {
+  responseControl: {
+    title: "Response control",
+    hint: "Use final responses for chat names, icons, and completion summaries. Applies when an agent session next opens or resumes. Supports Claude, Codex, OpenCode, and Pi.",
+    automaticNaming: "Use automatic naming",
+    updating: "Updating chat name…",
+    retry: "Retry",
+    dismiss: "Dismiss",
+  },
+
   changeStats: {
     title: "Change breakdown",
     code: "Code",
@@ -558,6 +567,9 @@ export const en = {
       },
       errors: {
         failedToListDirectory: "Failed to list directory",
+        pathUnavailable: "This path cannot be resolved from the conversation's working directory.",
+        outsideWorkspaceDirectory:
+          "This folder is outside the current workspace. Open it from its source workspace.",
         createFailed: "Failed to create entry",
         renameFailed: "Failed to rename entry",
         duplicateFailed: "Failed to duplicate entry",
@@ -1384,8 +1396,9 @@ export const en = {
   },
   desktop: {
     keepAwake: {
-      tooltip_one: "Keeping this computer awake while {{count}} agent works",
-      tooltip_other: "Keeping this computer awake while {{count}} agents work",
+      tooltip_zero: "Sleep prevention active",
+      tooltip_one: "Sleep prevention active for {{count}} agent",
+      tooltip_other: "Sleep prevention active for {{count}} agents",
     },
     windowControls: {
       minimize: "Minimize window",

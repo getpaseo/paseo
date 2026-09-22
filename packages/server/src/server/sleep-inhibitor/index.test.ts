@@ -24,26 +24,44 @@ function createLogger(): Logger {
 interface BackendHarness {
   acquireCount: number;
   releaseCount: number;
+  lose(supported: boolean): void;
+  listenerCount(): number;
   backend: SleepInhibitorBackend;
 }
 
 function createBackend(supported = true): BackendHarness {
   let held = false;
+  const listeners = new Set<() => void>();
+  function notify(): void {
+    for (const listener of listeners) listener();
+  }
   const harness: BackendHarness = {
     acquireCount: 0,
     releaseCount: 0,
+    lose(available): void {
+      held = false;
+      supported = available;
+      notify();
+    },
+    listenerCount: () => listeners.size,
     backend: {
       isSupported: () => supported,
       isHeld: () => held,
+      onChange(listener: () => void) {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
       acquire(): void {
         if (!supported || held) return;
         held = true;
         harness.acquireCount += 1;
+        notify();
       },
       release(): void {
         if (!held) return;
         held = false;
         harness.releaseCount += 1;
+        notify();
       },
     },
   };
@@ -82,15 +100,34 @@ function createAgentManager() {
   };
 }
 
+function createConfigStore(enabled = true) {
+  const config = { preventSleepWhileAgentsRun: enabled };
+  const listeners = new Set<() => void>();
+  return {
+    store: {
+      get: () => config,
+      onChange(listener: () => void) {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+    },
+    setEnabled(value: boolean): void {
+      config.preventSleepWhileAgentsRun = value;
+      for (const listener of listeners) listener();
+    },
+    listenerCount: () => listeners.size,
+  };
+}
+
 function setup(options?: { enabled?: boolean; supported?: boolean }) {
   harness = createBackend(options?.supported ?? true);
   const agentManager = createAgentManager();
-  const config = { preventSleepWhileAgentsRun: options?.enabled ?? true };
+  const config = createConfigStore(options?.enabled ?? true);
   const states: SleepInhibitorState[] = [];
 
   const runtime = setupSleepInhibitor({
     agentManager: agentManager.manager,
-    daemonConfigStore: { get: () => config },
+    daemonConfigStore: config.store,
     logger: createLogger(),
     backend: harness.backend,
     releaseDelayMs: RELEASE_DELAY_MS,
@@ -175,17 +212,26 @@ describe("sleep inhibitor", () => {
     runtime.dispose();
   });
 
-  test("releases immediately when the setting is turned off mid-run", () => {
-    const { runtime, agentManager, config } = setup();
+  test("applies setting changes while the agent stays running", () => {
+    const { runtime, agentManager, config, states } = setup();
 
     agentManager.setAgent({ id: "a", lifecycle: "running" });
     expect(harness.acquireCount).toBe(1);
 
-    config.preventSleepWhileAgentsRun = false;
-    agentManager.setAgent({ id: "a", lifecycle: "running" });
+    config.setEnabled(false);
 
     expect(harness.releaseCount).toBe(1);
     expect(runtime.getState().active).toBe(false);
+
+    config.setEnabled(true);
+
+    expect(harness.acquireCount).toBe(2);
+    expect(runtime.getState().active).toBe(true);
+    expect(states).toEqual([
+      { active: true, supported: true, agentCount: 1 },
+      { active: false, supported: true, agentCount: 1 },
+      { active: true, supported: true, agentCount: 1 },
+    ]);
     runtime.dispose();
   });
 
@@ -218,7 +264,7 @@ describe("sleep inhibitor", () => {
 
     const runtime = setupSleepInhibitor({
       agentManager: agentManager.manager,
-      daemonConfigStore: { get: () => ({ preventSleepWhileAgentsRun: true }) },
+      daemonConfigStore: createConfigStore().store,
       logger: createLogger(),
       backend: harness.backend,
       releaseDelayMs: RELEASE_DELAY_MS,
@@ -238,14 +284,55 @@ describe("sleep inhibitor", () => {
     runtime.dispose();
   });
 
-  test("releases and unsubscribes on dispose", () => {
+  test.each([true, false])(
+    "publishes helper loss with supported=%s without retrying",
+    (supported) => {
+      const { runtime, agentManager, states } = setup();
+      agentManager.setAgent({ id: "a", lifecycle: "running" });
+
+      harness.lose(supported);
+      vi.advanceTimersByTime(RELEASE_DELAY_MS * 2);
+
+      expect(states).toEqual([
+        { active: true, supported: true, agentCount: 1 },
+        { active: false, supported, agentCount: 1 },
+      ]);
+      expect(runtime.getState()).toEqual({ active: false, supported, agentCount: 1 });
+      expect(harness.acquireCount).toBe(1);
+      runtime.dispose();
+    },
+  );
+
+  test("can reacquire after helper loss on a later agent event", () => {
     const { runtime, agentManager } = setup();
+    agentManager.setAgent({ id: "a", lifecycle: "running" });
+    harness.lose(true);
+
+    agentManager.setAgent({ id: "a", lifecycle: "running" });
+
+    expect(harness.acquireCount).toBe(2);
+    expect(runtime.getState()).toEqual({ active: true, supported: true, agentCount: 1 });
+    runtime.dispose();
+  });
+
+  test("releases and unsubscribes on dispose", () => {
+    const { runtime, agentManager, config, states } = setup();
 
     agentManager.setAgent({ id: "a", lifecycle: "running" });
     runtime.dispose();
 
     expect(harness.releaseCount).toBe(1);
     expect(agentManager.listenerCount()).toBe(0);
+    expect(config.listenerCount()).toBe(0);
+    expect(harness.listenerCount()).toBe(0);
+
+    harness.lose(false);
+    config.setEnabled(false);
+    config.setEnabled(true);
+    agentManager.setAgent({ id: "a", lifecycle: "running" });
+
+    expect(harness.acquireCount).toBe(1);
+    expect(states).toEqual([{ active: true, supported: true, agentCount: 1 }]);
   });
 
   test("publishes each state transition once", () => {

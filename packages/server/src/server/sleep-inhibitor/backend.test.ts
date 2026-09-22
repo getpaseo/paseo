@@ -75,6 +75,8 @@ describe("process sleep inhibitor", () => {
       platform: "darwin",
       pid: 99,
     });
+    const heldChanges: boolean[] = [];
+    const unsubscribe = inhibitor.onChange(() => heldChanges.push(inhibitor.isHeld()));
 
     inhibitor.acquire();
     inhibitor.acquire();
@@ -86,6 +88,12 @@ describe("process sleep inhibitor", () => {
 
     expect(recorder.children[0]?.killed).toBe(true);
     expect(inhibitor.isHeld()).toBe(false);
+    expect(heldChanges).toEqual([true, false]);
+
+    unsubscribe();
+    inhibitor.acquire();
+    inhibitor.release();
+    expect(heldChanges).toEqual([true, false]);
   });
 
   test("reports unsupported on a platform with no mechanism", () => {
@@ -143,5 +151,56 @@ describe("process sleep inhibitor", () => {
 
     inhibitor.acquire();
     expect(recorder.calls).toHaveLength(2);
+  });
+
+  test("publishes current helper failures and ignores old or duplicate process events", () => {
+    const recorder = createSpawnRecorder();
+    const inhibitor = createProcessSleepInhibitor({
+      logger: createLogger(),
+      spawn: recorder.spawn,
+      platform: "linux",
+    });
+    const changes: [held: boolean, supported: boolean][] = [];
+    inhibitor.onChange(() => changes.push([inhibitor.isHeld(), inhibitor.isSupported()]));
+
+    inhibitor.acquire();
+    recorder.children[0].emit("exit", 0, null);
+    expect(changes).toEqual([
+      [true, true],
+      [false, true],
+    ]);
+
+    inhibitor.acquire();
+    const error = Object.assign(new Error("helper missing"), { code: "ENOENT" });
+    recorder.children[0].emit("error", error);
+    expect(inhibitor.isSupported()).toBe(true);
+    expect(inhibitor.isHeld()).toBe(true);
+
+    recorder.children[1].emit("error", error);
+    recorder.children[1].emit("exit", 1, null);
+    expect(changes).toEqual([
+      [true, true],
+      [false, true],
+      [true, true],
+      [false, false],
+    ]);
+    expect(recorder.calls).toHaveLength(2);
+  });
+
+  test("publishes unavailability when spawning throws", () => {
+    const inhibitor = createProcessSleepInhibitor({
+      logger: createLogger(),
+      platform: "linux",
+      spawn: () => {
+        throw new Error("spawn failed");
+      },
+    });
+    const supportChanges: boolean[] = [];
+    inhibitor.onChange(() => supportChanges.push(inhibitor.isSupported()));
+
+    inhibitor.acquire();
+
+    expect(supportChanges).toEqual([false]);
+    expect(inhibitor.isHeld()).toBe(false);
   });
 });

@@ -1,3 +1,6 @@
+import { Alert } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import { useWorkspaceDirectory } from "@/stores/session-store-hooks";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import React, {
   forwardRef,
@@ -379,6 +382,10 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       [isMobile],
     );
     const [isNearBottom, setIsNearBottom] = useState(true);
+    const [inlinePathError, setInlinePathError] = useState<
+      "pathUnavailable" | "outsideWorkspaceDirectory" | null
+    >(null);
+    const dismissInlinePathError = useStableEvent(() => setInlinePathError(null));
     const [expandedInlineToolCallIds, setExpandedInlineToolCallIds] = useState<Set<string>>(
       new Set(),
     );
@@ -411,11 +418,12 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       (state) => state.sessions[resolvedServerId]?.agentTimelineHasNewer.get(agentId) === true,
     );
 
-    const workspaceRoot = context.cwd?.trim() || "";
+    const workspaceRoot = context.cwd.trim();
+    const destinationRoot = useWorkspaceDirectory(resolvedServerId, context.workspaceId ?? null);
     const { requestDirectoryListing } = useFileExplorerActions({
       serverId: resolvedServerId,
       workspaceId: context.workspaceId,
-      workspaceRoot,
+      workspaceRoot: destinationRoot,
     });
     const agentHistoryPagination = useLoadOlderAgentHistory({
       serverId: resolvedServerId,
@@ -447,6 +455,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
 
     useEffect(() => {
       setIsNearBottom(true);
+      setInlinePathError(null);
       setExpandedInlineToolCallIds(new Set());
       setExpandedToolCallGroupIds(new Set());
     }, [agentId]);
@@ -457,10 +466,19 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
           return;
         }
 
-        const normalized = normalizeInlinePathTarget(target.path, context.cwd);
+        const normalized = normalizeInlinePathTarget(target.path, {
+          sourceCwd: context.cwd,
+          workspaceRoot: destinationRoot ?? undefined,
+        });
         if (!normalized) {
+          setInlinePathError("pathUnavailable");
           return;
         }
+        if ("error" in normalized) {
+          setInlinePathError(normalized.error);
+          return;
+        }
+        setInlinePathError(null);
 
         if (normalized.file) {
           const location = normalizeWorkspaceFileLocation({
@@ -503,7 +521,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
           }),
           checkout: {
             serverId: resolvedServerId,
-            cwd: context.cwd,
+            cwd: destinationRoot ?? "",
             isGit: context.projectPlacement?.checkout?.isGit ?? true,
           },
           view: "files",
@@ -1130,6 +1148,17 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     return (
       <ToolCallSheetProvider>
         <AssistantSelectionCopySurface style={stylesheet.container}>
+          {inlinePathError ? (
+            <Alert
+              variant="info"
+              description={t(`workspace.fileExplorer.errors.${inlinePathError}`)}
+              testID="inline-path-error"
+            >
+              <Button variant="ghost" size="sm" onPress={dismissInlinePathError}>
+                {t("common.actions.dismiss")}
+              </Button>
+            </Alert>
+          ) : null}
           <MessageOuterSpacingProvider disableOuterSpacing>
             {streamRenderStrategy.render({
               agentId,
