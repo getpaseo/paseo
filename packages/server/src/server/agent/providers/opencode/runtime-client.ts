@@ -55,6 +55,7 @@ export class OpenCodeRuntimeClient implements AgentClient {
   readonly resolveCreateConfig;
   readonly isCreateConfigUnattended;
   private selected: Promise<OpenCodeAgentClient | OpenCodeV2AgentClient> | null = null;
+  private legacySelected = false;
   private readonly legacy: OpenCodeAgentClient;
   constructor(
     private readonly logger: Logger,
@@ -82,10 +83,14 @@ export class OpenCodeRuntimeClient implements AgentClient {
       } catch {
         // Version discovery is additive: legacy wrappers need not support --version.
         this.selected = null;
+        this.legacySelected = true;
         return this.legacy;
       }
       if (!VERSION_PATTERN.test(output.trim())) this.selected = null;
-      if (openCodeMajorVersion(output) === 1) return this.legacy;
+      if (openCodeMajorVersion(output) === 1) {
+        this.legacySelected = true;
+        return this.legacy;
+      }
       const { OpenCodeV2AgentClient } = await import("./v2/agent.js");
       return new OpenCodeV2AgentClient({
         logger: this.logger,
@@ -148,6 +153,8 @@ export class OpenCodeRuntimeClient implements AgentClient {
     if (client instanceof OpenCodeAgentClient) await client.unarchiveNativeSession(handle);
   }
   async shutdown() {
-    if (this.selected) await (await this.selected.catch(() => null))?.shutdown?.();
+    const selected = await this.selected?.catch(() => null);
+    if (this.legacySelected) await this.legacy.shutdown();
+    if (selected && selected !== this.legacy) await selected.shutdown();
   }
 }

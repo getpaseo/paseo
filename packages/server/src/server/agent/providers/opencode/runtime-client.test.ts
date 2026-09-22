@@ -172,13 +172,25 @@ test.each([
     const { OpenCodeRuntimeClient } = await import("./runtime-client.js");
     const { OpenCodeAgentClient } = await import("../opencode-agent.js");
     const { createTestLogger } = await import("../../../../test-utils/test-logger.js");
+    const { OpenCodeServerManager } = await import("./server-manager.js");
     const root = await mkdtemp(join(tmpdir(), "opencode-legacy-probe-"));
     const script = join(root, "version.cjs");
     await writeFile(script, source);
     const logger = createTestLogger();
-    const client = new OpenCodeRuntimeClient(logger, {
-      command: { mode: "replace", argv: [process.execPath, script] },
-    });
+    let legacyShutdown = false;
+    class TrackedServerManager extends OpenCodeServerManager {
+      override async shutdown() {
+        legacyShutdown = true;
+        await super.shutdown();
+      }
+    }
+    const client = new OpenCodeRuntimeClient(
+      logger,
+      {
+        command: { mode: "replace", argv: [process.execPath, script] },
+      },
+      { serverManager: new TrackedServerManager({ logger }) },
+    );
     const legacy = new OpenCodeAgentClient(logger);
     const config = { provider: "opencode", cwd: root };
     try {
@@ -188,6 +200,7 @@ test.each([
       await legacy.shutdown();
       await rm(root, { recursive: true, force: true });
     }
+    expect(legacyShutdown).toBe(true);
   },
   10000,
 );
