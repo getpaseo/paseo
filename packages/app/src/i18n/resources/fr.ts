@@ -11,7 +11,6 @@ export const fr: TranslationResources = {
     loading: "Chargement…",
     failed: "Échec",
     retry: "Réessayer",
-    chatPosition: "{{current}} sur {{total}} dans le message",
 
     title: "Rechercher",
     placeholder: "Rechercher dans le panneau",

@@ -11,7 +11,6 @@ export const ptBR: TranslationResources = {
     loading: "Carregando…",
     failed: "Falhou",
     retry: "Tentar novamente",
-    chatPosition: "{{current}} de {{total}} na mensagem",
 
     title: "Buscar",
     placeholder: "Buscar no painel",

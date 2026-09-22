@@ -11,7 +11,6 @@ export const ja: TranslationResources = {
     loading: "読み込み中…",
     failed: "失敗",
     retry: "再試行",
-    chatPosition: "メッセージ内 {{current}} / {{total}}",
 
     title: "検索",
     placeholder: "ペイン内を検索",

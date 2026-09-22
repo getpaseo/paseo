@@ -126,7 +126,7 @@ export function ChatFind({
   else if (state.phase === "error") status = t("paneFind.failed");
   else if (state.query.trim())
     status = state.count
-      ? t("paneFind.chatPosition", { current: state.occurrence + 1, total: state.count })
+      ? t("paneFind.position", { current: state.occurrence + 1, total: state.count })
       : t("paneFind.noMatches");
   return (
     <div ref={root} tabIndex={-1} style={ROOT_STYLE}>

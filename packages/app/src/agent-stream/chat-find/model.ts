@@ -1,7 +1,15 @@
 import type { AgentTimelineSearchPayload } from "@getpaseo/client/internal/daemon-client";
 import type { StreamItem } from "@/types/stream";
 
-type Location = AgentTimelineSearchPayload["locations"][number];
+/**
+ * A message the host says contains the query. `count` is the host's estimate of its
+ * occurrences until a reveal replaces it with the rendered count, so the whole-chat
+ * position the widget shows is exact for every message that has been on screen. The
+ * wire field is optional; the search boundary fills it in, so the interior trusts it.
+ */
+type Location = Omit<AgentTimelineSearchPayload["locations"][number], "count"> & {
+  count: number;
+};
 interface Target {
   id: string;
   seq: number;
@@ -36,6 +44,7 @@ interface Snapshot {
   query: string;
   phase: "idle" | "searching" | "loading" | "ready" | "error";
   selectedItemId: string | null;
+  /** Position across the whole chat: the search scope, not the selected message. */
   occurrence: number;
   count: number;
   failure: ChatFindFailure | null;
@@ -70,6 +79,7 @@ export class ChatFindModel {
   private locations: Location[] = [];
   private resolved = new Map<Location, Target>();
   private current = -1;
+  private inMessage = { occurrence: 0, count: 0 };
   private abort = new AbortController();
   private timer: ReturnType<typeof setTimeout> | undefined;
   constructor(private operations: ChatFindOperations) {}
@@ -105,6 +115,7 @@ export class ChatFindModel {
     this.resultEpoch = null;
     this.resolved.clear();
     this.current = -1;
+    this.inMessage = { occurrence: 0, count: 0 };
     this.publish({
       query,
       phase: query.trim() ? "searching" : "idle",
@@ -142,7 +153,14 @@ export class ChatFindModel {
         const searchChanged = this.resultEpoch !== null && result.epoch !== this.resultEpoch;
         if (historyChanged || searchChanged) throw new ChatFindFailureError("historyChanged");
         this.resultEpoch = result.epoch;
-        this.locations.push(...result.locations);
+        this.locations.push(
+          ...result.locations.map((location) => ({
+            seq: location.seq,
+            role: location.role,
+            // COMPAT(timelineSearchCount): hosts before v0.9.0 send no count; remove after 2027-09-22.
+            count: location.count ?? 1,
+          })),
+        );
         cursor = result.nextCursor ?? undefined;
       } while (cursor !== undefined);
       await this.navigate(0, 1, signal);
@@ -238,7 +256,7 @@ export class ChatFindModel {
       if (signal.aborted) return;
       if (result.count) {
         this.current = index;
-        this.publish({ phase: "ready", ...result });
+        this.publish({ phase: "ready", ...this.position(location, result) });
         return;
       }
       this.locations.splice(index, 1);
@@ -247,13 +265,24 @@ export class ChatFindModel {
     this.operations.clear();
     this.publish({ phase: "ready", selectedItemId: null, count: 0, occurrence: 0 });
   }
+  private position(location: Location, revealed: { occurrence: number; count: number }) {
+    this.inMessage = revealed;
+    location.count = revealed.count;
+    let before = 0;
+    let total = 0;
+    for (const candidate of this.locations) {
+      if (candidate === location) before = total;
+      total += candidate.count;
+    }
+    return { occurrence: before + revealed.occurrence, count: total };
+  }
   private async move(direction: 1 | -1) {
     if (this.state.phase !== "ready" || !this.state.count) return;
     this.cancel();
     const signal = this.abort.signal;
     try {
-      const occurrence = this.state.occurrence + direction;
-      if (occurrence >= 0 && occurrence < this.state.count && this.state.selectedItemId) {
+      const occurrence = this.inMessage.occurrence + direction;
+      if (occurrence >= 0 && occurrence < this.inMessage.count && this.state.selectedItemId) {
         this.publish({ phase: "loading" });
         const result = await tagged(
           "reveal",
@@ -261,7 +290,7 @@ export class ChatFindModel {
         );
         if (signal.aborted) return;
         if (result.count) {
-          this.publish({ phase: "ready", ...result });
+          this.publish({ phase: "ready", ...this.position(this.locations[this.current]!, result) });
           return;
         }
       }

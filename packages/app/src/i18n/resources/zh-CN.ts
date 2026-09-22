@@ -10,7 +10,6 @@ export const zhCN: TranslationResources = {
     loading: "加载中…",
     failed: "失败",
     retry: "重试",
-    chatPosition: "消息内第 {{current}} 项，共 {{total}} 项",
 
     title: "查找",
     placeholder: "在窗格中查找",
