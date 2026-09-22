@@ -3076,8 +3076,9 @@ async function listForkPullRequestNumbers(options: {
     cwd: options.cwd,
     emptyFallback: "[]",
   });
-  const carriesHeadSha = (ref: (typeof refs)[number]): boolean =>
-    options.headSha !== undefined && ref.head?.sha === options.headSha;
+  function carriesHeadSha(ref: (typeof refs)[number]): boolean {
+    return options.headSha !== undefined && ref.head?.sha === options.headSha;
+  }
   return [...refs.filter(carriesHeadSha), ...refs.filter((ref) => !carriesHeadSha(ref))]
     .slice(0, FORK_PR_VIEW_LIMIT)
     .map((ref) => ref.number);
