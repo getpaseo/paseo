@@ -6068,13 +6068,15 @@ describe("Codex importable sessions", () => {
     appServer.assertNoErrors();
   });
 
-  test("stops scanning when Codex hands back a cursor it already served", async () => {
+  test("stops scanning when Codex pages without handing back any thread", async () => {
     const appServer = createFakeCodexAppServer({
+      // A cursor cycle: every page after the first is empty and points at the
+      // other empty page, so the scan can never fill its window.
       "thread/list": (input) => {
         const { cursor } = (input ?? {}) as { cursor?: string };
-        return cursor
-          ? { data: [], nextCursor: cursor }
-          : { data: [{ id: "thread-1", cwd: "/workspace/project-a" }], nextCursor: "stuck" };
+        if (cursor === "page-a") return { data: [], nextCursor: "page-b" };
+        if (cursor === "page-b") return { data: [], nextCursor: "page-a" };
+        return { data: [{ id: "thread-1", cwd: "/workspace/project-a" }], nextCursor: "page-a" };
       },
     });
     const provider = createProviderWithFakeAppServer(appServer);

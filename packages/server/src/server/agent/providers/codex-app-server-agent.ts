@@ -941,13 +941,18 @@ async function readCodexThreadWindow(
         ...(cursor ? { cursor } : {}),
       }),
     );
-    threads.push(...(Array.isArray(response?.data) ? response.data.filter(isRecord) : []));
+    const page = Array.isArray(response?.data) ? response.data.filter(isRecord) : [];
+    threads.push(...page);
     const nextCursor = typeof response?.nextCursor === "string" ? response.nextCursor : undefined;
     if (!nextCursor) break;
-    if (nextCursor === cursor) {
+    if (page.length === 0) {
+      // Every page that continues the scan carries rows, so the loop is bounded
+      // by the window. A page that carries none would let a Codex-side cursor
+      // bug (a stuck cursor, or a cycle) page for ever behind a caller that has
+      // already timed out.
       logger.warn(
         { cursor: nextCursor },
-        "codex thread/list repeated its page cursor, stopping the session scan",
+        "codex thread/list returned an empty page mid-scan, stopping the session scan",
       );
       break;
     }
