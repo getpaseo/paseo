@@ -486,9 +486,12 @@ describe("create handoff lifetime", () => {
     };
   }
 
-  it("keeps the handoff through the first synchronized page and releases it when the chat is current", async () => {
-    useSessionStore.getState().initializeSession(SERVER_ID, null);
-    sentCreateHandoff();
+  interface HeldCatchUpOwner {
+    owner: ViewedTimelineOwner;
+    release: () => void;
+  }
+
+  async function ownerWithHeldCatchUp(): Promise<HeldCatchUpOwner> {
     let releaseTailFetch!: () => void;
     let tailFetchStarted = false;
     const tailFetched = new Promise<void>((resolve) => {
@@ -521,6 +524,13 @@ describe("create handoff lifetime", () => {
     owner.setConnected(true);
     owner.replaceVisibleAgentIds("test", [AGENT_ID]);
     await expect.poll(() => tailFetchStarted).toBe(true);
+    return { owner, release: releaseTailFetch };
+  }
+
+  it("keeps the handoff through the first synchronized page and releases it when the chat is current", async () => {
+    useSessionStore.getState().initializeSession(SERVER_ID, null);
+    sentCreateHandoff();
+    const { owner, release } = await ownerWithHeldCatchUp();
 
     owner.applyTimelineResponse(syncedTailPage());
     expect(
@@ -528,8 +538,21 @@ describe("create handoff lifetime", () => {
     ).toMatchObject({ status: "synced" });
     expect(createHandoff()).toMatchObject({ agentId: AGENT_ID, lifecycle: "sent" });
 
-    releaseTailFetch();
+    release();
     await expect.poll(() => createHandoff()).toBeUndefined();
+    owner.dispose();
+  });
+
+  it("releases the handoff when the chat's tab closes before catch-up completes", async () => {
+    useSessionStore.getState().initializeSession(SERVER_ID, null);
+    sentCreateHandoff();
+    const { owner, release } = await ownerWithHeldCatchUp();
+
+    owner.replaceVisibleAgentIds("test", []);
+    owner.replaceOpenTabAgentIds([]);
+
+    expect(createHandoff()).toBeUndefined();
+    release();
     owner.dispose();
   });
 });

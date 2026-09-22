@@ -136,7 +136,7 @@ class TimelineWorld {
   cacheGate: Deferred<void> | null = null;
   readonly sync = createViewedTimelineSync({
     replaceDemandedAgentIds: () => undefined,
-    onTimelineCurrent: (agentId) => {
+    onCatchUpEnded: (agentId) => {
       this.reportedCurrent.push({
         agentId,
         status: this.sync.getAgentTimelineStatus(agentId),
@@ -485,6 +485,21 @@ test("reports a chat current once the latest-tail fallback replaces an overflowi
   fallback.respond({ hasNewer: false });
   await vi.waitFor(() => expect(world.sync.getAgentTimelineStatus("agent-a")).toBe("ready"));
   expect(world.reportedCurrent).toEqual([{ agentId: "agent-a", status: "ready" }]);
+  world.sync.dispose();
+});
+
+test("stops owing a chat a catch-up when its tab closes mid-fetch", async () => {
+  const world = new TimelineWorld();
+  world.sync.setConnected(true);
+  world.sync.replaceVisibleAgentIds("pane", ["agent-a"]);
+  (await world.nextMembership()).succeed();
+  await world.nextFetch("agent-a");
+  expect(world.reportedCurrent).toEqual([]);
+
+  world.sync.replaceVisibleAgentIds("pane", []);
+  world.sync.replaceOpenTabAgentIds([]);
+
+  expect(world.reportedCurrent).toEqual([{ agentId: "agent-a", status: "pending" }]);
   world.sync.dispose();
 });
 
