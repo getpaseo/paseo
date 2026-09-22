@@ -1,14 +1,6 @@
 # Changelog
 
-## 0.9.0-beta.2 - 2026-09-18
-
-### Fixed
-
-- Fixed every workspace showing the restart time as its last activity after relaunching ([#5040](https://github.com/getpaseo/paseo/pull/5040))
-- Fixed finished chats dropping out of Ready to review after a restart ([#5040](https://github.com/getpaseo/paseo/pull/5040))
-- Fixed launch resuming a provider session for every chat ever opened on the host ([#5040](https://github.com/getpaseo/paseo/pull/5040))
-
-## 0.9.0-beta.1 - 2026-09-17
+## 0.9.0 - 2026-09-22
 
 ### Added
 
@@ -80,6 +72,8 @@
 - Fixed an updated app rejecting daemons that lack independent subscriptions ([#4737](https://github.com/getpaseo/paseo/pull/4737))
 - Fixed workspace and agent creation failing or leaving agent titles at "Loading…" on 0.8.0 and older daemons ([#4895](https://github.com/getpaseo/paseo/pull/4895))
 - Fixed Cursor models showing another model's thinking options ([#4180](https://github.com/getpaseo/paseo/pull/4180) by [@fidelix](https://github.com/fidelix))
+- Fixed Pi model pickers offering thinking levels the model does not support ([#4413](https://github.com/getpaseo/paseo/pull/4413) by [@mcowger](https://github.com/mcowger), [@therainisme](https://github.com/therainisme))
+- Fixed Pi sessions reporting the requested thinking level instead of the one Pi applied ([#4413](https://github.com/getpaseo/paseo/pull/4413))
 - Fixed voice-chat user messages showing the internal prompt wrapper instead of the transcript ([#4927](https://github.com/getpaseo/paseo/pull/4927))
 - Fixed History and Command Center search matching a query assembled from letters in separate words ([#4945](https://github.com/getpaseo/paseo/pull/4945))
 - Fixed workspace titles truncating early on touch layouts behind hidden diff stats ([#4698](https://github.com/getpaseo/paseo/pull/4698))
