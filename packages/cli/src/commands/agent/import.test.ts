@@ -57,4 +57,32 @@ describe("resolveImportCwd", () => {
     });
     expect(result.data.provider).toBe("pi");
   });
+
+  it("passes the requested mode to the import request", async () => {
+    importAgent.mockResolvedValueOnce({
+      id: "agent-2",
+      status: "idle",
+      provider: "claude",
+      cwd: "/tmp/project",
+      title: "Imported Claude session",
+    });
+
+    await runImportCommand(
+      "claude-session-1",
+      {
+        daemonTarget: { kind: "endpoint", host: "example.test:12345" },
+        provider: "claude",
+        cwd: "/tmp/project",
+        mode: "auto",
+      },
+      {} as never,
+    );
+
+    expect(importAgent).toHaveBeenCalledWith({
+      provider: "claude",
+      sessionId: "claude-session-1",
+      cwd: "/tmp/project",
+      modeId: "auto",
+    });
+  });
 });

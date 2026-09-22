@@ -558,11 +558,13 @@ test("normalizeImportAgentRequest accepts new and legacy import handle shapes", 
       requestId: "new-shape",
       providerId: "custom-codex",
       providerHandleId: "thread-1",
+      modeId: "full-access",
     }),
   ).toEqual({
     requestId: "new-shape",
     provider: "custom-codex",
     providerHandleId: "thread-1",
+    modeId: "full-access",
   });
 
   expect(
@@ -633,7 +635,11 @@ class ProviderImportHarness {
       },
       unarchiveSnapshot: async (
         agentId: string,
-        updates?: { workspaceId?: string; labels?: Record<string, string | null> },
+        updates?: {
+          workspaceId?: string;
+          labels?: Record<string, string | null>;
+          modeId?: string;
+        },
       ) => {
         if (this.unarchiveWait) {
           await this.unarchiveWait;
@@ -654,6 +660,7 @@ class ProviderImportHarness {
           ...record,
           workspaceId: updates?.workspaceId ?? record.workspaceId,
           labels,
+          config: updates?.modeId ? { ...record.config, modeId: updates.modeId } : record.config,
           archivedAt: null,
         });
         return true;
@@ -735,7 +742,12 @@ class ProviderImportHarness {
     };
   }
 
-  import(input: { providerHandleId: string; cwd?: string; labels?: Record<string, string> }) {
+  import(input: {
+    providerHandleId: string;
+    cwd?: string;
+    labels?: Record<string, string>;
+    modeId?: string;
+  }) {
     return importProviderSession({
       request: {
         requestId: "import-thread",
@@ -743,6 +755,7 @@ class ProviderImportHarness {
         providerHandleId: input.providerHandleId,
         cwd: input.cwd,
         labels: input.labels,
+        modeId: input.modeId,
       },
       workspaceProvisioning: createImportWorkspace("ws-restored"),
       agentManager: this.manager,
@@ -752,7 +765,7 @@ class ProviderImportHarness {
   }
 }
 
-test("importProviderSession uses the provider import path with the requested labels", async () => {
+test("importProviderSession uses the provider import path with the requested labels and mode", async () => {
   const harness = await ProviderImportHarness.create();
   harness.timeline = [
     { type: "user_message", text: "Trace recent provider sessions" },
@@ -763,6 +776,7 @@ test("importProviderSession uses the provider import path with the requested lab
     providerHandleId: "thread-imported",
     cwd: "/tmp/imported-agent",
     labels: { source: "import" },
+    modeId: "full-access",
   });
 
   expect(harness.freshImports).toEqual([
@@ -772,6 +786,7 @@ test("importProviderSession uses the provider import path with the requested lab
       cwd: "/tmp/imported-agent",
       workspaceId: "ws-restored",
       labels: { source: "import" },
+      modeId: "full-access",
     },
   ]);
   expect(result).toEqual({
@@ -813,6 +828,7 @@ test("importProviderSession restores an archived session as the same standalone 
     providerHandleId: "thread-archived",
     cwd: harness.snapshot.cwd,
     labels: { source: "reimport" },
+    modeId: "full-access",
   });
 
   expect(result).toEqual({
@@ -824,6 +840,7 @@ test("importProviderSession restores an archived session as the same standalone 
     id: harness.snapshot.id,
     workspaceId: "ws-restored",
     labels: { existing: "label", source: "reimport" },
+    config: { modeId: "full-access" },
     archivedAt: null,
   });
   expect((await harness.storage.get(harness.snapshot.id))?.labels).not.toHaveProperty(
