@@ -6,6 +6,7 @@ import { expect, test } from "vitest";
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import { AgentManager } from "./agent-manager.js";
 import { ensureAgentLoaded } from "./agent-loading.js";
+import { startAgentRun } from "./agent-prompt.js";
 import { AgentStorage } from "./agent-storage.js";
 import type {
   AgentClient,
@@ -159,6 +160,7 @@ test("loads an archived agent's history after its working directory is removed",
     const agent = await manager.createAgent({ provider: "codex", cwd: worktree }, agentId, {
       workspaceId: "workspace-worktree",
     });
+    await startAgentRun(manager, agent.id, "what did you change", logger, {});
     await manager.archiveAgent(agent.id);
     await manager.closeAgent(agent.id);
     await manager.flush();
@@ -175,6 +177,15 @@ test("loads an archived agent's history after its working directory is removed",
     });
 
     expect(loaded.id).toBe(agentId);
+    // The transcript is replayed from the provider's persisted history, so the reply the
+    // agent gave before the worktree went away is still readable.
+    const replies = manager
+      .getTimeline(agentId)
+      .filter((item) => item.type === "assistant_message");
+    expect(replies.length).toBeGreaterThan(0);
+    expect(replies.every((item) => item.type === "assistant_message" && item.text.length > 0)).toBe(
+      true,
+    );
   } finally {
     await manager.closeAgent(agentId).catch(() => undefined);
     await manager.flush().catch(() => undefined);
