@@ -4,13 +4,12 @@ import type { StreamItem } from "@/types/stream";
 /**
  * A message the host says contains the query. `count` is the host's estimate of its
  * occurrences until a reveal replaces it with the rendered count, so the whole-chat
- * position the widget shows is exact for every message that has been on screen.
+ * position the widget shows is exact for every message that has been on screen. The
+ * wire field is optional; the search boundary fills it in, so the interior trusts it.
  */
-interface Location {
-  seq: number;
-  role: "user" | "assistant";
+type Location = Omit<AgentTimelineSearchPayload["locations"][number], "count"> & {
   count: number;
-}
+};
 interface Target {
   id: string;
   seq: number;

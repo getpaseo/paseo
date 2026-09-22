@@ -82,4 +82,7 @@ it("counts occurrences per rendered block rather than across block boundaries", 
     { seq: 1, role: "assistant", count: 1 },
   ]);
   expect((await searchTimeline({ rows: source, query: "two target" })).locations).toEqual([]);
+  // Rendered text never runs from the end of one block into the start of the next, so
+  // neither does a match, however contiguous the Markdown source looks.
+  expect((await searchTimeline({ rows: source, query: "one target" })).locations).toEqual([]);
 });
