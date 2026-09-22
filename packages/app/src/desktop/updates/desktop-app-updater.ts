@@ -12,6 +12,7 @@ export type DesktopAppUpdateStatus =
   | "pending"
   | "up-to-date"
   | "available"
+  | "waiting-for-idle"
   | "installing"
   | "installed"
   | "error";
@@ -33,8 +34,10 @@ export interface DesktopAppUpdaterPort {
     releaseChannel: DesktopReleaseChannel;
     intent: DesktopAppUpdateCheckIntent;
   }): Promise<DesktopAppUpdateCheckResult>;
+  cancelDesktopAppUpdate(): Promise<void>;
   installDesktopAppUpdate(input: {
     releaseChannel: DesktopReleaseChannel;
+    whenIdle?: boolean;
   }): Promise<DesktopAppUpdateInstallResult>;
 }
 
@@ -58,8 +61,10 @@ export interface DesktopAppUpdater {
     intent?: DesktopAppUpdateCheckIntent;
     silent?: boolean;
   }): Promise<DesktopAppUpdateCheckResult | null>;
+  cancelScheduledUpdate(): Promise<void>;
   installUpdate(options: {
     releaseChannel: DesktopReleaseChannel;
+    whenIdle?: boolean;
   }): Promise<DesktopAppUpdateInstallResult | null>;
 }
 
@@ -119,13 +124,13 @@ export function formatStatusText(input: {
     formatLastCheckedAt,
   } = input;
 
-  if (status === "checking") {
-    return i18n.t("desktop.updates.status.checking");
-  }
-
-  if (status === "installing") {
-    return i18n.t("desktop.updates.status.installing");
-  }
+  const progressText: Partial<Record<DesktopAppUpdateStatus, string>> = {
+    checking: i18n.t("desktop.updates.status.checking"),
+    installing: i18n.t("desktop.updates.status.installing"),
+    "waiting-for-idle": i18n.t("desktop.updates.callout.waitingTitle"),
+  };
+  const progress = progressText[status];
+  if (progress) return progress;
 
   if (status === "up-to-date") {
     if (lastCheckedAt != null) {
@@ -207,6 +212,7 @@ export function createDesktopAppUpdater(deps: DesktopAppUpdaterDeps): DesktopApp
     intent?: DesktopAppUpdateCheckIntent;
     silent?: boolean;
   }): Promise<DesktopAppUpdateCheckResult | null> {
+    if (state.isInstalling) return null;
     if (!options) {
       return null;
     }
@@ -294,10 +300,14 @@ export function createDesktopAppUpdater(deps: DesktopAppUpdaterDeps): DesktopApp
 
   async function installUpdate(options: {
     releaseChannel: DesktopReleaseChannel;
+    whenIdle?: boolean;
   }): Promise<DesktopAppUpdateInstallResult | null> {
+    if (state.isInstalling) return null;
+    const installStatus = options.whenIdle ? "waiting-for-idle" : "installing";
     commit({
       ...state,
-      status: "installing",
+      requestVersion: state.requestVersion + 1,
+      status: installStatus,
       errorMessage: null,
       isInstalling: true,
     });
@@ -305,12 +315,16 @@ export function createDesktopAppUpdater(deps: DesktopAppUpdaterDeps): DesktopApp
     try {
       const result = await deps.port.installDesktopAppUpdate({
         releaseChannel: options.releaseChannel,
+        ...(options.whenIdle ? { whenIdle: true } : {}),
       });
       const nextLastCheckedAt = deps.now();
+      const cancelled = result.cancelled === true;
+      let status: DesktopAppUpdateStatus = result.installed ? "installed" : "up-to-date";
+      if (cancelled) status = "available";
       commit({
         ...state,
-        status: result.installed ? "installed" : "up-to-date",
-        availableUpdate: null,
+        status,
+        availableUpdate: cancelled ? state.availableUpdate : null,
         installMessage: result.message,
         lastCheckedAt: nextLastCheckedAt,
         isInstalling: false,
@@ -343,5 +357,19 @@ export function createDesktopAppUpdater(deps: DesktopAppUpdaterDeps): DesktopApp
     },
     checkForUpdates,
     installUpdate,
+    async cancelScheduledUpdate() {
+      if (state.status !== "waiting-for-idle") return;
+      commit({ ...state, errorMessage: null });
+      try {
+        await deps.port.cancelDesktopAppUpdate();
+      } catch (error) {
+        commit({ ...state, errorMessage: getErrorMessage(error) });
+        deps.reportInstallError?.({
+          error,
+          message: getErrorMessage(error),
+          logLabel: "[DesktopUpdater] Failed to cancel scheduled update",
+        });
+      }
+    },
   };
 }

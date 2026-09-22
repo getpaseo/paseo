@@ -63,6 +63,43 @@ test.describe("Desktop updates", () => {
     await expectInstallInProgress(page);
   });
 
+  test("a scheduled update can be cancelled from the callout", async ({ page }, testInfo) => {
+    await installDesktopRuntime(page, {
+      serverId: getServerId(),
+      updateAvailable: true,
+      latestVersion: "1.2.3",
+      waitForIdle: true,
+    });
+    await gotoAppShell(page);
+    await expectUpdateBanner(page, "1.2.3");
+    const callout = page.getByTestId("update-callout");
+    await callout.screenshot({ path: testInfo.outputPath("update-available.png") });
+    await callout.getByRole("button", { name: "When idle", exact: true }).click();
+    await expect(callout).toContainText("Waiting for agents");
+    await expect(callout).toContainText("all local projects");
+    await expect(page.getByTestId("update-callout-dismiss")).toHaveCount(0);
+    await callout.screenshot({ path: testInfo.outputPath("update-waiting.png") });
+    await callout.getByRole("button", { name: "Cancel", exact: true }).click();
+    await expectUpdateBanner(page, "1.2.3");
+    await expect(
+      callout.getByRole("button", { name: "Install & restart", exact: true }),
+    ).toBeEnabled();
+  });
+
+  test("a failed activity check displays an error without restarting", async ({ page }) => {
+    await installDesktopRuntime(page, {
+      serverId: getServerId(),
+      updateAvailable: true,
+      installError: "Cannot verify agent activity",
+    });
+    await gotoAppShell(page);
+    const callout = page.getByTestId("update-callout");
+    await callout.getByRole("button", { name: "When idle", exact: true }).click();
+    await expect(callout).toContainText("Update failed");
+    await expect(callout).toContainText("Cannot verify agent activity");
+    await expect(callout.getByRole("button", { name: "Retry", exact: true })).toBeVisible();
+  });
+
   test("manual check reports a found update while it downloads", async ({ page }) => {
     await installDesktopRuntime(page, {
       serverId: getServerId(),

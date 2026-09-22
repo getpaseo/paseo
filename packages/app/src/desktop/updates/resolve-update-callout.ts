@@ -3,10 +3,11 @@ import { i18n } from "@/i18n/i18next";
 
 export type UpdateCalloutBody =
   | { kind: "available"; versionLabel: string | null }
+  | { kind: "waiting"; errorMessage: string | null }
   | { kind: "installing" }
   | { kind: "error"; message: string };
 
-export type UpdateCalloutActionRole = "changelog" | "install" | "retry";
+export type UpdateCalloutActionRole = "changelog" | "install" | "retry" | "whenIdle" | "cancel";
 
 export interface UpdateCalloutActionDescriptor {
   role: UpdateCalloutActionRole;
@@ -44,10 +45,16 @@ export function resolveUpdateCalloutDescriptor(
   input: ResolveUpdateCalloutInput,
 ): UpdateCalloutDescriptor | null {
   if (!input.isDesktopApp) return null;
-  if (input.status !== "available" && input.status !== "installing" && input.status !== "error") {
+  if (
+    input.status !== "available" &&
+    input.status !== "waiting-for-idle" &&
+    input.status !== "installing" &&
+    input.status !== "error"
+  ) {
     return null;
   }
 
+  const isWaiting = input.status === "waiting-for-idle";
   const isError = input.status === "error";
   const isInstalling = input.isInstalling;
   const isAvailable = !isInstalling && !isError;
@@ -57,7 +64,10 @@ export function resolveUpdateCalloutDescriptor(
 
   let title: string;
   let body: UpdateCalloutBody;
-  if (isInstalling) {
+  if (isWaiting) {
+    title = i18n.t("desktop.updates.callout.waitingTitle");
+    body = { kind: "waiting", errorMessage: input.errorMessage };
+  } else if (isInstalling) {
     title = i18n.t("desktop.updates.callout.installingTitle");
     body = { kind: "installing" };
   } else if (isError) {
@@ -71,10 +81,15 @@ export function resolveUpdateCalloutDescriptor(
     body = { kind: "available", versionLabel: formatVersionLabel(latestVersion) };
   }
 
-  const actions: UpdateCalloutActionDescriptor[] = [
-    { role: "changelog", label: i18n.t("desktop.updates.callout.whatsNew") },
-  ];
-  if (isError) {
+  const actions: UpdateCalloutActionDescriptor[] = [];
+  if (isAvailable) {
+    actions.push({ role: "whenIdle", label: i18n.t("desktop.updates.callout.whenIdle") });
+  } else {
+    actions.push({ role: "changelog", label: i18n.t("desktop.updates.callout.whatsNew") });
+  }
+  if (isWaiting) {
+    actions.push({ role: "cancel", label: i18n.t("common.actions.cancel") });
+  } else if (isError) {
     actions.push({ role: "retry", label: i18n.t("common.actions.retry"), variant: "primary" });
   } else {
     actions.push({

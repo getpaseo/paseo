@@ -17,6 +17,7 @@ export interface AppUpdateCheckResult {
 
 export interface AppUpdateInstallResult {
   installed: boolean;
+  cancelled?: boolean;
   version: string | null;
   message: string;
 }
@@ -64,8 +65,9 @@ export interface AppUpdateService {
     input: {
       currentVersion: string;
       releaseChannel: AppReleaseChannel;
+      signal?: AbortSignal;
     },
-    onBeforeQuit?: () => Promise<void>,
+    onBeforeQuit?: () => Promise<boolean>,
   ): Promise<AppUpdateInstallResult>;
   installUpdateOnQuit(input: {
     currentVersion: string;
@@ -112,16 +114,17 @@ async function performQuitAndInstall(
     restart,
   }: {
     targetVersion: string;
-    onBeforeQuit?: () => Promise<void>;
+    onBeforeQuit?: () => Promise<boolean>;
     restart: boolean;
   },
-): Promise<void> {
-  if (onBeforeQuit) await onBeforeQuit();
+): Promise<boolean> {
+  if (onBeforeQuit && (await onBeforeQuit()) === false) return false;
   runtime.quitAndInstall({
     targetVersion,
     isSilent: !restart,
     isForceRunAfter: restart,
   });
+  return true;
 }
 
 function getErrorMessage(error: unknown): string {
@@ -129,6 +132,34 @@ function getErrorMessage(error: unknown): string {
     return error.message;
   }
   return String(error);
+}
+
+function cancelledInstallResult(currentVersion: string): AppUpdateInstallResult {
+  return {
+    installed: false,
+    cancelled: true,
+    version: currentVersion,
+    message: "Installation cancelled.",
+  };
+}
+
+function whenAborted<T>(work: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return work;
+  if (signal.aborted) return Promise.reject(signal.reason);
+  return new Promise((resolve, reject) => {
+    const onAbort = () => reject(signal.reason);
+    signal.addEventListener("abort", onAbort, { once: true });
+    work.then(
+      (value) => {
+        signal.removeEventListener("abort", onAbort);
+        resolve(value);
+      },
+      (error) => {
+        signal.removeEventListener("abort", onAbort);
+        reject(error);
+      },
+    );
+  });
 }
 
 function buildDeferredInstallResult(currentVersion: string): AppUpdateInstallResult {
@@ -327,11 +358,13 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
     {
       currentVersion,
       releaseChannel,
+      signal,
     }: {
       currentVersion: string;
       releaseChannel: AppReleaseChannel;
+      signal?: AbortSignal;
     },
-    onBeforeQuit?: () => Promise<void>,
+    onBeforeQuit?: () => Promise<boolean>,
   ): Promise<AppUpdateInstallResult> {
     if (!deps.isPackaged()) {
       return {
@@ -354,7 +387,13 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
       };
     }
 
-    return installCachedUpdate(currentVersion, { onBeforeQuit, restart: true });
+    if (signal?.aborted) return cancelledInstallResult(currentVersion);
+    return installCachedUpdate(currentVersion, {
+      onBeforeQuit,
+      restart: true,
+      signal,
+      cancelOnAbort: true,
+    });
   }
 
   async function ensureUpdateDownloaded(
@@ -368,8 +407,9 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
       const attemptedVersion: string = preparingUpdateVersion ?? readyVersion;
       preparingUpdateVersion ??= readyVersion;
       try {
-        await deps.runtime.downloadUpdate(attemptedVersion);
+        await whenAborted(deps.runtime.downloadUpdate(attemptedVersion), signal);
       } catch (error) {
+        if (signal?.aborted) return "aborted";
         if (
           attemptedVersion !== readyVersion &&
           cachedUpdateInfo?.version === readyVersion &&
@@ -398,10 +438,12 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
       onBeforeQuit,
       signal,
       restart,
+      cancelOnAbort,
     }: {
-      onBeforeQuit?: () => Promise<void>;
+      onBeforeQuit?: () => Promise<boolean>;
       signal?: AbortSignal;
       restart: boolean;
+      cancelOnAbort?: boolean;
     },
   ): Promise<AppUpdateInstallResult> {
     if (!cachedUpdateInfo) {
@@ -414,26 +456,33 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
 
     const readyVersion = cachedUpdateInfo.version;
     if (signal?.aborted) {
-      return buildDeferredInstallResult(currentVersion);
+      return cancelOnAbort
+        ? cancelledInstallResult(currentVersion)
+        : buildDeferredInstallResult(currentVersion);
     }
 
     if (isReadyToInstallVersion(readyVersion)) {
-      await performQuitAndInstall(deps.runtime, {
+      const installed = await performQuitAndInstall(deps.runtime, {
         targetVersion: readyVersion,
         onBeforeQuit,
         restart,
       });
       return {
-        installed: true,
+        installed,
+        ...(!installed ? { cancelled: true } : {}),
         version: readyVersion,
-        message: "Update downloaded. The app will restart shortly.",
+        message: installed
+          ? "Update downloaded. The app will restart shortly."
+          : "Installation cancelled.",
       };
     }
 
     try {
       const preparation = await ensureUpdateDownloaded(readyVersion, signal);
       if (preparation === "aborted") {
-        return buildDeferredInstallResult(currentVersion);
+        return cancelOnAbort
+          ? cancelledInstallResult(currentVersion)
+          : buildDeferredInstallResult(currentVersion);
       }
       if (preparation === "superseded") {
         return {
@@ -442,25 +491,24 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
           message: "A newer update was found and will be installed later.",
         };
       }
-      await performQuitAndInstall(deps.runtime, {
+      const installed = await performQuitAndInstall(deps.runtime, {
         targetVersion: readyVersion,
         onBeforeQuit,
         restart,
       });
 
       return {
-        installed: true,
+        installed,
+        ...(!installed ? { cancelled: true } : {}),
         version: readyVersion,
-        message: "Update downloaded. The app will restart shortly.",
+        message: installed
+          ? "Update downloaded. The app will restart shortly."
+          : "Installation cancelled.",
       };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       deps.reportInstallError?.(message);
-      return {
-        installed: false,
-        version: currentVersion,
-        message: `Update failed: ${message}`,
-      };
+      throw error;
     }
   }
 
