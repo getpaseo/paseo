@@ -221,8 +221,14 @@ are stale, run `npm run build:server`.
 - GitHub PR polling owns one account-wide GraphQL budget. Coordinate retained
   targets per host, batch their reads, and stop until GitHub's reset time when
   the reserve is exhausted. Never add a per-target GitHub request to the poll
-  path. Resolve fork PRs through their parent repository without abandoning the
-  shared batch.
+  path.
+- A fork's own PRs come first, the parent is the fallback. `gh` resolves a
+  fork's base repository to the parent, so both `gh pr view` and a bare
+  `gh pr list` miss PRs a fork opens against itself; a long-lived personal fork
+  does exactly that. Check the fork's own candidates before redirecting to the
+  parent, keep the redirect inside the shared batch, and decide it per entry
+  per tick. Do not remember "this repository redirects to its parent": sibling
+  branches of one fork can have their PRs in different repositories.
 - No forge offers a subscription a local daemon can use. Webhooks need a public
   inbound URL, and the events and notifications APIs are polling with extra
   steps. Everything that makes a change look instant is polling smarter: a

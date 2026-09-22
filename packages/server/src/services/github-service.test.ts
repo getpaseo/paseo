@@ -1679,7 +1679,7 @@ describe("ForgeService", () => {
     service.dispose?.();
   });
 
-  it("redirects a fork poll to its parent and reuses that batch address", async () => {
+  it("redirects a fork poll to its parent when the fork has no matching PR", async () => {
     let now = 0;
     const parent = { owner: { login: "upstream" }, name: "widgets" };
     const forkPr = batchPollPrNodeJson({
@@ -1697,6 +1697,9 @@ describe("ForgeService", () => {
         t0: batchPollChecksAliasJson([
           { __typename: "StatusContext", context: "ci", state: "SUCCESS" },
         ]),
+      }),
+      batchPollStatusJson({
+        t0: batchPollRepositoryJson([], { isFork: true, parent }),
       }),
       batchPollStatusJson({ t0: batchPollRepositoryJson([forkPr]) }),
     ]);
@@ -1734,9 +1737,82 @@ describe("ForgeService", () => {
     await vi.advanceTimersByTimeAsync(EXPECTED_GITHUB_SLOW_POLL_MS);
     await flushMicrotasks();
 
+    // The redirect is decided per tick: the fork is asked again first, so a PR
+    // it later opens against itself is picked up without restarting the daemon.
     expect(runner.calls[3]?.args[3]).toContain(
+      't0: repository(owner: "forkowner", name: "widgets")',
+    );
+    expect(runner.calls[4]?.args[3]).toContain(
       't0: repository(owner: "upstream", name: "widgets")',
     );
+
+    subscription?.unsubscribe();
+    service.dispose?.();
+  });
+
+  it("resolves a PR the fork opened against itself without redirecting to the parent", async () => {
+    let now = 0;
+    const parent = { owner: { login: "upstream" }, name: "widgets" };
+    const forkLocalPr = batchPollPrNodeJson({
+      number: 7,
+      url: "https://github.com/forkowner/widgets/pull/7",
+      state: "OPEN",
+      mergedAt: null,
+      baseRefName: "customizations",
+      headRefName: "feat-a",
+      headRefOid: "oid-a",
+      headRepositoryOwner: { login: "forkowner" },
+    });
+    const runner = createScriptedRunner([
+      batchPollStatusJson({
+        t0: batchPollRepositoryJson([forkLocalPr], {
+          isFork: true,
+          parent,
+          owner: { login: "forkowner" },
+        }),
+      }),
+      batchPollStatusJson({
+        t0: batchPollChecksAliasJson([
+          { __typename: "StatusContext", context: "ci", state: "SUCCESS" },
+        ]),
+      }),
+    ]);
+    const service = createGitHubService({
+      ttlMs: 0,
+      runner: runner.runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+      resolveRepoHost: async () => null,
+      resolveRepoSlug: async () => "forkowner/widgets",
+      now: () => now,
+    });
+    const statuses: Array<CurrentPullRequestStatus | null> = [];
+
+    const subscription = service.retainCurrentPullRequestStatusPoll?.({
+      cwd: "/ws-a",
+      headRef: "feat-a",
+      headSha: "oid-a",
+      onStatus: (status) => statuses.push(status),
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    await flushMicrotasks();
+
+    expect(currentPullRequestStatusCalls(runner.calls)).toHaveLength(0);
+    expect(runner.calls).toHaveLength(2);
+    expect(runner.calls[0]?.args[3]).toContain(
+      't0: repository(owner: "forkowner", name: "widgets")',
+    );
+    expect(runner.calls[1]?.args[3]).toContain('owner: "forkowner", name: "widgets"');
+    expect(runner.calls.some((call) => call.args[3]?.includes('owner: "upstream"'))).toBe(false);
+    expect(statuses).toEqual([
+      expect.objectContaining({
+        number: 7,
+        state: "open",
+        repoOwner: "forkowner",
+        repoName: "widgets",
+        baseRefName: "customizations",
+        checksStatus: "success",
+      }),
+    ]);
 
     subscription?.unsubscribe();
     service.dispose?.();
@@ -3587,6 +3663,7 @@ describe("ForgeService", () => {
         name: "parentRepo",
         parent: { owner: { login: "parentOwner" }, name: "parentRepo" },
       }),
+      "[]",
       JSON.stringify([
         {
           number: 41,
@@ -3634,9 +3711,23 @@ describe("ForgeService", () => {
       title: "Real fork PR",
       headRefName: "feature/fork",
     });
-    expect(runner.calls.slice(0, 3).map((call) => call.args)).toEqual([
+    expect(runner.calls.slice(0, 4).map((call) => call.args)).toEqual([
       ["pr", "view", "--json", CURRENT_PR_STATUS_FIELDS],
       ["repo", "view", "--json", "owner,name,parent"],
+      [
+        "pr",
+        "list",
+        "--repo",
+        "forkOwner/parentRepo",
+        "--state",
+        "all",
+        "--head",
+        "feature/fork",
+        "--limit",
+        "10",
+        "--json",
+        CURRENT_PR_STATUS_FIELDS,
+      ],
       [
         "pr",
         "list",
@@ -3667,6 +3758,7 @@ describe("ForgeService", () => {
         name: "parentRepo",
         parent: { owner: { login: "parentOwner" }, name: "parentRepo" },
       }),
+      "[]",
       {
         error: statusCheckRollupPermissionError([
           "pr",
@@ -3717,9 +3809,23 @@ describe("ForgeService", () => {
       checks: [],
       checksStatus: "none",
     });
-    expect(runner.calls.slice(0, 4).map((call) => call.args)).toEqual([
+    expect(runner.calls.slice(0, 5).map((call) => call.args)).toEqual([
       ["pr", "view", "--json", CURRENT_PR_STATUS_FIELDS],
       ["repo", "view", "--json", "owner,name,parent"],
+      [
+        "pr",
+        "list",
+        "--repo",
+        "forkOwner/parentRepo",
+        "--state",
+        "all",
+        "--head",
+        "feature/fork",
+        "--limit",
+        "10",
+        "--json",
+        CURRENT_PR_STATUS_FIELDS,
+      ],
       [
         "pr",
         "list",
@@ -3892,6 +3998,7 @@ describe("ForgeService", () => {
         name: "repo",
         parent: { owner: { login: "parentOwner" }, name: "repo" },
       }),
+      "[]",
       JSON.stringify([
         {
           number: 88,
@@ -3925,7 +4032,69 @@ describe("ForgeService", () => {
       repoName: "repo",
       headRefName: "feature/fork",
     });
-    expect(runner.calls[2]?.args).toContain("forkOwner:feature/fork");
+    expect(runner.calls[2]?.args).toContain("forkOwner/repo");
+    expect(runner.calls[3]?.args).toContain("forkOwner:feature/fork");
+  });
+
+  it("finds a PR the fork opened against itself before asking the parent", async () => {
+    const runner = createScriptedRunner([
+      { error: noPullRequestError() },
+      JSON.stringify({
+        owner: { login: "forkOwner" },
+        name: "repo",
+        parent: { owner: { login: "parentOwner" }, name: "repo" },
+      }),
+      JSON.stringify([
+        {
+          number: 5,
+          url: "https://github.com/forkOwner/repo/pull/5",
+          title: "Fork-local PR",
+          state: "OPEN",
+          isDraft: false,
+          baseRefName: "customizations",
+          headRefName: "feature/fork",
+          mergedAt: null,
+          statusCheckRollup: [],
+          reviewDecision: null,
+          headRepositoryOwner: { login: "forkOwner" },
+        },
+      ]),
+    ]);
+    const service = createGitHubService({
+      runner: runner.runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+      now: () => 100,
+    });
+
+    const status = await service.getCurrentPullRequestStatus({
+      cwd: "/repo",
+      headRef: "feature/fork",
+    });
+
+    expect(status).toMatchObject({
+      number: 5,
+      repoOwner: "forkOwner",
+      repoName: "repo",
+      baseRefName: "customizations",
+      headRefName: "feature/fork",
+    });
+    expect(currentPullRequestStatusCalls(runner.calls).map((call) => call.args)).toEqual([
+      ["pr", "view", "--json", CURRENT_PR_STATUS_FIELDS],
+      [
+        "pr",
+        "list",
+        "--repo",
+        "forkOwner/repo",
+        "--state",
+        "all",
+        "--head",
+        "feature/fork",
+        "--limit",
+        "10",
+        "--json",
+        CURRENT_PR_STATUS_FIELDS,
+      ],
+    ]);
   });
 
   it("propagates DNS errors while resolving the current PR view", async () => {
@@ -3958,6 +4127,7 @@ describe("ForgeService", () => {
         name: "repo",
         parent: { owner: { login: "parentOwner" }, name: "repo" },
       }),
+      "[]",
       "[]",
     ]);
     const service = createGitHubService({

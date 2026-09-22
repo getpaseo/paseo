@@ -1111,8 +1111,6 @@ interface GitHubPollTarget {
 interface GitHubBatchPollEntry {
   target: GitHubPollTarget;
   host: string;
-  originOwner: string;
-  originName: string;
   owner: string;
   name: string;
   headRepositoryOwner?: string;
@@ -1184,10 +1182,6 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
   // Rollup nodes for merged/closed PRs keyed by repo#number@headOid: their
   // checks can no longer change, so each is fetched at most once per daemon run.
   const frozenPullRequestChecksCache = new Map<string, unknown[]>();
-  const pollRepositoryRedirects = new Map<
-    string,
-    { owner: string; name: string; headRepositoryOwner: string }
-  >();
   const pollPausedUntilByHost = new Map<string, number>();
   const lastPollNowAtByHost = new Map<string, number>();
   /** Cost accumulating for the tick currently running on a host, reset when one starts. */
@@ -1626,8 +1620,6 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
       group.push({
         target,
         host: key,
-        originOwner: owner,
-        originName: name,
         owner,
         name,
       });
@@ -1729,13 +1721,12 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
     entries: GitHubBatchPollEntry[],
     startedAt: number,
   ): Promise<void> {
-    const addressedEntries = entries.map(addressGitHubBatchEntry);
-    const firstEntry = addressedEntries[0];
+    const firstEntry = entries[0];
     if (!firstEntry) {
       return;
     }
     const query = buildBatchPullRequestStatusQuery(
-      addressedEntries.map((entry) => ({
+      entries.map((entry) => ({
         owner: entry.owner,
         name: entry.name,
         headRef: entry.target.headRef,
@@ -1743,7 +1734,7 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
     );
     const args = ["api", "graphql", "-f", `query=${query}`];
     const response = await loadGitHubPollBatchResponse({
-      entries: addressedEntries,
+      entries,
       firstEntry,
       args,
     });
@@ -1754,12 +1745,12 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
     recordGraphqlCost(firstEntry.host, rateLimit);
     if (rateLimit && pauseGitHubPollsAtReserve(firstEntry.host, rateLimit)) {
       const error = new GitHubGraphqlPollPausedError(rateLimit);
-      reportGitHubBatchError(addressedEntries, error);
+      reportGitHubBatchError(entries, error);
       return;
     }
 
     const distribution = distributeGitHubPollBatch({
-      entries: addressedEntries,
+      entries,
       aliases: response.aliases,
       args,
       startedAt,
@@ -1825,22 +1816,26 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
         );
         continue;
       }
-      if (repository.data.isFork && repository.data.parent) {
-        const forkOwner = repository.data.owner?.login ?? entry.owner;
-        pollRepositoryRedirects.set(batchRepositoryRedirectKey(entry), {
-          owner: repository.data.parent.owner.login,
-          name: repository.data.parent.name,
-          headRepositoryOwner: forkOwner,
-        });
-        distribution.redirected.push(entry);
-        continue;
-      }
       const node = selectBatchPollNode(entry, repository.data);
       if (!node) {
+        // A fork's own PR list is checked first and only a miss goes to the
+        // parent: a long-lived personal fork opens PRs against itself, and gh's
+        // own base-repo resolution never sees those. The redirect is decided per
+        // entry per tick rather than remembered per repository, because sibling
+        // branches of one fork can live in different repositories.
+        if (repository.data.isFork && repository.data.parent) {
+          distribution.redirected.push({
+            ...entry,
+            owner: repository.data.parent.owner.login,
+            name: repository.data.parent.name,
+            headRepositoryOwner: repository.data.owner?.login ?? entry.owner,
+          });
+          continue;
+        }
         // Legacy fallback covers the two ways "no match" can be wrong: a fork
-        // whose PR lives in the parent repository, and a full candidate page —
-        // ten newer same-named fork PRs can crowd the checkout's own PR out of
-        // the first:N window, so absence is only conclusive on a partial page.
+        // whose parent is not visible, and a full candidate page — ten newer
+        // same-named fork PRs can crowd the checkout's own PR out of the
+        // first:N window, so absence is only conclusive on a partial page.
         if (
           repository.data.isFork ||
           repository.data.pullRequests.nodes.length >= BATCH_PR_CANDIDATE_LIMIT
@@ -1931,22 +1926,6 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
       return null;
     }
     return target.lastChecksRollup;
-  }
-
-  function addressGitHubBatchEntry(entry: GitHubBatchPollEntry): GitHubBatchPollEntry {
-    const redirect = pollRepositoryRedirects.get(batchRepositoryRedirectKey(entry));
-    return redirect
-      ? {
-          ...entry,
-          owner: redirect.owner,
-          name: redirect.name,
-          headRepositoryOwner: redirect.headRepositoryOwner,
-        }
-      : entry;
-  }
-
-  function batchRepositoryRedirectKey(entry: GitHubBatchPollEntry): string {
-    return `${entry.host}\n${entry.originOwner}/${entry.originName}`;
   }
 
   function selectBatchPollNode(
@@ -2867,7 +2846,6 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
         closeGitHubPollTarget(target);
       }
       pollTargets.clear();
-      pollRepositoryRedirects.clear();
       pollPausedUntilByHost.clear();
       lastPollNowAtByHost.clear();
       tickGraphqlCostByHost.clear();
@@ -3236,12 +3214,33 @@ async function resolveCurrentPullRequestView(options: {
   if (!headRepositoryOwner) {
     const repo = await getGitHubRepoView(options);
     const forkOwner = repo?.owner?.login;
+    const forkName = repo?.name;
     const parentOwner = repo?.parent?.owner?.login;
     const parentName = repo?.parent?.name;
     if (!forkOwner) {
       return null;
     }
     if (parentOwner && parentName) {
+      // gh resolves a fork's base repository to the parent, so `pr view` above and a bare
+      // `pr list` never see PRs a fork opens against itself. Ask the fork explicitly first;
+      // only a miss goes on to the parent, matching the batch poller's order.
+      if (forkName) {
+        const forkCandidates = await listCurrentPullRequestCandidates({
+          cwd: options.cwd,
+          headRef: options.headRef,
+          run: options.run,
+          repo: `${forkOwner}/${forkName}`,
+        });
+        const forkMatch = pickPullRequestCandidate({
+          candidates: forkCandidates,
+          headRef: options.headRef,
+          headSha: options.headSha,
+          headRepositoryOwner: forkOwner,
+        });
+        if (forkMatch) {
+          return forkMatch.status;
+        }
+      }
       listHeadRef = `${forkOwner}:${options.headRef}`;
       listRepo = `${parentOwner}/${parentName}`;
     }
