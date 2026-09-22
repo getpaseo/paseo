@@ -1838,9 +1838,10 @@ describe("WorkspaceGitService checkout observation", () => {
       expect(getWatcherSubscribeCallCount(watcher, REPO_CWD)).toBe(2);
     });
     expect(erroredUnsubscribe).toHaveBeenCalledTimes(1);
-    await vi.waitFor(() => {
-      expect(getCheckoutStatus.mock.calls.length).toBeGreaterThan(statusCallsAfterSetup);
-    });
+    // Recovery schedules a debounced refresh. Advance the fake clock past the debounce
+    // explicitly; vi.waitFor alone runs out of real time before it on a slow runner.
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(getCheckoutStatus.mock.calls.length).toBeGreaterThan(statusCallsAfterSetup);
 
     subscription.unsubscribe();
     service.dispose();
