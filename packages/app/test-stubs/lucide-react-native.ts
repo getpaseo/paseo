@@ -33,6 +33,7 @@ export const CircleDot = StubIcon;
 export const CircleSlash = StubIcon;
 export const CircleX = StubIcon;
 export const ClipboardPaste = StubIcon;
+export const Coffee = StubIcon;
 export const Copy = StubIcon;
 export const CornerDownLeft = StubIcon;
 export const Download = StubIcon;

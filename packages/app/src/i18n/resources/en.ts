@@ -1395,8 +1395,9 @@ export const en = {
   },
   desktop: {
     keepAwake: {
-      tooltip_one: "Keeping this computer awake while {{count}} agent works",
-      tooltip_other: "Keeping this computer awake while {{count}} agents work",
+      tooltip_zero: "Sleep prevention active",
+      tooltip_one: "Sleep prevention active for {{count}} agent",
+      tooltip_other: "Sleep prevention active for {{count}} agents",
     },
     windowControls: {
       minimize: "Minimize window",

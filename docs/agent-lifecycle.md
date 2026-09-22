@@ -50,7 +50,9 @@ the daemon holds a sleep inhibitor (`caffeinate -i` on macOS, `systemd-inhibit` 
 Windows), released a few seconds after the last agent goes idle. Turn it off per host with
 `daemon.preventSleepWhileAgentsRun`. It only blocks idle sleep — closing a laptop lid still suspends
 the machine, and it cannot wake a host that is already asleep, so a schedule due during sleep is
-still missed.
+still missed. If the inhibitor helper exits unexpectedly, the daemon reports sleep prevention
+inactive. A supported helper retries on the next relevant agent or configuration change; toggle the
+setting off and on to retry sooner. There is no automatic retry timer.
 
 A provider runtime can still die on its own — crash, OOM kill, host suspend. Work the agent parked
 inside that process dies with it: Claude Code's background Bash shells, `Monitor` watches, and
