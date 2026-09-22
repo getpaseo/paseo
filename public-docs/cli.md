@@ -222,7 +222,7 @@ paseo send <id> --no-wait "queue this task"
 paseo send <id> --steer "also check the logs"   # deliver into the running turn
 ```
 
-Without `--steer`, a message sent to a busy agent cancels its current turn and any subagents it started. `--steer` hands the message to the running turn instead.
+Without `--steer`, a message sent to a busy agent cancels its current turn and any subagents it started. `--steer` hands the message to the running turn instead. If the agent is mid-turn and its provider cannot steer, `--steer` fails with a non-zero exit and leaves the running turn alone — wait for it to finish, or resend without `--steer`.
 
 ## Viewing logs
 

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const daemonTarget = { kind: "endpoint" as const, host: "example.test:12345" };
 
@@ -18,6 +18,10 @@ vi.mock("../../utils/client.js", () => ({
 }));
 
 describe("runSendCommand", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
   it("interrupts an active turn by default", async () => {
     await runSendCommand("agent-1", "keep going", { daemonTarget, wait: false }, {} as never);
 
@@ -37,6 +41,29 @@ describe("runSendCommand", () => {
     expect(sendAgentMessage).toHaveBeenCalledWith("agent-1", "keep going", {
       images: undefined,
       activeTurnBehavior: "steer",
+      steerFallback: "reject",
     });
+  });
+
+  it("fails without starting a turn when the agent cannot be steered", async () => {
+    sendAgentMessage.mockRejectedValueOnce(
+      new Error(
+        'target is mid-turn and its provider cannot steer; wait for it to finish or resend with activeTurnBehavior "interrupt"',
+      ),
+    );
+
+    await expect(
+      runSendCommand(
+        "agent-1",
+        "keep going",
+        { daemonTarget, wait: false, steer: true },
+        {} as never,
+      ),
+    ).rejects.toMatchObject({
+      code: "SEND_FAILED",
+      message: expect.stringContaining("its provider cannot steer"),
+    });
+
+    expect(waitForFinish).not.toHaveBeenCalled();
   });
 });

@@ -62,6 +62,7 @@ import {
   waitForAgentWithTimeout,
 } from "../mcp-shared.js";
 import {
+  isSteerUnavailableError,
   sendPromptToAgent,
   setupFinishNotification,
   waitForAgentRunStartWithTimeout,
@@ -1907,11 +1908,13 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     {
       title: "Send agent prompt",
       description:
-        'Send a task to a running agent. Agent-scoped callers run in background by default; top-level callers wait by default. activeTurnBehavior decides what happens when the target is mid-turn: "steer" delivers the prompt into the running turn without cancelling it, "interrupt" cancels the active turn and its subagents first. Agent-scoped callers default to "steer", top-level callers to "interrupt".',
+        'Send a task to a running agent. Agent-scoped callers run in background by default; top-level callers wait by default. activeTurnBehavior decides what happens when the target is mid-turn: "steer" delivers the prompt into the running turn without cancelling it, "interrupt" cancels the active turn and its subagents first. Agent-scoped callers default to "steer", top-level callers to "interrupt". A "steer" request never falls back to cancelling: if the target is mid-turn and its provider cannot steer, the call fails with success false and the running turn is left alone. The steered field reports whether the prompt joined a running turn (true) or started a new one (false).',
       inputSchema: sendAgentPromptInputSchema,
       outputSchema: {
         success: z.boolean(),
         status: AgentStatusEnum,
+        steered: z.boolean().optional(),
+        error: z.string().optional(),
         lastMessage: z.string().nullable().optional(),
         permission: AgentPermissionRequestPayloadSchema.nullable().optional(),
         guidance: z.string().optional(),
@@ -1939,15 +1942,37 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
         return true;
       }
 
-      const { disposition } = await sendPromptToAgent({
-        agentManager,
-        agentStorage,
-        agentId,
-        prompt,
-        sessionMode,
-        activeTurnBehavior,
-        logger: childLogger,
-      });
+      let dispatch: Awaited<ReturnType<typeof sendPromptToAgent>>;
+      try {
+        dispatch = await sendPromptToAgent({
+          agentManager,
+          agentStorage,
+          agentId,
+          prompt,
+          sessionMode,
+          activeTurnBehavior,
+          // A steer request is a steer request: never let it cancel the turn it
+          // asked to join.
+          steerFallback: activeTurnBehavior === "steer" ? "reject" : undefined,
+          logger: childLogger,
+        });
+      } catch (error) {
+        if (!isSteerUnavailableError(error)) throw error;
+        const responseData = {
+          success: false,
+          status: agentManager.getAgent(agentId)?.lifecycle ?? "idle",
+          steered: false,
+          error: error.message,
+          lastMessage: null,
+          permission: null,
+        };
+        return {
+          content: [],
+          structuredContent: ensureValidJson(responseData),
+          isError: true,
+        };
+      }
+      const steered = dispatch.disposition === "steered";
 
       // If not running in background, wait for completion
       if (!background) {
@@ -1964,6 +1989,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
         const responseData = {
           success: true,
           status: result.status,
+          steered,
           lastMessage: result.lastMessage,
           permission: sanitizePermissionRequest(result.permission),
           ...(notifying ? { guidance: PROMPTED_AGENT_NOTIFICATION_GUIDANCE } : {}),
@@ -1980,7 +2006,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       const notifying = armFinishNotification();
 
       // Return once the provider has accepted the turn, so the status reports it running.
-      if (disposition === "turn_started") {
+      if (dispatch.disposition === "turn_started") {
         await waitForAgentRunStartWithTimeout(agentManager, agentId);
       }
       const currentSnapshot = agentManager.getAgent(agentId);
@@ -1988,6 +2014,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       const responseData = {
         success: true,
         status: currentSnapshot?.lifecycle ?? "idle",
+        steered,
         lastMessage: null,
         permission: null,
         ...(notifying ? { guidance: PROMPTED_AGENT_NOTIFICATION_GUIDANCE } : {}),

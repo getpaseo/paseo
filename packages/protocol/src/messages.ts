@@ -1196,6 +1196,14 @@ const ImageAttachmentSchema = z.object({
 export const ActiveTurnBehaviorSchema = z.enum(["interrupt", "steer"]);
 export type ActiveTurnBehavior = z.infer<typeof ActiveTurnBehaviorSchema>;
 
+/**
+ * What a "steer" request should do when the provider cannot steer the active turn.
+ * "replace" (default) cancels the turn and starts a new one; "reject" leaves the
+ * running turn alone and fails the send.
+ */
+export const SteerFallbackSchema = z.enum(["replace", "reject"]);
+export type SteerFallback = z.infer<typeof SteerFallbackSchema>;
+
 export const SendAgentMessageSchema = z.object({
   type: z.literal("send_agent_message"),
   agentId: z.string(),
@@ -1355,6 +1363,7 @@ export const SendAgentMessageRequestSchema = z.object({
   text: z.string(),
   messageId: z.string().optional(), // Client-provided ID for deduplication
   activeTurnBehavior: ActiveTurnBehaviorSchema.optional(),
+  steerFallback: SteerFallbackSchema.optional(),
   images: z.array(ImageAttachmentSchema).optional(),
   attachments: AgentAttachmentsSchema,
 });

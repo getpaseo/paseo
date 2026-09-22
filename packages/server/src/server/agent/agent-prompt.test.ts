@@ -12,8 +12,12 @@ import {
   formatSystemNotificationPrompt,
   isSystemInjectedEnvelope,
   setupFinishNotification,
+  startAgentRun,
+  STEER_UNAVAILABLE_MESSAGE,
+  SteerUnavailableError,
   waitForAgentRunStartWithTimeout,
 } from "./agent-prompt.js";
+import type { AgentRunController } from "./agent-prompt.js";
 import type { AgentManagerEvent, ManagedAgent } from "./agent-manager.js";
 import type {
   AgentClient,
@@ -761,4 +765,91 @@ test("waiting for a run start still gives up at the run start budget", async () 
     vi.useRealTimers();
     await scenario.cleanup();
   }
+});
+
+interface SteerDispatchHarness {
+  controller: AgentRunController;
+  steerOrReplaceActiveTurn: ReturnType<typeof vi.fn>;
+  replaceAgentRun: ReturnType<typeof vi.fn>;
+  streamAgent: ReturnType<typeof vi.fn>;
+}
+
+function createSteerDispatchHarness(steerResult: Record<string, unknown>): SteerDispatchHarness {
+  const steerOrReplaceActiveTurn = vi.fn(async () => steerResult);
+  const replaceAgentRun = vi.fn(async () => (async function* noop() {})());
+  const streamAgent = vi.fn(() => (async function* noop() {})());
+  const controller = {
+    getAgent: vi.fn(() => null),
+    tryRunOutOfBand: vi.fn(() => false),
+    hasInFlightRun: vi.fn(() => true),
+    replaceAgentRun,
+    steerOrReplaceActiveTurn,
+    streamAgent,
+    reloadAgentSession: vi.fn(async () => undefined),
+  } as unknown as AgentRunController;
+  return { controller, steerOrReplaceActiveTurn, replaceAgentRun, streamAgent };
+}
+
+test("startAgentRun reports a steer the provider accepted", async () => {
+  const harness = createSteerDispatchHarness({ status: "steered" });
+
+  const result = await startAgentRun(
+    harness.controller,
+    "agent-1",
+    "keep going",
+    createTestLogger(),
+    {
+      replaceRunning: true,
+      activeTurnBehavior: "steer",
+      steerFallback: "reject",
+    },
+  );
+
+  expect(result.disposition).toBe("steered");
+  expect(harness.steerOrReplaceActiveTurn).toHaveBeenCalledWith("agent-1", "keep going", {
+    steerFallback: "reject",
+  });
+  expect(harness.replaceAgentRun).not.toHaveBeenCalled();
+  expect(harness.streamAgent).not.toHaveBeenCalled();
+});
+
+test("startAgentRun fails a rejecting steer instead of replacing the turn", async () => {
+  const harness = createSteerDispatchHarness({ status: "unavailable" });
+
+  await expect(
+    startAgentRun(harness.controller, "agent-1", "keep going", createTestLogger(), {
+      replaceRunning: true,
+      activeTurnBehavior: "steer",
+      steerFallback: "reject",
+    }),
+  ).rejects.toThrow(SteerUnavailableError);
+  await expect(
+    startAgentRun(harness.controller, "agent-1", "keep going", createTestLogger(), {
+      replaceRunning: true,
+      activeTurnBehavior: "steer",
+      steerFallback: "reject",
+    }),
+  ).rejects.toThrow(STEER_UNAVAILABLE_MESSAGE);
+
+  expect(harness.replaceAgentRun).not.toHaveBeenCalled();
+  expect(harness.streamAgent).not.toHaveBeenCalled();
+});
+
+test("startAgentRun keeps the replacing fallback for callers that do not opt out", async () => {
+  const iterator = (async function* noop() {})();
+  const harness = createSteerDispatchHarness({ status: "replaced", iterator });
+
+  const result = await startAgentRun(
+    harness.controller,
+    "agent-1",
+    "keep going",
+    createTestLogger(),
+    {
+      replaceRunning: true,
+      activeTurnBehavior: "steer",
+    },
+  );
+
+  expect(result.disposition).toBe("turn_started");
+  expect(harness.steerOrReplaceActiveTurn).toHaveBeenCalledWith("agent-1", "keep going", undefined);
 });

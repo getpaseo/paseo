@@ -4078,6 +4078,7 @@ describe("send_agent_prompt MCP tool", () => {
       const sent = await invokeToolWithParsedInput(registeredTool(server, "send_agent_prompt"), {
         agentId: childId,
         prompt: "Stop and reply instead",
+        activeTurnBehavior: "interrupt",
       });
       expect(sent.structuredContent).toMatchObject({
         success: true,
@@ -4258,7 +4259,7 @@ describe("send_agent_prompt MCP tool", () => {
     });
 
     const tool = registeredTool(server, "send_agent_prompt");
-    await invokeToolWithParsedInput(tool, {
+    const response = await invokeToolWithParsedInput(tool, {
       agentId: "child-agent",
       prompt: "Follow up",
     });
@@ -4266,9 +4267,64 @@ describe("send_agent_prompt MCP tool", () => {
     expect(spies.agentManager.steerOrReplaceActiveTurn).toHaveBeenCalledWith(
       "child-agent",
       "Follow up",
-      undefined,
+      { steerFallback: "reject" },
     );
     expect(spies.agentManager.replaceAgentRun).not.toHaveBeenCalled();
+    expect(response.structuredContent).toMatchObject({ success: true, steered: true });
+  });
+
+  it("fails a steer the target's provider cannot deliver instead of replacing the turn", async () => {
+    const { agentManager, agentStorage, spies } = createTestDeps();
+    spies.agentManager.getAgent.mockImplementation((agentId: string) => {
+      if (agentId === "parent-agent") {
+        return {
+          id: "parent-agent",
+          cwd: existingCwd,
+          workspaceId: "wks_parent",
+          provider: "codex",
+          currentModeId: "full-access",
+        } as ManagedAgent;
+      }
+      if (agentId === "child-agent") {
+        return {
+          id: "child-agent",
+          cwd: existingCwd,
+          lifecycle: "running",
+          currentModeId: null,
+          availableModes: [],
+          config: { title: "Child" },
+        } as ManagedAgent;
+      }
+      return null;
+    });
+    spies.agentManager.hasInFlightRun.mockReturnValue(true);
+    spies.agentManager.steerOrReplaceActiveTurn.mockResolvedValue({ status: "unavailable" });
+
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      callerAgentId: "parent-agent",
+      logger,
+    });
+
+    const tool = registeredTool(server, "send_agent_prompt");
+    const response = (await invokeToolWithParsedInput(tool, {
+      agentId: "child-agent",
+      prompt: "Follow up",
+    })) as unknown as { structuredContent: LooseStructuredContent; isError?: boolean };
+
+    expect(spies.agentManager.replaceAgentRun).not.toHaveBeenCalled();
+    expect(spies.agentManager.streamAgent).not.toHaveBeenCalled();
+    expect(response.isError).toBe(true);
+    expect(response.structuredContent).toMatchObject({
+      success: false,
+      steered: false,
+      status: "running",
+    });
+    expect(String(response.structuredContent.error)).toContain(
+      'target is mid-turn and its provider cannot steer; wait for it to finish or resend with activeTurnBehavior "interrupt"',
+    );
   });
 
   it("replaces the target's running turn when the caller asks to interrupt", async () => {
