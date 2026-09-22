@@ -87,6 +87,19 @@ describe("HermesACPAgentClient", () => {
 
     expect(client1.multiplexManager).toBe(client2.multiplexManager);
   });
+
+  test("shares multiplex manager across sessions despite unique PASEO_AGENT_ID and PASEO_AGENT_CWD", () => {
+    const manager1 = getHermesMultiplexManager(logger, ["hermes", "acp"], {
+      PASEO_AGENT_ID: "agent-1",
+      PASEO_AGENT_CWD: "/tmp/workspace1",
+    });
+    const manager2 = getHermesMultiplexManager(logger, ["hermes", "acp"], {
+      PASEO_AGENT_ID: "agent-2",
+      PASEO_AGENT_CWD: "/tmp/workspace2",
+    });
+
+    expect(manager1).toBe(manager2);
+  });
 });
 
 describe("ACPMultiplexConnectionManager", () => {
