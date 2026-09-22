@@ -130,11 +130,16 @@ test("appends a first notice after old history and records a changed major versi
   const session = withOpenCodeRuntimeNotice(await client.resumeSession(previous), 2, previous);
   try {
     const history = [];
-    for await (const event of session.streamHistory())
-      if (event.type === "timeline") history.push(event.item);
+    for await (const event of session.streamHistory()) history.push(event);
     expect(history).toEqual([
-      { type: "user_message", text: "Earlier prompt", messageId: "old" },
-      { type: "notification", level: "info", message: "This chat uses OpenCode v2." },
+      expect.objectContaining({
+        type: "timeline",
+        item: { type: "user_message", text: "Earlier prompt", messageId: "old" },
+      }),
+      expect.objectContaining({
+        type: "timeline",
+        item: { type: "notification", level: "info", message: "This chat uses OpenCode v2." },
+      }),
     ]);
     await session.close();
     const v1Handle = {
