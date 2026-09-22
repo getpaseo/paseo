@@ -451,26 +451,32 @@ describe("ProviderUsageService", () => {
   });
 
   it("times out slow plugin fetchUsage and isolates error", async () => {
-    const timeoutFetcher = createPluginUsageFetcher({
-      provider: {
-        id: "slow",
-        label: "Slow",
-        connect: async () => {
-          throw new Error("unused");
+    vi.useFakeTimers();
+    try {
+      const timeoutFetcher = createPluginUsageFetcher({
+        provider: {
+          id: "slow",
+          label: "Slow",
+          connect: async () => {
+            throw new Error("unused");
+          },
+          fetchUsage: () => new Promise<never>(() => {}),
         },
-        fetchUsage: async () => {
-          await new Promise((r) => setTimeout(r, 100));
-          return { planLabel: "Late" };
-        },
-      },
-      logger: createLogger(),
-      timeoutMs: 30,
-    });
-    expect(await timeoutFetcher.fetchUsage()).toMatchObject({
-      providerId: "slow",
-      status: "error",
-      error: "Plugin usage fetch timed out after 30ms",
-    });
+        logger: createLogger(),
+        timeoutMs: 30,
+      });
+
+      const fetchPromise = timeoutFetcher.fetchUsage();
+      await vi.advanceTimersByTimeAsync(30);
+
+      expect(await fetchPromise).toMatchObject({
+        providerId: "slow",
+        status: "error",
+        error: "Plugin usage fetch timed out after 30ms",
+      });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("does not restore stale cache when clearCache is called while a fetch is in flight", async () => {
