@@ -1,3 +1,4 @@
+import type { LanguageActionScope } from "@/code-language/actions";
 import type { ParsedDiffFile } from "@getpaseo/protocol/messages";
 import type { InlineReviewActions } from "@/review";
 import type { ReviewableDiffTarget } from "@/utils/diff-layout";
@@ -14,6 +15,7 @@ interface DiffDocumentBaseProps {
 
 export interface WorkingDiffMode {
   kind: "working";
+  languageScope?: LanguageActionScope;
   reviewActions?: InlineReviewActions;
   onFilePress?: (path: string) => void;
   focusPath?: string;

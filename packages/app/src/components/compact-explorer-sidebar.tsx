@@ -1,3 +1,4 @@
+import type { WorkspaceFileLocation } from "@/workspace/file-open";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { View, Text, Pressable } from "react-native";
 import { Gesture } from "react-native-gesture-handler";
@@ -50,7 +51,7 @@ interface ExplorerSidebarProps {
   workspaceId?: string | null;
   workspaceRoot: string;
   isGit: boolean;
-  onOpenFile?: (filePath: string) => void;
+  onOpenFile?: (location: WorkspaceFileLocation) => void;
   onOpenBackground?: (target: WorkspaceTabTarget) => void;
 }
 
@@ -306,7 +307,7 @@ interface SidebarContentProps {
   workspaceRoot: string;
   isGit: boolean;
   isOpen: boolean;
-  onOpenFile?: (filePath: string) => void;
+  onOpenFile?: (location: WorkspaceFileLocation) => void;
   onOpenBackground?: (target: WorkspaceTabTarget) => void;
 }
 
@@ -486,6 +487,7 @@ function ChangedFilesPane({
   SidebarContentProps,
   "serverId" | "workspaceId" | "workspaceRoot" | "isOpen" | "onOpenFile"
 >) {
+  const handleOpenFile = useCallback((path: string) => onOpenFile?.({ path }), [onOpenFile]);
   const { addFile, canAddToChat } = useAddFileToChat({ serverId, workspaceId });
   const [changesState, setChangesState] = useState<ChangesState>(() =>
     changesStateSchema.parse(defaultChangesState),
@@ -496,7 +498,8 @@ function ChangedFilesPane({
       workspaceId={workspaceId}
       cwd={workspaceRoot}
       enabled={isOpen}
-      onOpenFile={onOpenFile}
+      onOpenLocation={onOpenFile}
+      onOpenFile={handleOpenFile}
       onAddToChat={canAddToChat ? addFile : undefined}
       state={changesState}
       onStateChange={setChangesState}
@@ -510,13 +513,14 @@ function FilesPane({
   workspaceRoot,
   onOpenFile,
 }: Pick<SidebarContentProps, "serverId" | "workspaceId" | "workspaceRoot" | "onOpenFile">) {
+  const handleOpenFile = useCallback((path: string) => onOpenFile?.({ path }), [onOpenFile]);
   const { addFile, canAddToChat } = useAddFileToChat({ serverId, workspaceId });
   return (
     <FileExplorerPane
       serverId={serverId}
       workspaceId={workspaceId}
       workspaceRoot={workspaceRoot}
-      onOpenFile={onOpenFile}
+      onOpenFile={handleOpenFile}
       onAddToChat={canAddToChat ? addFile : undefined}
     />
   );

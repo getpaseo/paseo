@@ -29,7 +29,7 @@ const require = createRequire(import.meta.url);
 export class TypeScriptProcess {
   private readonly child: ChildProcessWithoutNullStreams;
   private readonly connection: ProtocolConnection;
-  private readonly opened = new Map<string, number>();
+  private readonly documents: LanguageDocuments;
   private stopped = false;
   readonly ready: Promise<void>;
 
@@ -56,6 +56,7 @@ export class TypeScriptProcess {
       new StreamMessageReader(this.child.stdout),
       new StreamMessageWriter(this.child.stdin),
     );
+    this.documents = new LanguageDocuments(this.connection);
     this.connection.onRequest("workspace/configuration", () => []);
     this.connection.onRequest("client/registerCapability", () => null);
     this.connection.onRequest("window/workDoneProgress/create", () => null);
@@ -98,31 +99,12 @@ export class TypeScriptProcess {
 
   async sync(path: string, content: string, version: number): Promise<void> {
     await this.ready;
-    const uri = pathToFileURL(path).href;
-    if (!this.opened.has(path)) {
-      await this.connection.sendNotification(DidOpenTextDocumentNotification.type, {
-        textDocument: {
-          uri,
-          languageId: path.endsWith(".tsx") ? "typescriptreact" : "typescript",
-          version,
-          text: content,
-        },
-      });
-    } else if (this.opened.get(path) !== version) {
-      await this.connection.sendNotification(DidChangeTextDocumentNotification.type, {
-        textDocument: { uri, version },
-        contentChanges: [{ text: content }],
-      });
-    }
-    this.opened.set(path, version);
+    await this.documents.sync(path, content, version);
   }
 
   async close(path: string): Promise<void> {
     await this.ready;
-    if (!this.opened.delete(path)) return;
-    await this.connection.sendNotification(DidCloseTextDocumentNotification.type, {
-      textDocument: { uri: pathToFileURL(path).href },
-    });
+    await this.documents.close(path);
   }
 
   async query(query: CodeQuery, token: CancellationToken): Promise<CodeQueryResult> {
@@ -211,4 +193,46 @@ export class TypeScriptProcess {
 // Child entrypoints must be real files; the packaged desktop unpacks both runtimes.
 export function unpackLanguageRuntimePath(path: string): string {
   return path.replace(/\.asar(?=[/\\]|$)/, ".asar.unpacked");
+}
+
+// Owns the text actually sent to one LSP connection, independently of client versions.
+export class LanguageDocuments {
+  private readonly opened = new Map<string, { content: string; sent: Promise<void> }>();
+  constructor(private readonly connection: Pick<ProtocolConnection, "sendNotification">) {}
+
+  async sync(path: string, content: string, version: number): Promise<void> {
+    const previous = this.opened.get(path);
+    if (previous?.content === content) return previous.sent;
+    const current = { content, sent: Promise.resolve() };
+    this.opened.set(path, current);
+    const uri = pathToFileURL(path).href;
+    try {
+      if (!previous) {
+        current.sent = this.connection.sendNotification(DidOpenTextDocumentNotification.type, {
+          textDocument: {
+            uri,
+            languageId: path.endsWith(".tsx") ? "typescriptreact" : "typescript",
+            version,
+            text: content,
+          },
+        });
+      } else {
+        current.sent = this.connection.sendNotification(DidChangeTextDocumentNotification.type, {
+          textDocument: { uri, version },
+          contentChanges: [{ text: content }],
+        });
+      }
+      await current.sent;
+    } catch (error) {
+      if (this.opened.get(path) === current) this.opened.delete(path);
+      throw error;
+    }
+  }
+
+  async close(path: string): Promise<void> {
+    if (!this.opened.delete(path)) return;
+    await this.connection.sendNotification(DidCloseTextDocumentNotification.type, {
+      textDocument: { uri: pathToFileURL(path).href },
+    });
+  }
 }

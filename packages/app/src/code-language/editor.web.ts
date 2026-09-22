@@ -16,6 +16,14 @@ export function editorLanguageExtension(actions: LanguageActions, path: string) 
     }),
     keymap.of([
       {
+        key: "Escape",
+        run: () => {
+          if (actions.getSnapshot().kind !== "hover") return false;
+          actions.close();
+          return true;
+        },
+      },
+      {
         key: "F12",
         run: (view) => {
           void actions.run(editorCodeTarget(view, path), "definition", undefined, () =>
@@ -34,7 +42,7 @@ export function editorLanguageExtension(actions: LanguageActions, path: string) 
         },
       },
       {
-        key: "Mod-k Mod-i",
+        key: "Alt-F12",
         run: (view) => {
           const position = view.coordsAtPos(view.state.selection.main.head);
           void actions.run(
@@ -54,7 +62,7 @@ export function editorLanguageExtension(actions: LanguageActions, path: string) 
           return false;
         }
         const offset = view.posAtCoords({ x: event.clientX, y: event.clientY });
-        if (offset === null) actions.dismissHover();
+        if (offset === null) actions.leaveHover();
         else
           actions.hover(editorCodeTarget(view, path, offset), {
             x: event.clientX,
@@ -68,7 +76,7 @@ export function editorLanguageExtension(actions: LanguageActions, path: string) 
           event.relatedTarget.closest('[data-testid="code-language-hover"]')
         )
           return false;
-        actions.dismissHover();
+        actions.leaveHover();
         return false;
       },
       mousedown(event, view) {

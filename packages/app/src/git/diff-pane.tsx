@@ -1,3 +1,4 @@
+import type { WorkspaceFileLocation } from "@/workspace/file-open";
 import { sumDiffStats, type DiffStat as DiffStatValue } from "@getpaseo/protocol/diff-stat";
 import { useState, useCallback, useMemo, type ReactElement, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
@@ -185,6 +186,7 @@ interface ChangesSurfaceProps {
   focusPath?: string;
   focusRequestId?: number;
   onOpenFile?: (path: string) => void;
+  onOpenLocation?: (location: WorkspaceFileLocation) => void;
   onOpenToSide?: (path: string) => void;
   onSelectDiffFile?: (path: string) => void;
   onAddToChat?: (path: string) => void;
@@ -1547,6 +1549,7 @@ export function ChangesSurface({
   focusPath,
   focusRequestId,
   onOpenFile,
+  onOpenLocation,
   onOpenToSide,
   onSelectDiffFile,
   onAddToChat,
@@ -1797,6 +1800,7 @@ export function ChangesSurface({
   const workingMode = useMemo(
     () => ({
       kind: "working" as const,
+      languageScope: onOpenLocation ? { serverId, cwd, onOpenLocation } : undefined,
       reviewActions,
       focusPath: documentFocusRequest?.path,
       focusRequestId: documentFocusRequest?.revision,
@@ -1817,6 +1821,8 @@ export function ChangesSurface({
       documentFocusRequest?.path,
       documentFocusRequest?.revision,
       serverId,
+      cwd,
+      onOpenLocation,
       workspaceId,
       onOpenFile,
       onOpenToSide,

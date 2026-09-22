@@ -1,5 +1,8 @@
 import * as Clipboard from "expo-clipboard";
 import { selectAll } from "@codemirror/commands";
+import { Shortcut } from "@/components/ui/shortcut";
+import { usePaneContext } from "@/panels/pane-context";
+import { useWorkspaceDirectory } from "@/stores/session-store-hooks";
 import { useToast } from "@/contexts/toast-context";
 import type { MouseEvent } from "react";
 import { useTranslation } from "react-i18next";
@@ -15,7 +18,7 @@ import {
   ContextMenuSeparator,
 } from "@/components/ui/context-menu";
 import { isAbsolutePath } from "@/utils/path";
-import { useCallback, useEffect, useRef, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from "react";
 import { Annotation, Compartment, EditorState, Transaction } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { getLanguageForFile } from "@getpaseo/highlight";
@@ -58,8 +61,19 @@ export function FileEditorView({
 }: FileEditorViewProps) {
   const { t } = useTranslation();
   const toast = useToast();
-  const actions = useLanguageActions(isTypeScriptFile(filename));
+  const pane = usePaneContext();
   const fileVersion = model.getSnapshot().version;
+  const workspaceDirectory = useWorkspaceDirectory(pane.serverId, pane.workspaceId);
+  const actions = useLanguageActions(
+    isTypeScriptFile(filename) && workspaceDirectory
+      ? {
+          serverId: pane.serverId,
+          cwd: workspaceDirectory,
+          onOpenLocation: (destination) =>
+            pane.openFileInWorkspace({ disposition: "preferred", location: destination }),
+        }
+      : null,
+  );
   const path = isAbsolutePath(fileVersion.path)
     ? fileVersion.path
     : `${fileVersion.cwd}/${fileVersion.path}`;
@@ -199,6 +213,7 @@ export function FileEditorView({
     [actions, path],
   );
   const inspect = useCallback(() => run("hover"), [run]);
+  const inspectShortcut = useMemo(() => <Shortcut keys={INSPECT_SHORTCUT_KEYS} />, []);
   const define = useCallback(() => run("definition"), [run]);
   const usages = useCallback(() => run("references"), [run]);
   const copySelection = useCallback(() => {
@@ -242,7 +257,9 @@ export function FileEditorView({
               {t("common.actions.selectAll")}
             </ContextMenuItem>
             <ContextMenuSeparator />
-            <ContextMenuItem onSelect={inspect}>{t("codeLanguage.inspect")}</ContextMenuItem>
+            <ContextMenuItem onSelect={inspect} trailing={inspectShortcut}>
+              {t("codeLanguage.inspect")}
+            </ContextMenuItem>
             <ContextMenuItem onSelect={define}>{t("codeLanguage.definition")}</ContextMenuItem>
             <ContextMenuItem onSelect={usages}>{t("codeLanguage.usages")}</ContextMenuItem>
           </ContextMenuContent>
@@ -252,6 +269,8 @@ export function FileEditorView({
     </ContextMenu>
   );
 }
+
+const INSPECT_SHORTCUT_KEYS = ["alt", "F12"];
 
 const remoteUpdate = Annotation.define<boolean>();
 const HOST_STYLE = { flex: 1, minHeight: 0, overflow: "hidden" } as const;

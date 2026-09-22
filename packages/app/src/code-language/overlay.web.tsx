@@ -28,7 +28,8 @@ export function LanguageOverlay({ actions }: { actions: LanguageActions }) {
   const state = useSyncExternalStore(actions.subscribe, actions.getSnapshot, actions.getSnapshot);
   const { t } = useTranslation();
   const theme = UnistylesRuntime.getTheme();
-  const layer = useGlobalWebOverlayLayer("modal", state.kind === "popup");
+  const ownsFocus = state.kind === "popup" || (state.kind === "hover" && state.interactive);
+  const layer = useGlobalWebOverlayLayer(state.kind === "popup" ? "modal" : "floating", ownsFocus);
   const keyDown = useCallback(
     (event: globalThis.KeyboardEvent) => {
       if (event.key !== "Escape") return false;
@@ -39,7 +40,7 @@ export function LanguageOverlay({ actions }: { actions: LanguageActions }) {
     [actions],
   );
   const setScope = useWebOverlayRegistration({
-    active: isWeb && state.kind === "popup",
+    active: isWeb && ownsFocus,
     layer,
     onKeyDown: keyDown,
   });
@@ -59,13 +60,8 @@ export function LanguageOverlay({ actions }: { actions: LanguageActions }) {
         return;
       actions.dismissHover();
     };
-    const escape = (event: globalThis.KeyboardEvent) => {
-      if (event.key === "Escape") actions.close();
-    };
-    window.addEventListener("keydown", escape);
     window.addEventListener("scroll", scroll, true);
     return () => {
-      window.removeEventListener("keydown", escape);
       window.removeEventListener("scroll", scroll, true);
     };
   }, [actions, state.kind]);
@@ -116,21 +112,33 @@ export function LanguageOverlay({ actions }: { actions: LanguageActions }) {
   if (state.kind === "hover")
     return createPortal(
       <div
-        role="tooltip"
+        ref={state.interactive ? setScope : undefined}
+        role={state.interactive ? "dialog" : "tooltip"}
+        aria-label={state.interactive ? t("codeLanguage.inspect") : undefined}
+        tabIndex={state.interactive ? -1 : undefined}
         data-testid="code-language-hover"
         style={hoverStyle}
-        onMouseLeave={actions.dismissHover}
+        onMouseEnter={actions.holdHover}
+        onMouseLeave={actions.leaveHover}
+        onFocus={actions.holdHover}
       >
-        {state.stale ? (
+        {state.error && (
+          <>
+            {t("codeLanguage.error")}{" "}
+            <button type="button" style={buttonStyle} onClick={actions.retry}>
+              {t("codeLanguage.retry")}
+            </button>
+          </>
+        )}
+        {state.stale && (
           <>
             {t("codeLanguage.stale")}{" "}
             <button type="button" style={buttonStyle} onClick={actions.openCurrent}>
               {t("codeLanguage.openCurrent")}
             </button>
           </>
-        ) : (
-          state.text
         )}
+        {!state.error && !state.stale && state.text}
       </div>,
       getOverlayRoot(),
     );

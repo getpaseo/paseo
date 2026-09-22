@@ -22,12 +22,30 @@ interface Document {
   content: string;
   version: number;
 }
+type LanguageProcess = Pick<TypeScriptProcess, "ready" | "sync" | "close" | "query" | "stop">;
+interface LanguageRuntime {
+  createProcess(cwd: string, logger: Logger, onExit: () => void): LanguageProcess;
+  now(): number;
+  schedule(callback: () => void, delayMs: number): () => void;
+}
+const defaultRuntime: LanguageRuntime = {
+  createProcess: (cwd, logger, onExit) => new TypeScriptProcess(cwd, logger, onExit),
+  now: Date.now,
+  schedule: (callback, delayMs) => {
+    const timer = setTimeout(callback, delayMs);
+    timer.unref();
+    return () => clearTimeout(timer);
+  },
+};
+const FAILURE_RETRY_MS = 5000;
+
 interface Workspace {
   cwd: string;
   generation: string;
   documents: Map<string, Document>;
-  process: TypeScriptProcess | null;
-  starting: Promise<TypeScriptProcess> | null;
+  process: LanguageProcess | null;
+  starting: Promise<LanguageProcess> | null;
+  retryAt: number;
   idle: ReturnType<typeof setTimeout> | null;
   sequence: number;
   revision: number;
@@ -39,7 +57,10 @@ export class CodeLanguageSession {
   private readonly workspaces = new Map<string, Workspace>();
   private readonly pending = new Map<string, CancellationTokenSource>();
   private disposed = false;
-  constructor(private readonly logger: Logger) {}
+  constructor(
+    private readonly logger: Logger,
+    private readonly runtime: LanguageRuntime = defaultRuntime,
+  ) {}
 
   async handle(
     request: LanguageRequest,
@@ -80,6 +101,7 @@ export class CodeLanguageSession {
         documents: new Map(),
         process: null,
         starting: null,
+        retryAt: 0,
         idle: null,
         sequence: 0,
         revision: 0,
@@ -112,14 +134,48 @@ export class CodeLanguageSession {
   }
 
   async query(query: CodeQuery, requestId: string = randomUUID()): Promise<LanguageResponse> {
-    const workspace = this.workspace(query.cwd);
+    let workspace: Workspace;
+    try {
+      workspace = this.workspace(query.cwd);
+    } catch (error) {
+      return { generation: "", result: { kind: "error", message: String(error) } };
+    }
     const cancellation = new CancellationTokenSource();
     this.pending.set(requestId, cancellation);
-    const timeout = setTimeout(() => cancellation.cancel(), 30000);
     const path = resolve(query.cwd, query.path);
     workspace.readers.set(path, (workspace.readers.get(path) ?? 0) + 1);
+    const attempt: { process: LanguageProcess | null } = { process: null };
+    let timedOut = false;
+    let cancelDeadline = () => {};
+    const deadline = new Promise<LanguageResponse>((_, reject) => {
+      cancelDeadline = this.runtime.schedule(() => {
+        timedOut = true;
+        reject(new Error("Language query timed out"));
+        cancellation.cancel();
+        if (attempt.process && workspace.process === attempt.process) {
+          this.failProcess(workspace, attempt.process);
+          attempt.process.stop();
+        }
+      }, 30000);
+    });
+    let abortSubscription: { dispose(): void } | undefined;
+    const aborted = new Promise<LanguageResponse>((complete) => {
+      abortSubscription = cancellation.token.onCancellationRequested(() =>
+        complete({
+          generation: workspace.generation,
+          result: timedOut
+            ? { kind: "error", message: "Language query timed out" }
+            : { kind: "stale" },
+        }),
+      );
+    });
+    // Keep the deadline on abandoned work: LSP cancellation is only advisory.
+    const execution = Promise.race([
+      this.executeQuery(workspace, { ...query, path }, cancellation.token, attempt),
+      deadline,
+    ]).finally(() => cancelDeadline());
     try {
-      return await this.executeQuery(workspace, { ...query, path }, cancellation.token);
+      return await Promise.race([execution, aborted]);
     } catch (error) {
       this.logger.debug({ err: error }, "Language query failed");
       return {
@@ -127,10 +183,10 @@ export class CodeLanguageSession {
         result: { kind: "error", message: error instanceof Error ? error.message : String(error) },
       };
     } finally {
-      clearTimeout(timeout);
+      abortSubscription?.dispose();
       cancellation.dispose();
       this.pending.delete(requestId);
-      await this.releaseReader(workspace, path);
+      this.releaseReader(workspace, path);
       this.idle(workspace);
     }
   }
@@ -139,6 +195,7 @@ export class CodeLanguageSession {
     workspace: Workspace,
     query: CodeQuery,
     token: CancellationToken,
+    attempt: { process: LanguageProcess | null },
   ): Promise<LanguageResponse> {
     const revision = workspace.revision;
     const stale = (): LanguageResponse => ({
@@ -147,10 +204,18 @@ export class CodeLanguageSession {
     });
     const content = await this.queryContent(workspace, query);
     if (content === null || token.isCancellationRequested) return stale();
-    const process = await this.start(workspace);
+    const starting = this.start(workspace);
+    attempt.process = workspace.process;
     const generation = workspace.generation;
-    if (revision !== workspace.revision || token.isCancellationRequested) return stale();
+    const process = await starting;
+    if (
+      revision !== workspace.revision ||
+      generation !== workspace.generation ||
+      token.isCancellationRequested
+    )
+      return stale();
     await process.sync(query.path, content, ++workspace.sequence);
+    if (token.isCancellationRequested || generation !== workspace.generation) return stale();
     const result = await process.query(query, token);
     const changedDisk =
       query.targetContentId &&
@@ -175,42 +240,57 @@ export class CodeLanguageSession {
     return content;
   }
 
-  private async releaseReader(workspace: Workspace, path: string): Promise<void> {
+  private releaseReader(workspace: Workspace, path: string): void {
     const readers = (workspace.readers.get(path) ?? 1) - 1;
     if (readers) workspace.readers.set(path, readers);
     else workspace.readers.delete(path);
     if (!readers && !workspace.documents.has(path))
-      await workspace.process?.close(path).catch(() => {});
+      void workspace.process?.close(path).catch(() => {});
   }
 
-  private async start(workspace: Workspace): Promise<TypeScriptProcess> {
+  private async start(workspace: Workspace): Promise<LanguageProcess> {
     if (workspace.starting) return workspace.starting;
     if (workspace.process) return workspace.process;
+    if (this.runtime.now() < workspace.retryAt)
+      throw new Error("Language server is restarting; retry shortly");
     workspace.starting = this.initializeWorkspace(workspace);
+    const starting = workspace.starting;
     try {
-      return await workspace.starting;
+      return await starting;
     } finally {
-      workspace.starting = null;
+      if (workspace.starting === starting) workspace.starting = null;
     }
   }
 
-  private async initializeWorkspace(workspace: Workspace): Promise<TypeScriptProcess> {
+  private failProcess(workspace: Workspace, process: LanguageProcess): void {
+    if (workspace.process !== process) return;
+    workspace.process = null;
+    workspace.starting = null;
     workspace.generation = randomUUID();
-    const process = new TypeScriptProcess(workspace.cwd, this.logger, () => {
-      if (workspace.process === process) {
-        workspace.process = null;
-        workspace.generation = randomUUID();
-      }
-    });
-    workspace.process = process;
+    workspace.retryAt = this.runtime.now() + FAILURE_RETRY_MS;
+  }
+
+  private async initializeWorkspace(workspace: Workspace): Promise<LanguageProcess> {
+    workspace.generation = randomUUID();
+    let process: LanguageProcess | null = null;
     try {
+      process = this.runtime.createProcess(workspace.cwd, this.logger, () => {
+        if (process) this.failProcess(workspace, process);
+      });
+      workspace.process = process;
       await process.ready;
-      for (const [path, document] of workspace.documents)
+      if (workspace.process !== process || this.workspaces.get(workspace.cwd) !== workspace)
+        throw new Error("Language workspace closed");
+      for (const [path, document] of workspace.documents) {
+        if (workspace.process !== process) throw new Error("Language server stopped");
         await process.sync(path, document.content, ++workspace.sequence);
+      }
       return process;
     } catch (error) {
-      process.stop();
-      workspace.process = null;
+      if (process && workspace.process === process) {
+        this.failProcess(workspace, process);
+        process.stop();
+      } else if (!process) workspace.retryAt = this.runtime.now() + FAILURE_RETRY_MS;
       throw error;
     }
   }
@@ -231,12 +311,19 @@ export class CodeLanguageSession {
   }
 
   private idle(workspace: Workspace): void {
-    if (workspace.documents.size || workspace.readers.size || workspace.idle) return;
+    if (
+      this.workspaces.get(workspace.cwd) !== workspace ||
+      workspace.documents.size ||
+      workspace.readers.size ||
+      workspace.idle
+    )
+      return;
     workspace.idle = setTimeout(() => this.closeWorkspace(workspace.cwd), 5 * 60_000);
     workspace.idle.unref();
   }
   retainWorkspaces(roots: ReadonlySet<string>): void {
-    for (const cwd of this.workspaces.keys()) if (!roots.has(cwd)) this.closeWorkspace(cwd);
+    const normalized = new Set([...roots].map((root) => resolve(root)));
+    for (const cwd of this.workspaces.keys()) if (!normalized.has(cwd)) this.closeWorkspace(cwd);
   }
   closeWorkspace(cwd: string): void {
     const workspace = this.workspaces.get(resolve(cwd));
@@ -244,7 +331,10 @@ export class CodeLanguageSession {
     this.workspaces.delete(workspace.cwd);
     if (workspace.idle) clearTimeout(workspace.idle);
     workspace.generation = randomUUID();
-    workspace.process?.stop();
+    const process = workspace.process;
+    workspace.process = null;
+    workspace.starting = null;
+    process?.stop();
   }
   dispose(): void {
     this.disposed = true;

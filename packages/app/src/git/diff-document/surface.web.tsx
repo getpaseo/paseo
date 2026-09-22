@@ -75,7 +75,9 @@ function emptyStickyHeaderCanvasSlot(): StickyHeaderCanvasSlot {
 export function DiffSurface(props: DiffSurfaceProps) {
   const { t } = useTranslation();
   const toast = useToast();
-  const language = useLanguageActions(props.mode.kind === "working");
+  const language = useLanguageActions(
+    props.mode.kind === "working" ? (props.mode.languageScope ?? null) : null,
+  );
   useEffect(() => {
     language?.dismiss();
   }, [language, props.files]);
@@ -636,22 +638,22 @@ export function DiffSurface(props: DiffSurfaceProps) {
     [paintStickyHeaderPool, schedulePaint],
   );
   const hoverCode = useCallback(
-    (event: React.PointerEvent<HTMLDivElement>) => {
+    (event: React.PointerEvent<HTMLDivElement>, hit: DiffHit | null) => {
       if (language) {
         const current = modelRef.current;
-        const target = current
-          ? diffLanguageTarget(current, pointHit(event), language.scope.cwd)
-          : null;
+        const target = current ? diffLanguageTarget(current, hit, language.scope.cwd) : null;
         if (target && !event.buttons)
           language.hover(target, { x: event.clientX, y: event.clientY });
-        else language.dismissHover();
+        else if (event.buttons) language.dismissHover();
+        else language.leaveHover();
       }
     },
-    [language, pointHit],
+    [language],
   );
   const pointerMove = useCallback(
     (event: React.PointerEvent<HTMLDivElement>) => {
-      hoverCode(event);
+      const hit = pointHit(event);
+      hoverCode(event, hit);
       updateActiveHeader(event.target);
       const drag = dragRef.current;
       if (drag) {
@@ -663,7 +665,6 @@ export function DiffSurface(props: DiffSurfaceProps) {
           alreadyDragging: drag.moved,
         });
       }
-      const hit = pointHit(event);
       if (hit?.kind === "cell") {
         const row = modelRef.current?.rows[hit.position.rowIndex];
         const file = modelRef.current?.files[hit.position.fileIndex];
@@ -740,7 +741,7 @@ export function DiffSurface(props: DiffSurfaceProps) {
         event.relatedTarget.closest('[data-testid="code-language-hover"]')
       )
         return;
-      language?.dismissHover();
+      language?.leaveHover();
       updateActiveHeader(null);
     },
     [language, updateActiveHeader],
@@ -811,6 +812,11 @@ export function DiffSurface(props: DiffSurfaceProps) {
           );
           return;
         }
+      }
+      if (event.key === "Escape" && language?.getSnapshot().kind === "hover") {
+        event.preventDefault();
+        language.close();
+        return;
       }
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "a") {
         event.preventDefault();
