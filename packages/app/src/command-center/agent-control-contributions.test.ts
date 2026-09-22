@@ -200,6 +200,34 @@ describe("Command Center agent-control contributions", () => {
     expect(selections).toEqual(["claude:shared"]);
   });
 
+  it("deduplicates repeated model rows from one provider", () => {
+    const codex = provider({ id: "codex", label: "Codex" });
+    if (codex.modelSelection.kind !== "models") {
+      throw new Error("expected model selection rows");
+    }
+    const duplicate = {
+      ...codex,
+      modelSelection: {
+        ...codex.modelSelection,
+        rows: [...codex.modelSelection.rows, { ...codex.modelSelection.rows[0] }],
+      },
+    } satisfies ProviderSelectorProvider;
+
+    const contributions = buildAgentControlContributions(
+      makeSource({
+        models: {
+          providers: [duplicate],
+          selectedProvider: "codex",
+          selectedModelId: "shared",
+        },
+      }),
+    );
+
+    expect(contributions.filter((contribution) => contribution.group === "models")).toHaveLength(1);
+    expect(contributions[0]).toMatchObject({ id: "models:codex:shared" });
+    expect(selected(contributions[0])).toBe(true);
+  });
+
   it("publishes thinking choices only when selection is meaningful", () => {
     const selections: string[] = [];
     const contributions = buildAgentControlContributions(
