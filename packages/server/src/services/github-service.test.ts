@@ -3475,23 +3475,25 @@ describe("ForgeService", () => {
     // against headRefName, so an "owner:branch" head never matches, and a
     // popular branch name fills the candidate page with other forks' PRs.
     const calls: RunnerCall[] = [];
-    const parentRepoPullRequest = (
+    function parentRepoPullRequest(
       number: number,
       headRepositoryOwner: string,
-    ): Record<string, unknown> => ({
-      number,
-      url: `https://github.com/parentOwner/parentRepo/pull/${number}`,
-      title: `PR ${number}`,
-      state: "OPEN",
-      isDraft: false,
-      baseRefName: "main",
-      headRefName: "main",
-      headRefOid: `${number}`.padStart(40, "0"),
-      mergedAt: null,
-      statusCheckRollup: [],
-      reviewDecision: "REVIEW_REQUIRED",
-      headRepositoryOwner: { login: headRepositoryOwner },
-    });
+    ): Record<string, unknown> {
+      return {
+        number,
+        url: `https://github.com/parentOwner/parentRepo/pull/${number}`,
+        title: `PR ${number}`,
+        state: "OPEN",
+        isDraft: false,
+        baseRefName: "main",
+        headRefName: "main",
+        headRefOid: `${number}`.padStart(40, "0"),
+        mergedAt: null,
+        statusCheckRollup: [],
+        reviewDecision: "REVIEW_REQUIRED",
+        headRepositoryOwner: { login: headRepositoryOwner },
+      };
+    }
     const crowd = Array.from({ length: 10 }, (_, index) =>
       parentRepoPullRequest(100 + index, `otherFork${index}`),
     );
