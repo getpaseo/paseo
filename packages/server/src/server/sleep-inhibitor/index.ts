@@ -43,7 +43,10 @@ interface AgentManagerLike {
 
 export interface SleepInhibitorOptions {
   agentManager: AgentManagerLike;
-  daemonConfigStore: { get(): { preventSleepWhileAgentsRun?: boolean } };
+  daemonConfigStore: {
+    get(): { preventSleepWhileAgentsRun?: boolean };
+    onChange(listener: () => void): () => void;
+  };
   logger: Logger;
   backend?: SleepInhibitorBackend;
   releaseDelayMs?: number;
@@ -122,8 +125,6 @@ export function setupSleepInhibitor(options: SleepInhibitorOptions): SleepInhibi
     if (disposed) return;
 
     const agentCount = countBusyAgents();
-    // Read the flag at event time so toggling the setting applies without a
-    // daemon restart.
     const enabled = options.daemonConfigStore.get().preventSleepWhileAgentsRun !== false;
     const shouldHold = enabled && agentCount > 0;
 
@@ -176,6 +177,11 @@ export function setupSleepInhibitor(options: SleepInhibitorOptions): SleepInhibi
     },
     { replayState: false },
   );
+  const unsubscribeConfig = options.daemonConfigStore.onChange(evaluate);
+  const unsubscribeBackend = backend.onChange(() => {
+    // Helper loss updates status; acquisition waits for an agent or config event.
+    if (!disposed) publishState(countBusyAgents());
+  });
 
   evaluate();
 
@@ -185,6 +191,8 @@ export function setupSleepInhibitor(options: SleepInhibitorOptions): SleepInhibi
       if (disposed) return;
       disposed = true;
       unsubscribe();
+      unsubscribeConfig();
+      unsubscribeBackend();
       cancelPendingRelease();
       backend.release();
     },

@@ -331,6 +331,8 @@ function WorkspaceRowBody({
                 isCreating={isCreating}
                 shortcutNumber={shortcutNumber}
                 showShortcutBadge={showShortcutBadge}
+                onArchive={onArchive}
+                archiveStatus={archiveStatus}
               >
                 <WorkspaceRowTrailingActions
                   workspace={workspace}

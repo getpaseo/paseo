@@ -2677,13 +2677,18 @@ export class DaemonClient {
 
   async updateAgent(
     agentId: string,
-    updates: { name?: string; labels?: Record<string, string> },
+    updates: {
+      name?: string;
+      labels?: Record<string, string>;
+      namingMode?: "automatic" | "manual";
+    },
   ): Promise<void> {
     const requestId = this.createRequestId();
     const message = SessionInboundMessageSchema.parse({
       type: "update_agent_request",
       agentId,
       ...(updates.name !== undefined ? { name: updates.name } : {}),
+      ...(updates.namingMode ? { namingMode: updates.namingMode } : {}),
       ...(updates.labels && Object.keys(updates.labels).length > 0
         ? { labels: updates.labels }
         : {}),

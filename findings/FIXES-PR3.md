@@ -1,6 +1,6 @@
 # Fix plan for PR #3
 
-This ledger owns current finding status. [CR1](CR1.md) remains the historical review snapshot.
+This ledger owns current finding status. [CR1](CR1-PR3.md) remains the historical review snapshot.
 
 **Current scope:** ROUND-2 below supersedes ROUND-1 recommendations. The user explicitly approved six narrower fixes and retained workspace-first TypeScript. ROUND-1 is historical planning, not the authorized implementation list.
 

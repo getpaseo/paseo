@@ -11,6 +11,7 @@ export interface SleepInhibitorBackend {
    */
   isSupported(): boolean;
   isHeld(): boolean;
+  onChange(listener: () => void): () => void;
   acquire(): void;
   release(): void;
 }
@@ -72,10 +73,19 @@ export function createProcessSleepInhibitor(
 
   let supported = resolved !== null;
   let child: ChildProcess | null = null;
+  const listeners = new Set<() => void>();
+
+  function notify(): void {
+    for (const listener of listeners) listener();
+  }
 
   return {
     isSupported: () => supported,
     isHeld: () => child !== null,
+    onChange(listener) {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
 
     acquire(): void {
       if (!resolved || !supported || child) return;
@@ -89,24 +99,30 @@ export function createProcessSleepInhibitor(
       } catch (err) {
         supported = false;
         log.warn({ err, command: resolved.command }, "Sleep inhibitor unavailable");
+        notify();
         return;
       }
 
       child = spawned;
 
       spawned.on("error", (err: NodeJS.ErrnoException) => {
-        if (child === spawned) child = null;
+        if (child !== spawned) return;
+        child = null;
         // ENOENT means the helper isn't installed — stop claiming support so
         // the client indicator tells the truth.
         if (err.code === "ENOENT") supported = false;
         log.warn({ err, command: resolved.command }, "Sleep inhibitor failed to start");
+        notify();
       });
 
       spawned.on("exit", () => {
-        if (child === spawned) child = null;
+        if (child !== spawned) return;
+        child = null;
+        notify();
       });
 
       log.debug({ command: resolved.command, pid: spawned.pid }, "Sleep inhibitor acquired");
+      notify();
     },
 
     release(): void {
@@ -118,6 +134,7 @@ export function createProcessSleepInhibitor(
       } catch (err) {
         log.warn({ err }, "Failed to release sleep inhibitor");
       }
+      notify();
     },
   };
 }

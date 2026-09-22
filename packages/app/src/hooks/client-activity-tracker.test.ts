@@ -67,6 +67,9 @@ function buildTracker(
     initialFocusedAgentId: overrides.initialFocusedAgentId ?? "agent-1",
     initialFocusedTerminalId: overrides.initialFocusedTerminalId ?? null,
     initialAppVisible: overrides.initialAppVisible ?? true,
+    ...(overrides.initialAppFocused === undefined
+      ? {}
+      : { initialAppFocused: overrides.initialAppFocused }),
     now: clock.now,
     onAppResumed: overrides.onAppResumed,
   });
@@ -238,6 +241,36 @@ describe("client activity tracker", () => {
 
     tracker.notifyAppVisibility(false);
     expect(resumed).toBeNull();
+  });
+
+  it("reports focus separately from visibility so a blurred desktop window still reads visible", () => {
+    const { tracker, client } = buildTracker({ initialAppVisible: true });
+
+    tracker.sendHeartbeat();
+    expect(client.latest()).toMatchObject({ appVisible: true, appFocused: true });
+
+    // Switching to another desktop window never changes document visibility.
+    expect(tracker.notifyAppFocus(false)).toEqual({ changed: true });
+    tracker.sendHeartbeat();
+    expect(client.latest()).toMatchObject({ appVisible: true, appFocused: false });
+
+    expect(tracker.notifyAppFocus(false)).toEqual({ changed: false });
+    expect(tracker.notifyAppFocus(true)).toEqual({ changed: true });
+    tracker.sendHeartbeat();
+    expect(client.latest()).toMatchObject({ appVisible: true, appFocused: true });
+  });
+
+  it("counts regaining focus as user activity", () => {
+    const { tracker, client, clock } = buildTracker({ initialAppFocused: false });
+
+    clock.advance(9_000);
+    tracker.notifyAppFocus(true);
+    tracker.sendHeartbeat();
+
+    expect(client.latest()).toMatchObject({
+      appFocused: true,
+      lastActivityAt: new Date(START_MS + 9_000).toISOString(),
+    });
   });
 
   it("skips heartbeats while the client is disconnected", () => {

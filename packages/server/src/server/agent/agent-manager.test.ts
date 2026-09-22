@@ -1,3 +1,4 @@
+import { RESPONSE_CONTROL_INSTRUCTIONS } from "./response-control/session.js";
 import { expect, test, vi } from "vitest";
 import { spawn } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -1609,7 +1610,7 @@ test("reload leaves a closed durable snapshot when shutdown starts during the sw
     await client.waitForCloseToStart();
 
     manager.prepareForShutdown();
-    const closing = Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id)));
+    const closing = Promise.all(manager.listAgents().map((entry) => manager.closeAgent(entry.id)));
     client.finishClosing();
 
     await closing;
@@ -2065,6 +2066,7 @@ test("createAgent injects daemon append system prompt at runtime only", async ()
     },
     registry: storage,
     logger,
+    responseControl: false,
     appendSystemPrompt: "  Daemon instructions.  ",
     idFactory: () => "00000000-0000-4000-8000-000000000103",
   });
@@ -2101,6 +2103,7 @@ test("daemon append system prompt is injected into Pi configs", async () => {
     },
     registry: storage,
     logger,
+    responseControl: false,
     appendSystemPrompt: "Daemon instructions.",
     idFactory: () => "00000000-0000-4000-8000-000000000104",
   });
@@ -2685,6 +2688,7 @@ test("createAgent passes daemon launch env through the provider launch context",
   );
 
   expect(client.lastConfig).toEqual({
+    daemonAppendSystemPrompt: RESPONSE_CONTROL_INSTRUCTIONS,
     provider: "codex",
     cwd: workdir,
     model: "gpt-5.4",
@@ -6959,7 +6963,7 @@ test("subscribe error isolation: throwing subscriber does not break event flow",
 
   expect(receivedEvents).toContain("turn_started");
   expect(receivedEvents).toContain("timeline");
-  expect(receivedEvents).toContain("turn_completed");
+  await vi.waitFor(() => expect(receivedEvents).toContain("turn_completed"));
   expect(manager.getTimeline(snapshot.id)).toContainEqual({
     type: "assistant_message",
     text: "EVENT_AFTER_ERROR",
@@ -9314,7 +9318,7 @@ test("idle agents remain resident until an explicit lifecycle action closes them
     expect(manager.getAgent(agent.id)?.lifecycle).toBe("idle");
     expect(resumeCount).toBe(0);
   } finally {
-    await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id))).catch(
+    await Promise.all(manager.listAgents().map((entry) => manager.closeAgent(entry.id))).catch(
       () => undefined,
     );
     rmSync(workdir, { recursive: true, force: true });
@@ -9602,7 +9606,7 @@ test("explicit close cancels running provider subagents before resume", async ()
       "completed",
     );
   } finally {
-    await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id))).catch(
+    await Promise.all(manager.listAgents().map((entry) => manager.closeAgent(entry.id))).catch(
       () => undefined,
     );
     await storage.flush().catch(() => undefined);
@@ -10745,3 +10749,133 @@ test("onWorkspaceStateMayHaveChanged is not called for running shell tool calls"
 
   expect(onWorkspaceStateMayHaveChanged).not.toHaveBeenCalled();
 });
+
+test("response control commits the final footer before attention and protects manual naming", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "response-control-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  let response =
+    'Detailed result.\n<paseo-meta message="Fixed tabs." title="Tab names" icon="🎛️" />';
+  let turnCounter = 0;
+  class FooterSession extends TestAgentSession {
+    override async startTurn(): Promise<{ turnId: string }> {
+      const turnId = `footer-${++turnCounter}`;
+      setTimeout(() => {
+        this.pushEvent({ type: "turn_started", provider: this.provider, turnId });
+        for (const text of [response.slice(0, 30), response.slice(30)]) {
+          this.pushEvent({
+            type: "timeline",
+            provider: this.provider,
+            turnId,
+            item: { type: "assistant_message", text },
+          });
+        }
+        this.pushEvent({ type: "turn_completed", provider: this.provider, turnId });
+        this.pushEvent({ type: "turn_completed", provider: this.provider, turnId });
+      }, 0);
+      return { turnId };
+    }
+  }
+  class FooterClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig) {
+      return new FooterSession(config);
+    }
+  }
+  const manager = new AgentManager({
+    clients: { codex: new FooterClient() },
+    registry: storage,
+    logger,
+  });
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    const summariesAtAttention: Array<string | undefined> = [];
+    manager.setAgentAttentionCallback(() => {
+      summariesAtAttention.push(manager.getAgent(agent.id)?.responseMetadata?.lastTurn?.message);
+    });
+    await manager.runAgent(agent.id, "First");
+    expect(await storage.get(agent.id)).toMatchObject({
+      title: "Tab names",
+      responseMetadata: {
+        namingMode: "automatic",
+        icon: "🎛️",
+        lastTurn: { message: "Fixed tabs." },
+      },
+    });
+    expect(summariesAtAttention).toEqual(["Fixed tabs."]);
+    expect(await manager.getLastAssistantMessage(agent.id)).toBe(response);
+
+    await manager.setTitle(agent.id, "My name");
+    response =
+      'Next result.\n<paseo-meta message="Added tests." title="Test coverage" icon="🧪" />';
+    await manager.runAgent(agent.id, "Second");
+    const manualReload = new AgentStorage(join(workdir, "agents"), logger);
+    expect(await manualReload.get(agent.id)).toMatchObject({
+      title: "My name",
+      responseMetadata: { namingMode: "manual", icon: "🎛️" },
+    });
+    expect(await storage.get(agent.id)).toMatchObject({
+      title: "My name",
+      responseMetadata: {
+        namingMode: "manual",
+        icon: "🎛️",
+        automaticTitle: "Test coverage",
+        automaticIcon: "🧪",
+      },
+    });
+    await manager.updateAgentMetadata(agent.id, { namingMode: "automatic" });
+    expect(await storage.get(agent.id)).toMatchObject({
+      title: "Test coverage",
+      responseMetadata: { icon: "🧪" },
+    });
+
+    response = "A response without metadata.";
+    await manager.runAgent(agent.id, "Third");
+    expect(manager.getAgent(agent.id)?.responseMetadata?.lastTurn).toEqual({ turnId: "footer-3" });
+    expect((await storage.get(agent.id))?.title).toBe("Test coverage");
+    const applySnapshot = storage.applySnapshot.bind(storage);
+    const failingSave = vi
+      .spyOn(storage, "applySnapshot")
+      .mockImplementation(async (snapshot, options) => {
+        if (options?.title === "Unsaved title") throw new Error("Simulated metadata write failure");
+        return applySnapshot(snapshot, options);
+      });
+    response =
+      'Result.\n<paseo-meta message="Must not publish." title="Unsaved title" icon="❌" />';
+    await manager.runAgent(agent.id, "Storage failure");
+    expect(manager.getAgent(agent.id)?.responseMetadata?.automaticTitle).toBe("Test coverage");
+    expect(manager.getAgent(agent.id)?.responseMetadata?.lastTurn).toBeUndefined();
+    expect(summariesAtAttention).not.toContain("Must not publish.");
+    failingSave.mockRestore();
+    await manager.closeAgent(agent.id);
+    const reloaded = new AgentStorage(join(workdir, "agents"), logger);
+    expect(await reloaded.get(agent.id)).toMatchObject({
+      title: "Test coverage",
+      responseMetadata: { namingMode: "automatic", automaticIcon: "🧪" },
+    });
+  } finally {
+    await Promise.all(manager.listAgents().map((entry) => manager.closeAgent(entry.id)));
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test.each(["claude", "codex", "opencode", "pi"])(
+  "response control instructions reach %s without changing saved prompts",
+  async (provider) => {
+    const client = new TestAgentClient(provider);
+    const manager = new AgentManager({
+      clients: { [provider]: client },
+      providerDefinitions: { [provider]: { enabled: true } },
+      logger,
+    });
+    const agent = await manager.createAgent(
+      { provider, cwd: tmpdir(), systemPrompt: "User instructions" },
+      undefined,
+      { workspaceId: undefined },
+    );
+    expect(client.createdConfigs[0]?.daemonAppendSystemPrompt).toContain("<paseo-meta");
+    expect(agent.config.systemPrompt).toBe("User instructions");
+    expect(agent.config.daemonAppendSystemPrompt).toBeUndefined();
+    await Promise.all(manager.listAgents().map((entry) => manager.closeAgent(entry.id)));
+  },
+);

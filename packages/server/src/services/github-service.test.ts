@@ -22,6 +22,7 @@ import { CheckoutPrStatusResponseSchema } from "@getpaseo/protocol/messages";
 const EXPECTED_GITHUB_FAST_POLL_MS = 20_000;
 const EXPECTED_GITHUB_SLOW_POLL_MS = 120_000;
 const EXPECTED_GITHUB_ERROR_BACKOFF_CAP_MS = 300_000;
+const EXPECTED_GITHUB_OPEN_SETTLED_MIN_POLL_MS = 30_000;
 const CURRENT_PR_STATUS_BASE_FIELDS =
   "number,url,title,state,isDraft,baseRefName,headRefName,headRefOid,mergedAt,reviewDecision,mergeable,headRepositoryOwner";
 const CURRENT_PR_STATUS_FIELDS = `${CURRENT_PR_STATUS_BASE_FIELDS},statusCheckRollup`;
@@ -294,6 +295,14 @@ function batchPollChecksAliasJson(
   };
 }
 
+/** Which of the two batch poll rounds a recorded `gh api graphql` call ran. */
+function batchQueryKind(call: RunnerCall): "status" | "checks" | "other" {
+  const query = call.args[3] ?? "";
+  if (query.includes("PaseoBatchPullRequestChecks")) return "checks";
+  if (query.includes("PaseoBatchPullRequestStatus")) return "status";
+  return "other";
+}
+
 function batchPollStatusJson(aliases: Record<string, unknown>): string {
   return JSON.stringify({ data: aliases });
 }
@@ -303,11 +312,17 @@ function batchPollStatusWithRateLimitJson(input: {
   limit: number;
   remaining: number;
   resetAt: string;
+  cost?: number;
 }): string {
   return JSON.stringify({
     data: {
       ...input.aliases,
-      rateLimit: { limit: input.limit, remaining: input.remaining, resetAt: input.resetAt },
+      rateLimit: {
+        limit: input.limit,
+        remaining: input.remaining,
+        resetAt: input.resetAt,
+        ...(input.cost === undefined ? {} : { cost: input.cost }),
+      },
     },
   });
 }
@@ -759,10 +774,58 @@ describe("ForgeService", () => {
     });
     const stableStatus = createCurrentPullRequestStatus({ checksStatus: "success" });
 
-    expect(computeGithubNextInterval(pendingStatus, 0)).toBe(EXPECTED_GITHUB_FAST_POLL_MS);
-    expect(computeGithubNextInterval(runningCheckStatus, 0)).toBe(EXPECTED_GITHUB_FAST_POLL_MS);
-    expect(computeGithubNextInterval(stableStatus, 0)).toBe(EXPECTED_GITHUB_SLOW_POLL_MS);
-    expect(computeGithubNextInterval(null, 0)).toBe(EXPECTED_GITHUB_SLOW_POLL_MS);
+    expect(computeGithubNextInterval({ status: pendingStatus, consecutiveErrors: 0 })).toBe(
+      EXPECTED_GITHUB_FAST_POLL_MS,
+    );
+    expect(computeGithubNextInterval({ status: runningCheckStatus, consecutiveErrors: 0 })).toBe(
+      EXPECTED_GITHUB_FAST_POLL_MS,
+    );
+    expect(computeGithubNextInterval({ status: stableStatus, consecutiveErrors: 0 })).toBe(
+      EXPECTED_GITHUB_SLOW_POLL_MS,
+    );
+    expect(computeGithubNextInterval({ status: null, consecutiveErrors: 0 })).toBe(
+      EXPECTED_GITHUB_SLOW_POLL_MS,
+    );
+  });
+
+  it("puts a settled open PR on the budget-scaled tier and leaves terminal states slow", () => {
+    const openStatus = createCurrentPullRequestStatus({ checksStatus: "success" });
+    const mergedStatus = createCurrentPullRequestStatus({
+      state: "merged",
+      isMerged: true,
+      checksStatus: "success",
+    });
+
+    expect(
+      computeGithubNextInterval({
+        status: openStatus,
+        consecutiveErrors: 0,
+        openSettledIntervalMs: EXPECTED_GITHUB_OPEN_SETTLED_MIN_POLL_MS,
+      }),
+    ).toBe(EXPECTED_GITHUB_OPEN_SETTLED_MIN_POLL_MS);
+    // A tier interval never runs slower than the slow tier it sits above.
+    expect(
+      computeGithubNextInterval({
+        status: openStatus,
+        consecutiveErrors: 0,
+        openSettledIntervalMs: 600_000,
+      }),
+    ).toBe(EXPECTED_GITHUB_SLOW_POLL_MS);
+    // Merged is terminal, and a target with no PR has nothing to watch.
+    expect(
+      computeGithubNextInterval({
+        status: mergedStatus,
+        consecutiveErrors: 0,
+        openSettledIntervalMs: EXPECTED_GITHUB_OPEN_SETTLED_MIN_POLL_MS,
+      }),
+    ).toBe(EXPECTED_GITHUB_SLOW_POLL_MS);
+    expect(
+      computeGithubNextInterval({
+        status: null,
+        consecutiveErrors: 0,
+        openSettledIntervalMs: EXPECTED_GITHUB_OPEN_SETTLED_MIN_POLL_MS,
+      }),
+    ).toBe(EXPECTED_GITHUB_SLOW_POLL_MS);
   });
 
   it("keeps an open PR with no checks on the fast cadence only inside the awaiting-checks window", () => {
@@ -774,20 +837,50 @@ describe("ForgeService", () => {
       checks: [],
     });
 
-    expect(computeGithubNextInterval(awaitingStatus, 0, true)).toBe(EXPECTED_GITHUB_FAST_POLL_MS);
-    expect(computeGithubNextInterval(awaitingStatus, 0, false)).toBe(EXPECTED_GITHUB_SLOW_POLL_MS);
+    expect(
+      computeGithubNextInterval({
+        status: awaitingStatus,
+        consecutiveErrors: 0,
+        withinAwaitingChecksWindow: true,
+      }),
+    ).toBe(EXPECTED_GITHUB_FAST_POLL_MS);
+    expect(
+      computeGithubNextInterval({
+        status: awaitingStatus,
+        consecutiveErrors: 0,
+        withinAwaitingChecksWindow: false,
+      }),
+    ).toBe(EXPECTED_GITHUB_SLOW_POLL_MS);
     // A closed or merged PR will never grow checks, so the window must not apply.
-    expect(computeGithubNextInterval(mergedStatus, 0, true)).toBe(EXPECTED_GITHUB_SLOW_POLL_MS);
-    expect(computeGithubNextInterval(null, 0, true)).toBe(EXPECTED_GITHUB_SLOW_POLL_MS);
+    expect(
+      computeGithubNextInterval({
+        status: mergedStatus,
+        consecutiveErrors: 0,
+        withinAwaitingChecksWindow: true,
+      }),
+    ).toBe(EXPECTED_GITHUB_SLOW_POLL_MS);
+    expect(
+      computeGithubNextInterval({
+        status: null,
+        consecutiveErrors: 0,
+        withinAwaitingChecksWindow: true,
+      }),
+    ).toBe(EXPECTED_GITHUB_SLOW_POLL_MS);
   });
 
   it("computes exponential error backoff up to the cap", () => {
     const stableStatus = createCurrentPullRequestStatus({ checksStatus: "success" });
 
-    expect(computeGithubNextInterval(stableStatus, 1)).toBe(EXPECTED_GITHUB_SLOW_POLL_MS);
-    expect(computeGithubNextInterval(stableStatus, 2)).toBe(240_000);
-    expect(computeGithubNextInterval(stableStatus, 3)).toBe(EXPECTED_GITHUB_ERROR_BACKOFF_CAP_MS);
-    expect(computeGithubNextInterval(stableStatus, 4)).toBe(EXPECTED_GITHUB_ERROR_BACKOFF_CAP_MS);
+    expect(computeGithubNextInterval({ status: stableStatus, consecutiveErrors: 1 })).toBe(
+      EXPECTED_GITHUB_SLOW_POLL_MS,
+    );
+    expect(computeGithubNextInterval({ status: stableStatus, consecutiveErrors: 2 })).toBe(240_000);
+    expect(computeGithubNextInterval({ status: stableStatus, consecutiveErrors: 3 })).toBe(
+      EXPECTED_GITHUB_ERROR_BACKOFF_CAP_MS,
+    );
+    expect(computeGithubNextInterval({ status: stableStatus, consecutiveErrors: 4 })).toBe(
+      EXPECTED_GITHUB_ERROR_BACKOFF_CAP_MS,
+    );
   });
 
   it("loads pull request checkout target details through GraphQL", async () => {
@@ -997,8 +1090,11 @@ describe("ForgeService", () => {
     await vi.advanceTimersByTimeAsync(EXPECTED_GITHUB_FAST_POLL_MS);
     now += EXPECTED_GITHUB_FAST_POLL_MS * 2;
     await vi.advanceTimersByTimeAsync(EXPECTED_GITHUB_FAST_POLL_MS * 2);
-    now += EXPECTED_GITHUB_SLOW_POLL_MS;
-    await vi.advanceTimersByTimeAsync(EXPECTED_GITHUB_SLOW_POLL_MS);
+    await flushMicrotasks();
+    // Recovery leaves a settled open PR, which polls on its own tier rather than the slow one.
+    now += EXPECTED_GITHUB_OPEN_SETTLED_MIN_POLL_MS;
+    await vi.advanceTimersByTimeAsync(EXPECTED_GITHUB_OPEN_SETTLED_MIN_POLL_MS);
+    await flushMicrotasks();
 
     expect(currentPullRequestStatusCalls(runner.calls)).toHaveLength(5);
     expect(reads.map((read) => read.reason)).toEqual([
@@ -1175,6 +1271,157 @@ describe("ForgeService", () => {
 
     subscriptionA?.unsubscribe();
     subscriptionB?.unsubscribe();
+    service.dispose?.();
+  });
+
+  it("runs the checks round for a settled open PR only once per checks interval", async () => {
+    let now = 0;
+    const openPrNode = () =>
+      batchPollPrNodeJson({
+        number: 41,
+        url: "https://github.com/acme/widgets/pull/41",
+        state: "OPEN",
+        headRefName: "feat-a",
+        headRefOid: "oid-a",
+        mergedAt: null,
+      });
+    const passingChecks = () =>
+      batchPollStatusJson({
+        t0: batchPollChecksAliasJson([
+          { __typename: "StatusContext", context: "ci", state: "SUCCESS" },
+        ]),
+      });
+    const statusRound = () => batchPollStatusJson({ t0: batchPollRepositoryJson([openPrNode()]) });
+    const runner = createScriptedRunner([
+      statusRound(),
+      passingChecks(),
+      statusRound(),
+      statusRound(),
+      statusRound(),
+      statusRound(),
+      passingChecks(),
+    ]);
+    const service = createGitHubService({
+      ttlMs: 0,
+      runner: runner.runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+      resolveRepoHost: async () => null,
+      resolveRepoSlug: async () => "acme/widgets",
+      now: () => now,
+    });
+
+    const subscription = service.retainCurrentPullRequestStatusPoll?.({
+      cwd: "/ws-a",
+      headRef: "feat-a",
+      headSha: "oid-a",
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    await flushMicrotasks();
+
+    expect(runner.calls.map(batchQueryKind)).toEqual(["status", "checks"]);
+
+    // A settled open PR polls on its own tier and reuses the rollup, so each tick inside the
+    // checks interval costs one round instead of two.
+    for (const at of [30_000, 60_000, 90_000]) {
+      const delta = at - now;
+      now = at;
+      await vi.advanceTimersByTimeAsync(delta);
+      await flushMicrotasks();
+    }
+
+    expect(runner.calls.map(batchQueryKind)).toEqual([
+      "status",
+      "checks",
+      "status",
+      "status",
+      "status",
+    ]);
+
+    // The checks interval has expired, so the checks round runs again.
+    now = 120_000;
+    await vi.advanceTimersByTimeAsync(30_000);
+    await flushMicrotasks();
+
+    expect(runner.calls.map(batchQueryKind)).toEqual([
+      "status",
+      "checks",
+      "status",
+      "status",
+      "status",
+      "status",
+      "checks",
+    ]);
+
+    subscription?.unsubscribe();
+    service.dispose?.();
+  });
+
+  it("stretches the settled-open cadence to fit the tick cost a host measured", async () => {
+    let now = 0;
+    const openPrNode = () =>
+      batchPollPrNodeJson({
+        number: 41,
+        url: "https://github.com/acme/widgets/pull/41",
+        state: "OPEN",
+        headRefName: "feat-a",
+        headRefOid: "oid-a",
+        mergedAt: null,
+      });
+    // 10 points a tick against the 750/hour tier budget buys a tick every 48s, which the
+    // 5s poll grid rounds up to 50s.
+    const runner = createScriptedRunner([
+      batchPollStatusWithRateLimitJson({
+        aliases: { t0: batchPollRepositoryJson([openPrNode()]) },
+        limit: 5_000,
+        remaining: 5_000,
+        resetAt: "2026-09-11T15:00:00Z",
+        cost: 8,
+      }),
+      batchPollStatusWithRateLimitJson({
+        aliases: {
+          t0: batchPollChecksAliasJson([
+            { __typename: "StatusContext", context: "ci", state: "SUCCESS" },
+          ]),
+        },
+        limit: 5_000,
+        remaining: 5_000,
+        resetAt: "2026-09-11T15:00:00Z",
+        cost: 2,
+      }),
+      batchPollStatusJson({ t0: batchPollRepositoryJson([openPrNode()]) }),
+    ]);
+    const service = createGitHubService({
+      ttlMs: 0,
+      runner: runner.runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+      resolveRepoHost: async () => null,
+      resolveRepoSlug: async () => "acme/widgets",
+      now: () => now,
+    });
+
+    const subscription = service.retainCurrentPullRequestStatusPoll?.({
+      cwd: "/ws-a",
+      headRef: "feat-a",
+      headSha: "oid-a",
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    await flushMicrotasks();
+
+    expect(runner.calls).toHaveLength(2);
+
+    now = 45_000;
+    await vi.advanceTimersByTimeAsync(45_000);
+    await flushMicrotasks();
+
+    expect(runner.calls).toHaveLength(2);
+
+    now = 50_000;
+    await vi.advanceTimersByTimeAsync(5_000);
+    await flushMicrotasks();
+
+    expect(runner.calls.map(batchQueryKind)).toEqual(["status", "checks", "status"]);
+
+    subscription?.unsubscribe();
     service.dispose?.();
   });
 

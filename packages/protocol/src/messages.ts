@@ -257,6 +257,7 @@ export const MutableDaemonConfigSchema = z
     autoArchiveAfterMerge: z.boolean().default(false),
     preventSleepWhileAgentsRun: z.boolean().default(true),
     enableTerminalAgentHooks: z.boolean().default(false),
+    responseControl: z.boolean().optional(),
     appendSystemPrompt: z.string().default(""),
     terminalProfiles: z.array(TerminalProfileSchema).optional(),
     agentProfiles: z.array(AgentProfileSchema).optional(),
@@ -279,6 +280,7 @@ export const MutableDaemonConfigPatchSchema = z
     autoArchiveAfterMerge: z.boolean().optional(),
     preventSleepWhileAgentsRun: z.boolean().optional(),
     enableTerminalAgentHooks: z.boolean().optional(),
+    responseControl: z.boolean().optional(),
     appendSystemPrompt: z.string().optional(),
     terminalProfiles: z.array(TerminalProfileSchema).optional(),
     agentProfiles: z.array(AgentProfileSchema).optional(),
@@ -864,6 +866,15 @@ const AgentActiveTurnPayloadSchema = z.object({
   startedAt: z.string().nullable(),
 });
 
+export const AgentResponseMetadataSchema = z.object({
+  namingMode: z.enum(["automatic", "manual"]),
+  automaticTitle: z.string().optional(),
+  automaticIcon: z.string().optional(),
+  icon: z.string().optional(),
+  lastTurn: z.object({ turnId: z.string(), message: z.string().optional() }).optional(),
+});
+export type AgentResponseMetadata = z.infer<typeof AgentResponseMetadataSchema>;
+
 export const AgentSnapshotPayloadSchema = z.object({
   id: z.string(),
   provider: AgentProviderSchema,
@@ -887,6 +898,8 @@ export const AgentSnapshotPayloadSchema = z.object({
   lastUsage: AgentUsageSchema.optional(),
   lastError: z.string().optional(),
   title: z.string().nullable(),
+  icon: z.string().optional(),
+  responseMetadata: AgentResponseMetadataSchema.optional(),
   labels: z.record(z.string(), z.string()).default({}),
   requiresAttention: z.boolean().optional(),
   attentionReason: z.enum(["finished", "error", "permission"]).nullable().optional(),
@@ -901,6 +914,8 @@ export const AgentListItemPayloadSchema = z.object({
   id: z.string(),
   shortId: z.string(),
   title: z.string().nullable(),
+  icon: z.string().optional(),
+  responseMetadata: AgentResponseMetadataSchema.optional(),
   provider: AgentProviderSchema,
   model: z.string().nullable(),
   thinkingOptionId: z.string().nullable().optional(),
@@ -1069,6 +1084,7 @@ export const CloseItemsRequestMessageSchema = z.object({
 
 export const UpdateAgentRequestMessageSchema = z.object({
   type: z.literal("update_agent_request"),
+  namingMode: z.enum(["automatic", "manual"]).optional(),
   agentId: z.string(),
   name: z.string().optional(),
   labels: z.record(z.string(), z.string()).optional(),
@@ -2907,6 +2923,10 @@ export const ClientHeartbeatMessageSchema = z.object({
   lastActivityAt: z.string(),
   appVisible: z.boolean(),
   appVisibilityChangedAt: z.string().optional(),
+  // Visible but unfocused is a real state on desktop: switching Electron windows never changes
+  // `document.visibilityState`, so `appVisible` stays true while the user is in the browser
+  // merging a PR. Absent from an older client — read it as `appVisible`.
+  appFocused: z.boolean().optional(),
 });
 
 export const PingMessageSchema = z.object({
@@ -3582,6 +3602,7 @@ export const ServerInfoStatusPayloadSchema = z
         packageJsonScripts: z.boolean().optional(),
         // COMPAT(sleepPrevention): added in v0.8.0, remove gate after 2027-09-11.
         sleepPrevention: z.boolean().optional(),
+        responseControl: z.boolean().optional(),
         // COMPAT(checkoutBaseRefSet): added in v0.8.0, remove gate after 2027-03-10.
         checkoutBaseRefSet: z.boolean().optional(),
         // COMPAT(checkoutForgeSetAutoMerge): added in v0.2.0-beta.1. Remove the

@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import { AppState } from "react-native";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { getIsElectron, isWeb, isNative } from "@/constants/platform";
+import { getIsAppActivelyVisible } from "@/utils/app-visibility";
 import { readDesktopSystemIdleTimeMs } from "@/desktop/electron/idle";
 import { invokeDesktopCommand } from "@/desktop/electron/invoke";
 import {
@@ -41,6 +42,7 @@ export function useClientActivity({
       initialFocusedAgentId: focusedAgentId,
       initialFocusedTerminalId: focusedTerminalId,
       initialAppVisible: AppState.currentState === "active",
+      initialAppFocused: getIsAppActivelyVisible(),
       now: () => Date.now(),
       onAppResumed: (awayMs) => onAppResumedRef.current?.(awayMs),
     });
@@ -50,7 +52,11 @@ export function useClientActivity({
   // Track app visibility via AppState (native).
   useEffect(() => {
     const subscription = AppState.addEventListener("change", (nextState) => {
-      tracker.notifyAppVisibility(nextState === "active");
+      const active = nextState === "active";
+      tracker.notifyAppVisibility(active);
+      // Native has no window focus of its own, so foreground is focus. On web the focus
+      // listeners below immediately correct this if the tab came back unfocused.
+      tracker.notifyAppFocus(active);
       tracker.sendHeartbeat();
     });
     return () => subscription.remove();
@@ -69,13 +75,33 @@ export function useClientActivity({
     const handleVisibilityChange = () => {
       const visible = document.visibilityState === "visible";
       const { changed } = tracker.notifyAppVisibility(visible);
-      if (changed && visible) {
+      const focusChanged = tracker.notifyAppFocus(getIsAppActivelyVisible()).changed;
+      if ((changed || focusChanged) && visible) {
         tracker.maybeSendImmediateHeartbeat();
       }
     };
 
+    // Regaining window focus is what the daemon acts on to refresh forge state: the user was
+    // in a browser merging a PR and has just come back. On desktop this is the only signal —
+    // switching Electron windows never fires `visibilitychange`.
+    const handleWindowFocus = () => {
+      tracker.recordUserActivity();
+      if (tracker.notifyAppFocus(true).changed) {
+        tracker.sendHeartbeat();
+        return;
+      }
+      tracker.maybeSendImmediateHeartbeat();
+    };
+
+    const handleWindowBlur = () => {
+      if (tracker.notifyAppFocus(false).changed) {
+        tracker.sendHeartbeat();
+      }
+    };
+
     document.addEventListener("visibilitychange", handleVisibilityChange);
-    window.addEventListener("focus", handleUserActivity);
+    window.addEventListener("focus", handleWindowFocus);
+    window.addEventListener("blur", handleWindowBlur);
     window.addEventListener("pointerdown", handleUserActivity, { passive: true });
     window.addEventListener("keydown", handleUserActivity);
     window.addEventListener("wheel", handleUserActivity, { passive: true });
@@ -83,7 +109,8 @@ export function useClientActivity({
 
     return () => {
       document.removeEventListener("visibilitychange", handleVisibilityChange);
-      window.removeEventListener("focus", handleUserActivity);
+      window.removeEventListener("focus", handleWindowFocus);
+      window.removeEventListener("blur", handleWindowBlur);
       window.removeEventListener("pointerdown", handleUserActivity);
       window.removeEventListener("keydown", handleUserActivity);
       window.removeEventListener("wheel", handleUserActivity);

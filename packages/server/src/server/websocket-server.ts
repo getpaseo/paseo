@@ -261,6 +261,7 @@ function createFallbackWorkspaceGitService(): WorkspaceGitService {
     scheduleRefreshForCwd: () => {},
     onWorkspaceStateMayHaveChanged: () => {},
     invalidateForge: () => {},
+    pollForgeStatusesNow: () => {},
     getMetrics: () => ({
       workspaceTargetCount: 0,
       workspaceListenerCount: 0,
@@ -1705,6 +1706,7 @@ export class VoiceAssistantWebSocketServer {
         packageJsonScripts: true,
         // COMPAT(sleepPrevention): added in v0.8.0, remove gate after 2027-09-11.
         sleepPrevention: true,
+        responseControl: true,
         // COMPAT(rewind): added in v0.1.X, drop the gate when floor >= v0.1.X.
         rewind: true,
         // COMPAT(agentTimelinePromptIndex): added in v0.2.X, drop the gate when floor >= v0.2.X.
@@ -2590,7 +2592,10 @@ export class VoiceAssistantWebSocketServer {
       serverId: this.serverId,
       workspaceId: agent.workspaceId,
       agentId: params.agentId,
-      assistantMessage,
+      assistantMessage:
+        params.reason === "finished"
+          ? (agent.responseMetadata?.lastTurn?.message ?? assistantMessage)
+          : assistantMessage,
       permissionRequest: findLatestPermissionRequest(agent.pendingPermissions),
     });
 
