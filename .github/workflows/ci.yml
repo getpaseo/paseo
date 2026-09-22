@@ -133,14 +133,10 @@ jobs:
           npm pack --dry-run --ignore-scripts --workspace=@getpaseo/server
 
   server-tests-ubuntu:
-    name: server-tests (ubuntu-latest, ${{ matrix.opencode }})
+    name: server-tests (ubuntu-latest)
     needs: changes
     if: ${{ !cancelled() && (needs.changes.outputs.full != 'false' || needs.changes.outputs.server != 'false' || needs.changes.outputs.hub != 'false') }}
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        opencode: ["opencode-ai@1.14.46", "@opencode/cli@2.0.10"]
     steps: &server_test_steps
       - uses: actions/checkout@v4
         with:
@@ -160,7 +156,7 @@ jobs:
 
       - name: Install agent CLIs for provider tests
         if: ${{ needs.changes.outputs.full != 'false' || needs.changes.outputs.server != 'false' }}
-        run: node scripts/npm-retry.mjs install -g @anthropic-ai/claude-code ${{ matrix.opencode }}
+        run: node scripts/npm-retry.mjs install -g @anthropic-ai/claude-code opencode-ai@1.14.46
 
       - name: Build server dependencies
         run: npm run build:server-deps
@@ -173,19 +169,29 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
 
+      - name: Switch to OpenCode v2
+        if: ${{ needs.changes.outputs.full != 'false' || needs.changes.outputs.server != 'false' }}
+        run: |
+          npm uninstall -g opencode-ai
+          node scripts/npm-retry.mjs install -g @opencode/cli@2.0.10
+
+      - name: Run server integration tests with OpenCode v2
+        if: ${{ needs.changes.outputs.full != 'false' || needs.changes.outputs.server != 'false' }}
+        run: npm run test:integration --workspace=@getpaseo/server
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+
       - name: Run Hub CLI/daemon contract
         if: ${{ needs.changes.outputs.full == 'false' && needs.changes.outputs.server == 'false' && needs.changes.outputs.hub != 'false' }}
         run: npm run test:hub-cli-contract --workspace=@getpaseo/server
 
   server-tests-windows:
-    name: server-tests (windows-latest, ${{ matrix.opencode }})
+    name: server-tests (windows-latest)
     needs: changes
     if: ${{ !cancelled() && (needs.changes.outputs.full != 'false' || needs.changes.outputs.server != 'false' || needs.changes.outputs.hub != 'false') }}
     runs-on: windows-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        opencode: ["opencode-ai@1.14.46", "@opencode/cli@2.0.10"]
     steps: *server_test_steps
 
   # native-recursive.ts serves darwin and win32, but windows-latest above is the only
