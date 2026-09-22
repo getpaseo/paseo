@@ -2,13 +2,14 @@ import type { TranslationResources } from "./en";
 
 export const it: TranslationResources = {
   paneFind: {
-    searchFailed:
+    connectionFailure:
       "Impossibile cercare in questa chat. Controlla la connessione all'host e riprova.",
+    historyChangedFailure: "La chat è cambiata durante la ricerca. Esegui di nuovo la ricerca.",
+    revealFailure: "Impossibile mostrare questa corrispondenza. Riprova.",
     searching: "Ricerca in corso…",
     loading: "Caricamento…",
     failed: "Operazione non riuscita",
     retry: "Riprova",
-    chatPosition: "{{current}} di {{total}} nel messaggio",
     title: "Trova",
     placeholder: "Trova nel pannello",
     close: "Chiudi ricerca",
