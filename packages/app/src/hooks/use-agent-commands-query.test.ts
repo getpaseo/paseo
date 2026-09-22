@@ -3,6 +3,7 @@ import {
   type AgentCommandsClient,
   type DraftCommandConfig,
   fetchAgentCommands,
+  resolveCommandsStaleTime,
 } from "./use-agent-commands-query";
 
 type ListCommands = AgentCommandsClient["listCommands"];
@@ -63,5 +64,53 @@ describe("fetchAgentCommands", () => {
     await fetchAgentCommands({ client, agentId: "agent-1" });
 
     expect(client.calls).toEqual([{ agentId: "agent-1", draftConfig: undefined }]);
+  });
+});
+
+describe("draft command failures", () => {
+  it("surfaces a daemon error for a draft composer instead of an empty command list", async () => {
+    const client = createClient({
+      requestId: "req_commands",
+      agentId: "",
+      error: "Provider 'codex' has no models available, so its commands cannot be listed.",
+      commands: [],
+    });
+
+    await expect(
+      fetchAgentCommands({
+        client,
+        agentId: "",
+        draftConfig: { provider: "codex", cwd: "/repo" },
+      }),
+    ).rejects.toThrow("has no models available");
+  });
+
+  it("keeps a running agent usable when the provider cannot list commands", async () => {
+    const client = createClient({
+      requestId: "req_commands",
+      agentId: "agent-1",
+      error: "Agent does not support listing commands",
+      commands: [],
+    });
+
+    await expect(fetchAgentCommands({ client, agentId: "agent-1" })).resolves.toEqual([]);
+  });
+});
+
+describe("resolveCommandsStaleTime", () => {
+  it("keeps a loaded draft command list indefinitely", () => {
+    expect(
+      resolveCommandsStaleTime({
+        isDraft: true,
+        commands: [{ name: "review", description: "", argumentHint: "" }],
+      }),
+    ).toBe(Number.POSITIVE_INFINITY);
+  });
+
+  it("lets an empty draft command list go stale so it is retried", () => {
+    const staleTime = resolveCommandsStaleTime({ isDraft: true, commands: [] });
+
+    expect(staleTime).toBeLessThan(Number.POSITIVE_INFINITY);
+    expect(staleTime).toBeGreaterThan(0);
   });
 });
