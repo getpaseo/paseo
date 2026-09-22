@@ -786,7 +786,7 @@ describe("ClaudeAgentSession features", () => {
   });
 
   test("passes extra Claude Code CLI arguments to the SDK", async () => {
-    const { queryFactory } = createQueryMock();
+    const { queryFactory, launches } = createQueryMock();
     const client = new ClaudeAgentClient({
       logger,
       queryFactory,
@@ -800,13 +800,11 @@ describe("ClaudeAgentSession features", () => {
       },
     });
 
-    await (
-      session as unknown as {
-        ensureQuery(): Promise<unknown>;
-      }
-    ).ensureQuery();
+    await expect(session.startTurn("hello")).resolves.toEqual({
+      turnId: expect.stringMatching(/^foreground-turn-/),
+    });
 
-    expect(queryFactory.mock.calls[0]?.[0].options.extraArgs).toEqual({ chrome: null });
+    expect(launches[0]?.options.extraArgs).toEqual({ chrome: null });
     await session.close();
   });
 
