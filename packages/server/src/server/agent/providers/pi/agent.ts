@@ -599,7 +599,7 @@ function createPiMcpConfigFile(
   };
 }
 
-function createPiPaseoExtensionFile(systemPrompt?: string): PiTempFile {
+export function createPiPaseoExtensionFile(systemPrompt?: string): PiTempFile {
   const dir = mkdtempSync(join(tmpdir(), "paseo-pi-extension-"));
   const filePath = join(dir, "paseo-integration.mjs");
   writeFileSync(
@@ -622,9 +622,14 @@ function createPiPaseoExtensionFile(systemPrompt?: string): PiTempFile {
 	    .join("\\n\\n");
 	}
 
-	function getCapturedUserEntries(ctx) {
-	  return ctx.sessionManager
-	    .getEntries()
+	export function getCapturedUserEntries(ctx) {
+	  const manager = ctx.sessionManager;
+	  // File order includes abandoned branches. Context order matches getMessages().
+	  if (!manager || typeof manager.buildContextEntries !== "function") {
+	    return [];
+	  }
+	  return manager
+	    .buildContextEntries()
 	    .filter((entry) => entry.type === "message" && entry.message?.role === "user")
 	    .map(toCapturedUserEntry);
 	}

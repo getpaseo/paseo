@@ -56,6 +56,7 @@ export class PiHistoryMapper {
   private readonly pendingToolCalls = new Map<string, PiTrackedToolCall>();
   private userIndex = 0;
   private assistantIndex = 0;
+  private entryIdsAligned = true;
 
   constructor(
     private readonly provider: string,
@@ -99,7 +100,14 @@ export class PiHistoryMapper {
     if (!text) {
       return [];
     }
-    const userEntry = this.userEntries[this.userIndex - 1];
+    const userEntry = this.entryIdsAligned ? this.userEntries[this.userIndex - 1] : undefined;
+    if (userEntry && userEntry.text !== text) {
+      // A shifted capture list must not lend its later ids to later prompts,
+      // including prompts whose text happens to match the shifted entry.
+      this.entryIdsAligned = false;
+    }
+    const messageId =
+      this.entryIdsAligned && userEntry && userEntry.text === text ? userEntry.id : undefined;
     return [
       {
         type: "timeline",
@@ -107,7 +115,7 @@ export class PiHistoryMapper {
         item: {
           type: "user_message",
           text,
-          ...(userEntry ? { messageId: userEntry.id } : {}),
+          ...(messageId ? { messageId } : {}),
         },
       },
     ];

@@ -183,4 +183,22 @@ describe("Pi history mapper", () => {
       },
     ]);
   });
+
+  test("drops entry ids once a captured entry does not match the context prompt", async () => {
+    const events = await collectHistory(
+      [
+        { role: "user", content: "已经完成，开始汇总处理" },
+        { role: "user", content: "可以" },
+      ],
+      [
+        { id: "6f81a132", text: "可以" },
+        { id: "also-yes", text: "可以" },
+      ],
+    );
+
+    expect(events.map((event) => (event.type === "timeline" ? event.item : null))).toEqual([
+      { type: "user_message", text: "已经完成，开始汇总处理" },
+      { type: "user_message", text: "可以" },
+    ]);
+  });
 });
