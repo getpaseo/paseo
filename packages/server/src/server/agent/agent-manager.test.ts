@@ -2573,9 +2573,19 @@ test("a hung interrupt does not wedge the agent against later prompts", async ()
 
     // Regression: this used to throw AgentRunCancellationError forever, leaving the agent
     // unusable until the provider process was killed or the daemon restarted.
-    await expect(
-      fixture.manager.replaceAgentRun(fixture.agentId, "replacement prompt"),
-    ).resolves.not.toThrow();
+    const replacement = await fixture.manager.replaceAgentRun(
+      fixture.agentId,
+      "replacement prompt",
+    );
+    const replacementDrain = (async () => {
+      for await (const _event of replacement) {
+        // Drain so the replacement turn actually starts.
+      }
+    })();
+
+    await fixture.manager.waitForAgentRunStart(fixture.agentId);
+    expect(fixture.manager.getAgent(fixture.agentId)?.lifecycle).toBe("running");
+    void replacementDrain;
   } finally {
     await fixture.cleanup();
   }

@@ -399,6 +399,8 @@ interface ManagedAgentBase {
   >;
   inFlightPermissionResponses: Set<string>;
   pendingReplacement: boolean;
+  /** Set when a cancel escalated without the provider acknowledging it released the turn. */
+  sessionMayOwnStaleTurn?: boolean;
   persistence: AgentPersistenceHandle | null;
   historyPrimed: boolean;
   lastUserMessageAt: Date | null;
@@ -1868,6 +1870,7 @@ export class AgentManager {
         bufferedPermissionResolutions: new Map(),
         inFlightPermissionResponses: new Set(),
         pendingReplacement: false,
+        sessionMayOwnStaleTurn: false,
         activeForegroundTurnId: null,
         activeTurnId: null,
         activeTurnStartedAt: null,
@@ -2656,6 +2659,7 @@ export class AgentManager {
 
     try {
       await this.cancelAgentRunBefore(agentId, "replace");
+      await this.rebuildSessionIfStale(agentId);
       return this.streamAgent(agentId, prompt, options);
     } catch (error) {
       const latest = this.agents.get(agentId);
@@ -3008,6 +3012,12 @@ export class AgentManager {
       return { status: settlement === "completed" ? "settled" : "refused" };
     }
 
+    // An escalated timeout ends the run locally but never proved the provider let go, so the
+    // session must not carry another turn until it has been rebuilt.
+    if (interruptOutcome === "timed_out" && settlement !== "completed") {
+      agent.sessionMayOwnStaleTurn = true;
+    }
+
     const runTurnId = this.runs.getTurnId(agentId);
     if (settlement === "timed_out" && runTurnId) {
       this.logger.warn(
@@ -3050,6 +3060,21 @@ export class AgentManager {
       this.emitState(agent);
     }
     return { status: "settled" };
+  }
+
+  /** Replace a session that escalated a cancel without the provider acknowledging the release. */
+  private async rebuildSessionIfStale(agentId: string): Promise<void> {
+    const agent = this.agents.get(agentId);
+    if (!agent?.sessionMayOwnStaleTurn) {
+      return;
+    }
+    agent.sessionMayOwnStaleTurn = false;
+    const pendingReplacement = agent.pendingReplacement;
+    await this.reloadAgentSession(agentId);
+    const reloaded = this.agents.get(agentId);
+    if (reloaded) {
+      reloaded.pendingReplacement = pendingReplacement;
+    }
   }
 
   private async cancelAgentRunBefore(
