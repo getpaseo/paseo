@@ -1,6 +1,7 @@
 import { DiffStatSchema } from "@getpaseo/protocol/diff-stat";
 import { z } from "zod";
 import {
+  AgentResponseMetadataSchema,
   AgentStatusSchema,
   AgentTimelineItemPayloadSchema,
   WorkspaceGitHubRuntimePayloadSchema,
@@ -247,6 +248,8 @@ const StoredAgentSnapshotSchema = z.strictObject({
   persistence: z.null(),
   lastError: z.string().optional(),
   title: z.string().nullable(),
+  icon: z.string().optional(),
+  responseMetadata: AgentResponseMetadataSchema.optional(),
   labels: z.record(z.string(), z.string()),
   requiresAttention: z.boolean().optional(),
   attentionReason: z.enum(["finished", "error", "permission"]).nullable().optional(),
@@ -597,7 +600,7 @@ function serializeAgentTurn(agent: Agent): NonNullable<StoredAgent["turn"]> {
 }
 
 function serializeAgent(agent: Agent): StoredAgent {
-  const snapshot = {
+  const snapshot: StoredAgent["snapshot"] = {
     id: agent.id,
     provider: agent.provider,
     cwd: agent.cwd,
