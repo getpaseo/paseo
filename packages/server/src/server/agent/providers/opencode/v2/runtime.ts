@@ -36,6 +36,13 @@ export interface V2RuntimeOptions {
   decorateEnv?: (env: Record<string, string>) => Record<string, string>;
 }
 
+export interface V2RuntimeAcquireOptions {
+  fresh?: boolean;
+  dedicated?: boolean;
+  env?: Record<string, string>;
+  signal?: AbortSignal;
+}
+
 // The runtime owns a credential for each subprocess; sessions only receive its authenticated client.
 export class V2Runtime {
   private current: Promise<Generation> | null = null;
@@ -45,14 +52,7 @@ export class V2Runtime {
 
   constructor(private readonly options: V2RuntimeOptions) {}
 
-  async acquire(
-    input: {
-      fresh?: boolean;
-      dedicated?: boolean;
-      env?: Record<string, string>;
-      signal?: AbortSignal;
-    } = {},
-  ): Promise<V2Connection> {
+  async acquire(input: V2RuntimeAcquireOptions = {}): Promise<V2Connection> {
     if (this.closed) throw new Error("OpenCode runtime is closed");
     input.signal?.throwIfAborted();
     let pending: Promise<Generation>;

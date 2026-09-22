@@ -43,6 +43,10 @@ export function openCodeMajorVersion(output: string): 1 | 2 {
   );
 }
 
+export type OpenCodeRuntimeClientOptions = NonNullable<
+  ConstructorParameters<typeof OpenCodeAgentClient>[2]
+>;
+
 // Selection belongs to the configured client, which provider reload replaces.
 export class OpenCodeRuntimeClient implements AgentClient {
   readonly provider = "opencode";
@@ -54,9 +58,7 @@ export class OpenCodeRuntimeClient implements AgentClient {
   constructor(
     private readonly logger: Logger,
     private readonly settings?: ProviderRuntimeSettings,
-    private readonly options: NonNullable<
-      ConstructorParameters<typeof OpenCodeAgentClient>[2]
-    > = {},
+    private readonly options: OpenCodeRuntimeClientOptions = {},
   ) {
     this.legacy = new OpenCodeAgentClient(logger, settings, options);
     this.capabilities = this.legacy.capabilities;
