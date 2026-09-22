@@ -15,6 +15,7 @@ import {
   type ProviderEvent,
   type ProviderInput,
   type ProviderQuotaSnapshot,
+  ProviderQuotaSnapshotSchema,
 } from "@getpaseo/plugin/server/provider";
 import type { PluginLogEntry } from "@getpaseo/protocol/messages";
 import { compilePlugin } from "./compiler.js";
@@ -523,7 +524,7 @@ export class PluginRuntime {
       requestId: randomUUID(),
       providerId,
     });
-    return output as ProviderQuotaSnapshot;
+    return ProviderQuotaSnapshotSchema.parse(output);
   }
 
   private request(

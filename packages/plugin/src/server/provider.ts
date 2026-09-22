@@ -25,6 +25,60 @@ export interface ProviderQuotaSnapshot {
   error?: string | null;
 }
 
+export const ProviderUsageToneSchema = z.enum(["default", "ok", "warning", "danger"]);
+export const ProviderUsageStatusSchema = z.enum(["available", "unavailable", "error"]);
+
+export const ProviderUsageWindowSchema: z.ZodType<ProviderUsageWindow> = z
+  .object({
+    id: z.string(),
+    label: z.string(),
+    usedPct: z.number().nullable().optional(),
+    remainingPct: z.number().nullable().optional(),
+    resetsAt: z.string().nullable().optional(),
+    runsOutAt: z.string().nullable().optional(),
+    shortfallPct: z.number().nullable().optional(),
+    tone: ProviderUsageToneSchema.optional(),
+  })
+  .strip();
+
+export const ProviderUsageBalanceSchema: z.ZodType<ProviderUsageBalance> = z
+  .object({
+    id: z.string(),
+    label: z.string(),
+    used: z.number().nullable().optional(),
+    remaining: z.number().nullable().optional(),
+    limit: z.number().nullable().optional(),
+    unit: z.enum(["usd", "credits", "requests", "tokens"]),
+    resetsAt: z.string().nullable().optional(),
+    tone: ProviderUsageToneSchema.optional(),
+  })
+  .strip();
+
+export const ProviderUsageDetailSchema: z.ZodType<ProviderUsageDetail> = z
+  .object({
+    id: z.string(),
+    label: z.string(),
+    value: z.string(),
+    tone: ProviderUsageToneSchema.optional(),
+  })
+  .strip();
+
+export const ProviderQuotaSnapshotSchema: z.ZodType<ProviderQuotaSnapshot> = z
+  .object({
+    providerId: z.string().optional(),
+    displayName: z.string().optional(),
+    status: ProviderUsageStatusSchema.optional(),
+    planLabel: z.string().nullable().optional(),
+    sourceLabel: z.string().nullable().optional(),
+    fetchedAt: z.string().nullable().optional(),
+    nextRefreshAt: z.string().nullable().optional(),
+    windows: z.array(ProviderUsageWindowSchema).optional(),
+    balances: z.array(ProviderUsageBalanceSchema).optional(),
+    details: z.array(ProviderUsageDetailSchema).optional(),
+    error: z.string().nullable().optional(),
+  })
+  .strip();
+
 export type {
   ProviderUsageWindow,
   ProviderUsageBalance,

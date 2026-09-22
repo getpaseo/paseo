@@ -112,9 +112,12 @@ export function toIsoStringOrNull(timestampMs: number): string | null {
   return Number.isFinite(date.getTime()) ? date.toISOString() : null;
 }
 
+export const PLUGIN_USAGE_TIMEOUT_MS = 15_000;
+
 export function createPluginUsageFetcher(
   provider: ProviderRegistration,
   logger: Logger,
+  timeoutMs = PLUGIN_USAGE_TIMEOUT_MS,
 ): ProviderUsageFetcher {
   return {
     providerId: provider.id,
@@ -127,7 +130,15 @@ export function createPluginUsageFetcher(
         });
       }
       try {
-        const result = await provider.fetchUsage();
+        let timer: NodeJS.Timeout | undefined;
+        const timeoutPromise = new Promise<never>((_, reject) => {
+          timer = setTimeout(() => {
+            reject(new Error(`Plugin usage fetch timed out after ${timeoutMs}ms`));
+          }, timeoutMs);
+        });
+        const result = await Promise.race([provider.fetchUsage(), timeoutPromise]).finally(() => {
+          if (timer) clearTimeout(timer);
+        });
         return normalizePluginUsage(provider, result);
       } catch (error) {
         logger.debug({ err: error, providerId: provider.id }, "Plugin provider usage fetch failed");
@@ -146,7 +157,7 @@ export function normalizePluginUsage(
   snapshot: ProviderQuotaSnapshot,
 ): ProviderUsage {
   return {
-    providerId: snapshot.providerId || provider.id,
+    providerId: provider.id,
     displayName: snapshot.displayName || provider.label,
     status: snapshot.status ?? (snapshot.error ? "error" : "available"),
     planLabel: snapshot.planLabel ?? null,

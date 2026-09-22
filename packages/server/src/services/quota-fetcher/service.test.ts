@@ -15,6 +15,7 @@ import { KimiQuotaProvider } from "./providers/kimi.js";
 import { MiniMaxQuotaProvider } from "./providers/minimax.js";
 import { ZaiQuotaProvider } from "./providers/zai.js";
 import { ProviderUsageService } from "./service.js";
+import { createPluginUsageFetcher } from "./usage.js";
 
 function writeClaudeCredentials(
   dir: string,
@@ -451,6 +452,151 @@ describe("ProviderUsageService", () => {
         error: "Plugin daemon disconnected",
       },
     ]);
+  });
+
+  it("skips plugin providers with duplicate or collision IDs and prevents ID spoofing", async () => {
+    const service = new ProviderUsageService({
+      logger: createLogger(),
+      fetchers: [
+        usageFetcher({
+          providerId: "codex",
+          displayName: "Codex",
+          status: "available",
+        }),
+      ],
+      getPluginProviders: () => [
+        {
+          // Collides with built-in "codex"
+          id: "codex",
+          label: "Colliding Plugin Codex",
+          connect: async () => {
+            throw new Error("unused");
+          },
+          fetchUsage: async () => ({
+            planLabel: "Malicious Plan",
+          }),
+        },
+        {
+          id: "custom-plugin",
+          label: "Custom Plugin",
+          connect: async () => {
+            throw new Error("unused");
+          },
+          fetchUsage: async () => ({
+            providerId: "spoofed-id-override",
+            displayName: "Overridden Display Name",
+            planLabel: "Valid Plan",
+          }),
+        },
+        {
+          // Collides with earlier plugin "custom-plugin"
+          id: "custom-plugin",
+          label: "Duplicate Custom Plugin",
+          connect: async () => {
+            throw new Error("unused");
+          },
+          fetchUsage: async () => ({
+            planLabel: "Duplicate Plan",
+          }),
+        },
+      ],
+    });
+
+    const result = await service.listUsage();
+    expect(result.providers).toHaveLength(2);
+    expect(result.providers[0].providerId).toBe("codex");
+    expect(result.providers[0].displayName).toBe("Codex");
+
+    // providerId is strictly locked to registered provider.id "custom-plugin", not "spoofed-id-override"
+    expect(result.providers[1].providerId).toBe("custom-plugin");
+    expect(result.providers[1].displayName).toBe("Overridden Display Name");
+    expect(result.providers[1].planLabel).toBe("Valid Plan");
+  });
+
+  it("does not restore stale cache when clearCache is called while a fetch is in flight", async () => {
+    let resolveFirstFetch!: (value: unknown) => void;
+    const firstFetchPromise = new Promise((resolve) => {
+      resolveFirstFetch = resolve;
+    });
+
+    let currentProviders: ProviderRegistration[] = [
+      {
+        id: "plugin-v1",
+        label: "Plugin V1",
+        connect: async () => {
+          throw new Error("unused");
+        },
+        fetchUsage: async () => {
+          await firstFetchPromise;
+          return { planLabel: "V1 Stale Plan" };
+        },
+      },
+    ];
+
+    const service = new ProviderUsageService({
+      logger: createLogger(),
+      fetchers: [],
+      getPluginProviders: () => currentProviders,
+    });
+
+    // Start first fetch (in-flight)
+    const inFlightPromise = service.listUsage();
+
+    // While in-flight, plugin updates and clearCache is invoked
+    currentProviders = [
+      {
+        id: "plugin-v2",
+        label: "Plugin V2",
+        connect: async () => {
+          throw new Error("unused");
+        },
+        fetchUsage: async () => ({ planLabel: "V2 Fresh Plan" }),
+      },
+    ];
+    service.clearCache();
+
+    // Second call starts fresh fetch for V2
+    const secondFetchPromise = service.listUsage();
+    const result2 = await secondFetchPromise;
+    expect(result2.providers).toMatchObject([
+      { providerId: "plugin-v2", planLabel: "V2 Fresh Plan" },
+    ]);
+
+    // Resolve the delayed first fetch
+    resolveFirstFetch(null);
+    await inFlightPromise;
+
+    // Cache should remain V2, not overwritten by delayed V1
+    const cachedResult = await service.listUsage();
+    expect(cachedResult.providers).toMatchObject([
+      { providerId: "plugin-v2", planLabel: "V2 Fresh Plan" },
+    ]);
+  });
+
+  it("times out slow plugin fetchUsage and isolates error", async () => {
+    const fetcher = createPluginUsageFetcher(
+      {
+        id: "slow-plugin",
+        label: "Slow Plugin",
+        connect: async () => {
+          throw new Error("unused");
+        },
+        fetchUsage: async () => {
+          await new Promise((resolve) => setTimeout(resolve, 200));
+          return { planLabel: "Never Arrives" };
+        },
+      },
+      createLogger(),
+      50, // 50ms timeout for test
+    );
+
+    const usage = await fetcher.fetchUsage();
+    expect(usage).toMatchObject({
+      providerId: "slow-plugin",
+      displayName: "Slow Plugin",
+      status: "error",
+      error: "Plugin usage fetch timed out after 50ms",
+    });
   });
 });
 

@@ -8,9 +8,6 @@ import { unavailableUsage, createPluginUsageFetcher } from "./usage.js";
 export interface ProviderUsageServiceOptions {
   logger: Logger;
   fetchers?: ProviderUsageFetcher[];
-  dynamicFetchers?: () =>
-    | readonly ProviderUsageFetcher[]
-    | Promise<readonly ProviderUsageFetcher[]>;
   getPluginProviders?: () => readonly ProviderRegistration[];
   fetch?: ProviderApiFetch;
   cacheTtlMs?: number;
@@ -27,14 +24,12 @@ const DEFAULT_PROVIDER_USAGE_CACHE_TTL_MS = 5 * 60 * 1000;
 export class ProviderUsageService {
   private readonly logger: Logger;
   private readonly fetchers: ProviderUsageFetcher[];
-  private readonly dynamicFetchers?: () =>
-    | readonly ProviderUsageFetcher[]
-    | Promise<readonly ProviderUsageFetcher[]>;
   private readonly getPluginProviders?: () => readonly ProviderRegistration[];
   private readonly cacheTtlMs: number;
   private readonly now: () => number;
   private cached: { fetchedAtMs: number; result: ProviderUsageListResult } | null = null;
   private inFlight: Promise<ProviderUsageListResult> | null = null;
+  private cacheEpoch = 0;
 
   constructor(options: ProviderUsageServiceOptions) {
     this.logger = options.logger.child({ module: "provider-usage-service" });
@@ -44,7 +39,6 @@ export class ProviderUsageService {
         logger: this.logger,
         fetch: options.fetch,
       });
-    this.dynamicFetchers = options.dynamicFetchers;
     this.getPluginProviders = options.getPluginProviders;
     this.cacheTtlMs = options.cacheTtlMs ?? DEFAULT_PROVIDER_USAGE_CACHE_TTL_MS;
     this.now = options.now ?? Date.now;
@@ -52,6 +46,8 @@ export class ProviderUsageService {
 
   clearCache(): void {
     this.cached = null;
+    this.inFlight = null;
+    this.cacheEpoch += 1;
   }
 
   async listUsage(options?: { forceRefresh?: boolean }): Promise<ProviderUsageListResult> {
@@ -68,7 +64,8 @@ export class ProviderUsageService {
       return this.inFlight;
     }
 
-    const request = this.fetchFreshUsage(nowMs);
+    const epoch = this.cacheEpoch;
+    const request = this.fetchFreshUsage(nowMs, epoch);
     this.inFlight = request;
     try {
       return await request;
@@ -79,12 +76,23 @@ export class ProviderUsageService {
     }
   }
 
-  private async fetchFreshUsage(nowMs: number): Promise<ProviderUsageListResult> {
-    const pluginFetchers = (this.getPluginProviders?.() ?? [])
-      .filter((provider) => typeof provider.fetchUsage === "function")
-      .map((provider) => createPluginUsageFetcher(provider, this.logger));
-    const dynamic = this.dynamicFetchers ? await this.dynamicFetchers() : [];
-    const allFetchers = [...this.fetchers, ...pluginFetchers, ...dynamic];
+  private async fetchFreshUsage(nowMs: number, epoch: number): Promise<ProviderUsageListResult> {
+    const seenProviderIds = new Set<string>(this.fetchers.map((fetcher) => fetcher.providerId));
+    const pluginFetchers: ProviderUsageFetcher[] = [];
+    for (const provider of this.getPluginProviders?.() ?? []) {
+      if (typeof provider.fetchUsage !== "function") continue;
+      if (seenProviderIds.has(provider.id)) {
+        this.logger.warn(
+          { providerId: provider.id },
+          "Plugin provider usage fetcher skipped due to duplicate providerId",
+        );
+        continue;
+      }
+      seenProviderIds.add(provider.id);
+      pluginFetchers.push(createPluginUsageFetcher(provider, this.logger));
+    }
+
+    const allFetchers = [...this.fetchers, ...pluginFetchers];
     const settled = await Promise.allSettled(allFetchers.map((fetcher) => fetcher.fetchUsage()));
     const providers = settled.map((result, index) => {
       const fetcher = allFetchers[index];
@@ -103,7 +111,9 @@ export class ProviderUsageService {
     });
 
     const result = { fetchedAt: new Date(nowMs).toISOString(), providers };
-    this.cached = { fetchedAtMs: nowMs, result };
+    if (this.cacheEpoch === epoch) {
+      this.cached = { fetchedAtMs: nowMs, result };
+    }
     return result;
   }
 }

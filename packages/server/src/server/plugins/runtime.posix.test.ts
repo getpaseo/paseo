@@ -581,6 +581,44 @@ export default function contribute(server: PluginServerContext) {
     }
   });
 
+  it("rejects malformed provider quota usage through the real plugin subprocess boundary", async () => {
+    const directory = await createPlugin(
+      "provider-malformed-usage",
+      `import type { PluginServerContext } from "@getpaseo/plugin/server";
+
+export default function contribute(server: PluginServerContext) {
+  server.registerProvider({
+    id: "malformed-usage-example",
+    label: "Malformed Usage Example",
+    fetchUsage: async () => ({
+      planLabel: "Pro Plan",
+      windows: [
+        { id: "rolling_5h", label: "5 Hours", usedPct: "invalid-number" },
+      ],
+    }),
+    connect: async () => ({
+      version: 1,
+      capabilities: [],
+      send: async () => {},
+      onEvent: () => () => {},
+      close: async () => {},
+    }),
+  });
+  return () => undefined;
+}
+`,
+    );
+    const runtime = createTestRuntime();
+    try {
+      await runtime.startPlugin("provider-malformed-usage", directory);
+      await expect(
+        runtime.fetchProviderUsage("provider-malformed-usage", "malformed-usage-example"),
+      ).rejects.toThrow();
+    } finally {
+      await runtime.stopAll();
+    }
+  });
+
   it("adapts an ACP command and example transformer through the AgentClient path", async () => {
     const transformerPath = fileURLToPath(
       new URL(

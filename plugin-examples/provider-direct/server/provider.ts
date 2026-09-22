@@ -38,6 +38,29 @@ export function createDirectExampleProvider(): ProviderRegistration {
     label: "Direct provider example",
     description: "A complete provider implemented directly against Paseo's provider boundary",
     icon: "icon.svg",
+    async fetchUsage() {
+      return {
+        planLabel: "Example tier",
+        windows: [
+          {
+            id: "session_window",
+            label: "Session limit",
+            usedPct: 25,
+            resetsAt: new Date(Date.now() + 2 * 3600 * 1000).toISOString(),
+            tone: "default",
+          },
+        ],
+        balances: [
+          {
+            id: "credits",
+            label: "Credits",
+            remaining: 450,
+            limit: 500,
+            unit: "credits",
+          },
+        ],
+      };
+    },
     async connect(request) {
       if (!request.versions.includes(1)) throw new Error("Provider protocol version 1 is required");
       return createConnection(negotiateProviderCapabilities(request.capabilities, CAPABILITIES));
