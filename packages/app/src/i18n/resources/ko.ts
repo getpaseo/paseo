@@ -10,7 +10,6 @@ export const ko: TranslationResources = {
     loading: "불러오는 중…",
     failed: "실패",
     retry: "다시 시도",
-    chatPosition: "메시지 내 {{current}} / {{total}}",
 
     title: "찾기",
     placeholder: "패널에서 찾기",

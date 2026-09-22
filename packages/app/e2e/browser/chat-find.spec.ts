@@ -139,20 +139,79 @@ test("loads older history through prompt navigation and finds repeated rendered 
     await expect(page.getByText("Prompt number 0", { exact: true })).toHaveCount(0);
     await searchChat(page, "hello world");
     await expectHighlight(page, "hello world");
-    await expect(status(page)).toHaveText("1 of 2 in message");
+    await expect(status(page)).toHaveText("1 of 90");
     await page.screenshot({ path: testInfo.outputPath("chat-find-highlight.png") });
     expect(jumps.requests()[0]).toMatchObject({ limit: 40, mergeWindow: true });
     await nextMatch(page);
-    await expect(status(page)).toHaveText("2 of 2 in message");
+    await expect(status(page)).toHaveText("2 of 90");
     await expectHighlight(page, "hello world");
     await previousMatch(page);
-    await expect(status(page)).toHaveText("1 of 2 in message");
+    await expect(status(page)).toHaveText("1 of 90");
     await query(page).fill("hello & world");
     await expectHighlight(page, "hello & world");
     await query(page).fill("a.b");
     await expectHighlight(page, "a.b");
     await query(page).fill("Prompt number 0");
     await expectHighlight(page, "Prompt number 0");
+    await closeFind(page);
+  } finally {
+    await agent.cleanup();
+  }
+});
+
+// The scope of the search is the whole chat, so the counter is the position across
+// every message that holds a hit, and Next walks off the end of one into the next.
+const ACROSS_PROMPT = "Find scope-needle in this chat";
+const ACROSS_RESPONSE = "Reply with scope-needle here.\n\nAnd scope-needle again there.";
+
+/** The test id of the message that holds the current match, so it can be watched crossing one. */
+async function highlightedMessage(page: Page) {
+  return page.evaluate(() => {
+    const entry = Array.from(CSS.highlights.entries()).find(([name]) =>
+      name.startsWith("paseo-chat-find-"),
+    );
+    const range = entry && Array.from(entry[1])[0];
+    if (!(range instanceof Range)) return null;
+    const message = range.startContainer.parentElement?.closest<HTMLElement>(
+      '[data-testid="user-message"], [data-testid="assistant-message"]',
+    );
+    return message?.dataset.testid ?? null;
+  });
+}
+async function expectHighlightedMessage(page: Page, testId: string) {
+  await expect.poll(() => highlightedMessage(page)).toBe(testId);
+}
+
+test("counts and steps through every match in the chat, not just the selected message", async ({
+  page,
+}, testInfo) => {
+  const agent = await seedMockAgentWorkspace({
+    repoPrefix: "chat-find-across-",
+    title: "Chat Find across messages",
+    initialPrompt: ACROSS_PROMPT,
+    featureValues: { mockAssistantResponse: ACROSS_RESPONSE },
+  });
+  try {
+    await agent.client.waitForFinish(agent.agentId, 15_000);
+    await openAgentRoute(page, agent);
+    await expect(page.getByTestId("assistant-message").first()).toBeVisible();
+    // One hit in the prompt and two in the reply: three across the chat.
+    await searchChat(page, "scope-needle");
+    await expect(status(page)).toHaveText("1 of 3");
+    await expectHighlight(page, "scope-needle");
+    await expectHighlightedMessage(page, "user-message");
+    await page.screenshot({ path: testInfo.outputPath("chat-find-across-messages.png") });
+    await expectNextMatch(page, "2 of 3", "scope-needle");
+    await expectHighlightedMessage(page, "assistant-message");
+    await expectNextMatch(page, "3 of 3", "scope-needle");
+    await expectHighlightedMessage(page, "assistant-message");
+    await page.screenshot({ path: testInfo.outputPath("chat-find-last-match.png") });
+    await expectNextMatch(page, "1 of 3", "scope-needle");
+    await expectHighlightedMessage(page, "user-message");
+    await previousMatch(page);
+    await expect(status(page)).toHaveText("3 of 3");
+    await expectHighlight(page, "scope-needle");
+    await expectHighlightedMessage(page, "assistant-message");
     await closeFind(page);
   } finally {
     await agent.cleanup();
@@ -264,12 +323,12 @@ test("finds a hit in a message that streamed while the chat was open", async ({ 
   try {
     await openChatFind(page);
     // The only hit is in the first paragraph, which is no longer the row that grows.
-    await expectFindStatus(page, "alpha-needle", "1 of 1 in message");
+    await expectFindStatus(page, "alpha-needle", "1 of 1");
     await chat.replyFinished();
-    await expectFindStatus(page, "beta-needle", "1 of 1 in message");
+    await expectFindStatus(page, "beta-needle", "1 of 1");
     // One message, two Markdown blocks, one count across both.
-    await expectFindStatus(page, "pair-needle", "1 of 2 in message");
-    await expectNextMatch(page, "2 of 2 in message", "pair-needle");
+    await expectFindStatus(page, "pair-needle", "1 of 2");
+    await expectNextMatch(page, "2 of 2", "pair-needle");
     await closeFind(page);
   } finally {
     await chat.cleanup();
@@ -311,9 +370,9 @@ test("counts every occurrence of a virtualized message and steps between them", 
   const chat = await openChatWithVirtualizedTallMessage(page);
   try {
     await openChatFind(page);
-    await expectFindStatus(page, "span-needle", "1 of 2 in message");
+    await expectFindStatus(page, "span-needle", "1 of 12");
     await expectHighlight(page, "span-needle");
-    await expectNextMatch(page, "2 of 2 in message", "span-needle");
+    await expectNextMatch(page, "2 of 12", "span-needle");
     await closeFind(page);
   } finally {
     await chat.cleanup();

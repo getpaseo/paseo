@@ -11,7 +11,6 @@ export const es: TranslationResources = {
     loading: "Cargando…",
     failed: "Error",
     retry: "Reintentar",
-    chatPosition: "{{current}} de {{total}} en el mensaje",
 
     title: "Buscar",
     placeholder: "Buscar en el panel",
