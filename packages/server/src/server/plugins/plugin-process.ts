@@ -308,23 +308,29 @@ async function shutdown(): Promise<void> {
 }
 
 function handleStoppingMessage(message: PluginProcessRequest): void {
-  if (message.type === "provider.catalog_key" || message.type === "provider.fetch_usage") {
-    send({ type: "error", requestId: message.requestId, error: "Plugin is stopping" });
-  } else if (message.type === "provider.connect") {
-    send({
-      type: "provider.connect_failed",
-      connectionId: message.connectionId,
-      error: "Plugin is stopping",
-    });
-  } else if (message.type === "provider.send") {
-    send({
-      type: "provider.rejected",
-      connectionId: message.connectionId,
-      acceptanceId: message.acceptanceId,
-      error: "Plugin is stopping",
-    });
-  } else if (message.type === "provider.close") {
-    send({ type: "provider.closed", connectionId: message.connectionId });
+  switch (message.type) {
+    case "provider.catalog_key":
+    case "provider.fetch_usage":
+      send({ type: "error", requestId: message.requestId, error: "Plugin is stopping" });
+      break;
+    case "provider.connect":
+      send({
+        type: "provider.connect_failed",
+        connectionId: message.connectionId,
+        error: "Plugin is stopping",
+      });
+      break;
+    case "provider.send":
+      send({
+        type: "provider.rejected",
+        connectionId: message.connectionId,
+        acceptanceId: message.acceptanceId,
+        error: "Plugin is stopping",
+      });
+      break;
+    case "provider.close":
+      send({ type: "provider.closed", connectionId: message.connectionId });
+      break;
   }
 }
 

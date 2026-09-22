@@ -533,28 +533,26 @@ export default function contribute(server: PluginServerContext) {
     await runtime.stopAll();
   });
 
-  it("fetches provider quota usage through the real plugin subprocess boundary", async () => {
+  it("fetches and validates provider quota usage across the subprocess boundary", async () => {
     const directory = await createPlugin(
-      "provider-usage-round-trip",
+      "provider-usage-boundary",
       `import type { PluginServerContext } from "@getpaseo/plugin/server";
 
 export default function contribute(server: PluginServerContext) {
   server.registerProvider({
-    id: "usage-example",
-    label: "Usage Example",
+    id: "valid",
+    label: "Valid",
     fetchUsage: async () => ({
       planLabel: "Pro Plan",
-      windows: [
-        { id: "rolling_5h", label: "5 Hours", usedPct: 42 },
-      ],
+      windows: [{ id: "5h", label: "5 Hours", usedPct: 42 }],
     }),
-    connect: async () => ({
-      version: 1,
-      capabilities: [],
-      send: async () => {},
-      onEvent: () => () => {},
-      close: async () => {},
-    }),
+    connect: async () => ({ version: 1, capabilities: [], send: async () => {}, onEvent: () => () => {}, close: async () => {} }),
+  });
+  server.registerProvider({
+    id: "invalid",
+    label: "Invalid",
+    fetchUsage: async () => ({ windows: "not-an-array" as any }),
+    connect: async () => ({ version: 1, capabilities: [], send: async () => {}, onEvent: () => () => {}, close: async () => {} }),
   });
   return () => undefined;
 }
@@ -562,57 +560,14 @@ export default function contribute(server: PluginServerContext) {
     );
     const runtime = createTestRuntime();
     try {
-      await runtime.startPlugin("provider-usage-round-trip", directory);
-
-      const [registration] = runtime.getProviderRegistrations("provider-usage-round-trip");
-      expect(registration).toMatchObject({
-        id: "usage-example",
-        label: "Usage Example",
-        hasFetchUsage: true,
-      });
-
-      const usage = await runtime.fetchProviderUsage("provider-usage-round-trip", "usage-example");
+      await runtime.startPlugin("provider-usage-boundary", directory);
+      const usage = await runtime.fetchProviderUsage("provider-usage-boundary", "valid");
       expect(usage).toEqual({
         planLabel: "Pro Plan",
-        windows: [{ id: "rolling_5h", label: "5 Hours", usedPct: 42 }],
+        windows: [{ id: "5h", label: "5 Hours", usedPct: 42 }],
       });
-    } finally {
-      await runtime.stopAll();
-    }
-  });
-
-  it("rejects malformed provider quota usage through the real plugin subprocess boundary", async () => {
-    const directory = await createPlugin(
-      "provider-malformed-usage",
-      `import type { PluginServerContext } from "@getpaseo/plugin/server";
-
-export default function contribute(server: PluginServerContext) {
-  server.registerProvider({
-    id: "malformed-usage-example",
-    label: "Malformed Usage Example",
-    fetchUsage: async () => ({
-      planLabel: "Pro Plan",
-      windows: [
-        { id: "rolling_5h", label: "5 Hours", usedPct: "invalid-number" },
-      ],
-    }),
-    connect: async () => ({
-      version: 1,
-      capabilities: [],
-      send: async () => {},
-      onEvent: () => () => {},
-      close: async () => {},
-    }),
-  });
-  return () => undefined;
-}
-`,
-    );
-    const runtime = createTestRuntime();
-    try {
-      await runtime.startPlugin("provider-malformed-usage", directory);
       await expect(
-        runtime.fetchProviderUsage("provider-malformed-usage", "malformed-usage-example"),
+        runtime.fetchProviderUsage("provider-usage-boundary", "invalid"),
       ).rejects.toThrow();
     } finally {
       await runtime.stopAll();

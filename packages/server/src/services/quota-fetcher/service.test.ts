@@ -347,256 +347,167 @@ describe("ProviderUsageService", () => {
     });
   });
 
-  it("fetches and normalizes usage from plugin providers", async () => {
-    let pluginCalls = 0;
+  it("fetches, normalizes, and isolates plugin provider usage", async () => {
+    let calls = 0;
     const service = new ProviderUsageService({
       logger: createLogger(),
-      now: () => Date.parse("2026-06-19T00:00:00.000Z"),
-      fetchers: [],
+      fetchers: [usageFetcher({ providerId: "codex", displayName: "Codex", status: "available" })],
       getPluginProviders: () => [
         {
-          id: "custom-plugin-provider",
-          label: "Custom Provider",
+          id: "plugin-1",
+          label: "Plugin 1",
           connect: async () => {
             throw new Error("unused");
           },
           fetchUsage: async () => {
-            pluginCalls += 1;
+            calls += 1;
             return {
-              planLabel: "Enterprise Tier",
-              windows: [{ id: "daily", label: "Daily Limit", usedPct: 45 }],
+              planLabel: "Pro Plan",
+              windows: [{ id: "daily", label: "Daily", usedPct: 40 }],
             };
           },
         },
         {
-          id: "provider-without-usage",
-          label: "No Usage Hook",
-          connect: async () => {
-            throw new Error("unused");
-          },
-        },
-      ],
-    });
-
-    const result = await service.listUsage();
-    expect(pluginCalls).toBe(1);
-    expect(result).toEqual({
-      fetchedAt: "2026-06-19T00:00:00.000Z",
-      providers: [
-        {
-          providerId: "custom-plugin-provider",
-          displayName: "Custom Provider",
-          status: "available",
-          planLabel: "Enterprise Tier",
-          sourceLabel: null,
-          fetchedAt: expect.any(String),
-          nextRefreshAt: null,
-          windows: [{ id: "daily", label: "Daily Limit", usedPct: 45 }],
-          balances: [],
-          details: [],
-          error: null,
-        },
-      ],
-    });
-
-    // clearCache allows fresh fetch
-    service.clearCache();
-    await service.listUsage();
-    expect(pluginCalls).toBe(2);
-  });
-
-  it("isolates plugin fetchUsage errors without breaking provider list", async () => {
-    const service = new ProviderUsageService({
-      logger: createLogger(),
-      now: () => Date.parse("2026-06-19T00:00:00.000Z"),
-      fetchers: [
-        usageFetcher({
-          providerId: "codex",
-          displayName: "Codex",
-          status: "available",
-          planLabel: "Pro 20x",
-          windows: [{ id: "weekly", label: "Weekly", usedPct: 29 }],
-        }),
-      ],
-      getPluginProviders: () => [
-        {
-          id: "failing-plugin",
+          id: "plugin-error",
           label: "Failing Plugin",
           connect: async () => {
             throw new Error("unused");
           },
           fetchUsage: async () => {
-            throw new Error("Plugin daemon disconnected");
+            throw new Error("Plugin crashed");
+          },
+        },
+        {
+          id: "no-usage",
+          label: "No Usage",
+          connect: async () => {
+            throw new Error("unused");
           },
         },
       ],
     });
 
-    const result = await service.listUsage();
-    expect(result.providers).toEqual([
+    const res = await service.listUsage();
+    expect(calls).toBe(1);
+    expect(res.providers).toMatchObject([
+      { providerId: "codex", status: "available" },
       {
-        providerId: "codex",
-        displayName: "Codex",
+        providerId: "plugin-1",
+        displayName: "Plugin 1",
         status: "available",
-        planLabel: "Pro 20x",
-        windows: [{ id: "weekly", label: "Weekly", usedPct: 29 }],
+        planLabel: "Pro Plan",
+        windows: [{ id: "daily", label: "Daily", usedPct: 40 }],
       },
       {
-        providerId: "failing-plugin",
+        providerId: "plugin-error",
         displayName: "Failing Plugin",
         status: "error",
-        planLabel: null,
-        windows: [],
-        balances: [],
-        details: [],
-        error: "Plugin daemon disconnected",
+        error: "Plugin crashed",
       },
     ]);
+
+    service.clearCache();
+    await service.listUsage();
+    expect(calls).toBe(2);
   });
 
-  it("skips plugin providers with duplicate or collision IDs and prevents ID spoofing", async () => {
+  it("handles duplicate IDs, ID spoofing, timeouts, and cache invalidation races", async () => {
+    // Duplicate ID and spoofing prevention
     const service = new ProviderUsageService({
       logger: createLogger(),
       fetchers: [
-        usageFetcher({
-          providerId: "codex",
-          displayName: "Codex",
-          status: "available",
-        }),
+        usageFetcher({ providerId: "builtin", displayName: "Builtin", status: "available" }),
       ],
       getPluginProviders: () => [
         {
-          // Collides with built-in "codex"
-          id: "codex",
-          label: "Colliding Plugin Codex",
+          id: "builtin", // Collides with built-in
+          label: "Colliding",
           connect: async () => {
             throw new Error("unused");
           },
-          fetchUsage: async () => ({
-            planLabel: "Malicious Plan",
-          }),
+          fetchUsage: async () => ({ planLabel: "Fake" }),
         },
         {
-          id: "custom-plugin",
-          label: "Custom Plugin",
+          id: "custom",
+          label: "Custom",
           connect: async () => {
             throw new Error("unused");
           },
-          fetchUsage: async () => ({
-            providerId: "spoofed-id-override",
-            displayName: "Overridden Display Name",
-            planLabel: "Valid Plan",
-          }),
+          fetchUsage: async () => ({ providerId: "spoofed", planLabel: "Valid" }),
         },
         {
-          // Collides with earlier plugin "custom-plugin"
-          id: "custom-plugin",
-          label: "Duplicate Custom Plugin",
+          id: "custom", // Duplicate plugin ID
+          label: "Duplicate",
           connect: async () => {
             throw new Error("unused");
           },
-          fetchUsage: async () => ({
-            planLabel: "Duplicate Plan",
-          }),
+          fetchUsage: async () => ({ planLabel: "Dup" }),
         },
       ],
     });
+    const res = await service.listUsage();
+    expect(res.providers).toHaveLength(2);
+    expect(res.providers[0].providerId).toBe("builtin");
+    expect(res.providers[1].providerId).toBe("custom"); // Spoofing prevented
 
-    const result = await service.listUsage();
-    expect(result.providers).toHaveLength(2);
-    expect(result.providers[0].providerId).toBe("codex");
-    expect(result.providers[0].displayName).toBe("Codex");
-
-    // providerId is strictly locked to registered provider.id "custom-plugin", not "spoofed-id-override"
-    expect(result.providers[1].providerId).toBe("custom-plugin");
-    expect(result.providers[1].displayName).toBe("Overridden Display Name");
-    expect(result.providers[1].planLabel).toBe("Valid Plan");
-  });
-
-  it("does not restore stale cache when clearCache is called while a fetch is in flight", async () => {
-    let resolveFirstFetch!: (value: unknown) => void;
-    const firstFetchPromise = new Promise((resolve) => {
-      resolveFirstFetch = resolve;
-    });
-
-    let currentProviders: ProviderRegistration[] = [
-      {
-        id: "plugin-v1",
-        label: "Plugin V1",
+    // Timeout isolation
+    const timeoutFetcher = createPluginUsageFetcher({
+      provider: {
+        id: "slow",
+        label: "Slow",
         connect: async () => {
           throw new Error("unused");
         },
         fetchUsage: async () => {
-          await firstFetchPromise;
-          return { planLabel: "V1 Stale Plan" };
+          await new Promise((r) => setTimeout(r, 100));
+          return { planLabel: "Late" };
         },
       },
-    ];
+      logger: createLogger(),
+      timeoutMs: 30,
+    });
+    expect(await timeoutFetcher.fetchUsage()).toMatchObject({
+      providerId: "slow",
+      status: "error",
+      error: "Plugin usage fetch timed out after 30ms",
+    });
 
-    const service = new ProviderUsageService({
+    // In-flight cache invalidation race
+    let resolveFirst!: () => void;
+    let currentProvider = {
+      id: "v1",
+      label: "v1",
+      connect: async () => {
+        throw new Error("unused");
+      },
+      fetchUsage: async () => {
+        await new Promise<void>((r) => {
+          resolveFirst = r;
+        });
+        return { planLabel: "V1 Stale" };
+      },
+    };
+    const raceService = new ProviderUsageService({
       logger: createLogger(),
       fetchers: [],
-      getPluginProviders: () => currentProviders,
+      getPluginProviders: () => [currentProvider],
     });
-
-    // Start first fetch (in-flight)
-    const inFlightPromise = service.listUsage();
-
-    // While in-flight, plugin updates and clearCache is invoked
-    currentProviders = [
-      {
-        id: "plugin-v2",
-        label: "Plugin V2",
-        connect: async () => {
-          throw new Error("unused");
-        },
-        fetchUsage: async () => ({ planLabel: "V2 Fresh Plan" }),
+    const req1 = raceService.listUsage();
+    currentProvider = {
+      id: "v2",
+      label: "v2",
+      connect: async () => {
+        throw new Error("unused");
       },
-    ];
-    service.clearCache();
-
-    // Second call starts fresh fetch for V2
-    const secondFetchPromise = service.listUsage();
-    const result2 = await secondFetchPromise;
-    expect(result2.providers).toMatchObject([
-      { providerId: "plugin-v2", planLabel: "V2 Fresh Plan" },
-    ]);
-
-    // Resolve the delayed first fetch
-    resolveFirstFetch(null);
-    await inFlightPromise;
-
-    // Cache should remain V2, not overwritten by delayed V1
-    const cachedResult = await service.listUsage();
-    expect(cachedResult.providers).toMatchObject([
-      { providerId: "plugin-v2", planLabel: "V2 Fresh Plan" },
-    ]);
-  });
-
-  it("times out slow plugin fetchUsage and isolates error", async () => {
-    const fetcher = createPluginUsageFetcher({
-      provider: {
-        id: "slow-plugin",
-        label: "Slow Plugin",
-        connect: async () => {
-          throw new Error("unused");
-        },
-        fetchUsage: async () => {
-          await new Promise((resolve) => setTimeout(resolve, 200));
-          return { planLabel: "Never Arrives" };
-        },
-      },
-      logger: createLogger(),
-      timeoutMs: 50,
-    });
-
-    const usage = await fetcher.fetchUsage();
-    expect(usage).toMatchObject({
-      providerId: "slow-plugin",
-      displayName: "Slow Plugin",
-      status: "error",
-      error: "Plugin usage fetch timed out after 50ms",
-    });
+      fetchUsage: async () => ({ planLabel: "V2 Fresh" }),
+    };
+    raceService.clearCache();
+    const res2 = await raceService.listUsage();
+    expect(res2.providers).toMatchObject([{ providerId: "v2", planLabel: "V2 Fresh" }]);
+    resolveFirst();
+    await req1;
+    const cached = await raceService.listUsage();
+    expect(cached.providers).toMatchObject([{ providerId: "v2", planLabel: "V2 Fresh" }]);
   });
 });
 

@@ -9,61 +9,7 @@ import type {
 } from "@getpaseo/protocol/messages";
 import { z } from "zod";
 
-export const ProviderUsageToneSchema = z.enum(["default", "ok", "warning", "danger"]);
-export const ProviderUsageStatusSchema = z.enum(["available", "unavailable", "error"]);
-
-export const ProviderUsageWindowSchema = z
-  .object({
-    id: z.string(),
-    label: z.string(),
-    usedPct: z.number().nullable().optional(),
-    remainingPct: z.number().nullable().optional(),
-    resetsAt: z.string().nullable().optional(),
-    runsOutAt: z.string().nullable().optional(),
-    shortfallPct: z.number().nullable().optional(),
-    tone: ProviderUsageToneSchema.optional(),
-  })
-  .strip();
-
-export const ProviderUsageBalanceSchema = z
-  .object({
-    id: z.string(),
-    label: z.string(),
-    used: z.number().nullable().optional(),
-    remaining: z.number().nullable().optional(),
-    limit: z.number().nullable().optional(),
-    unit: z.enum(["usd", "credits", "requests", "tokens"]),
-    resetsAt: z.string().nullable().optional(),
-    tone: ProviderUsageToneSchema.optional(),
-  })
-  .strip();
-
-export const ProviderUsageDetailSchema = z
-  .object({
-    id: z.string(),
-    label: z.string(),
-    value: z.string(),
-    tone: ProviderUsageToneSchema.optional(),
-  })
-  .strip();
-
-export const ProviderQuotaSnapshotSchema = z
-  .object({
-    providerId: z.string().optional(),
-    displayName: z.string().optional(),
-    status: ProviderUsageStatusSchema.optional(),
-    planLabel: z.string().nullable().optional(),
-    sourceLabel: z.string().nullable().optional(),
-    fetchedAt: z.string().nullable().optional(),
-    nextRefreshAt: z.string().nullable().optional(),
-    windows: z.array(ProviderUsageWindowSchema).optional(),
-    balances: z.array(ProviderUsageBalanceSchema).optional(),
-    details: z.array(ProviderUsageDetailSchema).optional(),
-    error: z.string().nullable().optional(),
-  })
-  .strip();
-
-export type ProviderQuotaSnapshot = z.infer<typeof ProviderQuotaSnapshotSchema>;
+export type ProviderQuotaSnapshot = Partial<ProtocolProviderUsage>;
 export type ProviderQuotaUsage = ProtocolProviderUsage;
 
 export type {

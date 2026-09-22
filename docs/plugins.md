@@ -348,7 +348,7 @@ workspace target. Return a key covering effective configuration and execution en
 `undefined` for target-specific caching. Ignore `force` when choosing identity. Existing providers
 need no change. See [catalogue ownership](providers.md#provider-snapshot-refresh-contract).
 
-Implement optional `ProviderRegistration.fetchUsage()` to report quota limits, rate-limit windows, and credit balances to Paseo's host usage widget (in the context meter tooltip and Host Usage settings screen).
+Implement optional `ProviderRegistration.fetchUsage()` to report quota limits, rate-limit windows, and credit balances to Paseo's host usage widget:
 
 ```ts
 import type { ProviderQuotaSnapshot } from "@getpaseo/plugin/server/provider";
@@ -359,38 +359,15 @@ server.registerProvider({
   async fetchUsage(): Promise<ProviderQuotaSnapshot> {
     return {
       planLabel: "Pro Plan",
-      windows: [
-        {
-          id: "session_requests",
-          label: "Session limit",
-          usedPct: 45,
-          resetsAt: new Date(Date.now() + 3600 * 1000).toISOString(),
-          tone: "default",
-        },
-      ],
-      balances: [
-        {
-          id: "credits",
-          label: "Available credits",
-          remaining: 120,
-          limit: 200,
-          unit: "credits",
-        },
-      ],
+      windows: [{ id: "session", label: "Session limit", usedPct: 45 }],
+      balances: [{ id: "credits", label: "Credits", remaining: 120, unit: "credits" }],
     };
   },
   // ...
 });
 ```
 
-- **Execution and isolation**: `fetchUsage()` executes out-of-process in the plugin subprocess and is bounded by a 15-second timeout. If the fetch throws, times out, or fails schema validation, Paseo sets the provider status to `"error"` with the error message and preserves all other provider cards without delaying the UI.
-- **Provider identity**: The reported `providerId` is strictly locked to the registered `provider.id`. If a plugin provider registers an ID that collides with a built-in provider or an earlier plugin provider, the duplicate is skipped with a warning.
-- **Snapshot fields**:
-  - `status`: optional (`"available"`, `"unavailable"`, `"error"`). Defaults to `"available"` (or `"error"` if `error` is present).
-  - `planLabel`: optional tier or plan name string (e.g. `"Tier 4"`, `"Pro 20x"`).
-  - `windows`: array of limit windows (`id`, `label`, optional `usedPct`, `remainingPct`, `resetsAt`, `runsOutAt`, `shortfallPct`, `tone`: `"default" | "ok" | "warning" | "danger"`).
-  - `balances`: array of balances (`id`, `label`, `unit`: `"usd" | "credits" | "requests" | "tokens"`, optional `used`, `remaining`, `limit`, `resetsAt`, `tone`).
-  - `details`: array of key-value metadata rows (`id`, `label`, `value`, optional `tone`).
+`fetchUsage()` runs in the plugin subprocess with a 15-second timeout and schema validation; errors are isolated per-provider. Provider IDs are locked to `provider.id` to prevent collision. See [provider usage contract](providers.md#provider-usage-and-quota-contract).
 
 `send()` resolves after acceptance. Publish operation completion, prompt disposition, turn state,
 configuration, permissions, persistence, and complete timeline snapshots through `onEvent()`.
