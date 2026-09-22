@@ -278,12 +278,17 @@ test.each([
       command: {
         mode: "replace",
         argv: [
-          path.join(
-            root,
-            "node_modules",
-            ".bin",
-            process.platform === "win32" ? "opencode.cmd" : "opencode",
-          ),
+          process.platform === "win32"
+            ? path.join(
+                root,
+                "node_modules",
+                major === 1
+                  ? `opencode-windows-${process.arch}`
+                  : `@opencode/cli-windows-${process.arch}`,
+                "bin",
+                "opencode.exe",
+              )
+            : path.join(root, "node_modules", ".bin", "opencode"),
         ],
       },
       env: {
