@@ -2,7 +2,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { mkdtempSync, rmSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProviderUsage } from "../../server/messages.js";
 import type { ProviderUsageFetcher } from "./provider.js";
@@ -13,6 +13,8 @@ import { CursorQuotaProvider } from "./providers/cursor.js";
 import { GrokQuotaProvider } from "./providers/grok.js";
 import { KimiQuotaProvider } from "./providers/kimi.js";
 import { MiniMaxQuotaProvider } from "./providers/minimax.js";
+import { SyntheticQuotaProvider } from "./providers/synthetic.js";
+import { PROVIDER_USAGE_FETCHERS } from "./manifest.js";
 import { ZaiQuotaProvider } from "./providers/zai.js";
 import { ProviderUsageService } from "./service.js";
 
@@ -379,6 +381,8 @@ describe("real provider usage fetchers", () => {
       "CODEX_HOME",
       "MINIMAX_API_KEY",
       "MINIMAX_BASE_URL",
+      "PASEO_SYNTHETIC_API_KEY",
+      "SYNTHETIC_API_KEY",
     ]) {
       delete process.env[key];
     }
@@ -1947,6 +1951,407 @@ describe("KimiQuotaProvider usage windows", () => {
     expect(usage.windows.map((window) => window.id)).toEqual([
       "coding_limit_300_time_unit_minute",
       "coding_limit_300_time_unit_minute_2",
+    ]);
+  });
+});
+
+describe("Synthetic usage", () => {
+  let homeDir: string;
+  let originalEnv: NodeJS.ProcessEnv;
+  interface SyntheticRequest {
+    url: string;
+    authorization: string | null;
+    signal: AbortSignal | null | undefined;
+  }
+  let calls: SyntheticRequest[];
+  let response: Response;
+  const quota = { subscription: { requests: 25, limit: 100, renewsAt: "2026-09-20T00:00:00Z" } };
+
+  beforeEach(() => {
+    originalEnv = { ...process.env };
+    delete process.env["SYNTHETIC_API_KEY"];
+    delete process.env["XDG_DATA_HOME"];
+    delete process.env["OPENCODE_DB"];
+    homeDir = mkdtempSync(join(tmpdir(), "synthetic-usage-"));
+    calls = [];
+    response = jsonResponse(quota);
+  });
+  afterEach(() => {
+    process.env = originalEnv;
+    rmSync(homeDir, { recursive: true, force: true });
+  });
+
+  function dataDir() {
+    return join(process.env["XDG_DATA_HOME"] || join(homeDir, ".local", "share"), "opencode");
+  }
+  function legacy() {
+    mkdirSync(dataDir(), { recursive: true });
+    writeFileSync(
+      join(dataDir(), "auth.json"),
+      JSON.stringify({ synthetic: { type: "api", key: "legacy" } }),
+    );
+  }
+  interface CredentialFixture {
+    id: string;
+    active: number;
+    created: number;
+    value: string;
+    integration?: string;
+  }
+  function database(rows: CredentialFixture[], path = join(dataDir(), "opencode.db")) {
+    mkdirSync(dirname(path), { recursive: true });
+    const { DatabaseSync } = testRequire("node:sqlite") as {
+      DatabaseSync: new (path: string) => TestSqliteDb;
+    };
+    const db = new DatabaseSync(path);
+    db.exec(
+      "CREATE TABLE credential (id TEXT PRIMARY KEY, integration_id TEXT, active INTEGER, time_created INTEGER, value TEXT)",
+    );
+    for (const credential of rows) {
+      db.prepare("INSERT INTO credential VALUES (?, ?, ?, ?, ?)").run(
+        credential.id,
+        credential.integration ?? "synthetic",
+        credential.active,
+        credential.created,
+        credential.value,
+      );
+    }
+    db.close();
+    return path;
+  }
+  function row(id: string, active = 1, created = 1): CredentialFixture {
+    return { id, active, created, value: JSON.stringify({ type: "key", key: id }) };
+  }
+  async function usage() {
+    const logger = createLogger();
+    const provider = new SyntheticQuotaProvider({
+      logger,
+      homeDir,
+      fetch: async (url, init) => {
+        calls.push({
+          url: url.toString(),
+          authorization: new Headers(init?.headers).get("Authorization"),
+          signal: init?.signal,
+        });
+        return response;
+      },
+    });
+    const service = new ProviderUsageService({ logger, fetchers: [provider] });
+    return findProvider(await service.listUsage(), "synthetic");
+  }
+  it("registers Synthetic in the built-in usage list", () => {
+    expect(PROVIDER_USAGE_FETCHERS.map((provider) => provider.providerId)).toContain("synthetic");
+  });
+  it("uses the daemon environment before saved credentials and normalizes subscription usage", async () => {
+    process.env["SYNTHETIC_API_KEY"] = "environment";
+    database([row("saved")]);
+    legacy();
+    expect(await usage()).toEqual({
+      providerId: "synthetic",
+      displayName: "Synthetic",
+      status: "available",
+      planLabel: null,
+      windows: [
+        {
+          id: "subscription",
+          label: "5 hours",
+          detail: "25 / 100 requests",
+          usedPct: 25,
+          remainingPct: 75,
+          resetsAt: quota.subscription.renewsAt,
+          tone: "ok",
+        },
+      ],
+      balances: [],
+      details: [],
+      error: null,
+    });
+    expect(calls).toEqual([
+      {
+        url: "https://api.synthetic.new/v2/quotas",
+        authorization: "Bearer environment",
+        signal: expect.any(AbortSignal),
+      },
+    ]);
+  });
+  it("prefers the Paseo-scoped environment key over the generic key", async () => {
+    process.env["PASEO_SYNTHETIC_API_KEY"] = "paseo-environment";
+    process.env["SYNTHETIC_API_KEY"] = "generic-environment";
+    expect((await usage()).status).toBe("available");
+    expect(calls[0].authorization).toBe("Bearer paseo-environment");
+  });
+  it("selects the active newest v2 credential with deterministic ID ordering without changing the database", async () => {
+    const path = database([
+      row("inactive", 0, 100),
+      row("older", 1, 0),
+      row("a"),
+      row("z"),
+      { ...row("other", 1, 100), integration: "other" },
+    ]);
+    legacy();
+    const before = readFileSync(path);
+    expect((await usage()).status).toBe("available");
+    expect(calls[0].authorization).toBe("Bearer z");
+    expect(readFileSync(path)).toEqual(before);
+  });
+  it.each([
+    {
+      name: "default",
+      arrange: () => ({ env: {}, databasePath: join(dataDir(), "opencode.db") }),
+    },
+    {
+      name: "relative",
+      arrange: () => ({
+        env: { OPENCODE_DB: "custom.db" },
+        databasePath: join(dataDir(), "custom.db"),
+      }),
+    },
+    {
+      name: "absolute",
+      arrange: () => ({
+        env: { OPENCODE_DB: join(homeDir, "elsewhere.db") },
+        databasePath: join(homeDir, "elsewhere.db"),
+      }),
+    },
+  ])("respects XDG data and $name database paths", async ({ arrange }) => {
+    process.env["XDG_DATA_HOME"] = join(homeDir, "xdg");
+    const { env, databasePath } = arrange();
+    for (const [key, value] of Object.entries(env)) {
+      process.env[key] = value;
+    }
+    database([row("xdg")], databasePath);
+    expect((await usage()).status).toBe("available");
+    expect(calls[0].authorization).toBe("Bearer xdg");
+  });
+  it.each([
+    { name: "absent", arrange: () => {} },
+    { name: "empty", arrange: () => void database([]) },
+    {
+      name: "v1",
+      arrange: () => {
+        const { DatabaseSync } = testRequire("node:sqlite") as {
+          DatabaseSync: new (path: string) => TestSqliteDb;
+        };
+        const db = new DatabaseSync(join(dataDir(), "opencode.db"));
+        db.exec("CREATE TABLE session (id TEXT)");
+        db.close();
+      },
+    },
+  ])("reads legacy credentials when the v2 credential is $name", async ({ arrange }) => {
+    legacy();
+    arrange();
+    expect((await usage()).status).toBe("available");
+    expect(calls[0].authorization).toBe("Bearer legacy");
+  });
+  it.each([
+    "{secret",
+    JSON.stringify({ type: "oauth", access: "secret" }),
+    JSON.stringify({ type: "key", key: "" }),
+  ])("never falls back from an invalid selected credential (%s)", async (value) => {
+    database([{ ...row("selected"), value }, row("older", 0)]);
+    legacy();
+    expect(await usage()).toMatchObject({
+      status: "error",
+      error: "Could not read Synthetic credentials from OpenCode",
+    });
+    expect(calls).toEqual([]);
+  });
+  it("reports a corrupt database instead of using a legacy account", async () => {
+    legacy();
+    writeFileSync(join(dataDir(), "opencode.db"), "corrupt");
+    expect(await usage()).toMatchObject({
+      status: "error",
+      error: "Could not read Synthetic credentials from OpenCode",
+    });
+    expect(calls).toEqual([]);
+  });
+  it("does not create a database when credentials are missing", async () => {
+    expect((await usage()).status).toBe("unavailable");
+    expect(calls).toEqual([]);
+    expect(() => readFileSync(join(dataDir(), "opencode.db"))).toThrow();
+  });
+  it("does not open a disk database for :memory:", async () => {
+    database([row("disk")]);
+    process.env["OPENCODE_DB"] = ":memory:";
+    expect((await usage()).status).toBe("unavailable");
+    expect(calls).toEqual([]);
+  });
+  it.each([401, 403, 500])("does not try an older account after HTTP %i", async (status) => {
+    database([row("selected")]);
+    legacy();
+    response = jsonResponse({}, status);
+    expect((await usage()).status).toBe(status === 500 ? "error" : "unavailable");
+    expect(calls.map((call) => call.authorization)).toEqual(["Bearer selected"]);
+  });
+  it.each([
+    {},
+    { subscription: { ...quota.subscription, requests: -1 } },
+    { subscription: { ...quota.subscription, renewsAt: "invalid" } },
+  ])("reports malformed quota responses", async (payload) => {
+    process.env["SYNTHETIC_API_KEY"] = "environment";
+    response = jsonResponse(payload);
+    expect(await usage()).toMatchObject({
+      status: "error",
+      error: "Synthetic returned an invalid quota response",
+    });
+  });
+  it.each([0, 40, 100])(
+    "shows both windows with %i percent weekly remaining",
+    async (percentRemaining) => {
+      process.env["SYNTHETIC_API_KEY"] = "environment";
+      response = jsonResponse({
+        ...quota,
+        weeklyTokenLimit: {
+          percentRemaining,
+          nextRegenAt: "2026-09-18T00:00:00Z",
+          maxCredits: "100",
+          remainingCredits: "40",
+          nextRegenCredits: "2",
+        },
+      });
+      expect((await usage()).windows).toEqual([
+        expect.objectContaining({
+          id: "subscription",
+          label: "5 hours",
+          usedPct: 25,
+          resetsAt: quota.subscription.renewsAt,
+        }),
+        {
+          id: "weekly",
+          label: "Weekly",
+          usedPct: 100 - percentRemaining,
+          remainingPct: percentRemaining,
+          resetsAt: null,
+          tone: percentRemaining === 0 ? "danger" : "ok",
+          ...(percentRemaining < 100 ? { refillsAt: "2026-09-18T00:00:00Z" } : {}),
+        },
+      ]);
+    },
+  );
+  it.each([undefined, null])(
+    "keeps the five-hour window without weekly quota (%s)",
+    async (weeklyTokenLimit) => {
+      process.env["SYNTHETIC_API_KEY"] = "environment";
+      response = jsonResponse({ ...quota, weeklyTokenLimit });
+      expect((await usage()).windows).toEqual([
+        expect.objectContaining({ id: "subscription", label: "5 hours", usedPct: 25 }),
+      ]);
+    },
+  );
+  it.each([
+    {},
+    { percentRemaining: -1 },
+    { percentRemaining: 101 },
+    { percentRemaining: "50" },
+    { percentRemaining: null },
+  ])("rejects invalid weekly quota (%j)", async (weeklyTokenLimit) => {
+    process.env["SYNTHETIC_API_KEY"] = "environment";
+    response = jsonResponse({ ...quota, weeklyTokenLimit });
+    expect(await usage()).toMatchObject({
+      status: "error",
+      error: "Synthetic returned an invalid quota response",
+    });
+  });
+  it.each([0, 600, 750, 800])(
+    "uses rolling quota over stale subscription with %i remaining",
+    async (remaining) => {
+      process.env["SYNTHETIC_API_KEY"] = "environment";
+      response = jsonResponse({
+        subscription: { ...quota.subscription, requests: 0, limit: 750 },
+        rollingFiveHourLimit: {
+          nextTickAt: "2026-09-18T00:00:00Z",
+          remaining,
+          max: 750,
+          tickPercent: 2,
+          limited: false,
+        },
+      });
+      const result = await usage();
+      const used = Math.max(0, 750 - remaining);
+      expect(result.windows).toEqual([
+        {
+          id: "subscription",
+          label: "5 hours",
+          detail: `${used} / 750 requests`,
+          usedPct: (used / 750) * 100,
+          remainingPct: Math.min(100, (remaining / 750) * 100),
+          resetsAt: null,
+          tone: remaining === 0 ? "danger" : "ok",
+          ...(used > 0 ? { refillsAt: "2026-09-18T00:00:00Z" } : {}),
+        },
+      ]);
+      expect(result.details).toEqual([]);
+    },
+  );
+  it("rounds a fractional rolling used count to two decimals", async () => {
+    process.env["SYNTHETIC_API_KEY"] = "environment";
+    response = jsonResponse({
+      subscription: { ...quota.subscription, requests: 0, limit: 750 },
+      rollingFiveHourLimit: {
+        nextTickAt: "2026-09-18T00:00:00Z",
+        remaining: 747.8,
+        max: 750,
+        tickPercent: 2,
+        limited: false,
+      },
+    });
+    expect((await usage()).windows[0]).toMatchObject({
+      detail: "2.2 / 750 requests",
+      usedPct: (2.2 / 750) * 100,
+    });
+  });
+  it("hides the legacy reset timer when no requests have been used", async () => {
+    process.env["SYNTHETIC_API_KEY"] = "environment";
+    response = jsonResponse({ subscription: { ...quota.subscription, requests: 0 } });
+    expect((await usage()).windows).toEqual([
+      {
+        id: "subscription",
+        label: "5 hours",
+        detail: "0 / 100 requests",
+        usedPct: 0,
+        remainingPct: 100,
+        resetsAt: null,
+        tone: "ok",
+      },
+    ]);
+  });
+  it.each([undefined, null])(
+    "shows weekly quota without a refill time (%s)",
+    async (nextRegenAt) => {
+      process.env["SYNTHETIC_API_KEY"] = "environment";
+      response = jsonResponse({
+        ...quota,
+        weeklyTokenLimit: { percentRemaining: 50, nextRegenAt },
+      });
+      expect((await usage()).windows[1]).toEqual({
+        id: "weekly",
+        label: "Weekly",
+        usedPct: 50,
+        remainingPct: 50,
+        resetsAt: null,
+        tone: "ok",
+      });
+    },
+  );
+  it.each([
+    { remaining: -1, max: 750, nextTickAt: "2026-09-18T00:00:00Z" },
+    { remaining: 1, max: -1, nextTickAt: "2026-09-18T00:00:00Z" },
+    { remaining: 1, max: 750, nextTickAt: "invalid" },
+  ])("rejects invalid rolling quota (%j)", async (rollingFiveHourLimit) => {
+    process.env["SYNTHETIC_API_KEY"] = "environment";
+    response = jsonResponse({ ...quota, rollingFiveHourLimit });
+    expect(await usage()).toMatchObject({
+      status: "error",
+      error: "Synthetic returned an invalid quota response",
+    });
+  });
+  it.each([0, 100, 120])("handles %i requests with zero or exhausted limits", async (requests) => {
+    process.env["SYNTHETIC_API_KEY"] = "environment";
+    const limit = requests === 0 ? 0 : 100;
+    response = jsonResponse({ subscription: { ...quota.subscription, requests, limit } });
+    const expectedPct = limit === 0 ? null : requests;
+    expect((await usage()).windows).toEqual([
+      expect.objectContaining({ usedPct: expectedPct, remainingPct: limit === 0 ? null : 0 }),
     ]);
   });
 });
