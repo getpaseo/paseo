@@ -377,12 +377,6 @@ export function KeyboardShortcutsSection() {
       event.preventDefault();
       event.stopPropagation();
 
-      const key = event.key ?? "";
-      if (key === "Backspace") {
-        setCapturedCombos((current) => (current.length > 0 ? current.slice(0, -1) : current));
-        return;
-      }
-
       const comboString = keyboardEventToComboString(event);
       if (comboString === null) {
         setHeldModifiers(heldModifiersFromEvent(event));
