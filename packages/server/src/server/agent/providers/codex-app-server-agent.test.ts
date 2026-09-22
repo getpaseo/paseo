@@ -171,6 +171,115 @@ function createSession(
   return session;
 }
 
+function createLegacyHistoryClient(
+  requests: Array<{ method: string; params: unknown }>,
+): CodexClientLike {
+  return {
+    request: vi.fn(async (method: string, params: unknown) => {
+      requests.push({ method, params });
+      if (method !== "thread/read") {
+        throw new Error(`Unexpected request: ${method}`);
+      }
+      if (!(params as { includeTurns?: boolean }).includeTurns) {
+        return { thread: { historyMode: "legacy", turns: [] } };
+      }
+      return {
+        thread: {
+          turns: [
+            {
+              items: [
+                {
+                  type: "agentMessage",
+                  id: "message-history",
+                  text: "History loaded.",
+                  timestamp: "2026-05-01T10:00:00.000Z",
+                },
+                {
+                  type: "contextCompaction",
+                  id: "compact-history",
+                  createdAt: "2026-05-01T10:00:01.000Z",
+                },
+              ],
+            },
+          ],
+        },
+      };
+    }),
+  };
+}
+
+function createPaginatedHistoryClient(
+  requests: Array<{ method: string; params: unknown }>,
+): CodexClientLike {
+  return {
+    request: vi.fn(async (method: string, params: unknown) => {
+      requests.push({ method, params });
+      if (method === "thread/read") {
+        return { thread: { historyMode: "paginated", turns: [] } };
+      }
+      if (method === "thread/turns/list") {
+        const hasCursor = Object.hasOwn(params as object, "cursor");
+        return hasCursor
+          ? {
+              data: [
+                {
+                  id: "turn-2",
+                  items: [],
+                  itemsView: "notLoaded",
+                  status: "completed",
+                  completedAt: 1_778_833_094,
+                },
+              ],
+              nextCursor: null,
+            }
+          : {
+              data: [
+                {
+                  id: "turn-1",
+                  items: [],
+                  itemsView: "notLoaded",
+                  status: "completed",
+                  startedAt: 1_778_832_941,
+                },
+              ],
+              nextCursor: "",
+            };
+      }
+      if (method === "thread/items/list") {
+        const hasCursor = Object.hasOwn(params as object, "cursor");
+        return hasCursor
+          ? {
+              data: [
+                {
+                  turnId: "turn-2",
+                  item: {
+                    type: "agentMessage",
+                    id: "assistant-history",
+                    text: "History loaded.",
+                  },
+                },
+              ],
+              nextCursor: null,
+            }
+          : {
+              data: [
+                {
+                  turnId: "turn-1",
+                  item: {
+                    type: "userMessage",
+                    id: "user-history",
+                    content: [{ type: "text", text: "Load every history page." }],
+                  },
+                },
+              ],
+              nextCursor: "",
+            };
+      }
+      throw new Error(`Unexpected request: ${method}`);
+    }),
+  };
+}
+
 function createProviderWithFakeAppServer(appServer: FakeCodexAppServer): CodexAppServerAgentClient {
   const provider = new CodexAppServerAgentClient(createTestLogger());
   const internals = castInternals<{
@@ -3904,38 +4013,7 @@ describe("Codex app-server provider", () => {
   test("loads Codex persisted history from the app-server thread", async () => {
     const session = createSession();
     const requests: Array<{ method: string; params: unknown }> = [];
-    session.client = {
-      request: vi.fn(async (method: string, params: unknown) => {
-        requests.push({ method, params });
-        if (method !== "thread/read") {
-          return {};
-        }
-        if (!(params as { includeTurns?: boolean }).includeTurns) {
-          return { thread: { historyMode: "legacy", turns: [] } };
-        }
-        return {
-          thread: {
-            turns: [
-              {
-                items: [
-                  {
-                    type: "agentMessage",
-                    id: "message-history",
-                    text: "History loaded.",
-                    timestamp: "2026-05-01T10:00:00.000Z",
-                  },
-                  {
-                    type: "contextCompaction",
-                    id: "compact-history",
-                    createdAt: "2026-05-01T10:00:01.000Z",
-                  },
-                ],
-              },
-            ],
-          },
-        };
-      }),
-    };
+    session.client = createLegacyHistoryClient(requests);
 
     await asInternals(session).loadPersistedHistory(session.client);
 
@@ -3974,73 +4052,7 @@ describe("Codex app-server provider", () => {
   test("loads paginated Codex history without full thread hydration", async () => {
     const session = createSession();
     const requests: Array<{ method: string; params: unknown }> = [];
-    session.client = {
-      request: vi.fn(async (method: string, params: unknown) => {
-        requests.push({ method, params });
-        if (method === "thread/read") {
-          return { thread: { historyMode: "paginated", turns: [] } };
-        }
-        if (method === "thread/turns/list") {
-          const hasCursor = Object.hasOwn(params as object, "cursor");
-          return hasCursor
-            ? {
-                data: [
-                  {
-                    id: "turn-2",
-                    items: [],
-                    itemsView: "notLoaded",
-                    status: "completed",
-                    completedAt: 1_778_833_094,
-                  },
-                ],
-                nextCursor: null,
-              }
-            : {
-                data: [
-                  {
-                    id: "turn-1",
-                    items: [],
-                    itemsView: "notLoaded",
-                    status: "completed",
-                    startedAt: 1_778_832_941,
-                  },
-                ],
-                nextCursor: "",
-              };
-        }
-        if (method === "thread/items/list") {
-          const hasCursor = Object.hasOwn(params as object, "cursor");
-          return hasCursor
-            ? {
-                data: [
-                  {
-                    turnId: "turn-2",
-                    item: {
-                      type: "agentMessage",
-                      id: "assistant-history",
-                      text: "History loaded.",
-                    },
-                  },
-                ],
-                nextCursor: null,
-              }
-            : {
-                data: [
-                  {
-                    turnId: "turn-1",
-                    item: {
-                      type: "userMessage",
-                      id: "user-history",
-                      content: [{ type: "text", text: "Load every history page." }],
-                    },
-                  },
-                ],
-                nextCursor: "",
-              };
-        }
-        throw new Error(`Unexpected request: ${method}`);
-      }),
-    };
+    session.client = createPaginatedHistoryClient(requests);
 
     await asInternals(session).loadPersistedHistory(session.client);
 
