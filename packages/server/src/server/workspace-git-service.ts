@@ -1575,6 +1575,9 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     );
   }
 
+  // A refresh that throws is swallowed by refreshWorkspaceTarget and leaves the fingerprint
+  // alone, so it reads as a quiet tick and widens the gap. That is the intended outcome: a
+  // repository whose Git commands keep failing is the last one to retry every 5 seconds.
   private async refreshDegradedPollTarget(
     workspaceTarget: WorkspaceGitTarget,
     request: WorkspaceGitRefreshRequest,

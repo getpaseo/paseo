@@ -1580,6 +1580,44 @@ describe("WorkspaceGitService checkout observation", () => {
     service.dispose();
   });
 
+  test("degraded repository-metadata polling backs off and resets on a change", async () => {
+    // Only the Git-directory watcher fails, so the metadata fallback is the one poll loop running.
+    const watcher = createWatcherHarness({ failDirectories: new Set([GIT_DIR]) });
+    let isDirty = false;
+    const getCheckoutStatus = vi.fn(async (cwd: string) => createCheckoutStatus(cwd, { isDirty }));
+    const service = createService(watcher, { getCheckoutStatus });
+    const subscription = service.registerWorkspace({ cwd: REPO_CWD }, vi.fn());
+
+    await vi.waitFor(() => {
+      expect(service.getMetrics().workspaceObservationSetupInFlightCount).toBe(0);
+      expect(service.getMetrics().workspaceRefreshInFlightCount).toBe(0);
+    });
+    const callsBeforePolling = getCheckoutStatus.mock.calls.length;
+    const pollCount = () => getCheckoutStatus.mock.calls.length - callsBeforePolling;
+
+    // Quiet ticks at 5s, 10s, 20s, 40s, then the 60s ceiling.
+    for (const [elapsedMs, expectedPolls] of [
+      [5_000, 1],
+      [10_000, 2],
+      [20_000, 3],
+      [40_000, 4],
+      [60_000, 5],
+      [60_000, 6],
+    ] as const) {
+      await vi.advanceTimersByTimeAsync(elapsedMs);
+      expect(pollCount()).toBe(expectedPolls);
+    }
+
+    isDirty = true;
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(pollCount()).toBe(7);
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(pollCount()).toBe(8);
+
+    subscription.unsubscribe();
+    service.dispose();
+  });
+
   test("non-Git fallback promotes an externally initialized checkout", async () => {
     const watcher = createWatcherHarness();
     let isGit = false;
