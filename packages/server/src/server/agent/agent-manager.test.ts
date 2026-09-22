@@ -2528,7 +2528,7 @@ test.each(["hang", "reject"])(
   },
 );
 
-test("cancelAgentRun preserves running state when the provider interrupt hangs", async () => {
+test("cancelAgentRun force-cancels the run when the provider interrupt hangs", async () => {
   const fixture = await createControlledInterruptFixture({
     name: "interrupt-timeout",
     agentId: "00000000-0000-4000-8000-000000000303",
@@ -2546,10 +2546,36 @@ test("cancelAgentRun preserves running state when the provider interrupt hangs",
     await running;
 
     await expect(fixture.manager.cancelAgentRun(fixture.agentId)).resolves.toEqual({
-      status: "refused",
+      status: "settled",
     });
     expect(fixture.session.interruptCalled).toBe(true);
-    expect(fixture.manager.getAgent(fixture.agentId)?.lifecycle).toBe("running");
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test("a hung interrupt does not wedge the agent against later prompts", async () => {
+  const fixture = await createControlledInterruptFixture({
+    name: "interrupt-timeout-replace",
+    agentId: "00000000-0000-4000-8000-000000000305",
+    turnId: "hanging-interrupt-replace-turn",
+    interrupt: async () => await new Promise(() => {}),
+  });
+
+  try {
+    const running = waitForAgentLifecycle(fixture.manager, fixture.agentId, "running");
+    fixture.session.pushEvent({
+      type: "turn_started",
+      provider: "codex",
+      turnId: "hanging-interrupt-replace-turn",
+    });
+    await running;
+
+    // Regression: this used to throw AgentRunCancellationError forever, leaving the agent
+    // unusable until the provider process was killed or the daemon restarted.
+    await expect(
+      fixture.manager.replaceAgentRun(fixture.agentId, "replacement prompt"),
+    ).resolves.not.toThrow();
   } finally {
     await fixture.cleanup();
   }

@@ -134,6 +134,8 @@ export class AgentRunCancellationError extends Error {
   }
 }
 
+type InterruptOutcome = "acknowledged" | "timed_out" | "rejected";
+
 export type AgentRunCancellationResult =
   | { status: "not_running" }
   | { status: "settled" }
@@ -2991,15 +2993,18 @@ export class AgentManager {
       return { status: "not_running" };
     }
 
-    const interruptAcknowledged = await this.interruptSession(agent.session, agentId);
+    const interruptOutcome = await this.interruptSession(agent.session, agentId);
     const settlement = await this.waitWithTimeout({
       operation: run.settledPromise,
-      timeoutMs: interruptAcknowledged
-        ? INTERRUPT_SESSION_TIMEOUT_MS
-        : this.rescueTimeouts.interruptSessionMs,
+      timeoutMs:
+        interruptOutcome === "acknowledged"
+          ? INTERRUPT_SESSION_TIMEOUT_MS
+          : this.rescueTimeouts.interruptSessionMs,
     });
 
-    if (!interruptAcknowledged) {
+    // Only a rejection claims the provider still owns the turn (see AgentSession#interrupt), so
+    // only a rejection refuses. A timeout makes no such claim and escalates like an ack instead.
+    if (interruptOutcome === "rejected") {
       return { status: settlement === "completed" ? "settled" : "refused" };
     }
 
@@ -3057,7 +3062,10 @@ export class AgentManager {
     }
   }
 
-  private async interruptSession(session: AgentSession, agentId: string): Promise<boolean> {
+  private async interruptSession(
+    session: AgentSession,
+    agentId: string,
+  ): Promise<InterruptOutcome> {
     try {
       const result = await this.waitWithTimeout({
         operation: session.interrupt(),
@@ -3075,12 +3083,12 @@ export class AgentManager {
           { agentId, timeoutMs: this.rescueTimeouts.interruptSessionMs },
           "Timed out interrupting session during cancel",
         );
-        return false;
+        return "timed_out";
       }
-      return true;
+      return "acknowledged";
     } catch (error) {
       this.logger.error({ err: error, agentId }, "Failed to interrupt session");
-      return false;
+      return "rejected";
     }
   }
 
