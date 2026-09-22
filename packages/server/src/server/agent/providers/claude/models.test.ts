@@ -460,9 +460,7 @@ describe("findClaudeModel", () => {
 describe("Claude Opus 5 catalog", () => {
   it("offers a single Opus 5 entry with a 1M context window", () => {
     const opus5Models = getClaudeModels()
-      .filter(
-        (model) => model.id.startsWith("claude-opus-5") && !model.id.startsWith("claude-opus-5-5"),
-      )
+      .filter((model) => /^claude-opus-5(\[1m\])?$/.test(model.id))
       .map(({ id, label, contextWindowMaxTokens }) => ({ id, label, contextWindowMaxTokens }));
 
     expect(opus5Models).toEqual([

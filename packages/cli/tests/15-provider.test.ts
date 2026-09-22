@@ -195,6 +195,16 @@ function assertClaudeModels(data: ProviderModel[]): void {
     !byId.has("claude-fable-5[1m]"),
     "compatibility-only Fable aliases should not appear in CLI output",
   );
+
+  const opus55Index = data.findIndex((model) => model.id === "claude-opus-5-5");
+  if (opus55Index !== -1) {
+    assert.strictEqual(opus55Index, 0, "Opus 5.5 should be listed first when the CLI has it");
+    assert.strictEqual(
+      data.findIndex((model) => model.id === "claude-opus-5"),
+      opus55Index + 1,
+      "Opus models should stay adjacent and newest-first",
+    );
+  }
 }
 
 try {
