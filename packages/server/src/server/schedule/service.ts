@@ -705,31 +705,35 @@ export class ScheduleService {
       output: null,
       error: null,
     };
-    const scheduleWithRun = await this.appendRunningRun(schedule.id, runningRun);
-
     try {
-      const result = await this.runner(scheduleWithRun, runId);
-      await this.finishRun({
-        scheduleId: schedule.id,
-        runId,
-        status: "succeeded",
-        agentId: result.agentId,
-        output: result.output,
-        error: null,
-        targetGone: false,
-        manual,
-      });
-    } catch (error) {
-      await this.finishRun({
-        scheduleId: schedule.id,
-        runId,
-        status: "failed",
-        agentId: null,
-        output: null,
-        error: error instanceof Error ? error.message : String(error),
-        targetGone: error instanceof ScheduleTargetGoneError,
-        manual,
-      });
+      const scheduleWithRun = await this.appendRunningRun(schedule.id, runningRun, manual);
+      if (!scheduleWithRun) {
+        return;
+      }
+      try {
+        const result = await this.runner(scheduleWithRun, runId);
+        await this.finishRun({
+          scheduleId: schedule.id,
+          runId,
+          status: "succeeded",
+          agentId: result.agentId,
+          output: result.output,
+          error: null,
+          targetGone: false,
+          manual,
+        });
+      } catch (error) {
+        await this.finishRun({
+          scheduleId: schedule.id,
+          runId,
+          status: "failed",
+          agentId: null,
+          output: null,
+          error: error instanceof Error ? error.message : String(error),
+          targetGone: error instanceof ScheduleTargetGoneError,
+          manual,
+        });
+      }
     } finally {
       this.runningScheduleIds.delete(schedule.id);
     }
@@ -738,13 +742,22 @@ export class ScheduleService {
   private async appendRunningRun(
     scheduleId: string,
     runningRun: ScheduleRun,
-  ): Promise<StoredSchedule> {
-    const updated = await this.store.update(scheduleId, (schedule) => ({
-      ...schedule,
-      updatedAt: runningRun.startedAt,
-      runs: [...schedule.runs, runningRun],
-    }));
-    return requireSchedule(updated, scheduleId);
+    manual: boolean,
+  ): Promise<StoredSchedule | null> {
+    let appended = false;
+    const updated = await this.store.update(scheduleId, (schedule) => {
+      if (!manual && schedule.status !== "active") {
+        return schedule;
+      }
+      appended = true;
+      return {
+        ...schedule,
+        updatedAt: runningRun.startedAt,
+        runs: [...schedule.runs, runningRun],
+      };
+    });
+    const existing = requireSchedule(updated, scheduleId);
+    return appended ? existing : null;
   }
 
   private async finishRun(params: {

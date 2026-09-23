@@ -44,6 +44,7 @@ import type { ScheduleExecutionResult, StoredSchedule } from "@getpaseo/protocol
 
 interface ScheduleServiceInternals {
   executeSchedule(schedule: StoredSchedule, runId: string): Promise<ScheduleExecutionResult>;
+  store: ScheduleStore;
 }
 
 const SCHEDULE_TEST_CAPABILITIES: AgentCapabilityFlags = {
@@ -386,6 +387,54 @@ describe("ScheduleService", () => {
     const resumed = await service.resume(created.id);
     expect(resumed.status).toBe("active");
     expect(resumed.nextRunAt).toBe("2026-01-01T00:04:00.000Z");
+  });
+
+  test("does not start a due run after pause wins the persisted schedule race", async () => {
+    const runner = vi.fn(async () => ({ agentId: null, output: "unexpected" }));
+    const service = createScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: new AgentManager({ logger: createTestLogger() }),
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      now: () => now,
+      runner,
+    });
+    const created = await service.create({
+      prompt: "Cancel before start",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: {
+        type: "new-agent",
+        config: { provider: "claude", cwd: tempDir },
+      },
+    });
+
+    const store = (service as unknown as ScheduleServiceInternals).store;
+    const originalList = store.list.bind(store);
+    let snapshotRead: (() => void) | null = null;
+    const snapshotReady = new Promise<void>((resolve) => {
+      snapshotRead = resolve;
+    });
+    let returnSnapshot: (() => void) | null = null;
+    const snapshotBlocked = new Promise<void>((resolve) => {
+      returnSnapshot = resolve;
+    });
+    store.list = async () => {
+      const schedules = await originalList();
+      snapshotRead?.();
+      await snapshotBlocked;
+      return schedules;
+    };
+
+    now = new Date("2026-01-01T00:01:00.000Z");
+    const tickPromise = service.tick();
+    await snapshotReady;
+    await service.pause(created.id);
+    returnSnapshot?.();
+    await tickPromise;
+
+    expect(runner).not.toHaveBeenCalled();
+    expect(await service.inspect(created.id)).toMatchObject({ status: "paused", runs: [] });
   });
 
   test("completes schedules when max runs is reached", async () => {
