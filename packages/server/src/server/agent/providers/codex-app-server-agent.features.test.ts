@@ -99,6 +99,8 @@ async function createConnectedSession(
 describe("Codex app-server provider features", () => {
   test.each([
     "gpt-6-astra",
+    "gpt-6-sol",
+    "gpt-6-luna",
     "gpt-5.6",
     "gpt-5.6-sol",
     "gpt-5.6-terra",
