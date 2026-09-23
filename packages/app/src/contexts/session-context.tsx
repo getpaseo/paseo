@@ -604,11 +604,11 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
         }
         await client.sendVoiceAudioChunk(audioData, mimeType);
       },
-      audioPlayed: async (chunkId) => {
+      audioPlayed: async (chunkId, error) => {
         if (!client) {
           throw new Error(t("common.errors.daemonUnavailable"));
         }
-        await client.audioPlayed(chunkId);
+        await client.audioPlayed(chunkId, error);
       },
       abortRequest: async () => {
         if (!client) {

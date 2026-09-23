@@ -1652,7 +1652,7 @@ export class Session {
       case "abort_request":
         return this.voiceSession.handleAbort();
       case "audio_played":
-        this.voiceSession.handleAudioPlayed(msg.id);
+        this.voiceSession.handleAudioPlayed(msg.id, msg.error);
         return undefined;
       case "set_voice_mode":
         return this.voiceSession.handleSetVoiceMode(msg.enabled, msg.agentId, msg.requestId, msg);

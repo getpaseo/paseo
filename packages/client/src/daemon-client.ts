@@ -3440,8 +3440,8 @@ export class DaemonClient {
     this.sendSessionMessage({ type: "abort_request" });
   }
 
-  async audioPlayed(id: string): Promise<void> {
-    this.sendSessionMessage({ type: "audio_played", id });
+  async audioPlayed(id: string, error?: string): Promise<void> {
+    this.sendSessionMessageStrict({ type: "audio_played", id, error });
   }
 
   // ============================================================================

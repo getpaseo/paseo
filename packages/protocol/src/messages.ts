@@ -788,6 +788,7 @@ export const AbortRequestMessageSchema = z.object({
 export const AudioPlayedMessageSchema = z.object({
   type: z.literal("audio_played"),
   id: z.string(),
+  error: z.string().optional(),
 });
 
 const AgentDirectoryFilterSchema = z.object({

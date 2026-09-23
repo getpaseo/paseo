@@ -560,6 +560,119 @@ describe("voice runtime", () => {
     expect(adapter.setVoiceMode).toHaveBeenCalledWith(true, "agent-1");
   });
 
+  it("reports playback failure instead of acknowledging success and plays the next reply", async () => {
+    const adapter = createSessionAdapter();
+    const engine = createAudioEngineMock();
+    vi.mocked(engine.play).mockRejectedValueOnce(new Error("audio output unavailable"));
+    const { runtime } = createRuntime({ engine });
+    runtime.registerSession(adapter);
+    await runtime.startVoice("server-1", "agent-1");
+
+    runtime.handleAudioOutput(
+      "server-1",
+      createAudioPayload({
+        id: "failed",
+        groupId: "failed-group",
+        chunkIndex: 0,
+        isLastChunk: true,
+      }),
+    );
+    await vi.waitFor(() =>
+      expect(adapter.audioPlayed).toHaveBeenCalledWith("failed", "audio output unavailable"),
+    );
+    runtime.handleAudioOutput(
+      "server-1",
+      createAudioPayload({
+        id: "recovered",
+        groupId: "recovered-group",
+        chunkIndex: 0,
+        isLastChunk: true,
+      }),
+    );
+    await vi.waitFor(() => expect(adapter.audioPlayed).toHaveBeenCalledWith("recovered"));
+    expect(runtime.getSnapshot().phase).toBe("listening");
+    await runtime.destroy();
+  });
+
+  it("times out a stalled player, reports failure, and consumes the next reply", async () => {
+    const adapter = createSessionAdapter();
+    const engine = createAudioEngineMock();
+    vi.mocked(engine.play).mockImplementationOnce(() => new Promise(() => {}));
+    const { runtime } = createRuntime({ engine });
+    runtime.registerSession(adapter);
+    await runtime.startVoice("server-1", "agent-1");
+    runtime.handleAudioOutput(
+      "server-1",
+      createAudioPayload({
+        id: "stalled",
+        groupId: "stalled-group",
+        chunkIndex: 0,
+        isLastChunk: true,
+      }),
+    );
+    await vi.advanceTimersByTimeAsync(90_000);
+    expect(adapter.audioPlayed).toHaveBeenCalledWith("stalled", "Audio playback timed out");
+    expect(engine.stop).toHaveBeenCalled();
+    expect(engine.clearQueue).toHaveBeenCalled();
+    runtime.handleAudioOutput(
+      "server-1",
+      createAudioPayload({
+        id: "next",
+        groupId: "next-group",
+        chunkIndex: 0,
+        isLastChunk: true,
+      }),
+    );
+    await vi.waitFor(() => expect(adapter.audioPlayed).toHaveBeenCalledWith("next"));
+    await runtime.destroy();
+  });
+
+  it("drops stalled playback on reconnect so new audio can play", async () => {
+    const adapter = createSessionAdapter();
+    const engine = createAudioEngineMock();
+    let finishOldPlayback!: (duration: number) => void;
+    vi.mocked(engine.play).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishOldPlayback = resolve;
+        }),
+    );
+    const { runtime } = createRuntime({ engine });
+    runtime.registerSession(adapter);
+    await runtime.startVoice("server-1", "agent-1");
+    runtime.handleAudioOutput(
+      "server-1",
+      createAudioPayload({
+        id: "stale",
+        groupId: "stale-group",
+        chunkIndex: 0,
+        isLastChunk: false,
+      }),
+    );
+    expect(engine.play).toHaveBeenCalledOnce();
+
+    runtime.updateSessionConnection("server-1", false);
+    runtime.updateSessionConnection("server-1", true);
+    await vi.waitFor(() => expect(runtime.getSnapshot().isVoiceSwitching).toBe(false));
+    runtime.handleAudioOutput(
+      "server-1",
+      createAudioPayload({
+        id: "fresh",
+        groupId: "fresh-group",
+        chunkIndex: 0,
+        isLastChunk: true,
+      }),
+    );
+    await vi.waitFor(() => expect(adapter.audioPlayed).toHaveBeenCalledWith("fresh"));
+    finishOldPlayback(1);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(adapter.audioPlayed).toHaveBeenCalledTimes(1);
+    expect(engine.stop).toHaveBeenCalled();
+    expect(engine.clearQueue).toHaveBeenCalled();
+    expect(engine.initialize).toHaveBeenCalledTimes(2);
+    await runtime.destroy();
+  });
+
   it("does not emit when the snapshot is unchanged", async () => {
     const adapter = createSessionAdapter();
     const { runtime } = createRuntime();

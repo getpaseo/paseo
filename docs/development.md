@@ -487,3 +487,25 @@ npm run typecheck
 ## Verbal microphone mute
 
 See [Voice microphone commands](voice-input.md) for phrases, local recognition, mute semantics, and focused tests.
+
+## Voice output diagnosis
+
+Trace output separately from microphone input. `TTS segment … synthesized` only proves
+that synthesis returned audio; it does not prove delivery or playback. The output path is
+`agent/tts-manager.ts` → `session/voice/voice-session.ts` → the session emitter in
+`websocket-server.ts` → `relay-transport.ts` (encrypted channel for relay clients) →
+`contexts/session-context.tsx` → `voice/voice-runtime.ts` → the platform audio engine.
+Server paths are under `packages/server/src/server`; client paths are under
+`packages/app/src`.
+
+The local speech worker returns bytes to the daemon, not a mobile playback sink. Its
+replacement does not own the WebSocket binding. Retained server sessions send to their
+current socket set; reconnect coverage lives in `websocket-server.relay-reconnect.test.ts`.
+Compare `audio_output` and `audio_played` counts in `ws_runtime_metrics` with microphone
+traffic before blaming worker memory or restarting a live service.
+
+Native playback shares a queue between thinking cues and assistant speech. Cancellation
+must cover initialization and audio preparation, and late continuations must never alter
+another clip's timer or completion. See `voice/audio-engine.native.test.ts` for the
+interruption regression. Playback acknowledgements and speech-tool completion must report
+failures rather than treating an interrupted or failed clip as heard.

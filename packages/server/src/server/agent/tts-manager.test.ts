@@ -52,6 +52,35 @@ describe("TTSManager", () => {
     expect(audioMessage?.payload.isLastChunk).toBe(true);
   });
 
+  it("rejects missing playback acknowledgements and permits a later speech call", async () => {
+    vi.useFakeTimers();
+    try {
+      const manager = new TTSManager("s1", pino({ level: "silent" }), new FakeTts());
+      const emitted = vi.fn();
+      const task = manager.generateAndWaitForPlayback(
+        "hello",
+        emitted,
+        new AbortController().signal,
+        true,
+      );
+      const failure = expect(task).rejects.toThrow("Audio playback confirmation timed out");
+      await vi.waitFor(() => expect(emitted).toHaveBeenCalledOnce());
+      await vi.advanceTimersByTimeAsync(120_000);
+      await failure;
+
+      await manager.generateAndWaitForPlayback(
+        "recovered",
+        (msg) => {
+          if (msg.type === "audio_output") manager.confirmAudioPlayed(msg.payload.id);
+        },
+        new AbortController().signal,
+        true,
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("splits long text into safe synthesis segments", async () => {
     const calls: string[] = [];
     const tts: TextToSpeechProvider = {
@@ -213,9 +242,10 @@ describe("TTSManager", () => {
       expect(firstChunkId).not.toBeNull();
     });
 
+    const interrupted = expect(task).rejects.toThrow("Speech playback interrupted");
     abort.abort();
 
-    await task;
+    await interrupted;
     await vi.waitFor(() => {
       expect(destroyed.length).toBeGreaterThanOrEqual(2);
     });
@@ -264,6 +294,54 @@ describe("TTSManager", () => {
       expect(unhandled).toHaveLength(0);
     } finally {
       process.off("unhandledRejection", onUnhandled);
+    }
+  });
+
+  it("propagates client playback failures to the speech caller", async () => {
+    const manager = new TTSManager("s1", pino({ level: "silent" }), new FakeTts());
+    await expect(
+      manager.generateAndWaitForPlayback(
+        "hello",
+        (msg) => {
+          if (msg.type === "audio_output") {
+            manager.confirmAudioPlayed(msg.payload.id, "native output unavailable");
+          }
+        },
+        new AbortController().signal,
+        true,
+      ),
+    ).rejects.toThrow("Audio playback failed: native output unavailable");
+  });
+
+  it("rejects canceled playback rather than returning speech success", async () => {
+    const manager = new TTSManager("s1", pino({ level: "silent" }), new FakeTts());
+    await expect(
+      manager.generateAndWaitForPlayback(
+        "hello",
+        () => manager.cancelPendingPlaybacks("client disconnected"),
+        new AbortController().signal,
+        true,
+      ),
+    ).rejects.toThrow("Speech playback interrupted: client disconnected");
+  });
+
+  it("rejects a disconnected output sink and releases its playback timer", async () => {
+    vi.useFakeTimers();
+    try {
+      const manager = new TTSManager("s1", pino({ level: "silent" }), new FakeTts());
+      await expect(
+        manager.generateAndWaitForPlayback(
+          "hello",
+          () => {
+            throw new Error("Voice output has no connected client");
+          },
+          new AbortController().signal,
+          true,
+        ),
+      ).rejects.toThrow("Voice output has no connected client");
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
     }
   });
 

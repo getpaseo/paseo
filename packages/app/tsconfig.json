@@ -3,7 +3,8 @@
   "compilerOptions": {
     "strict": true,
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": ["./src/*"],
+      "@getpaseo/expo-two-way-audio": ["../expo-two-way-audio/src/index.ts"]
     }
   },
   "include": [

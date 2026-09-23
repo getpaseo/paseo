@@ -1,3 +1,4 @@
+import * as native from "@getpaseo/expo-two-way-audio";
 import type {
   AudioEngine,
   AudioEngineCallbacks,
@@ -70,8 +71,6 @@ export function createAudioEngine(
   callbacks: AudioEngineCallbacks,
   _options?: AudioEngineTraceOptions,
 ): AudioEngine {
-  const native = require("@getpaseo/expo-two-way-audio");
-
   const refs: {
     initialized: boolean;
     captureActive: boolean;
@@ -178,14 +177,18 @@ export function createAudioEngine(
   }
 
   async function playAudio(audio: AudioPlaybackSource): Promise<number> {
-    await ensureInitialized();
-
     return await new Promise<number>((resolve, reject) => {
-      refs.activePlayback = { resolve, reject, settled: false, durationSec: 0 };
+      // Register before initialization/decoding so stop() also cancels preparation.
+      const active = { resolve, reject, settled: false, durationSec: 0 };
+      refs.activePlayback = active;
 
-      audio
-        .arrayBuffer()
+      ensureInitialized()
+        .then(() => {
+          if (active.settled) return null;
+          return audio.arrayBuffer();
+        })
         .then((arrayBuffer) => {
+          if (active.settled || arrayBuffer === null) return;
           const pcm = new Uint8Array(arrayBuffer);
           const inputRate = parsePcmSampleRate(audio.type || "") ?? 24000;
 
@@ -204,11 +207,8 @@ export function createAudioEngine(
           // Pad it heavily (2x + 10s) because native event should always fire first in foreground.
           refs.playbackTimeout = setTimeout(
             () => {
+              if (active.settled) return;
               clearPlaybackTimeout();
-              const active = refs.activePlayback;
-              if (!active || active.settled) {
-                return;
-              }
               active.settled = true;
               refs.activePlayback = null;
               resolve(durationSec);
@@ -218,13 +218,11 @@ export function createAudioEngine(
           return undefined;
         })
         .catch((error: unknown) => {
+          if (active.settled) return;
           clearPlaybackTimeout();
-          const active = refs.activePlayback;
-          if (active && !active.settled) {
-            active.settled = true;
-            refs.activePlayback = null;
-            reject(error instanceof Error ? error : new Error(String(error)));
-          }
+          active.settled = true;
+          refs.activePlayback = null;
+          reject(error instanceof Error ? error : new Error(String(error)));
         });
     });
   }
@@ -343,7 +341,8 @@ export function createAudioEngine(
       while (refs.queue.length > 0) {
         refs.queue.shift()!.reject(new Error("Playback stopped"));
       }
-      refs.processingQueue = false;
+      // Only the running consumer releases processingQueue. Clearing it here
+      // starts a second consumer before a canceled playAudio() has unwound.
     },
 
     isPlaying() {

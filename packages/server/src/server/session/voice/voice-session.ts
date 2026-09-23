@@ -1218,8 +1218,8 @@ export class VoiceSession {
   /**
    * Handle audio playback confirmation from client
    */
-  handleAudioPlayed(id: string): void {
-    this.ttsManager.confirmAudioPlayed(id);
+  handleAudioPlayed(id: string, error?: string): void {
+    this.ttsManager.confirmAudioPlayed(id, error);
   }
 
   /**

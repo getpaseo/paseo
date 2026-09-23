@@ -514,6 +514,41 @@ describe("relay external socket reconnect behavior", () => {
     await server.close();
   });
 
+  test("voice output fails while detached and uses the replacement relay socket", async () => {
+    const server = createServer();
+    const clientId = "cid-voice-reconnect";
+    const oldSocket = new MockSocket();
+    await attachRelayAndHello({ server, socket: oldSocket, clientId });
+    const session = sessionMock.instances[0];
+    const { onMessage } = session.args;
+    if (typeof onMessage !== "function") throw new Error("Missing session emitter");
+    const audio = {
+      type: "audio_output",
+      payload: {
+        id: "speech:0",
+        groupId: "speech",
+        chunkIndex: 0,
+        isLastChunk: true,
+        audio: "YQ==",
+        format: "pcm",
+        isVoiceMode: true,
+      },
+    };
+    onMessage(audio);
+    oldSocket.sent.length = 0;
+    oldSocket.emit("close", 1006, "");
+    expect(() => onMessage(audio)).toThrow("Voice output has no connected client");
+
+    const liveSocket = new MockSocket();
+    await attachRelayAndHello({ server, socket: liveSocket, clientId });
+    liveSocket.sent.length = 0;
+    onMessage(audio);
+    expect(sessionMock.instances).toHaveLength(1);
+    expect(oldSocket.sent).toEqual([]);
+    expect(sentEnvelopes(liveSocket).map((envelope) => envelope.message)).toEqual([audio]);
+    await server.close();
+  });
+
   test("passes hello capabilities through to the created session", async () => {
     const server = createServer();
     const socket = new MockSocket();

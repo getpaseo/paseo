@@ -16,12 +16,17 @@ export interface AudioInterruptionEvent {
   data: string;
 }
 
+export interface PlaybackCompleteEvent {
+  data: boolean;
+}
+
 export interface ExpoTwoWayAudioEventMap {
   onMicrophoneData: MicrophoneDataEvent;
   onInputVolumeLevelData: VolumeLevelEvent;
   onOutputVolumeLevelData: VolumeLevelEvent;
   onRecordingChange: RecordingChangeEvent;
   onAudioInterruption: AudioInterruptionEvent;
+  onPlaybackComplete: PlaybackCompleteEvent;
 }
 
 // These are useful for defining `useCallback` types inline

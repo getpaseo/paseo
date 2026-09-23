@@ -1,4 +1,6 @@
 import { execFileSync } from "node:child_process";
+import { Readable } from "node:stream";
+import { TTSManager } from "./tts-manager.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { describe, expect, it, vi } from "vitest";
@@ -17,6 +19,7 @@ import type { AgentMode, AgentProvider, ProviderSnapshotEntry } from "./agent-sd
 import type { ProviderSnapshotManager } from "./provider-snapshot-manager.js";
 import { createProviderSnapshotManagerStub } from "../test-utils/session-stubs.js";
 import {
+  AudioPlayedMessageSchema,
   AgentListItemPayloadSchema,
   AgentPermissionRequestPayloadSchema,
   AgentSnapshotPayloadSchema,
@@ -4987,6 +4990,53 @@ describe("speak MCP tool", () => {
         callerAgentId: "voice-agent-1",
       }),
     );
+  });
+
+  it("returns an MCP error when the client reports failed audio playback", async () => {
+    const { agentManager, agentStorage } = createTestDeps();
+    const tts = new TTSManager("voice-output-test", logger, {
+      async synthesizeSpeech() {
+        return { stream: Readable.from([Buffer.from("audio")]), format: "pcm" };
+      },
+    });
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      callerAgentId: "voice-agent-failed-output",
+      enableVoiceTools: true,
+      resolveSpeakHandler:
+        () =>
+        async ({ text, signal }) => {
+          await tts.generateAndWaitForPlayback(
+            text,
+            (message) => {
+              if (message.type !== "audio_output") return;
+              const response = AudioPlayedMessageSchema.parse({
+                type: "audio_played",
+                id: message.payload.id,
+                error: "Audio playback timed out",
+              });
+              tts.confirmAudioPlayed(response.id, response.error);
+            },
+            signal ?? new AbortController().signal,
+            true,
+          );
+        },
+      logger,
+    });
+    const client = await connectInMemoryMcpClient(server);
+    try {
+      const result = await client.callTool({ name: "speak", arguments: { text: "Hello." } });
+      expect(result.isError).toBe(true);
+      expect(result.content).toEqual([
+        { type: "text", text: "Audio playback failed: Audio playback timed out" },
+      ]);
+    } finally {
+      tts.cleanup();
+      await client.close();
+      await server.close();
+    }
   });
 
   it("fails when no speak handler exists", async () => {

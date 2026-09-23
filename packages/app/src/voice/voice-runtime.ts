@@ -12,6 +12,9 @@ import {
 const PCM_MIME_TYPE = "audio/pcm;rate=16000;bits=16";
 const KEEP_AWAKE_TAG = "paseo:voice";
 const THINKING_TONE_REPEAT_GAP_MS = 350;
+// TTS emits bounded text segments. Recover locally before the daemon's 120s
+// acknowledgement deadline, even if a platform player never settles play().
+const PLAYBACK_TIMEOUT_MS = 90_000;
 const DISPLAY_VOLUME_PUBLISH_INTERVAL_MS = 120;
 const DISPLAY_VOLUME_CHANGE_EPSILON = 0.02;
 const DISPLAY_VOLUME_ATTACK = 0.35;
@@ -58,7 +61,7 @@ export interface VoiceSessionAdapter {
   ): Promise<{ voiceCommandsEnabled?: boolean; isMuted?: boolean }>;
   setVoiceInputMuted(muted: boolean): Promise<boolean>;
   sendVoiceAudioChunk(audioData: string, mimeType: string): Promise<void>;
-  audioPlayed(chunkId: string): Promise<void>;
+  audioPlayed(chunkId: string, error?: string): Promise<void>;
   abortRequest(): Promise<void>;
   setAssistantAudioPlaying(isPlaying: boolean): void;
 }
@@ -339,12 +342,16 @@ export function createVoiceRuntime(deps: VoiceRuntimeDeps): VoiceRuntime {
     }
   }
 
-  async function acknowledgeChunk(chunkId: string): Promise<void> {
+  async function acknowledgeChunk(chunkId: string, error?: string): Promise<void> {
     const activeSession = getActiveSession();
     if (!activeSession) {
       return;
     }
-    await activeSession.adapter.audioPlayed(chunkId);
+    if (error === undefined) {
+      await activeSession.adapter.audioPlayed(chunkId);
+    } else {
+      await activeSession.adapter.audioPlayed(chunkId, error);
+    }
   }
 
   async function processPlaybackQueue(serverId: string): Promise<void> {
@@ -385,15 +392,27 @@ export function createVoiceRuntime(deps: VoiceRuntimeDeps): VoiceRuntime {
           api.onAssistantAudioStarted(serverId);
         }
 
+        let playbackError: string | undefined;
+        let playbackTimeout: ReturnType<typeof setTimeout> | undefined;
         try {
           if (group.shouldPlay) {
-            await deps.engine.play(nextChunk.source);
+            const timeout = new Promise<never>((_resolve, reject) => {
+              playbackTimeout = setTimeout(() => {
+                reject(new Error("Audio playback timed out"));
+              }, PLAYBACK_TIMEOUT_MS);
+            });
+            await Promise.race([deps.engine.play(nextChunk.source), timeout]);
           }
         } catch (error) {
           if (generation !== playback.generation) {
             return;
           }
           console.error(`[VoiceRuntime] play error chunk=${group.nextChunkToPlay}:`, error);
+          playbackError = error instanceof Error ? error.message : String(error);
+          deps.engine.stop();
+          deps.engine.clearQueue();
+        } finally {
+          clearTimeout(playbackTimeout);
         }
 
         if (generation !== playback.generation) {
@@ -402,7 +421,7 @@ export function createVoiceRuntime(deps: VoiceRuntimeDeps): VoiceRuntime {
 
         if (!group.ackedChunkIds.has(nextChunk.id)) {
           group.ackedChunkIds.add(nextChunk.id);
-          void acknowledgeChunk(nextChunk.id).catch((error) => {
+          void acknowledgeChunk(nextChunk.id, playbackError).catch((error) => {
             console.warn("[VoiceRuntime] Failed to confirm audio playback:", error);
           });
         }
@@ -595,6 +614,8 @@ export function createVoiceRuntime(deps: VoiceRuntimeDeps): VoiceRuntime {
     const generation = state.generation;
     patchSnapshot((prev) => ({ ...prev, isVoiceSwitching: true }));
     try {
+      await deps.engine.initialize();
+      if (generation !== state.generation) return;
       const response = state.snapshot.voiceCommandsEnabled
         ? await activeSession.adapter.setVoiceMode(true, state.snapshot.activeAgentId, {
             voiceCommandsEnabled: true,
@@ -607,14 +628,18 @@ export function createVoiceRuntime(deps: VoiceRuntimeDeps): VoiceRuntime {
       }
       state.transportReady = true;
       patchSnapshot({ muteError: null });
+      if (!playback.activeGroupId) {
+        patchSnapshot((prev) => ({ ...prev, phase: "listening" }));
+      }
     } catch (error) {
       if (generation !== state.generation) return;
       patchSnapshot({
         muteError: error instanceof Error ? error.message : "Voice reconnect failed.",
       });
     } finally {
-      if (generation === state.generation)
+      if (generation === state.generation) {
         patchSnapshot((prev) => ({ ...prev, isVoiceSwitching: false }));
+      }
     }
   }
 
@@ -670,6 +695,16 @@ export function createVoiceRuntime(deps: VoiceRuntimeDeps): VoiceRuntime {
         patchSnapshot({
           muteError: "Host disconnected. Microphone input is paused until reconnected.",
         });
+        if (!state.snapshot.isVoiceMode) return;
+        state.generation += 1;
+        state.turnInProgress = false;
+        state.serverSpeechDetected = false;
+        resetCaptureTelemetry();
+        resetPlaybackState();
+        stopCue();
+        deps.engine.stop();
+        deps.engine.clearQueue();
+        session.adapter.setAssistantAudioPlaying(false);
         return;
       }
       void resyncVoiceMode(serverId);

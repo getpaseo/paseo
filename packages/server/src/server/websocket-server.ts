@@ -968,18 +968,20 @@ export class VoiceAssistantWebSocketServer {
     this.wss.close();
   }
 
-  private sendToClient(ws: WebSocketLike, message: WSOutboundMessage): void {
+  private sendToClient(ws: WebSocketLike, message: WSOutboundMessage): boolean {
     // WebSocket.OPEN = 1. The check is a fast path; the socket can still
     // transition to closed between here and ws.send(), so guard the send too —
     // a synchronous throw here would propagate as an uncaughtException.
     if (ws.readyState !== 1) {
-      return;
+      return false;
     }
     try {
       ws.send(JSON.stringify(message));
       this.runtimeMetrics.recordOutboundMessage(message, ws.bufferedAmount);
+      return true;
     } catch (err) {
       this.logger.warn({ err }, "ws_send_failed");
+      return false;
     }
   }
 
@@ -995,11 +997,13 @@ export class VoiceAssistantWebSocketServer {
     }
   }
 
-  private sendToConnection(connection: SessionConnection, message: WSOutboundMessage): void {
+  private sendToConnection(connection: SessionConnection, message: WSOutboundMessage): boolean {
     const sockets = connection.kind === "trusted" ? connection.sockets : [connection.socket];
+    let sent = false;
     for (const ws of sockets) {
-      this.sendToClient(ws, message);
+      if (this.sendToClient(ws, message)) sent = true;
     }
+    return sent;
   }
 
   private sendBinaryToConnection(connection: SessionConnection, frame: Uint8Array): void {
@@ -1087,7 +1091,10 @@ export class VoiceAssistantWebSocketServer {
         if (!connection) {
           return;
         }
-        this.sendToConnection(connection, wrapSessionMessage(msg));
+        const sent = this.sendToConnection(connection, wrapSessionMessage(msg));
+        if (msg.type === "audio_output" && !sent) {
+          throw new Error("Voice output has no connected client");
+        }
       },
       onMessageToSource: (source, msg) => {
         if (!connection || !connection.sockets.has(source as WebSocketLike)) {
