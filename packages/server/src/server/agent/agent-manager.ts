@@ -366,6 +366,12 @@ export interface WaitForAgentStartOptions {
   signal?: AbortSignal;
 }
 
+export interface StaleAgentRunInput {
+  agentId: string;
+  prompt: AgentPromptInput;
+  options?: AgentRunOptions;
+}
+
 export type AttentionState =
   | { requiresAttention: false }
   | {
@@ -2500,11 +2506,7 @@ export class AgentManager {
     return this.createAgentStream({ agentId, prompt, options, recovery: null });
   }
 
-  streamAgentAfterStaleRecovery(params: {
-    agentId: string;
-    prompt: AgentPromptInput;
-    options?: AgentRunOptions;
-  }): AsyncGenerator<AgentStreamEvent> {
+  streamAgentAfterStaleRecovery(params: StaleAgentRunInput): AsyncGenerator<AgentStreamEvent> {
     const recovery = this.runStartRecoveries.get(params.agentId);
     if (!recovery) throw new Error(`Agent ${params.agentId} has no stale run recovery`);
     return this.createAgentStream({ ...params, recovery });

@@ -6,7 +6,7 @@ import type {
   AgentRunOptions,
   AgentStreamEvent,
 } from "./agent-sdk-types.js";
-import type { AgentManager, ManagedAgent } from "./agent-manager.js";
+import type { AgentManager, ManagedAgent, StaleAgentRunInput } from "./agent-manager.js";
 import type { AgentStorage } from "./agent-storage.js";
 import { ensureAgentLoaded } from "./agent-loading.js";
 import { isStaleProviderSessionError } from "./stale-provider-session-error.js";
@@ -26,11 +26,7 @@ export type AgentRunController = Pick<
 > & {
   reloadAgentSession(agentId: string): Promise<unknown>;
   reloadAgentSessionForStaleRun(agentId: string): Promise<unknown>;
-  streamAgentAfterStaleRecovery(params: {
-    agentId: string;
-    prompt: AgentPromptInput;
-    options?: AgentRunOptions;
-  }): AsyncGenerator<AgentStreamEvent>;
+  streamAgentAfterStaleRecovery(params: StaleAgentRunInput): AsyncGenerator<AgentStreamEvent>;
 };
 
 export interface StartAgentRunOptions {
