@@ -997,8 +997,13 @@ describe("home-tree scan cost", () => {
   });
 
   // Nothing matches, so the scan walks the whole tree instead of stopping at a confident result.
-  const scanWholeTree = () =>
-    searchAbsoluteDirectoryPaths({ homeDir: scanRoot, query: "nomatch", maxDepth: DEPTH + 4 });
+  function scanWholeTree() {
+    return searchAbsoluteDirectoryPaths({
+      homeDir: scanRoot,
+      query: "nomatch",
+      maxDepth: DEPTH + 4,
+    });
+  }
 
   async function countContainmentChecks(run: () => Promise<unknown>): Promise<number> {
     startPathContainmentMetrics();
