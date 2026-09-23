@@ -151,6 +151,12 @@ npm run build:server
 npm run typecheck
 ```
 
+## 赞助
+
+Paseo 由一个人开发，靠使用它的人来资助。你可以通过 [GitHub Sponsors](https://github.com/sponsors/boudra) 支持这项工作，或者以每月 500 美元[赞助一个展示位](https://buy.stripe.com/8x24gBczR7LNaokcve2sM00)，把贵公司的 logo 放在这里和 [paseo.sh 首页](https://paseo.sh/sponsor#spot)上。
+
+<!-- Sponsor logos go here, in the same order as packages/website/src/data/sponsors.ts -->
+
 ## 相关项目
 
 - [getpaseo/paseo-relay](https://github.com/getpaseo/paseo-relay) — 官方分布式 relay，使用 Elixir 编写

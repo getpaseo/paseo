@@ -40,13 +40,20 @@ export interface StreamEdgeSlotProps {
   ListFooterComponentStyle?: StyleProp<ViewStyle>;
 }
 
+/**
+ * A caller that landed on one occurrence inside the message owns where the viewport
+ * settles. It resolved the occurrence against a specific row already, so it takes no
+ * row here and returns null once that row is gone.
+ */
+export interface ScrollToMessageOccurrence {
+  signal: AbortSignal;
+  targetTop(): number | null;
+}
+
 export interface StreamViewportHandle {
   scrollToBottom: (reason?: BottomAnchorLocalRequest["reason"]) => void;
   prepareForViewportChange: () => void;
-  scrollToMessage?: (
-    itemId: string,
-    occurrence?: { signal: AbortSignal; targetTop(row: HTMLElement): number | null },
-  ) => void;
+  scrollToMessage?: (messageId: string, occurrence?: ScrollToMessageOccurrence) => void;
 }
 
 export interface StreamSegmentRenderers {
