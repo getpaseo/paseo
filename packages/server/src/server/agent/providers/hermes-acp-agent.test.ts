@@ -99,6 +99,7 @@ describe("HermesACPAgentClient", () => {
     });
 
     expect(manager1).toBe(manager2);
+    expect(manager1["launchEnv"]).toBeUndefined();
   });
 });
 

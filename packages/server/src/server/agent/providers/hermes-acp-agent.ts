@@ -56,15 +56,16 @@ export function getHermesMultiplexManager(
   command: [string, ...string[]],
   env?: Record<string, string>,
 ): ACPMultiplexConnectionManager {
-  const managerKey = buildManagerKey(command, env);
+  const filteredEnv = filterTransportEnv(env);
+  const managerKey = buildManagerKey(command, filteredEnv);
   let manager = multiplexManagers.get(managerKey);
   if (!manager) {
     manager = new ACPMultiplexConnectionManager({
       logger,
       provider: "hermes",
       defaultCommand: command,
-      runtimeSettings: { env },
-      launchEnv: env,
+      runtimeSettings: { env: filteredEnv },
+      launchEnv: filteredEnv,
     });
     multiplexManagers.set(managerKey, manager);
   }
