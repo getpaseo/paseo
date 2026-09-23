@@ -10,9 +10,10 @@ import type {
 
 import { createTestLogger } from "../../../test-utils/test-logger.js";
 import {
-  HermesACPAgentClient,
   getHermesMultiplexManager,
+  HermesACPAgentClient,
   resetHermesMultiplexManagers,
+  filterTransportEnv,
 } from "./hermes-acp-agent.js";
 import { ACPMultiplexConnectionManager } from "./acp-multiplex-manager.js";
 import { ACPAgentSession, type ACPTransportAcquisition } from "./acp-agent.js";
@@ -99,7 +100,21 @@ describe("HermesACPAgentClient", () => {
     });
 
     expect(manager1).toBe(manager2);
-    expect(manager1["launchEnv"]).toBeUndefined();
+  });
+
+  test("filterTransportEnv removes session-scoped variables and preserves process configuration", () => {
+    const sanitized = filterTransportEnv({
+      PASEO_AGENT_ID: "agent-1",
+      PASEO_AGENT_CWD: "/tmp/workspace1",
+      PASEO_SESSION_ID: "session-1",
+      HERMES_PROFILE: "custom-profile",
+      ANTHROPIC_API_KEY: "secret",
+    });
+
+    expect(sanitized).toEqual({
+      HERMES_PROFILE: "custom-profile",
+      ANTHROPIC_API_KEY: "secret",
+    });
   });
 });
 
