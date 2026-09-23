@@ -173,4 +173,29 @@ describe("buildSidebarProjection", () => {
       { serverId: "srv", workspaceId: "unpinned" },
     ]);
   });
+
+  it("excludes unpinned chat workspaces from ordinary workspace groups", () => {
+    const normalWorkspace = makeWorkspace("normal-wks", "running", [], "project");
+    const chatWorkspace = makeWorkspace("chat-wks", "running", [], "__chats__");
+    chatWorkspace.placement.workspaceKind = "chat";
+    chatWorkspace.entry.workspaceKind = "chat";
+
+    const projection = buildSidebarProjection({
+      projects: [makeProject([normalWorkspace.placement, chatWorkspace.placement], "project")],
+      pinnedKeys: { pinnedWorkspaceKeys: [], pinnedAtByKey: {} },
+      pinnedWorkspaceOrder: [],
+      workspaceEntriesByKey: new Map([
+        [normalWorkspace.placement.workspaceKey, normalWorkspace.entry],
+        [chatWorkspace.placement.workspaceKey, chatWorkspace.entry],
+      ]),
+      projectNamesByViewKey: new Map([["project", "Project"]]),
+      groupMode: "status",
+      pinnedCollapsed: false,
+      collapsedProjectKeys: new Set(),
+      collapsedWorkspaceGroupKeys: new Set(),
+    });
+
+    const runningGroup = projection.workspaceGroups.find((g) => g.key === "running");
+    expect(runningGroup?.rows.map((r) => r.workspaceId)).toEqual(["normal-wks"]);
+  });
 });

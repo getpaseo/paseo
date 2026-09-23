@@ -1151,6 +1151,16 @@ export const ru: TranslationResources = {
     pinned: {
       title: "Закреплённые",
     },
+    chats: {
+      title: "Чаты",
+      newChat: "Новый чат",
+      archiveAll: "Архивировать все чаты",
+      archiveAllConfirmTitle: "Архивировать все чаты?",
+      archiveAllConfirmMessage:
+        "Вы уверены, что хотите архивировать все чаты? Их можно будет восстановить из истории позже.",
+      archiveAllConfirmAction: "Архивировать все",
+      archiveAllFailed: "Не удалось архивировать некоторые чаты",
+    },
     host: {
       noHost: "Нет хоста",
       switchTitle: "Сменить хост",
@@ -1268,7 +1278,9 @@ export const ru: TranslationResources = {
   },
   newWorkspace: {
     title: "Новое рабочее пространство",
+    chatTitle: "Новый чат",
     create: "Создать",
+    startChat: "Начать чат",
     isolation: {
       local: "Локально",
       worktree: "Новый worktree",
@@ -1282,6 +1294,7 @@ export const ru: TranslationResources = {
     titlePlaceholder: "Заголовок (необязательно)",
     errors: {
       hostDisconnected: "Хост не подключён",
+      chatHostUpgradeRequired: "Обновите хост для создания сессий чата",
       createWorktreeFailed: "Не удалось создать worktree.",
       composerStateRequired: "Редактор сообщения ещё не готов.",
       selectModel: "Выберите модель",

@@ -1169,6 +1169,16 @@ export const es: TranslationResources = {
     pinned: {
       title: "Anclados",
     },
+    chats: {
+      title: "Chats",
+      newChat: "Nuevo chat",
+      archiveAll: "Archivar todos los chats",
+      archiveAllConfirmTitle: "¿Archivar todos los chats?",
+      archiveAllConfirmMessage:
+        "¿Estás seguro de que deseas archivar todos los chats? Podrás restaurarlos desde el historial más tarde.",
+      archiveAllConfirmAction: "Archivar todo",
+      archiveAllFailed: "Error al archivar algunos chats",
+    },
     host: {
       noHost: "Sin anfitrión",
       switchTitle: "Cambiar de anfitrión",
@@ -1286,7 +1296,9 @@ export const es: TranslationResources = {
   },
   newWorkspace: {
     title: "Nuevo espacio de trabajo",
+    chatTitle: "Nuevo chat",
     create: "Crear",
+    startChat: "Iniciar chat",
     isolation: {
       local: "Local",
       worktree: "Nuevo worktree",
@@ -1300,6 +1312,7 @@ export const es: TranslationResources = {
     titlePlaceholder: "Título (opcional)",
     errors: {
       hostDisconnected: "Hostno está conectado",
+      chatHostUpgradeRequired: "Actualiza el host para crear sesiones de chat",
       createWorktreeFailed: "No se pudo crear el árbol de trabajo",
       composerStateRequired: "Se requiere el estado del compositor",
       selectModel: "Selecciona un modelo",

@@ -1140,6 +1140,15 @@ export const ko: TranslationResources = {
     pinned: {
       title: "고정됨",
     },
+    chats: {
+      title: "채팅",
+      newChat: "새 채팅",
+      archiveAll: "모든 채팅 보관",
+      archiveAllConfirmTitle: "모든 채팅을 보관하시겠습니까?",
+      archiveAllConfirmMessage: "모든 채팅을 보관하시겠습니까? 나중에 기록에서 복원할 수 있습니다.",
+      archiveAllConfirmAction: "모두 보관",
+      archiveAllFailed: "일부 채팅을 보관하지 못했습니다",
+    },
     host: {
       noHost: "호스트 없음",
       switchTitle: "호스트 전환",
@@ -1257,7 +1266,9 @@ export const ko: TranslationResources = {
   },
   newWorkspace: {
     title: "새 워크스페이스",
+    chatTitle: "새 채팅",
     create: "생성",
+    startChat: "채팅 시작",
     isolation: {
       local: "로컬",
       worktree: "새 워크트리",
@@ -1271,6 +1282,7 @@ export const ko: TranslationResources = {
     titlePlaceholder: "제목(선택 사항)",
     errors: {
       hostDisconnected: "호스트가 연결되어 있지 않습니다",
+      chatHostUpgradeRequired: "채팅 세션을 생성하려면 호스트를 업데이트하세요",
       createWorktreeFailed: "워크트리를 생성하지 못했습니다",
       composerStateRequired: "작성기 상태가 필요합니다",
       selectModel: "모델을 선택하세요",

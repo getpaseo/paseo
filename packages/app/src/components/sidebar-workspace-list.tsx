@@ -36,7 +36,7 @@ import { getSidebarRowBackdrop } from "@/components/sidebar/sidebar-row-backdrop
 import { type GestureType } from "react-native-gesture-handler";
 import { WorkspaceRenameModal } from "@/components/workspace-rename-modal";
 import { useWorkspaceClipboardActions } from "@/hooks/use-workspace-clipboard-actions";
-import { ExternalLink, Settings, MoreVertical, Plus, Trash2 } from "lucide-react-native";
+import { ExternalLink, MoreVertical, Plus, Settings, Trash2 } from "lucide-react-native";
 import { NestableScrollContainer } from "react-native-draggable-flatlist";
 import { DraggableList, type DraggableRenderItemInfo } from "./draggable-list";
 import type { DraggableListDragHandleProps } from "./draggable-list.types";
@@ -113,6 +113,8 @@ import {
   SidebarFilterEmptyState,
   SidebarProjectEmptyState,
 } from "@/components/sidebar/empty-states";
+import { isChatsProject, isChatWorkspace } from "@/chats/model";
+import { SidebarChatsSection } from "@/chats/sidebar-chats-section";
 import { selectWorkspaceServiceSummary } from "@/components/sidebar/workspace-meta-row";
 import {
   SidebarWorkspaceTrailingContent,
@@ -1916,6 +1918,7 @@ export function SidebarWorkspaceList({
   const serverIds = useMemo(() => hosts.map((host) => host.serverId), [hosts]);
   const supportsMultiplicityByServerId = useHostFeatureMap(serverIds, "workspaceMultiplicity");
   const supportsPinningByServerId = useHostFeatureMap(serverIds, "workspacePinning");
+  const supportsChatByServerId = useHostFeatureMap(serverIds, "chatWorkspaces");
   const onToggleWorkspacePin = useSidebarWorkspacePinController();
   const getPinnedWorkspaceOrder = useSidebarOrderStore((state) => state.getPinnedWorkspaceOrder);
   const setPinnedWorkspaceOrder = useSidebarOrderStore((state) => state.setPinnedWorkspaceOrder);
@@ -1973,6 +1976,7 @@ export function SidebarWorkspaceList({
         onWorkspacePress={onWorkspacePress}
         hostBadgeByServerId={hostBadgeByServerId}
         supportsPinningByServerId={supportsPinningByServerId}
+        supportsChatByServerId={supportsChatByServerId}
         onToggleWorkspacePin={onToggleWorkspacePin}
         onPinnedWorkspaceReorder={handlePinnedWorkspaceReorder}
         listHeaderComponent={listHeaderComponent}
@@ -2002,6 +2006,7 @@ export function SidebarWorkspaceList({
         hostBadgeByServerId={hostBadgeByServerId}
         supportsMultiplicityByServerId={supportsMultiplicityByServerId}
         supportsPinningByServerId={supportsPinningByServerId}
+        supportsChatByServerId={supportsChatByServerId}
         onToggleWorkspacePin={onToggleWorkspacePin}
         onPinnedWorkspaceReorder={handlePinnedWorkspaceReorder}
       />
@@ -2016,6 +2021,8 @@ export function SidebarWorkspaceList({
  * that needed it — `SidebarStatusModeWrapper` is what made a label-mode reader believe the data
  * above it was status-only.
  */
+const EMPTY_CREATING_SET: ReadonlySet<string> = new Set();
+
 function SidebarGroupedModeList({
   workspaceGroups,
   pinnedGroups,
@@ -2025,6 +2032,7 @@ function SidebarGroupedModeList({
   onWorkspacePress,
   hostBadgeByServerId,
   supportsPinningByServerId,
+  supportsChatByServerId,
   onToggleWorkspacePin,
   onPinnedWorkspaceReorder,
   listHeaderComponent,
@@ -2040,6 +2048,7 @@ function SidebarGroupedModeList({
   onWorkspacePress?: () => void;
   hostBadgeByServerId: ReadonlyMap<string, HostBadgeModel>;
   supportsPinningByServerId: ReadonlyMap<string, boolean>;
+  supportsChatByServerId?: ReadonlyMap<string, boolean>;
   onToggleWorkspacePin: ToggleSidebarWorkspacePin;
   onPinnedWorkspaceReorder: (workspaces: SidebarWorkspacePlacement[]) => void;
   listHeaderComponent?: ReactElement | null;
@@ -2047,6 +2056,7 @@ function SidebarGroupedModeList({
   parentGestureRef?: MutableRefObject<GestureType | undefined>;
   dragGestureHostActive?: boolean;
 }) {
+  const activeWorkspaceSelection = useActiveWorkspaceSelection();
   const showShortcutBadges = useShowShortcutBadges();
   const pinnedWorkspaces = useMemo(
     () =>
@@ -2055,6 +2065,75 @@ function SidebarGroupedModeList({
         return entry ? [entry] : [];
       }),
     [pinnedGroups.pinnedChats, workspaceEntriesByKey],
+  );
+
+  const pinnedWorkspaceKeys = useMemo(
+    () => new Set(pinnedGroups.pinnedChats.map((workspace) => workspace.workspaceKey)),
+    [pinnedGroups.pinnedChats],
+  );
+
+  const renderFooterChatItem = useCallback(
+    (entry: SidebarWorkspaceEntry) => (
+      <MemoWorkspaceRowItem
+        key={entry.workspaceKey}
+        workspace={entry}
+        workspaceEntry={entry}
+        hostBadge={hostBadgeByServerId.get(entry.serverId) ?? null}
+        leadingProjectName={null}
+        leadingProjectIconDataUri={null}
+        shortcutNumber={_projectShortcutIndex.get(entry.workspaceKey) ?? null}
+        showShortcutBadge={showShortcutBadges}
+        canCopyBranchName={false}
+        canPin={supportsPinningByServerId.get(entry.serverId) === true}
+        onToggleWorkspacePin={onToggleWorkspacePin}
+        isCreating={false}
+        selectionEnabled={true}
+        activeWorkspaceSelection={activeWorkspaceSelection}
+        onWorkspacePress={onWorkspacePress}
+      />
+    ),
+    [
+      _projectShortcutIndex,
+      activeWorkspaceSelection,
+      hostBadgeByServerId,
+      onToggleWorkspacePin,
+      onWorkspacePress,
+      showShortcutBadges,
+      supportsPinningByServerId,
+    ],
+  );
+
+  const footerComponent = useMemo(
+    () => (
+      <SidebarChatsSection
+        workspaceEntriesByKey={workspaceEntriesByKey}
+        pinnedWorkspaceKeys={pinnedWorkspaceKeys}
+        supportsChatByServerId={supportsChatByServerId}
+        onWorkspacePress={onWorkspacePress}
+        activeWorkspaceSelection={activeWorkspaceSelection}
+        creatingWorkspaceIds={EMPTY_CREATING_SET}
+        hostBadgeByServerId={hostBadgeByServerId}
+        supportsPinningByServerId={supportsPinningByServerId}
+        onToggleWorkspacePin={onToggleWorkspacePin}
+        showShortcutBadges={showShortcutBadges}
+        shortcutIndexByWorkspaceKey={_projectShortcutIndex}
+        selectionEnabled={true}
+        renderWorkspaceItem={renderFooterChatItem}
+      />
+    ),
+    [
+      workspaceEntriesByKey,
+      pinnedWorkspaceKeys,
+      supportsChatByServerId,
+      onWorkspacePress,
+      activeWorkspaceSelection,
+      hostBadgeByServerId,
+      supportsPinningByServerId,
+      onToggleWorkspacePin,
+      showShortcutBadges,
+      _projectShortcutIndex,
+      renderFooterChatItem,
+    ],
   );
 
   return (
@@ -2073,6 +2152,7 @@ function SidebarGroupedModeList({
       sidebarFilterEmpty={sidebarFilterEmpty}
       parentGestureRef={parentGestureRef}
       dragGestureHostActive={dragGestureHostActive}
+      footerComponent={footerComponent}
     />
   );
 }
@@ -2098,6 +2178,7 @@ function ProjectModeList({
   hostBadgeByServerId,
   supportsMultiplicityByServerId,
   supportsPinningByServerId,
+  supportsChatByServerId,
   onToggleWorkspacePin,
   onPinnedWorkspaceReorder,
 }: Omit<
@@ -2116,6 +2197,7 @@ function ProjectModeList({
   hostBadgeByServerId: ReadonlyMap<string, HostBadgeModel>;
   supportsMultiplicityByServerId: ReadonlyMap<string, boolean>;
   supportsPinningByServerId: ReadonlyMap<string, boolean>;
+  supportsChatByServerId?: ReadonlyMap<string, boolean>;
   onToggleWorkspacePin: ToggleSidebarWorkspacePin;
   onPinnedWorkspaceReorder: (workspaces: SidebarWorkspacePlacement[]) => void;
 }) {
@@ -2355,14 +2437,15 @@ function ProjectModeList({
       isActive,
       dragHandleProps,
     }: DraggableRenderItemInfo<SidebarWorkspacePlacement>) => {
+      const isChat = isChatWorkspace(workspace);
       return (
         <MemoWorkspaceRowItem
           workspace={workspace}
           workspaceEntry={workspaceEntriesByKey.get(workspace.workspaceKey) ?? null}
           hostBadge={hostBadgeByServerId.get(workspace.serverId) ?? null}
-          leadingProjectName={workspace.projectName}
+          leadingProjectName={isChat ? null : workspace.projectName}
           leadingProjectIconDataUri={
-            projectIconByProjectViewKey.get(workspace.projectViewKey) ?? null
+            isChat ? null : (projectIconByProjectViewKey.get(workspace.projectViewKey) ?? null)
           }
           shortcutNumber={shortcutIndexByWorkspaceKey.get(workspace.workspaceKey) ?? null}
           showShortcutBadge={showShortcutBadges}
@@ -2400,7 +2483,7 @@ function ProjectModeList({
     ) : (
       <DraggableList
         testID="sidebar-project-list"
-        data={unpinnedProjects}
+        data={unpinnedProjects.filter((project) => !isChatsProject(project))}
         keyExtractor={projectViewKeyExtractor}
         renderItem={renderProject}
         onDragEnd={handleProjectDragEnd}
@@ -2413,6 +2496,39 @@ function ProjectModeList({
         containerStyle={styles.projectListContainer}
       />
     );
+
+  const renderProjectChatItem = useCallback(
+    (entry: SidebarWorkspaceEntry) => (
+      <MemoWorkspaceRowItem
+        key={entry.workspaceKey}
+        workspace={entry}
+        workspaceEntry={entry}
+        hostBadge={hostBadgeByServerId.get(entry.serverId) ?? null}
+        leadingProjectName={null}
+        leadingProjectIconDataUri={null}
+        shortcutNumber={shortcutIndexByWorkspaceKey.get(entry.workspaceKey) ?? null}
+        showShortcutBadge={showShortcutBadges}
+        canCopyBranchName={false}
+        canPin={supportsPinningByServerId.get(entry.serverId) === true}
+        onToggleWorkspacePin={onToggleWorkspacePin}
+        isCreating={creatingWorkspaceIds.has(entry.workspaceId)}
+        selectionEnabled={selectionEnabled}
+        activeWorkspaceSelection={activeWorkspaceSelection}
+        onWorkspacePress={onWorkspacePress}
+      />
+    ),
+    [
+      activeWorkspaceSelection,
+      creatingWorkspaceIds,
+      hostBadgeByServerId,
+      onToggleWorkspacePin,
+      onWorkspacePress,
+      selectionEnabled,
+      shortcutIndexByWorkspaceKey,
+      showShortcutBadges,
+      supportsPinningByServerId,
+    ],
+  );
 
   const content = (
     <>
@@ -2459,6 +2575,21 @@ function ProjectModeList({
         ? listHeaderComponent
         : null}
       {sidebarFilterEmpty ? <SidebarFilterEmptyState /> : projectBody}
+      <SidebarChatsSection
+        workspaceEntriesByKey={workspaceEntriesByKey}
+        pinnedWorkspaceKeys={new Set(pinnedChats.map((w) => w.workspaceKey))}
+        supportsChatByServerId={supportsChatByServerId}
+        onWorkspacePress={onWorkspacePress}
+        activeWorkspaceSelection={activeWorkspaceSelection}
+        creatingWorkspaceIds={creatingWorkspaceIds}
+        hostBadgeByServerId={hostBadgeByServerId}
+        supportsPinningByServerId={supportsPinningByServerId}
+        onToggleWorkspacePin={onToggleWorkspacePin}
+        showShortcutBadges={showShortcutBadges}
+        shortcutIndexByWorkspaceKey={shortcutIndexByWorkspaceKey}
+        selectionEnabled={selectionEnabled}
+        renderWorkspaceItem={renderProjectChatItem}
+      />
       {listFooterComponent}
     </>
   );

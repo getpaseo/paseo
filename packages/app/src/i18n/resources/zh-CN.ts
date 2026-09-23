@@ -1125,6 +1125,15 @@ export const zhCN: TranslationResources = {
     pinned: {
       title: "已置顶",
     },
+    chats: {
+      title: "Chats",
+      newChat: "新建对话",
+      archiveAll: "归档全部对话",
+      archiveAllConfirmTitle: "归档全部对话？",
+      archiveAllConfirmMessage: "确定要归档全部对话吗？后续仍可从历史记录中查看或恢复。",
+      archiveAllConfirmAction: "全部归档",
+      archiveAllFailed: "部分对话归档失败",
+    },
     host: {
       noHost: "没有 Host",
       switchTitle: "切换 Host",
@@ -1239,7 +1248,9 @@ export const zhCN: TranslationResources = {
   },
   newWorkspace: {
     title: "新建 workspace",
+    chatTitle: "新建对话",
     create: "创建",
+    startChat: "开始对话",
     isolation: {
       local: "本地",
       worktree: "新建 worktree",
@@ -1253,6 +1264,7 @@ export const zhCN: TranslationResources = {
     titlePlaceholder: "标题（可选）",
     errors: {
       hostDisconnected: "Host 未连接",
+      chatHostUpgradeRequired: "更新 Host 以支持创建对话",
       createWorktreeFailed: "创建 worktree 失败",
       composerStateRequired: "Composer 状态必填",
       selectModel: "请选择模型",

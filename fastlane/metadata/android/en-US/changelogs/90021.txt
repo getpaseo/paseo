@@ -1,0 +1,10 @@
+Added
+- Added an "Archive all chats" button in the Chats sidebar section with a confirmation prompt
+- Added support for reading an archived agent's logs after its worktree is removed
+- Added support for displaying a fork checkout's pull request in the workspace
+
+Fixed
+- Fixed workspaces being lost or errored when located on an unmounted disk or network share
+- Fixed workspace labels detaching after reconnecting to the daemon
+
+Full notes: https://paseo.sh/changelog

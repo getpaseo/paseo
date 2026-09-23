@@ -1147,6 +1147,16 @@ export const ja: TranslationResources = {
     pinned: {
       title: "固定済み",
     },
+    chats: {
+      title: "チャット",
+      newChat: "新しいチャット",
+      archiveAll: "すべてのチャットをアーカイブ",
+      archiveAllConfirmTitle: "すべてのチャットをアーカイブしますか？",
+      archiveAllConfirmMessage:
+        "すべてのチャットをアーカイブしてもよろしいですか？後で履歴から復元できます。",
+      archiveAllConfirmAction: "すべてアーカイブ",
+      archiveAllFailed: "一部のチャットのアーカイブに失敗しました",
+    },
     host: {
       noHost: "ホストなし",
       switchTitle: "ホストを切り替え",
@@ -1264,7 +1274,9 @@ export const ja: TranslationResources = {
   },
   newWorkspace: {
     title: "新しいワークスペース",
+    chatTitle: "新しいチャット",
     create: "作成",
+    startChat: "チャットを開始",
     isolation: {
       local: "ローカル",
       worktree: "新しいワークツリー",
@@ -1278,6 +1290,7 @@ export const ja: TranslationResources = {
     titlePlaceholder: "タイトル（任意）",
     errors: {
       hostDisconnected: "ホストが接続されていません",
+      chatHostUpgradeRequired: "チャットセッションを作成するにはホストを更新してください",
       createWorktreeFailed: "ワークツリーの作成に失敗しました",
       composerStateRequired: "コンポーザーの状態が必要です",
       selectModel: "モデルを選択してください",

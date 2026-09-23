@@ -1133,6 +1133,16 @@ export const ar: TranslationResources = {
     pinned: {
       title: "المثبتة",
     },
+    chats: {
+      title: "المحادثات",
+      newChat: "محادثة جديدة",
+      archiveAll: "أرشفة جميع المحادثات",
+      archiveAllConfirmTitle: "أرشفة جميع المحادثات؟",
+      archiveAllConfirmMessage:
+        "هل أنت متأكد من رغبتك في أرشفة جميع المحادثات؟ يمكن استعادتها من السجل لاحقًا.",
+      archiveAllConfirmAction: "أرشفة الكل",
+      archiveAllFailed: "فشلت أرشفة بعض المحادثات",
+    },
     host: {
       noHost: "لا مضيف",
       switchTitle: "تبديل المضيف",
@@ -1250,7 +1260,9 @@ export const ar: TranslationResources = {
   },
   newWorkspace: {
     title: "مساحة عمل جديدة",
+    chatTitle: "دردشة جديدة",
     create: "يخلق",
+    startChat: "بدء الدردشة",
     isolation: {
       local: "محلي",
       worktree: "شجرة عمل جديدة",
@@ -1264,6 +1276,7 @@ export const ar: TranslationResources = {
     titlePlaceholder: "العنوان (اختياري)",
     errors: {
       hostDisconnected: "Host غير متصل",
+      chatHostUpgradeRequired: "قم بتحديث المضيف لإنشاء جلسات الدردشة",
       createWorktreeFailed: "فشل في إنشاء شجرة العمل",
       composerStateRequired: "حالة الملحن مطلوبة",
       selectModel: "اختر نموذجا",

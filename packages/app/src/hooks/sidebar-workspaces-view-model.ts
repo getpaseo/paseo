@@ -1,3 +1,4 @@
+import { isChatsProject } from "@/chats/model";
 import type { PrHint } from "@/git/pr-hint";
 import { selectPrHintFromStatus } from "@/git/pr-hint";
 import { type HostProjectListItem } from "@/projects/host-project-model";
@@ -289,11 +290,19 @@ export function buildSidebarWorkspacePlacementModel(input: {
   projects: readonly HostProjectListItem[];
 }): SidebarWorkspacePlacementModel {
   const projects = buildSidebarProjectsFromHostProjects({ projects: input.projects });
+  const allWorkspacePlacements = input.projects.flatMap((project) =>
+    project.workspaceKeys.map((workspaceKey) =>
+      createStructuralWorkspaceEntry({
+        project,
+        workspaceKey,
+      }),
+    ),
+  );
   return {
     projects,
-    workspaces: projects.flatMap((project) => project.workspaces),
+    workspaces: allWorkspacePlacements,
     projectNamesByViewKey: new Map(
-      projects.map((project) => [project.viewKey, project.projectName]),
+      input.projects.map((project) => [project.viewKey, project.projectName]),
     ),
   };
 }
@@ -451,19 +460,21 @@ export function buildSidebarProjectsFromHostProjects(input: {
     return EMPTY_PROJECTS;
   }
 
-  return input.projects.map((project) => ({
-    viewKey: project.viewKey,
-    projectName: project.projectName,
-    projectKind: project.projectKind,
-    iconWorkingDir: project.iconWorkingDir,
-    hosts: project.hosts,
-    workspaces: project.workspaceKeys.map((workspaceKey) =>
-      createStructuralWorkspaceEntry({
-        project,
-        workspaceKey,
-      }),
-    ),
-  }));
+  return input.projects
+    .filter((project) => !isChatsProject(project))
+    .map((project) => ({
+      viewKey: project.viewKey,
+      projectName: project.projectName,
+      projectKind: project.projectKind,
+      iconWorkingDir: project.iconWorkingDir,
+      hosts: project.hosts,
+      workspaces: project.workspaceKeys.map((workspaceKey) =>
+        createStructuralWorkspaceEntry({
+          project,
+          workspaceKey,
+        }),
+      ),
+    }));
 }
 
 // Host labels disambiguate which machine a workspace lives on; they only earn their
