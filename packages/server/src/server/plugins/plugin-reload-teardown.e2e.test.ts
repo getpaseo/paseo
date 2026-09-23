@@ -9,12 +9,12 @@ import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
 const repoRoot = fileURLToPath(new URL("../../../../../", import.meta.url));
 
 // The direct provider example, with a close() that does real asynchronous work
-// the way a provider holding a live agent process does.
+// the way a provider holding a live agent does.
 async function createSlowClosingProviderPlugin(): Promise<string> {
   const directory = await mkdtemp(path.join(tmpdir(), "paseo-slow-close-plugin-"));
   await cp(path.join(repoRoot, "plugin-examples/provider-direct"), directory, { recursive: true });
   const providerPath = path.join(directory, "server", "provider.ts");
-  const source = await readFile(providerPath, "utf8");
+  const source = (await readFile(providerPath, "utf8")).replaceAll("\r\n", "\n");
   const patched = source.replace(
     "      closed = true;\n      sessions.clear();",
     "      closed = true;\n      await new Promise((resolve) => setTimeout(resolve, 250));\n      sessions.clear();",
@@ -34,11 +34,15 @@ test("reloading a plugin does not send on a closed IPC channel", async () => {
     await client.patchDaemonConfig({ pluginsEnabled: true });
     await client.installDirectoryPlugin(pluginDirectory);
     const agent = await client.createAgent({ provider: "direct-example", cwd });
-    void client.sendMessage(agent.id, "Say hello").catch(() => undefined);
+    // A turn in flight keeps the provider connection busy, so the reload's
+    // connection close is still running when the subprocess tears down.
+    const turn = client.sendMessage(agent.id, "Say hello").catch(() => undefined);
     await client.reloadPlugin("provider-direct-example");
     const entries = await client.getPluginLogs("provider-direct-example");
     const messages = entries.map((entry) => entry.message).join("\n");
     expect(messages).not.toContain("ERR_IPC_CHANNEL_CLOSED");
+    await turn;
+    await client.archiveAgent(agent.id).catch(() => undefined);
   } finally {
     await client.close();
     await daemon.close();
