@@ -2461,6 +2461,7 @@ export class AgentManager {
       return result.turnId;
     } catch (error) {
       if (pendingRun.settled) {
+        if (recovery) this.settleRunStartRecovery(agentId, recovery, error);
         throw error;
       }
       if (isStaleProviderSessionError(error)) {

@@ -571,6 +571,10 @@ class SlowStartAgentSession implements AgentSession {
   private readonly released = new Promise<void>((resolve) => {
     this.releaseStartTurn = resolve;
   });
+  private signalStartEntered!: () => void;
+  readonly startEntered = new Promise<void>((resolve) => {
+    this.signalStartEntered = resolve;
+  });
 
   constructor(
     private readonly startDelayMs: number | null,
@@ -590,6 +594,7 @@ class SlowStartAgentSession implements AgentSession {
     _prompt: AgentPromptInput,
     _options?: AgentRunOptions,
   ): Promise<{ turnId: string }> {
+    this.signalStartEntered();
     await new Promise<void>((resolve) => {
       if (this.startDelayMs !== null) {
         setTimeout(resolve, this.startDelayMs);
@@ -945,6 +950,110 @@ test("a stale send surfaces the retired session close failure", async () => {
         ),
     ).toEqual([]);
   } finally {
+    if (agentId) await agentManager.closeAgent(agentId).catch(() => undefined);
+    await agentManager.flush().catch(() => undefined);
+    await agentStorage.flush().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("canceling a stale replacement start releases recovery for the next prompt", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-stale-send-cancel-"));
+  const provider = "plugin-provider";
+
+  class StaleSession extends SlowStartAgentSession {
+    constructor() {
+      super(null, provider);
+    }
+
+    override async startTurn(): Promise<{ turnId: string }> {
+      throw new StaleProviderSessionError("stale-session");
+    }
+  }
+
+  class StaleClient extends SlowStartAgentClient {
+    constructor() {
+      super(null, provider);
+    }
+
+    override async createSession(): Promise<AgentSession> {
+      return new StaleSession();
+    }
+  }
+
+  let signalReplacementReady!: (session: SlowStartAgentSession) => void;
+  const replacementReady = new Promise<SlowStartAgentSession>((resolve) => {
+    signalReplacementReady = resolve;
+  });
+  class ReplacementClient extends SlowStartAgentClient {
+    constructor() {
+      super(null, provider);
+    }
+
+    override async resumeSession(): Promise<AgentSession> {
+      const session = new SlowStartAgentSession(null, provider);
+      this.sessions.push(session);
+      signalReplacementReady(session);
+      return session;
+    }
+  }
+
+  const agentStorage = new AgentStorage(join(workdir, "agents"), createTestLogger());
+  const agentManager = new AgentManager({
+    clients: { [provider]: new StaleClient() },
+    providerDefinitions: { [provider]: { enabled: true } },
+    registry: agentStorage,
+    logger: createTestLogger(),
+    rescueTimeouts: { interruptSessionMs: 1 },
+  });
+  let agentId: string | null = null;
+  let replacement: SlowStartAgentSession | null = null;
+
+  try {
+    const created = await agentManager.createAgent({ provider, cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    agentId = created.id;
+    agentManager.updateProviderRegistry({
+      clients: { [provider]: new ReplacementClient() },
+      providerDefinitions: { [provider]: { enabled: true } },
+    });
+
+    const dispatch = await sendPromptToAgent({
+      agentManager,
+      agentStorage,
+      agentId,
+      prompt: "cancel this replacement",
+      messageId: "canceled-recovery-message",
+      logger: createTestLogger(),
+    });
+    expect(dispatch.disposition).toBe("turn_started");
+    const runStart = waitForAgentRunStartWithTimeout(agentManager, agentId);
+    replacement = await replacementReady;
+    await replacement.startEntered;
+
+    vi.useFakeTimers();
+    const cancellation = agentManager.cancelAgentRun(agentId);
+    await Promise.resolve();
+    await vi.advanceTimersByTimeAsync(2_000);
+    await expect(cancellation).resolves.toEqual({ status: "settled" });
+    replacement.release();
+    await expect(runStart).rejects.toThrow(
+      `Agent ${agentId} run was canceled before its turn started`,
+    );
+    vi.useRealTimers();
+
+    const nextDispatch = await startAgentRun(
+      agentManager,
+      agentId,
+      "prompt after canceled recovery",
+      createTestLogger(),
+    );
+    expect(nextDispatch.disposition).toBe("turn_started");
+    await expect(agentManager.waitForAgentRunStart(agentId)).resolves.toBeUndefined();
+  } finally {
+    vi.useRealTimers();
+    replacement?.release();
     if (agentId) await agentManager.closeAgent(agentId).catch(() => undefined);
     await agentManager.flush().catch(() => undefined);
     await agentStorage.flush().catch(() => undefined);
