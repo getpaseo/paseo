@@ -170,6 +170,26 @@ describe("searchDirectoryEntries", () => {
     );
   });
 
+  it.skipIf(isWindows)(
+    "prunes a symlink whose target is inside a Git-ignored directory",
+    async () => {
+      initGitRepo(searchRoot, "generated/\n");
+      mkdirSync(path.join(searchRoot, "generated", "output"), { recursive: true });
+      symlinkSync(path.join(searchRoot, "generated", "output"), path.join(searchRoot, "linked"));
+
+      await expect(
+        searchDirectoryEntries({
+          root: searchRoot,
+          query: "linked",
+          pathFormat: "relative",
+          includeFiles: false,
+          includeDirectories: true,
+          respectGitIgnore: true,
+        }),
+      ).resolves.toEqual([]);
+    },
+  );
+
   it("configures raw blank queries independently from explicit root aliases", async () => {
     const rootEntries = [
       { path: "projects", kind: "directory" as const },

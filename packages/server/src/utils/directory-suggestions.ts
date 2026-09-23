@@ -337,16 +337,21 @@ function staysInsideRoot(entry: ChildEntry, root: string): boolean {
 }
 
 function shouldDiscover(entry: ChildEntry, input: SearchInput): boolean {
-  // Traversal only descends through entries that already passed this check, so every ancestor
-  // is known discoverable and only the entry itself can be newly ignored. Walking the ancestor
-  // chain here would re-derive that answer once per level, for every entry scanned.
-  if (input.gitIgnoredPaths.has(entry.resolvedPath)) return false;
+  if (isNewlyGitIgnored(entry, input)) return false;
   if (entry.kind === "file") {
     return input.includeFiles && !entry.name.startsWith(".");
   }
   if (IGNORED_DIRECTORY_NAMES.has(entry.name)) return false;
   if (!entry.name.startsWith(".")) return true;
   return input.hiddenDirectoryNames.has(entry.name);
+}
+
+// Traversal only descends through entries that already passed this check, so every ancestor of
+// a named child is known discoverable and only the entry itself can be newly ignored. A symlink
+// resolves to a path with different ancestors, so it still needs the full walk.
+function isNewlyGitIgnored(entry: ChildEntry, input: SearchInput): boolean {
+  if (entry.viaSymlink) return isGitIgnoredPath(entry.resolvedPath, input);
+  return input.gitIgnoredPaths.has(entry.resolvedPath);
 }
 
 function isGitIgnoredPath(absolutePath: string, input: SearchInput): boolean {
