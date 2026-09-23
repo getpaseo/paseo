@@ -1,0 +1,5 @@
+Fixed
+- Fixed createAgent requires provider and cwd error when starting the first chat agent in a new chat workspace
+- Ensured effective workspace directory fallback in workspace draft agent creation requests
+
+Full notes: https://paseo.sh/changelog
