@@ -175,6 +175,28 @@ export class JsonlRpcProcess {
     return this.startRequest(command, timeoutMs).promise;
   }
 
+  /**
+   * Send a command whose goal a dead process has already met — stopping a turn,
+   * clearing a queue. Resolves when the process is gone instead of rejecting,
+   * because nothing is queued and nothing is running, which is what the caller
+   * asked for. Use `request` when the caller needs an answer from a live process.
+   */
+  async requestStopWork(
+    command: { type: string; [key: string]: unknown },
+    timeoutMs?: number | null,
+  ): Promise<void> {
+    if (this.disposed) {
+      return;
+    }
+    try {
+      await this.request(command, timeoutMs);
+    } catch (error) {
+      if (!this.disposed) {
+        throw error;
+      }
+    }
+  }
+
   send(message: Record<string, unknown>): void {
     if (this.disposed) {
       return;

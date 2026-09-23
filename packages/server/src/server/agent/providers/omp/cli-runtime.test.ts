@@ -418,4 +418,28 @@ describe("OMP CLI runtime", () => {
     expect(result).toHaveLength(2_000);
     expect(result[0]).toEqual(expect.objectContaining({ id: "model-0" }));
   });
+
+  // A dead runtime owns no turn, so aborting it is already satisfied. Rejecting here
+  // makes AgentManager treat the interrupt as unacknowledged and refuse the stop, which
+  // pins the agent at `running` until the daemon restarts. See issue #3749.
+  test("abort resolves once the OMP process has exited", async () => {
+    const child = createOmpChild();
+    const session = await createRuntime(child).startSession({ cwd: "/workspace/project" });
+
+    child.emit("exit", 1, null);
+
+    await expect(session.abort()).resolves.toBeUndefined();
+  });
+
+  test("abort resolves when the OMP process exits while the abort is in flight", async () => {
+    const child = createOmpChild();
+    const session = await createRuntime(child).startSession({ cwd: "/workspace/project" });
+    child.stdin.on("data", (chunk) => {
+      if (chunk.toString().includes('"abort"')) {
+        child.emit("exit", 1, null);
+      }
+    });
+
+    await expect(session.abort()).resolves.toBeUndefined();
+  });
 });

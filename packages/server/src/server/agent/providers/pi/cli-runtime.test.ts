@@ -506,4 +506,29 @@ describe("PiCliRuntime", () => {
     // Neither RPC returned usable data — should resolve with empty object
     expect(stats).toEqual({});
   });
+
+  // A dead runtime owns no turn, so interrupting it is already satisfied. Rejecting here
+  // makes AgentManager treat the interrupt as unacknowledged and refuse the stop, which
+  // pins the agent at `running` until the daemon restarts. See issue #3749.
+  test("abort and clearQueue resolve once the Pi process has exited", async () => {
+    const child = createPiChild();
+    const session = await createRuntime(child).startSession({ cwd: "/workspace/project" });
+
+    child.emit("exit", 1, null);
+
+    await expect(session.clearQueue()).resolves.toBeUndefined();
+    await expect(session.abort()).resolves.toBeUndefined();
+  });
+
+  test("abort resolves when the Pi process exits while the abort is in flight", async () => {
+    const child = createPiChild();
+    const session = await createRuntime(child).startSession({ cwd: "/workspace/project" });
+    child.stdin.on("data", (chunk) => {
+      if (chunk.toString().includes('"abort"')) {
+        child.emit("exit", 1, null);
+      }
+    });
+
+    await expect(session.abort()).resolves.toBeUndefined();
+  });
 });
