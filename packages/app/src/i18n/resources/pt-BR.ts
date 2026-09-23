@@ -1159,6 +1159,16 @@ export const ptBR: TranslationResources = {
     pinned: {
       title: "Fixados",
     },
+    chats: {
+      title: "Chats",
+      newChat: "Novo chat",
+      archiveAll: "Arquivar todos os chats",
+      archiveAllConfirmTitle: "Arquivar todos os chats?",
+      archiveAllConfirmMessage:
+        "Tem certeza de que deseja arquivar todos os chats? Eles podem ser restaurados do histórico mais tarde.",
+      archiveAllConfirmAction: "Arquivar tudo",
+      archiveAllFailed: "Falha ao arquivar alguns chats",
+    },
     host: {
       noHost: "Nenhum host",
       switchTitle: "Trocar host",

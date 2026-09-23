@@ -1169,6 +1169,16 @@ export const es: TranslationResources = {
     pinned: {
       title: "Anclados",
     },
+    chats: {
+      title: "Chats",
+      newChat: "Nuevo chat",
+      archiveAll: "Archivar todos los chats",
+      archiveAllConfirmTitle: "¿Archivar todos los chats?",
+      archiveAllConfirmMessage:
+        "¿Estás seguro de que deseas archivar todos los chats? Podrás restaurarlos desde el historial más tarde.",
+      archiveAllConfirmAction: "Archivar todo",
+      archiveAllFailed: "Error al archivar algunos chats",
+    },
     host: {
       noHost: "Sin anfitrión",
       switchTitle: "Cambiar de anfitrión",

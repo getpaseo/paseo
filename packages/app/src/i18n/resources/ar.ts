@@ -1133,6 +1133,16 @@ export const ar: TranslationResources = {
     pinned: {
       title: "المثبتة",
     },
+    chats: {
+      title: "المحادثات",
+      newChat: "محادثة جديدة",
+      archiveAll: "أرشفة جميع المحادثات",
+      archiveAllConfirmTitle: "أرشفة جميع المحادثات؟",
+      archiveAllConfirmMessage:
+        "هل أنت متأكد من رغبتك في أرشفة جميع المحادثات؟ يمكن استعادتها من السجل لاحقًا.",
+      archiveAllConfirmAction: "أرشفة الكل",
+      archiveAllFailed: "فشلت أرشفة بعض المحادثات",
+    },
     host: {
       noHost: "لا مضيف",
       switchTitle: "تبديل المضيف",

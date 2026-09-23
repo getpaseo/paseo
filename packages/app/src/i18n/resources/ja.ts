@@ -1147,6 +1147,16 @@ export const ja: TranslationResources = {
     pinned: {
       title: "固定済み",
     },
+    chats: {
+      title: "チャット",
+      newChat: "新しいチャット",
+      archiveAll: "すべてのチャットをアーカイブ",
+      archiveAllConfirmTitle: "すべてのチャットをアーカイブしますか？",
+      archiveAllConfirmMessage:
+        "すべてのチャットをアーカイブしてもよろしいですか？後で履歴から復元できます。",
+      archiveAllConfirmAction: "すべてアーカイブ",
+      archiveAllFailed: "一部のチャットのアーカイブに失敗しました",
+    },
     host: {
       noHost: "ホストなし",
       switchTitle: "ホストを切り替え",

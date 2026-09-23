@@ -1,24 +1,31 @@
-import { memo, useCallback, useMemo, useState } from "react";
+import React, { memo, useCallback, useMemo, useState } from "react";
 import { Pressable, type PressableStateCallbackType, Text, View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import { ChevronDown, ChevronRight, Plus } from "lucide-react-native";
+import { Archive, ChevronDown, ChevronRight, Plus } from "lucide-react-native";
 import { router, type Href } from "expo-router";
+import { useTranslation } from "react-i18next";
 import type { Theme } from "@/styles/theme";
 import type { HostBadgeModel } from "@/hosts/appearance";
 import type { SidebarWorkspaceEntry } from "@/hooks/use-sidebar-workspaces-list";
 import type { ToggleSidebarWorkspacePin } from "@/hooks/use-sidebar-workspace-pin";
 import type { ActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
 import { useActiveWorkspaceSelection } from "@/stores/navigation-active-workspace-store";
-import { useHosts } from "@/runtime/host-runtime";
+import { getHostRuntimeStore, useHosts } from "@/runtime/host-runtime";
 import { buildNewWorkspaceRoute } from "@/utils/host-routes";
 import { SidebarHeaderRow } from "@/components/sidebar/sidebar-header-row";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { useToast } from "@/contexts/toast-context";
+import { confirmDialog } from "@/utils/confirm-dialog";
+import { archiveWorkspacesOptimistically } from "@/workspace/workspace-archive";
+import { redirectIfArchivingActiveWorkspace } from "@/utils/sidebar-workspace-archive-redirect";
+import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
+import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 import { isChatWorkspace } from "./model";
 
 const ThemedPlus = withUnistyles(Plus);
+const ThemedArchive = withUnistyles(Archive);
 const ThemedChevronDown = withUnistyles(ChevronDown);
 const ThemedChevronRight = withUnistyles(ChevronRight);
-
 const foregroundMutedColorMapping = (theme: Theme) => ({
   color: theme.colors.foregroundMuted,
 });
@@ -53,9 +60,12 @@ export const SidebarChatsSection = memo(function SidebarChatsSection({
   selectionEnabled: _selectionEnabled,
   renderWorkspaceItem,
 }: SidebarChatsSectionProps) {
+  const { t } = useTranslation();
+  const toast = useToast();
   const allHosts = useHosts();
   const activeSelection = useActiveWorkspaceSelection();
   const [collapsed, setCollapsed] = useState(false);
+  const [isArchivingAll, setIsArchivingAll] = useState(false);
 
   const chatEntries = useMemo(() => {
     return Array.from(workspaceEntriesByKey.values()).filter(
@@ -89,6 +99,66 @@ export const SidebarChatsSection = memo(function SidebarChatsSection({
     );
   }, [activeSelection, allHosts, onWorkspacePress]);
 
+  const handleArchiveAllChats = useCallback(async () => {
+    if (chatEntries.length === 0 || isArchivingAll) return;
+
+    const confirmed = await confirmDialog({
+      title: t("sidebar.chats.archiveAllConfirmTitle"),
+      message: t("sidebar.chats.archiveAllConfirmMessage"),
+      confirmLabel: t("sidebar.chats.archiveAllConfirmAction"),
+      cancelLabel: t("common.actions.cancel"),
+      destructive: true,
+    });
+
+    if (!confirmed) return;
+
+    setIsArchivingAll(true);
+    try {
+      if (activeSelection) {
+        const isCurrentActiveInChats = chatEntries.some(
+          (entry) =>
+            entry.serverId === activeSelection.serverId &&
+            entry.workspaceId === activeSelection.workspaceId,
+        );
+        if (isCurrentActiveInChats) {
+          redirectIfArchivingActiveWorkspace({
+            serverId: activeSelection.serverId,
+            workspaceId: activeSelection.workspaceId,
+            activeWorkspaceSelection: activeSelection,
+          });
+        }
+      }
+
+      for (const entry of chatEntries) {
+        const workspaceKey = buildWorkspaceTabPersistenceKey({
+          serverId: entry.serverId,
+          workspaceId: entry.workspaceId,
+        });
+        if (workspaceKey) {
+          useWorkspaceLayoutStore.getState().purgeWorkspace(workspaceKey);
+        }
+      }
+
+      const targets = chatEntries.map((entry) => ({
+        serverId: entry.serverId,
+        workspaceId: entry.workspaceId,
+      }));
+
+      const failures = await archiveWorkspacesOptimistically({
+        getClient: (serverId) => getHostRuntimeStore().getClient(serverId),
+        workspaces: targets,
+      });
+
+      if (failures.length > 0) {
+        toast.error(t("sidebar.chats.archiveAllFailed"));
+      }
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t("sidebar.chats.archiveAllFailed"));
+    } finally {
+      setIsArchivingAll(false);
+    }
+  }, [activeSelection, chatEntries, isArchivingAll, t, toast]);
+
   const toggleCollapsed = useCallback(() => setCollapsed((prev) => !prev), []);
 
   const newChatButtonStyle = useCallback(
@@ -103,7 +173,7 @@ export const SidebarChatsSection = memo(function SidebarChatsSection({
   const emptyChatRow = targetHostSupportsChat ? (
     <SidebarHeaderRow
       icon={Plus}
-      label="New chat"
+      label={t("sidebar.chats.newChat")}
       onPress={handleCreateChat}
       testID="sidebar-chats-empty-start"
       variant="compact"
@@ -133,6 +203,26 @@ export const SidebarChatsSection = memo(function SidebarChatsSection({
           )}
         </Pressable>
         <View style={styles.chatsSectionHeaderRight}>
+          {chatEntries.length > 0 && (
+            <Tooltip delayDuration={300}>
+              <TooltipTrigger asChild>
+                <Pressable
+                  onPress={handleArchiveAllChats}
+                  hitSlop={4}
+                  style={newChatButtonStyle}
+                  testID="sidebar-chats-archive-all-button"
+                  accessibilityRole="button"
+                  accessibilityLabel={t("sidebar.chats.archiveAll")}
+                  disabled={isArchivingAll}
+                >
+                  <ThemedArchive size={14} uniProps={foregroundMutedColorMapping} />
+                </Pressable>
+              </TooltipTrigger>
+              <TooltipContent side="bottom" align="center" offset={8}>
+                <Text style={styles.projectActionTooltipText}>{t("sidebar.chats.archiveAll")}</Text>
+              </TooltipContent>
+            </Tooltip>
+          )}
           {targetHostSupportsChat && (
             <Tooltip delayDuration={300}>
               <TooltipTrigger asChild>
@@ -142,13 +232,13 @@ export const SidebarChatsSection = memo(function SidebarChatsSection({
                   style={newChatButtonStyle}
                   testID="sidebar-chats-new-button"
                   accessibilityRole="button"
-                  accessibilityLabel="New chat"
+                  accessibilityLabel={t("sidebar.chats.newChat")}
                 >
                   <ThemedPlus size={14} uniProps={foregroundMutedColorMapping} />
                 </Pressable>
               </TooltipTrigger>
               <TooltipContent side="bottom" align="center" offset={8}>
-                <Text style={styles.projectActionTooltipText}>New chat</Text>
+                <Text style={styles.projectActionTooltipText}>{t("sidebar.chats.newChat")}</Text>
               </TooltipContent>
             </Tooltip>
           )}

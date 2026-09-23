@@ -1169,6 +1169,16 @@ export const fr: TranslationResources = {
     pinned: {
       title: "Épinglés",
     },
+    chats: {
+      title: "Chats",
+      newChat: "Nouveau chat",
+      archiveAll: "Archiver tous les chats",
+      archiveAllConfirmTitle: "Archiver tous les chats ?",
+      archiveAllConfirmMessage:
+        "Voulez-vous vraiment archiver tous les chats ? Vous pourrez les restaurer depuis l'historique ultérieurement.",
+      archiveAllConfirmAction: "Tout archiver",
+      archiveAllFailed: "Échec de l'archivage de certains chats",
+    },
     host: {
       noHost: "Aucun hôte",
       switchTitle: "Changer d'hôte",

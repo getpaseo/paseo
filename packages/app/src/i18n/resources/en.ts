@@ -1141,6 +1141,16 @@ export const en = {
     pinned: {
       title: "Pinned",
     },
+    chats: {
+      title: "Chats",
+      newChat: "New chat",
+      archiveAll: "Archive all chats",
+      archiveAllConfirmTitle: "Archive all chats?",
+      archiveAllConfirmMessage:
+        "Are you sure you want to archive all chats? They can be restored from history later.",
+      archiveAllConfirmAction: "Archive all",
+      archiveAllFailed: "Failed to archive some chats",
+    },
     host: {
       noHost: "No host",
       switchTitle: "Switch host",

@@ -1151,6 +1151,16 @@ export const ru: TranslationResources = {
     pinned: {
       title: "Закреплённые",
     },
+    chats: {
+      title: "Чаты",
+      newChat: "Новый чат",
+      archiveAll: "Архивировать все чаты",
+      archiveAllConfirmTitle: "Архивировать все чаты?",
+      archiveAllConfirmMessage:
+        "Вы уверены, что хотите архивировать все чаты? Их можно будет восстановить из истории позже.",
+      archiveAllConfirmAction: "Архивировать все",
+      archiveAllFailed: "Не удалось архивировать некоторые чаты",
+    },
     host: {
       noHost: "Нет хоста",
       switchTitle: "Сменить хост",

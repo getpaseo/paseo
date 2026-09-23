@@ -1125,6 +1125,15 @@ export const zhCN: TranslationResources = {
     pinned: {
       title: "已置顶",
     },
+    chats: {
+      title: "Chats",
+      newChat: "新建对话",
+      archiveAll: "归档全部对话",
+      archiveAllConfirmTitle: "归档全部对话？",
+      archiveAllConfirmMessage: "确定要归档全部对话吗？后续仍可从历史记录中查看或恢复。",
+      archiveAllConfirmAction: "全部归档",
+      archiveAllFailed: "部分对话归档失败",
+    },
     host: {
       noHost: "没有 Host",
       switchTitle: "切换 Host",

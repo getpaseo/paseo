@@ -1140,6 +1140,15 @@ export const ko: TranslationResources = {
     pinned: {
       title: "고정됨",
     },
+    chats: {
+      title: "채팅",
+      newChat: "새 채팅",
+      archiveAll: "모든 채팅 보관",
+      archiveAllConfirmTitle: "모든 채팅을 보관하시겠습니까?",
+      archiveAllConfirmMessage: "모든 채팅을 보관하시겠습니까? 나중에 기록에서 복원할 수 있습니다.",
+      archiveAllConfirmAction: "모두 보관",
+      archiveAllFailed: "일부 채팅을 보관하지 못했습니다",
+    },
     host: {
       noHost: "호스트 없음",
       switchTitle: "호스트 전환",
