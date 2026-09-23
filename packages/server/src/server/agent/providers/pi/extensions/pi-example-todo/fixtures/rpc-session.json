@@ -1,0 +1,250 @@
+{
+  "provenance": {
+    "package": "@earendil-works/pi-coding-agent examples/extensions/todo.ts",
+    "version": "0.87.1",
+    "sourceCommit": "7fd564cbb78f35f3de14d5382fea692b87ec4026",
+    "piVersion": "0.84.4",
+    "captureDate": "2026-09-23",
+    "mode": "pi --mode rpc; OpenRouter google/gemini-3.6-flash"
+  },
+  "events": [
+    {
+      "type": "tool_execution_start",
+      "toolCallId": "call_433291",
+      "toolName": "todo",
+      "args": {
+        "action": "add",
+        "text": "Inspect workspace"
+      }
+    },
+    {
+      "type": "tool_execution_end",
+      "toolCallId": "call_433291",
+      "toolName": "todo",
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Added todo #1: Inspect workspace"
+          }
+        ],
+        "details": {
+          "action": "add",
+          "todos": [
+            {
+              "id": 1,
+              "text": "Inspect workspace",
+              "done": false
+            }
+          ],
+          "nextId": 2
+        }
+      },
+      "isError": false
+    },
+    {
+      "type": "tool_execution_start",
+      "toolCallId": "call_453655",
+      "toolName": "todo",
+      "args": {
+        "action": "add",
+        "text": "Summarize findings"
+      }
+    },
+    {
+      "type": "tool_execution_end",
+      "toolCallId": "call_453655",
+      "toolName": "todo",
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Added todo #2: Summarize findings"
+          }
+        ],
+        "details": {
+          "action": "add",
+          "todos": [
+            {
+              "id": 1,
+              "text": "Inspect workspace",
+              "done": false
+            },
+            {
+              "id": 2,
+              "text": "Summarize findings",
+              "done": false
+            }
+          ],
+          "nextId": 3
+        }
+      },
+      "isError": false
+    },
+    {
+      "type": "tool_execution_start",
+      "toolCallId": "call_525797",
+      "toolName": "todo",
+      "args": {
+        "action": "toggle",
+        "id": 1
+      }
+    },
+    {
+      "type": "tool_execution_end",
+      "toolCallId": "call_525797",
+      "toolName": "todo",
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Todo #1 completed"
+          }
+        ],
+        "details": {
+          "action": "toggle",
+          "todos": [
+            {
+              "id": 1,
+              "text": "Inspect workspace",
+              "done": true
+            },
+            {
+              "id": 2,
+              "text": "Summarize findings",
+              "done": false
+            }
+          ],
+          "nextId": 3
+        }
+      },
+      "isError": false
+    }
+  ],
+  "messages": [
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "toolCall",
+          "id": "call_433291",
+          "name": "todo",
+          "arguments": {
+            "action": "add",
+            "text": "Inspect workspace"
+          }
+        }
+      ]
+    },
+    {
+      "role": "toolResult",
+      "toolCallId": "call_433291",
+      "toolName": "todo",
+      "content": [
+        {
+          "type": "text",
+          "text": "Added todo #1: Inspect workspace"
+        }
+      ],
+      "details": {
+        "action": "add",
+        "todos": [
+          {
+            "id": 1,
+            "text": "Inspect workspace",
+            "done": false
+          }
+        ],
+        "nextId": 2
+      },
+      "isError": false,
+      "timestamp": 1790195609694
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "toolCall",
+          "id": "call_453655",
+          "name": "todo",
+          "arguments": {
+            "action": "add",
+            "text": "Summarize findings"
+          }
+        }
+      ]
+    },
+    {
+      "role": "toolResult",
+      "toolCallId": "call_453655",
+      "toolName": "todo",
+      "content": [
+        {
+          "type": "text",
+          "text": "Added todo #2: Summarize findings"
+        }
+      ],
+      "details": {
+        "action": "add",
+        "todos": [
+          {
+            "id": 1,
+            "text": "Inspect workspace",
+            "done": false
+          },
+          {
+            "id": 2,
+            "text": "Summarize findings",
+            "done": false
+          }
+        ],
+        "nextId": 3
+      },
+      "isError": false,
+      "timestamp": 1790195610962
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "toolCall",
+          "id": "call_525797",
+          "name": "todo",
+          "arguments": {
+            "action": "toggle",
+            "id": 1
+          }
+        }
+      ]
+    },
+    {
+      "role": "toolResult",
+      "toolCallId": "call_525797",
+      "toolName": "todo",
+      "content": [
+        {
+          "type": "text",
+          "text": "Todo #1 completed"
+        }
+      ],
+      "details": {
+        "action": "toggle",
+        "todos": [
+          {
+            "id": 1,
+            "text": "Inspect workspace",
+            "done": true
+          },
+          {
+            "id": 2,
+            "text": "Summarize findings",
+            "done": false
+          }
+        ],
+        "nextId": 3
+      },
+      "isError": false,
+      "timestamp": 1790195612441
+    }
+  ]
+}

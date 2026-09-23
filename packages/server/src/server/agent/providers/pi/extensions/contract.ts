@@ -2,6 +2,7 @@ import type {
   AgentPermissionRequest,
   AgentPermissionResponse,
   ToolCallDetail,
+  AgentTimelineItem,
 } from "../../../agent-sdk-types.js";
 import type { PiRuntimeEvent } from "../rpc-types.js";
 import type { PiToolResult } from "../tool-call-mapper.js";
@@ -17,6 +18,7 @@ export interface PiExtensionToolCall {
 export interface PiExtensionToolMapping {
   name?: string;
   detail?: ToolCallDetail;
+  timeline?: AgentTimelineItem[];
 }
 
 export type PiExtensionDialog = Extract<PiRuntimeEvent, { type: "extension_ui_request" }>;

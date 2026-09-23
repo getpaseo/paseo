@@ -2308,6 +2308,9 @@ export class PiRpcAgentSession implements AgentSession {
       turnId,
       item,
     });
+    for (const timelineItem of mapping?.timeline ?? []) {
+      this.emit({ type: "timeline", provider: this.provider, turnId, item: timelineItem });
+    }
     return true;
   }
 

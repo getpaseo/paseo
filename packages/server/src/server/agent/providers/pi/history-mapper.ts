@@ -1,6 +1,5 @@
 import type { AgentStreamEvent, AgentTimelineItem, ToolCallDetail } from "../../agent-sdk-types.js";
-import { createPiExtensionHost } from "./extensions/index.js";
-import type { PiExtensionHost } from "./extensions/host.js";
+import { createPiExtensionHost, type PiExtensionHost } from "./extensions/index.js";
 import type { PiAgentMessage, PiImageContent, PiTextContent } from "./rpc-types.js";
 import {
   extractTextFromToolResult,
@@ -80,10 +79,7 @@ export class PiHistoryMapper {
           events.push(...this.mapAssistantMessage(message));
           break;
         case "toolResult": {
-          const event = this.mapToolResultMessage(message);
-          if (event) {
-            events.push(event);
-          }
+          events.push(...this.mapToolResultMessage(message));
           break;
         }
         case "bashExecution":
@@ -191,7 +187,7 @@ export class PiHistoryMapper {
 
   private mapToolResultMessage(
     message: Extract<PiAgentMessage, { role: "toolResult" }>,
-  ): AgentStreamEvent | null {
+  ): AgentStreamEvent[] {
     const tracked =
       this.pendingToolCalls.get(message.toolCallId) ?? parseToolArgs(message.toolName, null);
     this.pendingToolCalls.delete(message.toolCallId);
@@ -205,19 +201,28 @@ export class PiHistoryMapper {
     });
     const detail = this.mapToolDetail(message.toolCallId, tracked, result, mapping?.detail);
     if (!detail) {
-      return null;
+      return [];
     }
-    return {
-      type: "timeline",
-      provider: this.provider,
-      item: toToolResultTimelineItem({
-        callId: this.resolveToolCallId(message.toolCallId, tracked),
-        name: mapping?.name ?? tracked.toolName,
-        isError: Boolean(message.isError),
-        detail,
-        errorText: extractTextFromToolResult(result) ?? "Tool call failed",
-      }),
-    };
+    return [
+      {
+        type: "timeline",
+        provider: this.provider,
+        item: toToolResultTimelineItem({
+          callId: this.resolveToolCallId(message.toolCallId, tracked),
+          name: mapping?.name ?? tracked.toolName,
+          isError: Boolean(message.isError),
+          detail,
+          errorText: extractTextFromToolResult(result) ?? "Tool call failed",
+        }),
+      },
+      ...(mapping?.timeline ?? []).map(
+        (item): AgentStreamEvent => ({
+          type: "timeline",
+          provider: this.provider,
+          item,
+        }),
+      ),
+    ];
   }
 
   private mapBashExecutionMessage(
