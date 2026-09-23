@@ -86,6 +86,7 @@ export const piAskUser: PiExtension = {
     return {
       onToolStart(call) {
         active = call.toolName === "ask_user" ? (Args.safeParse(call.args).data ?? null) : null;
+        return undefined;
       },
       onToolEnd(call) {
         if (call.toolName === "ask_user") {
