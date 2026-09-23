@@ -1593,7 +1593,9 @@ describe("WorkspaceGitService checkout observation", () => {
       expect(service.getMetrics().workspaceRefreshInFlightCount).toBe(0);
     });
     const callsBeforePolling = getCheckoutStatus.mock.calls.length;
-    const pollCount = () => getCheckoutStatus.mock.calls.length - callsBeforePolling;
+    function pollCount(): number {
+      return getCheckoutStatus.mock.calls.length - callsBeforePolling;
+    }
 
     // Quiet ticks at 5s, 10s, 20s, 40s, then the 60s ceiling.
     for (const [elapsedMs, expectedPolls] of [
