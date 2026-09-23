@@ -227,6 +227,7 @@ interface ScheduleWorkspaceCreateInput {
 
 export interface ScheduleServiceOptions {
   paseoHome: string;
+  scheduleStore?: ScheduleStore;
   logger: Logger;
   agentManager: ScheduleAgentManager;
   agentStorage: AgentStorage;
@@ -264,7 +265,7 @@ export class ScheduleService {
   private tickTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(options: ScheduleServiceOptions) {
-    this.store = new ScheduleStore(join(options.paseoHome, "schedules"));
+    this.store = options.scheduleStore ?? new ScheduleStore(join(options.paseoHome, "schedules"));
     this.logger = options.logger.child({ module: "schedule-service" });
     this.agentManager = options.agentManager;
     this.agentStorage = options.agentStorage;
@@ -706,7 +707,11 @@ export class ScheduleService {
       error: null,
     };
     try {
-      const scheduleWithRun = await this.appendRunningRun(schedule.id, runningRun, manual);
+      const scheduleWithRun = await this.appendRunningRun({
+        scheduleId: schedule.id,
+        runningRun,
+        manual,
+      });
       if (!scheduleWithRun) {
         return;
       }
@@ -739,24 +744,27 @@ export class ScheduleService {
     }
   }
 
-  private async appendRunningRun(
-    scheduleId: string,
-    runningRun: ScheduleRun,
-    manual: boolean,
-  ): Promise<StoredSchedule | null> {
+  private async appendRunningRun(input: {
+    scheduleId: string;
+    runningRun: ScheduleRun;
+    manual: boolean;
+  }): Promise<StoredSchedule | null> {
     let appended = false;
-    const updated = await this.store.update(scheduleId, (schedule) => {
-      if (!manual && schedule.status !== "active") {
+    const updated = await this.store.update(input.scheduleId, (schedule) => {
+      if (
+        !input.manual &&
+        (schedule.status !== "active" || schedule.nextRunAt !== input.runningRun.scheduledFor)
+      ) {
         return schedule;
       }
       appended = true;
       return {
         ...schedule,
-        updatedAt: runningRun.startedAt,
-        runs: [...schedule.runs, runningRun],
+        updatedAt: input.runningRun.startedAt,
+        runs: [...schedule.runs, input.runningRun],
       };
     });
-    const existing = requireSchedule(updated, scheduleId);
+    const existing = requireSchedule(updated, input.scheduleId);
     return appended ? existing : null;
   }
 
