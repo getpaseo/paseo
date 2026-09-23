@@ -1391,6 +1391,10 @@ export const ko: TranslationResources = {
         genericError: "문제가 발생했습니다.",
         whatsNew: "새로운 기능",
         installingAction: "설치 중...",
+        whenIdle: "대기 상태일 때",
+        waitingTitle: "에이전트 대기 중",
+        waitingDescription:
+          "모든 로컬 프로젝트의 에이전트가 대기 상태가 되면 Paseo가 다시 시작됩니다. 터미널 세션이 닫힙니다.",
         installAndRestart: "설치 후 재시작",
         installingDescription: "설치 후 재시작 중...",
         versionReady: "{{version}} 설치가 준비되었습니다.",

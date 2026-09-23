@@ -8020,6 +8020,50 @@ test("acknowledged cancellation settles a pending run before it has a turn id", 
   }
 });
 
+test("idle shutdown claim stays held across a second request and queued session work", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-idle-shutdown-"));
+  let session: TestAgentSession | null = null;
+  class CapturingClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      session = new TestAgentSession(config);
+      return session;
+    }
+  }
+  const manager = new AgentManager({
+    clients: { codex: new CapturingClient() },
+    registry: new AgentStorage(join(workdir, "agents"), logger),
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000133",
+  });
+
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(manager.tryClaimIdleShutdown()).toBe(true);
+    await expect(manager.runAgent(agent.id, "after claim")).rejects.toBeInstanceOf(
+      AgentManagerShuttingDownError,
+    );
+
+    session?.pushEvent({
+      type: "provider_subagent",
+      provider: "codex",
+      event: { type: "upsert", id: "late-child", status: "running" },
+    });
+    expect(manager.tryClaimIdleShutdown()).toBe(true);
+    await expect(manager.runAgent(agent.id, "still held")).rejects.toBeInstanceOf(
+      AgentManagerShuttingDownError,
+    );
+  } finally {
+    if (manager.getAgent("00000000-0000-4000-8000-000000000133")) {
+      await manager.closeAgent("00000000-0000-4000-8000-000000000133").catch(() => undefined);
+    }
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("archiveAgent persists archivedAt and updatedAt before emitting closed state", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-archive-"));
   const storagePath = join(workdir, "agents");

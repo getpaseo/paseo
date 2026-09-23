@@ -669,6 +669,11 @@ type ShutdownRequestedStatusPayload = z.infer<typeof ShutdownRequestedStatusPayl
 export interface ShutdownServerOptions {
   requestId?: string;
   timeout?: number;
+  onlyIfIdle?: boolean;
+}
+
+export function isAgentsBusyShutdownError(error: unknown): boolean {
+  return error instanceof DaemonRpcError && error.code === "AGENTS_BUSY";
 }
 export interface DaemonStatusOptions {
   requestId?: string;
@@ -3626,10 +3631,19 @@ export class DaemonClient {
   }
 
   async shutdownServer(options?: ShutdownServerOptions): Promise<ShutdownRequestedStatusPayload> {
+    const onlyIfIdle = options?.onlyIfIdle === true;
+    if (onlyIfIdle) {
+      if (!this.lastServerInfoMessage) throw new DaemonConnectionError("Transport not connected");
+      // COMPAT(shutdownIfIdle): added after v0.9.0, remove gate after 2027-03-22.
+      if (this.lastServerInfoMessage.features?.shutdownIfIdle !== true) {
+        throw new Error("Update the host to stop only when agents are idle.");
+      }
+    }
     const resolvedRequestId = this.createRequestId(options?.requestId);
     const message = SessionInboundMessageSchema.parse({
       type: "shutdown_server_request",
       requestId: resolvedRequestId,
+      ...(onlyIfIdle ? { onlyIfIdle: true } : {}),
     });
     return this.sendRequest({
       requestId: resolvedRequestId,

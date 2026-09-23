@@ -2561,7 +2561,7 @@ export class Session {
       case "restart_server_request":
         return this.handleRestartServerRequest(msg.requestId, msg.reason);
       case "shutdown_server_request":
-        return this.handleShutdownServerRequest(msg.requestId);
+        return this.handleShutdownServerRequest(msg.requestId, msg.onlyIfIdle === true);
       case "client_heartbeat":
         this.handleClientHeartbeat(msg);
         return undefined;
@@ -3106,9 +3106,22 @@ export class Session {
     });
   }
 
-  private async handleShutdownServerRequest(requestId: string): Promise<void> {
+  private async handleShutdownServerRequest(requestId: string, onlyIfIdle = false): Promise<void> {
+    if (onlyIfIdle && !this.agentManager.tryClaimIdleShutdown()) {
+      this.emit({
+        type: "rpc_error",
+        payload: {
+          requestId,
+          requestType: "shutdown_server_request",
+          error: "Agents are busy",
+          code: "AGENTS_BUSY",
+        },
+      });
+      return;
+    }
+
     const reason = CLIENT_SHUTDOWN_RPC_REASON;
-    this.sessionLogger.warn({ reason }, "Shutdown requested via websocket");
+    this.sessionLogger.warn({ reason, onlyIfIdle }, "Shutdown requested via websocket");
     this.emit({
       type: "status",
       payload: {

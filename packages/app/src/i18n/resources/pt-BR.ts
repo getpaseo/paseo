@@ -1411,6 +1411,10 @@ export const ptBR: TranslationResources = {
         genericError: "Algo deu errado.",
         whatsNew: "Novidades",
         installingAction: "Instalando...",
+        whenIdle: "Quando ociosos",
+        waitingTitle: "Aguardando agentes",
+        waitingDescription:
+          "O Paseo reiniciará quando os agentes de todos os projetos locais estiverem ociosos. As sessões de terminal serão fechadas.",
         installAndRestart: "Instalar e reiniciar",
         installingDescription: "Instalando e reiniciando...",
         versionReady: "{{version}} está pronta para instalar.",

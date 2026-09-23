@@ -1421,6 +1421,10 @@ export const es: TranslationResources = {
         genericError: "Algo salió mal.",
         whatsNew: "Qué hay de nuevo",
         installingAction: "Instalando...",
+        whenIdle: "Cuando estén inactivos",
+        waitingTitle: "Esperando a los agentes",
+        waitingDescription:
+          "Paseo se reiniciará cuando los agentes de todos los proyectos locales estén inactivos. Se cerrarán las sesiones de terminal.",
         installAndRestart: "Instalar y reiniciar",
         installingDescription: "Instalando y reiniciando...",
         versionReady: "{{version}}está listo para instalar.",

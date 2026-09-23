@@ -1397,6 +1397,10 @@ export const ja: TranslationResources = {
         genericError: "問題が発生しました。",
         whatsNew: "新機能",
         installingAction: "インストール中...",
+        whenIdle: "待機時に実行",
+        waitingTitle: "エージェントの完了待ち",
+        waitingDescription:
+          "すべてのローカルプロジェクトのエージェントが待機状態になると、Paseo が再起動します。ターミナルセッションは閉じられます。",
         installAndRestart: "インストールして再起動",
         installingDescription: "インストールして再起動中...",
         versionReady: "{{version}}のインストール準備ができました。",

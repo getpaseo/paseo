@@ -1,3 +1,4 @@
+import { Pressable, Text } from "react-native";
 import { Gift } from "lucide-react-native";
 import { type ReactNode, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
@@ -17,8 +18,11 @@ import { useStableEvent } from "@/hooks/use-stable-event";
 import { openChangelog } from "@/changelog";
 
 const CHECK_INTERVAL_MS = 30 * 60 * 1000;
+const CHANGELOG_LINK_STYLE = { textDecorationLine: "underline" } as const;
 
 function renderBody(body: UpdateCalloutBody, t: ReturnType<typeof useTranslation>["t"]): ReactNode {
+  if (body.kind === "waiting")
+    return body.errorMessage ?? t("desktop.updates.callout.waitingDescription");
   if (body.kind === "installing") return t("desktop.updates.callout.installingDescription");
   if (body.kind === "error") return body.message;
   return <UpdateAvailableDescription versionLabel={body.versionLabel ?? undefined} t={t} />;
@@ -26,7 +30,7 @@ function renderBody(body: UpdateCalloutBody, t: ReturnType<typeof useTranslation
 
 function materializeActions(
   actions: readonly UpdateCalloutActionDescriptor[],
-  handlers: { changelog: () => void; install: () => void; retry: () => void },
+  handlers: Record<UpdateCalloutActionDescriptor["role"], () => void>,
 ): SidebarCalloutAction[] {
   return actions.map((action) => ({
     label: action.label,
@@ -47,12 +51,19 @@ export function UpdateCalloutSource() {
     errorMessage,
     checkForUpdates,
     installUpdate,
+    cancelScheduledUpdate,
     isInstalling,
   } = useDesktopAppUpdater();
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const install = useStableEvent(() => {
     void installUpdate();
+  });
+  const whenIdle = useStableEvent(() => {
+    void installUpdate({ whenIdle: true });
+  });
+  const cancel = useStableEvent(() => {
+    void cancelScheduledUpdate();
   });
   const retry = useStableEvent(() => {
     void checkForUpdates();
@@ -86,6 +97,7 @@ export function UpdateCalloutSource() {
     return callouts.show({
       id: descriptor.id,
       dismissalKey: descriptor.dismissalKey,
+      dismissible: status !== "waiting-for-idle",
       priority: descriptor.priority,
       title: descriptor.title,
       description: renderBody(descriptor.body, t),
@@ -94,6 +106,8 @@ export function UpdateCalloutSource() {
       ) : undefined,
       variant: descriptor.variant,
       actions: materializeActions(descriptor.actions, {
+        whenIdle,
+        cancel,
         changelog: openChangelog,
         install,
         retry,
@@ -102,6 +116,8 @@ export function UpdateCalloutSource() {
     });
   }, [
     availableUpdate,
+    whenIdle,
+    cancel,
     callouts,
     errorMessage,
     install,
@@ -134,6 +150,11 @@ function UpdateAvailableDescription({
       <SidebarCalloutDescriptionText>
         {t("desktop.updates.callout.restartWarning")}
       </SidebarCalloutDescriptionText>
+      <Pressable onPress={openChangelog} accessibilityRole="button">
+        <SidebarCalloutDescriptionText>
+          <Text style={CHANGELOG_LINK_STYLE}>{t("desktop.updates.callout.whatsNew")}</Text>
+        </SidebarCalloutDescriptionText>
+      </Pressable>
     </>
   );
 }

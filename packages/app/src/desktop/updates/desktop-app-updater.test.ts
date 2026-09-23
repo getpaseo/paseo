@@ -490,3 +490,74 @@ describe("formatStatusText", () => {
     }
   });
 });
+
+describe("scheduled desktop updates", () => {
+  it("keeps waiting through automatic checks and ignores duplicate installs", async () => {
+    const { updater, port } = createUpdater();
+    port.nextCheckResult(buildFakeCheckResult({ hasUpdate: true, readyToInstall: true }));
+    await updater.checkForUpdates({ releaseChannel: "stable" });
+    const install = port.deferNextInstall();
+    const pending = updater.installUpdate({ releaseChannel: "stable", whenIdle: true });
+    expect(updater.getSnapshot().status).toBe("waiting-for-idle");
+    await updater.checkForUpdates({ releaseChannel: "stable", silent: true });
+    await updater.installUpdate({ releaseChannel: "stable" });
+    expect(port.recordedInstalls).toEqual([{ releaseChannel: "stable", whenIdle: true }]);
+    expect(port.recordedChecks).toHaveLength(1);
+    await updater.cancelScheduledUpdate();
+    expect(port.cancellationCount).toBe(1);
+    install.resolve(buildFakeInstallResult({ cancelled: true }));
+    await pending;
+    expect(updater.getSnapshot()).toMatchObject({
+      status: "available",
+      isInstalling: false,
+      availableUpdate: { hasUpdate: true },
+    });
+  });
+
+  it("keeps cancellation failures visible while the update is still queued", async () => {
+    const fake = createFakeDesktopAppUpdaterPort();
+    const { updater } = createUpdater({
+      port: {
+        ...fake,
+        async cancelDesktopAppUpdate() {
+          throw new Error("Cancellation failed; try again");
+        },
+      },
+    });
+    const install = fake.deferNextInstall();
+    const pending = updater.installUpdate({ releaseChannel: "stable", whenIdle: true });
+    await updater.cancelScheduledUpdate();
+    expect(updater.getSnapshot()).toMatchObject({
+      status: "waiting-for-idle",
+      errorMessage: "Cancellation failed; try again",
+      isInstalling: true,
+    });
+    install.resolve(buildFakeInstallResult({ cancelled: true }));
+    await pending;
+  });
+
+  it("surfaces a failed idle check instead of treating it as idle", async () => {
+    const { updater, port } = createUpdater();
+    port.failNextInstall(new Error("Cannot verify agent activity"));
+    await updater.installUpdate({ releaseChannel: "stable", whenIdle: true });
+    expect(updater.getSnapshot()).toMatchObject({
+      status: "error",
+      errorMessage: "Cannot verify agent activity",
+      isInstalling: false,
+    });
+  });
+
+  it("does not let a check started before scheduling overwrite the waiting state", async () => {
+    const { updater, port } = createUpdater();
+    const check = port.deferNextCheck();
+    const checking = updater.checkForUpdates({ releaseChannel: "stable" });
+    const install = port.deferNextInstall();
+    const pending = updater.installUpdate({ releaseChannel: "stable", whenIdle: true });
+    check.resolve(buildFakeCheckResult());
+    await checking;
+    expect(updater.getSnapshot().status).toBe("waiting-for-idle");
+    install.resolve(buildFakeInstallResult({ installed: true }));
+    await pending;
+    expect(updater.getSnapshot().status).toBe("installed");
+  });
+});

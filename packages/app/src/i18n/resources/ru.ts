@@ -1405,6 +1405,10 @@ export const ru: TranslationResources = {
         genericError: "Что-то пошло не так.",
         whatsNew: "Что нового",
         installingAction: "Установка...",
+        whenIdle: "При простое",
+        waitingTitle: "Ожидание агентов",
+        waitingDescription:
+          "Paseo перезапустится, когда агенты во всех локальных проектах будут бездействовать. Сеансы терминала будут закрыты.",
         installAndRestart: "Установить и перезапустить",
         installingDescription: "Установка и перезапуск...",
         versionReady: "Версия {{version}} готова к установке.",

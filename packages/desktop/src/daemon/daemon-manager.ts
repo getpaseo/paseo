@@ -1,3 +1,5 @@
+import { setTimeout as delay } from "node:timers/promises";
+import { z } from "zod";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { app, ipcMain, powerMonitor } from "electron";
@@ -54,6 +56,14 @@ import {
 import { tailFile } from "../diagnostics/tail-file.js";
 
 const DAEMON_LOG_FILENAME = "daemon.log";
+let pendingUpdate: AbortController | null = null;
+class AgentsBusyError extends Error {
+  constructor() {
+    super("Agents are busy.");
+  }
+}
+const shutdownResultSchema = z.object({ action: z.string() });
+
 let ownedLaunch: { home: string; instance: DaemonInstance } | null = null;
 
 type DesktopDaemonState = "starting" | "running" | "stopped" | "errored";
@@ -321,6 +331,7 @@ async function startDaemon(): Promise<DesktopDaemonStatus> {
 export async function stopDesktopDaemon(
   reason: DesktopDaemonStopReason = DEFAULT_DESKTOP_DAEMON_STOP_REASON,
   confirmedInstance?: { pid: number; startedAt: string },
+  options: { onlyIfIdle?: boolean; signal?: AbortSignal } = {},
 ): Promise<DesktopDaemonStatus> {
   const home = getPaseoHome();
   const instance = await readDaemonInstance(home);
@@ -344,9 +355,14 @@ export async function stopDesktopDaemon(
   logDesktopDaemonLifecycle("stopping captured supervisor", { reason, pid: instance.pid, owned });
   await stopDaemonInstance(home, {
     instance,
+    requireLifecycleRpc: options.onlyIfIdle,
     timeoutMs: 15_000,
     requestShutdown: async (ready) => {
-      await runExternalCliJsonCommand(["daemon", "stop", "--host", ready.listen, "--json"]);
+      options.signal?.throwIfAborted();
+      const args = ["daemon", "stop", "--host", ready.listen, "--json"];
+      if (options.onlyIfIdle) args.push("--if-idle");
+      const result = shutdownResultSchema.parse(await runExternalCliJsonCommand(args));
+      if (result.action === "busy") throw new AgentsBusyError();
     },
   });
   if (owned) ownedLaunch = null;
@@ -390,6 +406,27 @@ async function resolveRequestedReleaseChannel(
 // ---------------------------------------------------------------------------
 // IPC registration
 // ---------------------------------------------------------------------------
+
+async function waitForAgentsToStop(signal: AbortSignal): Promise<boolean> {
+  while (!signal.aborted) {
+    try {
+      await stopDesktopDaemon("app_update", undefined, {
+        onlyIfIdle: true,
+        signal,
+      });
+      return true;
+    } catch (error) {
+      if (signal.aborted) return false;
+      if (!(error instanceof AgentsBusyError)) throw error;
+    }
+    try {
+      await delay(5_000, undefined, { signal });
+    } catch (error) {
+      if (!signal.aborted) throw error;
+    }
+  }
+  return false;
+}
 
 export function createDaemonCommandHandlers(): Record<string, DesktopCommandHandler> {
   return {
@@ -447,12 +484,26 @@ export function createDaemonCommandHandlers(): Record<string, DesktopCommandHand
     },
     install_app_update: async (args) => {
       const currentVersion = resolveDesktopAppVersion();
-      return downloadAndInstallUpdate(
-        { currentVersion, releaseChannel: await resolveRequestedReleaseChannel(args) },
-        async () => {
-          await stopDesktopDaemon("app_update");
-        },
-      );
+      if (pendingUpdate) throw new Error("An update installation is already pending.");
+      const controller = new AbortController();
+      pendingUpdate = controller;
+      try {
+        return await downloadAndInstallUpdate(
+          { currentVersion, releaseChannel: await resolveRequestedReleaseChannel(args) },
+          async () => {
+            if (args?.whenIdle !== true) {
+              await stopDesktopDaemon("app_update");
+              return true;
+            }
+            return waitForAgentsToStop(controller.signal);
+          },
+        );
+      } finally {
+        pendingUpdate = null;
+      }
+    },
+    cancel_app_update: () => {
+      pendingUpdate?.abort();
     },
     get_local_daemon_version: () => getLocalDaemonVersion(),
     install_cli: () => installCli(),
@@ -472,7 +523,26 @@ export function registerDaemonManager(): void {
       if (!handler) {
         throw new Error(`Unknown desktop command: ${command}`);
       }
-      return await handler(args);
+      if (command !== "install_app_update" || args?.whenIdle !== true) return await handler(args);
+      // A one-time request belongs to its renderer. Reloading or closing it cancels
+      // the wait so an invisible request cannot restart the app later.
+      const cancel = () => pendingUpdate?.abort();
+      const cancelOnNavigation = (
+        _: Electron.Event,
+        _url: string,
+        inPlace: boolean,
+        mainFrame: boolean,
+      ) => {
+        if (mainFrame && !inPlace) cancel();
+      };
+      _event.sender.on("did-start-navigation", cancelOnNavigation);
+      _event.sender.once("destroyed", cancel);
+      try {
+        return await handler(args);
+      } finally {
+        _event.sender.removeListener("did-start-navigation", cancelOnNavigation);
+        _event.sender.removeListener("destroyed", cancel);
+      }
     },
   );
 }
