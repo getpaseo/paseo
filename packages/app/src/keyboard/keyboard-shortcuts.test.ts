@@ -3,6 +3,7 @@ import { formatShortcut } from "@/utils/format-shortcut";
 import {
   buildKeyboardShortcutHelpSections,
   buildEffectiveBindings,
+  normalizeCapturedShortcutCombo,
   getBindingIdForAction,
   getDefaultKeysForAction,
   getWorkspaceIndexJumpModifierKey,
@@ -756,9 +757,9 @@ describe("keyboard-shortcut help sections", () => {
       expect(rowChord({}, "show-shortcuts")).toEqual([["?"]]);
     });
 
-    it("replaces the default-only wildcard when the index jump is rebound", () => {
+    it("keeps the digit range readable when the index jump is rebound", () => {
       expect(rowChord({ [MAC_INDEX_BINDING]: "Ctrl+Digit" }, "workspace-jump-index")).toEqual([
-        ["ctrl", "Digit"],
+        ["ctrl", "1-9"],
       ]);
     });
 
@@ -1289,4 +1290,42 @@ describe("rename shortcut settings", () => {
       ).toBeNull();
     },
   );
+});
+
+describe("number-group shortcut capture", () => {
+  const id = "workspace-tab-navigate-index-cmd-alt-digit-mac-desktop";
+  it("captures Ctrl+1 as the entire tab-number group", () => {
+    const combo = normalizeCapturedShortcutCombo(id, "Ctrl+1");
+    expect(combo).toBe("Ctrl+Digit");
+    const overrides = { [id]: combo };
+    const bindings = buildEffectiveBindings(overrides);
+    for (let index = 1; index <= 9; index++) {
+      const result = resolveShortcut({
+        event: { key: String(index), code: `Digit${index}`, ctrlKey: true },
+        context: { isMac: true, isDesktop: true, focusScope: "message-input" },
+        bindings,
+      });
+      expect(result.match?.action).toBe("workspace.tab.navigate.index");
+      expect(result.match?.payload).toEqual({ index });
+    }
+    expect(
+      resolveShortcutKeysForAction("workspace-tab-jump-index", overrides, {
+        isMac: true,
+        isDesktop: true,
+      }),
+    ).toEqual([["ctrl", "1-9"]]);
+    expect(
+      resolveShortcut({
+        event: { key: "0", code: "Digit0", ctrlKey: true },
+        context: { isMac: true, isDesktop: true },
+        bindings,
+      }).match,
+    ).toBeNull();
+  });
+  it("preserves literal numbers for non-index actions and existing nonnumeric combos", () => {
+    expect(normalizeCapturedShortcutCombo("workspace-rename", "Ctrl+1")).toBe("Ctrl+1");
+    expect(normalizeCapturedShortcutCombo(id, "Ctrl+K")).toBe("Ctrl+K");
+    expect(normalizeCapturedShortcutCombo(id, "Ctrl+0")).toBe("Ctrl+0");
+    expect(normalizeCapturedShortcutCombo(id, "Ctrl+9")).toBe("Ctrl+Digit");
+  });
 });

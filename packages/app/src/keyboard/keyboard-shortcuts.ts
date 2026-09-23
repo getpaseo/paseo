@@ -1233,6 +1233,13 @@ export const DEFAULT_BINDINGS: readonly ParsedShortcutBinding[] =
 
 export type ShortcutOverrides = Record<string, string | null>;
 
+/** Keep number-group actions bound to all nine indices when recording a new modifier. */
+export function normalizeCapturedShortcutCombo(bindingId: string, combo: string): string {
+  const binding = DEFAULT_BINDINGS.find((candidate) => candidate.id === bindingId);
+  if (binding?.payload?.type !== "index") return combo;
+  return combo.replace(/(^|\+)[1-9]$/, "$1Digit");
+}
+
 export interface ShortcutBindingOptions {
   paneFocusInTextFields?: boolean;
 }
