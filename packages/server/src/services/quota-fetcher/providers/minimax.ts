@@ -188,16 +188,7 @@ export class MiniMaxQuotaProvider implements ProviderUsageFetcher {
       return unavailableUsage(this);
     }
 
-    let resp: z.infer<typeof MiniMaxQuotaResponseSchema>;
-    try {
-      resp = MiniMaxQuotaResponseSchema.parse(await res.json());
-    } catch (err) {
-      this.logger.debug(
-        { err: err instanceof Error ? err.message : String(err) },
-        "MiniMax usage response failed to parse",
-      );
-      return unavailableUsage({ ...this, error: "Usage data unavailable" });
-    }
+    const resp = MiniMaxQuotaResponseSchema.parse(await res.json());
 
     const statusCode = resp.base_resp?.status_code;
     if (typeof statusCode === "number" && statusCode !== 0) {

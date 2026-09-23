@@ -1409,7 +1409,7 @@ describe("real provider usage fetchers", () => {
     expect(miniMax.error).toBeNull();
   });
 
-  it("returns error without throwing when the MiniMax response shape is unrecognizable (#5247)", async () => {
+  it("renders an unrecognizable MiniMax response as a friendly error, not raw JSON (#5247)", async () => {
     process.env["MINIMAX_API_KEY"] = "minimax_test_token";
     fetchApi = mockFetch(
       new Map([
@@ -1420,19 +1420,13 @@ describe("real provider usage fetchers", () => {
       ]),
     );
 
-    const logger = createLogger();
-    const provider = new MiniMaxQuotaProvider({
-      logger,
-      fetch: fetchApi as unknown as typeof fetch,
-      configPath: join(homeDir, ".mmx", "config.json"),
-      credentialsPath: join(homeDir, ".mmx", "credentials.json"),
-    });
+    const miniMax = findProvider(await service().listUsage(), "minimax");
 
-    const usage = await provider.fetchUsage();
-
-    expect(usage.status).toBe("error");
-    expect(usage.error).toBe("Usage data unavailable");
-    expect(usage.windows).toEqual([]);
+    expect(miniMax.status).toBe("error");
+    expect(miniMax.windows).toEqual([]);
+    expect(miniMax.error).toMatch(/^Unexpected response shape/);
+    expect(miniMax.error).not.toMatch(/^\[/);
+    expect(miniMax.error).not.toContain("invalid_type");
   });
 
   it("still returns available MiniMax usage when base_resp.status_code is 0 (#5247)", async () => {
