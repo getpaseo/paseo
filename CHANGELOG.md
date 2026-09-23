@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.9.2 - 2026-09-23
+
+### Added
+
+- Added an "Archive all chats" button in the Chats sidebar section with a confirmation prompt
+- Added support for reading an archived agent's logs after its worktree is removed ([#5229](https://github.com/getpaseo/paseo/pull/5229))
+- Added support for displaying a fork checkout's pull request in the workspace ([#5221](https://github.com/getpaseo/paseo/pull/5221))
+
+### Fixed
+
+- Fixed workspaces being lost or errored when located on an unmounted disk or network share ([#5227](https://github.com/getpaseo/paseo/pull/5227))
+- Fixed workspace labels detaching after reconnecting to the daemon ([#5079](https://github.com/getpaseo/paseo/pull/5079))
+- Fixed sidebar dropping projects whose folder name ends in a space ([#5205](https://github.com/getpaseo/paseo/pull/5205))
+
 ## 0.9.1 - 2026-09-22
 
 ### Added
