@@ -593,6 +593,42 @@ describe("keyboard-shortcuts", () => {
     });
   });
 
+  it("completes a chord whose second step carries a modifier", () => {
+    const bindings = buildEffectiveBindings({
+      "command-center-toggle-ctrl-k-non-mac": "Ctrl+K Ctrl+J",
+    });
+
+    // The browser emits a keydown for the bare Control key before every combo,
+    // so the stream for Ctrl+K, release, Ctrl+J is four keydowns, not two.
+    const firstModifier = resolveShortcut({
+      event: { key: "Control", code: "ControlLeft", ctrlKey: true },
+      context: { isMac: false, isDesktop: true },
+      bindings,
+    });
+    const firstStep = resolveShortcut({
+      event: { key: "k", code: "KeyK", ctrlKey: true },
+      context: { isMac: false, isDesktop: true },
+      chordState: firstModifier.nextChordState,
+      bindings,
+    });
+    expect(firstStep.nextChordState.step).toBe(1);
+
+    const secondModifier = resolveShortcut({
+      event: { key: "Control", code: "ControlLeft", ctrlKey: true },
+      context: { isMac: false, isDesktop: true },
+      chordState: firstStep.nextChordState,
+      bindings,
+    });
+    const secondStep = resolveShortcut({
+      event: { key: "j", code: "KeyJ", ctrlKey: true },
+      context: { isMac: false, isDesktop: true },
+      chordState: secondModifier.nextChordState,
+      bindings,
+    });
+
+    expect(secondStep.match?.action).toBe("command-center.toggle");
+  });
+
   it("schedules a chord reset timeout for advancing candidates", () => {
     vi.useFakeTimers();
 

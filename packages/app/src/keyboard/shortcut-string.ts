@@ -245,8 +245,17 @@ export function heldModifiersFromEvent(event: KeyboardEvent): string | null {
   return parts.length > 0 ? parts.join("+") : null;
 }
 
+/**
+ * Whether a keydown carries a modifier key itself rather than a key pressed
+ * with one. The browser emits one of these before every combo that holds a
+ * modifier, and it is the prefix of a combo, never a combo of its own.
+ */
+export function isModifierKeyCode(code: string): boolean {
+  return MODIFIER_CODES.has(code);
+}
+
 export function keyboardEventToComboString(event: KeyboardEvent): string | null {
-  if (MODIFIER_CODES.has(event.code)) {
+  if (isModifierKeyCode(event.code)) {
     return null;
   }
 
