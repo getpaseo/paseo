@@ -4149,3 +4149,235 @@ describe("ACP session/load invariant — cwd and mcpServers always passed", () =
     });
   });
 });
+
+/** Setup for a session whose agent may demand sign-in; unset request mocks succeed. */
+interface AuthTestSessionOptions {
+  authMethods?: Array<{ id: string; name: string }>;
+  authMethod?: string;
+  newSession?: ReturnType<typeof vi.fn>;
+  loadSession?: ReturnType<typeof vi.fn>;
+  authenticate?: ReturnType<typeof vi.fn>;
+  handle?: { provider: string; sessionId: string };
+}
+
+describe("ACP authentication on session open (#477)", () => {
+  const oauthPersonal = { id: "oauth-personal", name: "Log in with Google" };
+  const apiKey = { id: "gemini-api-key", name: "Gemini API key" };
+  const authRequired = () => new RequestError(-32000, "Authentication required");
+  const openedSession = { sessionId: "session-1", modes: null, models: null, configOptions: [] };
+
+  function makeSession(args: AuthTestSessionOptions) {
+    const newSession = args.newSession ?? vi.fn().mockResolvedValue(openedSession);
+    const loadSession = args.loadSession ?? vi.fn().mockResolvedValue(openedSession);
+    const authenticate = args.authenticate ?? vi.fn().mockResolvedValue({});
+    class TestSession extends ACPAgentSession {
+      protected override async spawnProcess(): Promise<SpawnedACPProcess> {
+        return {
+          child: createProbeChildStub(),
+          connection: {
+            prompt: vi.fn(),
+            newSession,
+            loadSession,
+            authenticate,
+          } as unknown as ClientSideConnection,
+          initialize: {
+            agentCapabilities: { loadSession: true },
+            authMethods: args.authMethods ?? [],
+          },
+        } as SpawnedACPProcess;
+      }
+    }
+    const session = new TestSession(
+      { provider: "antigravity", cwd: "/tmp/paseo-acp-test" },
+      {
+        provider: "antigravity",
+        logger: createTestLogger(),
+        defaultCommand: ["agy_acp_server.par", "--uid="],
+        defaultModes: [],
+        capabilities: {
+          supportsStreaming: true,
+          supportsSessionPersistence: true,
+          supportsDynamicModes: true,
+          supportsMcpServers: true,
+          supportsReasoningStream: true,
+          supportsToolInvocations: true,
+        },
+        authMethod: args.authMethod,
+        handle: args.handle,
+      },
+    );
+    return { session, newSession, loadSession, authenticate };
+  }
+
+  test("authenticates with the only advertised method and retries session/new", async () => {
+    const newSession = vi
+      .fn()
+      .mockRejectedValueOnce(authRequired())
+      .mockResolvedValueOnce(openedSession);
+    const { session, authenticate } = makeSession({ authMethods: [oauthPersonal], newSession });
+
+    await session.initializeNewSession();
+
+    expect(authenticate).toHaveBeenCalledTimes(1);
+    expect(authenticate).toHaveBeenCalledWith({ methodId: "oauth-personal" });
+    expect(newSession).toHaveBeenCalledTimes(2);
+    expect(session.id).toBe("session-1");
+  });
+
+  test("uses params.authMethod when the agent advertises several methods", async () => {
+    const newSession = vi
+      .fn()
+      .mockRejectedValueOnce(authRequired())
+      .mockResolvedValueOnce(openedSession);
+    const { session, authenticate } = makeSession({
+      authMethods: [oauthPersonal, apiKey],
+      authMethod: "gemini-api-key",
+      newSession,
+    });
+
+    await session.initializeNewSession();
+
+    expect(authenticate).toHaveBeenCalledWith({ methodId: "gemini-api-key" });
+  });
+
+  test("with several methods and no params.authMethod it names them instead of guessing", async () => {
+    const newSession = vi.fn().mockRejectedValue(authRequired());
+    const { session, authenticate } = makeSession({
+      authMethods: [oauthPersonal, apiKey],
+      newSession,
+    });
+
+    await expect(session.initializeNewSession()).rejects.toThrow(
+      /Authentication required.*params\.authMethod.*oauth-personal \(Log in with Google\), gemini-api-key \(Gemini API key\)/,
+    );
+    expect(authenticate).not.toHaveBeenCalled();
+    expect(newSession).toHaveBeenCalledTimes(1);
+  });
+
+  test("rejects a configured method the agent does not advertise", async () => {
+    const newSession = vi.fn().mockRejectedValue(authRequired());
+    const { session, authenticate } = makeSession({
+      authMethods: [oauthPersonal],
+      authMethod: "oauth-business",
+      newSession,
+    });
+
+    await expect(session.initializeNewSession()).rejects.toThrow(
+      /params\.authMethod is "oauth-business" but the agent advertises: oauth-personal/,
+    );
+    expect(authenticate).not.toHaveBeenCalled();
+  });
+
+  test("surfaces a failed authenticate call", async () => {
+    const newSession = vi.fn().mockRejectedValue(authRequired());
+    const authenticate = vi
+      .fn()
+      .mockRejectedValue(new RequestError(-32603, "Internal error", { details: "browser closed" }));
+    const { session } = makeSession({ authMethods: [oauthPersonal], newSession, authenticate });
+
+    await expect(session.initializeNewSession()).rejects.toThrow(/browser closed|Internal error/);
+    expect(newSession).toHaveBeenCalledTimes(1);
+  });
+
+  test("reports when the retry still demands authentication", async () => {
+    const newSession = vi.fn().mockRejectedValue(authRequired());
+    const { session, authenticate } = makeSession({ authMethods: [oauthPersonal], newSession });
+
+    await expect(session.initializeNewSession()).rejects.toThrow(
+      /still requires authentication after running method "oauth-personal"/,
+    );
+    expect(authenticate).toHaveBeenCalledTimes(1);
+    expect(newSession).toHaveBeenCalledTimes(2);
+  });
+
+  test("leaves other session/new errors alone", async () => {
+    const newSession = vi
+      .fn()
+      .mockRejectedValue(new RequestError(-32602, "Invalid params", { details: "cwd missing" }));
+    const { session, authenticate } = makeSession({ authMethods: [oauthPersonal], newSession });
+
+    await expect(session.initializeNewSession()).rejects.toThrow(/cwd missing|Invalid params/);
+    expect(authenticate).not.toHaveBeenCalled();
+  });
+
+  test("does nothing special when the agent advertises no methods", async () => {
+    const newSession = vi.fn().mockRejectedValue(authRequired());
+    const { session, authenticate } = makeSession({ authMethods: [], newSession });
+
+    await expect(session.initializeNewSession()).rejects.toThrow(
+      /Authentication required.*advertised no authentication methods/,
+    );
+    expect(authenticate).not.toHaveBeenCalled();
+  });
+
+  test("rejects a configured method when the agent advertises none", async () => {
+    const newSession = vi.fn().mockRejectedValue(authRequired());
+    const { session, authenticate } = makeSession({
+      authMethods: [],
+      authMethod: "oauth-personal",
+      newSession,
+    });
+
+    await expect(session.initializeNewSession()).rejects.toThrow(
+      /advertised no authentication methods/,
+    );
+    expect(authenticate).not.toHaveBeenCalled();
+  });
+
+  test("also covers session/load when resuming", async () => {
+    const loadSession = vi
+      .fn()
+      .mockRejectedValueOnce(authRequired())
+      .mockResolvedValueOnce(openedSession);
+    const { session, authenticate } = makeSession({
+      authMethods: [oauthPersonal],
+      loadSession,
+      handle: { provider: "antigravity", sessionId: "session-1" },
+    });
+
+    await session.initializeResumedSession();
+
+    expect(authenticate).toHaveBeenCalledWith({ methodId: "oauth-personal" });
+    expect(loadSession).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("ACP catalogue probes never sign in (#477)", () => {
+  test("a probe refused with -32000 names the advertised methods and does not call authenticate", async () => {
+    const newSession = vi
+      .fn()
+      .mockRejectedValue(new RequestError(-32000, "Authentication required"));
+    const authenticate = vi.fn();
+    class TestACPAgentClient extends ACPAgentClient {
+      protected override async spawnProcess(): Promise<SpawnedACPProcess> {
+        return {
+          child: createProbeChildStub(),
+          connection: { newSession, authenticate } as unknown as ClientSideConnection,
+          initialize: {
+            agentCapabilities: {},
+            authMethods: [
+              { id: "oauth-personal", name: "Log in with Google" },
+              { id: "gemini-api-key", name: "Gemini API key" },
+            ],
+          },
+        } as SpawnedACPProcess;
+      }
+
+      protected override async closeProbe(): Promise<void> {}
+    }
+
+    const client = new TestACPAgentClient({
+      provider: "antigravity",
+      logger: createTestLogger(),
+      defaultCommand: ["agy_acp_server.par", "--uid="],
+      authMethod: "oauth-personal",
+    });
+
+    await expect(
+      client.fetchCatalog({ scope: "workspace", cwd: "/tmp/acp-auth-probe", force: false }),
+    ).rejects.toThrow(
+      /Authentication required\. Advertised authentication methods: oauth-personal \(Log in with Google\), gemini-api-key \(Gemini API key\)\..*never starts an interactive sign-in/,
+    );
+    expect(authenticate).not.toHaveBeenCalled();
+  });
+});
