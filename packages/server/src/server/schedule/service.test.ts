@@ -46,6 +46,28 @@ interface ScheduleServiceInternals {
   executeSchedule(schedule: StoredSchedule, runId: string): Promise<ScheduleExecutionResult>;
 }
 
+class SnapshotBlockingScheduleStore extends ScheduleStore {
+  private markSnapshotRead: (() => void) | null = null;
+  readonly snapshotReady = new Promise<void>((resolve) => {
+    this.markSnapshotRead = resolve;
+  });
+  private returnSnapshot: (() => void) | null = null;
+  private readonly snapshotBlocked = new Promise<void>((resolve) => {
+    this.returnSnapshot = resolve;
+  });
+
+  releaseSnapshot(): void {
+    this.returnSnapshot?.();
+  }
+
+  override async list(): Promise<StoredSchedule[]> {
+    const schedules = await super.list();
+    this.markSnapshotRead?.();
+    await this.snapshotBlocked;
+    return schedules;
+  }
+}
+
 const SCHEDULE_TEST_CAPABILITIES: AgentCapabilityFlags = {
   supportsStreaming: true,
   supportsSessionPersistence: true,
@@ -387,6 +409,44 @@ describe("ScheduleService", () => {
     const resumed = await service.resume(created.id);
     expect(resumed.status).toBe("active");
     expect(resumed.nextRunAt).toBe("2026-01-01T00:04:00.000Z");
+  });
+
+  test("does not start a stale due run after pause and resume", async () => {
+    const runner = vi.fn(async () => ({ agentId: null, output: "unexpected" }));
+    const scheduleStore = new SnapshotBlockingScheduleStore(join(tempDir, "schedules"));
+    const service = createScheduleService({
+      paseoHome: tempDir,
+      scheduleStore,
+      logger: createTestLogger(),
+      agentManager: new AgentManager({ logger: createTestLogger() }),
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      now: () => now,
+      runner,
+    });
+    const created = await service.create({
+      prompt: "Cancel before start",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: {
+        type: "new-agent",
+        config: { provider: "claude", cwd: tempDir },
+      },
+    });
+
+    now = new Date("2026-01-01T00:01:00.000Z");
+    const tickPromise = service.tick();
+    await scheduleStore.snapshotReady;
+    await service.pause(created.id);
+    await service.resume(created.id);
+    scheduleStore.releaseSnapshot();
+    await tickPromise;
+
+    expect(runner).not.toHaveBeenCalled();
+    expect(await service.inspect(created.id)).toMatchObject({
+      status: "active",
+      nextRunAt: "2026-01-01T00:02:00.000Z",
+      runs: [],
+    });
   });
 
   test("completes schedules when max runs is reached", async () => {
