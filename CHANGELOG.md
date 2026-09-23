@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.9.3 - 2026-09-23
+
+### Fixed
+
+- Fixed `createAgent requires provider and cwd` error when starting the first chat agent in a new chat workspace
+- Ensured effective workspace directory fallback in workspace draft agent creation requests
+
 ## 0.9.2 - 2026-09-23
 
 ### Added
