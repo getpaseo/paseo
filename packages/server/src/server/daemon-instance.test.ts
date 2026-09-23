@@ -1,4 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
+import { existsSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir, uptime } from "node:os";
 import { join } from "node:path";
@@ -66,21 +67,29 @@ describe("daemon instance identity across a reboot", () => {
   });
 
   test("stopping a lock stamped before this boot leaves the process holding that pid alone", async () => {
-    bystander = spawn(process.execPath, ["-e", "setTimeout(() => {}, 120_000)"], {
-      stdio: "ignore",
-    });
+    // Records delivery rather than dying of it, so a signal cannot be missed by arriving late.
+    const signalMarker = join(paseoHome, "bystander-signalled");
+    bystander = spawn(
+      process.execPath,
+      [
+        "-e",
+        `process.on("SIGTERM", () => require("node:fs").writeFileSync(${JSON.stringify(signalMarker)}, "SIGTERM"));` +
+          `setTimeout(() => {}, 120_000);`,
+      ],
+      { stdio: "ignore" },
+    );
     const bystanderPid = bystander.pid;
-    expect(bystanderPid).toBeDefined();
+    if (bystanderPid === undefined) throw new Error("bystander process did not start");
     let exited = false;
     bystander.once("exit", () => {
       exited = true;
     });
 
-    await writeLock(paseoHome, lockFor(bystanderPid!, new Date(bootedAt() - 60 * 60_000)));
+    await writeLock(paseoHome, lockFor(bystanderPid, new Date(bootedAt() - 60 * 60_000)));
 
     expect(await stopDaemonInstance(paseoHome)).toMatchObject({ action: "not_running" });
 
-    await new Promise((resolve) => setTimeout(resolve, 500));
+    expect(existsSync(signalMarker)).toBe(false);
     expect(exited).toBe(false);
     await expect(readFile(join(paseoHome, "paseo.pid"), "utf-8")).rejects.toThrow(/ENOENT/);
   });

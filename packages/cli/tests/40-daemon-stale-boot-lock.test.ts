@@ -8,6 +8,7 @@
 
 import assert from "node:assert";
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir, uptime } from "node:os";
 import { join } from "node:path";
@@ -23,10 +24,18 @@ const env = {
   PASEO_VOICE_MODE_ENABLED: "0",
 };
 
-// Stands in for the process that inherits the supervisor's PID after a reboot.
-const bystander = spawn(process.execPath, ["-e", "setTimeout(() => {}, 120_000)"], {
-  stdio: "ignore",
-});
+// Stands in for the process that inherits the supervisor's PID after a reboot. It records a
+// signal rather than dying of it, so a late delivery cannot slip past the assertion.
+const signalMarker = join(paseoHome, "bystander-signalled");
+const bystander = spawn(
+  process.execPath,
+  [
+    "-e",
+    `process.on("SIGTERM", () => require("node:fs").writeFileSync(${JSON.stringify(signalMarker)}, "SIGTERM"));` +
+      `setTimeout(() => {}, 120_000);`,
+  ],
+  { stdio: "ignore" },
+);
 let bystanderExited = false;
 bystander.once("exit", () => {
   bystanderExited = true;
@@ -72,12 +81,12 @@ try {
     0,
     `daemon stop should succeed:\nstdout:\n${stopResult.stdout}\nstderr:\n${stopResult.stderr}`,
   );
-  await new Promise((resolve) => setTimeout(resolve, 500));
   assert.strictEqual(
-    bystanderExited,
+    existsSync(signalMarker),
     false,
     "daemon stop must not signal the process that inherited the pid",
   );
+  assert.strictEqual(bystanderExited, false, "the process that inherited the pid should survive");
   console.log("✓ daemon stop leaves the process holding that pid alone\n");
 } finally {
   bystander.kill("SIGKILL");

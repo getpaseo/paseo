@@ -49,9 +49,10 @@ function isPidRunning(pid: number): boolean {
   }
 }
 
-// `uptime()` dates this boot against the current clock, so a clock adjustment made since
-// boot moves the estimate. Stay well clear of it: a reboot leaves locks hours or days old.
-const BOOT_INSTANT_TOLERANCE_MS = 5 * 60_000;
+// `uptime()` reports whole seconds on some platforms, so the derived boot instant carries
+// about a second of error. This covers that resolution and nothing more: every extra second
+// is a window in which a lock written just before a reboot still reads as current.
+const BOOT_INSTANT_TOLERANCE_MS = 5_000;
 
 function precedesThisBoot(startedAt: string): boolean {
   const stamped = Date.parse(startedAt);
