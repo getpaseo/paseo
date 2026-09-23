@@ -1453,11 +1453,18 @@ export class OpenCodeAgentClient implements AgentClient {
     });
 
     try {
+      const permission = buildOpenCodePermissionRules(
+        openCodeConfig.providerOptions,
+        openCodeConfig.toolPolicy,
+      );
       // Creating the first session for a directory is part of OpenCode coming up, so it
       // shares the server startup budget instead of a shorter one that fails agent
       // creation on contended cold starts.
       const response = await withTimeout(
-        client.session.create({ directory: openCodeConfig.cwd }),
+        client.session.create({
+          directory: openCodeConfig.cwd,
+          ...(permission ? { permission } : {}),
+        }),
         OPENCODE_SERVER_STARTUP_TIMEOUT_MS,
         `OpenCode session.create timed out after ${Math.round(
           OPENCODE_SERVER_STARTUP_TIMEOUT_MS / 1000,
@@ -1527,6 +1534,22 @@ export class OpenCodeAgentClient implements AgentClient {
     });
 
     try {
+      const permission = buildOpenCodePermissionRules(
+        openCodeConfig.providerOptions,
+        openCodeConfig.toolPolicy,
+      );
+      if (permission) {
+        const response = await client.session.update({
+          sessionID: handle.sessionId,
+          directory: cwd,
+          permission,
+        });
+        if (response.error) {
+          throw new Error(
+            `Failed to update OpenCode session permissions: ${JSON.stringify(response.error)}`,
+          );
+        }
+      }
       await this.populateModelContextWindowCache(client, openCodeConfig.cwd);
       const unbindBridge = this.bindBridgeSession(handle.sessionId, launchContext);
 
@@ -3510,10 +3533,6 @@ class OpenCodeAgentSession implements AgentSession {
       this.config.systemPrompt,
       this.config.daemonAppendSystemPrompt,
     );
-    const permission = buildOpenCodePermissionRules(
-      this.config.providerOptions,
-      this.config.toolPolicy,
-    );
     const model = this.parseModel(this.config.model);
     const effectiveMode = resolveOpenCodeRuntimeAgentId(this.currentMode);
     const effectiveVariant = this.config.thinkingOptionId ?? undefined;
@@ -3525,7 +3544,6 @@ class OpenCodeAgentSession implements AgentSession {
         messageID: promptId,
         parts,
         ...(systemPrompt ? { system: systemPrompt } : {}),
-        ...(permission ? { permission } : {}),
         ...(model ? { model } : {}),
         ...(effectiveMode ? { agent: effectiveMode } : {}),
         ...(effectiveVariant ? { variant: effectiveVariant } : {}),
@@ -3850,10 +3868,6 @@ class OpenCodeAgentSession implements AgentSession {
             this.config.systemPrompt,
             this.config.daemonAppendSystemPrompt,
           );
-          const permission = buildOpenCodePermissionRules(
-            this.config.providerOptions,
-            this.config.toolPolicy,
-          );
           const promptResponse = await this.client.session.promptAsync({
             sessionID: this.sessionId,
             directory: this.config.cwd,
@@ -3868,7 +3882,6 @@ class OpenCodeAgentSession implements AgentSession {
                 }
               : {}),
             ...(systemPrompt ? { system: systemPrompt } : {}),
-            ...(permission ? { permission } : {}),
             ...(model ? { model } : {}),
             ...(effectiveMode ? { agent: effectiveMode } : {}),
             ...(effectiveVariant ? { variant: effectiveVariant } : {}),

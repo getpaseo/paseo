@@ -2384,50 +2384,45 @@ describe("OpenCode adapter startTurn error handling", () => {
     await session.close();
   });
 
-  test("sends exact Hub MCP permission grants without approving unrelated tools", async () => {
-    const promptAsync = vi.fn(async () => ({ data: {}, error: undefined }));
-    const fakeClient = {
-      global: {
-        event: vi.fn().mockImplementation(async ({ signal }: { signal: AbortSignal }) => ({
-          stream: {
-            async *[Symbol.asyncIterator](): AsyncGenerator<OpenCodeEvent> {
-              yield { type: "server.connected", properties: {} } as OpenCodeEvent;
-              await waitForAbort(signal);
-            },
-          },
-        })),
+  test("keeps Hub tool grants and external directory rules on OpenCode sessions", async () => {
+    const runtime = new TestOpenCodeHarness();
+    const openCode = new TestOpenCodeClient();
+    runtime.enqueueClient(openCode);
+    runtime.enqueueClient(openCode);
+    const client = new OpenCodeAgentClient(createTestLogger(), undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+    });
+    const config: AgentSessionConfig = {
+      provider: "opencode",
+      cwd: "/tmp/test",
+      providerOptions: {
+        permission: { external_directory: "allow", question: "deny", bash: "ask" },
       },
-      session: { promptAsync },
-    } as never;
-    const session = new __openCodeInternals.OpenCodeAgentSession(
-      {
-        provider: "opencode",
-        cwd: "/tmp/test",
-        providerOptions: { permission: { bash: "ask", hub_reply: "deny" } },
-        toolPolicy: {
-          preapproved: [{ kind: "mcp", server: "hub", tool: "finish_execution" }],
-        },
-      },
-      fakeClient,
-      "ses_unit_test",
-      createTestLogger(),
-    );
+      toolPolicy: { preapproved: [{ kind: "mcp", server: "hub", tool: "finish_execution" }] },
+    };
+    const permission = [
+      { permission: "hub_finish_execution", pattern: "*", action: "allow" },
+      { permission: "bash", pattern: "*", action: "ask" },
+      { permission: "external_directory", pattern: "*", action: "allow" },
+      { permission: "question", pattern: "*", action: "deny" },
+    ];
 
-    await session.startTurn("finish");
-
-    expect(promptAsync).toHaveBeenCalledWith(
-      expect.objectContaining({
-        permission: [
-          { permission: "hub_finish_execution", pattern: "*", action: "allow" },
-          { permission: "bash", pattern: "*", action: "ask" },
-          { permission: "hub_reply", pattern: "*", action: "deny" },
-        ],
-      }),
-    );
-    expect(promptAsync.mock.calls[0]?.[0].permission).not.toContainEqual(
-      expect.objectContaining({ permission: "bash", action: "allow" }),
-    );
+    const session = await client.createSession(config);
+    expect(openCode.calls.sessionCreate).toEqual([{ directory: config.cwd, permission }]);
+    await session.run("Inspect /tmp/fixture");
+    expect(openCode.calls.sessionPromptAsync[0]).not.toHaveProperty("permission");
     await session.close();
+
+    const resumed = await client.resumeSession({
+      provider: "opencode",
+      sessionId: "session-1",
+      metadata: config,
+    });
+    expect(openCode.calls.sessionUpdate).toEqual([
+      { sessionID: "session-1", directory: config.cwd, permission },
+    ]);
+    await resumed.close();
   });
 
   test("waits for the stop abort and provider idle before starting the next prompt", async () => {
