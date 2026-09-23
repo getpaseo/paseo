@@ -6,6 +6,8 @@ import { getE2EDaemonPort } from "../../app/e2e/support/helpers/daemon-port";
 import { installDaemonWebSocketGate } from "../../app/e2e/support/helpers/daemon-websocket-gate";
 import { expectAppRoute } from "../../app/e2e/support/helpers/route-assertions";
 import { seedWorkspace } from "../../app/e2e/support/helpers/seed-client";
+import { openAgentRoute, seedMockAgentWorkspace } from "../../app/e2e/support/helpers/mock-agent";
+import { scrollAgentChatToBottom } from "../../app/e2e/support/helpers/agent-bottom-anchor";
 import { getServerId } from "../../app/e2e/support/helpers/server-id";
 import { waitForWorkspaceTabsVisible } from "../../app/e2e/support/helpers/workspace-tabs";
 import {
@@ -57,36 +59,6 @@ async function getStartupPresentation(page: Page): Promise<StartupPresentation[]
   return page.evaluate(() => window.__paseoStartupPresentationTrace?.slice() ?? []);
 }
 
-async function expectWorkspaceHeaderDragSurface(page: Page): Promise<void> {
-  const audit = await page.evaluate(() => {
-    const header = document.querySelector<HTMLElement>('[data-testid="composer-dock-header"]');
-    if (!header) throw new Error("Expected the workspace header");
-
-    const headerRect = header.getBoundingClientRect();
-    const rowHasDragRegion = [...header.querySelectorAll<HTMLElement>("*")].some((element) => {
-      const style = getComputedStyle(element);
-      const rect = element.getBoundingClientRect();
-      return (
-        style.position === "relative" &&
-        style.getPropertyValue("-webkit-app-region") === "drag" &&
-        rect.width >= headerRect.width * 0.8 &&
-        rect.height >= 24
-      );
-    });
-    const interactiveRegions = [
-      ...header.querySelectorAll<HTMLElement>(
-        'button, [role="button"], [role="link"], [role="menuitem"], [tabindex]',
-      ),
-    ].map((element) => getComputedStyle(element).getPropertyValue("-webkit-app-region"));
-
-    return { rowHasDragRegion, interactiveRegions };
-  });
-
-  expect(audit.rowHasDragRegion).toBe(true);
-  expect(audit.interactiveRegions.length).toBeGreaterThan(0);
-  expect(audit.interactiveRegions.every((region) => region === "no-drag")).toBe(true);
-}
-
 async function expectWorkspaceLocation(
   page: Page,
   input: {
@@ -132,7 +104,6 @@ test("refresh keeps one continuous splash before restoring the desktop workspace
     await waitForWorkspaceTabsVisible(page);
     await expectWorkspaceTabVisible(page, agent.id);
     await expectWorkspaceLocation(page, { serverId, workspace });
-    await expectWorkspaceHeaderDragSurface(page);
 
     await observeStartupPresentation(page);
     await daemonGate.drop();
@@ -143,10 +114,90 @@ test("refresh keeps one continuous splash before restoring the desktop workspace
 
     await expectWorkspaceLocation(page, { serverId, workspace });
     await waitForWorkspaceTabsVisible(page);
-    await expectWorkspaceHeaderDragSurface(page);
     expect(await getStartupPresentation(page)).toEqual(["splash", "app"]);
   } finally {
     daemonGate.restore();
     await workspace.cleanup();
+  }
+});
+
+function inspectChatDragExclusions(scroll: Element) {
+  const header = document.querySelector('[data-testid="composer-dock-header"]');
+  if (!header) throw new Error("Expected the workspace header");
+  const headerRect = header.getBoundingClientRect();
+  const headerY = headerRect.top + headerRect.height / 2;
+  const content = scroll.firstElementChild;
+  const focusScope = scroll.closest("[tabindex]");
+  if (!content || !focusScope) throw new Error("Expected chat content and its focus scope");
+  const contentRect = content.getBoundingClientRect();
+  const exclusions = [...scroll.querySelectorAll("*")].filter((element) => {
+    const rect = element.getBoundingClientRect();
+    const style = getComputedStyle(element);
+    return (
+      style.visibility === "visible" &&
+      style.getPropertyValue("-webkit-app-region") === "no-drag" &&
+      rect.top < headerY &&
+      rect.bottom > headerY &&
+      rect.right > headerRect.left &&
+      rect.left < headerRect.right
+    );
+  });
+  return {
+    contentCrossesHeader: contentRect.top < headerY && contentRect.bottom > headerY,
+    focusScopeRegion: getComputedStyle(focusScope).getPropertyValue("-webkit-app-region"),
+    exclusions: exclusions.length,
+  };
+}
+
+test("scrolled chat does not exclude the workspace titlebar from dragging", async ({
+  page,
+}, testInfo) => {
+  const response = Array.from(
+    { length: 80 },
+    (_, index) =>
+      `Paragraph ${index}: a long conversation keeps the chat scrolled below its first message.`,
+  ).join("\n\n");
+  const agent = await seedMockAgentWorkspace({
+    repoPrefix: "desktop-scrolled-chat-",
+    title: "Scrollable conversation",
+    initialPrompt: "Show a long response",
+    featureValues: { mockAssistantResponse: response },
+  });
+
+  try {
+    await agent.client.waitForFinish(agent.agentId, 15_000);
+    await installDesktopRuntime(page, {
+      serverId: getServerId(),
+      daemonListen: `127.0.0.1:${getE2EDaemonPort()}`,
+    });
+    await openAgentRoute(page, agent);
+    const chat = page.getByTestId("agent-chat-scroll");
+    await expect(chat).toBeVisible();
+
+    for (const colorScheme of ["light", "dark"] as const) {
+      await page.emulateMedia({ colorScheme });
+      await scrollAgentChatToBottom(page);
+      // Electron can subtract no-drag rectangles outside a scroll viewport's clip.
+      // Check the offending geometry, rather than DOM hit testing or a specific row style.
+      await expect
+        .poll(() => chat.evaluate(inspectChatDragExclusions))
+        .toEqual({
+          contentCrossesHeader: true,
+          focusScopeRegion: "none",
+          exclusions: 0,
+        });
+    }
+
+    const menuTrigger = page.getByTestId("workspace-header-menu-trigger");
+    await expect(menuTrigger).toHaveCSS("-webkit-app-region", "no-drag");
+    await menuTrigger.click();
+    const menu = page.getByTestId("workspace-header-menu");
+    await expect(menu).toBeVisible();
+    await expect(menu.getByRole("menuitem").first()).toHaveCSS("-webkit-app-region", "no-drag");
+    await page.keyboard.press("Escape");
+    await expect(menu).toBeHidden();
+    await page.screenshot({ path: testInfo.outputPath("scrolled-chat-titlebar.png") });
+  } finally {
+    await agent.cleanup();
   }
 });

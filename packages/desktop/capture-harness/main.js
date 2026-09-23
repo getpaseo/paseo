@@ -2641,11 +2641,23 @@ async function runBrowserProfileGroup() {
 async function main() {
   ensureDirSync(OUT_DIR);
   if (
-    !["all", "existing", "permanent-parking", "automation", "browser-profile"].includes(
-      HARNESS_GROUP,
-    )
+    ![
+      "all",
+      "existing",
+      "permanent-parking",
+      "automation",
+      "browser-profile",
+      "titlebar-drag",
+    ].includes(HARNESS_GROUP)
   ) {
     fail(`unknown harness group ${HARNESS_GROUP}`);
+  }
+
+  if (HARNESS_GROUP === "titlebar-drag") {
+    const { runTitlebarDragGroup } = require("./titlebar-drag.js");
+    await runTitlebarDragGroup(OUT_DIR);
+    pass(`capture harness titlebar-drag complete output=${OUT_DIR}`);
+    return;
   }
 
   if (HARNESS_GROUP === "browser-profile") {

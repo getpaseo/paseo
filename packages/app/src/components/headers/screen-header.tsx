@@ -11,10 +11,7 @@ import {
   useIsCompactFormFactor,
 } from "@/constants/layout";
 import { WindowChromeSafeArea } from "@/utils/desktop-window";
-import {
-  TitlebarDragRegion,
-  titlebarDragSurfaceStyle,
-} from "@/components/desktop/titlebar-drag-region";
+import { TitlebarDragRegion } from "@/components/desktop/titlebar-drag-region";
 
 interface ScreenHeaderProps {
   left?: ReactNode;
@@ -48,14 +45,7 @@ export function ScreenHeader({
     () => [styles.inner, { paddingTop: insets.top + topPadding }],
     [insets.top, topPadding],
   );
-  // The row itself carries the drag region: the TitlebarDragRegion underlay is covered by
-  // the left/right siblings (RN Web Views default to position:relative), so the overlay alone
-  // never wins hit-testing here. Interactive children opt out via the global no-drag backstop
-  // in public/index.html — same pattern as explorer-sidebar-tab-rail.
-  const rowStyle = useMemo(
-    () => [styles.row, titlebarDragSurfaceStyle as never, borderless && styles.borderless],
-    [borderless],
-  );
+  const rowStyle = useMemo(() => [styles.row, borderless && styles.borderless], [borderless]);
   const leftCombinedStyle = useMemo(() => [styles.left, leftStyle], [leftStyle]);
   const rightCombinedStyle = useMemo(() => [styles.right, rightStyle], [rightStyle]);
 

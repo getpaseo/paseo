@@ -51,22 +51,32 @@
       }
     </style>
     <style>
-      button,
-      a,
-      input,
-      textarea,
-      select,
-      [role="button"],
-      [role="link"],
-      [role="textbox"],
-      [role="combobox"],
-      [role="tab"],
-      [role="switch"],
-      [role="checkbox"],
-      [role="slider"],
-      [role="menuitem"],
-      [tabindex],
-      [contenteditable="true"] {
+      /* no-drag on scrolled content subtracts from drag regions even where overflow
+         clips it visually, so scope the opt-out to actual drag surfaces and portals */
+      :is(
+          :has(> [data-titlebar-drag-region]),
+          [data-titlebar-drag-surface],
+          #overlay-root,
+          [data-window-overlay]
+        )
+        :is(
+          button,
+          a,
+          input,
+          textarea,
+          select,
+          [role="button"],
+          [role="link"],
+          [role="textbox"],
+          [role="combobox"],
+          [role="tab"],
+          [role="switch"],
+          [role="checkbox"],
+          [role="slider"],
+          [role="menuitem"],
+          [tabindex],
+          [contenteditable="true"]
+        ) {
         -webkit-app-region: no-drag !important;
       }
 

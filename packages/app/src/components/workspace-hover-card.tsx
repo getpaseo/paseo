@@ -48,6 +48,8 @@ import { formatCheckPresentationCountsLabel } from "@/git/check-presentation-cop
 import { CheckPresentationIcon, getCheckPresentationTone } from "@/git/check-presentation.view";
 import { buildForgeChecksUrl } from "@/git/forge-url";
 
+const PORTAL_OVERLAY_DATASET = { windowOverlay: "true" };
+
 interface Rect {
   x: number;
   y: number;
@@ -281,7 +283,7 @@ function WorkspaceHoverCardContent({
 
   return (
     <Portal hostName={bottomSheetInternal?.hostName}>
-      <View pointerEvents="box-none" style={styles.portalOverlay}>
+      <View pointerEvents="box-none" style={styles.portalOverlay} dataSet={PORTAL_OVERLAY_DATASET}>
         <FloatingSurface
           ref={contentRef}
           entering={FadeIn.duration(80)}
