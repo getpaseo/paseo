@@ -1,8 +1,9 @@
 import type { AgentStreamEvent, AgentTimelineItem, ToolCallDetail } from "../../agent-sdk-types.js";
-import { openSync, readSync, closeSync } from "node:fs";
-import { limitAgentTimelineItemContent } from "../../agent-timeline-content.js";
-import type { ProviderSubagentInputEvent } from "../../provider-subagents/store.js";
-import { createPiExtensionHost, type PiExtensionHost } from "./extensions/index.js";
+import {
+  createPiExtensionHost,
+  type PiExtensionEventOutput,
+  type PiExtensionHost,
+} from "./extensions/index.js";
 import type { PiAgentMessage, PiImageContent, PiTextContent } from "./rpc-types.js";
 import {
   extractTextFromToolResult,
@@ -57,6 +58,7 @@ export function getUserMessageText(content: string | (PiTextContent | PiImageCon
 
 export class PiHistoryMapper {
   private readonly pendingToolCalls = new Map<string, PiTrackedToolCall>();
+  private readonly hydrations: Promise<AgentStreamEvent[]>[] = [];
   private userIndex = 0;
   private assistantIndex = 0;
 
@@ -94,6 +96,10 @@ export class PiHistoryMapper {
     return events;
   }
 
+  async hydrate(): Promise<AgentStreamEvent[]> {
+    return (await Promise.all(this.hydrations)).flat();
+  }
+
   private mapUserMessage(message: Extract<PiAgentMessage, { role: "user" }>): AgentStreamEvent[] {
     const text = getUserMessageText(message.content);
     this.userIndex += 1;
@@ -118,33 +124,24 @@ export class PiHistoryMapper {
     message: Extract<PiAgentMessage, { role: "custom" }>,
   ): AgentStreamEvent[] {
     const extensionMapping = this.extensionHost.mapCustomMessage(message);
-    if (extensionMapping) {
-      const inputs = [
-        ...extensionMapping.subagents,
-        ...(extensionMapping.childSessions ?? []).flatMap(({ id, file }) =>
-          mapPiChildSession(id, file),
-        ),
-      ];
-      return inputs.map((event) => ({
-        type: "provider_subagent",
-        provider: this.provider,
-        event,
-      }));
-    }
+    const extensionEvents = this.extensionEvents(extensionMapping);
     const text = getUserMessageText(message.content);
     const mappedEvent = text ? this.hooks.mapCustomMessage?.(text, this.provider) : null;
     if (mappedEvent) {
-      return [mappedEvent];
+      return [...extensionEvents, mappedEvent];
     }
-    return text
-      ? [
-          {
-            type: "timeline",
-            provider: this.provider,
-            item: { type: "assistant_message", text },
-          },
-        ]
-      : [];
+    return [
+      ...extensionEvents,
+      ...(text
+        ? [
+            {
+              type: "timeline",
+              provider: this.provider,
+              item: { type: "assistant_message", text },
+            } as AgentStreamEvent,
+          ]
+        : []),
+    ];
   }
 
   private mapAssistantMessage(
@@ -197,7 +194,7 @@ export class PiHistoryMapper {
             error: null,
           },
         });
-        events.push(...this.mapSubagents(mapping));
+        events.push(...this.extensionEvents(mapping));
       }
     }
     return events;
@@ -233,24 +230,14 @@ export class PiHistoryMapper {
           errorText: extractTextFromToolResult(result) ?? "Tool call failed",
         }),
       },
-      ...(mapping?.timeline ?? []).map(
-        (item): AgentStreamEvent => ({
-          type: "timeline",
-          provider: this.provider,
-          item,
-        }),
-      ),
-      ...this.mapSubagents(mapping),
+      ...this.extensionEvents(mapping),
     ];
   }
 
-  private mapSubagents(mapping: ReturnType<PiExtensionHost["mapToolCall"]>): AgentStreamEvent[] {
+  private extensionEvents(mapping: PiExtensionEventOutput | undefined): AgentStreamEvent[] {
     if (!mapping) return [];
-    const inputs = [
-      ...(mapping.subagents ?? []),
-      ...(mapping.childSessions ?? []).flatMap(({ id, file }) => mapPiChildSession(id, file)),
-    ];
-    return inputs.map((event) => ({ type: "provider_subagent", provider: this.provider, event }));
+    this.hydrations.push(mapping.hydration);
+    return mapping.events;
   }
 
   private mapBashExecutionMessage(
@@ -293,64 +280,24 @@ export class PiHistoryMapper {
   }
 }
 
-/** A child session is immutable once its completion result exposes the file. */
-export function mapPiChildSession(id: string, file: string): ProviderSubagentInputEvent[] {
-  const MAX_BYTES = 2 * 1024 * 1024;
-  const MAX_ITEMS = 200;
-  let fd: number;
-  try {
-    fd = openSync(file, "r");
-  } catch {
-    return [];
-  }
-  try {
-    const buffer = Buffer.alloc(MAX_BYTES);
-    const bytes = readSync(fd, buffer, 0, MAX_BYTES, 0);
-    const text = buffer.toString("utf8", 0, bytes);
-    const completeText = bytes === MAX_BYTES ? text.slice(0, text.lastIndexOf("\n")) : text;
-    const mapper = new PiHistoryMapper("pi");
-    const events: ProviderSubagentInputEvent[] = [];
-    for (const line of completeText.split("\n")) {
-      if (!line || events.length >= MAX_ITEMS) break;
-      let entry: { type?: string; message?: PiAgentMessage; timestamp?: string };
-      try {
-        entry = JSON.parse(line);
-      } catch {
-        continue;
-      }
-      if (!entry.message || typeof entry.message !== "object" || !("role" in entry.message))
-        continue;
-      for (const mapped of mapper.mapMessages([entry.message])) {
-        if (mapped.type !== "timeline") continue;
-        events.push({
-          type: "timeline",
-          id,
-          item: limitAgentTimelineItemContent(mapped.item),
-          ...(entry.timestamp ? { timestamp: entry.timestamp } : {}),
-        });
-        if (events.length >= MAX_ITEMS) break;
-      }
-    }
-    return events;
-  } catch {
-    return [];
-  } finally {
-    closeSync(fd);
-  }
-}
-
 export async function* streamPiHistory(
   provider: string,
   messages: PiAgentMessage[],
   userEntries: readonly PiCapturedUserMessageEntry[] = [],
   hooks: PiHistoryMapperHooks = {},
   extensionHost: PiExtensionHost = createPiExtensionHost(),
+  signal?: AbortSignal,
 ): AsyncGenerator<AgentStreamEvent> {
   const mapper = new PiHistoryMapper(provider, userEntries, hooks, extensionHost);
   for (const event of mapper.mapMessages(messages)) {
+    if (signal?.aborted) return;
     if (event) {
       yield event;
     }
+  }
+  for (const event of await mapper.hydrate()) {
+    if (signal?.aborted) return;
+    yield event;
   }
 }
 

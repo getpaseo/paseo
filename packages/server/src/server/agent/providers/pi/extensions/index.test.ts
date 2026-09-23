@@ -15,14 +15,16 @@ describe("Pi extension host", () => {
       status: "completed",
       result,
     });
-    expect(live).toEqual({
-      detail: {
-        type: "sub_agent",
-        subAgentType: "scout",
-        description: "Inspect files",
-        log: "Found two files",
-      },
-    });
+    expect(live).toEqual(
+      expect.objectContaining({
+        detail: {
+          type: "sub_agent",
+          subAgentType: "scout",
+          description: "Inspect files",
+          log: "Found two files",
+        },
+      }),
+    );
     expect(
       host.mapToolCall({
         callId: "call-2",

@@ -61,12 +61,11 @@ import {
 import {
   getUserMessageText,
   streamPiHistory,
-  mapPiChildSession,
   type PiCapturedUserMessageEntry,
 } from "./history-mapper.js";
 import { materializeProviderImage } from "../provider-image-output.js";
 import { PiCliRuntime } from "./cli-runtime.js";
-import { createPiExtensionHost } from "./extensions/index.js";
+import { createPiExtensionHost, type PiExtensionEventOutput } from "./extensions/index.js";
 import { revertPiConversation } from "./rewind.js";
 import { listPiImportableSessions, readPiImportSessionConfig } from "./session-descriptor.js";
 import type { PiRuntime, PiRuntimeSession, PiStartSessionInput } from "./runtime.js";
@@ -1151,6 +1150,8 @@ export class PiRpcAgentSession implements AgentSession {
   private readonly logger: Logger;
   private readonly usagePoller: PiUsagePoller;
   private closed = false;
+  private readonly closeController = new AbortController();
+  private readonly pendingExtensionHydrations = new Set<Promise<void>>();
   // Pi publishes the terminal before acknowledging abort. Autonomous runs have no
   // turn ID; retain their errors too until the cancellation request settles.
   private interruptingTurn: { turnId: string | undefined; error: string | null } | null = null;
@@ -1352,6 +1353,7 @@ export class PiRpcAgentSession implements AgentSession {
       this.contextUserEntries,
       {},
       createPiExtensionHost(),
+      this.closeController.signal,
     );
   }
 
@@ -1517,10 +1519,12 @@ export class PiRpcAgentSession implements AgentSession {
       return;
     }
     this.closed = true;
+    this.closeController.abort();
     this.usagePoller.close();
     try {
       await this.runtimeSession.close();
     } finally {
+      await Promise.all(this.pendingExtensionHydrations);
       this.rejectAllExtensionResults(new Error("Pi session closed"));
       this.cleanup?.();
     }
@@ -1587,6 +1591,20 @@ export class PiRpcAgentSession implements AgentSession {
     for (const subscriber of this.subscribers) {
       subscriber(event);
     }
+  }
+
+  private emitExtensionOutput(output: PiExtensionEventOutput | undefined, turnId?: string): void {
+    if (!output || this.closed) return;
+    for (const event of output.events) {
+      this.emit(event.type === "timeline" ? { ...event, turnId } : event);
+    }
+    const pending = output.hydration.then((events) => {
+      if (this.closeController.signal.aborted) return;
+      for (const event of events) this.emit(event);
+      return undefined;
+    });
+    this.pendingExtensionHydrations.add(pending);
+    void pending.finally(() => this.pendingExtensionHydrations.delete(pending));
   }
 
   private currentTurnIdForEvent(): string | undefined {
@@ -2261,18 +2279,7 @@ export class PiRpcAgentSession implements AgentSession {
     }
     if (event.message.role === "custom") {
       const customMapping = this.extensionHost.mapCustomMessage(event.message);
-      for (const subagent of customMapping?.subagents ?? []) {
-        this.emit({ type: "provider_subagent", provider: this.provider, event: subagent });
-      }
-      for (const child of customMapping?.childSessions ?? []) {
-        for (const subagent of mapPiChildSession(child.id, child.file)) {
-          this.emit({ type: "provider_subagent", provider: this.provider, event: subagent });
-        }
-      }
-      if (customMapping) {
-        if (!this.activeTurnStarted) this.completeTurn(turnId, []);
-        return;
-      }
+      this.emitExtensionOutput(customMapping, turnId);
       const text = getUserMessageText(event.message.content);
       if (text) {
         this.emit({
@@ -2322,17 +2329,7 @@ export class PiRpcAgentSession implements AgentSession {
       turnId,
       item,
     });
-    for (const timelineItem of mapping?.timeline ?? []) {
-      this.emit({ type: "timeline", provider: this.provider, turnId, item: timelineItem });
-    }
-    for (const subagent of mapping?.subagents ?? []) {
-      this.emit({ type: "provider_subagent", provider: this.provider, event: subagent });
-    }
-    for (const child of mapping?.childSessions ?? []) {
-      for (const subagent of mapPiChildSession(child.id, child.file)) {
-        this.emit({ type: "provider_subagent", provider: this.provider, event: subagent });
-      }
-    }
+    this.emitExtensionOutput(mapping, turnId);
     return true;
   }
 

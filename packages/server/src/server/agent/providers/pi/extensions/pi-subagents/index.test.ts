@@ -6,8 +6,12 @@ import {
   type PiToolResult,
   type PiTrackedToolCall,
 } from "../../tool-call-mapper.js";
-import { mapPiChildSession } from "../../history-mapper.js";
+import { mapPiChildSession } from "../child-session.js";
 import { readSubagentFixture, verifySubagentFixture } from "../subagent-fixture-test.js";
+import pino from "pino";
+import { PiRpcAgentClient } from "../../agent.js";
+import { FakePi } from "../../test-utils/fake-pi.js";
+import type { AgentStreamEvent } from "../../../../agent-sdk-types.js";
 
 function mapping(toolCall: PiTrackedToolCall, result: PiToolResult) {
   return createPiExtensionHost().mapToolCall({
@@ -102,8 +106,39 @@ describe("pi-subagents adapter", () => {
     expect(events.filter((event) => event.event.type === "timeline").length).toBeGreaterThan(0);
   });
 
-  test("missing child file produces no timeline", () => {
-    expect(mapPiChildSession("child", "/does-not-exist/pi-child.jsonl")).toEqual([]);
+  test("missing child file produces no timeline", async () => {
+    expect(await mapPiChildSession("child", "/does-not-exist/pi-child.jsonl")).toEqual([]);
+  });
+
+  test("does not emit child timeline after session close", async () => {
+    const raw = readSubagentFixture(new URL("./fixtures/foreground.json", import.meta.url));
+    const completion = raw.events.find(
+      (event) => event.type === "tool_execution_end" && event.toolName === "subagent",
+    );
+    if (!completion || completion.type !== "tool_execution_end") throw new Error("No completion");
+    const original = (completion.result as { details: { results: Array<{ sessionFile: string }> } })
+      .details.results[0].sessionFile;
+    const fixture = readSubagentFixture(new URL("./fixtures/foreground.json", import.meta.url), {
+      from: original,
+      to: new URL("./fixtures/child-session.jsonl", import.meta.url).pathname,
+    });
+    const pi = new FakePi();
+    const client = new PiRpcAgentClient({ logger: pino({ level: "silent" }), runtime: pi });
+    const session = await client.createSession({
+      provider: "pi",
+      cwd: "/tmp/paseo-pi-child-close",
+    });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    await session.startTurn("Delegate work");
+    for (const event of fixture.events) pi.latestSession().emit(event);
+    await session.close();
+    expect(
+      events.some((event) => event.type === "provider_subagent" && event.event.type === "upsert"),
+    ).toBe(true);
+    expect(
+      events.some((event) => event.type === "provider_subagent" && event.event.type === "timeline"),
+    ).toBe(false);
   });
 
   test("a failed spawn without result rows finishes its descriptor", () => {

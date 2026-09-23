@@ -1,9 +1,9 @@
 import { readFileSync } from "node:fs";
 import pino from "pino";
-import { expect } from "vitest";
+import { expect, vi } from "vitest";
 import type { AgentStreamEvent } from "../../../agent-sdk-types.js";
 import { PiRpcAgentClient } from "../agent.js";
-import { PiHistoryMapper } from "../history-mapper.js";
+import { streamPiHistory } from "../history-mapper.js";
 import type { PiAgentMessage, PiAgentSessionEvent } from "../rpc-types.js";
 import { FakePi } from "../test-utils/fake-pi.js";
 
@@ -51,10 +51,35 @@ export async function verifySubagentFixture(
   try {
     await session.startTurn("Delegate work");
     for (const event of fixture.events) pi.latestSession().emit(event);
+    const immediate = live.filter((event) => event.type === "provider_subagent");
+    expect(immediate.some((event) => event.event.type === "timeline")).toBe(false);
     pi.latestSession().finishTurn();
-    const replay = new PiHistoryMapper("pi").mapMessages(fixture.messages);
-    const liveSubagents = live.filter((event) => event.type === "provider_subagent");
+    const replay: AgentStreamEvent[] = [];
+    for await (const event of streamPiHistory("pi", fixture.messages)) replay.push(event);
     const replaySubagents = replay.filter((event) => event.type === "provider_subagent");
+    await vi.waitFor(() => {
+      expect(live.filter((event) => event.type === "provider_subagent")).toEqual(replaySubagents);
+    });
+    for (const message of fixture.messages) {
+      if (message.role !== "custom" || typeof message.content !== "string") continue;
+      const assistantText = {
+        type: "assistant_message" as const,
+        text: message.content,
+      };
+      expect(live).toContainEqual(
+        expect.objectContaining({ type: "timeline", item: assistantText }),
+      );
+      expect(replay).toContainEqual(
+        expect.objectContaining({ type: "timeline", item: assistantText }),
+      );
+    }
+    const liveSubagents = live.filter((event) => event.type === "provider_subagent");
+    const firstTimeline = liveSubagents.findIndex((event) => event.event.type === "timeline");
+    if (firstTimeline !== -1) {
+      expect(
+        liveSubagents.slice(0, firstTimeline).some((event) => event.event.type === "upsert"),
+      ).toBe(true);
+    }
     expect(liveSubagents).toEqual(replaySubagents);
     return liveSubagents;
   } finally {
