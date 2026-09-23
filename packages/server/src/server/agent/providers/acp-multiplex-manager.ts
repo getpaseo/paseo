@@ -105,8 +105,14 @@ export class ACPMultiplexConnectionManager {
     });
     this.provider = options.provider;
     this.defaultCommand = options.defaultCommand;
-    this.runtimeSettings = options.runtimeSettings;
-    this.launchEnv = options.launchEnv;
+    const filteredLaunchEnv = filterTransportEnv(options.launchEnv);
+    this.launchEnv = filteredLaunchEnv;
+    this.runtimeSettings = options.runtimeSettings
+      ? {
+          ...options.runtimeSettings,
+          env: filterTransportEnv(options.runtimeSettings.env),
+        }
+      : undefined;
     this.clientCapabilityMeta = options.clientCapabilityMeta;
     this.clientCapabilities = options.clientCapabilities;
     this.terminateProcess = options.terminateProcess ?? terminateWithTreeKill;
