@@ -14,6 +14,7 @@ import {
   RequestPermissionRequest,
   SessionConfigOption,
   SessionUpdate,
+  SetSessionConfigOptionRequest,
 } from "@agentclientprotocol/sdk";
 
 import {
@@ -101,11 +102,7 @@ interface ACPSessionInternals {
 interface ACPModelSelectionInternals {
   sessionId: string | null;
   connection: {
-    setSessionConfigOption: (input: {
-      sessionId: string;
-      configId: string;
-      value: string;
-    }) => Promise<unknown>;
+    setSessionConfigOption: (input: SetSessionConfigOptionRequest) => Promise<unknown>;
   };
   configOptions: SessionConfigOption[];
 }
@@ -114,11 +111,7 @@ interface ACPConfiguredOverrideInternals {
   sessionId: string | null;
   connection: {
     setSessionMode: (input: { sessionId: string; modeId: string }) => Promise<void>;
-    setSessionConfigOption: (input: {
-      sessionId: string;
-      configId: string;
-      value: string;
-    }) => Promise<unknown>;
+    setSessionConfigOption: (input: SetSessionConfigOptionRequest) => Promise<unknown>;
     unstable_setSessionModel?: (input: { sessionId: string; modelId: string }) => Promise<void>;
   };
   configOptions: SessionConfigOption[];
@@ -126,6 +119,7 @@ interface ACPConfiguredOverrideInternals {
   availableModels: Array<{ modelId: string; name: string; description?: string | null }> | null;
   currentMode: string | null;
   currentModel: string | null;
+  thinkingOptionId: string | null;
   applyConfiguredOverrides(): Promise<void>;
 }
 
@@ -287,6 +281,20 @@ function selectConfigOption(
     type: "select",
     currentValue,
     options: values.map((value) => ({ value, name: value })),
+  };
+}
+
+function booleanConfigOption(
+  id: string,
+  category: string,
+  currentValue: boolean,
+): SessionConfigOption {
+  return {
+    id,
+    name: "Thinking",
+    category,
+    type: "boolean",
+    currentValue,
   };
 }
 
@@ -1025,6 +1033,102 @@ describe("ACPAgentSession Zed parity", () => {
     );
   });
 
+  test.each([
+    {
+      name: "GPT reasoning level",
+      targetModel: "gpt-5.4-mini",
+      thinkingOptionId: "high",
+      currentThinkingOptionId: "high",
+      initialConfigOptions: [
+        {
+          ...selectConfigOption("thought_level", ["low", "high"], "high"),
+          id: "effort",
+        },
+      ],
+      targetConfigOptions: [
+        {
+          ...selectConfigOption("thought_level", ["low", "high"], "low"),
+          id: "reasoning",
+        },
+      ],
+      expectedRequest: {
+        sessionId: "session-1",
+        configId: "reasoning",
+        value: "high",
+      },
+    },
+    {
+      name: "Claude thinking toggle",
+      targetModel: "claude-haiku-4-5",
+      thinkingOptionId: "true",
+      currentThinkingOptionId: "low",
+      initialConfigOptions: [selectConfigOption("thought_level", ["low", "high"], "low")],
+      targetConfigOptions: [booleanConfigOption("thinking", "thought_level", false)],
+      expectedRequest: {
+        sessionId: "session-1",
+        configId: "thinking",
+        type: "boolean",
+        value: true,
+      },
+    },
+  ])(
+    "refreshes target-model config before applying $name",
+    async ({
+      targetModel,
+      thinkingOptionId,
+      currentThinkingOptionId,
+      initialConfigOptions,
+      targetConfigOptions,
+      expectedRequest,
+    }) => {
+      const defaultModel = targetModel === "gpt-5.4-mini" ? "claude-haiku-4-5" : "gpt-5.4-mini";
+      const modelConfigOptionsResolver = vi.fn(async () => targetConfigOptions);
+      const session = new ACPAgentSession(
+        {
+          provider: "cursor",
+          cwd: "/tmp/paseo-acp-test",
+          model: targetModel,
+          thinkingOptionId,
+        },
+        {
+          provider: "cursor",
+          logger: createTestLogger(),
+          defaultCommand: ["cursor-agent", "acp"],
+          defaultModes: [],
+          modelConfigOptionsResolver,
+          capabilities: {
+            supportsStreaming: true,
+            supportsSessionPersistence: true,
+            supportsDynamicModes: true,
+            supportsMcpServers: true,
+            supportsReasoningStream: true,
+            supportsToolInvocations: true,
+          },
+        },
+      );
+      const setSessionConfigOption = vi.fn(async () => ({
+        configOptions: targetConfigOptions,
+      }));
+      const { internals } = prepareConfiguredOverrideSession(session, {
+        currentModel: defaultModel,
+        availableModels: [
+          { modelId: defaultModel, name: defaultModel, description: null },
+          { modelId: targetModel, name: targetModel, description: null },
+        ],
+        configOptions: initialConfigOptions,
+        connection: { setSessionConfigOption },
+      });
+      internals.thinkingOptionId = currentThinkingOptionId;
+
+      await internals.applyConfiguredOverrides();
+
+      expect(modelConfigOptionsResolver).toHaveBeenCalledWith(
+        expect.objectContaining({ sessionId: "session-1", modelId: targetModel }),
+      );
+      expect(setSessionConfigOption).toHaveBeenCalledWith(expectedRequest);
+    },
+  );
+
   test("does not use config-option fallback when Cursor-style availableModes omit the stored mode", async () => {
     const session = createSessionWithConfig({ modeId: "acceptEdits" });
     const { internals, setSessionConfigOption } = prepareConfiguredOverrideSession(session, {
@@ -1238,6 +1342,24 @@ describe("ACPAgentSession Zed parity", () => {
       provider: "claude-acp",
       thinkingOptionId: "high",
     });
+  });
+
+  test("normalizes plain JSON-RPC config errors before they leave the ACP session", async () => {
+    const session = createSession();
+    const internals = asInternals<ACPModelSelectionInternals>(session);
+    internals.sessionId = "session-1";
+    internals.configOptions = [selectConfigOption("thought_level", ["low", "high"], "low")];
+    internals.connection = {
+      setSessionConfigOption: vi.fn().mockRejectedValue({
+        code: -32602,
+        message: "Invalid params",
+        data: { message: "Unknown model config option: thinking" },
+      }),
+    };
+
+    await expect(session.setThinkingOption("high")).rejects.toThrow(
+      "Invalid params: Unknown model config option: thinking",
+    );
   });
 
   test("passes generic ACP permission requests through to the user", async () => {

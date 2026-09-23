@@ -7,6 +7,7 @@ import {
   deriveSelectorOptions,
   type ACPCatalogModelResolverContext,
   type ACPConfigFeatureOption,
+  type ACPModelConfigOptionsResolverContext,
 } from "./acp-agent.js";
 import { GenericACPAgentClient } from "./generic-acp-agent.js";
 
@@ -68,6 +69,18 @@ export async function resolveCursorCatalogModels({
   });
 }
 
+export async function resolveCursorModelConfigOptions({
+  connection,
+  modelId,
+}: ACPModelConfigOptionsResolverContext) {
+  const catalog = await fetchCursorModelCatalog(connection);
+  const model = catalog.models.find((candidate) => candidate.value === modelId);
+  if (!model) {
+    throw new Error(`Cursor model catalog does not include model '${modelId}'`);
+  }
+  return model.configOptions;
+}
+
 async function fetchCursorModelCatalog(connection: ACPCatalogModelResolverContext["connection"]) {
   try {
     const response = await connection.extMethod("cursor/list_available_models", {});
@@ -100,6 +113,7 @@ export class CursorACPAgentClient extends GenericACPAgentClient {
       clientCapabilityMeta: CURSOR_CLIENT_CAPABILITY_META,
       configFeatureOptions: [CURSOR_FAST_FEATURE_OPTION],
       catalogModelResolver: resolveCursorCatalogModels,
+      modelConfigOptionsResolver: resolveCursorModelConfigOptions,
     });
   }
 }

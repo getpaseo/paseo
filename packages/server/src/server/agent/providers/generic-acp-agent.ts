@@ -8,6 +8,7 @@ import {
   type ACPCatalogModelResolver,
   type ACPClientCapabilityMeta,
   type ACPConfigFeatureOption,
+  type ACPModelConfigOptionsResolver,
   DEFAULT_ACP_CAPABILITIES,
   type ACPExtensionCommandsParser,
 } from "./acp-agent.js";
@@ -51,6 +52,7 @@ interface GenericACPAgentClientOptions {
   configFeatureOptions?: ACPConfigFeatureOption[];
   extensionCommandsParser?: ACPExtensionCommandsParser;
   catalogModelResolver?: ACPCatalogModelResolver;
+  modelConfigOptionsResolver?: ACPModelConfigOptionsResolver;
   now?: () => number;
 }
 
@@ -77,6 +79,7 @@ export class GenericACPAgentClient extends ACPAgentClient {
       configFeatureOptions: options.configFeatureOptions,
       extensionCommandsParser: options.extensionCommandsParser,
       catalogModelResolver: options.catalogModelResolver,
+      modelConfigOptionsResolver: options.modelConfigOptionsResolver,
       now: options.now,
     });
 
