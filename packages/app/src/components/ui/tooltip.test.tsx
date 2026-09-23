@@ -4,7 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { JSDOM } from "jsdom";
 import { Pressable, Text } from "react-native";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { Tooltip, TooltipTrigger } from "./tooltip";
+import { createTooltipAnchorMeasurement, Tooltip, TooltipTrigger } from "./tooltip";
 
 vi.mock("@/constants/platform", () => ({
   isWeb: true,
@@ -112,5 +112,65 @@ describe("TooltipTrigger", () => {
     pressTrigger();
 
     expect(onPress).toHaveBeenCalledTimes(1);
+  });
+});
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((nextResolve) => {
+    resolve = nextResolve;
+  });
+  return { promise, resolve };
+}
+
+describe("createTooltipAnchorMeasurement", () => {
+  it("uses the latest anchor after modal, keyboard, layout, and window geometry changes", async () => {
+    const beforeModal = deferred<{ x: number; y: number; width: number; height: number }>();
+    const afterKeyboardHide = deferred<{ x: number; y: number; width: number; height: number }>();
+    const afterTriggerLayout = deferred<{ x: number; y: number; width: number; height: number }>();
+    const afterWindowChange = deferred<{ x: number; y: number; width: number; height: number }>();
+    const measure = vi
+      .fn<() => Promise<{ x: number; y: number; width: number; height: number }>>()
+      .mockReturnValueOnce(beforeModal.promise)
+      .mockReturnValueOnce(afterKeyboardHide.promise)
+      .mockReturnValueOnce(afterTriggerLayout.promise)
+      .mockReturnValueOnce(afterWindowChange.promise);
+    const onRect = vi.fn();
+    const measurement = createTooltipAnchorMeasurement({ measure, statusBarHeight: 24, onRect });
+
+    measurement.refresh();
+    measurement.refresh();
+    measurement.refresh();
+    measurement.refresh();
+    expect(measure).toHaveBeenCalledTimes(4);
+
+    beforeModal.resolve({ x: 180, y: 760, width: 40, height: 40 });
+    afterKeyboardHide.resolve({ x: 180, y: 1120, width: 40, height: 40 });
+    afterTriggerLayout.resolve({ x: 180, y: 1640, width: 40, height: 40 });
+    await Promise.resolve();
+    expect(onRect).not.toHaveBeenCalled();
+
+    afterWindowChange.resolve({ x: 180, y: 1780, width: 40, height: 40 });
+    await Promise.resolve();
+    expect(onRect).toHaveBeenCalledTimes(1);
+    expect(onRect).toHaveBeenLastCalledWith({ x: 180, y: 1804, width: 40, height: 40 });
+  });
+
+  it("ignores an anchor measurement and retained refresh callback after the tooltip closes", async () => {
+    const pending = deferred<{ x: number; y: number; width: number; height: number }>();
+    const onRect = vi.fn();
+    const measurement = createTooltipAnchorMeasurement({
+      measure: () => pending.promise,
+      statusBarHeight: 0,
+      onRect,
+    });
+
+    measurement.refresh();
+    measurement.dispose();
+    measurement.refresh();
+    pending.resolve({ x: 180, y: 760, width: 40, height: 40 });
+    await Promise.resolve();
+
+    expect(onRect).not.toHaveBeenCalled();
   });
 });
