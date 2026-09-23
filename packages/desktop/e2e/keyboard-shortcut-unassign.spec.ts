@@ -14,10 +14,13 @@ const SHORTCUTS_ROW = "show-shortcuts";
  * daemon is left unmanaged so the app talks to the E2E daemon instead of trying
  * to start one of its own.
  */
-async function installDesktopBridge(page: Page): Promise<void> {
-  await page.addInitScript(() => {
+async function installDesktopBridge(
+  page: Page,
+  platform: "darwin" | "win32" = "darwin",
+): Promise<void> {
+  await page.addInitScript((desktopPlatform) => {
     window.paseoDesktop = {
-      platform: "darwin",
+      platform: desktopPlatform,
       events: { on: () => () => {} },
       invoke: async (command: string) => {
         if (command === "get_desktop_settings") {
@@ -29,11 +32,11 @@ async function installDesktopBridge(page: Page): Promise<void> {
         return null;
       },
     };
-  });
+  }, platform);
 }
 
-async function openShortcutsSettings(page: Page) {
-  await installDesktopBridge(page);
+async function openShortcutsSettings(page: Page, platform: "darwin" | "win32" = "darwin") {
+  await installDesktopBridge(page, platform);
   await gotoAppShell(page);
   await openSettings(page);
   await openSettingsSection(page, "shortcuts");
@@ -86,6 +89,17 @@ async function expectInterruptShortcut(page: Page, chord: string) {
 async function finishInterruptCapture(page: Page, action: "Done" | "Cancel") {
   const row = page.getByText("Interrupt agent", { exact: true }).locator("..");
   await row.getByRole("button", { name: action }).click();
+}
+
+async function eraseLastCapturedCombo(page: Page, firstCombo: string, secondCombo: string) {
+  await captureShortcut(page, "Interrupt agent", "agent-interrupt", "Alt+K");
+  await page.keyboard.press("Alt+J");
+  await expectInterruptShortcut(page, firstCombo);
+  await expectInterruptShortcut(page, secondCombo);
+  await page.keyboard.press("Backspace");
+  await expectInterruptShortcut(page, firstCombo);
+  const row = page.getByText("Interrupt agent", { exact: true }).locator("..");
+  await expect(row.getByText(secondCombo, { exact: true })).toHaveCount(0);
 }
 
 test("unassigning a shortcut leaves it inert until it is reset", async ({ page }) => {
@@ -168,15 +182,34 @@ test("unassigning a shortcut leaves it inert until it is reset", async ({ page }
   await expect(dialog).not.toBeVisible({ timeout: 10_000 });
 });
 
-test("binds Backspace to Interrupt agent after clearing Archive workspace", async ({ page }) => {
-  await openShortcutsSettings(page);
-  await clearShortcut(page, "Archive workspace", "archive-workspace");
-  await captureShortcut(page, "Interrupt agent", "agent-interrupt", "Meta+Shift+Backspace");
-  await expectInterruptShortcut(page, "⇧⌘⌫");
-  await finishInterruptCapture(page, "Done");
-  await expectInterruptShortcut(page, "⇧⌘⌫");
-  await captureShortcut(page, "Interrupt agent", "agent-interrupt", "Backspace");
-  await expectInterruptShortcut(page, "⌫");
-  await finishInterruptCapture(page, "Cancel");
-  await expectInterruptShortcut(page, "⇧⌘⌫");
-});
+for (const { platform, keys, label, firstCombo, secondCombo } of [
+  {
+    platform: "darwin",
+    keys: "Meta+Shift+Backspace",
+    label: "⇧⌘⌫",
+    firstCombo: "⌥K",
+    secondCombo: "⌥J",
+  },
+  {
+    platform: "win32",
+    keys: "Control+Shift+Backspace",
+    label: "Ctrl+Shift+⌫",
+    firstCombo: "Alt+K",
+    secondCombo: "Alt+J",
+  },
+] as const) {
+  test(`binds modified Backspace and erases a combo with bare Backspace on ${platform}`, async ({
+    page,
+  }) => {
+    await openShortcutsSettings(page, platform);
+    await clearShortcut(page, "Archive workspace", "archive-workspace");
+    await captureShortcut(page, "Interrupt agent", "agent-interrupt", keys);
+    await expectInterruptShortcut(page, label);
+    await finishInterruptCapture(page, "Done");
+    await expectInterruptShortcut(page, label);
+
+    await eraseLastCapturedCombo(page, firstCombo, secondCombo);
+    await finishInterruptCapture(page, "Cancel");
+    await expectInterruptShortcut(page, label);
+  });
+}
