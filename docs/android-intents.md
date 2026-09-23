@@ -67,7 +67,8 @@ form.
   never straight from `useLocalSearchParams`.
 - Shared files are accepted only as `content://` URIs with an `image/*` type,
   copied into the app cache (16 files, 25 MB each at most), and handed to the
-  attachment store as `file://` paths. The original grant is never retained.
+  attachment store as `file://` paths. The native staging copy is removed after
+  persistence or failure. The original grant is never retained.
 - Links never launch components, open arbitrary URLs, or change hosts. The only
   side effect a link can have without a tap is the opt-in prompt send above.
 - Dynamic shortcut links are checked on the native side to use the `paseo`
@@ -98,8 +99,13 @@ or URL query parameters. It is empty when Paseo has no parseable remote.
 Use `serverId` from a catalog row to scope an agent or message query to the
 host that owns it. Omitting it preserves cross-host lookup for older callers.
 
-On every table a SQL selection or sort order is refused rather than ignored, and
-only callers in the `com.colonelpanic.eva` package family are served.
+On every table a SQL selection or sort order is refused rather than ignored.
+The provider serves the exact `com.colonelpanic.eva` package only when Android
+verifies its released signing certificate. A `com.colonelpanic.eva.debug`
+caller is allowed only when signed by the same key as the Paseo build. Other
+callers cannot read the catalog or transcripts. The pinned certificate in
+`AssistantContentProvider` comes from EVA's signed release APK and must be
+updated if its signing identity rotates.
 
 ### Messages
 
@@ -117,8 +123,10 @@ daemon and answers with `resolveAssistantQuery`. Reasoning, todos, and tool
 internals are dropped on the way, because an assistant reads these out loud.
 
 Anything that keeps the app from answering — Paseo not running, a host offline,
-an unknown id, a timeout, a failed fetch — comes back as one `kind=notice` row
-whose `text` is a sentence the assistant can read, not an exception. Only a
+an unknown id, a timeout, a failed fetch — comes back as a `kind=notice` row
+whose `text` is a sentence the assistant can read, not an exception. A partial
+workspace fetch includes a notice before the available messages so the
+assistant does not present an incomplete transcript as complete. Only a
 request the provider cannot parse throws. A workspace whose agents have said
 nothing yet returns no rows.
 

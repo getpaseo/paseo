@@ -3,11 +3,13 @@ package sh.paseo.androidintents
 import android.content.ContentProvider
 import android.content.ContentValues
 import android.content.Context
+import android.content.pm.PackageManager
 import android.content.pm.ProviderInfo
 import android.database.Cursor
 import android.database.MatrixCursor
 import android.net.Uri
 import android.os.CancellationSignal
+import android.os.Binder
 import org.json.JSONArray
 import org.json.JSONException
 import org.json.JSONObject
@@ -17,7 +19,10 @@ private const val MAX_LIMIT = 100
 private const val MESSAGE_DEFAULT_LIMIT = 10
 private const val MESSAGE_MAX_LIMIT = 50
 private const val MESSAGE_TIMEOUT_MS = 7_000L
-private const val CALLER_PACKAGE_PREFIX = "com.colonelpanic.eva"
+private const val EVA_PACKAGE = "com.colonelpanic.eva"
+private const val EVA_DEBUG_PACKAGE = "com.colonelpanic.eva.debug"
+// Public signing certificate of the released EVA app, not a secret.
+private const val EVA_CERT_SHA256 = "688df17827dd9a002705baf0400c80f8f4650c6e87c3fc91d41f32be287f8b68"
 private const val UNAVAILABLE_NOTICE =
   "Paseo could not read the conversation; open Paseo, leave it running, and ask again."
 
@@ -74,8 +79,7 @@ class AssistantContentProvider : ContentProvider() {
     selectionArgs: Array<String>?,
     sortOrder: String?,
   ): Cursor {
-    val caller = callingPackage
-    if (caller == null || !(caller == CALLER_PACKAGE_PREFIX || caller.startsWith("$CALLER_PACKAGE_PREFIX."))) {
+    if (!isAuthorizedCaller()) {
       throw SecurityException("Caller is not an allowed assistant")
     }
     require(uri.authority == authority) { "Unknown authority ${uri.authority}" }
@@ -89,6 +93,19 @@ class AssistantContentProvider : ContentProvider() {
       "messages" -> queryMessages(uri, projection)
       else -> throw IllegalArgumentException("Unknown table ${uri.path}")
     }
+  }
+
+  private fun isAuthorizedCaller(): Boolean {
+    val appContext = context ?: return false
+    val caller = callingPackage ?: return false
+    if (caller != EVA_PACKAGE && caller != EVA_DEBUG_PACKAGE) return false
+    val manager = appContext.packageManager
+    val callerUid = Binder.getCallingUid()
+    if (caller == EVA_DEBUG_PACKAGE) {
+      return manager.checkSignatures(appContext.applicationInfo.uid, callerUid) == PackageManager.SIGNATURE_MATCH
+    }
+    val certificate = EVA_CERT_SHA256.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
+    return manager.hasSigningCertificate(callerUid, certificate, PackageManager.CERT_INPUT_SHA256)
   }
 
   private fun queryCatalog(

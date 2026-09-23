@@ -1,4 +1,5 @@
 import type { UserComposerAttachment } from "@/attachments/types";
+import * as FileSystem from "expo-file-system/legacy";
 import { persistAttachmentFromFileUri } from "@/attachments/service";
 import { NEW_WORKSPACE_DRAFT_KEY } from "@/stores/draft-keys";
 import { buildNewWorkspaceRoute } from "@/utils/host-routes";
@@ -12,6 +13,27 @@ import {
 export interface StagedSharedIntent {
   route: ReturnType<typeof buildNewWorkspaceRoute>;
   skippedFiles: number;
+}
+
+function stagedImageDirectory(uri: string): string | null {
+  const prefix =
+    FileSystem.cacheDirectory && `${FileSystem.cacheDirectory.replace(/\/?$/, "/")}shared-intents/`;
+  if (!prefix || !uri.startsWith(prefix)) return null;
+  const relative = uri.slice(prefix.length);
+  const match = /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/[^/]+$/i.exec(
+    relative,
+  );
+  return match ? `${prefix}${match[1]}/` : null;
+}
+
+async function removeStagedImage(uri: string): Promise<void> {
+  const directory = stagedImageDirectory(uri);
+  if (!directory) return;
+  try {
+    await FileSystem.deleteAsync(directory, { idempotent: true });
+  } catch (error) {
+    console.warn("[AndroidIntents] Failed to remove a staged shared image", error);
+  }
 }
 
 /**
@@ -42,6 +64,8 @@ export async function stageSharedIntent(
       } catch (error) {
         console.warn("[AndroidIntents] Failed to persist a shared image", error);
         skippedFiles += 1;
+      } finally {
+        await removeStagedImage(file.uri);
       }
     }
   }

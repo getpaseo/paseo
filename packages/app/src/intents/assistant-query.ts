@@ -179,8 +179,14 @@ export async function runAssistantQuery(input: {
     }),
   );
   const fetched = groups.filter((group): group is AssistantMessageRow[] => group !== null);
-  if (fetched.length === 0) {
-    return [notice("Paseo could not read that conversation from the host; try again in a moment.")];
+  const failures = groups.length - fetched.length;
+  if (failures > 0) {
+    const warning = notice(
+      failures === groups.length
+        ? "Paseo could not read that conversation from the host; try again in a moment."
+        : `Paseo could not read ${failures} of ${groups.length} agents. These workspace messages are incomplete; try again in a moment.`,
+    );
+    return [warning, ...mergeAssistantMessageRows(fetched, request.limit - 1)];
   }
   return mergeAssistantMessageRows(fetched, request.limit);
 }

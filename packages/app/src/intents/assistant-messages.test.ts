@@ -295,6 +295,44 @@ describe("runAssistantQuery", () => {
     expect(rows[0].text).toContain("could not read");
   });
 
+  it("marks a workspace transcript incomplete when one agent fetch fails", async () => {
+    const workspaceHosts = [
+      host({
+        serverId: "laptop",
+        workspaceIds: new Set(["ws-1"]),
+        agents: [
+          agent({
+            id: "a-1",
+            workspaceId: "ws-1",
+            lastActivityAt: new Date("2026-09-14T10:00:00Z"),
+          }),
+          agent({
+            id: "a-2",
+            workspaceId: "ws-1",
+            lastActivityAt: new Date("2026-09-14T09:00:00Z"),
+          }),
+        ],
+      }),
+    ];
+    const read = (limit: number) =>
+      runAssistantQuery({
+        request: { requestId: "r-2", agentId: null, workspaceId: "ws-1", limit },
+        hosts: workspaceHosts,
+        fetchEntries: async (agentTarget) => {
+          if (agentTarget.agentId === "a-2") throw new Error("disconnected");
+          return [
+            entry({ type: "assistant_message", text: "still working" }, "2026-09-14T10:00:00Z"),
+          ];
+        },
+      });
+
+    const rows = await read(3);
+    expect(rows.map((row) => row.kind)).toEqual(["notice", "assistant"]);
+    expect(rows[0].text).toContain("incomplete");
+    expect(rows[1].text).toBe("still working");
+    expect((await read(1)).map((row) => row.kind)).toEqual(["notice"]);
+  });
+
   it("returns the agent's rows when the fetch succeeds", async () => {
     const rows = await runAssistantQuery({
       request,

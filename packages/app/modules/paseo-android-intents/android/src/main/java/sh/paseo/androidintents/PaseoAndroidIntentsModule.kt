@@ -183,9 +183,12 @@ class PaseoAndroidIntentsModule : Module() {
       val written =
         resolver.openInputStream(uri)?.use { input ->
           target.outputStream().use { output -> copyBounded(input, output) }
-        } ?: return null
+        } ?: run {
+          directory.deleteRecursively()
+          return null
+        }
       if (written < 0) {
-        target.delete()
+        directory.deleteRecursively()
         return null
       }
       mapOf(
@@ -195,7 +198,7 @@ class PaseoAndroidIntentsModule : Module() {
         "size" to written,
       )
     } catch (error: Exception) {
-      target.delete()
+      directory.deleteRecursively()
       null
     }
   }
