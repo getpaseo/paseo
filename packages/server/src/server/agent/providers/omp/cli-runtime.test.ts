@@ -66,10 +66,7 @@ function createRuntime(
   });
 }
 
-function replyToCommands(
-  child: OmpChild,
-  handler: (command: Record<string, unknown>) => unknown,
-): void {
+function onOmpCommand(child: OmpChild, handler: (command: Record<string, unknown>) => void): void {
   let buffer = "";
   child.stdin.on("data", (chunk) => {
     buffer += chunk.toString();
@@ -78,17 +75,34 @@ function replyToCommands(
       if (newlineIndex === -1) break;
       const line = buffer.slice(0, newlineIndex);
       buffer = buffer.slice(newlineIndex + 1);
-      const command = JSON.parse(line) as Record<string, unknown>;
-      const result = handler(command);
-      child.stdout.write(
-        `${JSON.stringify({
-          id: command.id,
-          type: "response",
-          command: command.type,
-          success: true,
-          data: result,
-        })}\n`,
-      );
+      handler(JSON.parse(line) as Record<string, unknown>);
+    }
+  });
+}
+
+function replyToCommands(
+  child: OmpChild,
+  handler: (command: Record<string, unknown>) => unknown,
+): void {
+  onOmpCommand(child, (command) => {
+    const result = handler(command);
+    child.stdout.write(
+      `${JSON.stringify({
+        id: command.id,
+        type: "response",
+        command: command.type,
+        success: true,
+        data: result,
+      })}\n`,
+    );
+  });
+}
+
+/** Kill the child the moment it receives `type`, so the request is in flight when it dies. */
+function exitOnCommand(child: OmpChild, type: string): void {
+  onOmpCommand(child, (command) => {
+    if (command.type === type) {
+      child.emit("exit", 1, null);
     }
   });
 }
@@ -434,11 +448,7 @@ describe("OMP CLI runtime", () => {
   test("abort resolves when the OMP process exits while the abort is in flight", async () => {
     const child = createOmpChild();
     const session = await createRuntime(child).startSession({ cwd: "/workspace/project" });
-    child.stdin.on("data", (chunk) => {
-      if (chunk.toString().includes('"abort"')) {
-        child.emit("exit", 1, null);
-      }
-    });
+    exitOnCommand(child, "abort");
 
     await expect(session.abort()).resolves.toBeUndefined();
   });

@@ -81,6 +81,7 @@ export class JsonlRpcProcess {
   private stderrBuffer = "";
   private nextRequestId = 1;
   private disposed = false;
+  private exited = false;
   private readonly frameDecoder: JsonlFrameDecoder;
 
   constructor(private readonly options: JsonlRpcProcessOptions) {
@@ -111,6 +112,7 @@ export class JsonlRpcProcess {
       this.failAll(error instanceof Error ? error : new Error(String(error)));
     });
     this.child.on("exit", (code, signal) => {
+      this.exited = true;
       const error = new Error(
         `${this.diagnosticName} process exited with code ${code ?? "null"} and signal ${signal ?? "null"}\n${this.stderrBuffer}`.trim(),
       );
@@ -176,22 +178,26 @@ export class JsonlRpcProcess {
   }
 
   /**
-   * Send a command whose goal a dead process has already met — stopping a turn,
-   * clearing a queue. Resolves when the process is gone instead of rejecting,
+   * Send a command whose goal an exited process has already met — stopping a turn,
+   * clearing a queue. Resolves once the child has exited instead of rejecting,
    * because nothing is queued and nothing is running, which is what the caller
    * asked for. Use `request` when the caller needs an answer from a live process.
+   *
+   * Keyed on an observed exit rather than on `disposed`: `close()` disposes the
+   * transport before termination completes, and a child that outlives SIGKILL can
+   * still be working, so a disposed transport is not proof the work stopped.
    */
   async requestStopWork(
     command: { type: string; [key: string]: unknown },
     timeoutMs?: number | null,
   ): Promise<void> {
-    if (this.disposed) {
+    if (this.exited) {
       return;
     }
     try {
       await this.request(command, timeoutMs);
     } catch (error) {
-      if (!this.disposed) {
+      if (!this.exited) {
         throw error;
       }
     }

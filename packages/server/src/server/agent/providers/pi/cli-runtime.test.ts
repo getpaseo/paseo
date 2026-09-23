@@ -62,6 +62,15 @@ function onPiCommand(child: PiChild, handler: (command: Record<string, unknown>)
   });
 }
 
+/** Kill the child the moment it receives `type`, so the request is in flight when it dies. */
+function exitOnCommand(child: PiChild, type: string): void {
+  onPiCommand(child, (command) => {
+    if (command.type === type) {
+      child.emit("exit", 1, null);
+    }
+  });
+}
+
 function replyToCommands(
   child: PiChild,
   handler: (command: Record<string, unknown>) => unknown,
@@ -523,11 +532,7 @@ describe("PiCliRuntime", () => {
   test("abort resolves when the Pi process exits while the abort is in flight", async () => {
     const child = createPiChild();
     const session = await createRuntime(child).startSession({ cwd: "/workspace/project" });
-    child.stdin.on("data", (chunk) => {
-      if (chunk.toString().includes('"abort"')) {
-        child.emit("exit", 1, null);
-      }
-    });
+    exitOnCommand(child, "abort");
 
     await expect(session.abort()).resolves.toBeUndefined();
   });
