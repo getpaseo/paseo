@@ -108,8 +108,8 @@ const BACKING_OPTIONS: ReadonlyArray<BackingOption> = [
   },
   {
     href: "/sponsor#spot",
-    name: "Sponsor a spot",
-    detail: "For companies",
+    name: "Sponsor as a company",
+    detail: "Monthly, with your logo on paseo.sh",
     icon: SpotIcon,
     external: false,
   },
@@ -156,9 +156,7 @@ export function BackingOptions() {
   );
 }
 
-/** The four homepage spots: sponsor logos first, then a placeholder for each open spot. */
 function SponsorLogoRow() {
-  const placeholders = Array.from({ length: openSpotCount() }, (_, index) => index);
   return (
     <ul className="grid grid-cols-2 gap-4">
       {HOMEPAGE_SPONSORS.map((sponsor) => (
@@ -170,17 +168,6 @@ function SponsorLogoRow() {
             className="flex h-32 items-center justify-center rounded-xl border border-white/10 bg-white/[0.02] px-6 transition-colors hover:border-white/20 hover:bg-white/[0.05]"
           >
             <img src={sponsor.logo} alt={sponsor.name} className="max-h-10 max-w-full opacity-80" />
-          </a>
-        </li>
-      ))}
-      {placeholders.map((index) => (
-        <li key={index}>
-          <a
-            href="/sponsor#spot"
-            className="flex h-32 flex-col items-center justify-center gap-1 rounded-xl border border-dashed border-white/20 transition-colors hover:border-white/40 hover:bg-white/[0.03]"
-          >
-            <span className="text-sm font-medium text-white/70">Sponsor</span>
-            <span className="text-xs text-white/40">{HOMEPAGE_SPOT_PRICE} a month</span>
           </a>
         </li>
       ))}
@@ -201,8 +188,8 @@ export function SponsorSpotSection() {
     <section id="spot" className="scroll-mt-8">
       <SectionHeading
         as="h2"
-        title="Sponsor a spot"
-        description="Support an independent project and put your company in front of a fast-growing audience of developers."
+        title="Sponsor as a company"
+        description="If your team relies on Paseo, a monthly sponsorship funds its development directly. As a thank you, your logo goes on the homepage and in the README."
       />
       <div className="space-y-8">
         <div className="flex items-end gap-2">
@@ -223,7 +210,7 @@ export function SponsorSpotSection() {
               href={SPONSOR_SPOT_CHECKOUT_URL}
               className="inline-flex items-center rounded-md bg-white px-5 py-2.5 text-sm font-medium text-black transition-colors hover:bg-white/90"
             >
-              Sponsor a spot
+              Become a sponsor
             </a>
           ) : null}
           <a
@@ -279,12 +266,23 @@ export function SponsorSection() {
   );
 }
 
-/** Homepage: the four sponsor spots, as they look once filled. */
+/** Homepage: the companies sponsoring Paseo. Renders nothing until there is one. */
 export function SponsorsSection() {
+  if (HOMEPAGE_SPONSORS.length === 0) return null;
   return (
     <section>
-      <SectionHeading as="h2" title="Sponsors" badge="New" />
-      <SponsorLogoRow />
+      <SectionHeading as="h2" title="Sponsors" />
+      <div className="space-y-4">
+        <SponsorLogoRow />
+        {openSpotCount() > 0 ? (
+          <a
+            href="/sponsor#spot"
+            className="inline-block text-sm text-white/50 underline transition-colors hover:text-white/80"
+          >
+            Become a sponsor
+          </a>
+        ) : null}
+      </div>
     </section>
   );
 }
