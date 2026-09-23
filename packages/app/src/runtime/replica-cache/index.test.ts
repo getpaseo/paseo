@@ -35,6 +35,8 @@ class MemoryStorage implements ReplicaRowStore {
   persistentWriteFailure: Error | null = null;
   readGate: Promise<void> | null = null;
   onRead: (() => void) | null = null;
+  /** Throws once a read goes past this count, so a non-terminating read loop fails the test. */
+  readLimit: number | null = null;
 
   private key(row: Pick<ReplicaRow, "serverId" | "kind" | "id">): string {
     return `${row.serverId}:${row.kind}:${row.id}`;
@@ -48,6 +50,11 @@ class MemoryStorage implements ReplicaRowStore {
     ids?: readonly string[],
   ): Promise<ReplicaRow[]> {
     this.reads.push({ serverId, kinds, ...(ids ? { ids } : {}) });
+    if (this.readLimit !== null && this.reads.length > this.readLimit) {
+      throw new Error(
+        `replica cache read ${this.reads.length} passed the limit of ${this.readLimit}`,
+      );
+    }
     this.onRead?.();
     await this.readGate;
     const acceptedKinds = new Set(kinds);
@@ -441,10 +448,7 @@ describe("ReplicaCache", () => {
     await cache.flush();
     storage.persistentWriteFailure = new Error("QuotaExceededError");
     storage.reads.length = 0;
-    // Bounds the failure: without it the read loop never returns and only stops on heap exhaustion.
-    storage.onRead = () => {
-      if (storage.reads.length > 5) throw new Error("read loop did not stop");
-    };
+    storage.readLimit = 5;
 
     deleteDirectory(cache, SERVER_ID);
 
