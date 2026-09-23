@@ -11,3 +11,15 @@ describe("resolveWorkspaceCommandCenterShortcuts", () => {
     ).toEqual([["mod", "shift", "A"]]);
   });
 });
+
+it("shows user-assigned rename keys in the command palette", () => {
+  const shortcuts = resolveWorkspaceCommandCenterShortcuts({
+    overrides: {
+      "workspace-rename": "Cmd+Alt+Shift+R",
+      "workspace-tab-rename-current": "Cmd+Alt+R",
+    },
+    platform: { isMac: true, isDesktop: true },
+  });
+  expect(shortcuts.renameWorkspace).toEqual([["mod", "alt", "shift", "R"]]);
+  expect(shortcuts.renameCurrentTab).toEqual([["mod", "alt", "R"]]);
+});

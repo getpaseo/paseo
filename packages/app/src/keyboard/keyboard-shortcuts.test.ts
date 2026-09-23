@@ -3,6 +3,7 @@ import { formatShortcut } from "@/utils/format-shortcut";
 import {
   buildKeyboardShortcutHelpSections,
   buildEffectiveBindings,
+  normalizeCapturedShortcutCombo,
   getBindingIdForAction,
   getDefaultKeysForAction,
   getWorkspaceIndexJumpModifierKey,
@@ -822,9 +823,9 @@ describe("keyboard-shortcut help sections", () => {
       expect(rowChord({}, "show-shortcuts")).toEqual([["?"]]);
     });
 
-    it("replaces the default-only wildcard when the index jump is rebound", () => {
+    it("keeps the digit range readable when the index jump is rebound", () => {
       expect(rowChord({ [MAC_INDEX_BINDING]: "Ctrl+Digit" }, "workspace-jump-index")).toEqual([
-        ["ctrl", "Digit"],
+        ["ctrl", "1-9"],
       ]);
     });
 
@@ -1260,5 +1261,137 @@ describe("direct new-tab target shortcuts", () => {
     expect(
       resolveShortcutKeysForAction("workspace-tab-target-agent", overrides, desktopNonMac),
     ).toEqual([["ctrl", "shift", "H"]]);
+  });
+});
+
+describe("pane focus in text fields", () => {
+  it.each(["Left", "Right", "Up", "Down"])("opts Arrow%s in and out", (direction) => {
+    const event = {
+      code: `Arrow${direction}`,
+      key: `Arrow${direction}`,
+      metaKey: true,
+      shiftKey: true,
+    };
+    const context = { isMac: true, focusScope: "message-input" as const };
+    const enabled = buildEffectiveBindings({}, { paneFocusInTextFields: true });
+    const disabled = buildEffectiveBindings({}, { paneFocusInTextFields: false });
+    expect(resolveShortcut({ event, context, bindings: disabled }).match).toBeNull();
+    expect(resolveShortcut({ event, context, bindings: enabled }).match?.action).toBe(
+      `workspace.pane.focus.${direction.toLowerCase()}`,
+    );
+    expect(
+      resolveShortcut({ event, context: { ...context, focusScope: "editable" }, bindings: enabled })
+        .match?.action,
+    ).toBe(`workspace.pane.focus.${direction.toLowerCase()}`);
+    expect(
+      resolveShortcut({
+        event,
+        context: { ...context, commandCenterOpen: true },
+        bindings: enabled,
+      }).match,
+    ).toBeNull();
+    expect(
+      resolveShortcut({ event, context, bindings: buildEffectiveBindings({}) }).match,
+    ).toBeNull();
+  });
+
+  it("applies to rebound pane keys and respects clear", () => {
+    const id = "workspace-pane-focus-right-cmd-shift-right";
+    const event = { code: "KeyJ", key: "j", metaKey: true, altKey: true };
+    const context = { isMac: true, focusScope: "message-input" as const };
+    expect(
+      resolveShortcut({
+        event,
+        context,
+        bindings: buildEffectiveBindings({ [id]: "Cmd+Alt+J" }, { paneFocusInTextFields: true }),
+      }).match?.action,
+    ).toBe("workspace.pane.focus.right");
+    expect(
+      resolveShortcut({ event, context, bindings: buildEffectiveBindings({ [id]: "Cmd+Alt+J" }) })
+        .match,
+    ).toBeNull();
+    expect(
+      resolveShortcut({
+        event,
+        context,
+        bindings: buildEffectiveBindings({ [id]: null }, { paneFocusInTextFields: true }),
+      }).match,
+    ).toBeNull();
+  });
+});
+
+describe("rename shortcut settings", () => {
+  it.each([
+    { isMac: true, isDesktop: true },
+    { isMac: false, isDesktop: true },
+    { isMac: true, isDesktop: false },
+    { isMac: false, isDesktop: false },
+  ])("offers unassigned rename actions on $isMac / $isDesktop", (platform) => {
+    const rows = buildKeyboardShortcutHelpSections(platform).flatMap((section) => section.rows);
+    for (const id of ["workspace-rename", "workspace-tab-rename-current"]) {
+      expect(rows.find((row) => row.id === id)?.chord).toBeNull();
+      expect(getBindingIdForAction(id, platform)).toBe(id);
+    }
+  });
+
+  it.each([
+    ["workspace-tab-rename-current", "workspace.tab.rename-current", "Cmd+Alt+R", false],
+    ["workspace-rename", "workspace.rename", "Cmd+Alt+Shift+R", true],
+  ] as const)(
+    "runs rebound %s from the composer without repeating",
+    (id, action, combo, shiftKey) => {
+      const bindings = buildEffectiveBindings({ [id]: combo });
+      const event = { key: "r", code: "KeyR", metaKey: true, altKey: true, shiftKey };
+      const context = { isMac: true, isDesktop: true, focusScope: "message-input" as const };
+      expect(resolveShortcut({ event, context, bindings }).match?.action).toBe(action);
+      expect(
+        resolveShortcut({ event: { ...event, repeat: true }, context, bindings }).match,
+      ).toBeNull();
+      expect(
+        resolveShortcut({ event, context: { ...context, commandCenterOpen: true }, bindings })
+          .match,
+      ).toBeNull();
+      expect(
+        resolveShortcut({ event, context, bindings: buildEffectiveBindings({ [id]: null }) }).match,
+      ).toBeNull();
+    },
+  );
+});
+
+describe("number-group shortcut capture", () => {
+  const id = "workspace-tab-navigate-index-cmd-alt-digit-mac-desktop";
+  it("captures Ctrl+1 as the entire tab-number group", () => {
+    const combo = normalizeCapturedShortcutCombo(id, "Ctrl+1");
+    expect(combo).toBe("Ctrl+Digit");
+    const overrides = { [id]: combo };
+    const bindings = buildEffectiveBindings(overrides);
+    for (let index = 1; index <= 9; index++) {
+      const result = resolveShortcut({
+        event: { key: String(index), code: `Digit${index}`, ctrlKey: true },
+        context: { isMac: true, isDesktop: true, focusScope: "message-input" },
+        bindings,
+      });
+      expect(result.match?.action).toBe("workspace.tab.navigate.index");
+      expect(result.match?.payload).toEqual({ index });
+    }
+    expect(
+      resolveShortcutKeysForAction("workspace-tab-jump-index", overrides, {
+        isMac: true,
+        isDesktop: true,
+      }),
+    ).toEqual([["ctrl", "1-9"]]);
+    expect(
+      resolveShortcut({
+        event: { key: "0", code: "Digit0", ctrlKey: true },
+        context: { isMac: true, isDesktop: true },
+        bindings,
+      }).match,
+    ).toBeNull();
+  });
+  it("preserves literal numbers for non-index actions and existing nonnumeric combos", () => {
+    expect(normalizeCapturedShortcutCombo("workspace-rename", "Ctrl+1")).toBe("Ctrl+1");
+    expect(normalizeCapturedShortcutCombo(id, "Ctrl+K")).toBe("Ctrl+K");
+    expect(normalizeCapturedShortcutCombo(id, "Ctrl+0")).toBe("Ctrl+0");
+    expect(normalizeCapturedShortcutCombo(id, "Ctrl+9")).toBe("Ctrl+Digit");
   });
 });

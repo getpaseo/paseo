@@ -2252,6 +2252,12 @@ export const es: TranslationResources = {
       dialogTitle: "Atajos",
       searchPlaceholder: "Buscar atajos",
       unavailableOnMobile: "Los atajos de teclado solo están disponibles en el escritorio",
+      paneFocusInTextFields: "Usar atajos de foco de panel en campos de texto",
+      paneFocusInTextFieldsHint:
+        "Mueve el foco entre paneles en lugar de ampliar la selección de texto",
+      paneFocusSettingFailed:
+        "No se pudo guardar esta preferencia. Reintenta para conservarla al reiniciar.",
+      saving: "Guardando...",
       capturePrompt: "Presione el acceso directo...",
       unassigned: "Sin asignar",
       actions: {
@@ -2272,6 +2278,7 @@ export const es: TranslationResources = {
         agentInput: "EntradaAgent",
       },
       help: {
+        renameCurrentTab: "Renombrar la pestaña actual",
         openProject: "Abrir proyecto",
         newWorkspace: "Nuevo espacio de trabajo",
         newWorktree: "Nuevo árbol de trabajo",

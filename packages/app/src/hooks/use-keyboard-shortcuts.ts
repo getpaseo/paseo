@@ -1,3 +1,4 @@
+import { useSettings } from "@/hooks/use-settings";
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import { usePathname, useRouter } from "expo-router";
 import { getIsElectronRuntime } from "@/constants/layout";
@@ -64,7 +65,11 @@ export function useKeyboardShortcuts({
   const router = useRouter();
   const resetModifiers = useKeyboardShortcutsStore((s) => s.resetModifiers);
   const { overrides } = useKeyboardShortcutOverrides();
-  const bindings = useMemo(() => buildEffectiveBindings(overrides), [overrides]);
+  const paneFocusInTextFields = useSettings((settings) => settings.paneFocusInTextFields);
+  const bindings = useMemo(
+    () => buildEffectiveBindings(overrides, { paneFocusInTextFields }),
+    [overrides, paneFocusInTextFields],
+  );
   const shortcutsAvailable = keyboardShortcutsAvailable({ isNative, isCompact: isMobile });
   const isDesktopApp = getIsElectronRuntime();
   const isMac = getShortcutOs() === "mac";

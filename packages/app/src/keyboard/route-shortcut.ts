@@ -45,6 +45,8 @@ const PASSTHROUGH_DISPATCH: Record<string, KeyboardActionDefinition> = {
   "workspace.tab.target.browser": { id: "workspace.tab.target.browser", scope: "workspace" },
   "workspace.tab.target.changes": { id: "workspace.tab.target.changes", scope: "workspace" },
   "workspace.tab.target.files": { id: "workspace.tab.target.files", scope: "workspace" },
+  "workspace.rename": { id: "workspace.rename", scope: "workspace" },
+  "workspace.tab.rename-current": { id: "workspace.tab.rename-current", scope: "workspace" },
   "workspace.new": { id: "workspace.new", scope: "sidebar" },
   "workspace.project.pick": { id: "workspace.project.pick", scope: "workspace" },
   "workspace.archive": { id: "workspace.archive", scope: "sidebar" },

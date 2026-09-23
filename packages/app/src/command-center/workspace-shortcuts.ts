@@ -34,6 +34,11 @@ export function resolveWorkspaceCommandCenterShortcuts({
     toggleFocusMode: resolveShortcutKeysForAction("toggle-focus", overrides, platform) ?? undefined,
     toggleExplorerSidebar:
       resolveShortcutKeysForAction("toggle-right-sidebar", overrides, platform) ?? undefined,
+    renameCurrentTab:
+      resolveShortcutKeysForAction("workspace-tab-rename-current", overrides, platform) ??
+      undefined,
+    renameWorkspace:
+      resolveShortcutKeysForAction("workspace-rename", overrides, platform) ?? undefined,
     // Workspace management shortcuts
     pinWorkspace: resolveShortcutKeysForAction("pin-workspace", overrides, platform) ?? undefined,
   };

@@ -2238,6 +2238,12 @@ export const ru: TranslationResources = {
       dialogTitle: "Сочетания клавиш",
       searchPlaceholder: "Поиск сочетаний клавиш",
       unavailableOnMobile: "Сочетания клавиш доступны только на рабочем столе.",
+      paneFocusInTextFields: "Использовать сочетания перехода между панелями в текстовых полях",
+      paneFocusInTextFieldsHint:
+        "Перемещает фокус между панелями вместо расширения выделения текста",
+      paneFocusSettingFailed:
+        "Не удалось сохранить настройку. Повторите попытку, чтобы она сохранилась после перезапуска.",
+      saving: "Сохранение...",
       capturePrompt: "Нажмите сочетание клавиш...",
       unassigned: "Не задано",
       actions: {
@@ -2258,6 +2264,7 @@ export const ru: TranslationResources = {
         agentInput: "Ввод для агента",
       },
       help: {
+        renameCurrentTab: "Переименовать текущую вкладку",
         openProject: "Открыть проект",
         newWorkspace: "Новое рабочее пространство",
         newWorktree: "Новый worktree",

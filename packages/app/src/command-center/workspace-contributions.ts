@@ -102,6 +102,8 @@ export interface WorkspaceCommandCenterShortcuts {
   toggleFocusMode?: ShortcutKey[][];
   toggleExplorerSidebar?: ShortcutKey[][];
   pinWorkspace?: ShortcutKey[][];
+  renameWorkspace?: ShortcutKey[][];
+  renameCurrentTab?: ShortcutKey[][];
 }
 
 export interface WorkspaceCommandCenterSource {
@@ -296,6 +298,7 @@ function buildActiveTabContributions(
         id: "tab:rename-current",
         rank: 33,
         title: source.labels.renameTab,
+        shortcutKeys: source.shortcuts.renameCurrentTab,
         keywords: ["tab", "rename", "current"],
         icon: source.icons.rename,
         action: { id: "workspace.tab.rename-current", scope: "workspace" },
@@ -609,6 +612,7 @@ export function buildWorkspaceCommandCenterContributions(
       id: "workspace:rename",
       rank: 21,
       title: source.labels.rename,
+      shortcutKeys: source.shortcuts.renameWorkspace,
       keywords: ["rename", "title", "name", "label"],
       icon: source.icons.rename,
       action: { id: "workspace.rename", scope: "workspace" },

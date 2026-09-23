@@ -2172,6 +2172,10 @@ export const zhCN: TranslationResources = {
       dialogTitle: "快捷键",
       searchPlaceholder: "搜索快捷键",
       unavailableOnMobile: "键盘快捷键仅在桌面端可用",
+      paneFocusInTextFields: "在文本框中使用面板焦点快捷键",
+      paneFocusInTextFieldsHint: "在面板之间移动焦点，而不是扩展文本选区",
+      paneFocusSettingFailed: "无法保存此设置。请重试，以便重启后保留。",
+      saving: "正在保存...",
       capturePrompt: "按下快捷键...",
       unassigned: "未设置",
       actions: {
@@ -2192,6 +2196,7 @@ export const zhCN: TranslationResources = {
         agentInput: "Agent 输入",
       },
       help: {
+        renameCurrentTab: "重命名当前标签页",
         openProject: "打开项目",
         newWorkspace: "新建 workspace",
         newWorktree: "新建 worktree",
