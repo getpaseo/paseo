@@ -6728,12 +6728,14 @@ describe("OpenCode snapshot summary false-idle regression", () => {
 
 describe("OpenCode session permission rules", () => {
   const logger = createTestLogger();
-  const permissionConfig = (cwd: string): AgentSessionConfig => ({
-    provider: "opencode",
-    cwd,
-    providerOptions: { permission: { bash: "ask", external_directory: "allow" } },
-    toolPolicy: { preapproved: [{ kind: "mcp", server: "hub", tool: "finish_execution" }] },
-  });
+  function permissionConfig(cwd: string): AgentSessionConfig {
+    return {
+      provider: "opencode",
+      cwd,
+      providerOptions: { permission: { bash: "ask", external_directory: "allow" } },
+      toolPolicy: { preapproved: [{ kind: "mcp", server: "hub", tool: "finish_execution" }] },
+    };
+  }
   // OpenCode stores permission rules on the session (POST /session, PATCH /session/{id}) and
   // drops an unknown `permission` field on prompt_async, so rules sent with a prompt never
   // reach the server.

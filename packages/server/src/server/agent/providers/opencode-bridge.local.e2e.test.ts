@@ -29,11 +29,11 @@ test("real OpenCode server persists provider permissions across creation and res
     });
     inspection = await manager.acquireCurrent();
     const sdk = createOpencodeClient({ baseUrl: inspection.server.url, directory: cwd });
-    const readPermission = async (sessionId: string) => {
+    async function readPermission(sessionId: string) {
       const response = await sdk.session.get({ sessionID: sessionId, directory: cwd });
       if (response.error) throw new Error(JSON.stringify(response.error));
       return response.data?.permission;
-    };
+    }
     const handle = session.describePersistence()!;
     expect(await readPermission(handle.sessionId)).toEqual([
       { permission: "external_directory", pattern: "*", action: "allow" },
