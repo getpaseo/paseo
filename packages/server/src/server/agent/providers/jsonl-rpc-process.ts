@@ -82,6 +82,7 @@ export class JsonlRpcProcess {
   private nextRequestId = 1;
   private disposed = false;
   private exited = false;
+  private closing: Promise<void> | null = null;
   private readonly frameDecoder: JsonlFrameDecoder;
 
   constructor(private readonly options: JsonlRpcProcessOptions) {
@@ -197,6 +198,10 @@ export class JsonlRpcProcess {
     try {
       await this.request(command, timeoutMs);
     } catch (error) {
+      // A dying child breaks its stdin pipe a fraction before it emits `exit`, which
+      // fails this request and starts a termination. Wait for that termination to reach
+      // an answer rather than refusing a stop the runtime went on to honor.
+      await this.closing?.catch(() => undefined);
       if (!this.exited) {
         throw error;
       }
@@ -221,6 +226,11 @@ export class JsonlRpcProcess {
   async close(error = new Error(`${this.diagnosticName} process is closed`)): Promise<void> {
     if (this.disposed) return;
     this.failAll(error);
+    this.closing = this.terminate();
+    await this.closing;
+  }
+
+  private async terminate(): Promise<void> {
     try {
       this.child.stdin.end();
     } catch {
