@@ -180,6 +180,37 @@ jobs:
     runs-on: windows-latest
     steps: *server_test_steps
 
+  # native-recursive.ts serves darwin and win32, but windows-latest above is the only
+  # runner that exercises it. macOS — the platform the reported watcher bug was on —
+  # otherwise has no server-test coverage. Scoped to the observer/watcher suites to
+  # bound runtime.
+  server-tests-macos:
+    name: server-tests (macos-14, file observation)
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.outputs.full != 'false' || needs.changes.outputs.server != 'false') }}
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: node scripts/npm-retry.mjs ci
+
+      - name: Build server dependencies
+        run: npm run build:server-deps
+
+      - name: Run file observation tests
+        run: |
+          npm run test:unit --workspace=@getpaseo/server -- \
+            src/server/file-observer \
+            src/server/workspace-git-service.observation.test.ts \
+            src/server/workspace-git-service.observation.integration.test.ts \
+            --bail=1
+
   desktop-tests-ubuntu:
     name: desktop-tests (ubuntu-latest)
     needs: changes

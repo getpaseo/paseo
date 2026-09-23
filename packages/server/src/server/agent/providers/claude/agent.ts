@@ -76,7 +76,12 @@ import {
 } from "./options.js";
 import { renderPromptAttachmentAsText } from "../../prompt-attachments.js";
 import { claudeQuery, type ClaudeOptions, type ClaudeQueryFactory } from "./query.js";
-import { realClaudeRewindSdk, revertClaudeConversation, revertClaudeFiles } from "./rewind.js";
+import {
+  realClaudeRewindSdk,
+  revertClaudeConversation,
+  revertClaudeFiles,
+  type ClaudeRewindSdk,
+} from "./rewind.js";
 import { normalizeProviderReplayTimestamp } from "../../provider-history-timestamps.js";
 import { claudeProjectDirSync } from "./project-dir.js";
 import { THINKING_APPLIES_NEXT_TURN_NOTICE } from "../../provider-notices.js";
@@ -405,6 +410,7 @@ interface ClaudeAgentClientOptions {
   resolveBinary?: () => Promise<string>;
   resolveVersion?: (signal?: AbortSignal) => Promise<string>;
   configDir?: string;
+  rewindSdk?: ClaudeRewindSdk;
 }
 
 interface ClaudeAgentSessionOptions {
@@ -417,6 +423,7 @@ interface ClaudeAgentSessionOptions {
   logger: Logger;
   queryFactory?: ClaudeQueryFactory;
   resolveBinary: () => Promise<string>;
+  rewindSdk?: ClaudeRewindSdk;
 }
 
 type ClaudeThinkingEffort = "low" | "medium" | "high" | "xhigh" | "max";
@@ -1500,6 +1507,7 @@ export class ClaudeAgentClient implements AgentClient {
   private readonly resolveBinary: () => Promise<string>;
   private readonly resolveVersion: (signal?: AbortSignal) => Promise<string>;
   private readonly configDir?: string;
+  private readonly rewindSdk: ClaudeRewindSdk;
 
   constructor(options: ClaudeAgentClientOptions) {
     this.defaults = options.defaults;
@@ -1511,6 +1519,7 @@ export class ClaudeAgentClient implements AgentClient {
       options.resolveVersion ??
       ((signal) => resolveClaudeCodeVersion(this.runtimeSettings, signal));
     this.configDir = options.configDir;
+    this.rewindSdk = options.rewindSdk ?? realClaudeRewindSdk;
   }
 
   resolveConfiguredModel(model: AgentModelDefinition): AgentModelDefinition {
@@ -1532,6 +1541,7 @@ export class ClaudeAgentClient implements AgentClient {
       logger: this.logger,
       queryFactory: this.queryFactory,
       resolveBinary: this.resolveBinary,
+      rewindSdk: this.rewindSdk,
     });
   }
 
@@ -1560,6 +1570,7 @@ export class ClaudeAgentClient implements AgentClient {
       logger: this.logger,
       queryFactory: this.queryFactory,
       resolveBinary: this.resolveBinary,
+      rewindSdk: this.rewindSdk,
     });
   }
 
@@ -2105,6 +2116,7 @@ class ClaudeAgentSession implements AgentSession {
   private userMessageIds: string[] = [];
   private readonly emittedUserMessageIds = new Set<string>();
   private readonly rewindTurnAnchors: ClaudeRewindTurnAnchor[] = [];
+  private readonly rewindSdk: ClaudeRewindSdk;
   private pendingFreshSessionId: string | null = null;
   private recentStderr = "";
   private closed = false;
@@ -2120,6 +2132,7 @@ class ClaudeAgentSession implements AgentSession {
     this.logger = options.logger.child({ agentId: this.agentId });
     this.queryFactory = options.queryFactory;
     this.resolveBinary = options.resolveBinary;
+    this.rewindSdk = options.rewindSdk ?? realClaudeRewindSdk;
     this.contextUsage = new ClaudeContextUsageState(
       findClaudeModel(this.config.model)?.contextWindowMaxTokens,
     );
@@ -2760,7 +2773,7 @@ class ClaudeAgentSession implements AgentSession {
       return;
     }
     await revertClaudeConversation({
-      sdk: realClaudeRewindSdk,
+      sdk: this.rewindSdk,
       sessionId: this.claudeSessionId,
       messageId: target.messageId,
       resolveMessageId: (messageId) => this.resolveClaudeMessageId(messageId),
@@ -3041,6 +3054,13 @@ class ClaudeAgentSession implements AgentSession {
     if (!messageId) {
       return;
     }
+    // Subagent frames ride the same stream as the conversation, but their uuids live on the
+    // subagent's sidechain, so forkSession cannot resolve one. Anchoring a turn on one leaves
+    // rewind throwing "Message <uuid> not found in session". The persisted history path already
+    // skips sidechain entries; the live stream has to skip them too.
+    if (readClaudeParentToolUseId(message)) {
+      return;
+    }
     if (
       message.type === "user" &&
       !isSyntheticUserEntry(message) &&
@@ -3076,17 +3096,18 @@ class ClaudeAgentSession implements AgentSession {
       throw new Error(`Claude rewind target ${messageId} is not in the tracked conversation`);
     }
 
-    if (index === 0) {
-      return { kind: "fresh-session" };
+    // A turn the model never answered — an instant gateway error, or an abort before the first
+    // token — leaves its anchor without an assistant id, and carries no conversation state worth
+    // preserving. Fork at the most recent turn before the target that did answer. Reading only
+    // the immediately preceding anchor let one such turn fail every later rewind in the
+    // conversation.
+    for (let previous = index - 1; previous >= 0; previous -= 1) {
+      const assistantMessageId = this.rewindTurnAnchors[previous]?.assistantMessageId;
+      if (assistantMessageId) {
+        return { kind: "fork", messageId: assistantMessageId };
+      }
     }
-
-    const previousTurn = this.rewindTurnAnchors[index - 1];
-    if (!previousTurn?.assistantMessageId) {
-      throw new Error(
-        `Claude rewind cannot preserve turn ${index} because its assistant response id was not observed`,
-      );
-    }
-    return { kind: "fork", messageId: previousTurn.assistantMessageId };
+    return { kind: "fresh-session" };
   }
 
   private async ensureQuery(): Promise<Query> {
