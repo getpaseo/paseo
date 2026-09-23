@@ -1030,9 +1030,8 @@ describe("WorkspaceGitService checkout observation", () => {
       expect(runGitFetch).toHaveBeenCalledTimes(1);
     });
     expect(getCheckoutSnapshotFacts).toHaveBeenCalledTimes(1);
-    const [repoWatcher] = getWatcherRecordsForDirectory(watcher, GIT_DIR);
-    expect(repoWatcher).toBeDefined();
-    repoWatcher?.callback(null, [
+    const repoWatcher = getWatcherRecordsForDirectory(watcher, GIT_DIR)[0]!;
+    repoWatcher.callback(null, [
       { path: path.join(GIT_DIR, "refs", "remotes", "origin", "main"), type: "update" },
     ]);
     await vi.advanceTimersByTimeAsync(1_000);
