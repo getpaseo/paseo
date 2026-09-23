@@ -29,6 +29,7 @@ export interface SelectFieldOption<TValue> {
   value: TValue;
   label: string;
   description?: string;
+  disabledReason?: string;
   kind?: ComboboxOption["kind"];
   testID?: string;
 }
@@ -206,7 +207,8 @@ export function SelectField<TValue>({
       visibleOptions.map((option) => ({
         id: option.id,
         label: option.label,
-        description: option.description,
+        description: option.disabledReason ?? option.description,
+        disabledReason: option.disabledReason,
         kind: option.kind,
       })),
     [visibleOptions],
@@ -220,6 +222,9 @@ export function SelectField<TValue>({
     (id: string) => {
       const option = optionById.get(id);
       if (!option) {
+        return;
+      }
+      if (option.disabledReason) {
         return;
       }
       onChange(option.value, { label: option.label, description: option.description });
@@ -277,6 +282,7 @@ export function SelectField<TValue>({
           kind={selectOption.kind}
           selected={selected}
           active={active}
+          disabled={Boolean(selectOption.disabledReason)}
           onPress={onPress}
         />
       );

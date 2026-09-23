@@ -84,15 +84,24 @@ export function resolveAndValidateCreateAgentMode(
 export function resolveDefaultAgentCreateConfig(
   input: ResolveAgentCreateConfigInput,
 ): ResolveAgentCreateConfigResult {
-  const availableModeIds = input.availableModes?.map((mode) => mode.id);
+  const availableModes = input.availableModes?.filter((mode) => mode.disabledReason === undefined);
+  const inheritedModeId =
+    input.requestedMode === undefined && input.parent?.provider === input.provider
+      ? input.parent.modeId
+      : null;
+  const selectedModeId = input.requestedMode ?? inheritedModeId;
+  const selectedMode = input.availableModes?.find((mode) => mode.id === selectedModeId);
+  if (selectedMode?.disabledReason) {
+    throw new Error(selectedMode.disabledReason);
+  }
   return {
     modeId: resolveAndValidateCreateAgentMode({
       requestedMode: input.requestedMode,
       targetProvider: input.provider,
       parent: input.parent,
       unattended: input.unattended,
-      availableModes: availableModeIds,
-      targetUnattendedMode: input.availableModes?.find(isUnattendedMode)?.id,
+      availableModes: availableModes?.map((mode) => mode.id),
+      targetUnattendedMode: availableModes?.find(isUnattendedMode)?.id,
     }),
     featureValues: input.featureValues,
   };
@@ -104,7 +113,10 @@ export function isDefaultAgentCreateConfigUnattended(
   if (input.modeId === null) {
     return false;
   }
-  return input.availableModes.some((mode) => mode.id === input.modeId && isUnattendedMode(mode));
+  return input.availableModes.some(
+    (mode) =>
+      mode.id === input.modeId && mode.disabledReason === undefined && isUnattendedMode(mode),
+  );
 }
 
 function isUnattendedMode(mode: AgentMode): boolean {

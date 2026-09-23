@@ -34,7 +34,7 @@ import type {
   ProviderProfileModel,
   ProviderRuntimeSettings,
 } from "./provider-launch-config.js";
-import { ClaudeAgentClient } from "./providers/claude/agent.js";
+import { applyClaudeRuntimeModeAvailability, ClaudeAgentClient } from "./providers/claude/agent.js";
 import { CodexAppServerAgentClient } from "./providers/codex-app-server-agent.js";
 import { CopilotACPAgentClient } from "./providers/copilot-acp-agent.js";
 import { CursorACPAgentClient } from "./providers/cursor-acp-agent.js";
@@ -609,6 +609,11 @@ function createRegistryEntry(
       });
     });
 
+  const applyRuntimeModeAvailability = (modes: AgentMode[]): AgentMode[] => {
+    const baseProvider = resolved.derivedFromProviderId ?? provider;
+    return baseProvider === "claude" ? applyClaudeRuntimeModeAvailability(modes) : modes;
+  };
+
   const hasStaticModes = resolved.definition.modes.length > 0;
 
   const { createBaseClient: _createBaseClient, contract: _contract, ...configuration } = resolved;
@@ -664,7 +669,7 @@ function createRegistryEntry(
           );
           return {
             models,
-            modes: decorateModes(resolved.definition.modes),
+            modes: decorateModes(applyRuntimeModeAvailability(resolved.definition.modes)),
             defaultModeId,
           };
         }
