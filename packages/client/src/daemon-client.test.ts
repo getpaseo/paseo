@@ -891,6 +891,7 @@ test("advertises client capabilities in hello", async () => {
       explicit_event_subscriptions: true,
       owned_subscriptions: true,
       compact_provider_snapshots: true,
+      chat_workspaces: true,
       custom_mode_icons: true,
       project_updates: true,
       provider_subagents: true,

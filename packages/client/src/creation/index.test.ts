@@ -222,3 +222,17 @@ test.each([
   });
   f.client.close();
 });
+
+test("legacy creation creates agent for chat workspace without pre-set cwd", async () => {
+  const f = fixture(false);
+  await f.client.createWorkspace({
+    ...f.input,
+    source: { kind: "chat" as const },
+    agent: { config: { provider: "codex", cwd: "" } },
+  });
+  expect(f.legacy[1]).toMatchObject({
+    kind: "agent",
+    input: { workspaceId: workspace.id, config: { cwd: "/project/worktree" } },
+  });
+  f.client.close();
+});

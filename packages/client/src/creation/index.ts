@@ -70,7 +70,9 @@ export class CreationClient {
         sourceCwd = request.source.cwd;
       }
       const relativeCwd =
-        agent && sourceCwd ? relativeDirectory(agent.config!.cwd, sourceCwd) : undefined;
+        agent && sourceCwd && agent.config?.cwd
+          ? relativeDirectory(agent.config.cwd, sourceCwd)
+          : undefined;
       const workspace = await this.deps.legacyWorkspace(workspaceInput);
       if (workspace.error || !workspace.workspace) return workspace;
       this.receive({
@@ -85,9 +87,12 @@ export class CreationClient {
         error: null,
       });
       if (!agent) return workspace;
-      const cwd = `${workspace.workspace.workspaceDirectory!.replace(/[\\/]+$/, "")}${
-        relativeCwd ?? relativeDirectory(agent.config!.cwd, workspace.workspace.projectRootPath)
-      }`;
+      const subpath =
+        relativeCwd ??
+        (agent.config?.cwd && workspace.workspace.projectRootPath
+          ? relativeDirectory(agent.config.cwd, workspace.workspace.projectRootPath)
+          : "");
+      const cwd = `${workspace.workspace.workspaceDirectory!.replace(/[\\/]+$/, "")}${subpath}`;
       const created = await this.legacyAgent({
         ...agent,
         config: { ...agent.config!, cwd },
