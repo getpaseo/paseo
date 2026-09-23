@@ -550,6 +550,36 @@ describe("keyboard-shortcuts", () => {
     expectNoShortcutResolution({ event, context });
   });
 
+  // A rebound pane-focus shortcut has to fire wherever the user is typing.
+  // Its default combo carries `editable: false` so that Cmd+Shift+Arrow keeps
+  // selecting text (the two cases above), and that guard describes the default
+  // combo rather than the action, so it must not survive the rebind.
+  describe("a rebound pane-focus shortcut", () => {
+    const PANE_FOCUS_DOWN_BINDING = "workspace-pane-focus-down-cmd-shift-down";
+    // macOS emits U+2206 for Option+J; the stored combo comes from the code.
+    const altJ = { key: "\u2206", code: "KeyJ", altKey: true };
+
+    it.each(["message-input", "editable"] as const)("fires with %s focused", (focusScope) => {
+      const result = resolveShortcut({
+        event: altJ,
+        context: { isMac: true, focusScope },
+        bindings: buildEffectiveBindings({ [PANE_FOCUS_DOWN_BINDING]: "Alt+J" }),
+      });
+
+      expect(result.match?.action).toBe("workspace.pane.focus.down");
+    });
+
+    it("still fires outside a text field", () => {
+      const result = resolveShortcut({
+        event: altJ,
+        context: { isMac: true, focusScope: "other" },
+        bindings: buildEffectiveBindings({ [PANE_FOCUS_DOWN_BINDING]: "Alt+J" }),
+      });
+
+      expect(result.match?.action).toBe("workspace.pane.focus.down");
+    });
+  });
+
   it("prefers advancing chord candidates over single-combo matches on the same prefix", () => {
     const bindings = buildEffectiveBindings({
       "workspace-terminal-new-ctrl-shift-t-non-mac": "Ctrl+W S",
