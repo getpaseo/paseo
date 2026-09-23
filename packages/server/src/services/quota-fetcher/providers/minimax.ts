@@ -37,8 +37,16 @@ const MiniMaxModelRemainSchema = z.object({
   weekly_boost_permille: ApiNumberSchema.optional(),
 });
 
+const MiniMaxBaseRespSchema = z
+  .object({
+    status_code: ApiNumberSchema.nullish(),
+    status_msg: ApiOptionalStringSchema,
+  })
+  .nullish();
+
 const MiniMaxQuotaResponseSchema = z.object({
-  model_remains: z.array(MiniMaxModelRemainSchema).optional(),
+  model_remains: z.array(MiniMaxModelRemainSchema).nullish(),
+  base_resp: MiniMaxBaseRespSchema,
 });
 
 const MiniMaxCredentialsSchema = z.object({
@@ -180,7 +188,26 @@ export class MiniMaxQuotaProvider implements ProviderUsageFetcher {
       return unavailableUsage(this);
     }
 
-    const resp = MiniMaxQuotaResponseSchema.parse(await res.json());
+    let resp: z.infer<typeof MiniMaxQuotaResponseSchema>;
+    try {
+      resp = MiniMaxQuotaResponseSchema.parse(await res.json());
+    } catch (err) {
+      this.logger.debug(
+        { err: err instanceof Error ? err.message : String(err) },
+        "MiniMax usage response failed to parse",
+      );
+      return unavailableUsage({ ...this, error: "Usage data unavailable" });
+    }
+
+    const statusCode = resp.base_resp?.status_code;
+    if (typeof statusCode === "number" && statusCode !== 0) {
+      const message = resp.base_resp?.status_msg?.trim();
+      return unavailableUsage({
+        ...this,
+        error: message && message.length > 0 ? message : "Usage data unavailable",
+      });
+    }
+
     const models = resp.model_remains ?? [];
 
     const windows: ProviderUsageWindow[] = [];

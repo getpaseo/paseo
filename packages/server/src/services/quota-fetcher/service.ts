@@ -1,4 +1,5 @@
 import type { Logger } from "pino";
+import { ZodError } from "zod";
 import type { ProviderUsage } from "../../server/messages.js";
 import { createProviderUsageFetchers } from "./manifest.js";
 import type { ProviderApiFetch, ProviderUsageFetcher } from "./provider.js";
@@ -18,6 +19,19 @@ export interface ProviderUsageListResult {
 }
 
 const DEFAULT_PROVIDER_USAGE_CACHE_TTL_MS = 5 * 60 * 1000;
+
+function describeFetchError(reason: unknown): string {
+  if (reason instanceof ZodError) {
+    const first = reason.issues[0];
+    if (first) {
+      const path = first.path.length > 0 ? first.path.join(".") : "response";
+      return `Unexpected response shape (${path})`;
+    }
+    return "Unexpected response shape";
+  }
+  if (reason instanceof Error) return reason.message;
+  return String(reason);
+}
 
 export class ProviderUsageService {
   private readonly logger: Logger;
@@ -78,7 +92,7 @@ export class ProviderUsageService {
       return unavailableUsage({
         providerId: fetcher.providerId,
         displayName: fetcher.displayName,
-        error: result.reason instanceof Error ? result.reason.message : String(result.reason),
+        error: describeFetchError(result.reason),
       });
     });
 

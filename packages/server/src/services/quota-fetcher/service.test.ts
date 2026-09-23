@@ -345,6 +345,40 @@ describe("ProviderUsageService", () => {
       ],
     });
   });
+
+  it("summarizes a ZodError from a failing provider instead of dumping JSON", async () => {
+    const { ZodError } = await import("zod");
+    const zodError = new ZodError([
+      {
+        expected: "array",
+        code: "invalid_type",
+        path: ["model_remains"],
+        message: "Expected array, received null",
+      },
+    ]);
+    const service = new ProviderUsageService({
+      logger: createLogger(),
+      now: () => Date.parse("2026-06-19T00:00:00.000Z"),
+      fetchers: [
+        {
+          providerId: "minimax",
+          displayName: "MiniMax",
+          fetchUsage: async () => {
+            throw zodError;
+          },
+        },
+      ],
+    });
+
+    const result = await service.listUsage();
+    const provider = result.providers[0];
+
+    expect(provider?.status).toBe("error");
+    expect(provider?.error).toBe("Unexpected response shape (model_remains)");
+    expect(provider?.error).not.toMatch(/^\[/);
+    expect(provider?.error).not.toContain("invalid_type");
+    expect(provider?.error).not.toContain('"path"');
+  });
 });
 
 describe("real provider usage fetchers", () => {
@@ -1309,6 +1343,134 @@ describe("real provider usage fetchers", () => {
         }),
       ]),
     });
+  });
+
+  it("accepts MiniMax responses with null model_remains and a failed base_resp (#5247)", async () => {
+    process.env["MINIMAX_API_KEY"] = "minimax_test_token";
+    fetchApi = mockFetch(
+      new Map([
+        [
+          "https://api.minimax.io/v1/token_plan/remains",
+          () =>
+            jsonResponse({
+              model_remains: null,
+              base_resp: {
+                status_code: 2062,
+                status_msg: "no active token plan subscription",
+              },
+            }),
+        ],
+      ]),
+    );
+
+    const miniMax = findProvider(await service().listUsage(), "minimax");
+
+    expect(miniMax).toMatchObject({
+      status: "error",
+      windows: [],
+      balances: [],
+      details: [],
+      error: "no active token plan subscription",
+    });
+  });
+
+  it("falls back to a generic MiniMax message when base_resp omits status_msg (#5247)", async () => {
+    process.env["MINIMAX_API_KEY"] = "minimax_test_token";
+    fetchApi = mockFetch(
+      new Map([
+        [
+          "https://api.minimax.io/v1/token_plan/remains",
+          () =>
+            jsonResponse({
+              model_remains: null,
+              base_resp: { status_code: 9999 },
+            }),
+        ],
+      ]),
+    );
+
+    const miniMax = findProvider(await service().listUsage(), "minimax");
+
+    expect(miniMax).toMatchObject({
+      status: "error",
+      error: "Usage data unavailable",
+    });
+  });
+
+  it("treats an empty MiniMax response as unavailable without an error (#5247)", async () => {
+    process.env["MINIMAX_API_KEY"] = "minimax_test_token";
+    fetchApi = mockFetch(
+      new Map([["https://api.minimax.io/v1/token_plan/remains", () => jsonResponse({})]]),
+    );
+
+    const miniMax = findProvider(await service().listUsage(), "minimax");
+
+    expect(miniMax.status).toBe("unavailable");
+    expect(miniMax.error).toBeNull();
+  });
+
+  it("returns error without throwing when the MiniMax response shape is unrecognizable (#5247)", async () => {
+    process.env["MINIMAX_API_KEY"] = "minimax_test_token";
+    fetchApi = mockFetch(
+      new Map([
+        [
+          "https://api.minimax.io/v1/token_plan/remains",
+          () => jsonResponse("totally not json shape"),
+        ],
+      ]),
+    );
+
+    const logger = createLogger();
+    const provider = new MiniMaxQuotaProvider({
+      logger,
+      fetch: fetchApi as unknown as typeof fetch,
+      configPath: join(homeDir, ".mmx", "config.json"),
+      credentialsPath: join(homeDir, ".mmx", "credentials.json"),
+    });
+
+    const usage = await provider.fetchUsage();
+
+    expect(usage.status).toBe("error");
+    expect(usage.error).toBe("Usage data unavailable");
+    expect(usage.windows).toEqual([]);
+  });
+
+  it("still returns available MiniMax usage when base_resp.status_code is 0 (#5247)", async () => {
+    process.env["MINIMAX_API_KEY"] = "minimax_test_token";
+    fetchApi = mockFetch(
+      new Map([
+        [
+          "https://api.minimax.io/v1/token_plan/remains",
+          () =>
+            jsonResponse({
+              base_resp: { status_code: 0, status_msg: "success" },
+              model_remains: [
+                {
+                  model_name: "MiniMax-M2.7",
+                  end_time: Date.parse("2026-06-19T05:00:00.000Z"),
+                  weekly_end_time: Date.parse("2026-06-26T00:00:00.000Z"),
+                  current_interval_total_count: 100,
+                  current_interval_usage_count: 25,
+                  current_interval_remaining_percent: 75,
+                  current_weekly_total_count: 500,
+                  current_weekly_usage_count: 100,
+                  current_weekly_remaining_percent: 80,
+                },
+              ],
+            }),
+        ],
+      ]),
+    );
+
+    const miniMax = findProvider(await service().listUsage(), "minimax");
+
+    expect(miniMax.status).toBe("available");
+    expect(miniMax.windows).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "interval_MiniMax-M2.7", usedPct: 25 }),
+        expect.objectContaining({ id: "weekly_MiniMax-M2.7", usedPct: 20 }),
+      ]),
+    );
   });
 });
 
