@@ -17,10 +17,18 @@ async function createSlowClosingProviderPlugin(): Promise<string> {
   const source = (await readFile(providerPath, "utf8")).replaceAll("\r\n", "\n");
   const patched = source.replace(
     "      closed = true;\n      sessions.clear();",
-    "      closed = true;\n      await new Promise((resolve) => setTimeout(resolve, 250));\n      sessions.clear();",
+    "      closed = true;\n      await new Promise((resolve) => setTimeout(resolve, 250));\n      sessions.clear();\n      console.log('provider close completed');",
   );
   expect(patched).not.toBe(source);
   await writeFile(providerPath, patched);
+  const entryPath = path.join(directory, "index.server.ts");
+  const entry = (await readFile(entryPath, "utf8")).replaceAll("\r\n", "\n");
+  const withCleanup = entry.replace(
+    "  return () => {};",
+    "  return () => console.log('plugin cleanup completed');",
+  );
+  expect(withCleanup).not.toBe(entry);
+  await writeFile(entryPath, withCleanup);
   return directory;
 }
 
@@ -37,10 +45,13 @@ test("reloading a plugin does not send on a closed IPC channel", async () => {
     // A turn in flight keeps the provider connection busy, so the reload's
     // connection close is still running when the subprocess tears down.
     const turn = client.sendMessage(agent.id, "Say hello").catch(() => undefined);
-    await client.reloadPlugin("provider-direct-example");
+    const reloaded = await client.reloadPlugin("provider-direct-example");
+    expect(reloaded.status).toBe("running");
     const entries = await client.getPluginLogs("provider-direct-example");
     const messages = entries.map((entry) => entry.message).join("\n");
     expect(messages).not.toContain("ERR_IPC_CHANNEL_CLOSED");
+    expect(entries.filter((entry) => entry.message === "plugin cleanup completed")).toHaveLength(1);
+    expect(entries.filter((entry) => entry.message === "provider close completed")).toHaveLength(1);
     await turn;
     await client.archiveAgent(agent.id).catch(() => undefined);
   } finally {

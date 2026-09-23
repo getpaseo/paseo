@@ -193,6 +193,7 @@ async function sendProviderInput(
   if (stopping) throw new Error("Plugin is stopping");
   const current = providerConnections.get(message.connectionId);
   if (!current) throw new Error(`Unknown provider connection: ${message.connectionId}`);
+  if (current.closing) throw new Error("Provider connection is closing");
   await current.connection.send(message.input);
   send({
     type: "provider.accepted",
