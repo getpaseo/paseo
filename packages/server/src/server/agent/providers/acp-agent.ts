@@ -200,6 +200,49 @@ function toACPRequestError(error: unknown): Error {
   return next;
 }
 
+const ACP_TRANSPORT_RETRY_DELAYS_MS = [500, 1500] as const;
+
+const ACP_NON_RETRYABLE_ERROR_RE =
+  /not logged in|please sign in|authentication failed|auth_required|unauthorized|permission denied|rate limit|quota|upgrade your plan/i;
+
+const ACP_TRANSPORT_RETRYABLE_ERROR_RE =
+  /retriableerror|keepalive ping timed out|ping timed out|disconnected before secure tls connection was established|\[(?:aborted|internal|unavailable)\].*(?:tls|socket|econnreset|http\/2|connection|ping)|econnreset|socket hang up|connect econnrefused|connect etimedout|http\/2 stream closed|connection stalled/i;
+
+export function isACPTransportRetryableErrorMessage(message: string): boolean {
+  const text = message.trim();
+  if (!text) {
+    return false;
+  }
+  if (ACP_NON_RETRYABLE_ERROR_RE.test(text)) {
+    return false;
+  }
+  return ACP_TRANSPORT_RETRYABLE_ERROR_RE.test(text);
+}
+
+/** Cursor ACP often prints only `Error: RetriableError: ...` and then ends the turn. */
+export function isACPTransportRetryableAssistantText(text: string): boolean {
+  const lines = text
+    .trim()
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (lines.length === 0 || lines.length > 4) {
+    return false;
+  }
+  return lines.every(
+    (line) => /^error:\s*retriableerror\b/i.test(line) && isACPTransportRetryableErrorMessage(line),
+  );
+}
+
+function delayMs(ms: number): Promise<void> {
+  if (ms <= 0) {
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
 function resolveTerminalCommand(
   command: string,
   args?: string[],
@@ -1687,6 +1730,10 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private currentTurnUsage: AgentUsage | undefined;
   private activeForegroundTurnId: string | null = null;
   private fallbackAssistantMessageId: string | null = null;
+  private currentTurnAssistantText = "";
+  private attemptEmittedAssistantOutput = false;
+  private toolCallCountAtTurnStart = 0;
+  private transportRetryDelaysMs: number[] = [...ACP_TRANSPORT_RETRY_DELAYS_MS];
   private closed = false;
   private historyPending = false;
   private replayingHistory = false;
@@ -1855,33 +1902,118 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.activeForegroundTurnId = turnId;
     this.fallbackAssistantMessageId = null;
     this.submittedUserMessageTurnId = null;
+    this.currentTurnAssistantText = "";
+    this.toolCallCountAtTurnStart = this.toolCalls.size;
     this.emitBootstrapThreadEvent();
     this.pushEvent({ type: "turn_started", provider: this.provider, turnId });
     this.emitSubmittedUserMessage(prompt, messageId, turnId, options?.clientMessageId);
 
-    void this.connection
-      .prompt({
-        sessionId: this.sessionId,
-        messageId,
-        prompt: toACPContentBlocks(prompt),
-      })
-      .then((response) => {
-        this.handlePromptResponse(response, turnId);
+    void this.runPromptWithTransportRetry({
+      prompt,
+      messageId,
+      turnId,
+    });
+
+    return { turnId };
+  }
+
+  private async runPromptWithTransportRetry(input: {
+    prompt: AgentPromptInput;
+    messageId: string;
+    turnId: string;
+  }): Promise<void> {
+    if (!this.connection || !this.sessionId) {
+      return;
+    }
+
+    const delays = this.transportRetryDelaysMs;
+    const maxAttempts = delays.length + 1;
+    const promptBlocks = toACPContentBlocks(input.prompt);
+
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+      if (!this.isForegroundTurnActive(input.turnId)) {
         return;
-      })
-      .catch((error) => {
+      }
+
+      this.currentTurnAssistantText = "";
+      this.attemptEmittedAssistantOutput = false;
+      try {
+        const response = await this.connection.prompt({
+          sessionId: this.sessionId,
+          messageId: attempt === 0 ? input.messageId : randomUUID(),
+          prompt: promptBlocks,
+        });
+        if (!this.isForegroundTurnActive(input.turnId)) {
+          return;
+        }
+        if (attempt < delays.length && this.shouldRetryCompletedPrompt(response)) {
+          this.emitTransportRetry(attempt + 1, input.turnId, this.currentTurnAssistantText.trim());
+          await delayMs(delays[attempt] ?? 0);
+          continue;
+        }
+        this.handlePromptResponse(response, input.turnId);
+        return;
+      } catch (error) {
+        if (!this.isForegroundTurnActive(input.turnId)) {
+          return;
+        }
         const summary = summarizeACPRequestError(error);
+        if (this.shouldRetryRejectedPrompt(attempt, delays.length, summary.message)) {
+          this.emitTransportRetry(attempt + 1, input.turnId, summary.message);
+          await delayMs(delays[attempt] ?? 0);
+          continue;
+        }
         this.finishTurn({
           type: "turn_failed",
           provider: this.provider,
           error: summary.message,
           code: summary.code,
           diagnostic: this.collectDiagnostic(summary.diagnostic ?? summary.message),
-          turnId,
+          turnId: input.turnId,
         });
-      });
+        return;
+      }
+    }
+  }
 
-    return { turnId };
+  private isForegroundTurnActive(turnId: string): boolean {
+    return !this.closed && this.activeForegroundTurnId === turnId;
+  }
+
+  private shouldRetryRejectedPrompt(attempt: number, maxRetries: number, message: string): boolean {
+    return (
+      attempt < maxRetries &&
+      !this.turnStartedToolCalls() &&
+      !this.attemptEmittedAssistantOutput &&
+      isACPTransportRetryableErrorMessage(message)
+    );
+  }
+
+  private shouldRetryCompletedPrompt(response: PromptResponse): boolean {
+    if (response.stopReason === "cancelled") {
+      return false;
+    }
+    if (this.turnStartedToolCalls()) {
+      return false;
+    }
+    return isACPTransportRetryableAssistantText(this.currentTurnAssistantText);
+  }
+
+  private turnStartedToolCalls(): boolean {
+    return this.toolCalls.size > this.toolCallCountAtTurnStart;
+  }
+
+  private emitTransportRetry(attempt: number, turnId: string, errorMessage: string): void {
+    const detail = errorMessage.trim() || "transport error";
+    this.pushEvent({
+      type: "timeline",
+      provider: this.provider,
+      turnId,
+      item: {
+        type: "error",
+        message: `Retrying after a transport error (attempt ${attempt}): ${detail}`,
+      },
+    });
   }
 
   subscribe(callback: (event: AgentStreamEvent) => void): () => void {
@@ -3047,6 +3179,8 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       return null;
     }
     if (type === "assistant_message") {
+      this.currentTurnAssistantText += chunkText;
+      this.attemptEmittedAssistantOutput = true;
       return {
         type: "assistant_message",
         text: chunkText,
