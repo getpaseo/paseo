@@ -40,6 +40,9 @@ interface PendingRequest {
   timer: NodeJS.Timeout | null;
 }
 
+/** The process answered the request with a failure, so it did not carry it out. */
+export class JsonlRpcRequestRejectedError extends Error {}
+
 export interface JsonlRpcExit {
   code: number | null;
   signal: NodeJS.Signals | null;
@@ -283,7 +286,7 @@ export class JsonlRpcProcess {
     this.pending.delete(response.id);
     if (!response.success) {
       pending.reject(
-        new Error(
+        new JsonlRpcRequestRejectedError(
           response.error ?? `${this.diagnosticName} ${response.command ?? "request"} failed`,
         ),
       );

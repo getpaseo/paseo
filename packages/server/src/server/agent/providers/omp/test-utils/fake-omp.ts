@@ -133,6 +133,7 @@ export class FakeOmpSession implements OmpRuntimeSession {
   compactError: Error | null = null;
   emitCompactEnd = true;
   getStateError: Error | null = null;
+  promptError: Error | null = null;
   promptAck: OmpPromptAck = {};
   branchResponse: { text?: string; cancelled?: boolean } = { text: "" };
   branchMessages: Array<{ entryId: string; text: string }> = [];
@@ -182,6 +183,9 @@ export class FakeOmpSession implements OmpRuntimeSession {
     }
     this.prompts.push({ message, imageCount: images?.length ?? 0 });
     this.promptWaiters.shift()?.();
+    if (this.promptError) {
+      throw this.promptError;
+    }
     const heldPrompt = this.nextHeldPrompt;
     if (heldPrompt) {
       this.nextHeldPrompt = null;

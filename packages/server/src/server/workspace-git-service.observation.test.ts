@@ -1006,7 +1006,13 @@ describe("WorkspaceGitService checkout observation", () => {
       branchMergeRef: null,
       upstreamStatus: null,
     }));
-    const service = createService(watcher, { getCheckoutSnapshotFacts });
+    // A remote URL starts the background fetch; keep it off the real git binary.
+    const runGitFetch = vi.fn(async () => ({
+      changes: [],
+      nonRemoteRefsChanged: false,
+      error: null,
+    }));
+    const service = createService(watcher, { getCheckoutSnapshotFacts, runGitFetch });
     const subscription = service.registerWorkspace({ cwd: REPO_CWD }, vi.fn());
     await vi.waitFor(() => {
       expect(getCheckoutSnapshotFacts).toHaveBeenCalledTimes(1);

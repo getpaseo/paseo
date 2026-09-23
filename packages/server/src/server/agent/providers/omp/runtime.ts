@@ -44,6 +44,7 @@ export interface OmpStartSessionInput {
 
 export interface OmpRuntimeSession {
   onEvent(callback: (event: OmpRuntimeEvent) => void): () => void;
+  // Rejects with JsonlRpcRequestRejectedError when OMP refused the prompt.
   prompt(
     message: string,
     images?: Array<{ type: "image"; data: string; mimeType: string }>,

@@ -466,6 +466,33 @@ export class OmpHarness {
     await promptStarted;
   }
 
+  // Drains the microtask queue until the session has reached the state the test
+  // is waiting on, so no test depends on how many async steps a path takes.
+  async waitUntil(condition: () => boolean, description: string): Promise<void> {
+    for (let index = 0; index < 100; index += 1) {
+      if (condition()) return;
+      await waitForImmediate();
+    }
+    throw new Error(`OMP harness timed out waiting for ${description}`);
+  }
+
+  async waitForUserMessages(count: number): Promise<void> {
+    await this.waitUntil(
+      () => this.timeline().filter((item) => item.type === "user_message").length >= count,
+      `${count} user message(s)`,
+    );
+  }
+
+  async waitForEvent(type: AgentStreamEvent["type"]): Promise<void> {
+    await this.waitUntil(() => this.eventTypes().includes(type), `a ${type} event`);
+  }
+
+  async requireStartTurnFromClient(message: string, clientMessageId: string): Promise<void> {
+    const promptStarted = this.omp.latestSession().nextPrompt();
+    await this.requireSession().startTurn(message, { clientMessageId });
+    await promptStarted;
+  }
+
   async interrupt(): Promise<void> {
     await this.requireSession().interrupt();
   }

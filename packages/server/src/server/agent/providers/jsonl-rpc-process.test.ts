@@ -4,7 +4,11 @@ import { PassThrough } from "node:stream";
 import pino from "pino";
 import { describe, expect, test } from "vitest";
 
-import { JsonlRpcProcess, type JsonlRpcExit } from "./jsonl-rpc-process.js";
+import {
+  JsonlRpcProcess,
+  JsonlRpcRequestRejectedError,
+  type JsonlRpcExit,
+} from "./jsonl-rpc-process.js";
 
 const CHILD_SOURCE = String.raw`
 const readline = require("node:readline");
@@ -154,13 +158,13 @@ describe("JsonlRpcProcess", () => {
     }
   });
 
-  test("rejects unsuccessful responses", async () => {
+  test("rejects unsuccessful responses as rejected requests", async () => {
     const transport = startProcess();
 
     try {
-      await expect(transport.request({ type: "fail" })).rejects.toThrow(
-        "child rejected the request",
-      );
+      const request = transport.request({ type: "fail" });
+      await expect(request).rejects.toThrow("child rejected the request");
+      await expect(request).rejects.toBeInstanceOf(JsonlRpcRequestRejectedError);
     } finally {
       await transport.close();
     }
@@ -173,9 +177,12 @@ describe("JsonlRpcProcess", () => {
     try {
       child.stderr.write("still waiting");
 
-      await expect(transport.request({ type: "hang" })).rejects.toThrow(
+      const request = transport.request({ type: "hang" });
+      await expect(request).rejects.toThrow(
         /JSONL RPC request timed out phase=hang elapsedMs=\d+ timeoutMs=50\nstill waiting/,
       );
+      // A timed-out request may still be carried out, so it is not a rejection.
+      await expect(request).rejects.not.toBeInstanceOf(JsonlRpcRequestRejectedError);
     } finally {
       await transport.close();
     }
