@@ -2667,6 +2667,87 @@ test("does not evict a Codex backend while an out-of-band command is running", a
   }
 });
 
+test("rearms Codex idle eviction after a provider subagent completes", async () => {
+  vi.useFakeTimers();
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-idle-subagent-"));
+  class HeldSession extends EvictableTestAgentSession {
+    override async startTurn(): Promise<{ turnId: string }> {
+      return { turnId: "held-turn" };
+    }
+  }
+  let session: HeldSession | null = null;
+  const client = new (class extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      session = new HeldSession(config);
+      return session;
+    }
+  })();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    codexIdleBackendTimeoutMs: 10_000,
+    logger,
+  });
+
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    const stream = manager.streamAgent(agent.id, "Work with a subagent");
+    expect((await stream.next()).value).toMatchObject({ type: "turn_started" });
+    session?.pushEvent({
+      type: "provider_subagent",
+      provider: "codex",
+      event: { type: "upsert", id: "child", status: "running" },
+    });
+    session?.pushEvent({
+      type: "provider_subagent",
+      provider: "codex",
+      event: { type: "upsert", id: "other-child", status: "running" },
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(manager.listProviderSubagents(agent.id)).toEqual([
+      expect.objectContaining({ id: "child", status: "running" }),
+      expect.objectContaining({ id: "other-child", status: "running" }),
+    ]);
+    session?.pushEvent({ type: "turn_completed", provider: "codex", turnId: "held-turn" });
+    await drainAsyncGenerator(stream);
+    expect(manager.getAgent(agent.id)?.lifecycle).toBe("idle");
+
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(session?.closed).toBe(false);
+
+    session?.pushEvent({
+      type: "provider_subagent",
+      provider: "codex",
+      event: { type: "upsert", id: "child", status: "completed" },
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(manager.listProviderSubagents(agent.id)).toEqual([
+      expect.objectContaining({ id: "child", status: "completed" }),
+      expect.objectContaining({ id: "other-child", status: "running" }),
+    ]);
+
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(session?.closed).toBe(false);
+
+    session?.pushEvent({
+      type: "provider_subagent",
+      provider: "codex",
+      event: { type: "upsert", id: "other-child", status: "completed" },
+    });
+    await vi.advanceTimersByTimeAsync(0);
+
+    await vi.advanceTimersByTimeAsync(10_000);
+    await manager.waitForAgentClose(agent.id);
+    expect(session?.closed).toBe(true);
+    expect(manager.getAgent(agent.id)).toBeNull();
+  } finally {
+    manager.prepareForShutdown();
+    vi.useRealTimers();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("failed idle eviction retains its provider session and retries later", async () => {
   vi.useFakeTimers();
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-idle-close-retry-"));
