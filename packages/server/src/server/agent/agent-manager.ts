@@ -2497,25 +2497,26 @@ export class AgentManager {
     if (this.runStartRecoveries.has(agentId)) {
       throw new Error(`Agent ${agentId} is recovering a stale provider session`);
     }
-    return this.createAgentStream(agentId, prompt, options, null);
+    return this.createAgentStream({ agentId, prompt, options, recovery: null });
   }
 
-  streamAgentAfterStaleRecovery(
-    agentId: string,
-    prompt: AgentPromptInput,
-    options?: AgentRunOptions,
-  ): AsyncGenerator<AgentStreamEvent> {
-    const recovery = this.runStartRecoveries.get(agentId);
-    if (!recovery) throw new Error(`Agent ${agentId} has no stale run recovery`);
-    return this.createAgentStream(agentId, prompt, options, recovery);
+  streamAgentAfterStaleRecovery(params: {
+    agentId: string;
+    prompt: AgentPromptInput;
+    options?: AgentRunOptions;
+  }): AsyncGenerator<AgentStreamEvent> {
+    const recovery = this.runStartRecoveries.get(params.agentId);
+    if (!recovery) throw new Error(`Agent ${params.agentId} has no stale run recovery`);
+    return this.createAgentStream({ ...params, recovery });
   }
 
-  private createAgentStream(
-    agentId: string,
-    prompt: AgentPromptInput,
-    options: AgentRunOptions | undefined,
-    recovery: RunStartRecovery | null,
-  ): AsyncGenerator<AgentStreamEvent> {
+  private createAgentStream(params: {
+    agentId: string;
+    prompt: AgentPromptInput;
+    options?: AgentRunOptions;
+    recovery: RunStartRecovery | null;
+  }): AsyncGenerator<AgentStreamEvent> {
+    const { agentId, prompt, options, recovery } = params;
     if (!recovery) this.runStartRecoveryFailures.delete(agentId);
     const existingAgent = this.requireSessionAgent(agentId);
     this.logger.trace(

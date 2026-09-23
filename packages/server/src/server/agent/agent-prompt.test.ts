@@ -558,6 +558,11 @@ const RUN_START_TEST_CAPABILITIES = {
   supportsToolInvocations: false,
 } as const;
 
+interface SlowStartAgentOptions {
+  startDelayMs: number | null;
+  provider?: AgentProvider;
+}
+
 /**
  * Provider session whose turn start is held open for a configurable span, so the real
  * AgentManager run-state transition (pendingRun.started -> lifecycle "running" ->
@@ -576,10 +581,13 @@ class SlowStartAgentSession implements AgentSession {
     this.signalStartEntered = resolve;
   });
 
-  constructor(
-    private readonly startDelayMs: number | null,
-    readonly provider: AgentProvider = "codex",
-  ) {}
+  private readonly startDelayMs: number | null;
+  readonly provider: AgentProvider;
+
+  constructor(options: SlowStartAgentOptions) {
+    this.startDelayMs = options.startDelayMs;
+    this.provider = options.provider ?? "codex";
+  }
 
   async run(): Promise<AgentRunResult> {
     return { sessionId: this.id, finalText: "", timeline: [] };
@@ -657,17 +665,23 @@ class SlowStartAgentClient implements AgentClient {
   readonly capabilities = RUN_START_TEST_CAPABILITIES;
   readonly sessions: SlowStartAgentSession[] = [];
 
-  constructor(
-    private readonly startDelayMs: number | null,
-    readonly provider: AgentProvider = "codex",
-  ) {}
+  private readonly startDelayMs: number | null;
+  readonly provider: AgentProvider;
+
+  constructor(options: SlowStartAgentOptions) {
+    this.startDelayMs = options.startDelayMs;
+    this.provider = options.provider ?? "codex";
+  }
 
   async isAvailable(): Promise<boolean> {
     return true;
   }
 
   async createSession(): Promise<AgentSession> {
-    const session = new SlowStartAgentSession(this.startDelayMs, this.provider);
+    const session = new SlowStartAgentSession({
+      startDelayMs: this.startDelayMs,
+      provider: this.provider,
+    });
     this.sessions.push(session);
     return session;
   }
@@ -695,7 +709,7 @@ async function createRunStartScenario(startDelayMs: number | null): Promise<{
   cleanup: () => Promise<void>;
 }> {
   const workdir = mkdtempSync(join(tmpdir(), "agent-run-start-budget-"));
-  const client = new SlowStartAgentClient(startDelayMs);
+  const client = new SlowStartAgentClient({ startDelayMs });
   const agentManager = new AgentManager({
     clients: { codex: client },
     logger: createTestLogger(),
@@ -748,7 +762,7 @@ test("a stale send waits for its resumed replacement turn and records the prompt
 
   class StaleSession extends SlowStartAgentSession {
     constructor() {
-      super(null, provider);
+      super({ startDelayMs: null, provider });
     }
 
     override async startTurn(
@@ -769,7 +783,7 @@ test("a stale send waits for its resumed replacement turn and records the prompt
     readonly staleSession = new StaleSession();
 
     constructor() {
-      super(null, provider);
+      super({ startDelayMs: null, provider });
     }
 
     override async createSession(): Promise<AgentSession> {
@@ -779,12 +793,12 @@ test("a stale send waits for its resumed replacement turn and records the prompt
 
   class ReplacementClient extends SlowStartAgentClient {
     constructor() {
-      super(0, provider);
+      super({ startDelayMs: 0, provider });
     }
 
     override async resumeSession(handle: AgentPersistenceHandle): Promise<AgentSession> {
       resumeHandles.push(handle);
-      const session = new SlowStartAgentSession(0, provider);
+      const session = new SlowStartAgentSession({ startDelayMs: 0, provider });
       const startTurn = session.startTurn.bind(session);
       session.startTurn = async (prompt, options) => {
         replacementPrompts.push({ prompt, options });
@@ -884,7 +898,7 @@ test("a stale send surfaces the retired session close failure", async () => {
 
   class FailingStaleSession extends SlowStartAgentSession {
     constructor() {
-      super(null, provider);
+      super({ startDelayMs: null, provider });
     }
 
     override async startTurn(): Promise<{ turnId: string }> {
@@ -900,7 +914,7 @@ test("a stale send surfaces the retired session close failure", async () => {
     readonly staleSession = new FailingStaleSession();
 
     constructor() {
-      super(null, provider);
+      super({ startDelayMs: null, provider });
     }
 
     override async createSession(): Promise<AgentSession> {
@@ -908,7 +922,7 @@ test("a stale send surfaces the retired session close failure", async () => {
     }
   }
 
-  const replacementClient = new SlowStartAgentClient(0, provider);
+  const replacementClient = new SlowStartAgentClient({ startDelayMs: 0, provider });
   const agentStorage = new AgentStorage(join(workdir, "agents"), createTestLogger());
   const agentManager = new AgentManager({
     clients: { [provider]: new FailingStaleClient() },
@@ -963,7 +977,7 @@ test("canceling a stale replacement start releases recovery for the next prompt"
 
   class StaleSession extends SlowStartAgentSession {
     constructor() {
-      super(null, provider);
+      super({ startDelayMs: null, provider });
     }
 
     override async startTurn(): Promise<{ turnId: string }> {
@@ -973,7 +987,7 @@ test("canceling a stale replacement start releases recovery for the next prompt"
 
   class StaleClient extends SlowStartAgentClient {
     constructor() {
-      super(null, provider);
+      super({ startDelayMs: null, provider });
     }
 
     override async createSession(): Promise<AgentSession> {
@@ -987,11 +1001,11 @@ test("canceling a stale replacement start releases recovery for the next prompt"
   });
   class ReplacementClient extends SlowStartAgentClient {
     constructor() {
-      super(null, provider);
+      super({ startDelayMs: null, provider });
     }
 
     override async resumeSession(): Promise<AgentSession> {
-      const session = new SlowStartAgentSession(null, provider);
+      const session = new SlowStartAgentSession({ startDelayMs: null, provider });
       this.sessions.push(session);
       signalReplacementReady(session);
       return session;

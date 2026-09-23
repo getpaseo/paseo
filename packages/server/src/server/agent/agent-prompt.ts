@@ -4,6 +4,7 @@ import type {
   AgentPermissionRequest,
   AgentPromptInput,
   AgentRunOptions,
+  AgentStreamEvent,
 } from "./agent-sdk-types.js";
 import type { AgentManager, ManagedAgent } from "./agent-manager.js";
 import type { AgentStorage } from "./agent-storage.js";
@@ -22,10 +23,14 @@ export type AgentRunController = Pick<
   | "replaceAgentRun"
   | "steerOrReplaceActiveTurn"
   | "streamAgent"
-  | "streamAgentAfterStaleRecovery"
-  | "reloadAgentSessionForStaleRun"
 > & {
   reloadAgentSession(agentId: string): Promise<unknown>;
+  reloadAgentSessionForStaleRun(agentId: string): Promise<unknown>;
+  streamAgentAfterStaleRecovery(params: {
+    agentId: string;
+    prompt: AgentPromptInput;
+    options?: AgentRunOptions;
+  }): AsyncGenerator<AgentStreamEvent>;
 };
 
 export interface StartAgentRunOptions {
@@ -164,11 +169,11 @@ async function startAgentRunInner(
           "Provider session went stale; reopening from persistence",
         );
         await agentManager.reloadAgentSessionForStaleRun(agentId);
-        const retry = agentManager.streamAgentAfterStaleRecovery(
+        const retry = agentManager.streamAgentAfterStaleRecovery({
           agentId,
           prompt,
-          options?.runOptions,
-        );
+          options: options?.runOptions,
+        });
         await drainAgentRunIterator(retry);
       }
       logger.trace(
