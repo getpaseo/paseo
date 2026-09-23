@@ -647,9 +647,18 @@ describe("pending provider responses", () => {
     },
   );
 
-  test.each<RequestKind>(["catalog", "session.configure"])(
+  test.each([
+    [
+      "catalog",
+      expect.objectContaining({
+        models: [expect.objectContaining({ id: "plugin-model", isDefault: true })],
+        defaultModeId: "build",
+      }),
+    ],
+    ["session.configure", undefined],
+  ] as const)(
     "contains an early request.failed for %s and permits a successful retry",
-    async (kind) => {
+    async (kind, result) => {
       let failed = false;
       await withObservedProvider(
         {
@@ -671,74 +680,58 @@ describe("pending provider responses", () => {
             code: "busy",
             diagnostic: "retry",
           });
-          if (kind === "catalog") {
-            await expect(requestFromClient(client, kind)).resolves.toMatchObject({
-              models: [expect.objectContaining({ id: "plugin-model", isDefault: true })],
-              defaultModeId: "build",
-            });
-          } else {
-            await expect(requestFromClient(client, kind)).resolves.toBeUndefined();
-          }
+          await expect(requestFromClient(client, kind)).resolves.toEqual(result);
         },
       );
     },
   );
 
-  test.each<RequestKind>(["session.open", "session.configure", "session.prompt"])(
-    "contains session closure while accepting %s",
-    async (kind) => {
-      await withObservedProvider(
-        {
-          async handleInput(input, emit) {
-            if (input.type !== kind || !("sessionId" in input)) return false;
-            emit({
-              type: "session.closed",
-              sessionId: input.sessionId,
-              error: { message: "Provider session closed" },
-            });
-            await nextTurn();
-            return true;
-          },
+  test.each([
+    ["session.open", "Provider session closed"],
+    ["session.configure", "Provider session closed"],
+    ["session.prompt", StaleProviderSessionError],
+  ] as const)("contains session closure while accepting %s", async (kind, error) => {
+    await withObservedProvider(
+      {
+        async handleInput(input, emit) {
+          if (input.type !== kind || !("sessionId" in input)) return false;
+          emit({
+            type: "session.closed",
+            sessionId: input.sessionId,
+            error: { message: "Provider session closed" },
+          });
+          await nextTurn();
+          return true;
         },
-        async (client) => {
-          const request = requestFromClient(client, kind);
-          if (kind === "session.prompt") {
-            await expect(request).rejects.toBeInstanceOf(StaleProviderSessionError);
-          } else {
-            await expect(request).rejects.toThrow("Provider session closed");
-          }
-        },
-      );
-    },
-  );
+      },
+      async (client) => {
+        await expect(requestFromClient(client, kind)).rejects.toThrow(error);
+      },
+    );
+  });
 
-  test.each<RequestKind>(["session.open", "catalog", "session.configure", "session.prompt"])(
-    "contains connection shutdown while accepting %s",
-    async (kind) => {
-      let disconnect!: () => Promise<void>;
-      await withObservedProvider(
-        {
-          async handleInput(input) {
-            if (input.type !== kind) return false;
-            await disconnect();
-            await nextTurn();
-            return true;
-          },
+  test.each([
+    ["session.open", "Provider connection closed"],
+    ["catalog", "Provider closed"],
+    ["session.configure", "Provider closed"],
+    ["session.prompt", StaleProviderSessionError],
+  ] as const)("contains connection shutdown while accepting %s", async (kind, error) => {
+    let disconnect!: () => Promise<void>;
+    await withObservedProvider(
+      {
+        async handleInput(input) {
+          if (input.type !== kind) return false;
+          await disconnect();
+          await nextTurn();
+          return true;
         },
-        async (client, registry) => {
-          disconnect = () => registry.shutdown();
-          const request = requestFromClient(client, kind);
-          if (kind === "session.prompt") {
-            await expect(request).rejects.toBeInstanceOf(StaleProviderSessionError);
-          } else {
-            await expect(request).rejects.toThrow(
-              kind === "session.open" ? "Provider connection closed" : "Provider closed",
-            );
-          }
-        },
-      );
-    },
-  );
+      },
+      async (client, registry) => {
+        disconnect = () => registry.shutdown();
+        await expect(requestFromClient(client, kind)).rejects.toThrow(error);
+      },
+    );
+  });
 
   test.each([true, false])(
     "preserves cancellation with acceptance pending: %s",
