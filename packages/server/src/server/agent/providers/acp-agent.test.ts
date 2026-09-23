@@ -8,6 +8,7 @@ import {
   RequestError,
   ndJsonStream,
   type Agent,
+  type CreateTerminalRequest,
   PermissionOption,
   PromptResponse,
   RequestPermissionRequest,
@@ -128,7 +129,10 @@ interface ACPConfiguredOverrideInternals {
   applyConfiguredOverrides(): Promise<void>;
 }
 
-function createSession(terminateProcess?: ProcessTerminator): ACPAgentSession {
+function createSession(
+  terminateProcess?: ProcessTerminator,
+  launchEnv?: Record<string, string>,
+): ACPAgentSession {
   return new ACPAgentSession(
     {
       provider: "claude-acp",
@@ -148,6 +152,7 @@ function createSession(terminateProcess?: ProcessTerminator): ACPAgentSession {
         supportsToolInvocations: true,
       },
       ...(terminateProcess ? { terminateProcess } : {}),
+      ...(launchEnv ? { launchEnv } : {}),
     },
   );
 }
@@ -658,6 +663,108 @@ describe("ACPAgentSession terminal tools", () => {
       ["status", "--short"],
       expect.objectContaining({ cwd: "/repo" }),
     );
+  });
+
+  // Terminals the daemon opens for an agent are siblings of the agent process, so
+  // they inherit nothing from it. They carry the agent's identity only if the
+  // session puts its launch environment on them, the way its transport spawn does.
+  describe("agent launch environment", () => {
+    afterEach(() => {
+      vi.unstubAllEnvs();
+    });
+
+    const readLaunchIdentityArgs = [
+      "-e",
+      "process.stdout.write(JSON.stringify({ id: process.env.PASEO_AGENT_ID ?? null, cwd: process.env.PASEO_AGENT_CWD ?? null, extra: process.env.PASEO_TEST_EXTRA ?? null }))",
+    ];
+
+    async function readLaunchIdentity(
+      session: ACPAgentSession,
+      params: Partial<CreateTerminalRequest> = {},
+    ): Promise<{ id: string | null; cwd: string | null; extra: string | null }> {
+      const terminal = await session.createTerminal({
+        sessionId: "session-1",
+        command: process.execPath,
+        args: readLaunchIdentityArgs,
+        cwd: process.cwd(),
+        ...params,
+      });
+      await session.waitForTerminalExit({
+        sessionId: "session-1",
+        terminalId: terminal.terminalId,
+      });
+      const { output } = await session.terminalOutput({
+        sessionId: "session-1",
+        terminalId: terminal.terminalId,
+      });
+      return JSON.parse(output.trim());
+    }
+
+    test("gives the terminal the agent's identity", async () => {
+      // The daemon itself does not run inside a Paseo agent.
+      vi.stubEnv("PASEO_AGENT_ID", undefined);
+      vi.stubEnv("PASEO_AGENT_CWD", undefined);
+      const session = createSession(undefined, {
+        PASEO_AGENT_ID: "agent-1",
+        PASEO_AGENT_CWD: "/repo",
+      });
+
+      await expect(readLaunchIdentity(session)).resolves.toMatchObject({
+        id: "agent-1",
+        cwd: "/repo",
+      });
+    });
+
+    test("prefers the agent's identity over the daemon's own environment", async () => {
+      // A daemon started from inside another Paseo agent carries that agent's id.
+      vi.stubEnv("PASEO_AGENT_ID", "daemon-host-agent");
+      vi.stubEnv("PASEO_AGENT_CWD", "/elsewhere");
+      const session = createSession(undefined, {
+        PASEO_AGENT_ID: "agent-1",
+        PASEO_AGENT_CWD: "/repo",
+      });
+
+      await expect(readLaunchIdentity(session)).resolves.toMatchObject({
+        id: "agent-1",
+        cwd: "/repo",
+      });
+    });
+
+    test("lets the requested terminal environment win over the launch environment", async () => {
+      const session = createSession(undefined, {
+        PASEO_AGENT_ID: "agent-1",
+        PASEO_TEST_EXTRA: "from-launch",
+      });
+
+      await expect(
+        readLaunchIdentity(session, {
+          env: [{ name: "PASEO_TEST_EXTRA", value: "from-request" }],
+        }),
+      ).resolves.toMatchObject({ id: "agent-1", extra: "from-request" });
+    });
+
+    test("carries the agent's identity into single-string shell commands", async () => {
+      const child = createTerminalChildStub();
+      const spawn = vi.spyOn(spawnUtils, "spawnProcess").mockReturnValue(child);
+      const session = createSession(undefined, { PASEO_AGENT_ID: "agent-1" });
+
+      await session.createTerminal({
+        sessionId: "session-1",
+        command: "paseo heartbeat create --every 5m",
+        cwd: "/repo",
+      });
+
+      expect(spawn).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.any(Array),
+        expect.objectContaining({
+          envOverlay: expect.objectContaining({
+            PASEO_AGENT_ID: "agent-1",
+            BASH_ENV: undefined,
+          }),
+        }),
+      );
+    });
   });
 
   test("surfaces spawn errors through terminal output and waitForTerminalExit", async () => {
