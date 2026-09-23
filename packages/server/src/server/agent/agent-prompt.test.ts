@@ -12,6 +12,7 @@ import {
   formatSystemNotificationPrompt,
   isSystemInjectedEnvelope,
   sendPromptToAgent,
+  startAgentRun,
   setupFinishNotification,
   waitForAgentRunStartWithTimeout,
 } from "./agent-prompt.js";
@@ -827,6 +828,9 @@ test("a stale send waits for its resumed replacement turn and records the prompt
       () => "started" as const,
       (error: unknown) => error,
     );
+    await expect(
+      startAgentRun(agentManager, agentId, "unrelated concurrent prompt", createTestLogger()),
+    ).rejects.toThrow(`Agent ${agentId} is recovering a stale provider session`);
     releaseClose();
 
     await expect(runStart).resolves.toBe("started");

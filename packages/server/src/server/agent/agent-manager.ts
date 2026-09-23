@@ -1506,15 +1506,22 @@ export class AgentManager {
     overrides?: Partial<AgentSessionConfig>,
     options?: { rehydrateFromDisk?: boolean },
   ): Promise<ManagedAgent> {
-    const operation = this.trackAgentRegistrationOperation(
+    return this.trackAgentRegistrationOperation(
       this.runLifecycleMutation(agentId, () =>
         this.reloadAgentSessionInternal(agentId, overrides, options),
       ),
     );
-    return operation.catch((error: unknown) => {
-      this.settleRunStartRecovery(agentId, error);
+  }
+
+  async reloadAgentSessionForStaleRun(agentId: string): Promise<ManagedAgent> {
+    const recovery = this.runStartRecoveries.get(agentId);
+    if (!recovery) throw new Error(`Agent ${agentId} has no stale run recovery`);
+    try {
+      return await this.reloadAgentSession(agentId);
+    } catch (error) {
+      this.settleRunStartRecovery(agentId, recovery, error);
       throw error;
-    });
+    }
   }
 
   private async reloadAgentSessionInternal(
@@ -2443,8 +2450,9 @@ export class AgentManager {
     pendingRun: PendingForegroundRun;
     prompt: AgentPromptInput;
     options?: AgentRunOptions;
+    recovery: RunStartRecovery | null;
   }): Promise<string> {
-    const { agent, agentId, pendingRun, prompt, options } = params;
+    const { agent, agentId, pendingRun, prompt, options, recovery } = params;
     try {
       const result = await agent.session.startTurn(prompt, options);
       if (pendingRun.settled) {
@@ -2456,16 +2464,17 @@ export class AgentManager {
         throw error;
       }
       if (isStaleProviderSessionError(error)) {
-        const startedRecovery = this.beginRunStartRecovery(agentId);
+        const startedRecovery = recovery ?? this.beginRunStartRecovery(agentId);
         pendingRun.start = { status: "failed", error: error.message };
         agent.pendingReplacement = false;
         if (!agent.activeForegroundTurnId) agent.lifecycle = "idle";
         this.runs.settleForegroundRun(agentId, pendingRun.token);
-        if (!startedRecovery) this.settleRunStartRecovery(agentId, error);
+        if (!startedRecovery) throw error;
+        if (recovery) this.settleRunStartRecovery(agentId, recovery, error);
         throw error;
       }
       agent.pendingReplacement = false;
-      this.settleRunStartRecovery(agentId, error);
+      if (recovery) this.settleRunStartRecovery(agentId, recovery, error);
       const errorMsg = error instanceof Error ? error.message : "Failed to start turn";
       pendingRun.start = { status: "failed", error: errorMsg };
       await this.handleStreamEvent(agent, {
@@ -2484,7 +2493,29 @@ export class AgentManager {
     prompt: AgentPromptInput,
     options?: AgentRunOptions,
   ): AsyncGenerator<AgentStreamEvent> {
-    if (!this.runStartRecoveries.has(agentId)) this.runStartRecoveryFailures.delete(agentId);
+    if (this.runStartRecoveries.has(agentId)) {
+      throw new Error(`Agent ${agentId} is recovering a stale provider session`);
+    }
+    return this.createAgentStream(agentId, prompt, options, null);
+  }
+
+  streamAgentAfterStaleRecovery(
+    agentId: string,
+    prompt: AgentPromptInput,
+    options?: AgentRunOptions,
+  ): AsyncGenerator<AgentStreamEvent> {
+    const recovery = this.runStartRecoveries.get(agentId);
+    if (!recovery) throw new Error(`Agent ${agentId} has no stale run recovery`);
+    return this.createAgentStream(agentId, prompt, options, recovery);
+  }
+
+  private createAgentStream(
+    agentId: string,
+    prompt: AgentPromptInput,
+    options: AgentRunOptions | undefined,
+    recovery: RunStartRecovery | null,
+  ): AsyncGenerator<AgentStreamEvent> {
+    if (!recovery) this.runStartRecoveryFailures.delete(agentId);
     const existingAgent = this.requireSessionAgent(agentId);
     this.logger.trace(
       {
@@ -2530,6 +2561,7 @@ export class AgentManager {
         pendingRun,
         prompt,
         options,
+        recovery,
       });
 
       if (isReplacement) {
@@ -2540,7 +2572,7 @@ export class AgentManager {
       agent.activeForegroundTurnId = turnId;
       this.openActiveTurn(agent, turnId, turnStartedAt);
       agent.lifecycle = "running";
-      this.settleRunStartRecovery(agentId);
+      if (recovery) this.settleRunStartRecovery(agentId, recovery);
       this.touchUpdatedAt(agent);
       // AgentManager owns the accepted-turn boundary. Publish liveness before the canonical
       // prompt so clients can retire optimistic activity without painting an idle frame.
@@ -2872,8 +2904,8 @@ export class AgentManager {
     this.emitState(agent);
   }
 
-  private beginRunStartRecovery(agentId: string): boolean {
-    if (this.runStartRecoveries.has(agentId)) return false;
+  private beginRunStartRecovery(agentId: string): RunStartRecovery | null {
+    if (this.runStartRecoveries.has(agentId)) return null;
     let resolveRecovery!: () => void;
     let rejectRecovery!: (error: unknown) => void;
     const promise = new Promise<void>((resolvePromise, rejectPromise) => {
@@ -2881,17 +2913,21 @@ export class AgentManager {
       rejectRecovery = rejectPromise;
     });
     void promise.catch(() => undefined);
-    this.runStartRecoveries.set(agentId, {
+    const recovery = {
       promise,
       resolve: resolveRecovery,
       reject: rejectRecovery,
-    });
-    return true;
+    };
+    this.runStartRecoveries.set(agentId, recovery);
+    return recovery;
   }
 
-  private settleRunStartRecovery(agentId: string, error?: unknown): void {
-    const recovery = this.runStartRecoveries.get(agentId);
-    if (!recovery) return;
+  private settleRunStartRecovery(
+    agentId: string,
+    recovery: RunStartRecovery,
+    error?: unknown,
+  ): void {
+    if (this.runStartRecoveries.get(agentId) !== recovery) return;
     this.runStartRecoveries.delete(agentId);
     if (error === undefined) {
       this.runStartRecoveryFailures.delete(agentId);

@@ -22,6 +22,8 @@ export type AgentRunController = Pick<
   | "replaceAgentRun"
   | "steerOrReplaceActiveTurn"
   | "streamAgent"
+  | "streamAgentAfterStaleRecovery"
+  | "reloadAgentSessionForStaleRun"
 > & {
   reloadAgentSession(agentId: string): Promise<unknown>;
 };
@@ -161,9 +163,13 @@ async function startAgentRunInner(
           { agentId, err: error },
           "Provider session went stale; reopening from persistence",
         );
-        await agentManager.reloadAgentSession(agentId);
-        const retry = await startOrReplaceRun(agentManager, agentId, prompt, options);
-        await drainAgentRunIterator(retry.iterator);
+        await agentManager.reloadAgentSessionForStaleRun(agentId);
+        const retry = agentManager.streamAgentAfterStaleRecovery(
+          agentId,
+          prompt,
+          options?.runOptions,
+        );
+        await drainAgentRunIterator(retry);
       }
       logger.trace(
         {
