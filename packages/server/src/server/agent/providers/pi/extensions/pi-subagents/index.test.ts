@@ -1,4 +1,5 @@
 import { describe, expect, test } from "vitest";
+import { fileURLToPath } from "node:url";
 import { createPiExtensionHost } from "../index.js";
 import {
   parseToolArgs,
@@ -62,7 +63,7 @@ describe("pi-subagents adapter", () => {
       .details.results[0].sessionFile;
     const fixture = readSubagentFixture(new URL("./fixtures/foreground.json", import.meta.url), {
       from: original,
-      to: new URL("./fixtures/child-session.jsonl", import.meta.url).pathname,
+      to: fileURLToPath(new URL("./fixtures/child-session.jsonl", import.meta.url)),
     });
     const events = await verifySubagentFixture(fixture);
     expect(
@@ -95,7 +96,7 @@ describe("pi-subagents adapter", () => {
     ).details.completions[0].results[0].sessionFile;
     const fixture = readSubagentFixture(new URL("./fixtures/wait.json", import.meta.url), {
       from: original,
-      to: new URL("./fixtures/child-session.jsonl", import.meta.url).pathname,
+      to: fileURLToPath(new URL("./fixtures/child-session.jsonl", import.meta.url)),
     });
     const events = await verifySubagentFixture(fixture);
     const upserts = events
@@ -120,7 +121,7 @@ describe("pi-subagents adapter", () => {
       .details.results[0].sessionFile;
     const fixture = readSubagentFixture(new URL("./fixtures/foreground.json", import.meta.url), {
       from: original,
-      to: new URL("./fixtures/child-session.jsonl", import.meta.url).pathname,
+      to: fileURLToPath(new URL("./fixtures/child-session.jsonl", import.meta.url)),
     });
     const pi = new FakePi();
     const client = new PiRpcAgentClient({ logger: pino({ level: "silent" }), runtime: pi });

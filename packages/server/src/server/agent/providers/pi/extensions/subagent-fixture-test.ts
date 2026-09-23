@@ -25,7 +25,10 @@ export function readSubagentFixture(
 ): Fixture {
   let source = readFileSync(path, "utf8");
   if (replaceSessionFile)
-    source = source.replaceAll(replaceSessionFile.from, replaceSessionFile.to);
+    source = source.replaceAll(
+      replaceSessionFile.from,
+      JSON.stringify(replaceSessionFile.to).slice(1, -1),
+    );
   const fixture = JSON.parse(source) as Fixture;
   expect(fixture.provenance).toEqual({
     package: expect.any(String),

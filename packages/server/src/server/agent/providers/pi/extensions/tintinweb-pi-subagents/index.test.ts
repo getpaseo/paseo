@@ -1,4 +1,5 @@
 import { describe, expect, test } from "vitest";
+import { fileURLToPath } from "node:url";
 import { createPiExtensionHost } from "../index.js";
 import { readSubagentFixture, verifySubagentFixture } from "../subagent-fixture-test.js";
 
@@ -22,7 +23,7 @@ describe("@tintinweb/pi-subagents adapter", () => {
     ).details.outputFile;
     const fixture = readSubagentFixture(new URL("./fixtures/background.json", import.meta.url), {
       from: file,
-      to: new URL("./fixtures/child-session.jsonl", import.meta.url).pathname,
+      to: fileURLToPath(new URL("./fixtures/child-session.jsonl", import.meta.url)),
     });
     const events = await verifySubagentFixture(fixture);
     expect(
