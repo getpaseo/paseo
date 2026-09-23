@@ -1571,11 +1571,8 @@ export class AgentManager {
       this.assertAcceptingAgentRegistrations();
 
       if (rehydrateFromDisk) {
-        // Wipe both timelines so registerSession mints a new epoch and
+        // Wipe the in-memory timeline so registerSession mints a new epoch and
         // hydrateTimelineFromProvider re-streams the freshly read provider history.
-        // The durable store is what getTimelineRows reads, so leaving it in place
-        // would keep the old copy and let the re-streamed history append a second one.
-        await this.deleteCommittedTimeline(agentId);
         this.timelineStore.delete(agentId);
         for (const event of this.providerSubagents.deleteParent(agentId)) {
           this.dispatch({ type: "provider_subagent", event });
@@ -4028,23 +4025,17 @@ export class AgentManager {
     broadcast: boolean | (() => boolean),
   ): Promise<void> {
     const deferredBroadcast = typeof broadcast === "function";
-    const timelineEvents: Array<{
-      event: Extract<AgentStreamEvent, { type: "timeline" }>;
-      row: AgentTimelineRow;
-    }> = [];
-    const providerSubagentEvents: AgentManagerEvent[] = [];
+    const historyEvents: Extract<AgentStreamEvent, { type: "timeline" }>[] = [];
+    const historySubagentEvents: Extract<AgentStreamEvent, { type: "provider_subagent" }>[] = [];
     agent.historyPrimed = false;
     try {
+      // Collect the whole replay before touching either store. A stream that fails
+      // halfway then leaves the committed timeline as it was, instead of a partial
+      // copy the next attempt would append to.
       for await (const rawEvent of agent.session.streamHistory()) {
         const event = limitAgentStreamEventContent(rawEvent);
         if (event.type === "provider_subagent") {
-          const update = this.providerSubagents.apply(agent.id, event.provider, event.event);
-          const managerEvent: AgentManagerEvent = { type: "provider_subagent", event: update };
-          if (deferredBroadcast) {
-            providerSubagentEvents.push(managerEvent);
-          } else if (broadcast) {
-            this.dispatch(managerEvent);
-          }
+          historySubagentEvents.push(event);
           continue;
         }
         if (event.type !== "timeline") {
@@ -4053,24 +4044,46 @@ export class AgentManager {
         if (event.item.type === "user_message" && isSystemInjectedEnvelope(event.item.text)) {
           continue;
         }
-        const row = this.recordTimeline(
-          agent.id,
-          event.item,
-          event.timestamp ? { timestamp: event.timestamp } : undefined,
-        );
-        if (deferredBroadcast) {
-          timelineEvents.push({ event, row });
-        } else if (broadcast) {
-          this.dispatchStream(agent.id, event, {
-            seq: row.seq,
-            epoch: this.timelineStore.getEpoch(agent.id),
-            timestamp: row.timestamp,
-          });
-        }
+        historyEvents.push(event);
       }
     } catch (error) {
       this.logger.warn({ err: error, agentId: agent.id }, "Failed to hydrate provider history");
       throw error;
+    }
+
+    // The replay is the timeline, so drop the rows a previous hydration committed.
+    // Keeping them would leave getTimelineRows reading one copy per hydration.
+    await this.deleteCommittedTimeline(agent.id);
+
+    const timelineEvents: Array<{
+      event: Extract<AgentStreamEvent, { type: "timeline" }>;
+      row: AgentTimelineRow;
+    }> = [];
+    const providerSubagentEvents: AgentManagerEvent[] = [];
+    for (const event of historySubagentEvents) {
+      const update = this.providerSubagents.apply(agent.id, event.provider, event.event);
+      const managerEvent: AgentManagerEvent = { type: "provider_subagent", event: update };
+      if (deferredBroadcast) {
+        providerSubagentEvents.push(managerEvent);
+      } else if (broadcast) {
+        this.dispatch(managerEvent);
+      }
+    }
+    for (const event of historyEvents) {
+      const row = this.recordTimeline(
+        agent.id,
+        event.item,
+        event.timestamp ? { timestamp: event.timestamp } : undefined,
+      );
+      if (deferredBroadcast) {
+        timelineEvents.push({ event, row });
+      } else if (broadcast) {
+        this.dispatchStream(agent.id, event, {
+          seq: row.seq,
+          epoch: this.timelineStore.getEpoch(agent.id),
+          timestamp: row.timestamp,
+        });
+      }
     }
     agent.historyPrimed = true;
 
