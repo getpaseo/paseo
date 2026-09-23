@@ -1010,7 +1010,12 @@ describe("WorkspaceGitService checkout observation", () => {
         upstreamStatus: null,
       };
     });
-    const service = createService(watcher, { getCheckoutSnapshotFacts });
+    const runGitFetch = vi.fn(async () => ({
+      changes: [],
+      nonRemoteRefsChanged: false,
+      error: null,
+    }));
+    const service = createService(watcher, { getCheckoutSnapshotFacts, runGitFetch });
     const subscription = service.registerWorkspace({ cwd: REPO_CWD }, vi.fn());
     await vi.waitFor(() => {
       expect(getCheckoutSnapshotFacts).toHaveBeenCalledTimes(1);
@@ -1021,10 +1026,13 @@ describe("WorkspaceGitService checkout observation", () => {
       expect(getWatcherRecordsForDirectory(watcher, GIT_DIR)).toHaveLength(1);
       expect(service.getMetrics().workspaceRefreshInFlightCount).toBe(0);
       expect(service.getMetrics().workspaceObservationSetupInFlightCount).toBe(0);
+      expect(service.getMetrics().fetchInFlightCount).toBe(0);
+      expect(runGitFetch).toHaveBeenCalledTimes(1);
     });
+    expect(getCheckoutSnapshotFacts).toHaveBeenCalledTimes(1);
     const [repoWatcher] = getWatcherRecordsForDirectory(watcher, GIT_DIR);
-    if (!repoWatcher) throw new Error("Repository watcher was not registered");
-    repoWatcher.callback(null, [
+    expect(repoWatcher).toBeDefined();
+    repoWatcher?.callback(null, [
       { path: path.join(GIT_DIR, "refs", "remotes", "origin", "main"), type: "update" },
     ]);
     await vi.advanceTimersByTimeAsync(1_000);
