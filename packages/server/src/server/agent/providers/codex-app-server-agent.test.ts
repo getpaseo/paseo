@@ -470,15 +470,19 @@ async function startCompactionTurnTest(): Promise<{
   return { appServer, session, events, terminalEvent };
 }
 
-function archivedThreadHandle() {
+function threadHandle(threadId: string) {
   return {
-    sessionId: "archived-thread-id",
+    sessionId: threadId,
     metadata: {
       cwd: "/tmp/codex-question-test",
       modeId: "auto",
       model: "gpt-5.4",
     },
   };
+}
+
+function archivedThreadHandle() {
+  return threadHandle("archived-thread-id");
 }
 
 function archivedThreadErrorMessage(threadId: string): string {
@@ -3953,7 +3957,9 @@ describe("Codex app-server provider", () => {
     });
   });
 
-  test("does not synthesize a parent sub-agent failure from child error state alone", () => {
+  // Codex `AgentStatus::Errored` is final (`is_final` in codex-rs/core/src/agent/status.rs);
+  // an errored child must leave the running count instead of spinning forever.
+  test("settles a parent sub-agent as failed from a final child error state", () => {
     const session = createSession();
     const events: AgentStreamEvent[] = [];
     session.subscribe((event) => events.push(event));
@@ -3962,7 +3968,7 @@ describe("Codex app-server provider", () => {
       threadId: "test-thread",
       item: {
         type: "collabAgentToolCall",
-        id: "call-sub-agent-transient-child-error",
+        id: "call-sub-agent-final-child-error",
         tool: "spawnAgent",
         status: "completed",
         prompt: "Validate the child agent result.",
@@ -3973,16 +3979,18 @@ describe("Codex app-server provider", () => {
       },
     });
 
-    expect(events.at(-1)?.item).toMatchObject({
+    expect(events.at(-1)?.item).toEqual({
       type: "tool_call",
-      callId: "call-sub-agent-transient-child-error",
+      callId: "call-sub-agent-final-child-error",
       name: "Sub-agent",
-      status: "running",
-      error: null,
+      status: "failed",
+      error: { message: "Sub-agent failed" },
       detail: {
         type: "sub_agent",
         subAgentType: "Sub-agent",
         description: "Validate the child agent result.",
+        log: "",
+        actions: [],
       },
     });
   });
@@ -4258,6 +4266,379 @@ describe("Codex app-server provider", () => {
         detail: { type: "sub_agent", log: "[Assistant] Legacy findings after resume." },
       },
     });
+  });
+
+  async function collectStreamHistory(
+    session: ReturnType<typeof createSession>,
+  ): Promise<AgentStreamEvent[]> {
+    const history: AgentStreamEvent[] = [];
+    for await (const event of session.streamHistory()) {
+      history.push(event);
+    }
+    return history;
+  }
+
+  function providerSubagentUpserts(history: AgentStreamEvent[]) {
+    return history.flatMap((event) =>
+      event.type === "provider_subagent" && event.event.type === "upsert" ? [event.event] : [],
+    );
+  }
+
+  test("settles a replayed Codex collab from a later wait item's completed child state", async () => {
+    const appServer = createFakeCodexAppServer({
+      "thread/read": (params) => {
+        const threadId = (params as { threadId?: string }).threadId;
+        if (threadId !== "test-thread") {
+          return { thread: { turns: [] } };
+        }
+        return {
+          thread: {
+            turns: [
+              {
+                items: [
+                  {
+                    type: "collabAgentToolCall",
+                    id: "call-spawn-collab",
+                    tool: "spawnAgent",
+                    status: "completed",
+                    prompt: "Research the rtk usage.",
+                    receiverThreadIds: ["collab-child-thread"],
+                    agentsStates: {
+                      "collab-child-thread": { status: "pendingInit", message: null },
+                    },
+                  },
+                ],
+              },
+              {
+                items: [
+                  {
+                    type: "collabAgentToolCall",
+                    id: "call-wait-collab",
+                    tool: "wait",
+                    status: "completed",
+                    receiverThreadIds: ["collab-child-thread"],
+                    agentsStates: {
+                      "collab-child-thread": { status: "completed", message: "Report" },
+                    },
+                  },
+                ],
+              },
+            ],
+          },
+        };
+      },
+    });
+    const provider = createProviderWithFakeAppServer(appServer);
+    const session = await provider.resumeSession(
+      threadHandle("test-thread"),
+      undefined,
+      undefined,
+      { purpose: "history" },
+    );
+
+    try {
+      const history = await collectStreamHistory(session);
+      expect(providerSubagentUpserts(history)).toEqual([
+        {
+          type: "upsert",
+          id: "collab-child-thread",
+          title: "Sub-agent",
+          description: "Research the rtk usage.",
+          status: "completed",
+          toolCallId: "call-spawn-collab",
+          parentSubagentId: null,
+        },
+      ]);
+      expect(history.flatMap((event) => (event.type === "timeline" ? [event.item] : []))).toEqual([
+        {
+          type: "tool_call",
+          callId: "call-spawn-collab",
+          name: "Sub-agent",
+          status: "completed",
+          error: null,
+          detail: {
+            type: "sub_agent",
+            subAgentType: "Sub-agent",
+            description: "Research the rtk usage.",
+            log: "",
+            actions: [],
+          },
+        },
+        {
+          type: "tool_call",
+          callId: "call-wait-collab",
+          name: "Sub-agent",
+          status: "completed",
+          error: null,
+          detail: {
+            type: "sub_agent",
+            subAgentType: "Sub-agent",
+            log: "",
+            actions: [],
+          },
+        },
+      ]);
+    } finally {
+      await session.close();
+    }
+    appServer.assertNoErrors();
+  });
+
+  // Defensive: `spawn_agent` currently creates one child, but the protocol keeps
+  // `receiverThreadIds` an array, so a spawn entry can own several children.
+  test("keeps a shared spawn card running until every child settles in history", async () => {
+    const appServer = createFakeCodexAppServer({
+      "thread/read": (params) => {
+        const threadId = (params as { threadId?: string }).threadId;
+        if (threadId !== "test-thread") {
+          return { thread: { turns: [] } };
+        }
+        return {
+          thread: {
+            turns: [
+              {
+                items: [
+                  {
+                    type: "collabAgentToolCall",
+                    id: "call-spawn-pair",
+                    tool: "spawnAgent",
+                    status: "completed",
+                    prompt: "Two children",
+                    receiverThreadIds: ["pair-child-a", "pair-child-b"],
+                    agentsStates: {
+                      "pair-child-a": { status: "pendingInit", message: null },
+                      "pair-child-b": { status: "pendingInit", message: null },
+                    },
+                  },
+                ],
+              },
+              {
+                items: [
+                  {
+                    type: "collabAgentToolCall",
+                    id: "call-wait-pair",
+                    tool: "wait",
+                    status: "completed",
+                    receiverThreadIds: ["pair-child-a"],
+                    agentsStates: {
+                      "pair-child-a": { status: "completed", message: "A done" },
+                    },
+                  },
+                ],
+              },
+            ],
+          },
+        };
+      },
+    });
+    const provider = createProviderWithFakeAppServer(appServer);
+    const session = await provider.resumeSession(
+      threadHandle("test-thread"),
+      undefined,
+      undefined,
+      { purpose: "history" },
+    );
+
+    try {
+      const history = await collectStreamHistory(session);
+      expect(providerSubagentUpserts(history)).toEqual([
+        {
+          type: "upsert",
+          id: "pair-child-a",
+          title: "Sub-agent",
+          description: "Two children",
+          status: "completed",
+          toolCallId: "call-spawn-pair",
+          parentSubagentId: null,
+        },
+        {
+          type: "upsert",
+          id: "pair-child-b",
+          title: "Sub-agent",
+          description: "Two children",
+          status: "running",
+          toolCallId: "call-spawn-pair",
+          parentSubagentId: null,
+        },
+      ]);
+      const spawnCard = history.find(
+        (event) =>
+          event.type === "timeline" &&
+          event.item.type === "tool_call" &&
+          event.item.callId === "call-spawn-pair",
+      );
+      expect(spawnCard).toEqual({
+        type: "timeline",
+        provider: "codex",
+        item: {
+          type: "tool_call",
+          callId: "call-spawn-pair",
+          name: "Sub-agent",
+          status: "running",
+          error: null,
+          detail: {
+            type: "sub_agent",
+            subAgentType: "Sub-agent",
+            description: "Two children",
+            log: "",
+            actions: [],
+          },
+        },
+      });
+    } finally {
+      await session.close();
+    }
+    appServer.assertNoErrors();
+  });
+
+  test("settles a live sub-agent when Codex reports completed activity", async () => {
+    const appServer = createFakeCodexAppServer();
+    const session = new CodexAppServerAgentSession(
+      createConfig({ cwd: "/workspace/project" }),
+      null,
+      createTestLogger(),
+      async () => appServer.child,
+    );
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    try {
+      const resultPromise = session.run("Report completion.");
+      await appServer.waitForTurnStart();
+
+      const started = waitForProviderSubagent(session, "activity-child-thread");
+      appServer.startsSubAgent({
+        callId: "activity-started",
+        threadId: "activity-child-thread",
+        agentPath: "/root/activity-child",
+      });
+      await started;
+
+      const completed = waitForProviderSubagent(session, "activity-child-thread");
+      appServer.completesSubAgentActivity({
+        callId: "activity-completed",
+        threadId: "activity-child-thread",
+        agentPath: "/root/activity-child",
+        kind: "completed",
+      });
+      await completed;
+      appServer.completeTurn();
+      await resultPromise;
+
+      expect(providerSubagentUpserts(events)).toEqual([
+        {
+          type: "upsert",
+          id: "activity-child-thread",
+          title: "Activity child",
+          description: "activity-child",
+          status: "running",
+          toolCallId: "activity-started",
+          parentSubagentId: null,
+        },
+        {
+          type: "upsert",
+          id: "activity-child-thread",
+          title: "Activity child",
+          description: "activity-child",
+          status: "completed",
+          toolCallId: "activity-started",
+          parentSubagentId: null,
+        },
+      ]);
+      expect(events.flatMap((event) => (event.type === "timeline" ? [event.item] : []))).toEqual([
+        {
+          type: "tool_call",
+          callId: "activity-started",
+          name: "Sub-agent",
+          status: "running",
+          error: null,
+          detail: {
+            type: "sub_agent",
+            subAgentType: "Activity child",
+            description: "activity-child",
+            log: "",
+            actions: [],
+          },
+        },
+        {
+          type: "tool_call",
+          callId: "activity-started",
+          name: "Sub-agent",
+          status: "completed",
+          error: null,
+          detail: {
+            type: "sub_agent",
+            subAgentType: "Activity child",
+            description: "activity-child",
+            log: "",
+            actions: [],
+          },
+        },
+      ]);
+    } finally {
+      await session.close();
+    }
+    appServer.assertNoErrors();
+  });
+
+  test("settles a replayed Codex collab reported by completed activity", async () => {
+    const appServer = createFakeCodexAppServer({
+      "thread/read": (params) => {
+        const threadId = (params as { threadId?: string }).threadId;
+        if (threadId !== "test-thread") {
+          return { thread: { turns: [] } };
+        }
+        return {
+          thread: {
+            turns: [
+              {
+                items: [
+                  {
+                    type: "subAgentActivity",
+                    id: "child-started-history",
+                    kind: "started",
+                    agentThreadId: "history-child-thread",
+                    agentPath: "/root/history-child",
+                  },
+                  {
+                    type: "subAgentActivity",
+                    id: "child-completed-history",
+                    kind: "completed",
+                    agentThreadId: "history-child-thread",
+                    agentPath: "/root/history-child",
+                  },
+                ],
+              },
+            ],
+          },
+        };
+      },
+    });
+    const provider = createProviderWithFakeAppServer(appServer);
+    const session = await provider.resumeSession(
+      threadHandle("test-thread"),
+      undefined,
+      undefined,
+      { purpose: "history" },
+    );
+
+    try {
+      const history = await collectStreamHistory(session);
+      expect(providerSubagentUpserts(history)).toEqual([
+        {
+          type: "upsert",
+          id: "history-child-thread",
+          title: "History child",
+          description: "history-child",
+          status: "completed",
+          toolCallId: "child-started-history",
+          parentSubagentId: null,
+        },
+      ]);
+    } finally {
+      await session.close();
+    }
+    appServer.assertNoErrors();
   });
 
   test("restores nested MultiAgentV2 ownership from persisted child threads", async () => {

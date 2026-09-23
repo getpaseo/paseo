@@ -339,10 +339,12 @@ describe("codex tool-call mapper", () => {
     });
   });
 
-  it("does not fail a collabAgentToolCall from child error state alone", () => {
+  // Codex `AgentStatus::Errored` is final (`is_final` in codex-rs/core/src/agent/status.rs);
+  // only `Interrupted` children may still receive more input.
+  it("fails a collabAgentToolCall from a final child error state", () => {
     const item = mapCodexToolCallFromThreadItem({
       type: "collabAgentToolCall",
-      id: "call-sub-agent-transient-child-error",
+      id: "call-sub-agent-final-child-error",
       tool: "spawnAgent",
       status: "completed",
       prompt: "Inspect the Codex stream path.",
@@ -354,10 +356,10 @@ describe("codex tool-call mapper", () => {
 
     expect(item).toEqual({
       type: "tool_call",
-      callId: "call-sub-agent-transient-child-error",
+      callId: "call-sub-agent-final-child-error",
       name: "Sub-agent",
-      status: "running",
-      error: null,
+      status: "failed",
+      error: { message: "Sub-agent failed" },
       detail: {
         type: "sub_agent",
         subAgentType: "Sub-agent",
