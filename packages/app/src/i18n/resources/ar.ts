@@ -2198,6 +2198,10 @@ export const ar: TranslationResources = {
       dialogTitle: "الاختصارات",
       searchPlaceholder: "البحث في الاختصارات",
       unavailableOnMobile: "اختصارات لوحة المفاتيح متاحة فقط على سطح المكتب",
+      paneFocusInTextFields: "استخدام اختصارات تركيز اللوحات في حقول النص",
+      paneFocusInTextFieldsHint: "ينقل التركيز بين اللوحات بدلاً من توسيع تحديد النص",
+      paneFocusSettingFailed: "تعذّر حفظ هذا التفضيل. أعد المحاولة للاحتفاظ به بعد إعادة التشغيل.",
+      saving: "جارٍ الحفظ...",
       capturePrompt: "اضغط على الاختصار...",
       unassigned: "غير معين",
       actions: {
@@ -2218,6 +2222,7 @@ export const ar: TranslationResources = {
         agentInput: "إدخال Agent",
       },
       help: {
+        renameCurrentTab: "إعادة تسمية علامة التبويب الحالية",
         openProject: "مشروع مفتوح",
         newWorkspace: "مساحة عمل جديدة",
         newWorktree: "شجرة عمل جديدة",

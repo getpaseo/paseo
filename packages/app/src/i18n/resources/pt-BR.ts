@@ -2233,6 +2233,11 @@ export const ptBR: TranslationResources = {
       dialogTitle: "Atalhos",
       searchPlaceholder: "Pesquisar atalhos",
       unavailableOnMobile: "Atalhos de teclado estão disponíveis apenas no desktop",
+      paneFocusInTextFields: "Usar atalhos de foco de painel em campos de texto",
+      paneFocusInTextFieldsHint: "Move o foco entre painéis em vez de ampliar a seleção de texto",
+      paneFocusSettingFailed:
+        "Não foi possível salvar esta preferência. Tente novamente para mantê-la após reiniciar.",
+      saving: "Salvando...",
       capturePrompt: "Pressione o atalho...",
       unassigned: "Não definido",
       actions: {
@@ -2253,6 +2258,7 @@ export const ptBR: TranslationResources = {
         agentInput: "Entrada do agente",
       },
       help: {
+        renameCurrentTab: "Renomear aba atual",
         openProject: "Abrir projeto",
         newWorkspace: "Novo workspace",
         newWorktree: "Novo worktree",

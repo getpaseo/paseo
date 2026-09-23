@@ -2317,6 +2317,11 @@ export const en = {
       dialogTitle: "Shortcuts",
       searchPlaceholder: "Search shortcuts",
       unavailableOnMobile: "Keyboard shortcuts are only available on desktop",
+      paneFocusInTextFields: "Use pane focus shortcuts in text fields",
+      paneFocusInTextFieldsHint:
+        "Moves focus between panes instead of extending the text selection",
+      paneFocusSettingFailed: "Could not save this preference. Retry to keep it after restarting.",
+      saving: "Saving...",
       capturePrompt: "Press shortcut...",
       unassigned: "Not set",
       actions: {
@@ -2337,6 +2342,7 @@ export const en = {
         agentInput: "Agent Input",
       },
       help: {
+        renameCurrentTab: "Rename current tab",
         openProject: "Open project",
         newWorkspace: "New workspace",
         newWorktree: "New worktree",

@@ -34,6 +34,10 @@ import { getShortcutOs } from "@/utils/shortcut-platform";
 import { getIsElectronRuntime } from "@/constants/layout";
 import { isNative } from "@/constants/platform";
 import { getDesktopHost } from "@/desktop/host";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useAppSettings } from "@/hooks/use-settings";
+import { APP_SETTINGS_QUERY_KEY } from "@/hooks/use-settings/storage";
+import { Switch } from "@/components/ui/switch";
 
 const EMPTY_CAPTURED_COMBOS: string[] = [];
 
@@ -323,6 +327,58 @@ function ShortcutRow({
   );
 }
 
+function PaneFocusInTextFieldsSetting() {
+  const { t } = useTranslation();
+  const { settings, updateSettings, isLoading, error } = useAppSettings();
+  const queryClient = useQueryClient();
+  const mutation = useMutation({
+    mutationFn: (paneFocusInTextFields: boolean) => updateSettings({ paneFocusInTextFields }),
+    onError: () => queryClient.invalidateQueries({ queryKey: APP_SETTINGS_QUERY_KEY }),
+  });
+  const disabled = isLoading || mutation.isPending || error !== null;
+  const hasError = mutation.isError || error !== null;
+
+  const { mutate, variables } = mutation;
+  const retry = useCallback(() => {
+    if (error !== null) {
+      void queryClient.invalidateQueries({ queryKey: APP_SETTINGS_QUERY_KEY });
+      return;
+    }
+    if (variables !== undefined) mutate(variables);
+  }, [error, queryClient, variables, mutate]);
+
+  return (
+    <View style={[settingsStyles.row, styles.separatorBelow]}>
+      <View style={settingsStyles.rowContent}>
+        <Text style={settingsStyles.rowTitle}>{t("settings.shortcuts.paneFocusInTextFields")}</Text>
+        <Text style={settingsStyles.rowHint}>
+          {t("settings.shortcuts.paneFocusInTextFieldsHint")}
+        </Text>
+        {mutation.isPending && (
+          <Text style={settingsStyles.rowHint}>{t("settings.shortcuts.saving")}</Text>
+        )}
+        {hasError && (
+          <View>
+            <Text style={settingsStyles.rowError} testID="pane-focus-text-fields-error">
+              {t("settings.shortcuts.paneFocusSettingFailed")}
+            </Text>
+            <Button variant="ghost" size="sm" onPress={retry}>
+              {t("common.actions.retry")}
+            </Button>
+          </View>
+        )}
+      </View>
+      <Switch
+        value={settings.paneFocusInTextFields}
+        onValueChange={mutation.mutate}
+        disabled={disabled}
+        accessibilityLabel={t("settings.shortcuts.paneFocusInTextFields")}
+        testID="pane-focus-text-fields-toggle"
+      />
+    </View>
+  );
+}
+
 export function KeyboardShortcutsSection() {
   const { t } = useTranslation();
   const [capturingBindingId, setCapturingBindingId] = useState<string | null>(null);
@@ -452,6 +508,7 @@ export function KeyboardShortcutsSection() {
             trailing={sectionIndex === 0 ? resetAllButton : undefined}
           >
             <View style={settingsStyles.card}>
+              {section.id === "tabs-panes" && isMac && <PaneFocusInTextFieldsSetting />}
               {section.rows.map(function (row, index) {
                 const platform = { isMac, isDesktop: isDesktopApp };
                 const bindingId = getBindingIdForAction(row.id, platform);
@@ -494,6 +551,10 @@ export function KeyboardShortcutsSection() {
 }
 
 const styles = StyleSheet.create((theme) => ({
+  separatorBelow: {
+    borderBottomWidth: 1,
+    borderBottomColor: theme.colors.border,
+  },
   row: {
     flexDirection: "row",
     justifyContent: "space-between",

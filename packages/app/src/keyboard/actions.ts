@@ -24,6 +24,8 @@ export type KeyboardActionId =
   | "workspace.tab.target.browser"
   | "workspace.tab.target.changes"
   | "workspace.tab.target.files"
+  | "workspace.tab.rename-current"
+  | "workspace.rename"
   | "workspace.tab.close.current"
   | "workspace.tab.navigate.index"
   | "workspace.tab.navigate.relative"

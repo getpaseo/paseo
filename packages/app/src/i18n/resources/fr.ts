@@ -2255,6 +2255,12 @@ export const fr: TranslationResources = {
       dialogTitle: "Raccourcis",
       searchPlaceholder: "Rechercher des raccourcis",
       unavailableOnMobile: "Les raccourcis clavier ne sont disponibles que sur le bureau",
+      paneFocusInTextFields: "Utiliser les raccourcis de panneau dans les champs de texte",
+      paneFocusInTextFieldsHint:
+        "Déplace le focus entre les panneaux au lieu d’étendre la sélection de texte",
+      paneFocusSettingFailed:
+        "Impossible d’enregistrer cette préférence. Réessayez pour la conserver après le redémarrage.",
+      saving: "Enregistrement...",
       capturePrompt: "Appuyez sur le raccourci...",
       unassigned: "Non défini",
       actions: {
@@ -2275,6 +2281,7 @@ export const fr: TranslationResources = {
         agentInput: "EntréeAgent",
       },
       help: {
+        renameCurrentTab: "Renommer l’onglet actuel",
         openProject: "Projet ouvert",
         newWorkspace: "Nouvel espace de travail",
         newWorktree: "Nouvel arbre de travail",

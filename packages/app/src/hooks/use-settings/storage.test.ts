@@ -42,6 +42,26 @@ function makeDeps(
 }
 
 describe("loadAppSettingsFromStorage", () => {
+  it("defaults pane focus in text fields to off for old or malformed settings", async () => {
+    for (const stored of [{}, { paneFocusInTextFields: "true" }]) {
+      const deps = makeDeps({
+        storage: createInMemoryKeyValueStorage({
+          [APP_SETTINGS_KEY]: JSON.stringify(stored),
+        }),
+      });
+      expect((await loadAppSettingsFromStorage(deps)).paneFocusInTextFields).toBe(false);
+    }
+  });
+
+  it("persists enabling and disabling pane focus in text fields", async () => {
+    const deps = makeDeps();
+    const queryClient = new QueryClient();
+    for (const enabled of [true, false]) {
+      await saveAppSettings({ queryClient, updates: { paneFocusInTextFields: enabled }, deps });
+      expect((await loadAppSettingsFromStorage(deps)).paneFocusInTextFields).toBe(enabled);
+    }
+  });
+
   it("preserves a persisted steer send behavior", async () => {
     const deps = makeDeps({
       storage: createInMemoryKeyValueStorage({

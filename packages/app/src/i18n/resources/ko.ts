@@ -2208,6 +2208,11 @@ export const ko: TranslationResources = {
       dialogTitle: "단축키",
       searchPlaceholder: "검색 단축키",
       unavailableOnMobile: "키보드 단축키는 데스크톱에서만 사용할 수 있습니다",
+      paneFocusInTextFields: "입력창에서 패널 포커스 단축키 사용",
+      paneFocusInTextFieldsHint: "텍스트 선택 영역을 확장하는 대신 패널 사이로 포커스를 이동합니다",
+      paneFocusSettingFailed:
+        "설정을 저장하지 못했습니다. 재시작 후에도 유지하려면 다시 시도하세요.",
+      saving: "저장 중...",
       capturePrompt: "단축키를 누르세요...",
       unassigned: "설정되지 않음",
       actions: {
@@ -2228,6 +2233,7 @@ export const ko: TranslationResources = {
         agentInput: "에이전트 입력",
       },
       help: {
+        renameCurrentTab: "현재 탭 이름 변경",
         openProject: "프로젝트 열기",
         newWorkspace: "새 워크스페이스",
         newWorktree: "새 워크트리",

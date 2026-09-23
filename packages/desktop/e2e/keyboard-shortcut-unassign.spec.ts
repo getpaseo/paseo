@@ -1,3 +1,15 @@
+import {
+  clickNewChat,
+  clickNewTerminal,
+  gotoWorkspace,
+} from "../../app/e2e/support/helpers/launcher";
+import { seedWorkspace } from "../../app/e2e/support/helpers/seed-client";
+import { getServerId } from "../../app/e2e/support/helpers/server-id";
+import { renameModalInput, renameModalSubmit } from "../../app/e2e/support/helpers/rename";
+import { composerLocator } from "../../app/e2e/support/helpers/composer";
+import { runWorkspaceActionFromCommandCenter } from "../../app/e2e/support/helpers/command-center-workspace-actions";
+import { waitForWorkspaceTabsVisible } from "../../app/e2e/support/helpers/workspace-tabs";
+import { clickSettingsBackToWorkspace } from "../../app/e2e/support/helpers/settings";
 import type { Page } from "@playwright/test";
 import { test, expect } from "../../app/e2e/support/fixtures";
 import { gotoAppShell, openSettings } from "../../app/e2e/support/helpers/app";
@@ -145,4 +157,169 @@ test("unassigning a shortcut leaves it inert until it is reset", async ({ page }
   await expect(dialog).toBeVisible({ timeout: 10_000 });
   await page.keyboard.press("Escape");
   await expect(dialog).not.toBeVisible({ timeout: 10_000 });
+});
+
+async function bindShortcut(page: Page, input: { id: string; combo: string }): Promise<void> {
+  await page.getByTestId(`shortcut-actions-${input.id}`).click();
+  await page.getByTestId(`shortcut-bind-${input.id}`).click();
+  await page.keyboard.press(input.combo);
+  await page.getByRole("button", { name: "Done", exact: true }).click();
+}
+
+function workspaceRowTestId(workspaceId: string): string {
+  return `sidebar-workspace-row-${getServerId()}:${workspaceId}`;
+}
+
+test.describe("Rename and editable shortcut preferences", () => {
+  test.use({
+    viewport: { width: 1280, height: 1100 },
+    userAgent:
+      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/130.0.0.0 Safari/537.36",
+  });
+
+  test("shows rename choices and persists the text-field toggle", async ({ page }, testInfo) => {
+    await installDesktopBridge(page);
+    await gotoAppShell(page);
+    await openSettings(page);
+    await openSettingsSection(page, "shortcuts");
+    await expect(page.getByTestId("shortcut-actions-workspace-rename")).toBeVisible();
+    await expect(page.getByTestId("shortcut-actions-workspace-tab-rename-current")).toBeVisible();
+    const toggle = page.getByTestId("pane-focus-text-fields-toggle");
+    await expect(toggle).not.toBeChecked();
+    await toggle.click();
+    await expect(toggle).toBeChecked();
+    await expect(toggle).toBeEnabled();
+    await page.reload();
+    await openSettings(page);
+    await openSettingsSection(page, "shortcuts");
+    await expect(toggle).toBeChecked();
+    await page.getByTestId("shortcut-actions-workspace-rename").scrollIntoViewIfNeeded();
+    await expect(
+      page.getByText("Unable to load desktop daemon status.", { exact: true }),
+    ).not.toBeVisible();
+    await page.screenshot({ path: testInfo.outputPath("shortcut-settings.png"), fullPage: true });
+    await page
+      .getByTestId("shortcut-actions-workspace-tab-rename-current")
+      .evaluate((element) => element.scrollIntoView({ block: "center" }));
+    await page.screenshot({
+      path: testInfo.outputPath("tab-shortcut-settings.png"),
+      fullPage: true,
+    });
+    await toggle.click();
+    await expect(toggle).not.toBeChecked();
+    await expect(toggle).toBeEnabled();
+    await page.reload();
+    await openSettings(page);
+    await openSettingsSection(page, "shortcuts");
+    await expect(toggle).not.toBeChecked();
+  });
+});
+
+test("settings-bound workspace rename persists after reload", async ({ page }) => {
+  const workspace = await seedWorkspace({ repoPrefix: "shortcut-workspace-rename-" });
+  try {
+    await installDesktopBridge(page);
+    await gotoWorkspace(page, workspace.workspaceId);
+    await openSettings(page);
+    await openSettingsSection(page, "shortcuts");
+    await bindShortcut(page, { id: "workspace-rename", combo: "Control+Alt+Shift+r" });
+    await clickSettingsBackToWorkspace(page);
+    await page.keyboard.press("Control+Alt+Shift+r");
+    const input = page.getByTestId("workspace-rename-modal-global-input");
+    await expect(input).toBeVisible();
+    await input.fill("Shortcut renamed workspace");
+    await page.getByTestId("workspace-rename-modal-global-submit").click();
+    await expect(input).toHaveCount(0);
+    await page.reload();
+    await expect(page.getByTestId(workspaceRowTestId(workspace.workspaceId))).toContainText(
+      "Shortcut renamed workspace",
+    );
+    await page.keyboard.press("Control+Alt+Shift+r");
+    await expect(input).toHaveValue("Shortcut renamed workspace");
+    await page.keyboard.press("Escape");
+  } finally {
+    await workspace.cleanup();
+  }
+});
+
+test("settings-bound current tab rename updates the focused terminal", async ({ page }) => {
+  const workspace = await seedWorkspace({ repoPrefix: "shortcut-tab-rename-" });
+  let terminalId: string | null = null;
+  try {
+    await installDesktopBridge(page);
+    await gotoWorkspace(page, workspace.workspaceId);
+    await clickNewTerminal(page);
+    await expect
+      .poll(
+        async () =>
+          (
+            await workspace.client.listTerminals(workspace.repoPath, undefined, {
+              workspaceId: workspace.workspaceId,
+            })
+          ).terminals.length,
+      )
+      .toBe(1);
+    terminalId = (
+      await workspace.client.listTerminals(workspace.repoPath, undefined, {
+        workspaceId: workspace.workspaceId,
+      })
+    ).terminals[0]!.id;
+    await openSettings(page);
+    await openSettingsSection(page, "shortcuts");
+    await bindShortcut(page, { id: "workspace-tab-rename-current", combo: "Control+Alt+r" });
+    await clickSettingsBackToWorkspace(page);
+    await page.keyboard.press("Control+Alt+r");
+    const prefix = `workspace-tab-rename-modal-terminal-${terminalId}`;
+    const input = renameModalInput(page, prefix);
+    await expect(input).toBeVisible();
+    await input.fill("Shortcut renamed terminal");
+    await renameModalSubmit(page, prefix).click();
+    await expect(input).toHaveCount(0);
+    await expect(page.getByTestId(`workspace-tab-terminal_${terminalId}`).first()).toContainText(
+      "Shortcut renamed terminal",
+    );
+  } finally {
+    if (terminalId) await workspace.client.killTerminal(terminalId);
+    await workspace.cleanup();
+  }
+});
+
+test.describe("Opt-in pane focus from text fields", () => {
+  test.use({
+    userAgent:
+      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/130.0.0.0 Safari/537.36",
+  });
+  test("the toggle enables pane navigation from the composer", async ({ page }) => {
+    const workspace = await seedWorkspace({ repoPrefix: "pane-focus-text-field-" });
+    try {
+      await installDesktopBridge(page);
+      await gotoWorkspace(page, workspace.workspaceId);
+      await waitForWorkspaceTabsVisible(page);
+      await clickNewChat(page);
+      await runWorkspaceActionFromCommandCenter(page, "Split pane right");
+      const composer = composerLocator(page);
+      await composer.fill("Select this text");
+      await page.keyboard.press("Meta+Shift+ArrowRight");
+      await expect(composer).toBeFocused();
+      await openSettings(page);
+      await openSettingsSection(page, "shortcuts");
+      const toggle = page.getByTestId("pane-focus-text-fields-toggle");
+      await toggle.click();
+      await expect(toggle).toBeChecked();
+      await expect(toggle).toBeEnabled();
+      await clickSettingsBackToWorkspace(page);
+      await composer.click();
+      await page.keyboard.press("Meta+Shift+ArrowRight");
+      await expect(
+        page
+          .getByTestId("workspace-new-tab-panel")
+          .filter({ visible: true })
+          .getByRole("button", { name: "Agent", exact: true }),
+      ).toBeFocused();
+      await page.keyboard.press("Meta+Shift+ArrowLeft");
+      await expect(composer).toBeFocused();
+    } finally {
+      await workspace.cleanup();
+    }
+  });
 });
