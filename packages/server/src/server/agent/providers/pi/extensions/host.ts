@@ -7,6 +7,8 @@ import type {
   PiExtensionToolMapping,
   PiExtensionUiResponse,
 } from "./contract.js";
+import type { PiAgentMessage } from "../rpc-types.js";
+import type { PiExtensionCustomMapping } from "./contract.js";
 
 export class PiExtensionHost {
   private readonly sessions;
@@ -18,6 +20,16 @@ export class PiExtensionHost {
   mapToolCall(call: PiExtensionToolCall): PiExtensionToolMapping | undefined {
     for (const session of this.sessions) {
       const mapping = session.mapToolCall?.(call);
+      if (mapping) return mapping;
+    }
+    return undefined;
+  }
+
+  mapCustomMessage(
+    message: Extract<PiAgentMessage, { role: "custom" }>,
+  ): PiExtensionCustomMapping | undefined {
+    for (const session of this.sessions) {
+      const mapping = session.mapCustomMessage?.(message);
       if (mapping) return mapping;
     }
     return undefined;

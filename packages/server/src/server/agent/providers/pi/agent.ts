@@ -61,6 +61,7 @@ import {
 import {
   getUserMessageText,
   streamPiHistory,
+  mapPiChildSession,
   type PiCapturedUserMessageEntry,
 } from "./history-mapper.js";
 import { materializeProviderImage } from "../provider-image-output.js";
@@ -2259,6 +2260,19 @@ export class PiRpcAgentSession implements AgentSession {
       return;
     }
     if (event.message.role === "custom") {
+      const customMapping = this.extensionHost.mapCustomMessage(event.message);
+      for (const subagent of customMapping?.subagents ?? []) {
+        this.emit({ type: "provider_subagent", provider: this.provider, event: subagent });
+      }
+      for (const child of customMapping?.childSessions ?? []) {
+        for (const subagent of mapPiChildSession(child.id, child.file)) {
+          this.emit({ type: "provider_subagent", provider: this.provider, event: subagent });
+        }
+      }
+      if (customMapping) {
+        if (!this.activeTurnStarted) this.completeTurn(turnId, []);
+        return;
+      }
       const text = getUserMessageText(event.message.content);
       if (text) {
         this.emit({
@@ -2310,6 +2324,14 @@ export class PiRpcAgentSession implements AgentSession {
     });
     for (const timelineItem of mapping?.timeline ?? []) {
       this.emit({ type: "timeline", provider: this.provider, turnId, item: timelineItem });
+    }
+    for (const subagent of mapping?.subagents ?? []) {
+      this.emit({ type: "provider_subagent", provider: this.provider, event: subagent });
+    }
+    for (const child of mapping?.childSessions ?? []) {
+      for (const subagent of mapPiChildSession(child.id, child.file)) {
+        this.emit({ type: "provider_subagent", provider: this.provider, event: subagent });
+      }
     }
     return true;
   }

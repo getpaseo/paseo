@@ -41,6 +41,9 @@ export type PiAgentMessage =
   | {
       role: "custom";
       content: string | Array<PiTextContent | PiImageContent>;
+      customType?: string;
+      details?: unknown;
+      display?: boolean;
     }
   | {
       role: "assistant";

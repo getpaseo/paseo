@@ -1,4 +1,7 @@
 import type { AgentStreamEvent, AgentTimelineItem, ToolCallDetail } from "../../agent-sdk-types.js";
+import { openSync, readSync, closeSync } from "node:fs";
+import { limitAgentTimelineItemContent } from "../../agent-timeline-content.js";
+import type { ProviderSubagentInputEvent } from "../../provider-subagents/store.js";
 import { createPiExtensionHost, type PiExtensionHost } from "./extensions/index.js";
 import type { PiAgentMessage, PiImageContent, PiTextContent } from "./rpc-types.js";
 import {
@@ -114,6 +117,20 @@ export class PiHistoryMapper {
   private mapCustomMessage(
     message: Extract<PiAgentMessage, { role: "custom" }>,
   ): AgentStreamEvent[] {
+    const extensionMapping = this.extensionHost.mapCustomMessage(message);
+    if (extensionMapping) {
+      const inputs = [
+        ...extensionMapping.subagents,
+        ...(extensionMapping.childSessions ?? []).flatMap(({ id, file }) =>
+          mapPiChildSession(id, file),
+        ),
+      ];
+      return inputs.map((event) => ({
+        type: "provider_subagent",
+        provider: this.provider,
+        event,
+      }));
+    }
     const text = getUserMessageText(message.content);
     const mappedEvent = text ? this.hooks.mapCustomMessage?.(text, this.provider) : null;
     if (mappedEvent) {
@@ -180,6 +197,7 @@ export class PiHistoryMapper {
             error: null,
           },
         });
+        events.push(...this.mapSubagents(mapping));
       }
     }
     return events;
@@ -222,7 +240,17 @@ export class PiHistoryMapper {
           item,
         }),
       ),
+      ...this.mapSubagents(mapping),
     ];
+  }
+
+  private mapSubagents(mapping: ReturnType<PiExtensionHost["mapToolCall"]>): AgentStreamEvent[] {
+    if (!mapping) return [];
+    const inputs = [
+      ...(mapping.subagents ?? []),
+      ...(mapping.childSessions ?? []).flatMap(({ id, file }) => mapPiChildSession(id, file)),
+    ];
+    return inputs.map((event) => ({ type: "provider_subagent", provider: this.provider, event }));
   }
 
   private mapBashExecutionMessage(
@@ -262,6 +290,52 @@ export class PiHistoryMapper {
     return hook
       ? hook(toolCall, result, { toolCallId })
       : (extensionDetail ?? mapToolDetail(toolCall, result));
+  }
+}
+
+/** A child session is immutable once its completion result exposes the file. */
+export function mapPiChildSession(id: string, file: string): ProviderSubagentInputEvent[] {
+  const MAX_BYTES = 2 * 1024 * 1024;
+  const MAX_ITEMS = 200;
+  let fd: number;
+  try {
+    fd = openSync(file, "r");
+  } catch {
+    return [];
+  }
+  try {
+    const buffer = Buffer.alloc(MAX_BYTES);
+    const bytes = readSync(fd, buffer, 0, MAX_BYTES, 0);
+    const text = buffer.toString("utf8", 0, bytes);
+    const completeText = bytes === MAX_BYTES ? text.slice(0, text.lastIndexOf("\n")) : text;
+    const mapper = new PiHistoryMapper("pi");
+    const events: ProviderSubagentInputEvent[] = [];
+    for (const line of completeText.split("\n")) {
+      if (!line || events.length >= MAX_ITEMS) break;
+      let entry: { type?: string; message?: PiAgentMessage; timestamp?: string };
+      try {
+        entry = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      if (!entry.message || typeof entry.message !== "object" || !("role" in entry.message))
+        continue;
+      for (const mapped of mapper.mapMessages([entry.message])) {
+        if (mapped.type !== "timeline") continue;
+        events.push({
+          type: "timeline",
+          id,
+          item: limitAgentTimelineItemContent(mapped.item),
+          ...(entry.timestamp ? { timestamp: entry.timestamp } : {}),
+        });
+        if (events.length >= MAX_ITEMS) break;
+      }
+    }
+    return events;
+  } catch {
+    return [];
+  } finally {
+    closeSync(fd);
   }
 }
 

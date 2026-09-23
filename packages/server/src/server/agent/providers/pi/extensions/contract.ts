@@ -6,6 +6,8 @@ import type {
 } from "../../../agent-sdk-types.js";
 import type { PiRuntimeEvent } from "../rpc-types.js";
 import type { PiToolResult } from "../tool-call-mapper.js";
+import type { ProviderSubagentInputEvent } from "../../../provider-subagents/store.js";
+import type { PiAgentMessage } from "../rpc-types.js";
 
 export interface PiExtensionToolCall {
   callId: string;
@@ -19,6 +21,14 @@ export interface PiExtensionToolMapping {
   name?: string;
   detail?: ToolCallDetail;
   timeline?: AgentTimelineItem[];
+  subagents?: ProviderSubagentInputEvent[];
+  /** Completed Pi child sessions to hydrate through the normal Pi history mapper. */
+  childSessions?: Array<{ id: string; file: string }>;
+}
+
+export interface PiExtensionCustomMapping {
+  subagents: ProviderSubagentInputEvent[];
+  childSessions?: Array<{ id: string; file: string }>;
 }
 
 export type PiExtensionDialog = Extract<PiRuntimeEvent, { type: "extension_ui_request" }>;
@@ -33,6 +43,9 @@ export type PiExtensionDialogMapping =
 
 export interface PiExtensionSession {
   mapToolCall?(call: PiExtensionToolCall): PiExtensionToolMapping | undefined;
+  mapCustomMessage?(
+    message: Extract<PiAgentMessage, { role: "custom" }>,
+  ): PiExtensionCustomMapping | undefined;
   onToolStart?(call: PiExtensionToolCall): void;
   onToolEnd?(call: PiExtensionToolCall): void;
   mapDialog?(dialog: PiExtensionDialog, provider: string): PiExtensionDialogMapping | undefined;
