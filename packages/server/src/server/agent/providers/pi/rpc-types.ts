@@ -74,6 +74,7 @@ export interface PiModel {
   id: string;
   name?: string;
   reasoning?: boolean;
+  thinkingLevelMap?: Record<string, string | null>;
   contextWindow?: number;
   maxTokens?: number;
   api?: string;

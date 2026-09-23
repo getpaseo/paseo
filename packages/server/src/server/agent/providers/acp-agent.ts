@@ -2614,8 +2614,13 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       (params.env ?? []).map((entry: EnvVariable) => [entry.name, entry.value]),
     );
     const terminalCommand = resolveTerminalCommand(params.command, params.args);
+    // The terminal is a sibling of the agent process, not a child, so it inherits
+    // nothing from it. Carry the agent's launch environment the way spawnProcess
+    // does, keeping the requested terminal environment on top.
     const commandEnvOverlays =
-      terminalCommand.shell === false ? [env, createStringCommandShellEnvOverlay()] : [env];
+      terminalCommand.shell === false
+        ? [this.launchEnv, env, createStringCommandShellEnvOverlay()]
+        : [this.launchEnv, env];
     const child = spawnProcess(terminalCommand.command, terminalCommand.args, {
       cwd: params.cwd ?? this.config.cwd,
       ...createProviderEnvSpec({

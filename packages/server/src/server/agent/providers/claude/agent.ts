@@ -3374,9 +3374,19 @@ class ClaudeAgentSession implements AgentSession {
           };
         }
     > = [];
+    // Claude Code expands a slash command only when it is the last content block of the user
+    // message. buildAgentPrompt places the typed text ahead of images and rendered attachments,
+    // so a "/command" sent with a pasted link or a screenshot would otherwise reach the model as
+    // literal text instead of the command it names.
+    let typedSlashCommandIndex = -1;
     if (Array.isArray(prompt)) {
       for (const chunk of prompt) {
         if (chunk.type === "text") {
+          // Attachments rendered as text always carry a mimeType; the composer's typed text does
+          // not. Only the typed block can be a slash command the user meant to invoke.
+          if (!("mimeType" in chunk) && this.parseSlashCommandInput(chunk.text)) {
+            typedSlashCommandIndex = content.length;
+          }
           content.push({ type: "text", text: chunk.text });
         } else if (chunk.type === "image") {
           if (isImageMimeType(chunk.mimeType)) {
@@ -3395,6 +3405,10 @@ class ClaudeAgentSession implements AgentSession {
       }
     } else {
       content.push({ type: "text", text: prompt });
+    }
+    if (typedSlashCommandIndex >= 0 && typedSlashCommandIndex < content.length - 1) {
+      const [slashCommand] = content.splice(typedSlashCommandIndex, 1);
+      content.push(slashCommand);
     }
 
     const messageId = randomUUID();
