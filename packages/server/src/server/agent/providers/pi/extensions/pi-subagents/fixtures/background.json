@@ -39,14 +39,10 @@
             "version": 1,
             "source": "launch-resolved",
             "disableAmbientExtensions": false,
-            "runtime": [
-              "sha256:c41552bd9557eaab"
-            ],
+            "runtime": ["sha256:c41552bd9557eaab"],
             "configured": [],
             "required": [],
-            "effective": [
-              "sha256:c41552bd9557eaab"
-            ],
+            "effective": ["sha256:c41552bd9557eaab"],
             "omitted": {
               "runtime": 0,
               "configured": 0,
@@ -172,14 +168,10 @@
           "version": 1,
           "source": "launch-resolved",
           "disableAmbientExtensions": false,
-          "runtime": [
-            "sha256:c41552bd9557eaab"
-          ],
+          "runtime": ["sha256:c41552bd9557eaab"],
           "configured": [],
           "required": [],
-          "effective": [
-            "sha256:c41552bd9557eaab"
-          ],
+          "effective": ["sha256:c41552bd9557eaab"],
           "omitted": {
             "runtime": 0,
             "configured": 0,

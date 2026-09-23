@@ -43,14 +43,10 @@
                 "version": 1,
                 "source": "launch-resolved",
                 "disableAmbientExtensions": true,
-                "runtime": [
-                  "sha256:c41552bd9557eaab"
-                ],
+                "runtime": ["sha256:c41552bd9557eaab"],
                 "configured": [],
                 "required": [],
-                "effective": [
-                  "sha256:c41552bd9557eaab"
-                ],
+                "effective": ["sha256:c41552bd9557eaab"],
                 "omitted": {
                   "runtime": 0,
                   "configured": 0,
@@ -102,38 +98,25 @@
                 "effectiveAcceptance": {
                   "level": "attested",
                   "explicit": false,
-                  "inferredReason": [
-                    "default lightweight attestation"
-                  ],
+                  "inferredReason": ["default lightweight attestation"],
                   "criteria": [
                     {
                       "id": "criterion-1",
                       "must": "Return a concise result and residual risks when applicable",
-                      "evidence": [
-                        "manual-notes",
-                        "residual-risks"
-                      ],
+                      "evidence": ["manual-notes", "residual-risks"],
                       "severity": "required"
                     }
                   ],
-                  "evidence": [
-                    "manual-notes",
-                    "residual-risks"
-                  ],
+                  "evidence": ["manual-notes", "residual-risks"],
                   "verify": [],
                   "stopRules": []
                 },
-                "inferredReason": [
-                  "default lightweight attestation"
-                ],
+                "inferredReason": ["default lightweight attestation"],
                 "criteria": [
                   {
                     "id": "criterion-1",
                     "must": "Return a concise result and residual risks when applicable",
-                    "evidence": [
-                      "manual-notes",
-                      "residual-risks"
-                    ],
+                    "evidence": ["manual-notes", "residual-risks"],
                     "severity": "required"
                   }
                 ],
@@ -150,17 +133,11 @@
                   "changedFiles": [],
                   "testsAddedOrUpdated": [],
                   "commandsRun": [],
-                  "validationOutput": [
-                    "Directory contents: (empty directory)"
-                  ],
-                  "residualRisks": [
-                    "Workspace is empty"
-                  ],
+                  "validationOutput": ["Directory contents: (empty directory)"],
+                  "residualRisks": ["Workspace is empty"],
                   "noStagedFiles": true,
                   "diffSummary": "No source files changed. Output written to subagent artifacts path.",
-                  "reviewFindings": [
-                    "No code issues; directory is empty."
-                  ],
+                  "reviewFindings": ["No code issues; directory is empty."],
                   "manualNotes": "Listed current workspace directory and generated required context artifact."
                 }
               },
@@ -258,38 +235,25 @@
               "effectiveAcceptance": {
                 "level": "attested",
                 "explicit": false,
-                "inferredReason": [
-                  "default lightweight attestation"
-                ],
+                "inferredReason": ["default lightweight attestation"],
                 "criteria": [
                   {
                     "id": "criterion-1",
                     "must": "Return a concise result and residual risks when applicable",
-                    "evidence": [
-                      "manual-notes",
-                      "residual-risks"
-                    ],
+                    "evidence": ["manual-notes", "residual-risks"],
                     "severity": "required"
                   }
                 ],
-                "evidence": [
-                  "manual-notes",
-                  "residual-risks"
-                ],
+                "evidence": ["manual-notes", "residual-risks"],
                 "verify": [],
                 "stopRules": []
               },
-              "inferredReason": [
-                "default lightweight attestation"
-              ],
+              "inferredReason": ["default lightweight attestation"],
               "criteria": [
                 {
                   "id": "criterion-1",
                   "must": "Return a concise result and residual risks when applicable",
-                  "evidence": [
-                    "manual-notes",
-                    "residual-risks"
-                  ],
+                  "evidence": ["manual-notes", "residual-risks"],
                   "severity": "required"
                 }
               ],
@@ -306,17 +270,11 @@
                 "changedFiles": [],
                 "testsAddedOrUpdated": [],
                 "commandsRun": [],
-                "validationOutput": [
-                  "Directory contents: (empty directory)"
-                ],
-                "residualRisks": [
-                  "Workspace is empty"
-                ],
+                "validationOutput": ["Directory contents: (empty directory)"],
+                "residualRisks": ["Workspace is empty"],
                 "noStagedFiles": true,
                 "diffSummary": "No source files changed. Output written to subagent artifacts path.",
-                "reviewFindings": [
-                  "No code issues; directory is empty."
-                ],
+                "reviewFindings": ["No code issues; directory is empty."],
                 "manualNotes": "Listed current workspace directory and generated required context artifact."
               }
             }
@@ -403,14 +361,10 @@
               "version": 1,
               "source": "launch-resolved",
               "disableAmbientExtensions": true,
-              "runtime": [
-                "sha256:c41552bd9557eaab"
-              ],
+              "runtime": ["sha256:c41552bd9557eaab"],
               "configured": [],
               "required": [],
-              "effective": [
-                "sha256:c41552bd9557eaab"
-              ],
+              "effective": ["sha256:c41552bd9557eaab"],
               "omitted": {
                 "runtime": 0,
                 "configured": 0,
@@ -462,38 +416,25 @@
               "effectiveAcceptance": {
                 "level": "attested",
                 "explicit": false,
-                "inferredReason": [
-                  "default lightweight attestation"
-                ],
+                "inferredReason": ["default lightweight attestation"],
                 "criteria": [
                   {
                     "id": "criterion-1",
                     "must": "Return a concise result and residual risks when applicable",
-                    "evidence": [
-                      "manual-notes",
-                      "residual-risks"
-                    ],
+                    "evidence": ["manual-notes", "residual-risks"],
                     "severity": "required"
                   }
                 ],
-                "evidence": [
-                  "manual-notes",
-                  "residual-risks"
-                ],
+                "evidence": ["manual-notes", "residual-risks"],
                 "verify": [],
                 "stopRules": []
               },
-              "inferredReason": [
-                "default lightweight attestation"
-              ],
+              "inferredReason": ["default lightweight attestation"],
               "criteria": [
                 {
                   "id": "criterion-1",
                   "must": "Return a concise result and residual risks when applicable",
-                  "evidence": [
-                    "manual-notes",
-                    "residual-risks"
-                  ],
+                  "evidence": ["manual-notes", "residual-risks"],
                   "severity": "required"
                 }
               ],
@@ -510,17 +451,11 @@
                 "changedFiles": [],
                 "testsAddedOrUpdated": [],
                 "commandsRun": [],
-                "validationOutput": [
-                  "Directory contents: (empty directory)"
-                ],
-                "residualRisks": [
-                  "Workspace is empty"
-                ],
+                "validationOutput": ["Directory contents: (empty directory)"],
+                "residualRisks": ["Workspace is empty"],
                 "noStagedFiles": true,
                 "diffSummary": "No source files changed. Output written to subagent artifacts path.",
-                "reviewFindings": [
-                  "No code issues; directory is empty."
-                ],
+                "reviewFindings": ["No code issues; directory is empty."],
                 "manualNotes": "Listed current workspace directory and generated required context artifact."
               }
             },
@@ -618,38 +553,25 @@
             "effectiveAcceptance": {
               "level": "attested",
               "explicit": false,
-              "inferredReason": [
-                "default lightweight attestation"
-              ],
+              "inferredReason": ["default lightweight attestation"],
               "criteria": [
                 {
                   "id": "criterion-1",
                   "must": "Return a concise result and residual risks when applicable",
-                  "evidence": [
-                    "manual-notes",
-                    "residual-risks"
-                  ],
+                  "evidence": ["manual-notes", "residual-risks"],
                   "severity": "required"
                 }
               ],
-              "evidence": [
-                "manual-notes",
-                "residual-risks"
-              ],
+              "evidence": ["manual-notes", "residual-risks"],
               "verify": [],
               "stopRules": []
             },
-            "inferredReason": [
-              "default lightweight attestation"
-            ],
+            "inferredReason": ["default lightweight attestation"],
             "criteria": [
               {
                 "id": "criterion-1",
                 "must": "Return a concise result and residual risks when applicable",
-                "evidence": [
-                  "manual-notes",
-                  "residual-risks"
-                ],
+                "evidence": ["manual-notes", "residual-risks"],
                 "severity": "required"
               }
             ],
@@ -666,17 +588,11 @@
               "changedFiles": [],
               "testsAddedOrUpdated": [],
               "commandsRun": [],
-              "validationOutput": [
-                "Directory contents: (empty directory)"
-              ],
-              "residualRisks": [
-                "Workspace is empty"
-              ],
+              "validationOutput": ["Directory contents: (empty directory)"],
+              "residualRisks": ["Workspace is empty"],
               "noStagedFiles": true,
               "diffSummary": "No source files changed. Output written to subagent artifacts path.",
-              "reviewFindings": [
-                "No code issues; directory is empty."
-              ],
+              "reviewFindings": ["No code issues; directory is empty."],
               "manualNotes": "Listed current workspace directory and generated required context artifact."
             }
           }
