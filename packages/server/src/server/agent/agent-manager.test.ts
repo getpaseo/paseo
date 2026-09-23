@@ -1492,7 +1492,9 @@ test("keeps one assistant message whole when a steer lands between its chunks", 
         }
       })(),
     },
-    agentStreamCoalesceWindowMs: 1,
+    // Zero window: every streamed chunk flushes on the coalescer's leading edge,
+    // so the timeline reaches its next state without waiting on a timer.
+    agentStreamCoalesceWindowMs: 0,
     logger,
   });
   let agentId: string | null = null;
@@ -1508,13 +1510,25 @@ test("keeps one assistant message whole when a steer lands between its chunks", 
     })();
     await manager.waitForAgentRunStart(agent.id);
 
+    const conversation = () =>
+      manager
+        .fetchTimeline(agent.id, { limit: 0 })
+        .rows.filter(
+          (row) => row.item.type === "assistant_message" || row.item.type === "user_message",
+        )
+        .map((row) => row.item);
+
     session.pushEvent({
       type: "timeline",
       provider: "codex",
       turnId: "active-turn-1",
       item: { type: "assistant_message", text: "with the uncommit", messageId: "msg-1" },
     });
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    await expect
+      .poll(conversation)
+      .toMatchObject([
+        { type: "assistant_message", text: "with the uncommit", messageId: "msg-1" },
+      ]);
     await expect(
       manager.steerAgentRun(agent.id, "keep going", { clientMessageId: "keep-going-client" }),
     ).resolves.toEqual({ status: "accepted" });
@@ -1524,15 +1538,8 @@ test("keeps one assistant message whole when a steer lands between its chunks", 
       turnId: "active-turn-1",
       item: { type: "assistant_message", text: "ted changes.", messageId: "msg-1" },
     });
-    await new Promise((resolve) => setTimeout(resolve, 20));
 
-    const rows = manager
-      .fetchTimeline(agent.id, { limit: 0 })
-      .rows.filter(
-        (row) => row.item.type === "assistant_message" || row.item.type === "user_message",
-      )
-      .map((row) => row.item);
-    expect(rows).toMatchObject([
+    await expect.poll(conversation).toMatchObject([
       { type: "assistant_message", text: "with the uncommitted changes.", messageId: "msg-1" },
       { type: "user_message", text: "keep going" },
     ]);
