@@ -88,10 +88,22 @@ function matchesNameAndTarget(
   );
 }
 
+function parseStoredSchedule(
+  content: string,
+): { success: true; data: StoredSchedule } | { success: false; error: unknown } {
+  let json: unknown;
+  try {
+    json = JSON.parse(content);
+  } catch (error) {
+    return { success: false, error };
+  }
+  return StoredScheduleSchema.safeParse(json);
+}
+
 export class ScheduleStore {
   private readonly scheduleMutations = new Map<string, Promise<unknown>>();
   private readonly identityMutations = new Map<string, Promise<unknown>>();
-  private readonly reportedInvalidFiles = new Set<string>();
+  private reportedInvalidFiles = new Set<string>();
 
   constructor(
     private readonly dir: string,
@@ -106,34 +118,33 @@ export class ScheduleStore {
     await mkdir(this.dir, { recursive: true });
   }
 
+  // The service lists schedules on every tick, so a file that is not a valid schedule is
+  // reported when it first appears rather than once per second.
   async list(): Promise<StoredSchedule[]> {
     await this.ensureDir();
     const entries = await readdir(this.dir, { withFileTypes: true });
-    const schedules = await Promise.all(
+    const files = await Promise.all(
       entries
         .filter((entry) => entry.isFile() && entry.name.endsWith(".json"))
-        .map((entry) => this.readScheduleFile(join(this.dir, entry.name))),
+        .map(async (entry) => {
+          const filePath = join(this.dir, entry.name);
+          return { filePath, parsed: parseStoredSchedule(await readFile(filePath, "utf-8")) };
+        }),
     );
-    return schedules
-      .filter((schedule): schedule is StoredSchedule => schedule !== null)
-      .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
-  }
-
-  // The service lists schedules on every tick, so each unreadable file is reported once
-  // instead of once per second.
-  private async readScheduleFile(filePath: string): Promise<StoredSchedule | null> {
-    try {
-      const content = await readFile(filePath, "utf-8");
-      const schedule = StoredScheduleSchema.parse(JSON.parse(content));
-      this.reportedInvalidFiles.delete(filePath);
-      return schedule;
-    } catch (error) {
-      if (!this.reportedInvalidFiles.has(filePath)) {
-        this.reportedInvalidFiles.add(filePath);
-        this.logger.error({ err: error, filePath }, "Skipping invalid schedule file");
+    const schedules: StoredSchedule[] = [];
+    const invalidFiles = new Set<string>();
+    for (const { filePath, parsed } of files) {
+      if (parsed.success) {
+        schedules.push(parsed.data);
+        continue;
       }
-      return null;
+      invalidFiles.add(filePath);
+      if (!this.reportedInvalidFiles.has(filePath)) {
+        this.logger.error({ err: parsed.error, filePath }, "Skipping invalid schedule file");
+      }
     }
+    this.reportedInvalidFiles = invalidFiles;
+    return schedules.sort((left, right) => left.createdAt.localeCompare(right.createdAt));
   }
 
   async get(id: string): Promise<StoredSchedule | null> {

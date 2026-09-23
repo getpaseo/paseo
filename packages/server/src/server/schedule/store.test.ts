@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Writable } from "node:stream";
@@ -50,7 +50,7 @@ describe("ScheduleStore", () => {
     expect(listed).toEqual([created]);
   });
 
-  test("reports each schedule file it cannot read once, by name, and lists the rest", async () => {
+  test("reports an invalid schedule file once while it stays invalid, by name, and lists the rest", async () => {
     const created = await store.create({
       name: "Morning summary",
       prompt: "Summarize new commits",
@@ -81,11 +81,27 @@ describe("ScheduleStore", () => {
 
     expect(await reloaded.list()).toEqual([created]);
     expect(await reloaded.list()).toEqual([created]);
+    await rm(join(tempDir, "notes.json"));
+    expect(await reloaded.list()).toEqual([created]);
+    await writeFile(join(tempDir, "notes.json"), "{ not json");
+    expect(await reloaded.list()).toEqual([created]);
 
-    expect(logLines.map(({ msg, filePath }) => ({ msg, filePath }))).toEqual([
-      { msg: "Skipping invalid schedule file", filePath: join(tempDir, "notes.json") },
-    ]);
+    const skipped = {
+      msg: "Skipping invalid schedule file",
+      filePath: join(tempDir, "notes.json"),
+    };
+    expect(logLines.map(({ msg, filePath }) => ({ msg, filePath }))).toEqual([skipped, skipped]);
   });
+
+  test.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+    "fails the listing when a schedule file cannot be read",
+    async () => {
+      await writeFile(join(tempDir, "unreadable.json"), "{}");
+      await chmod(join(tempDir, "unreadable.json"), 0o000);
+
+      await expect(store.list()).rejects.toMatchObject({ code: "EACCES" });
+    },
+  );
 
   test("update round-trips an updated schedule to disk", async () => {
     const created = await store.create({
@@ -253,7 +269,7 @@ describe("ScheduleStore", () => {
       }
     }
 
-    const gatedStore = new GatedListScheduleStore(tempDir);
+    const gatedStore = new GatedListScheduleStore(tempDir, createTestLogger());
     const target = {
       type: "new-agent" as const,
       config: { provider: "claude" as const, cwd: tempDir },
