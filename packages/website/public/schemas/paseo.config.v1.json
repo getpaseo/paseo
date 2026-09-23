@@ -355,6 +355,11 @@
               "type": "integer",
               "exclusiveMinimum": 0,
               "maximum": 2147483647
+            },
+            "codexIdleBackendTimeoutMs": {
+              "type": "integer",
+              "minimum": 60000,
+              "maximum": 2147483647
             }
           },
           "additionalProperties": false

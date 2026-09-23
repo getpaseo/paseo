@@ -50,6 +50,25 @@ codex
 
 Paseo uses this installation and its existing authentication when you start a Codex agent.
 
+## Release idle Codex backends
+
+By default, an idle Codex agent keeps its app-server running. To release persisted Codex backends
+after 15 minutes of inactivity, add this to `$PASEO_HOME/config.json`:
+
+```json
+{
+  "agents": {
+    "codexIdleBackendTimeoutMs": 900000
+  }
+}
+```
+
+The agent remains in Paseo as `closed`, not archived. Opening or prompting it later resumes the same
+agent ID and Codex thread; the next response has a cold-start delay. Accessing an idle agent resets
+its timeout. A daemon restart is required after changing this setting. A Codex backend can own
+background commands even while the agent shows `idle`. Eviction stops those commands, so leave the
+setting unset if they must continue between turns.
+
 ## Codex is missing in Paseo
 
 The ChatGPT desktop app and the Codex CLI are separate installs. Installing the desktop app does not make the `codex` command available to Paseo.

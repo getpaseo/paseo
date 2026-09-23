@@ -333,6 +333,8 @@ export interface AgentManagerOptions {
   resolvePaseoToolPolicy?: (provider: AgentProvider) => ProviderPaseoToolsPolicy | undefined;
   appendSystemPrompt?: string;
   agentStreamCoalesceWindowMs?: number;
+  /** Opt-in timeout for releasing idle, persisted Codex app-server backends. */
+  codexIdleBackendTimeoutMs?: number;
   rescueTimeouts?: AgentManagerRescueTimeouts;
   beforeSteerUnavailableFallback?: (input: {
     agentId: string;
@@ -739,6 +741,12 @@ export class AgentManager {
   private readonly inFlightAgentCloses = new Map<string, Promise<void>>();
   private readonly reloadedSessionCloses = new WeakMap<AgentSession, Promise<void>>();
   private readonly lifecycleMutationTails = new Map<string, Promise<void>>();
+  private readonly inFlightOutOfBand = new Map<string, number>();
+  private readonly idleBackendTimers = new Map<
+    string,
+    { session: AgentSession; timer: NodeJS.Timeout }
+  >();
+  private readonly codexIdleBackendTimeoutMs: number | undefined;
   private readonly agentStreamCoalescer: AgentStreamCoalescer;
   private mcpBaseUrl: string | null;
   private readonly mcpAuthToken: string | null;
@@ -770,6 +778,7 @@ export class AgentManager {
     this.resolvePaseoToolPolicy = options.resolvePaseoToolPolicy ?? (() => undefined);
     this.appendSystemPrompt = options.appendSystemPrompt ?? "";
     this.logger = options.logger.child({ module: "agent", component: "agent-manager" });
+    this.codexIdleBackendTimeoutMs = options.codexIdleBackendTimeoutMs;
     this.rescueTimeouts = {
       reloadSessionCloseMs:
         options.rescueTimeouts?.reloadSessionCloseMs ?? RELOAD_SESSION_CLOSE_TIMEOUT_MS,
@@ -852,6 +861,9 @@ export class AgentManager {
 
   prepareForShutdown(): void {
     this.acceptingAgentRegistrations = false;
+    for (const agentId of this.idleBackendTimers.keys()) {
+      this.cancelIdleBackendTimer(agentId);
+    }
   }
 
   setPaseoToolsEnabled(enabled: boolean): void {
@@ -1671,6 +1683,14 @@ export class AgentManager {
   }
 
   closeAgent(agentId: string): Promise<void> {
+    return this.closeAgentWhen(agentId, () => true);
+  }
+
+  private closeAgentWhen(
+    agentId: string,
+    shouldClose: (agent: ActiveManagedAgent) => boolean,
+    onClose?: (agent: ActiveManagedAgent) => void,
+  ): Promise<void> {
     const existing = this.inFlightAgentCloses.get(agentId);
     if (existing) {
       return existing;
@@ -1678,7 +1698,8 @@ export class AgentManager {
 
     const close = this.runLifecycleMutation(agentId, async () => {
       // A preceding reload or archive may already have closed the durable agent.
-      if (this.agents.has(agentId)) await this.closeAgentRuntime(agentId);
+      const agent = this.agents.get(agentId);
+      if (agent && shouldClose(agent)) await this.closeAgentRuntime(agentId, shouldClose, onClose);
     });
     this.inFlightAgentCloses.set(agentId, close);
     const clearClose = () => {
@@ -1690,7 +1711,82 @@ export class AgentManager {
     return close;
   }
 
-  private async closeAgentRuntime(agentId: string): Promise<void> {
+  noteAgentAccess(agentId: string): void {
+    const agent = this.agents.get(agentId);
+    if (!agent || agent.lifecycle !== "idle") return;
+    this.cancelIdleBackendTimer(agentId);
+    this.syncIdleBackendTimer(agent);
+  }
+
+  private cancelIdleBackendTimer(agentId: string): void {
+    const existing = this.idleBackendTimers.get(agentId);
+    if (!existing) return;
+    clearTimeout(existing.timer);
+    this.idleBackendTimers.delete(agentId);
+  }
+
+  private isIdleBackendEvictionCandidate(agent: ActiveManagedAgent): boolean {
+    return (
+      this.acceptingAgentRegistrations &&
+      this.codexIdleBackendTimeoutMs !== undefined &&
+      agent.session.idleBackendEvictionEligible === true &&
+      !agent.internal &&
+      agent.lifecycle === "idle" &&
+      agent.capabilities.supportsSessionPersistence &&
+      Boolean(agent.persistence?.sessionId) &&
+      agent.persistence?.sessionId === agent.session.describePersistence()?.sessionId &&
+      !agent.activeForegroundTurnId &&
+      !agent.activeTurnId &&
+      !agent.pendingReplacement &&
+      agent.pendingPermissions.size === 0 &&
+      agent.inFlightPermissionResponses.size === 0 &&
+      !this.runs.hasRun(agent.id) &&
+      !this.inFlightOutOfBand.has(agent.id) &&
+      !this.providerSubagents.list(agent.id).some((subagent) => subagent.status === "running")
+    );
+  }
+
+  private syncIdleBackendTimer(agent: ManagedAgent): void {
+    if (agent.lifecycle === "closed" || !this.isIdleBackendEvictionCandidate(agent)) {
+      this.cancelIdleBackendTimer(agent.id);
+      return;
+    }
+    const existing = this.idleBackendTimers.get(agent.id);
+    if (existing?.session === agent.session) return;
+    this.cancelIdleBackendTimer(agent.id);
+    const timeoutMs = this.codexIdleBackendTimeoutMs;
+    if (timeoutMs === undefined) return;
+    const session = agent.session;
+    const idleSince = Date.now();
+    const timer = setTimeout(() => {
+      this.idleBackendTimers.delete(agent.id);
+      void this.closeAgentWhen(
+        agent.id,
+        (current) => current.session === session && this.isIdleBackendEvictionCandidate(current),
+        (current) => {
+          this.logger.info(
+            { agentId: current.id, provider: current.provider, idleMs: Date.now() - idleSince },
+            "Evicting idle Codex backend",
+          );
+        },
+      )
+        .catch((error) => {
+          this.logger.warn({ err: error, agentId: agent.id }, "Failed to evict idle Codex backend");
+        })
+        .finally(() => {
+          const current = this.agents.get(agent.id);
+          if (current?.session === session) this.syncIdleBackendTimer(current);
+        });
+    }, timeoutMs);
+    timer.unref();
+    this.idleBackendTimers.set(agent.id, { session, timer });
+  }
+
+  private async closeAgentRuntime(
+    agentId: string,
+    shouldClose?: (agent: ActiveManagedAgent) => boolean,
+    onClose?: (agent: ActiveManagedAgent) => void,
+  ): Promise<void> {
     const agent = this.requireAgent(agentId);
     this.logger.trace(
       {
@@ -1705,6 +1801,8 @@ export class AgentManager {
       "agent.manager.close.start",
     );
     await this.drainSessionEvents(agentId);
+    if (shouldClose && !shouldClose(agent)) return;
+    onClose?.(agent);
     // Retain ownership until shutdown succeeds. A failed close may still own a
     // native writer, so publishing a resumable closed snapshot would orphan it.
     await agent.session.close();
@@ -2360,6 +2458,8 @@ export class AgentManager {
       this.recordSubmittedPrompt(agent, prompt, options.clientMessageId);
       this.emitState(agent);
     }
+    this.inFlightOutOfBand.set(agentId, (this.inFlightOutOfBand.get(agentId) ?? 0) + 1);
+    this.cancelIdleBackendTimer(agentId);
     const dispatch = (event: AgentStreamEvent): void => {
       // Persist timeline items so they show up in fetchAgentTimeline; broadcast
       // for live subscribers. Other event types are broadcast only.
@@ -2385,6 +2485,15 @@ export class AgentManager {
           provider: agent.provider,
           item: { type: "assistant_message", text: `[Error] ${text}` },
         });
+      } finally {
+        const remaining = (this.inFlightOutOfBand.get(agentId) ?? 1) - 1;
+        if (remaining > 0) {
+          this.inFlightOutOfBand.set(agentId, remaining);
+        } else {
+          this.inFlightOutOfBand.delete(agentId);
+          const current = this.agents.get(agentId);
+          if (current?.session === agent.session) this.syncIdleBackendTimer(current);
+        }
       }
     })();
     return true;
@@ -3687,6 +3796,7 @@ export class AgentManager {
       turnId,
     }));
     this.runs.clearAgentRun(agent.id);
+    this.inFlightOutOfBand.delete(agent.id);
     return {
       ...agent,
       lifecycle: "closed",
@@ -4757,6 +4867,7 @@ export class AgentManager {
     }
 
     this.syncFeaturesFromSession(agent);
+    this.syncIdleBackendTimer(agent);
 
     this.logger.trace(
       {

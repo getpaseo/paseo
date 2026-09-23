@@ -3345,6 +3345,10 @@ export class CodexAppServerAgentSession implements AgentSession {
   readonly provider = CODEX_PROVIDER;
   readonly capabilities = CODEX_APP_SERVER_CAPABILITIES;
 
+  get idleBackendEvictionEligible(): boolean {
+    return !this.ephemeral && this.initialResumePurpose === "interactive";
+  }
+
   private readonly logger: Logger;
   private readonly config: AgentSessionConfig;
   private readonly asyncQuestions: CodexAsyncQuestions;

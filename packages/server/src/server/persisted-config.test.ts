@@ -265,6 +265,17 @@ describe("PersistedConfigSchema agent provider runtime settings", () => {
       PersistedConfigSchema.parse({ agents: { catalogRefreshTimeoutMs: 2_147_483_648 } }),
     ).toThrow();
   });
+
+  test("accepts an opt-in Codex idle backend timeout", () => {
+    const parsed = PersistedConfigSchema.parse({
+      agents: { codexIdleBackendTimeoutMs: 900_000 },
+    });
+
+    expect(parsed.agents?.codexIdleBackendTimeoutMs).toBe(900_000);
+    expect(() =>
+      PersistedConfigSchema.parse({ agents: { codexIdleBackendTimeoutMs: 59_999 } }),
+    ).toThrow();
+  });
 });
 
 describe("provider overrides (new format)", () => {

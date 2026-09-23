@@ -184,6 +184,28 @@ function createProviderWithFakeAppServer(appServer: FakeCodexAppServer): CodexAp
   return provider;
 }
 
+test("only durable interactive Codex sessions allow idle backend eviction", () => {
+  const makeSession = (ephemeral: boolean, purpose: "interactive" | "history") =>
+    new CodexAppServerAgentSession(
+      createConfig(),
+      null,
+      createTestLogger(),
+      () => {
+        throw new Error("Test session cannot spawn Codex app-server");
+      },
+      {},
+      ephemeral,
+      false,
+      false,
+      undefined,
+      purpose,
+    );
+
+  expect(makeSession(false, "interactive").idleBackendEvictionEligible).toBe(true);
+  expect(makeSession(true, "interactive").idleBackendEvictionEligible).toBe(false);
+  expect(makeSession(false, "history").idleBackendEvictionEligible).toBe(false);
+});
+
 async function startPublicSteeringSession(
   appServer: FakeCodexAppServer,
   resolveSlashCommandInvocation?: (prompt: AgentPromptInput) => Promise<{

@@ -40,6 +40,17 @@ describe("server config", () => {
     expect(config.providerCatalogRefreshTimeoutMs).toBe(180_000);
   });
 
+  test("loads the opt-in Codex idle backend timeout", async () => {
+    const paseoHome = await mkdtemp(path.join(os.tmpdir(), "paseo-config-codex-idle-"));
+    roots.push(paseoHome);
+    await writeFile(
+      path.join(paseoHome, "config.json"),
+      JSON.stringify({ agents: { codexIdleBackendTimeoutMs: 900_000 } }),
+    );
+
+    expect(loadConfig(paseoHome, { env: {} }).codexIdleBackendTimeoutMs).toBe(900_000);
+  });
+
   test("resolves reload state from the supplied validated snapshot", async () => {
     const paseoHome = await mkdtemp(path.join(os.tmpdir(), "paseo-config-snapshot-"));
     roots.push(paseoHome);
