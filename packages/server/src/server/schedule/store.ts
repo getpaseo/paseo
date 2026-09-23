@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { mkdir, readFile, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
+import type { Logger } from "pino";
 import {
   StoredScheduleSchema,
   type ScheduleTarget,
@@ -90,8 +91,12 @@ function matchesNameAndTarget(
 export class ScheduleStore {
   private readonly scheduleMutations = new Map<string, Promise<unknown>>();
   private readonly identityMutations = new Map<string, Promise<unknown>>();
+  private readonly reportedInvalidFiles = new Set<string>();
 
-  constructor(private readonly dir: string) {}
+  constructor(
+    private readonly dir: string,
+    private readonly logger: Logger,
+  ) {}
 
   private filePath(id: string): string {
     return join(this.dir, `${id}.json`);
@@ -107,12 +112,28 @@ export class ScheduleStore {
     const schedules = await Promise.all(
       entries
         .filter((entry) => entry.isFile() && entry.name.endsWith(".json"))
-        .map(async (entry) => {
-          const content = await readFile(join(this.dir, entry.name), "utf-8");
-          return StoredScheduleSchema.parse(JSON.parse(content));
-        }),
+        .map((entry) => this.readScheduleFile(join(this.dir, entry.name))),
     );
-    return schedules.sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+    return schedules
+      .filter((schedule): schedule is StoredSchedule => schedule !== null)
+      .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+  }
+
+  // The service lists schedules on every tick, so each unreadable file is reported once
+  // instead of once per second.
+  private async readScheduleFile(filePath: string): Promise<StoredSchedule | null> {
+    try {
+      const content = await readFile(filePath, "utf-8");
+      const schedule = StoredScheduleSchema.parse(JSON.parse(content));
+      this.reportedInvalidFiles.delete(filePath);
+      return schedule;
+    } catch (error) {
+      if (!this.reportedInvalidFiles.has(filePath)) {
+        this.reportedInvalidFiles.add(filePath);
+        this.logger.error({ err: error, filePath }, "Skipping invalid schedule file");
+      }
+      return null;
+    }
   }
 
   async get(id: string): Promise<StoredSchedule | null> {
