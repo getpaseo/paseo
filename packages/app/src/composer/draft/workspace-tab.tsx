@@ -30,7 +30,7 @@ import {
   shouldAllowEmptyDraftText,
   validateDraftSubmission,
 } from "@/composer/draft/workspace-tab-core";
-import type { AgentCapabilityFlags } from "@getpaseo/protocol/agent-types";
+import type { AgentCapabilityFlags, AgentSessionConfig } from "@getpaseo/protocol/agent-types";
 import type { AgentSnapshotPayload } from "@getpaseo/protocol/messages";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { WorkspaceComposerAttachment } from "@/attachments/types";
@@ -134,6 +134,28 @@ function resolveDraftModeId(input: {
   return null;
 }
 
+async function buildSubmitDraftAgentOptions(input: {
+  draftId: string;
+  config: AgentSessionConfig;
+  workspaceId: string;
+  text: string;
+  clientMessageId: string;
+  images?: UserMessageImageAttachment[];
+  attachments?: unknown;
+}) {
+  const attachmentsArray = Array.isArray(input.attachments) ? input.attachments : undefined;
+  const imagesData = await encodeImages(input.images);
+  return {
+    idempotencyKey: input.draftId,
+    config: input.config,
+    workspaceId: input.workspaceId,
+    initialPrompt: input.text,
+    clientMessageId: input.clientMessageId,
+    ...(imagesData && imagesData.length > 0 ? { images: imagesData } : {}),
+    ...(attachmentsArray && attachmentsArray.length > 0 ? { attachments: attachmentsArray } : {}),
+  };
+}
+
 async function submitDraftCreateRequest(input: {
   draftId: string;
   attempt: { clientMessageId: string };
@@ -184,9 +206,10 @@ async function submitDraftCreateRequest(input: {
     modeOptionIds: composerState.modeOptions.map((mode) => mode.id),
     selectedMode: composerState.selectedMode,
   });
+  const effectiveCwd = cwd || workspaceDirectory || "";
   const config = buildWorkspaceDraftAgentConfig({
     provider,
-    cwd,
+    cwd: effectiveCwd,
     ...modeIdOverride,
     model: autoSubmitConfig?.model ?? (composerState.effectiveModelId || undefined),
     thinkingOptionId:
@@ -194,17 +217,15 @@ async function submitDraftCreateRequest(input: {
     featureValues: autoSubmitConfig?.featureValues ?? composerState.featureValues,
   });
 
-  const attachmentsArray = Array.isArray(attachments) ? attachments : undefined;
-  const imagesData = await encodeImages(images);
-  const options = {
-    idempotencyKey: input.draftId,
+  const options = await buildSubmitDraftAgentOptions({
+    draftId: input.draftId,
     config,
     workspaceId,
-    initialPrompt: text,
+    text,
     clientMessageId: attempt.clientMessageId,
-    ...(imagesData && imagesData.length > 0 ? { images: imagesData } : {}),
-    ...(attachmentsArray && attachmentsArray.length > 0 ? { attachments: attachmentsArray } : {}),
-  };
+    images,
+    attachments,
+  });
   const creation = useWorkspaceDraftSubmissionStore.getState().creationByDraftId[input.draftId];
   const result = creation ? await creation.retry(options) : await client.createAgent(options);
 
