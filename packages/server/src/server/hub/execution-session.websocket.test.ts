@@ -54,6 +54,49 @@ test("Hub execute can steer ordinary agents while unrelated administration stays
   expect(hub.serverInfoPermissions()).toEqual([["hub.execute"]]);
 });
 
+test("Hub execute can title the workspace created with an agent", async () => {
+  const hub = await launchRelationship();
+  const created = await hub.requestOrdinary({
+    type: "create_agent_request",
+    requestId: "create-for-title",
+    config: { provider: "codex", cwd: hub.repoRoot() },
+  });
+  expect(created).toMatchObject({
+    type: "status",
+    payload: { status: "agent_created", agent: { workspaceId: expect.any(String) } },
+  });
+  if (created.type !== "status" || created.payload.status !== "agent_created")
+    throw new Error("Agent was not created");
+  const workspaceId = created.payload.agent.workspaceId;
+  if (!workspaceId) throw new Error("Workspace was not created");
+
+  expect(
+    await hub.requestOrdinary({
+      type: "workspace.title.set.request",
+      requestId: "title-created-workspace",
+      workspaceId,
+      title: "Hub execution",
+    }),
+  ).toMatchObject({
+    type: "workspace.title.set.response",
+    payload: { workspaceId, accepted: true, title: "Hub execution", error: null },
+  });
+
+  expect(
+    await hub.requestOrdinary({
+      type: "fetch_workspaces_request",
+      requestId: "read-created-workspace",
+    }),
+  ).toMatchObject({
+    type: "fetch_workspaces_response",
+    payload: {
+      entries: expect.arrayContaining([
+        expect.objectContaining({ id: workspaceId, title: "Hub execution" }),
+      ]),
+    },
+  });
+});
+
 test("ordinary Hub create and message retries do not duplicate agents or prompts", async () => {
   const hub = await launchRelationship();
   const create = {
