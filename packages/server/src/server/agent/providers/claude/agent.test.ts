@@ -796,7 +796,7 @@ describe("ClaudeAgentSession features", () => {
       provider: "claude",
       cwd: process.cwd(),
       providerOptions: {
-        extraArgs: { chrome: null },
+        extraArgs: { chrome: null, model: "x" },
       },
     });
 
@@ -804,7 +804,7 @@ describe("ClaudeAgentSession features", () => {
       turnId: expect.stringMatching(/^foreground-turn-/),
     });
 
-    expect(launches[0]?.options.extraArgs).toEqual({ chrome: null });
+    expect(launches[0]?.options.extraArgs).toEqual({ chrome: null, model: "x" });
     await session.close();
   });
 

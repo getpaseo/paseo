@@ -8,7 +8,8 @@ This guide walks through adding a new agent provider end-to-end. There are two i
 names and nesting are the provider's native contract; options are not portable between providers.
 Paseo validates the object with the selected provider's strict schema before constructing a session.
 Unknown keys fail with their `providerOptions.*` path. Paseo-owned controls such as cwd, model,
-prompt, environment, session identity, MCP transport, callbacks, and hooks cannot be passed here.
+prompt, environment, session identity, MCP transport, callbacks, and hooks are not accepted as
+top-level provider options.
 
 This Paseo version accepts these keys:
 
@@ -20,9 +21,14 @@ This Paseo version accepts these keys:
   `dangerously_allow_non_loopback_proxy`, `domains`, and `unix_sockets`. See the
   [Codex configuration reference](https://developers.openai.com/codex/config-reference).
 - **Claude:** `allowedTools`, `disallowedTools`, `additionalDirectories`, `extraArgs`, `sandbox`, and
-  `settings`. `extraArgs` uses Claude's native argument map: keys omit the leading `--`, string
-  values supply an argument value, and `null` supplies a boolean flag. For example,
-  `{ "extraArgs": { "chrome": null } }` launches Claude Code with `--chrome`. The accepted sandbox
+  `settings`. `providerOptions.extraArgs` passes the SDK's documented
+  [`Options.extraArgs`](https://platform.claude.com/docs/en/agent-sdk/typescript#options) map
+  unchanged: keys omit the leading `--`, string values supply an argument value, and `null`
+  supplies a boolean flag. For example, `providerOptions: { extraArgs: { chrome: null } }`
+  passes `--chrome`, and `providerOptions: { extraArgs: { model: "x" } }` passes `--model x`.
+  Set it in session configuration or a plugin's `server.before("agent.create", ...)` hook; see
+  [plugin configuration hooks](../public-docs/plugins/reference.md#change-configuration-and-inject-an-mcp-server). Values are literal;
+  shell expressions such as `$(command)` are not evaluated. The accepted sandbox
   fields cover enablement, fail-if-unavailable behavior, excluded and unsandboxed commands,
   filesystem read/write rules, network domain/socket/local-binding rules, weaker nested
   sandboxing, ignored violations, and the ripgrep command. `settings` accepts native

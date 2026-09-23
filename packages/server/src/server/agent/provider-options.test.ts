@@ -51,7 +51,7 @@ describe("provider-owned option schemas", () => {
       ClaudeProviderOptionsSchema.parse({
         allowedTools: ["Read"],
         disallowedTools: ["Bash(rm *)"],
-        extraArgs: { chrome: null, "debug-file": "/tmp/claude-debug.log" },
+        extraArgs: { chrome: null, model: "x" },
         sandbox: {
           enabled: true,
           failIfUnavailable: true,
@@ -65,9 +65,25 @@ describe("provider-owned option schemas", () => {
         settings: { permissions: { ask: ["Bash(*)"], deny: ["Edit(.env)"] } },
       }),
     ).toMatchObject({
-      extraArgs: { chrome: null, "debug-file": "/tmp/claude-debug.log" },
+      extraArgs: { chrome: null, model: "x" },
       sandbox: { enabled: true, failIfUnavailable: true },
     });
+  });
+
+  test.each([true, 42, ["x"]])("rejects invalid Claude extra argument values: %j", (value) => {
+    expect(() =>
+      validateProviderOptions("claude", ClaudeProviderOptionsSchema, {
+        extraArgs: { chrome: value },
+      }),
+    ).toThrow("providerOptions.extraArgs.chrome");
+  });
+
+  test("rejects a raw argument list for the SDK argument map", () => {
+    expect(() =>
+      validateProviderOptions("claude", ClaudeProviderOptionsSchema, {
+        extraArgs: ["--chrome"],
+      }),
+    ).toThrow("providerOptions.extraArgs");
   });
 
   test("reports the exact invalid Claude option path", () => {
