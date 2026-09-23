@@ -1,4 +1,4 @@
-import { open, readFile, unlink, utimes } from "node:fs/promises";
+import { open, readFile, stat, unlink, utimes } from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
 import { ensurePrivateDirectory } from "./private-files.js";
 import { join } from "node:path";
@@ -84,18 +84,26 @@ async function touchPidLockFile(pidPath: string): Promise<void> {
 
 async function readPidLock(pidPath: string): Promise<PidLockInfo | null> {
   let lastError: unknown;
+  let empty = false;
   for (let attempt = 0; attempt < PID_LOCK_READ_RETRY_ATTEMPTS; attempt++) {
     try {
       const content = await readFile(pidPath, "utf-8");
-      const lock = parsePidLockInfo(JSON.parse(content));
-      if (lock) return lock;
-      lastError = new Error("Invalid lock shape");
+      empty = content === "";
+      if (!empty) {
+        const lock = parsePidLockInfo(JSON.parse(content));
+        if (lock) return lock;
+        lastError = new Error("Invalid lock shape");
+      }
     } catch (error) {
       if (isErrnoException(error) && error.code === "ENOENT") return null;
+      empty = false;
       lastError = error;
     }
     await new Promise((resolve) => setTimeout(resolve, PID_LOCK_READ_RETRY_DELAY_MS));
   }
+  // A supervisor writes its lock right after creating the file, so a file still empty
+  // after the retries was abandoned in between and names no owner.
+  if (empty) return null;
   throw Object.assign(
     new PidLockError(`Cannot read daemon state at ${pidPath}: ${String(lastError)}`),
     { code: "DAEMON_STATE_READ_FAILED" },
@@ -149,6 +157,14 @@ async function clearExistingPidLock(
   return "cleared";
 }
 
+async function removeEmptyPidLock(pidPath: string): Promise<void> {
+  try {
+    if ((await stat(pidPath)).size === 0) await unlink(pidPath);
+  } catch (error) {
+    if (!isErrnoException(error) || error.code !== "ENOENT") throw error;
+  }
+}
+
 async function writeNewPidLock(pidPath: string, lockInfo: PidLockInfo): Promise<void> {
   let fd;
   try {
@@ -191,6 +207,8 @@ export async function acquirePidLock(
     if (result === "already_owned") {
       return;
     }
+  } else {
+    await removeEmptyPidLock(pidPath);
   }
 
   // Create new lock with exclusive flag
