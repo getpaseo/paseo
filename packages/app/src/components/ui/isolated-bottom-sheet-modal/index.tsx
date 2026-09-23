@@ -3,9 +3,9 @@ import {
   type BottomSheetModalProps,
 } from "@gorhom/bottom-sheet";
 import React from "react";
-import { forwardRef, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { ElementRef, Ref, ReactNode } from "react";
-import { BackHandler } from "react-native";
+import { forwardRef, useCallback, useEffect, useMemo, useRef } from "react";
+import type { ElementRef, ReactNode } from "react";
+import { systemBackPress } from "./back-press";
 import {
   type BottomSheetController,
   createBottomSheetVisibilityTracker,
@@ -58,56 +58,11 @@ export const IsolatedBottomSheetModal = forwardRef<
   IsolatedBottomSheetModalRef,
   IsolatedBottomSheetModalProps
 >(function IsolatedBottomSheetModal(props, ref) {
-  const {
-    children,
-    presentation = "push",
-    contextBridge,
-    onChange,
-    onDismiss,
-    ...bottomSheetProps
-  } = props;
-  const sheet = useRef<IsolatedBottomSheetModalRef | null>(null);
-  const attachSheet = useCallback(
-    (instance: IsolatedBottomSheetModalRef | null) => {
-      sheet.current = instance;
-      assignRef(ref, instance);
-    },
-    [ref],
-  );
-
-  // The sheet lives in a portal inside the app's own view tree, not in a native modal window, so
-  // Android hands Back to the navigator underneath it. Claim the press for as long as the sheet
-  // is on screen, or Back dismisses the screen the sheet is covering instead of the sheet.
-  const [isOnScreen, setIsOnScreen] = useState(false);
-  const handleChange = useCallback(
-    (index: number, ...rest: SheetChangeRest) => {
-      setIsOnScreen(index !== -1);
-      onChange?.(index, ...rest);
-    },
-    [onChange],
-  );
-  const handleDismiss = useCallback(() => {
-    setIsOnScreen(false);
-    onDismiss?.();
-  }, [onDismiss]);
-
-  useEffect(() => {
-    if (!isOnScreen) return;
-    // Listeners are offered the press newest-first, so a stacked sheet answers before the one
-    // below it. `BackHandler` never fires off Android, which is why this needs no platform check.
-    const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
-      sheet.current?.dismiss();
-      return true;
-    });
-    return () => subscription.remove();
-  }, [isOnScreen]);
-
+  const { children, presentation = "push", contextBridge, ...bottomSheetProps } = props;
   const modal = (
     <GorhomBottomSheetModal
       {...bottomSheetProps}
-      ref={attachSheet}
-      onChange={handleChange}
-      onDismiss={handleDismiss}
+      ref={ref}
       enableDismissOnClose
       stackBehavior={presentation}
     >
@@ -117,24 +72,6 @@ export const IsolatedBottomSheetModal = forwardRef<
 
   return modal;
 });
-
-type SheetChangeRest =
-  NonNullable<BottomSheetModalProps["onChange"]> extends (
-    index: number,
-    ...rest: infer Rest
-  ) => void
-    ? Rest
-    : never;
-
-function assignRef<T>(ref: Ref<T> | undefined, value: T | null): void {
-  if (typeof ref === "function") {
-    ref(value);
-    return;
-  }
-  if (ref) {
-    (ref as React.MutableRefObject<T | null>).current = value;
-  }
-}
 
 export function useIsolatedBottomSheetVisibility({
   visible,
@@ -149,7 +86,11 @@ export function useIsolatedBottomSheetVisibility({
   onCloseRef.current = onClose;
 
   const tracker = useMemo(
-    () => createBottomSheetVisibilityTracker({ onClose: () => onCloseRef.current() }),
+    () =>
+      createBottomSheetVisibilityTracker({
+        onClose: () => onCloseRef.current(),
+        backPress: systemBackPress,
+      }),
     [],
   );
 
