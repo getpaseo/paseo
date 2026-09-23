@@ -144,9 +144,7 @@ function isACPError(value: unknown): value is ACPError {
   return isRecord(value) && typeof value.message === "string" && typeof value.code === "number";
 }
 
-// A provider answers a write for a config option the current model does not have with
-// `-32602 Invalid params` (cursor-agent adds `data.message="Unknown model config option: fast"`).
-function isACPConfigOptionRejection(error: unknown): boolean {
+function isACPInvalidParams(error: unknown): boolean {
   return isACPError(error) && error.code === -32602;
 }
 
@@ -2820,6 +2818,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       await this.setModeWithSelection({ modeId: configuredModeId, selection });
     }
     const configuredModelId = this.config.model;
+    let switchedModel = false;
     if (configuredModelId && configuredModelId !== this.currentModel) {
       const selection = resolveACPModelSelection({
         modelId: configuredModelId,
@@ -2828,6 +2827,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       });
       try {
         await this.setModelWithSelection({ modelId: configuredModelId, selection });
+        switchedModel = true;
       } catch (error) {
         if (!this.isModelSelectionUnavailableError(error)) {
           throw error;
@@ -2849,10 +2849,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       try {
         await this.setFeature(featureOption.id, configuredFeatureValues[featureOption.id]);
       } catch (error) {
-        if (
-          !this.isFeatureUnavailableError(error, featureOption.id) &&
-          !isACPConfigOptionRejection(error)
-        ) {
+        if (!this.isStaleFeatureValueError(error, featureOption.id, switchedModel)) {
           throw error;
         }
         this.logger.warn(
@@ -2861,6 +2858,25 @@ export class ACPAgentSession implements AgentSession, ACPClient {
         );
       }
     }
+  }
+
+  /**
+   * A stored feature value is a preference carried over from whichever model the user
+   * last configured, so the session it lands on may have no such option. Paseo's own
+   * guard says so when the session's options are accurate. A model switch answers with
+   * an empty response, leaving Paseo holding the previous model's options, and then the
+   * provider is the one that rejects the write as invalid params. Outside those two
+   * cases the write failed for a reason the user needs to see.
+   */
+  private isStaleFeatureValueError(
+    error: unknown,
+    featureId: string,
+    switchedModel: boolean,
+  ): boolean {
+    if (this.isFeatureUnavailableError(error, featureId)) {
+      return true;
+    }
+    return switchedModel && isACPInvalidParams(error);
   }
 
   private warnInvalidSelection(value: string, message: string): void {

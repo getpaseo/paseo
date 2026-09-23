@@ -334,4 +334,24 @@ describe("CursorACPAgentClient session start", () => {
       "acp does not expose ACP feature 'fast'",
     );
   });
+
+  test("still fails session start when the provider rejects a write it should accept", async () => {
+    // No model switch, so the session's options came straight from session/new and the
+    // provider disagreeing about a feature it just advertised is a real failure.
+    const session = createCursorSession(
+      { model: "composer-2.5", featureValues: { [CURSOR_FAST_FEATURE_OPTION.id]: "true" } },
+      {
+        currentModelId: "composer-2.5",
+        configOptions: [fastConfigOption("false")],
+        setSessionConfigOption: vi.fn().mockRejectedValue(
+          Object.assign(new Error("Invalid params"), {
+            code: -32602,
+            data: { message: "sessionId is required" },
+          }),
+        ),
+      },
+    );
+
+    await expect(session.initializeNewSession()).rejects.toThrow("Invalid params");
+  });
 });
