@@ -57,6 +57,36 @@ async function getStartupPresentation(page: Page): Promise<StartupPresentation[]
   return page.evaluate(() => window.__paseoStartupPresentationTrace?.slice() ?? []);
 }
 
+async function expectWorkspaceHeaderDragSurface(page: Page): Promise<void> {
+  const audit = await page.evaluate(() => {
+    const header = document.querySelector<HTMLElement>('[data-testid="composer-dock-header"]');
+    if (!header) throw new Error("Expected the workspace header");
+
+    const headerRect = header.getBoundingClientRect();
+    const rowHasDragRegion = [...header.querySelectorAll<HTMLElement>("*")].some((element) => {
+      const style = getComputedStyle(element);
+      const rect = element.getBoundingClientRect();
+      return (
+        style.position === "relative" &&
+        style.getPropertyValue("-webkit-app-region") === "drag" &&
+        rect.width >= headerRect.width * 0.8 &&
+        rect.height >= 24
+      );
+    });
+    const interactiveRegions = [
+      ...header.querySelectorAll<HTMLElement>(
+        'button, [role="button"], [role="link"], [role="menuitem"], [tabindex]',
+      ),
+    ].map((element) => getComputedStyle(element).getPropertyValue("-webkit-app-region"));
+
+    return { rowHasDragRegion, interactiveRegions };
+  });
+
+  expect(audit.rowHasDragRegion).toBe(true);
+  expect(audit.interactiveRegions.length).toBeGreaterThan(0);
+  expect(audit.interactiveRegions.every((region) => region === "no-drag")).toBe(true);
+}
+
 async function expectWorkspaceLocation(
   page: Page,
   input: {
@@ -102,6 +132,7 @@ test("refresh keeps one continuous splash before restoring the desktop workspace
     await waitForWorkspaceTabsVisible(page);
     await expectWorkspaceTabVisible(page, agent.id);
     await expectWorkspaceLocation(page, { serverId, workspace });
+    await expectWorkspaceHeaderDragSurface(page);
 
     await observeStartupPresentation(page);
     await daemonGate.drop();
@@ -112,6 +143,7 @@ test("refresh keeps one continuous splash before restoring the desktop workspace
 
     await expectWorkspaceLocation(page, { serverId, workspace });
     await waitForWorkspaceTabsVisible(page);
+    await expectWorkspaceHeaderDragSurface(page);
     expect(await getStartupPresentation(page)).toEqual(["splash", "app"]);
   } finally {
     daemonGate.restore();
