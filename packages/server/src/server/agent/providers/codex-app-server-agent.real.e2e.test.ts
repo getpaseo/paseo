@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { beforeAll, describe, expect, test } from "vitest";
@@ -18,6 +18,44 @@ describe("Codex app-server provider (real)", () => {
   beforeAll(async () => {
     canRunOpenRouter = await canRunRealProvider("codex");
   });
+
+  test("returns the native diff for a real file edit", async () => {
+    const client = new CodexAppServerAgentClient(createTestLogger());
+    const cwd = mkdtempSync(path.join(os.tmpdir(), "codex-native-diff-e2e-"));
+    const file = path.join(cwd, "sample.txt");
+    writeFileSync(file, "before\n");
+    try {
+      const { models } = await client.fetchCatalog({ scope: "workspace", cwd, force: false });
+      const model = models.find((candidate) => candidate.isDefault) ?? models[0];
+      if (!model) throw new Error("Native Codex app-server returned no models");
+      const session = await client.createSession({
+        provider: "codex",
+        modeId: "full-access",
+        model: model.id,
+        cwd,
+        thinkingOptionId: "medium",
+      });
+      const events: AgentStreamEvent[] = [];
+      const unsubscribe = session.subscribe((event) => events.push(event));
+      try {
+        await session.run(
+          "This is a bounded file-edit test. Read sample.txt, use apply_patch to replace its " +
+            "only line before with after, keep the trailing newline, read it again, and finish. " +
+            "Only sample.txt may be written. Do not use shell commands to write files, change " +
+            "Git, create agents, access external services, or modify any configuration.",
+        );
+        expect(readFileSync(file, "utf8")).toBe("after\n");
+        const completed = events.findLast((event) => event.type === "turn_completed");
+        expect(completed?.nativeDiff).toContain("sample.txt");
+        expect(completed?.nativeDiff).toContain("-before\n+after");
+      } finally {
+        unsubscribe();
+        await session.close();
+      }
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  }, 120_000);
 
   test("lists models and runs a simple prompt", async (context) => {
     if (!canRunOpenRouter) {
