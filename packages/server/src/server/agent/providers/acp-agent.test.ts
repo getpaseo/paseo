@@ -130,9 +130,12 @@ interface ACPConfiguredOverrideInternals {
 }
 
 function createSession(
-  terminateProcess?: ProcessTerminator,
-  launchEnv?: Record<string, string>,
+  options: {
+    terminateProcess?: ProcessTerminator;
+    launchEnv?: Record<string, string>;
+  } = {},
 ): ACPAgentSession {
+  const { terminateProcess, launchEnv } = options;
   return new ACPAgentSession(
     {
       provider: "claude-acp",
@@ -704,9 +707,11 @@ describe("ACPAgentSession terminal tools", () => {
       // The daemon itself does not run inside a Paseo agent.
       vi.stubEnv("PASEO_AGENT_ID", undefined);
       vi.stubEnv("PASEO_AGENT_CWD", undefined);
-      const session = createSession(undefined, {
-        PASEO_AGENT_ID: "agent-1",
-        PASEO_AGENT_CWD: "/repo",
+      const session = createSession({
+        launchEnv: {
+          PASEO_AGENT_ID: "agent-1",
+          PASEO_AGENT_CWD: "/repo",
+        },
       });
 
       await expect(readLaunchIdentity(session)).resolves.toMatchObject({
@@ -719,9 +724,11 @@ describe("ACPAgentSession terminal tools", () => {
       // A daemon started from inside another Paseo agent carries that agent's id.
       vi.stubEnv("PASEO_AGENT_ID", "daemon-host-agent");
       vi.stubEnv("PASEO_AGENT_CWD", "/elsewhere");
-      const session = createSession(undefined, {
-        PASEO_AGENT_ID: "agent-1",
-        PASEO_AGENT_CWD: "/repo",
+      const session = createSession({
+        launchEnv: {
+          PASEO_AGENT_ID: "agent-1",
+          PASEO_AGENT_CWD: "/repo",
+        },
       });
 
       await expect(readLaunchIdentity(session)).resolves.toMatchObject({
@@ -731,9 +738,11 @@ describe("ACPAgentSession terminal tools", () => {
     });
 
     test("lets the requested terminal environment win over the launch environment", async () => {
-      const session = createSession(undefined, {
-        PASEO_AGENT_ID: "agent-1",
-        PASEO_TEST_EXTRA: "from-launch",
+      const session = createSession({
+        launchEnv: {
+          PASEO_AGENT_ID: "agent-1",
+          PASEO_TEST_EXTRA: "from-launch",
+        },
       });
 
       await expect(
@@ -746,7 +755,7 @@ describe("ACPAgentSession terminal tools", () => {
     test("carries the agent's identity into single-string shell commands", async () => {
       const child = createTerminalChildStub();
       const spawn = vi.spyOn(spawnUtils, "spawnProcess").mockReturnValue(child);
-      const session = createSession(undefined, { PASEO_AGENT_ID: "agent-1" });
+      const session = createSession({ launchEnv: { PASEO_AGENT_ID: "agent-1" } });
 
       await session.createTerminal({
         sessionId: "session-1",
@@ -3434,7 +3443,7 @@ describe("ACPAgentSession close() tree-kill", () => {
 
   test("close() terminates the main child process via the process tree", async () => {
     const terminator = new FakeTerminator();
-    const session = createSession(terminator.terminate);
+    const session = createSession({ terminateProcess: terminator.terminate });
     const internals = asInternals<ACPCloseInternals>(session);
 
     const child = createTerminalChildStub();
@@ -3452,7 +3461,7 @@ describe("ACPAgentSession close() tree-kill", () => {
 
   test("close() terminates running terminal child processes", async () => {
     const terminator = new FakeTerminator();
-    const session = createSession(terminator.terminate);
+    const session = createSession({ terminateProcess: terminator.terminate });
 
     const terminalChild = createTerminalChildStub();
     await startTerminal(session, terminalChild);
@@ -3465,7 +3474,7 @@ describe("ACPAgentSession close() tree-kill", () => {
 
   test("close() terminates terminal child processes in parallel", async () => {
     const terminator = new FakeTerminator("deferred");
-    const session = createSession(terminator.terminate);
+    const session = createSession({ terminateProcess: terminator.terminate });
 
     const firstChild = createTerminalChildStub();
     const secondChild = createTerminalChildStub();
@@ -3483,7 +3492,7 @@ describe("ACPAgentSession close() tree-kill", () => {
 
   test("killTerminal terminates the terminal process tree without a direct SIGTERM", async () => {
     const terminator = new FakeTerminator();
-    const session = createSession(terminator.terminate);
+    const session = createSession({ terminateProcess: terminator.terminate });
 
     const child = createTerminalChildStub();
     const terminalId = await startTerminal(session, child);
@@ -3496,7 +3505,7 @@ describe("ACPAgentSession close() tree-kill", () => {
 
   test("releaseTerminal terminates and removes a running terminal", async () => {
     const terminator = new FakeTerminator();
-    const session = createSession(terminator.terminate);
+    const session = createSession({ terminateProcess: terminator.terminate });
 
     const child = createTerminalChildStub();
     const terminalId = await startTerminal(session, child);
