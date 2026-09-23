@@ -692,6 +692,45 @@ test("uses an injected timeline store without making it a production requirement
   }
 });
 
+test("keeps OMP timeline rows and sequence metadata intact on reads", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-omp-timeline-read-"));
+  const manager = new AgentManager({
+    clients: { omp: new TestAgentClient("omp") },
+    logger,
+  });
+  let agentId: string | null = null;
+  try {
+    const agent = await manager.createAgent({ provider: "omp", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    agentId = agent.id;
+    await manager.appendTimelineItem(agent.id, {
+      type: "notification",
+      level: "info",
+      message: "xd://: mounted mcp__agent_browser_click",
+    });
+    await manager.appendTimelineItem(agent.id, {
+      type: "assistant_message",
+      text: "answer",
+    });
+
+    expect(manager.getTimeline(agent.id)).toEqual([
+      { type: "notification", level: "info", message: "xd://: mounted mcp__agent_browser_click" },
+      { type: "assistant_message", text: "answer" },
+    ]);
+    expect(manager.fetchTimeline(agent.id, { limit: 0 })).toMatchObject({
+      window: { minSeq: 1, maxSeq: 2, nextSeq: 3 },
+      rows: [
+        { seq: 1, item: { type: "notification" } },
+        { seq: 2, item: { type: "assistant_message", text: "answer" } },
+      ],
+    });
+  } finally {
+    if (agentId) await manager.closeAgent(agentId).catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("retries provider history hydration after a stream failure", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-history-retry-"));
   let attempts = 0;

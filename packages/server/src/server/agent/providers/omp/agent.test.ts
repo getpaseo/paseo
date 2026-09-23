@@ -393,24 +393,79 @@ describe("OMP agent client and session", () => {
     ]);
   });
 
+  test("omits live xdev mount notices without affecting the completed turn", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+
+    await omp.runPromptWithCustomMessage(
+      "hello OMP",
+      {
+        role: "custom",
+        content: "<system-notice>\nxd:// device inventory changed.\n</system-notice>",
+        customType: "xdev-mount-notice",
+        display: true,
+      },
+      "done",
+    );
+
+    expect(omp.timeline()).toEqual([
+      { type: "user_message", text: "hello OMP", messageId: "user-1" },
+      {
+        type: "assistant_message",
+        text: "done",
+        messageId: "omp-assistant-1",
+      },
+    ]);
+    expect(omp.completedTurnCount()).toBe(1);
+  });
+
+  test("hides metadata-free xdev notices before the provider echo", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+
+    await expect(
+      omp.runPromptWithCustomMessageBeforeUser({
+        input: "hello OMP",
+        customMessage: {
+          role: "custom",
+          content: "<system-notice>\nxd://: mounted mcp__agent_browser_click\n</system-notice>",
+        },
+        output: "done",
+      }),
+    ).resolves.toMatchObject({ finalText: "done" });
+
+    expect(omp.timeline()).toEqual([
+      {
+        type: "user_message",
+        text: "hello OMP",
+        messageId: "user-1",
+        clientMessageId: "client-1",
+      },
+      {
+        type: "assistant_message",
+        text: "done",
+        messageId: "omp-assistant-1",
+      },
+    ]);
+    expect(omp.completedTurnCount()).toBe(1);
+  });
+
   test("renders a live system-notice custom message as a notification", async () => {
     const omp = new OmpHarness();
     await omp.start();
 
     await omp.runPrompt("hello OMP", "done");
-    omp
-      .runtime()
-      .acceptCustomMessage(
-        [
-          "<system-notice>",
-          "Background job DocsSmokeTwo has completed.",
-          '<task-result id="DocsSmokeTwo" agent="explore" status="completed" duration="21.6s">',
-          "<output>done</output>",
-          "</task-result>",
-          "</system-notice>",
-        ].join("\n"),
-      );
-    omp.runtime().acceptCustomMessage("plain custom status text");
+    omp.runtime().acceptCustomMessage({
+      content: [
+        "<system-notice>",
+        "Background job DocsSmokeTwo has completed.",
+        '<task-result id="DocsSmokeTwo" agent="explore" status="completed" duration="21.6s">',
+        "<output>done</output>",
+        "</task-result>",
+        "</system-notice>",
+      ].join("\n"),
+    });
+    omp.runtime().acceptCustomMessage({ content: "plain custom status text" });
 
     expect(omp.timeline().filter((item) => item.type === "notification")).toEqual([
       {

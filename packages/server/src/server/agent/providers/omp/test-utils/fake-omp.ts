@@ -49,6 +49,11 @@ export interface FakeOmpSubagentMessagesResult {
   messages: OmpAgentMessage[];
 }
 
+interface FakeOmpCustomMessageOptions {
+  content: string;
+  metadata?: Record<string, unknown>;
+}
+
 export class FakeOmp implements OmpRuntime {
   readonly recordedLaunches: OmpRuntimeLaunch[] = [];
   private readonly sessions: FakeOmpSession[] = [];
@@ -452,10 +457,10 @@ export class FakeOmpSession implements OmpRuntimeSession {
     });
   }
 
-  acceptCustomMessage(content: string): void {
+  acceptCustomMessage({ content, metadata }: FakeOmpCustomMessageOptions): void {
     this.emit({
       type: "message_end",
-      message: { role: "custom", content },
+      message: { role: "custom", content, ...metadata },
     });
   }
 
