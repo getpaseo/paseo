@@ -61,6 +61,7 @@ import type {
   CheckoutGithubGetCheckDetailsResponse,
   CheckoutPrStatusResponse,
   PullRequestTimelineResponse,
+  CheckoutGithubReviewWriteResponse,
   CheckoutSwitchBranchResponse,
   StashSaveResponse,
   StashPopResponse,
@@ -445,6 +446,7 @@ type CheckoutForgeGetCheckDetailsPayload = CheckoutForgeGetCheckDetailsResponse[
 type CheckoutGithubGetCheckDetailsPayload = CheckoutGithubGetCheckDetailsResponse["payload"];
 type CheckoutPrStatusPayload = CheckoutPrStatusResponse["payload"];
 type PullRequestTimelinePayload = PullRequestTimelineResponse["payload"];
+type CheckoutGithubReviewWritePayload = CheckoutGithubReviewWriteResponse["payload"];
 type CheckoutSwitchBranchPayload = CheckoutSwitchBranchResponse["payload"];
 export type RenameBranchResult = z.infer<typeof CheckoutRenameBranchResponseSchema>["payload"];
 type StashSavePayload = StashSaveResponse["payload"];
@@ -4310,6 +4312,116 @@ export class DaemonClient {
         repoName: input.repoName,
       },
       responseType: "pull_request_timeline_response",
+    });
+  }
+
+  async checkoutGithubReviewReply(
+    input: {
+      cwd: string;
+      prNumber: number;
+      repoOwner: string;
+      repoName: string;
+      threadId: string;
+      body: string;
+    },
+    requestId?: string,
+  ): Promise<CheckoutGithubReviewWritePayload> {
+    return this.sendNamespacedCorrelatedSessionRequest<"checkout.github.review.write.response">({
+      requestId,
+      message: {
+        type: "checkout.github.review.write.request",
+        action: "reply",
+        ...input,
+      },
+    });
+  }
+
+  async checkoutGithubReviewComment(
+    input: {
+      cwd: string;
+      prNumber: number;
+      repoOwner: string;
+      repoName: string;
+      path: string;
+      side: "old" | "new";
+      line: number;
+      body: string;
+    },
+    requestId?: string,
+  ): Promise<CheckoutGithubReviewWritePayload> {
+    return this.sendNamespacedCorrelatedSessionRequest<"checkout.github.review.write.response">({
+      requestId,
+      message: {
+        type: "checkout.github.review.write.request",
+        action: "comment",
+        ...input,
+      },
+    });
+  }
+
+  async checkoutGithubReviewDraft(
+    input: {
+      cwd: string;
+      prNumber: number;
+      repoOwner: string;
+      repoName: string;
+      path: string;
+      side: "old" | "new";
+      line: number;
+      body: string;
+      reviewId?: string;
+    },
+    requestId?: string,
+  ): Promise<CheckoutGithubReviewWritePayload> {
+    return this.sendNamespacedCorrelatedSessionRequest<"checkout.github.review.write.response">({
+      requestId,
+      message: {
+        type: "checkout.github.review.write.request",
+        action: "draft",
+        ...input,
+      },
+    });
+  }
+
+  async checkoutGithubReviewSubmit(
+    input: {
+      cwd: string;
+      prNumber: number;
+      repoOwner: string;
+      repoName: string;
+      reviewId: string;
+      event: "comment" | "approve" | "request_changes";
+      body?: string;
+    },
+    requestId?: string,
+  ): Promise<CheckoutGithubReviewWritePayload> {
+    return this.sendNamespacedCorrelatedSessionRequest<"checkout.github.review.write.response">({
+      requestId,
+      message: {
+        type: "checkout.github.review.write.request",
+        action: "submit",
+        ...input,
+      },
+    });
+  }
+
+  async checkoutGithubReviewCancel(
+    input: {
+      cwd: string;
+      prNumber: number;
+      repoOwner: string;
+      repoName: string;
+      reviewId: string;
+    },
+    requestId?: string,
+  ): Promise<CheckoutGithubReviewWritePayload> {
+    return this.sendNamespacedCorrelatedSessionRequest<"checkout.github.review.write.response">({
+      requestId,
+      message: {
+        type: "checkout.github.review.write.request",
+        action: "cancel",
+        ...input,
+      },
     });
   }
 

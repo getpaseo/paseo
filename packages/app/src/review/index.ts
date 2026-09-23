@@ -16,7 +16,9 @@ export {
 export {
   getInlineReviewThreadState,
   getSplitInlineReviewThreadState,
+  hasInlineReviewOverlay,
   isInlineReviewEditorForTarget,
+  stubInlineReviewActions,
   type InlineReviewActions,
   type InlineReviewEditorState,
 } from "./geometry";

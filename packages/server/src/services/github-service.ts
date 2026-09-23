@@ -54,6 +54,7 @@ import {
   isGitHubPullRequestStatusFacts,
   type GitHubPullRequestStatusFacts,
 } from "./github-facts.js";
+import { createGithubPrReviewApi } from "./github-pr-review.js";
 
 export type {
   CheckAnnotation,
@@ -390,6 +391,7 @@ const PullRequestReviewThreadNodeSchema = z.object({
   path: z.string().catch(""),
   line: z.number().nullable().optional().catch(null),
   startLine: z.number().nullable().optional().catch(null),
+  diffSide: z.enum(["LEFT", "RIGHT"]).nullable().optional().catch(null),
   isResolved: z.boolean().catch(false),
   isOutdated: z.boolean().catch(false),
   comments: z
@@ -596,6 +598,7 @@ query PullRequestTimeline($owner: String!, $name: String!, $number: Int!) {
           path
           line
           startLine
+          diffSide
           isResolved
           isOutdated
           comments(first: 100) {
@@ -989,6 +992,51 @@ export interface SearchGitHubRepositoriesOptions {
 
 export interface GitHubService extends ForgeService {
   searchRepositories(options: SearchGitHubRepositoriesOptions): Promise<GitHubRepositorySummary[]>;
+  replyPullRequestReviewComment(input: {
+    cwd: string;
+    repoOwner: string;
+    repoName: string;
+    prNumber: number;
+    threadId: string;
+    body: string;
+  }): Promise<{ reviewId: string | null; commentId: string | null; threadId: string | null }>;
+  createPullRequestReviewComment(input: {
+    cwd: string;
+    repoOwner: string;
+    repoName: string;
+    prNumber: number;
+    path: string;
+    side: "old" | "new";
+    line: number;
+    body: string;
+  }): Promise<{ reviewId: string | null; commentId: string | null; threadId: string | null }>;
+  draftPullRequestReviewComment(input: {
+    cwd: string;
+    repoOwner: string;
+    repoName: string;
+    prNumber: number;
+    path: string;
+    side: "old" | "new";
+    line: number;
+    body: string;
+    reviewId?: string;
+  }): Promise<{ reviewId: string | null; commentId: string | null; threadId: string | null }>;
+  submitPullRequestReview(input: {
+    cwd: string;
+    repoOwner: string;
+    repoName: string;
+    prNumber: number;
+    reviewId: string;
+    event: "comment" | "approve" | "request_changes";
+    body?: string;
+  }): Promise<{ reviewId: string | null; commentId: string | null; threadId: string | null }>;
+  cancelPullRequestReview(input: {
+    cwd: string;
+    repoOwner: string;
+    repoName: string;
+    prNumber: number;
+    reviewId: string;
+  }): Promise<{ reviewId: string | null; commentId: string | null; threadId: string | null }>;
 }
 
 export class GitHubCliMissingError extends ForgeCliMissingError {
@@ -1347,6 +1395,8 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
       emptyFallback,
     });
   }
+
+  const githubPrReview = createGithubPrReviewApi(runGhJson);
 
   function getPollTargetKey(target: {
     cwd: string;
@@ -2230,6 +2280,22 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
           }
         },
       });
+    },
+
+    replyPullRequestReviewComment(input) {
+      return githubPrReview.reply(input);
+    },
+    createPullRequestReviewComment(input) {
+      return githubPrReview.comment(input);
+    },
+    draftPullRequestReviewComment(input) {
+      return githubPrReview.draft(input);
+    },
+    submitPullRequestReview(input) {
+      return githubPrReview.submit(input);
+    },
+    cancelPullRequestReview(input) {
+      return githubPrReview.cancel(input);
     },
 
     getCheckDetails(input) {
@@ -3767,6 +3833,9 @@ function toPullRequestTimelineReviewThreadItems(
       ...(thread.id ? { threadId: thread.id } : {}),
       isResolved: thread.isResolved,
       isOutdated: thread.isOutdated,
+      ...(thread.diffSide === "LEFT" || thread.diffSide === "RIGHT"
+        ? { side: thread.diffSide === "LEFT" ? ("old" as const) : ("new" as const) }
+        : {}),
     },
   }));
 }

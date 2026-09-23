@@ -1702,6 +1702,8 @@ export class VoiceAssistantWebSocketServer {
         // fallback for forgeCheckDetails. Stop advertising it after 2027-01-17
         // once supported floors are >= v0.2.0.
         githubCheckDetails: true,
+        // COMPAT(githubPrReviewWrite): added in v0.9.2, remove gate after 2027-09-23.
+        githubPrReviewWrite: true,
         // COMPAT(forgeCheckDetails): added in v0.2.0-beta.1. Remove the feature
         // gate and legacy fallback after 2027-01-17 once the supported daemon
         // floor is >= v0.2.0.

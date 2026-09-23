@@ -11,7 +11,7 @@ import {
 } from "@/components/ui/context-menu";
 import { useToast } from "@/contexts/toast-context";
 import { useStableEvent } from "@/hooks/use-stable-event";
-import { InlineReviewAddButton, InlineReviewThread } from "@/review";
+import { hasInlineReviewOverlay, InlineReviewAddButton, InlineReviewThread } from "@/review";
 import { copyToClipboard } from "@/utils/copy-to-clipboard";
 import type { ReviewableDiffTarget } from "@/utils/diff-layout";
 import { DocumentFileHeader } from "./document-file-header";
@@ -181,6 +181,7 @@ export function DiffSurface(props: DiffSurfaceProps) {
       labels: {
         binary: t("workspace.git.diff.binaryFile"),
         tooLarge: t("workspace.git.diff.tooLarge"),
+        outdated: t("review.github.outdatedCount"),
       },
       materializationWindow: diffMaterializationWindow(fileWindowTop, viewport.height),
     });
@@ -851,12 +852,8 @@ export function DiffSurface(props: DiffSurfaceProps) {
                 const columnWidth = model.viewportWidth / row.cells.length;
                 return row.cells.map((cell, index) => {
                   if (!cell?.reviewTarget) return null;
-                  const comments = reviewActions.commentsByTarget.get(cell.reviewTarget.key) ?? [];
-                  const hasEditor =
-                    reviewActions.editor?.target.filePath === cell.reviewTarget.filePath &&
-                    reviewActions.editor.target.side === cell.reviewTarget.side &&
-                    reviewActions.editor.target.lineNumber === cell.reviewTarget.lineNumber;
-                  if (comments.length === 0 && !hasEditor) return null;
+                  const hasOverlay = hasInlineReviewOverlay(reviewActions, cell.reviewTarget);
+                  if (!hasOverlay) return null;
                   return (
                     <WebReviewThread
                       key={cell.reviewTarget.key}

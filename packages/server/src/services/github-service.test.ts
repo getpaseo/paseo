@@ -2137,6 +2137,7 @@ describe("ForgeService", () => {
               path: "packages/app/src/git/pull-request-panel/data.ts",
               line: 24,
               startLine: 20,
+              diffSide: "RIGHT",
               isResolved: true,
               isOutdated: false,
               comments: {
@@ -2200,9 +2201,11 @@ describe("ForgeService", () => {
         threadId: "PRRT_1",
         isResolved: true,
         isOutdated: false,
+        side: "new",
       },
     });
     expect(runner.calls[0]?.args[3]).toContain("pullRequestReview");
+    expect(runner.calls[0]?.args[3]).toContain("diffSide");
   });
 
   it("keeps inline review thread comments once when they also appear in PR comments", async () => {

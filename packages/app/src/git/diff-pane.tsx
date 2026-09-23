@@ -90,6 +90,7 @@ import type { WorkspaceTabTarget } from "@/workspace-tabs/model";
 import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
 import { isWeb } from "@/constants/platform";
 import { usePublishWorkingDiffAttachment, useWorkingDiff } from "@/git/use-working-diff";
+import { ChangesGithubPendingBar } from "@/review/pending-bar";
 import type { CheckoutStatusPayload } from "@/git/use-status-query";
 import { DiffTooLargeState } from "@/git/diff-too-large-state";
 import { openDesktopTarget, useDesktopOpenTargets } from "@/workspace/desktop-open-targets";
@@ -1548,6 +1549,7 @@ export function ChangesSurface({
     isDiffLoading,
     reviewActions,
     reviewAttachment,
+    githubReview,
   } = useWorkingDiff({
     serverId,
     workspaceId: workspaceId ?? undefined,
@@ -1918,6 +1920,8 @@ export function ChangesSurface({
           sidebarSurface={presentation === "tree"}
         />
       ) : null}
+
+      <ChangesGithubPendingBar session={githubReview} />
 
       {forgeSetupMessage ? (
         <View style={styles.forgeSetupCallout} testID="forge-setup-callout">

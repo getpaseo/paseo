@@ -2846,6 +2846,8 @@ export class Session {
         return this.checkoutSession.handleCheckoutPrStatusRequest(msg);
       case "pull_request_timeline_request":
         return this.checkoutSession.handlePullRequestTimelineRequest(msg);
+      case "checkout.github.review.write.request":
+        return this.checkoutSession.handleCheckoutGithubReviewWriteRequest(msg);
       case "forge.search.request":
       case "github_search_request":
         return this.checkoutSession.handleForgeSearchRequest(msg);

@@ -30,6 +30,8 @@ import {
   type InlineReviewActions,
   type InlineReviewEditorState,
 } from "./geometry";
+import type { GithubReviewSession } from "./github-session";
+import type { GithubDiffThread, GithubReviewComment } from "./github-threads";
 
 type PressableState = PressableStateCallbackType & { hovered?: boolean };
 function iconButtonStyle({ hovered, pressed }: PressableState): StyleProp<ViewStyle> {
@@ -98,7 +100,10 @@ export function groupInlineReviewCommentsByTarget(
   return grouped;
 }
 
-export function useInlineReviewController(input: { reviewDraftKey: string }): InlineReviewActions {
+export function useInlineReviewController(input: {
+  reviewDraftKey: string;
+  github?: GithubReviewSession | null;
+}): InlineReviewActions {
   const reviewComments = useReviewDraftComments(input.reviewDraftKey);
   const commentsByTarget = useMemo(
     () => groupInlineReviewCommentsByTarget(reviewComments),
@@ -108,21 +113,26 @@ export function useInlineReviewController(input: { reviewDraftKey: string }): In
   const addComment = useReviewDraftStore((state) => state.addComment);
   const updateComment = useReviewDraftStore((state) => state.updateComment);
   const deleteComment = useReviewDraftStore((state) => state.deleteComment);
+  const github = input.github ?? null;
 
   useEffect(() => {
     setEditor(null);
   }, [input.reviewDraftKey]);
 
   const handleStartComment = useCallback((target: ReviewableDiffTarget) => {
-    setEditor({ target, commentId: null, body: "" });
+    setEditor({ target, commentId: null, replyThreadId: null, body: "" });
   }, []);
 
   const handleEditComment = useCallback(
     (target: ReviewableDiffTarget, comment: ReviewDraftComment) => {
-      setEditor({ target, commentId: comment.id, body: comment.body });
+      setEditor({ target, commentId: comment.id, replyThreadId: null, body: comment.body });
     },
     [],
   );
+
+  const handleReply = useCallback((target: ReviewableDiffTarget, threadId: string) => {
+    setEditor({ target, commentId: null, replyThreadId: threadId, body: "" });
+  }, []);
 
   const handleCancelEditor = useCallback(() => {
     setEditor(null);
@@ -157,6 +167,42 @@ export function useInlineReviewController(input: { reviewDraftKey: string }): In
     [addComment, editor, input.reviewDraftKey, updateComment],
   );
 
+  const handlePublishComment = useCallback(
+    (body: string) => {
+      if (!editor || !github) return;
+      void github
+        .publishComment(
+          {
+            filePath: editor.target.filePath,
+            side: editor.target.side,
+            lineNumber: editor.target.lineNumber,
+          },
+          body,
+        )
+        .then(() => setEditor(null))
+        .catch(() => {});
+    },
+    [editor, github],
+  );
+
+  const handleStartReview = useCallback(
+    (body: string) => {
+      if (!editor || !github) return;
+      void github
+        .startReview(
+          {
+            filePath: editor.target.filePath,
+            side: editor.target.side,
+            lineNumber: editor.target.lineNumber,
+          },
+          body,
+        )
+        .then(() => setEditor(null))
+        .catch(() => {});
+    },
+    [editor, github],
+  );
+
   const handleDeleteComment = useCallback(
     (id: string) => {
       deleteComment({ key: input.reviewDraftKey, id });
@@ -168,21 +214,31 @@ export function useInlineReviewController(input: { reviewDraftKey: string }): In
   return useMemo<InlineReviewActions>(
     () => ({
       commentsByTarget,
+      githubThreadsByTarget: github?.overlay.threadsByTarget ?? new Map(),
+      unmatchedOutdatedByPath: github?.overlay.unmatchedOutdatedByPath ?? new Map(),
       editor,
+      githubWrite: github,
       onStartComment: handleStartComment,
       onEditComment: handleEditComment,
+      onReply: handleReply,
       onCancelEditor: handleCancelEditor,
       onSaveEditor: handleSaveEditor,
+      onPublishComment: handlePublishComment,
+      onStartReview: handleStartReview,
       onDeleteComment: handleDeleteComment,
     }),
     [
       commentsByTarget,
       editor,
+      github,
       handleCancelEditor,
       handleDeleteComment,
       handleEditComment,
+      handlePublishComment,
+      handleReply,
       handleSaveEditor,
       handleStartComment,
+      handleStartReview,
     ],
   );
 }
@@ -295,6 +351,58 @@ export function InlineReviewGutterCell({
   );
 }
 
+function resolveInlineReviewEditorMode(
+  editor: InlineReviewEditorState,
+  canWrite: boolean,
+): "local" | "github-new" | "reply" {
+  if (editor.replyThreadId) {
+    return "reply";
+  }
+  if (editor.commentId || !canWrite) {
+    return "local";
+  }
+  return "github-new";
+}
+
+function InlineReviewThreadEditor({
+  editor,
+  canWrite,
+  reviewActions,
+}: {
+  editor: InlineReviewEditorState;
+  canWrite: boolean;
+  reviewActions: InlineReviewActions;
+}) {
+  const replyThreadId = editor.replyThreadId;
+  const githubWrite = reviewActions.githubWrite;
+  const onCancel = reviewActions.onCancelEditor;
+  const handleReply = useCallback(
+    (body: string) => {
+      if (!replyThreadId || !githubWrite) {
+        return;
+      }
+      void githubWrite.reply(replyThreadId, body).then(() => {
+        onCancel();
+        return undefined;
+      });
+    },
+    [githubWrite, onCancel, replyThreadId],
+  );
+  return (
+    <InlineReviewEditor
+      key={editor.commentId ?? editor.replyThreadId ?? "new"}
+      initialBody={editor.body}
+      mode={resolveInlineReviewEditorMode(editor, canWrite)}
+      onCancel={reviewActions.onCancelEditor}
+      onSave={reviewActions.onSaveEditor}
+      onPublish={reviewActions.onPublishComment}
+      onStartReview={reviewActions.onStartReview}
+      onReply={handleReply}
+      testID="inline-review-editor"
+    />
+  );
+}
+
 export function InlineReviewThread({
   reviewTarget,
   reviewActions,
@@ -311,21 +419,16 @@ export function InlineReviewThread({
   testID?: string;
 }) {
   const comments = reviewActions.commentsByTarget.get(reviewTarget.key) ?? [];
+  const githubThreads = reviewActions.githubThreadsByTarget.get(reviewTarget.key) ?? [];
   const editor = isInlineReviewEditorForTarget(reviewActions.editor, reviewTarget)
     ? reviewActions.editor
     : null;
   const editingCommentId = editor?.commentId ?? null;
   const editingExisting =
     editingCommentId !== null && comments.some((comment) => comment.id === editingCommentId);
-
+  const canWrite = reviewActions.githubWrite?.canWrite === true;
   const editorElement = editor ? (
-    <InlineReviewEditor
-      key={editingCommentId ?? "new"}
-      initialBody={editor.body}
-      onCancel={reviewActions.onCancelEditor}
-      onSave={reviewActions.onSaveEditor}
-      testID="inline-review-editor"
-    />
+    <InlineReviewThreadEditor editor={editor} canWrite={canWrite} reviewActions={reviewActions} />
   ) : null;
 
   const containerStyle = useMemo<StyleProp<ViewStyle>>(
@@ -339,6 +442,15 @@ export function InlineReviewThread({
 
   return (
     <View style={containerStyle} testID={testID}>
+      {githubThreads.map((thread) => (
+        <GithubThreadBlock
+          key={thread.threadId}
+          thread={thread}
+          canWrite={canWrite}
+          reviewTarget={reviewTarget}
+          onReply={reviewActions.onReply}
+        />
+      ))}
       {comments.map((comment) => {
         if (comment.id === editingCommentId) {
           return <React.Fragment key={comment.id}>{editorElement}</React.Fragment>;
@@ -356,6 +468,67 @@ export function InlineReviewThread({
       {editor && !editingExisting ? editorElement : null}
     </View>
   );
+}
+
+function GithubThreadBlock({
+  thread,
+  canWrite,
+  reviewTarget,
+  onReply,
+}: {
+  thread: GithubDiffThread;
+  canWrite: boolean;
+  reviewTarget: ReviewableDiffTarget;
+  onReply: (target: ReviewableDiffTarget, threadId: string) => void;
+}) {
+  const { t } = useTranslation();
+  const handleReply = useCallback(() => {
+    onReply(reviewTarget, thread.threadId);
+  }, [onReply, reviewTarget, thread.threadId]);
+  return (
+    <View>
+      {thread.comments.map((comment) => (
+        <GithubCommentRow key={comment.id} comment={comment} />
+      ))}
+      {canWrite ? (
+        <View style={styles.commentActions}>
+          <Button
+            accessibilityLabel={t("review.comment.reply")}
+            testID={`review-comment-reply-${thread.threadId}`}
+            hitSlop={SMALL_ACTION_HIT_SLOP}
+            onPress={handleReply}
+            variant="ghost"
+            size="xs"
+          >
+            {t("review.comment.reply")}
+          </Button>
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+function GithubCommentRow({ comment }: { comment: GithubReviewComment }) {
+  return (
+    <View style={styles.githubCommentBlock} testID={`github-review-comment-${comment.id}`}>
+      <Text style={styles.commentMeta} numberOfLines={1}>
+        {comment.author} · {formatCommentAge(comment.createdAt)}
+      </Text>
+      <Text style={styles.commentBody} numberOfLines={3}>
+        {comment.body}
+      </Text>
+    </View>
+  );
+}
+
+function formatCommentAge(createdAt: number): string {
+  const deltaMs = Date.now() - createdAt;
+  const minutes = Math.round(deltaMs / 60_000);
+  const formatter = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
+  if (Math.abs(minutes) < 60) return formatter.format(-minutes, "minute");
+  const hours = Math.round(minutes / 60);
+  if (Math.abs(hours) < 24) return formatter.format(-hours, "hour");
+  return formatter.format(-Math.round(hours / 24), "day");
 }
 
 function CommentRow({
@@ -431,11 +604,19 @@ export function InlineReviewEditor({
   initialBody,
   onCancel,
   onSave,
+  onPublish,
+  onStartReview,
+  onReply,
+  mode = "local",
   testID,
 }: {
   initialBody: string;
   onCancel: () => void;
   onSave: (body: string) => void;
+  onPublish?: (body: string) => void;
+  onStartReview?: (body: string) => void;
+  onReply?: (body: string) => void;
+  mode?: "local" | "github-new" | "reply";
   testID?: string;
 }) {
   const { t } = useTranslation();
@@ -455,7 +636,19 @@ export function InlineReviewEditor({
   const handleBlur = useCallback(() => {
     setIsFocused(false);
   }, []);
-  const handleSave = useCallback(() => onSave(trimmedBody), [onSave, trimmedBody]);
+  const handleSave = useCallback(() => {
+    if (mode === "reply") {
+      onReply?.(trimmedBody);
+      return;
+    }
+    onSave(trimmedBody);
+  }, [mode, onReply, onSave, trimmedBody]);
+  const handlePublish = useCallback(() => {
+    onPublish?.(trimmedBody);
+  }, [onPublish, trimmedBody]);
+  const handleStartReview = useCallback(() => {
+    onStartReview?.(trimmedBody);
+  }, [onStartReview, trimmedBody]);
 
   useEffect(() => {
     const element = getWebTextInputElement(inputRef.current);
@@ -522,17 +715,46 @@ export function InlineReviewEditor({
         >
           {t("review.comment.cancel")}
         </Button>
-        <Button
-          accessibilityLabel={t("review.comment.saveAccessibility")}
-          testID={testID ? `${testID}-save` : undefined}
-          hitSlop={SMALL_ACTION_HIT_SLOP}
-          disabled={!canSave}
-          onPress={handleSave}
-          variant="default"
-          size="xs"
-        >
-          {t("review.comment.save")}
-        </Button>
+        {mode === "github-new" ? (
+          <>
+            <Button
+              accessibilityLabel={t("review.comment.addSingle")}
+              testID={testID ? `${testID}-single` : undefined}
+              hitSlop={SMALL_ACTION_HIT_SLOP}
+              disabled={!canSave}
+              onPress={handlePublish}
+              variant="ghost"
+              size="xs"
+            >
+              {t("review.comment.addSingle")}
+            </Button>
+            <Button
+              accessibilityLabel={t("review.comment.startReview")}
+              testID={testID ? `${testID}-start-review` : undefined}
+              hitSlop={SMALL_ACTION_HIT_SLOP}
+              disabled={!canSave}
+              onPress={handleStartReview}
+              variant="default"
+              size="xs"
+            >
+              {t("review.comment.startReview")}
+            </Button>
+          </>
+        ) : (
+          <Button
+            accessibilityLabel={
+              mode === "reply" ? t("review.comment.reply") : t("review.comment.saveAccessibility")
+            }
+            testID={testID ? `${testID}-save` : undefined}
+            hitSlop={SMALL_ACTION_HIT_SLOP}
+            disabled={!canSave}
+            onPress={handleSave}
+            variant="default"
+            size="xs"
+          >
+            {mode === "reply" ? t("review.comment.reply") : t("review.comment.save")}
+          </Button>
+        )}
       </View>
     </View>
   );
@@ -599,6 +821,19 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foreground,
     fontSize: theme.fontSize.content,
     lineHeight: theme.fontSize.content * 1.4,
+  },
+  githubCommentBlock: {
+    backgroundColor: theme.colors.surface2,
+    borderWidth: theme.borderWidth[1],
+    borderColor: theme.colors.borderAccent,
+    borderRadius: theme.borderRadius.lg,
+    paddingHorizontal: theme.spacing[3],
+    paddingVertical: theme.spacing[2],
+    gap: theme.spacing[1],
+  },
+  commentMeta: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
   },
   commentActions: {
     flexDirection: "row",

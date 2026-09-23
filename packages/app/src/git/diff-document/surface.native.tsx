@@ -19,7 +19,7 @@ import Animated, {
   type SharedValue,
 } from "react-native-reanimated";
 import { scheduleOnRN } from "react-native-worklets";
-import { InlineReviewThread } from "@/review";
+import { hasInlineReviewOverlay, InlineReviewThread } from "@/review";
 import { useKeyboardShift } from "@/keyboard/shift";
 import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 import { DocumentFileHeader } from "./document-file-header";
@@ -136,6 +136,7 @@ export function DiffSurface(props: DiffSurfaceProps) {
       labels: {
         binary: t("workspace.git.diff.binaryFile"),
         tooLarge: t("workspace.git.diff.tooLarge"),
+        outdated: t("review.github.outdatedCount"),
       },
       materializationWindow: diffMaterializationWindow(fileWindowTop, viewport.height),
       reuseFrom,
@@ -513,13 +514,8 @@ function NativeReviewOverlays({
     const columnWidth = model.viewportWidth / row.cells.length;
     return row.cells.flatMap((cell, index) => {
       if (!cell?.reviewTarget) return [];
-      const comments = reviewActions.commentsByTarget.get(cell.reviewTarget.key) ?? [];
-      const editor = reviewActions.editor;
-      const hasEditor =
-        editor?.target.filePath === cell.reviewTarget.filePath &&
-        editor.target.side === cell.reviewTarget.side &&
-        editor.target.lineNumber === cell.reviewTarget.lineNumber;
-      if (comments.length === 0 && !hasEditor) return [];
+      const hasOverlay = hasInlineReviewOverlay(reviewActions, cell.reviewTarget);
+      if (!hasOverlay) return [];
       return [
         <View
           key={cell.reviewTarget.key}

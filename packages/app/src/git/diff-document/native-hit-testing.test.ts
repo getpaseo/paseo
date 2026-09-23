@@ -114,7 +114,7 @@ function build(layout: "unified" | "split") {
       statusWarning: "orange",
       syntax: {},
     },
-    labels: { binary: "Binary", tooLarge: "Too large" },
+    labels: { binary: "Binary", tooLarge: "Too large", outdated: "{{count}} outdated" },
   };
   return buildDiffDocumentModel(input);
 }

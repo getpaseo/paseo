@@ -85,7 +85,7 @@ function shapedCharactersFor(options: { lineCount: number; lineLength: number })
       statusWarning: "orange",
       syntax: {},
     },
-    labels: { binary: "Binary", tooLarge: "Too large" },
+    labels: { binary: "Binary", tooLarge: "Too large", outdated: "{{count}} outdated" },
   };
   buildDiffDocumentModel(input);
   return stats.shapedCharacters;

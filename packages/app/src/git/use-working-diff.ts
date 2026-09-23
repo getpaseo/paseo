@@ -8,6 +8,7 @@ import {
   useInlineReviewController,
   useReviewAttachmentSnapshot,
 } from "@/review";
+import { useGithubReviewSession } from "@/review/github-session";
 import { useCheckoutDiffQuery } from "@/git/use-diff-query";
 import { useCheckoutStatusQuery } from "@/git/use-status-query";
 import { useWorkingDiffComparison } from "@/git/working-diff-comparison";
@@ -81,7 +82,13 @@ export function useWorkingDiff({
       }),
     [baseRef, cwd, diffMode, ignoreWhitespace, serverId, workspaceId],
   );
-  const reviewActions = useInlineReviewController({ reviewDraftKey });
+  const github = useGithubReviewSession({
+    serverId,
+    cwd,
+    files,
+    enabled: enabled && isGit,
+  });
+  const reviewActions = useInlineReviewController({ reviewDraftKey, github });
   const reviewAttachment = useReviewAttachmentSnapshot({
     key: reviewDraftKey,
     diffFiles: files,
@@ -107,6 +114,7 @@ export function useWorkingDiff({
     isDiffLoading,
     reviewActions,
     reviewAttachment,
+    githubReview: github,
   };
 }
 

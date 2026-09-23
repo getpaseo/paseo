@@ -146,12 +146,19 @@ export function paintWebFileHeader(input: {
   context.font = `${typography.statSize}px ${typography.family}`;
   const statWidths = statLabels.map((label) => context.measureText(label).width);
   const statWidth = statWidths[0]! + 4 + statWidths[1]!;
-  const statX = iconX - 8 - statWidth;
+  const chip = file.outdatedChip;
+  const chipWidth = chip ? context.measureText(chip).width : 0;
+  const chipGap = chip ? 8 : 0;
+  const statX = iconX - 8 - statWidth - chipWidth - chipGap;
   const statBaseline = centeredTextBaseline(context, y + DIFF_FILE_HEADER_CONTENT_HEIGHT / 2);
+  if (chip) {
+    context.fillStyle = palette.statusWarning;
+    context.fillText(chip, statX, statBaseline);
+  }
   context.fillStyle = palette.statusSuccess;
-  context.fillText(statLabels[0]!, statX, statBaseline);
+  context.fillText(statLabels[0]!, statX + chipWidth + chipGap, statBaseline);
   context.fillStyle = palette.statusDanger;
-  context.fillText(statLabels[1]!, statX + statWidths[0]! + 4, statBaseline);
+  context.fillText(statLabels[1]!, statX + chipWidth + chipGap + statWidths[0]! + 4, statBaseline);
   paintChangeIcon(
     context,
     file,

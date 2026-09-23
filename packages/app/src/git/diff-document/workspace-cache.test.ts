@@ -72,7 +72,7 @@ function modelInput(
     typography: { family: "monospace", size: 12, lineHeight: 18 },
     measureText,
     palette,
-    labels: { binary: "Binary", tooLarge: "Too large" },
+    labels: { binary: "Binary", tooLarge: "Too large", outdated: "{{count}} outdated" },
     ...overrides,
   };
 }
@@ -173,7 +173,7 @@ describe("diff document workspace cache", () => {
     const first = cache.buildModel(modelInput(files, measureText));
     const second = cache.buildModel(
       modelInput(files, measureText, {
-        labels: { binary: "Binary blob", tooLarge: "Too large" },
+        labels: { binary: "Binary blob", tooLarge: "Too large", outdated: "{{count}} outdated" },
       }),
     );
 

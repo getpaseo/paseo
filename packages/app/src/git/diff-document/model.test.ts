@@ -11,6 +11,7 @@ import {
   shouldApplyRelayoutScroll,
 } from "./model";
 import type { BuildDiffDocumentModelInput, TextMeasurer } from "./types";
+import { stubInlineReviewActions } from "@/review/geometry";
 
 const measurer: TextMeasurer = { measure: (text) => Array.from(text).length * 10 };
 
@@ -65,7 +66,7 @@ function input(overrides: Partial<BuildDiffDocumentModelInput> = {}): BuildDiffD
       statusWarning: "orange",
       syntax: {},
     },
-    labels: { binary: "Binary", tooLarge: "Too large" },
+    labels: { binary: "Binary", tooLarge: "Too large", outdated: "{{count}} outdated" },
     ...overrides,
   };
 }
@@ -369,8 +370,7 @@ describe("diff document model", () => {
   it("reserves review geometry in the measured row", () => {
     const model = buildDiffDocumentModel(
       input({
-        reviewActions: {
-          commentsByTarget: new Map(),
+        reviewActions: stubInlineReviewActions({
           editor: {
             target: {
               key: "src/a.ts:old:1",
@@ -387,13 +387,9 @@ describe("diff document model", () => {
             },
             body: "",
             commentId: null,
+            replyThreadId: null,
           },
-          onStartComment() {},
-          onCancelEditor() {},
-          onSaveEditor() {},
-          onEditComment() {},
-          onDeleteComment() {},
-        },
+        }),
       }),
     );
     const reviewRow = model.rows.find((row) => {
@@ -786,13 +782,7 @@ function rowForReviewTarget(model: ReturnType<typeof buildDiffDocumentModel>, ke
 function reviewActionsWithEditor(
   target: NonNullable<ReturnType<typeof addedCell>["reviewTarget"]> | null,
 ): NonNullable<BuildDiffDocumentModelInput["reviewActions"]> {
-  return {
-    commentsByTarget: new Map(),
-    editor: target ? { target, body: "", commentId: null } : null,
-    onStartComment() {},
-    onCancelEditor() {},
-    onSaveEditor() {},
-    onEditComment() {},
-    onDeleteComment() {},
-  };
+  return stubInlineReviewActions({
+    editor: target ? { target, body: "", commentId: null, replyThreadId: null } : null,
+  });
 }

@@ -27,7 +27,10 @@ export interface NativeHeaderTextLayout {
   families: string[] | undefined;
   fontSize: number;
   statFontSize: number;
-  palette: Pick<DiffPalette, "foreground" | "foregroundMuted" | "statusSuccess" | "statusDanger">;
+  palette: Pick<
+    DiffPalette,
+    "foreground" | "foregroundMuted" | "statusSuccess" | "statusDanger" | "statusWarning"
+  >;
 }
 
 export interface NativeShapedHeaderText {

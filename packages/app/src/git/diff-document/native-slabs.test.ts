@@ -26,6 +26,7 @@ function modelWithBodies(
       rowStart: 0,
       rowEnd: 0,
       isCollapsed: body.bottom === body.bodyTop,
+      outdatedChip: null,
     })),
     rows: [],
     height: bodies.at(-1)?.bottom ?? 0,

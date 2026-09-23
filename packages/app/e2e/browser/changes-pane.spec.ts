@@ -84,6 +84,98 @@ async function failNextDiscardRequest(page: Page): Promise<void> {
   });
 }
 
+async function stubGithubReviewRpcs(page: Page): Promise<void> {
+  await page.routeWebSocket(daemonWsRoutePattern(), (browserSocket) => {
+    const serverSocket = browserSocket.connectToServer();
+    browserSocket.onMessage((message) => {
+      if (typeof message === "string") {
+        const envelope = JSON.parse(message) as {
+          message?: {
+            type?: string;
+            cwd?: string;
+            requestId?: string;
+          };
+        };
+        const type = envelope.message?.type;
+        const cwd = envelope.message?.cwd ?? "";
+        const requestId = envelope.message?.requestId ?? "";
+        if (type === "checkout_pr_status_request") {
+          browserSocket.send(
+            JSON.stringify({
+              type: "session",
+              message: {
+                type: "checkout_pr_status_response",
+                payload: {
+                  cwd,
+                  status: {
+                    url: "https://github.com/acme/app/pull/12",
+                    title: "Review overlay",
+                    state: "OPEN",
+                    number: 12,
+                    baseRefName: "main",
+                    headRefName: "feat",
+                    isMerged: false,
+                    repoOwner: "acme",
+                    repoName: "app",
+                  },
+                  githubFeaturesEnabled: true,
+                  forge: "github",
+                  error: null,
+                  requestId,
+                },
+              },
+            }),
+          );
+          return;
+        }
+        if (type === "pull_request_timeline_request") {
+          browserSocket.send(
+            JSON.stringify({
+              type: "session",
+              message: {
+                type: "pull_request_timeline_response",
+                payload: {
+                  cwd,
+                  prNumber: 12,
+                  items: [],
+                  truncated: false,
+                  error: null,
+                  requestId,
+                  githubFeaturesEnabled: true,
+                },
+              },
+            }),
+          );
+          return;
+        }
+        if (type === "checkout.github.review.write.request") {
+          const responseType = "checkout.github.review.write.response";
+          browserSocket.send(
+            JSON.stringify({
+              type: "session",
+              message: {
+                type: responseType,
+                payload: {
+                  cwd,
+                  success: true,
+                  error: null,
+                  requestId,
+                  reviewId: "review-1",
+                  commentId: null,
+                  threadId: null,
+                },
+              },
+            }),
+          );
+          return;
+        }
+      }
+      serverSocket.send(message);
+    });
+    serverSocket.onMessage((message) => browserSocket.send(message));
+  });
+}
+
 const CHANGES_PREFERENCES_KEY = "@paseo:changes-preferences";
 
 const BEFORE = `import { useLayoutEffect, useMemo, useRef, useState } from "react";
@@ -1038,6 +1130,20 @@ test("creates, cancels, edits, and deletes a review while keeping Changes focuse
     await editInlineReview(page, "Please keep this branch named explicitly");
     await deleteInlineReview(page);
   });
+});
+
+test("posts a GitHub pending review from the Changes editor", async ({ page }) => {
+  const workspace = await createWorkspaceWithMountedTabDiff();
+  await stubGithubReviewRpcs(page);
+  await useUnwrappedDiffLines(page);
+  await openWorkspaceChanges(page, workspace);
+  await startReviewOnFirstChangedLine(page);
+  await page.getByTestId("inline-review-editor-input").fill("please name this");
+  await expect(page.getByTestId("inline-review-editor-single")).toBeVisible();
+  await page.getByTestId("inline-review-editor-start-review").click();
+  await expect(page.getByTestId("github-pending-review-bar")).toBeVisible();
+  await page.getByTestId("github-pending-review-comment").click();
+  await expect(page.getByTestId("github-pending-review-bar")).toHaveCount(0);
 });
 
 test("split canvas creates a review on the changed side and keeps it in that column", async ({

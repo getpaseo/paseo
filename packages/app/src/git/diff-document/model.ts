@@ -127,6 +127,10 @@ export function buildDiffDocumentModel(input: BuildDiffDocumentModelInput): Diff
       rowStart,
       rowEnd: rows.length,
       isCollapsed,
+      outdatedChip: outdatedChipLabel(
+        input.reviewActions?.unmatchedOutdatedByPath.get(file.path) ?? 0,
+        input.labels.outdated,
+      ),
     });
   }
 
@@ -331,10 +335,28 @@ export function reviewGeometryKey(
   const comments = [...reviewActions.commentsByTarget.entries()]
     .map(([target, targetComments]) => [target, targetComments.map((comment) => comment.id).sort()])
     .sort(([left], [right]) => String(left).localeCompare(String(right)));
+  const github = [...reviewActions.githubThreadsByTarget.entries()]
+    .map(([target, threads]) => [
+      target,
+      threads.flatMap((thread) => thread.comments.map((comment) => comment.id)).sort(),
+    ])
+    .sort(([left], [right]) => String(left).localeCompare(String(right)));
+  const outdated = [...reviewActions.unmatchedOutdatedByPath.entries()].sort(([left], [right]) =>
+    left.localeCompare(right),
+  );
   const editor = reviewActions.editor
-    ? [reviewActions.editor.target.key, reviewActions.editor.commentId]
+    ? [
+        reviewActions.editor.target.key,
+        reviewActions.editor.commentId,
+        reviewActions.editor.replyThreadId,
+      ]
     : null;
-  return JSON.stringify([comments, editor]);
+  return JSON.stringify([comments, github, outdated, editor]);
+}
+
+function outdatedChipLabel(count: number, template: string): string | null {
+  if (count <= 0) return null;
+  return template.replace("{{count}}", String(count));
 }
 
 export function expandedBodyBorderTop(file: DiffFileSection): number | null {

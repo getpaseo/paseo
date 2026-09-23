@@ -92,5 +92,6 @@ function section(
     rowStart: 0,
     rowEnd: 0,
     isCollapsed,
+    outdatedChip: null,
   };
 }

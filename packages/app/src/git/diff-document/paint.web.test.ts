@@ -395,6 +395,7 @@ function createSelectionModel(layout: "unified" | "split"): DiffDocumentModel {
         rowStart: 0,
         rowEnd: 1,
         isCollapsed: false,
+        outdatedChip: null,
       },
     ],
     rows: [
@@ -490,6 +491,7 @@ const model: DiffDocumentModel = {
       rowStart: 0,
       rowEnd: 1,
       isCollapsed: false,
+      outdatedChip: null,
     },
   ],
   rows: [

@@ -40,6 +40,7 @@ import type {
   PullRequestTimelineItem,
   SearchResult,
 } from "../../../services/forge-service.js";
+import type { GitHubService } from "../../../services/github-service.js";
 import {
   commitChanges,
   createPullRequest,
@@ -1280,6 +1281,59 @@ export class CheckoutSession {
     }
   }
 
+  async handleCheckoutGithubReviewWriteRequest(
+    msg: Extract<SessionInboundMessage, { type: "checkout.github.review.write.request" }>,
+  ): Promise<void> {
+    await this.runGithubReviewWrite(msg, (github) => dispatchGithubReviewWrite(github, msg));
+  }
+
+  private async runGithubReviewWrite(
+    msg: { cwd: string; requestId: string },
+    write: (github: GitHubService) => Promise<{
+      reviewId: string | null;
+      commentId: string | null;
+      threadId: string | null;
+    }>,
+  ): Promise<void> {
+    try {
+      const github = await this.requireGitHubService(msg.cwd);
+      const result = await write(github);
+      this.host.emit({
+        type: "checkout.github.review.write.response",
+        payload: {
+          cwd: msg.cwd,
+          success: true,
+          error: null,
+          requestId: msg.requestId,
+          reviewId: result.reviewId,
+          commentId: result.commentId,
+          threadId: result.threadId,
+        },
+      });
+    } catch (error) {
+      this.host.emit({
+        type: "checkout.github.review.write.response",
+        payload: {
+          cwd: msg.cwd,
+          success: false,
+          error: toCheckoutError(error),
+          requestId: msg.requestId,
+          reviewId: null,
+          commentId: null,
+          threadId: null,
+        },
+      });
+    }
+  }
+
+  private async requireGitHubService(cwd: string): Promise<GitHubService> {
+    const { forge, service } = await this.requireForgeService(cwd);
+    if (forge !== "github" || !isGitHubReviewService(service)) {
+      throw new Error("Posting review comments is only supported for GitHub");
+    }
+    return service;
+  }
+
   async handleCheckoutForgeGetCheckDetailsRequest(
     msg: Extract<
       SessionInboundMessage,
@@ -1482,4 +1536,68 @@ function toPullRequestTimelinePayloadItem(
   item: PullRequestTimelineItem,
 ): PullRequestTimelinePayloadItem {
   return item;
+}
+
+function requireReviewField<T>(value: T | undefined, label: string): T {
+  if (value === undefined || value === "") {
+    throw new Error(`GitHub review write requires ${label}`);
+  }
+  return value;
+}
+
+function dispatchGithubReviewWrite(
+  github: GitHubService,
+  msg: Extract<SessionInboundMessage, { type: "checkout.github.review.write.request" }>,
+): Promise<{ reviewId: string | null; commentId: string | null; threadId: string | null }> {
+  const identity = {
+    cwd: msg.cwd,
+    repoOwner: msg.repoOwner,
+    repoName: msg.repoName,
+    prNumber: msg.prNumber,
+  };
+  switch (msg.action) {
+    case "reply":
+      return github.replyPullRequestReviewComment({
+        ...identity,
+        threadId: requireReviewField(msg.threadId, "threadId"),
+        body: requireReviewField(msg.body, "body"),
+      });
+    case "comment":
+      return github.createPullRequestReviewComment({
+        ...identity,
+        path: requireReviewField(msg.path, "path"),
+        side: requireReviewField(msg.side, "side"),
+        line: requireReviewField(msg.line, "line"),
+        body: requireReviewField(msg.body, "body"),
+      });
+    case "draft":
+      return github.draftPullRequestReviewComment({
+        ...identity,
+        path: requireReviewField(msg.path, "path"),
+        side: requireReviewField(msg.side, "side"),
+        line: requireReviewField(msg.line, "line"),
+        body: requireReviewField(msg.body, "body"),
+        ...(msg.reviewId ? { reviewId: msg.reviewId } : {}),
+      });
+    case "submit":
+      return github.submitPullRequestReview({
+        ...identity,
+        reviewId: requireReviewField(msg.reviewId, "reviewId"),
+        event: requireReviewField(msg.event, "event"),
+        ...(msg.body ? { body: msg.body } : {}),
+      });
+    case "cancel":
+      return github.cancelPullRequestReview({
+        ...identity,
+        reviewId: requireReviewField(msg.reviewId, "reviewId"),
+      });
+    default: {
+      const exhaustive: never = msg.action;
+      throw new Error(`Unhandled GitHub review action: ${exhaustive}`);
+    }
+  }
+}
+
+function isGitHubReviewService(service: ForgeService): service is GitHubService {
+  return "replyPullRequestReviewComment" in service;
 }

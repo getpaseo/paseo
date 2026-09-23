@@ -153,6 +153,7 @@ export interface DiffFileSection {
   rowStart: number;
   rowEnd: number;
   isCollapsed: boolean;
+  outdatedChip: string | null;
 }
 
 export interface DiffDocumentModel {
@@ -183,7 +184,7 @@ export interface BuildDiffDocumentModelInput {
   measureText: TextMeasurer;
   palette: DiffPalette;
   reviewActions?: InlineReviewActions;
-  labels: { binary: string; tooLarge: string };
+  labels: { binary: string; tooLarge: string; outdated: string };
   materializationWindow?: { top: number; height: number };
   /** A geometry-compatible model whose unchanged file measurements may be reused. */
   reuseFrom?: readonly DiffDocumentModel[];

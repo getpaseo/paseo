@@ -113,9 +113,24 @@ export function recordNativeHeaderPicture(input: {
     size: "stat",
     tone: "statusDanger",
   });
-  const statX = iconX - 8 - additionsText.width - 4 - deletionsText.width;
-  paintNativeHeaderText(canvas, additionsText, statX);
-  paintNativeHeaderText(canvas, deletionsText, statX + additionsText.width + 4);
+  const chip = input.file.outdatedChip
+    ? shapeNativeHeaderText({
+        layout: input.textLayout,
+        text: input.file.outdatedChip,
+        size: "stat",
+        tone: "statusWarning",
+      })
+    : null;
+  const chipGap = chip ? 8 : 0;
+  const statX =
+    iconX - 8 - additionsText.width - 4 - deletionsText.width - (chip?.width ?? 0) - chipGap;
+  if (chip) paintNativeHeaderText(canvas, chip, statX);
+  paintNativeHeaderText(canvas, additionsText, statX + (chip?.width ?? 0) + chipGap);
+  paintNativeHeaderText(
+    canvas,
+    deletionsText,
+    statX + (chip?.width ?? 0) + chipGap + additionsText.width + 4,
+  );
   paintNativeChangeIcon(
     canvas,
     input.file,

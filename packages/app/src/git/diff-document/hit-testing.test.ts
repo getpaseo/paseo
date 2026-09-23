@@ -10,6 +10,7 @@ import {
 } from "./hit-testing";
 import { buildDiffDocumentModel } from "./model";
 import type { BuildDiffDocumentModelInput, DiffCell, DiffSelection } from "./types";
+import { stubInlineReviewActions } from "@/review/geometry";
 
 const measurer = { measure: (text: string) => Array.from(text).length * 10 };
 
@@ -214,7 +215,7 @@ function buildModel(changedContent: string, overrides: Partial<BuildDiffDocument
       statusWarning: "orange",
       syntax: {},
     },
-    labels: { binary: "Binary", tooLarge: "Too large" },
+    labels: { binary: "Binary", tooLarge: "Too large", outdated: "{{count}} outdated" },
     ...overrides,
   });
 }
@@ -311,13 +312,7 @@ function reviewActionsForFirstAddition(): NonNullable<
     lineType: "add" as const,
     content: "review me",
   };
-  return {
-    commentsByTarget: new Map(),
-    editor: { target, commentId: null, body: "" },
-    onStartComment() {},
-    onCancelEditor() {},
-    onSaveEditor() {},
-    onEditComment() {},
-    onDeleteComment() {},
-  };
+  return stubInlineReviewActions({
+    editor: { target, commentId: null, replyThreadId: null, body: "" },
+  });
 }

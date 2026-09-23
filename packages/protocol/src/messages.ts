@@ -2338,6 +2338,30 @@ export const PullRequestTimelineRequestSchema = z.object({
   requestId: z.string(),
 });
 
+const GithubReviewIdentitySchema = z.object({
+  cwd: z.string(),
+  prNumber: z.number().int().positive(),
+  repoOwner: GitHubRepoSegmentSchema,
+  repoName: GitHubRepoSegmentSchema,
+  requestId: z.string(),
+});
+
+const GithubReviewLineSideSchema = z.enum(["old", "new"]);
+const GithubReviewSubmitEventSchema = z.enum(["comment", "approve", "request_changes"]);
+
+// COMPAT(githubPrReviewWrite): added in v0.9.2, remove gate after 2027-09-23.
+export const CheckoutGithubReviewWriteRequestSchema = GithubReviewIdentitySchema.extend({
+  type: z.literal("checkout.github.review.write.request"),
+  action: z.enum(["reply", "comment", "draft", "submit", "cancel"]),
+  threadId: z.string().min(1).optional(),
+  path: z.string().min(1).optional(),
+  side: GithubReviewLineSideSchema.optional(),
+  line: z.number().int().positive().optional(),
+  body: z.string().min(1).optional(),
+  reviewId: z.string().min(1).optional(),
+  event: GithubReviewSubmitEventSchema.optional(),
+});
+
 export const ValidateBranchRequestSchema = z.object({
   type: z.literal("validate_branch_request"),
   cwd: z.string(),
@@ -3275,6 +3299,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   CheckoutGithubGetCheckDetailsRequestSchema,
   CheckoutPrStatusRequestSchema,
   PullRequestTimelineRequestSchema,
+  CheckoutGithubReviewWriteRequestSchema,
   CheckoutSwitchBranchRequestSchema,
   CheckoutRenameBranchRequestSchema,
   StashSaveRequestSchema,
@@ -3555,6 +3580,8 @@ export const ServerInfoStatusPayloadSchema = z
         // fallback for forgeCheckDetails. Stop advertising and consuming it
         // after 2027-01-17 once supported floors are >= v0.2.0.
         githubCheckDetails: z.boolean().optional(),
+        // COMPAT(githubPrReviewWrite): added in v0.9.2, remove gate after 2027-09-23.
+        githubPrReviewWrite: z.boolean().optional(),
         // COMPAT(forgeCheckDetails): added in v0.2.0-beta.1. Remove the feature
         // gate and githubCheckDetails fallback after 2027-01-17 once the
         // supported daemon floor is >= v0.2.0.
@@ -5705,6 +5732,7 @@ const PullRequestTimelineCommentItemSchema = z.object({
       threadId: z.string().optional(),
       isResolved: z.boolean().optional(),
       isOutdated: z.boolean().optional(),
+      side: z.enum(["old", "new"]).optional(),
     })
     .optional(),
 });
@@ -5744,6 +5772,21 @@ export const PullRequestTimelineResponseSchema = z.object({
     })
     .optional()
     .prefault({}),
+});
+
+const CheckoutGithubReviewWritePayloadSchema = z.object({
+  cwd: z.string(),
+  success: z.boolean(),
+  error: CheckoutErrorSchema.nullable(),
+  requestId: z.string(),
+  reviewId: z.string().nullable().optional(),
+  commentId: z.string().nullable().optional(),
+  threadId: z.string().nullable().optional(),
+});
+
+export const CheckoutGithubReviewWriteResponseSchema = z.object({
+  type: z.literal("checkout.github.review.write.response"),
+  payload: CheckoutGithubReviewWritePayloadSchema,
 });
 
 export const CheckoutSwitchBranchResponseSchema = z.object({
@@ -6877,6 +6920,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   CheckoutGithubGetCheckDetailsResponseSchema,
   CheckoutPrStatusResponseSchema,
   PullRequestTimelineResponseSchema,
+  CheckoutGithubReviewWriteResponseSchema,
   CheckoutSwitchBranchResponseSchema,
   CheckoutRenameBranchResponseSchema,
   StashSaveResponseSchema,
@@ -7273,6 +7317,15 @@ export type CheckoutPrStatusResponse = z.infer<typeof CheckoutPrStatusResponseSc
 export type PullRequestTimelineRequest = z.infer<typeof PullRequestTimelineRequestSchema>;
 export type PullRequestTimelineItem = z.infer<typeof PullRequestTimelineItemSchema>;
 export type PullRequestTimelineResponse = z.infer<typeof PullRequestTimelineResponseSchema>;
+export type CheckoutGithubReviewWriteRequest = z.infer<
+  typeof CheckoutGithubReviewWriteRequestSchema
+>;
+export type CheckoutGithubReviewWritePayload = z.infer<
+  typeof CheckoutGithubReviewWritePayloadSchema
+>;
+export type CheckoutGithubReviewWriteResponse = z.infer<
+  typeof CheckoutGithubReviewWriteResponseSchema
+>;
 export type CheckoutSwitchBranchRequest = z.infer<typeof CheckoutSwitchBranchRequestSchema>;
 export type CheckoutSwitchBranchResponse = z.infer<typeof CheckoutSwitchBranchResponseSchema>;
 export type CheckoutRenameBranchRequest = z.infer<typeof CheckoutRenameBranchRequestSchema>;

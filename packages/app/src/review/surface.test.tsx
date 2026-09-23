@@ -143,11 +143,17 @@ const COMMENT_LIST: ReviewDraftComment[] = [comment()];
 function buildReviewActions(overrides: Partial<InlineReviewActions> = {}): InlineReviewActions {
   return {
     commentsByTarget: new Map(),
+    githubThreadsByTarget: new Map(),
+    unmatchedOutdatedByPath: new Map(),
     editor: null,
+    githubWrite: null,
     onStartComment: vi.fn(),
     onEditComment: vi.fn(),
+    onReply: vi.fn(),
     onCancelEditor: vi.fn(),
     onSaveEditor: vi.fn(),
+    onPublishComment: vi.fn(),
+    onStartReview: vi.fn(),
     onDeleteComment: vi.fn(),
     ...overrides,
   };
@@ -186,7 +192,12 @@ describe("useInlineReviewController", () => {
     );
 
     act(() => result.current.onStartComment(reviewTarget));
-    expect(result.current.editor).toEqual({ target: reviewTarget, commentId: null, body: "" });
+    expect(result.current.editor).toEqual({
+      target: reviewTarget,
+      commentId: null,
+      replyThreadId: null,
+      body: "",
+    });
 
     act(() => result.current.onSaveEditor(" first comment "));
     const savedComment = useReviewDraftStore.getState().drafts[firstKey]?.[0];
@@ -205,6 +216,7 @@ describe("useInlineReviewController", () => {
     expect(result.current.editor).toEqual({
       target: reviewTarget,
       commentId: savedComment?.id,
+      replyThreadId: null,
       body: "first comment",
     });
 
@@ -259,7 +271,7 @@ describe("git diff inline review helpers", () => {
     const rightComment = comment();
     const actions = buildReviewActions({
       commentsByTarget: groupInlineReviewCommentsByTarget([rightComment]),
-      editor: { target: rightTarget, commentId: null, body: "" },
+      editor: { target: rightTarget, commentId: null, replyThreadId: null, body: "" },
     });
 
     const rowState = getSplitInlineReviewThreadState({
@@ -276,7 +288,7 @@ describe("git diff inline review helpers", () => {
   it("includes thread padding in the inline editor height", () => {
     const reviewTarget = target();
     const actions = buildReviewActions({
-      editor: { target: reviewTarget, commentId: null, body: "" },
+      editor: { target: reviewTarget, commentId: null, replyThreadId: null, body: "" },
     });
 
     expect(getInlineReviewThreadState({ reviewTarget, reviewActions: actions })?.height).toBe(148);
