@@ -4234,7 +4234,7 @@ describe("create_schedule MCP tool", () => {
     });
   });
 
-  it("passes timezone through cron create_schedule input", async () => {
+  it("passes timezone and workspace through cron create_schedule input", async () => {
     const { agentManager, agentStorage } = createTestDeps();
     const createOrReplace = vi.fn(async (scheduleInput: CreateScheduleInput) =>
       createStoredSchedule(scheduleInput),
@@ -4253,6 +4253,7 @@ describe("create_schedule MCP tool", () => {
       cron: "0 9 * * 1-5",
       timezone: "  America/New_York  ",
       provider: "codex",
+      workspaceId: "wks_daily",
     });
 
     expect(createOrReplace).toHaveBeenCalledWith(
@@ -4261,6 +4262,10 @@ describe("create_schedule MCP tool", () => {
           type: "cron",
           expression: "0 9 * * 1-5",
           timezone: "America/New_York",
+        },
+        target: {
+          type: "new-agent",
+          config: expect.objectContaining({ workspaceId: "wks_daily" }),
         },
       }),
     );
@@ -4759,6 +4764,8 @@ describe("update_schedule MCP tool", () => {
       mode: null,
       maxRuns: null,
       clearExpires: true,
+      cwd: "/home/user/project",
+      workspaceId: null,
     });
 
     expect(update).toHaveBeenCalledWith({
@@ -4768,8 +4775,14 @@ describe("update_schedule MCP tool", () => {
       newAgentConfig: {
         model: null,
         modeId: null,
+        cwd: "/home/user/project",
+        workspaceId: null,
       },
     });
+    await expect(tool.handler({ id: "schedule-1", workspaceId: null })).rejects.toThrow(
+      "cwd is required when clearing workspaceId",
+    );
+    expect(update).toHaveBeenCalledOnce();
   });
 
   it("rejects conflicting model and expiry inputs", async () => {

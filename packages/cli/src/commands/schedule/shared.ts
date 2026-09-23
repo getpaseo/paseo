@@ -50,6 +50,16 @@ export function toScheduleCommandError(code: string, action: string, error: unkn
   };
 }
 
+export function requireScheduleExistingWorkspaceSupport(client: ScheduleDaemonClient): void {
+  // COMPAT(scheduleExistingWorkspace): added in v0.8.0, remove after 2027-09-11.
+  if (client.getLastServerInfoMessage()?.features?.scheduleExistingWorkspace !== true) {
+    throw {
+      code: "DAEMON_UPDATE_REQUIRED",
+      message: "Update the host to schedule fresh agents in an existing workspace.",
+    } satisfies CommandError;
+  }
+}
+
 export async function requireNewAgentSchedule(
   client: ScheduleDaemonClient,
   id: string,
@@ -76,7 +86,10 @@ export function formatTarget(target: ScheduleTarget | ScheduleListItem["target"]
     return `agent:${target.agentId.slice(0, 7)}`;
   }
   const modelSuffix = target.config.model ? `/${target.config.model}` : "";
-  return `new-agent:${target.config.provider}${modelSuffix}`;
+  const workspaceSuffix = target.config.workspaceId
+    ? `@${target.config.workspaceId.slice(0, 7)}`
+    : "";
+  return `new-agent:${target.config.provider}${modelSuffix}${workspaceSuffix}`;
 }
 
 export function formatDurationMs(durationMs: number): string {
@@ -116,7 +129,7 @@ function resolveScheduleTarget(args: {
   if (hasExplicitNewAgentOption) {
     throw {
       code: "INVALID_TARGET",
-      message: "--provider/--mode/--thinking can only be used with a new-agent target",
+      message: "--provider/--mode/--thinking/--workspace can only be used with a new-agent target",
       details: "Use --target new-agent or omit --target to create a new agent schedule",
     } satisfies CommandError;
   }
@@ -137,6 +150,20 @@ function resolveScheduleTarget(args: {
   return { type: "agent", agentId: targetValue };
 }
 
+function parseWorkspaceId(value: string | undefined): string | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  const workspaceId = value.trim();
+  if (!workspaceId) {
+    throw {
+      code: "INVALID_WORKSPACE",
+      message: "--workspace cannot be empty",
+    } satisfies CommandError;
+  }
+  return workspaceId;
+}
+
 export function parseScheduleCreateInput(options: {
   prompt: string;
   every?: string;
@@ -148,6 +175,7 @@ export function parseScheduleCreateInput(options: {
   mode?: string;
   thinking?: string;
   cwd?: string;
+  workspace?: string;
   host?: string;
   daemonTarget: import("../../utils/daemon-target.js").DaemonTarget;
   maxRuns?: string;
@@ -171,11 +199,12 @@ export function parseScheduleCreateInput(options: {
   }
 
   const cwdInput = options.cwd?.trim();
-  if (options.daemonTarget.kind === "endpoint" && !cwdInput) {
+  const workspaceId = parseWorkspaceId(options.workspace);
+  if (options.daemonTarget.kind === "endpoint" && !cwdInput && !workspaceId) {
     throw {
       code: "MISSING_CWD",
       message:
-        "--cwd is required when --host is specified (the local working directory will not exist on the remote daemon)",
+        "--cwd is required when --host is specified unless --workspace is set (the local working directory will not exist on the remote daemon)",
     } satisfies CommandError;
   }
 
@@ -190,8 +219,12 @@ export function parseScheduleCreateInput(options: {
       message: "--thinking cannot be empty",
     } satisfies CommandError;
   }
-  const hasExplicitNewAgentOption =
-    options.provider !== undefined || options.mode !== undefined || options.thinking !== undefined;
+  const hasExplicitNewAgentOption = [
+    options.provider,
+    options.mode,
+    options.thinking,
+    options.workspace,
+  ].some((value) => value !== undefined);
   const createNewAgentTarget = (): ScheduleTarget => {
     const resolvedProviderModel = resolveProviderAndModel({
       provider: options.provider,
@@ -201,6 +234,7 @@ export function parseScheduleCreateInput(options: {
       config: {
         provider: resolvedProviderModel.provider,
         cwd: cwdInput ?? process.cwd(),
+        ...(workspaceId ? { workspaceId } : {}),
         ...(resolvedProviderModel.model ? { model: resolvedProviderModel.model } : {}),
         ...(modeId ? { modeId } : {}),
         ...(thinkingOptionId ? { thinkingOptionId } : {}),
@@ -249,10 +283,12 @@ export interface ScheduleUpdateOptionsInput {
   model?: string;
   mode?: string;
   cwd?: string;
+  workspace?: string;
   maxRuns?: string;
   expiresIn?: string;
   clearMaxRuns?: boolean;
   clearExpires?: boolean;
+  clearWorkspace?: boolean;
 }
 
 export function parseScheduleUpdateInput(options: ScheduleUpdateOptionsInput): UpdateScheduleInput {
@@ -436,6 +472,23 @@ function buildNewAgentConfigPatch(
       } satisfies CommandError;
     }
     patch.cwd = trimmed;
+  }
+  if (options.workspace !== undefined && options.clearWorkspace) {
+    throw {
+      code: "CONFLICTING_WORKSPACE",
+      message: "Use either --workspace <id> or --clear-workspace, not both",
+    } satisfies CommandError;
+  }
+  if (options.workspace !== undefined) {
+    patch.workspaceId = parseWorkspaceId(options.workspace);
+  } else if (options.clearWorkspace) {
+    if (patch.cwd === undefined) {
+      throw {
+        code: "MISSING_CWD",
+        message: "--cwd is required with --clear-workspace",
+      } satisfies CommandError;
+    }
+    patch.workspaceId = null;
   }
   return Object.keys(patch).length > 0 ? patch : undefined;
 }
