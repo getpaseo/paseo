@@ -26,6 +26,15 @@ export interface LifecycleAgentManager {
   }>;
   notifyAgentState(agentId: string): void;
   setAgentMode(agentId: string, modeId: string): Promise<AgentProviderNotice | null>;
+  updateCompanionEntry(input: {
+    agentId: string;
+    entryId?: string;
+    action: "update_status" | "add_pin" | "remove_pin" | "add_q_and_a";
+    status?: "open" | "reviewed" | "done";
+    text?: string;
+    answerText?: string;
+    sourceId?: string;
+  }): Promise<void>;
   updateAgentMetadata(
     agentId: string,
     updates: {
@@ -229,4 +238,27 @@ async function archiveStoredAgent(
 
   const archivedAt = new Date().toISOString();
   return dependencies.agentManager.archiveSnapshot(agentId, archivedAt);
+}
+
+export async function updateCompanionEntryCommand(
+  dependencies: Pick<AgentLifecycleCommandDependencies, "agentManager">,
+  input: {
+    agentId: string;
+    entryId?: string;
+    action: "update_status" | "add_pin" | "remove_pin" | "add_q_and_a";
+    status?: "open" | "reviewed" | "done";
+    text?: string;
+    answerText?: string;
+    sourceId?: string;
+  },
+): Promise<{ accepted: boolean; error?: string }> {
+  try {
+    await dependencies.agentManager.updateCompanionEntry(input);
+    return { accepted: true };
+  } catch (error) {
+    return {
+      accepted: false,
+      error: error instanceof Error ? error.message : "Failed to update companion entry",
+    };
+  }
 }

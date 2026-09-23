@@ -22,6 +22,7 @@ interface ArtifactFeedProps {
   isSupported: boolean;
   onOpenWorkspaceFile?: (request: WorkspaceFileOpenRequest) => void;
   onReturnToChat?: () => void;
+  onPinArtifact?: (artifact: AgentArtifact) => void;
 }
 
 interface ArtifactCardProps {
@@ -29,6 +30,7 @@ interface ArtifactCardProps {
   serverId: string;
   cwd: string;
   onOpen: (artifact: AgentArtifact) => void;
+  onPin?: () => void;
 }
 
 const ICON_BY_KIND: Record<
@@ -66,6 +68,7 @@ export function ArtifactFeed({
   isSupported,
   onOpenWorkspaceFile,
   onReturnToChat,
+  onPinArtifact,
 }: ArtifactFeedProps) {
   const { t } = useTranslation();
   const connectionStatus = useHostRuntimeConnectionStatus(serverId);
@@ -132,13 +135,15 @@ export function ArtifactFeed({
           serverId={serverId}
           cwd={cwd}
           onOpen={handleOpen}
+          // eslint-disable-next-line react-perf/jsx-no-new-function-as-prop
+          onPin={onPinArtifact ? () => onPinArtifact(artifact) : undefined}
         />
       ))}
     </ScrollView>
   );
 }
 
-export function ArtifactCard({ artifact, serverId, cwd, onOpen }: ArtifactCardProps) {
+export function ArtifactCard({ artifact, serverId, cwd, onOpen, onPin }: ArtifactCardProps) {
   const { t } = useTranslation();
   const handlePress = useCallback(() => onOpen(artifact), [artifact, onOpen]);
   const pressableStyle = useCallback(
@@ -156,6 +161,7 @@ export function ArtifactCard({ artifact, serverId, cwd, onOpen }: ArtifactCardPr
       accessibilityRole="button"
       accessibilityLabel={t("agentPanel.artifacts.open", { name: artifact.name })}
       onPress={handlePress}
+      onLongPress={onPin}
       style={pressableStyle}
       testID={`artifact-card-${artifact.path}`}
     >

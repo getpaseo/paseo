@@ -18,6 +18,7 @@ import {
   type ProjectPlacementPayload,
   type WorkspaceSetupSnapshot,
   type WorkspaceDescriptorPayload,
+  type UpdateCompanionEntryRequestMessage,
 } from "./messages.js";
 import type {
   TerminalManager,
@@ -82,6 +83,7 @@ import {
   detachAgentCommand,
   setAgentModeCommand,
   updateAgentCommand,
+  updateCompanionEntryCommand,
 } from "./agent/lifecycle-command.js";
 import {
   buildStoredAgentPayload,
@@ -1778,6 +1780,8 @@ export class Session {
         return this.handleCloseItemsRequest(msg);
       case "update_agent_request":
         return this.handleUpdateAgentRequest(msg.agentId, msg.name, msg.labels, msg.requestId);
+      case "update_companion_entry_request":
+        return this.handleUpdateCompanionEntryRequest(msg);
       case "project.rename.request":
         return this.handleProjectRenameRequest(msg.projectId, msg.customName, msg.requestId);
       case "send_agent_message_request":
@@ -2410,6 +2414,40 @@ export class Session {
           error: getErrorMessageOr(error, "Failed to update agent"),
         },
       });
+    }
+  }
+
+  private async handleUpdateCompanionEntryRequest(
+    msg: UpdateCompanionEntryRequestMessage,
+  ): Promise<void> {
+    this.sessionLogger.info(
+      {
+        agentId: msg.agentId,
+        requestId: msg.requestId,
+        action: msg.action,
+      },
+      "session: update_companion_entry_request",
+    );
+
+    try {
+      const result = await updateCompanionEntryCommand(
+        { agentManager: this.agentManager },
+        {
+          agentId: msg.agentId,
+          entryId: msg.entryId,
+          action: msg.action,
+          status: msg.status,
+          text: msg.text,
+          answerText: msg.answerText,
+          sourceId: msg.sourceId,
+        },
+      );
+
+      if (!result.accepted) {
+        this.sessionLogger.warn({ error: result.error }, "Failed to update companion entry");
+      }
+    } catch (error) {
+      this.sessionLogger.error({ err: error }, "session: update_companion_entry_request error");
     }
   }
 

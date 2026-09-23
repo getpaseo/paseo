@@ -1,19 +1,21 @@
 import type { AgentArtifact } from "@getpaseo/protocol/agent-types";
 import { isCompanionEntryPending, type CompanionEntry } from "@getpaseo/protocol/companion-stream";
 import { useCallback, useMemo, useState } from "react";
-import { ActivityIndicator, FlatList, Text, View } from "react-native";
+import { ActivityIndicator, FlatList, Text, View, TextInput } from "react-native";
 import { useTranslation } from "react-i18next";
 import { StyleSheet } from "react-native-unistyles";
 import { ArtifactCard, ArtifactFeed } from "@/artifacts/feed";
 import { Button } from "@/components/ui/button";
 import { MarkdownRenderer } from "@/components/markdown/renderer";
-import { useHostRuntimeConnectionStatus } from "@/runtime/host-runtime";
+import { SegmentedControl } from "@/components/ui/segmented-control";
+import { useHostRuntimeConnectionStatus, useHostRuntimeClient } from "@/runtime/host-runtime";
 import { formatMessageTimestamp } from "@/utils/time";
 import type { WorkspaceFileOpenRequest } from "@/workspace/file-open";
 import { buildCompanionFeed, type CompanionFeedItem } from "./model";
 
 interface CompanionFeedProps {
   serverId: string;
+  agentId: string;
   cwd: string;
   entries: readonly CompanionEntry[];
   artifacts: readonly AgentArtifact[];
@@ -26,8 +28,12 @@ interface CompanionFeedProps {
 
 const keyExtractor = (item: CompanionFeedItem) => item.id;
 
+type ViewTab = "stream" | "pinned";
+type StreamFilter = "all" | "question" | "feature_request" | "permission" | "outcome" | "q_and_a";
+
 export function CompanionFeed({
   serverId,
+  agentId,
   cwd,
   entries,
   artifacts,
@@ -39,18 +45,44 @@ export function CompanionFeed({
 }: CompanionFeedProps) {
   const { t } = useTranslation();
   const connection = useHostRuntimeConnectionStatus(serverId);
-  const [onlyPending, setOnlyPending] = useState(false);
+  const client = useHostRuntimeClient(serverId);
+
+  const [viewTab, setViewTab] = useState<ViewTab>("stream");
+  const [filter, setFilter] = useState<StreamFilter>("all");
+  const [onlyOpen, setOnlyOpen] = useState(true);
+  const [pinText, setPinText] = useState("");
+
   const items = useMemo(() => buildCompanionFeed(entries, artifacts), [entries, artifacts]);
-  const pendingCount = entries.filter(isCompanionEntryPending).length;
-  const visible = useMemo(
-    () =>
-      onlyPending
-        ? items.filter((item) => item.kind === "entry" && isCompanionEntryPending(item.entry))
-        : items,
-    [items, onlyPending],
-  );
-  const pendingAccessibilityState = useMemo(() => ({ selected: onlyPending }), [onlyPending]);
-  const togglePending = useCallback(() => setOnlyPending((value) => !value), []);
+
+  const visible = useMemo(() => {
+    return items.filter((item) => {
+      if (viewTab === "pinned") {
+        return item.kind === "entry" && item.entry.kind === "pin";
+      } else {
+        // Stream / Queue
+        if (item.kind === "entry" && item.entry.kind === "pin") return false;
+
+        if (item.kind === "artifact") {
+          return filter === "all" && !onlyOpen;
+        }
+
+        if (filter !== "all" && item.entry.kind !== filter) return false;
+
+        if (onlyOpen) {
+          if (item.entry.kind === "question" || item.entry.kind === "feature_request") {
+            return item.entry.status === "open";
+          }
+          if (item.entry.kind === "permission") {
+            return item.entry.status === "pending";
+          }
+          return false;
+        }
+
+        return true;
+      }
+    });
+  }, [items, viewTab, filter, onlyOpen]);
+
   const openArtifact = useCallback(
     (artifact: AgentArtifact) => {
       onOpenWorkspaceFile?.({ location: { path: artifact.path }, disposition: "side" });
@@ -58,6 +90,37 @@ export function CompanionFeed({
     },
     [onOpenWorkspaceFile, onReturnToChat],
   );
+
+  const handleUpdateStatus = useCallback(
+    (entryId: string, status: "open" | "reviewed" | "done") => {
+      client
+        ?.updateCompanionEntry({ agentId, entryId, action: "update_status", status })
+        .catch(() => {});
+    },
+    [client, agentId],
+  );
+
+  const handleRemovePin = useCallback(
+    (entryId: string) => {
+      client?.updateCompanionEntry({ agentId, entryId, action: "remove_pin" }).catch(() => {});
+    },
+    [client, agentId],
+  );
+
+  const handlePinArtifact = useCallback(
+    (artifact: { path: string }) => {
+      client
+        ?.updateCompanionEntry({
+          agentId,
+          action: "add_pin",
+          text: `Artifact: ${artifact.path}`,
+          sourceId: `artifact:${artifact.path}`,
+        })
+        .catch(() => {});
+    },
+    [client, agentId],
+  );
+
   const renderItem = useCallback(
     ({ item }: { item: CompanionFeedItem }) =>
       item.kind === "artifact" ? (
@@ -66,73 +129,129 @@ export function CompanionFeed({
           serverId={serverId}
           cwd={cwd}
           onOpen={openArtifact}
+          // eslint-disable-next-line react-perf/jsx-no-new-function-as-prop
+          onPin={() => handlePinArtifact(item.artifact)}
         />
       ) : (
         <EntryCard
           entry={item.entry}
           onReturnToChat={onReturnToChat}
           onReplyInChat={onReplyInChat}
+          onUpdateStatus={handleUpdateStatus}
+          onRemovePin={handleRemovePin}
         />
       ),
-    [serverId, cwd, openArtifact, onReturnToChat, onReplyInChat],
+    [
+      serverId,
+      cwd,
+      openArtifact,
+      handlePinArtifact,
+      onReturnToChat,
+      onReplyInChat,
+      handleUpdateStatus,
+      handleRemovePin,
+    ],
   );
+
+  const handleToggleOnlyOpen = useCallback(() => setOnlyOpen((v) => !v), []);
+  const handleSubmitPin = useCallback(() => {
+    if (!pinText.trim()) return;
+    client
+      ?.updateCompanionEntry({ agentId, action: "add_pin", text: pinText.trim() })
+      .catch(() => {});
+    setPinText("");
+  }, [client, agentId, pinText]);
 
   const header = useMemo(
     () => (
       <View style={styles.header}>
         <Text style={styles.title}>{t("agentPanel.stream.title")}</Text>
         <Text style={styles.description}>{t("agentPanel.stream.description")}</Text>
+
         {connection !== "online" ? (
           <View style={styles.notice} testID="companion-stream-connection">
             {connection === "connecting" ? <ActivityIndicator size="small" /> : null}
             <Text style={styles.description}>{t("agentPanel.stream.offline")}</Text>
           </View>
         ) : null}
-        <Button
-          variant={onlyPending ? "secondary" : "outline"}
-          style={styles.touchTarget}
-          onPress={togglePending}
-          accessibilityState={pendingAccessibilityState}
-          testID="companion-stream-pending"
-        >
-          {onlyPending
-            ? t("agentPanel.stream.showAll")
-            : t("agentPanel.stream.pending", { count: pendingCount })}
-        </Button>
+
+        <SegmentedControl
+          value={viewTab}
+          onValueChange={setViewTab}
+          options={[
+            { value: "stream", label: "Queue" },
+            { value: "pinned", label: "Pinned" },
+          ]}
+        />
+
+        {viewTab === "stream" && (
+          <View style={styles.segmentContainer}>
+            <SegmentedControl
+              value={filter}
+              onValueChange={setFilter}
+              size="sm"
+              options={[
+                { value: "all", label: "All" },
+                { value: "question", label: "Questions" },
+                { value: "q_and_a", label: "Q&A" },
+                { value: "feature_request", label: "Features" },
+                { value: "permission", label: "Decisions" },
+                { value: "outcome", label: "Outcomes" },
+              ]}
+            />
+            <Button
+              variant={onlyOpen ? "secondary" : "outline"}
+              style={styles.touchTarget}
+              onPress={handleToggleOnlyOpen}
+              testID="companion-stream-pending"
+            >
+              {onlyOpen ? "Show All" : "Show Open Only"}
+            </Button>
+          </View>
+        )}
+
+        {viewTab === "pinned" && (
+          <View style={styles.pinInputContainer}>
+            <TextInput
+              style={styles.pinInput}
+              placeholder="Type a note or link..."
+              placeholderTextColor="#888"
+              value={pinText}
+              onChangeText={setPinText}
+              onSubmitEditing={handleSubmitPin}
+            />
+            <Button onPress={handleSubmitPin}>Add Note</Button>
+          </View>
+        )}
       </View>
     ),
-    [connection, onlyPending, pendingCount, pendingAccessibilityState, togglePending, t],
+    [connection, viewTab, filter, onlyOpen, pinText, t, handleToggleOnlyOpen, handleSubmitPin],
   );
+
   const empty = useMemo(
     () => (
       <View style={styles.empty} testID="companion-stream-empty">
         <Text style={styles.title}>
-          {t(onlyPending ? "agentPanel.stream.noPending" : "agentPanel.stream.emptyTitle")}
-        </Text>
-        <Text style={styles.description}>
-          {t(
-            onlyPending
-              ? "agentPanel.stream.noPendingDescription"
-              : "agentPanel.stream.emptyDescription",
-          )}
+          {viewTab === "pinned" ? "No pinned items" : "No items found"}
         </Text>
         <Button variant="outline" style={styles.touchTarget} onPress={onReturnToChat}>
           {t("agentPanel.stream.backToChat")}
         </Button>
       </View>
     ),
-    [onlyPending, onReturnToChat, t],
+    [viewTab, onReturnToChat, t],
   );
+
   const hasItems = visible.length > 0;
   const footer = useMemo(
     () =>
-      hasItems ? (
+      hasItems && viewTab === "stream" ? (
         <View style={styles.footer}>
           <Text style={styles.description}>{t("agentPanel.stream.outcomeDescription")}</Text>
           <Text style={styles.description}>{t("agentPanel.stream.retention")}</Text>
         </View>
       ) : null,
-    [hasItems, t],
+    [hasItems, viewTab, t],
   );
 
   if (!isSupported) {
@@ -175,25 +294,47 @@ function CardSeparator() {
   return <View style={styles.separator} />;
 }
 
+// eslint-disable-next-line complexity
 function EntryCard({
   entry,
   onReturnToChat,
   onReplyInChat,
+  onUpdateStatus,
+  onRemovePin,
 }: {
   entry: CompanionEntry;
   onReturnToChat: () => void;
   onReplyInChat: () => void;
+  onUpdateStatus: (id: string, status: "open" | "reviewed" | "done") => void;
+  onRemovePin: (id: string) => void;
 }) {
   const { t } = useTranslation();
   const [expanded, setExpanded] = useState(false);
   const toggleExpanded = useCallback(() => setExpanded((value) => !value), []);
+  const handleSetOpen = useCallback(
+    () => onUpdateStatus(entry.id, "open"),
+    [onUpdateStatus, entry.id],
+  );
+  const handleSetReviewed = useCallback(
+    () => onUpdateStatus(entry.id, "reviewed"),
+    [onUpdateStatus, entry.id],
+  );
+  const handleSetDone = useCallback(
+    () => onUpdateStatus(entry.id, "done"),
+    [onUpdateStatus, entry.id],
+  );
+  const handleRemovePinLocal = useCallback(() => onRemovePin(entry.id), [onRemovePin, entry.id]);
   const pending = isCompanionEntryPending(entry);
   const expandedAccessibilityState = useMemo(() => ({ expanded }), [expanded]);
+
   let title: string;
-  let status: string;
+  let status: string = "";
   if (entry.kind === "question") {
     title = t("agentPanel.stream.question");
-    status = t(`agentPanel.stream.${entry.status}`);
+    status = entry.status;
+  } else if (entry.kind === "feature_request") {
+    title = "Feature Request";
+    status = entry.status;
   } else if (entry.kind === "permission") {
     const titles = {
       question: "question",
@@ -208,34 +349,68 @@ function EntryCard({
         ? "agentPanel.stream.pendingStatus"
         : `agentPanel.stream.${entry.status}`,
     );
+  } else if (entry.kind === "pin") {
+    title = "Pinned Note";
+  } else if (entry.kind === "q_and_a") {
+    title = "Q&A";
   } else {
     title = t(`agentPanel.stream.${entry.status}`);
-    status = "";
   }
+
   let body = null;
   if (entry.text) {
     body = expanded ? (
-      <MarkdownRenderer text={entry.text} compact enableHtmlish={false} />
+      <View>
+        <MarkdownRenderer text={entry.text} compact enableHtmlish={false} />
+        {entry.kind === "q_and_a" && entry.answer && (
+          <View style={styles.qaAnswerContainer}>
+            <Text style={styles.qaAnswerLabel}>Answer:</Text>
+            <MarkdownRenderer text={entry.answer} compact enableHtmlish={false} />
+          </View>
+        )}
+      </View>
     ) : (
-      <Text selectable style={styles.body} numberOfLines={6}>
-        {entry.text}
-      </Text>
+      <View>
+        <Text selectable style={styles.body} numberOfLines={6}>
+          {entry.text}
+        </Text>
+        {entry.kind === "q_and_a" && entry.answer && (
+          <View style={styles.qaAnswerContainer}>
+            <Text style={styles.qaAnswerLabel}>Answer:</Text>
+            <Text selectable style={styles.body} numberOfLines={6}>
+              {entry.answer}
+            </Text>
+          </View>
+        )}
+      </View>
     );
   }
+
   return (
     <View
       style={[styles.card, pending && styles.pendingCard]}
       testID={`companion-entry-${entry.id}`}
     >
-      <Text style={styles.eyebrow}>{formatMessageTimestamp(new Date(entry.timestamp))}</Text>
+      <View style={styles.entryHeaderRow}>
+        <Text style={styles.eyebrow}>{formatMessageTimestamp(new Date(entry.timestamp))}</Text>
+        {entry.kind === "pin" ? (
+          <Button variant="ghost" size="sm" onPress={handleRemovePinLocal}>
+            <Text style={styles.description}>Unpin</Text>
+          </Button>
+        ) : null}
+      </View>
+
       <Text style={styles.title}>{title}</Text>
       {status ? (
         <Text style={[styles.description, pending && styles.pendingText]}>{status}</Text>
       ) : null}
+
       {body}
+
       {entry.truncated ? (
         <Text style={styles.description}>{t("agentPanel.stream.excerpt")}</Text>
       ) : null}
+
       <View style={styles.actions}>
         {entry.text ? (
           <Button
@@ -254,6 +429,20 @@ function EntryCard({
         >
           {t(pending ? "agentPanel.stream.replyInChat" : "agentPanel.stream.backToChat")}
         </Button>
+
+        {(entry.kind === "question" || entry.kind === "feature_request") && (
+          <View style={styles.statusActionsRow}>
+            <Button variant="outline" onPress={handleSetOpen}>
+              Open
+            </Button>
+            <Button variant="outline" onPress={handleSetReviewed}>
+              Reviewed
+            </Button>
+            <Button variant="outline" onPress={handleSetDone}>
+              Done
+            </Button>
+          </View>
+        )}
       </View>
     </View>
   );
@@ -303,5 +492,34 @@ const styles = StyleSheet.create((theme) => ({
   footer: {
     gap: theme.spacing[2],
     paddingVertical: theme.spacing[6],
+  },
+  segmentContainer: { gap: theme.spacing[2], marginTop: theme.spacing[2] },
+  pinInputContainer: { flexDirection: "row", gap: theme.spacing[2], marginTop: theme.spacing[2] },
+  pinInput: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    padding: theme.spacing[2],
+    borderRadius: theme.borderRadius.md,
+    color: theme.colors.foreground,
+  },
+  qaAnswerContainer: {
+    marginTop: theme.spacing[2],
+    paddingLeft: theme.spacing[2],
+    borderLeftWidth: 2,
+    borderLeftColor: theme.colors.border,
+  },
+  qaAnswerLabel: {
+    fontWeight: "bold",
+    marginBottom: theme.spacing[1],
+    fontSize: theme.fontSize.xs,
+    color: theme.colors.foregroundMuted,
+  },
+  entryHeaderRow: { flexDirection: "row", justifyContent: "space-between" },
+  statusActionsRow: {
+    flexDirection: "row",
+    gap: theme.spacing[2],
+    marginTop: theme.spacing[2],
+    width: "100%",
   },
 }));

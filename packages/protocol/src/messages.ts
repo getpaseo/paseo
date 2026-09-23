@@ -827,6 +827,18 @@ export const UpdateAgentRequestMessageSchema = z.object({
   requestId: z.string(),
 });
 
+export const UpdateCompanionEntryRequestMessageSchema = z.object({
+  type: z.literal("update_companion_entry_request"),
+  agentId: z.string(),
+  entryId: z.string().optional(),
+  action: z.enum(["update_status", "add_pin", "remove_pin", "add_q_and_a"]),
+  status: z.enum(["open", "reviewed", "done"]).optional(),
+  text: z.string().optional(),
+  answerText: z.string().optional(),
+  sourceId: z.string().optional(),
+  requestId: z.string(),
+});
+
 export const ProjectRenameRequestSchema = z.object({
   type: z.literal("project.rename.request"),
   projectId: z.string(),
@@ -2466,6 +2478,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   ArchiveAgentRequestMessageSchema,
   CloseItemsRequestMessageSchema,
   UpdateAgentRequestMessageSchema,
+  UpdateCompanionEntryRequestMessageSchema,
   ProjectRenameRequestSchema,
   ProjectRemoveRequestSchema,
   WorkspaceTitleSetRequestSchema,
@@ -5570,6 +5583,9 @@ export type LoopStopRequest = z.infer<typeof LoopStopRequestSchema>;
 export type ResumeAgentRequestMessage = z.infer<typeof ResumeAgentRequestMessageSchema>;
 export type DeleteAgentRequestMessage = z.infer<typeof DeleteAgentRequestMessageSchema>;
 export type UpdateAgentRequestMessage = z.infer<typeof UpdateAgentRequestMessageSchema>;
+export type UpdateCompanionEntryRequestMessage = z.infer<
+  typeof UpdateCompanionEntryRequestMessageSchema
+>;
 export type ProjectRenameRequest = z.infer<typeof ProjectRenameRequestSchema>;
 export type ProjectRemoveRequest = z.infer<typeof ProjectRemoveRequestSchema>;
 export type WorkspaceTitleSetRequest = z.infer<typeof WorkspaceTitleSetRequestSchema>;
