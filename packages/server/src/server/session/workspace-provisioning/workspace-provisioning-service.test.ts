@@ -34,13 +34,13 @@ const ARCHIVED_AT = "2026-01-01T00:00:00.000Z";
 const directorySymlinkType = process.platform === "win32" ? "junction" : "dir";
 
 // The real filesystem, so "this directory is gone" is observed rather than modelled.
-const isDirectory = async (target: string) => {
+async function isDirectory(target: string): Promise<boolean> {
   try {
     return statSync(target).isDirectory();
   } catch {
     return false;
   }
-};
+}
 
 let tmpDir: string;
 let gitRoots: Set<string>;
@@ -880,5 +880,43 @@ test("re-opening an active worktree workspace keeps its placement while the dire
     workspaceId: created.workspaceId,
     kind: "local_checkout",
     branch: "feature/away",
+  });
+});
+
+test("a directory that goes away while the git read is in flight keeps its placement", async () => {
+  const repo = path.join(tmpDir, "repo");
+  mkdirSync(repo, { recursive: true });
+  gitRoots.add(repo);
+  gitBranches.set(repo, "feature/vanishing");
+  const created = await provisioning.findOrCreateWorkspaceForDirectory(repo);
+  expect(created).toMatchObject({ kind: "local_checkout", branch: "feature/vanishing" });
+  const vanishingProvisioning = createWorkspaceProvisioningService({
+    workspaceRegistry,
+    projectRegistry,
+    isDirectory,
+    logger,
+    workspaceGitService: createNoopWorkspaceGitService({
+      peekSnapshot: () => null,
+      getCheckout: async (cwd: string) => {
+        rmSync(repo, { recursive: true, force: true });
+        return {
+          cwd,
+          isGit: false,
+          currentBranch: null,
+          remoteUrl: null,
+          worktreeRoot: null,
+          isPaseoOwnedWorktree: false,
+          mainRepoRoot: null,
+        };
+      },
+    }),
+  });
+
+  const reopened = await vanishingProvisioning.findOrCreateWorkspaceForDirectory(repo);
+
+  expect(reopened).toMatchObject({
+    workspaceId: created.workspaceId,
+    kind: "local_checkout",
+    branch: "feature/vanishing",
   });
 });

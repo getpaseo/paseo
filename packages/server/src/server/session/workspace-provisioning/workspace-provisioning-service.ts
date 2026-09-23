@@ -105,11 +105,15 @@ export function createWorkspaceProvisioningService(deps: {
    * Placement facts at a workspace directory, or null when there is nothing
    * there to read. A git read answers "not a checkout" for a plain directory
    * and for a directory that is gone, and only the first is evidence that a
-   * worktree stopped being one.
+   * worktree stopped being one. That answer therefore counts only while the
+   * directory is there on both sides of the read, so a worktree removed or
+   * unmounted while the read is in flight stays an absence.
    */
   async function observeWorkspaceCheckout(cwd: string): Promise<ProjectCheckoutLitePayload | null> {
     if (!(await deps.isDirectory(cwd))) return null;
-    return workspaceGitService.getCheckout(cwd);
+    const checkout = await workspaceGitService.getCheckout(cwd);
+    if (!checkout.isGit && !(await deps.isDirectory(cwd))) return null;
+    return checkout;
   }
 
   async function runInImportWorkspace<T>(
