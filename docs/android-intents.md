@@ -80,11 +80,11 @@ form.
 Links let another app act, but not look. The app exports a read-only content
 provider (`AssistantContentProvider` in the native module) with three tables:
 
-| URI                                                                  | Columns                                                                                 |
-| -------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
-| `content://sh.paseo.assistant/workspaces?q=&limit=`                  | `id`, `serverId`, `name`, `project`, `branch`, `status`, `agentCount`, `lastActivityAt` |
-| `content://sh.paseo.assistant/agents?workspaceId=&q=&limit=`         | `id`, `serverId`, `workspaceId`, `name`, `provider`, `status`, `lastActivityAt`         |
-| `content://sh.paseo.assistant/messages?agentId=&workspaceId=&limit=` | `id`, `serverId`, `workspaceId`, `agentId`, `agentName`, `kind`, `createdAt`, `text`    |
+| URI                                                                            | Columns                                                                                               |
+| ------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------- |
+| `content://sh.paseo.assistant/workspaces?q=&limit=`                            | `id`, `serverId`, `name`, `project`, `repository`, `branch`, `status`, `agentCount`, `lastActivityAt` |
+| `content://sh.paseo.assistant/agents?workspaceId=&serverId=&q=&limit=`         | `id`, `serverId`, `workspaceId`, `name`, `provider`, `status`, `lastActivityAt`                       |
+| `content://sh.paseo.assistant/messages?agentId=&workspaceId=&serverId=&limit=` | `id`, `serverId`, `workspaceId`, `agentId`, `agentName`, `kind`, `createdAt`, `text`                  |
 
 `workspaces` and `agents` come from a catalog the app publishes whenever hosts,
 workspaces, or agents change: ids, names, status, and activity, most recent
@@ -93,6 +93,10 @@ are never in it. Those two tables read a file, so they work without starting
 React Native and answer as of the last time the app was open. `q` is a
 case-insensitive substring match over the row's columns and `limit` is 1 to 100
 (default 25).
+`repository` is the Git remote's host and repository path, without credentials
+or URL query parameters. It is empty when Paseo has no parseable remote.
+Use `serverId` from a catalog row to scope an agent or message query to the
+host that owns it. Omitting it preserves cross-host lookup for older callers.
 
 On every table a SQL selection or sort order is refused rather than ignored, and
 only callers in the `com.colonelpanic.eva` package family are served.

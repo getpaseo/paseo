@@ -50,7 +50,12 @@ describe("buildAssistantCatalog", () => {
       hosts: [{ serverId: "laptop", label: "  Laptop ", status: "online" }],
       workspaces: [
         workspace({ id: "ws-old", name: "old-branch" }),
-        workspace({ id: "ws-new", name: "sidebar-fix", title: "Sidebar crash" }),
+        workspace({
+          id: "ws-new",
+          name: "sidebar-fix",
+          title: "Sidebar crash",
+          gitRuntime: { remoteUrl: "https://secret@github.com/team/paseo.git" },
+        }),
       ],
       agents: [
         agent({
@@ -80,6 +85,7 @@ describe("buildAssistantCatalog", () => {
       serverId: "laptop",
       name: "Sidebar crash",
       project: "paseo",
+      repository: "github.com/team/paseo",
       branch: null,
       status: "idle",
       agentCount: 1,
@@ -88,6 +94,7 @@ describe("buildAssistantCatalog", () => {
     expect(catalog.agents.map((entry) => entry.id)).toEqual(["a-new", "a-old"]);
     expect(catalog.agents[1].name).toBe("paseo");
     expect(JSON.stringify(catalog)).not.toContain("/home/me");
+    expect(JSON.stringify(catalog)).not.toContain("secret");
     expect(catalog.truncated).toBe(false);
   });
 

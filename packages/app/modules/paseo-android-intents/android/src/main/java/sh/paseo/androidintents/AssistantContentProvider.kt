@@ -22,7 +22,7 @@ private const val UNAVAILABLE_NOTICE =
   "Paseo could not read the conversation; open Paseo, leave it running, and ask again."
 
 private val WORKSPACE_COLUMNS =
-  listOf("id", "serverId", "name", "project", "branch", "status", "agentCount", "lastActivityAt")
+  listOf("id", "serverId", "name", "project", "repository", "branch", "status", "agentCount", "lastActivityAt")
 private val AGENT_COLUMNS =
   listOf("id", "serverId", "workspaceId", "name", "provider", "status", "lastActivityAt")
 private val MESSAGE_COLUMNS =
@@ -101,12 +101,14 @@ class AssistantContentProvider : ContentProvider() {
     val limit = parseLimit(uri.getQueryParameter("limit"), DEFAULT_LIMIT, MAX_LIMIT)
     val query = uri.getQueryParameter("q")?.trim()?.lowercase()?.ifEmpty { null }
     val workspaceId = uri.getQueryParameter("workspaceId")?.trim()?.ifEmpty { null }
+    val serverId = uri.getQueryParameter("serverId")?.trim()?.ifEmpty { null }
     require(table == "agents" || workspaceId == null) { "workspaceId only filters agents" }
 
     val catalog = readCatalog()
     val rows =
       catalog?.optJSONArray(table).toList().filter { row ->
         (workspaceId == null || row.optString("workspaceId") == workspaceId) &&
+          (serverId == null || row.optString("serverId") == serverId) &&
           (query == null || columns.any { column -> row.optString(column).lowercase().contains(query) })
       }
     val cursor = MatrixCursor(requested.toTypedArray(), minOf(rows.size, limit))
@@ -133,17 +135,18 @@ class AssistantContentProvider : ContentProvider() {
     val requested = requestedColumns(projection, MESSAGE_COLUMNS)
     val agentId = uri.getQueryParameter("agentId")?.trim()?.ifEmpty { null }
     val workspaceId = uri.getQueryParameter("workspaceId")?.trim()?.ifEmpty { null }
+    val serverId = uri.getQueryParameter("serverId")?.trim()?.ifEmpty { null }
     require(agentId != null || workspaceId != null) { "Pass agentId or workspaceId" }
     val limit = parseLimit(uri.getQueryParameter("limit"), MESSAGE_DEFAULT_LIMIT, MESSAGE_MAX_LIMIT)
     val scopedWorkspaceId = if (agentId == null) workspaceId else null
 
     val answer =
       AssistantQueryBridge.request(
-        mapOf("agentId" to agentId, "workspaceId" to scopedWorkspaceId, "limit" to limit),
+        mapOf("agentId" to agentId, "workspaceId" to scopedWorkspaceId, "serverId" to serverId, "limit" to limit),
         MESSAGE_TIMEOUT_MS,
       )
     val rows = answer?.let(::parseMessageRows)
-      ?: return noticeCursor(requested, agentId, scopedWorkspaceId, UNAVAILABLE_NOTICE)
+      ?: return noticeCursor(requested, agentId, scopedWorkspaceId, serverId, UNAVAILABLE_NOTICE)
 
     val cursor = MatrixCursor(requested.toTypedArray(), minOf(rows.size, limit))
     for (row in rows.take(limit)) {
@@ -163,12 +166,13 @@ class AssistantContentProvider : ContentProvider() {
     requested: List<String>,
     agentId: String?,
     workspaceId: String?,
+    serverId: String?,
     text: String,
   ): Cursor {
     val values =
       mapOf(
         "id" to "notice",
-        "serverId" to "",
+        "serverId" to (serverId ?: ""),
         "workspaceId" to workspaceId,
         "agentId" to (agentId ?: ""),
         "agentName" to "",

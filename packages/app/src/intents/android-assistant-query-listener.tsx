@@ -51,6 +51,7 @@ async function answer(request: AssistantQueryRequest): Promise<void> {
     rows = [
       assistantNoticeRow({
         text: "Paseo could not read that conversation; try again in a moment.",
+        serverId: request.serverId,
         agentId: request.agentId,
         workspaceId: request.workspaceId,
       }),

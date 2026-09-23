@@ -15,6 +15,7 @@ const MAX_FAN_OUT = 6;
 
 const AssistantQueryRequestSchema = z.object({
   requestId: z.string().min(1),
+  serverId: z.string().min(1).nullish(),
   agentId: z.string().min(1).nullish(),
   workspaceId: z.string().min(1).nullish(),
   limit: z.number().int().min(1).max(ASSISTANT_MESSAGE_MAX_LIMIT).nullish(),
@@ -22,6 +23,7 @@ const AssistantQueryRequestSchema = z.object({
 
 export interface AssistantQueryRequest {
   requestId: string;
+  serverId?: string | null;
   agentId: string | null;
   workspaceId: string | null;
   limit: number;
@@ -55,6 +57,7 @@ export function parseAssistantQueryRequest(raw: unknown): AssistantQueryRequest 
   }
   return {
     requestId: result.data.requestId,
+    serverId: result.data.serverId ?? null,
     agentId,
     workspaceId,
     limit: result.data.limit ?? ASSISTANT_MESSAGE_DEFAULT_LIMIT,
@@ -84,9 +87,12 @@ export function resolveAssistantQueryTargets(
   request: AssistantQueryRequest,
   hosts: readonly AssistantQueryHost[],
 ): { targets: AssistantQueryTarget[]; notice: string | null } {
+  const scopedHosts = request.serverId
+    ? hosts.filter((host) => host.serverId === request.serverId)
+    : hosts;
   const agentId = request.agentId;
   if (agentId) {
-    const owners = hosts.filter((host) => host.agents.some((agent) => agent.id === agentId));
+    const owners = scopedHosts.filter((host) => host.agents.some((agent) => agent.id === agentId));
     if (owners.length === 0) {
       return {
         targets: [],
@@ -103,7 +109,9 @@ export function resolveAssistantQueryTargets(
   }
 
   const workspaceId = request.workspaceId;
-  const owners = hosts.filter((host) => workspaceId !== null && host.workspaceIds.has(workspaceId));
+  const owners = scopedHosts.filter(
+    (host) => workspaceId !== null && host.workspaceIds.has(workspaceId),
+  );
   if (owners.length === 0) {
     return {
       targets: [],
@@ -145,7 +153,12 @@ export async function runAssistantQuery(input: {
 }): Promise<AssistantMessageRow[]> {
   const { request } = input;
   const notice = (text: string) =>
-    assistantNoticeRow({ text, agentId: request.agentId, workspaceId: request.workspaceId });
+    assistantNoticeRow({
+      text,
+      serverId: request.serverId,
+      agentId: request.agentId,
+      workspaceId: request.workspaceId,
+    });
 
   const resolved = resolveAssistantQueryTargets(request, input.hosts);
   if (resolved.notice) {

@@ -163,7 +163,7 @@ describe("parseAssistantQueryRequest", () => {
   it("defaults the limit and lets agentId win over workspaceId", () => {
     expect(
       parseAssistantQueryRequest({ requestId: "r-1", agentId: "a-1", workspaceId: "ws-1" }),
-    ).toEqual({ requestId: "r-1", agentId: "a-1", workspaceId: null, limit: 10 });
+    ).toEqual({ requestId: "r-1", serverId: null, agentId: "a-1", workspaceId: null, limit: 10 });
   });
 
   it("drops a request without a target or with a bad limit", () => {
@@ -236,6 +236,22 @@ describe("resolveAssistantQueryTargets", () => {
     expect(
       resolveAssistantQueryTargets({ ...request, agentId: "a-gone", workspaceId: null }, []).notice,
     ).toContain("does not know that agent");
+  });
+
+  it("uses the selected host when workspace ids overlap", () => {
+    const selected = resolveAssistantQueryTargets({ ...request, serverId: "laptop" }, [
+      host({
+        serverId: "laptop",
+        workspaceIds: new Set(["ws-1"]),
+        agents: [agent({ id: "a-laptop", workspaceId: "ws-1", lastActivityAt: new Date(0) })],
+      }),
+      host({
+        serverId: "desktop",
+        workspaceIds: new Set(["ws-1"]),
+        agents: [agent({ id: "a-desktop", workspaceId: "ws-1", lastActivityAt: new Date(0) })],
+      }),
+    ]);
+    expect(selected.targets.map((found) => found.agentId)).toEqual(["a-laptop"]);
   });
 });
 

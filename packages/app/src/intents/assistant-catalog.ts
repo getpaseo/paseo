@@ -1,4 +1,5 @@
 import type { Agent, WorkspaceDescriptor } from "@/stores/session-store";
+import { parseGitRemoteLocation } from "@getpaseo/protocol/git-remote";
 
 export const ASSISTANT_CATALOG_VERSION = 1;
 const MAX_WORKSPACES = 100;
@@ -16,6 +17,7 @@ export interface AssistantCatalogWorkspace {
   serverId: string;
   name: string;
   project: string;
+  repository: string | null;
   branch: string | null;
   status: string;
   agentCount: number;
@@ -95,6 +97,11 @@ export function buildAssistantCatalog(input: AssistantCatalogInput): AssistantCa
         serverId,
         name: clip(workspace.title) || clip(workspace.name),
         project: clip(workspace.projectCustomName) || clip(workspace.projectDisplayName),
+        repository: (() => {
+          const remote = workspace.project?.checkout.remoteUrl ?? workspace.gitRuntime?.remoteUrl;
+          const location = remote ? parseGitRemoteLocation(remote) : null;
+          return location ? clip(`${location.host}/${location.path}`) : null;
+        })(),
         branch: clip(workspace.gitRuntime?.currentBranch) || null,
         status: workspace.status,
         agentCount: agentCountByWorkspace.get(key) ?? 0,
