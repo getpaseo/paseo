@@ -292,8 +292,16 @@ export function AnchoredSurface({
     revision,
   });
 
+  // The surface is placed once both measurements land. Until then it sits off-screen so it can
+  // be measured, and it must not animate: Reanimated's web entering path snapshots the element's
+  // rect when the animation ends and writes that rect back as inline top/left when it cleans the
+  // keyframe up 750ms later. If the animation ends before placement, the snapshot is the
+  // off-screen rect and the menu jumps back off-screen. Remounting on placement starts the
+  // animation from the final position.
+  const placed = position !== null;
+
   useEffect(() => {
-    if (!isWeb || !open || !contentSize || typeof document === "undefined") return undefined;
+    if (!isWeb || !open || !placed || typeof document === "undefined") return undefined;
     const frame = requestAnimationFrame(() => {
       document
         .getElementById(surfaceNativeID)
@@ -301,7 +309,7 @@ export function AnchoredSurface({
         ?.focus();
     });
     return () => cancelAnimationFrame(frame);
-  }, [contentSize, open, surfaceNativeID]);
+  }, [open, placed, surfaceNativeID]);
 
   const frameStyle = useMemo<StyleProp<ViewStyle>>(() => {
     const { width: screenWidth } = Dimensions.get("window");
@@ -371,6 +379,7 @@ export function AnchoredSurface({
         />
       ) : null}
       <FloatingSurface
+        key={placed ? "placed" : "measuring"}
         collapsable={false}
         tabIndex={-1}
         nativeID={surfaceNativeID}
@@ -378,9 +387,9 @@ export function AnchoredSurface({
         dataSet={surfaceDataSet}
         style={styles.content}
         frameStyle={frameStyle}
-        entering={contentEntering}
+        entering={placed ? contentEntering : undefined}
         exiting={
-          isWeb || !onExited
+          !placed || isWeb || !onExited
             ? undefined
             : contentExiting.withCallback((finished) => {
                 "worklet";

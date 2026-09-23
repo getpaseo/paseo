@@ -206,7 +206,7 @@ import {
 } from "@/workspace/file-open";
 import { RenderProfile } from "@/utils/render-profiler";
 import { useWorkspaceCheckoutStatus } from "@/screens/workspace/use-workspace-checkout-status";
-import { useHasPullRequest } from "@/panels/pull-request";
+import { useHasPullRequest, usePullRequestAutoAdd } from "@/panels/pull-request";
 
 const WORKSPACE_FLOATING_PANEL_PORTAL_HOST_PREFIX = "workspace-floating-panels";
 const EMPTY_UI_TABS: WorkspaceTab[] = [];
@@ -1760,10 +1760,16 @@ function WorkspaceScreenContent({
     workspace: workspaceDescriptor,
     checkoutState: workspaceHeaderCheckoutState,
   });
+  const canDetectPullRequestTab = canDetectPullRequest(isRouteFocused, isGitCheckout, isMobile);
   const hasPullRequest = useHasPullRequest({
     serverId: normalizedServerId,
     cwd: workspaceDirectory,
-    enabled: canDetectPullRequest(isRouteFocused, isGitCheckout, isMobile),
+    enabled: canDetectPullRequestTab,
+  });
+  usePullRequestAutoAdd({
+    workspaceKey: persistenceKey,
+    hasPullRequest,
+    enabled: canDetectPullRequestTab,
   });
 
   const showMobileAgent = usePanelStore((state) => state.showMobileAgent);

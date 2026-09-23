@@ -1,3 +1,5 @@
+import { getHostRuntimeStore } from "@/runtime/host-runtime";
+import { createPluginHosts } from "./hosts";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { PluginClientOpenPanelOptions } from "@getpaseo/plugin/client";
 import {
@@ -26,6 +28,7 @@ export function createPluginClientRuntime(
   );
   return {
     ...capabilities,
+    hosts: createPluginHosts(getHostRuntimeStore(), installation.lifetime.signal),
     addComposerPill(contribution) {
       return pluginButtonStore.addComposerPill(installation, contribution);
     },

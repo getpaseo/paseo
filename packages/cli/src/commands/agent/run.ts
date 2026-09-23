@@ -1,5 +1,8 @@
 import { Command, Option } from "commander";
-import { getStructuredAgentResponse, StructuredAgentResponseError } from "@getpaseo/server";
+import {
+  getStructuredAgentResponse,
+  StructuredAgentResponseError,
+} from "@getpaseo/server/agent-response";
 import type { AgentSnapshotPayload } from "@getpaseo/protocol/messages";
 import { connectToDaemon } from "../../utils/client.js";
 import type {

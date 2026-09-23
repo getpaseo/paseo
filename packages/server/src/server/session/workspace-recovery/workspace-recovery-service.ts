@@ -189,7 +189,7 @@ export function createWorkspaceRecoveryService(deps: {
       const result = await createWorktree({
         cwd: sourceRepoRoot,
         worktreeSlug: basename(previousWorktreePath),
-        source: { kind: "checkout-branch", branchName: branch },
+        source: { kind: "restore", branchName: branch, baseRef: workspace.baseBranch },
         runSetup: false,
         paseoHome: deps.paseoHome,
         worktreesRoot: deps.worktreesRoot,

@@ -84,6 +84,7 @@ interface DetachTabFromTreeResult {
 }
 
 interface InsertTabIntoPaneInput {
+  insertionPosition?: WorkspaceTabInsertionPosition;
   paneId: string;
   tab: WorkspaceTab;
   focusTabId?: string | null;
@@ -124,7 +125,12 @@ export type WorkspaceTabPlacement =
 export const FOCUSED_PANE_PLACEMENT: WorkspaceTabPlacement = { mode: "focused" };
 export const AMBIENT_PLACEMENT: WorkspaceTabPlacement = { mode: "ambient" };
 
+export interface WorkspaceTabInsertionPosition {
+  afterTabId: string;
+}
+
 interface OpenTabInLayoutInput {
+  insertionPosition?: WorkspaceTabInsertionPosition;
   layout: WorkspaceLayout;
   target: WorkspaceTabTarget;
   now: number;
@@ -848,7 +854,11 @@ function insertTabIntoPane(
     } else if (existingIndex >= 0) {
       nextTabs = node.pane.tabs.map((tab, index) => (index === existingIndex ? input.tab : tab));
     } else {
-      nextTabs = [...node.pane.tabs, input.tab];
+      nextTabs = [...node.pane.tabs];
+      const afterIndex = nextTabs.findIndex(
+        (tab) => tab.tabId === input.insertionPosition?.afterTabId,
+      );
+      nextTabs.splice(afterIndex >= 0 ? afterIndex + 1 : nextTabs.length, 0, input.tab);
     }
     return {
       kind: "pane",
@@ -1380,6 +1390,7 @@ function insertNewTabIntoPane(
       root: insertTabIntoPane(layout.root, {
         paneId: targetPane.id,
         tab: nextTab,
+        insertionPosition: input.insertionPosition,
         focusTabId: input.focus ? tabId : preservedFocusTabId,
       }),
       focusedPaneId: input.focus ? targetPane.id : layout.focusedPaneId,

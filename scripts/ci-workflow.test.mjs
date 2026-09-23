@@ -17,6 +17,7 @@ const gatedCiJobs = new Map([
   ["typecheck", { name: "typecheck", contract: "quality" }],
   ["server-tests-ubuntu", { name: "server-tests (ubuntu-latest)", contracts: ["server", "hub"] }],
   ["server-tests-windows", { name: "server-tests (windows-latest)", contracts: ["server", "hub"] }],
+  ["server-tests-macos", { name: "server-tests (macos-14, file observation)", contract: "server" }],
   ["desktop-tests-ubuntu", { name: "desktop-tests (ubuntu-latest)", contract: "desktop" }],
   ["desktop-tests-windows", { name: "desktop-tests (windows-latest)", contract: "desktop" }],
   ["app-tests", { name: "app-tests", contract: "app" }],
@@ -172,7 +173,7 @@ test("PR routing declares stable behavior ownership", () => {
     sdk: [
       "packages/plugin/**",
       "plugin-examples/**",
-      "public-docs/plugins/v0.8/**",
+      "public-docs/plugins/**",
       "packages/client/**",
       "packages/highlight/**",
       "packages/protocol/**",

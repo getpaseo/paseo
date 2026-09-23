@@ -282,6 +282,7 @@ function createFallbackWorkspaceGitService(): WorkspaceGitService {
         nativeTrackedFileCount: 0,
         pendingEventCount: 0,
         pendingReconciliationWorkCount: 0,
+        pendingClassificationCount: 0,
         reconciliationInFlightCount: 0,
         reconciliationCount: 0,
         scopedReconciliationCount: 0,
@@ -1721,6 +1722,8 @@ export class VoiceAssistantWebSocketServer {
         plugins: true,
         pluginManagement: true,
         pluginGitManagement: true,
+        pluginSourceInstallation: true,
+        pluginSourceUpdates: true,
         pluginLogs: true,
         // COMPAT(pluginThemes): added in v0.5.0, remove gate after 2027-08-20.
         pluginThemes: true,

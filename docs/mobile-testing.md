@@ -47,12 +47,32 @@ focused input identity and IME hide/show events. It saves screenshots and logs u
 `.dev/agent-device-artifacts/terminal-keyboard-android`. Set `PASEO_TERMINAL_KEYBOARD_APP_ID=sh.paseo`
 to test an installed production build. It never submits a chat message.
 
-`npm run test:e2e:composer-keyboard:android` covers composer growth in chat and
-New workspace, plus keyboard and control interactions. Configure its daemon,
+`npm run test:e2e:composer-keyboard:android` preserves the chat control and
+keyboard regression flow, then runs the same growth, retained-height, bounds, and
+hold-to-delete and background-tap dismissal scenario on chat, a workspace draft
+tab, and New workspace. It checks empty-content taps and header taps at the cap
+without changing the input height. Each
+host also opens command/file autocomplete, the model selector, the attachment
+menu, and the forge picker from both keyboard states. It then submits a long
+fixture from each host and checks native stream displacement twice: after the
+response settles, and after returning to the bottom and letting the scrollbar
+fade. The image comparison excludes the scrollbar; keyboard dismissal alone
+does not prove that native scrolling receives touches.
+Artifacts are grouped by host under
+`.dev/agent-device-artifacts/composer-keyboard-android`. Configure its daemon,
 Metro, and device through the `PASEO_COMPOSER_KEYBOARD_*` variables in
 `packages/app/e2e/mobile/composer-keyboard/android.sh`. Use a software keyboard;
 the headless input helper cannot verify the
 [visible composer constraints](floating-panels.md#gotcha-3--keyboard-layout-and-portal-anchors).
+
+On a Play-image emulator, disable Gmail and Calendar first. Their welcome
+screens launch on their own, take input focus, and the run fails with
+`IME did not become visible` while the app still looks focused:
+
+```bash
+adb shell pm disable-user --user 0 com.google.android.gm
+adb shell pm disable-user --user 0 com.google.android.calendar
+```
 
 When replay diverges, read its ranked selector suggestions. Edit the script deliberately and rerun it from the beginning. `--update` is retained for compatibility but no longer rewrites scripts.
 

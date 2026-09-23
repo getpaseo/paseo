@@ -17,7 +17,14 @@ import {
 } from "./agent.js";
 import { claudeProjectDirSync } from "./project-dir.js";
 import { streamSession } from "../test-utils/session-stream-adapter.js";
-import type { AgentSession, AgentTimelineItem, AgentStreamEvent } from "../../agent-sdk-types.js";
+import type {
+  AgentPromptInput,
+  AgentSession,
+  AgentTimelineItem,
+  AgentStreamEvent,
+} from "../../agent-sdk-types.js";
+import type { AgentAttachment } from "@getpaseo/protocol/messages";
+import { buildAgentPrompt, renderPromptAttachmentAsText } from "../../prompt-attachments.js";
 
 interface TestClaudeSession {
   translateMessageToEvents(message: SDKMessage): AgentStreamEvent[];
@@ -476,7 +483,7 @@ describe("ClaudeAgentClient.fetchCatalog", () => {
         force: false,
       });
 
-      expect(models.find((model) => model.isDefault)?.id).toBe("claude-opus-5");
+      expect(models.find((model) => model.isDefault)?.id).toBe("claude-opus-5-5");
       expect(models.map((model) => model.id)).toContain("claude-fable-5");
     } finally {
       await fs.rm(emptyConfigDir, { recursive: true, force: true });
@@ -864,6 +871,97 @@ describe("ClaudeAgentSession features", () => {
     expect(queryMock.applyFlagSettings).toHaveBeenCalledWith({ fastMode: true });
 
     await session.close();
+  });
+
+  async function captureSdkUserMessage(prompt: AgentPromptInput): Promise<SDKUserMessage> {
+    const { queryFactory, queryMock } = createQueryMock();
+    let resolveSent: ((message: SDKUserMessage) => void) | null = null;
+    const sent = new Promise<SDKUserMessage>((resolve) => {
+      resolveSent = resolve;
+    });
+    queryFactory.mockImplementation((input: { prompt: AsyncIterable<SDKUserMessage> }) => {
+      void (async () => {
+        for await (const message of input.prompt) {
+          resolveSent?.(message);
+          break;
+        }
+      })();
+      return queryMock;
+    });
+    const session = await new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    }).createSession({ provider: "claude", cwd: process.cwd() });
+    try {
+      await session.startTurn(prompt);
+      return await sent;
+    } finally {
+      await session.close();
+    }
+  }
+
+  const issueAttachment: AgentAttachment = {
+    type: "forge_issue",
+    mimeType: "application/paseo-forge-issue",
+    forge: "github",
+    number: 12,
+    title: "Fake issue for QA",
+    url: "https://example.invalid/acme/app/issues/12",
+    body: "This is an attached issue body.",
+  };
+
+  // Claude Code expands a slash command only when it is the last content block of the user
+  // message, so an auto-attached issue or a pasted screenshot must not be appended after it.
+  test("sends a typed slash command last when an attachment follows it", async () => {
+    const message = await captureSdkUserMessage(
+      buildAgentPrompt("/hello please", undefined, [issueAttachment]),
+    );
+
+    expect(message.message.content).toEqual([
+      { type: "text", text: renderPromptAttachmentAsText(issueAttachment) },
+      { type: "text", text: "/hello please" },
+    ]);
+  });
+
+  test("sends a typed slash command last when an image follows it", async () => {
+    const message = await captureSdkUserMessage(
+      buildAgentPrompt("/hello please", [{ data: "aGk=", mimeType: "image/png" }], undefined),
+    );
+
+    expect(message.message.content).toEqual([
+      { type: "image", source: { type: "base64", media_type: "image/png", data: "aGk=" } },
+      { type: "text", text: "/hello please" },
+    ]);
+  });
+
+  test("keeps typed text before attachments when it is not a slash command", async () => {
+    const message = await captureSdkUserMessage(
+      buildAgentPrompt("please look at this issue", undefined, [issueAttachment]),
+    );
+
+    expect(message.message.content).toEqual([
+      { type: "text", text: "please look at this issue" },
+      { type: "text", text: renderPromptAttachmentAsText(issueAttachment) },
+    ]);
+  });
+
+  test("moves the typed slash command, not an attachment that reads like one", async () => {
+    const chatHistory: AgentAttachment = {
+      type: "text",
+      mimeType: "text/plain",
+      contextKind: "chat_history",
+      text: "/earlier command quoted from another chat",
+    };
+    const message = await captureSdkUserMessage(
+      buildAgentPrompt("/hello please", undefined, [chatHistory, issueAttachment]),
+    );
+
+    expect(message.message.content).toEqual([
+      { type: "text", text: chatHistory.text },
+      { type: "text", text: renderPromptAttachmentAsText(issueAttachment) },
+      { type: "text", text: "/hello please" },
+    ]);
   });
 
   test("maps Ultracode to xhigh effort and Claude ultracode settings", async () => {

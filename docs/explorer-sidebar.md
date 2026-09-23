@@ -30,7 +30,10 @@ never read or modify that width.
 `packages/app/src/workspace-tabs/open-supporting-view.ts` owns semantic Changes and pull-request
 opens. Compact and wide native layouts select the matching Explorer tab. Desktop Changes opens
 follow the shared diff preference. Desktop pull requests use their Main panel, On the side, or
-Explorer sidebar setting. Callers request the content and never choose the shell.
+Explorer sidebar setting. Automatic PR discovery follows that preference once per workspace without
+interrupting the user's work. Closing the tab opts that workspace out of future automatic opens,
+even for a different PR; moving or reordering it remains the user's choice.
+Callers request the content and never choose the shell.
 The composer Changes pill is a two-stage desktop action: it first reveals Explorer on Changes, then
 routes later presses to the working diff through the shared diff preference.
 
