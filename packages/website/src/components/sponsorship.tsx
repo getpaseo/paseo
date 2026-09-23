@@ -77,7 +77,6 @@ export function FounderNote() {
 interface BackingOption {
   href: string;
   name: string;
-  detail: string;
   icon: React.ComponentType<{ className?: string }>;
   external: boolean;
   primary?: boolean;
@@ -87,7 +86,6 @@ const BACKING_OPTIONS: ReadonlyArray<BackingOption> = [
   {
     href: GITHUB_SPONSORS_URL,
     name: "GitHub Sponsors",
-    detail: "From $5 a month, or one time",
     icon: GitHubIcon,
     external: true,
     primary: true,
@@ -95,21 +93,18 @@ const BACKING_OPTIONS: ReadonlyArray<BackingOption> = [
   {
     href: OPEN_COLLECTIVE_URL,
     name: "Open Collective",
-    detail: "Monthly or one time, with an invoice",
     icon: OpenCollectiveIcon,
     external: true,
   },
   {
     href: BUY_ME_A_COFFEE_URL,
     name: "Buy Me a Coffee",
-    detail: "One time, no account needed",
     icon: BuyMeACoffeeIcon,
     external: true,
   },
   {
     href: "/sponsor#spot",
     name: "Sponsor as a company",
-    detail: "Monthly, with your logo on paseo.sh",
     icon: SpotIcon,
     external: false,
   },
@@ -132,24 +127,21 @@ export function BackingOptions() {
           key={option.href}
           href={option.href}
           {...(option.external ? { target: "_blank", rel: "noopener noreferrer" } : {})}
-          className={`flex items-start gap-4 rounded-xl border p-4 transition-colors ${
+          className={`flex items-center gap-4 rounded-xl border p-4 transition-colors ${
             option.primary
               ? "border-white/25 bg-white/[0.06] hover:border-white/40 hover:bg-white/[0.08]"
               : "border-white/10 bg-white/[0.02] hover:border-white/20 hover:bg-white/[0.05]"
           }`}
         >
-          <option.icon className="mt-0.5 h-6 w-6 shrink-0 text-white/60" />
-          <div className="space-y-1">
-            <p className="flex items-center gap-1.5 font-medium text-white">
-              {option.name}
-              {option.external ? (
-                <ExternalLink className="h-3.5 w-3.5 text-white/40" />
-              ) : (
-                <ArrowRight className="h-3.5 w-3.5 text-white/40" />
-              )}
-            </p>
-            <p className="text-sm text-white/50">{option.detail}</p>
-          </div>
+          <option.icon className="h-6 w-6 shrink-0 text-white/60" />
+          <p className="flex items-center gap-1.5 font-medium text-white">
+            {option.name}
+            {option.external ? (
+              <ExternalLink className="h-3.5 w-3.5 text-white/40" />
+            ) : (
+              <ArrowRight className="h-3.5 w-3.5 text-white/40" />
+            )}
+          </p>
         </a>
       ))}
     </div>
