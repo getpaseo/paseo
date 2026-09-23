@@ -11,16 +11,24 @@ import { AgentStorage } from "./agent-storage.js";
 import {
   formatSystemNotificationPrompt,
   isSystemInjectedEnvelope,
+  sendPromptToAgent,
+  startAgentRun,
   setupFinishNotification,
   waitForAgentRunStartWithTimeout,
 } from "./agent-prompt.js";
 import type { AgentManagerEvent, ManagedAgent } from "./agent-manager.js";
 import type {
   AgentClient,
+  AgentPersistenceHandle,
+  AgentPromptInput,
+  AgentProvider,
+  AgentRunOptions,
+  AgentSessionConfig,
   AgentRunResult,
   AgentSession,
   AgentStreamEvent,
 } from "./agent-sdk-types.js";
+import { StaleProviderSessionError } from "./stale-provider-session-error.js";
 
 interface CapturedLogger {
   logger: Logger;
@@ -550,13 +558,17 @@ const RUN_START_TEST_CAPABILITIES = {
   supportsToolInvocations: false,
 } as const;
 
+interface SlowStartAgentOptions {
+  startDelayMs: number | null;
+  provider?: AgentProvider;
+}
+
 /**
  * Provider session whose turn start is held open for a configurable span, so the real
  * AgentManager run-state transition (pendingRun.started -> lifecycle "running" ->
  * agent_state) is what the run-start wait observes. `startDelayMs: null` never starts.
  */
 class SlowStartAgentSession implements AgentSession {
-  readonly provider = "codex" as const;
   readonly capabilities = RUN_START_TEST_CAPABILITIES;
   readonly id = randomUUID();
   private readonly subscribers = new Set<(event: AgentStreamEvent) => void>();
@@ -564,8 +576,18 @@ class SlowStartAgentSession implements AgentSession {
   private readonly released = new Promise<void>((resolve) => {
     this.releaseStartTurn = resolve;
   });
+  private signalStartEntered!: () => void;
+  readonly startEntered = new Promise<void>((resolve) => {
+    this.signalStartEntered = resolve;
+  });
 
-  constructor(private readonly startDelayMs: number | null) {}
+  private readonly startDelayMs: number | null;
+  readonly provider: AgentProvider;
+
+  constructor(options: SlowStartAgentOptions) {
+    this.startDelayMs = options.startDelayMs;
+    this.provider = options.provider ?? "codex";
+  }
 
   async run(): Promise<AgentRunResult> {
     return { sessionId: this.id, finalText: "", timeline: [] };
@@ -576,7 +598,11 @@ class SlowStartAgentSession implements AgentSession {
     this.releaseStartTurn();
   }
 
-  async startTurn(): Promise<{ turnId: string }> {
+  async startTurn(
+    _prompt: AgentPromptInput,
+    _options?: AgentRunOptions,
+  ): Promise<{ turnId: string }> {
+    this.signalStartEntered();
     await new Promise<void>((resolve) => {
       if (this.startDelayMs !== null) {
         setTimeout(resolve, this.startDelayMs);
@@ -636,18 +662,26 @@ class SlowStartAgentSession implements AgentSession {
 }
 
 class SlowStartAgentClient implements AgentClient {
-  readonly provider = "codex" as const;
   readonly capabilities = RUN_START_TEST_CAPABILITIES;
   readonly sessions: SlowStartAgentSession[] = [];
 
-  constructor(private readonly startDelayMs: number | null) {}
+  private readonly startDelayMs: number | null;
+  readonly provider: AgentProvider;
+
+  constructor(options: SlowStartAgentOptions) {
+    this.startDelayMs = options.startDelayMs;
+    this.provider = options.provider ?? "codex";
+  }
 
   async isAvailable(): Promise<boolean> {
     return true;
   }
 
   async createSession(): Promise<AgentSession> {
-    const session = new SlowStartAgentSession(this.startDelayMs);
+    const session = new SlowStartAgentSession({
+      startDelayMs: this.startDelayMs,
+      provider: this.provider,
+    });
     this.sessions.push(session);
     return session;
   }
@@ -656,7 +690,10 @@ class SlowStartAgentClient implements AgentClient {
     return { models: [], modes: [] };
   }
 
-  async resumeSession(): Promise<AgentSession> {
+  async resumeSession(
+    _handle: AgentPersistenceHandle,
+    _config?: Partial<AgentSessionConfig>,
+  ): Promise<AgentSession> {
     return await this.createSession();
   }
 }
@@ -672,7 +709,7 @@ async function createRunStartScenario(startDelayMs: number | null): Promise<{
   cleanup: () => Promise<void>;
 }> {
   const workdir = mkdtempSync(join(tmpdir(), "agent-run-start-budget-"));
-  const client = new SlowStartAgentClient(startDelayMs);
+  const client = new SlowStartAgentClient({ startDelayMs });
   const agentManager = new AgentManager({
     clients: { codex: client },
     logger: createTestLogger(),
@@ -707,6 +744,336 @@ async function createRunStartScenario(startDelayMs: number | null): Promise<{
     },
   };
 }
+
+test("a stale send waits for its resumed replacement turn and records the prompt once", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-stale-send-recovery-"));
+  const provider = "plugin-provider";
+  let releaseClose!: () => void;
+  const closeReleased = new Promise<void>((resolve) => {
+    releaseClose = resolve;
+  });
+  let signalCloseStarted!: () => void;
+  const closeStarted = new Promise<void>((resolve) => {
+    signalCloseStarted = resolve;
+  });
+  const stalePrompts: Array<{ prompt: AgentPromptInput; options?: AgentRunOptions }> = [];
+  const replacementPrompts: Array<{ prompt: AgentPromptInput; options?: AgentRunOptions }> = [];
+  const resumeHandles: AgentPersistenceHandle[] = [];
+
+  class StaleSession extends SlowStartAgentSession {
+    constructor() {
+      super({ startDelayMs: null, provider });
+    }
+
+    override async startTurn(
+      prompt: AgentPromptInput,
+      options?: AgentRunOptions,
+    ): Promise<{ turnId: string }> {
+      stalePrompts.push({ prompt, options });
+      throw new StaleProviderSessionError("stale-session");
+    }
+
+    override async close(): Promise<void> {
+      signalCloseStarted();
+      await closeReleased;
+    }
+  }
+
+  class StaleClient extends SlowStartAgentClient {
+    readonly staleSession = new StaleSession();
+
+    constructor() {
+      super({ startDelayMs: null, provider });
+    }
+
+    override async createSession(): Promise<AgentSession> {
+      return this.staleSession;
+    }
+  }
+
+  class ReplacementClient extends SlowStartAgentClient {
+    constructor() {
+      super({ startDelayMs: 0, provider });
+    }
+
+    override async resumeSession(handle: AgentPersistenceHandle): Promise<AgentSession> {
+      resumeHandles.push(handle);
+      const session = new SlowStartAgentSession({ startDelayMs: 0, provider });
+      const startTurn = session.startTurn.bind(session);
+      session.startTurn = async (prompt, options) => {
+        replacementPrompts.push({ prompt, options });
+        return await startTurn(prompt, options);
+      };
+      this.sessions.push(session);
+      return session;
+    }
+  }
+
+  const staleClient = new StaleClient();
+  const replacementClient = new ReplacementClient();
+  const agentStorage = new AgentStorage(join(workdir, "agents"), createTestLogger());
+  const agentManager = new AgentManager({
+    clients: { [provider]: staleClient },
+    providerDefinitions: { [provider]: { enabled: true } },
+    registry: agentStorage,
+    logger: createTestLogger(),
+  });
+  let agentId: string | null = null;
+
+  try {
+    const created = await agentManager.createAgent({ provider, cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    agentId = created.id;
+    const persistence = created.persistence;
+    expect(persistence).not.toBeNull();
+    agentManager.updateProviderRegistry({
+      clients: { [provider]: replacementClient },
+      providerDefinitions: { [provider]: { enabled: true } },
+    });
+
+    const dispatch = await sendPromptToAgent({
+      agentManager,
+      agentStorage,
+      agentId,
+      prompt: "continue after reload",
+      messageId: "client-message",
+      logger: createTestLogger(),
+    });
+    expect(dispatch.disposition).toBe("turn_started");
+    await closeStarted;
+
+    const runStart = waitForAgentRunStartWithTimeout(agentManager, agentId).then(
+      () => "started" as const,
+      (error: unknown) => error,
+    );
+    await expect(
+      startAgentRun(agentManager, agentId, "unrelated concurrent prompt", createTestLogger()),
+    ).rejects.toThrow(`Agent ${agentId} is recovering a stale provider session`);
+    releaseClose();
+
+    await expect(runStart).resolves.toBe("started");
+    await expect(agentManager.waitForAgentEvent(agentId)).resolves.toMatchObject({
+      status: "idle",
+    });
+    expect(resumeHandles).toEqual([persistence]);
+    expect(stalePrompts).toEqual([
+      {
+        prompt: "continue after reload",
+        options: { clientMessageId: "client-message" },
+      },
+    ]);
+    expect(replacementPrompts).toEqual([
+      {
+        prompt: "continue after reload",
+        options: { clientMessageId: "client-message" },
+      },
+    ]);
+    expect(
+      agentManager
+        .getTimeline(agentId)
+        .filter(
+          (item) => item.type === "user_message" && item.clientMessageId === "client-message",
+        ),
+    ).toEqual([
+      expect.objectContaining({
+        type: "user_message",
+        text: "continue after reload",
+        messageId: "client-message",
+        clientMessageId: "client-message",
+      }),
+    ]);
+  } finally {
+    releaseClose();
+    if (agentId) await agentManager.closeAgent(agentId).catch(() => undefined);
+    await agentManager.flush().catch(() => undefined);
+    await agentStorage.flush().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("a stale send surfaces the retired session close failure", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-stale-send-failure-"));
+  const provider = "plugin-provider";
+
+  class FailingStaleSession extends SlowStartAgentSession {
+    constructor() {
+      super({ startDelayMs: null, provider });
+    }
+
+    override async startTurn(): Promise<{ turnId: string }> {
+      throw new StaleProviderSessionError("stale-session");
+    }
+
+    override async close(): Promise<void> {
+      throw new Error("retired session cleanup failed");
+    }
+  }
+
+  class FailingStaleClient extends SlowStartAgentClient {
+    readonly staleSession = new FailingStaleSession();
+
+    constructor() {
+      super({ startDelayMs: null, provider });
+    }
+
+    override async createSession(): Promise<AgentSession> {
+      return this.staleSession;
+    }
+  }
+
+  const replacementClient = new SlowStartAgentClient({ startDelayMs: 0, provider });
+  const agentStorage = new AgentStorage(join(workdir, "agents"), createTestLogger());
+  const agentManager = new AgentManager({
+    clients: { [provider]: new FailingStaleClient() },
+    providerDefinitions: { [provider]: { enabled: true } },
+    registry: agentStorage,
+    logger: createTestLogger(),
+  });
+  let agentId: string | null = null;
+
+  try {
+    const created = await agentManager.createAgent({ provider, cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    agentId = created.id;
+    agentManager.updateProviderRegistry({
+      clients: { [provider]: replacementClient },
+      providerDefinitions: { [provider]: { enabled: true } },
+    });
+
+    const dispatch = await sendPromptToAgent({
+      agentManager,
+      agentStorage,
+      agentId,
+      prompt: "continue after reload",
+      messageId: "failed-client-message",
+      logger: createTestLogger(),
+    });
+    expect(dispatch.disposition).toBe("turn_started");
+    await expect(waitForAgentRunStartWithTimeout(agentManager, agentId)).rejects.toThrow(
+      "retired session cleanup failed",
+    );
+    expect(replacementClient.sessions).toEqual([]);
+    expect(
+      agentManager
+        .getTimeline(agentId)
+        .filter(
+          (item) =>
+            item.type === "user_message" && item.clientMessageId === "failed-client-message",
+        ),
+    ).toEqual([]);
+  } finally {
+    if (agentId) await agentManager.closeAgent(agentId).catch(() => undefined);
+    await agentManager.flush().catch(() => undefined);
+    await agentStorage.flush().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("canceling a stale replacement start releases recovery for the next prompt", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-stale-send-cancel-"));
+  const provider = "plugin-provider";
+
+  class StaleSession extends SlowStartAgentSession {
+    constructor() {
+      super({ startDelayMs: null, provider });
+    }
+
+    override async startTurn(): Promise<{ turnId: string }> {
+      throw new StaleProviderSessionError("stale-session");
+    }
+  }
+
+  class StaleClient extends SlowStartAgentClient {
+    constructor() {
+      super({ startDelayMs: null, provider });
+    }
+
+    override async createSession(): Promise<AgentSession> {
+      return new StaleSession();
+    }
+  }
+
+  let signalReplacementReady!: (session: SlowStartAgentSession) => void;
+  const replacementReady = new Promise<SlowStartAgentSession>((resolve) => {
+    signalReplacementReady = resolve;
+  });
+  class ReplacementClient extends SlowStartAgentClient {
+    constructor() {
+      super({ startDelayMs: null, provider });
+    }
+
+    override async resumeSession(): Promise<AgentSession> {
+      const session = new SlowStartAgentSession({ startDelayMs: null, provider });
+      this.sessions.push(session);
+      signalReplacementReady(session);
+      return session;
+    }
+  }
+
+  const agentStorage = new AgentStorage(join(workdir, "agents"), createTestLogger());
+  const agentManager = new AgentManager({
+    clients: { [provider]: new StaleClient() },
+    providerDefinitions: { [provider]: { enabled: true } },
+    registry: agentStorage,
+    logger: createTestLogger(),
+    rescueTimeouts: { interruptSessionMs: 1 },
+  });
+  let agentId: string | null = null;
+  let replacement: SlowStartAgentSession | null = null;
+
+  try {
+    const created = await agentManager.createAgent({ provider, cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    agentId = created.id;
+    agentManager.updateProviderRegistry({
+      clients: { [provider]: new ReplacementClient() },
+      providerDefinitions: { [provider]: { enabled: true } },
+    });
+
+    const dispatch = await sendPromptToAgent({
+      agentManager,
+      agentStorage,
+      agentId,
+      prompt: "cancel this replacement",
+      messageId: "canceled-recovery-message",
+      logger: createTestLogger(),
+    });
+    expect(dispatch.disposition).toBe("turn_started");
+    const runStart = waitForAgentRunStartWithTimeout(agentManager, agentId);
+    replacement = await replacementReady;
+    await replacement.startEntered;
+
+    vi.useFakeTimers();
+    const cancellation = agentManager.cancelAgentRun(agentId);
+    await Promise.resolve();
+    await vi.advanceTimersByTimeAsync(2_000);
+    await expect(cancellation).resolves.toEqual({ status: "settled" });
+    replacement.release();
+    await expect(runStart).rejects.toThrow(
+      `Agent ${agentId} run was canceled before its turn started`,
+    );
+    vi.useRealTimers();
+
+    const nextDispatch = await startAgentRun(
+      agentManager,
+      agentId,
+      "prompt after canceled recovery",
+      createTestLogger(),
+    );
+    expect(nextDispatch.disposition).toBe("turn_started");
+    await expect(agentManager.waitForAgentRunStart(agentId)).resolves.toBeUndefined();
+  } finally {
+    vi.useRealTimers();
+    replacement?.release();
+    if (agentId) await agentManager.closeAgent(agentId).catch(() => undefined);
+    await agentManager.flush().catch(() => undefined);
+    await agentStorage.flush().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
 
 test("waiting for a run start outlasts the slowest provider startup budget", async () => {
   // A provider is still allowed to be starting here, so the outer wait must not abort it.

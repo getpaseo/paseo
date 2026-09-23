@@ -25,6 +25,7 @@ interface ProviderHarnessOptions {
   capabilities?: ProviderConnection["capabilities"];
   completeTurn?: boolean;
   openChildren?: (rootSessionId: string, emit: (event: ProviderEvent) => void) => void;
+  closeFailure?: "live" | "terminal";
 }
 
 function createProviderHarness(options: ProviderHarnessOptions = {}) {
@@ -176,6 +177,17 @@ function createProviderHarness(options: ProviderHarnessOptions = {}) {
         return;
       }
       if (input.type === "session.close") {
+        if (options.closeFailure === "terminal") {
+          emit({
+            type: "session.closed",
+            sessionId: input.sessionId,
+            error: { message: "Provider connection is closed" },
+          });
+          throw new Error("Provider connection is closed");
+        }
+        if (options.closeFailure === "live") {
+          throw new Error("close rejected");
+        }
         emit({ type: "session.closed", sessionId: input.sessionId });
       }
       if ("requestId" in input) {
@@ -418,6 +430,42 @@ describe("PluginAgentClientRegistry", () => {
       );
 
       await resumed.close();
+    } finally {
+      await registry.shutdown();
+    }
+  });
+
+  test("closing a terminal session succeeds when its transport is already closed", async () => {
+    const harness = createProviderHarness({ closeFailure: "terminal" });
+    const registry = new PluginAgentClientRegistry(createTestLogger());
+
+    try {
+      registry.replace([harness.registration]);
+      const session = await registry.clients()[harness.registration.id]!.createSession({
+        provider: harness.registration.id,
+        cwd: "/workspace",
+      });
+
+      await expect(session.close()).resolves.toBeUndefined();
+      await expect(session.close()).resolves.toBeUndefined();
+      expect(harness.inputs.filter((input) => input.type === "session.close")).toHaveLength(1);
+    } finally {
+      await registry.shutdown();
+    }
+  });
+
+  test("closing a live session still surfaces transport failures", async () => {
+    const harness = createProviderHarness({ closeFailure: "live" });
+    const registry = new PluginAgentClientRegistry(createTestLogger());
+
+    try {
+      registry.replace([harness.registration]);
+      const session = await registry.clients()[harness.registration.id]!.createSession({
+        provider: harness.registration.id,
+        cwd: "/workspace",
+      });
+
+      await expect(session.close()).rejects.toThrow("close rejected");
     } finally {
       await registry.shutdown();
     }

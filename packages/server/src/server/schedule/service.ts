@@ -208,6 +208,8 @@ type ScheduleAgentManager = Pick<
   | "replaceAgentRun"
   | "steerOrReplaceActiveTurn"
   | "streamAgent"
+  | "reloadAgentSessionForStaleRun"
+  | "streamAgentAfterStaleRecovery"
 > &
   Pick<
     AgentManager,
