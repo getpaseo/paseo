@@ -1481,6 +1481,67 @@ test("a steer the provider names without echoing it can be rewound to", async ()
   }
 });
 
+test("keeps one assistant message whole when a steer lands between its chunks", async () => {
+  const session = new SteeringTestSession({ provider: "codex", cwd: process.cwd() });
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-steer-split-"));
+  const manager = new AgentManager({
+    clients: {
+      codex: new (class extends TestAgentClient {
+        override async createSession(): Promise<AgentSession> {
+          return session;
+        }
+      })(),
+    },
+    agentStreamCoalesceWindowMs: 1,
+    logger,
+  });
+  let agentId: string | null = null;
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    agentId = agent.id;
+    const run = manager.streamAgent(agent.id, "initial");
+    void (async () => {
+      for await (const _event of run) {
+      }
+    })();
+    await manager.waitForAgentRunStart(agent.id);
+
+    session.pushEvent({
+      type: "timeline",
+      provider: "codex",
+      turnId: "active-turn-1",
+      item: { type: "assistant_message", text: "with the uncommit", messageId: "msg-1" },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await expect(
+      manager.steerAgentRun(agent.id, "keep going", { clientMessageId: "keep-going-client" }),
+    ).resolves.toEqual({ status: "accepted" });
+    session.pushEvent({
+      type: "timeline",
+      provider: "codex",
+      turnId: "active-turn-1",
+      item: { type: "assistant_message", text: "ted changes.", messageId: "msg-1" },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    const rows = manager
+      .fetchTimeline(agent.id, { limit: 0 })
+      .rows.filter(
+        (row) => row.item.type === "assistant_message" || row.item.type === "user_message",
+      )
+      .map((row) => row.item);
+    expect(rows).toMatchObject([
+      { type: "assistant_message", text: "with the uncommitted changes.", messageId: "msg-1" },
+      { type: "user_message", text: "keep going" },
+    ]);
+  } finally {
+    if (agentId) await manager.closeAgent(agentId).catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("orders a concurrent replacement after a pending accepted steer", async () => {
   const entered = deferred<void>();
   const release = deferred<void>();
