@@ -108,23 +108,16 @@ function initClonedRepo(): string {
   return work;
 }
 
-function upstreamOf(dir: string, branch: string): string | null {
-  const result = execFileSync(
+// Always exits 0 and prints an empty line when the branch has no upstream, so a git or
+// process failure surfaces as a throw instead of being read as "no upstream".
+function upstreamOf(dir: string, branch: string): string {
+  return execFileSync(
     "git",
-    ["rev-parse", "--abbrev-ref", "--symbolic-full-name", `${branch}@{upstream}`],
+    ["for-each-ref", "--format=%(upstream:short)", `refs/heads/${branch}`],
     { cwd: dir, stdio: ["pipe", "pipe", "pipe"] },
   )
     .toString()
     .trim();
-  return result.length > 0 ? result : null;
-}
-
-function upstreamOrNull(dir: string, branch: string): string | null {
-  try {
-    return upstreamOf(dir, branch);
-  } catch {
-    return null;
-  }
 }
 
 afterEach(() => {
@@ -247,7 +240,7 @@ describe("createBranchFromBase", () => {
       newBranchName: "feature-from-remote",
     });
     expect(headBranch(dir)).toBe("feature-from-remote");
-    expect(upstreamOrNull(dir, "feature-from-remote")).toBeNull();
+    expect(upstreamOf(dir, "feature-from-remote")).toBe("");
   });
 
   test("leaves no upstream when git is configured to inherit tracking (real repo)", async () => {
@@ -263,7 +256,7 @@ describe("createBranchFromBase", () => {
       newBranchName: "feature-inherited",
     });
     expect(headBranch(dir)).toBe("feature-inherited");
-    expect(upstreamOrNull(dir, "feature-inherited")).toBeNull();
+    expect(upstreamOf(dir, "feature-inherited")).toBe("");
   });
 });
 
