@@ -199,6 +199,7 @@ import {
   type ManagedProcessRegistry,
 } from "./managed-processes/managed-processes.js";
 import { terminateWithTreeKill } from "../utils/tree-kill.js";
+import { withTimeout } from "../utils/promise-timeout.js";
 import { isHostnameAllowed, type HostnamesConfig } from "./hostnames.js";
 import {
   createRequireBearerMiddleware,
@@ -1833,12 +1834,24 @@ export async function createPaseoDaemon(
   };
 }
 
+/**
+ * Closing an agent asks its provider to close the session and waits for the
+ * answer. A provider that never answers must not hold the daemon open, so a
+ * close that outlives this deadline is abandoned; `agentProviderRuntime`
+ * shutdown runs next and rejects the request that was still pending.
+ */
+const AGENT_CLOSE_TIMEOUT_MS = 5_000;
+
 async function closeAllAgents(logger: Logger, agentManager: AgentManager): Promise<void> {
   const agents = agentManager.listAgents();
   await Promise.all(
     agents.map(async (agent) => {
       try {
-        await agentManager.closeAgent(agent.id);
+        await withTimeout({
+          promise: agentManager.closeAgent(agent.id),
+          timeoutMs: AGENT_CLOSE_TIMEOUT_MS,
+          label: `close agent ${agent.id}`,
+        });
       } catch (err) {
         logger.error({ err, agentId: agent.id }, "Failed to close agent");
       }

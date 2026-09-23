@@ -8,7 +8,10 @@ import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
 
 const PROVIDER_ID = "shutdown-provider";
 
-async function createProviderPlugin(root: string): Promise<string> {
+async function createProviderPlugin(
+  root: string,
+  options: { acknowledgeClose: boolean } = { acknowledgeClose: true },
+): Promise<string> {
   const directory = path.join(root, "plugin");
   await mkdir(directory, { recursive: true });
   await writeFile(
@@ -20,7 +23,11 @@ async function createProviderPlugin(root: string): Promise<string> {
   );
   await writeFile(
     path.join(directory, "index.server.ts"),
-    `import type { ProviderEvent, ProviderRegistration } from "@getpaseo/plugin/server/provider";
+    `import type {
+  ProviderEvent,
+  ProviderInput,
+  ProviderRegistration,
+} from "@getpaseo/plugin/server/provider";
 
 const CAPABILITIES = ["prompt.message", "session.persistence"];
 
@@ -34,7 +41,7 @@ const provider: ProviderRegistration = {
     return {
       version: 1,
       capabilities: CAPABILITIES,
-      async send(input: any) {
+      async send(input: ProviderInput) {
         if (input.type === "catalog") {
           emit({
             type: "catalog",
@@ -80,6 +87,7 @@ const provider: ProviderRegistration = {
           return;
         }
         if (input.type === "session.close") {
+          if (!${JSON.stringify(options.acknowledgeClose)}) return;
           emit({ type: "session.closed", sessionId: input.sessionId });
         }
         if ("requestId" in input) {
@@ -148,3 +156,39 @@ test("a clean daemon shutdown leaves a completed plugin-provider agent without a
   expect(persisted?.lastError ?? null).toBeNull();
   expect(persisted?.attentionReason ?? null).not.toBe("error");
 }, 60_000);
+
+test("a provider that never acknowledges session.close does not hold the daemon open", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "plugin-provider-stuck-close-"));
+  onTestFinished(() => rm(root, { recursive: true, force: true }));
+  const pluginDirectory = await createProviderPlugin(root, { acknowledgeClose: false });
+  const workspace = path.join(root, "workspace");
+  await mkdir(workspace, { recursive: true });
+
+  const daemon = await createTestPaseoDaemon({
+    paseoHomeRoot: path.join(root, "daemon"),
+    staticDir: path.join(root, "static"),
+    cleanup: false,
+    pluginsEnabled: true,
+    plugins: {
+      "shutdown-provider-plugin": { source: "directory", path: pluginDirectory, enabled: true },
+    },
+  });
+
+  const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws`, appVersion: "0.9.1" });
+  await client.connect();
+  await client.fetchAgents({ subscribe: {} });
+
+  const agent = await client.createAgent({
+    provider: PROVIDER_ID,
+    model: "shutdown-model",
+    cwd: workspace,
+    title: "Stuck close agent",
+  });
+  await client.sendMessage(agent.id, "hello");
+  await client.waitForFinish(agent.id, 30_000);
+  await client.close();
+
+  const startedAt = Date.now();
+  await daemon.daemon.stop();
+  expect(Date.now() - startedAt).toBeLessThan(30_000);
+}, 90_000);
