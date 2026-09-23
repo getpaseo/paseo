@@ -1,4 +1,5 @@
 import { afterEach, expect, test } from "vitest";
+import type { SessionOutboundMessage } from "../messages.js";
 import { HubRelationshipHarness } from "./test-utils/relationship-harness.js";
 
 let relationship: HubRelationshipHarness | null = null;
@@ -14,6 +15,13 @@ async function launchRelationship(): Promise<HubRelationshipHarness> {
   launched.connectLatestSocket();
   relationship = launched;
   return launched;
+}
+
+function createdAgentWorkspaceId(message: SessionOutboundMessage): string {
+  if (message.type !== "status" || message.payload.status !== "agent_created")
+    throw new Error("Agent was not created");
+  if (!message.payload.agent.workspaceId) throw new Error("Workspace was not created");
+  return message.payload.agent.workspaceId;
 }
 
 test("Hub retries one durable daemon execution across concurrency and reconstruction", async () => {
@@ -65,10 +73,7 @@ test("Hub execute can title the workspace created with an agent", async () => {
     type: "status",
     payload: { status: "agent_created", agent: { workspaceId: expect.any(String) } },
   });
-  if (created.type !== "status" || created.payload.status !== "agent_created")
-    throw new Error("Agent was not created");
-  const workspaceId = created.payload.agent.workspaceId;
-  if (!workspaceId) throw new Error("Workspace was not created");
+  const workspaceId = createdAgentWorkspaceId(created);
 
   expect(
     await hub.requestOrdinary({
