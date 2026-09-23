@@ -1777,7 +1777,10 @@ export async function createPaseoDaemon(
   };
 
   const stop = async () => {
-    await pluginRuntime.stopAllPlugins();
+    // Stop tracking plugin provider registrations before anything tears plugins
+    // down, so plugin shutdown cannot withdraw a provider from under an agent
+    // that is still open. Plugins themselves are stopped once every session
+    // they serve has been closed, further down.
     unsubscribePluginProviders();
     await hubRelationships.stop();
     workspaceReconciliation.dispose();
@@ -1790,6 +1793,7 @@ export async function createPaseoDaemon(
     detachAgentStoragePersistence();
     await agentStorage.flush().catch(() => undefined);
     await agentProviderRuntime.shutdown();
+    await pluginRuntime.stopAllPlugins();
     terminalManager.killAll();
     await speechService.stop();
     await scheduleService.stop().catch(() => undefined);
