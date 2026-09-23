@@ -7,7 +7,7 @@ import type {
   PiExtensionDialogMapping,
   PiExtensionToolCall,
   PiExtensionToolMapping,
-  PiExtensionUiResponse,
+  PiExtensionUiReply,
 } from "./contract.js";
 import type { PiAgentMessage } from "../rpc-types.js";
 import type { PiExtensionCustomMapping } from "./contract.js";
@@ -66,8 +66,13 @@ export class PiExtensionHost {
     return { ...mapping, events, hydration };
   }
 
-  onToolStart(call: PiExtensionToolCall): void {
-    for (const session of this.sessions) session.onToolStart?.(call);
+  onToolStart(call: PiExtensionToolCall, provider = "pi"): AgentPermissionRequest | undefined {
+    let request: AgentPermissionRequest | undefined;
+    for (const session of this.sessions) {
+      const candidate = session.onToolStart?.(call, provider);
+      request ??= candidate;
+    }
+    return request;
   }
 
   onToolEnd(call: PiExtensionToolCall): void {
@@ -85,7 +90,7 @@ export class PiExtensionHost {
   respondToPermission(
     request: AgentPermissionRequest,
     response: AgentPermissionResponse,
-  ): PiExtensionUiResponse | undefined {
+  ): PiExtensionUiReply | undefined {
     for (const session of this.sessions) {
       const mapped = session.respondToPermission?.(request, response);
       if (mapped) return mapped;

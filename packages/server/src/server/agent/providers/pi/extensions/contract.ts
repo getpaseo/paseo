@@ -39,20 +39,25 @@ export interface PiExtensionUiResponse {
 }
 export type PiExtensionDialogMapping =
   | { type: "permission"; request: AgentPermissionRequest }
-  | { type: "response"; response: PiExtensionUiResponse };
+  | { type: "response"; response: PiExtensionUiResponse }
+  | { type: "deferred" };
+
+export interface PiExtensionUiReply {
+  responses: Array<{ id: string; response: PiExtensionUiResponse }>;
+}
 
 export interface PiExtensionSession {
   mapToolCall?(call: PiExtensionToolCall): PiExtensionToolMapping | undefined;
   mapCustomMessage?(
     message: Extract<PiAgentMessage, { role: "custom" }>,
   ): PiExtensionCustomMapping | undefined;
-  onToolStart?(call: PiExtensionToolCall): void;
+  onToolStart?(call: PiExtensionToolCall, provider: string): AgentPermissionRequest | undefined;
   onToolEnd?(call: PiExtensionToolCall): void;
   mapDialog?(dialog: PiExtensionDialog, provider: string): PiExtensionDialogMapping | undefined;
   respondToPermission?(
     request: AgentPermissionRequest,
     response: AgentPermissionResponse,
-  ): PiExtensionUiResponse | undefined;
+  ): PiExtensionUiReply | undefined;
 }
 
 export interface PiExtension {

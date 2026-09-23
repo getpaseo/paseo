@@ -4,7 +4,7 @@ import type {
   AgentPermissionRequest,
   AgentPermissionResponse,
 } from "../../../../agent-sdk-types.js";
-import type { PiExtension, PiExtensionDialog, PiExtensionUiResponse } from "../contract.js";
+import type { PiExtension, PiExtensionDialog, PiExtensionUiReply } from "../contract.js";
 
 const QUESTION_RESPONSE_HEADER = "Response";
 const QUESTION_COMMENT_HEADER = "Comment";
@@ -123,16 +123,16 @@ export const piAskUser: PiExtension = {
       respondToPermission(
         request: AgentPermissionRequest,
         response: AgentPermissionResponse,
-      ): PiExtensionUiResponse | undefined {
+      ): PiExtensionUiReply | undefined {
         if (request.metadata?.combinedAskUser !== COMBINED_METADATA) return undefined;
         if (response.behavior === "deny") {
           pending = null;
-          return { cancelled: true };
+          return { responses: [{ id: request.id, response: { cancelled: true } }] };
         }
         const selected = answer(response.updatedInput, QUESTION_RESPONSE_HEADER);
         if (selected === null) {
           pending = null;
-          return { cancelled: true };
+          return { responses: [{ id: request.id, response: { cancelled: true } }] };
         }
         const selectOptions = Array.isArray(request.metadata?.selectOptions)
           ? request.metadata.selectOptions.filter(
@@ -148,7 +148,9 @@ export const piAskUser: PiExtension = {
           comment: answer(response.updatedInput, QUESTION_COMMENT_HEADER) ?? "",
           freeform: isFreeform ? selected : null,
         };
-        return { value: isFreeform ? sentinel : selected };
+        return {
+          responses: [{ id: request.id, response: { value: isFreeform ? sentinel : selected } }],
+        };
       },
     };
   },

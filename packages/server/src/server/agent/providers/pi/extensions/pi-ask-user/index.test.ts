@@ -29,7 +29,7 @@ describe("pi-ask-user adapter", () => {
         behavior: "allow",
         updatedInput: { answers: { Response: "B", Comment: "Looks good" } },
       }),
-    ).toEqual({ value: "B" });
+    ).toEqual({ responses: [{ id: "select-1", response: { value: "B" } }] });
     expect(
       host.mapDialog(
         {
@@ -64,7 +64,7 @@ describe("pi-ask-user adapter", () => {
     );
     if (mapped?.type !== "permission") throw new Error("Expected a combined permission");
     expect(host.respondToPermission(mapped.request, { behavior: "deny" })).toEqual({
-      cancelled: true,
+      responses: [{ id: "select-2", response: { cancelled: true } }],
     });
   });
 });

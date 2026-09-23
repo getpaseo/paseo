@@ -1391,11 +1391,12 @@ export class PiRpcAgentSession implements AgentSession {
     }
     this.pendingExtensionUiRequests.delete(requestId);
 
-    this.runtimeSession.respondToExtensionUiRequest(
-      requestId,
-      this.extensionHost.respondToPermission(request, response) ??
-        buildExtensionUiResponse(request, response),
-    );
+    const mapped = this.extensionHost.respondToPermission(request, response);
+    for (const reply of mapped?.responses ?? [
+      { id: requestId, response: buildExtensionUiResponse(request, response) },
+    ]) {
+      this.runtimeSession.respondToExtensionUiRequest(reply.id, reply.response);
+    }
     this.emit({
       type: "permission_resolved",
       provider: this.provider,
@@ -1954,6 +1955,7 @@ export class PiRpcAgentSession implements AgentSession {
       this.runtimeSession.respondToExtensionUiRequest(event.id, mapped.response);
       return;
     }
+    if (mapped?.type === "deferred") return;
     const request =
       mapped?.type === "permission"
         ? mapped.request
@@ -2094,13 +2096,25 @@ export class PiRpcAgentSession implements AgentSession {
       case "tool_execution_start": {
         const toolCall = parseToolArgs(event.toolName, event.args);
         this.activeToolCalls.set(event.toolCallId, toolCall);
-        this.extensionHost.onToolStart({
-          callId: event.toolCallId,
-          toolName: event.toolName,
-          args: toolCall.args,
-          status: "running",
-          result: null,
-        });
+        const request = this.extensionHost.onToolStart(
+          {
+            callId: event.toolCallId,
+            toolName: event.toolName,
+            args: toolCall.args,
+            status: "running",
+            result: null,
+          },
+          this.provider,
+        );
+        if (request) {
+          this.pendingExtensionUiRequests.set(request.id, request);
+          this.emit({
+            type: "permission_requested",
+            provider: this.provider,
+            request,
+            turnId: this.currentTurnIdForEvent(),
+          });
+        }
         this.emitToolCallEvent(event.toolCallId, toolCall, "running", null, null);
         return;
       }
