@@ -93,7 +93,9 @@ function initClonedRepo(): string {
   const remote = join(root, "remote.git");
   const seed = join(root, "seed");
   const work = join(root, "work");
-  const run = (cwd: string, ...args: string[]) => execFileSync("git", args, { cwd, stdio: "pipe" });
+  function run(cwd: string, ...args: string[]): void {
+    execFileSync("git", args, { cwd, stdio: "pipe" });
+  }
   execFileSync("git", ["init", "--bare", "-b", "main", remote], { cwd: root, stdio: "pipe" });
   execFileSync("git", ["clone", "--quiet", remote, seed], { cwd: root, stdio: "pipe" });
   run(seed, "config", "user.email", "test@example.com");
