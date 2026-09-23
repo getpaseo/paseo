@@ -74,12 +74,12 @@ function createSessionHarness(
   const appServer = createFakeCodexAppServer({
     "collaborationMode/list": () => ({ data: TEST_COLLABORATION_MODES }),
   });
-  const session = new CodexAppServerAgentSession(
-    { ...config, provider: CODEX_PROVIDER },
-    null,
-    options.logger ?? createTestLogger(),
-    async () => appServer.child,
-  ) as CodexFeaturesTestSession;
+  const session = new CodexAppServerAgentSession({
+    config: { ...config, provider: CODEX_PROVIDER },
+    resumeHandle: null,
+    logger: options.logger ?? createTestLogger(),
+    spawnAppServer: async () => appServer.child,
+  }) as CodexFeaturesTestSession;
   return { session, appServer };
 }
 
