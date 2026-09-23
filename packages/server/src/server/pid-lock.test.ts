@@ -73,7 +73,7 @@ describe("pid-lock ownership", () => {
         pidPath,
         JSON.stringify({
           pid: process.pid,
-          startedAt: "2026-01-01T00:00:00.000Z",
+          startedAt: new Date().toISOString(),
           hostname: "old-host",
           uid: process.getuid?.() ?? 0,
           listen: "127.0.0.1:6767",
@@ -106,7 +106,7 @@ describe("pid-lock ownership", () => {
         pidPath,
         JSON.stringify({
           pid: process.pid,
-          startedAt: "2026-01-01T00:00:00.000Z",
+          startedAt: new Date().toISOString(),
           hostname: "old-host",
           uid: process.getuid?.() ?? 0,
           listen: "127.0.0.1:6767",
@@ -138,7 +138,7 @@ describe("pid-lock ownership", () => {
         pidPath,
         JSON.stringify({
           pid: process.pid,
-          startedAt: "2026-01-01T00:00:00.000Z",
+          startedAt: new Date().toISOString(),
           hostname: "old-host",
           uid: process.getuid?.() ?? 0,
           listen: "127.0.0.1:6767",
@@ -169,7 +169,7 @@ describe("pid-lock ownership", () => {
         pidPath,
         JSON.stringify({
           pid: process.pid,
-          startedAt: "2026-01-01T00:00:00.000Z",
+          startedAt: new Date().toISOString(),
           hostname: "old-host",
           uid: process.getuid?.() ?? 0,
           listen: "127.0.0.1:6767",
