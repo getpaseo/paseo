@@ -1377,6 +1377,19 @@ function throwFirstNonTeaAuthSearchRejection(results: PromiseSettledResult<unkno
   }
 }
 
+// forgejo username pattern
+function normalizeGiteaOwnerForBranch(owner: string | null): string | null {
+  const normalized = owner?.trim().toLowerCase() ?? "";
+  if (!/^[a-z0-9][a-z0-9_.-]*$/.test(normalized)) {
+    return null;
+  }
+  // git refuses .. and .lock, trailing dot too
+  if (normalized.includes("..") || normalized.endsWith(".") || normalized.endsWith(".lock")) {
+    return null;
+  }
+  return normalized;
+}
+
 export function createGiteaService(options: CreateGiteaServiceOptions = {}): ForgeService {
   const runner = options.runner ?? runTeaCommand;
   const resolveTea = createCachedCliPathResolver(options.resolveTeaPath ?? resolveTeaPath);
@@ -1997,17 +2010,31 @@ export function createGiteaService(options: CreateGiteaServiceOptions = {}): For
       return summary.headRefName;
     },
 
+    defaultCheckoutRefs({ changeRequestNumber }) {
+      return [{ remoteName: "origin", remoteRef: `refs/pull/${changeRequestNumber}/head` }];
+    },
+
+    buildPrLocalBranchName({ headRef, checkoutTarget }) {
+      if (!checkoutTarget.isCrossRepository) {
+        return headRef;
+      }
+      const owner = normalizeGiteaOwnerForBranch(checkoutTarget.headOwnerLogin);
+      // odd login, use pr-N instead
+      return `${owner ?? `pr-${checkoutTarget.number}`}/${headRef}`;
+    },
+
     async getPullRequestCheckoutTarget(
       input: GetPullRequestOptions,
     ): Promise<PullRequestCheckoutTarget> {
       const summary = await this.getPullRequest(input);
+      const fork = await resolveForkCheckoutFacts(input.cwd, summary);
       const checkoutRefs = [
         { remoteName: "origin", remoteRef: `refs/pull/${summary.number}/head` },
       ];
-      if (summary.headRefName) {
+      // on a fork PR thats the base repos branch
+      if (summary.headRefName && !fork.isCrossRepository) {
         checkoutRefs.push({ remoteName: "origin", remoteRef: `refs/heads/${summary.headRefName}` });
       }
-      const fork = await resolveForkCheckoutFacts(input.cwd, summary);
       return {
         number: summary.number,
         baseRefName: summary.baseRefName,
