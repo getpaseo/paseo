@@ -344,6 +344,21 @@ describe("pull request timeline message schemas", () => {
 });
 
 describe("checkout PR status compatibility", () => {
+  test("accepts an old daemon response without a canonical repository URL", () => {
+    const response = {
+      type: "checkout_pr_status_response",
+      payload: {
+        cwd: "/repo",
+        status: null,
+        githubFeaturesEnabled: true,
+        forge: "gitea",
+        error: null,
+        requestId: "old-daemon",
+      },
+    };
+    expect(CheckoutPrStatusResponseSchema.parse(response)).toEqual(response);
+  });
+
   test("an old client schema parses a new daemon checkout PR status response", () => {
     const oldClientCheckoutPrStatusResponseSchema = z.object({
       type: z.literal("checkout_pr_status_response"),
@@ -380,6 +395,7 @@ describe("checkout PR status compatibility", () => {
       type: "checkout_pr_status_response",
       payload: {
         cwd: "/tmp/repo",
+        repositoryWebUrl: "https://github.com/getpaseo/paseo",
         status: {
           number: 42,
           url: "https://github.com/getpaseo/paseo/pull/42",

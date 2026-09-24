@@ -27,6 +27,27 @@ describe("buildForgeChecksUrl", () => {
 });
 
 describe("buildForgeBranchTreeUrl", () => {
+  it("preserves a canonical web scheme, port and reverse-proxy prefix", () => {
+    expect(
+      buildForgeBranchTreeUrl("gitea", {
+        remoteUrl: "ssh://git@git.example:7998/owner/repo.git",
+        repositoryWebUrl: "http://projects.example:3000/gitea/owner/repo/",
+        branch: "main",
+      }),
+    ).toBe("http://projects.example:3000/gitea/owner/repo/src/branch/main");
+  });
+
+  it.each([
+    "not a URL",
+    "javascript:alert(1)",
+    "file:///tmp/repo",
+    "https://user:secret@example.com/owner/repo",
+  ])("rejects an unsafe canonical URL: %s", (repositoryWebUrl) => {
+    const input = { remoteUrl: "git@git.example:owner/repo.git", repositoryWebUrl, branch: "main" };
+    expect(buildForgeBranchTreeUrl("gitea", input)).toBeNull();
+    expect(buildForgeBlobUrl("gitea", { ...input, path: "README.md" })).toBeNull();
+  });
+
   it("builds a branch-specific GitHub tree URL", () => {
     expect(
       buildForgeBranchTreeUrl("github", {
