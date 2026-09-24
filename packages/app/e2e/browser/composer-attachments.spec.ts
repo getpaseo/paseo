@@ -39,6 +39,7 @@ import { hasGithubAuth, createTempGithubRepo } from "../support/helpers/github-f
 import { getServerId } from "../support/helpers/server-id";
 import { openFileExplorer } from "../support/helpers/file-explorer";
 import { attachFileFromMenu, controlFileUploadCompletion } from "../support/helpers/composer";
+import { withAgentContextExample } from "../support/helpers/agent-context";
 
 const MINIMAL_PNG = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
@@ -53,6 +54,16 @@ const TEST_JSON = {
 };
 
 test.describe("Composer attachments", () => {
+  test("New Agent offers a recent transcript snapshot without a search query", async ({
+    page,
+  }, info) => {
+    await withAgentContextExample(page, info, async (context) => {
+      await context.openPickerFromNewAgent();
+      await context.attachRecentSource();
+      await context.expectAttachmentInDraft();
+    });
+  });
+
   test("selected file shows a loading attachment until upload is acknowledged", async ({
     page,
     withWorkspace,
