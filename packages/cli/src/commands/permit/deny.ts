@@ -2,7 +2,11 @@ import type { Command } from "commander";
 import type { AgentPermissionRequest } from "@getpaseo/protocol/agent-types";
 import { connectToDaemon } from "../../utils/client.js";
 import type { CommandOptions, ListResult, CommandError } from "../../output/index.js";
-import { permitResponseSchema, type PermissionResponseItem } from "./allow.js";
+import {
+  permitResponseSchema,
+  toPermissionResponseItem,
+  type PermissionResponseItem,
+} from "./allow.js";
 
 export type PermitDenyResult = ListResult<PermissionResponseItem>;
 
@@ -83,13 +87,7 @@ export async function runDenyCommand(
           ...(options.message ? { message: options.message } : {}),
           ...(options.interrupt ? { interrupt: true } : {}),
         });
-        return {
-          requestId: permission.id.slice(0, 8),
-          agentId: resolvedAgentId,
-          agentShortId: resolvedAgentId.slice(0, 7),
-          name: permission.name,
-          result: "denied",
-        };
+        return toPermissionResponseItem(resolvedAgentId, permission, "denied");
       }),
     );
 

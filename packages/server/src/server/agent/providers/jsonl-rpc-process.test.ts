@@ -268,6 +268,41 @@ describe("JsonlRpcProcess", () => {
     },
   );
 
+  test("requestStopWork resolves once the child has exited", async () => {
+    const child = createInMemoryChildProcess();
+    const transport = startProcess({ child });
+
+    child.emit("exit", 1, null);
+
+    await expect(transport.requestStopWork({ type: "abort" })).resolves.toBeUndefined();
+  });
+
+  // A dying child's stdin pipe breaks a fraction before its exit event, so deciding at the
+  // moment of the write failure would refuse a stop the runtime did honor.
+  test("requestStopWork resolves when stdin fails just before the child exits", async () => {
+    const child = createInMemoryChildProcess();
+    const transport = startProcess({ child });
+
+    const stopped = transport.requestStopWork({ type: "abort" });
+    child.stdin.emit("error", Object.assign(new Error("write EPIPE"), { code: "EPIPE" }));
+
+    await expect(stopped).resolves.toBeUndefined();
+  });
+
+  // `close()` and a spawn error dispose the transport before the child is known to be
+  // gone, and a child can outlive SIGKILL, so a disposed transport is not proof that the
+  // requested work stopped.
+  test("requestStopWork keeps failing while the transport is disposed but the child has not exited", async () => {
+    const child = createInMemoryChildProcess();
+    const transport = startProcess({ child });
+
+    child.emit("error", new Error("spawn failed"));
+
+    await expect(transport.requestStopWork({ type: "abort" })).rejects.toThrow(
+      "JSONL RPC process is closed",
+    );
+  });
+
   test("stdin error events close the transport instead of becoming uncaught exceptions", async () => {
     const child = createInMemoryChildProcess();
     const transport = startProcess({ child });

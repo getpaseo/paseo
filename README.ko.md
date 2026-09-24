@@ -161,6 +161,12 @@ npm run build:server
 npm run typecheck
 ```
 
+## 스폰서
+
+Paseo는 한 사람이 개발하며, 사용하는 분들의 후원으로 운영됩니다. [GitHub Sponsors](https://github.com/sponsors/boudra)로 후원할 수 있습니다. 회사는 매월 [Paseo를 후원](https://paseo.sh/sponsor#spot)하고 로고를 이곳과 paseo.sh 홈페이지에 게재할 수 있습니다.
+
+<!-- Sponsor logos go here, in the same order as packages/website/src/data/sponsors.ts -->
+
 ## 관련 프로젝트
 
 - [getpaseo/paseo-relay](https://github.com/getpaseo/paseo-relay) — Elixir로 작성한 공식 분산형 릴레이

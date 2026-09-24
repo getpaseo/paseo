@@ -23,6 +23,7 @@ type WorkerLifecycleMessage =
   | {
       type: "paseo:ready";
       listen: string;
+      serverId: string;
     }
   | {
       type: "paseo:restart";
@@ -50,7 +51,7 @@ interface SupervisorOptions {
     args: string[];
     env?: NodeJS.ProcessEnv;
   } | null;
-  onWorkerReady?: (message: { listen: string }) => Promise<void> | void;
+  onWorkerReady?: (message: { listen: string; serverId: string }) => Promise<void> | void;
   onWorkerExit?: () => Promise<void> | void;
   restartOnCrash?: boolean;
   onSupervisorExit?: () => Promise<void> | void;
@@ -78,11 +79,14 @@ function parseLifecycleMessage(msg: unknown): WorkerLifecycleMessage | null {
     };
   }
   if (type === "paseo:ready") {
-    const listen = (msg as { listen?: unknown }).listen;
+    const { listen, serverId } = msg as { listen?: unknown; serverId?: unknown };
     if (typeof listen !== "string" || listen.trim().length === 0) {
       return null;
     }
-    return { type: "paseo:ready", listen };
+    if (typeof serverId !== "string" || serverId.trim().length === 0) {
+      return null;
+    }
+    return { type: "paseo:ready", listen, serverId };
   }
   if (type === "paseo:restart") {
     const reason = (msg as { reason?: unknown }).reason;
@@ -289,7 +293,12 @@ export function runSupervisor(options: SupervisorOptions): SupervisorController 
         reachedReady = true;
         writeLifecycleLog("Worker ready", { listen: lifecycleMessage.listen });
         publication = publication
-          .then(() => options.onWorkerReady?.({ listen: lifecycleMessage.listen }))
+          .then(() =>
+            options.onWorkerReady?.({
+              listen: lifecycleMessage.listen,
+              serverId: lifecycleMessage.serverId,
+            }),
+          )
           .catch((error) => {
             lifecycleFailed = true;
             const message = error instanceof Error ? error.message : String(error);

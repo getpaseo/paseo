@@ -28,7 +28,8 @@ import {
   type TerminalLocalFileLinkSource,
   type TerminalLocalFileLinkTarget,
 } from "../local-links/terminal-local-link-provider";
-import { isMac, isFindShortcut } from "./terminal-find-shortcut";
+import { isFindShortcut, type FindShortcutPlatform } from "@/pane-find/find-shortcut";
+import { isMacUserAgent } from "@/utils/mac-user-agent";
 import { resolveTerminalFontFamily, resolveTerminalFontSize } from "./terminal-font";
 
 export type TerminalOutputData = Uint8Array;
@@ -178,7 +179,7 @@ function withOverviewRulerBorderHidden(theme: ITheme): ITheme {
 }
 
 export class TerminalEmulatorRuntime {
-  constructor(private readonly options: { isMac: boolean } = { isMac }) {}
+  constructor(private readonly options: FindShortcutPlatform = { isMac: isMacUserAgent() }) {}
 
   private callbacks: TerminalEmulatorRuntimeCallbacks = {};
   private pendingModifiers: PendingTerminalModifiers = {

@@ -10,12 +10,11 @@ import {
 import { View, type LayoutChangeEvent } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
-import { PaneFind, type PaneFindHandle } from "@/pane-find";
+import { PaneFind, findShortcutPlatform, isFindShortcut, type PaneFindHandle } from "@/pane-find";
 import { isWeb } from "@/constants/platform";
 import { hasActiveWebOverlay } from "@/lib/overlay-root";
 import { isImeComposingKeyboardEvent } from "@/utils/keyboard-ime";
 import type { TerminalEmulatorHandle } from "@/components/terminal-emulator-contract";
-import { isFindShortcut } from "../runtime/terminal-find-shortcut";
 import type { TerminalFindResult } from "../runtime/terminal-emulator-runtime";
 
 export interface TerminalPaneFindHandle {
@@ -65,7 +64,7 @@ export const TerminalFind = forwardRef<
     function onKeyDown(event: KeyboardEvent) {
       if (event.defaultPrevented || hasActiveWebOverlay() || isImeComposingKeyboardEvent(event))
         return;
-      if (isFindShortcut(event) && terminal.current?.find) {
+      if (isFindShortcut(event, findShortcutPlatform()) && terminal.current?.find) {
         event.preventDefault();
         show();
       }

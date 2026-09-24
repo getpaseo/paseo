@@ -37,8 +37,19 @@ const MiniMaxModelRemainSchema = z.object({
   weekly_boost_permille: ApiNumberSchema.optional(),
 });
 
+/**
+ * MiniMax reports application-level failures inside a 200 response: `base_resp.status_code`
+ * is non-zero and `model_remains` comes back as null. An account with no token plan
+ * subscription is the common case (status 2062), so both shapes are normal input here.
+ */
+const MiniMaxBaseRespSchema = z.object({
+  status_code: ApiNumberSchema.optional(),
+  status_msg: ApiOptionalStringSchema,
+});
+
 const MiniMaxQuotaResponseSchema = z.object({
-  model_remains: z.array(MiniMaxModelRemainSchema).optional(),
+  model_remains: z.array(MiniMaxModelRemainSchema).nullish(),
+  base_resp: MiniMaxBaseRespSchema.nullish(),
 });
 
 const MiniMaxCredentialsSchema = z.object({
@@ -181,6 +192,16 @@ export class MiniMaxQuotaProvider implements ProviderUsageFetcher {
     }
 
     const resp = MiniMaxQuotaResponseSchema.parse(await res.json());
+
+    const statusCode = resp.base_resp?.status_code;
+    if (typeof statusCode === "number" && statusCode !== 0) {
+      this.logger.debug(
+        { statusCode, statusMsg: resp.base_resp?.status_msg },
+        "MiniMax usage unavailable",
+      );
+      return unavailableUsage(this);
+    }
+
     const models = resp.model_remains ?? [];
 
     const windows: ProviderUsageWindow[] = [];

@@ -92,7 +92,7 @@ test("a replacement worker must independently reach ready", async () => {
     process.on("message", message => {
       if (message.type === "paseo:graceful-shutdown") process.exit(0);
     });
-    process.send({ type: "paseo:ready", listen: "test-endpoint" });
+    process.send({ type: "paseo:ready", listen: "test-endpoint", serverId: "srv_test" });
     process.send({ type: "paseo:restart" });
   `);
   expect(result.code).toBe(1);
@@ -102,7 +102,7 @@ test("a replacement worker must independently reach ready", async () => {
 test("exit clears publication after an in-flight ready write", async () => {
   const result = await runWorker(
     `
-    process.send({ type: "paseo:ready", listen: "test-endpoint" }, () => process.exit(0));
+    process.send({ type: "paseo:ready", listen: "test-endpoint", serverId: "srv_test" }, () => process.exit(0));
   `,
     100,
   );
