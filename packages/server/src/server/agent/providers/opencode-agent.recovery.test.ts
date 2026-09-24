@@ -169,6 +169,53 @@ test("orders queued live deltas behind an incomplete recovery snapshot and suppr
   await upstream.close();
 });
 
+test("sends the next turn to the new OpenCode server after the old one exits", async () => {
+  const exited = await createRecoveryUpstream();
+  const current = await createRecoveryUpstream();
+  const ports = [exited.port, current.port];
+  const processes: RecoveryServerProcess[] = [];
+  const manager = new OpenCodeServerManager({
+    logger: createTestLogger(),
+    portAllocator: async () => ports.shift() as number,
+    resolveCommandPrefix: async () => ({ command: "opencode", args: [] }),
+    resolveHomeDir: () => process.cwd(),
+    spawnServerProcess: () => {
+      const serverProcess = new RecoveryServerProcess();
+      processes.push(serverProcess);
+      return serverProcess as unknown as ChildProcess;
+    },
+    terminateProcess: async (serverProcess) => {
+      (serverProcess as unknown as RecoveryServerProcess).exit();
+      return "terminated";
+    },
+  });
+  const client = new OpenCodeAgentClient(createTestLogger(), undefined, {
+    serverManager: manager,
+    createClient: ({ baseUrl, directory }) => createOpencodeClient({ baseUrl, directory }),
+  });
+  const session = await client.createSession({ provider: "opencode", cwd: "/workspace" });
+  const observed: AgentStreamEvent[] = [];
+  session.subscribe((event) => observed.push(event));
+  await exited.connected(1);
+  exited.send(0, connectedRecord());
+  processes[0]?.exit();
+  await exited.close();
+
+  const turn = session.startTurn("after restart");
+  await current.connected(1);
+  current.send(0, connectedRecord());
+  await turn;
+  await current.dispatched(1);
+  current.send(0, idleRecord());
+
+  await eventually(() => expect(observed.map((event) => event.type)).toContain("turn_completed"));
+  expect(observed.filter((event) => event.type === "turn_failed")).toHaveLength(0);
+
+  await session.close();
+  await manager.shutdown();
+  await current.close();
+});
+
 class RecoveryTiming implements OpenCodeEventConsumerTiming {
   private resolveWait: (() => void) | null = null;
   arm(): () => void {
