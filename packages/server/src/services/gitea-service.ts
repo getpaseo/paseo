@@ -5,6 +5,7 @@ import pLimit from "p-limit";
 import { parseGitHubRemoteIdentity, parseGitRemoteLocation } from "@getpaseo/protocol/git-remote";
 import { findExecutable } from "../executable-resolution/executable-resolution.js";
 import { runGitCommand } from "../utils/run-git-command.js";
+import { buildForkLocalBranchName } from "../utils/change-request-checkout.js";
 import { execCommand } from "../utils/spawn.js";
 import {
   createCachedCliPathResolver,
@@ -1377,19 +1378,6 @@ function throwFirstNonTeaAuthSearchRejection(results: PromiseSettledResult<unkno
   }
 }
 
-// forgejo username pattern
-function normalizeGiteaOwnerForBranch(owner: string | null): string | null {
-  const normalized = owner?.trim().toLowerCase() ?? "";
-  if (!/^[a-z0-9][a-z0-9_.-]*$/.test(normalized)) {
-    return null;
-  }
-  // git refuses .. and .lock, trailing dot too
-  if (normalized.includes("..") || normalized.endsWith(".") || normalized.endsWith(".lock")) {
-    return null;
-  }
-  return normalized;
-}
-
 export function createGiteaService(options: CreateGiteaServiceOptions = {}): ForgeService {
   const runner = options.runner ?? runTeaCommand;
   const resolveTea = createCachedCliPathResolver(options.resolveTeaPath ?? resolveTeaPath);
@@ -2015,12 +2003,7 @@ export function createGiteaService(options: CreateGiteaServiceOptions = {}): For
     },
 
     buildPrLocalBranchName({ headRef, checkoutTarget }) {
-      if (!checkoutTarget.isCrossRepository) {
-        return headRef;
-      }
-      const owner = normalizeGiteaOwnerForBranch(checkoutTarget.headOwnerLogin);
-      // odd login, use pr-N instead
-      return `${owner ?? `pr-${checkoutTarget.number}`}/${headRef}`;
+      return buildForkLocalBranchName({ headRef, ...checkoutTarget });
     },
 
     async getPullRequestCheckoutTarget(

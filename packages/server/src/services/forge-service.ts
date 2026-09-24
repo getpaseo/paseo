@@ -441,9 +441,9 @@ export interface ForgeService {
   getPullRequestCheckoutTarget(options: GetPullRequestOptions): Promise<PullRequestCheckoutTarget>;
   /**
    * Refs to fetch for a change-request checkout when the resolved checkout
-   * target carries none. Adapters that expose a universal change-request head
-   * ref (GitHub's refs/pull/N/head) return it here; others let the shell fall
-   * back to the head branch.
+   * target carries none. Adapters with a universal change-request head ref
+   * (refs/pull/N/head) return it here; others let the shell fall back to the
+   * head branch.
    */
   defaultCheckoutRefs?(params: {
     changeRequestNumber: number;
@@ -451,7 +451,7 @@ export interface ForgeService {
   }): PullRequestCheckoutRef[];
   /**
    * Local branch name for a checked-out change request when the adapter
-   * disambiguates cross-repository heads (GitHub prefixes the fork owner).
+   * disambiguates cross-repository heads (prefixes the fork owner).
    * Returns undefined to keep the head ref name as-is.
    */
   buildPrLocalBranchName?(params: {
