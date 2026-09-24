@@ -4,6 +4,10 @@ import type { AudioEngine } from "@/voice/audio-engine-types";
 import { createVoiceRuntime, type VoiceSessionAdapter } from "@/voice/voice-runtime";
 import { REALTIME_VOICE_VAD_CONFIG } from "@/voice/realtime-voice-config";
 
+const CUE_MIME_TYPE = "audio/pcm;rate=16000;bits=16";
+const THINKING_TONE_MIN_SILENCE_MS = 1500;
+const SEGMENT_MIME_TYPE = "audio/pcm;rate=24000;bits=16";
+
 function createAudioEngineMock(): AudioEngine {
   return {
     initialize: vi.fn().mockResolvedValue(undefined),
@@ -252,10 +256,11 @@ describe("voice runtime", () => {
     runtime.onAssistantAudioFinished("server-1");
 
     expect(runtime.getSnapshot().phase).toBe("waiting");
+    await vi.advanceTimersByTimeAsync(THINKING_TONE_MIN_SILENCE_MS);
     expect(engine.play).toHaveBeenCalled();
   });
 
-  it("starts the thinking tone when an agent turn begins before playback", async () => {
+  it("starts the thinking tone once the wait for a reply outlasts an inter-segment gap", async () => {
     const adapter = createSessionAdapter();
     const { runtime, engine } = createRuntime();
     runtime.registerSession(adapter);
@@ -264,6 +269,10 @@ describe("voice runtime", () => {
     runtime.onTurnEvent("server-1", "agent-1", "turn_started");
 
     expect(runtime.getSnapshot().phase).toBe("waiting");
+    await vi.advanceTimersByTimeAsync(THINKING_TONE_MIN_SILENCE_MS - 1);
+    expect(engine.play).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(1);
     expect(engine.play).toHaveBeenCalled();
   });
 
@@ -284,6 +293,7 @@ describe("voice runtime", () => {
     runtime.onTurnEvent("server-1", "agent-1", "turn_started");
 
     expect(runtime.getSnapshot().phase).toBe("waiting");
+    await vi.advanceTimersByTimeAsync(THINKING_TONE_MIN_SILENCE_MS);
     expect(engine.play).toHaveBeenCalledTimes(1);
     vi.mocked(engine.stop).mockClear();
     vi.mocked(engine.clearQueue).mockClear();
@@ -303,6 +313,53 @@ describe("voice runtime", () => {
     resolvePlay(0.1);
   });
 
+  it("does not play the thinking tone in the gap between two segments of one reply", async () => {
+    const adapter = createSessionAdapter();
+    const engine = createAudioEngineMock();
+    const played: string[] = [];
+    vi.mocked(engine.play).mockImplementation(async (source: { type: string }) => {
+      played.push(source.type);
+      return 0.1;
+    });
+    const { runtime } = createRuntime({ engine });
+    runtime.registerSession(adapter);
+
+    await runtime.startVoice("server-1", "agent-1");
+    runtime.onTurnEvent("server-1", "agent-1", "turn_started");
+
+    runtime.handleAudioOutput(
+      "server-1",
+      createAudioPayload({
+        id: "seg-1-chunk-0",
+        groupId: "seg-1",
+        chunkIndex: 0,
+        isLastChunk: true,
+      }),
+    );
+    await vi.waitFor(() => {
+      expect(runtime.getSnapshot().phase).toBe("waiting");
+    });
+
+    await vi.advanceTimersByTimeAsync(400);
+
+    runtime.handleAudioOutput(
+      "server-1",
+      createAudioPayload({
+        id: "seg-2-chunk-0",
+        groupId: "seg-2",
+        chunkIndex: 0,
+        isLastChunk: true,
+      }),
+    );
+    await vi.waitFor(() => {
+      expect(played).toContain(SEGMENT_MIME_TYPE);
+    });
+
+    const replyStart = played.indexOf(SEGMENT_MIME_TYPE);
+    expect(replyStart).toBeGreaterThanOrEqual(0);
+    expect(played.slice(replyStart).filter((type) => type === CUE_MIME_TYPE)).toEqual([]);
+  });
+
   it("returns to listening after assistant playback once the turn is complete", async () => {
     const adapter = createSessionAdapter();
     const { runtime, engine } = createRuntime();
@@ -310,6 +367,7 @@ describe("voice runtime", () => {
 
     await runtime.startVoice("server-1", "agent-1");
     runtime.onTurnEvent("server-1", "agent-1", "turn_started");
+    await vi.advanceTimersByTimeAsync(THINKING_TONE_MIN_SILENCE_MS);
     runtime.onAssistantAudioStarted("server-1");
     runtime.onTurnEvent("server-1", "agent-1", "turn_completed");
     runtime.onAssistantAudioFinished("server-1");

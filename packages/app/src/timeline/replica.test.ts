@@ -9,6 +9,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { AgentStreamEventPayload } from "@getpaseo/protocol/messages";
 import type { CachedTimeline } from "@/runtime/replica-cache";
 import { selectAgentTimelineState, useSessionStore } from "@/stores/session-store";
+import { useCreateFlowStore, type PendingCreateAttempt } from "@/stores/create-flow-store";
 import type { StreamItem } from "@/types/stream";
 import {
   createTimelineReplica,
@@ -439,6 +440,119 @@ describe("viewed timeline persistence", () => {
     }
 
     expect(keys).toEqual([AGENT_ID, "agent-2"]);
+    owner.dispose();
+  });
+});
+
+describe("create handoff lifetime", () => {
+  const DRAFT_ID = "draft-1";
+
+  afterEach(() => useCreateFlowStore.getState().clearAll());
+
+  function sentCreateHandoff(): void {
+    useCreateFlowStore.getState().setPending({
+      draftId: DRAFT_ID,
+      serverId: SERVER_ID,
+      agentId: AGENT_ID,
+      clientMessageId: "client-message-1",
+      text: "Create this chat.",
+      timestamp: 0,
+    });
+    useCreateFlowStore.getState().markLifecycle({ draftId: DRAFT_ID, lifecycle: "sent" });
+  }
+
+  function createHandoff(): PendingCreateAttempt | undefined {
+    return useCreateFlowStore.getState().pendingByDraftId[DRAFT_ID];
+  }
+
+  function syncedTailPage(): Parameters<ViewedTimelineOwner["applyTimelineResponse"]>[0] {
+    return {
+      requestId: "tail-1",
+      agentId: AGENT_ID,
+      agent: null,
+      direction: "tail",
+      projection: "projected",
+      reset: false,
+      epoch: "epoch-1",
+      window: { minSeq: 1, maxSeq: 0, nextSeq: 1 },
+      startCursor: null,
+      endCursor: null,
+      entries: [],
+      error: null,
+      hasNewer: false,
+      hasOlder: false,
+      staleCursor: false,
+      gap: false,
+    };
+  }
+
+  interface HeldCatchUpOwner {
+    owner: ViewedTimelineOwner;
+    release: () => void;
+  }
+
+  async function ownerWithHeldCatchUp(): Promise<HeldCatchUpOwner> {
+    let releaseTailFetch!: () => void;
+    let tailFetchStarted = false;
+    const tailFetched = new Promise<void>((resolve) => {
+      releaseTailFetch = resolve;
+    });
+    const replica = createTimelineReplica({
+      serverId: SERVER_ID,
+      storage: { readTimeline: async () => undefined, commitTimeline: () => undefined },
+      prepareAgent: async () => undefined,
+    });
+    const owner = createViewedTimelineOwner({
+      serverId: SERVER_ID,
+      replica,
+      replaceDemandedAgentIds: () => undefined,
+      drainQueuedAgentMessage: () => undefined,
+      ports: {
+        observe: () => ({ ready: Promise.resolve(), release: async () => undefined }),
+        readCursor: () => undefined,
+        fetchPage: async () => {
+          tailFetchStarted = true;
+          await tailFetched;
+          return { hasNewer: false, endCursor: null };
+        },
+        fetchLatestTail: async () => ({ hasNewer: false, endCursor: null }),
+        reportError: () => undefined,
+        schedule: () => () => undefined,
+      },
+    });
+
+    owner.setConnected(true);
+    owner.replaceVisibleAgentIds("test", [AGENT_ID]);
+    await expect.poll(() => tailFetchStarted).toBe(true);
+    return { owner, release: releaseTailFetch };
+  }
+
+  it("keeps the handoff through the first synchronized page and releases it when the chat is current", async () => {
+    useSessionStore.getState().initializeSession(SERVER_ID, null);
+    sentCreateHandoff();
+    const { owner, release } = await ownerWithHeldCatchUp();
+
+    owner.applyTimelineResponse(syncedTailPage());
+    expect(
+      selectAgentTimelineState(useSessionStore.getState().sessions[SERVER_ID], AGENT_ID),
+    ).toMatchObject({ status: "synced" });
+    expect(createHandoff()).toMatchObject({ agentId: AGENT_ID, lifecycle: "sent" });
+
+    release();
+    await expect.poll(() => createHandoff()).toBeUndefined();
+    owner.dispose();
+  });
+
+  it("releases the handoff when the chat's tab closes before catch-up completes", async () => {
+    useSessionStore.getState().initializeSession(SERVER_ID, null);
+    sentCreateHandoff();
+    const { owner, release } = await ownerWithHeldCatchUp();
+
+    owner.replaceVisibleAgentIds("test", []);
+    owner.replaceOpenTabAgentIds([]);
+
+    expect(createHandoff()).toBeUndefined();
+    release();
     owner.dispose();
   });
 });

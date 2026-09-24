@@ -86,6 +86,13 @@ offline, then Updating messages until authoritative catch-up completes. Socket c
 certify that the displayed conversation is current. The timeline owner publishes freshness; the
 view renders it without a toast timer or a separate resume workflow.
 
+The draft-create handoff has the same lifetime: the viewed-timeline owner releases it when the sync
+stops owing that chat a catch-up, not when the first authoritative page lands. Releasing it at the
+first page leaves a chat this client just created looking hydrated but still catching up, which
+shows Updating messages for a conversation that cannot be out of date. Closing the tab ends the
+obligation too, so a reopened chat starts from authoritative state instead of a stale optimistic
+one; disconnect and backgrounding keep it.
+
 Foregrounding probes a nominally connected session immediately. A healthy response preserves the
 socket; a failed three-second probe starts reconnecting without waiting for the background heartbeat
 or retry backoff. This cannot keep a mobile socket alive after the operating system suspends it.

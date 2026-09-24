@@ -1,12 +1,17 @@
 import type { ChatFindOperations } from "./model";
 import type { ChatFindProps } from "./types";
-import { findRenderedMatches } from "./ranges.web";
+import { findMessageMatches, findMessageRows, findRenderedMatches } from "./ranges.web";
 
 interface ViewportInput {
-  getBindings(): Pick<ChatFindProps, "viewportRef" | "revealLoadedItem" | "visibleItemIds">;
+  getBindings(): Pick<ChatFindProps, "viewportRef" | "revealLoadedMessage" | "visibleMessageIds">;
   getRoot(): HTMLElement | null;
   highlightName: string;
 }
+
+function rowOf(range: Range): HTMLElement | null {
+  return range.startContainer.parentElement?.closest<HTMLElement>("[data-history-row-id]") ?? null;
+}
+
 export function createFindViewport({
   getBindings,
   getRoot,
@@ -16,7 +21,9 @@ export function createFindViewport({
     clear() {
       CSS.highlights.delete(highlightName);
     },
-    reveal(itemId, query, occurrence, signal) {
+    // A message renders as one row per Markdown block, so an occurrence can sit in
+    // any of them and the chosen one decides where the viewport lands.
+    reveal(messageId, query, occurrence, signal) {
       return new Promise((resolve, reject) => {
         let frame = 0;
         let started = false;
@@ -40,23 +47,21 @@ export function createFindViewport({
             return;
           }
           const current = getBindings();
-          if (!current.visibleItemIds.has(itemId)) {
-            current.revealLoadedItem(itemId);
+          if (!current.visibleMessageIds.has(messageId)) {
+            current.revealLoadedMessage(messageId);
             frame = requestAnimationFrame(poll);
             return;
           }
           if (!started) {
-            current.viewportRef.current?.scrollToMessage?.(itemId);
+            current.viewportRef.current?.scrollToMessage?.(messageId);
             started = true;
           }
-          const row = getRoot()?.querySelector<HTMLElement>(
-            `[data-history-row-id="${CSS.escape(itemId)}"]`,
-          );
-          if (!row || !row.getBoundingClientRect().height) {
+          const rows = findMessageRows(getRoot(), messageId);
+          if (!rows.some((row) => row.getBoundingClientRect().height)) {
             frame = requestAnimationFrame(poll);
             return;
           }
-          const ranges = findRenderedMatches(row, query);
+          const ranges = findMessageMatches(getRoot(), messageId, query);
           const index =
             occurrence < 0 ? ranges.length - 1 : Math.min(occurrence, ranges.length - 1);
           const range = ranges[index];
@@ -65,10 +70,18 @@ export function createFindViewport({
             resolve({ occurrence: 0, count: 0 });
             return;
           }
-          current.viewportRef.current?.scrollToMessage?.(itemId, {
+          // The settle loop re-resolves the range every frame because scrolling
+          // invalidates it. Re-counting the whole message would let a row mounting or
+          // unmounting mid-scroll shift which occurrence a fixed index names, so the
+          // occurrence is pinned to its own row for the rest of this reveal.
+          const row = rowOf(range);
+          const indexInRow = ranges
+            .slice(0, index)
+            .filter((earlier) => rowOf(earlier) === row).length;
+          current.viewportRef.current?.scrollToMessage?.(messageId, {
             signal,
-            targetTop(currentRow) {
-              const selected = findRenderedMatches(currentRow, query)[index];
+            targetTop() {
+              const selected = row ? findRenderedMatches(row, query)[indexInRow] : undefined;
               if (!selected) return null;
               CSS.highlights.set(highlightName, new Highlight(selected));
               const widget = getRoot()?.querySelector<HTMLElement>(

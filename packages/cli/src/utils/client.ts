@@ -52,11 +52,18 @@ export function buildDaemonConnectionCommandError(options: ConnectOptions & { er
   return {
     code,
     message: `Cannot connect to daemon at ${describeDaemonTarget(options.target)}: ${message}`,
-    details:
-      options.target.kind === "instance"
-        ? `Start with: paseo daemon start --home ${JSON.stringify(options.target.home)}`
-        : "Check the selected endpoint and credentials. SSH transport does not install or start the daemon.",
+    details: describeConnectionRemedy(code, options.target),
   };
+}
+
+function describeConnectionRemedy(code: string, target: DaemonTarget): string {
+  if (code === "AUTH_REQUIRED")
+    return "The daemon requires a password. Set PASEO_PASSWORD and retry.";
+  if (code === "AUTH_FAILED")
+    return "The daemon rejected the password. Check PASEO_PASSWORD and retry.";
+  if (target.kind === "instance")
+    return `Start with: paseo daemon start --home ${JSON.stringify(target.home)}`;
+  return "Check the selected endpoint and credentials. SSH transport does not install or start the daemon.";
 }
 
 export function normalizeDaemonHost(raw: string): string | null {

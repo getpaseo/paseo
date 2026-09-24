@@ -366,6 +366,7 @@ function createPaseoWorktreeForTest(options: {
     projectRegistry,
     workspaceRegistry,
     workspaceGitService,
+    isDirectory: async () => true,
     logger: createLogger(),
   });
 
