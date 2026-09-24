@@ -3454,9 +3454,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     config: AgentSessionConfig,
     private readonly resumeHandle: { sessionId: string; metadata?: Record<string, unknown> } | null,
     logger: Logger,
-    private readonly spawnAppServer: () =>
-      | ChildProcessWithoutNullStreams
-      | Promise<ChildProcessWithoutNullStreams>,
+    private readonly spawnAppServer: () => Promise<ChildProcessWithoutNullStreams>,
     private readonly deps: CodexAppServerAgentDeps = {},
     private readonly ephemeral: boolean = false,
     private readonly goalsEnabled: boolean = false,
@@ -7177,7 +7175,7 @@ export class CodexAppServerAgentClient implements AgentClient {
       sessionConfig,
       null,
       this.logger,
-      spawn,
+      async () => spawn(),
       this.sessionDeps(launchContext?.env),
       options?.persistSession === false,
       goalsEnabled,
@@ -7212,7 +7210,7 @@ export class CodexAppServerAgentClient implements AgentClient {
       merged,
       handle,
       this.logger,
-      spawn,
+      async () => spawn(),
       this.sessionDeps(launchContext?.env),
       false,
       goalsEnabled,
