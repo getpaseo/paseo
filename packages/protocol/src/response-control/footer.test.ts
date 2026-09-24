@@ -69,3 +69,23 @@ it("releases a malformed prefix before the stream ends", () => {
   const text = "Answer.\n<paseo-meta message!!!";
   expect(responseDisplayText(text, true)).toBe(text);
 });
+describe("recommended prompts", () => {
+  it("collects prompt1 to prompt3 in order and skips blanks", () => {
+    expect(
+      parseResponseFooter(
+        '<paseo-meta message="Done." prompt3="Ship it" prompt1="Run the tests" prompt2="   " />',
+      )?.metadata,
+    ).toEqual({ message: "Done.", prompts: ["Run the tests", "Ship it"] });
+  });
+  it("omits prompts when none are given", () => {
+    expect(parseResponseFooter('<paseo-meta message="Done." />')?.metadata).toEqual({
+      message: "Done.",
+    });
+  });
+  it("decodes entities inside prompts", () => {
+    expect(
+      parseResponseFooter('<paseo-meta message="Done." prompt1="Fix &quot;a&quot; &amp; b" />')
+        ?.metadata.prompts,
+    ).toEqual(['Fix "a" & b']);
+  });
+});

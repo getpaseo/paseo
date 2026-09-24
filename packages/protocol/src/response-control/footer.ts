@@ -3,10 +3,15 @@ import { MAX_EXPLICIT_AGENT_TITLE_CHARS } from "../agent-title-limits.js";
 export const MAX_RESPONSE_FOOTER_LENGTH = 4096;
 const MARKER = "<paseo-meta";
 
+export const MAX_RECOMMENDED_PROMPTS = 3;
+export const RECOMMENDED_PROMPT_ATTRIBUTES = ["prompt1", "prompt2", "prompt3"] as const;
+
 export interface ResponseFooterMetadata {
   message: string;
   title?: string;
   icon?: string;
+  /** Recommended prompts in the agent's order; the client offers them as one-click follow-ups. */
+  prompts?: string[];
 }
 
 interface ParsedFooter {
@@ -95,9 +100,17 @@ export function parseResponseFooter(text: string): ParsedFooter | null {
   const icon = values.get("icon");
   if (title !== undefined && (!title || title.length > MAX_EXPLICIT_AGENT_TITLE_CHARS)) return null;
   if (icon !== undefined && (!icon || icon.length > 32)) return null;
+  const prompts = RECOMMENDED_PROMPT_ATTRIBUTES.map((name) => values.get(name) ?? "").filter(
+    Boolean,
+  );
   return {
     text: text.slice(0, candidate.start).trimEnd(),
-    metadata: { message, ...(title ? { title } : {}), ...(icon ? { icon } : {}) },
+    metadata: {
+      message,
+      ...(title ? { title } : {}),
+      ...(icon ? { icon } : {}),
+      ...(prompts.length > 0 ? { prompts } : {}),
+    },
   };
 }
 

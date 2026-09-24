@@ -19,6 +19,11 @@ export const en = {
     updating: "Updating chat name…",
     retry: "Retry",
     dismiss: "Dismiss",
+    recommendedPrompts: {
+      send: "Send prompt",
+      useEdited: "Use edited",
+      sendFailed: "Failed to send prompt",
+    },
   },
 
   changeStats: {

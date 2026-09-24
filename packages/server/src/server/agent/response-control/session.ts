@@ -6,9 +6,10 @@ import type { AgentStreamEvent } from "../agent-sdk-types.js";
 
 export const RESPONSE_CONTROL_INSTRUCTIONS = `Paseo response metadata:
 At the end of each final response that ends your turn, append exactly one standalone line outside Markdown fences:
-<paseo-meta message="One short sentence describing this turn's outcome." title="Chat topic" icon="🎛️" />
+<paseo-meta message="One short sentence describing this turn's outcome." title="Chat topic" icon="🎛️" prompt1="Recommended next prompt" prompt2="Another option" />
 The message is required. Target at most 220 characters. Describe what happened, including questions or blockers; do not claim unfinished work is done.
 Use a 1–3-word title describing the chat and one complementary emoji icon. Include title and icon on your first response, then only when they change; omitted values stay unchanged.
+Recommend one to three next prompts as prompt1, prompt2, and prompt3. Each is one sentence written as the user would send it to you, describing the most useful next step; omit them when no follow-up makes sense.
 Use double-quoted XML attributes. Escape ampersands as &amp;, quotes as &quot;, and angle brackets as &lt; and &gt;.
 Put the footer after all user-facing content. Never include it in progress updates, reasoning, tool calls, or examples. Paseo hides this footer and uses it for naming and completion notifications.`;
 

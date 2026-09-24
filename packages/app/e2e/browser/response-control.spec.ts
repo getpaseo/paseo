@@ -5,6 +5,9 @@ import { waitForWorkspaceTabsVisible } from "../support/helpers/workspace-tabs";
 import { buildHostAgentDetailRoute } from "@/utils/host-routes";
 import { getServerId } from "../support/helpers/server-id";
 import { daemonWsRoutePattern } from "../support/helpers/daemon-port";
+import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-agent";
+import { awaitAssistantMessage } from "../support/helpers/agent-stream";
+import { composerLocator, expectComposerDraft } from "../support/helpers/composer";
 
 interface Envelope {
   type?: string;
@@ -86,4 +89,48 @@ test("host response control is enabled by default and can be switched off", asyn
   await page.screenshot({ path: "/tmp/paseo-response-control-settings.png" });
   await toggle.click();
   await expect(toggle).toHaveAttribute("aria-checked", "true");
+});
+
+const RECOMMENDED_PROMPTS_RESPONSE = [
+  "Renamed the tabs.",
+  '<paseo-meta message="Renamed the tabs." prompt1="Run the tests" prompt2="Open a pull request" />',
+].join("\n");
+
+test("recommended prompts send directly or prefill the composer", async ({ page }) => {
+  test.setTimeout(120_000);
+  const agent = await seedMockAgentWorkspace({
+    repoPrefix: "recommended-prompts-",
+    title: "Recommended prompts",
+    featureValues: { mockAssistantResponse: RECOMMENDED_PROMPTS_RESPONSE },
+  });
+  try {
+    await openAgentRoute(page, agent);
+    await agent.client.sendAgentMessage(agent.agentId, "Rename the tabs.");
+    await agent.client.waitForFinish(agent.agentId, 30_000);
+    await awaitAssistantMessage(page, "Renamed the tabs.");
+    await expect(page.getByTestId("assistant-message").last()).not.toContainText("paseo-meta");
+
+    const prompts = page.getByTestId("recommended-prompts").last();
+    await expect(prompts).toBeVisible();
+    await expect(prompts.getByTestId("recommended-prompt-send")).toHaveText([
+      "Run the tests",
+      "Open a pull request",
+    ]);
+
+    const first = prompts.getByTestId("recommended-prompt").first();
+    await first.hover();
+    await first.getByTestId("recommended-prompt-use-edited").click();
+    await expectComposerDraft(page, "Run the tests");
+    await expect(composerLocator(page)).toBeFocused();
+    await page.screenshot({ path: "/tmp/paseo-recommended-prompts.png" });
+
+    await prompts.getByTestId("recommended-prompt-send").nth(1).click();
+    await expect(
+      page.getByTestId("user-message").filter({ hasText: "Open a pull request" }),
+    ).toBeVisible();
+    await agent.client.waitForFinish(agent.agentId, 30_000);
+    await expectComposerDraft(page, "Run the tests");
+  } finally {
+    await agent.cleanup();
+  }
 });

@@ -20,6 +20,12 @@ the shared transcript projection. Replaying history must never rename a chat or 
 Persist metadata before creating completion attention, and associate summaries with their turn so
 a footerless response cannot reuse an earlier summary.
 
+The same footer carries up to three **recommended prompts** (`prompt1` to `prompt3`). The client
+reads them from the raw assistant text of the latest completed response and renders them under the
+copy and fork row; pressing one sends it as a new user message, the pencil puts it in the composer
+instead. Only the surface that owns a composer provides the actions, so read-only panes and older
+responses never show them. The daemon does not persist prompts; the history item is the source.
+
 Manual naming freezes both the title and emoji while automatic suggestions continue to accumulate.
 **Use automatic naming** applies the latest suggestion and resumes updates. Treat existing records
 without naming provenance as manually named to preserve user choices.

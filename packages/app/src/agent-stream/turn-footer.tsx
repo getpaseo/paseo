@@ -1,6 +1,7 @@
 import React, { memo, useCallback, useMemo, type ReactNode } from "react";
 import { View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
+import { parseResponseFooter } from "@getpaseo/protocol/response-control/footer";
 import { MAX_CONTENT_WIDTH } from "@/constants/layout";
 import { SPACING, type Theme } from "@/styles/theme";
 import type { TurnTiming } from "@/timeline/turn-time";
@@ -20,6 +21,8 @@ import type { TurnFooterHost } from "./layout";
 import { AssistantForkMenu } from "@/components/assistant-fork-menu";
 import { SyncedLoader } from "@/components/synced-loader";
 import { useRetainedPanelActive } from "@/components/retained-panel";
+import { useRecommendedPromptActions } from "@/response-control/recommended-prompt-actions";
+import { RecommendedPrompts } from "./recommended-prompts";
 
 const ThemedSyncedLoader = withUnistyles(SyncedLoader);
 const workingIndicatorColorMapping = (theme: Theme) => ({ color: theme.colors.foreground });
@@ -59,6 +62,14 @@ export const TurnFooter = memo(function TurnFooter({
   onForkAssistantTurn?: AssistantTurnForkHandler;
   onForkInFlightTurn?: InFlightTurnForkHandler;
 }) {
+  const promptActions = useRecommendedPromptActions();
+  const hostItem = host ? host.items[host.startIndex] : undefined;
+  const hostText = hostItem?.kind === "assistant_message" ? hostItem.text : null;
+  // The raw item keeps the footer; only the display projection strips it.
+  const recommendedPrompts = useMemo(
+    () => (hostText === null ? undefined : parseResponseFooter(hostText)?.metadata.prompts),
+    [hostText],
+  );
   if (isRunning) {
     return (
       <TurnFooterRow>
@@ -80,7 +91,11 @@ export const TurnFooter = memo(function TurnFooter({
       startIndex={host.startIndex}
       supportsTimelineCursor={supportsTimelineCursor}
       onForkAssistantTurn={onForkAssistantTurn}
-    />
+    >
+      {recommendedPrompts && promptActions ? (
+        <RecommendedPrompts prompts={recommendedPrompts} actions={promptActions} />
+      ) : null}
+    </CompletedTurnFooterRow>
   );
 });
 
@@ -91,6 +106,7 @@ export const CompletedTurnFooterRow = memo(function CompletedTurnFooterRow({
   startIndex,
   supportsTimelineCursor,
   onForkAssistantTurn,
+  children,
 }: {
   strategy: TurnContentStrategy;
   items: StreamItem[];
@@ -98,6 +114,8 @@ export const CompletedTurnFooterRow = memo(function CompletedTurnFooterRow({
   startIndex: number;
   supportsTimelineCursor: boolean;
   onForkAssistantTurn?: AssistantTurnForkHandler;
+  /** Rendered under the action row, inside the footer's bottom spacing. */
+  children?: ReactNode;
 }) {
   return (
     <TurnFooterRow>
@@ -108,7 +126,9 @@ export const CompletedTurnFooterRow = memo(function CompletedTurnFooterRow({
         startIndex={startIndex}
         supportsTimelineCursor={supportsTimelineCursor}
         onForkAssistantTurn={onForkAssistantTurn}
-      />
+      >
+        {children}
+      </CompletedTurnFooter>
     </TurnFooterRow>
   );
 });
@@ -164,6 +184,7 @@ function CompletedTurnFooter({
   startIndex,
   supportsTimelineCursor,
   onForkAssistantTurn,
+  children,
 }: {
   strategy: TurnContentStrategy;
   items: StreamItem[];
@@ -171,6 +192,7 @@ function CompletedTurnFooter({
   startIndex: number;
   supportsTimelineCursor: boolean;
   onForkAssistantTurn?: AssistantTurnForkHandler;
+  children?: ReactNode;
 }) {
   const getContent = useCallback(
     () =>
@@ -196,13 +218,16 @@ function CompletedTurnFooter({
     [boundary, onForkAssistantTurn],
   );
   return (
-    <View style={stylesheet.turnFooterSlot}>
-      <AssistantTurnFooter
-        getContent={getContent}
-        completedAt={timing?.completedAt}
-        durationMs={timing?.durationMs}
-        onFork={boundary && onForkAssistantTurn ? handleFork : undefined}
-      />
+    <View style={stylesheet.turnFooterBlock}>
+      <View style={stylesheet.turnFooterSlot}>
+        <AssistantTurnFooter
+          getContent={getContent}
+          completedAt={timing?.completedAt}
+          durationMs={timing?.durationMs}
+          onFork={boundary && onForkAssistantTurn ? handleFork : undefined}
+        />
+      </View>
+      {children}
     </View>
   );
 }
@@ -222,12 +247,15 @@ const stylesheet = StyleSheet.create((theme) => ({
   turnFooterRow: {
     marginTop: theme.spacing[2] + 5,
   },
+  turnFooterBlock: {
+    alignSelf: "stretch",
+    paddingBottom: TURN_FOOTER_BOTTOM_SPACING,
+  },
   turnFooterSlot: {
     flexDirection: "row",
     alignItems: "center",
     alignSelf: "flex-start",
     minHeight: 24,
-    paddingBottom: TURN_FOOTER_BOTTOM_SPACING,
   },
   turnFooterContent: {
     height: 24,

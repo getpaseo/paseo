@@ -36,6 +36,14 @@ import {
 } from "@/composer/pill-styles";
 import { getActiveMessageSubmissions } from "@/composer/submission/model";
 import { RewindComposerRestoreProvider } from "@/components/rewind/composer-restore";
+import {
+  RecommendedPromptActionsProvider,
+  type RecommendedPromptActions,
+} from "@/response-control/recommended-prompt-actions";
+import { dispatchComposerAgentMessage } from "@/composer/actions";
+import { resolveComposerAttachmentSubmitFormat } from "@/composer/attachments/submit";
+import { createMessageSubmissionWriter } from "@/composer/submission/writer";
+import { encodeImages } from "@/utils/encode-images";
 import { getProviderIcon } from "@/components/provider-icons";
 import {
   ToastViewport,
@@ -1345,6 +1353,46 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
       composerState,
     ],
   );
+  const client = useHostRuntimeClient(serverId);
+  const draftTextRef = useRef(text);
+  draftTextRef.current = text;
+  const focusComposerRef = useRef<(() => void) | null>(null);
+  const handleFocusInput = useCallback((focus: () => void) => {
+    focusComposerRef.current = focus;
+  }, []);
+  const recommendedPromptActions = useMemo<RecommendedPromptActions>(
+    () => ({
+      send: async (prompt) => {
+        if (!client) {
+          toastApi.error(t("responseControl.recommendedPrompts.sendFailed"));
+          return;
+        }
+        handleMessageSent();
+        try {
+          await dispatchComposerAgentMessage({
+            client,
+            agentId,
+            text: prompt,
+            attachments: [],
+            attachmentSubmitFormat: resolveComposerAttachmentSubmitFormat({}),
+            encodeImages,
+            submission: createMessageSubmissionWriter(serverId),
+            activeTurnBehavior: "interrupt",
+          });
+          onAttentionPromptSend();
+        } catch (error) {
+          console.error("[AgentPanel] Failed to send recommended prompt:", error);
+          toastApi.error(t("responseControl.recommendedPrompts.sendFailed"));
+        }
+      },
+      useEdited: (prompt) => {
+        const current = draftTextRef.current;
+        replaceText(current.trim() ? `${current.trimEnd()}\n\n${prompt}` : prompt);
+        focusComposerRef.current?.();
+      },
+    }),
+    [agentId, client, handleMessageSent, onAttentionPromptSend, replaceText, serverId, t, toastApi],
+  );
   const composerSection = (
     <RenderProfile id={`AgentComposerSection:${agentId}`}>
       <AgentComposerSection
@@ -1360,6 +1408,7 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
         onAttentionPromptSend={onAttentionPromptSend}
         onComposerHeightChange={handleComposerHeightChange}
         onMessageSent={handleMessageSent}
+        onFocusInput={handleFocusInput}
       />
     </RenderProfile>
   );
@@ -1403,55 +1452,73 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
       setText={agentInputDraft.replaceText}
       onRewindComplete={handleRewindComplete}
     >
-      <View style={styles.root} collapsable={false}>
-        <DockedChatSurface disabled={isArchivingCurrentAgent}>
-          {contentContainer}
+      <RecommendedPromptActionsProvider value={recommendedPromptActions}>
+        <View style={styles.root} collapsable={false}>
+          <DockedChatSurface disabled={isArchivingCurrentAgent}>
+            {contentContainer}
 
-          {showHistorySyncError ? (
-            <View style={styles.timelineSyncCalloutRail}>
-              <View style={styles.timelineSyncCalloutContent}>
-                <View style={styles.timelineSyncCallout} testID="agent-timeline-sync-error">
-                  <Text style={styles.timelineSyncCalloutText}>
-                    {t("agentPanel.states.timelineSyncFailed")}
-                  </Text>
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    onPress={retryTimelineSync}
-                    disabled={isRetryingHistorySync}
-                    testID="agent-timeline-sync-retry"
-                  >
-                    {isRetryingHistorySync
-                      ? t("agentPanel.states.timelineSyncRetrying")
-                      : t("common.actions.retry")}
-                  </Button>
-                </View>
+            {showHistorySyncError ? (
+              <TimelineSyncErrorCallout
+                isRetrying={isRetryingHistorySync}
+                onRetry={retryTimelineSync}
+              />
+            ) : null}
+
+            {composerSection}
+
+            {showHistorySyncOverlay ? (
+              <View style={styles.historySyncOverlay} testID="agent-history-overlay">
+                <ThemedLoadingSpinner size="large" uniProps={foregroundMutedColorMapping} />
               </View>
+            ) : null}
+
+            <ToastViewport toast={toast} onDismiss={dismiss} placement="panel" />
+          </DockedChatSurface>
+
+          {isArchivingCurrentAgent ? (
+            <View style={styles.archivingOverlay} testID="agent-archiving-overlay">
+              <ThemedLoadingSpinner size="large" uniProps={foregroundColorMapping} />
+              <Text style={styles.archivingTitle}>{t("agentPanel.states.archivingTitle")}</Text>
+              <Text style={styles.archivingSubtitle}>
+                {t("agentPanel.states.archivingSubtitle")}
+              </Text>
             </View>
           ) : null}
-
-          {composerSection}
-
-          {showHistorySyncOverlay ? (
-            <View style={styles.historySyncOverlay} testID="agent-history-overlay">
-              <ThemedLoadingSpinner size="large" uniProps={foregroundMutedColorMapping} />
-            </View>
-          ) : null}
-
-          <ToastViewport toast={toast} onDismiss={dismiss} placement="panel" />
-        </DockedChatSurface>
-
-        {isArchivingCurrentAgent ? (
-          <View style={styles.archivingOverlay} testID="agent-archiving-overlay">
-            <ThemedLoadingSpinner size="large" uniProps={foregroundColorMapping} />
-            <Text style={styles.archivingTitle}>{t("agentPanel.states.archivingTitle")}</Text>
-            <Text style={styles.archivingSubtitle}>{t("agentPanel.states.archivingSubtitle")}</Text>
-          </View>
-        ) : null}
-      </View>
+        </View>
+      </RecommendedPromptActionsProvider>
     </RewindComposerRestoreProvider>
   );
 });
+
+function TimelineSyncErrorCallout({
+  isRetrying,
+  onRetry,
+}: {
+  isRetrying: boolean;
+  onRetry: () => void;
+}) {
+  const { t } = useTranslation();
+  return (
+    <View style={styles.timelineSyncCalloutRail}>
+      <View style={styles.timelineSyncCalloutContent}>
+        <View style={styles.timelineSyncCallout} testID="agent-timeline-sync-error">
+          <Text style={styles.timelineSyncCalloutText}>
+            {t("agentPanel.states.timelineSyncFailed")}
+          </Text>
+          <Button
+            size="sm"
+            variant="secondary"
+            onPress={onRetry}
+            disabled={isRetrying}
+            testID="agent-timeline-sync-retry"
+          >
+            {isRetrying ? t("agentPanel.states.timelineSyncRetrying") : t("common.actions.retry")}
+          </Button>
+        </View>
+      </View>
+    </View>
+  );
+}
 
 function DockedChatSurface({ children, disabled }: { children: ReactNode; disabled: boolean }) {
   return (
@@ -1579,6 +1646,7 @@ const AgentComposerSection = memo(function AgentComposerSection({
   onAttentionPromptSend,
   onComposerHeightChange,
   onMessageSent,
+  onFocusInput,
 }: {
   agentId?: string;
   serverId: string;
@@ -1592,6 +1660,7 @@ const AgentComposerSection = memo(function AgentComposerSection({
   onAttentionPromptSend: () => void;
   onComposerHeightChange: (height: number) => void;
   onMessageSent: () => void;
+  onFocusInput: (focus: () => void) => void;
 }) {
   if (!agentId) {
     return null;
@@ -1615,6 +1684,7 @@ const AgentComposerSection = memo(function AgentComposerSection({
       onAttentionPromptSend={onAttentionPromptSend}
       onComposerHeightChange={onComposerHeightChange}
       onMessageSent={onMessageSent}
+      onFocusInput={onFocusInput}
     />
   );
 });
@@ -1630,6 +1700,7 @@ function ActiveAgentComposer({
   onAttentionPromptSend,
   onComposerHeightChange,
   onMessageSent,
+  onFocusInput,
 }: {
   agentId: string;
   serverId: string;
@@ -1641,6 +1712,7 @@ function ActiveAgentComposer({
   onAttentionPromptSend: () => void;
   onComposerHeightChange: (height: number) => void;
   onMessageSent: () => void;
+  onFocusInput: (focus: () => void) => void;
 }) {
   const insets = useSafeAreaInsets();
   const isCompactFormFactor = useIsCompactFormFactor();
@@ -1747,6 +1819,7 @@ function ActiveAgentComposer({
         onAttentionPromptSend={onAttentionPromptSend}
         onComposerHeightChange={onComposerHeightChange}
         onMessageSent={onMessageSent}
+        onFocusInput={onFocusInput}
         onClientSlashCommand={handleClientSlashCommand}
         isCompactLayout={isCompactComposerLayout}
       />
