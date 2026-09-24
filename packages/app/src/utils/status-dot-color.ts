@@ -21,7 +21,10 @@ export function getStatusDotColor(input: {
   if (bucket === "failed") {
     return theme.colors.statusDotDanger;
   }
-  if (bucket === "running") {
+  if (bucket === "running" || bucket === "waiting_on_subagent") {
+    // Waiting shares running's color on purpose: the work is still moving and asks nothing of the
+    // user. The label — not the dot — separates "this agent is working" from "this agent is
+    // waiting on a subagent", because a dot has no room for either.
     return theme.colors.statusDotRunning;
   }
   if (bucket === "attention") {

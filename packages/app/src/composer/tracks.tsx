@@ -298,6 +298,10 @@ function dotColorStyle(bucket: Exclude<SidebarStateBucket, "running">) {
       return styles.dotFailed;
     case "attention":
       return styles.dotAttention;
+    case "waiting_on_subagent":
+      // The pill only reports child rows today, and a child's waiting state is not a child-level
+      // fact — it stays here so the mark vocabulary is total, drawn like running's dot.
+      return styles.dotRunning;
     case "done":
       return styles.dotDone;
   }
@@ -306,7 +310,7 @@ function dotColorStyle(bucket: Exclude<SidebarStateBucket, "running">) {
 const styles = StyleSheet.create((theme) => {
   // Colours come from the one bucket-to-colour map so the pill cannot drift from the status dots
   // everywhere else, and are baked into each variant so the style prop stays a stable object.
-  const statusDot = (bucket: Exclude<SidebarStateBucket, "running">) => ({
+  const statusDot = (bucket: SidebarStateBucket) => ({
     width: STATUS_INDICATOR_FILLED_DOT_SIZE,
     height: STATUS_INDICATOR_FILLED_DOT_SIZE,
     borderRadius: theme.borderRadius.full,
@@ -379,6 +383,8 @@ const styles = StyleSheet.create((theme) => {
     dotNeedsInput: statusDot("needs_input"),
     dotFailed: statusDot("failed"),
     dotAttention: statusDot("attention"),
+    // Waiting falls back to running's dot, matching the workspace row's mark.
+    dotRunning: statusDot("running"),
     dotDone: statusDot("done"),
   };
 });

@@ -147,6 +147,9 @@ export function WorkspaceTabIcon({
   let statusDotColor: string | undefined;
   if (bucket === "failed") statusDotColor = styles.statusDotFailed.color;
   else if (bucket === "attention") statusDotColor = styles.statusDotAttention.color;
+  // Waiting on a subagent is running's color as a plain dot rather than the live ring: the
+  // agent's own turn is not what is moving.
+  else if (bucket === "waiting_on_subagent") statusDotColor = styles.statusDotRunning.color;
   const showNeedsInputAlert = bucket === "needs_input";
   const Icon = presentation.icon;
   const agentIconWrapperStyle = useMemo(

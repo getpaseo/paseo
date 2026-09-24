@@ -267,6 +267,10 @@ function getStatusDotColorStyle(bucket: SidebarStateBucket) {
       return styles.statusDotFailed;
     case "running":
       return styles.statusDotRunning;
+    case "waiting_on_subagent":
+      // Same color as running — the work is moving — with the "Waiting on subagent" group label
+      // doing the naming, since a dot carries no text.
+      return styles.statusDotRunning;
     case "attention":
       return styles.statusDotAttention;
     case "done":

@@ -10,6 +10,7 @@ export const STATUS_BUCKET_LABELS: Record<StatusBucket, string> = {
   failed: "Failed",
   attention: "Ready to review",
   running: "Working",
+  waiting_on_subagent: "Waiting on subagent",
   done: "Done",
 };
 

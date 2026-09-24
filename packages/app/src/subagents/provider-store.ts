@@ -13,6 +13,7 @@ import {
 } from "@/timeline/session-stream-reducers";
 import type { StreamItem } from "@/types/stream";
 import type { AgentLifecycleStatus } from "@getpaseo/protocol/agent-lifecycle";
+import type { SubagentActivity } from "@/utils/subagent-activity";
 
 export interface ProviderSubagentTimelineState {
   tail: StreamItem[];
@@ -64,6 +65,43 @@ export function providerSubagentLifecycleStatus(
   if (status === "running") return "running";
   if (status === "failed") return "error";
   return "idle";
+}
+
+// The store replaces `descriptors` only on list/upsert/remove, not on timeline writes. Keying on
+// that reference keeps a panel's selector from rescanning every descriptor during a stream.
+const providerActivityCache = new WeakMap<
+  ReadonlyMap<string, ProviderSubagentDescriptorPayload>,
+  Map<string, SubagentActivity>
+>();
+
+/**
+ * Running provider-native descendants of one managed agent. Nested descriptors carry the same
+ * server/parent key prefix, so the prefix alone identifies the subtree.
+ */
+export function selectProviderSubagentActivity(
+  descriptors: ReadonlyMap<string, ProviderSubagentDescriptorPayload>,
+  serverId: string,
+  parentAgentId: string,
+): SubagentActivity {
+  let byPrefix = providerActivityCache.get(descriptors);
+  if (!byPrefix) {
+    byPrefix = new Map();
+    providerActivityCache.set(descriptors, byPrefix);
+  }
+  const prefix = parentPrefix(serverId, parentAgentId);
+  const cached = byPrefix.get(prefix);
+  if (cached !== undefined) {
+    return cached;
+  }
+  let activity: SubagentActivity = "none";
+  for (const [key, descriptor] of descriptors) {
+    if (key.startsWith(prefix) && descriptor.status === "running") {
+      activity = "active";
+      break;
+    }
+  }
+  byPrefix.set(prefix, activity);
+  return activity;
 }
 
 type ProviderSubagentListClient = Pick<DaemonClient, "listProviderSubagents">;

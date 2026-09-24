@@ -177,6 +177,11 @@ describe("buildStatusGroups", () => {
         statusBucket: "running",
         statusEnteredAt: d("2026-01-01T00:00:00Z"),
       }),
+      ws({
+        workspaceKey: "srv:wait",
+        statusBucket: "waiting_on_subagent",
+        statusEnteredAt: d("2026-01-01T00:00:00Z"),
+      }),
       ws({ workspaceKey: "srv:dn", statusBucket: "done", statusEnteredAt: null }),
     ];
 

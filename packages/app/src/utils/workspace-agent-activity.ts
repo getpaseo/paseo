@@ -1,10 +1,15 @@
-import type { Agent, WorkspaceDescriptor } from "@/stores/session-store";
+import type { Agent } from "@/stores/session-store";
 import { isWorkspaceRootAgent } from "@/subagents/policies";
-import { deriveSidebarStateBucket } from "./sidebar-agent-state";
+import { getSubagentActivityIndex, type SubagentActivity } from "./subagent-activity";
+import {
+  deriveSidebarStateBucket,
+  getSidebarStateBucketPriority,
+  type SidebarStateBucket,
+} from "./sidebar-agent-state";
 
 export interface WorkspaceAgentActivity {
   agentId: string;
-  status: WorkspaceDescriptor["status"];
+  status: SidebarStateBucket;
   enteredAt: Date | null;
 }
 
@@ -13,12 +18,27 @@ function workspaceAgentStatus(agent: Agent): Agent["status"] {
   return agent.status === "running" ? "idle" : agent.status;
 }
 
+function workspaceRootActivity(input: {
+  agent: Agent;
+  subagentActivity: SubagentActivity;
+}): SidebarStateBucket {
+  return deriveSidebarStateBucket({
+    status: workspaceAgentStatus(input.agent),
+    pendingPermissionCount: input.agent.pendingPermissions.length,
+    requiresAttention: input.agent.requiresAttention,
+    attentionReason: input.agent.attentionReason,
+    subagentActivity: input.subagentActivity,
+  });
+}
+
 export function buildWorkspaceAgentActivityIndex(
   agents: ReadonlyMap<string, Agent>,
   previous?: ReadonlyMap<string, WorkspaceAgentActivity>,
 ): Map<string, WorkspaceAgentActivity> {
   const activityByWorkspaceId = new Map<string, WorkspaceAgentActivity>();
-  const latestActivityAtByWorkspaceId = new Map<string, Date>();
+  // One derived index for the whole pass, shared with any concurrent panel selector over the
+  // same directory reference.
+  const { descendantsByAgentId } = getSubagentActivityIndex(agents);
 
   for (const agent of agents.values()) {
     const parentAgent = agent.parentAgentId ? agents.get(agent.parentAgentId) : undefined;
@@ -26,19 +46,20 @@ export function buildWorkspaceAgentActivityIndex(
       continue;
     }
 
+    const status = workspaceRootActivity({
+      agent,
+      subagentActivity: descendantsByAgentId.get(agent.id) ?? "none",
+    });
     const enteredAt = agent.attentionTimestamp ?? agent.updatedAt;
-    const latestActivityAt = latestActivityAtByWorkspaceId.get(agent.workspaceId);
-    if (latestActivityAt && enteredAt <= latestActivityAt) {
+
+    // A workspace can hold several root agents. Fold them by urgency the way the daemon's
+    // aggregate does, newest first only within a bucket: a newer done root must not hide an
+    // older one waiting on a subagent, which the server cannot see.
+    const existing = activityByWorkspaceId.get(agent.workspaceId);
+    if (existing && !shouldReplaceWorkspaceActivity({ existing, status, enteredAt })) {
       continue;
     }
-    latestActivityAtByWorkspaceId.set(agent.workspaceId, enteredAt);
 
-    const status = deriveSidebarStateBucket({
-      status: workspaceAgentStatus(agent),
-      pendingPermissionCount: agent.pendingPermissions.length,
-      requiresAttention: agent.requiresAttention,
-      attentionReason: agent.attentionReason,
-    });
     activityByWorkspaceId.set(agent.workspaceId, {
       agentId: agent.id,
       status,
@@ -60,6 +81,19 @@ export function buildWorkspaceAgentActivityIndex(
     return previous instanceof Map ? previous : new Map(previous);
   }
   return activityByWorkspaceId;
+}
+
+function shouldReplaceWorkspaceActivity(input: {
+  existing: WorkspaceAgentActivity;
+  status: SidebarStateBucket;
+  enteredAt: Date;
+}): boolean {
+  const existingPriority = getSidebarStateBucketPriority(input.existing.status);
+  const nextPriority = getSidebarStateBucketPriority(input.status);
+  if (nextPriority !== existingPriority) {
+    return nextPriority < existingPriority;
+  }
+  return !input.existing.enteredAt || input.enteredAt > input.existing.enteredAt;
 }
 
 function areWorkspaceAgentActivityIndexesIdentical(

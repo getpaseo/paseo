@@ -250,7 +250,7 @@ function ProjectInlineChevron({ chevron }: { chevron: "expand" | "collapse" | nu
 
 function getStatusDotColorStyle(bucket: ProjectStatusBadgeDotBucket): ViewStyle {
   if (bucket === "failed") return styles.statusDotFailed;
-  if (bucket === "running") return styles.statusDotRunning;
+  if (bucket === "running" || bucket === "waiting_on_subagent") return styles.statusDotRunning;
   return styles.statusDotAttention;
 }
 

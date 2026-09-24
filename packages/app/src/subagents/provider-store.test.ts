@@ -3,6 +3,7 @@ import { afterEach, describe, expect, test } from "vitest";
 import {
   observeProviderSubagentTimeline,
   providerSubagentKey,
+  selectProviderSubagentActivity,
   useProviderSubagentStore,
 } from "./provider-store";
 
@@ -115,6 +116,65 @@ describe("provider subagent client store", () => {
         ?.tail.map((item) => (item.kind === "assistant_message" ? item.text : ""))
         .join(""),
     ).toBe("Older history.New live output.");
+  });
+
+  test("derives running provider activity per parent and keeps it across timeline writes", () => {
+    const store = useProviderSubagentStore.getState();
+    store.applyUpdate(SERVER_ID, {
+      kind: "upsert",
+      subagent: {
+        id: SUBAGENT_ID,
+        parentAgentId: PARENT_ID,
+        provider: "codex",
+        title: "Running child",
+        description: null,
+        status: "running",
+        createdAt: "2026-07-12T10:00:00.000Z",
+        updatedAt: "2026-07-12T10:00:00.000Z",
+        toolCallId: "call-1",
+      },
+    });
+    const descriptors = useProviderSubagentStore.getState().descriptors;
+    expect(selectProviderSubagentActivity(descriptors, SERVER_ID, PARENT_ID)).toBe("active");
+    expect(selectProviderSubagentActivity(descriptors, SERVER_ID, "other-parent")).toBe("none");
+
+    // A timeline write replaces `timelines` but not `descriptors`. That stable reference is what
+    // lets the panel selector hit its cache instead of rescanning descriptors during a stream.
+    store.applyUpdate(SERVER_ID, {
+      kind: "timeline",
+      parentAgentId: PARENT_ID,
+      subagentId: SUBAGENT_ID,
+      provider: "codex",
+      epoch: "epoch-1",
+      seq: 1,
+      timestamp: "2026-07-12T10:00:01.000Z",
+      item: { type: "assistant_message", text: "Still working." },
+    });
+    const afterTimeline = useProviderSubagentStore.getState().descriptors;
+    expect(afterTimeline).toBe(descriptors);
+    expect(selectProviderSubagentActivity(afterTimeline, SERVER_ID, PARENT_ID)).toBe("active");
+
+    store.applyUpdate(SERVER_ID, {
+      kind: "upsert",
+      subagent: {
+        id: SUBAGENT_ID,
+        parentAgentId: PARENT_ID,
+        provider: "codex",
+        title: "Running child",
+        description: null,
+        status: "completed",
+        createdAt: "2026-07-12T10:00:00.000Z",
+        updatedAt: "2026-07-12T10:00:02.000Z",
+        toolCallId: "call-1",
+      },
+    });
+    expect(
+      selectProviderSubagentActivity(
+        useProviderSubagentStore.getState().descriptors,
+        SERVER_ID,
+        PARENT_ID,
+      ),
+    ).toBe("none");
   });
 
   test("removes timelines for children no longer returned by the provider", () => {
