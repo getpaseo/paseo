@@ -2,6 +2,8 @@ import { compare, compareSync, hashSync } from "bcryptjs";
 import { timingSafeEqual } from "node:crypto";
 import type { RequestHandler } from "express";
 
+import { extractBearerToken } from "@getpaseo/protocol/daemon-bearer";
+
 export const DAEMON_PASSWORD_BCRYPT_COST = 12;
 
 export interface DaemonAuthConfig {
@@ -67,8 +69,7 @@ export function extractWsBearerProtocol(value: string | undefined): string | nul
 
   for (const protocol of value.split(",")) {
     const trimmed = protocol.trim();
-    const segments = trimmed.split(".");
-    if (segments[0] === "paseo" && segments[1] === "bearer" && segments.length >= 3) {
+    if (extractBearerToken(trimmed) !== null) {
       return trimmed;
     }
   }
@@ -80,11 +81,7 @@ export function extractWsBearerToken(protocol: string | null): string | null {
   if (!protocol) {
     return null;
   }
-  const segments = protocol.split(".");
-  if (segments[0] !== "paseo" || segments[1] !== "bearer" || segments.length < 3) {
-    return null;
-  }
-  return segments.slice(2).join(".");
+  return extractBearerToken(protocol);
 }
 
 export function createRequireBearerMiddleware(
