@@ -26,6 +26,7 @@ export async function withAgentContextExample(
   const pluginClient = await connectNewWorkspaceDaemonClient({ ownProjects: false });
   const previousConfig = await pluginClient.getDaemonConfig();
   const plugin = await copyPluginExample("agent-context");
+  let journeyFailed = false;
 
   try {
     const sourceAgent = await workspace.client.createAgent({
@@ -79,6 +80,9 @@ export async function withAgentContextExample(
           });
         }),
     });
+  } catch (error) {
+    journeyFailed = true;
+    throw error;
   } finally {
     const cleanupSteps: Array<() => Promise<unknown>> = [
       () => pluginClient.removePlugin("agent-context"),
@@ -99,7 +103,13 @@ export async function withAgentContextExample(
       }
     }
     if (errors.length > 0) {
-      throw new AggregateError(errors, "Agent context fixture teardown failed");
+      const teardownError = new AggregateError(errors, "Agent context fixture teardown failed");
+      if (journeyFailed) {
+        // Keep the browser failure primary while still reporting teardown failures.
+        console.error(teardownError);
+      } else {
+        throw teardownError;
+      }
     }
   }
 }
