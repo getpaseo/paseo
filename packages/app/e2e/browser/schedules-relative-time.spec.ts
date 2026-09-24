@@ -1,4 +1,4 @@
-import { expect, test } from "../support/fixtures";
+import { expect, test, type Page } from "../support/fixtures";
 import { seedWorkspace, type SeededWorkspace } from "../support/helpers/seed-client";
 import { buildSchedulesRoute } from "../../src/utils/host-routes";
 
@@ -68,14 +68,38 @@ async function deleteSeededSchedule(workspace: SeededWorkspace, id: string): Pro
   }
 }
 
+/** Opens Schedules with the browser clock frozen at `time`, so the page cannot age it. */
+async function openSchedulesAt(page: Page, time: number): Promise<void> {
+  await page.clock.install({ time });
+  await page.goto(buildSchedulesRoute());
+}
+
+async function letTimePass(page: Page, duration: string): Promise<void> {
+  await page.clock.fastForward(duration);
+}
+
+async function expectScheduleRowText(page: Page, scheduleId: string, text: string): Promise<void> {
+  await expect(page.getByTestId(`schedule-row-${scheduleId}`)).toContainText(text, {
+    timeout: 30_000,
+  });
+}
+
 test.describe("Schedule relative timestamps", () => {
   const cleanupTasks: Array<() => Promise<void>> = [];
 
   test.afterEach(async () => {
+    const failures: unknown[] = [];
     for (const cleanup of cleanupTasks.toReversed()) {
-      await cleanup();
+      try {
+        await cleanup();
+      } catch (error) {
+        failures.push(error);
+      }
     }
     cleanupTasks.length = 0;
+    if (failures.length > 0) {
+      throw new AggregateError(failures, "Test cleanup failed");
+    }
   });
 
   test("an idle schedule row keeps its created age current", async ({ page }) => {
@@ -84,14 +108,11 @@ test.describe("Schedule relative timestamps", () => {
     const schedule = await seedPausedSchedule(workspace, `Relative time ${Date.now()}`);
     cleanupTasks.push(() => deleteSeededSchedule(workspace, schedule.id));
 
-    // Anchored to the schedule's own creation time so setup and page load cannot age it.
-    await page.clock.install({ time: schedule.createdAt });
-    await page.goto(buildSchedulesRoute());
-    const row = page.getByTestId(`schedule-row-${schedule.id}`);
-    await expect(row).toContainText("Created just now", { timeout: 30_000 });
+    await openSchedulesAt(page, schedule.createdAt);
+    await expectScheduleRowText(page, schedule.id, "Created just now");
 
-    await page.clock.fastForward("03:00");
+    await letTimePass(page, "03:00");
 
-    await expect(row).toContainText("Created 3m ago");
+    await expectScheduleRowText(page, schedule.id, "Created 3m ago");
   });
 });
