@@ -95,6 +95,7 @@ export async function fetchAgentHistoryPage(input: {
       {
         contentSnippet: entry.contentSnippet ?? null,
         contentSource: entry.contentSource ?? null,
+        contentExcerpts: entry.contentExcerpts ?? null,
         contentMatchBand: entry.contentMatchBand ?? null,
       },
     ]),
@@ -122,6 +123,7 @@ export async function fetchAgentHistoryPage(input: {
       projectPlacement: agent.projectPlacement,
       contentSnippet: detailByAgentId.get(agent.id)?.contentSnippet ?? null,
       contentSource: detailByAgentId.get(agent.id)?.contentSource ?? null,
+      contentExcerpts: detailByAgentId.get(agent.id)?.contentExcerpts ?? null,
       contentMatchBand: detailByAgentId.get(agent.id)?.contentMatchBand ?? null,
     })),
     pageInfo: payload.pageInfo,

@@ -1,5 +1,9 @@
 import type { AggregatedAgent } from "@/hooks/use-aggregated-agents";
-import type { AgentHistoryContentSource, AgentHistoryMatchBand } from "@getpaseo/protocol/messages";
+import type {
+  AgentHistoryContentExcerpt,
+  AgentHistoryContentSource,
+  AgentHistoryMatchBand,
+} from "@getpaseo/protocol/messages";
 import {
   compareMatchScores,
   type MatchScore,
@@ -65,6 +69,8 @@ export interface CommandCenterAgentResult {
   metaSubtitle?: string;
   /** Set when line 2 is a conversation excerpt. The label is not part of subtitle. */
   snippetSource?: AgentHistoryContentSource;
+  /** Lead excerpt first. Later entries are words that only matched a worse place. */
+  excerpts?: readonly AgentHistoryContentExcerpt[];
   /** message outranks trace. Absent on rows the daemon has not scored. */
   matchBand?: AgentHistoryMatchBand;
   run(): void;
@@ -177,8 +183,18 @@ function contributionSearchFields(
   return { visible, hidden: contribution.keywords };
 }
 
+const AGENT_ROW_HEIGHT = 56;
+const EXTRA_EXCERPT_HEIGHT = 18;
+
+/** Title plus one excerpt is 56. Each extra labeled place needs another line. */
+export function commandCenterAgentHeight(result: CommandCenterAgentResult): number {
+  const lines = result.excerpts && result.excerpts.length > 1 ? result.excerpts.length : 1;
+  return AGENT_ROW_HEIGHT + (lines - 1) * EXTRA_EXCERPT_HEIGHT;
+}
+
 function resultHeight(result: CommandCenterResult): number {
-  if (result.kind === "workspace" || result.kind === "agent") return 56;
+  if (result.kind === "agent") return commandCenterAgentHeight(result);
+  if (result.kind === "workspace") return 56;
   if (result.kind === "file") return 36;
   if (result.contribution.presentation.kind === "action") {
     return result.contribution.presentation.subtitle ? 56 : 36;
@@ -221,6 +237,20 @@ const DEFAULT_CATEGORY_RESULT_LIMIT = 5;
  * that matched exactly as well.
  */
 function agentSearchTexts(row: CommandCenterAgentResult): CommandCenterSearchFields {
+  if (row.excerpts && row.excerpts.length > 0) {
+    const message = row.excerpts
+      .filter((excerpt) => excerpt.source === "user" || excerpt.source === "reply")
+      .map((excerpt) => excerpt.snippet)
+      .join("\n");
+    const trace = row.excerpts
+      .filter((excerpt) => excerpt.source === "thinking" || excerpt.source === "tool")
+      .map((excerpt) => excerpt.snippet)
+      .join("\n");
+    return {
+      visible: [row.title, row.metaSubtitle ?? "", message],
+      hidden: [row.agent.cwd, trace],
+    };
+  }
   const excerpt = row.snippetSource ? row.subtitle : "";
   const meta = row.metaSubtitle ?? (row.snippetSource ? "" : row.subtitle);
   const excerptIsMessage = row.snippetSource === "user" || row.snippetSource === "reply";
@@ -262,11 +292,13 @@ function combineAgentContentHit(
     subtitle: snippet,
     metaSubtitle: local.metaSubtitle ?? local.subtitle,
     snippetSource: server.snippetSource,
+    excerpts: server.excerpts,
     matchBand: server.matchBand ?? local.matchBand,
     agent: {
       ...local.agent,
       contentSnippet: snippet,
       contentSource: server.snippetSource ?? null,
+      contentExcerpts: server.excerpts ?? null,
       contentMatchBand: server.matchBand ?? null,
     },
   };

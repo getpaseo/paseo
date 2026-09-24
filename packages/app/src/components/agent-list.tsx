@@ -160,34 +160,50 @@ function SessionRowTrailingAttention({
   );
 }
 
-function SessionSnippet({
-  agent,
-  ranges,
-}: {
-  agent: AggregatedAgent;
-  ranges: ReturnType<typeof findHighlightRanges>;
-}) {
+function sessionExcerpts(agent: AggregatedAgent): {
+  source?: AggregatedAgent["contentSource"];
+  snippet: string;
+}[] {
+  if (agent.contentExcerpts && agent.contentExcerpts.length > 0) return [...agent.contentExcerpts];
+  if (!agent.contentSnippet) return [];
+  return [{ source: agent.contentSource, snippet: agent.contentSnippet }];
+}
+
+function SessionSnippet({ agent, search }: { agent: AggregatedAgent; search?: string }) {
   const { t } = useTranslation();
-  if (!agent.contentSnippet) return null;
+  const excerpts = sessionExcerpts(agent);
+  if (excerpts.length === 0) return null;
   return (
-    <View style={styles.snippetRow}>
-      {agent.contentSource ? (
-        <Text
-          style={styles.snippetLabel}
-          numberOfLines={1}
-          testID={`agent-row-snippet-source-${agent.serverId}-${agent.id}`}
-        >
-          {t(`agentList.snippetSource.${agent.contentSource}`)}
-          {" · "}
-        </Text>
-      ) : null}
-      <HighlightedText
-        text={agent.contentSnippet}
-        ranges={ranges}
-        style={styles.sessionSnippet}
-        numberOfLines={2}
-        testID={`agent-row-snippet-${agent.serverId}-${agent.id}`}
-      />
+    <View style={styles.snippetStack}>
+      {excerpts.map((excerpt, index) => (
+        <View key={excerpt.source ?? "snippet"} style={styles.snippetRow}>
+          {excerpt.source ? (
+            <Text
+              style={styles.snippetLabel}
+              numberOfLines={1}
+              testID={
+                index === 0
+                  ? `agent-row-snippet-source-${agent.serverId}-${agent.id}`
+                  : `agent-row-snippet-source-${excerpt.source}-${agent.serverId}-${agent.id}`
+              }
+            >
+              {t(`agentList.snippetSource.${excerpt.source}`)}
+              {" · "}
+            </Text>
+          ) : null}
+          <HighlightedText
+            text={excerpt.snippet}
+            ranges={findHighlightRanges(search ?? "", excerpt.snippet)}
+            style={styles.sessionSnippet}
+            numberOfLines={2}
+            testID={
+              index === 0
+                ? `agent-row-snippet-${agent.serverId}-${agent.id}`
+                : `agent-row-snippet-${excerpt.source}-${agent.serverId}-${agent.id}`
+            }
+          />
+        </View>
+      ))}
     </View>
   );
 }
@@ -227,9 +243,8 @@ function SessionRow({
       title: findHighlightRanges(search ?? "", agent.title ?? ""),
       branch: findHighlightRanges(search ?? "", branch),
       project: findHighlightRanges(search ?? "", projectName),
-      snippet: findHighlightRanges(search ?? "", agent.contentSnippet ?? ""),
     }),
-    [search, workspaceName, agent.title, branch, projectName, agent.contentSnippet],
+    [search, workspaceName, agent.title, branch, projectName],
   );
 
   const pressableStyle = useCallback(
@@ -298,7 +313,7 @@ function SessionRow({
           />
         </View>
         {isMobile ? agentTitle : null}
-        <SessionSnippet agent={agent} ranges={ranges.snippet} />
+        <SessionSnippet agent={agent} search={search} />
         {isMobile ? (
           <View style={styles.rowMetaRow}>
             <HighlightedText
@@ -672,6 +687,9 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.base,
     fontWeight: "400",
     color: theme.colors.foregroundMuted,
+  },
+  snippetStack: {
+    minWidth: 0,
   },
   snippetRow: {
     flexDirection: "row",

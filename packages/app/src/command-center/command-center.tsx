@@ -62,6 +62,7 @@ import { useCommandCenterContributions } from "./provider";
 import { filterAndRankWorkspaces } from "./workspace-search";
 import {
   buildContributionSections,
+  commandCenterAgentHeight,
   filterAndRankBuiltInResults,
   joinSubtitleParts,
   mergeAgentContentHits,
@@ -199,13 +200,26 @@ function useBuiltInRows(open: boolean): {
   }, [agents, open, projects, showHost, t]);
 }
 
+function historyExcerpts(entry: FetchAgentHistoryEntry): {
+  excerpts: NonNullable<CommandCenterAgentResult["excerpts"]>;
+  snippet: string;
+  snippetSource: CommandCenterAgentResult["snippetSource"];
+} {
+  const excerpts = (entry.contentExcerpts ?? [])
+    .map((excerpt) => ({ source: excerpt.source, snippet: excerpt.snippet.trim() }))
+    .filter((excerpt) => excerpt.snippet);
+  const lead = excerpts[0];
+  const snippet = lead?.snippet || entry.contentSnippet?.trim() || "";
+  const snippetSource = lead?.source ?? (snippet ? entry.contentSource : undefined);
+  return { excerpts, snippet, snippetSource };
+}
+
 function historyAgentResult(
   host: { serverId: string; label: string },
   entry: FetchAgentHistoryEntry,
 ): CommandCenterAgentResult {
   const snapshot = entry.agent;
-  const snippet = entry.contentSnippet?.trim() ?? "";
-  const snippetSource = snippet ? entry.contentSource : undefined;
+  const { excerpts, snippet, snippetSource } = historyExcerpts(entry);
   return {
     kind: "agent",
     id: `agent:${host.serverId}:${snapshot.id}`,
@@ -213,6 +227,7 @@ function historyAgentResult(
     subtitle: snippet || host.label,
     metaSubtitle: host.label,
     ...(snippetSource ? { snippetSource } : {}),
+    ...(excerpts.length > 0 ? { excerpts } : {}),
     ...(entry.contentMatchBand ? { matchBand: entry.contentMatchBand } : {}),
     agent: {
       id: snapshot.id,
@@ -237,6 +252,7 @@ function historyAgentResult(
       pendingPermissionCount: snapshot.pendingPermissions.length,
       contentSnippet: snippet || null,
       contentSource: snippetSource ?? null,
+      contentExcerpts: excerpts.length > 0 ? excerpts : null,
       contentMatchBand: entry.contentMatchBand ?? null,
     },
     run: () => {
@@ -523,8 +539,8 @@ const ResultRow = memo(function ResultRow({ result, query, active, onSelect }: R
   const style = useCallback(
     ({ hovered, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
       styles.row,
-      (result.kind === "agent" ||
-        result.kind === "workspace" ||
+      result.kind === "agent" && { height: commandCenterAgentHeight(result) },
+      (result.kind === "workspace" ||
         (result.kind === "contribution" &&
           result.contribution.presentation.kind === "action" &&
           Boolean(result.contribution.presentation.subtitle))) &&
@@ -557,19 +573,15 @@ function AgentResultContent({
   result: CommandCenterAgentResult;
   query: string;
 }) {
-  const { t } = useTranslation();
   const agent = result.agent;
-  const sourceLabel = result.snippetSource
-    ? t(`agentList.snippetSource.${result.snippetSource}`)
-    : "";
   const titleRanges = useMemo(
     () => findHighlightRanges(query, result.title),
     [query, result.title],
   );
-  const subtitleRanges = useMemo(
-    () => findHighlightRanges(query, result.subtitle),
-    [query, result.subtitle],
-  );
+  const excerpts =
+    result.excerpts && result.excerpts.length > 0
+      ? result.excerpts
+      : [{ source: result.snippetSource, snippet: result.subtitle }];
   return (
     <View style={styles.rowContent} testID={`command-center-agent-${agent.serverId}:${agent.id}`}>
       <View style={styles.rowMain}>
@@ -587,23 +599,50 @@ function AgentResultContent({
             style={styles.title}
             numberOfLines={1}
           />
-          <View style={styles.subtitleLine}>
-            {sourceLabel ? (
-              <Text style={styles.subtitleLabel} numberOfLines={1}>
-                {sourceLabel}
-                {" · "}
-              </Text>
-            ) : null}
-            <HighlightedText
-              text={result.subtitle}
-              ranges={subtitleRanges}
-              style={sourceLabel ? styles.subtitleText : styles.subtitle}
-              numberOfLines={1}
-              testID="command-center-agent-subtitle"
+          {excerpts.map((excerpt, index) => (
+            <LabeledExcerpt
+              key={excerpt.source ?? "meta"}
+              label={excerpt.source}
+              text={excerpt.snippet}
+              query={query}
+              testID={index === 0 ? "command-center-agent-subtitle" : undefined}
             />
-          </View>
+          ))}
         </View>
       </View>
+    </View>
+  );
+}
+
+function LabeledExcerpt({
+  label,
+  text,
+  query,
+  testID,
+}: {
+  label?: CommandCenterAgentResult["snippetSource"];
+  text: string;
+  query: string;
+  testID?: string;
+}) {
+  const { t } = useTranslation();
+  const ranges = useMemo(() => findHighlightRanges(query, text), [query, text]);
+  const sourceLabel = label ? t(`agentList.snippetSource.${label}`) : "";
+  return (
+    <View style={styles.subtitleLine}>
+      {sourceLabel ? (
+        <Text style={styles.subtitleLabel} numberOfLines={1}>
+          {sourceLabel}
+          {" · "}
+        </Text>
+      ) : null}
+      <HighlightedText
+        text={text}
+        ranges={ranges}
+        style={sourceLabel ? styles.subtitleText : styles.subtitle}
+        numberOfLines={1}
+        testID={testID}
+      />
     </View>
   );
 }

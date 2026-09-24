@@ -62,41 +62,55 @@ export function agentHistoryMatchBand(
   return traceOnly ? 1 : 0;
 }
 
-export interface HistoryContentHit {
-  snippet: string;
+export interface HistoryContentExcerpt {
   source: HistoryContentSource;
+  snippet: string;
+}
+
+export interface HistoryContentHit {
+  /** Best source that contains at least one query token. */
+  source: HistoryContentSource;
+  /** Excerpt from that best source. */
+  snippet: string;
+  /** One excerpt per source that owns a token, best source first. */
+  excerpts: HistoryContentExcerpt[];
 }
 
 const SOURCE_PREFERENCE: readonly HistoryContentSource[] = ["user", "reply", "thinking", "tool"];
 
-/** The excerpt comes from the best place that contains the query, not the first byte of a flattened transcript. */
+/**
+ * Each token is claimed by the best source that contains it: user message,
+ * then reply, then thinking, then tool. A tool dump cannot take the lead
+ * just because it contains more of the words.
+ */
 export function historyContentHit(
   query: string,
   conversation: HistoryConversation,
 ): HistoryContentHit | null {
   const tokens = tokenizeQuery(query);
   if (tokens.length === 0) return null;
-  let best: { source: HistoryContentSource; count: number; preference: number } | null = null;
-  SOURCE_PREFERENCE.forEach((source, preference) => {
+  const claimed = new Set<string>();
+  const excerpts: HistoryContentExcerpt[] = [];
+  for (const source of SOURCE_PREFERENCE) {
     const lower = conversation[source].toLowerCase();
-    let count = 0;
-    for (const token of tokens) {
-      if (lower.includes(token)) count += 1;
-    }
-    if (count === 0) return;
-    if (!best || count > best.count || (count === best.count && preference < best.preference)) {
-      best = { source, count, preference };
-    }
-  });
-  if (!best) return null;
-  const snippet = historyContentSnippet(query, conversation[best.source]);
-  if (!snippet) return null;
-  return { snippet, source: best.source };
+    const owned = tokens.filter((token) => !claimed.has(token) && lower.includes(token));
+    if (owned.length === 0) continue;
+    for (const token of owned) claimed.add(token);
+    const snippet = snippetAroundTokens(owned, conversation[source]);
+    if (!snippet) continue;
+    excerpts.push({ source, snippet });
+  }
+  const lead = excerpts[0];
+  if (!lead) return null;
+  return { source: lead.source, snippet: lead.snippet, excerpts };
 }
 
 /** A short line of one band around the words that matched. */
 export function historyContentSnippet(query: string, content: string): string | null {
-  const tokens = tokenizeQuery(query);
+  return snippetAroundTokens(tokenizeQuery(query), content);
+}
+
+function snippetAroundTokens(tokens: readonly string[], content: string): string | null {
   if (!content || tokens.length === 0) return null;
   const lower = content.toLowerCase();
   const parts: string[] = [];

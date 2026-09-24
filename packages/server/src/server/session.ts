@@ -5370,7 +5370,13 @@ export class Session {
         matchedEntries.push({
           agent: entry.agent,
           project: entry.project,
-          ...(hit ? { contentSnippet: hit.snippet, contentSource: hit.source } : {}),
+          ...(hit
+            ? {
+                contentSnippet: hit.snippet,
+                contentSource: hit.source,
+                contentExcerpts: hit.excerpts,
+              }
+            : {}),
           ...(search ? { contentMatchBand: band === 1 ? "trace" : "message" } : {}),
         });
         if (matchedEntries.length > limit) {

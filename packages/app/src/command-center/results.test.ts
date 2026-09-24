@@ -556,6 +556,7 @@ describe("agent content hits", () => {
     subtitle: string;
     metaSubtitle?: string;
     snippetSource?: CommandCenterAgentResult["snippetSource"];
+    excerpts?: CommandCenterAgentResult["excerpts"];
     matchBand?: CommandCenterAgentResult["matchBand"];
     cwd?: string;
   }): CommandCenterAgentResult {
@@ -566,6 +567,7 @@ describe("agent content hits", () => {
       subtitle: input.subtitle,
       metaSubtitle: input.metaSubtitle,
       snippetSource: input.snippetSource,
+      excerpts: input.excerpts,
       matchBand: input.matchBand,
       agent: { cwd: input.cwd ?? "/tmp/repo", id: input.id } as AggregatedAgent,
       run: () => undefined,
@@ -596,6 +598,31 @@ describe("agent content hits", () => {
     expect(row?.subtitle).toBe("the kanban board was left off");
     expect(row?.snippetSource).toBe("reply");
     expect(mergeAgentContentHits([local], [server])).toHaveLength(1);
+  });
+
+  it("keeps the reply excerpt ahead of a tool word from the same chat", () => {
+    const local = agentRow({
+      id: "agent:host:auth",
+      title: "Order gate",
+      subtitle: "paseo · 1h",
+    });
+    const server = agentRow({
+      id: "agent:host:auth",
+      title: "Order gate",
+      subtitle: "The reply mentions authorization at the end.",
+      snippetSource: "reply",
+      matchBand: "trace",
+      excerpts: [
+        { source: "reply", snippet: "The reply mentions authorization at the end." },
+        { source: "tool", snippet: "The authorization gate dump from the tool ran first." },
+      ],
+    });
+    const [row] = mergeAgentContentHits([local], [server]);
+    expect(row?.title).toBe("Order gate");
+    expect(row?.snippetSource).toBe("reply");
+    expect(row?.subtitle).toContain("reply mentions authorization");
+    expect(row?.excerpts?.map((excerpt) => excerpt.source)).toEqual(["reply", "tool"]);
+    expect(row?.excerpts?.[1]?.snippet).toContain("gate");
   });
 
   it("ranks a reply above a tool-only hit", () => {

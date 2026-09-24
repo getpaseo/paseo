@@ -242,6 +242,38 @@ describe("conversation bands", () => {
     expect(hit?.snippet).toContain("tool dump");
   });
 
+  it("leads with the reply when a tool dump contains more of the query", () => {
+    const conversation: HistoryConversation = {
+      user: "",
+      reply: "The reply mentions authorization at the end.",
+      thinking: "",
+      tool: "The authorization gate dump from the tool ran first.",
+    };
+    const hit = historyContentHit("authorization gate", conversation);
+    expect(hit?.source).toBe("reply");
+    expect(hit?.snippet).toContain("The reply mentions authorization at the end.");
+    expect(hit?.snippet).not.toContain("gate");
+    expect(hit?.excerpts.map((excerpt) => excerpt.source)).toEqual(["reply", "tool"]);
+    expect(hit?.excerpts[1]?.snippet).toContain("gate");
+    expect(agentHistoryMatchBand("authorization gate", candidate({ conversation }))).toBe(1);
+  });
+
+  it("keeps the user sentence primary when the tool contains more tokens", () => {
+    const conversation: HistoryConversation = {
+      user: "Please check the invoice.",
+      reply: "",
+      thinking: "",
+      tool: "invoice ledger export failed in the tool dump",
+    };
+    const hit = historyContentHit("invoice ledger export", conversation);
+    expect(hit?.source).toBe("user");
+    expect(hit?.snippet).toContain("Please check the invoice.");
+    expect(hit?.excerpts.map((excerpt) => excerpt.source)).toEqual(["user", "tool"]);
+    expect(hit?.excerpts[1]?.snippet).toContain("ledger");
+    expect(hit?.excerpts[1]?.snippet).toContain("export");
+    expect(agentHistoryMatchBand("invoice ledger export", candidate({ conversation }))).toBe(1);
+  });
+
   it("keeps every candidate for an empty query", () => {
     expect(matchesAgentHistoryQuery("", candidate({ title: "anything" }))).toBe(true);
     expect(matchesAgentHistoryQuery("   ", candidate({}))).toBe(true);

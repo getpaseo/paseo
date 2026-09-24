@@ -4102,6 +4102,11 @@ export const AgentHistoryContentSourceSchema = z.enum(["user", "reply", "thinkin
 export type AgentHistoryContentSource = z.infer<typeof AgentHistoryContentSourceSchema>;
 export const AgentHistoryMatchBandSchema = z.enum(["message", "trace"]);
 export type AgentHistoryMatchBand = z.infer<typeof AgentHistoryMatchBandSchema>;
+export const AgentHistoryContentExcerptSchema = z.object({
+  source: AgentHistoryContentSourceSchema,
+  snippet: z.string(),
+});
+export type AgentHistoryContentExcerpt = z.infer<typeof AgentHistoryContentExcerptSchema>;
 
 const AgentDirectoryResponseEntrySchema = z.object({
   agent: AgentSnapshotPayloadSchema,
@@ -4113,8 +4118,11 @@ const AgentDirectoryResponseEntrySchema = z.object({
   searchMatches: z.array(AgentSearchMatchSchema).optional(),
   // The conversation line that matched, shown under the title.
   contentSnippet: z.string().optional(),
-  // Where that line was taken from. Absent when only a name matched.
+  // Where the lead line was taken from. Absent when only a name matched.
   contentSource: AgentHistoryContentSourceSchema.optional(),
+  // Every labeled line. The first entry is the lead source. Later entries are
+  // tokens that existed only in a worse place, such as a tool trace.
+  contentExcerpts: z.array(AgentHistoryContentExcerptSchema).optional(),
   // message: every token is in a name, a user message, or a reply.
   // trace: some token matched only thinking or a tool trace.
   contentMatchBand: AgentHistoryMatchBandSchema.optional(),
