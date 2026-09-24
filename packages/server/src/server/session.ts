@@ -42,6 +42,7 @@ import type { TerminalActivity } from "@getpaseo/protocol/terminal-activity";
 import type { BinaryFrame } from "@getpaseo/protocol/binary-frames/index";
 import { CursorError } from "./pagination/cursor.js";
 import { SortablePager, type SortSpec } from "./pagination/sortable-pager.js";
+import { loadAgentHistoryContent } from "./agent-history-content.js";
 import { matchesAgentHistoryQuery } from "./agent-history-search.js";
 import type { SpeechToTextProvider, TextToSpeechProvider } from "./speech/speech-provider.js";
 import type { TurnDetectionProvider } from "./speech/turn-detection-provider.js";
@@ -5340,7 +5341,9 @@ export class Session {
       const batchEntries = await Promise.all(
         batch.map(async (agent) => {
           const project = await getPlacement(agent.workspaceId);
-          return project ? { agent, project } : null;
+          if (!project) return null;
+          const content = search ? await loadAgentHistoryContent(agent) : "";
+          return { agent, project, content };
         }),
       );
       for (const entry of batchEntries) {
@@ -5357,7 +5360,7 @@ export class Session {
           continue;
         }
         if (search && !matchesAgentHistoryQuery(search, entry)) continue;
-        matchedEntries.push(entry);
+        matchedEntries.push({ agent: entry.agent, project: entry.project });
         if (matchedEntries.length > limit) {
           break;
         }

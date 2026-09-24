@@ -10,6 +10,7 @@ function candidate(input: {
   branch?: string | null;
   projectName?: string;
   updatedAt?: string;
+  content?: string;
 }): AgentHistorySearchCandidate & { agent: { id: string; updatedAt: string } } {
   const branch = input.branch ?? null;
   return {
@@ -32,8 +33,8 @@ function candidate(input: {
         mainRepoRoot: null,
       },
     },
-    // The module only reads the four names; the rest of the payload is the
-    // session's business.
+    content: input.content,
+    // The module only reads the names and the conversation text.
   } as unknown as AgentHistorySearchCandidate & { agent: { id: string; updatedAt: string } };
 }
 
@@ -95,5 +96,32 @@ describe("matchesAgentHistoryQuery", () => {
 
   it("keeps candidates for a blank query", () => {
     expect(matchesAgentHistoryQuery("   ", candidate({ title: "anything" }))).toBe(true);
+  });
+
+  it("matches a phrase that is only in the conversation", () => {
+    expect(
+      matchesAgentHistoryQuery(
+        "obsidian kanban",
+        candidate({
+          title: "Help me find the note",
+          content: "The obsidian kanban board was left with community plugins off.",
+        }),
+      ),
+    ).toBe(true);
+  });
+
+  it("lets one token match the title and another match the conversation", () => {
+    const entry = candidate({
+      title: "Invoice export",
+      content: "The failure is a missing entitlements row.",
+    });
+    expect(matchesAgentHistoryQuery("invoice entitlements", entry)).toBe(true);
+    expect(matchesAgentHistoryQuery("invoice rosetta", entry)).toBe(false);
+  });
+
+  it("does not treat an empty conversation as a match", () => {
+    expect(matchesAgentHistoryQuery("kanban", candidate({ title: "Help me find the note" }))).toBe(
+      false,
+    );
   });
 });
