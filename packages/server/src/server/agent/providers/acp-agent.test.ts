@@ -584,6 +584,42 @@ describe("createLoggedNdJsonStream", () => {
   });
 });
 
+describe("ACPAgentSession.close", () => {
+  test("terminates the child even when cancel and closeSession never settle on a dead transport", async () => {
+    vi.useFakeTimers();
+    try {
+      const terminator = new FakeTerminator();
+      const session = createSession(terminator.terminate);
+      const child = createTerminalChildStub();
+      const cancel = vi.fn(() => new Promise<void>(() => undefined));
+      const unstableCloseSession = vi.fn(() => new Promise<void>(() => undefined));
+      const internals = asInternals<{
+        sessionId: string | null;
+        activeForegroundTurnId: string | null;
+        connection: unknown;
+        agentCapabilities: unknown;
+        child: ChildProcess | null;
+      }>(session);
+      internals.sessionId = "session-1";
+      internals.activeForegroundTurnId = "turn-1";
+      internals.connection = { cancel, unstable_closeSession: unstableCloseSession };
+      internals.agentCapabilities = { sessionCapabilities: { close: true } };
+      internals.child = child;
+
+      const closing = session.close();
+      // cancel and closeSession each time out after 2s; the transport never answers.
+      await vi.advanceTimersByTimeAsync(5_000);
+
+      await expect(closing).resolves.toBeUndefined();
+      expect(cancel).toHaveBeenCalledWith({ sessionId: "session-1" });
+      expect(unstableCloseSession).toHaveBeenCalledWith({ sessionId: "session-1" });
+      expect(terminator.terminated).toContain(child);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
 describe("ACPAgentSession terminal tools", () => {
   afterEach(() => {
     vi.restoreAllMocks();
