@@ -13,7 +13,11 @@ the server dependency build, typecheck, lint, and formatting. GitHub reports PR 
 CI run [35973248754](https://github.com/infi-pc/paseo/actions/runs/35973248754) found an outdated
 client test expectation for the already-defaulted `preventSleepWhileAgentsRun: true` field.
 Updated both exact config response expectations; no product behavior changed. The targeted client
-file passes 17 cases. Broader CI results remain pending while the remaining jobs run.
+file passes 17 cases. The correction is pushed as `fb4f42001`. Current readiness is **blocked by inherited CI failures**:
+47 stale-fixture cases and 7 Hub authorization/MCP serialization cases in the Linux server job.
+See [CR2 CI follow-up](CR2.md#ci-follow-up--current-readiness-is-blocked) for affirmative triage,
+remaining actions, passing jobs, and pending platform/browser coverage. These blockers are open;
+no risk acceptance or broader repair round is implied by the conflict-resolution authorization.
 
 [CR2](CR2.md) records the focused integration review. CR2-1 / reviewer M-SERVER-1 is
 **verified-closed** on the merge candidate: chapter fingerprints exclude live-file language

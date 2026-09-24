@@ -1,0 +1,1437 @@
+Failed Tests 54 ⎯⎯⎯⎯⎯⎯⎯
+2026-09-24T08:15:14.5201893Z 
+2026-09-24T08:15:14.5213291Z  FAIL  src/server/script-health-monitor.test.ts > ScriptHealthMonitor > only probes service routes because plain scripts never register routes
+2026-09-24T08:15:14.5232575Z TypeError: terminal.setActivity is not a function
+2026-09-24T08:15:14.5242937Z  ❯ spawnWorkspaceScript src/server/worktree-bootstrap.ts:1071:16
+2026-09-24T08:15:14.5433599Z     1069|         if (completed) terminal.setActivity("idle");
+2026-09-24T08:15:14.5467085Z     1070|       });
+2026-09-24T08:15:14.5501412Z     1071|       terminal.setActivity("working");
+2026-09-24T08:15:14.5502971Z        |                ^
+2026-09-24T08:15:14.5503608Z     1072|     }
+2026-09-24T08:15:14.5505188Z     1073|     terminal.send({ type: "input", data: `${command}\r` });
+2026-09-24T08:15:14.5506934Z  ❯ src/server/script-health-monitor.test.ts:444:7
+2026-09-24T08:15:14.5507499Z 
+2026-09-24T08:15:14.5507936Z ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/54]⎯
+2026-09-24T08:15:14.5508311Z 
+2026-09-24T08:15:14.5510046Z  FAIL  src/server/session.test.ts > session checkout commit handling > generates commit messages from checkout diffs read through the workspace git service
+2026-09-24T08:15:14.5512498Z AssertionError: expected "vi.fn()" to be called with arguments: [ ObjectContaining{…} ]
+2026-09-24T08:15:14.5513225Z 
+2026-09-24T08:15:14.5513505Z Number of calls: 0
+2026-09-24T08:15:14.5513951Z 
+2026-09-24T08:15:14.5514665Z  ❯ src/server/session.test.ts:2606:76
+2026-09-24T08:15:14.5515479Z     2604|       includeStructured: true,
+2026-09-24T08:15:14.5516072Z     2605|     });
+2026-09-24T08:15:14.5517091Z     2606|     expect(agentResponseMocks.generateStructuredAgentResponseWithFallb…
+2026-09-24T08:15:14.5518363Z        |                                                                            ^
+2026-09-24T08:15:14.5519215Z     2607|       expect.objectContaining({
+2026-09-24T08:15:14.5519965Z     2608|         persistSession: false,
+2026-09-24T08:15:14.5520339Z 
+2026-09-24T08:15:14.5521200Z ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/54]⎯
+2026-09-24T08:15:14.5521887Z 
+2026-09-24T08:15:14.5523539Z  FAIL  src/server/session.test.ts > session checkout commit handling > renders the default commit style when no override applies (paseo.json missing)
+2026-09-24T08:15:14.5526463Z  FAIL  src/server/session.test.ts > session checkout commit handling > renders the default commit style when no override applies (paseo.json exists but invalid JSON)
+2026-09-24T08:15:14.5529634Z  FAIL  src/server/session.test.ts > session checkout commit handling > renders the default commit style when no override applies (paseo.json valid but missing metadataGeneration)
+2026-09-24T08:15:14.5533065Z  FAIL  src/server/session.test.ts > session checkout commit handling > renders the default commit style when no override applies (metadataGeneration is schema-invalid)
+2026-09-24T08:15:14.5536549Z  FAIL  src/server/session.test.ts > session checkout commit handling > renders the default commit style when no override applies (metadataGeneration exists but missing commitMessage)
+2026-09-24T08:15:14.5539811Z  FAIL  src/server/session.test.ts > session checkout commit handling > renders the default commit style when no override applies (commitMessage exists but instructions is undefined)
+2026-09-24T08:15:14.5543206Z  FAIL  src/server/session.test.ts > session checkout commit handling > renders the default commit style when no override applies (commitMessage exists but instructions is empty)
+2026-09-24T08:15:14.5546530Z  FAIL  src/server/session.test.ts > session checkout commit handling > renders the default commit style when no override applies (commitMessage exists but instructions is whitespace-only)
+2026-09-24T08:15:14.5549045Z AssertionError: expected 'undefined' to be 'Write a concise git commit message fo…' // Object.is equality
+2026-09-24T08:15:14.5549903Z 
+2026-09-24T08:15:14.5550150Z - Expected
+2026-09-24T08:15:14.5550604Z + Received
+2026-09-24T08:15:14.5550834Z 
+2026-09-24T08:15:14.5551407Z - Write a concise git commit message for the changes below.
+2026-09-24T08:15:14.5552328Z -
+2026-09-24T08:15:14.5552989Z - Concise, imperative mood, no trailing period.
+2026-09-24T08:15:14.5553592Z -
+2026-09-24T08:15:14.5554266Z - Return JSON only with a single field 'message'.
+2026-09-24T08:15:14.5554879Z -
+2026-09-24T08:15:14.5555304Z - Files changed:
+2026-09-24T08:15:14.5555857Z - M	file.txt	(+1 -0)
+2026-09-24T08:15:14.5556305Z -
+2026-09-24T08:15:14.5556855Z - diff --git a/file.txt b/file.txt
+2026-09-24T08:15:14.5557453Z - +hello
+2026-09-24T08:15:14.5557836Z -
+2026-09-24T08:15:14.5558242Z + undefined
+2026-09-24T08:15:14.5558479Z 
+2026-09-24T08:15:14.5559019Z  ❯ src/server/session.test.ts:2654:20
+2026-09-24T08:15:14.5575333Z     2652|     const prompt = await generateCommitPromptWithConfig(config);
+2026-09-24T08:15:14.5632164Z     2653|
+2026-09-24T08:15:14.5662727Z     2654|     expect(prompt).toBe(PRE_CHANGE_COMMIT_PROMPT);
+2026-09-24T08:15:14.5692312Z        |                    ^
+2026-09-24T08:15:14.5722199Z     2655|   });
+2026-09-24T08:15:14.5752004Z     2656|
+2026-09-24T08:15:14.5752272Z 
+2026-09-24T08:15:14.5752778Z ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/54]⎯
+2026-09-24T08:15:14.5753195Z 
+2026-09-24T08:15:14.5754548Z  FAIL  src/server/session.test.ts > session checkout commit handling > commit instructions replace the default commit style
+2026-09-24T08:15:14.5756974Z AssertionError: expected 'undefined' to contain 'Use conventional commits.\nAccept XML…'
+2026-09-24T08:15:14.5757742Z 
+2026-09-24T08:15:14.5758008Z - Expected
+2026-09-24T08:15:14.5758468Z + Received
+2026-09-24T08:15:14.5758688Z 
+2026-09-24T08:15:14.5759004Z - Use conventional commits.
+2026-09-24T08:15:14.5759641Z - Accept XML-ish <scope> text.
+2026-09-24T08:15:14.5760175Z + undefined
+2026-09-24T08:15:14.5760395Z 
+2026-09-24T08:15:14.5760882Z  ❯ src/server/session.test.ts:2666:20
+2026-09-24T08:15:14.5761868Z     2664|     });
+2026-09-24T08:15:14.5762332Z     2665|
+2026-09-24T08:15:14.5763249Z     2666|     expect(prompt).toContain("Use conventional commits.\nAccept XML-is…
+2026-09-24T08:15:14.5764251Z        |                    ^
+2026-09-24T08:15:14.5765194Z     2667|     expect(prompt).not.toContain("Concise, imperative mood, no trailin…
+2026-09-24T08:15:14.5766239Z     2668|
+2026-09-24T08:15:14.5766459Z 
+2026-09-24T08:15:14.5766845Z ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/54]⎯
+2026-09-24T08:15:14.5767244Z 
+2026-09-24T08:15:14.5768549Z  FAIL  src/server/session.test.ts > session checkout commit handling > keeps the commit fallback when structured generation fails
+2026-09-24T08:15:14.5770337Z AssertionError: expected "vi.fn()" to be called with arguments: [ '/tmp/request-worktree', …(1) ]
+2026-09-24T08:15:14.5771084Z 
+2026-09-24T08:15:14.5771338Z Number of calls: 0
+2026-09-24T08:15:14.5771999Z 
+2026-09-24T08:15:14.5772716Z  ❯ src/server/session.test.ts:2706:44
+2026-09-24T08:15:14.5773350Z     2704|     });
+2026-09-24T08:15:14.5773800Z     2705|
+2026-09-24T08:15:14.5774721Z     2706|     expect(checkoutGitMocks.commitChanges).toHaveBeenCalledWith("/tmp/…
+2026-09-24T08:15:14.5775848Z        |                                            ^
+2026-09-24T08:15:14.5776700Z     2707|       message: "Update files",
+2026-09-24T08:15:14.5777416Z     2708|       addAll: true,
+2026-09-24T08:15:14.5777781Z 
+2026-09-24T08:15:14.5778241Z ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/54]⎯
+2026-09-24T08:15:14.5778618Z 
+2026-09-24T08:15:14.5780273Z  FAIL  src/server/session.test.ts > session checkout pull request creation > generates PR text from checkout diffs read through the workspace git service
+2026-09-24T08:15:14.5800719Z AssertionError: expected "vi.fn()" to be called with arguments: [ ObjectContaining{…} ]
+2026-09-24T08:15:14.5801691Z 
+2026-09-24T08:15:14.5802039Z Number of calls: 0
+2026-09-24T08:15:14.5802543Z 
+2026-09-24T08:15:14.5803323Z  ❯ src/server/session.test.ts:2877:76
+2026-09-24T08:15:14.5804385Z     2875|       includeStructured: true,
+2026-09-24T08:15:14.5805017Z     2876|     });
+2026-09-24T08:15:14.5806038Z     2877|     expect(agentResponseMocks.generateStructuredAgentResponseWithFallb…
+2026-09-24T08:15:14.5807323Z        |                                                                            ^
+2026-09-24T08:15:14.5808208Z     2878|       expect.objectContaining({
+2026-09-24T08:15:14.5808939Z     2879|         persistSession: false,
+2026-09-24T08:15:14.5809323Z 
+2026-09-24T08:15:14.5809743Z ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/54]⎯
+2026-09-24T08:15:14.5810112Z 
+2026-09-24T08:15:14.5812023Z  FAIL  src/server/session.test.ts > session checkout pull request creation > renders the default PR style when no override applies (paseo.json missing)
+2026-09-24T08:15:14.5815003Z  FAIL  src/server/session.test.ts > session checkout pull request creation > renders the default PR style when no override applies (paseo.json exists but invalid JSON)
+2026-09-24T08:15:14.5818447Z  FAIL  src/server/session.test.ts > session checkout pull request creation > renders the default PR style when no override applies (paseo.json valid but missing metadataGeneration)
+2026-09-24T08:15:14.5822210Z  FAIL  src/server/session.test.ts > session checkout pull request creation > renders the default PR style when no override applies (metadataGeneration is schema-invalid)
+2026-09-24T08:15:14.5825523Z  FAIL  src/server/session.test.ts > session checkout pull request creation > renders the default PR style when no override applies (metadataGeneration exists but missing pullRequest)
+2026-09-24T08:15:14.5828812Z  FAIL  src/server/session.test.ts > session checkout pull request creation > renders the default PR style when no override applies (pullRequest exists but instructions is undefined)
+2026-09-24T08:15:14.5832552Z  FAIL  src/server/session.test.ts > session checkout pull request creation > renders the default PR style when no override applies (pullRequest exists but instructions is empty)
+2026-09-24T08:15:14.5835894Z  FAIL  src/server/session.test.ts > session checkout pull request creation > renders the default PR style when no override applies (pullRequest exists but instructions is whitespace-only)
+2026-09-24T08:15:14.5838401Z AssertionError: expected 'undefined' to be 'Write a pull request title and body f…' // Object.is equality
+2026-09-24T08:15:14.5839242Z 
+2026-09-24T08:15:14.5839484Z - Expected
+2026-09-24T08:15:14.5839953Z + Received
+2026-09-24T08:15:14.5840180Z 
+2026-09-24T08:15:14.5840753Z - Write a pull request title and body for the changes below.
+2026-09-24T08:15:14.5841643Z -
+2026-09-24T08:15:14.5842453Z - Clear, descriptive title; body explaining what changed and why.
+2026-09-24T08:15:14.5843211Z -
+2026-09-24T08:15:14.5843922Z - Return JSON only with fields 'title' and 'body'.
+2026-09-24T08:15:14.5844559Z -
+2026-09-24T08:15:14.5844999Z - Files changed:
+2026-09-24T08:15:14.5845571Z - M	file.txt	(+1 -0)
+2026-09-24T08:15:14.5846031Z -
+2026-09-24T08:15:14.5846594Z - diff --git a/file.txt b/file.txt
+2026-09-24T08:15:14.5847169Z - +hello
+2026-09-24T08:15:14.5847550Z -
+2026-09-24T08:15:14.5847956Z + undefined
+2026-09-24T08:15:14.5848203Z 
+2026-09-24T08:15:14.5848736Z  ❯ src/server/session.test.ts:2931:20
+2026-09-24T08:15:14.5849821Z     2929|     const prompt = await generatePullRequestPromptWithConfig(config);
+2026-09-24T08:15:14.5850615Z     2930|
+2026-09-24T08:15:14.5851329Z     2931|     expect(prompt).toBe(PRE_CHANGE_PULL_REQUEST_PROMPT);
+2026-09-24T08:15:14.5869139Z        |                    ^
+2026-09-24T08:15:14.5869751Z     2932|   });
+2026-09-24T08:15:14.5870205Z     2933|
+2026-09-24T08:15:14.5870427Z 
+2026-09-24T08:15:14.5870867Z ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/54]⎯
+2026-09-24T08:15:14.5871241Z 
+2026-09-24T08:15:14.5872834Z  FAIL  src/server/session.test.ts > session checkout pull request creation > PR instructions replace the default PR style
+2026-09-24T08:15:14.5874811Z AssertionError: expected 'undefined' to contain 'Use a terse title.\nKeep literal <tic…'
+2026-09-24T08:15:14.5875565Z 
+2026-09-24T08:15:14.5875805Z - Expected
+2026-09-24T08:15:14.5876259Z + Received
+2026-09-24T08:15:14.5876488Z 
+2026-09-24T08:15:14.5876790Z - Use a terse title.
+2026-09-24T08:15:14.5877406Z - Keep literal <ticket> text.
+2026-09-24T08:15:14.5877965Z + undefined
+2026-09-24T08:15:14.5878207Z 
+2026-09-24T08:15:14.5878741Z  ❯ src/server/session.test.ts:2943:20
+2026-09-24T08:15:14.5879658Z     2941|     });
+2026-09-24T08:15:14.5880130Z     2942|
+2026-09-24T08:15:14.5880999Z     2943|     expect(prompt).toContain("Use a terse title.\nKeep literal <ticket…
+2026-09-24T08:15:14.5882146Z        |                    ^
+2026-09-24T08:15:14.5883143Z     2944|     expect(prompt).not.toContain("Clear, descriptive title; body expla…
+2026-09-24T08:15:14.5883943Z     2945|
+2026-09-24T08:15:14.5884157Z 
+2026-09-24T08:15:14.5884584Z ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/54]⎯
+2026-09-24T08:15:14.5884943Z 
+2026-09-24T08:15:14.5886529Z  FAIL  src/server/session.test.ts > session checkout pull request creation > keeps PR generation as one structured call with title and body schema
+2026-09-24T08:15:14.5888390Z TypeError: Cannot read properties of undefined (reading 'schema')
+2026-09-24T08:15:14.5889511Z  ❯ src/server/session.test.ts:2968:8
+2026-09-24T08:15:14.5890436Z     2966|     });
+2026-09-24T08:15:14.5891335Z     2967|     const schema = (call as { schema?: { safeParse?: (value: unknown) …
+2026-09-24T08:15:14.5925031Z     2968|       .schema;
+2026-09-24T08:15:14.5925655Z        |        ^
+2026-09-24T08:15:14.5926423Z     2969|
+2026-09-24T08:15:14.5927733Z     2970|     expect(agentResponseMocks.generateStructuredAgentResponseWithFallb…
+2026-09-24T08:15:14.5928654Z 
+2026-09-24T08:15:14.5929104Z ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[9/54]⎯
+2026-09-24T08:15:14.5929813Z 
+2026-09-24T08:15:14.5931497Z  FAIL  src/server/session.test.ts > session checkout pull request creation > keeps the PR fallback when structured generation fails
+2026-09-24T08:15:14.5934482Z AssertionError: expected "vi.fn()" to be called with arguments: [ '/tmp/request-worktree', …(2) ]
+2026-09-24T08:15:14.5935467Z 
+2026-09-24T08:15:14.5935756Z Number of calls: 0
+2026-09-24T08:15:14.5936594Z 
+2026-09-24T08:15:14.5937362Z  ❯ src/server/session.test.ts:3010:48
+2026-09-24T08:15:14.5938302Z     3008|     });
+2026-09-24T08:15:14.5938927Z     3009|
+2026-09-24T08:15:14.5939804Z     3010|     expect(checkoutGitMocks.createPullRequest).toHaveBeenCalledWith(
+2026-09-24T08:15:14.5940861Z        |                                                ^
+2026-09-24T08:15:14.5941811Z     3011|       "/tmp/request-worktree",
+2026-09-24T08:15:14.5942420Z     3012|       {
+2026-09-24T08:15:14.5942686Z 
+2026-09-24T08:15:14.5943118Z ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[10/54]⎯
+2026-09-24T08:15:14.5943476Z 
+2026-09-24T08:15:14.5945478Z  FAIL  src/server/websocket-server.browser-tools.test.ts > WebSocketServer browser tools wiring > registers capable clients and dispatches broker requests over the real WebSocket path
+2026-09-24T08:15:14.5948889Z  FAIL  src/server/websocket-server.browser-tools.test.ts > WebSocketServer browser tools wiring > unregisters capable clients on disconnect and clears pending browser commands
+2026-09-24T08:15:14.6002235Z  FAIL  src/server/websocket-server.browser-tools.test.ts > WebSocketServer browser tools wiring > keeps browser automation registered when a browser host client resumes
+2026-09-24T08:15:14.6005532Z  FAIL  src/server/websocket-server.browser-tools.test.ts > WebSocketServer browser tools wiring > clears pending browser commands when a browser host changes capabilities
+2026-09-24T08:15:14.6007350Z Error: Connection timed out
+2026-09-24T08:15:14.6008635Z  ❯ DaemonClient.scheduleReconnect ../client/src/daemon-client.ts:6246:26
+2026-09-24T08:15:14.6010101Z  ❯ Timeout.<anonymous> ../client/src/daemon-client.ts:1287:14
+2026-09-24T08:15:14.6010729Z 
+2026-09-24T08:15:14.6011710Z ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[11/54]⎯
+2026-09-24T08:15:14.6012095Z 
+2026-09-24T08:15:14.6013956Z  FAIL  src/server/websocket-server.relay-reconnect.test.ts > relay external socket reconnect behavior > keeps the same session when relay reconnects within grace window
+2026-09-24T08:15:14.6015867Z AssertionError: expected null not to be null
+2026-09-24T08:15:14.6017350Z  ❯ attachRelayAndHello src/server/websocket-server.relay-reconnect.test.ts:420:26
+2026-09-24T08:15:14.6085118Z     418|   const serverInfo = parseServerInfoStatusPayload(envelope.message?.pa…
+2026-09-24T08:15:14.6142915Z     419|   expect(envelope.message?.type).toBe("status");
+2026-09-24T08:15:14.6183401Z     420|   expect(serverInfo).not.toBeNull();
+2026-09-24T08:15:14.6185114Z        |                          ^
+2026-09-24T08:15:14.6186264Z     421|   return serverInfo!;
+2026-09-24T08:15:14.6187210Z     422| }
+2026-09-24T08:15:14.6188443Z  ❯ src/server/websocket-server.relay-reconnect.test.ts:488:5
+2026-09-24T08:15:14.6189226Z 
+2026-09-24T08:15:14.6189789Z ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[12/54]⎯
+2026-09-24T08:15:14.6190284Z 
+2026-09-24T08:15:14.6192326Z  FAIL  src/server/websocket-server.relay-reconnect.test.ts > relay external socket reconnect behavior > rejects sockets attached after shutdown begins
+2026-09-24T08:15:14.6194378Z AssertionError: expected null not to be null
+2026-09-24T08:15:14.6195950Z  ❯ attachRelayAndHello src/server/websocket-server.relay-reconnect.test.ts:420:26
+2026-09-24T08:15:14.6197520Z     418|   const serverInfo = parseServerInfoStatusPayload(envelope.message?.pa…
+2026-09-24T08:15:14.6199377Z     419|   expect(envelope.message?.type).toBe("status");
+2026-09-24T08:15:14.6201163Z     420|   expect(serverInfo).not.toBeNull();
+2026-09-24T08:15:14.6202562Z        |                          ^
+2026-09-24T08:15:14.6203493Z     421|   return serverInfo!;
+2026-09-24T08:15:14.6204268Z     422| }
+2026-09-24T08:15:14.6205470Z  ❯ src/server/websocket-server.relay-reconnect.test.ts:572:5
+2026-09-24T08:15:14.6206376Z 
+2026-09-24T08:15:14.6206996Z ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[13/54]⎯
+2026-09-24T08:15:14.6207497Z 
+2026-09-24T08:15:14.6209749Z  FAIL  src/server/websocket-server.relay-reconnect.test.ts > relay external socket reconnect behavior > accepts plugin startup sessions while application sessions remain paused
+2026-09-24T08:15:14.6212251Z AssertionError: expected null not to be null
+2026-09-24T08:15:14.6214078Z  ❯ attachRelayAndHello src/server/websocket-server.relay-reconnect.test.ts:420:26
+2026-09-24T08:15:14.6215661Z     418|   const serverInfo = parseServerInfoStatusPayload(envelope.message?.pa…
+2026-09-24T08:15:14.6217351Z     419|   expect(envelope.message?.type).toBe("status");
+2026-09-24T08:15:14.6219154Z     420|   expect(serverInfo).not.toBeNull();
+2026-09-24T08:15:14.6220469Z        |                          ^
+2026-09-24T08:15:14.6221442Z     421|   return serverInfo!;
+2026-09-24T08:15:14.6222575Z     422| }
+2026-09-24T08:15:14.6223722Z  ❯ src/server/websocket-server.relay-reconnect.test.ts:612:5
+2026-09-24T08:15:14.6224721Z 
+2026-09-24T08:15:14.6225281Z ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[14/54]⎯
+2026-09-24T08:15:14.6225770Z 
+2026-09-24T08:15:14.6227727Z  FAIL  src/server/websocket-server.relay-reconnect.test.ts > relay external socket reconnect behavior > returns server_info when clientId reconnects with existing session
+2026-09-24T08:15:14.6229673Z AssertionError: expected null not to be null
+2026-09-24T08:15:14.6231238Z  ❯ attachRelayAndHello src/server/websocket-server.relay-reconnect.test.ts:420:26
+2026-09-24T08:15:14.6233081Z     418|   const serverInfo = parseServerInfoStatusPayload(envelope.message?.pa…
+2026-09-24T08:15:14.6234790Z     419|   expect(envelope.message?.type).toBe("status");
+2026-09-24T08:15:14.6236483Z     420|   expect(serverInfo).not.toBeNull();
+2026-09-24T08:15:14.6237611Z        |                          ^
+2026-09-24T08:15:14.6238544Z     421|   return serverInfo!;
+2026-09-24T08:15:14.6239356Z     422| }
+2026-09-24T08:15:14.6240553Z  ❯ src/server/websocket-server.relay-reconnect.test.ts:646:5
+2026-09-24T08:15:14.6241699Z 
+2026-09-24T08:15:14.6242376Z ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[15/54]⎯
+2026-09-24T08:15:14.6242933Z 
+2026-09-24T08:15:14.6244697Z  FAIL  src/server/websocket-server.relay-reconnect.test.ts > relay external socket reconnect behavior > returns server_info for distinct clientIds
+2026-09-24T08:15:14.6246569Z AssertionError: expected null not to be null
+2026-09-24T08:15:14.6248121Z  ❯ attachRelayAndHello src/server/websocket-server.relay-reconnect.test.ts:420:26
+2026-09-24T08:15:14.6249732Z     418|   const serverInfo = parseServerInfoStatusPayload(envelope.message?.pa…
+2026-09-24T08:15:14.6251421Z     419|   expect(envelope.message?.type).toBe("status");
+2026-09-24T08:15:14.6253301Z     420|   expect(serverInfo).not.toBeNull();
+2026-09-24T08:15:14.6254504Z        |                          ^
+2026-09-24T08:15:14.6255440Z     421|   return serverInfo!;
+2026-09-24T08:15:14.6256207Z     422| }
+2026-09-24T08:15:14.6257287Z  ❯ src/server/websocket-server.relay-reconnect.test.ts:669:5
+2026-09-24T08:15:14.6258045Z 
+2026-09-24T08:15:14.6258581Z ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[16/54]⎯
+2026-09-24T08:15:14.6259072Z 
+2026-09-24T08:15:14.6261685Z  FAIL  src/server/websocket-server.relay-reconnect.test.ts > relay external socket reconnect behavior > isolates resumable sessions by principal while sharing hello bootstrap
+2026-09-24T08:15:14.6263937Z AssertionError: expected null not to be null
+2026-09-24T08:15:14.6265555Z  ❯ attachRelayAndHello src/server/websocket-server.relay-reconnect.test.ts:420:26
+2026-09-24T08:15:14.6267206Z     418|   const serverInfo = parseServerInfoStatusPayload(envelope.message?.pa…
+2026-09-24T08:15:14.6268907Z     419|   expect(envelope.message?.type).toBe("status");
+2026-09-24T08:15:14.6270541Z     420|   expect(serverInfo).not.toBeNull();
+2026-09-24T08:15:14.6271918Z        |                          ^
+2026-09-24T08:15:14.6286398Z     421|   return serverInfo!;
+2026-09-24T08:15:14.6300084Z     422| }
+2026-09-24T08:15:14.6301778Z  ❯ src/server/websocket-server.relay-reconnect.test.ts:692:23
+2026-09-24T08:15:14.6303654Z 
+2026-09-24T08:15:14.6306551Z ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[17/54]⎯
+2026-09-24T08:15:14.6307081Z 
+2026-09-24T08:15:14.6309086Z  FAIL  src/server/websocket-server.relay-reconnect.test.ts > relay external socket reconnect behavior > responds to top-level ping while provider diagnostic is still running
+2026-09-24T08:15:14.6311249Z AssertionError: expected null not to be null
+2026-09-24T08:15:14.6313193Z  ❯ attachRelayAndHello src/server/websocket-server.relay-reconnect.test.ts:420:26
+2026-09-24T08:15:14.6315011Z     418|   const serverInfo = parseServerInfoStatusPayload(envelope.message?.pa…
+2026-09-24T08:15:14.6316804Z     419|   expect(envelope.message?.type).toBe("status");
+2026-09-24T08:15:14.6318575Z     420|   expect(serverInfo).not.toBeNull();
+2026-09-24T08:15:14.6319774Z        |                          ^
+2026-09-24T08:15:14.6320785Z     421|   return serverInfo!;
+2026-09-24T08:15:14.6321864Z     422| }
+2026-09-24T08:15:14.6323074Z  ❯ src/server/websocket-server.relay-reconnect.test.ts:777:5
+2026-09-24T08:15:14.6323885Z 
+2026-09-24T08:15:14.6324486Z ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[18/54]⎯
+2026-09-24T08:15:14.6325020Z 
+2026-09-24T08:15:14.6327111Z  FAIL  src/server/websocket-server.relay-reconnect.test.ts > relay external socket reconnect behavior > routes later session requests while provider diagnostic is still running
+2026-09-24T08:15:14.6329208Z AssertionError: expected null not to be null
+2026-09-24T08:15:14.6330834Z  ❯ attachRelayAndHello src/server/websocket-server.relay-reconnect.test.ts:420:26
+2026-09-24T08:15:14.6332749Z     418|   const serverInfo = parseServerInfoStatusPayload(envelope.message?.pa…
+2026-09-24T08:15:14.6334535Z     419|   expect(envelope.message?.type).toBe("status");
+2026-09-24T08:15:14.6336923Z     420|   expect(serverInfo).not.toBeNull();
+2026-09-24T08:15:14.6338071Z        |                          ^
+2026-09-24T08:15:14.6339057Z     421|   return serverInfo!;
+2026-09-24T08:15:14.6339912Z     422| }
+2026-09-24T08:15:14.6341087Z  ❯ src/server/websocket-server.relay-reconnect.test.ts:815:5
+2026-09-24T08:15:14.6342141Z 
+2026-09-24T08:15:14.6342757Z ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[19/54]⎯
+2026-09-24T08:15:14.6343295Z 
+2026-09-24T08:15:14.6345424Z  FAIL  src/server/websocket-server.relay-reconnect.test.ts > relay external socket reconnect behavior > sends rpc_error when an async session request fails
+2026-09-24T08:15:14.6347436Z AssertionError: expected null not to be null
+2026-09-24T08:15:14.6349082Z  ❯ attachRelayAndHello src/server/websocket-server.relay-reconnect.test.ts:420:26
+2026-09-24T08:15:14.6350735Z     418|   const serverInfo = parseServerInfoStatusPayload(envelope.message?.pa…
+2026-09-24T08:15:14.6352666Z     419|   expect(envelope.message?.type).toBe("status");
+2026-09-24T08:15:14.6354398Z     420|   expect(serverInfo).not.toBeNull();
+2026-09-24T08:15:14.6355680Z        |                          ^
+2026-09-24T08:15:14.6356793Z     421|   return serverInfo!;
+2026-09-24T08:15:14.6357837Z     422| }
+2026-09-24T08:15:14.6359017Z  ❯ src/server/websocket-server.relay-reconnect.test.ts:862:5
+2026-09-24T08:15:14.6359908Z 
+2026-09-24T08:15:14.6360575Z ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[20/54]⎯
+2026-09-24T08:15:14.6361125Z 
+2026-09-24T08:15:14.6363402Z  FAIL  src/server/websocket-server.relay-reconnect.test.ts > relay external socket reconnect behavior > reuses direct session when same clientId reconnects within grace window
+2026-09-24T08:15:14.6365463Z AssertionError: expected null not to be null
+2026-09-24T08:15:14.6367125Z  ❯ attachDirectAndHello src/server/websocket-server.relay-reconnect.test.ts:439:26
+2026-09-24T08:15:14.6368901Z     437|   const serverInfo = parseServerInfoStatusPayload(envelope.message?.pa…
+2026-09-24T08:15:14.6370606Z     438|   expect(envelope.message?.type).toBe("status");
+2026-09-24T08:15:14.6371442Z 
+2026-09-24T08:15:14.6372661Z     439|   expect(serverInfo).not.toBeNull();
+2026-09-24T08:15:14.6373727Z        |                          ^
+2026-09-24T08:15:14.6374542Z     440|   return serverInfo!;
+2026-09-24T08:15:14.6375219Z     441| }
+2026-09-24T08:15:14.6376156Z  ❯ src/server/websocket-server.relay-reconnect.test.ts:907:5
+2026-09-24T08:15:14.6376814Z 
+2026-09-24T08:15:14.6377314Z ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[21/54]⎯
+2026-09-24T08:15:14.6377748Z 
+2026-09-24T08:15:14.6379431Z  FAIL  src/server/websocket-server.relay-reconnect.test.ts > relay external socket reconnect behavior > reuses one session when switching from direct to relay with the same clientId
+2026-09-24T08:15:14.6381113Z AssertionError: expected null not to be null
+2026-09-24T08:15:14.6382713Z  ❯ attachDirectAndHello src/server/websocket-server.relay-reconnect.test.ts:439:26
+2026-09-24T08:15:14.6384028Z     437|   const serverInfo = parseServerInfoStatusPayload(envelope.message?.pa…
+2026-09-24T08:15:14.6385447Z     438|   expect(envelope.message?.type).toBe("status");
+2026-09-24T08:15:14.6386814Z     439|   expect(serverInfo).not.toBeNull();
+2026-09-24T08:15:14.6387748Z        |                          ^
+2026-09-24T08:15:14.6388662Z     440|   return serverInfo!;
+2026-09-24T08:15:14.6389537Z     441| }
+2026-09-24T08:15:14.6390811Z  ❯ src/server/websocket-server.relay-reconnect.test.ts:938:5
+2026-09-24T08:15:14.6391861Z 
+2026-09-24T08:15:14.6392410Z ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[22/54]⎯
+2026-09-24T08:15:14.6392897Z 
+2026-09-24T08:15:14.6394885Z  FAIL  src/server/websocket-server.relay-reconnect.test.ts > relay external socket reconnect behavior > cleans up relay session when reconnect grace expires
+2026-09-24T08:15:14.6396900Z AssertionError: expected null not to be null
+2026-09-24T08:15:14.6398344Z  ❯ attachRelayAndHello src/server/websocket-server.relay-reconnect.test.ts:420:26
+2026-09-24T08:15:14.6399962Z  Test Files  6 failed | 381 passed | 4 skipped (391)
+2026-09-24T08:15:14.6401425Z     418|   const serverInfo = parseServerInfoStatusPayload(envelope.message?.pa…
+2026-09-24T08:15:14.6403254Z     419|   expect(envelope.message?.type).toBe("status");
+2026-09-24T08:15:14.6404783Z     420|   expect(serverInfo).not.toBeNull();
+2026-09-24T08:15:14.6406112Z        |                          ^
+2026-09-24T08:15:14.6406986Z     421|   return serverInfo!;
+2026-09-24T08:15:14.6407714Z     422| }
+2026-09-24T08:15:14.6408712Z  ❯ src/server/websocket-server.relay-reconnect.test.ts:982:5
+2026-09-24T08:15:14.6409420Z 
+2026-09-24T08:15:14.6409944Z ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[23/54]⎯
+2026-09-24T08:15:14.6410418Z 
+2026-09-24T08:15:14.6412337Z  FAIL  src/server/websocket-server.relay-reconnect.test.ts > relay external socket reconnect behavior > advertises current features in initial server_info
+2026-09-24T08:15:14.6414089Z AssertionError: expected null not to be null
+2026-09-24T08:15:14.6415619Z  ❯ attachRelayAndHello src/server/websocket-server.relay-reconnect.test.ts:420:26
+2026-09-24T08:15:14.6417168Z     418|   const serverInfo = parseServerInfoStatusPayload(envelope.message?.pa…
+2026-09-24T08:15:14.6418913Z     419|   expect(envelope.message?.type).toBe("status");
+2026-09-24T08:15:14.6420548Z     420|   expect(serverInfo).not.toBeNull();
+2026-09-24T08:15:14.6421863Z        |                          ^
+2026-09-24T08:15:14.6422818Z     421|   return serverInfo!;
+2026-09-24T08:15:14.6423559Z     422| }
+2026-09-24T08:15:14.6424621Z  ❯ src/server/websocket-server.relay-reconnect.test.ts:1001:24
+2026-09-24T08:15:14.6425396Z 
+2026-09-24T08:15:14.6426006Z ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[24/54]⎯
+2026-09-24T08:15:14.6426515Z 
+2026-09-24T08:15:14.6428511Z  FAIL  src/server/websocket-server.relay-reconnect.test.ts > relay external socket reconnect behavior > includes voice capabilities in initial server_info when speech readiness exists
+2026-09-24T08:15:14.6430576Z AssertionError: expected null not to be null
+2026-09-24T08:15:14.6432439Z  ❯ attachRelayAndHello src/server/websocket-server.relay-reconnect.test.ts:420:26
+2026-09-24T08:15:14.6434226Z     418|   const serverInfo = parseServerInfoStatusPayload(envelope.message?.pa…
+2026-09-24T08:15:14.6436194Z     419|   expect(envelope.message?.type).toBe("status");
+2026-09-24T08:15:14.6437863Z     420|   expect(serverInfo).not.toBeNull();
+2026-09-24T08:15:14.6438987Z        |                          ^
+2026-09-24T08:15:14.6439938Z     421|   return serverInfo!;
+2026-09-24T08:15:14.6440735Z     422| }
+2026-09-24T08:15:14.6442380Z  ❯ src/server/websocket-server.relay-reconnect.test.ts:1024:25
+2026-09-24T08:15:14.6443246Z 
+2026-09-24T08:15:14.6443827Z ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[25/54]⎯
+2026-09-24T08:15:14.6444320Z 
+2026-09-24T08:15:14.6446175Z  FAIL  src/server/websocket-server.relay-reconnect.test.ts > relay external socket reconnect behavior > broadcasts updated server_info when capabilities change
+2026-09-24T08:15:14.6448067Z AssertionError: expected null not to be null
+2026-09-24T08:15:14.6449807Z  ❯ attachRelayAndHello src/server/websocket-server.relay-reconnect.test.ts:420:26
+2026-09-24T08:15:14.6451944Z     418|   const serverInfo = parseServerInfoStatusPayload(envelope.message?.pa…
+2026-09-24T08:15:14.6454019Z     419|   expect(envelope.message?.type).toBe("status");
+2026-09-24T08:15:14.6456759Z     420|   expect(serverInfo).not.toBeNull();
+2026-09-24T08:15:14.6458358Z        |                          ^
+2026-09-24T08:15:14.6459675Z     421|   return serverInfo!;
+2026-09-24T08:15:14.6461790Z       Tests  54 failed | 5635 passed | 55 skipped (5744)
+2026-09-24T08:15:14.6463106Z     422| }
+2026-09-24T08:15:14.6464260Z  ❯ src/server/websocket-server.relay-reconnect.test.ts:1054:5
+2026-09-24T08:15:14.6465078Z 
+2026-09-24T08:15:14.6465645Z ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[26/54]⎯
+2026-09-24T08:15:14.6466206Z 
+2026-09-24T08:15:14.6468259Z  FAIL  src/server/websocket-server.relay-reconnect.test.ts > relay external socket reconnect behavior > includes temporary retry guidance while models are downloading
+2026-09-24T08:15:14.6470467Z AssertionError: expected null not to be null
+2026-09-24T08:15:14.6472528Z  ❯ attachRelayAndHello src/server/websocket-server.relay-reconnect.test.ts:420:26
+2026-09-24T08:15:14.6474262Z     418|   const serverInfo = parseServerInfoStatusPayload(envelope.message?.pa…
+2026-09-24T08:15:14.6476225Z     419|   expect(envelope.message?.type).toBe("status");
+2026-09-24T08:15:14.6478120Z     420|   expect(serverInfo).not.toBeNull();
+2026-09-24T08:15:14.6479352Z        |                          ^
+2026-09-24T08:15:14.6480361Z     421|   return serverInfo!;
+2026-09-24T08:15:14.6481210Z     422| }
+2026-09-24T08:15:14.6482782Z  ❯ src/server/websocket-server.relay-reconnect.test.ts:1080:5
+2026-09-24T08:15:14.6483824Z    Start at  08:08:21
+2026-09-24T08:15:14.6484446Z 
+2026-09-24T08:15:14.6485205Z ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[27/54]⎯
+2026-09-24T08:15:14.6485834Z 
+2026-09-24T08:15:14.6487823Z  FAIL  src/server/websocket-server.relay-reconnect.test.ts > relay external socket reconnect behavior > routes inbound terminal frames to session.handleBinaryFrame
+2026-09-24T08:15:14.6490003Z AssertionError: expected null not to be null
+2026-09-24T08:15:14.6492092Z  ❯ attachRelayAndHello src/server/websocket-server.relay-reconnect.test.ts:420:26
+2026-09-24T08:15:14.6493824Z     418|   const serverInfo = parseServerInfoStatusPayload(envelope.message?.pa…
+2026-09-24T08:15:14.6495576Z     419|   expect(envelope.message?.type).toBe("status");
+2026-09-24T08:15:14.6497237Z     420|   expect(serverInfo).not.toBeNull();
+2026-09-24T08:15:14.6498622Z        |                          ^
+2026-09-24T08:15:14.6499594Z     421|   return serverInfo!;
+2026-09-24T08:15:14.6500405Z     422| }
+2026-09-24T08:15:14.6501786Z  ❯ src/server/websocket-server.relay-reconnect.test.ts:1104:5
+2026-09-24T08:15:14.6502606Z 
+2026-09-24T08:15:14.6503191Z ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[28/54]⎯
+2026-09-24T08:15:14.6503709Z 
+2026-09-24T08:15:14.6505562Z  FAIL  src/server/websocket-server.relay-reconnect.test.ts > relay external socket reconnect behavior > sends status error when async binary frame handling fails
+2026-09-24T08:15:14.6507455Z AssertionError: expected null not to be null
+2026-09-24T08:15:14.6509045Z  ❯ attachRelayAndHello src/server/websocket-server.relay-reconnect.test.ts:420:26
+2026-09-24T08:15:14.6510630Z     418|   const serverInfo = parseServerInfoStatusPayload(envelope.message?.pa…
+2026-09-24T08:15:14.6512761Z    Duration  412.84s (transform 26.05s, setup 9.05s, import 201.28s, tests 878.95s, environment 76ms)
+2026-09-24T08:15:14.6513477Z 
+2026-09-24T08:15:14.6514559Z     419|   expect(envelope.message?.type).toBe("status");
+2026-09-24T08:15:14.6516220Z     420|   expect(serverInfo).not.toBeNull();
+2026-09-24T08:15:14.6517339Z        |                          ^
+2026-09-24T08:15:14.6518292Z     421|   return serverInfo!;
+2026-09-24T08:15:14.6519095Z     422| }
+2026-09-24T08:15:14.6520219Z  ❯ src/server/websocket-server.relay-reconnect.test.ts:1135:5
+2026-09-24T08:15:14.6521009Z 
+2026-09-24T08:15:14.6521785Z ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[29/54]⎯
+2026-09-24T08:15:14.6522325Z 
+2026-09-24T08:15:14.6524288Z  FAIL  src/server/websocket-server.relay-reconnect.test.ts > relay external socket reconnect behavior > sends outbound terminal frames from session over websocket
+2026-09-24T08:15:14.6526041Z AssertionError: expected null not to be null
+2026-09-24T08:15:14.6527503Z  ❯ attachRelayAndHello src/server/websocket-server.relay-reconnect.test.ts:420:26
+2026-09-24T08:15:14.6528902Z     418|   const serverInfo = parseServerInfoStatusPayload(envelope.message?.pa…
+2026-09-24T08:15:14.6529917Z     419|   expect(envelope.message?.type).toBe("status");
+2026-09-24T08:15:14.6531411Z     420|   expect(serverInfo).not.toBeNull();
+2026-09-24T08:15:14.6532774Z        |                          ^
+2026-09-24T08:15:14.6533750Z     421|   return serverInfo!;
+2026-09-24T08:15:14.6534591Z     422| }
+2026-09-24T08:15:14.6535466Z  ❯ src/server/websocket-server.relay-reconnect.test.ts:1176:5
+2026-09-24T08:15:14.6535951Z 
+2026-09-24T08:15:14.6536582Z ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[30/54]⎯
+2026-09-24T08:15:14.6537136Z 
+2026-09-24T08:15:14.6538720Z  FAIL  src/server/agent/mcp-server.test.ts > agent snapshot MCP serialization > returns compact list items from list_agents
+2026-09-24T08:15:14.6540846Z AssertionError: expected { agents: [ { …(19) } ] } to deeply equal { agents: [ { …(17) } ] }
+2026-09-24T08:15:14.6541971Z 
+2026-09-24T08:15:14.6542470Z - Expected
+2026-09-24T08:15:14.6543188Z + Received
+2026-09-24T08:15:14.6543646Z 
+2026-09-24T08:15:14.6544141Z @@ -5,18 +5,20 @@
+2026-09-24T08:15:14.6545032Z         "attentionReason": null,
+2026-09-24T08:15:14.6546066Z         "attentionTimestamp": null,
+2026-09-24T08:15:14.6547413Z         "createdAt": "2026-09-24T08:08:37.325Z",
+2026-09-24T08:15:14.6548463Z         "cwd": "/tmp/repo",
+2026-09-24T08:15:14.6549507Z         "effectiveThinkingOptionId": "high",
+2026-09-24T08:15:14.6550417Z +       "icon": null,
+2026-09-24T08:15:14.6551267Z         "id": "agent-compact",
+2026-09-24T08:15:14.6552436Z         "labels": {
+2026-09-24T08:15:14.6553322Z           "role": "researcher",
+2026-09-24T08:15:14.6554139Z         },
+2026-09-24T08:15:14.6555037Z         "lastUserMessageAt": null,
+2026-09-24T08:15:14.6556026Z         "model": "gpt-5.4",
+2026-09-24T08:15:14.6556943Z         "provider": "codex",
+2026-09-24T08:15:14.6557314Z 
+2026-09-24T08:15:14.6557951Z         "requiresAttention": false,
+2026-09-24T08:15:14.6558975Z +       "responseMetadata": null,
+2026-09-24T08:15:14.6559987Z         "shortId": "agent-c",
+2026-09-24T08:15:14.6561200Z         "status": "idle",
+2026-09-24T08:15:14.6582998Z         "thinkingOptionId": "high",
+2026-09-24T08:15:14.6617221Z ##[error]TypeError: terminal.setActivity is not a function
+ ❯ spawnWorkspaceScript src/server/worktree-bootstrap.ts:1071:16
+ ❯ src/server/script-health-monitor.test.ts:444:7
+
+
+2026-09-24T08:15:14.6633157Z         "title": null,
+2026-09-24T08:15:14.6633988Z         "updatedAt": "2026-09-24T08:08:37.325Z",
+2026-09-24T08:15:14.6634632Z 
+2026-09-24T08:15:14.6635306Z  ❯ src/server/agent/mcp-server.test.ts:5264:24
+2026-09-24T08:15:14.6636343Z     5262|       .parse(response.structuredContent);
+2026-09-24T08:15:14.6637034Z     5263|
+2026-09-24T08:15:14.6638246Z     5264|     expect(structured).toEqual({
+2026-09-24T08:15:14.6639412Z        |                        ^
+2026-09-24T08:15:14.6640217Z     5265|       agents: [
+2026-09-24T08:15:14.6640903Z     5266|         {
+2026-09-24T08:15:14.6641251Z 
+2026-09-24T08:15:14.6642068Z ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[31/54]⎯
+2026-09-24T08:15:14.6642552Z 
+2026-09-24T08:15:14.6643966Z  FAIL  src/server/agent/mcp-server.test.ts > agent snapshot MCP serialization > returns full-detail snapshots from get_agent_status
+2026-09-24T08:15:14.6645854Z Error: get_agent_status response failed AgentSnapshotPayloadSchema: [
+2026-09-24T08:15:14.6646613Z   {
+2026-09-24T08:15:14.6646982Z     "expected": "string",
+2026-09-24T08:15:14.6647437Z     "code": "invalid_type",
+2026-09-24T08:15:14.6647858Z     "path": [
+2026-09-24T08:15:14.6648211Z       "icon"
+2026-09-24T08:15:14.6648552Z     ],
+2026-09-24T08:15:14.6649102Z     "message": "Invalid input: expected string, received null"
+2026-09-24T08:15:14.6649720Z   },
+2026-09-24T08:15:14.6650027Z   {
+2026-09-24T08:15:14.6650372Z     "expected": "object",
+2026-09-24T08:15:14.6650817Z     "code": "invalid_type",
+2026-09-24T08:15:14.6651373Z     "path": [
+2026-09-24T08:15:14.6652327Z       "responseMetadata"
+2026-09-24T08:15:14.6652746Z     ],
+2026-09-24T08:15:14.6653690Z     "message": "Invalid input: expected object, received null"
+2026-09-24T08:15:14.6654659Z   }
+2026-09-24T08:15:14.6655071Z ]
+2026-09-24T08:15:14.6656297Z  ❯ src/server/agent/mcp-server.test.ts:5387:13
+2026-09-24T08:15:14.6658234Z     5385|     const parsed = AgentSnapshotPayloadSchema.safeParse(snapshot);
+2026-09-24T08:15:14.6659785Z     5386|     if (!parsed.success) {
+2026-09-24T08:15:14.6661118Z     5387|       throw new Error(
+2026-09-24T08:15:14.6662023Z        |             ^
+2026-09-24T08:15:14.6663116Z     5388|         `get_agent_status response failed AgentSnapshotPayloadSchema: …
+2026-09-24T08:15:14.6664083Z     5389|       );
+2026-09-24T08:15:14.6664391Z 
+2026-09-24T08:15:14.6664884Z ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[32/54]⎯
+2026-09-24T08:15:14.6665326Z 
+2026-09-24T08:15:14.6667410Z  FAIL  src/server/agent/mcp-server.test.ts > agent snapshot MCP serialization > returns compact list items for stored archived agents
+2026-09-24T08:15:14.6669785Z AssertionError: expected { Object (id, shortId, ...) } to deeply equal { Object (id, shortId, ...) }
+2026-09-24T08:15:14.6670625Z 
+2026-09-24T08:15:14.6670977Z - Expected
+2026-09-24T08:15:14.6671840Z + Received
+2026-09-24T08:15:14.6672153Z 
+2026-09-24T08:15:14.6672489Z @@ -3,16 +3,18 @@
+2026-09-24T08:15:14.6673156Z     "attentionReason": null,
+2026-09-24T08:15:14.6673934Z     "attentionTimestamp": null,
+2026-09-24T08:15:14.6674750Z     "createdAt": "2026-04-11T00:00:00.000Z",
+2026-09-24T08:15:14.6675469Z     "cwd": "/tmp/repo",
+2026-09-24T08:15:14.6676211Z     "effectiveThinkingOptionId": null,
+2026-09-24T08:15:14.6676910Z +   "icon": null,
+2026-09-24T08:15:14.6677914Z     "id": "stored-archived-compact",
+2026-09-24T08:15:14.6678603Z     "labels": {},
+2026-09-24T08:15:14.6679226Z     "lastUserMessageAt": null,
+2026-09-24T08:15:14.6680005Z     "model": "claude-sonnet-4-20250514",
+2026-09-24T08:15:14.6680740Z     "provider": "claude",
+2026-09-24T08:15:14.6681424Z     "requiresAttention": false,
+2026-09-24T08:15:14.6683506Z +   "responseMetadata": null,
+2026-09-24T08:15:14.6684481Z     "shortId": "stored-",
+2026-09-24T08:15:14.6685174Z     "status": "closed",
+2026-09-24T08:15:14.6685841Z     "thinkingOptionId": null,
+2026-09-24T08:15:14.6686552Z     "title": "Stored agent",
+2026-09-24T08:15:14.6687298Z     "updatedAt": "2026-09-24T08:08:37.524Z",
+2026-09-24T08:15:14.6687692Z 
+2026-09-24T08:15:14.6688389Z  ❯ src/server/agent/mcp-server.test.ts:5631:18
+2026-09-24T08:15:14.6689259Z     5629|     const item = agentsOf(response)[0];
+2026-09-24T08:15:14.6689888Z     5630|
+2026-09-24T08:15:14.6690503Z     5631|     expect(item).toEqual({
+2026-09-24T08:15:14.6691277Z        |                  ^
+2026-09-24T08:15:14.6692401Z     5632|       id: "stored-archived-compact",
+2026-09-24T08:15:14.6693149Z     5633|       shortId: "stored-",
+2026-09-24T08:15:14.6693497Z 
+2026-09-24T08:15:14.6693935Z ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[33/54]⎯
+2026-09-24T08:15:14.6694437Z 
+2026-09-24T08:15:14.6695886Z  FAIL  src/server/agent/mcp-server.test.ts > agent snapshot MCP serialization > emits list_agents payloads that satisfy the agent list schema
+2026-09-24T08:15:14.6697464Z Error: list_agents response failed AgentListItemPayloadSchema: [
+2026-09-24T08:15:14.6698101Z   {
+2026-09-24T08:15:14.6698428Z     "expected": "string",
+2026-09-24T08:15:14.6698797Z     "code": "invalid_type",
+2026-09-24T08:15:14.6699149Z     "path": [
+2026-09-24T08:15:14.6699455Z       0,
+2026-09-24T08:15:14.6699740Z       "icon"
+2026-09-24T08:15:14.6700236Z     ],
+2026-09-24T08:15:14.6700714Z     "message": "Invalid input: expected string, received null"
+2026-09-24T08:15:14.6701246Z   },
+2026-09-24T08:15:14.6701745Z   {
+2026-09-24T08:15:14.6702077Z     "expected": "object",
+2026-09-24T08:15:14.6702471Z     "code": "invalid_type",
+2026-09-24T08:15:14.6702819Z     "path": [
+2026-09-24T08:15:14.6703103Z       0,
+2026-09-24T08:15:14.6703397Z       "responseMetadata"
+2026-09-24T08:15:14.6703730Z     ],
+2026-09-24T08:15:14.6704170Z     "message": "Invalid input: expected object, received null"
+2026-09-24T08:15:14.6704661Z   },
+2026-09-24T08:15:14.6704917Z   {
+2026-09-24T08:15:14.6705202Z     "expected": "string",
+2026-09-24T08:15:14.6705566Z     "code": "invalid_type",
+2026-09-24T08:15:14.6705913Z     "path": [
+2026-09-24T08:15:14.6706195Z       1,
+2026-09-24T08:15:14.6706470Z       "icon"
+2026-09-24T08:15:14.6706758Z     ],
+2026-09-24T08:15:14.6707201Z     "message": "Invalid input: expected string, received null"
+2026-09-24T08:15:14.6707890Z   },
+2026-09-24T08:15:14.6708148Z   {
+2026-09-24T08:15:14.6708441Z     "expected": "object",
+2026-09-24T08:15:14.6708791Z     "code": "invalid_type",
+2026-09-24T08:15:14.6709140Z     "path": [
+2026-09-24T08:15:14.6709420Z       1,
+2026-09-24T08:15:14.6709715Z       "responseMetadata"
+2026-09-24T08:15:14.6710049Z     ],
+2026-09-24T08:15:14.6710494Z     "message": "Invalid input: expected object, received null"
+2026-09-24T08:15:14.6710983Z   },
+2026-09-24T08:15:14.6711254Z   {
+2026-09-24T08:15:14.6712054Z     "expected": "string",
+2026-09-24T08:15:14.6712454Z     "code": "invalid_type",
+2026-09-24T08:15:14.6713075Z     "path": [
+2026-09-24T08:15:14.6713383Z       2,
+2026-09-24T08:15:14.6713663Z       "icon"
+2026-09-24T08:15:14.6714169Z     ],
+2026-09-24T08:15:14.6714653Z     "message": "Invalid input: expected string, received null"
+2026-09-24T08:15:14.6715381Z   },
+2026-09-24T08:15:14.6715653Z   {
+2026-09-24T08:15:14.6715961Z     "expected": "object",
+2026-09-24T08:15:14.6716562Z     "code": "invalid_type",
+2026-09-24T08:15:14.6716955Z     "path": [
+2026-09-24T08:15:14.6717247Z       2,
+2026-09-24T08:15:14.6717767Z       "responseMetadata"
+2026-09-24T08:15:14.6718176Z     ],
+2026-09-24T08:15:14.6718621Z     "message": "Invalid input: expected object, received null"
+2026-09-24T08:15:14.6719353Z   }
+2026-09-24T08:15:14.6719676Z ]
+2026-09-24T08:15:14.6720631Z  ❯ src/server/agent/mcp-server.test.ts:5743:13
+2026-09-24T08:15:14.6721943Z     5741|     const parsed = z.array(AgentListItemPayloadSchema).safeParse(respo…
+2026-09-24T08:15:14.6723087Z     5742|     if (!parsed.success) {
+2026-09-24T08:15:14.6723896Z     5743|       throw new Error(
+2026-09-24T08:15:14.6724427Z        |             ^
+2026-09-24T08:15:14.6725514Z     5744|         `list_agents response failed AgentListItemPayloadSchema: ${JSO…
+2026-09-24T08:15:14.6726489Z     5745|       );
+2026-09-24T08:15:14.6726739Z 
+2026-09-24T08:15:14.6727432Z ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[34/54]⎯
+2026-09-24T08:15:14.6727762Z 
+2026-09-24T08:15:14.6729069Z  FAIL  src/server/hub/execution-session.websocket.test.ts > legacy Hub wire behavior still enters the common Session bootstrap
+2026-09-24T08:15:14.6730711Z AssertionError: expected [ 'server_info', …(1) ] to deeply equal [ 'server_info' ]
+2026-09-24T08:15:14.6731315Z 
+2026-09-24T08:15:14.6731695Z - Expected
+2026-09-24T08:15:14.6732107Z + Received
+2026-09-24T08:15:14.6732311Z 
+2026-09-24T08:15:14.6732502Z   [
+2026-09-24T08:15:14.6732926Z     "server_info",
+2026-09-24T08:15:14.6733472Z +   "sleep_prevention_changed",
+2026-09-24T08:15:14.6733943Z   ]
+2026-09-24T08:15:14.6734125Z 
+2026-09-24T08:15:14.6734798Z  ❯ src/server/hub/execution-session.websocket.test.ts:193:55
+2026-09-24T08:15:14.6735737Z     191|   relationship = launched;
+2026-09-24T08:15:14.6736541Z     192|
+2026-09-24T08:15:14.6737354Z     193|   expect(launched.observedTrustedLifecycleMessages()).toEqual(["server…
+2026-09-24T08:15:14.6738332Z        |                                                       ^
+2026-09-24T08:15:14.6739746Z     194|   expect(launched.serverInfoPermissions()).toEqual([["hub.execute"]]);
+2026-09-24T08:15:14.6740809Z     195| });
+2026-09-24T08:15:14.6741069Z 
+2026-09-24T08:15:14.6741916Z ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[35/54]⎯
+2026-09-24T08:15:14.6742272Z 
+2026-09-24T08:15:14.6743763Z  FAIL  src/server/hub/execution-session.websocket.test.ts > Hub receives standard server info but not broadcasts outside its scope
+2026-09-24T08:15:14.6745881Z AssertionError: expected [ 'server_info', …(1) ] to deeply equal [ 'server_info' ]
+2026-09-24T08:15:14.6746941Z 
+2026-09-24T08:15:14.6747186Z - Expected
+2026-09-24T08:15:14.6747830Z + Received
+2026-09-24T08:15:14.6748040Z 
+2026-09-24T08:15:14.6748205Z   [
+2026-09-24T08:15:14.6748590Z     "server_info",
+2026-09-24T08:15:14.6749435Z +   "sleep_prevention_changed",
+2026-09-24T08:15:14.6750138Z   ]
+2026-09-24T08:15:14.6750319Z 
+2026-09-24T08:15:14.6751228Z  ❯ src/server/hub/execution-session.websocket.test.ts:211:50
+2026-09-24T08:15:14.6752857Z     209|   expect(trustedBroadcasts).toBe(0);
+2026-09-24T08:15:14.6754306Z     210|   expect(trustedStatus).toMatchObject({ pid: process.pid, relay: { ena…
+2026-09-24T08:15:14.6755928Z     211|   expect(hub.observedTrustedLifecycleMessages()).toEqual(["server_info…
+2026-09-24T08:15:14.6757119Z        |                                                  ^
+2026-09-24T08:15:14.6757758Z     212| });
+2026-09-24T08:15:14.6758411Z     213|
+2026-09-24T08:15:14.6758613Z 
+2026-09-24T08:15:14.6758987Z ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[36/54]⎯
+2026-09-24T08:15:14.6759550Z 
+2026-09-24T08:15:14.6760984Z  FAIL  src/server/hub/execution-session.websocket.test.ts > Hub reconnects through the standard resumable session bootstrap
+2026-09-24T08:15:14.6763335Z AssertionError: expected [ 'server_info', …(3) ] to deeply equal [ 'server_info', 'server_info' ]
+2026-09-24T08:15:14.6764223Z 
+2026-09-24T08:15:14.6764440Z - Expected
+2026-09-24T08:15:14.6764846Z + Received
+2026-09-24T08:15:14.6765047Z 
+2026-09-24T08:15:14.6765446Z   [
+2026-09-24T08:15:14.6765862Z     "server_info",
+2026-09-24T08:15:14.6766645Z +   "sleep_prevention_changed",
+2026-09-24T08:15:14.6767193Z     "server_info",
+2026-09-24T08:15:14.6768051Z +   "sleep_prevention_changed",
+2026-09-24T08:15:14.6768527Z   ]
+2026-09-24T08:15:14.6768950Z 
+2026-09-24T08:15:14.6769654Z  ❯ src/server/hub/execution-session.websocket.test.ts:224:50
+2026-09-24T08:15:14.6771012Z     222|     agentId: created.first.agentId,
+2026-09-24T08:15:14.6772011Z     223|   });
+2026-09-24T08:15:14.6773373Z     224|   expect(hub.observedTrustedLifecycleMessages()).toEqual(["server_info…
+2026-09-24T08:15:14.6774470Z        |                                                  ^
+2026-09-24T08:15:14.6775434Z     225|   expect(hub.serverInfoPermissions()).toEqual([["hub.execute"], ["hub.…
+2026-09-24T08:15:14.6776202Z     226| });
+2026-09-24T08:15:14.6776447Z 
+2026-09-24T08:15:14.6776822Z ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[37/54]⎯
+2026-09-24T08:15:14.6777148Z 
+2026-09-24T08:15:14.6777184Z 
+2026-09-24T08:15:14.6780688Z ##[error]AssertionError: expected "vi.fn()" to be called with arguments: [ ObjectContaining{…} ]
+
+Number of calls: 0
+
+ ❯ src/server/session.test.ts:2606:76
+
+
+2026-09-24T08:15:14.6782956Z 
+2026-09-24T08:15:14.6788801Z ##[error]AssertionError: expected 'undefined' to be 'Write a concise git commit message fo…' // Object.is equality
+
+- Expected
++ Received
+
+- Write a concise git commit message for the changes below.
+-
+- Concise, imperative mood, no trailing period.
+-
+- Return JSON only with a single field 'message'.
+-
+- Files changed:
+- M	file.txt	(+1 -0)
+-
+- diff --git a/file.txt b/file.txt
+- +hello
+-
++ undefined
+
+ ❯ src/server/session.test.ts:2654:20
+
+
+2026-09-24T08:15:14.6792455Z 
+2026-09-24T08:15:14.6798262Z ##[error]AssertionError: expected 'undefined' to be 'Write a concise git commit message fo…' // Object.is equality
+
+- Expected
++ Received
+
+- Write a concise git commit message for the changes below.
+-
+- Concise, imperative mood, no trailing period.
+-
+- Return JSON only with a single field 'message'.
+-
+- Files changed:
+- M	file.txt	(+1 -0)
+-
+- diff --git a/file.txt b/file.txt
+- +hello
+-
++ undefined
+
+ ❯ src/server/session.test.ts:2654:20
+
+
+2026-09-24T08:15:14.6802205Z 
+2026-09-24T08:15:14.6808703Z ##[error]AssertionError: expected 'undefined' to be 'Write a concise git commit message fo…' // Object.is equality
+
+- Expected
++ Received
+
+- Write a concise git commit message for the changes below.
+-
+- Concise, imperative mood, no trailing period.
+-
+- Return JSON only with a single field 'message'.
+-
+- Files changed:
+- M	file.txt	(+1 -0)
+-
+- diff --git a/file.txt b/file.txt
+- +hello
+-
++ undefined
+
+ ❯ src/server/session.test.ts:2654:20
+
+
+2026-09-24T08:15:14.6812746Z 
+2026-09-24T08:15:14.6818749Z ##[error]AssertionError: expected 'undefined' to be 'Write a concise git commit message fo…' // Object.is equality
+
+- Expected
++ Received
+
+- Write a concise git commit message for the changes below.
+-
+- Concise, imperative mood, no trailing period.
+-
+- Return JSON only with a single field 'message'.
+-
+- Files changed:
+- M	file.txt	(+1 -0)
+-
+- diff --git a/file.txt b/file.txt
+- +hello
+-
++ undefined
+
+ ❯ src/server/session.test.ts:2654:20
+
+
+2026-09-24T08:15:14.6822938Z 
+2026-09-24T08:15:14.6826950Z ##[error]AssertionError: expected 'undefined' to be 'Write a concise git commit message fo…' // Object.is equality
+
+- Expected
++ Received
+
+- Write a concise git commit message for the changes below.
+-
+- Concise, imperative mood, no trailing period.
+-
+- Return JSON only with a single field 'message'.
+-
+- Files changed:
+- M	file.txt	(+1 -0)
+-
+- diff --git a/file.txt b/file.txt
+- +hello
+-
++ undefined
+
+ ❯ src/server/session.test.ts:2654:20
+
+
+2026-09-24T08:15:14.6828910Z 
+2026-09-24T08:15:14.6832911Z ##[error]AssertionError: expected 'undefined' to be 'Write a concise git commit message fo…' // Object.is equality
+
+- Expected
++ Received
+
+- Write a concise git commit message for the changes below.
+-
+- Concise, imperative mood, no trailing period.
+-
+- Return JSON only with a single field 'message'.
+-
+- Files changed:
+- M	file.txt	(+1 -0)
+-
+- diff --git a/file.txt b/file.txt
+- +hello
+-
++ undefined
+
+ ❯ src/server/session.test.ts:2654:20
+
+
+2026-09-24T08:15:14.6834909Z 
+2026-09-24T08:15:14.6838237Z ##[error]AssertionError: expected 'undefined' to be 'Write a concise git commit message fo…' // Object.is equality
+
+- Expected
++ Received
+
+- Write a concise git commit message for the changes below.
+-
+- Concise, imperative mood, no trailing period.
+-
+- Return JSON only with a single field 'message'.
+-
+- Files changed:
+- M	file.txt	(+1 -0)
+-
+- diff --git a/file.txt b/file.txt
+- +hello
+-
++ undefined
+
+ ❯ src/server/session.test.ts:2654:20
+
+
+2026-09-24T08:15:14.6840128Z 
+2026-09-24T08:15:14.6845367Z ##[error]AssertionError: expected 'undefined' to be 'Write a concise git commit message fo…' // Object.is equality
+
+- Expected
++ Received
+
+- Write a concise git commit message for the changes below.
+-
+- Concise, imperative mood, no trailing period.
+-
+- Return JSON only with a single field 'message'.
+-
+- Files changed:
+- M	file.txt	(+1 -0)
+-
+- diff --git a/file.txt b/file.txt
+- +hello
+-
++ undefined
+
+ ❯ src/server/session.test.ts:2654:20
+
+
+2026-09-24T08:15:14.6849544Z 
+2026-09-24T08:15:14.6853528Z ##[error]AssertionError: expected 'undefined' to contain 'Use conventional commits.\nAccept XML…'
+
+- Expected
++ Received
+
+- Use conventional commits.
+- Accept XML-ish <scope> text.
++ undefined
+
+ ❯ src/server/session.test.ts:2666:20
+
+
+2026-09-24T08:15:14.6855812Z 
+2026-09-24T08:15:14.6858304Z ##[error]AssertionError: expected "vi.fn()" to be called with arguments: [ '/tmp/request-worktree', …(1) ]
+
+Number of calls: 0
+
+ ❯ src/server/session.test.ts:2706:44
+
+
+2026-09-24T08:15:14.6860082Z 
+2026-09-24T08:15:14.6862735Z ##[error]AssertionError: expected "vi.fn()" to be called with arguments: [ ObjectContaining{…} ]
+
+Number of calls: 0
+
+ ❯ src/server/session.test.ts:2877:76
+
+
+2026-09-24T08:15:14.6864516Z 
+2026-09-24T08:15:14.6871713Z ##[error]AssertionError: expected 'undefined' to be 'Write a pull request title and body f…' // Object.is equality
+
+- Expected
++ Received
+
+- Write a pull request title and body for the changes below.
+-
+- Clear, descriptive title; body explaining what changed and why.
+-
+- Return JSON only with fields 'title' and 'body'.
+-
+- Files changed:
+- M	file.txt	(+1 -0)
+-
+- diff --git a/file.txt b/file.txt
+- +hello
+-
++ undefined
+
+ ❯ src/server/session.test.ts:2931:20
+
+
+2026-09-24T08:15:14.6891404Z 
+2026-09-24T08:15:14.6897852Z ##[error]AssertionError: expected 'undefined' to be 'Write a pull request title and body f…' // Object.is equality
+
+- Expected
++ Received
+
+- Write a pull request title and body for the changes below.
+-
+- Clear, descriptive title; body explaining what changed and why.
+-
+- Return JSON only with fields 'title' and 'body'.
+-
+- Files changed:
+- M	file.txt	(+1 -0)
+-
+- diff --git a/file.txt b/file.txt
+- +hello
+-
++ undefined
+
+ ❯ src/server/session.test.ts:2931:20
+
+
+2026-09-24T08:15:14.6901430Z 
+2026-09-24T08:15:14.6907758Z ##[error]AssertionError: expected 'undefined' to be 'Write a pull request title and body f…' // Object.is equality
+
+- Expected
++ Received
+
+- Write a pull request title and body for the changes below.
+-
+- Clear, descriptive title; body explaining what changed and why.
+-
+- Return JSON only with fields 'title' and 'body'.
+-
+- Files changed:
+- M	file.txt	(+1 -0)
+-
+- diff --git a/file.txt b/file.txt
+- +hello
+-
++ undefined
+
+ ❯ src/server/session.test.ts:2931:20
+
+
+2026-09-24T08:15:14.6911409Z 
+2026-09-24T08:15:14.6917728Z ##[error]AssertionError: expected 'undefined' to be 'Write a pull request title and body f…' // Object.is equality
+
+- Expected
++ Received
+
+- Write a pull request title and body for the changes below.
+-
+- Clear, descriptive title; body explaining what changed and why.
+-
+- Return JSON only with fields 'title' and 'body'.
+-
+- Files changed:
+- M	file.txt	(+1 -0)
+-
+- diff --git a/file.txt b/file.txt
+- +hello
+-
++ undefined
+
+ ❯ src/server/session.test.ts:2931:20
+
+
+2026-09-24T08:15:14.6921342Z 
+2026-09-24T08:15:14.6927725Z ##[error]AssertionError: expected 'undefined' to be 'Write a pull request title and body f…' // Object.is equality
+
+- Expected
++ Received
+
+- Write a pull request title and body for the changes below.
+-
+- Clear, descriptive title; body explaining what changed and why.
+-
+- Return JSON only with fields 'title' and 'body'.
+-
+- Files changed:
+- M	file.txt	(+1 -0)
+-
+- diff --git a/file.txt b/file.txt
+- +hello
+-
++ undefined
+
+ ❯ src/server/session.test.ts:2931:20
+
+
+2026-09-24T08:15:14.6931257Z 
+2026-09-24T08:15:14.6937586Z ##[error]AssertionError: expected 'undefined' to be 'Write a pull request title and body f…' // Object.is equality
+
+- Expected
++ Received
+
+- Write a pull request title and body for the changes below.
+-
+- Clear, descriptive title; body explaining what changed and why.
+-
+- Return JSON only with fields 'title' and 'body'.
+-
+- Files changed:
+- M	file.txt	(+1 -0)
+-
+- diff --git a/file.txt b/file.txt
+- +hello
+-
++ undefined
+
+ ❯ src/server/session.test.ts:2931:20
+
+
+2026-09-24T08:15:14.6941100Z 
+2026-09-24T08:15:14.6947663Z ##[error]AssertionError: expected 'undefined' to be 'Write a pull request title and body f…' // Object.is equality
+
+- Expected
++ Received
+
+- Write a pull request title and body for the changes below.
+-
+- Clear, descriptive title; body explaining what changed and why.
+-
+- Return JSON only with fields 'title' and 'body'.
+-
+- Files changed:
+- M	file.txt	(+1 -0)
+-
+- diff --git a/file.txt b/file.txt
+- +hello
+-
++ undefined
+
+ ❯ src/server/session.test.ts:2931:20
+
+
+2026-09-24T08:15:14.6951221Z 
+2026-09-24T08:15:14.6957566Z ##[error]AssertionError: expected 'undefined' to be 'Write a pull request title and body f…' // Object.is equality
+
+- Expected
++ Received
+
+- Write a pull request title and body for the changes below.
+-
+- Clear, descriptive title; body explaining what changed and why.
+-
+- Return JSON only with fields 'title' and 'body'.
+-
+- Files changed:
+- M	file.txt	(+1 -0)
+-
+- diff --git a/file.txt b/file.txt
+- +hello
+-
++ undefined
+
+ ❯ src/server/session.test.ts:2931:20
+
+
+2026-09-24T08:15:14.6961058Z 
+2026-09-24T08:15:14.6964670Z ##[error]AssertionError: expected 'undefined' to contain 'Use a terse title.\nKeep literal <tic…'
+
+- Expected
++ Received
+
+- Use a terse title.
+- Keep literal <ticket> text.
++ undefined
+
+ ❯ src/server/session.test.ts:2943:20
+
+
+2026-09-24T08:15:14.6967209Z 
+2026-09-24T08:15:14.6969368Z ##[error]TypeError: Cannot read properties of undefined (reading 'schema')
+ ❯ src/server/session.test.ts:2968:8
+
+
+2026-09-24T08:15:14.6970938Z 
+2026-09-24T08:15:14.6973809Z ##[error]AssertionError: expected "vi.fn()" to be called with arguments: [ '/tmp/request-worktree', …(2) ]
+
+Number of calls: 0
+
+ ❯ src/server/session.test.ts:3010:48
+
+
+2026-09-24T08:15:14.6975763Z 
+2026-09-24T08:15:14.6979125Z ##[error]AssertionError: expected null not to be null
+ ❯ attachRelayAndHello src/server/websocket-server.relay-reconnect.test.ts:420:26
+ ❯ src/server/websocket-server.relay-reconnect.test.ts:488:5
+
+
+2026-09-24T08:15:14.6981446Z 
+2026-09-24T08:15:14.6984986Z ##[error]AssertionError: expected null not to be null
+ ❯ attachRelayAndHello src/server/websocket-server.relay-reconnect.test.ts:420:26
+ ❯ src/server/websocket-server.relay-reconnect.test.ts:572:5
+
+
+2026-09-24T08:15:14.6987216Z 
+2026-09-24T08:15:14.6990570Z ##[error]AssertionError: expected null not to be null
+ ❯ attachRelayAndHello src/server/websocket-server.relay-reconnect.test.ts:420:26
+ ❯ src/server/websocket-server.relay-reconnect.test.ts:612:5
+
+
+2026-09-24T08:15:14.6992924Z 
+2026-09-24T08:15:14.6996168Z ##[error]AssertionError: expected null not to be null
+ ❯ attachRelayAndHello src/server/websocket-server.relay-reconnect.test.ts:420:26
+ ❯ src/server/websocket-server.relay-reconnect.test.ts:646:5
+
+
+2026-09-24T08:15:14.6998350Z 
+2026-09-24T08:15:14.7001811Z ##[error]AssertionError: expected null not to be null
+ ❯ attachRelayAndHello src/server/websocket-server.relay-reconnect.test.ts:420:26
+ ❯ src/server/websocket-server.relay-reconnect.test.ts:669:5
+
+
+2026-09-24T08:15:14.7004002Z 
+2026-09-24T08:15:14.7007245Z ##[error]AssertionError: expected null not to be null
+ ❯ attachRelayAndHello src/server/websocket-server.relay-reconnect.test.ts:420:26
+ ❯ src/server/websocket-server.relay-reconnect.test.ts:692:23
+
+
+2026-09-24T08:15:14.7009437Z 
+2026-09-24T08:15:14.7012907Z ##[error]AssertionError: expected null not to be null
+ ❯ attachRelayAndHello src/server/websocket-server.relay-reconnect.test.ts:420:26
+ ❯ src/server/websocket-server.relay-reconnect.test.ts:777:5
+
+
+2026-09-24T08:15:14.7015123Z 
+2026-09-24T08:15:14.7018355Z ##[error]AssertionError: expected null not to be null
+ ❯ attachRelayAndHello src/server/websocket-server.relay-reconnect.test.ts:420:26
+ ❯ src/server/websocket-server.relay-reconnect.test.ts:815:5
+
+
+2026-09-24T08:15:14.7020492Z 
+2026-09-24T08:15:14.7023872Z ##[error]AssertionError: expected null not to be null
+ ❯ attachRelayAndHello src/server/websocket-server.relay-reconnect.test.ts:420:26
+ ❯ src/server/websocket-server.relay-reconnect.test.ts:862:5
+
+
+2026-09-24T08:15:14.7026269Z 
+2026-09-24T08:15:14.7029584Z ##[error]AssertionError: expected null not to be null
+ ❯ attachDirectAndHello src/server/websocket-server.relay-reconnect.test.ts:439:26
+ ❯ src/server/websocket-server.relay-reconnect.test.ts:907:5
+
+
+2026-09-24T08:15:14.7032039Z 
+2026-09-24T08:15:14.7035316Z ##[error]AssertionError: expected null not to be null
+ ❯ attachDirectAndHello src/server/websocket-server.relay-reconnect.test.ts:439:26
+ ❯ src/server/websocket-server.relay-reconnect.test.ts:938:5
+
+
+2026-09-24T08:15:14.7037320Z 
+2026-09-24T08:15:14.7040237Z ##[error]AssertionError: expected null not to be null
+ ❯ attachRelayAndHello src/server/websocket-server.relay-reconnect.test.ts:420:26
+ ❯ src/server/websocket-server.relay-reconnect.test.ts:982:5
+
+
+2026-09-24T08:15:14.7042399Z 
+2026-09-24T08:15:14.7045483Z ##[error]AssertionError: expected null not to be null
+ ❯ attachRelayAndHello src/server/websocket-server.relay-reconnect.test.ts:420:26
+ ❯ src/server/websocket-server.relay-reconnect.test.ts:1001:24
+
+
+2026-09-24T08:15:14.7047685Z 
+2026-09-24T08:15:14.7050955Z ##[error]AssertionError: expected null not to be null
+ ❯ attachRelayAndHello src/server/websocket-server.relay-reconnect.test.ts:420:26
+ ❯ src/server/websocket-server.relay-reconnect.test.ts:1024:25
+
+
+2026-09-24T08:15:14.7053585Z 
+2026-09-24T08:15:14.7056861Z ##[error]AssertionError: expected null not to be null
+ ❯ attachRelayAndHello src/server/websocket-server.relay-reconnect.test.ts:420:26
+ ❯ src/server/websocket-server.relay-reconnect.test.ts:1054:5
+
+
+2026-09-24T08:15:14.7059033Z 
+2026-09-24T08:15:14.7062484Z ##[error]AssertionError: expected null not to be null
+ ❯ attachRelayAndHello src/server/websocket-server.relay-reconnect.test.ts:420:26
+ ❯ src/server/websocket-server.relay-reconnect.test.ts:1080:5
+
+
+2026-09-24T08:15:14.7064834Z 
+2026-09-24T08:15:14.7068119Z ##[error]AssertionError: expected null not to be null
+ ❯ attachRelayAndHello src/server/websocket-server.relay-reconnect.test.ts:420:26
+ ❯ src/server/websocket-server.relay-reconnect.test.ts:1104:5
+
+
+2026-09-24T08:15:14.7070288Z 
+2026-09-24T08:15:14.7073783Z ##[error]AssertionError: expected null not to be null
+ ❯ attachRelayAndHello src/server/websocket-server.relay-reconnect.test.ts:420:26
+ ❯ src/server/websocket-server.relay-reconnect.test.ts:1135:5
+
+
+2026-09-24T08:15:14.7076003Z 
+2026-09-24T08:15:14.7079266Z ##[error]AssertionError: expected null not to be null
+ ❯ attachRelayAndHello src/server/websocket-server.relay-reconnect.test.ts:420:26
+ ❯ src/server/websocket-server.relay-reconnect.test.ts:1176:5
+
+
+2026-09-24T08:15:14.7081429Z 
+2026-09-24T08:15:14.7090549Z ##[error]AssertionError: expected { agents: [ { …(19) } ] } to deeply equal { agents: [ { …(17) } ] }
+
+- Expected
++ Received
+
+@@ -5,18 +5,20 @@
+        "attentionReason": null,
+        "attentionTimestamp": null,
+        "createdAt": "2026-09-24T08:08:37.325Z",
+        "cwd": "/tmp/repo",
+        "effectiveThinkingOptionId": "high",
++       "icon": null,
+        "id": "agent-compact",
+        "labels": {
+          "role": "researcher",
+        },
+        "lastUserMessageAt": null,
+        "model": "gpt-5.4",
+        "provider": "codex",
+        "requiresAttention": false,
++       "responseMetadata": null,
+        "shortId": "agent-c",
+        "status": "idle",
+        "thinkingOptionId": "high",
+        "title": null,
+        "updatedAt": "2026-09-24T08:08:37.325Z",
+
+ ❯ src/server/agent/mcp-server.test.ts:5264:24
+
+
+2026-09-24T08:15:14.7095709Z 
+2026-09-24T08:15:14.7101419Z ##[error]Error: get_agent_status response failed AgentSnapshotPayloadSchema: [
+  {
+    "expected": "string",
+    "code": "invalid_type",
+    "path": [
+      "icon"
+    ],
+    "message": "Invalid input: expected string, received null"
+  },
+  {
+    "expected": "object",
+    "code": "invalid_type",
+    "path": [
+      "responseMetadata"
+    ],
+    "message": "Invalid input: expected object, received null"
+  }
+]
+ ❯ src/server/agent/mcp-server.test.ts:5387:13
+
+
+2026-09-24T08:15:14.7104979Z 
+2026-09-24T08:15:14.7114516Z ##[error]AssertionError: expected { Object (id, shortId, ...) } to deeply equal { Object (id, shortId, ...) }
+
+- Expected
++ Received
+
+@@ -3,16 +3,18 @@
+    "attentionReason": null,
+    "attentionTimestamp": null,
+    "createdAt": "2026-04-11T00:00:00.000Z",
+    "cwd": "/tmp/repo",
+    "effectiveThinkingOptionId": null,
++   "icon": null,
+    "id": "stored-archived-compact",
+    "labels": {},
+    "lastUserMessageAt": null,
+    "model": "claude-sonnet-4-20250514",
+    "provider": "claude",
+    "requiresAttention": false,
++   "responseMetadata": null,
+    "shortId": "stored-",
+    "status": "closed",
+    "thinkingOptionId": null,
+    "title": "Stored agent",
+    "updatedAt": "2026-09-24T08:08:37.524Z",
+
+ ❯ src/server/agent/mcp-server.test.ts:5631:18
+
+
+2026-09-24T08:15:14.7119567Z 
+2026-09-24T08:15:14.7131943Z ##[error]Error: list_agents response failed AgentListItemPayloadSchema: [
+  {
+    "expected": "string",
+    "code": "invalid_type",
+    "path": [
+      0,
+      "icon"
+    ],
+    "message": "Invalid input: expected string, received null"
+  },
+  {
+    "expected": "object",
+    "code": "invalid_type",
+    "path": [
+      0,
+      "responseMetadata"
+    ],
+    "message": "Invalid input: expected object, received null"
+  },
+  {
+    "expected": "string",
+    "code": "invalid_type",
+    "path": [
+      1,
+      "icon"
+    ],
+    "message": "Invalid input: expected string, received null"
+  },
+  {
+    "expected": "object",
+    "code": "invalid_type",
+    "path": [
+      1,
+      "responseMetadata"
+    ],
+    "message": "Invalid input: expected object, received null"
+  },
+  {
+    "expected": "string",
+    "code": "invalid_type",
+    "path": [
+      2,
+      "icon"
+    ],
+    "message": "Invalid input: expected string, received null"
+  },
+  {
+    "expected": "object",
+    "code": "invalid_type",
+    "path": [
+      2,
+      "responseMetadata"
+    ],
+    "message": "Invalid input: expected object, received null"
+  }
+]
+ ❯ src/server/agent/mcp-server.test.ts:5743:13
+
+
+2026-09-24T08:15:14.7136311Z 
+2026-09-24T08:15:14.7138328Z ##[error]AssertionError: expected [ 'server_info', …(1) ] to deeply equal [ 'server_info' ]
+
+- Expected
++ Received
+
+  [
+    "server_info",
++   "sleep_prevention_changed",
+  ]
+
+ ❯ src/server/hub/execution-session.websocket.test.ts:193:55
+
+
+2026-09-24T08:15:14.7139556Z 
+2026-09-24T08:15:14.7141376Z ##[error]AssertionError: expected [ 'server_info', …(1) ] to deeply equal [ 'server_info' ]
+
+- Expected
++ Received
+
+  [
+    "server_info",
++   "sleep_prevention_changed",
+  ]
+
+ ❯ src/server/hub/execution-session.websocket.test.ts:211:50
+
+
+2026-09-24T08:15:14.7143778Z 
+2026-09-24T08:15:14.7146858Z ##[error]AssertionError: expected [ 'server_info', …(3) ] to deeply equal [ 'server_info', 'server_info' ]
+
+- Expected
++ Received
+
+  [
+    "server_info",
++   "sleep_prevention_changed",
+    "server_info",
++   "sleep_prevention_changed",
+  ]
+
+ ❯ src/server/hub/execution-session.websocket.test.ts:224:50
+
+
+2026-09-24T08:15:14.9181134Z 

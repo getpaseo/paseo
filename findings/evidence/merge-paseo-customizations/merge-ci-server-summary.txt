@@ -1,0 +1,54 @@
+src/server/script-health-monitor.test.ts > ScriptHealthMonitor > only probes service routes because plain scripts never register routes
+src/server/session.test.ts > session checkout commit handling > generates commit messages from checkout diffs read through the workspace git service
+src/server/session.test.ts > session checkout commit handling > renders the default commit style when no override applies (paseo.json missing)
+src/server/session.test.ts > session checkout commit handling > renders the default commit style when no override applies (paseo.json exists but invalid JSON)
+src/server/session.test.ts > session checkout commit handling > renders the default commit style when no override applies (paseo.json valid but missing metadataGeneration)
+src/server/session.test.ts > session checkout commit handling > renders the default commit style when no override applies (metadataGeneration is schema-invalid)
+src/server/session.test.ts > session checkout commit handling > renders the default commit style when no override applies (metadataGeneration exists but missing commitMessage)
+src/server/session.test.ts > session checkout commit handling > renders the default commit style when no override applies (commitMessage exists but instructions is undefined)
+src/server/session.test.ts > session checkout commit handling > renders the default commit style when no override applies (commitMessage exists but instructions is empty)
+src/server/session.test.ts > session checkout commit handling > renders the default commit style when no override applies (commitMessage exists but instructions is whitespace-only)
+src/server/session.test.ts > session checkout commit handling > commit instructions replace the default commit style
+src/server/session.test.ts > session checkout commit handling > keeps the commit fallback when structured generation fails
+src/server/session.test.ts > session checkout pull request creation > generates PR text from checkout diffs read through the workspace git service
+src/server/session.test.ts > session checkout pull request creation > renders the default PR style when no override applies (paseo.json missing)
+src/server/session.test.ts > session checkout pull request creation > renders the default PR style when no override applies (paseo.json exists but invalid JSON)
+src/server/session.test.ts > session checkout pull request creation > renders the default PR style when no override applies (paseo.json valid but missing metadataGeneration)
+src/server/session.test.ts > session checkout pull request creation > renders the default PR style when no override applies (metadataGeneration is schema-invalid)
+src/server/session.test.ts > session checkout pull request creation > renders the default PR style when no override applies (metadataGeneration exists but missing pullRequest)
+src/server/session.test.ts > session checkout pull request creation > renders the default PR style when no override applies (pullRequest exists but instructions is undefined)
+src/server/session.test.ts > session checkout pull request creation > renders the default PR style when no override applies (pullRequest exists but instructions is empty)
+src/server/session.test.ts > session checkout pull request creation > renders the default PR style when no override applies (pullRequest exists but instructions is whitespace-only)
+src/server/session.test.ts > session checkout pull request creation > PR instructions replace the default PR style
+src/server/session.test.ts > session checkout pull request creation > keeps PR generation as one structured call with title and body schema
+src/server/session.test.ts > session checkout pull request creation > keeps the PR fallback when structured generation fails
+src/server/websocket-server.browser-tools.test.ts > WebSocketServer browser tools wiring > registers capable clients and dispatches broker requests over the real WebSocket path
+src/server/websocket-server.browser-tools.test.ts > WebSocketServer browser tools wiring > unregisters capable clients on disconnect and clears pending browser commands
+src/server/websocket-server.browser-tools.test.ts > WebSocketServer browser tools wiring > keeps browser automation registered when a browser host client resumes
+src/server/websocket-server.browser-tools.test.ts > WebSocketServer browser tools wiring > clears pending browser commands when a browser host changes capabilities
+src/server/websocket-server.relay-reconnect.test.ts > relay external socket reconnect behavior > keeps the same session when relay reconnects within grace window
+src/server/websocket-server.relay-reconnect.test.ts > relay external socket reconnect behavior > rejects sockets attached after shutdown begins
+src/server/websocket-server.relay-reconnect.test.ts > relay external socket reconnect behavior > accepts plugin startup sessions while application sessions remain paused
+src/server/websocket-server.relay-reconnect.test.ts > relay external socket reconnect behavior > returns server_info when clientId reconnects with existing session
+src/server/websocket-server.relay-reconnect.test.ts > relay external socket reconnect behavior > returns server_info for distinct clientIds
+src/server/websocket-server.relay-reconnect.test.ts > relay external socket reconnect behavior > isolates resumable sessions by principal while sharing hello bootstrap
+src/server/websocket-server.relay-reconnect.test.ts > relay external socket reconnect behavior > responds to top-level ping while provider diagnostic is still running
+src/server/websocket-server.relay-reconnect.test.ts > relay external socket reconnect behavior > routes later session requests while provider diagnostic is still running
+src/server/websocket-server.relay-reconnect.test.ts > relay external socket reconnect behavior > sends rpc_error when an async session request fails
+src/server/websocket-server.relay-reconnect.test.ts > relay external socket reconnect behavior > reuses direct session when same clientId reconnects within grace window
+src/server/websocket-server.relay-reconnect.test.ts > relay external socket reconnect behavior > reuses one session when switching from direct to relay with the same clientId
+src/server/websocket-server.relay-reconnect.test.ts > relay external socket reconnect behavior > cleans up relay session when reconnect grace expires
+src/server/websocket-server.relay-reconnect.test.ts > relay external socket reconnect behavior > advertises current features in initial server_info
+src/server/websocket-server.relay-reconnect.test.ts > relay external socket reconnect behavior > includes voice capabilities in initial server_info when speech readiness exists
+src/server/websocket-server.relay-reconnect.test.ts > relay external socket reconnect behavior > broadcasts updated server_info when capabilities change
+src/server/websocket-server.relay-reconnect.test.ts > relay external socket reconnect behavior > includes temporary retry guidance while models are downloading
+src/server/websocket-server.relay-reconnect.test.ts > relay external socket reconnect behavior > routes inbound terminal frames to session.handleBinaryFrame
+src/server/websocket-server.relay-reconnect.test.ts > relay external socket reconnect behavior > sends status error when async binary frame handling fails
+src/server/websocket-server.relay-reconnect.test.ts > relay external socket reconnect behavior > sends outbound terminal frames from session over websocket
+src/server/agent/mcp-server.test.ts > agent snapshot MCP serialization > returns compact list items from list_agents
+src/server/agent/mcp-server.test.ts > agent snapshot MCP serialization > returns full-detail snapshots from get_agent_status
+src/server/agent/mcp-server.test.ts > agent snapshot MCP serialization > returns compact list items for stored archived agents
+src/server/agent/mcp-server.test.ts > agent snapshot MCP serialization > emits list_agents payloads that satisfy the agent list schema
+src/server/hub/execution-session.websocket.test.ts > legacy Hub wire behavior still enters the common Session bootstrap
+src/server/hub/execution-session.websocket.test.ts > Hub receives standard server info but not broadcasts outside its scope
+src/server/hub/execution-session.websocket.test.ts > Hub reconnects through the standard resumable session bootstrap

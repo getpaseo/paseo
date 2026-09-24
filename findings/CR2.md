@@ -13,7 +13,7 @@ a new exhaustive review of the incoming branch or a reopening of deferred person
 
 Three independent reviewers covered correctness/frontend, correctness/reliability/API contracts,
 and testing/maintainability/project standards. One new integration defect was found and corrected.
-Final readiness depends on the validation results recorded below.
+**Current verdict: not ready to merge.** Local integration checks passed, but broader CI has unresolved failures described below.
 
 ## Finding
 
@@ -66,7 +66,35 @@ branch, or final feature merge into paseo-customizations is part of this work.
 
 ## Remaining findings and limits
 
-No other new issue was found in the inspected integration seams. No unresolved review finding
-remains after the CR2-1 correction; readiness still requires the stated validation.
+No other new issue was found in the inspected integration seams. No unresolved merge-specific review finding
+remains after the CR2-1 correction. Broader CI nevertheless exposes inherited blockers below.
 Prior deferred findings retain their existing disposition. Native/device rendering, live-provider
 sandbox enforcement, and full incoming feature coverage are not established by this focused review.
+
+## CI follow-up — current readiness is blocked
+
+[CI run 35973248754](https://github.com/infi-pc/paseo/actions/runs/35973248754) tested merge commit
+`d7c07411e`. It found 54 Linux server failures across six files, grouped by root cause:
+
+| Failures                             | Cause                                                                                                                                                  | Assessment / remaining action                                                                                                                                       |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 23 session + 1 script health         | Test doubles omit background activity and terminal activity methods now used by production                                                             | Stale fixtures inherited from the incoming base. Add a real BackgroundActivityRecorder and the local terminal adapter method; retain assertions.                    |
+| 4 browser tools + 19 relay reconnect | AgentManager fixtures omit supportsToolCallSummaries, so hello fails before the tested behavior                                                        | Stale fixtures already in both parents. Add the capability method to the two local fixtures.                                                                        |
+| 3 Hub execution websocket            | Initial sleep-prevention snapshot sends directly to the socket and bypasses daemon.read authorization                                                  | Existing production authorization defect. Guard snapshot delivery with the existing permission; do not broaden the failing test expectations.                       |
+| 4 MCP agent serialization            | Agent projections introduce icon/responseMetadata keys with undefined; ensureValidJson turns them into null although their schemas only allow omission | Existing incoming-base contract mismatch. Preserve optional-field semantics at the serialization/projection boundary and verify both live and stored-agent outputs. |
+
+These failures were not caused by the conflict resolutions. The session/health and transport groups
+were independently triaged without editing or rerunning their suites. MCP projection, serialization,
+and tool code are identical to the incoming base; four CI failures demonstrate the contract mismatch.
+The remaining repairs were not silently folded into this merge-conflict pass, and their residual risks
+have not been accepted. They need correction or an explicit narrower release decision before a ready verdict.
+
+The SDK job also failed one client config expectation because it omitted the default sleep-prevention
+flag. Corrected and pushed as `fb4f42001`; the changed client file passes 17 cases. This correction
+has not yet passed a second full CI run.
+
+At the captured CI checkpoint, typecheck, lint, format, app tests, relay tests, all three CLI shards,
+and Windows desktop tests passed. Linux desktop, Windows server, and four browser shards were still
+running. Later results may add blockers; no claim is made that those pending jobs passed.
+The remote base remains `160430f94`; GitHub reports PR #2 conflict-free and mergeable. Target branch
+has not been changed. Raw failure excerpt, checkpoint, and triage reports are in the evidence directory.
