@@ -44,6 +44,39 @@ export class CodexAppServerRpcError extends Error {
   }
 }
 
+interface CodexAppServerExitDetails {
+  exitCode: number | null;
+  exitSignal: NodeJS.Signals | null;
+  stderr: string;
+}
+
+export class CodexAppServerExitError extends Error {
+  readonly reason: "sqlite_state_initialization" | "other";
+  readonly exitCode: number | null;
+  readonly exitSignal: NodeJS.Signals | null;
+  readonly stderr: string;
+
+  constructor(details: CodexAppServerExitDetails) {
+    const message =
+      details.exitCode === 0 && !details.exitSignal
+        ? "Codex app-server exited"
+        : `Codex app-server exited with code ${details.exitCode ?? "null"} and signal ${details.exitSignal ?? "null"}`;
+    super(`${message}\n${details.stderr}`.trim());
+    this.name = "CodexAppServerExitError";
+    this.exitCode = details.exitCode;
+    this.exitSignal = details.exitSignal;
+    this.stderr = details.stderr;
+    // Codex reports this pre-initialize failure only on stderr, not as a
+    // JSON-RPC error. Classify it here so callers branch on a typed reason.
+    this.reason =
+      details.exitCode === 1 &&
+      !details.exitSignal &&
+      details.stderr.includes("failed to initialize sqlite state runtime")
+        ? "sqlite_state_initialization"
+        : "other";
+  }
+}
+
 type RequestHandler = (params: unknown, requestId: number) => unknown;
 type NotificationHandler = (method: string, params: unknown) => void;
 type UnexpectedTerminationHandler = (error: Error) => void;
@@ -202,11 +235,11 @@ export class CodexAppServerClient {
     });
 
     child.on("exit", (code, signal) => {
-      const message =
-        code === 0 && !signal
-          ? "Codex app-server exited"
-          : `Codex app-server exited with code ${code ?? "null"} and signal ${signal ?? "null"}`;
-      const error = new Error(`${message}\n${this.stderrBuffer}`.trim());
+      const error = new CodexAppServerExitError({
+        exitCode: code,
+        exitSignal: signal,
+        stderr: this.stderrBuffer,
+      });
       this.handleUnexpectedTermination(error);
     });
   }

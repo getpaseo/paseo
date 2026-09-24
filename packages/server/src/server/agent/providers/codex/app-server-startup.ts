@@ -2,6 +2,7 @@ import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import type { Logger } from "pino";
 
 import { terminateWithTreeKill } from "../../../../utils/tree-kill.js";
+import { CodexAppServerExitError } from "./app-server-transport.js";
 
 const DEFAULT_QUEUE_TIMEOUT_MS = 60_000;
 const DEFAULT_ATTEMPT_TIMEOUT_MS = 30_000;
@@ -26,11 +27,6 @@ interface CoordinatorOptions {
   queueTimeoutMs?: number;
   attemptTimeoutMs?: number;
   maxAttempts?: number;
-}
-
-function isSqliteStartupFailure(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error);
-  return /failed to initialize sqlite state runtime|database is locked/i.test(message);
 }
 
 async function waitForSignal<T>(operation: Promise<T>, signal: AbortSignal): Promise<T> {
@@ -100,10 +96,13 @@ export class CodexAppServerStartupCoordinator {
         try {
           return await this.startAttempt(options);
         } catch (error) {
+          const isRetryableStartupFailure =
+            error instanceof CodexAppServerExitError &&
+            error.reason === "sqlite_state_initialization";
           if (
             options.signal?.aborted ||
             attempt === this.maxAttempts ||
-            !isSqliteStartupFailure(error)
+            !isRetryableStartupFailure
           ) {
             throw error;
           }

@@ -3,6 +3,15 @@ import { describe, expect, test, vi } from "vitest";
 import { createTestLogger } from "../../../../test-utils/test-logger.js";
 import { createCodexAppServerChildProcess } from "./test-utils/fake-app-server.js";
 import { CodexAppServerStartupCoordinator } from "./app-server-startup.js";
+import { CodexAppServerExitError } from "./app-server-transport.js";
+
+function sqliteStartupError(): CodexAppServerExitError {
+  return new CodexAppServerExitError({
+    exitCode: 1,
+    exitSignal: null,
+    stderr: "failed to initialize sqlite state runtime",
+  });
+}
 
 function deferred<T = void>() {
   let resolve!: (value: T) => void;
@@ -109,7 +118,7 @@ describe("Codex app-server startup coordinator", () => {
         return {
           request: async () => {
             events.push(`initialize ${number}`);
-            if (number === 1) throw new Error("failed to initialize sqlite state runtime");
+            if (number === 1) throw sqliteStartupError();
             return {};
           },
           notify: () => events.push(`initialized ${number}`),
@@ -146,7 +155,7 @@ describe("Codex app-server startup coordinator", () => {
         },
         createClient: () => ({
           request: async () => {
-            throw new Error("invalid Codex configuration");
+            throw new Error("database is locked while reading unrelated configuration");
           },
           notify: vi.fn(),
           dispose: async () => {
@@ -156,7 +165,7 @@ describe("Codex app-server startup coordinator", () => {
         initializeParams: {},
         logger: createTestLogger(),
       }),
-    ).rejects.toThrow("invalid Codex configuration");
+    ).rejects.toThrow("database is locked while reading unrelated configuration");
     expect(spawned).toBe(1);
     expect(disposed).toBe(1);
   });
@@ -175,7 +184,7 @@ describe("Codex app-server startup coordinator", () => {
         },
         createClient: () => ({
           request: async () => {
-            if (locked) throw new Error("database is locked");
+            if (locked) throw sqliteStartupError();
             return {};
           },
           notify: vi.fn(),
@@ -187,7 +196,7 @@ describe("Codex app-server startup coordinator", () => {
         logger: createTestLogger(),
       });
 
-    await expect(start()).rejects.toThrow("database is locked");
+    await expect(start()).rejects.toThrow("failed to initialize sqlite state runtime");
     expect(spawned).toBe(3);
     expect(disposed).toBe(3);
     locked = false;

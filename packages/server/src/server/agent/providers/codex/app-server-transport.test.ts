@@ -5,9 +5,35 @@ import {
   createCodexAppServerChildProcess,
   createFakeCodexAppServer,
 } from "./test-utils/fake-app-server.js";
-import { CodexAppServerClient } from "./app-server-transport.js";
+import { CodexAppServerClient, CodexAppServerExitError } from "./app-server-transport.js";
 
 describe("Codex app-server transport", () => {
+  test.each([
+    {
+      stderr: "Error: failed to initialize sqlite state runtime under /isolated/.codex",
+      reason: "sqlite_state_initialization",
+    },
+    { stderr: "database is locked while loading configuration", reason: "other" },
+  ] as const)("classifies a failed startup from child stderr as $reason", async (entry) => {
+    const child = createCodexAppServerChildProcess();
+    const client = new CodexAppServerClient(child, createTestLogger());
+    const request = client.request("initialize", {});
+    child.stderr.write(entry.stderr);
+    child.exitCode = 1;
+    child.emit("exit", 1, null);
+
+    await expect(request).rejects.toMatchObject({
+      name: "CodexAppServerExitError",
+      reason: entry.reason,
+      exitCode: 1,
+      exitSignal: null,
+      stderr: entry.stderr,
+    } satisfies Partial<CodexAppServerExitError>);
+    child.stdout.end();
+    child.stderr.end();
+    child.stdin.end();
+  });
+
   test("ignores non-JSON stdout lines without dropping pending requests", async () => {
     const child = createCodexAppServerChildProcess();
     const client = new CodexAppServerClient(child, createTestLogger());
