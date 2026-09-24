@@ -76,6 +76,7 @@ import { extractCodexTerminalSessionId, nonEmptyString } from "./tool-call-mappe
 import { buildCodexFeatures, codexModelSupportsFastMode } from "./codex-feature-definitions.js";
 import {
   CodexAppServerClient,
+  CodexAppServerRequestTimeoutError,
   CodexAppServerRpcError,
   parseCodexThreadForkResponse,
   parseCodexThreadRollbackResponse,
@@ -4874,25 +4875,72 @@ export class CodexAppServerAgentSession implements AgentSession {
     if (!turnId || (foregroundTurnId && this.activeForegroundTurnId !== foregroundTurnId)) {
       throw new Error("Cannot interrupt Codex before turn/started identifies the active turn");
     }
+    await this.requestTurnInterrupt({
+      client: this.client,
+      threadId: this.currentThreadId,
+      turnId,
+    });
+  }
+
+  private async requestTurnInterrupt(target: {
+    client: CodexAppServerClient;
+    threadId: string;
+    turnId: string;
+  }): Promise<void> {
     try {
-      await this.client.request(
+      await target.client.request(
         "turn/interrupt",
-        {
-          threadId: this.currentThreadId,
-          turnId,
-        },
+        { threadId: target.threadId, turnId: target.turnId },
         INTERRUPT_TIMEOUT_MS,
       );
     } catch (error) {
+      if (error instanceof CodexAppServerRequestTimeoutError) {
+        await this.stopUnresponsiveAppServer(target);
+        return;
+      }
       if (!isCodexAlreadyIdleInterrupt(error)) {
         throw error;
       }
-      this.activeForegroundTurnId = null;
-      this.activeClientMessageId = null;
-      this.currentTurnId = null;
-      this.pendingForegroundTurnIdentification?.resolve(null);
-      this.pendingForegroundTurnIdentification = null;
+      this.clearActiveTurnState();
     }
+  }
+
+  // An app-server that cannot answer turn/interrupt (for example while stalled in
+  // memory reclaim) would otherwise keep the run uncancelable forever. Killing the
+  // process is the only way to guarantee the turn stopped writing; the next turn
+  // reconnects and resumes the thread.
+  private async stopUnresponsiveAppServer(target: {
+    client: CodexAppServerClient;
+    threadId: string;
+    turnId: string;
+  }): Promise<void> {
+    this.logger.warn(
+      {
+        agentId: this.agentId,
+        provider: CODEX_PROVIDER,
+        sessionId: target.threadId,
+        turnId: target.turnId,
+        timeoutMs: INTERRUPT_TIMEOUT_MS,
+      },
+      "provider.codex.interrupt.unacknowledged_stopping_app_server",
+    );
+    await target.client.forceDispose();
+    if (this.client === target.client) {
+      this.client = null;
+      this.connectionState = "disconnected";
+    }
+    this.clearPendingPermissions();
+    this.dismissInterruptedAsyncQuestions();
+    this.emitEvent({ type: "turn_canceled", provider: CODEX_PROVIDER, reason: "interrupted" });
+    this.clearActiveTurnState();
+  }
+
+  private clearActiveTurnState(): void {
+    this.activeForegroundTurnId = null;
+    this.activeClientMessageId = null;
+    this.currentTurnId = null;
+    this.pendingForegroundTurnIdentification?.resolve(null);
+    this.pendingForegroundTurnIdentification = null;
   }
 
   async close(): Promise<void> {
