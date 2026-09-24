@@ -591,6 +591,25 @@ test("malformed configuration cannot turn a readiness timeout into launch cancel
   }
 }, 60_000);
 
+test("a background start that fails before the supervisor logs names the cause in a log that exists", async () => {
+  const f = await fixture();
+  const home = f.homes[0]!;
+  const configPath = path.join(home, "config.json");
+  try {
+    await mkdir(home, { recursive: true });
+    await writeFile(configPath, '{"version":1,');
+    const failed = await f.run(["daemon", "start", "--home", home, "--timeout", "30"]);
+    expect(failed.code).toBe(1);
+    expect(failed.stderr).toContain(`Logs: ${path.join(home, "daemon.log")}`);
+    expect(failed.stderr).toContain(`Invalid JSON in ${configPath}`);
+    expect(await readFile(path.join(home, "daemon.log"), "utf8")).toContain(
+      `Invalid JSON in ${configPath}`,
+    );
+  } finally {
+    await f.close();
+  }
+}, 60_000);
+
 test("onboarding preserves an existing MCP choice unless explicitly supplied", async () => {
   const f = await fixture();
   const home = f.homes[0]!;
