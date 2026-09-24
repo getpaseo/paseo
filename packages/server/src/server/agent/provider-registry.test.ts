@@ -48,6 +48,11 @@ const mockState = vi.hoisted(() => {
         env?: Record<string, string>;
         providerParams?: unknown;
       }>,
+      dsh: [] as Array<{
+        command: string[];
+        env?: Record<string, string>;
+        providerParams?: unknown;
+      }>,
       pi: [] as ConstructorEntry[],
       genericAcp: [] as Array<{
         command: string[];
@@ -67,6 +72,7 @@ const mockState = vi.hoisted(() => {
       this.constructorArgs.cursor = [];
       this.constructorArgs.trae = [];
       this.constructorArgs.kimi = [];
+      this.constructorArgs.dsh = [];
       this.constructorArgs.pi = [];
       this.constructorArgs.genericAcp = [];
       this.isCommandAvailable.mockReset();
@@ -528,6 +534,59 @@ vi.mock("./providers/kimi-acp-agent.js", () => ({
   },
 }));
 
+vi.mock("./providers/dsh-acp-agent.js", () => ({
+  DshACPAgentClient: class DshACPAgentClient {
+    readonly capabilities = {
+      supportsStreaming: true,
+      supportsSessionPersistence: true,
+      supportsDynamicModes: true,
+      supportsMcpServers: true,
+      supportsReasoningStream: true,
+      supportsToolInvocations: true,
+    };
+    readonly provider = "acp";
+    readonly runtimeSettings?: unknown;
+
+    constructor(options: {
+      command: string[];
+      env?: Record<string, string>;
+      providerParams?: unknown;
+    }) {
+      this.runtimeSettings = {
+        command: {
+          mode: "replace",
+          argv: options.command,
+        },
+        env: options.env,
+      };
+      mockState.constructorArgs.dsh.push({
+        command: options.command,
+        env: options.env,
+        providerParams: options.providerParams,
+      });
+    }
+
+    async createSession(): Promise<never> {
+      throw new Error("not implemented");
+    }
+
+    async resumeSession(): Promise<never> {
+      throw new Error("not implemented");
+    }
+
+    async fetchCatalog(): Promise<ProviderCatalog> {
+      return {
+        models: mockState.runtimeModels.get(this.provider) ?? [],
+        modes: [],
+      };
+    }
+
+    async isAvailable(): Promise<boolean> {
+      return true;
+    }
+  },
+}));
+
 import {
   AGENT_PROVIDER_DEFINITIONS,
   buildProviderRegistry,
@@ -941,6 +1000,33 @@ test("kimi provider extending acp uses KimiACPAgentClient", () => {
     },
     {
       command: ["kimi", "acp"],
+      env: undefined,
+      providerParams: undefined,
+    },
+  ]);
+  expect(mockState.constructorArgs.genericAcp).toEqual([]);
+});
+
+test("dsh provider extending acp uses DshACPAgentClient", () => {
+  const registry = buildProviderRegistry(logger, {
+    providerOverrides: {
+      dsh: {
+        extends: "acp",
+        label: "DeepSeek Harness",
+        command: ["dsh", "--profile", "acp"],
+      },
+    },
+  });
+
+  expect(registry.dsh.createClient(logger).provider).toBe("dsh");
+  expect(mockState.constructorArgs.dsh).toEqual([
+    {
+      command: ["dsh", "--profile", "acp"],
+      env: undefined,
+      providerParams: undefined,
+    },
+    {
+      command: ["dsh", "--profile", "acp"],
       env: undefined,
       providerParams: undefined,
     },
