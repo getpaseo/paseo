@@ -20,6 +20,7 @@ interface TestPaseoDaemonOptions {
   downloadTokenTtlMs?: number;
   corsAllowedOrigins?: string[];
   listen?: string;
+  listenPort?: number;
   logger?: Parameters<typeof createPaseoDaemon>[1];
   mcpEnabled?: boolean;
   mcpDebug?: boolean;
@@ -168,8 +169,9 @@ async function prepareTestDaemonConfig(
   await mkdir(paseoHome, { recursive: true });
   const staticDir = options.staticDir ?? (await mkdtemp(path.join(os.tmpdir(), "paseo-static-")));
   const listenHost = options.listen ?? "127.0.0.1";
+  const listenPort = options.listenPort ?? 0;
   const config: PaseoDaemonConfig = {
-    listen: `${listenHost}:0`,
+    listen: `${listenHost}:${listenPort}`,
     paseoHome,
     daemonVersion: options.daemonVersion,
     desktopManaged: options.desktopManaged,
