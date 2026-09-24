@@ -5,6 +5,7 @@ import net from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { hashDaemonPassword } from "@getpaseo/server/auth";
 import { startDaemonInstance, readDaemonInstance } from "@getpaseo/server/daemon-control";
 import { expect, test } from "vitest";
 import { connectToDaemon } from "../../utils/client.js";
@@ -195,6 +196,26 @@ test("removed flags and ambiguous targets fail before side effects; observation 
     await f.close();
   }
 }, 30_000);
+
+test("status reports the server id of a password-protected daemon to a caller without the password", async () => {
+  const f = await fixture();
+  const home = f.homes[0]!;
+  try {
+    await f.configure(home, `127.0.0.1:${await port()}`);
+    const configPath = path.join(home, "config.json");
+    const config = JSON.parse(await readFile(configPath, "utf8"));
+    config.daemon.auth = { password: await hashDaemonPassword("secret") };
+    await writeFile(configPath, JSON.stringify(config));
+    await f.ok(["start", "--home", home, "--timeout", "30"]);
+    const authenticated = await f.liveStatus(home, { PASEO_PASSWORD: "secret" });
+    expect(await f.ok(["daemon", "status", "--home", home])).toMatchObject({
+      connectedDaemon: "auth_required",
+      serverId: authenticated.serverId,
+    });
+  } finally {
+    await f.close();
+  }
+}, 60_000);
 
 test("an occupied initial or replacement address fails without false readiness or killing its owner", async () => {
   const f = await fixture();
