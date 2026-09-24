@@ -39,6 +39,8 @@ export interface PullRequestCheckoutTarget {
   headRepositorySshUrl: string | null;
   headRepositoryUrl: string | null;
   isCrossRepository: boolean;
+  /** false when origin has no head branch to track */
+  hasOriginHeadBranch?: boolean;
 }
 
 export interface PullRequestCheckoutRef {

@@ -182,6 +182,28 @@ describe("resolveWorktreeCreationIntent", () => {
     expect(deps.headRefLookups).toEqual([]);
   });
 
+  test("does not track origin for a same-repo head with no origin branch", async () => {
+    const deps = createResolverHarness();
+    deps.forgeService.getPullRequestCheckoutTarget = async () => ({
+      number: 42,
+      baseRefName: "main",
+      headRefName: "ford/towel",
+      headOwnerLogin: null,
+      headRepositorySshUrl: null,
+      headRepositoryUrl: null,
+      isCrossRepository: false,
+      hasOriginHeadBranch: false,
+    });
+
+    const intent = await resolveWorktreeCreationIntent(
+      { action: "checkout", githubPrNumber: 42 },
+      repoRoot,
+      deps,
+    );
+
+    expect(intent).not.toHaveProperty("trackOriginHead");
+  });
+
   test("configures the contributor remote for fork PR targets", async () => {
     const deps = createResolverHarness();
     deps.forgeService.getPullRequestCheckoutTarget = async () => ({
