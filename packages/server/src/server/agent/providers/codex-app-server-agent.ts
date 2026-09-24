@@ -3369,6 +3369,12 @@ export class CodexAppServerAgentSession implements AgentSession {
     cancelRequested: boolean;
   } | null = null;
   private client: CodexAppServerClient | null = null;
+  private timedOutInterruptTarget: {
+    client: CodexAppServerClient;
+    threadId: string;
+    turnId: string;
+    foregroundTurnId: string | null;
+  } | null = null;
   private readonly subscribers = new Set<(event: AgentStreamEvent) => void>();
   private nextTurnOrdinal = 0;
   private activeForegroundTurnId: string | null = null;
@@ -4271,6 +4277,7 @@ export class CodexAppServerAgentSession implements AgentSession {
 
       const turnStart = await this.buildTurnStartParams(effectivePrompt, options);
       const turnId = this.createTurnId();
+      this.clearTimedOutInterruptTarget();
       this.activeForegroundTurnId = turnId;
       this.activeClientMessageId = options?.clientMessageId ?? null;
       this.currentTurnId = null;
@@ -4879,6 +4886,7 @@ export class CodexAppServerAgentSession implements AgentSession {
       client: this.client,
       threadId: this.currentThreadId,
       turnId,
+      foregroundTurnId,
     });
   }
 
@@ -4886,6 +4894,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     client: CodexAppServerClient;
     threadId: string;
     turnId: string;
+    foregroundTurnId: string | null;
   }): Promise<void> {
     try {
       await target.client.request(
@@ -4893,27 +4902,91 @@ export class CodexAppServerAgentSession implements AgentSession {
         { threadId: target.threadId, turnId: target.turnId },
         INTERRUPT_TIMEOUT_MS,
       );
+      this.clearTimedOutInterruptTarget(target);
     } catch (error) {
       if (error instanceof CodexAppServerRequestTimeoutError) {
-        await this.stopUnresponsiveAppServer(target);
-        return;
-      }
-      if (!isCodexAlreadyIdleInterrupt(error)) {
+        if (!this.isInterruptTargetActive(target)) {
+          this.clearTimedOutInterruptTarget(target);
+          return;
+        }
+        if (this.matchesTimedOutInterruptTarget(target)) {
+          this.clearTimedOutInterruptTarget(target);
+          await this.stopUnresponsiveAppServer(target);
+          return;
+        }
+        this.timedOutInterruptTarget = target;
+        this.logger.warn(
+          {
+            agentId: this.agentId,
+            provider: CODEX_PROVIDER,
+            sessionId: target.threadId,
+            turnId: target.turnId,
+            timeoutMs: INTERRUPT_TIMEOUT_MS,
+          },
+          "provider.codex.interrupt.unacknowledged_retry_required",
+        );
         throw error;
       }
+      if (!isCodexAlreadyIdleInterrupt(error)) {
+        this.clearTimedOutInterruptTarget(target);
+        throw error;
+      }
+      this.clearTimedOutInterruptTarget(target);
       this.clearActiveTurnState();
     }
   }
 
-  // An app-server that cannot answer turn/interrupt (for example while stalled in
-  // memory reclaim) would otherwise keep the run uncancelable forever. Killing the
-  // process is the only way to guarantee the turn stopped writing; the next turn
-  // reconnects and resumes the thread.
+  private isInterruptTargetActive(target: {
+    client: CodexAppServerClient;
+    threadId: string;
+    turnId: string;
+    foregroundTurnId: string | null;
+  }): boolean {
+    return (
+      this.client === target.client &&
+      this.currentThreadId === target.threadId &&
+      this.currentTurnId === target.turnId &&
+      this.activeForegroundTurnId === target.foregroundTurnId
+    );
+  }
+
+  private matchesTimedOutInterruptTarget(target: {
+    client: CodexAppServerClient;
+    threadId: string;
+    turnId: string;
+    foregroundTurnId: string | null;
+  }): boolean {
+    const timedOut = this.timedOutInterruptTarget;
+    return (
+      timedOut?.client === target.client &&
+      timedOut.threadId === target.threadId &&
+      timedOut.turnId === target.turnId &&
+      timedOut.foregroundTurnId === target.foregroundTurnId
+    );
+  }
+
+  private clearTimedOutInterruptTarget(target?: {
+    client: CodexAppServerClient;
+    threadId: string;
+    turnId: string;
+    foregroundTurnId: string | null;
+  }): void {
+    if (!target || this.matchesTimedOutInterruptTarget(target)) {
+      this.timedOutInterruptTarget = null;
+    }
+  }
+
+  // A timeout alone can be transient. Escalate only after a second explicit cancel
+  // still targets the exact same active turn; never stop a newer turn for a stale RPC.
   private async stopUnresponsiveAppServer(target: {
     client: CodexAppServerClient;
     threadId: string;
     turnId: string;
+    foregroundTurnId: string | null;
   }): Promise<void> {
+    if (!this.isInterruptTargetActive(target)) {
+      return;
+    }
     this.logger.warn(
       {
         agentId: this.agentId,
@@ -4922,12 +4995,16 @@ export class CodexAppServerAgentSession implements AgentSession {
         turnId: target.turnId,
         timeoutMs: INTERRUPT_TIMEOUT_MS,
       },
-      "provider.codex.interrupt.unacknowledged_stopping_app_server",
+      "provider.codex.interrupt.repeated_unacknowledged_stopping_app_server",
     );
     await target.client.forceDispose();
+    const targetTurnStillActive = this.isInterruptTargetActive(target);
     if (this.client === target.client) {
       this.client = null;
       this.connectionState = "disconnected";
+    }
+    if (!targetTurnStillActive) {
+      return;
     }
     this.clearPendingPermissions();
     this.dismissInterruptedAsyncQuestions();
@@ -6026,6 +6103,7 @@ export class CodexAppServerAgentSession implements AgentSession {
       this.emitSubAgentActivityUpdate(subAgentCallId, "running", { reopen: true });
       return;
     }
+    this.clearTimedOutInterruptTarget();
     this.currentTurnId = parsed.turnId;
     const pendingIdentification = this.pendingForegroundTurnIdentification;
     if (
@@ -6073,6 +6151,7 @@ export class CodexAppServerAgentSession implements AgentSession {
         usage: this.latestUsage,
       });
     }
+    this.clearTimedOutInterruptTarget();
     this.activeForegroundTurnId = null;
     this.activeClientMessageId = null;
     this.currentTurnId = null;

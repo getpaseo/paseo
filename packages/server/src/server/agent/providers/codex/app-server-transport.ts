@@ -292,7 +292,7 @@ export class CodexAppServerClient {
       onForceSignal: () => {
         this.logger.warn(
           { timeoutMs: APP_SERVER_GRACEFUL_SHUTDOWN_TIMEOUT_MS, firstSignal },
-          "Codex app-server did not exit after SIGTERM; sending SIGKILL",
+          `Codex app-server did not exit after ${firstSignal}; sending SIGKILL`,
         );
       },
     });
