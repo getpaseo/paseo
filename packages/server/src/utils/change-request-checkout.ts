@@ -1,3 +1,13 @@
+import type { PullRequestCheckoutRef } from "../services/forge-service.js";
+
+// upstream for clones where origin is your fork
+export function buildPullHeadCheckoutRefs(number: number): PullRequestCheckoutRef[] {
+  return [
+    { remoteName: "origin", remoteRef: `refs/pull/${number}/head` },
+    { remoteName: "upstream", remoteRef: `refs/pull/${number}/head` },
+  ];
+}
+
 // forgejo username pattern, covers github logins too
 export function normalizeForgeOwnerForBranch(owner: string | null): string | null {
   const normalized = owner?.trim().toLowerCase() ?? "";

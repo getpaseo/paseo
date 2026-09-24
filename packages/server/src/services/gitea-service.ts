@@ -5,7 +5,10 @@ import pLimit from "p-limit";
 import { parseGitHubRemoteIdentity, parseGitRemoteLocation } from "@getpaseo/protocol/git-remote";
 import { findExecutable } from "../executable-resolution/executable-resolution.js";
 import { runGitCommand } from "../utils/run-git-command.js";
-import { buildForkLocalBranchName } from "../utils/change-request-checkout.js";
+import {
+  buildForkLocalBranchName,
+  buildPullHeadCheckoutRefs,
+} from "../utils/change-request-checkout.js";
 import { execCommand } from "../utils/spawn.js";
 import {
   createCachedCliPathResolver,
@@ -76,6 +79,8 @@ const CURRENT_PR_HEAD_SHA_CACHE_TTL_MS = 30_000;
 // the sweep to the 250 most recent Actions tasks.
 const GITEA_ACTION_PAGE_LIMIT = 50;
 const GITEA_ACTION_MAX_PAGES = 5;
+// PullRequestFlowAGit in forgejo models/issues/pull.go
+const GITEA_PULL_REQUEST_FLOW_AGIT = 1;
 
 /**
  * Fields requested from `tea pr list -o json`. tea's default field set omits the
@@ -226,8 +231,12 @@ const GiteaPullRequestRepoSchema = z
 
 const GiteaPullRequestApiSchema = z
   .object({
+    flow: z.number().optional(),
     head: z
-      .object({ repo: GiteaPullRequestRepoSchema.nullable().optional() })
+      .object({
+        ref: z.string().optional(),
+        repo: GiteaPullRequestRepoSchema.nullable().optional(),
+      })
       .passthrough()
       .optional(),
     base: z
@@ -1441,12 +1450,14 @@ export function createGiteaService(options: CreateGiteaServiceOptions = {}): For
     summary: PullRequestSummary,
   ): Promise<{
     isCrossRepository: boolean;
+    hasHeadBranch: boolean;
     headOwnerLogin: string | null;
     headRepositorySshUrl: string | null;
     headRepositoryUrl: string | null;
   }> {
     const sameRepo = {
       isCrossRepository: false,
+      hasHeadBranch: true,
       headOwnerLogin: null,
       headRepositorySshUrl: null,
       headRepositoryUrl: null,
@@ -1465,18 +1476,21 @@ export function createGiteaService(options: CreateGiteaServiceOptions = {}): For
     );
     const headRepo = pr.head?.repo ?? null;
     const baseRepo = pr.base?.repo ?? null;
+    // head.ref only becomes the branch name when the branch still exists,
+    // agit PRs and deleted branches keep the pull ref
+    const hasHeadBranch =
+      pr.flow !== GITEA_PULL_REQUEST_FLOW_AGIT &&
+      pr.head?.ref !== `refs/pull/${summary.number}/head`;
     if (baseRepo?.id == null || headRepo?.id === baseRepo.id) {
-      return sameRepo;
+      return { ...sameRepo, hasHeadBranch };
     }
-    if (headRepo?.id == null) {
-      // fork was deleted
-      return { ...sameRepo, isCrossRepository: true };
-    }
+    // headRepo is null when the fork was deleted
     return {
       isCrossRepository: true,
-      headOwnerLogin: headRepo.owner?.login ?? null,
-      headRepositorySshUrl: headRepo.ssh_url ?? null,
-      headRepositoryUrl: headRepo.html_url ?? null,
+      hasHeadBranch,
+      headOwnerLogin: headRepo?.owner?.login ?? null,
+      headRepositorySshUrl: headRepo?.ssh_url ?? null,
+      headRepositoryUrl: headRepo?.html_url ?? null,
     };
   }
 
@@ -2003,7 +2017,7 @@ export function createGiteaService(options: CreateGiteaServiceOptions = {}): For
     },
 
     defaultCheckoutRefs({ changeRequestNumber }) {
-      return [{ remoteName: "origin", remoteRef: `refs/pull/${changeRequestNumber}/head` }];
+      return buildPullHeadCheckoutRefs(changeRequestNumber);
     },
 
     buildPrLocalBranchName({ headRef, checkoutTarget }) {
@@ -2015,13 +2029,16 @@ export function createGiteaService(options: CreateGiteaServiceOptions = {}): For
     ): Promise<PullRequestCheckoutTarget> {
       const summary = await this.getPullRequest(input);
       const fork = await resolveForkCheckoutFacts(input.cwd, summary);
-      const checkoutRefs = [
-        { remoteName: "origin", remoteRef: `refs/pull/${summary.number}/head` },
-      ];
-      // on a fork PR thats the base repos branch
-      if (summary.headRefName && !fork.isCrossRepository) {
+      const [originPullRef, upstreamPullRef] = buildPullHeadCheckoutRefs(summary.number);
+      const checkoutRefs = [originPullRef];
+      // for a fork PR a branch with that name on origin belongs to the base repo
+      const headBranchOnOrigin =
+        !fork.isCrossRepository && fork.hasHeadBranch && Boolean(summary.headRefName);
+      if (headBranchOnOrigin) {
         checkoutRefs.push({ remoteName: "origin", remoteRef: `refs/heads/${summary.headRefName}` });
       }
+      // upstream can hold a different PR with the same number, so it goes last
+      checkoutRefs.push(upstreamPullRef);
       return {
         number: summary.number,
         baseRefName: summary.baseRefName,
@@ -2031,6 +2048,7 @@ export function createGiteaService(options: CreateGiteaServiceOptions = {}): For
         headRepositorySshUrl: fork.headRepositorySshUrl,
         headRepositoryUrl: fork.headRepositoryUrl,
         isCrossRepository: fork.isCrossRepository,
+        hasOriginHeadBranch: headBranchOnOrigin,
       };
     },
 

@@ -2297,11 +2297,13 @@ describe("createGiteaService", () => {
       checkoutRefs: [
         { remoteName: "origin", remoteRef: "refs/pull/5/head" },
         { remoteName: "origin", remoteRef: "refs/heads/feat/sample-change" },
+        { remoteName: "upstream", remoteRef: "refs/pull/5/head" },
       ],
       headOwnerLogin: null,
       headRepositorySshUrl: null,
       headRepositoryUrl: null,
       isCrossRepository: false,
+      hasOriginHeadBranch: true,
     });
   });
 
@@ -2330,14 +2332,60 @@ describe("createGiteaService", () => {
       number: 5,
       baseRefName: "main",
       headRefName: "feat/sample-change",
-      checkoutRefs: [{ remoteName: "origin", remoteRef: "refs/pull/5/head" }],
+      checkoutRefs: [
+        { remoteName: "origin", remoteRef: "refs/pull/5/head" },
+        { remoteName: "upstream", remoteRef: "refs/pull/5/head" },
+      ],
       headOwnerLogin: "contributor",
       headRepositorySshUrl: "git@gitea.com:contributor/sample-repo.git",
       headRepositoryUrl: "https://gitea.com/contributor/sample-repo",
       isCrossRepository: true,
+      hasOriginHeadBranch: false,
     });
 
     expect(calls).toContainEqual(["api", "repos/example-user/sample-repo/pulls/5"]);
+  });
+
+  it("skips the origin branch fallback and tracking for an AGit pull request", async () => {
+    const { service } = makeService((args) =>
+      args[0] === "api"
+        ? ok(
+            JSON.stringify({
+              flow: 1,
+              head: { ref: "refs/pull/5/head", repo: { id: 1 } },
+              base: { repo: { id: 1 } },
+            }),
+          )
+        : ok(JSON.stringify(STATUS_PR_VIEW)),
+    );
+
+    const target = await service.getPullRequestCheckoutTarget({ cwd: "/repo", number: 5 });
+
+    expect(target).toMatchObject({
+      checkoutRefs: [
+        { remoteName: "origin", remoteRef: "refs/pull/5/head" },
+        { remoteName: "upstream", remoteRef: "refs/pull/5/head" },
+      ],
+      isCrossRepository: false,
+      hasOriginHeadBranch: false,
+    });
+  });
+
+  it("skips the origin branch fallback when the head branch was deleted", async () => {
+    const { service } = makeService((args) =>
+      args[0] === "api"
+        ? ok(
+            JSON.stringify({
+              head: { ref: "refs/pull/5/head", repo: { id: 1 } },
+              base: { repo: { id: 1 } },
+            }),
+          )
+        : ok(JSON.stringify(STATUS_PR_VIEW)),
+    );
+
+    const target = await service.getPullRequestCheckoutTarget({ cwd: "/repo", number: 5 });
+
+    expect(target.hasOriginHeadBranch).toBe(false);
   });
 
   it("keeps a pull request from a deleted fork cross-repository", async () => {
@@ -2350,10 +2398,30 @@ describe("createGiteaService", () => {
     const target = await service.getPullRequestCheckoutTarget({ cwd: "/repo", number: 5 });
 
     expect(target).toMatchObject({
-      checkoutRefs: [{ remoteName: "origin", remoteRef: "refs/pull/5/head" }],
+      checkoutRefs: [
+        { remoteName: "origin", remoteRef: "refs/pull/5/head" },
+        { remoteName: "upstream", remoteRef: "refs/pull/5/head" },
+      ],
       headOwnerLogin: null,
       isCrossRepository: true,
+      hasOriginHeadBranch: false,
     });
+  });
+
+  it("keeps the origin branch fallback when the server sends no head ref", async () => {
+    const { service } = makeService((args) =>
+      args[0] === "api"
+        ? ok(JSON.stringify({ head: { repo: { id: 1 } }, base: { repo: { id: 1 } } }))
+        : ok(JSON.stringify(STATUS_PR_VIEW)),
+    );
+
+    const target = await service.getPullRequestCheckoutTarget({ cwd: "/repo", number: 5 });
+
+    expect(target.checkoutRefs).toContainEqual({
+      remoteName: "origin",
+      remoteRef: "refs/heads/feat/sample-change",
+    });
+    expect(target.hasOriginHeadBranch).toBe(true);
   });
 
   it("prefixes the local branch name with the fork owner for a cross-repository checkout", () => {
@@ -2380,6 +2448,7 @@ describe("createGiteaService", () => {
 
     expect(service.defaultCheckoutRefs?.({ changeRequestNumber: 5, headRef: "patch-1" })).toEqual([
       { remoteName: "origin", remoteRef: "refs/pull/5/head" },
+      { remoteName: "upstream", remoteRef: "refs/pull/5/head" },
     ]);
   });
 

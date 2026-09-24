@@ -6,7 +6,10 @@ import {
 } from "@getpaseo/protocol/git-remote";
 import { findExecutable } from "../executable-resolution/executable-resolution.js";
 import { runGitCommand } from "../utils/run-git-command.js";
-import { buildForkLocalBranchName } from "../utils/change-request-checkout.js";
+import {
+  buildForkLocalBranchName,
+  buildPullHeadCheckoutRefs,
+} from "../utils/change-request-checkout.js";
 import { execCommand } from "../utils/spawn.js";
 import { resolveSshHostname } from "../utils/ssh-hostname.js";
 import {
@@ -2105,10 +2108,7 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
     },
 
     defaultCheckoutRefs({ changeRequestNumber }) {
-      return [
-        { remoteName: "origin", remoteRef: `refs/pull/${changeRequestNumber}/head` },
-        { remoteName: "upstream", remoteRef: `refs/pull/${changeRequestNumber}/head` },
-      ];
+      return buildPullHeadCheckoutRefs(changeRequestNumber);
     },
 
     buildPrLocalBranchName({ headRef, checkoutTarget }) {
