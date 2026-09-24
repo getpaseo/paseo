@@ -25,11 +25,11 @@ export async function startRestartableHostDaemon(version: string): Promise<Resta
   const paseoHomeRoot = await mkdtemp(path.join(tmpdir(), "paseo-e2e-restartable-host-"));
   const port = await getAvailableHostDaemonPort();
   let current: VersionedHostDaemon | null = null;
-  const dispose = async (): Promise<void> => {
+  async function dispose(): Promise<void> {
     await current?.stop();
     current = null;
     await rm(paseoHomeRoot, { recursive: true, force: true });
-  };
+  }
   try {
     current = await startVersionedHostDaemon({ version, port, paseoHomeRoot });
   } catch (error) {
@@ -111,11 +111,11 @@ async function startVersionedHostDaemon(
   );
 
   let stopped = false;
-  const stop = async (): Promise<void> => {
+  async function stop(): Promise<void> {
     if (stopped) return;
     stopped = true;
     await killProcessTree(child);
-  };
+  }
 
   try {
     const readyMessage = await ready.promise;

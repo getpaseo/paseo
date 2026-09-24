@@ -163,19 +163,20 @@ async function removeDirs(dirs: string[]): Promise<void> {
   );
 }
 
+async function createTempDir(prefix: string, createdDirs: string[]): Promise<string> {
+  const dir = await mkdtemp(path.join(os.tmpdir(), prefix));
+  createdDirs.push(dir);
+  return dir;
+}
+
 async function prepareTestDaemonConfig(
   options: TestPaseoDaemonOptions,
 ): Promise<PreparedTestDaemonConfig> {
   const createdDirs: string[] = [];
-  const createTempDir = async (prefix: string): Promise<string> => {
-    const dir = await mkdtemp(path.join(os.tmpdir(), prefix));
-    createdDirs.push(dir);
-    return dir;
-  };
-  const paseoHomeRoot = options.paseoHomeRoot ?? (await createTempDir("paseo-home-"));
+  const paseoHomeRoot = options.paseoHomeRoot ?? (await createTempDir("paseo-home-", createdDirs));
   const paseoHome = path.join(paseoHomeRoot, ".paseo");
   await mkdir(paseoHome, { recursive: true });
-  const staticDir = options.staticDir ?? (await createTempDir("paseo-static-"));
+  const staticDir = options.staticDir ?? (await createTempDir("paseo-static-", createdDirs));
   const listenHost = options.listen ?? "127.0.0.1";
   const listenPort = options.listenPort ?? 0;
   const config: PaseoDaemonConfig = {
