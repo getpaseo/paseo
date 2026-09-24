@@ -2385,7 +2385,14 @@ describe("createGiteaService", () => {
 
     const target = await service.getPullRequestCheckoutTarget({ cwd: "/repo", number: 5 });
 
-    expect(target.hasOriginHeadBranch).toBe(false);
+    expect(target).toMatchObject({
+      checkoutRefs: [
+        { remoteName: "origin", remoteRef: "refs/pull/5/head" },
+        { remoteName: "upstream", remoteRef: "refs/pull/5/head" },
+      ],
+      isCrossRepository: false,
+      hasOriginHeadBranch: false,
+    });
   });
 
   it("keeps a pull request from a deleted fork cross-repository", async () => {
