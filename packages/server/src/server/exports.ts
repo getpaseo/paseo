@@ -5,6 +5,11 @@ export { resolvePaseoHome } from "./paseo-home.js";
 export { getOrCreateServerId } from "./server-id.js";
 export { createRootLogger, type LogLevel, type LogFormat } from "./logger.js";
 export {
+  DEFAULT_DAEMON_LOG_FILENAME,
+  resolveDaemonLogPath,
+  type DaemonLogPathConfig,
+} from "./daemon-log-path.js";
+export {
   loadPersistedConfig,
   savePersistedConfig,
   type PersistedConfig,
