@@ -18,12 +18,20 @@ interface ScheduleSeedClient {
       };
     };
     runOnCreate: boolean;
-  }): Promise<{ schedule: { id: string } | null; error: string | null }>;
+  }): Promise<{ schedule: { id: string; createdAt: string } | null; error: string | null }>;
   schedulePause(input: { id: string }): Promise<{ error: string | null }>;
   scheduleDelete(input: { id: string }): Promise<{ error: string | null }>;
 }
 
-async function seedPausedSchedule(workspace: SeededWorkspace, name: string): Promise<string> {
+interface SeededSchedule {
+  id: string;
+  createdAt: number;
+}
+
+async function seedPausedSchedule(
+  workspace: SeededWorkspace,
+  name: string,
+): Promise<SeededSchedule> {
   const client = workspace.client as unknown as ScheduleSeedClient;
   const result = await client.scheduleCreate({
     prompt: "Say hello from the scheduled agent.",
@@ -44,20 +52,20 @@ async function seedPausedSchedule(workspace: SeededWorkspace, name: string): Pro
   if (!result.schedule) {
     throw new Error(result.error ?? "Failed to seed schedule");
   }
-  const scheduleId = result.schedule.id;
-  const paused = await client.schedulePause({ id: scheduleId });
+  const { id, createdAt } = result.schedule;
+  const paused = await client.schedulePause({ id });
   if (paused.error) {
     throw new Error(paused.error);
   }
-  return scheduleId;
+  return { id, createdAt: Date.parse(createdAt) };
 }
 
-function ignoreScheduleDeleteError(): void {}
-
 async function deleteSeededSchedule(workspace: SeededWorkspace, id: string): Promise<void> {
-  await (workspace.client as unknown as ScheduleSeedClient)
-    .scheduleDelete({ id })
-    .catch(ignoreScheduleDeleteError);
+  const client = workspace.client as unknown as ScheduleSeedClient;
+  const result = await client.scheduleDelete({ id });
+  if (result.error) {
+    throw new Error(result.error);
+  }
 }
 
 test.describe("Schedule relative timestamps", () => {
@@ -73,12 +81,13 @@ test.describe("Schedule relative timestamps", () => {
   test("an idle schedule row keeps its created age current", async ({ page }) => {
     const workspace = await seedWorkspace({ repoPrefix: "schedule-relative-time-", git: false });
     cleanupTasks.push(() => workspace.cleanup());
-    const scheduleId = await seedPausedSchedule(workspace, `Relative time ${Date.now()}`);
-    cleanupTasks.push(() => deleteSeededSchedule(workspace, scheduleId));
+    const schedule = await seedPausedSchedule(workspace, `Relative time ${Date.now()}`);
+    cleanupTasks.push(() => deleteSeededSchedule(workspace, schedule.id));
 
-    await page.clock.install({ time: Date.now() });
+    // Anchored to the schedule's own creation time so setup and page load cannot age it.
+    await page.clock.install({ time: schedule.createdAt });
     await page.goto(buildSchedulesRoute());
-    const row = page.getByTestId(`schedule-row-${scheduleId}`);
+    const row = page.getByTestId(`schedule-row-${schedule.id}`);
     await expect(row).toContainText("Created just now", { timeout: 30_000 });
 
     await page.clock.fastForward("03:00");
