@@ -78,6 +78,15 @@ OpenCode uses a server plugin instead of command hooks. Both generations discove
 
 The plugin translates both event contracts into the existing Paseo hook events. OpenCode 2 disposes its event subscription when the plugin unloads.
 
+omp loads a default-exported hook factory instead of command hooks. The factory reports only from the session with a UI: subagent sessions run in the same process and see the same hooks, and their `agent_end` must not end the terminal's turn.
+
+| omp event               | Paseo hook event | Activity    |
+| ----------------------- | ---------------- | ----------- |
+| `agent_start`           | `agent_start`    | running     |
+| `agent_end`             | `agent_end`      | idle        |
+| `tool_call` for `ask`   | `ask.started`    | needs-input |
+| `tool_result` for `ask` | `ask.finished`   | running     |
+
 The daemon maps hook states onto terminal activity like an agent lifecycle plus unread attention: `running` → `state: working`, `idle` → `state: idle`, and `needs-input` → `state: idle` with `attentionReason: needs_input`. A `working` → `idle` transition records `state: idle` with `attentionReason: finished` until the user focuses that terminal; plain idle terminals still contribute no workspace status.
 
 ## Focus clearing
@@ -101,8 +110,9 @@ When enabled, Paseo installs provider hooks globally:
 - Claude hooks are written to `~/.claude/settings.json` (or `CLAUDE_CONFIG_DIR/settings.json` when that override is set).
 - Codex hooks are written to `~/.codex/hooks.json` (or `CODEX_HOME/hooks.json` when that override is set). Codex supports a native `commandWindows`, so each Paseo hook includes both POSIX and Windows commands. Non-managed Codex hooks are trust-gated by Codex; users may see Codex's hook review prompt before the hook runs.
 - OpenCode gets a self-contained plugin at `$XDG_CONFIG_HOME/opencode/plugins/paseo-terminal-activity.js` (or `~/.config/opencode/plugins/paseo-terminal-activity.js` when XDG is unset; `OPENCODE_CONFIG_DIR` still wins when set).
+- omp gets a hook factory at `~/.omp/agent/hooks/post/paseo-terminal-activity.js` (or `PI_CODING_AGENT_DIR/hooks/post/paseo-terminal-activity.js` when that override is set). Named omp profiles use their own agent dir and do not load it.
 
-Installation is marker-based/idempotent for config hooks and exact-file/idempotent for the OpenCode plugin. Paseo preserves user hooks, removes only its own marker-matched command hooks, and leaves hooks installed across daemon shutdown. Outside a Paseo terminal they are inert because the command or plugin is gated on `PASEO_TERMINAL_ID`.
+Installation is marker-based/idempotent for config hooks and exact-file/idempotent for the OpenCode plugin and omp hook factory. Paseo preserves user hooks, removes only its own marker-matched command hooks, and leaves hooks installed across daemon shutdown. Outside a Paseo terminal they are inert because the command or plugin is gated on `PASEO_TERMINAL_ID`.
 
 Provider variation lives in `AGENT_HOOK_PROVIDERS`: provider id, installed events, config install metadata, and runtime event-to-activity resolution. The daemon calls `installRegisteredAgentHooks()` once; the CLI calls `resolveHookActivity(provider, event, input)`. Adding a provider should add one provider entry and register it in `AGENT_HOOK_PROVIDERS`, without editing the generic CLI command or daemon bootstrap.
 
