@@ -57,11 +57,147 @@ function fixture(manager?: AgentManager) {
   return { service, sources, generate, apply, invalidate, enqueue };
 }
 
+async function activityFixture() {
+  const manager = new AgentManager({
+    clients: { codex: createTestAgentClient("codex") },
+    logger: pino({ level: "silent" }),
+  });
+  const source = await manager.createAgent(
+    { provider: "codex", cwd: "/tmp", internal: true },
+    undefined,
+    { workspaceId: undefined, persistSession: false },
+  );
+  const f = fixture(manager);
+  return {
+    ...f,
+    manager,
+    source,
+    status: (id: string) =>
+      manager.backgroundActivity.snapshot().requests.find((request) => request.id === id)?.status,
+    dispose: async () => {
+      await f.service.dispose();
+      await manager.closeAgent(source.id);
+    },
+  };
+}
+
 function response(calls: SummaryCall[]): SummaryResponse {
   return { descriptions: calls.map((call) => ({ id: call.id, description: "Read the data." })) };
 }
 
 describe("tool-call summary scheduling", () => {
+  it("cancels retries whose sources have all disappeared", async () => {
+    const f = await activityFixture();
+    try {
+      f.generate.mockRejectedValueOnce(new Error("Retry needed"));
+      const targets = f.enqueue(f.source.id, 2);
+      await vi.advanceTimersByTimeAsync(0);
+      const requestId = f.manager.backgroundActivity.snapshot().requests[0].id;
+      for (const target of targets) f.sources.delete(target.key);
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(f.status(requestId)).toBe("canceled");
+      expect(f.generate).toHaveBeenCalledTimes(1);
+    } finally {
+      await f.dispose();
+    }
+  });
+
+  it("cancels overflowed retries only after the last member is dropped", async () => {
+    const f = await activityFixture();
+    try {
+      f.generate.mockRejectedValueOnce(new Error("Retry needed"));
+      f.enqueue(f.source.id, 2);
+      await vi.advanceTimersByTimeAsync(0);
+      const requestId = f.manager.backgroundActivity.snapshot().requests[0].id;
+      f.enqueue(f.source.id, 249);
+      expect(f.status(requestId)).toBe("queued");
+      f.enqueue(f.source.id);
+      expect(f.status(requestId)).toBe("canceled");
+      expect(f.generate).toHaveBeenCalledTimes(1);
+    } finally {
+      await f.dispose();
+    }
+  });
+
+  it("keeps a split retry request until its active member finishes even if the rest overflow", async () => {
+    const f = await activityFixture();
+    let finish: () => void = () => {};
+    try {
+      f.generate.mockRejectedValueOnce(new Error("Retry needed"));
+      const targets = f.enqueue(f.source.id, 4);
+      await vi.advanceTimersByTimeAsync(0);
+      const requestId = f.manager.backgroundActivity.snapshot().requests[0].id;
+      for (const target of targets) {
+        const source = f.sources.get(target.key)!;
+        source.item.detail = { type: "shell", command: "x".repeat(6000), output: "x".repeat(4000) };
+      }
+      f.generate.mockImplementationOnce(
+        (_id, calls) =>
+          new Promise((resolve) => {
+            finish = () => resolve(response(calls));
+          }),
+      );
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(f.generate.mock.calls[1][1]).toHaveLength(3);
+      f.enqueue(f.source.id, 250);
+      expect(f.status(requestId)).toBe("queued");
+      finish();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(f.status(requestId)).toBe("completed");
+    } finally {
+      finish();
+      await f.dispose();
+    }
+  });
+
+  it("finishes a split retry request when refused cancellation pauses all work", async () => {
+    const f = await activityFixture();
+    try {
+      f.generate.mockRejectedValueOnce(new Error("Retry needed"));
+      const targets = f.enqueue(f.source.id, 4);
+      await vi.advanceTimersByTimeAsync(0);
+      const requestId = f.manager.backgroundActivity.snapshot().requests[0].id;
+      for (const target of targets) {
+        const source = f.sources.get(target.key)!;
+        source.item.detail = {
+          type: "shell",
+          command: "x".repeat(6000),
+          output: "x".repeat(4000),
+        };
+      }
+      f.generate.mockRejectedValueOnce(new SummaryCancellationError("Still running"));
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(f.generate.mock.calls[1][1]).toHaveLength(3);
+      expect(f.status(requestId)).toBe("failed");
+      await vi.advanceTimersByTimeAsync(10000);
+      expect(f.generate).toHaveBeenCalledTimes(2);
+    } finally {
+      await f.dispose();
+    }
+  });
+
+  it("keeps surviving retries when another source disappears and when a retry splits", async () => {
+    const f = await activityFixture();
+    try {
+      f.generate.mockRejectedValueOnce(new Error("Retry needed"));
+      const targets = f.enqueue(f.source.id, 5);
+      await vi.advanceTimersByTimeAsync(0);
+      const requestId = f.manager.backgroundActivity.snapshot().requests[0].id;
+      f.sources.delete(targets[0].key);
+      for (const target of targets.slice(1)) {
+        const source = f.sources.get(target.key)!;
+        source.item.detail = { type: "shell", command: "x".repeat(6000), output: "x".repeat(4000) };
+      }
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(f.generate.mock.calls[1][1]).toHaveLength(3);
+      expect(f.status(requestId)).toBe("queued");
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(f.generate.mock.calls[2][1]).toHaveLength(1);
+      expect(f.status(requestId)).toBe("completed");
+    } finally {
+      await f.dispose();
+    }
+  });
   it("records queued batches without changing their scheduling", async () => {
     const manager = new AgentManager({
       clients: { codex: createTestAgentClient("codex") },

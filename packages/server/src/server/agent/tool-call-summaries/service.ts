@@ -39,7 +39,12 @@ export class ToolCallSummarizer {
   private readonly queuedRequests = new Map<string, string>();
   private timer: ReturnType<typeof setTimeout> | null = null;
   private lastStarted = Number.NEGATIVE_INFINITY;
-  private active: { agentId: string; controller: AbortController; keys: Set<string> } | null = null;
+  private active: {
+    agentId: string;
+    controller: AbortController;
+    keys: Set<string>;
+    requestId?: string;
+  } | null = null;
   private task: Promise<void> | null = null;
   private stopped = false;
   private paused = false;
@@ -58,7 +63,12 @@ export class ToolCallSummarizer {
     this.queues.set(target.agentId, queue);
     if (queue.size > 250) {
       const oldest = queue.keys().next().value;
-      if (oldest !== undefined) queue.delete(oldest);
+      if (oldest !== undefined) {
+        const dropped = queue.get(oldest);
+        queue.delete(oldest);
+        if (dropped?.requestId !== this.active?.requestId)
+          this.finishActivity(dropped?.requestId, "Summary work dropped", true);
+      }
       this.options.logger.warn(
         { agentId: target.agentId, dropped: 1 },
         "Tool-call summary queue overflow",
@@ -104,7 +114,10 @@ export class ToolCallSummarizer {
     const requests = new Set(
       [...(this.queues.get(agentId)?.values() ?? [])].map((call) => call.requestId),
     );
-    for (const id of requests) this.finishActivity(id, "Source work canceled", true);
+    this.queues.delete(agentId);
+    for (const id of requests) {
+      if (id !== this.active?.requestId) this.finishActivity(id, "Source work canceled", true);
+    }
     this.updateQueued(agentId, 0);
   }
 
@@ -156,11 +169,13 @@ export class ToolCallSummarizer {
   private takeBatch(agentId: string, queue: Map<string, PendingCall>): Batch {
     this.queues.delete(agentId);
     const batch: Batch = { pending: [], calls: [] };
+    const droppedRequests = new Set<string>();
     let chars = 2;
     for (const [key, pending] of queue) {
       const source = this.options.getSource(pending.target);
       if (!source || readToolCallSummary(source.item.metadata, pending.target.phase)) {
         queue.delete(key);
+        if (pending.requestId) droppedRequests.add(pending.requestId);
         continue;
       }
       const call = summaryCall(key, source, pending.target.phase);
@@ -174,6 +189,10 @@ export class ToolCallSummarizer {
       chars += size;
     }
     if (queue.size > 0) this.queues.set(agentId, queue);
+    for (const requestId of droppedRequests) {
+      if (!batch.pending.some((call) => call.requestId === requestId))
+        this.finishActivity(requestId, "Summary work dropped", true);
+    }
     return batch;
   }
 
@@ -198,7 +217,12 @@ export class ToolCallSummarizer {
     return requestId;
   }
   private finishActivity(requestId: string | undefined, error?: unknown, canceled = false): void {
-    if (requestId) this.options.manager?.backgroundActivity.finish(requestId, error, canceled);
+    if (!requestId) return;
+    // A retry may split across batches; only its last member finishes the request.
+    for (const queue of this.queues.values()) {
+      if ([...queue.values()].some((call) => call.requestId === requestId)) return;
+    }
+    this.options.manager?.backgroundActivity.finish(requestId, error, canceled);
   }
 
   private async runNext(): Promise<void> {
@@ -213,7 +237,12 @@ export class ToolCallSummarizer {
     }
     const requestId = this.startActivity(agentId, batch);
     const controller = new AbortController();
-    this.active = { agentId, controller, keys: new Set(batch.calls.map((call) => call.id)) };
+    this.active = {
+      agentId,
+      controller,
+      keys: new Set(batch.calls.map((call) => call.id)),
+      requestId,
+    };
     this.lastStarted = Date.now();
     const timeout = setTimeout(() => {
       this.options.logger.warn(
@@ -253,11 +282,12 @@ export class ToolCallSummarizer {
         "Tool-call summaries generated",
       );
     } catch (error) {
-      this.finishActivity(requestId, error, controller.signal.aborted);
       if (error instanceof SummaryCancellationError) {
         this.pause(error);
+        this.finishActivity(requestId, error, controller.signal.aborted);
         return;
       }
+      this.finishActivity(requestId, error, controller.signal.aborted);
       this.options.logger.warn(
         { agentId, count: batch.calls.length, attempt: batch.pending[0].attempt },
         "Tool-call summary generation failed",

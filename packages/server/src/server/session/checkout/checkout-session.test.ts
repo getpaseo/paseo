@@ -27,6 +27,9 @@ import {
   createNoGitWorkspaceRuntimeSnapshot,
   createNoopWorkspaceGitService,
 } from "../../test-utils/workspace-git-service-stub.js";
+import { createWorktree } from "../../../utils/worktree.js";
+import { readPaseoWorktreeMetadata } from "../../../utils/worktree-metadata.js";
+import { getCheckoutStatus } from "../../../utils/checkout-git.js";
 import { expandTilde } from "../../../utils/path.js";
 import type { GitMetadataGenerator } from "./git-metadata-generator.js";
 
@@ -112,6 +115,8 @@ function makeCheckoutSession(options?: {
   gitMutation?: Partial<GitMutationFake>;
   gitMetadataGenerator?: Partial<GitMetadataGenerator>;
   setCheckoutBaseRef?: CheckoutSessionOptions["setCheckoutBaseRef"];
+  paseoHome?: string;
+  worktreesRoot?: string;
 }) {
   const emitted: SessionOutboundMessage[] = [];
   const hostCalls: RecordedHostCalls = {
@@ -171,8 +176,8 @@ function makeCheckoutSession(options?: {
     checkoutDiffManager:
       options?.diff ?? createFakeDiffSubscriber({ cwd: "", files: [], error: null }).subscriber,
     gitMetadataGenerator,
-    paseoHome: "/tmp/paseo-home",
-    worktreesRoot: undefined,
+    paseoHome: options?.paseoHome ?? "/tmp/paseo-home",
+    worktreesRoot: options?.worktreesRoot,
     logger: pino({ level: "silent" }),
     ...(options?.setCheckoutBaseRef ? { setCheckoutBaseRef: options.setCheckoutBaseRef } : {}),
   });
@@ -790,6 +795,88 @@ describe("CheckoutSession", () => {
   });
 
   describe("set base ref", () => {
+    it.each(["worktrees", "checkouts"])(
+      "keeps custom %s base changes local to the selected worktree",
+      async (directory) => {
+        const cwd = realpathSync(mkdtempSync(join(tmpdir(), "checkout-base-scope-")));
+        const paseoHome = join(cwd, "home");
+        const worktreesRoot = join(cwd, directory);
+        const context = { paseoHome, worktreesRoot };
+        try {
+          execFileSync("git", ["init", "-b", "main"], { cwd });
+          execFileSync("git", ["config", "user.name", "Test"], { cwd });
+          execFileSync("git", ["config", "user.email", "test@example.com"], { cwd });
+          execFileSync(
+            "git",
+            ["-c", "commit.gpgsign=false", "commit", "--allow-empty", "-m", "initial"],
+            { cwd },
+          );
+          execFileSync("git", ["branch", "develop"], { cwd });
+          execFileSync("git", ["config", "paseo.baseBranch", "main"], { cwd });
+          const worktrees = [];
+          for (const branchName of ["selected", "sibling"]) {
+            worktrees.push(
+              await createWorktree({
+                cwd,
+                ...context,
+                worktreeSlug: branchName,
+                source: { kind: "branch-off", baseBranch: "main", branchName },
+                runSetup: false,
+              }),
+            );
+          }
+          const [selected, sibling] = worktrees;
+          const { checkout, emitted } = makeCheckoutSession(context);
+          await checkout.handleCheckoutBaseRefSetRequest({
+            type: "checkout.base_ref.set.request",
+            cwd: selected.worktreePath,
+            baseRef: "develop",
+            requestId: "scoped",
+          });
+          expect(emitted).toEqual([
+            {
+              type: "checkout.base_ref.set.response",
+              payload: {
+                cwd: selected.worktreePath,
+                success: true,
+                baseRef: "develop",
+                error: null,
+                requestId: "scoped",
+              },
+            },
+          ]);
+          expect(readPaseoWorktreeMetadata(selected.worktreePath)?.baseRefName).toBe("develop");
+          expect(readPaseoWorktreeMetadata(sibling.worktreePath)?.baseRefName).toBe("main");
+          expect(
+            execFileSync("git", ["config", "--get", "paseo.baseBranch"], {
+              cwd,
+              encoding: "utf8",
+            }).trim(),
+          ).toBe("main");
+          expect(await getCheckoutStatus(selected.worktreePath, context)).toMatchObject({
+            isGit: true,
+            isPaseoOwnedWorktree: true,
+            baseRef: "develop",
+          });
+          await checkout.handleCheckoutBaseRefSetRequest({
+            type: "checkout.base_ref.set.request",
+            cwd,
+            baseRef: "develop",
+            requestId: "ordinary",
+          });
+          expect(
+            execFileSync("git", ["config", "--get", "paseo.baseBranch"], {
+              cwd,
+              encoding: "utf8",
+            }).trim(),
+          ).toBe("develop");
+          expect(readPaseoWorktreeMetadata(sibling.worktreePath)?.baseRefName).toBe("main");
+        } finally {
+          rmSync(cwd, { recursive: true, force: true });
+        }
+      },
+    );
+
     it("persists the base, refreshes git state, and confirms the base in effect", async () => {
       const { subscriber, refreshedCwds } = createFakeDiffSubscriber({
         cwd: "",

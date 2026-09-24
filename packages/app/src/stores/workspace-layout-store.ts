@@ -1,7 +1,7 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useEffect, useState } from "react";
 import { create } from "zustand";
-import { persist } from "zustand/middleware";
+import { persist, type StateStorage } from "zustand/middleware";
 import { z } from "zod";
 import type { JsonValue } from "@getpaseo/protocol/agent-types";
 import type { WorkspaceTab, WorkspaceTabTarget } from "@/workspace-tabs/model";
@@ -199,6 +199,12 @@ const WorkspaceTabTargetStorageSchema = z.discriminatedUnion("kind", [
   }),
   z.strictObject({ kind: z.literal("terminal"), terminalId: z.string() }),
   z.strictObject({ kind: z.literal("browser"), browserId: z.string() }),
+  z.strictObject({ kind: z.literal("background_activity") }),
+  z.strictObject({
+    kind: z.literal("background_thread"),
+    conversationId: z.string(),
+    requestId: z.string().optional(),
+  }),
   z.strictObject({ kind: z.literal("chapters") }),
   z.strictObject({ kind: z.literal("chapter"), selectionId: z.string(), category: z.boolean() }),
   z.strictObject({ kind: z.literal("changes_tree") }),
@@ -759,6 +765,7 @@ function createExplorerSidebarPane(
 
 export function createWorkspaceLayoutStore(
   ids: WorkspaceLayoutIdSource = defaultWorkspaceLayoutIds,
+  storage: StateStorage = AsyncStorage,
 ) {
   return create<WorkspaceLayoutStore>()(
     persist(
@@ -1806,7 +1813,7 @@ export function createWorkspaceLayoutStore(
       {
         name: "workspace-layout-state",
         version: WORKSPACE_LAYOUT_PERSIST_VERSION,
-        storage: createValidatedPersistStorage(AsyncStorage, WorkspaceLayoutPersistedStateSchema),
+        storage: createValidatedPersistStorage(storage, WorkspaceLayoutPersistedStateSchema),
         migrate: (persistedState, version) =>
           migrateWorkspaceLayoutPersistedState(persistedState, version, ids),
         partialize: (state) => {

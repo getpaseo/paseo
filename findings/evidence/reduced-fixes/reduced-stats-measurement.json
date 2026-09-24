@@ -1,0 +1,77 @@
+{
+  "facts": {
+    "isGit": true,
+    "worktreeRoot": "/Users/michaelmusil/.paseo/worktrees/3pdqpnjh/slim-monkey",
+    "currentBranch": "introduce-pr-diff-chapters",
+    "remoteUrl": "https://github.com/infi-pc/paseo.git",
+    "absoluteGitDir": "/Users/michaelmusil/www/paseo/.git/worktrees/slim-monkey",
+    "gitCommonDir": "/Users/michaelmusil/www/paseo/.git",
+    "paseoWorktree": {
+      "isPaseoOwnedWorktree": true,
+      "worktreeRoot": "/Users/michaelmusil/.paseo/worktrees/3pdqpnjh/slim-monkey"
+    },
+    "storedBaseRef": "refs/remotes/origin/paseo-customizations",
+    "resolvedBaseRef": "refs/remotes/origin/paseo-customizations",
+    "mainRepoRoot": "/Users/michaelmusil/www/paseo",
+    "comparisonBaseRef": "refs/remotes/origin/paseo-customizations",
+    "branchRemoteName": "origin",
+    "branchMergeRef": "refs/heads/introduce-pr-diff-chapters",
+    "upstreamStatus": {
+      "ref": "refs/remotes/origin/introduce-pr-diff-chapters",
+      "aheadBehind": {
+        "ahead": 0,
+        "behind": 0
+      }
+    },
+    "pullRequestLookupTarget": {
+      "headRef": "introduce-pr-diff-chapters",
+      "headSha": "23cb8e83c1a899b631d8b08a896992a5da0f7faa"
+    }
+  },
+  "measurements": [
+    {
+      "pass": "cold",
+      "elapsedMs": 1470,
+      "commands": 79,
+      "gitShow": 73,
+      "eventLoopMaxMs": 87,
+      "eventLoopP99Ms": 60,
+      "additions": 5043,
+      "deletions": 195,
+      "hasBreakdown": true
+    },
+    {
+      "pass": "save-1",
+      "elapsedMs": 331,
+      "commands": 18,
+      "gitShow": 12,
+      "eventLoopMaxMs": 7,
+      "eventLoopP99Ms": 7,
+      "additions": 5043,
+      "deletions": 195,
+      "hasBreakdown": true
+    },
+    {
+      "pass": "save-2",
+      "elapsedMs": 328,
+      "commands": 18,
+      "gitShow": 12,
+      "eventLoopMaxMs": 7,
+      "eventLoopP99Ms": 6,
+      "additions": 5043,
+      "deletions": 195,
+      "hasBreakdown": true
+    },
+    {
+      "pass": "save-3",
+      "elapsedMs": 344,
+      "commands": 18,
+      "gitShow": 12,
+      "eventLoopMaxMs": 6,
+      "eventLoopP99Ms": 6,
+      "additions": 5043,
+      "deletions": 195,
+      "hasBreakdown": true
+    }
+  ]
+}

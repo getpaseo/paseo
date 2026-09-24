@@ -1240,6 +1240,8 @@ const expandableBadgeStylesheet = StyleSheet.create((theme) => ({
 }));
 
 interface NativeExpandableBadgeShimmerProps {
+  labelContent?: ExpandableBadgeProps["labelContent"];
+  showOpenFileButton: boolean;
   label: string;
   secondaryLabel?: string;
   rowWidth: number;
@@ -1250,6 +1252,8 @@ interface NativeExpandableBadgeShimmerProps {
 }
 
 const NativeExpandableBadgeShimmer = memo(function NativeExpandableBadgeShimmer({
+  labelContent,
+  showOpenFileButton,
   label,
   secondaryLabel,
   rowWidth,
@@ -1318,19 +1322,37 @@ const NativeExpandableBadgeShimmer = memo(function NativeExpandableBadgeShimmer(
   const maskElement = useMemo(
     () => (
       <View pointerEvents="none" style={nativeShimmerMaskStyle}>
-        <Text style={nativeLabelMaskStyle} numberOfLines={1}>
-          {label}
-        </Text>
+        {labelContent ? (
+          labelContent({ style: nativeLabelMaskStyle })
+        ) : (
+          <Text style={nativeLabelMaskStyle} numberOfLines={1}>
+            {label}
+          </Text>
+        )}
         {secondaryLabel ? (
           <Text style={nativeSecondaryMaskStyle} numberOfLines={1}>
             {secondaryLabel}
           </Text>
-        ) : (
+        ) : null}
+        {showOpenFileButton ? (
+          <View style={expandableBadgeStylesheet.openFileButton}>
+            <View style={expandableBadgeStylesheet.openFileButtonPlaceholderIcon} />
+          </View>
+        ) : null}
+        {!labelContent && !secondaryLabel && !showOpenFileButton ? (
           <View style={expandableBadgeStylesheet.spacer} />
-        )}
+        ) : null}
       </View>
     ),
-    [nativeShimmerMaskStyle, nativeLabelMaskStyle, nativeSecondaryMaskStyle, label, secondaryLabel],
+    [
+      nativeShimmerMaskStyle,
+      nativeLabelMaskStyle,
+      nativeSecondaryMaskStyle,
+      label,
+      secondaryLabel,
+      labelContent,
+      showOpenFileButton,
+    ],
   );
 
   return (
@@ -2297,8 +2319,13 @@ export const TodoListCard = memo(function TodoListCard({
   );
 });
 
+interface ExpandableBadgeLabelContentProps {
+  style: StyleProp<TextStyle>;
+  onLayout?: (event: LayoutChangeEvent) => void;
+}
+
 interface ExpandableBadgeProps {
-  labelContent?: ReactNode;
+  labelContent?: (props: ExpandableBadgeLabelContentProps) => ReactNode;
   label: string;
   secondaryLabel?: string;
   icon?: ComponentType<{ size?: number; color?: string }>;
@@ -2344,6 +2371,7 @@ function ExpandableBadgeSecondaryLabel({
 }
 
 interface ExpandableBadgeWebShimmerOverlayProps {
+  labelContent?: ExpandableBadgeProps["labelContent"];
   label: string;
   secondaryLabel?: string;
   shimmerLabelTextStyle: StyleProp<TextStyle>;
@@ -2352,6 +2380,7 @@ interface ExpandableBadgeWebShimmerOverlayProps {
 }
 
 function ExpandableBadgeWebShimmerOverlay({
+  labelContent,
   label,
   secondaryLabel,
   shimmerLabelTextStyle,
@@ -2360,9 +2389,13 @@ function ExpandableBadgeWebShimmerOverlay({
 }: ExpandableBadgeWebShimmerOverlayProps) {
   return (
     <View style={expandableBadgeStylesheet.shimmerOverlay} pointerEvents="none">
-      <Text style={shimmerLabelTextStyle} numberOfLines={1}>
-        {label}
-      </Text>
+      {labelContent ? (
+        labelContent({ style: shimmerLabelTextStyle })
+      ) : (
+        <Text style={shimmerLabelTextStyle} numberOfLines={1}>
+          {label}
+        </Text>
+      )}
       {secondaryLabel ? (
         <Text style={shimmerSecondaryTextStyle} numberOfLines={1}>
           {secondaryLabel}
@@ -2373,7 +2406,7 @@ function ExpandableBadgeWebShimmerOverlay({
           <View style={expandableBadgeStylesheet.openFileButtonPlaceholderIcon} />
         </View>
       ) : null}
-      {!secondaryLabel && !showOpenFileButton ? (
+      {!labelContent && !secondaryLabel && !showOpenFileButton ? (
         <View style={expandableBadgeStylesheet.spacer} />
       ) : null}
     </View>
@@ -2381,6 +2414,7 @@ function ExpandableBadgeWebShimmerOverlay({
 }
 
 interface ExpandableBadgeLabelRowProps {
+  labelContent?: ExpandableBadgeProps["labelContent"];
   label: string;
   labelStyle: StyleProp<TextStyle>;
   secondaryLabel?: string;
@@ -2407,6 +2441,7 @@ interface ExpandableBadgeLabelRowProps {
 }
 
 function ExpandableBadgeLabelRow({
+  labelContent,
   label,
   labelStyle,
   secondaryLabel,
@@ -2437,13 +2472,20 @@ function ExpandableBadgeLabelRow({
       style={expandableBadgeStylesheet.labelRow}
       onLayout={shouldMeasureNativeShimmer ? onLabelRowLayout : undefined}
     >
-      <Text
-        style={labelStyle}
-        numberOfLines={1}
-        onLayout={shouldMeasureWebShimmer ? onLabelLayout : undefined}
-      >
-        {label}
-      </Text>
+      {labelContent ? (
+        labelContent({
+          style: labelStyle,
+          onLayout: shouldMeasureWebShimmer ? onLabelLayout : undefined,
+        })
+      ) : (
+        <Text
+          style={labelStyle}
+          numberOfLines={1}
+          onLayout={shouldMeasureWebShimmer ? onLabelLayout : undefined}
+        >
+          {label}
+        </Text>
+      )}
       <ExpandableBadgeSecondaryLabel
         secondaryLabel={secondaryLabel}
         secondaryLabelStyle={secondaryLabelStyle}
@@ -2469,6 +2511,7 @@ function ExpandableBadgeLabelRow({
       ) : null}
       {isWebShimmer ? (
         <ExpandableBadgeWebShimmerOverlay
+          labelContent={labelContent}
           label={label}
           secondaryLabel={secondaryLabel}
           shimmerLabelTextStyle={shimmerLabelTextStyle}
@@ -2478,6 +2521,8 @@ function ExpandableBadgeLabelRow({
       ) : null}
       {isNativeShimmer ? (
         <NativeExpandableBadgeShimmer
+          labelContent={labelContent}
+          showOpenFileButton={showOpenFileButton}
           label={label}
           secondaryLabel={secondaryLabel}
           rowWidth={labelRowWidth}
@@ -2946,33 +2991,32 @@ export const ExpandableBadge = memo(function ExpandableBadge({
       >
         <View style={expandableBadgeStylesheet.headerRow}>
           <View style={expandableBadgeStylesheet.iconBadge}>{iconSlotNode}</View>
-          {labelContent ?? (
-            <ExpandableBadgeLabelRow
-              label={label}
-              labelStyle={labelStyle}
-              secondaryLabel={secondaryLabel}
-              secondaryLabelStyle={secondaryLabelStyle}
-              shouldMeasureWebShimmer={shouldMeasureWebShimmer}
-              shouldMeasureNativeShimmer={shouldMeasureNativeShimmer}
-              isWebShimmer={isWebShimmer}
-              isNativeShimmer={isNativeShimmer}
-              shimmerLabelTextStyle={shimmerLabelTextStyle}
-              shimmerSecondaryTextStyle={shimmerSecondaryTextStyle}
-              labelRowWidth={labelRowWidth}
-              labelRowHeight={labelRowHeight}
-              nativeShimmerPeakWidth={nativeShimmerPeakWidth}
-              shimmerDuration={shimmerDuration}
-              nativeGradientId={nativeGradientIdRef.current}
-              onLabelRowLayout={handleLabelRowLayout}
-              onLabelLayout={handleLabelLayout}
-              onSecondaryLayout={handleSecondaryLayout}
-              showOpenFileButton={Boolean(onOpenFile && isHovered)}
-              isOpenFileHovered={isOpenFileHovered}
-              onOpenFilePress={handleOpenFilePress}
-              onOpenFileHoverIn={handleOpenFileHoverIn}
-              onOpenFileHoverOut={handleOpenFileHoverOut}
-            />
-          )}
+          <ExpandableBadgeLabelRow
+            labelContent={labelContent}
+            label={label}
+            labelStyle={labelStyle}
+            secondaryLabel={secondaryLabel}
+            secondaryLabelStyle={secondaryLabelStyle}
+            shouldMeasureWebShimmer={shouldMeasureWebShimmer}
+            shouldMeasureNativeShimmer={shouldMeasureNativeShimmer}
+            isWebShimmer={isWebShimmer}
+            isNativeShimmer={isNativeShimmer}
+            shimmerLabelTextStyle={shimmerLabelTextStyle}
+            shimmerSecondaryTextStyle={shimmerSecondaryTextStyle}
+            labelRowWidth={labelRowWidth}
+            labelRowHeight={labelRowHeight}
+            nativeShimmerPeakWidth={nativeShimmerPeakWidth}
+            shimmerDuration={shimmerDuration}
+            nativeGradientId={nativeGradientIdRef.current}
+            onLabelRowLayout={handleLabelRowLayout}
+            onLabelLayout={handleLabelLayout}
+            onSecondaryLayout={handleSecondaryLayout}
+            showOpenFileButton={Boolean(onOpenFile && (isHovered || isNative))}
+            isOpenFileHovered={isOpenFileHovered}
+            onOpenFilePress={handleOpenFilePress}
+            onOpenFileHoverIn={handleOpenFileHoverIn}
+            onOpenFileHoverOut={handleOpenFileHoverOut}
+          />
         </View>
       </Pressable>
       {detailContent ? (
@@ -3166,10 +3210,14 @@ export const ToolCall = memo(function ToolCall({
   ]);
 
   const summaryLabel = useMemo(() => {
-    if (!presentation.inputLabel) return undefined;
-    return (
+    const input = presentation.inputLabel;
+    if (!input) return undefined;
+    const isLoading = status === "running" || status === "executing";
+    return ({ style, onLayout }: ExpandableBadgeLabelContentProps) => (
       <ToolCallSummaryLabel
-        input={presentation.inputLabel}
+        inputStyle={isLoading ? style : undefined}
+        onInputLayout={onLayout}
+        input={input}
         output={
           status === "running" || status === "executing" ? undefined : presentation.description
         }
@@ -3201,8 +3249,8 @@ export const ToolCall = memo(function ToolCall({
     <ExpandableBadge
       testID="tool-call-badge"
       labelContent={summaryLabel}
-      label={presentation.displayName}
-      secondaryLabel={presentation.summary}
+      label={presentation.inputLabel ?? presentation.displayName}
+      secondaryLabel={presentation.inputLabel ? undefined : presentation.summary}
       icon={presentation.icon}
       isExpanded={shouldRenderInline && isExpanded}
       onToggle={presentation.canOpenDetails ? handleToggle : undefined}

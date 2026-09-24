@@ -1,8 +1,17 @@
 import React, { useCallback } from "react";
-import { Text, View, type GestureResponderEvent } from "react-native";
+import {
+  Text,
+  View,
+  type GestureResponderEvent,
+  type LayoutChangeEvent,
+  type StyleProp,
+  type TextStyle,
+} from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 
 interface ToolCallSummaryLabelProps {
+  inputStyle?: StyleProp<TextStyle>;
+  onInputLayout?: (event: LayoutChangeEvent) => void;
   input: string;
   output?: string;
   inputFilePath?: string;
@@ -50,6 +59,8 @@ function LinkedLabel({ text, filePath, onOpenFilePath }: LinkedLabelProps) {
 }
 
 export function ToolCallSummaryLabel({
+  inputStyle,
+  onInputLayout,
   input,
   output,
   inputFilePath,
@@ -59,7 +70,13 @@ export function ToolCallSummaryLabel({
   return (
     <View style={styles.row} testID="tool-call-summary-label">
       <Text
-        style={[styles.input, output ? styles.inputWithOutput : undefined]}
+        style={[
+          styles.input,
+          output ? styles.inputWithOutput : undefined,
+          inputStyle,
+          styles.inputLayout,
+        ]}
+        onLayout={onInputLayout}
         numberOfLines={1}
         testID="tool-call-input-label"
       >
@@ -88,6 +105,7 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.medium,
   },
+  inputLayout: { flexShrink: 1, minWidth: 0 },
   inputWithOutput: { maxWidth: "55%" },
   output: {
     flexShrink: 1,

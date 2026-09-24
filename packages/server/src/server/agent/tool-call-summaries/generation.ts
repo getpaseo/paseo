@@ -108,8 +108,24 @@ export class AgentSummaryGenerator implements SummaryGenerator {
         thinkingOptionId: source.config.thinkingOptionId,
       },
     });
+    const constrainedProviders = providers.flatMap((provider) => {
+      const providerOptions = helperProviderOptions(
+        this.options.manager.getProviderRuntimeId(provider.provider),
+      );
+      if (!providerOptions) {
+        if (backgroundRequestId)
+          this.options.manager.backgroundActivity.unavailable(
+            backgroundRequestId,
+            provider.provider,
+            provider.model,
+            "Provider cannot restrict summary helper tools",
+          );
+        return [];
+      }
+      return [{ ...provider, providerOptions }];
+    });
     const available = [];
-    for (const provider of providers) {
+    for (const provider of constrainedProviders) {
       const availability = await this.options.manager.getProviderAvailability(provider.provider);
       if (availability.available) available.push(provider);
       else if (backgroundRequestId)
@@ -134,9 +150,7 @@ export class AgentSummaryGenerator implements SummaryGenerator {
           internal: true,
           systemPrompt: SUMMARY_INSTRUCTIONS,
           mcpServers: {},
-          providerOptions: helperProviderOptions(
-            this.options.manager.getProviderRuntimeId(selected.provider),
-          ),
+          providerOptions: selected.providerOptions,
         },
         undefined,
         { persistSession: false, workspaceId: undefined, paseoToolsEnabled: false },

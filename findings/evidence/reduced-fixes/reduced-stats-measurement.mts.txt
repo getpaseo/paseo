@@ -1,0 +1,42 @@
+import { writeFile, rm } from 'node:fs/promises';
+import { monitorEventLoopDelay, performance } from 'node:perf_hooks';
+import { setTimeout as delay } from 'node:timers/promises';
+import { join } from 'node:path';
+import { getCheckoutShortstat, getCheckoutSnapshotFacts } from '/Users/michaelmusil/.paseo/worktrees/3pdqpnjh/slim-monkey/packages/server/src/utils/checkout-git.ts';
+import { runGitCommand } from '/Users/michaelmusil/.paseo/worktrees/3pdqpnjh/slim-monkey/packages/server/src/utils/run-git-command.ts';
+const cwd = '/Users/michaelmusil/.paseo/worktrees/3pdqpnjh/slim-monkey';
+const probe = join(cwd, `reduced-stats-measurement-${process.pid}.ts`);
+const facts = await getCheckoutSnapshotFacts(cwd);
+let commands: string[][] = [];
+const context = { facts, runGitCommand: async (args, options) => {
+  commands.push([...args]);
+  return runGitCommand(args, options);
+}};
+const measurements = [];
+await writeFile(probe, 'export const measurement = 0;\n', { flag: 'wx' });
+try {
+  for (let pass = 0; pass < 4; pass++) {
+    await writeFile(probe, `export const measurement = ${pass};\n`);
+    commands = [];
+    const lag = monitorEventLoopDelay({ resolution: 5 });
+    lag.enable();
+    await delay(20);
+    const start = performance.now();
+    const stats = await getCheckoutShortstat(cwd, context, { force: true });
+    const elapsedMs = performance.now() - start;
+    await delay(20);
+    lag.disable();
+    measurements.push({
+      pass: pass === 0 ? 'cold' : `save-${pass}`,
+      elapsedMs: Math.round(elapsedMs), commands: commands.length,
+      gitShow: commands.filter(args => args[0] === 'show').length,
+      eventLoopMaxMs: Math.round(lag.max / 1e6),
+      eventLoopP99Ms: Math.round(lag.percentile(99) / 1e6),
+      additions: stats?.additions, deletions: stats?.deletions,
+      hasBreakdown: Boolean(stats?.breakdown),
+    });
+  }
+  console.log(JSON.stringify({ facts, measurements }, null, 2));
+} finally {
+  await rm(probe);
+}

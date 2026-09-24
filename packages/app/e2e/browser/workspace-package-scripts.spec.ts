@@ -64,11 +64,15 @@ test("nested package scripts run, appear in the sidebar, and expose their result
     await page.keyboard.press("Escape");
     await writeFile(join(repo.path, "packages/web/package.json"), "{");
     await openWorkspaceScriptsMenu(page);
-    const retry = page.getByRole("menuitem", { name: /Retry/ });
-    await expect(retry).toBeVisible();
+    await expect(
+      page.getByTestId("workspace-scripts-item-package.json:package.json:build"),
+    ).toBeVisible();
+    await expect(page.getByRole("menuitem", { name: /Retry/ })).not.toBeVisible();
+    await page.keyboard.press("Escape");
     await writeFile(join(repo.path, "packages/web/package.json"), manifest);
-    await retry.click();
-    await expect(retry).not.toBeVisible();
+    await openWorkspaceScriptsMenu(page);
+    await nestedGroup.click();
+    await expect(row).toBeVisible();
   } finally {
     await client.close();
     await repo.cleanup();

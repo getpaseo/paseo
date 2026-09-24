@@ -76,9 +76,7 @@ export async function waitForWorkspaceInSidebar(
   });
 }
 
-// Beside the title, a wide git checkout shows `<branch> → <base>` instead of the project name
-// (`WorkspaceHeaderProjectRow`), so `subtitle` is satisfied by either the project name or the
-// branch pair being there. Pass `branch` to pin the current branch shown in that pair.
+// Wide git headers show branches; their project identity belongs to the selected sidebar group.
 export async function expectWorkspaceHeader(
   page: Page,
   input: { title: string; subtitle?: string; branch?: string },
@@ -89,16 +87,18 @@ export async function expectWorkspaceHeader(
     timeout: 30_000,
   });
   if (input.subtitle !== undefined) {
-    const subtitleLocator = page.getByTestId("workspace-header-subtitle").filter({ visible: true });
-    const branchesLocator = page.getByTestId("workspace-header-branches").filter({ visible: true });
-    await expect(subtitleLocator.first().or(branchesLocator.first())).toBeVisible({
+    const subtitleLocator = page
+      .getByTestId("workspace-header-subtitle")
+      .and(page.getByText(input.subtitle, { exact: true }))
+      .filter({ visible: true });
+    const selectedProjectWorkspace = page
+      .getByRole("group", { name: input.subtitle, exact: true })
+      .locator('[data-testid^="sidebar-workspace-row-"][aria-selected="true"]')
+      .getByText(input.title, { exact: true })
+      .filter({ visible: true });
+    await expect(subtitleLocator.or(selectedProjectWorkspace).first()).toBeVisible({
       timeout: 30_000,
     });
-    if ((await subtitleLocator.count()) > 0) {
-      await expect(subtitleLocator.first()).toHaveText(input.subtitle, {
-        timeout: 30_000,
-      });
-    }
   }
   if (input.branch !== undefined) {
     const branchLocator = page

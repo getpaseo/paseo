@@ -43,7 +43,10 @@ interface AgentManagerLike {
 
 export interface SleepInhibitorOptions {
   agentManager: AgentManagerLike;
-  daemonConfigStore: { get(): { preventSleepWhileAgentsRun?: boolean } };
+  daemonConfigStore: {
+    get(): { preventSleepWhileAgentsRun?: boolean };
+    onChange(listener: () => void): () => void;
+  };
   logger: Logger;
   backend?: SleepInhibitorBackend;
   releaseDelayMs?: number;
@@ -177,6 +180,7 @@ export function setupSleepInhibitor(options: SleepInhibitorOptions): SleepInhibi
     { replayState: false },
   );
 
+  const unsubscribeConfig = options.daemonConfigStore.onChange(evaluate);
   evaluate();
 
   return {
@@ -185,6 +189,7 @@ export function setupSleepInhibitor(options: SleepInhibitorOptions): SleepInhibi
       if (disposed) return;
       disposed = true;
       unsubscribe();
+      unsubscribeConfig();
       cancelPendingRelease();
       backend.release();
     },

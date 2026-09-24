@@ -1,3 +1,5 @@
+import type { Dirent } from "node:fs";
+import type { Logger } from "pino";
 import { readdir, readFile, realpath } from "node:fs/promises";
 import { dirname, join, relative, sep } from "node:path";
 import { z } from "zod";
@@ -37,21 +39,44 @@ function resolveManager(
   return inherited;
 }
 
+function isUnreadablePath(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    "code" in error &&
+    ["ENOENT", "ENOTDIR", "EACCES", "EPERM"].includes(String(error.code))
+  );
+}
+
 /** Discovery is requested by the run menu, never by sidebar snapshot projection. */
-export async function discoverPackageScripts(root: string): Promise<Map<string, PackageScript>> {
+export async function discoverPackageScripts(
+  root: string,
+  logger?: Pick<Logger, "warn">,
+): Promise<Map<string, PackageScript>> {
   const scripts = new Map<string, PackageScript>();
   const realRoot = await realpath(root);
 
   async function visit(directory: string, inherited: PackageManager): Promise<void> {
-    const entries = await readdir(directory, { withFileTypes: true });
+    let entries: Dirent[];
+    try {
+      entries = await readdir(directory, { withFileTypes: true });
+    } catch (error) {
+      if (directory === realRoot || !isUnreadablePath(error)) throw error;
+      logger?.warn({ err: error, directory }, "Skipping unreadable package directory");
+      return;
+    }
     entries.sort((left, right) => left.name.localeCompare(right.name));
     const names = new Set(entries.map((entry) => entry.name));
     let manifest: z.infer<typeof PackageSchema> | null = null;
     const packageFile = entries.find((entry) => entry.name === "package.json" && entry.isFile());
     if (packageFile) {
-      manifest = PackageSchema.parse(
-        JSON.parse(await readFile(join(directory, "package.json"), "utf8")),
-      );
+      const path = join(directory, "package.json");
+      try {
+        manifest = PackageSchema.parse(JSON.parse(await readFile(path, "utf8")));
+      } catch (error) {
+        const invalidManifest = error instanceof SyntaxError || error instanceof z.ZodError;
+        if (!invalidManifest && !isUnreadablePath(error)) throw error;
+        logger?.warn({ err: error, path }, "Skipping invalid or unreadable package manifest");
+      }
     }
     const manager = resolveManager(manifest, names, inherited);
     const packagePath = relative(realRoot, join(directory, "package.json")).split(sep).join("/");

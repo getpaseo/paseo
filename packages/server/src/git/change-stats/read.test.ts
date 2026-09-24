@@ -3,8 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
 import { productionStat } from "@getpaseo/protocol/diff-stat";
-import { runGitCommand } from "../../utils/run-git-command.js";
-import { parseNumstat, readComparisonBreakdown } from "./read.js";
+import { runGitCommand, type RunGitCommand } from "../../utils/run-git-command.js";
+import { parseNumstat, readComparisonBreakdown, readFileBreakdown } from "./read.js";
 const roots: string[] = [];
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((cwd) => rm(cwd, { recursive: true, force: true })));
@@ -74,4 +74,71 @@ it("parses NUL-delimited numstat without corrupting paths", () => {
     deletions: 2,
   });
   expect(files[1]).toMatchObject({ path: "image.png", additions: 0, deletions: 0 });
+});
+
+it("keeps every categorization Git command read-only across comparison and file reads", async () => {
+  const cwd = await repository();
+  await writeFile(join(cwd, "a.ts"), "const a = 1;\n");
+  await runGitCommand(["add", "."], { cwd });
+  await runGitCommand(["commit", "-m", "initial"], { cwd });
+  await writeFile(join(cwd, "a.ts"), "const a = 2;\n");
+  const commands: string[][] = [];
+  const readOnlyGit: RunGitCommand = async (args, options) => {
+    expect(options.envOverlay).toMatchObject({ GIT_OPTIONAL_LOCKS: "0", LC_ALL: "C" });
+    commands.push(args);
+    return runGitCommand(args, options);
+  };
+  const result = await readComparisonBreakdown({
+    cwd,
+    baseRef: "HEAD",
+    runGit: readOnlyGit,
+    total: { additions: 1, deletions: 1 },
+  });
+  expect(productionStat(result)).toEqual({ additions: 1, deletions: 1 });
+  const file = parseNumstat("1\t1\ta.ts\0")[0];
+  const perFile = await readFileBreakdown({
+    cwd,
+    baseRef: "HEAD",
+    file,
+    loadPatch: true,
+    runGit: readOnlyGit,
+  });
+  expect(productionStat(perFile)).toEqual({ additions: 1, deletions: 1 });
+  await readFileBreakdown({ cwd, baseRef: "HEAD", targetRef: "HEAD", file, runGit: readOnlyGit });
+  expect(commands.map((args) => args[0])).toEqual([
+    "diff",
+    "diff",
+    "show",
+    "ls-files",
+    "show",
+    "--literal-pathspecs",
+    "show",
+    "show",
+  ]);
+});
+
+it("does not overcount concurrent immutable reads when evicting cached contents", async () => {
+  const cwd = await repository();
+  await writeFile(join(cwd, "a.ts"), `// ${"x".repeat(600_000)}\n`);
+  await runGitCommand(["add", "."], { cwd });
+  await runGitCommand(["commit", "-m", "initial"], { cwd });
+  const baseRef = (await runGitCommand(["rev-parse", "HEAD"], { cwd })).stdout.trim();
+  const barrier = Promise.withResolvers<void>();
+  let completed = 0;
+  const concurrentGit: RunGitCommand = async (args, options) => {
+    const result = await runGitCommand(args, options);
+    if (++completed === 16) barrier.resolve();
+    await barrier.promise;
+    return result;
+  };
+  const file = { ...parseNumstat("0\t1\ta.ts\0")[0], isDeleted: true };
+  const results = await Promise.all(
+    Array.from({ length: 16 }, () =>
+      readFileBreakdown({ cwd, baseRef, file, runGit: concurrentGit }),
+    ),
+  );
+  expect(results).toHaveLength(16);
+  const cached = await readFileBreakdown({ cwd, baseRef, file, runGit: concurrentGit });
+  expect(cached).toEqual(results[0]);
+  expect(completed).toBe(16);
 });

@@ -617,10 +617,15 @@ export class CheckoutSession {
   }
 
   async handleCheckoutBaseRefSetRequest(msg: CheckoutBaseRefSetRequest): Promise<void> {
-    const { cwd, baseRef, requestId } = msg;
+    const { baseRef, requestId } = msg;
+    const cwd = expandTilde(msg.cwd);
     try {
       assertSafeGitRef(baseRef, "base branch");
-      const result = await this.setCheckoutBaseRef(cwd, baseRef);
+      const result = await this.setCheckoutBaseRef(cwd, baseRef, {
+        paseoHome: this.paseoHome,
+        worktreesRoot: this.worktreesRoot,
+        logger: this.logger,
+      });
       await this.gitMutation.notifyGitMutation(cwd, "set-base-ref");
       this.scheduleDiffRefresh(cwd);
       // The header and sidebar stats read the base from the workspace's git snapshot; push it

@@ -894,7 +894,11 @@ async function resolveWorkspaceScript({
   workspaceId,
   scriptName,
   runtimeStore,
-}: Pick<SpawnWorkspaceScriptOptions, "repoRoot" | "workspaceId" | "scriptName" | "runtimeStore">) {
+  logger,
+}: Pick<
+  SpawnWorkspaceScriptOptions,
+  "repoRoot" | "workspaceId" | "scriptName" | "runtimeStore" | "logger"
+>) {
   const configResult = readPaseoConfig(repoRoot);
   if (!configResult.ok) {
     throw paseoConfigParseError(configResult);
@@ -903,7 +907,7 @@ async function resolveWorkspaceScript({
   let config = scriptConfigs.get(scriptName);
   let packageScript;
   if (!config && scriptName.startsWith("package.json:")) {
-    const discovered = await discoverPackageScripts(repoRoot);
+    const discovered = await discoverPackageScripts(repoRoot, logger);
     runtimeStore.setPackageScripts(workspaceId, discovered);
     packageScript = discovered.get(scriptName);
     config = packageScript;
@@ -939,7 +943,7 @@ export async function spawnWorkspaceScript(
     onLifecycleChanged,
   } = options;
   const { configResult, scriptConfigs, config, packageJson, terminalName, scriptCwd, command } =
-    await resolveWorkspaceScript({ repoRoot, workspaceId, scriptName, runtimeStore });
+    await resolveWorkspaceScript({ repoRoot, workspaceId, scriptName, runtimeStore, logger });
 
   const serviceScript = isServiceScript(config);
   const scriptType = serviceScript ? "service" : "script";
@@ -999,9 +1003,13 @@ export async function spawnWorkspaceScript(
     });
     runtimeRegistered = true;
 
-    const stopRuntimeIfCurrent = (input: { exitCode: number | null; removeRoute: boolean }) => {
+    function isCurrentRuntimeRunning(): boolean {
       const current = runtimeStore.get({ workspaceId, scriptName });
-      if (current?.terminalId !== terminal.id || current.lifecycle !== "running") {
+      return current?.terminalId === terminal.id && current.lifecycle === "running";
+    }
+
+    const stopRuntimeIfCurrent = (input: { exitCode: number | null; removeRoute: boolean }) => {
+      if (!isCurrentRuntimeRunning()) {
         return false;
       }
 
@@ -1049,6 +1057,11 @@ export async function spawnWorkspaceScript(
 
     if (!reusableTerminal) {
       await waitForTerminalBootstrapReadiness(terminal);
+    }
+    if (!isCurrentRuntimeRunning()) {
+      // Exit handling already recorded the stopped state; rollback must not erase it.
+      runtimeRegistered = false;
+      throw new Error(`Terminal stopped before script '${scriptName}' could start`);
     }
     if (!serviceScript) {
       unsubscribeCommandFinished = terminal.onCommandFinished((info) => {

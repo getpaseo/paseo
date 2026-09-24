@@ -11,6 +11,7 @@ import { runGitCommand, type RunGitCommand } from "../../utils/run-git-command.j
 import { classifyDiff } from "./classify.js";
 import { classifyPath } from "./path.js";
 
+const READ_ONLY_GIT_ENV = { GIT_OPTIONAL_LOCKS: "0", LC_ALL: "C" };
 const MAX_BYTES = 1024 * 1024;
 const immutableContentCache = new Map<string, string>();
 let cachedContentCharacters = 0;
@@ -29,11 +30,13 @@ async function readContent(input: Comparison, path: string, ref?: string): Promi
     if (cached !== undefined) return cached;
     const result = await (input.runGit ?? runGitCommand)(["show", `${ref}:${path}`], {
       cwd: input.cwd,
+      envOverlay: READ_ONLY_GIT_ENV,
       maxOutputBytes: MAX_BYTES,
       acceptExitCodes: [0, 128],
     });
     if (result.exitCode !== 0 || result.truncated) return null;
     if (/^[a-f0-9]{40,64}$/.test(ref)) {
+      cachedContentCharacters -= immutableContentCache.get(key)?.length ?? 0;
       immutableContentCache.set(key, result.stdout);
       cachedContentCharacters += result.stdout.length;
       while (immutableContentCache.size > 256 || cachedContentCharacters > 8 * 1024 * 1024) {
@@ -94,7 +97,7 @@ export async function readFileBreakdown(
         oldPath,
         file.path,
       ],
-      { cwd: input.cwd, maxOutputBytes: MAX_BYTES },
+      { cwd: input.cwd, envOverlay: READ_ONLY_GIT_ENV, maxOutputBytes: MAX_BYTES },
     );
     if (!patch.truncated) hunks = parseDiff(patch.stdout)[0]?.hunks ?? [];
   }
@@ -152,7 +155,10 @@ export async function readComparisonBreakdown(
 ): Promise<ChangeBreakdown> {
   const git = input.runGit ?? runGitCommand;
   const refs = input.targetRef ? [input.baseRef, input.targetRef] : [input.baseRef];
-  const result = await git(["diff", "--numstat", "-z", ...refs], { cwd: input.cwd });
+  const result = await git(["diff", "--no-ext-diff", "--no-textconv", "--numstat", "-z", ...refs], {
+    cwd: input.cwd,
+    envOverlay: READ_ONLY_GIT_ENV,
+  });
   if (result.truncated) {
     const breakdown = emptyChangeBreakdown();
     breakdown.other = { additions: input.total.additions, deletions: input.total.deletions };
@@ -161,6 +167,7 @@ export async function readComparisonBreakdown(
   const files = parseNumstat(result.stdout);
   const patch = await git(["diff", "--no-ext-diff", "--no-textconv", "--unified=0", ...refs], {
     cwd: input.cwd,
+    envOverlay: READ_ONLY_GIT_ENV,
   });
   if (!patch.truncated) {
     const parsed = parseDiff(patch.stdout);
@@ -180,6 +187,7 @@ export async function readComparisonBreakdown(
   if (!input.targetRef) {
     const untracked = await git(["ls-files", "--others", "--exclude-standard", "-z"], {
       cwd: input.cwd,
+      envOverlay: READ_ONLY_GIT_ENV,
     });
     for (const path of untracked.stdout.split("\0").filter(Boolean).slice(0, 500)) {
       const content = await readContent(input, path);

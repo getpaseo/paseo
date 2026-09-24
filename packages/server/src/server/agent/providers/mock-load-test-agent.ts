@@ -1144,9 +1144,10 @@ export class MockLoadTestAgentSession implements AgentSession {
         });
       }
       const callId = `${turn.turnId}:steering-replay-shell`;
+      const readCommand = /using (cat .+)$/i.exec(promptToText(turn.prompt))?.[1];
       const detail: ToolCallDetail = {
         type: "shell",
-        command: "sleep 5",
+        command: readCommand ?? "sleep 5",
         cwd: "/tmp/paseo-mock-load",
       };
       this.emitTimeline(

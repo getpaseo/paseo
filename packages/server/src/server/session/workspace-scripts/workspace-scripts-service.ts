@@ -165,7 +165,10 @@ export function createWorkspaceScriptsService(deps: {
   async function list(workspaceId: string): Promise<WorkspaceScriptPayload[]> {
     const { runtimeStore } = requireAvailable();
     const workspace = await getWorkspace(workspaceId);
-    runtimeStore.setPackageScripts(workspaceId, await discoverPackageScripts(workspace.cwd));
+    runtimeStore.setPackageScripts(
+      workspaceId,
+      await discoverPackageScripts(workspace.cwd, deps.logger),
+    );
     const project = await projectRegistry.get(workspace.projectId);
     return buildSnapshot(workspace, project);
   }

@@ -10,6 +10,7 @@ import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
+import { useMenuContext } from "@/components/ui/menu";
 import { agentHistoryQueryKey, allAgentHistoryQueryRootKey } from "@/hooks/agent-history-query-key";
 import type { AggregatedAgent } from "@/hooks/use-aggregated-agents";
 import { useAgentHistory } from "@/hooks/use-agent-history";
@@ -128,7 +129,8 @@ export function WorkspaceRecentAgentsMenuContent({
 }) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
-  const { agents, isInitialLoad, hostErrors } = useAgentHistory({ serverId });
+  const { open } = useMenuContext("WorkspaceRecentAgentsMenuContent");
+  const { agents, isInitialLoad, hostErrors } = useAgentHistory({ serverId, enabled: open });
   const recentlyClosed = useMemo(
     () =>
       selectRecentlyClosedAgents(agents, {

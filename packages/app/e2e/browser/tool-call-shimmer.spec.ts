@@ -217,3 +217,39 @@ test("measures an overview heading that becomes loading after its idle mount", a
     await agent.cleanup();
   }
 });
+
+test("a summary label keeps its running shimmer and file action", async ({ page }) => {
+  test.setTimeout(120_000);
+  const agent = await seedMockAgentWorkspace({
+    repoPrefix: "summary-badge-",
+    title: "Summary badge",
+  });
+  try {
+    await openAgentRoute(page, { workspaceId: agent.workspaceId, agentId: agent.agentId });
+    await expectComposerVisible(page);
+    await agent.client.sendAgentMessage(
+      agent.agentId,
+      `Replay a claude-shaped foreground shell tool call using cat "${agent.cwd}/README.md"`,
+    );
+    const badge = page.getByTestId("tool-call-badge").filter({ visible: true }).first();
+    await expect(badge.getByTestId("tool-call-input-label").first()).toHaveText("Read README.md");
+    await expect(badge.locator('[style*="paseo-toolcall-shimmer"]')).not.toHaveCount(0);
+    const shimmer = await readShimmerEvidence(badge);
+    expect(shimmer.label).toBe("Read README.md");
+    expect(shimmer.renderedWidth).toBeGreaterThan(0);
+    await badge.hover();
+    await badge.getByTestId("tool-call-open-file").click();
+    await expect(page.getByTestId("workspace-tab-file_README.md").first()).toBeVisible();
+    await agent.client.waitForFinish(agent.agentId);
+    await page
+      .getByTestId(`workspace-tab-agent_${agent.agentId}`)
+      .first()
+      .click({ position: { x: 12, y: 13 } });
+    await expect(badge).toBeVisible();
+    await expect(badge.locator('[style*="paseo-toolcall-shimmer"]')).toHaveCount(0);
+    await badge.hover();
+    await expect(badge.getByTestId("tool-call-open-file")).toBeVisible();
+  } finally {
+    await agent.cleanup();
+  }
+});

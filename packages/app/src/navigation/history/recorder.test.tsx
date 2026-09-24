@@ -120,13 +120,16 @@ describe("NavigationHistoryRecorder", () => {
   });
 
   it("records app-wide routes and workspaces as the pathname changes", () => {
+    act(() => {
+      layout().openTab({ workspaceKey: WS1, target: AGENT, intent: "reveal" });
+    });
     navigate("/settings/general");
     navigate("/h/srv/workspace/ws-1");
     navigate("/sessions");
 
     expect(history.getState().entries).toEqual([
       { kind: "route", path: "/settings/general" },
-      ws("ws-1", null),
+      ws("ws-1", "agent_a1", AGENT),
       { kind: "route", path: "/sessions" },
     ]);
     expect(history.getState().index).toBe(2);

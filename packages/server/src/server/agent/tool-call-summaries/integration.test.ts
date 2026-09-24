@@ -1,3 +1,5 @@
+import { ClaudeProviderOptionsSchema } from "../providers/claude/options.js";
+import { OpenCodeProviderOptionsSchema } from "../providers/opencode/options.js";
 import { CodexProviderOptionsSchema } from "../providers/codex/options.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { promises as fs } from "node:fs";
@@ -55,6 +57,124 @@ async function setup() {
 }
 
 describe("tool-call descriptions in the real manager", () => {
+  it.each(["copilot", "pi", "custom"])(
+    "skips unrestricted %s helpers before session creation",
+    async (provider) => {
+      const { source, store, logger } = await setup();
+      const client = createTestAgentClient(provider);
+      const manager = new AgentManager({ clients: { [provider]: client }, logger });
+      const origin = await manager.createAgent({ provider, cwd: source.cwd }, undefined, {
+        workspaceId: undefined,
+        persistSession: false,
+      });
+      cleanup.push(() => manager.closeAgent(origin.id));
+      const created = vi
+        .spyOn(client, "createSession")
+        .mockRejectedValue(new Error("Unexpected helper creation"));
+      const generator = new AgentSummaryGenerator({
+        manager,
+        store,
+        logger,
+        readDaemonConfig: () => ({ metadataGeneration: { providers: [{ provider }] } }),
+        providerSnapshotManager: {
+          listProviders: async () => [{ provider, enabled: true, status: "ready", models: [] }],
+        },
+      });
+      cleanup.push(() => generator.dispose());
+      await expect(
+        generator.generate(origin.id, [], 0, new AbortController().signal),
+      ).rejects.toThrow("No metadata generation provider is available");
+      expect(created).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    ["claude", { tools: [] }],
+    [
+      "codex",
+      {
+        sandbox_mode: "read-only",
+        approval_policy: "on-request",
+        web_search: "disabled",
+        features: { multi_agent_v2: false },
+      },
+    ],
+    ["opencode", { permission: "deny" }],
+  ] as const)(
+    "falls through an unsupported provider to a restricted custom %s runtime",
+    async (runtime, providerOptions) => {
+      const { source, store, logger } = await setup();
+      const client = createTestAgentClient("custom");
+      const unrestricted = createTestAgentClient("pi");
+      const manager = new AgentManager({
+        clients: { custom: client, pi: unrestricted },
+        logger,
+        providerDefinitions: {
+          custom: {
+            enabled: true,
+            derivedFromProviderId: runtime,
+            validateOptions: (options) =>
+              options === undefined
+                ? undefined
+                : {
+                    claude: ClaudeProviderOptionsSchema,
+                    codex: CodexProviderOptionsSchema,
+                    opencode: OpenCodeProviderOptionsSchema,
+                  }[runtime].parse(options),
+          },
+        },
+      });
+      const origin = await manager.createAgent({ provider: "custom", cwd: source.cwd }, undefined, {
+        workspaceId: undefined,
+        persistSession: false,
+      });
+      cleanup.push(() => manager.closeAgent(origin.id));
+      const skipped = vi
+        .spyOn(unrestricted, "createSession")
+        .mockRejectedValue(new Error("Unexpected unrestricted helper"));
+      const created = vi
+        .spyOn(client, "createSession")
+        .mockRejectedValue(new Error("Restricted session reached"));
+      const generator = new AgentSummaryGenerator({
+        manager,
+        store,
+        logger,
+        readDaemonConfig: () => ({
+          metadataGeneration: { providers: [{ provider: "pi" }, { provider: "custom" }] },
+        }),
+        providerSnapshotManager: {
+          listProviders: async () =>
+            ["pi", "custom"].map((provider) => ({
+              provider,
+              enabled: true,
+              status: "ready",
+              models: [],
+            })),
+        },
+      });
+      cleanup.push(() => generator.dispose());
+      const requestId = manager.backgroundActivity.create({
+        kind: "labels",
+        title: "Labels",
+        cwd: source.cwd,
+      });
+      await expect(
+        generator.generate(origin.id, [], 0, new AbortController().signal, requestId),
+      ).rejects.toThrow("Restricted session reached");
+      expect(skipped).not.toHaveBeenCalled();
+      expect(created.mock.calls[0][0]).toMatchObject({
+        providerOptions,
+        internal: true,
+        mcpServers: {},
+      });
+      expect(created.mock.calls[0][1]?.paseoTools).toBeUndefined();
+      expect(manager.backgroundActivity.snapshot().requests[0].attempts[0]).toMatchObject({
+        provider: "pi",
+        error: "Provider cannot restrict summary helper tools",
+      });
+    },
+  );
+
   it("keeps the input label when its request finishes after the tool result", async () => {
     const { manager, targets, inputTargets, source } = await setup();
     expect(inputTargets).toHaveLength(1);

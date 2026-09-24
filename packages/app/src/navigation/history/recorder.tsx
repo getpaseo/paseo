@@ -82,25 +82,34 @@ export function NavigationHistoryRecorder({
     } else {
       entry = location;
     }
-    const { entries, index } = store.getState();
-    const current = entries[index];
-    if (current && entriesEqual(current, entry)) {
-      // A same-kind tab replacement can keep the tab id while changing its target. Keep the
-      // current entry's replay payload fresh without turning that retarget into a new place.
-      if (
-        current.kind === "workspace" &&
-        entry.kind === "workspace" &&
-        ((current.target === null) !== (entry.target === null) ||
-          (current.target !== null &&
-            entry.target !== null &&
-            !workspaceTabTargetsEqual(current.target, entry.target)))
-      ) {
-        store.replaceCurrent(entry);
-      }
-      return;
-    }
-    store.record(entry);
+    recordNavigationLocation(store, entry);
   }, [focusedTabId, focusedTabTargetSignature, hydrated, location, store, workspaceKey]);
 
   return null;
+}
+
+export function recordNavigationLocation(store: NavigationHistoryStore, entry: HistoryEntry) {
+  // Missing layouts and Explorer-only focus are transitional. Settled empty workspaces have
+  // a New tab; recording a tabless location cannot restore its focus when replayed.
+  if (entry.kind === "workspace" && (!entry.tabId || !entry.target)) {
+    return;
+  }
+  const { entries, index } = store.getState();
+  const current = entries[index];
+  if (current && entriesEqual(current, entry)) {
+    // A same-kind tab replacement can keep the tab id while changing its target. Keep the
+    // current entry's replay payload fresh without turning that retarget into a new place.
+    if (
+      current.kind === "workspace" &&
+      entry.kind === "workspace" &&
+      ((current.target === null) !== (entry.target === null) ||
+        (current.target !== null &&
+          entry.target !== null &&
+          !workspaceTabTargetsEqual(current.target, entry.target)))
+    ) {
+      store.replaceCurrent(entry);
+    }
+    return;
+  }
+  store.record(entry);
 }

@@ -41,7 +41,7 @@ export function PreventSleepCard({ serverId }: { serverId: string }) {
     [mutation],
   );
 
-  if (!isConnected || !supportsFeature) return null;
+  if (!isConnected || !supportsFeature || config === null) return null;
 
   const errorText = formatMutationError(mutation.error);
 
@@ -62,7 +62,7 @@ export function PreventSleepCard({ serverId }: { serverId: string }) {
           ) : null}
         </View>
         <Switch
-          value={config?.preventSleepWhileAgentsRun !== false}
+          value={config.preventSleepWhileAgentsRun !== false}
           onValueChange={handleValueChange}
           disabled={!isSupportedHost || mutation.isPending}
           accessibilityLabel={t("settings.host.preventSleep.title")}

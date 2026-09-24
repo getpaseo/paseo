@@ -72,8 +72,35 @@ describe("package script discovery", () => {
     ]);
   });
 
-  it("reports a malformed manifest instead of returning an empty successful list", async () => {
-    await writeFile(join(root, "package.json"), "{");
-    await expect(discoverPackageScripts(root)).rejects.toThrow();
+  it.each(["{", JSON.stringify({ scripts: { broken: 42 } })])(
+    "keeps healthy scripts and descendants when a manifest is invalid: %s",
+    async (invalid) => {
+      await manifest("", { packageManager: "pnpm@10", scripts: { root: "echo root" } });
+      await manifest("packages/healthy", { scripts: { build: "echo healthy" } });
+      await manifest("packages/broken/child", { scripts: { test: "echo child" } });
+      await writeFile(join(root, "packages/broken/package.json"), invalid);
+      expect(
+        [...(await discoverPackageScripts(root)).values()].map((script) => ({
+          path: script.packageJson.path,
+          command: script.command,
+        })),
+      ).toEqual([
+        { path: "package.json", command: "pnpm run 'root'" },
+        { path: "packages/broken/child/package.json", command: "pnpm run 'test'" },
+        { path: "packages/healthy/package.json", command: "pnpm run 'build'" },
+      ]);
+      await manifest("packages/broken", { scripts: { restored: "echo restored" } });
+      expect(
+        (await discoverPackageScripts(root)).get(
+          "package.json:packages%2Fbroken%2Fpackage.json:restored",
+        )?.command,
+      ).toBe("pnpm run 'restored'");
+    },
+  );
+
+  it("still reports an unavailable workspace root", async () => {
+    await expect(discoverPackageScripts(join(root, "missing"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
   });
 });

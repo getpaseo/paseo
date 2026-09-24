@@ -1210,11 +1210,6 @@ async function getPaseoWorktreeForCwd(
   cwd: string,
   options: PaseoWorktreeLookupOptions = {},
 ): Promise<PaseoWorktreeForCwd> {
-  // Fast-path reject: non-worktree paths do not need expensive ownership checks.
-  if (!/[\\/]worktrees[\\/]/.test(cwd)) {
-    return { isPaseoOwnedWorktree: false };
-  }
-
   const ownership = await isPaseoOwnedWorktreeCwd(cwd, {
     paseoHome: options.context?.paseoHome,
     worktreesRoot: options.context?.worktreesRoot,
