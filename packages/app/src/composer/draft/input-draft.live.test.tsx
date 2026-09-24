@@ -136,7 +136,9 @@ beforeAll(async () => {
   });
 
   ({ useAgentInputDraft } = await import("./input-draft"));
-});
+  // The hook pulls in the whole composer graph; a cold transform on a loaded machine exceeds
+  // the default hook timeout.
+}, 120_000);
 
 describe("useAgentInputDraft live contract", () => {
   beforeEach(() => {
@@ -424,7 +426,7 @@ describe("useAgentInputDraft live contract", () => {
     expect(getLatest().attachments).toEqual([{ kind: "image", metadata: image }]);
     const readPersistedInput = () => useDraftStore.getState().drafts["draft:attachments"]?.input;
     await act(async () => {
-      // Web text publication occurs after paint; attachments save immediately.
+      // Text publication occurs after paint; attachments save immediately.
       await expect.poll(readPersistedInput).toEqual({
         text: "with attachment",
         attachments: [{ kind: "image", metadata: image }],
@@ -604,4 +606,128 @@ describe("useAgentInputDraft live contract", () => {
       input: { text: "", attachments: [] },
     });
   });
+
+  it("writes rapid edits to the store once after paint and flushes the last value on unmount", async () => {
+    let latest: ReturnType<typeof useAgentInputDraft> | null = null;
+    function getLatest(): ReturnType<typeof useAgentInputDraft> {
+      if (!latest) {
+        throw new Error("Expected hook result");
+      }
+      return latest;
+    }
+    function Probe() {
+      latest = useAgentInputDraft({ draftKey: "draft:coalesce" });
+      return null;
+    }
+
+    const queryClient = new QueryClient();
+    const container = document.getElementById("root");
+    if (!container) {
+      throw new Error("Missing root container");
+    }
+    const writes = recordDraftTextWrites("draft:coalesce");
+
+    const root = createTestRoot(container);
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={queryClient}>
+          <Probe />
+        </QueryClientProvider>,
+      );
+    });
+
+    act(() => {
+      for (const text of ["h", "he", "hel", "hell", "hello"]) {
+        getLatest().editText(text);
+      }
+    });
+    expect(writes.texts).toEqual([]);
+
+    await act(async () => {
+      await waitForPaint();
+    });
+    expect(writes.texts).toEqual(["hello"]);
+    expect(getLatest().textSource.getSnapshot()).toBe("hello");
+
+    act(() => {
+      getLatest().editText("hello world");
+    });
+    expect(writes.texts).toEqual(["hello"]);
+
+    await act(async () => {
+      root.unmount();
+    });
+    expect(writes.texts).toEqual(["hello", "hello world"]);
+    writes.stop();
+  });
+
+  it("flushes staged text when the app goes to the background", async () => {
+    let latest: ReturnType<typeof useAgentInputDraft> | null = null;
+    function getLatest(): ReturnType<typeof useAgentInputDraft> {
+      if (!latest) {
+        throw new Error("Expected hook result");
+      }
+      return latest;
+    }
+    function Probe() {
+      latest = useAgentInputDraft({ draftKey: "draft:background" });
+      return null;
+    }
+
+    const queryClient = new QueryClient();
+    const container = document.getElementById("root");
+    if (!container) {
+      throw new Error("Missing root container");
+    }
+    const writes = recordDraftTextWrites("draft:background");
+
+    const root = createTestRoot(container);
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={queryClient}>
+          <Probe />
+        </QueryClientProvider>,
+      );
+    });
+
+    act(() => {
+      getLatest().editText("unsaved");
+    });
+    expect(writes.texts).toEqual([]);
+
+    await act(async () => {
+      setDocumentVisibility("hidden");
+    });
+    expect(writes.texts).toEqual(["unsaved"]);
+
+    setDocumentVisibility("visible");
+    await act(async () => {
+      root.unmount();
+    });
+    expect(writes.texts).toEqual(["unsaved"]);
+    writes.stop();
+  });
 });
+
+function recordDraftTextWrites(draftKey: string): { texts: string[]; stop: () => void } {
+  const texts: string[] = [];
+  const stop = useDraftStore.subscribe((state, previous) => {
+    if (state.drafts[draftKey] === previous.drafts[draftKey]) return;
+    const text = state.drafts[draftKey]?.input.text;
+    if (typeof text === "string") texts.push(text);
+  });
+  return { texts, stop };
+}
+
+function waitForPaint(): Promise<void> {
+  return new Promise((resolve) => {
+    requestAnimationFrame(() => setTimeout(resolve, 0));
+  });
+}
+
+// react-native-web's AppState derives "background" from document.visibilityState, which jsdom
+// exposes read-only; redefining it is the only way to drive that transition here.
+function setDocumentVisibility(state: DocumentVisibilityState): void {
+  Object.defineProperty(document, "visibilityState", { value: state, configurable: true });
+  document.dispatchEvent(new Event("visibilitychange"));
+}
