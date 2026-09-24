@@ -2330,10 +2330,7 @@ describe("createGiteaService", () => {
       number: 5,
       baseRefName: "main",
       headRefName: "feat/sample-change",
-      checkoutRefs: [
-        { remoteName: "origin", remoteRef: "refs/pull/5/head" },
-        { remoteName: "origin", remoteRef: "refs/heads/feat/sample-change" },
-      ],
+      checkoutRefs: [{ remoteName: "origin", remoteRef: "refs/pull/5/head" }],
       headOwnerLogin: "contributor",
       headRepositorySshUrl: "git@gitea.com:contributor/sample-repo.git",
       headRepositoryUrl: "https://gitea.com/contributor/sample-repo",
@@ -2341,6 +2338,128 @@ describe("createGiteaService", () => {
     });
 
     expect(calls).toContainEqual(["api", "repos/example-user/sample-repo/pulls/5"]);
+  });
+
+  it("prefixes the local branch name with the fork owner for a cross-repository checkout", () => {
+    const { service } = makeService(() => ok(""));
+
+    const localBranchName = service.buildPrLocalBranchName?.({
+      headRef: "patch-1",
+      checkoutTarget: {
+        number: 5,
+        baseRefName: "main",
+        headRefName: "patch-1",
+        headOwnerLogin: "contributor",
+        headRepositorySshUrl: null,
+        headRepositoryUrl: null,
+        isCrossRepository: true,
+      },
+    });
+
+    expect(localBranchName).toBe("contributor/patch-1");
+  });
+
+  it("keeps the head ref name as-is for a same-repository checkout", () => {
+    const { service } = makeService(() => ok(""));
+
+    const localBranchName = service.buildPrLocalBranchName?.({
+      headRef: "patch-1",
+      checkoutTarget: {
+        number: 5,
+        baseRefName: "main",
+        headRefName: "patch-1",
+        headOwnerLogin: null,
+        headRepositorySshUrl: null,
+        headRepositoryUrl: null,
+        isCrossRepository: false,
+      },
+    });
+
+    expect(localBranchName).toBe("patch-1");
+  });
+
+  it("falls back to a PR-number prefix when the fork owner login is not a safe branch path segment", () => {
+    const { service } = makeService(() => ok(""));
+
+    const localBranchName = service.buildPrLocalBranchName?.({
+      headRef: "patch-1",
+      checkoutTarget: {
+        number: 5,
+        baseRefName: "main",
+        headRefName: "patch-1",
+        headOwnerLogin: "../evil",
+        headRepositorySshUrl: null,
+        headRepositoryUrl: null,
+        isCrossRepository: true,
+      },
+    });
+
+    expect(localBranchName).toBe("pr-5/patch-1");
+  });
+
+  it("falls back to a PR-number prefix when the fork owner login would produce an invalid ref", () => {
+    const { service } = makeService(() => ok(""));
+
+    const localBranchName = service.buildPrLocalBranchName?.({
+      headRef: "patch-1",
+      checkoutTarget: {
+        number: 5,
+        baseRefName: "main",
+        headRefName: "patch-1",
+        headOwnerLogin: "contributor.lock",
+        headRepositorySshUrl: null,
+        headRepositoryUrl: null,
+        isCrossRepository: true,
+      },
+    });
+
+    expect(localBranchName).toBe("pr-5/patch-1");
+  });
+
+  it("falls back to a PR-number prefix when the fork owner login is unknown", () => {
+    const { service } = makeService(() => ok(""));
+
+    const localBranchName = service.buildPrLocalBranchName?.({
+      headRef: "patch-1",
+      checkoutTarget: {
+        number: 5,
+        baseRefName: "main",
+        headRefName: "patch-1",
+        headOwnerLogin: null,
+        headRepositorySshUrl: null,
+        headRepositoryUrl: null,
+        isCrossRepository: true,
+      },
+    });
+
+    expect(localBranchName).toBe("pr-5/patch-1");
+  });
+
+  it("lowercases the fork owner login for the branch prefix", () => {
+    const { service } = makeService(() => ok(""));
+
+    const localBranchName = service.buildPrLocalBranchName?.({
+      headRef: "patch-1",
+      checkoutTarget: {
+        number: 5,
+        baseRefName: "main",
+        headRefName: "patch-1",
+        headOwnerLogin: "Contributor",
+        headRepositorySshUrl: null,
+        headRepositoryUrl: null,
+        isCrossRepository: true,
+      },
+    });
+
+    expect(localBranchName).toBe("contributor/patch-1");
+  });
+
+  it("returns the pull head ref for default checkout refs", () => {
+    const { service } = makeService(() => ok(""));
+
+    expect(service.defaultCheckoutRefs?.({ changeRequestNumber: 5, headRef: "patch-1" })).toEqual([
+      { remoteName: "origin", remoteRef: "refs/pull/5/head" },
+    ]);
   });
 
   it("creates a pull request and parses the resulting URL and index", async () => {
