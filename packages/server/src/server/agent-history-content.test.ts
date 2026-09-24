@@ -58,7 +58,12 @@ describe("conversation text extractors", () => {
     const blobs = [
       Buffer.from(JSON.stringify({ role: "system", content: "You are an agent." })),
       Buffer.from(JSON.stringify({ role: "user", content: "SuperGrok usage versus Cursor" })),
-      Buffer.from(JSON.stringify({ role: "assistant", content: [{ type: "text", text: "Cursor bills separately." }] })),
+      Buffer.from(
+        JSON.stringify({
+          role: "assistant",
+          content: [{ type: "text", text: "Cursor bills separately." }],
+        }),
+      ),
       Buffer.from([0x0a, 0x8b, 0x01]),
     ];
     const text = conversationTextFromCursorBlobs(blobs);
@@ -127,7 +132,10 @@ describe("loadAgentHistoryContent", () => {
     cursorDb.exec("CREATE TABLE blobs (id TEXT, data BLOB)");
     cursorDb
       .prepare("INSERT INTO blobs (id, data) VALUES (?, ?)")
-      .run("1", Buffer.from(JSON.stringify({ role: "user", content: "unique cursor phrase harp" })));
+      .run(
+        "1",
+        Buffer.from(JSON.stringify({ role: "user", content: "unique cursor phrase harp" })),
+      );
     cursorDb.close();
 
     const opencodeDb = new DatabaseSync(roots.opencodeDbPath);

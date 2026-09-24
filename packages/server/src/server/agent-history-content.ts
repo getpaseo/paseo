@@ -121,7 +121,12 @@ export async function loadAgentHistoryContent(
   try {
     switch (provider) {
       case "grok":
-        return await readIndexedFile(roots.grokSessionsDir, sessionId, "grok", conversationTextFromGrokJsonl);
+        return await readIndexedFile(
+          roots.grokSessionsDir,
+          sessionId,
+          "grok",
+          conversationTextFromGrokJsonl,
+        );
       case "claude":
         return await readIndexedFile(
           roots.claudeProjectsDir,
@@ -173,7 +178,8 @@ function textFromContent(content: unknown): string {
     if (!part || typeof part !== "object") continue;
     const record = part as { type?: unknown; text?: unknown };
     if (typeof record.text !== "string") continue;
-    if (record.type !== undefined && record.type !== "text" && record.type !== "output_text") continue;
+    if (record.type !== undefined && record.type !== "text" && record.type !== "output_text")
+      continue;
     bits.push(record.text);
   }
   return bits.join("\n");
@@ -202,7 +208,11 @@ async function readIndexedFile(
   kind: string,
   extract: (raw: string) => string,
 ): Promise<string> {
-  const index = await fileIndex(kind, root, kind === "grok" ? indexGrokSessions : indexClaudeSessions);
+  const index = await fileIndex(
+    kind,
+    root,
+    kind === "grok" ? indexGrokSessions : indexClaudeSessions,
+  );
   const file = index.get(sessionId);
   if (!file) return "";
   const info = await stat(file).catch(() => null);
@@ -317,9 +327,9 @@ async function readOpenCodeSession(dbPath: string, sessionId: string): Promise<s
   const { DatabaseSync } = await import("node:sqlite");
   const db = new DatabaseSync(dbPath, { readOnly: true });
   try {
-    const parts = db
-      .prepare("SELECT data FROM part WHERE session_id = ?")
-      .all(sessionId) as Array<{ data: string }>;
+    const parts = db.prepare("SELECT data FROM part WHERE session_id = ?").all(sessionId) as Array<{
+      data: string;
+    }>;
     const messages = db
       .prepare("SELECT data FROM message WHERE session_id = ?")
       .all(sessionId) as Array<{ data: string }>;
