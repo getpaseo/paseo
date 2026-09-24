@@ -98,7 +98,8 @@ export async function createTestPaseoDaemon(
   let lastError: unknown;
 
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-    const { config, paseoHomeRoot, paseoHome, staticDir } = await prepareTestDaemonConfig(options);
+    const { config, paseoHomeRoot, paseoHome, staticDir, createdDirs } =
+      await prepareTestDaemonConfig(options);
     const logger = options.logger ?? pino({ level: "silent" });
     const daemon = await createPaseoDaemon(config, logger, {
       serverFeatureOverrides: {
@@ -106,14 +107,6 @@ export async function createTestPaseoDaemon(
         relayConfig: options.relayConfigCapability,
       },
     });
-    // With cleanup disabled the caller owns the home, including its persisted serverId.
-    const removeTestDaemonDirs = async (): Promise<void> => {
-      if (!(options.cleanup ?? true)) return;
-      await Promise.all([
-        rm(paseoHomeRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }),
-        rm(staticDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }),
-      ]);
-    };
     try {
       await startDaemonWithTimeout(daemon, TEST_DAEMON_START_TIMEOUT_MS);
       const listenTarget = daemon.getListenTarget();
@@ -124,8 +117,10 @@ export async function createTestPaseoDaemon(
       const close = async (): Promise<void> => {
         await daemon.stop().catch(() => undefined);
         await daemon.agentManager.flush().catch(() => undefined);
-        await new Promise((r) => setTimeout(r, 50));
-        await removeTestDaemonDirs();
+        if (options.cleanup ?? true) {
+          await new Promise((r) => setTimeout(r, 50));
+          await removeDirs([paseoHomeRoot, staticDir]);
+        }
       };
 
       return {
@@ -139,7 +134,8 @@ export async function createTestPaseoDaemon(
     } catch (error) {
       lastError = error;
       await daemon.stop().catch(() => undefined);
-      await removeTestDaemonDirs();
+      // A failed attempt removes only what it created: a caller-supplied home keeps its serverId.
+      await removeDirs(createdDirs);
 
       if (
         (!isAddressInUseError(error) && !isStartupTimeoutError(error)) ||
@@ -158,16 +154,28 @@ interface PreparedTestDaemonConfig {
   paseoHomeRoot: string;
   paseoHome: string;
   staticDir: string;
+  createdDirs: string[];
+}
+
+async function removeDirs(dirs: string[]): Promise<void> {
+  await Promise.all(
+    dirs.map((dir) => rm(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 })),
+  );
 }
 
 async function prepareTestDaemonConfig(
   options: TestPaseoDaemonOptions,
 ): Promise<PreparedTestDaemonConfig> {
-  const paseoHomeRoot =
-    options.paseoHomeRoot ?? (await mkdtemp(path.join(os.tmpdir(), "paseo-home-")));
+  const createdDirs: string[] = [];
+  const createTempDir = async (prefix: string): Promise<string> => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), prefix));
+    createdDirs.push(dir);
+    return dir;
+  };
+  const paseoHomeRoot = options.paseoHomeRoot ?? (await createTempDir("paseo-home-"));
   const paseoHome = path.join(paseoHomeRoot, ".paseo");
   await mkdir(paseoHome, { recursive: true });
-  const staticDir = options.staticDir ?? (await mkdtemp(path.join(os.tmpdir(), "paseo-static-")));
+  const staticDir = options.staticDir ?? (await createTempDir("paseo-static-"));
   const listenHost = options.listen ?? "127.0.0.1";
   const listenPort = options.listenPort ?? 0;
   const config: PaseoDaemonConfig = {
@@ -206,7 +214,7 @@ async function prepareTestDaemonConfig(
     pluginsEnabled: options.pluginsEnabled,
     plugins: options.plugins,
   };
-  return { config, paseoHomeRoot, paseoHome, staticDir };
+  return { config, paseoHomeRoot, paseoHome, staticDir, createdDirs };
 }
 
 function isAddressInUseError(error: unknown): boolean {

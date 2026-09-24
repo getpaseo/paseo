@@ -1,9 +1,9 @@
 import { existsSync } from "node:fs";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 
 import { createTestPaseoDaemon } from "./paseo-daemon.js";
 
@@ -11,6 +11,7 @@ describe("createTestPaseoDaemon", () => {
   const cleanups: Array<() => Promise<void>> = [];
 
   afterEach(async () => {
+    vi.unstubAllEnvs();
     await Promise.all(cleanups.splice(0).map((cleanup) => cleanup()));
   });
 
@@ -32,6 +33,19 @@ describe("createTestPaseoDaemon", () => {
     ).rejects.toMatchObject({ code: "EADDRINUSE" });
 
     expect(existsSync(ownedFile)).toBe(true);
+  }, 60_000);
+
+  test("removes the directories it created when startup on a taken port fails", async () => {
+    const scratchTmp = await mkdtemp(path.join(os.tmpdir(), "paseo-daemon-scratch-"));
+    cleanups.push(() => rm(scratchTmp, { recursive: true, force: true }));
+    for (const name of ["TMPDIR", "TMP", "TEMP"]) vi.stubEnv(name, scratchTmp);
+    const takenPort = await occupyPort(cleanups);
+
+    await expect(
+      createTestPaseoDaemon({ listenPort: takenPort, cleanup: false, mcpEnabled: false }),
+    ).rejects.toMatchObject({ code: "EADDRINUSE" });
+
+    expect(await readdir(scratchTmp)).toEqual([]);
   }, 60_000);
 });
 
