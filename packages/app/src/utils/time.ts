@@ -44,7 +44,7 @@ export function formatTimeAgo(date: Date, now: Date = new Date()): string {
  */
 export type RelativeTimeResolution = "minute" | "hour" | "day" | "static";
 
-export interface CompactTimeAgo {
+export interface RelativeTimeLabel {
   label: string;
   resolution: RelativeTimeResolution;
 }
@@ -67,7 +67,7 @@ const ABSOLUTE_AFTER_MS = 7 * DAY_MS;
  * The resolution comes back with the label so a caller can wake at the rate the label actually
  * changes instead of guessing — see `useCompactTimeAgo`.
  */
-export function describeCompactTimeAgo(date: Date, now: Date = new Date()): CompactTimeAgo {
+export function describeCompactTimeAgo(date: Date, now: Date = new Date()): RelativeTimeLabel {
   const elapsedMs = now.getTime() - date.getTime();
 
   if (elapsedMs < MINUTE_MS) {
@@ -109,6 +109,18 @@ export function formatCompactTimeAgoAsProse(label: string): string {
 function localCalendarDaysBetween(earlier: Date, later: Date): number {
   const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
   return Math.round((startOfDay(later).getTime() - startOfDay(earlier).getTime()) / DAY_MS);
+}
+
+/**
+ * `formatTimeAgo` with the resolution it changes at, so a caller can keep it current with
+ * `useTimeAgo`. The prose label steps over from minutes to hours to days to a date at the same
+ * points as the compact one, so it wakes at the same rate.
+ */
+export function describeTimeAgo(date: Date, now: Date = new Date()): RelativeTimeLabel {
+  return {
+    label: formatTimeAgo(date, now),
+    resolution: describeCompactTimeAgo(date, now).resolution,
+  };
 }
 
 // Cached Intl formatter. Explicitly carrying `hourCycle` from the resolved
