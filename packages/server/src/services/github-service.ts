@@ -6,6 +6,7 @@ import {
 } from "@getpaseo/protocol/git-remote";
 import { findExecutable } from "../executable-resolution/executable-resolution.js";
 import { runGitCommand } from "../utils/run-git-command.js";
+import { buildForkLocalBranchName } from "../utils/change-request-checkout.js";
 import { execCommand } from "../utils/spawn.js";
 import { resolveSshHostname } from "../utils/ssh-hostname.js";
 import {
@@ -2111,10 +2112,7 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
     },
 
     buildPrLocalBranchName({ headRef, checkoutTarget }) {
-      const owner = checkoutTarget.isCrossRepository
-        ? normalizeGitHubOwnerForBranch(checkoutTarget.headOwnerLogin)
-        : null;
-      return owner ? `${owner}/${headRef}` : headRef;
+      return buildForkLocalBranchName({ headRef, ...checkoutTarget });
     },
 
     supportsCrossRepoCheckoutWithoutRefs: true,
@@ -2661,11 +2659,6 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
   };
 
   return api;
-}
-
-function normalizeGitHubOwnerForBranch(owner: string | null): string | null {
-  const normalized = owner?.trim().toLowerCase() ?? "";
-  return /^[a-z0-9-]+$/.test(normalized) ? normalized : null;
 }
 
 function getGithubStatusFacts(
