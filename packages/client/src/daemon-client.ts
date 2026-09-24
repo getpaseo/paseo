@@ -25,6 +25,7 @@ import {
   DaemonUpdateResponseSchema,
   SessionInboundMessageSchema,
   type ActiveTurnBehavior,
+  type SteerFallback,
   type ServerInfoStatusPayload,
 } from "@getpaseo/protocol/messages";
 import { validateWSOutboundMessage } from "@getpaseo/protocol/validation/ws-outbound";
@@ -360,6 +361,8 @@ export interface DaemonClientTrace {
 export interface SendMessageOptions {
   messageId?: string;
   activeTurnBehavior?: ActiveTurnBehavior;
+  /** Only meaningful with activeTurnBehavior "steer". Defaults to "replace" server-side. */
+  steerFallback?: SteerFallback;
   images?: Array<{ data: string; mimeType: string }>;
   attachments?: SendAgentMessageRequest["attachments"];
 }
@@ -3356,6 +3359,7 @@ export class DaemonClient {
       text,
       ...(messageId ? { messageId } : {}),
       ...(options?.activeTurnBehavior ? { activeTurnBehavior: options.activeTurnBehavior } : {}),
+      ...(options?.steerFallback ? { steerFallback: options.steerFallback } : {}),
       ...(options?.images ? { images: options.images } : {}),
       ...(options?.attachments ? { attachments: options.attachments } : {}),
     });

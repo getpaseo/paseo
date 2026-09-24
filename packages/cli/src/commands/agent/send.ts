@@ -29,6 +29,7 @@ export const agentSendSchema: OutputSchema<AgentSendResult> = {
 
 export interface AgentSendOptions extends CommandOptions {
   wait?: boolean;
+  steer?: boolean;
   image?: string[];
   prompt?: string;
   promptFile?: string;
@@ -42,6 +43,10 @@ export function addSendOptions(cmd: Command): Command {
     .option("--prompt <text>", "Provide the message inline as a flag")
     .option("--prompt-file <path>", "Read the message from a UTF-8 text file")
     .option("--image <path>", "Attach image(s) to the message", collectMultiple, [])
+    .option(
+      "--steer",
+      "Deliver the message into the agent's running turn instead of cancelling it. Fails if the agent is mid-turn and its provider cannot steer.",
+    )
     .option("--no-wait", "Return immediately without waiting for completion");
 }
 
@@ -192,7 +197,13 @@ export async function runSendCommand(
       options.image && options.image.length > 0 ? await readImageFiles(options.image) : undefined;
 
     // Send the message
-    await client.sendAgentMessage(agentIdArg, promptInput, { images });
+    await client.sendAgentMessage(agentIdArg, promptInput, {
+      images,
+      // --steer means steer: never let it turn into a cancel-and-restart.
+      ...(options.steer
+        ? { activeTurnBehavior: "steer" as const, steerFallback: "reject" as const }
+        : {}),
+    });
 
     // If --no-wait, return immediately
     if (options.wait === false) {

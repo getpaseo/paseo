@@ -63,6 +63,8 @@ Agent-scoped `create_agent` defaults `notifyOnFinish` to true. Set it to `false`
 
 **`send_agent_prompt`** — `{ agentId, prompt }`. Use for follow-ups to an existing agent. Agent-scoped prompt calls default to `background: true` and `notifyOnFinish: true`; top-level calls default to blocking with no callback. For a synchronous follow-up, pass `background: false` and use the returned result.
 
+`activeTurnBehavior` decides what happens when the target is mid-turn. `"steer"` delivers the prompt into the running turn and leaves it and its subagents alive; `"interrupt"` cancels the turn first. Agent-scoped calls default to `"steer"`, top-level calls to `"interrupt"`. Pass `"interrupt"` only when you mean to stop the work the target is doing. A `"steer"` call never silently falls back to cancelling: if the target is mid-turn and its provider cannot steer, the call returns `success: false` with the target's status and the running turn keeps going. The `steered` field says whether the prompt joined a running turn or started a new one.
+
 **`update_agent`** — `{ agentId, name?, labels?, settings? }`. Use `settings` for runtime changes on an existing agent: `modeId`, `model`, `thinkingOptionId`, and provider-specific `features`. For Codex fast mode, pass `settings: { features: { "fast_mode": true } }`.
 
 **`list_agents`** — filter by `cwd`, `statuses`, `sinceHours`, `includeArchived`.
@@ -121,6 +123,7 @@ paseo workspace create --isolation worktree --mode checkout-pr --pr-number 42
 paseo run --provider codex/gpt-5.4 --mode full-access --workspace <workspace-id> "<prompt>"
 paseo run --provider codex/gpt-5.4 --mode full-access --new-workspace worktree --worktree-mode branch-off --new-branch fix-x --base origin/main "<prompt>"
 paseo send <agent-id> "<follow-up>"
+paseo send <agent-id> --steer "<follow-up>"   # do not cancel the turn it is running; fails if it cannot steer
 paseo ls
 paseo schedule create --cron "*/15 * * * *" "ping main build"
 paseo heartbeat create --cron "*/15 * * * *" "check the build"

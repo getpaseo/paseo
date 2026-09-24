@@ -216,9 +216,18 @@ export interface AgentRunOptions {
   clientMessageId?: string;
 }
 
+/**
+ * What to do when the provider cannot steer the active turn.
+ * "replace" cancels the running turn and starts a new one (legacy behavior).
+ * "reject" leaves the running turn untouched and fails the request.
+ */
+export type SteerFallback = "replace" | "reject";
+
 export interface AgentSteerOptions extends AgentRunOptions {
   /** Deny permissions that block this steer. An accepted steer must honor this contract. */
   clearPendingPermissions?: boolean;
+  /** Defaults to "replace" so existing callers keep the steer-then-replace fallback. */
+  steerFallback?: SteerFallback;
 }
 
 export type SteerResult = { status: "accepted" } | { status: "unavailable" };

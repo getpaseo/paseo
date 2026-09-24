@@ -8069,6 +8069,8 @@ export class Session {
           prompt,
           messageId: msg.messageId,
           activeTurnBehavior: msg.activeTurnBehavior ?? "interrupt",
+          // Absent, the server keeps the steer-then-replace fallback the UI relies on.
+          steerFallback: msg.steerFallback,
           clearPendingPermissions: true,
           logger: this.sessionLogger,
         });

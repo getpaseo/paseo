@@ -4,6 +4,7 @@ import type {
   AgentPermissionRequest,
   AgentPromptInput,
   AgentRunOptions,
+  SteerFallback,
 } from "./agent-sdk-types.js";
 import type { AgentManager, ManagedAgent } from "./agent-manager.js";
 import type { AgentStorage } from "./agent-storage.js";
@@ -32,9 +33,38 @@ export interface StartAgentRunOptions {
   runOptions?: AgentRunOptions;
   /** Ask the provider to deny permissions blocking this steer. */
   clearPendingPermissions?: boolean;
+  /**
+   * What to do when `activeTurnBehavior` is "steer" but the provider cannot steer.
+   * Defaults to "replace" (cancel the turn and start a new one) so the UI, schedules
+   * and child finish notifications keep today's behavior. Surfaces that promised the
+   * caller a steer and nothing else pass "reject": the running turn is left alone and
+   * the send fails with {@link SteerUnavailableError}.
+   */
+  steerFallback?: SteerFallback;
 }
 
 export type PromptDispatchDisposition = "out_of_band" | "steered" | "turn_started";
+
+export const STEER_UNAVAILABLE_MESSAGE =
+  'target is mid-turn and its provider cannot steer; wait for it to finish or resend with activeTurnBehavior "interrupt"';
+
+/**
+ * Thrown when a steer-only send reaches an agent whose provider cannot steer the
+ * active turn. The running turn is untouched: the caller decides what to do next.
+ */
+export class SteerUnavailableError extends Error {
+  readonly agentId: string;
+
+  constructor(agentId: string) {
+    super(STEER_UNAVAILABLE_MESSAGE);
+    this.name = "SteerUnavailableError";
+    this.agentId = agentId;
+  }
+}
+
+export function isSteerUnavailableError(error: unknown): error is SteerUnavailableError {
+  return error instanceof SteerUnavailableError;
+}
 
 async function steerOrReplaceActiveRun(
   agentManager: AgentRunController,
@@ -52,15 +82,25 @@ async function steerOrReplaceActiveRun(
   if (options?.activeTurnBehavior !== "steer") {
     return null;
   }
-  const steerOptions = options.clearPendingPermissions
-    ? { ...options.runOptions, clearPendingPermissions: true }
-    : options.runOptions;
+  const steerOptions =
+    options.clearPendingPermissions || options.steerFallback
+      ? {
+          ...options.runOptions,
+          ...(options.clearPendingPermissions ? { clearPendingPermissions: true } : {}),
+          ...(options.steerFallback ? { steerFallback: options.steerFallback } : {}),
+        }
+      : options.runOptions;
   const result = await agentManager.steerOrReplaceActiveTurn(agentId, prompt, steerOptions);
   if (result.status === "steered") {
     return { disposition: "steered" };
   }
   if (result.status === "replaced") {
     return { disposition: "turn_started", iterator: result.iterator };
+  }
+  if (result.status === "unavailable") {
+    // Only "reject" callers can see this: the turn is still running, so failing
+    // here is the whole point — never fall through to a replacing run.
+    throw new SteerUnavailableError(agentId);
   }
   return null;
 }
@@ -240,6 +280,8 @@ export interface SendPromptToAgentParams {
   unarchive?: boolean;
   /** See {@link StartAgentRunOptions.clearPendingPermissions}. */
   clearPendingPermissions?: boolean;
+  /** See {@link StartAgentRunOptions.steerFallback}. */
+  steerFallback?: SteerFallback;
   logger: Logger;
 }
 
@@ -334,6 +376,7 @@ export async function sendPromptToAgent(
     replaceRunning: true,
     activeTurnBehavior: params.activeTurnBehavior,
     clearPendingPermissions: params.clearPendingPermissions,
+    steerFallback: params.steerFallback,
     runOptions,
   });
 }

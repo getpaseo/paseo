@@ -342,12 +342,12 @@ export interface AgentManagerOptions {
 }
 
 export type ActiveTurnSteerDispatchResult =
-  | { status: "inactive" | "steered" }
+  | { status: "inactive" | "steered" | "unavailable" }
   | { status: "replaced"; iterator: AsyncGenerator<AgentStreamEvent> };
 
 function stripSteerOptions(options?: AgentSteerOptions): AgentRunOptions | undefined {
   if (!options) return undefined;
-  const { clearPendingPermissions: _, ...runOptions } = options;
+  const { clearPendingPermissions: _, steerFallback: __, ...runOptions } = options;
   return runOptions;
 }
 
@@ -2752,6 +2752,12 @@ export class AgentManager {
     // admission may recognize the turn, but only an accepted steer can own it without replacement.
     if (agent.activeForegroundTurnId === null && agent.activeTurnId === expectedTurnId) {
       return { status: "inactive" };
+    }
+
+    // Callers that asked to steer and nothing else must never have their request
+    // turned into a cancel-and-restart of the turn they were steering.
+    if (options?.steerFallback === "reject") {
+      return { status: "unavailable" };
     }
 
     await this.beforeSteerUnavailableFallback?.({ agentId, expectedTurnId });
