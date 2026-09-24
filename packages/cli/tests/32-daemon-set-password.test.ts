@@ -116,8 +116,13 @@ try {
     const result = await run;
 
     assert.strictEqual(result.exitCode, 1, result.stderr);
-    const error = JSON.parse(result.stderr).error as { code: string; details: string };
+    const error = JSON.parse(result.stderr).error as {
+      code: string;
+      message: string;
+      details: string;
+    };
     assert.strictEqual(error.code, "PASSWORD_TTY_REQUIRED");
+    assert.match(error.message, /needs a terminal/);
     assert.match(error.details, /PASEO_PASSWORD/);
     await assert.rejects(readFile(join(pipedHome, "config.json"), "utf-8"));
     console.log("✓ piped stdin reports that a terminal is required\n");
