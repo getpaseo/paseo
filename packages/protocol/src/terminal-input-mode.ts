@@ -25,7 +25,8 @@ const CSI_INPUT_MODE_SEQUENCE = new RegExp(
   `${ESC}\\[(?:([<>=?]?)([0-9;]*)u|\\?([0-9;]*)([hl]))`,
   "g",
 );
-const INCOMPLETE_CSI_INPUT_MODE_SEQUENCE = new RegExp(`${ESC}\\[[<>=?]?[0-9;]*$`);
+// PTY reads split anywhere, including right after ESC, so a lone trailing ESC is pending too.
+const INCOMPLETE_CSI_INPUT_MODE_SEQUENCE = new RegExp(`${ESC}(?:\\[[<>=?]?[0-9;]*)?$`);
 
 function parseFirstParam(params: string): number | null {
   const first = params.split(";")[0];
@@ -108,7 +109,7 @@ export class TerminalInputModeTracker {
     }
 
     const tail = text.slice(consumedUntil);
-    const pendingStart = tail.lastIndexOf(`${ESC}[`);
+    const pendingStart = tail.lastIndexOf(ESC);
     if (pendingStart >= 0) {
       const pending = tail.slice(pendingStart);
       if (INCOMPLETE_CSI_INPUT_MODE_SEQUENCE.test(pending)) {
