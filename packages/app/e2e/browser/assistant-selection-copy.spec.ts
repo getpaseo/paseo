@@ -1,4 +1,4 @@
-import type { BrowserContext } from "@playwright/test";
+import type { BrowserContext, Locator } from "@playwright/test";
 import { expect, test, type Page } from "../support/fixtures";
 import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-agent";
 
@@ -97,14 +97,20 @@ async function allowRichClipboard(context: BrowserContext): Promise<void> {
   await context.grantPermissions(["clipboard-read", "clipboard-write"]);
 }
 
+/**
+ * The rows of one assistant message. A message renders one row per Markdown block, so
+ * every locator and every text walk below covers the group, not a single block.
+ */
+function assistantMessageBlocks(page: Page): Locator {
+  return page.locator("[data-message-id]").filter({ has: page.getByTestId("assistant-message") });
+}
+
 async function selectStructuredClipboardFixture(page: Page): Promise<void> {
   await selectAssistantTextRange(page, "Direct matches:", "ready");
 }
 
 async function selectAssistantElement(page: Page, selector: string): Promise<void> {
-  const assistantMessage = page.getByTestId("assistant-message").filter({
-    hasText: "Direct matches:",
-  });
+  const assistantMessage = assistantMessageBlocks(page);
   await assistantMessage.locator(selector).evaluate((element) => {
     const selection = window.getSelection();
     const range = document.createRange();
@@ -124,9 +130,7 @@ async function selectAssistantListItemFromMarker(
   itemText: string,
   endText: string,
 ): Promise<void> {
-  const assistantMessage = page.getByTestId("assistant-message").filter({
-    hasText: "Direct matches:",
-  });
+  const assistantMessage = assistantMessageBlocks(page);
   const item = assistantMessage
     .locator(`[data-paseo-markdown-tag="${listTag}"]`)
     .filter({ hasText: itemText })
@@ -170,9 +174,7 @@ async function doubleClickAssistantMarkdownText(
   tag: "code" | "strong",
   text: string,
 ): Promise<void> {
-  const assistantMessage = page.getByTestId("assistant-message").filter({
-    hasText: "Direct matches:",
-  });
+  const assistantMessage = assistantMessageBlocks(page);
   await assistantMessage
     .locator(`[data-paseo-markdown-tag="${tag}"]`)
     .filter({ hasText: text })
@@ -184,12 +186,20 @@ async function selectAssistantTextRange(
   startText: string,
   endText: string,
 ): Promise<void> {
-  const assistantMessage = page.getByTestId("assistant-message").filter({
-    hasText: "Direct matches:",
-  });
-  await assistantMessage.evaluate(
-    (element, selectedRange) => {
-      const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+  await assistantMessageBlocks(page).evaluateAll(
+    (blocks, selectedRange) => {
+      // The message's text nodes in reading order, across every block row.
+      const nodes: Text[] = [];
+      for (const block of blocks) {
+        const blockWalker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT);
+        let found = blockWalker.nextNode();
+        while (found) {
+          nodes.push(found as Text);
+          found = blockWalker.nextNode();
+        }
+      }
+      let cursor = 0;
+      const walker = { nextNode: () => nodes[cursor++] ?? null };
       let startNode: Node | null = null;
       let startOffset = -1;
       let endNode: Node | null = null;
@@ -241,12 +251,20 @@ async function selectAssistantAcrossCodeLines(
   startText: string,
   endText: string,
 ): Promise<void> {
-  const assistantMessage = page.getByTestId("assistant-message").filter({
-    hasText: "Direct matches:",
-  });
-  await assistantMessage.evaluate(
-    (element, selectedRange) => {
-      const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+  await assistantMessageBlocks(page).evaluateAll(
+    (blocks, selectedRange) => {
+      // The message's text nodes in reading order, across every block row.
+      const nodes: Text[] = [];
+      for (const block of blocks) {
+        const blockWalker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT);
+        let found = blockWalker.nextNode();
+        while (found) {
+          nodes.push(found as Text);
+          found = blockWalker.nextNode();
+        }
+      }
+      let cursor = 0;
+      const walker = { nextNode: () => nodes[cursor++] ?? null };
       let startNode: Node | null = null;
       let startOffset = -1;
       let textNode = walker.nextNode();
@@ -326,9 +344,7 @@ test("copying an assistant selection preserves Markdown structure and links", as
     );
     await openAgentRoute(page, agent);
 
-    const assistantMessage = page.getByTestId("assistant-message").filter({
-      hasText: "Direct matches:",
-    });
+    const assistantMessage = assistantMessageBlocks(page);
     for (const [tag, text] of [
       ["strong", "strong prose"],
       ["em", "emphasized prose"],

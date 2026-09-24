@@ -1794,7 +1794,12 @@ export function createWorkspaceLayoutStore(
 
 export const useWorkspaceLayoutStore = createWorkspaceLayoutStore();
 
-/** Observe open chats independently of which workspace views are mounted. */
+/**
+ * The agent tabs that exist right now, across every workspace of this host, independently
+ * of which workspace views are mounted. Timeline sync uses this to release a chat when its
+ * tab closes. It is not a subscription source: this layout is restored from disk at launch,
+ * so subscribing to it would resume every agent the user has ever opened.
+ */
 export function observeOpenWorkspaceAgentIds(
   serverId: string,
   listener: (agentIds: string[]) => void,

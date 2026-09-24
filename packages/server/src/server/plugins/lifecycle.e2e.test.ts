@@ -1,9 +1,11 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { expect, test } from "vitest";
+import { fileURLToPath } from "node:url";
+import { expect, onTestFinished, test } from "vitest";
 import { DaemonClient } from "../test-utils/daemon-client.js";
 import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
+import { resolveDaemonVersion } from "../daemon-version.js";
 
 test("a plugin transforms workspace creation once across receipt replays and observes its committed lifecycle", async () => {
   const directory = await mkdtemp(path.join(tmpdir(), "paseo-lifecycle-"));
@@ -267,5 +269,269 @@ export default function contribute(server) {
     await client.close();
     await daemon.close();
     await rm(directory, { recursive: true, force: true });
+  }
+}, 60_000);
+
+const PROVIDER_ID = "shutdown-provider";
+
+async function createProviderPlugin(
+  root: string,
+  options: { acknowledgeClose: boolean } = { acknowledgeClose: true },
+): Promise<string> {
+  const directory = path.join(root, "plugin");
+  await mkdir(directory, { recursive: true });
+  await writeFile(
+    path.join(directory, "paseo-plugin.json"),
+    JSON.stringify({
+      id: "shutdown-provider-plugin",
+      requirements: { paseo: `>=${resolveDaemonVersion(import.meta.url)}` },
+    }),
+  );
+  await writeFile(
+    path.join(directory, "index.server.ts"),
+    `import type {
+  ProviderEvent,
+  ProviderInput,
+  ProviderRegistration,
+} from "@getpaseo/plugin/server/provider";
+
+const CAPABILITIES = ["prompt.message", "session.persistence"];
+
+const provider: ProviderRegistration = {
+  id: ${JSON.stringify(PROVIDER_ID)},
+  label: "Shutdown provider",
+  async connect() {
+    let listener: ((event: ProviderEvent) => void) | null = null;
+    const emit = (event: ProviderEvent) => listener?.(event);
+    let turn = 0;
+    return {
+      version: 1,
+      capabilities: CAPABILITIES,
+      async send(input: ProviderInput) {
+        if (input.type === "catalog") {
+          emit({
+            type: "catalog",
+            requestId: input.requestId,
+            catalog: {
+              models: [{ id: "shutdown-model", label: "Shutdown model" }],
+              modes: [],
+              thinkingOptions: [],
+              defaultModel: "shutdown-model",
+            },
+          });
+          return;
+        }
+        if (input.type === "session.open") {
+          emit({
+            type: "session.opened",
+            requestId: input.requestId,
+            sessionId: input.sessionId,
+            capabilities: CAPABILITIES,
+            restoration: "core",
+            persistence: { version: 1, data: { token: "root" } },
+            cwd: input.config.cwd,
+          });
+          emit({ type: "session.ready", requestId: input.requestId, sessionId: input.sessionId });
+          return;
+        }
+        if (input.type === "session.prompt") {
+          turn += 1;
+          const turnId = "turn-" + turn;
+          emit({
+            type: "session.prompt_result",
+            sessionId: input.sessionId,
+            clientMessageId: input.prompt.clientMessageId,
+            result: { type: "turn", turnId },
+          });
+          emit({ type: "session.turn", sessionId: input.sessionId, turnId, state: "started" });
+          emit({
+            type: "timeline.item",
+            sessionId: input.sessionId,
+            item: { type: "assistant_message", id: "answer-" + turn, text: "Done" },
+          });
+          emit({ type: "session.turn", sessionId: input.sessionId, turnId, state: "completed" });
+          return;
+        }
+        if (input.type === "session.close") {
+          if (!${JSON.stringify(options.acknowledgeClose)}) return;
+          emit({ type: "session.closed", sessionId: input.sessionId });
+        }
+        if ("requestId" in input) {
+          emit({ type: "request.completed", requestId: input.requestId });
+        }
+      },
+      onEvent(next: (event: ProviderEvent) => void) {
+        listener = next;
+        return () => {
+          if (listener === next) listener = null;
+        };
+      },
+      async close() {},
+    };
+  },
+};
+
+export default function contribute(server: { registerProvider(p: ProviderRegistration): void }) {
+  server.registerProvider(provider);
+  return () => undefined;
+}`,
+  );
+  return directory;
+}
+
+test("a clean daemon shutdown leaves a completed plugin-provider agent without an error", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "plugin-provider-shutdown-"));
+  onTestFinished(() => rm(root, { recursive: true, force: true }));
+  const pluginDirectory = await createProviderPlugin(root);
+  const workspace = path.join(root, "workspace");
+  await mkdir(workspace, { recursive: true });
+
+  const daemon = await createTestPaseoDaemon({
+    paseoHomeRoot: path.join(root, "daemon"),
+    staticDir: path.join(root, "static"),
+    cleanup: false,
+    pluginsEnabled: true,
+    plugins: {
+      "shutdown-provider-plugin": { source: "directory", path: pluginDirectory, enabled: true },
+    },
+  });
+
+  const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws`, appVersion: "0.9.1" });
+  await client.connect();
+  await client.fetchAgents({ subscribe: {} });
+
+  const agent = await client.createAgent({
+    provider: PROVIDER_ID,
+    model: "shutdown-model",
+    cwd: workspace,
+    title: "Shutdown provider agent",
+  });
+  await client.sendMessage(agent.id, "hello");
+  const finished = await client.waitForFinish(agent.id, 30_000);
+  expect(finished.status).toBe("idle");
+
+  const beforeShutdown = await daemon.daemon.agentStorage.get(agent.id);
+  expect(beforeShutdown?.lastError ?? null).toBeNull();
+
+  await client.close();
+  await daemon.daemon.stop();
+  await daemon.daemon.agentStorage.flush().catch(() => undefined);
+
+  const persisted = await daemon.daemon.agentStorage.get(agent.id);
+  expect(persisted).not.toBeNull();
+  expect(persisted?.lastError ?? null).toBeNull();
+  expect(persisted?.attentionReason ?? null).not.toBe("error");
+}, 60_000);
+
+test("a provider that never acknowledges session.close does not hold the daemon open", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "plugin-provider-stuck-close-"));
+  onTestFinished(() => rm(root, { recursive: true, force: true }));
+  const pluginDirectory = await createProviderPlugin(root, { acknowledgeClose: false });
+  const workspace = path.join(root, "workspace");
+  await mkdir(workspace, { recursive: true });
+
+  const daemon = await createTestPaseoDaemon({
+    paseoHomeRoot: path.join(root, "daemon"),
+    staticDir: path.join(root, "static"),
+    cleanup: false,
+    pluginsEnabled: true,
+    plugins: {
+      "shutdown-provider-plugin": { source: "directory", path: pluginDirectory, enabled: true },
+    },
+  });
+
+  const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws`, appVersion: "0.9.1" });
+  await client.connect();
+  await client.fetchAgents({ subscribe: {} });
+
+  const agent = await client.createAgent({
+    provider: PROVIDER_ID,
+    model: "shutdown-model",
+    cwd: workspace,
+    title: "Stuck close agent",
+  });
+  await client.sendMessage(agent.id, "hello");
+  await client.waitForFinish(agent.id, 30_000);
+  await client.close();
+
+  // Without a deadline on each agent close, stop() never returns here and the
+  // test fails by timing out.
+  await expect(daemon.daemon.stop()).resolves.toBeUndefined();
+}, 90_000);
+
+const repoRoot = fileURLToPath(new URL("../../../../../", import.meta.url));
+
+// Hold the provider close until the subprocess has entered shutdown cleanup.
+async function createSlowClosingProviderPlugin() {
+  const directory = await mkdtemp(path.join(tmpdir(), "paseo-slow-close-plugin-"));
+  const closeStarted = path.join(directory, "close-started");
+  const closeRelease = path.join(directory, "close-release");
+  const cleanupStarted = path.join(directory, "cleanup-started");
+  await cp(path.join(repoRoot, "plugin-examples/provider-direct"), directory, { recursive: true });
+  const providerPath = path.join(directory, "server", "provider.ts");
+  const source = (await readFile(providerPath, "utf8")).replaceAll("\r\n", "\n");
+  const patched = `import { readFile, writeFile } from "node:fs/promises";\n${source.replace(
+    "      closed = true;\n      sessions.clear();",
+    `      closed = true;
+      await writeFile(${JSON.stringify(closeStarted)}, "started");
+      while (true) {
+        try { await readFile(${JSON.stringify(closeRelease)}); break; }
+        catch { await new Promise((resolve) => setTimeout(resolve, 10)); }
+      }
+      sessions.clear();
+      console.log("provider close completed");`,
+  )}`;
+  expect(patched).toContain(`await writeFile(${JSON.stringify(closeStarted)}, "started")`);
+  await writeFile(providerPath, patched);
+  const entryPath = path.join(directory, "index.server.ts");
+  const entry = (await readFile(entryPath, "utf8")).replaceAll("\r\n", "\n");
+  const withCleanup = `import { writeFile } from "node:fs/promises";\n${entry.replace(
+    "  return () => {};",
+    `  return async () => { await writeFile(${JSON.stringify(cleanupStarted)}, "started"); console.log("plugin cleanup completed"); };`,
+  )}`;
+  expect(withCleanup).toContain(`await writeFile(${JSON.stringify(cleanupStarted)}, "started")`);
+  await writeFile(entryPath, withCleanup);
+  return { directory, closeStarted, closeRelease, cleanupStarted };
+}
+
+test("reloading a plugin does not send on a closed IPC channel", async () => {
+  const {
+    directory: pluginDirectory,
+    closeStarted,
+    closeRelease,
+    cleanupStarted,
+  } = await createSlowClosingProviderPlugin();
+  const cwd = await mkdtemp(path.join(tmpdir(), "paseo-reload-teardown-"));
+  const daemon = await createTestPaseoDaemon();
+  const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+  try {
+    await client.connect();
+    await client.patchDaemonConfig({ pluginsEnabled: true });
+    await client.installDirectoryPlugin(pluginDirectory);
+    const agent = await client.createAgent({ provider: "direct-example", cwd });
+    const turn = client.sendMessage(agent.id, "Say hello").catch(() => undefined);
+    const reload = client.reloadPlugin("provider-direct-example");
+    await expect
+      .poll(() => readFile(closeStarted, "utf8").catch(() => null), { timeout: 20_000 })
+      .toBe("started");
+    await expect
+      .poll(() => readFile(cleanupStarted, "utf8").catch(() => null), { timeout: 20_000 })
+      .toBe("started");
+    await writeFile(closeRelease, "release");
+    const reloaded = await reload;
+    expect(reloaded.status).toBe("running");
+    const entries = await client.getPluginLogs("provider-direct-example");
+    const messages = entries.map((entry) => entry.message).join("\n");
+    expect(messages).not.toContain("ERR_IPC_CHANNEL_CLOSED");
+    expect(entries.filter((entry) => entry.message === "plugin cleanup completed")).toHaveLength(1);
+    expect(entries.filter((entry) => entry.message === "provider close completed")).toHaveLength(1);
+    await turn;
+    await client.archiveAgent(agent.id).catch(() => undefined);
+  } finally {
+    await writeFile(closeRelease, "release");
+    await client.close();
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+    await rm(pluginDirectory, { recursive: true, force: true });
   }
 }, 60_000);

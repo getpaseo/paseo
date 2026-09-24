@@ -124,6 +124,7 @@ function localStatus(home: string, instance: Awaited<ReturnType<typeof readDaemo
     pid: instance?.pid ?? null,
     startedAt: instance?.startedAt ?? null,
     listen: instance?.listen ?? null,
+    serverId: instance?.serverId ?? undefined,
     hostname: instance?.hostname ?? null,
     configuredListen: config.listen,
     localDaemon,
