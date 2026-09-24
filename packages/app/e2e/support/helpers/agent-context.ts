@@ -80,12 +80,26 @@ export async function withAgentContextExample(
         }),
     });
   } finally {
-    await pluginClient.removePlugin("agent-context").catch(() => undefined);
-    await pluginClient
-      .patchDaemonConfig({ pluginsEnabled: previousConfig.config.pluginsEnabled ?? false })
-      .catch(() => undefined);
-    await pluginClient.close().catch(() => undefined);
-    await plugin.cleanup();
-    await workspace.cleanup();
+    const cleanupSteps: Array<() => Promise<unknown>> = [
+      () => pluginClient.removePlugin("agent-context"),
+      () =>
+        pluginClient.patchDaemonConfig({
+          pluginsEnabled: previousConfig.config.pluginsEnabled ?? false,
+        }),
+      () => pluginClient.close(),
+      () => plugin.cleanup(),
+      () => workspace.cleanup(),
+    ];
+    const errors: unknown[] = [];
+    for (const cleanup of cleanupSteps) {
+      try {
+        await cleanup();
+      } catch (error) {
+        errors.push(error);
+      }
+    }
+    if (errors.length > 0) {
+      throw new AggregateError(errors, "Agent context fixture teardown failed");
+    }
   }
 }
