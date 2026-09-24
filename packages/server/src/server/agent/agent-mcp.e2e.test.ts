@@ -97,6 +97,10 @@ interface OfflineMcpDaemon {
 async function startOfflineMcpDaemon(): Promise<OfflineMcpDaemon> {
   const paseoHome = await mkdtemp(path.join(os.tmpdir(), "paseo-home-"));
   const staticDir = await mkdtemp(path.join(os.tmpdir(), "paseo-static-"));
+  const removeDirectories = async () => {
+    await rm(paseoHome, { recursive: true, force: true });
+    await rm(staticDir, { recursive: true, force: true });
+  };
   const port = await getAvailablePort();
   const daemon = await createPaseoDaemon(
     {
@@ -111,18 +115,26 @@ async function startOfflineMcpDaemon(): Promise<OfflineMcpDaemon> {
       agentStoragePath: path.join(paseoHome, "agents"),
     },
     pino({ level: "silent" }),
-  );
-  await daemon.start();
-  const client = await createMcpClient(`http://127.0.0.1:${port}/mcp/agents`);
-  return {
-    client,
-    stop: async () => {
-      await client.close();
-      await daemon.stop();
-      await rm(paseoHome, { recursive: true, force: true });
-      await rm(staticDir, { recursive: true, force: true });
-    },
-  };
+  ).catch(async (error: unknown) => {
+    await removeDirectories();
+    throw error;
+  });
+  try {
+    await daemon.start();
+    const client = await createMcpClient(`http://127.0.0.1:${port}/mcp/agents`);
+    return {
+      client,
+      stop: async () => {
+        await client.close();
+        await daemon.stop();
+        await removeDirectories();
+      },
+    };
+  } catch (error) {
+    await daemon.stop();
+    await removeDirectories();
+    throw error;
+  }
 }
 
 type WorkspaceCreation = { workspaceId: unknown } | { error: unknown };
