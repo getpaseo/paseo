@@ -106,6 +106,14 @@ export async function createTestPaseoDaemon(
         relayConfig: options.relayConfigCapability,
       },
     });
+    // With cleanup disabled the caller owns the home, including its persisted serverId.
+    const removeTestDaemonDirs = async (): Promise<void> => {
+      if (!(options.cleanup ?? true)) return;
+      await Promise.all([
+        rm(paseoHomeRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }),
+        rm(staticDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }),
+      ]);
+    };
     try {
       await startDaemonWithTimeout(daemon, TEST_DAEMON_START_TIMEOUT_MS);
       const listenTarget = daemon.getListenTarget();
@@ -116,13 +124,8 @@ export async function createTestPaseoDaemon(
       const close = async (): Promise<void> => {
         await daemon.stop().catch(() => undefined);
         await daemon.agentManager.flush().catch(() => undefined);
-        if (options.cleanup ?? true) {
-          await new Promise((r) => setTimeout(r, 50));
-          await Promise.all([
-            rm(paseoHomeRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }),
-            rm(staticDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }),
-          ]);
-        }
+        await new Promise((r) => setTimeout(r, 50));
+        await removeTestDaemonDirs();
       };
 
       return {
@@ -136,10 +139,7 @@ export async function createTestPaseoDaemon(
     } catch (error) {
       lastError = error;
       await daemon.stop().catch(() => undefined);
-      await Promise.all([
-        rm(paseoHomeRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }),
-        rm(staticDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }),
-      ]);
+      await removeTestDaemonDirs();
 
       if (
         (!isAddressInUseError(error) && !isStartupTimeoutError(error)) ||

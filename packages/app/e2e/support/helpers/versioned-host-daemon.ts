@@ -1,5 +1,8 @@
+import { mkdtemp, rm } from "node:fs/promises";
 import net from "node:net";
+import { tmpdir } from "node:os";
 import path from "node:path";
+import { getAvailableHostDaemonPort } from "./isolated-host-daemon";
 import { killProcessTree, spawnTsx } from "./spawn-node";
 
 const VERSIONED_DAEMON_ENTRYPOINT = path.resolve(
@@ -9,23 +12,66 @@ const VERSIONED_DAEMON_ENTRYPOINT = path.resolve(
 
 const READY_TIMEOUT_MS = 30_000;
 
-export interface VersionedHostDaemon {
+// A host daemon that can be replaced by a daemon reporting another version under the same
+// endpoint and serverId, the way an upgraded host comes back.
+export interface RestartableHostDaemon {
+  serverId: string;
+  port: number;
+  restartWithVersion(version: string): Promise<void>;
+  dispose(): Promise<void>;
+}
+
+export async function startRestartableHostDaemon(version: string): Promise<RestartableHostDaemon> {
+  const paseoHomeRoot = await mkdtemp(path.join(tmpdir(), "paseo-e2e-restartable-host-"));
+  const port = await getAvailableHostDaemonPort();
+  let current: VersionedHostDaemon | null = null;
+  const dispose = async (): Promise<void> => {
+    await current?.stop();
+    current = null;
+    await rm(paseoHomeRoot, { recursive: true, force: true });
+  };
+  try {
+    current = await startVersionedHostDaemon({ version, port, paseoHomeRoot });
+  } catch (error) {
+    await dispose();
+    throw error;
+  }
+  const { serverId } = current;
+
+  return {
+    serverId,
+    port,
+    async restartWithVersion(nextVersion) {
+      await current?.stop();
+      current = null;
+      await waitForPortReleased(port);
+      current = await startVersionedHostDaemon({ version: nextVersion, port, paseoHomeRoot });
+      if (current.serverId !== serverId) {
+        throw new Error(
+          `Restarted host daemon reported serverId ${current.serverId}, expected ${serverId}`,
+        );
+      }
+    },
+    dispose,
+  };
+}
+
+interface VersionedHostDaemon {
   serverId: string;
   port: number;
   version: string;
   stop(): Promise<void>;
 }
 
-export interface VersionedHostDaemonOptions {
+interface VersionedHostDaemonOptions {
   version: string;
   port: number;
   paseoHomeRoot: string;
 }
 
-// Starts the versioned test daemon on an explicit port with a caller-owned PASEO_HOME, so a test
-// can stop it and start a replacement under the same endpoint and serverId. The caller removes
-// the home root.
-export async function startVersionedHostDaemon(
+// Starts the versioned test daemon on an explicit port with a caller-owned PASEO_HOME. The caller
+// removes the home root.
+async function startVersionedHostDaemon(
   options: VersionedHostDaemonOptions,
 ): Promise<VersionedHostDaemon> {
   const child = spawnTsx(
@@ -93,7 +139,7 @@ export async function startVersionedHostDaemon(
 }
 
 // A replacement daemon can only bind the port the stopped daemon just released.
-export async function waitForPortReleased(port: number, timeoutMs = 15_000): Promise<void> {
+async function waitForPortReleased(port: number, timeoutMs = 15_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (await isPortAvailable(port)) return;

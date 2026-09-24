@@ -1,16 +1,11 @@
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import path from "node:path";
 import type { Page } from "@playwright/test";
 import { expect, test } from "../support/fixtures";
 import { gotoAppShell, openSettings } from "../support/helpers/app";
 import { addConnectedHostAndReload } from "../support/helpers/hosts";
-import { getAvailableHostDaemonPort } from "../support/helpers/isolated-host-daemon";
 import { openHostSection, selectSettingsHost } from "../support/helpers/settings";
 import {
-  startVersionedHostDaemon,
-  waitForPortReleased,
-  type VersionedHostDaemon,
+  startRestartableHostDaemon,
+  type RestartableHostDaemon,
 } from "../support/helpers/versioned-host-daemon";
 
 const PREVIOUS_VERSION = "0.8.0";
@@ -24,65 +19,46 @@ interface ReloadMarkerWindow {
 
 test.describe.configure({ timeout: 120_000 });
 
-test("host page shows the restarted daemon's version without reloading", async ({
-  page,
-}, testInfo) => {
-  const paseoHomeRoot = await mkdtemp(path.join(tmpdir(), "paseo-e2e-version-restart-"));
-  const port = await getAvailableHostDaemonPort();
-  let daemon: VersionedHostDaemon | null = null;
-  try {
-    const originalDaemon = await startVersionedHostDaemon({
-      version: PREVIOUS_VERSION,
-      port,
-      paseoHomeRoot,
-    });
-    daemon = originalDaemon;
+let hostDaemon: RestartableHostDaemon | null = null;
 
-    await test.step("the connected host reports its current daemon version", async () => {
-      await gotoAppShell(page);
-      await addConnectedHostAndReload(page, {
-        serverId: originalDaemon.serverId,
-        label: HOST_LABEL,
-        port,
-      });
-      await openSettings(page);
-      await selectSettingsHost(page, originalDaemon.serverId);
-      await openHostSection(page, originalDaemon.serverId, "host");
-      await expect(hostIdentity(page)).toContainText("Online");
-      await expect(hostVersionBadge(page, PREVIOUS_VERSION)).toBeVisible();
-      await markPageForNoReloadCheck(page, NO_RELOAD_MARKER);
-      await page.screenshot({
-        path: testInfo.outputPath("before-restart.png"),
-        fullPage: true,
-      });
-    });
-
-    await test.step("a replacement daemon starts on the same port and home", async () => {
-      await originalDaemon.stop();
-      daemon = null;
-      await waitForPortReleased(port);
-      daemon = await startVersionedHostDaemon({
-        version: UPDATED_VERSION,
-        port,
-        paseoHomeRoot,
-      });
-      expect(daemon.serverId).toBe(originalDaemon.serverId);
-    });
-
-    await test.step("the host page badge follows the new version", async () => {
-      await expect(hostVersionBadge(page, UPDATED_VERSION)).toBeVisible({ timeout: 30_000 });
-      await expect(hostVersionBadge(page, PREVIOUS_VERSION)).toHaveCount(0);
-      await expectNoReloadSinceMarker(page);
-      await page.screenshot({
-        path: testInfo.outputPath("after-restart.png"),
-        fullPage: true,
-      });
-    });
-  } finally {
-    await daemon?.stop();
-    await rm(paseoHomeRoot, { recursive: true, force: true });
-  }
+test.afterEach(async () => {
+  await hostDaemon?.dispose();
+  hostDaemon = null;
 });
+
+test("host page shows the restarted daemon's version without reloading", async ({ page }) => {
+  const host = await startRestartableHostDaemon(PREVIOUS_VERSION);
+  hostDaemon = host;
+
+  await test.step("the connected host reports its current daemon version", async () => {
+    await openHostPage(page, host);
+    await expect(hostIdentity(page)).toContainText("Online");
+    await expect(hostVersionBadge(page, PREVIOUS_VERSION)).toBeVisible();
+    await markPageForNoReloadCheck(page, NO_RELOAD_MARKER);
+  });
+
+  await test.step("the host daemon restarts on the new version", async () => {
+    await host.restartWithVersion(UPDATED_VERSION);
+  });
+
+  await test.step("the host page badge follows the new version", async () => {
+    await expect(hostVersionBadge(page, UPDATED_VERSION)).toBeVisible({ timeout: 30_000 });
+    await expect(hostVersionBadge(page, PREVIOUS_VERSION)).toHaveCount(0);
+    await expectNoReloadSinceMarker(page);
+  });
+});
+
+async function openHostPage(page: Page, host: RestartableHostDaemon): Promise<void> {
+  await gotoAppShell(page);
+  await addConnectedHostAndReload(page, {
+    serverId: host.serverId,
+    label: HOST_LABEL,
+    port: host.port,
+  });
+  await openSettings(page);
+  await selectSettingsHost(page, host.serverId);
+  await openHostSection(page, host.serverId, "host");
+}
 
 function hostIdentity(page: Page) {
   return page.getByTestId("host-page-identity");
