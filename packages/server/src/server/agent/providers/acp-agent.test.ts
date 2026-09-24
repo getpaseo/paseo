@@ -589,7 +589,7 @@ describe("ACPAgentSession.close", () => {
     vi.useFakeTimers();
     try {
       const terminator = new FakeTerminator();
-      const session = createSession(terminator.terminate);
+      const session = createSession({ terminateProcess: terminator.terminate });
       const child = createTerminalChildStub();
       const cancel = vi.fn(() => new Promise<void>(() => undefined));
       const unstableCloseSession = vi.fn(() => new Promise<void>(() => undefined));
