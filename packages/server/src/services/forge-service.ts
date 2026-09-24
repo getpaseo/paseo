@@ -39,10 +39,8 @@ export interface PullRequestCheckoutTarget {
   headRepositorySshUrl: string | null;
   headRepositoryUrl: string | null;
   isCrossRepository: boolean;
-  /** false when origin has no head branch to track */
-  hasOriginHeadBranch?: boolean;
-  /** false when headRefName is a synthetic pull ref, not a real branch name (agit PRs, deleted branches) */
-  hasHeadBranch?: boolean;
+  /** "pull-ref" when headRefName is a synthetic pull ref, not a real branch name (agit PRs, deleted branches); undefined means "branch" */
+  headRefKind?: "branch" | "pull-ref";
 }
 
 export interface PullRequestCheckoutRef {

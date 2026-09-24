@@ -26,15 +26,15 @@ export interface ForkLocalBranchNameInput {
   number: number;
   isCrossRepository: boolean;
   headOwnerLogin: string | null;
-  /** false when headRef is a synthetic pull ref, not a real branch name (agit PRs, deleted branches) */
-  hasHeadBranch?: boolean;
+  /** "pull-ref" when headRef is a synthetic pull ref, not a real branch name (agit PRs, deleted branches); undefined means "branch" */
+  headRefKind?: "branch" | "pull-ref";
 }
 
 export function buildForkLocalBranchName(params: ForkLocalBranchNameInput): string {
   const pullRefFallback = `pr-${params.number}`;
   // headRef is the literal pull ref (e.g. refs/pull/42/head) when there is no
   // real branch to name after, so use the pr number instead
-  const headSegment = params.hasHeadBranch === false ? pullRefFallback : params.headRef;
+  const headSegment = params.headRefKind === "pull-ref" ? pullRefFallback : params.headRef;
   if (!params.isCrossRepository) {
     return headSegment;
   }

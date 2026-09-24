@@ -187,7 +187,7 @@ describe("resolveWorktreeCreationIntent", () => {
       headRepositorySshUrl: null,
       headRepositoryUrl: null,
       isCrossRepository: false,
-      hasOriginHeadBranch: false,
+      headRefKind: "pull-ref",
     });
 
     const intent = await resolveWorktreeCreationIntent(
@@ -351,8 +351,7 @@ describe("resolveWorktreeCreationIntent", () => {
           headRepositorySshUrl: null,
           headRepositoryUrl: null,
           isCrossRepository: false,
-          hasOriginHeadBranch: false,
-          hasHeadBranch: false,
+          headRefKind: "pull-ref",
         }),
       },
     });
@@ -386,7 +385,7 @@ describe("resolveWorktreeCreationIntent", () => {
           headRepositorySshUrl: "git@gitea.test:contributor/repo.git",
           headRepositoryUrl: "https://gitea.test/contributor/repo",
           isCrossRepository: true,
-          hasHeadBranch: false,
+          headRefKind: "pull-ref",
         }),
       },
     });
@@ -419,7 +418,7 @@ describe("resolveWorktreeCreationIntent", () => {
           headRepositorySshUrl: null,
           headRepositoryUrl: null,
           isCrossRepository: true,
-          hasHeadBranch: false,
+          headRefKind: "pull-ref",
         }),
       },
     });

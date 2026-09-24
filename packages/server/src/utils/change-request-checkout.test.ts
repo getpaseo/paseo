@@ -70,20 +70,20 @@ describe("buildForkLocalBranchName", () => {
         ...fork,
         isCrossRepository: false,
         headOwnerLogin: "arthur",
-        hasHeadBranch: false,
+        headRefKind: "pull-ref",
       }),
     ).toBe("pr-42");
   });
 
   it("prefixes pr-<number> with the owner for a fork pull-ref-only head", () => {
     expect(
-      buildForkLocalBranchName({ ...fork, headOwnerLogin: "Arthur", hasHeadBranch: false }),
+      buildForkLocalBranchName({ ...fork, headOwnerLogin: "Arthur", headRefKind: "pull-ref" }),
     ).toBe("arthur/pr-42");
   });
 
   it("does not double the pr number when the fork owner is unknown and there is no head branch", () => {
-    expect(buildForkLocalBranchName({ ...fork, headOwnerLogin: null, hasHeadBranch: false })).toBe(
-      "pr-42",
-    );
+    expect(
+      buildForkLocalBranchName({ ...fork, headOwnerLogin: null, headRefKind: "pull-ref" }),
+    ).toBe("pr-42");
   });
 });
