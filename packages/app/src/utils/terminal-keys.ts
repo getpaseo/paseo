@@ -103,6 +103,46 @@ export function isAppleHandheldPlatform(input: AppleHandheldDetectionInput): boo
   return false;
 }
 
+interface DomTerminalKeyEvent {
+  key: string;
+  ctrlKey: boolean;
+  shiftKey: boolean;
+  altKey: boolean;
+  metaKey: boolean;
+  pendingModifiers: PendingTerminalModifiers;
+  isMac?: boolean;
+  isAppleHandheld?: boolean;
+}
+
+// xterm.js sends nothing for Cmd+Left/Right. On macOS they move to line start/end, as in
+// VS Code's terminal and iTerm2's "Natural Text Editing": Ctrl+A and Ctrl+E. Cmd+Shift+Arrow
+// stays with the app's pane-focus shortcuts. The Mac user-agent check also matches iPad,
+// which is excluded.
+function macLineNavigationKey(args: DomTerminalKeyEvent): "a" | "e" | null {
+  if (!args.isMac || args.isAppleHandheld) return null;
+  if (!args.metaKey || args.ctrlKey || args.shiftKey || args.altKey) return null;
+  // Cmd must be the only modifier, including toggles held on the virtual key bar.
+  if (hasPendingTerminalModifiers(args.pendingModifiers)) return null;
+  if (args.key === "ArrowLeft") return "a";
+  if (args.key === "ArrowRight") return "e";
+  return null;
+}
+
+// The key input sent for a DOM key that shouldInterceptDomTerminalKey claimed.
+export function resolveDomTerminalKeyInput(args: DomTerminalKeyEvent): {
+  key: string;
+  ctrl: boolean;
+  shift: boolean;
+  alt: boolean;
+  meta: boolean;
+} {
+  const lineNavigationKey = macLineNavigationKey(args);
+  if (lineNavigationKey) {
+    return { key: lineNavigationKey, ctrl: true, shift: false, alt: false, meta: false };
+  }
+  return { key: normalizeTerminalTransportKey(args.key), ...mergeTerminalModifiers(args) };
+}
+
 export function shouldInterceptDomTerminalKey(args: {
   key: string;
   ctrlKey: boolean;
@@ -111,9 +151,13 @@ export function shouldInterceptDomTerminalKey(args: {
   metaKey: boolean;
   pendingModifiers: PendingTerminalModifiers;
   enhancedInputActive?: boolean;
+  isMac?: boolean;
   isAppleHandheld?: boolean;
 }): boolean {
   if (hasPendingTerminalModifiers(args.pendingModifiers)) {
+    return true;
+  }
+  if (macLineNavigationKey(args)) {
     return true;
   }
   if (args.key === "Enter" && (args.shiftKey || args.ctrlKey || args.altKey || args.metaKey)) {

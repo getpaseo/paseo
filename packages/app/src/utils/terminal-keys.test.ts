@@ -7,6 +7,7 @@ import {
   mergeTerminalModifiers,
   normalizeDomTerminalKey,
   normalizeTerminalTransportKey,
+  resolveDomTerminalKeyInput,
   resolvePendingModifierDataInput,
   shouldInterceptDomTerminalKey,
 } from "./terminal-keys";
@@ -349,5 +350,55 @@ describe("terminal key helpers", () => {
       mode: "raw",
       clearPendingModifiers: false,
     });
+  });
+
+  function metaArrowEvent(input: {
+    key: string;
+    shiftKey?: boolean;
+    isMac?: boolean;
+    isAppleHandheld?: boolean;
+    pendingCtrl?: boolean;
+  }) {
+    return {
+      key: input.key,
+      ctrlKey: false,
+      shiftKey: input.shiftKey ?? false,
+      altKey: false,
+      metaKey: true,
+      pendingModifiers: { ctrl: input.pendingCtrl ?? false, shift: false, alt: false },
+      isMac: input.isMac ?? true,
+      isAppleHandheld: input.isAppleHandheld ?? false,
+    };
+  }
+
+  it.each([
+    {
+      name: "Cmd+Left on macOS as Ctrl+A",
+      event: { key: "ArrowLeft" },
+      sent: { key: "a", ctrl: true, shift: false, alt: false, meta: false },
+    },
+    {
+      name: "Cmd+Right on macOS as Ctrl+E",
+      event: { key: "ArrowRight" },
+      sent: { key: "e", ctrl: true, shift: false, alt: false, meta: false },
+    },
+    {
+      name: "Cmd+Left with a pending Ctrl through the pending-modifier path",
+      event: { key: "ArrowLeft", pendingCtrl: true },
+      sent: { key: "ArrowLeft", ctrl: true, shift: false, alt: false, meta: true },
+    },
+  ])("intercepts $name", ({ event, sent }) => {
+    const keyEvent = metaArrowEvent(event);
+
+    expect(shouldInterceptDomTerminalKey(keyEvent)).toBe(true);
+    expect(resolveDomTerminalKeyInput(keyEvent)).toEqual(sent);
+  });
+
+  it.each([
+    { name: "Cmd+Shift+Left on macOS", event: { key: "ArrowLeft", shiftKey: true } },
+    { name: "Meta+Left off macOS", event: { key: "ArrowLeft", isMac: false } },
+    { name: "Cmd+Left on iPad", event: { key: "ArrowLeft", isAppleHandheld: true } },
+  ])("leaves $name to xterm", ({ event }) => {
+    expect(shouldInterceptDomTerminalKey(metaArrowEvent(event))).toBe(false);
   });
 });
