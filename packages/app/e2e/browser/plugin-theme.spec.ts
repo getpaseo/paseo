@@ -120,3 +120,76 @@ test("applies a contributed theme and falls back when its plugin is gone", async
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+const MANY_THEMES_PLUGIN_ID = "plugin-theme-many-e2e";
+const MANY_THEMES_COUNT = 40;
+
+const MANY_THEMES_SOURCE = `export default function contribute(plugin) {
+  for (let index = 1; index <= ${MANY_THEMES_COUNT}; index += 1) {
+    plugin.addTheme({
+      id: "pack-" + index,
+      name: "Pack theme " + index,
+      appearance: "dark",
+      colors: {
+        background: "#1e1e2e",
+        foreground: "#cdd6f4",
+        raised: "#313244",
+        control: "#45475a",
+        border: "#45475a",
+        accent: "#cba6f7",
+        mutedForeground: "#a6adc8",
+        ring: "#6c7086",
+      },
+    });
+  }
+  return () => {};
+}`;
+
+test("scrolls to the last theme when a plugin contributes more themes than fit", async ({
+  page,
+}, testInfo) => {
+  const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-theme-many-e2e-"));
+  const client = await connectNewWorkspaceDaemonClient({ ownProjects: false });
+  const previousConfig = await client.getDaemonConfig();
+  await writeFile(
+    path.join(directory, "paseo-plugin.json"),
+    JSON.stringify({ id: MANY_THEMES_PLUGIN_ID, requirements: pluginRequirements }),
+  );
+  await writeFile(path.join(directory, "index.client.ts"), MANY_THEMES_SOURCE);
+
+  try {
+    await client.patchDaemonConfig({ pluginsEnabled: true });
+    await client.installDirectoryPlugin(directory);
+    await page.setViewportSize({ width: 1280, height: 720 });
+    await page.goto("/settings");
+    await expect(page.getByTestId("settings-sidebar")).toBeVisible();
+    await openSettingsSection(page, "appearance");
+
+    await page.getByLabel("Theme: System", { exact: true }).click();
+    const firstPluginItem = page.getByText("Pack theme 1", { exact: true });
+    await expect(firstPluginItem).toBeVisible({ timeout: 30_000 });
+
+    const lastPluginItem = page.getByText(`Pack theme ${MANY_THEMES_COUNT}`, { exact: true });
+    await firstPluginItem.hover();
+    await expect(async () => {
+      await page.mouse.wheel(0, 400);
+      await expect(lastPluginItem).toBeInViewport({ ratio: 1, timeout: 500 });
+    }).toPass({ timeout: 10_000 });
+    await page.screenshot({
+      path: testInfo.outputPath("plugin-theme-picker-scrolled.png"),
+      animations: "disabled",
+    });
+
+    await lastPluginItem.click();
+    await expect(
+      page.getByLabel(`Theme: Pack theme ${MANY_THEMES_COUNT}`, { exact: true }),
+    ).toBeVisible();
+  } finally {
+    await client.removePlugin(MANY_THEMES_PLUGIN_ID).catch(() => undefined);
+    await client
+      .patchDaemonConfig({ pluginsEnabled: previousConfig.config.pluginsEnabled ?? false })
+      .catch(() => undefined);
+    await client.close().catch(() => undefined);
+    await rm(directory, { recursive: true, force: true });
+  }
+});
