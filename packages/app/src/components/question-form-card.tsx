@@ -10,6 +10,7 @@ import type { AgentPermissionResponse } from "@getpaseo/protocol/agent-types";
 import { isWeb } from "@/constants/platform";
 import { EditingTextInput as TextInput } from "@/components/ui/text-input";
 import type { EditingTextInputHandle } from "@/components/ui/text-input/types";
+import { ScrollableCodeSurface } from "@/components/ui/scrollable-code-surface";
 import {
   areQuestionsAnswered,
   buildQuestionFormAnswers,
@@ -29,6 +30,7 @@ interface QuestionFormCardProps {
 }
 
 const IS_WEB = isWeb;
+const OPTION_PREVIEW_MAX_HEIGHT = 240;
 
 function getQuestionInputPlaceholder({
   question,
@@ -132,6 +134,17 @@ function QuestionOptionRow({
           <Text style={optionLabelStyle}>{option.label}</Text>
           {option.description ? (
             <Text style={optionDescriptionStyle}>{option.description}</Text>
+          ) : null}
+          {option.preview ? (
+            // Shown for every option at once so they can be compared before picking.
+            <ScrollableCodeSurface
+              tone="surface0"
+              maxHeight={OPTION_PREVIEW_MAX_HEIGHT}
+              selectable={false}
+              testID="question-form-option-preview"
+            >
+              {option.preview}
+            </ScrollableCodeSurface>
           ) : null}
         </View>
       </View>

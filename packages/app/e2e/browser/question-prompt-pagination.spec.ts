@@ -7,6 +7,7 @@ import {
   expectQuestionDismissEnabled,
   expectQuestionHidden,
   expectQuestionNavigationEnabled,
+  expectQuestionOptionPreview,
   expectQuestionOptionSelected,
   expectQuestionPrimaryActionDisabled,
   expectQuestionPrimaryActionEnabled,
@@ -61,6 +62,7 @@ test.describe("Question prompt pagination", () => {
       await expectQuestionOptionSelected(page, "App");
 
       await openQuestion(page, { index: 2, total: TOTAL_QUESTIONS });
+      await expectQuestionOptionPreview(page, 'flags.enabled("new-surface")');
       await chooseQuestionOption(page, "Behind feature flag");
       await expectCurrentQuestion(page, {
         index: 3,

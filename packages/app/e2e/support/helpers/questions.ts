@@ -43,6 +43,12 @@ export async function expectQuestionOptionSelected(page: Page, option: string): 
   await expect(questionOption(page, option)).toHaveAttribute("aria-checked", "true");
 }
 
+export async function expectQuestionOptionPreview(page: Page, preview: string): Promise<void> {
+  await expect(
+    page.getByTestId("question-form-card").first().getByTestId("question-form-option-preview"),
+  ).toContainText(preview);
+}
+
 export async function openQuestion(
   page: Page,
   input: { index: number; total: number },
