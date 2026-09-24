@@ -3367,8 +3367,7 @@ class OpenCodeAgentSession implements AgentSession {
   private abortController: AbortController | null = null;
   private accumulatedUsage: AgentUsage = {};
   private sessionTotalCostUsd: number | undefined;
-  private mcpConfigured = false;
-  private mcpSetupPromise: Promise<void> | null = null;
+  private mcpSetup: Promise<void> | null = null;
   private messageRoles = new Map<string, OpenCodeMessageRole>();
   private pendingUserMessageText: string | null = null;
   private pendingClientMessageId: string | null = null;
@@ -3511,7 +3510,7 @@ class OpenCodeAgentSession implements AgentSession {
     this.server = next;
     this.serverExited = false;
     this.recoveryAbortController = new AbortController();
-    this.mcpConfigured = false;
+    this.mcpSetup = null;
     this.subscribeServerEvents();
     this.logger.info(
       { sessionId: this.sessionId, previousUrl: exited.url, url: next.url },
@@ -5093,25 +5092,18 @@ class OpenCodeAgentSession implements AgentSession {
   }
 
   private async ensureMcpServersConfigured(): Promise<void> {
-    if (this.mcpConfigured) {
-      return;
-    }
-
     const mcpServers = this.config.mcpServers;
     if (!mcpServers || Object.keys(mcpServers).length === 0) {
-      this.mcpConfigured = true;
       return;
     }
 
-    if (!this.mcpSetupPromise) {
-      this.mcpSetupPromise = this.configureMcpServers(mcpServers);
-    }
-
+    const setup = (this.mcpSetup ??= this.configureMcpServers(mcpServers));
     try {
-      await this.mcpSetupPromise;
-      this.mcpConfigured = true;
+      await setup;
     } catch (error) {
-      this.mcpSetupPromise = null;
+      if (this.mcpSetup === setup) {
+        this.mcpSetup = null;
+      }
       throw error;
     }
   }
