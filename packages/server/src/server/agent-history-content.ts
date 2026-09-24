@@ -50,33 +50,72 @@ export function defaultHistoryContentRoots(home = homedir()): HistoryContentRoot
 }
 
 const fileIndexes = new Map<string, Promise<Map<string, string>>>();
-const textCache = new Map<string, string>();
+const textCache = new Map<string, HistoryConversation>();
 
 export function clearAgentHistoryContentCache(): void {
   fileIndexes.clear();
   textCache.clear();
 }
 
-export function conversationTextFromGrokJsonl(raw: string): string {
-  return conversationTextFromLines(raw, (row) => {
+/** User text and replies outrank thinking and tool traces. */
+export type HistoryContentSource = "user" | "reply" | "thinking" | "tool";
+
+export interface HistoryConversation {
+  user: string;
+  reply: string;
+  thinking: string;
+  tool: string;
+}
+
+export function emptyHistoryConversation(): HistoryConversation {
+  return { user: "", reply: "", thinking: "", tool: "" };
+}
+
+interface HistoryBands {
+  user: string[];
+  reply: string[];
+  thinking: string[];
+  tool: string[];
+}
+
+export function conversationTextFromGrokJsonl(raw: string): HistoryConversation {
+  return conversationFromLines(raw, (row, bands) => {
     const type = stringField(row, "type");
-    if (type !== "user" && type !== "assistant" && type !== "tool_result") return "";
-    return textFromContent(row.content);
+    if (type === "user") {
+      pushBand(bands.user, visibleUserText(textFromContent(row.content)));
+      return;
+    }
+    if (type === "assistant") {
+      pushBand(bands.reply, textFromContent(row.content));
+      pushBand(bands.tool, collectPlainText(row.tool_calls));
+      return;
+    }
+    if (type === "tool_result") {
+      pushBand(bands.tool, textFromContent(row.content));
+      return;
+    }
+    if (type === "backend_tool_call") {
+      pushBand(bands.tool, collectPlainText(row.kind ?? row));
+      return;
+    }
+    if (type === "reasoning") {
+      pushBand(bands.thinking, reasoningSummaryText(row.summary));
+    }
   });
 }
 
-export function conversationTextFromClaudeJsonl(raw: string): string {
-  return conversationTextFromLines(raw, (row) => {
+export function conversationTextFromClaudeJsonl(raw: string): HistoryConversation {
+  return conversationFromLines(raw, (row, bands) => {
     const type = stringField(row, "type");
-    if (type !== "user" && type !== "assistant") return "";
+    if (type !== "user" && type !== "assistant") return;
     const message = row.message;
-    if (!message || typeof message !== "object") return "";
-    return textFromContent((message as { content?: unknown }).content);
+    if (!message || typeof message !== "object") return;
+    readStructuredContent((message as { content?: unknown }).content, type, bands);
   });
 }
 
-export function conversationTextFromCursorBlobs(blobs: readonly Uint8Array[]): string {
-  const parts: string[] = [];
+export function conversationTextFromCursorBlobs(blobs: readonly Uint8Array[]): HistoryConversation {
+  const bands = emptyBands();
   for (const blob of blobs) {
     if (blob.length === 0 || blob[0] !== 0x7b) continue;
     let row: unknown;
@@ -86,37 +125,59 @@ export function conversationTextFromCursorBlobs(blobs: readonly Uint8Array[]): s
       continue;
     }
     if (!row || typeof row !== "object") continue;
-    const role = stringField(row as Record<string, unknown>, "role");
-    if (role !== "user" && role !== "assistant") continue;
-    const text = textFromContent((row as { content?: unknown }).content);
-    if (text) parts.push(text);
+    const record = row as Record<string, unknown>;
+    const role = stringField(record, "role");
+    if (role !== "user" && role !== "assistant" && role !== "tool") continue;
+    readStructuredContent(record.content, role, bands);
   }
-  return capText(parts.join("\n"));
+  return finishBands(bands);
 }
 
-export function conversationTextFromOpenCodeParts(rows: readonly string[]): string {
-  const parts: string[] = [];
-  for (const raw of rows) {
-    let row: unknown;
-    try {
-      row = JSON.parse(raw);
-    } catch {
-      continue;
-    }
-    if (!row || typeof row !== "object") continue;
-    const record = row as { type?: unknown; text?: unknown; summary?: unknown };
-    if (record.type === "text" && typeof record.text === "string") parts.push(record.text);
-    if (typeof record.summary === "string") parts.push(record.summary);
+export function conversationTextFromOpenCodeParts(
+  rows: readonly (string | { data: string; role?: string | null })[],
+): HistoryConversation {
+  const bands = emptyBands();
+  for (const raw of rows) readOpenCodePart(raw, bands);
+  return finishBands(bands);
+}
+
+function readOpenCodePart(
+  raw: string | { data: string; role?: string | null },
+  bands: HistoryBands,
+): void {
+  const data = typeof raw === "string" ? raw : raw.data;
+  const role = typeof raw === "string" ? "" : (raw.role ?? "");
+  let row: unknown;
+  try {
+    row = JSON.parse(data);
+  } catch {
+    return;
   }
-  return capText(parts.join("\n"));
+  if (!row || typeof row !== "object") return;
+  const record = row as Record<string, unknown>;
+  const type = typeof record.type === "string" ? record.type : "";
+  if (type === "text" && typeof record.text === "string") {
+    if (role === "user") pushBand(bands.user, visibleUserText(record.text));
+    else pushBand(bands.reply, record.text);
+    return;
+  }
+  if (type === "reasoning" || type === "thinking") {
+    pushBand(bands.thinking, firstString(record.text, record.thinking));
+    return;
+  }
+  if (type === "tool" || type === "tool-result" || type === "tool_result") {
+    pushBand(bands.tool, typeof record.text === "string" ? record.text : collectPlainText(record));
+    return;
+  }
+  if (typeof record.summary === "string") pushBand(bands.reply, record.summary);
 }
 
 export async function loadAgentHistoryContent(
   agent: HistoryContentAgent,
   roots: HistoryContentRoots = defaultHistoryContentRoots(),
-): Promise<string> {
+): Promise<HistoryConversation> {
   const sessionId = safeSessionId(agent.persistence?.sessionId);
-  if (!sessionId) return "";
+  if (!sessionId) return emptyHistoryConversation();
   const provider = agent.provider || agent.persistence?.provider || "";
   try {
     switch (provider) {
@@ -139,18 +200,18 @@ export async function loadAgentHistoryContent(
       case "opencode":
         return await readOpenCodeSession(roots.opencodeDbPath, sessionId);
       default:
-        return "";
+        return emptyHistoryConversation();
     }
   } catch {
-    return "";
+    return emptyHistoryConversation();
   }
 }
 
-function conversationTextFromLines(
+function conversationFromLines(
   raw: string,
-  pick: (row: Record<string, unknown>) => string,
-): string {
-  const parts: string[] = [];
+  pick: (row: Record<string, unknown>, bands: HistoryBands) => void,
+): HistoryConversation {
+  const bands = emptyBands();
   for (const line of raw.split("\n")) {
     if (!line) continue;
     let row: unknown;
@@ -160,10 +221,177 @@ function conversationTextFromLines(
       continue;
     }
     if (!row || typeof row !== "object") continue;
-    const text = pick(row as Record<string, unknown>);
-    if (text) parts.push(text);
+    pick(row as Record<string, unknown>, bands);
   }
-  return capText(parts.join("\n"));
+  return finishBands(bands);
+}
+
+const INJECTED_USER_WRAPPERS = [
+  "user_info",
+  "user_rules",
+  "user_rule",
+  "rules",
+  "system-reminder",
+  "system_reminder",
+];
+
+/**
+ * The typed message. `<user_query>` is that message when the tag exists.
+ * `<user_info>`, `<rules>`, and system reminders are injected and must not match.
+ * With no `<user_query>` tag, whatever is left after those wrappers is the message.
+ */
+function visibleUserText(text: string): string {
+  if (text.includes("<user_query>")) {
+    const parts: string[] = [];
+    for (const match of text.matchAll(/<user_query>([\s\S]*?)<\/user_query>/gi)) {
+      const inner = match[1].trim();
+      if (inner) parts.push(inner);
+    }
+    return parts.join("\n");
+  }
+  let stripped = text;
+  let removed = false;
+  for (const tag of INJECTED_USER_WRAPPERS) {
+    const pattern = new RegExp(`<${tag}\\b[^>]*>[\\s\\S]*?</${tag}>`, "gi");
+    const next = stripped.replace(pattern, "");
+    if (next !== stripped) removed = true;
+    stripped = next;
+  }
+  return (removed ? stripped : text).trim();
+}
+
+function reasoningSummaryText(summary: unknown): string {
+  if (!Array.isArray(summary)) return "";
+  const bits: string[] = [];
+  for (const item of summary) {
+    if (!item || typeof item !== "object") continue;
+    const record = item as { type?: unknown; text?: unknown };
+    if (record.type !== "summary_text" || typeof record.text !== "string") continue;
+    bits.push(record.text);
+  }
+  return bits.join("\n");
+}
+
+function readStructuredContent(
+  content: unknown,
+  role: "user" | "assistant" | "tool",
+  bands: HistoryBands,
+): void {
+  if (typeof content === "string") {
+    pushMessageText(bands, role, content);
+    return;
+  }
+  if (!Array.isArray(content)) return;
+  for (const part of content) readStructuredPart(part, role, bands);
+}
+
+function readStructuredPart(
+  part: unknown,
+  role: "user" | "assistant" | "tool",
+  bands: HistoryBands,
+): void {
+  if (typeof part === "string") {
+    pushMessageText(bands, role, part);
+    return;
+  }
+  if (!part || typeof part !== "object") return;
+  const record = part as Record<string, unknown>;
+  const type = typeof record.type === "string" ? record.type : "";
+  if (type === "redacted_thinking") return;
+  if (type === "thinking" || type === "reasoning") {
+    pushBand(bands.thinking, firstString(record.thinking, record.text));
+    return;
+  }
+  if (isToolPart(type) || role === "tool") {
+    pushBand(bands.tool, collectPlainText(record));
+    return;
+  }
+  if (type !== "text" && type !== "output_text" && type !== "") return;
+  if (typeof record.text !== "string") return;
+  pushMessageText(bands, role, record.text);
+}
+
+function pushMessageText(
+  bands: HistoryBands,
+  role: "user" | "assistant" | "tool",
+  text: string,
+): void {
+  if (role === "user") {
+    pushBand(bands.user, visibleUserText(text));
+    return;
+  }
+  if (role === "assistant") {
+    pushBand(bands.reply, text);
+    return;
+  }
+  pushBand(bands.tool, text);
+}
+
+function isToolPart(type: string): boolean {
+  return (
+    type === "tool_use" ||
+    type === "tool_result" ||
+    type === "tool-call" ||
+    type === "tool-result" ||
+    type === "tool"
+  );
+}
+
+function firstString(...values: unknown[]): string {
+  for (const value of values) {
+    if (typeof value === "string") return value;
+  }
+  return "";
+}
+
+const SKIPPED_TRACE_KEYS = new Set([
+  "encrypted_content",
+  "experimental_content",
+  "id",
+  "providerOptions",
+  "signature",
+  "status",
+  "toolCallId",
+  "tool_use_id",
+  "type",
+]);
+
+function collectPlainText(value: unknown, depth = 0): string {
+  if (depth > 6 || value == null) return "";
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") return "";
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => collectPlainText(item, depth + 1))
+      .filter(Boolean)
+      .join("\n");
+  }
+  if (typeof value !== "object") return "";
+  const bits: string[] = [];
+  for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+    if (SKIPPED_TRACE_KEYS.has(key)) continue;
+    const text = collectPlainText(child, depth + 1);
+    if (text) bits.push(text);
+  }
+  return bits.join("\n");
+}
+
+function emptyBands(): HistoryBands {
+  return { user: [], reply: [], thinking: [], tool: [] };
+}
+
+function pushBand(bucket: string[], text: string): void {
+  const trimmed = text.trim();
+  if (trimmed) bucket.push(trimmed);
+}
+
+function finishBands(bands: HistoryBands): HistoryConversation {
+  return {
+    user: capText(bands.user.join("\n")),
+    reply: capText(bands.reply.join("\n")),
+    thinking: capText(bands.thinking.join("\n")),
+    tool: capText(bands.tool.join("\n")),
+  };
 }
 
 function textFromContent(content: unknown): string {
@@ -206,17 +434,17 @@ async function readIndexedFile(
   root: string,
   sessionId: string,
   kind: string,
-  extract: (raw: string) => string,
-): Promise<string> {
+  extract: (raw: string) => HistoryConversation,
+): Promise<HistoryConversation> {
   const index = await fileIndex(
     kind,
     root,
     kind === "grok" ? indexGrokSessions : indexClaudeSessions,
   );
   const file = index.get(sessionId);
-  if (!file) return "";
+  if (!file) return emptyHistoryConversation();
   const info = await stat(file).catch(() => null);
-  if (!info?.isFile()) return "";
+  if (!info?.isFile()) return emptyHistoryConversation();
   const cacheKey = `${file}\0${info.mtimeMs}:${info.size}`;
   const cached = textCache.get(cacheKey);
   if (cached !== undefined) return cached;
@@ -300,9 +528,9 @@ async function readBounded(file: string): Promise<string> {
   }
 }
 
-async function readCursorSession(dbPath: string): Promise<string> {
+async function readCursorSession(dbPath: string): Promise<HistoryConversation> {
   const info = await stat(dbPath).catch(() => null);
-  if (!info?.isFile()) return "";
+  if (!info?.isFile()) return emptyHistoryConversation();
   const cacheKey = `${dbPath}\0${info.mtimeMs}:${info.size}`;
   const cached = textCache.get(cacheKey);
   if (cached !== undefined) return cached;
@@ -318,25 +546,48 @@ async function readCursorSession(dbPath: string): Promise<string> {
   }
 }
 
-async function readOpenCodeSession(dbPath: string, sessionId: string): Promise<string> {
+function openCodeRole(message: string | null): string {
+  if (!message) return "";
+  try {
+    const row = JSON.parse(message) as { role?: unknown };
+    return typeof row.role === "string" ? row.role : "";
+  } catch {
+    return "";
+  }
+}
+
+async function readOpenCodeSession(
+  dbPath: string,
+  sessionId: string,
+): Promise<HistoryConversation> {
   const info = await stat(dbPath).catch(() => null);
-  if (!info?.isFile()) return "";
+  if (!info?.isFile()) return emptyHistoryConversation();
   const cacheKey = `${dbPath}\0${sessionId}\0${info.mtimeMs}:${info.size}`;
   const cached = textCache.get(cacheKey);
   if (cached !== undefined) return cached;
   const { DatabaseSync } = await import("node:sqlite");
   const db = new DatabaseSync(dbPath, { readOnly: true });
   try {
-    const parts = db.prepare("SELECT data FROM part WHERE session_id = ?").all(sessionId) as Array<{
-      data: string;
-    }>;
-    const messages = db
-      .prepare("SELECT data FROM message WHERE session_id = ?")
-      .all(sessionId) as Array<{ data: string }>;
-    const text = conversationTextFromOpenCodeParts([
-      ...parts.map((row) => row.data),
-      ...messages.map((row) => row.data),
-    ]);
+    let inputs: Array<string | { data: string; role?: string | null }>;
+    try {
+      const joined = db
+        .prepare(
+          `SELECT part.data AS data, message.data AS message
+           FROM part
+           LEFT JOIN message ON message.id = part.message_id
+           WHERE part.session_id = ?`,
+        )
+        .all(sessionId) as Array<{ data: string; message: string | null }>;
+      inputs = joined.map((row) => ({ data: row.data, role: openCodeRole(row.message) }));
+    } catch {
+      const parts = db
+        .prepare("SELECT data FROM part WHERE session_id = ?")
+        .all(sessionId) as Array<{
+        data: string;
+      }>;
+      inputs = parts.map((row) => row.data);
+    }
+    const text = conversationTextFromOpenCodeParts(inputs);
     textCache.set(cacheKey, text);
     return text;
   } finally {

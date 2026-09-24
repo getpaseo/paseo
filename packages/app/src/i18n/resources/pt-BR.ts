@@ -315,6 +315,12 @@ export const ptBR: TranslationResources = {
       runningAgent: "Este agente ainda está em execução. Arquivá-lo interromperá o agente.",
       archive: "Arquivar",
     },
+    snippetSource: {
+      user: "Sua mensagem",
+      reply: "Resposta",
+      thinking: "Pensamento",
+      tool: "Ferramenta",
+    },
   },
   message: {
     diagram: {

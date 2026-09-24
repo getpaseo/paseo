@@ -308,6 +308,12 @@ export const en = {
       runningAgent: "This agent is still running. Archiving it will stop the agent.",
       archive: "Archive",
     },
+    snippetSource: {
+      user: "Your message",
+      reply: "Reply",
+      thinking: "Thinking",
+      tool: "Tool",
+    },
   },
   message: {
     diagram: {

@@ -316,6 +316,12 @@ export const es: TranslationResources = {
       runningAgent: "Este agente todavía está ejecutándose. Archivarlo detendrá al agente.",
       archive: "Archivo",
     },
+    snippetSource: {
+      user: "Tu mensaje",
+      reply: "Respuesta",
+      thinking: "Pensamiento",
+      tool: "Herramienta",
+    },
   },
   message: {
     diagram: {

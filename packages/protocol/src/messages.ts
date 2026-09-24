@@ -4098,6 +4098,11 @@ export const AgentSearchMatchSchema = z.object({
 
 export type AgentSearchMatch = z.infer<typeof AgentSearchMatchSchema>;
 
+export const AgentHistoryContentSourceSchema = z.enum(["user", "reply", "thinking", "tool"]);
+export type AgentHistoryContentSource = z.infer<typeof AgentHistoryContentSourceSchema>;
+export const AgentHistoryMatchBandSchema = z.enum(["message", "trace"]);
+export type AgentHistoryMatchBand = z.infer<typeof AgentHistoryMatchBandSchema>;
+
 const AgentDirectoryResponseEntrySchema = z.object({
   agent: AgentSnapshotPayloadSchema,
   project: ProjectPlacementPayloadSchema,
@@ -4108,6 +4113,11 @@ const AgentDirectoryResponseEntrySchema = z.object({
   searchMatches: z.array(AgentSearchMatchSchema).optional(),
   // The conversation line that matched, shown under the title.
   contentSnippet: z.string().optional(),
+  // Where that line was taken from. Absent when only a name matched.
+  contentSource: AgentHistoryContentSourceSchema.optional(),
+  // message: every token is in a name, a user message, or a reply.
+  // trace: some token matched only thinking or a tool trace.
+  contentMatchBand: AgentHistoryMatchBandSchema.optional(),
   // COMPAT(directorySync): sequence of this latest directory projection.
   syncSeq: z.number().int().positive().optional(),
 });

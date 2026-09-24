@@ -89,8 +89,15 @@ export async function fetchAgentHistoryPage(input: {
     serverId: input.serverId,
     entries: payload.entries,
   });
-  const snippetByAgentId = new Map(
-    payload.entries.map((entry) => [entry.agent.id, entry.contentSnippet ?? null]),
+  const detailByAgentId = new Map(
+    payload.entries.map((entry) => [
+      entry.agent.id,
+      {
+        contentSnippet: entry.contentSnippet ?? null,
+        contentSource: entry.contentSource ?? null,
+        contentMatchBand: entry.contentMatchBand ?? null,
+      },
+    ]),
   );
   return {
     isSearchTruncated: payload.searchTruncated === true,
@@ -113,14 +120,21 @@ export async function fetchAgentHistoryPage(input: {
       createdAt: agent.createdAt,
       labels: agent.labels,
       projectPlacement: agent.projectPlacement,
-      contentSnippet: snippetByAgentId.get(agent.id) ?? null,
+      contentSnippet: detailByAgentId.get(agent.id)?.contentSnippet ?? null,
+      contentSource: detailByAgentId.get(agent.id)?.contentSource ?? null,
+      contentMatchBand: detailByAgentId.get(agent.id)?.contentMatchBand ?? null,
     })),
     pageInfo: payload.pageInfo,
   };
 }
 
-function sortByLatestActivity(agents: AggregatedAgent[]): AggregatedAgent[] {
-  return [...agents].sort((a, b) => b.lastActivityAt.getTime() - a.lastActivityAt.getTime());
+function sortHistoryAgents(agents: AggregatedAgent[]): AggregatedAgent[] {
+  return [...agents].sort((left, right) => {
+    const band =
+      (left.contentMatchBand === "trace" ? 1 : 0) - (right.contentMatchBand === "trace" ? 1 : 0);
+    if (band !== 0) return band;
+    return right.lastActivityAt.getTime() - left.lastActivityAt.getTime();
+  });
 }
 
 /**
@@ -209,7 +223,7 @@ export async function fetchAgentHistoryBatch(input: {
     pages.map(({ host, page }) => [host.serverId, page.pageInfo]),
   );
   return {
-    agents: sortByLatestActivity(agents),
+    agents: sortHistoryAgents(agents),
     pageInfoByServerId,
     hostErrors,
     ...(input.search
@@ -348,7 +362,7 @@ export function useAgentHistory(options: {
         serverLabel: serverLabelById.get(agent.serverId) ?? agent.serverLabel,
       }),
     );
-    return sortByLatestActivity(labelledAgents);
+    return sortHistoryAgents(labelledAgents);
   }, [data?.pages, serverLabelById]);
   const isInitialLoad = isLoading && agents.length === 0;
   const isRevalidating = isFetching && !isFetchingNextPage && agents.length > 0;

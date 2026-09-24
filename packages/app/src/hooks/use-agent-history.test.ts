@@ -86,6 +86,9 @@ function historyEntry(input: {
   title?: string | null;
   archivedAt?: string | null;
   searchScore?: number;
+  contentMatchBand?: "message" | "trace";
+  contentSnippet?: string;
+  contentSource?: "user" | "reply" | "thinking" | "tool";
 }): FetchAgentHistoryEntry {
   return {
     agent: {
@@ -136,6 +139,9 @@ function historyEntry(input: {
       },
     },
     ...(input.searchScore === undefined ? {} : { searchScore: input.searchScore }),
+    ...(input.contentMatchBand === undefined ? {} : { contentMatchBand: input.contentMatchBand }),
+    ...(input.contentSnippet === undefined ? {} : { contentSnippet: input.contentSnippet }),
+    ...(input.contentSource === undefined ? {} : { contentSource: input.contentSource }),
   };
 }
 
@@ -551,6 +557,44 @@ describe("fetchAgentHistoryPage", () => {
       "newer-weak-match",
       "older-strong-match",
     ]);
+  });
+
+  it("puts a reply hit above a newer tool-only hit", async () => {
+    const client = createClient([
+      historyPayload({
+        entries: [
+          historyEntry({
+            id: "newer-tool",
+            cwd: "/repo/a",
+            updatedAt: "2026-04-09T10:00:00.000Z",
+            title: "Unrelated",
+            contentMatchBand: "trace",
+            contentSource: "tool",
+            contentSnippet: "kanban in the tool dump",
+          }),
+          historyEntry({
+            id: "older-reply",
+            cwd: "/repo/a",
+            updatedAt: "2026-04-01T10:00:00.000Z",
+            title: "Also unrelated",
+            contentMatchBand: "message",
+            contentSource: "reply",
+            contentSnippet: "the reply says kanban",
+          }),
+        ],
+      }),
+    ]);
+
+    const page = await fetchAgentHistoryBatch({
+      hosts: [{ serverId: "server-a", serverLabel: "MacBook", client }],
+      cursorByServerId: null,
+      search: "kanban",
+    });
+
+    expect(page.agents.map((agent) => agent.id)).toEqual(["older-reply", "newer-tool"]);
+    expect(page.agents[0]?.contentSnippet).toBe("the reply says kanban");
+    expect(page.agents[0]?.contentSource).toBe("reply");
+    expect(page.agents[1]?.contentSource).toBe("tool");
   });
 
   it("fetches only hosts with a cursor when loading the next all-host page", async () => {

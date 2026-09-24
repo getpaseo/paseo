@@ -9,6 +9,7 @@ import {
   conversationTextFromCursorBlobs,
   conversationTextFromGrokJsonl,
   conversationTextFromOpenCodeParts,
+  emptyHistoryConversation,
   loadAgentHistoryContent,
   type HistoryContentRoots,
 } from "./agent-history-content.js";
@@ -18,9 +19,14 @@ afterEach(() => {
 });
 
 describe("conversation text extractors", () => {
-  it("keeps grok user and assistant text and skips reasoning", () => {
+  it("keeps grok user and assistant text and puts summary text in thinking", () => {
     const raw = [
       JSON.stringify({ type: "reasoning", summary: "hidden chain" }),
+      JSON.stringify({
+        type: "reasoning",
+        encrypted_content: "secret xylophone blob",
+        summary: [{ type: "summary_text", text: "pondering the kanban board" }],
+      }),
       JSON.stringify({
         type: "user",
         content: [{ type: "text", text: "Where is the obsidian kanban note?" }],
@@ -31,9 +37,63 @@ describe("conversation text extractors", () => {
       }),
     ].join("\n");
     const text = conversationTextFromGrokJsonl(raw);
-    expect(text).toContain("obsidian kanban");
-    expect(text).toContain("vault under plugins");
-    expect(text).not.toContain("hidden chain");
+    expect(text.user).toContain("obsidian kanban");
+    expect(text.reply).toContain("vault under plugins");
+    expect(text.thinking).toContain("pondering the kanban board");
+    expect(text.thinking).not.toContain("hidden chain");
+    expect(JSON.stringify(text)).not.toContain("secret xylophone blob");
+    expect(JSON.stringify(text)).not.toContain("hidden chain");
+  });
+
+  it("reads a grok user_query and ignores injected wrappers", () => {
+    const raw = [
+      JSON.stringify({
+        type: "user",
+        content: [
+          {
+            type: "text",
+            text: "<user_info>kanban lives in the info block</user_info><rules>kanban lives in the rules</rules><user_query>Where is the obsidian note?</user_query>",
+          },
+        ],
+      }),
+      JSON.stringify({
+        type: "user",
+        content: "<system-reminder>kanban inside the reminder</system-reminder>",
+      }),
+      JSON.stringify({
+        type: "user",
+        content: "<user_info>xylophone in info</user_info><rules>xylophone in rules</rules>",
+      }),
+    ].join("\n");
+    const text = conversationTextFromGrokJsonl(raw);
+    expect(text.user).toContain("obsidian note");
+    expect(text.user).not.toContain("kanban");
+    expect(text.user).not.toContain("xylophone");
+    expect(JSON.stringify(text)).not.toContain("xylophone");
+  });
+
+  it("keeps a grok reply out of an earlier tool result", () => {
+    const raw = [
+      JSON.stringify({
+        type: "tool_result",
+        content: "The authorization dump from the tool ran first.",
+      }),
+      JSON.stringify({
+        type: "assistant",
+        content: "The reply mentions authorization at the end.",
+        tool_calls: [{ id: "call-1", name: "bash", arguments: '{"cmd":"authorization dump"}' }],
+      }),
+      JSON.stringify({
+        type: "backend_tool_call",
+        kind: { tool_type: "web_search", action: { query: "backend authorization query" } },
+      }),
+    ].join("\n");
+    const text = conversationTextFromGrokJsonl(raw);
+    expect(text.reply).toContain("reply mentions authorization");
+    expect(text.reply).not.toContain("dump from the tool");
+    expect(text.tool).toContain("authorization dump from the tool");
+    expect(text.tool).toContain("backend authorization query");
+    expect(text.tool).not.toContain("call-1");
   });
 
   it("reads claude user and assistant message content", () => {
@@ -41,17 +101,35 @@ describe("conversation text extractors", () => {
       JSON.stringify({ type: "queue-operation", operation: "enqueue" }),
       JSON.stringify({
         type: "user",
-        message: { role: "user", content: [{ type: "text", text: "file the google export" }] },
+        message: {
+          role: "user",
+          content: [
+            { type: "tool_result", content: "tool output xylophone" },
+            { type: "text", text: "file the google export" },
+          ],
+        },
       }),
       JSON.stringify({
         type: "assistant",
-        message: { role: "assistant", content: "Filed under tank photos." },
+        message: {
+          role: "assistant",
+          content: [
+            { type: "thinking", thinking: "hidden claude thought", signature: "encrypted-thought" },
+            { type: "text", text: "Filed under tank photos." },
+            { type: "tool_use", id: "toolu_1", name: "bash", input: { cmd: "ls photos" } },
+          ],
+        },
       }),
     ].join("\n");
     const text = conversationTextFromClaudeJsonl(raw);
-    expect(text).toContain("file the google export");
-    expect(text).toContain("Filed under tank photos");
-    expect(text).not.toContain("enqueue");
+    expect(text.user).toContain("file the google export");
+    expect(text.user).not.toContain("xylophone");
+    expect(text.reply).toContain("Filed under tank photos");
+    expect(text.thinking).toContain("hidden claude thought");
+    expect(text.thinking).not.toContain("encrypted-thought");
+    expect(text.tool).toContain("tool output xylophone");
+    expect(text.tool).toContain("ls photos");
+    expect(JSON.stringify(text)).not.toContain("enqueue");
   });
 
   it("reads cursor user and assistant json blobs and skips system prompts", () => {
@@ -61,24 +139,54 @@ describe("conversation text extractors", () => {
       Buffer.from(
         JSON.stringify({
           role: "assistant",
-          content: [{ type: "text", text: "Cursor bills separately." }],
+          content: [
+            { type: "reasoning", text: "cursor thought", signature: "encrypted-cursor-thought" },
+            { type: "text", text: "Cursor bills separately." },
+            {
+              type: "tool-call",
+              toolCallId: "tc_1",
+              toolName: "grep",
+              args: { pattern: "secret-tool-pattern" },
+            },
+          ],
+        }),
+      ),
+      Buffer.from(
+        JSON.stringify({
+          role: "tool",
+          content: [
+            {
+              type: "tool-result",
+              toolCallId: "tc_1",
+              toolName: "grep",
+              result: "tool result blob",
+            },
+          ],
         }),
       ),
       Buffer.from([0x0a, 0x8b, 0x01]),
     ];
     const text = conversationTextFromCursorBlobs(blobs);
-    expect(text).toContain("SuperGrok usage versus Cursor");
-    expect(text).toContain("Cursor bills separately");
-    expect(text).not.toContain("You are an agent");
+    expect(text.user).toContain("SuperGrok usage versus Cursor");
+    expect(text.reply).toContain("Cursor bills separately");
+    expect(text.thinking).toContain("cursor thought");
+    expect(text.thinking).not.toContain("encrypted-cursor-thought");
+    expect(text.tool).toContain("secret-tool-pattern");
+    expect(text.tool).toContain("tool result blob");
+    expect(JSON.stringify(text)).not.toContain("You are an agent");
   });
 
-  it("reads opencode text parts", () => {
+  it("reads opencode text parts and keeps tool text in the tool band", () => {
     const text = conversationTextFromOpenCodeParts([
-      JSON.stringify({ type: "text", text: "Alert summary for the airflow job" }),
+      {
+        data: JSON.stringify({ type: "text", text: "Alert summary for the airflow job" }),
+        role: "user",
+      },
       JSON.stringify({ type: "tool", text: "ignored tool wrapper" }),
     ]);
-    expect(text).toContain("airflow job");
-    expect(text).not.toContain("ignored tool wrapper");
+    expect(text.user).toContain("airflow job");
+    expect(text.reply).not.toContain("ignored tool wrapper");
+    expect(text.tool).toContain("ignored tool wrapper");
   });
 });
 
@@ -98,7 +206,7 @@ describe("loadAgentHistoryContent", () => {
       { provider: "grok", persistence: { sessionId } },
       roots,
     );
-    expect(text).toContain("unique grok phrase xylophone");
+    expect(text.user).toContain("unique grok phrase xylophone");
   });
 
   it("loads a claude jsonl by session id", async () => {
@@ -119,7 +227,7 @@ describe("loadAgentHistoryContent", () => {
       { provider: "claude", persistence: { sessionId } },
       roots,
     );
-    expect(text).toContain("unique claude phrase zither");
+    expect(text.reply).toContain("unique claude phrase zither");
   });
 
   it("loads cursor and opencode stores", async () => {
@@ -155,8 +263,8 @@ describe("loadAgentHistoryContent", () => {
       { provider: "opencode", persistence: { sessionId: "ses_open" } },
       roots,
     );
-    expect(cursorText).toContain("unique cursor phrase harp");
-    expect(opencodeText).toContain("unique opencode phrase lute");
+    expect(cursorText.user).toContain("unique cursor phrase harp");
+    expect(opencodeText.reply).toContain("unique opencode phrase lute");
   });
 
   it("rejects a session id that tries to leave the store", async () => {
@@ -166,7 +274,7 @@ describe("loadAgentHistoryContent", () => {
       { provider: "grok", persistence: { sessionId: "../secrets" } },
       roots,
     );
-    expect(text).toBe("");
+    expect(text).toEqual(emptyHistoryConversation());
   });
 });
 

@@ -315,6 +315,12 @@ export const ru: TranslationResources = {
       runningAgent: "Этот агент всё ещё работает. Перемещение в архив остановит его.",
       archive: "Архивировать",
     },
+    snippetSource: {
+      user: "Ваше сообщение",
+      reply: "Ответ",
+      thinking: "Размышление",
+      tool: "Инструмент",
+    },
   },
   message: {
     diagram: {

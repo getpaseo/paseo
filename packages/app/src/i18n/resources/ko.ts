@@ -312,6 +312,12 @@ export const ko: TranslationResources = {
       runningAgent: "이 에이전트는 아직 실행 중입니다. 보관하면 에이전트가 중지됩니다.",
       archive: "보관",
     },
+    snippetSource: {
+      user: "내 메시지",
+      reply: "답변",
+      thinking: "생각",
+      tool: "도구",
+    },
   },
   message: {
     diagram: {

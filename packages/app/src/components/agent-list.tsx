@@ -160,6 +160,38 @@ function SessionRowTrailingAttention({
   );
 }
 
+function SessionSnippet({
+  agent,
+  ranges,
+}: {
+  agent: AggregatedAgent;
+  ranges: ReturnType<typeof findHighlightRanges>;
+}) {
+  const { t } = useTranslation();
+  if (!agent.contentSnippet) return null;
+  return (
+    <View style={styles.snippetRow}>
+      {agent.contentSource ? (
+        <Text
+          style={styles.snippetLabel}
+          numberOfLines={1}
+          testID={`agent-row-snippet-source-${agent.serverId}-${agent.id}`}
+        >
+          {t(`agentList.snippetSource.${agent.contentSource}`)}
+          {" · "}
+        </Text>
+      ) : null}
+      <HighlightedText
+        text={agent.contentSnippet}
+        ranges={ranges}
+        style={styles.sessionSnippet}
+        numberOfLines={2}
+        testID={`agent-row-snippet-${agent.serverId}-${agent.id}`}
+      />
+    </View>
+  );
+}
+
 function SessionRow({
   agent,
   search,
@@ -266,15 +298,7 @@ function SessionRow({
           />
         </View>
         {isMobile ? agentTitle : null}
-        {agent.contentSnippet ? (
-          <HighlightedText
-            text={agent.contentSnippet}
-            ranges={ranges.snippet}
-            style={styles.sessionSnippet}
-            numberOfLines={2}
-            testID={`agent-row-snippet-${agent.serverId}-${agent.id}`}
-          />
-        ) : null}
+        <SessionSnippet agent={agent} ranges={ranges.snippet} />
         {isMobile ? (
           <View style={styles.rowMetaRow}>
             <HighlightedText
@@ -647,6 +671,16 @@ const styles = StyleSheet.create((theme) => ({
     minWidth: 0,
     fontSize: theme.fontSize.base,
     fontWeight: "400",
+    color: theme.colors.foregroundMuted,
+  },
+  snippetRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    minWidth: 0,
+  },
+  snippetLabel: {
+    flexShrink: 0,
+    fontSize: theme.fontSize.sm,
     color: theme.colors.foregroundMuted,
   },
   sessionSnippet: {

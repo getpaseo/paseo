@@ -21,6 +21,8 @@ import {
 } from "@gorhom/bottom-sheet";
 import { AgentStatusDot } from "@/components/agent-status-dot";
 import { MaterialFileIcon } from "@/components/material-file-icon";
+import { HighlightedText } from "@/components/ui/highlighted-text";
+import { findHighlightRanges } from "@/components/ui/highlighted-text-segments";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import {
   EditingTextInput as TextInput,
@@ -33,6 +35,7 @@ import {
 } from "@/components/ui/isolated-bottom-sheet-modal";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { isNative, isWeb } from "@/constants/platform";
+import type { FetchAgentHistoryEntry } from "@getpaseo/client/internal/daemon-client";
 import { useAggregatedAgents, type AggregatedAgent } from "@/hooks/use-aggregated-agents";
 import { useProjects } from "@/hooks/use-projects";
 import {
@@ -61,10 +64,12 @@ import {
   buildContributionSections,
   filterAndRankBuiltInResults,
   joinSubtitleParts,
+  mergeAgentContentHits,
   moveActiveResultId,
   PINNED_SECTION_BAND,
   preserveActiveResultId,
   projectCommandCenterRows,
+  rankCommandCenterAgents,
   type CommandCenterAgentResult,
   type CommandCenterFileResult,
   type CommandCenterListRow,
@@ -194,6 +199,81 @@ function useBuiltInRows(open: boolean): {
   }, [agents, open, projects, showHost, t]);
 }
 
+function historyAgentResult(
+  host: { serverId: string; label: string },
+  entry: FetchAgentHistoryEntry,
+): CommandCenterAgentResult {
+  const snapshot = entry.agent;
+  const snippet = entry.contentSnippet?.trim() ?? "";
+  const snippetSource = snippet ? entry.contentSource : undefined;
+  return {
+    kind: "agent",
+    id: `agent:${host.serverId}:${snapshot.id}`,
+    title: snapshot.title || "New session",
+    subtitle: snippet || host.label,
+    metaSubtitle: host.label,
+    ...(snippetSource ? { snippetSource } : {}),
+    ...(entry.contentMatchBand ? { matchBand: entry.contentMatchBand } : {}),
+    agent: {
+      id: snapshot.id,
+      serverId: host.serverId,
+      serverLabel: host.label,
+      title: snapshot.title,
+      status: snapshot.status,
+      turn: { phase: "idle", cancellationRequestId: null },
+      lastActivityAt: new Date(snapshot.updatedAt),
+      cwd: snapshot.cwd,
+      workspaceId: snapshot.workspaceId,
+      provider: snapshot.provider,
+      requiresAttention: snapshot.requiresAttention,
+      attentionReason: snapshot.attentionReason ?? null,
+      attentionTimestamp: snapshot.attentionTimestamp
+        ? new Date(snapshot.attentionTimestamp)
+        : null,
+      archivedAt: snapshot.archivedAt ? new Date(snapshot.archivedAt) : null,
+      createdAt: new Date(snapshot.createdAt),
+      labels: snapshot.labels,
+      projectPlacement: entry.project,
+      pendingPermissionCount: snapshot.pendingPermissions.length,
+      contentSnippet: snippet || null,
+      contentSource: snippetSource ?? null,
+      contentMatchBand: entry.contentMatchBand ?? null,
+    },
+    run: () => {
+      clearCommandCenterFocusRestoreElement();
+      navigateToAgent({ serverId: host.serverId, agentId: snapshot.id });
+    },
+  };
+}
+
+async function loadServerHistoryAgents(
+  hosts: readonly { serverId: string; label: string }[],
+  search: string,
+): Promise<CommandCenterAgentResult[]> {
+  const runtime = getHostRuntimeStore();
+  const pages = await Promise.all(hosts.map((host) => serverHistoryAgents(runtime, host, search)));
+  return pages.flat();
+}
+
+async function serverHistoryAgents(
+  runtime: ReturnType<typeof getHostRuntimeStore>,
+  host: { serverId: string; label: string },
+  search: string,
+): Promise<CommandCenterAgentResult[]> {
+  const client = runtime.getClient(host.serverId);
+  if (!client) return [];
+  try {
+    const page = await client.fetchAgentHistory({
+      search,
+      page: { limit: 20 },
+    });
+    return page.entries.map((entry) => historyAgentResult(host, entry));
+  } catch {
+    // A host that cannot search still leaves the title matches in place.
+    return [];
+  }
+}
+
 /**
  * Chats whose stored conversation matches the query. The local agent list only
  * knows titles, so Search asks the daemon and shows the matching line.
@@ -209,63 +289,11 @@ function useServerHistoryAgents(open: boolean, query: string): CommandCenterAgen
       setRows([]);
       return;
     }
-    const runtime = getHostRuntimeStore();
     const currentHosts = hosts;
     let cancelled = false;
     const timer = setTimeout(() => {
       void (async () => {
-        const next: CommandCenterAgentResult[] = [];
-        await Promise.all(
-          currentHosts.map(async (host) => {
-            const client = runtime.getClient(host.serverId);
-            if (!client) return;
-            try {
-              const page = await client.fetchAgentHistory({
-                search: trimmed,
-                page: { limit: 20 },
-              });
-              for (const entry of page.entries) {
-                const snapshot = entry.agent;
-                const snippet = entry.contentSnippet?.trim() ?? "";
-                next.push({
-                  kind: "agent",
-                  id: `agent:${host.serverId}:${snapshot.id}`,
-                  title: snapshot.title || "New session",
-                  subtitle: snippet || host.label,
-                  agent: {
-                    id: snapshot.id,
-                    serverId: host.serverId,
-                    serverLabel: host.label,
-                    title: snapshot.title,
-                    status: snapshot.status,
-                    turn: { phase: "idle", cancellationRequestId: null },
-                    lastActivityAt: new Date(snapshot.updatedAt),
-                    cwd: snapshot.cwd,
-                    workspaceId: snapshot.workspaceId,
-                    provider: snapshot.provider,
-                    requiresAttention: snapshot.requiresAttention,
-                    attentionReason: snapshot.attentionReason ?? null,
-                    attentionTimestamp: snapshot.attentionTimestamp
-                      ? new Date(snapshot.attentionTimestamp)
-                      : null,
-                    archivedAt: snapshot.archivedAt ? new Date(snapshot.archivedAt) : null,
-                    createdAt: new Date(snapshot.createdAt),
-                    labels: snapshot.labels,
-                    projectPlacement: entry.project,
-                    pendingPermissionCount: snapshot.pendingPermissions.length,
-                    contentSnippet: snippet || null,
-                  },
-                  run: () => {
-                    clearCommandCenterFocusRestoreElement();
-                    navigateToAgent({ serverId: host.serverId, agentId: snapshot.id });
-                  },
-                });
-              }
-            } catch {
-              // A host that cannot search still leaves the title matches in place.
-            }
-          }),
-        );
+        const next = await loadServerHistoryAgents(currentHosts, trimmed);
         if (!cancelled) setRows(next);
       })();
     }, 200);
@@ -285,14 +313,11 @@ function useBuiltInSections(open: boolean, query: string): CommandCenterResultSe
 
   return useMemo(() => {
     if (!open) return [];
-    const rankedAgents = filterAndRankBuiltInResults(
-      rows.agents,
-      query,
-      agentSearchFields,
-      (left, right) => sortAgents(left.agent, right.agent),
-    );
-    const seen = new Set(rankedAgents.map((row) => row.id));
-    const fromConversation = query.trim() ? searched.filter((row) => !seen.has(row.id)) : [];
+    const tiebreak = (left: CommandCenterAgentResult, right: CommandCenterAgentResult) =>
+      sortAgents(left.agent, right.agent);
+    const rankedAgents = query.trim()
+      ? rankCommandCenterAgents(mergeAgentContentHits(rows.agents, searched), query, tiebreak)
+      : filterAndRankBuiltInResults(rows.agents, query, agentSearchFields, tiebreak);
     return [
       {
         id: "workspaces",
@@ -306,7 +331,7 @@ function useBuiltInSections(open: boolean, query: string): CommandCenterResultSe
         band: PINNED_SECTION_BAND,
         rank: 3,
         title: t("shell.commandCenter.agents"),
-        results: [...fromConversation, ...rankedAgents],
+        results: rankedAgents,
       },
     ];
   }, [open, query, rows, searched, t]);
@@ -476,11 +501,12 @@ function useCommandCenterState(): CommandCenterState {
 
 interface ResultRowProps {
   result: CommandCenterResult;
+  query: string;
   active: boolean;
   onSelect(result: CommandCenterResult): void;
 }
 
-const ResultRow = memo(function ResultRow({ result, active, onSelect }: ResultRowProps) {
+const ResultRow = memo(function ResultRow({ result, query, active, onSelect }: ResultRowProps) {
   const press = useCallback(() => onSelect(result), [onSelect, result]);
   const choice =
     result.kind === "contribution" && result.contribution.presentation.kind === "choice"
@@ -519,12 +545,70 @@ const ResultRow = memo(function ResultRow({ result, active, onSelect }: ResultRo
         result.kind === "file" ? `command-center-file-row-${result.filePath}` : choice?.testId
       }
     >
-      <ResultContent result={result} />
+      <ResultContent result={result} query={query} />
     </Pressable>
   );
 });
 
-function ResultContent({ result }: { result: CommandCenterResult }) {
+function AgentResultContent({
+  result,
+  query,
+}: {
+  result: CommandCenterAgentResult;
+  query: string;
+}) {
+  const { t } = useTranslation();
+  const agent = result.agent;
+  const sourceLabel = result.snippetSource
+    ? t(`agentList.snippetSource.${result.snippetSource}`)
+    : "";
+  const titleRanges = useMemo(
+    () => findHighlightRanges(query, result.title),
+    [query, result.title],
+  );
+  const subtitleRanges = useMemo(
+    () => findHighlightRanges(query, result.subtitle),
+    [query, result.subtitle],
+  );
+  return (
+    <View style={styles.rowContent} testID={`command-center-agent-${agent.serverId}:${agent.id}`}>
+      <View style={styles.rowMain}>
+        <View style={styles.iconSlot}>
+          <AgentStatusDot
+            status={agent.status}
+            requiresAttention={agent.requiresAttention}
+            showInactive
+          />
+        </View>
+        <View style={styles.textContent}>
+          <HighlightedText
+            text={result.title}
+            ranges={titleRanges}
+            style={styles.title}
+            numberOfLines={1}
+          />
+          <View style={styles.subtitleLine}>
+            {sourceLabel ? (
+              <Text style={styles.subtitleLabel} numberOfLines={1}>
+                {sourceLabel}
+                {" · "}
+              </Text>
+            ) : null}
+            <HighlightedText
+              text={result.subtitle}
+              ranges={subtitleRanges}
+              style={sourceLabel ? styles.subtitleText : styles.subtitle}
+              numberOfLines={1}
+              testID="command-center-agent-subtitle"
+            />
+          </View>
+        </View>
+      </View>
+    </View>
+  );
+}
+
+function ResultContent({ result, query }: { result: CommandCenterResult; query: string }) {
   if (result.kind === "file") {
     return (
       <View style={styles.rowContent}>
@@ -548,28 +632,7 @@ function ResultContent({ result }: { result: CommandCenterResult }) {
     );
   }
   if (result.kind === "agent") {
-    const agent = result.agent;
-    return (
-      <View style={styles.rowContent} testID={`command-center-agent-${agent.serverId}:${agent.id}`}>
-        <View style={styles.rowMain}>
-          <View style={styles.iconSlot}>
-            <AgentStatusDot
-              status={agent.status}
-              requiresAttention={agent.requiresAttention}
-              showInactive
-            />
-          </View>
-          <View style={styles.textContent}>
-            <Text style={styles.title} numberOfLines={1}>
-              {result.title}
-            </Text>
-            <Text style={styles.subtitle} numberOfLines={1} testID="command-center-agent-subtitle">
-              {result.subtitle}
-            </Text>
-          </View>
-        </View>
-      </View>
-    );
+    return <AgentResultContent result={result} query={query} />;
   }
   if (result.kind === "workspace") {
     const key = result.id.slice("workspace:".length);
@@ -739,11 +802,12 @@ export function CommandCenter() {
       ) : (
         <ResultRow
           result={item.result}
+          query={state.query}
           active={item.result.id === state.activeId}
           onSelect={state.select}
         />
       ),
-    [state.activeId, state.select],
+    [state.activeId, state.query, state.select],
   );
   const getItemLayout = useCallback(
     (_data: ArrayLike<CommandCenterListRow> | null | undefined, index: number) => ({
@@ -1041,6 +1105,24 @@ const styles = StyleSheet.create((theme) => ({
   fileName: { color: theme.colors.foreground },
   filePath: { color: theme.colors.foregroundMuted },
   subtitle: { color: theme.colors.foregroundMuted, fontSize: theme.fontSize.sm, lineHeight: 16 },
+  subtitleLine: {
+    flexDirection: "row",
+    alignItems: "center",
+    minWidth: 0,
+  },
+  subtitleLabel: {
+    flexShrink: 0,
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
+    lineHeight: 16,
+  },
+  subtitleText: {
+    flexShrink: 1,
+    minWidth: 0,
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
+    lineHeight: 16,
+  },
   iconSlot: { width: 16, height: 20, alignItems: "center", justifyContent: "center" },
   rowShortcut: { flexShrink: 0 },
   breadcrumb: {
