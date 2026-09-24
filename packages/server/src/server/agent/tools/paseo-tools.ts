@@ -1910,7 +1910,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       background = Boolean(callerAgentId),
       notifyOnFinish = Boolean(callerAgentId),
     }) => {
-      const armFinishNotification = (): boolean => {
+      function armFinishNotification(): boolean {
         if (!callerAgentId || !notifyOnFinish) {
           return false;
         }
@@ -1922,7 +1922,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
           logger: childLogger,
         });
         return true;
-      };
+      }
 
       await sendPromptToAgent({
         agentManager,
