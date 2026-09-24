@@ -1,14 +1,35 @@
-import { existsSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, rmSync, utimesSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
-import { describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
 
 import {
+  __resetMaterializedImageAttachmentDirForTests,
   isProviderImageMarkdown,
   materializeProviderImage,
   renderProviderImageOutputAsAssistantMarkdown,
 } from "./provider-image-output.js";
 
 const HASH = "a".repeat(64);
+
+// Materialized images live under the paseo home now, so without this every test
+// run would read and delete the developer's real provider images.
+const originalPaseoHome = process.env.PASEO_HOME;
+let testHome: string | null = null;
+
+function useTempPaseoHome(): string {
+  testHome = mkdtempSync(path.join(os.tmpdir(), "paseo-provider-images-"));
+  process.env.PASEO_HOME = testHome;
+  __resetMaterializedImageAttachmentDirForTests();
+  return testHome;
+}
+
+function attachmentsDir(): string {
+  if (!testHome) {
+    throw new Error("useTempPaseoHome() must run before reading the attachments dir.");
+  }
+  return path.join(testHome, "paseo-attachments");
+}
 
 function renderImageMarkdown(imagePath: string): string {
   const item = renderProviderImageOutputAsAssistantMarkdown({ path: imagePath });
@@ -90,26 +111,88 @@ describe("isProviderImageMarkdown", () => {
 });
 
 describe("materializeProviderImage", () => {
-  test("recreates the private temp directory if the cached directory is removed", () => {
+  beforeEach(() => {
+    useTempPaseoHome();
+  });
+
+  afterEach(() => {
+    if (originalPaseoHome === undefined) {
+      delete process.env.PASEO_HOME;
+    } else {
+      process.env.PASEO_HOME = originalPaseoHome;
+    }
+    if (testHome) {
+      rmSync(testHome, { recursive: true, force: true });
+      testHome = null;
+    }
+    __resetMaterializedImageAttachmentDirForTests();
+  });
+
+  test("recreates the private directory if the cached directory is removed", () => {
     const first = materializeProviderImage({
       data: "YWJjMTIz",
       mimeType: "image/png",
     });
-    const firstDir = path.dirname(first.path);
     expect(existsSync(first.path)).toBe(true);
 
-    rmSync(firstDir, { recursive: true, force: true });
+    rmSync(path.dirname(first.path), { recursive: true, force: true });
 
     const second = materializeProviderImage({
       data: "ZGVmNDU2",
       mimeType: "image/png",
     });
-    const secondDir = path.dirname(second.path);
 
-    try {
-      expect(existsSync(second.path)).toBe(true);
-    } finally {
-      rmSync(secondDir, { recursive: true, force: true });
+    expect(existsSync(second.path)).toBe(true);
+  });
+
+  test("stores images in a stable directory under the paseo home", () => {
+    const result = materializeProviderImage({ data: "YWJjMTIz", mimeType: "image/png" });
+
+    // A fixed directory, not a per-process mkdtemp one — the old shape is what
+    // let the OS reap these images out from under the app after ~3 days.
+    expect(path.dirname(result.path)).toBe(attachmentsDir());
+    expect(path.basename(path.dirname(result.path))).toBe("paseo-attachments");
+    // Mode assertions live in the .posix suite: Windows ignores mkdir/writeFile
+    // modes and reports 0o666, so asserting them here fails on that runner.
+  });
+
+  test("is idempotent for the same bytes across daemon restarts", () => {
+    const first = materializeProviderImage({ data: "YWJjMTIz", mimeType: "image/png" });
+
+    // A fresh daemon process: module state is cleared but the directory persists.
+    __resetMaterializedImageAttachmentDirForTests();
+    const second = materializeProviderImage({ data: "YWJjMTIz", mimeType: "image/png" });
+
+    expect(second.path).toBe(first.path);
+    expect(readdirSync(attachmentsDir())).toHaveLength(1);
+  });
+
+  test("emits markdown that isProviderImageMarkdown still recognizes", () => {
+    const item = renderProviderImageOutputAsAssistantMarkdown(
+      { data: "YWJjMTIz", mimeType: "image/png" },
+      { materialize: materializeProviderImage },
+    );
+
+    if (!item || item.type !== "assistant_message") {
+      throw new Error("Expected provider image output to render as assistant markdown.");
     }
+    expect(isProviderImageMarkdown(item.text)).toBe(true);
+  });
+
+  // The whole point of moving out of the temp dir is that nothing deletes these
+  // behind the user's back. An age-based sweep would reintroduce that on a
+  // longer fuse, because mtime cannot tell a referenced image from an abandoned
+  // one and reading a transcript never touches the file.
+  test("keeps images no matter how old they are", () => {
+    const image = materializeProviderImage({ data: "YWJjMTIz", mimeType: "image/png" });
+    const longAgoSeconds = Date.now() / 1000 - 365 * 24 * 60 * 60;
+    utimesSync(image.path, longAgoSeconds, longAgoSeconds);
+
+    // A fresh daemon process materializing an unrelated image: the oldest point
+    // at which a startup sweep would run.
+    __resetMaterializedImageAttachmentDirForTests();
+    materializeProviderImage({ data: "Z2hpNzg5", mimeType: "image/png" });
+
+    expect(existsSync(image.path)).toBe(true);
   });
 });
