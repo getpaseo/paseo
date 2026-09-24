@@ -43,7 +43,7 @@ import type { BinaryFrame } from "@getpaseo/protocol/binary-frames/index";
 import { CursorError } from "./pagination/cursor.js";
 import { SortablePager, type SortSpec } from "./pagination/sortable-pager.js";
 import { loadAgentHistoryContent } from "./agent-history-content.js";
-import { matchesAgentHistoryQuery } from "./agent-history-search.js";
+import { historyContentSnippet, matchesAgentHistoryQuery } from "./agent-history-search.js";
 import type { SpeechToTextProvider, TextToSpeechProvider } from "./speech/speech-provider.js";
 import type { TurnDetectionProvider } from "./speech/turn-detection-provider.js";
 import {
@@ -5360,7 +5360,12 @@ export class Session {
           continue;
         }
         if (search && !matchesAgentHistoryQuery(search, entry)) continue;
-        matchedEntries.push({ agent: entry.agent, project: entry.project });
+        const contentSnippet = search ? historyContentSnippet(search, entry.content) : null;
+        matchedEntries.push({
+          agent: entry.agent,
+          project: entry.project,
+          ...(contentSnippet ? { contentSnippet } : {}),
+        });
         if (matchedEntries.length > limit) {
           break;
         }

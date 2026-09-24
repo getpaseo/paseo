@@ -7,7 +7,7 @@ import { useInfiniteQuery } from "@tanstack/react-query";
 import { useCallback, useMemo, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
 import type { AggregatedAgent } from "@/hooks/use-aggregated-agents";
-import { getHostRuntimeStore, isHostRuntimeConnected, useHosts } from "@/runtime/host-runtime";
+import { getHostRuntimeStore, useHosts } from "@/runtime/host-runtime";
 import { useSessionStore } from "@/stores/session-store";
 import { buildAgentDirectoryState } from "@/utils/agent-directory-sync";
 import { agentHistoryQueryKey, allAgentHistoryQueryKey } from "./agent-history-query-key";
@@ -89,6 +89,9 @@ export async function fetchAgentHistoryPage(input: {
     serverId: input.serverId,
     entries: payload.entries,
   });
+  const snippetByAgentId = new Map(
+    payload.entries.map((entry) => [entry.agent.id, entry.contentSnippet ?? null]),
+  );
   return {
     isSearchTruncated: payload.searchTruncated === true,
     agents: Array.from(agents.values(), (agent) => ({
@@ -110,6 +113,7 @@ export async function fetchAgentHistoryPage(input: {
       createdAt: agent.createdAt,
       labels: agent.labels,
       projectPlacement: agent.projectPlacement,
+      contentSnippet: snippetByAgentId.get(agent.id) ?? null,
     })),
     pageInfo: payload.pageInfo,
   };
@@ -244,10 +248,12 @@ export function useAgentHistory(options: {
     const unreachable: AgentHistoryHostError[] = [];
 
     for (const targetServerId of serverIds) {
-      const snapshot = runtime.getSnapshot(targetServerId);
       const client = runtime.getClient(targetServerId);
       const serverName = serverLabelById.get(targetServerId) ?? targetServerId;
-      if (!client || !isHostRuntimeConnected(snapshot)) {
+      // The directory can already be live while the connection probe is still
+      // not "online". History used to wait for that probe and then show
+      // "Could not load history" with an empty list.
+      if (!client) {
         unreachable.push({ serverId: targetServerId, serverName });
         continue;
       }

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   type AgentHistorySearchCandidate,
+  historyContentSnippet,
   matchesAgentHistoryQuery,
 } from "./agent-history-search.js";
 
@@ -123,5 +124,20 @@ describe("matchesAgentHistoryQuery", () => {
     expect(matchesAgentHistoryQuery("kanban", candidate({ title: "Help me find the note" }))).toBe(
       false,
     );
+  });
+});
+
+describe("historyContentSnippet", () => {
+  it("quotes the conversation around the matched word", () => {
+    const snippet = historyContentSnippet(
+      "authorization",
+      "The order gate checks authorization before any live placement.",
+    );
+    expect(snippet).toContain("authorization");
+    expect(snippet?.startsWith("…") || snippet?.includes("order gate")).toBe(true);
+  });
+
+  it("returns null when the conversation does not contain the query", () => {
+    expect(historyContentSnippet("authorization", "Nothing about that here.")).toBeNull();
   });
 });

@@ -40,7 +40,7 @@ import {
   useGlobalWebOverlayLayer,
   useWebOverlayRegistration,
 } from "@/lib/overlay-root";
-import { useHosts } from "@/runtime/host-runtime";
+import { getHostRuntimeStore, useHosts } from "@/runtime/host-runtime";
 import {
   useKeyboardShortcutsStore,
   type CommandCenterScope,
@@ -194,12 +194,105 @@ function useBuiltInRows(open: boolean): {
   }, [agents, open, projects, showHost, t]);
 }
 
+/**
+ * Chats whose stored conversation matches the query. The local agent list only
+ * knows titles, so Search asks the daemon and shows the matching line.
+ */
+function useServerHistoryAgents(open: boolean, query: string): CommandCenterAgentResult[] {
+  const hosts = useHosts();
+  const hostKey = hosts.map((host) => `${host.serverId}\0${host.label}`).join("\n");
+  const [rows, setRows] = useState<CommandCenterAgentResult[]>([]);
+
+  useEffect(() => {
+    const trimmed = query.trim();
+    if (!open || !trimmed) {
+      setRows([]);
+      return;
+    }
+    const runtime = getHostRuntimeStore();
+    const currentHosts = hosts;
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      void (async () => {
+        const next: CommandCenterAgentResult[] = [];
+        await Promise.all(
+          currentHosts.map(async (host) => {
+            const client = runtime.getClient(host.serverId);
+            if (!client) return;
+            try {
+              const page = await client.fetchAgentHistory({
+                search: trimmed,
+                page: { limit: 20 },
+              });
+              for (const entry of page.entries) {
+                const snapshot = entry.agent;
+                const snippet = entry.contentSnippet?.trim() ?? "";
+                next.push({
+                  kind: "agent",
+                  id: `agent:${host.serverId}:${snapshot.id}`,
+                  title: snapshot.title || "New session",
+                  subtitle: snippet || host.label,
+                  agent: {
+                    id: snapshot.id,
+                    serverId: host.serverId,
+                    serverLabel: host.label,
+                    title: snapshot.title,
+                    status: snapshot.status,
+                    turn: { phase: "idle", cancellationRequestId: null },
+                    lastActivityAt: new Date(snapshot.updatedAt),
+                    cwd: snapshot.cwd,
+                    workspaceId: snapshot.workspaceId,
+                    provider: snapshot.provider,
+                    requiresAttention: snapshot.requiresAttention,
+                    attentionReason: snapshot.attentionReason ?? null,
+                    attentionTimestamp: snapshot.attentionTimestamp
+                      ? new Date(snapshot.attentionTimestamp)
+                      : null,
+                    archivedAt: snapshot.archivedAt ? new Date(snapshot.archivedAt) : null,
+                    createdAt: new Date(snapshot.createdAt),
+                    labels: snapshot.labels,
+                    projectPlacement: entry.project,
+                    pendingPermissionCount: snapshot.pendingPermissions.length,
+                    contentSnippet: snippet || null,
+                  },
+                  run: () => {
+                    clearCommandCenterFocusRestoreElement();
+                    navigateToAgent({ serverId: host.serverId, agentId: snapshot.id });
+                  },
+                });
+              }
+            } catch {
+              // A host that cannot search still leaves the title matches in place.
+            }
+          }),
+        );
+        if (!cancelled) setRows(next);
+      })();
+    }, 200);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [hostKey, hosts, open, query]);
+
+  return rows;
+}
+
 function useBuiltInSections(open: boolean, query: string): CommandCenterResultSection[] {
   const { t } = useTranslation();
   const rows = useBuiltInRows(open);
+  const searched = useServerHistoryAgents(open, query);
 
   return useMemo(() => {
     if (!open) return [];
+    const rankedAgents = filterAndRankBuiltInResults(
+      rows.agents,
+      query,
+      agentSearchFields,
+      (left, right) => sortAgents(left.agent, right.agent),
+    );
+    const seen = new Set(rankedAgents.map((row) => row.id));
+    const fromConversation = query.trim() ? searched.filter((row) => !seen.has(row.id)) : [];
     return [
       {
         id: "workspaces",
@@ -213,12 +306,10 @@ function useBuiltInSections(open: boolean, query: string): CommandCenterResultSe
         band: PINNED_SECTION_BAND,
         rank: 3,
         title: t("shell.commandCenter.agents"),
-        results: filterAndRankBuiltInResults(rows.agents, query, agentSearchFields, (left, right) =>
-          sortAgents(left.agent, right.agent),
-        ),
+        results: [...fromConversation, ...rankedAgents],
       },
     ];
-  }, [open, query, rows, t]);
+  }, [open, query, rows, searched, t]);
 }
 
 interface CommandCenterState {

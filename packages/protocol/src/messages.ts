@@ -4106,6 +4106,8 @@ const AgentDirectoryResponseEntrySchema = z.object({
   searchScore: z.number().optional(),
   // Legacy server-generated highlights. Current clients highlight displayed text locally.
   searchMatches: z.array(AgentSearchMatchSchema).optional(),
+  // The conversation line that matched, shown under the title.
+  contentSnippet: z.string().optional(),
   // COMPAT(directorySync): sequence of this latest directory projection.
   syncSeq: z.number().int().positive().optional(),
 });

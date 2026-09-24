@@ -34,3 +34,24 @@ export function matchesAgentHistoryQuery(
   }
   return true;
 }
+
+/** A short line of the conversation around the words that matched. */
+export function historyContentSnippet(query: string, content: string): string | null {
+  const tokens = tokenizeQuery(query);
+  if (!content || tokens.length === 0) return null;
+  const lower = content.toLowerCase();
+  const parts: string[] = [];
+  for (const token of tokens) {
+    const at = lower.indexOf(token);
+    if (at < 0) continue;
+    const start = Math.max(0, at - 36);
+    const end = Math.min(content.length, at + token.length + 36);
+    let slice = content.slice(start, end).replace(/\s+/g, " ").trim();
+    if (start > 0) slice = `…${slice}`;
+    if (end < content.length) slice = `${slice}…`;
+    parts.push(slice);
+  }
+  if (parts.length === 0) return null;
+  const joined = parts.join(" · ");
+  return joined.length > 180 ? `${joined.slice(0, 179)}…` : joined;
+}

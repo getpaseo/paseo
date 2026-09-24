@@ -20,4 +20,6 @@ export type AgentDirectoryEntry = Pick<
   | "projectPlacement"
 > & {
   pendingPermissionCount?: number;
+  /** Conversation line that matched a history or Search query. */
+  contentSnippet?: string | null;
 };

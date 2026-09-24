@@ -195,8 +195,9 @@ function SessionRow({
       title: findHighlightRanges(search ?? "", agent.title ?? ""),
       branch: findHighlightRanges(search ?? "", branch),
       project: findHighlightRanges(search ?? "", projectName),
+      snippet: findHighlightRanges(search ?? "", agent.contentSnippet ?? ""),
     }),
-    [search, workspaceName, agent.title, branch, projectName],
+    [search, workspaceName, agent.title, branch, projectName, agent.contentSnippet],
   );
 
   const pressableStyle = useCallback(
@@ -265,6 +266,15 @@ function SessionRow({
           />
         </View>
         {isMobile ? agentTitle : null}
+        {agent.contentSnippet ? (
+          <HighlightedText
+            text={agent.contentSnippet}
+            ranges={ranges.snippet}
+            style={styles.sessionSnippet}
+            numberOfLines={2}
+            testID={`agent-row-snippet-${agent.serverId}-${agent.id}`}
+          />
+        ) : null}
         {isMobile ? (
           <View style={styles.rowMetaRow}>
             <HighlightedText
@@ -637,6 +647,12 @@ const styles = StyleSheet.create((theme) => ({
     minWidth: 0,
     fontSize: theme.fontSize.base,
     fontWeight: "400",
+    color: theme.colors.foregroundMuted,
+  },
+  sessionSnippet: {
+    flexShrink: 1,
+    minWidth: 0,
+    fontSize: theme.fontSize.sm,
     color: theme.colors.foregroundMuted,
   },
   sessionMetaText: {
