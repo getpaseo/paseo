@@ -84,6 +84,7 @@ describe("Codex executable discovery", () => {
 
 import { CodexAppServerClient } from "./codex/app-server-transport.js";
 import {
+  createCodexAppServerChildProcess,
   createFakeCodexAppServer,
   type FakeCodexAppServer,
   waitForNextPermission,
@@ -176,11 +177,11 @@ function createProviderWithFakeAppServer(appServer: FakeCodexAppServer): CodexAp
   const internals = castInternals<{
     goalsEnabledPromise: Promise<boolean> | null;
     autoReviewEnabledPromise: Promise<boolean> | null;
-    spawnAppServer: () => Promise<ChildProcessWithoutNullStreams>;
+    prepareAppServerSpawn: () => Promise<() => ChildProcessWithoutNullStreams>;
   }>(provider);
   internals.goalsEnabledPromise = Promise.resolve(false);
   internals.autoReviewEnabledPromise = Promise.resolve(false);
-  internals.spawnAppServer = async () => appServer.child;
+  internals.prepareAppServerSpawn = async () => () => appServer.child;
   return provider;
 }
 
@@ -1610,9 +1611,9 @@ describe("Codex app-server provider", () => {
       },
     });
     const provider = new CodexAppServerAgentClient(createTestLogger());
-    castInternals<{ spawnAppServer: () => Promise<ChildProcessWithoutNullStreams> }>(
+    castInternals<{ prepareAppServerSpawn: () => Promise<() => ChildProcessWithoutNullStreams> }>(
       provider,
-    ).spawnAppServer = async () => appServer.child;
+    ).prepareAppServerSpawn = async () => () => appServer.child;
 
     await provider.unarchiveNativeSession({
       provider: "codex",
@@ -1635,9 +1636,9 @@ describe("Codex app-server provider", () => {
       },
     });
     const provider = new CodexAppServerAgentClient(createTestLogger());
-    castInternals<{ spawnAppServer: () => Promise<ChildProcessWithoutNullStreams> }>(
+    castInternals<{ prepareAppServerSpawn: () => Promise<() => ChildProcessWithoutNullStreams> }>(
       provider,
-    ).spawnAppServer = async () => appServer.child;
+    ).prepareAppServerSpawn = async () => () => appServer.child;
 
     await provider.archiveNativeSession({
       provider: "codex",
@@ -1660,9 +1661,9 @@ describe("Codex app-server provider", () => {
       },
     });
     const provider = new CodexAppServerAgentClient(createTestLogger());
-    castInternals<{ spawnAppServer: () => Promise<ChildProcessWithoutNullStreams> }>(
+    castInternals<{ prepareAppServerSpawn: () => Promise<() => ChildProcessWithoutNullStreams> }>(
       provider,
-    ).spawnAppServer = async () => appServer.child;
+    ).prepareAppServerSpawn = async () => () => appServer.child;
 
     await provider.unarchiveNativeSession({
       provider: "codex",
@@ -1692,9 +1693,9 @@ describe("Codex app-server provider", () => {
       },
     });
     const provider = new CodexAppServerAgentClient(createTestLogger());
-    castInternals<{ spawnAppServer: () => Promise<ChildProcessWithoutNullStreams> }>(
+    castInternals<{ prepareAppServerSpawn: () => Promise<() => ChildProcessWithoutNullStreams> }>(
       provider,
-    ).spawnAppServer = async () => appServer.child;
+    ).prepareAppServerSpawn = async () => () => appServer.child;
 
     await provider.unarchiveNativeSession({
       provider: "codex",
@@ -1725,9 +1726,9 @@ describe("Codex app-server provider", () => {
       },
     });
     const provider = new CodexAppServerAgentClient(createTestLogger());
-    castInternals<{ spawnAppServer: () => Promise<ChildProcessWithoutNullStreams> }>(
+    castInternals<{ prepareAppServerSpawn: () => Promise<() => ChildProcessWithoutNullStreams> }>(
       provider,
-    ).spawnAppServer = async () => appServer.child;
+    ).prepareAppServerSpawn = async () => () => appServer.child;
 
     await expect(
       provider.unarchiveNativeSession({
@@ -6080,6 +6081,54 @@ describe("Codex app-server provider", () => {
 });
 
 describe("Codex importable sessions", () => {
+  test("serializes concurrent app-server startups while allowing all scans to complete", async () => {
+    const firstEntered = deferred<void>();
+    const releaseFirst = deferred<void>();
+    let spawned = 0;
+    let activeInitializations = 0;
+    let maxActiveInitializations = 0;
+    let disposed = 0;
+    const provider = new CodexAppServerAgentClient(createTestLogger(), undefined, {
+      _createCodexClient: () => ({
+        request: async (method) => {
+          if (method === "initialize") {
+            activeInitializations++;
+            maxActiveInitializations = Math.max(maxActiveInitializations, activeInitializations);
+            if (spawned === 1) {
+              firstEntered.resolve();
+              await releaseFirst.promise;
+            }
+            activeInitializations--;
+            return {};
+          }
+          if (method === "thread/list") return { data: [] };
+          throw new Error(`Unexpected Codex method: ${method}`);
+        },
+        notify: () => {},
+        dispose: async () => {
+          disposed++;
+        },
+      }),
+    });
+    castInternals<{
+      prepareAppServerSpawn: () => Promise<() => ChildProcessWithoutNullStreams>;
+    }>(provider).prepareAppServerSpawn = async () => () => {
+      spawned++;
+      return createCodexAppServerChildProcess();
+    };
+
+    const scans = Array.from({ length: 24 }, () => provider.listImportableSessions({ limit: 1 }));
+    await firstEntered.promise;
+    expect(spawned).toBe(1);
+    releaseFirst.resolve();
+    const results = await Promise.all(scans);
+
+    expect(results).toEqual(Array.from({ length: 24 }, () => []));
+    expect(spawned).toBe(24);
+    expect(maxActiveInitializations).toBe(1);
+    expect(disposed).toBe(24);
+  });
+
   const CODEX_THREAD_PAGE_CAP = 100;
 
   // Codex answers thread/list with at most 100 rows per response whatever limit
@@ -6252,9 +6301,9 @@ describe("Codex importable sessions", () => {
     const provider = new CodexAppServerAgentClient(createTestLogger(), undefined, {
       _createCodexClient: () => fakeClient,
     });
-    castInternals<{ spawnAppServer: () => Promise<ChildProcessWithoutNullStreams> }>(
+    castInternals<{ prepareAppServerSpawn: () => Promise<() => ChildProcessWithoutNullStreams> }>(
       provider,
-    ).spawnAppServer = async () => {
+    ).prepareAppServerSpawn = async () => () => {
       const child = new EventEmitter() as ChildProcessWithoutNullStreams;
       child.exitCode = 0;
       child.signalCode = null;

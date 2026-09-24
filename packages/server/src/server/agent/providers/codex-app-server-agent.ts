@@ -85,6 +85,7 @@ import {
   type CodexThreadRollbackResponse,
   type CodexAppServerTraceContext,
 } from "./codex/app-server-transport.js";
+import { codexAppServerStartup } from "./codex/app-server-startup.js";
 import { type CodexUserMessageTurnIndex, revertCodexConversation } from "./codex/rewind.js";
 import {
   materializeProviderImage,
@@ -245,7 +246,7 @@ const CODEX_MODES: AgentMode[] = [
 const DEFAULT_CODEX_MODE_ID = "auto";
 
 interface CodexAppServerClientLike {
-  request(method: string, params?: unknown): Promise<unknown>;
+  request(method: string, params?: unknown, timeoutMs?: number): Promise<unknown>;
   forkThread?(params: CodexThreadForkParams): Promise<CodexThreadForkResponse>;
   rollbackThread?(params: CodexThreadRollbackParams): Promise<CodexThreadRollbackResponse>;
   notify(method: string, params?: unknown): void;
@@ -253,6 +254,7 @@ interface CodexAppServerClientLike {
 }
 
 interface CodexAppServerAgentDeps {
+  startupStateDirKey?: string;
   workspaceGitService?: Pick<WorkspaceGitService, "resolveRepoRoot">;
   customProvider?: {
     id: string;
@@ -3253,6 +3255,17 @@ export function buildCodexAppServerEnv(
   });
 }
 
+function codexStartupStateDirKey(
+  runtimeSettings?: ProviderRuntimeSettings,
+  launchEnv?: Record<string, string>,
+): string {
+  const env = buildCodexAppServerEnv(runtimeSettings, launchEnv);
+  const home =
+    process.platform === "win32" ? env.USERPROFILE || os.homedir() : env.HOME || os.homedir();
+  const stateDir = env.CODEX_HOME || path.join(home, ".codex");
+  return path.resolve(stateDir);
+}
+
 function buildCodexAppServerInitializeParams(): {
   clientInfo: { name: string; title: string; version: string };
   capabilities: { experimentalApi: true; mcpServerOpenaiFormElicitation: true };
@@ -3421,6 +3434,7 @@ export class CodexAppServerAgentSession implements AgentSession {
   private unpairedCompactionItemCompletions = 0;
   private connectionState: "disconnected" | "history-ready" | "connected" = "disconnected";
   private connectionPromise: Promise<void> | null = null;
+  private readonly startupAbort = new AbortController();
   private closed = false;
   private collaborationModes: Array<{
     name: string;
@@ -3440,7 +3454,9 @@ export class CodexAppServerAgentSession implements AgentSession {
     config: AgentSessionConfig,
     private readonly resumeHandle: { sessionId: string; metadata?: Record<string, unknown> } | null,
     logger: Logger,
-    private readonly spawnAppServer: () => Promise<ChildProcessWithoutNullStreams>,
+    private readonly spawnAppServer: () =>
+      | ChildProcessWithoutNullStreams
+      | Promise<ChildProcessWithoutNullStreams>,
     private readonly deps: CodexAppServerAgentDeps = {},
     private readonly ephemeral: boolean = false,
     private readonly goalsEnabled: boolean = false,
@@ -3521,8 +3537,15 @@ export class CodexAppServerAgentSession implements AgentSession {
       this.connectionState = "history-ready";
       return;
     }
-    const child = await this.spawnAppServer();
-    const client = new CodexAppServerClient(child, this.logger, () => this.traceContext());
+    const client = await codexAppServerStartup.start({
+      stateDirKey: this.deps.startupStateDirKey ?? codexStartupStateDirKey(),
+      spawn: this.spawnAppServer,
+      createClient: (child) =>
+        new CodexAppServerClient(child, this.logger, () => this.traceContext()),
+      initializeParams: buildCodexAppServerInitializeParams(),
+      logger: this.logger,
+      signal: this.startupAbort.signal,
+    });
     if (this.closed) {
       await client.dispose();
       throw this.createClosedError();
@@ -3535,9 +3558,6 @@ export class CodexAppServerAgentSession implements AgentSession {
     this.registerRequestHandlers();
 
     try {
-      await client.request("initialize", buildCodexAppServerInitializeParams());
-      client.notify("initialized", {});
-
       await this.loadResolvedWorkspaceWrite();
       await this.loadCollaborationModes();
       await this.loadSkills();
@@ -3847,11 +3867,16 @@ export class CodexAppServerAgentSession implements AgentSession {
   }
 
   private async readArchivedHistory(): Promise<void> {
-    const child = await this.spawnAppServer();
-    const client = new CodexAppServerClient(child, this.logger, () => this.traceContext());
+    const client = await codexAppServerStartup.start({
+      stateDirKey: this.deps.startupStateDirKey ?? codexStartupStateDirKey(),
+      spawn: this.spawnAppServer,
+      createClient: (child) =>
+        new CodexAppServerClient(child, this.logger, () => this.traceContext()),
+      initializeParams: buildCodexAppServerInitializeParams(),
+      logger: this.logger,
+      signal: this.startupAbort.signal,
+    });
     try {
-      await client.request("initialize", buildCodexAppServerInitializeParams());
-      client.notify("initialized", {});
       await this.loadPersistedHistory(client);
     } finally {
       await client.dispose();
@@ -4897,6 +4922,7 @@ export class CodexAppServerAgentSession implements AgentSession {
 
   async close(): Promise<void> {
     this.closed = true;
+    this.startupAbort.abort(this.createClosedError());
     this.clearPendingPermissions();
     this.pendingSubAgentNotificationsByThreadId.clear();
     this.subscribers.clear();
@@ -7018,9 +7044,10 @@ export class CodexAppServerAgentClient implements AgentClient {
     private readonly deps: CodexAppServerAgentDeps = {},
   ) {}
 
-  private sessionDeps(): CodexAppServerAgentDeps {
+  private sessionDeps(launchEnv?: Record<string, string>): CodexAppServerAgentDeps {
     return {
       ...this.deps,
+      startupStateDirKey: codexStartupStateDirKey(this.runtimeSettings, launchEnv),
       customCodexConfig: buildCodexCustomProviderConfig(
         this.runtimeSettings,
         this.deps.customProvider,
@@ -7080,34 +7107,50 @@ export class CodexAppServerAgentClient implements AgentClient {
     }
   }
 
-  private async spawnAppServer(
-    launchEnv?: Record<string, string>,
-    options?: { goalsEnabled?: boolean; agentId?: string },
-  ): Promise<ChildProcessWithoutNullStreams> {
+  private async prepareAppServerSpawn(
+    options: { launchEnv?: Record<string, string>; goalsEnabled?: boolean; agentId?: string } = {},
+  ): Promise<() => ChildProcessWithoutNullStreams> {
     const launchPrefix = await resolveCodexLaunchPrefix(this.runtimeSettings);
     const args = [...launchPrefix.args, "app-server"];
-    if (options?.goalsEnabled) {
+    if (options.goalsEnabled) {
       args.push("--enable", "goals");
     }
-    this.logger.trace(
-      {
-        agentId: options?.agentId,
-        provider: CODEX_PROVIDER,
-        launchPrefix,
-        goalsEnabled: options?.goalsEnabled === true,
-      },
-      "provider.codex.spawn",
-    );
-    const child = spawnProcess(launchPrefix.command, args, {
-      detached: process.platform !== "win32",
-      stdio: ["pipe", "pipe", "pipe"],
-      ...createProviderEnvSpec({
-        runtimeSettings: this.runtimeSettings,
-        overlays: [launchEnv],
-      }),
+    const envSpec = createProviderEnvSpec({
+      runtimeSettings: this.runtimeSettings,
+      overlays: [options.launchEnv],
     });
-    assertChildWithPipes(child);
-    return child;
+    return () => {
+      this.logger.trace(
+        {
+          agentId: options.agentId,
+          provider: CODEX_PROVIDER,
+          launchPrefix,
+          goalsEnabled: options.goalsEnabled === true,
+        },
+        "provider.codex.spawn",
+      );
+      const child = spawnProcess(launchPrefix.command, args, {
+        detached: process.platform !== "win32",
+        stdio: ["pipe", "pipe", "pipe"],
+        ...envSpec,
+      });
+      assertChildWithPipes(child);
+      return child;
+    };
+  }
+
+  private async startAppServer(
+    options: { signal?: AbortSignal } = {},
+  ): Promise<CodexAppServerClient> {
+    const spawn = await this.prepareAppServerSpawn();
+    return codexAppServerStartup.start({
+      stateDirKey: codexStartupStateDirKey(this.runtimeSettings),
+      spawn,
+      createClient: (child) => new CodexAppServerClient(child, this.logger),
+      initializeParams: buildCodexAppServerInitializeParams(),
+      logger: this.logger,
+      signal: options.signal,
+    });
   }
 
   async createSession(
@@ -7125,13 +7168,17 @@ export class CodexAppServerAgentClient implements AgentClient {
     const sessionConfig: AgentSessionConfig = { ...config, provider: CODEX_PROVIDER };
     const goalsEnabled = await this.resolveGoalsEnabled();
     const autoReviewEnabled = await this.resolveAutoReviewEnabled();
+    const spawn = await this.prepareAppServerSpawn({
+      launchEnv: launchContext?.env,
+      goalsEnabled,
+      agentId: launchContext?.agentId,
+    });
     const session = new CodexAppServerAgentSession(
       sessionConfig,
       null,
       this.logger,
-      () =>
-        this.spawnAppServer(launchContext?.env, { goalsEnabled, agentId: launchContext?.agentId }),
-      this.sessionDeps(),
+      spawn,
+      this.sessionDeps(launchContext?.env),
       options?.persistSession === false,
       goalsEnabled,
       autoReviewEnabled,
@@ -7156,13 +7203,17 @@ export class CodexAppServerAgentClient implements AgentClient {
     };
     const goalsEnabled = await this.resolveGoalsEnabled();
     const autoReviewEnabled = await this.resolveAutoReviewEnabled();
+    const spawn = await this.prepareAppServerSpawn({
+      launchEnv: launchContext?.env,
+      goalsEnabled,
+      agentId: launchContext?.agentId,
+    });
     const session = new CodexAppServerAgentSession(
       merged,
       handle,
       this.logger,
-      () =>
-        this.spawnAppServer(launchContext?.env, { goalsEnabled, agentId: launchContext?.agentId }),
-      this.sessionDeps(),
+      spawn,
+      this.sessionDeps(launchContext?.env),
       false,
       goalsEnabled,
       autoReviewEnabled,
@@ -7176,15 +7227,18 @@ export class CodexAppServerAgentClient implements AgentClient {
   async listImportableSessions(
     options?: ListImportableSessionsOptions,
   ): Promise<ImportableProviderSession[]> {
-    const child = await this.spawnAppServer();
-    const client =
-      this.deps._createCodexClient?.(child, this.logger, () => ({})) ??
-      new CodexAppServerClient(child, this.logger);
+    const spawn = await this.prepareAppServerSpawn();
+    const client = await codexAppServerStartup.start({
+      stateDirKey: codexStartupStateDirKey(this.runtimeSettings),
+      spawn,
+      createClient: (child) =>
+        this.deps._createCodexClient?.(child, this.logger, () => ({})) ??
+        new CodexAppServerClient(child, this.logger),
+      initializeParams: buildCodexAppServerInitializeParams(),
+      logger: this.logger,
+    });
 
     try {
-      await client.request("initialize", buildCodexAppServerInitializeParams());
-      client.notify("initialized", {});
-
       const limit = options?.limit ?? 20;
       const scanLimit = Math.min(options?.scanLimit ?? limit, 500);
       // thread/list returns the cheap `cwd` field. Fetch a wider window when
@@ -7275,15 +7329,10 @@ export class CodexAppServerAgentClient implements AgentClient {
 
     try {
       await runProviderRefreshActivity(context, "app-server.start", async () => {
-        const child = await this.spawnAppServer();
-        client = new CodexAppServerClient(child, this.logger);
+        client = await this.startAppServer({ signal: context?.signal });
         if (context?.signal.aborted) await dispose();
       });
       if (!client) throw new Error("Codex app-server did not start");
-      await runProviderRefreshActivity(context, "initialize", () =>
-        client!.request("initialize", buildCodexAppServerInitializeParams()),
-      );
-      client.notify("initialized", {});
 
       const rawResponse = await runProviderRefreshActivity(context, "model/list", () =>
         client!.request("model/list", {}),
@@ -7327,12 +7376,9 @@ export class CodexAppServerAgentClient implements AgentClient {
     const threadId = handle.nativeHandle ?? handle.sessionId;
     if (!threadId) return;
 
-    const child = await this.spawnAppServer();
-    const client = new CodexAppServerClient(child, this.logger);
+    const client = await this.startAppServer();
 
     try {
-      await client.request("initialize", buildCodexAppServerInitializeParams());
-      client.notify("initialized", {});
       if (state === "archive") {
         await client.request("thread/archive", { threadId });
         return;
