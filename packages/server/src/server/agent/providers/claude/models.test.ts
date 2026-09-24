@@ -271,7 +271,7 @@ describe("ClaudeAgentClient.fetchCatalog", () => {
       },
     ]);
     expect(models.filter((model) => model.id === "claude-fable-5-1[1M]")).toHaveLength(1);
-    expect(getClaudeModels().some((model) => model.id === "claude-fable-5-1")).toBe(true);
+    expect(models.some((model) => model.id === "claude-fable-5-1")).toBe(true);
   });
 
   it("falls back to hardcoded models when settings.json is missing", async () => {
