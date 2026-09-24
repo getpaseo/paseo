@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { describe, expect, it, vi } from "vitest";
@@ -13,7 +14,16 @@ import { createAgentMcpServer } from "./mcp-server.js";
 import { AgentManager, type ManagedAgent } from "./agent-manager.js";
 import { AgentStorage, type StoredAgentRecord } from "./agent-storage.js";
 import { createTestAgentClients } from "../test-utils/fake-agent-client.js";
-import type { AgentMode, AgentProvider, ProviderSnapshotEntry } from "./agent-sdk-types.js";
+import type {
+  AgentClient,
+  AgentMode,
+  AgentPromptInput,
+  AgentProvider,
+  AgentRunResult,
+  AgentSession,
+  AgentStreamEvent,
+  ProviderSnapshotEntry,
+} from "./agent-sdk-types.js";
 import type { ProviderSnapshotManager } from "./provider-snapshot-manager.js";
 import { createProviderSnapshotManagerStub } from "../test-utils/session-stubs.js";
 import {
@@ -3664,6 +3674,130 @@ describe("create_agent MCP tool", () => {
   });
 });
 
+const HELD_TURN_CAPABILITIES = {
+  supportsStreaming: false,
+  supportsSessionPersistence: false,
+  supportsSessionListing: false,
+  supportsDynamicModes: false,
+  supportsMcpServers: false,
+  supportsReasoningStream: false,
+  supportsToolInvocations: false,
+} as const;
+
+/**
+ * Provider session that records every prompt it receives. With `holdTurns`, a started
+ * turn stays running until `finishTurn()` so a caller's bounded wait can run out first.
+ */
+class HeldTurnAgentSession implements AgentSession {
+  readonly capabilities = HELD_TURN_CAPABILITIES;
+  readonly id = randomUUID();
+  readonly prompts: string[] = [];
+  private readonly subscribers = new Set<(event: AgentStreamEvent) => void>();
+  private activeTurnId: string | null = null;
+
+  constructor(
+    readonly provider: AgentProvider,
+    private readonly holdTurns: boolean,
+  ) {}
+
+  async run(): Promise<AgentRunResult> {
+    return { sessionId: this.id, finalText: "", timeline: [] };
+  }
+
+  async startTurn(prompt: AgentPromptInput): Promise<{ turnId: string }> {
+    this.prompts.push(typeof prompt === "string" ? prompt : JSON.stringify(prompt));
+    const turnId = randomUUID();
+    this.activeTurnId = turnId;
+    setTimeout(() => {
+      this.pushEvent({ type: "turn_started", provider: this.provider, turnId });
+      if (!this.holdTurns) {
+        this.finishTurn();
+      }
+    }, 0);
+    return { turnId };
+  }
+
+  finishTurn(): void {
+    const turnId = this.activeTurnId;
+    if (!turnId) {
+      throw new Error("No held turn to finish");
+    }
+    this.activeTurnId = null;
+    this.pushEvent({ type: "turn_completed", provider: this.provider, turnId });
+  }
+
+  subscribe(callback: (event: AgentStreamEvent) => void): () => void {
+    this.subscribers.add(callback);
+    return () => {
+      this.subscribers.delete(callback);
+    };
+  }
+
+  private pushEvent(event: AgentStreamEvent): void {
+    for (const callback of this.subscribers) {
+      callback(event);
+    }
+  }
+
+  async *streamHistory(): AsyncGenerator<AgentStreamEvent> {}
+
+  async getRuntimeInfo() {
+    return { provider: this.provider, sessionId: this.id, model: null, modeId: null };
+  }
+
+  async getAvailableModes() {
+    return [];
+  }
+
+  async getCurrentMode() {
+    return null;
+  }
+
+  async setMode(): Promise<void> {}
+
+  getPendingPermissions() {
+    return [];
+  }
+
+  async respondToPermission(): Promise<void> {}
+
+  describePersistence() {
+    return { provider: this.provider, sessionId: this.id };
+  }
+
+  async interrupt(): Promise<void> {}
+
+  async close(): Promise<void> {}
+}
+
+class HeldTurnAgentClient implements AgentClient {
+  readonly capabilities = HELD_TURN_CAPABILITIES;
+  readonly sessions: HeldTurnAgentSession[] = [];
+
+  constructor(
+    readonly provider: AgentProvider,
+    private readonly holdTurns: boolean,
+  ) {}
+
+  async isAvailable(): Promise<boolean> {
+    return true;
+  }
+
+  async createSession(): Promise<AgentSession> {
+    const session = new HeldTurnAgentSession(this.provider, this.holdTurns);
+    this.sessions.push(session);
+    return session;
+  }
+
+  async fetchCatalog() {
+    return { models: [], modes: [] };
+  }
+
+  async resumeSession(): Promise<AgentSession> {
+    return await this.createSession();
+  }
+}
+
 describe("send_agent_prompt MCP tool", () => {
   const logger = createTestLogger();
   const existingCwd = process.cwd();
@@ -3806,6 +3940,68 @@ describe("send_agent_prompt MCP tool", () => {
       "child-agent",
       expect.objectContaining({ waitForActive: true }),
     );
+  });
+
+  it("notifies the caller when a blocking agent-scoped prompt outlasts the wait", async () => {
+    const workdir = await mkdtemp(join(tmpdir(), "mcp-blocking-send-timeout-"));
+    const storage = new AgentStorage(join(workdir, "agents"), logger);
+    const parentClient = new HeldTurnAgentClient("claude", false);
+    const childClient = new HeldTurnAgentClient("codex", true);
+    const agentManager = new AgentManager({
+      clients: { claude: parentClient, codex: childClient },
+      registry: storage,
+      logger,
+    });
+
+    try {
+      const parent = await agentManager.createAgent(
+        { provider: "claude", cwd: existingCwd },
+        undefined,
+        { workspaceId: "wks_parent" },
+      );
+      const child = await agentManager.createAgent(
+        { provider: "codex", cwd: existingCwd },
+        undefined,
+        { workspaceId: "wks_parent" },
+      );
+      const server = await createAgentMcpServer({
+        agentManager,
+        agentStorage: storage,
+        callerAgentId: parent.id,
+        providerSnapshotManager: createOpenCodeManager().manager,
+        logger,
+      });
+      const tool = registeredTool(server, "send_agent_prompt");
+
+      vi.useFakeTimers();
+      const pending = invokeToolWithParsedInput(tool, {
+        agentId: child.id,
+        prompt: "Follow up",
+        background: false,
+      });
+      await vi.advanceTimersByTimeAsync(31_000);
+      const response = await pending;
+      expect(response.structuredContent).toMatchObject({
+        status: "running",
+        guidance:
+          "You will get notified when the prompted agent finishes, errors, or needs permission. Do not poll for status; continue with other work until the notification arrives.",
+      });
+      expect(response.structuredContent.lastMessage).toContain("timed out after 30s");
+
+      childClient.sessions[0]!.finishTurn();
+      await vi.advanceTimersByTimeAsync(1_000);
+      vi.useRealTimers();
+
+      await vi.waitFor(() => {
+        const parentPrompts = parentClient.sessions[0]!.prompts;
+        expect(parentPrompts).toHaveLength(1);
+        expect(parentPrompts[0]).toContain(child.id);
+        expect(parentPrompts[0]).toContain("finished");
+      });
+    } finally {
+      vi.useRealTimers();
+      rmSync(workdir, { recursive: true, force: true });
+    }
   });
 });
 
