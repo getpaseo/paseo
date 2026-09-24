@@ -34,6 +34,7 @@ import {
   findClaudeModel,
   getClaudeModelsWithSettings,
   normalizeClaudeRuntimeModelId,
+  resolveClaudeSdkModelId,
   resolveConfiguredClaudeModel,
 } from "./models.js";
 import {
@@ -2440,7 +2441,7 @@ class ClaudeAgentSession implements AgentSession {
     const normalizedModelId =
       typeof modelId === "string" && modelId.trim().length > 0 ? modelId.trim() : null;
     const activeQuery = await this.ensureQuery();
-    await activeQuery.setModel(normalizedModelId ?? undefined);
+    await activeQuery.setModel(resolveClaudeSdkModelId(normalizedModelId));
     this.config.model = normalizedModelId ?? undefined;
     this.reconcileThinkingOptionForModel(normalizedModelId);
     if (!claudeModelSupportsFastMode(this.config.model) && this.config.featureValues?.fast_mode) {
@@ -3335,9 +3336,9 @@ class ClaudeAgentSession implements AgentSession {
     }
 
     if (this.config.model) {
-      base.model = this.config.model;
+      base.model = resolveClaudeSdkModelId(this.config.model) ?? this.config.model;
     }
-    this.lastOptionsModel = base.model ?? null;
+    this.lastOptionsModel = this.config.model ?? base.model ?? null;
     if (this.claudeSessionId && !this.pendingFreshSessionId) {
       base.resume = this.claudeSessionId;
     }
