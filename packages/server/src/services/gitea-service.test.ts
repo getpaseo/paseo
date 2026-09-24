@@ -2340,6 +2340,22 @@ describe("createGiteaService", () => {
     expect(calls).toContainEqual(["api", "repos/example-user/sample-repo/pulls/5"]);
   });
 
+  it("keeps a pull request from a deleted fork cross-repository", async () => {
+    const { service } = makeService((args) =>
+      args[0] === "api"
+        ? ok(JSON.stringify({ head: { repo: null }, base: { repo: { id: 1 } } }))
+        : ok(JSON.stringify(STATUS_PR_VIEW)),
+    );
+
+    const target = await service.getPullRequestCheckoutTarget({ cwd: "/repo", number: 5 });
+
+    expect(target).toMatchObject({
+      checkoutRefs: [{ remoteName: "origin", remoteRef: "refs/pull/5/head" }],
+      headOwnerLogin: null,
+      isCrossRepository: true,
+    });
+  });
+
   it("prefixes the local branch name with the fork owner for a cross-repository checkout", () => {
     const { service } = makeService(() => ok(""));
 

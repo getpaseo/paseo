@@ -1465,8 +1465,12 @@ export function createGiteaService(options: CreateGiteaServiceOptions = {}): For
     );
     const headRepo = pr.head?.repo ?? null;
     const baseRepo = pr.base?.repo ?? null;
-    if (headRepo?.id == null || baseRepo?.id == null || headRepo.id === baseRepo.id) {
+    if (baseRepo?.id == null || headRepo?.id === baseRepo.id) {
       return sameRepo;
+    }
+    if (headRepo?.id == null) {
+      // fork was deleted
+      return { ...sameRepo, isCrossRepository: true };
     }
     return {
       isCrossRepository: true,
