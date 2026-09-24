@@ -395,16 +395,16 @@ describe("loadAppSettingsFromStorage", () => {
     });
   });
 
-  it("loads a persisted explicit language", async () => {
+  it.each(["de", "zh-CN"])("loads a persisted explicit language (%s)", async (language) => {
     const deps = makeDeps({
       storage: createInMemoryKeyValueStorage({
-        [APP_SETTINGS_KEY]: JSON.stringify({ language: "zh-CN" }),
+        [APP_SETTINGS_KEY]: JSON.stringify({ language }),
       }),
     });
 
     const result = await loadAppSettingsFromStorage(deps);
 
-    expect(result.language).toBe("zh-CN");
+    expect(result.language).toBe(language);
   });
 
   it("drops an unknown persisted language back to system", async () => {
@@ -421,6 +421,24 @@ describe("loadAppSettingsFromStorage", () => {
 });
 
 describe("saveAppSettings", () => {
+  it("persists German across a save and a fresh storage read", async () => {
+    const deps = makeDeps();
+    const queryClient = new QueryClient();
+
+    try {
+      await saveAppSettings({ queryClient, updates: { language: "de" }, deps });
+
+      expect(queryClient.getQueryData(APP_SETTINGS_QUERY_KEY)).toMatchObject({ language: "de" });
+      expect(JSON.parse(deps.storage.entries.get(APP_SETTINGS_KEY) ?? "null")).toMatchObject({
+        language: "de",
+      });
+      queryClient.clear();
+      expect((await loadAppSettingsFromStorage(deps)).language).toBe("de");
+    } finally {
+      queryClient.clear();
+    }
+  });
+
   it("applies consecutive functional updates to the latest cached settings", async () => {
     const deps = makeDeps();
     const queryClient = new QueryClient();

@@ -2109,6 +2109,7 @@ export const ru: TranslationResources = {
           fr: "Français",
           ja: "日本語",
           ko: "한국어",
+          de: "немецкий",
           ptBR: "Português brasileiro",
           ru: "Русский",
           zhCN: "简体中文",

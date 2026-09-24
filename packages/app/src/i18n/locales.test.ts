@@ -9,19 +9,23 @@ import {
 describe("parseAppLanguage", () => {
   it("accepts system and all supported language locales", () => {
     expect(
-      ["system", "ar", "en", "es", "fr", "ja", "ko", "pt-BR", "ru", "zh-CN"].map(parseAppLanguage),
-    ).toEqual(["system", "ar", "en", "es", "fr", "ja", "ko", "pt-BR", "ru", "zh-CN"]);
+      ["system", "ar", "de", "en", "es", "fr", "ja", "ko", "pt-BR", "ru", "zh-CN"].map(
+        parseAppLanguage,
+      ),
+    ).toEqual(["system", "ar", "de", "en", "es", "fr", "ja", "ko", "pt-BR", "ru", "zh-CN"]);
   });
 
   it("returns null for unknown values", () => {
-    expect(parseAppLanguage("de")).toBeNull();
+    expect(parseAppLanguage("it")).toBeNull();
     expect(parseAppLanguage(null)).toBeNull();
+    expect(parseAppLanguage("de-DE")).toBeNull();
   });
 
   it("offers system plus all supported languages", () => {
     expect(LANGUAGE_OPTIONS.map((option) => option.value)).toEqual([
       "system",
       "ar",
+      "de",
       "en",
       "es",
       "fr",
@@ -35,6 +39,31 @@ describe("parseAppLanguage", () => {
 });
 
 describe("formatLanguageOptionLabel", () => {
+  it("shows German in English UI and uses its native name in German UI", () => {
+    const german = LANGUAGE_OPTIONS.find((option) => option.value === "de");
+
+    expect(formatLanguageOptionLabel(german!, "en", "System")).toBe("Deutsch - German");
+    expect(formatLanguageOptionLabel(german!, "de", "System")).toBe("Deutsch");
+  });
+
+  it("labels every language option in German UI", () => {
+    expect(
+      LANGUAGE_OPTIONS.map((option) => formatLanguageOptionLabel(option, "de", "System")),
+    ).toEqual([
+      "System",
+      "العربية - Arabisch",
+      "Deutsch",
+      "English - Englisch",
+      "Español - Spanisch",
+      "Français - Französisch",
+      "日本語 - Japanisch",
+      "한국어 - Koreanisch",
+      "Português brasileiro - Brasilianisches Portugiesisch",
+      "Русский - Russisch",
+      "简体中文 - Vereinfachtes Chinesisch",
+    ]);
+  });
+
   it("shows the native language name and English name in English UI", () => {
     const arabic = LANGUAGE_OPTIONS.find((option) => option.value === "ar");
     const japanese = LANGUAGE_OPTIONS.find((option) => option.value === "ja");
@@ -92,6 +121,21 @@ describe("formatLanguageOptionLabel", () => {
 });
 
 describe("resolveSupportedLocale", () => {
+  it.each(["de", "de-DE", "de-AT", "de-CH", "de-LI", "de-LU", "DE-de", "de-DE-u-co-phonebk"])(
+    "maps German system locale %s to German",
+    (locale) => {
+      expect(resolveSupportedLocale("system", [locale])).toBe("de");
+    },
+  );
+
+  it("respects German selection and system language priority", () => {
+    expect(resolveSupportedLocale("de", ["en-US"])).toBe("de");
+    expect(resolveSupportedLocale("en", ["de-DE"])).toBe("en");
+    expect(resolveSupportedLocale("system", ["en-US", "de-DE"])).toBe("en");
+    expect(resolveSupportedLocale("system", ["de-CH", "en-US"])).toBe("de");
+    expect(resolveSupportedLocale("system", ["it-IT", "de-AT"])).toBe("de");
+  });
+
   it("respects explicit language choices", () => {
     expect(resolveSupportedLocale("ar", ["en-US"])).toBe("ar");
     expect(resolveSupportedLocale("en", ["zh-CN"])).toBe("en");
@@ -144,7 +188,7 @@ describe("resolveSupportedLocale", () => {
   });
 
   it("maps unsupported or missing system locales to English", () => {
-    expect(resolveSupportedLocale("system", ["de-DE"])).toBe("en");
+    expect(resolveSupportedLocale("system", ["it-IT"])).toBe("en");
     expect(resolveSupportedLocale("system", [])).toBe("en");
   });
 });

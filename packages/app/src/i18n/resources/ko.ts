@@ -2084,6 +2084,7 @@ export const ko: TranslationResources = {
           fr: "Français",
           ja: "일본어",
           ko: "한국어",
+          de: "독일어",
           ptBR: "브라질 포르투갈어",
           ru: "Русский",
           zhCN: "简体中文",

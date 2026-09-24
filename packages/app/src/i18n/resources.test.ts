@@ -1,7 +1,9 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
+import { createInstance } from "i18next";
 import { describe, expect, it } from "vitest";
 import { ar } from "./resources/ar";
+import { de } from "./resources/de";
 import { en } from "./resources/en";
 import { es } from "./resources/es";
 import { fr } from "./resources/fr";
@@ -107,6 +109,7 @@ describe("translation resources", () => {
   it("keeps all supported language keys in sync with English", () => {
     const englishKeys = flattenKeys(en).sort();
     expect(flattenKeys(ar).sort()).toEqual(englishKeys);
+    expect(flattenKeys(de).sort()).toEqual(englishKeys);
     expect(flattenKeys(es).sort()).toEqual(englishKeys);
     expect(flattenKeys(fr).sort()).toEqual(englishKeys);
     expect(flattenKeys(ja).sort()).toEqual(englishKeys);
@@ -120,6 +123,7 @@ describe("translation resources", () => {
     const totalStrings = Object.keys(flattenStrings(en)).length;
     const maxFallbackStrings = Math.floor(totalStrings * 0.25);
     expect(countMatchingEnglishStrings(ar)).toBeLessThan(maxFallbackStrings);
+    expect(countMatchingEnglishStrings(de)).toBeLessThan(maxFallbackStrings);
     expect(countMatchingEnglishStrings(es)).toBeLessThan(maxFallbackStrings);
     expect(countMatchingEnglishStrings(fr)).toBeLessThan(maxFallbackStrings);
     expect(countMatchingEnglishStrings(ja)).toBeLessThan(maxFallbackStrings);
@@ -130,7 +134,7 @@ describe("translation resources", () => {
   });
 
   it("localizes the pull request empty state in every supported language", () => {
-    for (const resource of [ar, es, fr, ja, ko, ptBR, ru, zhCN]) {
+    for (const resource of [ar, de, es, fr, ja, ko, ptBR, ru, zhCN]) {
       expect(resource.panels.pullRequest.emptyTitle).not.toBe(en.panels.pullRequest.emptyTitle);
       expect(resource.panels.pullRequest.emptyDescription).not.toBe(
         en.panels.pullRequest.emptyDescription,
@@ -140,6 +144,7 @@ describe("translation resources", () => {
 
   it("preserves interpolation placeholders in every language", () => {
     expect(findInterpolationMismatches(ar)).toEqual([]);
+    expect(findInterpolationMismatches(de)).toEqual([]);
     expect(findInterpolationMismatches(es)).toEqual([]);
     expect(findInterpolationMismatches(fr)).toEqual([]);
     expect(findInterpolationMismatches(ja)).toEqual([]);
@@ -147,6 +152,37 @@ describe("translation resources", () => {
     expect(findInterpolationMismatches(ptBR)).toEqual([]);
     expect(findInterpolationMismatches(ru)).toEqual([]);
     expect(findInterpolationMismatches(zhCN)).toEqual([]);
+  });
+
+  it("resolves German interpolation, plurals, and merge-request context", async () => {
+    const instance = createInstance();
+    await instance.init({
+      lng: "de",
+      fallbackLng: "en",
+      resources: { en: { translation: en }, de: { translation: de } },
+      interpolation: { escapeValue: false },
+    });
+
+    expect(instance.t("common.actions.cancel")).toBe("Abbrechen");
+    expect(instance.t("common.states.copiedLabel", { label: "Dateipfad" })).toBe(
+      "Dateipfad kopiert",
+    );
+    expect(instance.t("workspaceLabels.manage.deleteMessage", { count: 1 })).toBe(
+      "Dadurch wird das Label von 1 Arbeitsbereich auf diesem Host entfernt.",
+    );
+    expect(instance.t("workspaceLabels.manage.deleteMessage", { count: 2 })).toBe(
+      "Dadurch wird das Label von 2 Arbeitsbereichen auf diesem Host entfernt.",
+    );
+    expect(instance.t("workspace.git.actions.createPr.label")).toBe("PR erstellen");
+    expect(instance.t("workspace.git.actions.createPr.label", { context: "mr" })).toBe(
+      "MR erstellen",
+    );
+  });
+
+  it("keeps German open states distinct from open actions", () => {
+    expect(de.workspace.git.pr.states.open).toBe("Offen");
+    expect(de.workspace.git.openInEditor.open).toBe("Öffnen");
+    expect(de.settings.general.language.options.de).toBe("Deutsch");
   });
 
   it("keeps reported Spanish settings and scripts labels clean", () => {

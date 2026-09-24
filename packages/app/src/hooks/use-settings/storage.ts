@@ -196,7 +196,7 @@ const StoredAppSettingsSchema = z
     theme: ThemePreferenceSchema.catch(DEFAULT_THEME_PREFERENCE),
     pluginThemeId: z.string().nullable().catch(null),
     language: z
-      .enum(["system", "ar", "en", "es", "fr", "ja", "ko", "pt-BR", "ru", "zh-CN"])
+      .enum(["system", "ar", "de", "en", "es", "fr", "ja", "ko", "pt-BR", "ru", "zh-CN"])
       .catch("system"),
     sendBehavior: z.enum(["interrupt", "steer", "queue"]).catch("steer"),
     serviceUrlBehavior: z.enum(["ask", "in-app", "external"]).catch("ask"),

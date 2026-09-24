@@ -2125,6 +2125,7 @@ export const es: TranslationResources = {
           fr: "Français",
           ja: "日本語",
           ko: "한국어",
+          de: "alemán",
           ptBR: "Português brasileiro",
           ru: "Русский",
           zhCN: "中文",
