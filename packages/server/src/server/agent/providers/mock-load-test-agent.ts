@@ -272,7 +272,13 @@ function parseSettledAssistantImageMarkdown(prompt: AgentPromptInput): string | 
   return match?.[1] ?? null;
 }
 
-const ROLLOUT_FLAG_PREVIEW = 'if (flags.enabled("new-surface")) {\n  render(<NewSurface />);\n}';
+const ROLLOUT_FLAG_PREVIEW = [
+  "Ship it dark behind the new-surface flag, then turn it on for internal users before everyone else.",
+  "",
+  'if (flags.enabled("new-surface")) {',
+  "  render(<NewSurface />);",
+  "}",
+].join("\n");
 
 function parseMockQuestionPrompt(prompt: AgentPromptInput): MockQuestionPromptRequest | null {
   const text = promptToText(prompt);

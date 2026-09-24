@@ -137,10 +137,13 @@ function QuestionOptionRow({
           ) : null}
           {option.preview ? (
             // Shown for every option at once so they can be compared before picking.
+            // Long lines wrap, as in Claude Code, since most previews are prose.
             <ScrollableCodeSurface
               tone="surface0"
               maxHeight={OPTION_PREVIEW_MAX_HEIGHT}
+              horizontal={false}
               selectable={false}
+              textStyle={styles.optionPreviewText}
               testID="question-form-option-preview"
             >
               {option.preview}
@@ -716,6 +719,10 @@ const styles = StyleSheet.create((theme) => ({
   optionDescription: {
     fontSize: theme.fontSize.base,
     lineHeight: 20,
+  },
+  optionPreviewText: {
+    lineHeight: 20,
+    ...(isWeb ? { whiteSpace: "pre-wrap", overflowWrap: "break-word" } : null),
   },
   selectionControl: {
     width: 18,
