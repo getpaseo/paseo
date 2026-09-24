@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 
 import type { ForgeService } from "../services/forge-service.js";
+import { buildForkLocalBranchName } from "../utils/change-request-checkout.js";
 import {
   CheckoutSourceForgeMismatchError,
   MissingCheckoutTargetError,
@@ -32,14 +33,8 @@ function createResolverHarness(overrides?: {
           defaultCheckoutRefs: ({ changeRequestNumber }) => [
             { remoteName: "origin", remoteRef: `refs/pull/${changeRequestNumber}/head` },
           ],
-          buildPrLocalBranchName: ({ headRef, checkoutTarget }) => {
-            const normalized = checkoutTarget.headOwnerLogin?.trim().toLowerCase() ?? "";
-            const owner =
-              checkoutTarget.isCrossRepository && /^[a-z0-9-]+$/.test(normalized)
-                ? normalized
-                : null;
-            return owner ? `${owner}/${headRef}` : headRef;
-          },
+          buildPrLocalBranchName: ({ headRef, checkoutTarget }) =>
+            buildForkLocalBranchName({ headRef, ...checkoutTarget }),
           supportsCrossRepoCheckoutWithoutRefs: true,
         }
       : {};
@@ -231,6 +226,29 @@ describe("resolveWorktreeCreationIntent", () => {
       pushRemoteUrl: "git@github.com:therainisme/paseo.git",
     });
     expect(deps.headRefLookups).toEqual([]);
+  });
+
+  test("prefixes the pr number when the fork was deleted", async () => {
+    const deps = createResolverHarness();
+    deps.forgeService.getPullRequestCheckoutTarget = async () => ({
+      number: 42,
+      baseRefName: "main",
+      headRefName: "towel",
+      headOwnerLogin: null,
+      headRepositorySshUrl: null,
+      headRepositoryUrl: null,
+      isCrossRepository: true,
+    });
+
+    const intent = await resolveWorktreeCreationIntent(
+      { action: "checkout", githubPrNumber: 42 },
+      repoRoot,
+      deps,
+    );
+
+    expect(intent).toMatchObject({ headRef: "towel", localBranchName: "pr-42/towel" });
+    expect(intent).not.toHaveProperty("pushRemoteUrl");
+    expect(intent).not.toHaveProperty("trackOriginHead");
   });
 
   test("uses an explicit PR head ref without calling GitHub", async () => {
