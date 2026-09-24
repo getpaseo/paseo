@@ -70,12 +70,29 @@ describe("omp terminal agent hooks", () => {
     expect(agentHooksAreInstalled(ompAgentHookProvider, { env: {}, homeDir })).toBe(true);
   });
 
-  it("prefers PI_CODING_AGENT_DIR over the home agent dir", () => {
-    const agentDir = createTempDir("paseo-omp-agent-");
-    const configPath = resolveAgentHookConfigPath(ompAgentHookProvider, {
-      env: { PI_CODING_AGENT_DIR: agentDir },
-      homeDir: createTempDir("paseo-home-"),
-    });
+  const HOME = join(tmpdir(), "paseo-omp-home");
+  const CUSTOM_AGENT_DIR = join(tmpdir(), "paseo-omp-custom-agent");
+  it.each([
+    ["the home agent dir by default", {}, join(HOME, ".omp", "agent")],
+    ["PI_CONFIG_DIR under home", { PI_CONFIG_DIR: ".omp-alt" }, join(HOME, ".omp-alt", "agent")],
+    ["PI_CODING_AGENT_DIR", { PI_CODING_AGENT_DIR: CUSTOM_AGENT_DIR }, CUSTOM_AGENT_DIR],
+    [
+      "PI_CODING_AGENT_DIR for the explicit default profile",
+      { OMP_PROFILE: "default", PI_CODING_AGENT_DIR: CUSTOM_AGENT_DIR },
+      CUSTOM_AGENT_DIR,
+    ],
+    [
+      "the OMP_PROFILE agent dir over PI_CODING_AGENT_DIR",
+      { OMP_PROFILE: "work", PI_PROFILE: "other", PI_CODING_AGENT_DIR: CUSTOM_AGENT_DIR },
+      join(HOME, ".omp", "profiles", "work", "agent"),
+    ],
+    [
+      "the PI_PROFILE agent dir inside PI_CONFIG_DIR",
+      { PI_PROFILE: "work", PI_CONFIG_DIR: ".omp-alt" },
+      join(HOME, ".omp-alt", "profiles", "work", "agent"),
+    ],
+  ])("installs into %s", (_name, env, agentDir) => {
+    const configPath = resolveAgentHookConfigPath(ompAgentHookProvider, { env, homeDir: HOME });
 
     expect(configPath).toBe(join(agentDir, "hooks", "post", "paseo-terminal-activity.js"));
   });

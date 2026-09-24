@@ -1,3 +1,4 @@
+import { resolveOmpDiagnosticPaths } from "../../../server/agent/providers/omp/provider-config.js";
 import type {
   AgentHookActivityState,
   AgentHookPluginFileInstallStrategy,
@@ -53,9 +54,8 @@ export const OMP_HOOK_SOURCE = [
 
 const ompHookInstallStrategy: AgentHookPluginFileInstallStrategy = {
   kind: "plugin-file",
-  configDir: ".omp/agent",
+  configDir: ({ env, homeDir }) => resolveOmpDiagnosticPaths(env, homeDir).agentDir,
   configFile: "hooks/post/paseo-terminal-activity.js",
-  configDirEnvOverride: "PI_CODING_AGENT_DIR",
   hookMarker: "paseo hooks omp",
   source: OMP_HOOK_SOURCE,
 };
