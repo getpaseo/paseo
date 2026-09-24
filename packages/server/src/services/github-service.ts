@@ -3522,6 +3522,7 @@ function toPullRequestCheckoutTarget(
     headRepositorySshUrl: pullRequest.headRepository?.sshUrl || null,
     headRepositoryUrl: pullRequest.headRepository?.url || null,
     isCrossRepository: pullRequest.isCrossRepository,
+    headRefKind: "branch",
   };
 }
 

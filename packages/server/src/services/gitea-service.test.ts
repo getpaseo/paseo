@@ -2303,8 +2303,7 @@ describe("createGiteaService", () => {
       headRepositorySshUrl: null,
       headRepositoryUrl: null,
       isCrossRepository: false,
-      hasOriginHeadBranch: true,
-      hasHeadBranch: true,
+      headRefKind: "branch",
     });
   });
 
@@ -2341,8 +2340,7 @@ describe("createGiteaService", () => {
       headRepositorySshUrl: "git@gitea.com:contributor/sample-repo.git",
       headRepositoryUrl: "https://gitea.com/contributor/sample-repo",
       isCrossRepository: true,
-      hasOriginHeadBranch: false,
-      hasHeadBranch: true,
+      headRefKind: "branch",
     });
 
     expect(calls).toContainEqual(["api", "repos/example-user/sample-repo/pulls/5"]);
@@ -2369,8 +2367,7 @@ describe("createGiteaService", () => {
         { remoteName: "upstream", remoteRef: "refs/pull/5/head" },
       ],
       isCrossRepository: false,
-      hasOriginHeadBranch: false,
-      hasHeadBranch: false,
+      headRefKind: "pull-ref",
     });
   });
 
@@ -2418,8 +2415,7 @@ describe("createGiteaService", () => {
         { remoteName: "upstream", remoteRef: "refs/pull/5/head" },
       ],
       isCrossRepository: false,
-      hasOriginHeadBranch: false,
-      hasHeadBranch: false,
+      headRefKind: "pull-ref",
     });
   });
 
@@ -2439,8 +2435,7 @@ describe("createGiteaService", () => {
       ],
       headOwnerLogin: null,
       isCrossRepository: true,
-      hasOriginHeadBranch: false,
-      hasHeadBranch: true,
+      headRefKind: "branch",
     });
   });
 
@@ -2457,7 +2452,7 @@ describe("createGiteaService", () => {
       remoteName: "origin",
       remoteRef: "refs/heads/feat/sample-change",
     });
-    expect(target.hasOriginHeadBranch).toBe(true);
+    expect(target.headRefKind).toBe("branch");
   });
 
   it("prefixes the local branch name with the fork owner for a cross-repository checkout", () => {
@@ -2492,7 +2487,7 @@ describe("createGiteaService", () => {
         headRepositorySshUrl: null,
         headRepositoryUrl: null,
         isCrossRepository: false,
-        hasHeadBranch: false,
+        headRefKind: "pull-ref",
       },
     });
 
@@ -2512,7 +2507,7 @@ describe("createGiteaService", () => {
         headRepositorySshUrl: null,
         headRepositoryUrl: null,
         isCrossRepository: true,
-        hasHeadBranch: false,
+        headRefKind: "pull-ref",
       },
     });
 
@@ -2532,7 +2527,7 @@ describe("createGiteaService", () => {
         headRepositorySshUrl: null,
         headRepositoryUrl: null,
         isCrossRepository: true,
-        hasHeadBranch: false,
+        headRefKind: "pull-ref",
       },
     });
 

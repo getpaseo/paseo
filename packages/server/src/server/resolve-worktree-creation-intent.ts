@@ -189,7 +189,7 @@ async function resolvePrCheckoutIntent(
   const localBranchName = service.buildPrLocalBranchName?.({ headRef, checkoutTarget });
   const crossRepository = resolveCrossRepositoryFields(checkoutTarget);
   const trackOriginHead =
-    !checkoutTarget.isCrossRepository && checkoutTarget.hasOriginHeadBranch !== false;
+    !checkoutTarget.isCrossRepository && checkoutTarget.headRefKind !== "pull-ref";
 
   return {
     kind: "checkout-change-request",
