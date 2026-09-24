@@ -56,6 +56,52 @@ describe("TerminalInputModeTracker", () => {
     expect(feedChunks(tracker, chunks)).toEqual({ changes: 0, responses: ["\x1b[?0u"] });
   });
 
+  it.each(everySplit("before\x1b[>4;2mafter"))(
+    "tracks a split modifyOtherKeys enable (%s)",
+    (_name, chunks) => {
+      const tracker = new TerminalInputModeTracker();
+
+      expect(feedChunks(tracker, chunks)).toEqual({ changes: 1, responses: [] });
+      expect(tracker.getState().modifyOtherKeys).toBe(2);
+      expect(tracker.supportsModifiedEnter()).toBe(true);
+    },
+  );
+
+  it.each(
+    ["\x1b[>4;0m", "\x1b[>4m"].flatMap((reset) =>
+      everySplit(`before${reset}after`).map(([name, chunks]) => [
+        `${JSON.stringify(reset)} ${name}`,
+        chunks,
+      ]),
+    ),
+  )("tracks a split modifyOtherKeys reset (%s)", (_name, chunks) => {
+    const tracker = new TerminalInputModeTracker();
+    tracker.feed("\x1b[>4;2m");
+
+    expect(feedChunks(tracker, chunks)).toEqual({ changes: 1, responses: [] });
+    expect(tracker.getState().modifyOtherKeys).toBe(0);
+    expect(tracker.supportsModifiedEnter()).toBe(false);
+  });
+
+  it("tracks xterm modifyOtherKeys, which omp uses when the kitty query goes unanswered", () => {
+    const tracker = new TerminalInputModeTracker();
+
+    expect(tracker.feed("\x1b[>4;2m").changed).toBe(true);
+    expect(tracker.supportsModifiedEnter()).toBe(true);
+    expect(tracker.getPreamble()).toBe("\x1b[>4;2m");
+
+    expect(tracker.feed("\x1b[>4;0m").changed).toBe(true);
+    expect(tracker.supportsModifiedEnter()).toBe(false);
+    expect(tracker.getPreamble()).toBe("");
+  });
+
+  it("does not treat modifyOtherKeys level 1 as modified Enter support", () => {
+    const tracker = new TerminalInputModeTracker();
+    tracker.feed("\x1b[>4;1m");
+
+    expect(tracker.supportsModifiedEnter()).toBe(false);
+  });
+
   it("drops a lone trailing ESC that plain text follows", () => {
     const tracker = new TerminalInputModeTracker();
 
@@ -96,6 +142,7 @@ describe("TerminalInputModeTracker", () => {
       win32InputMode: true,
       applicationCursorKeys: false,
       bracketedPaste: false,
+      modifyOtherKeys: 0,
     });
     expect(tracker.supportsModifiedEnter()).toBe(true);
     expect(tracker.getPreamble()).toBe("\x1b[?9001h");
@@ -114,6 +161,7 @@ describe("TerminalInputModeTracker", () => {
       win32InputMode: true,
       applicationCursorKeys: false,
       bracketedPaste: false,
+      modifyOtherKeys: 0,
     });
     expect(tracker.getPreamble()).toBe("\x1b[=7;1u\x1b[?9001h");
   });
@@ -127,6 +175,7 @@ describe("TerminalInputModeTracker", () => {
       win32InputMode: false,
       applicationCursorKeys: true,
       bracketedPaste: false,
+      modifyOtherKeys: 0,
     });
     expect(tracker.getPreamble()).toBe("\x1b[?1h");
 
@@ -136,6 +185,7 @@ describe("TerminalInputModeTracker", () => {
       win32InputMode: false,
       applicationCursorKeys: false,
       bracketedPaste: false,
+      modifyOtherKeys: 0,
     });
   });
 
@@ -148,6 +198,7 @@ describe("TerminalInputModeTracker", () => {
       win32InputMode: false,
       applicationCursorKeys: false,
       bracketedPaste: true,
+      modifyOtherKeys: 0,
     });
     expect(tracker.getPreamble()).toBe("\x1b[?2004h");
 
@@ -157,6 +208,7 @@ describe("TerminalInputModeTracker", () => {
       win32InputMode: false,
       applicationCursorKeys: false,
       bracketedPaste: false,
+      modifyOtherKeys: 0,
     });
     expect(tracker.getPreamble()).toBe("");
   });

@@ -87,6 +87,23 @@ describe("encodeTerminalKeyInput", () => {
     );
   });
 
+  it("encodes modified Enter as CSI 27 ~ under modifyOtherKeys level 2 and keeps plain Enter", () => {
+    const options = {
+      inputMode: { kittyKeyboardFlags: 0, win32InputMode: false, modifyOtherKeys: 2 },
+    };
+
+    expect(encodeTerminalKeyInput({ key: "Enter", shift: true }, options)).toBe("\x1b[27;2;13~");
+    expect(encodeTerminalKeyInput({ key: "Enter" }, options)).toBe("\r");
+  });
+
+  it("prefers Kitty CSI u over modifyOtherKeys when both are active", () => {
+    const options = {
+      inputMode: { kittyKeyboardFlags: 5, win32InputMode: false, modifyOtherKeys: 2 },
+    };
+
+    expect(encodeTerminalKeyInput({ key: "Enter", shift: true }, options)).toBe("\x1b[13;2u");
+  });
+
   it("encodes Shift+Enter using Win32 input mode when ConPTY requests it", () => {
     const options = { inputMode: { kittyKeyboardFlags: 0, win32InputMode: true } };
 

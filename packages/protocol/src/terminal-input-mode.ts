@@ -8,6 +8,8 @@ export interface TerminalInputModeState {
   win32InputMode: boolean;
   applicationCursorKeys?: boolean;
   bracketedPaste?: boolean;
+  // xterm modifyOtherKeys level (CSI > 4 ; N m). Level 2 reports Shift+Enter as CSI 27;2;13~.
+  modifyOtherKeys?: number;
 }
 
 export const DEFAULT_TERMINAL_INPUT_MODE_STATE: TerminalInputModeState = {
@@ -15,14 +17,16 @@ export const DEFAULT_TERMINAL_INPUT_MODE_STATE: TerminalInputModeState = {
   win32InputMode: false,
   applicationCursorKeys: false,
   bracketedPaste: false,
+  modifyOtherKeys: 0,
 };
 
 const ESC = String.fromCharCode(0x1b);
 const APPLICATION_CURSOR_KEYS_MODE = 1;
 const WIN32_INPUT_MODE = 9001;
 const BRACKETED_PASTE_MODE = 2004;
+// Groups: 1-2 kitty `u` prefix/params, 3-4 private mode params/`h|l`, 5 modifyOtherKeys sequence, 6 its level.
 const CSI_INPUT_MODE_SEQUENCE = new RegExp(
-  `${ESC}\\[(?:([<>=?]?)([0-9;]*)u|\\?([0-9;]*)([hl]))`,
+  `${ESC}\\[(?:([<>=?]?)([0-9;]*)u|\\?([0-9;]*)([hl])|(>4(?:;(\\d*))?m))`,
   "g",
 );
 // PTY reads split anywhere, including right after ESC, so a lone trailing ESC is pending too.
@@ -55,7 +59,7 @@ function parsePrivateModeParams(params: string): Set<number> {
 }
 
 export function terminalInputModeSupportsModifiedEnter(state: TerminalInputModeState): boolean {
-  return state.kittyKeyboardFlags > 0 || state.win32InputMode;
+  return state.kittyKeyboardFlags > 0 || state.win32InputMode || (state.modifyOtherKeys ?? 0) >= 2;
 }
 
 export function terminalInputModeStatesEqual(
@@ -66,7 +70,8 @@ export function terminalInputModeStatesEqual(
     left.kittyKeyboardFlags === right.kittyKeyboardFlags &&
     left.win32InputMode === right.win32InputMode &&
     Boolean(left.applicationCursorKeys) === Boolean(right.applicationCursorKeys) &&
-    Boolean(left.bracketedPaste) === Boolean(right.bracketedPaste)
+    Boolean(left.bracketedPaste) === Boolean(right.bracketedPaste) &&
+    (left.modifyOtherKeys ?? 0) === (right.modifyOtherKeys ?? 0)
   );
 }
 
@@ -75,6 +80,7 @@ export class TerminalInputModeTracker {
   private win32InputMode = false;
   private applicationCursorKeys = false;
   private bracketedPaste = false;
+  private modifyOtherKeys = 0;
   private readonly kittyKeyboardStack: number[] = [];
   private pending = "";
 
@@ -97,6 +103,13 @@ export class TerminalInputModeTracker {
         break;
       }
       consumedUntil = CSI_INPUT_MODE_SEQUENCE.lastIndex;
+
+      if (match[5] !== undefined) {
+        const level = Number(match[6] || 0);
+        changed = level !== this.modifyOtherKeys || changed;
+        this.modifyOtherKeys = level;
+        continue;
+      }
 
       if (match[4]) {
         changed = this.applyPrivateModeSequence(match[3] ?? "", match[4]) || changed;
@@ -125,6 +138,7 @@ export class TerminalInputModeTracker {
     this.win32InputMode = false;
     this.applicationCursorKeys = false;
     this.bracketedPaste = false;
+    this.modifyOtherKeys = 0;
     this.kittyKeyboardStack.length = 0;
     this.pending = "";
   }
@@ -135,6 +149,7 @@ export class TerminalInputModeTracker {
       win32InputMode: this.win32InputMode,
       applicationCursorKeys: this.applicationCursorKeys,
       bracketedPaste: this.bracketedPaste,
+      modifyOtherKeys: this.modifyOtherKeys,
     };
   }
 
@@ -159,6 +174,9 @@ export class TerminalInputModeTracker {
     }
     if (this.bracketedPaste) {
       parts.push("\x1b[?2004h");
+    }
+    if (this.modifyOtherKeys > 0) {
+      parts.push(`\x1b[>4;${this.modifyOtherKeys}m`);
     }
     return parts.join("");
   }
