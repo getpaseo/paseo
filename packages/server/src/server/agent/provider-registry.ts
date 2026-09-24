@@ -25,6 +25,7 @@ import {
   resolveDefaultAgentCreateConfig,
 } from "./create-agent-mode.js";
 import { normalizeAgentModelDefinition } from "./agent-sdk-types.js";
+import { readConfiguredProviderIcon } from "./provider-icon.js";
 import { runProviderRefreshActivity } from "./provider-refresh-deadline.js";
 import type { WorkspaceGitService } from "../workspace-git-service.js";
 import type { ManagedProcessRegistry } from "../managed-processes/managed-processes.js";
@@ -581,10 +582,25 @@ function wrapClientProvider(
   };
 }
 
+function loadConfiguredIcon(
+  logger: Logger,
+  provider: AgentProvider,
+  iconPath: string | undefined,
+): string | undefined {
+  if (!iconPath) return undefined;
+  try {
+    return readConfiguredProviderIcon(iconPath);
+  } catch (error) {
+    logger.warn({ provider, icon: iconPath, err: error }, "Ignoring invalid provider icon");
+    return undefined;
+  }
+}
+
 function createRegistryEntry(
   logger: Logger,
   provider: AgentProvider,
   resolved: ResolvedProvider,
+  iconPath?: string,
 ): ProviderDefinition {
   const modelClient = resolved.createBaseClient(logger);
   const profileModels = resolveConfiguredModels(provider, modelClient, resolved.profileModels);
@@ -614,6 +630,7 @@ function createRegistryEntry(
   const { createBaseClient: _createBaseClient, contract: _contract, ...configuration } = resolved;
   return {
     ...resolved.definition,
+    iconSvg: loadConfiguredIcon(logger, provider, iconPath),
     configuration,
     enabled: resolved.enabled,
     derivedFromProviderId: resolved.derivedFromProviderId,
@@ -889,7 +906,7 @@ export function buildProviderRegistry(
   return Object.fromEntries(
     [...resolvedProviders.entries()].map(([provider, resolved]) => [
       provider,
-      createRegistryEntry(logger, provider, resolved),
+      createRegistryEntry(logger, provider, resolved, providerOverrides[provider]?.icon),
     ]),
   ) as Record<AgentProvider, ProviderDefinition>;
 }
