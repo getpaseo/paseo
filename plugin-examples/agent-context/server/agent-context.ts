@@ -161,6 +161,11 @@ async function findAgents(
       if (score !== null) ranked.push({ entry, score });
     }
 
+    // The directory is already newest-first, so an empty picker query can stop
+    // once it has enough eligible defaults. Typed searches still scan all
+    // bounded pages because a better match may be older.
+    if (!normalizedQuery && ranked.length >= MAX_SEARCH_RESULTS) break;
+
     const nextCursor = page.pageInfo.nextCursor?.trim();
     if (!nextCursor || nextCursor === cursor || page.entries.length === 0) break;
     cursor = nextCursor;
@@ -435,9 +440,7 @@ function createAgentTranscriptSearch(dependencies: AgentContextSearchDependencie
   return async ({
     query,
   }: RpcInput<typeof searchAgentTranscriptsRpc>): Promise<PluginAttachmentSearchPayload> => {
-    const normalizedQuery = query.trim();
-    if (!normalizedQuery) return { items: [] };
-    const candidates = await findAgents(dependencies, normalizedQuery);
+    const candidates = await findAgents(dependencies, query);
     const capturedAt = dependencies.now();
     const snapshots = await mapWithConcurrency(candidates, 2, async (entry) => {
       const timeline = await readTimelineSnapshot(dependencies, entry.agent.id);

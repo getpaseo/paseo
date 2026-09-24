@@ -507,6 +507,9 @@ Set an item's optional `contextKind` to `"chat_history"` when its text is an ear
 Paseo then places that snapshot before the new user instruction instead of appending it as an
 ordinary resource.
 
+Set the source's optional `newAgentShortcut` to `true` when New Agent drafts should show a direct
+action beside Import Session. The source remains available from the attachment menu everywhere.
+
 ## Contribute settings
 
 Register ordinary components with `client.addSettingsScreen` and open them with `openSettings`.

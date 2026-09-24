@@ -337,18 +337,59 @@ describe("agent transcript attachment source", () => {
     await expect(invokeSearch(source, "missing")).rejects.toThrow("Agent not found");
   });
 
-  it("does not read agent history before the user enters a search", async () => {
+  it("shows recent top-level agents before the user enters a search", async () => {
     const source = dependencies({
-      listAgents: async () => {
-        throw new Error("Blank search read the agent directory");
-      },
-      fetchTimeline: async () => {
-        throw new Error("Blank search read an agent timeline");
+      entries: [
+        entry("child", {
+          title: "Recent child",
+          updatedAt: "2026-09-10T13:00:00.000Z",
+          parentAgentId: "parent",
+        }),
+        entry("archived", {
+          title: "Recent archive",
+          updatedAt: "2026-09-10T12:00:00.000Z",
+          archivedAt: "2026-09-10T12:30:00.000Z",
+        }),
+        entry("recent", {
+          title: "Recent planning",
+          updatedAt: "2026-09-10T11:00:00.000Z",
+        }),
+        entry("older", {
+          title: "Older planning",
+          updatedAt: "2026-09-10T10:00:00.000Z",
+        }),
+      ],
+      timeline: [{ type: "assistant_message", text: "Snapshot ready." }],
+    });
+
+    const result = await invokeSearch(source, "  ");
+
+    expect(result.items.map((item) => item.id)).toEqual(["recent", "older"]);
+    expect(result.items[0]?.text).toContain("[Assistant] Snapshot ready.");
+  });
+
+  it("stops paging recent defaults once five eligible agents are found", async () => {
+    let listCalls = 0;
+    const source = dependencies({
+      listAgents: async ({ page }) => {
+        listCalls += 1;
+        if (page.cursor) throw new Error("Recent defaults read an unnecessary directory page");
+        return {
+          entries: Array.from({ length: 6 }, (_, index) => entry(`agent-${index}`)),
+          pageInfo: { nextCursor: "older-page" },
+        };
       },
     });
 
-    await expect(invokeSearch(source, "  ")).resolves.toEqual({
-      items: [],
-    });
+    const result = await invokeSearch(source, "");
+
+    expect(result.items.map((item) => item.id)).toEqual([
+      "agent-0",
+      "agent-1",
+      "agent-2",
+      "agent-3",
+      "agent-4",
+    ]);
+    expect(listCalls).toBe(1);
   });
 });

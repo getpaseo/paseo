@@ -7,8 +7,7 @@ import { useContainerWidthBelow } from "@/hooks/use-container-width";
 import invariant from "tiny-invariant";
 import { Composer } from "@/composer";
 import { FileDropZone } from "@/components/file-drop/file-drop-zone";
-import { ComposerImportPill } from "@/composer/draft/import-pill";
-import { COMPOSER_PILL_CLEARANCE } from "@/composer/pill-styles";
+import { DraftAttachmentActions } from "@/composer/draft/attachment-actions";
 import { AgentStreamView } from "@/agent-stream/view";
 import { composerWorkspaceAttachment } from "@/composer/attachments/workspace";
 import { useAgentInputDraft } from "@/composer/draft/input-draft";
@@ -40,11 +39,7 @@ import {
   useWorkspaceAttachmentsStore,
 } from "@/attachments/workspace-attachments-store";
 import type { UserMessageImageAttachment } from "@/types/stream";
-import {
-  COMPACT_FORM_FACTOR_WIDTH,
-  MAX_CONTENT_WIDTH,
-  useIsCompactFormFactor,
-} from "@/constants/layout";
+import { COMPACT_FORM_FACTOR_WIDTH, useIsCompactFormFactor } from "@/constants/layout";
 import { isWeb } from "@/constants/platform";
 import {
   buildWorkspaceTabPersistenceKey,
@@ -303,16 +298,6 @@ interface WorkspaceDraftAgentTabProps {
   onCreated: (snapshot: AgentSnapshotPayload) => void;
   onOpenWorkspaceFile: (request: WorkspaceFileOpenRequest) => void;
   onOpenImportSheet?: () => void;
-}
-
-function resolveImportPillPress(
-  onOpenImportSheet: (() => void) | undefined,
-  isSubmitting: boolean,
-): (() => void) | null {
-  if (isSubmitting) {
-    return null;
-  }
-  return onOpenImportSheet ?? null;
 }
 
 export function WorkspaceDraftAgentTab({
@@ -612,7 +597,6 @@ export function WorkspaceDraftAgentTab({
   const handleDropdownCloseFocus = useCallback(() => {
     focusInputRef.current?.();
   }, []);
-  const importPillPress = resolveImportPillPress(onOpenImportSheet, isSubmitting);
   const composerAgentControls = useMemo(
     () => ({
       ...composerState.agentControls,
@@ -655,13 +639,15 @@ export function WorkspaceDraftAgentTab({
       <ComposerDock>
         {dockContent}
         <View style={animatedStaticStyles.inputAreaWrapper} onLayout={onInputAreaLayout}>
-          {importPillPress ? (
-            <View style={styles.importPillRow}>
-              <View style={styles.importPillContent}>
-                <ComposerImportPill onPress={importPillPress} />
-              </View>
-            </View>
-          ) : null}
+          {isSubmitting ? null : (
+            <DraftAttachmentActions
+              serverId={serverId}
+              client={client}
+              attachments={draftInput.attachments}
+              onChangeAttachments={draftInput.setAttachments}
+              onOpenImportSheet={onOpenImportSheet}
+            />
+          )}
           <Composer
             agentId={tabId}
             serverId={serverId}
@@ -721,24 +707,6 @@ const styles = StyleSheet.create((theme) => ({
   },
   configSection: {
     gap: theme.spacing[3],
-  },
-  importPillRow: {
-    width: "100%",
-    paddingHorizontal: theme.spacing[4],
-    paddingTop: {
-      xs: COMPOSER_PILL_CLEARANCE.compact,
-      md: COMPOSER_PILL_CLEARANCE.wide,
-    },
-    paddingBottom: {
-      xs: COMPOSER_PILL_CLEARANCE.compact,
-      md: COMPOSER_PILL_CLEARANCE.wide,
-    },
-    alignItems: "center",
-  },
-  importPillContent: {
-    width: "100%",
-    maxWidth: MAX_CONTENT_WIDTH,
-    flexDirection: "row",
   },
   errorContainer: {
     marginTop: theme.spacing[2],

@@ -17,5 +17,6 @@ export const agentTranscriptAttachments = defineAttachmentSource({
   icon: "MessagesSquare",
   pickerTitle: "Attach agent transcript",
   searchPlaceholder: "Search agents",
+  newAgentShortcut: true,
   search: searchAgentTranscriptsRpc,
 });

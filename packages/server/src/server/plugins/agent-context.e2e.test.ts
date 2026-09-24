@@ -4,6 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "vitest";
 import { searchAgentTranscriptsRpc } from "../../../../../plugin-examples/agent-context/shared/agent-context.js";
+import serverPackage from "../../../package.json";
 import { DaemonClient } from "../test-utils/daemon-client.js";
 import { createTestAgentClient } from "../test-utils/fake-agent-client.js";
 import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
@@ -11,12 +12,12 @@ import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
 test("the agent context example snapshots a real daemon timeline through its plugin RPC", async () => {
   const directory = await mkdtemp(path.join(tmpdir(), "paseo-agent-context-"));
   const daemon = await createTestPaseoDaemon({
-    daemonVersion: "0.8.0",
+    daemonVersion: serverPackage.version,
     agentClients: { codex: createTestAgentClient("codex") },
   });
   const client = new DaemonClient({
     url: `ws://127.0.0.1:${daemon.port}/ws`,
-    appVersion: "0.8.0",
+    appVersion: serverPackage.version,
   });
 
   try {
@@ -42,7 +43,7 @@ test("the agent context example snapshots a real daemon timeline through its plu
 
     const output = searchAgentTranscriptsRpc.output.parse(
       await client.invokePluginRpc("agent-context", searchAgentTranscriptsRpc.name, {
-        query: "snapshot source",
+        query: "",
       }),
     );
 
