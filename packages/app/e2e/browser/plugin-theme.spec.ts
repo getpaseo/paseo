@@ -2,6 +2,7 @@ import { pluginRequirements } from "../support/helpers/plugin-fixture";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import type { Page } from "@playwright/test";
 import { expect, test } from "../support/fixtures";
 import { connectNewWorkspaceDaemonClient } from "../support/helpers/new-workspace";
 import { openSettingsSection } from "../support/helpers/settings";
@@ -123,6 +124,7 @@ test("applies a contributed theme and falls back when its plugin is gone", async
 
 const MANY_THEMES_PLUGIN_ID = "plugin-theme-many-e2e";
 const MANY_THEMES_COUNT = 40;
+const LAST_THEME_NAME = `Pack theme ${MANY_THEMES_COUNT}`;
 
 const MANY_THEMES_SOURCE = `export default function contribute(plugin) {
   for (let index = 1; index <= ${MANY_THEMES_COUNT}; index += 1) {
@@ -145,6 +147,14 @@ const MANY_THEMES_SOURCE = `export default function contribute(plugin) {
   return () => {};
 }`;
 
+async function scrollThemeMenuToLastTheme(page: Page) {
+  const firstTheme = page.getByText("Pack theme 1", { exact: true });
+  await expect(firstTheme).toBeVisible({ timeout: 30_000 });
+  await firstTheme.hover();
+  await page.mouse.wheel(0, 4000);
+  await expect(page.getByText(LAST_THEME_NAME, { exact: true })).toBeInViewport({ ratio: 1 });
+}
+
 test("scrolls to the last theme when a plugin contributes more themes than fit", async ({
   page,
 }, testInfo) => {
@@ -166,24 +176,14 @@ test("scrolls to the last theme when a plugin contributes more themes than fit",
     await openSettingsSection(page, "appearance");
 
     await page.getByLabel("Theme: System", { exact: true }).click();
-    const firstPluginItem = page.getByText("Pack theme 1", { exact: true });
-    await expect(firstPluginItem).toBeVisible({ timeout: 30_000 });
-
-    const lastPluginItem = page.getByText(`Pack theme ${MANY_THEMES_COUNT}`, { exact: true });
-    await firstPluginItem.hover();
-    await expect(async () => {
-      await page.mouse.wheel(0, 400);
-      await expect(lastPluginItem).toBeInViewport({ ratio: 1, timeout: 500 });
-    }).toPass({ timeout: 10_000 });
+    await scrollThemeMenuToLastTheme(page);
     await page.screenshot({
       path: testInfo.outputPath("plugin-theme-picker-scrolled.png"),
       animations: "disabled",
     });
 
-    await lastPluginItem.click();
-    await expect(
-      page.getByLabel(`Theme: Pack theme ${MANY_THEMES_COUNT}`, { exact: true }),
-    ).toBeVisible();
+    await page.getByText(LAST_THEME_NAME, { exact: true }).click();
+    await expect(page.getByLabel(`Theme: ${LAST_THEME_NAME}`, { exact: true })).toBeVisible();
   } finally {
     await client.removePlugin(MANY_THEMES_PLUGIN_ID).catch(() => undefined);
     await client
