@@ -1,14 +1,25 @@
 import * as pty from "node-pty";
 import xterm, { type Terminal as TerminalType } from "@xterm/headless";
 import { randomUUID } from "crypto";
-import { chmodSync, existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
+import {
+  accessSync,
+  chmodSync,
+  constants,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  statSync,
+} from "node:fs";
 import { tmpdir, userInfo } from "node:os";
 import { basename, delimiter, dirname, extname, join, resolve as resolvePath } from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { createExternalProcessEnv } from "../server/paseo-env.js";
 import { writePrivateFileAtomicSync } from "../server/private-files.js";
-import { findExecutable } from "../executable-resolution/executable-resolution.js";
+import {
+  findExecutable,
+  findExecutableWithoutProbing,
+} from "../executable-resolution/executable-resolution.js";
 import type { TerminalCell, TerminalState } from "@getpaseo/protocol/messages";
 import { TerminalInputModeTracker } from "@getpaseo/protocol/terminal-input-mode";
 import { TerminalActivityTracker } from "./activity/terminal-activity-tracker.js";
@@ -31,6 +42,20 @@ export interface TerminalExitInfo {
   exitCode: number | null;
   signal: number | null;
   lastOutputLines: string[];
+}
+
+// The field is assigned explicitly rather than declared as a constructor
+// parameter property: the terminal worker loads this module under
+// --experimental-strip-types, which erases types but cannot emit the
+// assignment a parameter property implies.
+export class TerminalCommandNotFoundError extends Error {
+  readonly command: string;
+
+  constructor(command: string) {
+    super(`${command}: command not found`);
+    this.name = "TerminalCommandNotFoundError";
+    this.command = command;
+  }
 }
 
 export interface TerminalCommandFinishedInfo {
@@ -882,6 +907,59 @@ function extractLastOutputLinesFromText(text: string, limit: number): string[] {
   return lines.slice(-limit);
 }
 
+function isExecutableFile(path: string): boolean {
+  try {
+    if (!statSync(path).isFile()) {
+      return false;
+    }
+    accessSync(path, constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export interface AssertTerminalCommandCanStartInput {
+  command: string | undefined;
+  // The terminal's own cwd and environment, not the daemon's: execve in the
+  // child resolves against those, so anything else produces false negatives.
+  cwd: string;
+  env: Record<string, string>;
+  platform?: NodeJS.Platform;
+}
+
+// node-pty spawns directly through execve on POSIX, with no shell, so a command
+// that does not exist fails inside the spawn helper and surfaces as exit code 1
+// with no output -- indistinguishable from `false` or any program that simply
+// failed. Resolving it up front is the only signal that separates "cannot start"
+// from "ran and exited non-zero", and it lets the create report the failure
+// instead of handing back a terminal that dies immediately. Windows keeps
+// resolving inside resolveTerminalSpawnCommand, which has its own shim handling
+// and its own fallback for an unresolved command.
+export async function assertTerminalCommandCanStart(
+  input: AssertTerminalCommandCanStartInput,
+): Promise<void> {
+  const { command, cwd, env } = input;
+  const platform = input.platform ?? process.platform;
+  if (command === undefined || platform === "win32") {
+    return;
+  }
+
+  // A path-ish command is resolved by execve against the child's cwd, never
+  // through PATH and never against the daemon's working directory.
+  if (command.includes("/")) {
+    if (isExecutableFile(resolvePath(cwd, command))) {
+      return;
+    }
+    throw new TerminalCommandNotFoundError(command);
+  }
+
+  const resolved = await findExecutableWithoutProbing(command, { path: env[getPathEnvKey(env)] });
+  if (!resolved) {
+    throw new TerminalCommandNotFoundError(command);
+  }
+}
+
 export async function createTerminal(options: CreateTerminalOptions): Promise<TerminalSession> {
   const {
     cwd,
@@ -941,19 +1019,23 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
   const { command: spawnCommand, args: spawnArgs } = command
     ? await resolveTerminalSpawnCommand(command, args)
     : { command: resolvedShell, args: [] as string[] };
+  const terminalEnv = buildTerminalEnvironment({
+    shell: spawnCommand,
+    env: {
+      ...env,
+      ...activityEnv,
+      PASEO_WORKSPACE_ID: workspaceId,
+    },
+  });
+
+  await assertTerminalCommandCanStart({ command, cwd, env: terminalEnv });
+
   const ptyProcess = pty.spawn(spawnCommand, spawnArgs, {
     name: "xterm-256color",
     cols,
     rows,
     cwd,
-    env: buildTerminalEnvironment({
-      shell: spawnCommand,
-      env: {
-        ...env,
-        ...activityEnv,
-        PASEO_WORKSPACE_ID: workspaceId,
-      },
-    }),
+    env: terminalEnv,
   });
 
   function emitTitleChange(nextTitle: string | undefined): void {
