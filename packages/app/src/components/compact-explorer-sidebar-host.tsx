@@ -1,3 +1,4 @@
+import type { WorkspaceFileLocation } from "@/workspace/file-open";
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { View, type LayoutChangeEvent } from "react-native";
 import { GestureDetector } from "react-native-gesture-handler";
@@ -132,12 +133,12 @@ export function CompactExplorerSidebarHost({
   }, [model, openCompactFileExplorer]);
 
   const handleOpenFile = useCallback(
-    (filePath: string) => {
+    (location: WorkspaceFileLocation) => {
       if (!model) {
         return;
       }
       openWorkspaceFileFromExplorer({
-        filePath,
+        location,
         persistenceKey: model.persistenceKey,
         closeExplorerAfterOpen: presentation === "overlay",
         showMobileAgent,

@@ -221,5 +221,33 @@ are stale, run `npm run build:server`.
 - GitHub PR polling owns one account-wide GraphQL budget. Coordinate retained
   targets per host, batch their reads, and stop until GitHub's reset time when
   the reserve is exhausted. Never add a per-target GitHub request to the poll
-  path. Resolve fork PRs through their parent repository without abandoning the
-  shared batch.
+  path.
+- A fork's own PRs come first, the parent is the fallback. `gh` resolves a
+  fork's base repository to the parent, so both `gh pr view` and a bare
+  `gh pr list` miss PRs a fork opens against itself; a long-lived personal fork
+  does exactly that. Check the fork's own candidates before redirecting to the
+  parent, keep the redirect inside the shared batch, and decide it per entry
+  per tick. Do not remember "this repository redirects to its parent": sibling
+  branches of one fork can have their PRs in different repositories.
+- No forge offers a subscription a local daemon can use. Webhooks need a public
+  inbound URL, and the events and notifications APIs are polling with extra
+  steps. Everything that makes a change look instant is polling smarter: a
+  cheaper round, a shorter interval where it is affordable, or a local signal
+  that stands in for the remote one.
+- A poll interval is a spend decision, not a constant. The daemon shares one
+  token with every `gh` call an agent makes, so an interval that ignores how
+  many PRs a host is watching trips the reserve pause and blacks out polling
+  entirely. Measure what a tick cost (`rateLimit.cost`) and scale the interval
+  against a fixed share of the hourly budget.
+- Split a poll into the round that answers the question and the round that is
+  expensive. A merge is visible from PR state alone; checks are the costly half
+  and rarely move once a PR has settled. Run them on different cadences rather
+  than paying for both every tick.
+- An adapter whose polling is batched service-wide implements
+  `pollRetainedPullRequestStatusesNow` so the daemon can pull every retained
+  poll forward when a client regains focus. The adapter owns the rate limiting
+  and may ignore the call. Per-workspace pollers expose `pollNow()` on their
+  subscription instead — the daemon drives those directly.
+- A pruned remote branch is a merge signal worth acting on: repositories that
+  delete the head branch on merge report the merge through the background fetch
+  before any poll is due, at no API cost.

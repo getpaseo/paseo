@@ -451,3 +451,15 @@ describe("layout strategy edges", () => {
     );
   });
 });
+
+it("copies the final answer without the response footer", () => {
+  const strategy = resolveStreamRenderStrategy({ platform: "web", isMobileBreakpoint: false });
+  const item = assistantMessage("a1", 'Done.\n<paseo-meta message="Done." />', 1);
+  expect(
+    collectAssistantResponseContentForStreamRenderStrategy({
+      strategy,
+      items: [item],
+      startIndex: 0,
+    }),
+  ).toBe("Done.");
+});

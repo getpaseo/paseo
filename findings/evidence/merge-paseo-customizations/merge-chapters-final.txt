@@ -1,0 +1,9 @@
+
+ RUN  v4.1.6 /Users/michaelmusil/.paseo/worktrees/3pdqpnjh/slim-monkey/packages/server
+
+
+ Test Files  1 passed (1)
+      Tests  7 passed (7)
+   Start at  10:02:25
+   Duration  12.55s (transform 4.23s, setup 361ms, import 5.27s, tests 5.72s, environment 0ms)
+

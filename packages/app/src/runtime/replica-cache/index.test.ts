@@ -269,6 +269,52 @@ describe("ReplicaCache", () => {
     expect(restoredTimeline).toEqual(timeline());
   });
 
+  it("preserves agent icons and response metadata across baseline and mutation reloads", async () => {
+    const storage = new MemoryStorage();
+    const writer = createCache(storage);
+    const baseline = directory();
+    const metadataAgent: Agent = {
+      ...agent("metadata"),
+      responseMetadata: {
+        namingMode: "automatic",
+        automaticTitle: "Repair cache",
+        automaticIcon: "wrench",
+        lastTurn: { turnId: "turn-1", message: "Cache repaired" },
+      },
+    };
+    const iconAgent: Agent = { ...agent("icon"), icon: "wrench" };
+    baseline.agents.set(metadataAgent.id, metadataAgent);
+    baseline.agents.set(iconAgent.id, iconAgent);
+    writer.replaceDirectoryBaseline(SERVER_ID, baseline);
+    await writer.flush();
+
+    const baselineReader = createCache(storage);
+    const restoredBaseline = await baselineReader.readDirectory(SERVER_ID);
+    expect(restoredBaseline.agents).toEqual(baseline.agents);
+    expect(restoredBaseline.checkpoint).toEqual(baseline.checkpoint);
+    expect(await baselineReader.readAgent(SERVER_ID, metadataAgent.id)).toEqual(metadataAgent);
+
+    const updated: Agent = {
+      ...metadataAgent,
+      icon: "check",
+      responseMetadata: { namingMode: "manual", icon: "check" },
+    };
+    const checkpoint = { agents: { generation: "g", afterSeq: 13 } };
+    baselineReader.commitDirectoryMutations(
+      SERVER_ID,
+      [{ kind: "agent", type: "upsert", id: updated.id, value: updated }],
+      checkpoint,
+    );
+    await baselineReader.flush();
+
+    const mutationReader = createCache(storage);
+    expect(await mutationReader.readAgent(SERVER_ID, updated.id)).toEqual(updated);
+    const restoredMutation = await mutationReader.readDirectory(SERVER_ID);
+    expect(restoredMutation.agents).toEqual(new Map(baseline.agents).set(updated.id, updated));
+    expect(restoredMutation.checkpoint).toEqual(checkpoint);
+    expect(storage.changes.flatMap((change) => change.deletes)).toEqual([]);
+  });
+
   it("preserves pending timeline updates across directory baseline replacement", async () => {
     const storage = new MemoryStorage();
     const writer = createCache(storage);
@@ -575,6 +621,37 @@ describe("ReplicaCache", () => {
     expect(restored.projects.get("project-1")?.projectDisplayName).toBe("Paseo");
     expect(storage.rows.has(`${SERVER_ID}:agent:agent-1`)).toBe(false);
     expect(storage.rows.has(`${SERVER_ID}:project:project-1`)).toBe(true);
+  });
+
+  it("rejects malformed response metadata and repairs only the agent cursor", async () => {
+    const storage = new MemoryStorage();
+    const writer = createCache(storage);
+    const baseline = directory({
+      agents: { generation: "g", afterSeq: 12 },
+      projects: { generation: "g", afterSeq: 4 },
+    });
+    baseline.agents.set("agent-1", {
+      ...agent(),
+      responseMetadata: { namingMode: "automatic" },
+    });
+    writer.replaceDirectoryBaseline(SERVER_ID, baseline);
+    await writer.flush();
+    const key = `${SERVER_ID}:agent:agent-1`;
+    const row = storage.rows.get(key);
+    if (!row) throw new Error("agent row was not written");
+    storage.rows.set(key, {
+      ...row,
+      payload: row.payload.replace('"namingMode":"automatic"', '"namingMode":"invalid"'),
+    });
+
+    expect(await createCache(storage).readAgent(SERVER_ID, "agent-1")).toBeUndefined();
+
+    const reopened = await createCache(storage).readDirectory(SERVER_ID);
+    expect(reopened.agents.size).toBe(0);
+    expect(reopened.projects).toEqual(baseline.projects);
+    expect(reopened.workspaces).toEqual(baseline.workspaces);
+    expect(reopened.checkpoint).toEqual({ projects: { generation: "g", afterSeq: 4 } });
+    expect(storage.rows.has(key)).toBe(false);
   });
 
   it("removes a targeted corrupt row from eviction bookkeeping", async () => {

@@ -24,6 +24,8 @@ files:
   - "!node_modules/@getpaseo/*/conversations/**"
   - "!node_modules/@getpaseo/*/test-results/**"
 asarUnpack:
+  - "**/node_modules/typescript-language-server/**/*"
+  - "**/node_modules/typescript/**/*"
   - dist/daemon/node-entrypoint-runner.js
   - node_modules/@getpaseo/server/dist/server/terminal/shell-integration/**/*
 extraResources:

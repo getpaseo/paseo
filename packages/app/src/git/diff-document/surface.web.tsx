@@ -1,3 +1,6 @@
+import { useLanguageActions } from "@/code-language/use-actions.web";
+import { LanguageOverlay } from "@/code-language/overlay.web";
+import { diffLanguageTarget } from "./language-target";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { ViewStyle } from "react-native";
@@ -72,6 +75,12 @@ function emptyStickyHeaderCanvasSlot(): StickyHeaderCanvasSlot {
 export function DiffSurface(props: DiffSurfaceProps) {
   const { t } = useTranslation();
   const toast = useToast();
+  const language = useLanguageActions(
+    props.mode.kind === "working" ? (props.mode.languageScope ?? null) : null,
+  );
+  useEffect(() => {
+    language?.dismiss();
+  }, [language, props.files]);
   const workspaceCache = useDiffDocumentWorkspaceCache();
   const rootRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -585,6 +594,17 @@ export function DiffSurface(props: DiffSurfaceProps) {
         )
       )
         return;
+      if (language && (event.metaKey || event.ctrlKey)) {
+        const current = modelRef.current;
+        const codeTarget = current
+          ? diffLanguageTarget(current, pointHit(event), language.scope.cwd)
+          : null;
+        if (codeTarget) {
+          event.preventDefault();
+          void language.run(codeTarget, "definition", undefined, () => scrollRef.current?.focus());
+          return;
+        }
+      }
       const dismissSelectionOnClick = selectionRef.current !== null;
       if (dismissSelectionOnClick) {
         setSelection(null);
@@ -602,7 +622,7 @@ export function DiffSurface(props: DiffSurfaceProps) {
       event.currentTarget.focus();
       event.currentTarget.setPointerCapture(event.pointerId);
     },
-    [pointHit, setSelection],
+    [language, pointHit, setSelection],
   );
   const updateActiveHeader = useCallback(
     (target: EventTarget | null) => {
@@ -617,8 +637,23 @@ export function DiffSurface(props: DiffSurfaceProps) {
     },
     [paintStickyHeaderPool, schedulePaint],
   );
+  const hoverCode = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>, hit: DiffHit | null) => {
+      if (language) {
+        const current = modelRef.current;
+        const target = current ? diffLanguageTarget(current, hit, language.scope.cwd) : null;
+        if (target && !event.buttons)
+          language.hover(target, { x: event.clientX, y: event.clientY });
+        else if (event.buttons) language.dismissHover();
+        else language.leaveHover();
+      }
+    },
+    [language],
+  );
   const pointerMove = useCallback(
     (event: React.PointerEvent<HTMLDivElement>) => {
+      const hit = pointHit(event);
+      hoverCode(event, hit);
       updateActiveHeader(event.target);
       const drag = dragRef.current;
       if (drag) {
@@ -630,7 +665,6 @@ export function DiffSurface(props: DiffSurfaceProps) {
           alreadyDragging: drag.moved,
         });
       }
-      const hit = pointHit(event);
       if (hit?.kind === "cell") {
         const row = modelRef.current?.rows[hit.position.rowIndex];
         const file = modelRef.current?.files[hit.position.fileIndex];
@@ -660,7 +694,7 @@ export function DiffSurface(props: DiffSurfaceProps) {
       if (!drag || hit?.kind !== "cell") return;
       setSelection({ anchor: drag.anchor, focus: hit.position });
     },
-    [pointHit, setSelection, updateActiveHeader, viewport.width],
+    [hoverCode, pointHit, setSelection, updateActiveHeader, viewport.width],
   );
   const pointerUp = useCallback(
     (event: React.PointerEvent<HTMLDivElement>) => {
@@ -700,7 +734,18 @@ export function DiffSurface(props: DiffSurfaceProps) {
   const cancelPointer = useCallback(() => {
     dragRef.current = null;
   }, []);
-  const pointerLeave = useCallback(() => updateActiveHeader(null), [updateActiveHeader]);
+  const pointerLeave = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      if (
+        event.relatedTarget instanceof Element &&
+        event.relatedTarget.closest('[data-testid="code-language-hover"]')
+      )
+        return;
+      language?.leaveHover();
+      updateActiveHeader(null);
+    },
+    [language, updateActiveHeader],
+  );
   const copy = useCallback(
     (event: React.ClipboardEvent<HTMLDivElement>) => {
       if (!selectionRef.current) return;
@@ -752,6 +797,27 @@ export function DiffSurface(props: DiffSurfaceProps) {
       ) {
         return;
       }
+      if (event.key === "F12" && language) {
+        const position = selectionRef.current?.focus ?? contextHit?.position;
+        const current = modelRef.current;
+        const hit: DiffHit | null = position ? { kind: "cell", target: null, position } : null;
+        const codeTarget = current ? diffLanguageTarget(current, hit, language.scope.cwd) : null;
+        if (codeTarget) {
+          event.preventDefault();
+          void language.run(
+            codeTarget,
+            event.shiftKey ? "references" : "definition",
+            undefined,
+            () => scrollRef.current?.focus(),
+          );
+          return;
+        }
+      }
+      if (event.key === "Escape" && language?.getSnapshot().kind === "hover") {
+        event.preventDefault();
+        language.close();
+        return;
+      }
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "a") {
         event.preventDefault();
         selectAll();
@@ -762,7 +828,7 @@ export function DiffSurface(props: DiffSurfaceProps) {
         setSelection(null);
       }
     },
-    [selectAll, setSelection],
+    [language, contextHit, selectAll, setSelection],
   );
   const rootStyle = useMemo<React.CSSProperties>(
     () => ({ ...ROOT_STYLE, background: props.palette.surface }),
@@ -793,6 +859,32 @@ export function DiffSurface(props: DiffSurfaceProps) {
     [desiredTypography, loadedTypography],
   );
 
+  const contextLanguageTarget = language
+    ? diffLanguageTarget(model, contextHit, language.scope.cwd)
+    : null;
+  const inspectContext = useCallback(() => {
+    if (language && contextLanguageTarget)
+      void language.run(contextLanguageTarget, "hover", undefined, () =>
+        scrollRef.current?.focus(),
+      );
+  }, [language, contextLanguageTarget]);
+  const defineContext = useCallback(() => {
+    if (language && contextLanguageTarget)
+      void language.run(contextLanguageTarget, "definition", undefined, () =>
+        scrollRef.current?.focus(),
+      );
+  }, [language, contextLanguageTarget]);
+  const usagesContext = useCallback(() => {
+    if (language && contextLanguageTarget)
+      void language.run(contextLanguageTarget, "references", undefined, () =>
+        scrollRef.current?.focus(),
+      );
+  }, [language, contextLanguageTarget]);
+  const openContextFile = useCallback(() => {
+    if (props.mode.kind !== "working" || !contextHit) return;
+    const file = model.files[contextHit.position.fileIndex];
+    if (file) props.mode.onOpenFile?.(file.path);
+  }, [contextHit, model.files, props.mode]);
   const surface = (
     <div data-testid="git-diff-canvas-root" ref={rootRef} style={rootStyle}>
       <div
@@ -837,7 +929,7 @@ export function DiffSurface(props: DiffSurfaceProps) {
                 onScroll={handleHorizontalScroll}
               />
             ))}
-          {props.mode.kind === "working" && reviewActions
+          {reviewActions
             ? model.rows.map((row) => {
                 if (row.kind !== "line" || row.reviewHeight === 0) return null;
                 const columnWidth = model.viewportWidth / row.cells.length;
@@ -878,7 +970,27 @@ export function DiffSurface(props: DiffSurfaceProps) {
       <ContextMenuTrigger contextOnly style={CONTEXT_TRIGGER_STYLE}>
         {surface}
       </ContextMenuTrigger>
+      {language && <LanguageOverlay actions={language} />}
       <ContextMenuContent align="start" minWidth={180} testID="diff-source-context-menu">
+        {language && (
+          <>
+            <ContextMenuItem disabled={!contextLanguageTarget} onSelect={inspectContext}>
+              {t("codeLanguage.inspect")}
+            </ContextMenuItem>
+            <ContextMenuItem disabled={!contextLanguageTarget} onSelect={defineContext}>
+              {t("codeLanguage.definition")}
+            </ContextMenuItem>
+            <ContextMenuItem disabled={!contextLanguageTarget} onSelect={usagesContext}>
+              {t("codeLanguage.usages")}
+            </ContextMenuItem>
+            {!contextLanguageTarget && (
+              <ContextMenuItem disabled={!contextHit} onSelect={openContextFile}>
+                {t("codeLanguage.openCurrent")}
+              </ContextMenuItem>
+            )}
+            <ContextMenuSeparator />
+          </>
+        )}
         <ContextMenuItem
           disabled={!hasSelection}
           onSelect={copySelectedSource}

@@ -901,6 +901,8 @@ function StatusWorkspaceRowInnerContent({
                 shortcutNumber={shortcutNumber}
                 showShortcutBadge={showShortcutBadge}
                 reserveIdleStatusIndicatorSpace={reserveIdleStatusIndicatorSpace}
+                onArchive={onArchive}
+                archiveStatus={archiveStatus}
               >
                 {renderSlot ? (
                   <StatusWorkspaceActionSlot

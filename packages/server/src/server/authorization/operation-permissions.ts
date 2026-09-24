@@ -91,6 +91,11 @@ const INBOUND_PERMISSION = {
   "fs.file.subscribe.request": "workspace.read",
   "fs.file.unsubscribe.request": "workspace.read",
   "fs.file.write.request": "workspace.write",
+  "code.language.sync.request": "workspace.read",
+  "code.language.query.request": "workspace.read",
+  "code.language.cancel.request": "workspace.read",
+  "code.language.snippets.request": "workspace.read",
+
   get_daemon_config_request: "daemon.read",
   get_providers_snapshot_request: ["daemon.read", "hub.execute"],
   github_search_request: "workspace.read",
@@ -307,6 +312,11 @@ const OUTBOUND_PERMISSION = {
   "fs.file.unsubscribe.response": "workspace.read",
   "fs.file.update": "workspace.read",
   "fs.file.write.response": "workspace.write",
+  "code.language.sync.response": "workspace.read",
+  "code.language.query.response": "workspace.read",
+  "code.language.cancel.response": "workspace.read",
+  "code.language.snippets.response": "workspace.read",
+
   get_daemon_config_response: "daemon.read",
   get_providers_snapshot_response: ["daemon.read", "hub.execute"],
   github_search_response: "workspace.read",

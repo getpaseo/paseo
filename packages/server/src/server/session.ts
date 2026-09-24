@@ -1,4 +1,5 @@
 import { getChaptersService } from "./chapters/generation.js";
+import { CodeLanguageSession } from "./code-language/session.js";
 import type { DiffStat } from "@getpaseo/protocol/diff-stat";
 import type { SessionEventSubscription } from "@getpaseo/protocol/messages";
 import type { AgentRequests } from "./agent/requests/index.js";
@@ -729,6 +730,7 @@ export class Session {
     lastActivityAt: Date;
     appVisible: boolean;
     appVisibilityChangedAt: Date;
+    appFocused: boolean;
   } | null = null;
   private registeredPushToken: string | null = null;
   private readonly terminalManager: TerminalManager | null;
@@ -751,6 +753,7 @@ export class Session {
   private readonly scheduleSession: ScheduleSession;
   private readonly providerCatalogSession: ProviderCatalogSession;
   private readonly workspaceFilesSession: WorkspaceFilesSession;
+  private readonly codeLanguage: CodeLanguageSession;
   private readonly agentConfigSession: AgentConfigSession;
   private readonly projectConfigSession: ProjectConfigSession;
   private readonly daemonSession: DaemonSession;
@@ -841,6 +844,7 @@ export class Session {
       clientId: this.clientId,
       sessionId: this.sessionId,
     });
+    this.codeLanguage = new CodeLanguageSession(this.sessionLogger);
     this.workspaceFilesSession = new WorkspaceFilesSession({
       host: {
         emit: (msg, source) => this.emitForSource(msg, source),
@@ -1557,6 +1561,11 @@ export class Session {
         mutation.workspace?.archivedAt
       ) {
         this.workspaceGitObserver.removeForWorkspaceId(mutation.workspaceId);
+        if (mutation.workspace) this.codeLanguage.closeWorkspace(mutation.workspace.cwd);
+        else {
+          const remaining = await this.workspaceRegistry.list();
+          this.codeLanguage.retainWorkspaces(new Set(remaining.map((workspace) => workspace.cwd)));
+        }
       } else {
         await this.syncWorkspaceMutationObserver(mutation);
       }
@@ -2504,7 +2513,13 @@ export class Session {
       case "close_items_request":
         return this.handleCloseItemsRequest(msg);
       case "update_agent_request":
-        return this.handleUpdateAgentRequest(msg.agentId, msg.name, msg.labels, msg.requestId);
+        return this.handleUpdateAgentRequest(
+          msg.agentId,
+          msg.name,
+          msg.labels,
+          msg.requestId,
+          msg.namingMode,
+        );
       case "project.rename.request":
         return this.handleProjectRenameRequest(msg.projectId, msg.customName, msg.requestId);
       case "project.icon.set.request":
@@ -2730,6 +2745,11 @@ export class Session {
     source?: object,
   ): Promise<void> | undefined {
     switch (msg.type) {
+      case "code.language.sync.request":
+      case "code.language.query.request":
+      case "code.language.cancel.request":
+      case "code.language.snippets.request":
+        return this.codeLanguage.handle(msg, (message) => this.emitForSource(message, source));
       case "file_explorer_request":
         return this.workspaceFilesSession.handleFileExplorerRequest(msg, source);
       case "fs.file.subscribe.request":
@@ -3153,6 +3173,7 @@ export class Session {
     name: string | undefined,
     labels: Record<string, string> | undefined,
     requestId: string,
+    namingMode?: "automatic" | "manual",
   ): Promise<void> {
     this.sessionLogger.info(
       {
@@ -3167,7 +3188,7 @@ export class Session {
     try {
       const result = await updateAgentCommand(
         { agentManager: this.agentManager },
-        { agentId, name, labels },
+        { agentId, name, labels, namingMode },
       );
 
       if (!result.accepted) {
@@ -4390,11 +4411,16 @@ export class Session {
     lastActivityAt: string;
     appVisible: boolean;
     appVisibilityChangedAt?: string;
+    appFocused?: boolean;
   }): void {
     const focusedTerminalId = msg.focusedTerminalId?.trim() || null;
     const appVisibilityChangedAt = msg.appVisibilityChangedAt
       ? new Date(msg.appVisibilityChangedAt)
       : new Date(msg.lastActivityAt);
+    // A client too old to report focus only ever reports visibility, so its visibility
+    // transitions stand in for focus and the refresh below still fires.
+    const appFocused = msg.appFocused ?? msg.appVisible;
+    const regainedFocus = appFocused && this.clientActivity?.appFocused === false;
     this.clientActivity = {
       deviceType: msg.deviceType,
       focusedAgentId: msg.focusedAgentId,
@@ -4402,7 +4428,12 @@ export class Session {
       lastActivityAt: new Date(msg.lastActivityAt),
       appVisible: msg.appVisible,
       appVisibilityChangedAt,
+      appFocused,
     };
+    if (regainedFocus) {
+      // The user was away — very likely in a browser, on the change request this refreshes.
+      this.workspaceGitService.pollForgeStatusesNow();
+    }
     if (msg.appVisible && focusedTerminalId) {
       void this.clearFocusedTerminalAttention(focusedTerminalId);
     }
@@ -8034,6 +8065,7 @@ export class Session {
 
     this.workspaceGitObserver.dispose();
     this.workspaceFilesSession.dispose();
+    this.codeLanguage.dispose();
   }
 }
 

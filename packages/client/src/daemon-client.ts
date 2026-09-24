@@ -1,4 +1,5 @@
 import type { ChapterComparison, ChapterStory, ChapterState } from "@getpaseo/protocol/messages";
+import type { CodeDocument, CodeQuery, CodeLocation } from "@getpaseo/protocol/code-language";
 import { ProviderSnapshotUpdates } from "./provider-snapshots/index.js";
 import type { SessionEventSubscription } from "@getpaseo/protocol/messages";
 import {
@@ -2677,13 +2678,18 @@ export class DaemonClient {
 
   async updateAgent(
     agentId: string,
-    updates: { name?: string; labels?: Record<string, string> },
+    updates: {
+      name?: string;
+      labels?: Record<string, string>;
+      namingMode?: "automatic" | "manual";
+    },
   ): Promise<void> {
     const requestId = this.createRequestId();
     const message = SessionInboundMessageSchema.parse({
       type: "update_agent_request",
       agentId,
       ...(updates.name !== undefined ? { name: updates.name } : {}),
+      ...(updates.namingMode ? { namingMode: updates.namingMode } : {}),
       ...(updates.labels && Object.keys(updates.labels).length > 0
         ? { labels: updates.labels }
         : {}),
@@ -4576,6 +4582,38 @@ export class DaemonClient {
       this.fileSubscriptions.delete(subscriptionId);
       throw error;
     }
+  }
+
+  async syncCodeDocument(input: CodeDocument): Promise<void> {
+    const payload = await this.sendCorrelatedSessionRequest({
+      message: { type: "code.language.sync.request", ...input },
+      responseType: "code.language.sync.response",
+    });
+    if (payload.error) throw new Error(payload.error);
+  }
+
+  async queryCode(input: CodeQuery, requestId: string) {
+    return this.sendCorrelatedSessionRequest({
+      requestId,
+      timeout: 35000,
+      message: { type: "code.language.query.request", ...input },
+      responseType: "code.language.query.response",
+    });
+  }
+
+  async cancelCodeQuery(queryId: string): Promise<void> {
+    await this.sendCorrelatedSessionRequest({
+      message: { type: "code.language.cancel.request", queryId },
+      responseType: "code.language.cancel.response",
+    });
+  }
+
+  async getCodeSnippets(cwd: string, locations: CodeLocation[]): Promise<string[]> {
+    const payload = await this.sendCorrelatedSessionRequest({
+      message: { type: "code.language.snippets.request", cwd, locations },
+      responseType: "code.language.snippets.response",
+    });
+    return payload.snippets;
   }
 
   async writeFile(input: {

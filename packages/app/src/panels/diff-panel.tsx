@@ -1,3 +1,4 @@
+import type { WorkspaceFileLocation } from "@/workspace/file-open";
 import { useCallback, useMemo, type ReactNode } from "react";
 import { Text, View } from "react-native";
 import { useTranslation } from "react-i18next";
@@ -86,8 +87,15 @@ function resolveChangesPresentation(
 
 function ChangesPanel() {
   const { t } = useTranslation();
-  const { serverId, workspaceId, tabId, target, openPreferredTarget, openTargetToSide } =
-    usePaneContext();
+  const {
+    serverId,
+    workspaceId,
+    tabId,
+    target,
+    openPreferredTarget,
+    openTargetToSide,
+    openFileInWorkspace,
+  } = usePaneContext();
   const [changesState, setChangesState] = usePanelState(changesStateSchema, defaultChangesState);
   const { preferences } = useChangesPreferences();
   const cwd = useWorkspaceDirectory(serverId, workspaceId);
@@ -102,6 +110,12 @@ function ChangesPanel() {
   const handleOpenFile = useCallback(
     (path: string) => openPreferredTarget({ kind: "file", path }, isTree ? "diffs" : "diffFiles"),
     [isTree, openPreferredTarget],
+  );
+
+  const handleOpenLocation = useCallback(
+    (location: WorkspaceFileLocation) =>
+      openFileInWorkspace({ disposition: "preferred", location }),
+    [openFileInWorkspace],
   );
 
   const handleSelectDiffFile = useCallback(
@@ -139,6 +153,7 @@ function ChangesPanel() {
           focusRequestId={target.kind === "working_diff" ? target.focusRequestId : undefined}
           onSelectDiffFile={isTree ? handleSelectDiffFile : undefined}
           onOpenFile={handleOpenFile}
+          onOpenLocation={handleOpenLocation}
           onOpenToSide={isTree && openTargetToSide ? handleOpenDiffToSide : undefined}
           onAddToChat={canAddToChat ? addFile : undefined}
           state={changesState}

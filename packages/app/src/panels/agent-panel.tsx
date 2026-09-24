@@ -353,6 +353,7 @@ function useAgentPanelDescriptor(
         return {
           provider: "codex" as const,
           title: null,
+          emoji: undefined,
           status: null,
           pendingPermissionCount: 0,
           requiresAttention: false,
@@ -364,6 +365,7 @@ function useAgentPanelDescriptor(
       return {
         provider: agent.provider,
         title: agent.title,
+        emoji: agent.icon,
         status: agent.status,
         pendingPermissionCount: agent.pendingPermissions.length,
         requiresAttention: agent.requiresAttention,
@@ -383,6 +385,7 @@ function useAgentPanelDescriptor(
     tooltip: label ?? `${formatProviderLabel(provider)} agent`,
     titleState: label ? "ready" : "loading",
     icon,
+    emoji: descriptorState.emoji,
     attentionTimestamp: descriptorState.attentionTimestamp,
     statusBucket: descriptorState.status
       ? deriveSidebarStateBucket({

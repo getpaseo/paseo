@@ -89,6 +89,9 @@ const FORGE_PR_STATUS_POLL_ERROR_BACKOFF_CAP_MS = 300_000;
 // was retained.
 const FORGE_PR_STATUS_POLL_AWAITING_CHECKS_WINDOW_MS = 300_000;
 const DEGRADED_GIT_POLL_INTERVAL_MS = 5_000;
+// See WorkspaceGitService.pollForgeStatusesNow — how often returning to the app may pull the
+// change-request polls forward. Matches GITHUB_POLL_NOW_MIN_INTERVAL_MS.
+const FORGE_PR_STATUS_POLL_NOW_MIN_INTERVAL_MS = 30_000;
 // Keep whole workspace pipelines below the lower-level Git process pool so daemon control work
 // retains subprocess and event-loop headroom during large workspace reconciliation bursts.
 export const WORKSPACE_GIT_REFRESH_CONCURRENCY = 4;
@@ -230,6 +233,7 @@ export interface WorkspaceGitService {
   scheduleRefreshForCwd(cwd: string): void;
   onWorkspaceStateMayHaveChanged(cwd: string): void;
   invalidateForge(cwd: string): void;
+  pollForgeStatusesNow(): void;
   getMetrics(): WorkspaceGitServiceMetrics;
   dispose(): Promise<void>;
 }
@@ -400,8 +404,10 @@ interface WorkspaceGitTarget {
   debounceTimer: NodeJS.Timeout | null;
   pendingDebounceRequest: WorkspaceGitRefreshRequest | null;
   observationReensureTimer: NodeJS.Timeout | null;
-  forgePrStatusPollSubscription: { unsubscribe: () => void } | null;
+  forgePrStatusPollSubscription: { unsubscribe: () => void; pollNow?: () => void } | null;
   forgePrStatusPollKey: string | null;
+  /** The adapter backing the live subscription, for service-wide batched poll-now. */
+  forgePrStatusPollService: ForgeService | null;
   refreshState: WorkspaceGitRefreshState;
   latestGit: WorkspaceGitRuntimeSnapshot["git"] | null;
   latestGitLoadedAtMs: number | null;
@@ -543,6 +549,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
   private disposePromise: Promise<void> | null = null;
   private readonly snapshotUpdatedListeners = new Set<WorkspaceGitSnapshotUpdatedListener>();
   private readonly workspaceTargets = new Map<string, WorkspaceGitTarget>();
+  private lastForgePollNowAt = 0;
   private readonly repoTargets = new Map<string, RepoGitTarget>();
   private readonly workingTreeWatchTargets = new Map<string, WorkingTreeWatchTarget>();
   private readonly workingTreeWatchSetups = new Map<string, Promise<WorkingTreeWatchTarget>>();
@@ -960,6 +967,44 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
   }
 
   /**
+   * Pull every live change-request poll forward to now. Called when the user returns to a
+   * focused client: the state most likely to have gone stale is the one they just changed
+   * elsewhere, and open → merged is the change that otherwise waits the full slow interval.
+   *
+   * Debounced service-wide rather than per workspace — one return covers every workspace, and
+   * the user can alt-tab repeatedly.
+   */
+  pollForgeStatusesNow(): void {
+    // A best-effort hint rather than a command, so a heartbeat landing during shutdown is
+    // dropped instead of throwing back into the session's message handler.
+    if (this.disposed) {
+      return;
+    }
+    const now = Date.now();
+    if (now - this.lastForgePollNowAt < FORGE_PR_STATUS_POLL_NOW_MIN_INTERVAL_MS) {
+      return;
+    }
+    this.lastForgePollNowAt = now;
+
+    const batchedServices = new Set<ForgeService>();
+    for (const target of this.workspaceTargets.values()) {
+      const subscription = target.forgePrStatusPollSubscription;
+      if (target.closed || !subscription) {
+        continue;
+      }
+      const service = target.forgePrStatusPollService;
+      if (service?.pollRetainedPullRequestStatusesNow) {
+        batchedServices.add(service);
+        continue;
+      }
+      subscription.pollNow?.();
+    }
+    for (const service of batchedServices) {
+      service.pollRetainedPullRequestStatusesNow?.();
+    }
+  }
+
+  /**
    * Drop the resolved forge adapter's cached state for a cwd. Goes through the
    * resolver so it targets the same adapter instance the poller reads — used by
    * git mutations to force a fresh forge status on the next refresh.
@@ -1144,6 +1189,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       observationReensureTimer: null,
       forgePrStatusPollSubscription: null,
       forgePrStatusPollKey: null,
+      forgePrStatusPollService: null,
       refreshState: { status: "idle" },
       latestGit: null,
       latestGitLoadedAtMs: null,
@@ -2432,6 +2478,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
 
     this.stopForgePrStatusPollForTarget(target);
     target.forgePrStatusPollKey = pollKey;
+    target.forgePrStatusPollService = resolution.service;
     if (resolution.service.retainCurrentPullRequestStatusPoll) {
       target.forgePrStatusPollSubscription = resolution.service.retainCurrentPullRequestStatusPoll({
         cwd: target.cwd,
@@ -2490,12 +2537,13 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     service: ForgeService;
     pollTarget: WorkspaceForgePrStatusPollTarget;
     pollImmediately: boolean;
-  }): { unsubscribe: () => void } {
+  }): { unsubscribe: () => void; pollNow: () => void } {
     let closed = false;
     let timer: NodeJS.Timeout | null = null;
     let latestStatus: WorkspaceGitRuntimeSnapshot["forge"]["pullRequest"] =
       target.latestForge?.pullRequest ?? null;
     let consecutiveErrors = 0;
+    let inFlight = false;
     const headFirstSeenAt = Date.now();
 
     const schedule = (delayMs: number) => {
@@ -2509,9 +2557,10 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     };
 
     const poll = async () => {
-      if (closed || !this.isActiveObservedWorkspaceTarget(target)) {
+      if (closed || inFlight || !this.isActiveObservedWorkspaceTarget(target)) {
         return;
       }
+      inFlight = true;
       try {
         const status = await service.getCurrentPullRequestStatus({
           cwd: target.cwd,
@@ -2543,6 +2592,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
           "Failed to run forge PR status self-heal refresh",
         );
       } finally {
+        inFlight = false;
         schedule(
           computeGenericForgeNextInterval(
             latestStatus,
@@ -2566,6 +2616,17 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
           clearTimeout(timer);
           timer = null;
         }
+      },
+      pollNow: () => {
+        // Merged and closed are terminal; only an open or not-yet-resolved PR can change.
+        if (closed || inFlight || (latestStatus && latestStatus.state !== "open")) {
+          return;
+        }
+        if (timer) {
+          clearTimeout(timer);
+          timer = null;
+        }
+        void poll();
       },
     };
   }
@@ -2596,6 +2657,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     target.forgePrStatusPollSubscription?.unsubscribe();
     target.forgePrStatusPollSubscription = null;
     target.forgePrStatusPollKey = null;
+    target.forgePrStatusPollService = null;
   }
 
   private async loadIgnoredDirs(rootPath: string): Promise<Set<string>> {
@@ -3216,6 +3278,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     for (const change of result.changes) {
       target.recentFetchRemoteRefChanges.set(change.ref, { change, expiresAtMs });
     }
+    this.notifyForgeOnPrunedHeadRefs(target, result.changes);
     this.flushBufferedFetchMetadataEvents(target);
     if (
       result.nonRemoteRefsChanged === true ||
@@ -3233,6 +3296,50 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       this.routeRemoteBranchRef(target, change.ref, refreshes, { narrow: true });
     }
     this.scheduleRepoMetadataRefresh(target, "repo-fetch", false, refreshes);
+  }
+
+  /**
+   * A workspace's own remote branch disappearing from a pruning fetch is a merge, for every
+   * repository configured to delete the head branch on merge. The fetch already ran, so acting
+   * on it costs nothing and beats waiting out the change-request poll interval.
+   *
+   * Deleting the branch by hand produces the same signal. That is not a false positive worth
+   * guarding — it only forces one forge refresh that reports the PR's real state.
+   */
+  private notifyForgeOnPrunedHeadRefs(
+    target: RepoGitTarget,
+    changes: readonly WorkspaceGitRemoteRefChange[],
+  ): void {
+    if (this.disposed) {
+      return;
+    }
+    const deletedRefs = new Set<string>();
+    for (const change of changes) {
+      if (change.kind === "deleted") {
+        deletedRefs.add(change.ref);
+      }
+    }
+    if (deletedRefs.size === 0) {
+      return;
+    }
+
+    for (const workspaceKey of target.workspaceKeys) {
+      const workspace = this.workspaceTargets.get(workspaceKey);
+      const branch = workspace?.latestGit?.currentBranch;
+      if (!workspace || workspace.closed || !branch) {
+        continue;
+      }
+      const facts = workspace.latestFacts?.isGit ? workspace.latestFacts : null;
+      const remoteName =
+        facts?.branchRemoteName && facts.branchRemoteName !== "." ? facts.branchRemoteName : null;
+      const isHeadRef =
+        deletedRefs.has(`origin/${branch}`) ||
+        (remoteName !== null && deletedRefs.has(`${remoteName}/${branch}`));
+      if (!isHeadRef) {
+        continue;
+      }
+      this.onWorkspaceStateMayHaveChanged(workspaceKey);
+    }
   }
 
   private flushBufferedFetchMetadataEvents(target: RepoGitTarget): void {

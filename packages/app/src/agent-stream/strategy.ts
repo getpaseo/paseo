@@ -1,3 +1,4 @@
+import { responseDisplayText } from "@getpaseo/protocol/response-control/footer";
 import type { ComponentType, ReactElement, ReactNode, RefObject } from "react";
 import type { StyleProp, ViewStyle } from "react-native";
 import type { StreamItem } from "@/types/stream";
@@ -177,11 +178,15 @@ export function createStreamStrategy(config: StreamStrategyConfig): StreamStrate
           break;
         }
         if (currentItem.kind === "assistant_message") {
-          messages.push(currentItem.text);
+          messages.push(
+            laterItem === null || laterItem.turnId !== currentItem.turnId
+              ? responseDisplayText(currentItem.text)
+              : currentItem.text,
+          );
         }
         laterItem = currentItem;
       }
-      return messages.toReversed().join("\n\n");
+      return messages.toReversed().filter(Boolean).join("\n\n");
     },
     isNearBottom: (input) => config.isNearBottom(input),
     getBottomOffset: (metrics) => config.getBottomOffset(metrics),

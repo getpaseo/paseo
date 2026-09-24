@@ -1,33 +1,50 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { openWorkspaceFileFromExplorer } from "@/screens/workspace/workspace-file-open-command";
+import type { WorkspaceTabTarget } from "@/workspace-tabs/model";
 
 function createInput(closeExplorerAfterOpen: boolean) {
-  return {
-    filePath: "src/app.tsx",
+  const opened: WorkspaceTabTarget[] = [];
+  const focused: string[] = [];
+  let closed = 0;
+  const input = {
+    location: { path: "src/app.tsx", lineStart: 4, columnStart: 2, lineEnd: 4, columnEnd: 8 },
     persistenceKey: "server:workspace",
     closeExplorerAfterOpen,
-    showMobileAgent: vi.fn(),
-    openWorkspaceTabInFocusedPane: vi.fn(() => "file-tab"),
-    focusWorkspaceTab: vi.fn(),
+    showMobileAgent: () => {
+      closed++;
+    },
+    openWorkspaceTabInFocusedPane: (_key: string, target: WorkspaceTabTarget) => {
+      opened.push(target);
+      return "file-tab";
+    },
+    focusWorkspaceTab: (key: string, tab: string) => {
+      focused.push(`${key}/${tab}`);
+    },
+  };
+  return {
+    input,
+    opened,
+    focused,
+    get closed() {
+      return closed;
+    },
   };
 }
 
 describe("openWorkspaceFileFromExplorer", () => {
-  it("closes the phone overlay after opening a file", () => {
-    const input = createInput(true);
-
-    openWorkspaceFileFromExplorer(input);
-
-    expect(input.showMobileAgent).toHaveBeenCalledOnce();
+  it("preserves the selected range and closes the phone overlay after opening a file", () => {
+    const fixture = createInput(true);
+    openWorkspaceFileFromExplorer(fixture.input);
+    expect(fixture.closed).toBe(1);
+    expect(fixture.opened).toEqual([{ kind: "file", ...fixture.input.location }]);
+    expect(fixture.focused).toEqual(["server:workspace/file-tab"]);
   });
 
   it("keeps the tablet dock open after opening a file", () => {
-    const input = createInput(false);
-
-    openWorkspaceFileFromExplorer(input);
-
-    expect(input.showMobileAgent).not.toHaveBeenCalled();
-    expect(input.openWorkspaceTabInFocusedPane).toHaveBeenCalledOnce();
-    expect(input.focusWorkspaceTab).toHaveBeenCalledWith("server:workspace", "file-tab");
+    const fixture = createInput(false);
+    openWorkspaceFileFromExplorer(fixture.input);
+    expect(fixture.closed).toBe(0);
+    expect(fixture.opened).toEqual([{ kind: "file", ...fixture.input.location }]);
+    expect(fixture.focused).toEqual(["server:workspace/file-tab"]);
   });
 });

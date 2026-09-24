@@ -20,6 +20,7 @@ export interface DiffHunk {
 }
 
 export interface ParsedDiffFile {
+  targetContentId?: string;
   oldPath?: string;
   breakdown?: ChangeBreakdown;
   path: string;

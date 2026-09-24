@@ -1,0 +1,34 @@
+
+ RUN  v4.1.6 /Users/michaelmusil/.paseo/worktrees/3pdqpnjh/slim-monkey/packages/server
+
+stdout | src/server/chapters/service.test.ts
+[dotenv@17.3.1] injecting env (0) from .env.test -- tip: ⚙️  suppress all logs with { quiet: true }
+[dotenv@17.3.1] injecting env (0) from ../.env -- tip: ⚙️  override existing env vars with { override: true }
+
+ ❯ src/server/chapters/service.test.ts (7 tests | 1 failed) 384ms
+   × keeps the story current when only language eligibility changes to undefined 56ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/server/chapters/service.test.ts > keeps the story current when only language eligibility changes to undefined
+AssertionError: expected '049d178e3ebe7270119ab431c9cee474b6d31…' to be 'b84167dc86c933b82ef2d85dcf38ee01a891f…' // Object.is equality
+
+Expected: "b84167dc86c933b82ef2d85dcf38ee01a891fab1c4c34c82bbef3fce822fff60"
+Received: "049d178e3ebe7270119ab431c9cee474b6d31074c0606130d07238ccebc531ac"
+
+ ❯ src/server/chapters/service.test.ts:147:40
+    145|     const current = await service.get(input);
+    146|     expect(current.status).toBe("ready");
+    147|     expect(current.currentFingerprint).toBe(completed.story?.fingerpri…
+       |                                        ^
+    148|     expect(current.story).toEqual(completed.story);
+    149|     expect(generate).toHaveBeenCalledTimes(1);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 5 passed (7)
+   Start at  09:59:36
+   Duration  740ms (transform 158ms, setup 23ms, import 255ms, tests 384ms, environment 0ms)
+

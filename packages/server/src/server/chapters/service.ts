@@ -29,9 +29,9 @@ export interface ChaptersServiceOptions {
 }
 
 export function chapterFingerprint(comparison: ChapterComparison, files: ParsedDiffFile[]): string {
-  // Highlight tokens are presentation; theme changes must not invalidate a story.
+  // Rendering and live-file navigation metadata do not change the compared source.
   const source = JSON.stringify({ version: 1, comparison, files }, (key, value: unknown) => {
-    if (key === "tokens") return undefined;
+    if (key === "tokens" || key === "targetContentId") return undefined;
     if (value !== null && typeof value === "object" && !Array.isArray(value)) {
       return Object.fromEntries(
         Object.entries(value).sort(([left], [right]) => left.localeCompare(right)),

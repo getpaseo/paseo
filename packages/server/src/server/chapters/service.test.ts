@@ -127,3 +127,31 @@ it("rejects missing coverage instead of publishing a partial story", async () =>
   expect(result.story).toBeNull();
   expect(result.error).toContain("changes have no chapter");
 });
+
+it.each([undefined, "another-current-file-identity"])(
+  "keeps the story current when only language eligibility changes to %s",
+  async (targetContentId) => {
+    const { service, input, read, generate, settled } = await setup();
+    read.mockResolvedValue({
+      files: files().map((file) =>
+        Object.assign(file, { targetContentId: "current-file-identity" }),
+      ),
+      tooLarge: false,
+    });
+    await service.get(input);
+    const completed = await settled();
+    read.mockResolvedValue({
+      files: files().map((file) => Object.assign(file, { targetContentId })),
+      tooLarge: false,
+    });
+    const current = await service.get(input);
+    expect(current.status).toBe("ready");
+    expect(current.currentFingerprint).toBe(completed.story?.fingerprint);
+    expect(current.story).toEqual(completed.story);
+    expect(generate).toHaveBeenCalledTimes(1);
+
+    read.mockResolvedValue({ files: files("second"), tooLarge: false });
+    const changed = await service.get(input);
+    expect(changed.currentFingerprint).not.toBe(completed.story?.fingerprint);
+  },
+);

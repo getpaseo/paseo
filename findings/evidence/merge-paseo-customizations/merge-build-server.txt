@@ -1,0 +1,72 @@
+
+> paseo@0.8.0-beta.1 build:server
+> npm run build:server-deps && npm run build --workspace=@getpaseo/server && npm run build --workspace=@getpaseo/cli
+
+
+> paseo@0.8.0-beta.1 build:server-deps
+> npm run build:client && concurrently --kill-others-on-fail --names highlight,plugin,relay --prefix-colors yellow,green,blue "npm run build:highlight" "npm run build:plugin" "npm run build:relay"
+
+
+> paseo@0.8.0-beta.1 build:client
+> npm run build --workspace=@getpaseo/client
+
+
+> @getpaseo/client@0.8.0-beta.1 build
+> npm run build --workspace=@getpaseo/protocol && tsc -p tsconfig.json --incremental false
+
+
+> @getpaseo/protocol@0.8.0-beta.1 prebuild
+> npm run generate:validators
+
+
+> @getpaseo/protocol@0.8.0-beta.1 generate:validators
+> node scripts/generate-validation-aot.mjs
+
+generated src/generated/validation/ws-outbound.aot.ts from codegen/ws-outbound.compile.ts (WSOutboundMessageSchema)
+
+> @getpaseo/protocol@0.8.0-beta.1 build
+> tsc -p tsconfig.json --incremental false
+
+[relay] 
+[relay] > paseo@0.8.0-beta.1 build:relay
+[relay] > npm run build --workspace=@getpaseo/relay
+[relay] 
+[highlight] 
+[highlight] > paseo@0.8.0-beta.1 build:highlight
+[highlight] > npm run build --workspace=@getpaseo/highlight
+[highlight] 
+[plugin] 
+[plugin] > paseo@0.8.0-beta.1 build:plugin
+[plugin] > npm run build --workspace=@getpaseo/plugin
+[plugin] 
+[highlight] 
+[highlight] > @getpaseo/highlight@0.8.0-beta.1 build
+[highlight] > tsc -p tsconfig.json --incremental false
+[highlight] 
+[plugin] 
+[plugin] > @getpaseo/plugin@0.8.0-beta.1 build
+[plugin] > tsc -p tsconfig.json --incremental false
+[plugin] 
+[relay] 
+[relay] > @getpaseo/relay@0.8.0-beta.1 build
+[relay] > tsc -p tsconfig.json --incremental false
+[relay] 
+[relay] npm run build:relay exited with code 0
+[highlight] npm run build:highlight exited with code 0
+[plugin] npm run build:plugin exited with code 0
+
+> @getpaseo/server@0.8.0-beta.1 build
+> npm run build:lib && npm run build:scripts
+
+
+> @getpaseo/server@0.8.0-beta.1 build:lib
+> tsc -p tsconfig.server.json --incremental false && node scripts/build-opencode-bridge-plugin.mjs && node -e "const fs=require('node:fs'); fs.mkdirSync('dist/server/server/speech/providers/local/sherpa/assets',{recursive:true}); fs.copyFileSync('src/server/speech/providers/local/sherpa/assets/silero_vad.onnx','dist/server/server/speech/providers/local/sherpa/assets/silero_vad.onnx'); fs.cpSync('src/terminal/shell-integration','dist/server/terminal/shell-integration',{recursive:true}); fs.cpSync('src/terminal/shell-integration','dist/src/terminal/shell-integration',{recursive:true}); fs.copyFileSync('src/terminal/terminal-ts-loader.mjs','dist/server/terminal/terminal-ts-loader.mjs'); fs.rmSync('dist/server/skills',{recursive:true,force:true}); fs.cpSync('../../skills','dist/server/skills',{recursive:true});"
+
+
+> @getpaseo/server@0.8.0-beta.1 build:scripts
+> tsc -p tsconfig.scripts.json --incremental false && node -e "const fs=require('node:fs'); fs.mkdirSync('dist/scripts',{recursive:true}); fs.copyFileSync('scripts/mcp-stdio-socket-bridge-cli.mjs','dist/scripts/mcp-stdio-socket-bridge-cli.mjs');"
+
+
+> @getpaseo/cli@0.8.0-beta.1 build
+> tsc -p tsconfig.json --incremental false
+

@@ -356,3 +356,25 @@ describe("VoiceAssistantWebSocketServer notification payloads", () => {
     expect(pushNotifications.sent).toEqual([]);
   });
 });
+
+it("uses the current turn summary for completion notifications", async () => {
+  const { server, pushNotifications } = createServer({
+    getAgent: vi.fn(() => ({
+      workspaceId: WORKSPACE_ID,
+      pendingPermissions: new Map(),
+      responseMetadata: {
+        namingMode: "automatic",
+        lastTurn: { turnId: "turn-1", message: "Fixed the tab names." },
+      },
+    })),
+    getLastAssistantMessage: vi.fn(
+      async () => 'Long answer.\n<paseo-meta message="Fixed the tab names." />',
+    ),
+  });
+  await asInternals<WebSocketServerInternals>(server).broadcastAgentAttention({
+    agentId: "agent-1",
+    provider: "codex",
+    reason: "finished",
+  });
+  expect(pushNotifications.sent[0]?.body).toBe("Fixed the tab names.");
+});

@@ -31,6 +31,7 @@ import { StatusRing } from "@/components/status-ring";
 import { resolveSidebarWorkspacePrimaryLabel } from "@/components/sidebar/sidebar-workspace-title";
 import { TrailingActionScrim } from "@/components/ui/trailing-action-scrim";
 import { useWorkspaceLabelDefinitions } from "@/workspace-labels";
+import { SidebarMergedArchiveAction } from "@/components/sidebar/merged-archive-action.view";
 
 const foregroundMutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 const needsInputColorMapping = (theme: Theme) => ({
@@ -102,6 +103,8 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
   shortcutNumber = null,
   showShortcutBadge = false,
   reserveIdleStatusIndicatorSpace = true,
+  onArchive,
+  archiveStatus = "idle",
   children,
 }: {
   workspace: SidebarWorkspaceEntry;
@@ -119,6 +122,9 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
   showShortcutBadge?: boolean;
   /** Keep the empty leading slot when the workspace has no active status. */
   reserveIdleStatusIndicatorSpace?: boolean;
+  /** Drives the one-click archive the meta line offers once the change request is merged. */
+  onArchive?: () => void;
+  archiveStatus?: "idle" | "pending" | "success";
   children?: ReactNode;
 }) {
   const {
@@ -167,14 +173,25 @@ export const SidebarWorkspaceRowContent = memo(function SidebarWorkspaceRowConte
             </Text>
             <View style={sidebarWorkspaceRowStyles.rowRight}>{children}</View>
           </View>
-          <WorkspaceMetaRow
-            currentBranch={workspace.currentBranch}
-            projectName={leadingProjectName}
-            hostBadge={hostBadge ?? null}
-            prHint={workspace.prHint}
-            serviceSummary={serviceSummary}
-            labels={labels}
-          />
+          <View style={styles.workspaceMetaLine}>
+            {/* The meta row renders nothing when it has no items; the trailing action still
+                has to appear, so it sits beside the row rather than inside it. */}
+            <View style={styles.workspaceMetaLineContent}>
+              <WorkspaceMetaRow
+                currentBranch={workspace.currentBranch}
+                projectName={leadingProjectName}
+                hostBadge={hostBadge ?? null}
+                prHint={workspace.prHint}
+                serviceSummary={serviceSummary}
+                labels={labels}
+              />
+            </View>
+            <SidebarMergedArchiveAction
+              workspace={workspace}
+              onArchive={onArchive}
+              archiveStatus={archiveStatus}
+            />
+          </View>
         </View>
       </View>
       {showShortcutBadge && shortcutNumber !== null ? (
@@ -477,6 +494,16 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "flex-start",
     justifyContent: "space-between",
     gap: theme.spacing[2],
+  },
+  workspaceMetaLine: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: theme.spacing[2],
+  },
+  workspaceMetaLineContent: {
+    flex: 1,
+    minWidth: 0,
   },
   shortcutBadgeOverlay: {
     position: "absolute",

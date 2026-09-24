@@ -63,6 +63,16 @@ function createFakeMacBundle(options: { includeHelper: boolean }): {
 }
 
 describe("desktop packaging", () => {
+  it("unpacks TypeScript subprocess entrypoints and declares the bundled language server", () => {
+    const config = readFileSync(join(packageRoot, "electron-builder.yml"), "utf8");
+    const server = JSON.parse(
+      readFileSync(join(packageRoot, "..", "server", "package.json"), "utf8"),
+    );
+    expect(config).toContain('"**/node_modules/typescript-language-server/**/*"');
+    expect(config).toContain('"**/node_modules/typescript/**/*"');
+    expect(server.dependencies["typescript-language-server"]).toBeDefined();
+    expect(server.dependencies.typescript).toBeDefined();
+  });
   it("uses an Electron runtime whose Squirrel handoff explicitly wakes ShipIt", () => {
     const pkg = JSON.parse(readFileSync(join(packageRoot, "package.json"), "utf8")) as {
       devDependencies?: Record<string, string>;

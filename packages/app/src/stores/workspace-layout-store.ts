@@ -215,6 +215,8 @@ const WorkspaceTabTargetStorageSchema = z.discriminatedUnion("kind", [
     path: z.string(),
     lineStart: z.number().int().positive().optional(),
     lineEnd: z.number().int().positive().optional(),
+    columnStart: z.number().int().positive().optional(),
+    columnEnd: z.number().int().positive().optional(),
   }),
   z.strictObject({
     kind: z.literal("working_diff"),

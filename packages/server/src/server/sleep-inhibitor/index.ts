@@ -125,8 +125,6 @@ export function setupSleepInhibitor(options: SleepInhibitorOptions): SleepInhibi
     if (disposed) return;
 
     const agentCount = countBusyAgents();
-    // Read the flag at event time so toggling the setting applies without a
-    // daemon restart.
     const enabled = options.daemonConfigStore.get().preventSleepWhileAgentsRun !== false;
     const shouldHold = enabled && agentCount > 0;
 
@@ -179,8 +177,12 @@ export function setupSleepInhibitor(options: SleepInhibitorOptions): SleepInhibi
     },
     { replayState: false },
   );
-
   const unsubscribeConfig = options.daemonConfigStore.onChange(evaluate);
+  const unsubscribeBackend = backend.onChange(() => {
+    // Helper loss updates status; acquisition waits for an agent or config event.
+    if (!disposed) publishState(countBusyAgents());
+  });
+
   evaluate();
 
   return {
@@ -190,6 +192,7 @@ export function setupSleepInhibitor(options: SleepInhibitorOptions): SleepInhibi
       disposed = true;
       unsubscribe();
       unsubscribeConfig();
+      unsubscribeBackend();
       cancelPendingRelease();
       backend.release();
     },

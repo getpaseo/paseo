@@ -1,0 +1,11 @@
+
+ RUN  v4.1.6 /Users/michaelmusil/.paseo/worktrees/3pdqpnjh/slim-monkey/packages/server
+
+(node:29302) [DEP0205] DeprecationWarning: `module.register()` is deprecated. Use `module.registerHooks()` instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+
+ Test Files  1 passed (1)
+      Tests  1 passed (1)
+   Start at  10:00:24
+   Duration  10.73s (transform 7.75s, setup 25ms, import 9.92s, tests 693ms, environment 0ms)
+

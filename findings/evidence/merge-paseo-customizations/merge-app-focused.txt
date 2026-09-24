@@ -1,0 +1,9 @@
+
+ RUN  v4.1.7 /Users/michaelmusil/.paseo/worktrees/3pdqpnjh/slim-monkey/packages/app
+
+
+ Test Files  4 passed (4)
+      Tests  37 passed (37)
+   Start at  10:00:17
+   Duration  7.02s (transform 11.29s, setup 67ms, import 13.61s, tests 32ms, environment 1ms)
+

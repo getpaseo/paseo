@@ -1193,6 +1193,8 @@ function WorkspaceRowInner({
                 shortcutNumber={shortcutNumber}
                 showShortcutBadge={showShortcutBadge}
                 reserveIdleStatusIndicatorSpace={reserveIdleStatusIndicatorSpace}
+                onArchive={onArchive}
+                archiveStatus={archiveStatus}
               >
                 <WorkspaceRowRightGroup
                   workspace={workspace}

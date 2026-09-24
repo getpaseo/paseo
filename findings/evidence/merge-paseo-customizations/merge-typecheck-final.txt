@@ -1,0 +1,57 @@
+
+> paseo@0.8.0-beta.1 typecheck
+> npm run typecheck --workspaces --if-present
+
+
+> @getpaseo/expo-two-way-audio@0.8.0-beta.1 typecheck
+> tsgo --noEmit
+
+
+> @getpaseo/highlight@0.8.0-beta.1 typecheck
+> tsgo --noEmit
+
+
+> @getpaseo/plugin@0.8.0-beta.1 typecheck
+> tsgo --noEmit && tsgo -p tsconfig.examples.json --noEmit
+
+
+> @getpaseo/protocol@0.8.0-beta.1 pretypecheck
+> npm run generate:validators
+
+
+> @getpaseo/protocol@0.8.0-beta.1 generate:validators
+> node scripts/generate-validation-aot.mjs
+
+generated src/generated/validation/ws-outbound.aot.ts from codegen/ws-outbound.compile.ts (WSOutboundMessageSchema)
+
+> @getpaseo/protocol@0.8.0-beta.1 typecheck
+> tsgo --noEmit
+
+
+> @getpaseo/client@0.8.0-beta.1 typecheck
+> tsgo --noEmit
+
+
+> @getpaseo/server@0.8.0-beta.1 typecheck
+> tsgo -p tsconfig.server.typecheck.json --noEmit
+
+
+> @getpaseo/app@0.8.0-beta.1 typecheck
+> tsgo --noEmit
+
+
+> @getpaseo/relay@0.8.0-beta.1 typecheck
+> tsgo --noEmit
+
+
+> @getpaseo/website@0.8.0-beta.1 typecheck
+> tsgo --noEmit
+
+
+> @getpaseo/desktop@0.8.0-beta.1 typecheck
+> tsgo --noEmit -p tsconfig.json
+
+
+> @getpaseo/cli@0.8.0-beta.1 typecheck
+> tsgo --noEmit
+

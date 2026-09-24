@@ -2,6 +2,23 @@
 
 This ledger owns current finding status. [CR1](CR1.md) remains the historical review snapshot.
 
+## ROUND-3 — Integrate the latest paseo-customizations
+
+Authorized on 2026-09-24: commit and push the reduced fixes, merge latest paseo-customizations,
+resolve conflicts, and check readiness. Fixes committed and pushed as `ff66c741b`.
+Incoming parent: `160430f9452ab32c7b75b35d1ee5158d1f953c89`. No final merge into the target branch.
+
+[CR2](CR2.md) records the focused integration review. CR2-1 / reviewer M-SERVER-1 is
+**verified-closed** on the merge candidate: chapter fingerprints exclude live-file language
+eligibility metadata. The real-service reproduction failed before the fix, passes after it,
+and still detects actual hunk changes. Independent review confirmed one fingerprint owner and
+unchanged language safety checks. The correction is two product lines plus focused regression cases.
+
+All earlier reduced fixes are retained. Sleep runtime/tests now use the incoming implementation,
+which subsumes the approved config subscription fix and adds backend-state handling. Previously
+deferred items stay deferred; this integration does not expand their scope. Candidate hash and
+verification evidence are in `findings/evidence/merge-paseo-customizations/`.
+
 ## ROUND-2 — Implement the reduced personal-fork scope
 
 **Current authorization:** Michael requested only fixes that affect his usage or future maintenance,
