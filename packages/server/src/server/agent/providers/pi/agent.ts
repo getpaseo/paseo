@@ -2664,12 +2664,23 @@ export class PiRpcAgentClient implements AgentClient {
       });
       if (!runtimeSession) throw new Error("Pi catalog runtime did not start");
       const catalogSession = runtimeSession;
+      const piModels = await runProviderRefreshActivity(context, "get_available_models", () =>
+        catalogSession.getAvailableModels(null),
+      );
+      // A fresh Pi session starts on the model Pi resolves from its own settings.
+      const { model: configuredModel } = await runProviderRefreshActivity(
+        context,
+        "get_state",
+        () => catalogSession.getState(),
+      );
       const models = transformPiModels(
-        (
-          await runProviderRefreshActivity(context, "get_available_models", () =>
-            catalogSession.getAvailableModels(null),
-          )
-        ).map((model) => mapPiModel(model, PI_PROVIDER)),
+        piModels.map((model) => {
+          const mapped = mapPiModel(model, PI_PROVIDER);
+          const isConfigured =
+            model.provider === configuredModel?.provider && model.id === configuredModel?.id;
+          if (isConfigured) mapped.isDefault = true;
+          return mapped;
+        }),
       );
       return { models, modes: [] };
     } finally {

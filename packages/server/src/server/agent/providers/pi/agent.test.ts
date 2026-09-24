@@ -2505,6 +2505,26 @@ describe("PiRpcAgentClient", () => {
     expect(pi.recordedLaunches[0]).toMatchObject({ cwd: "/workspace/with-extension" });
   });
 
+  test("marks the model Pi resolves from its own settings as the catalog default", async () => {
+    const pi = new FakePi();
+    const unconfigured = { provider: "openai", id: "gpt-4", name: "GPT-4", reasoning: false };
+    const configured = { provider: "zai", id: "glm-5.3", name: "GLM-5.3", reasoning: true };
+    pi.queueSessionSetup((session) => {
+      session.models = [unconfigured, configured];
+      session.state = { ...session.state, model: configured };
+    });
+
+    const catalog = await createClient(pi).fetchCatalog({
+      scope: "workspace",
+      cwd: "/workspace/project",
+      force: false,
+    });
+
+    expect(catalog.models.filter((model) => model.isDefault).map((model) => model.id)).toEqual([
+      "zai/glm-5.3",
+    ]);
+  });
+
   test("honors per-model Pi thinking maps and clamps the catalog default upward", async () => {
     const pi = new FakePi();
     pi.queueSessionSetup((session) => {
