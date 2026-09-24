@@ -1,0 +1,9 @@
+
+ RUN  v4.1.7 /Users/michaelmusil/.paseo/worktrees/3pdqpnjh/slim-monkey/packages/client
+
+
+ Test Files  1 passed (1)
+      Tests  17 passed (17)
+   Start at  10:10:39
+   Duration  1.90s (transform 1.53s, setup 0ms, import 1.75s, tests 89ms, environment 0ms)
+

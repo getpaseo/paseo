@@ -7,6 +7,13 @@ This ledger owns current finding status. [CR1](CR1.md) remains the historical re
 Authorized on 2026-09-24: commit and push the reduced fixes, merge latest paseo-customizations,
 resolve conflicts, and check readiness. Fixes committed and pushed as `ff66c741b`.
 Incoming parent: `160430f9452ab32c7b75b35d1ee5158d1f953c89`. No final merge into the target branch.
+Merge committed and pushed as `d7c07411e`. Local merge validation passed 69 focused cases,
+the server dependency build, typecheck, lint, and formatting. GitHub reports PR #2 mergeable.
+
+CI run [35973248754](https://github.com/infi-pc/paseo/actions/runs/35973248754) found an outdated
+client test expectation for the already-defaulted `preventSleepWhileAgentsRun: true` field.
+Updated both exact config response expectations; no product behavior changed. The targeted client
+file passes 17 cases. Broader CI results remain pending while the remaining jobs run.
 
 [CR2](CR2.md) records the focused integration review. CR2-1 / reviewer M-SERVER-1 is
 **verified-closed** on the merge candidate: chapter fingerprints exclude live-file language
