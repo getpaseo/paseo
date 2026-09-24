@@ -1445,7 +1445,7 @@ export class OpenCodeAgentClient implements AgentClient {
     options?: AgentCreateSessionOptions,
   ): Promise<AgentSession> {
     const openCodeConfig = this.assertConfig(config);
-    const connectServer = () => this.connectServer(openCodeConfig, launchContext);
+    const connectServer = this.connectServer.bind(this, openCodeConfig, launchContext);
     const connection = await connectServer();
     const { client } = connection;
 
@@ -1526,7 +1526,7 @@ export class OpenCodeAgentClient implements AgentClient {
     const registeredAcquisition = registeredServerUrl
       ? this.serverManager.acquireExisting(registeredServerUrl)
       : null;
-    const connectServer = () => this.connectServer(openCodeConfig, launchContext);
+    const connectServer = this.connectServer.bind(this, openCodeConfig, launchContext);
     const connection = registeredAcquisition
       ? this.toServerConnection(registeredAcquisition, openCodeConfig.cwd)
       : await connectServer();
@@ -3500,6 +3500,14 @@ class OpenCodeAgentSession implements AgentSession {
       return;
     }
     this.unsubscribeEvents?.();
+    this.unsubscribeEvents = null;
+    // Let the exited server's queued events, including its exit, settle while no turn is
+    // running, so none of them can fail a turn started on the new server.
+    await this.ingress;
+    if (this.closed) {
+      await next.release();
+      return;
+    }
     this.server = next;
     this.serverExited = false;
     this.recoveryAbortController = new AbortController();
