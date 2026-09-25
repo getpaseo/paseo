@@ -4,6 +4,7 @@ import {
   StructuredAgentResponseError,
 } from "@getpaseo/server/agent-response";
 import type { AgentSnapshotPayload } from "@getpaseo/protocol/messages";
+import { DaemonConnectionError } from "@getpaseo/client/internal/daemon-client";
 import { connectToDaemon } from "../../utils/client.js";
 import type {
   CommandOptions,
@@ -759,6 +760,13 @@ export async function resolveRunCallerAgentId(
   if (!agentId) {
     return undefined;
   }
-  const caller = await client.fetchAgent({ agentId }).catch(() => null);
+  const caller = await client.fetchAgent({ agentId }).catch((error: unknown) => {
+    // A daemon without this agent answers with an error. A lost or timed-out
+    // connection is not an answer, so it must not drop the caller.
+    if (error instanceof DaemonConnectionError) {
+      throw error;
+    }
+    return null;
+  });
   return caller?.agent.id === agentId ? agentId : undefined;
 }
