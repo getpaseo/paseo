@@ -1,13 +1,11 @@
+import { randomUUID } from "node:crypto";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import type { Logger } from "pino";
 
 import { resolvePaseoHome } from "../../../paseo-home.js";
 import type { AgentModelDefinition } from "../../agent-sdk-types.js";
-import {
-  getClaudeCustomModelThinkingOptions,
-  normalizeClaudeRuntimeModelId,
-} from "./model-manifest.js";
+import { getClaudeCustomModelThinkingOptions, isClaudeManifestModelId } from "./model-manifest.js";
 
 const MODELS_DEV_API_URL = "https://models.dev/api.json";
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
@@ -55,14 +53,19 @@ export async function fetchDiscoveredClaudeModels(
     return toModelDefinitions(cached.models);
   }
 
+  let models: unknown;
   try {
-    const models = await fetchAnthropicModels(options);
-    await writeDiscoveryCache(cacheFile, { fetchedAt: now, models });
-    return toModelDefinitions(models);
+    models = await fetchAnthropicModels(options);
   } catch (error) {
     logger.warn({ err: error }, "Claude model discovery failed; using cached or manifest models");
     return cached ? toModelDefinitions(cached.models) : [];
   }
+  try {
+    await writeDiscoveryCache(cacheFile, { fetchedAt: now, models });
+  } catch (error) {
+    logger.debug({ err: error, cacheFile }, "Could not persist the Claude model discovery cache");
+  }
+  return toModelDefinitions(models);
 }
 
 async function fetchAnthropicModels(options: ClaudeModelDiscoveryOptions): Promise<unknown> {
@@ -91,7 +94,10 @@ function toModelDefinitions(models: unknown): AgentModelDefinition[] {
   }
   const definitions: AgentModelDefinition[] = [];
   for (const [id, entry] of Object.entries(models)) {
-    if (!CLAUDE_MODEL_ALIAS_PATTERN.test(id) || normalizeClaudeRuntimeModelId(id) !== null) {
+    // Exact-id match only: fuzzy normalization maps a new minor (claude-opus-5-6)
+    // onto a known major (claude-opus-5) and would drop the release discovery
+    // exists to surface. Gated manifest entries stay gated either way.
+    if (!CLAUDE_MODEL_ALIAS_PATTERN.test(id) || isClaudeManifestModelId(id)) {
       continue;
     }
     const record = isRecord(entry) ? entry : {};
@@ -131,7 +137,7 @@ async function readDiscoveryCache(cacheFile: string): Promise<DiscoveryCache | n
 
 async function writeDiscoveryCache(cacheFile: string, cache: DiscoveryCache): Promise<void> {
   await fs.mkdir(path.dirname(cacheFile), { recursive: true });
-  const temporary = `${cacheFile}.${process.pid}.tmp`;
+  const temporary = `${cacheFile}.${process.pid}.${randomUUID()}.tmp`;
   await fs.writeFile(temporary, JSON.stringify(cache), { mode: 0o600 });
   await fs.rename(temporary, cacheFile);
 }

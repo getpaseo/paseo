@@ -25,8 +25,13 @@ const API_BODY = {
         limit: { context: 500_000, output: 64_000 },
       },
       "claude-haiku-6": { id: "claude-haiku-6" },
-      // Already in the compiled manifest: must not be duplicated.
+      // A new minor under a known major: fuzzy normalization maps it onto
+      // claude-opus-5, but it must still be offered.
+      "claude-opus-5-6": { id: "claude-opus-5-6", name: "Claude Opus 5.6" },
+      // Already in the compiled manifest: must not be duplicated. Version-gated
+      // entries (Opus 5.5 needs Claude Code >= 2.1.280) stay gated.
       "claude-opus-4-8": { id: "claude-opus-4-8", name: "Claude Opus 4.8" },
+      "claude-opus-5-5": { id: "claude-opus-5-5", name: "Claude Opus 5.5" },
       // Dated variants and non-Claude ids never become picker rows.
       "claude-opus-6-20270101": { id: "claude-opus-6-20270101", name: "Claude Opus 6 dated" },
       "some-other-model": { id: "some-other-model" },
@@ -77,7 +82,11 @@ describe("fetchDiscoveredClaudeModels", () => {
       cacheFile,
     });
 
-    expect(models.map((model) => model.id)).toEqual(["claude-opus-6", "claude-haiku-6"]);
+    expect(models.map((model) => model.id)).toEqual([
+      "claude-opus-6",
+      "claude-haiku-6",
+      "claude-opus-5-6",
+    ]);
     const opus = models[0];
     expect(opus.provider).toBe("claude");
     expect(opus.label).toBe("Opus 6");
@@ -119,6 +128,24 @@ describe("fetchDiscoveredClaudeModels", () => {
     expect(models).toEqual([]);
   });
 
+  it("still serves fetched models when the cache cannot be written", async () => {
+    const stub = await stubModelsDev(200, API_BODY);
+    // A regular file as the cache's parent directory makes the write fail.
+    const blocker = await tempCacheFile({});
+    const cacheFile = path.join(blocker, "claude-models.json");
+
+    const models = await fetchDiscoveredClaudeModels(createTestLogger(), {
+      apiUrl: stub.apiUrl,
+      cacheFile,
+    });
+
+    expect(models.map((model) => model.id)).toEqual([
+      "claude-opus-6",
+      "claude-haiku-6",
+      "claude-opus-5-6",
+    ]);
+  });
+
   it("serves a fresh cache without touching the network", async () => {
     const cacheFile = await tempCacheFile({
       fetchedAt: Date.now(),
@@ -130,7 +157,11 @@ describe("fetchDiscoveredClaudeModels", () => {
       cacheFile,
     });
 
-    expect(models.map((model) => model.id)).toEqual(["claude-opus-6", "claude-haiku-6"]);
+    expect(models.map((model) => model.id)).toEqual([
+      "claude-opus-6",
+      "claude-haiku-6",
+      "claude-opus-5-6",
+    ]);
   });
 
   it("falls back to a stale cache when the refresh fails", async () => {
@@ -145,7 +176,11 @@ describe("fetchDiscoveredClaudeModels", () => {
       cacheFile,
     });
 
-    expect(models.map((model) => model.id)).toEqual(["claude-opus-6", "claude-haiku-6"]);
+    expect(models.map((model) => model.id)).toEqual([
+      "claude-opus-6",
+      "claude-haiku-6",
+      "claude-opus-5-6",
+    ]);
     expect(stub.requestCount()).toBe(1);
   });
 
@@ -161,7 +196,11 @@ describe("fetchDiscoveredClaudeModels", () => {
       cacheFile,
     });
 
-    expect(models.map((model) => model.id)).toEqual(["claude-opus-6", "claude-haiku-6"]);
+    expect(models.map((model) => model.id)).toEqual([
+      "claude-opus-6",
+      "claude-haiku-6",
+      "claude-opus-5-6",
+    ]);
     expect(stub.requestCount()).toBe(1);
   });
 
