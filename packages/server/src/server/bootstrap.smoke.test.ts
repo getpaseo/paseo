@@ -5,7 +5,7 @@ import path from "node:path";
 import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import pino from "pino";
 import { afterEach, describe, expect, test, vi } from "vitest";
-import { WebSocket } from "ws";
+import { WebSocket, WebSocketServer } from "ws";
 
 import { createPaseoDaemon, parseListenString, type PaseoDaemonConfig } from "./bootstrap.js";
 import { loadConfig } from "./config.js";
@@ -48,6 +48,76 @@ interface BlockedDaemonShutdown {
 type WebSocketProbeResult =
   | { status: "connected" }
   | { status: "rejected"; statusCode: number | null };
+
+function attachEchoHandler(ws: WebSocket, value: string): void {
+  ws.on("message", (message) => ws.send(`${value}:${message.toString()}`));
+}
+
+function createEchoUpstream(value: string): {
+  server: http.Server;
+  wss: WebSocketServer;
+} {
+  const server = http.createServer();
+  const wss = new WebSocketServer({ noServer: true });
+  server.on("upgrade", (request, socket, head) => {
+    wss.handleUpgrade(request, socket, head, (ws) => attachEchoHandler(ws, value));
+  });
+  return { server, wss };
+}
+
+function waitForWebSocketOpen(ws: WebSocket): Promise<void> {
+  const { promise, resolve, reject } = Promise.withResolvers<void>();
+  ws.once("open", resolve);
+  ws.once("error", reject);
+  return promise;
+}
+
+function waitForWebSocketMessage(ws: WebSocket): Promise<string> {
+  const { promise, resolve, reject } = Promise.withResolvers<string>();
+  ws.once("message", (message) => resolve(message.toString()));
+  ws.once("error", reject);
+  return promise;
+}
+
+async function probeServiceWebSocket(
+  connect: (host: string) => WebSocket,
+  service: { project: string; value: string },
+  index: number,
+): Promise<void> {
+  const ws = connect(`web--${service.project}.localhost`);
+  ws.on("error", () => undefined);
+  try {
+    await waitForWebSocketOpen(ws);
+    const response = waitForWebSocketMessage(ws);
+    ws.send(`probe-${index}`);
+    await expect(response).resolves.toBe(`${service.value}:probe-${index}`);
+  } finally {
+    ws.close();
+  }
+}
+
+function waitForWebSocketClose(ws: WebSocket): Promise<number> {
+  const { promise, resolve, reject } = Promise.withResolvers<number>();
+  ws.once("close", (code) => resolve(code));
+  ws.once("error", reject);
+  return promise;
+}
+
+function waitForWebSocketHttpStatus(ws: WebSocket, openError: string): Promise<number> {
+  const { promise, resolve, reject } = Promise.withResolvers<number>();
+  ws.once("unexpected-response", (_request, response) => resolve(response.statusCode));
+  ws.once("open", () => reject(new Error(openError)));
+  ws.once("error", reject);
+  return promise;
+}
+
+function waitForWebSocketRejection(ws: WebSocket, openError: string): Promise<number> {
+  const { promise, resolve, reject } = Promise.withResolvers<number>();
+  ws.once("unexpected-response", (_request, response) => resolve(response.statusCode));
+  ws.once("open", () => reject(new Error(openError)));
+  ws.once("error", () => resolve(0));
+  return promise;
+}
 
 describe("paseo daemon bootstrap", () => {
   afterEach(() => {
@@ -484,7 +554,7 @@ describe("paseo daemon bootstrap", () => {
     }
   });
 
-  test("daemon websocket still upgrades when service proxy upgrade handler is mounted", async () => {
+  test("daemon WebSocket upgrades through the primary listener", async () => {
     const daemonHandle = await createTestPaseoDaemon();
     const ws = new WebSocket(`ws://127.0.0.1:${daemonHandle.port}/ws`);
     try {
@@ -496,6 +566,74 @@ describe("paseo daemon bootstrap", () => {
     } finally {
       ws.close();
       await daemonHandle.close();
+    }
+  });
+
+  test("routes primary-listener service WebSockets by host before daemon /ws", async () => {
+    const services = [
+      { name: "one", project: "first", value: "first-service" },
+      { name: "two", project: "second", value: "second-service" },
+    ];
+    const upstreams = services.map(({ value }) => createEchoUpstream(value));
+    await Promise.all(
+      upstreams.map(
+        ({ server }) => new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve)),
+      ),
+    );
+    const daemonHandle = await createTestPaseoDaemon({
+      auth: { password: hashDaemonPassword("secret") },
+    });
+    const connect = (host: string, protocols?: string[], headers: Record<string, string> = {}) =>
+      new WebSocket(`ws://127.0.0.1:${daemonHandle.port}/ws`, protocols, {
+        headers: { Host: `${host}:${daemonHandle.port}`, ...headers },
+      });
+    try {
+      services.forEach(({ name, project }, index) => {
+        const address = upstreams[index].server.address();
+        if (!address || typeof address === "string") {
+          throw new Error("Expected upstream TCP address");
+        }
+        daemonHandle.daemon.serviceProxy.registerWorkspaceService({
+          workspaceId: `workspace-${name}`,
+          projectSlug: project,
+          branchName: "main",
+          scriptName: "web",
+          port: address.port,
+        });
+      });
+      await Promise.all(
+        services.map((service, index) => probeServiceWebSocket(connect, service, index)),
+      );
+
+      const daemonSocket = connect("127.0.0.1", ["paseo.bearer.secret"]);
+      try {
+        await waitForWebSocketOpen(daemonSocket);
+        expect(daemonSocket.readyState).toBe(WebSocket.OPEN);
+      } finally {
+        daemonSocket.close();
+      }
+
+      const unauthorizedSocket = connect("127.0.0.1");
+      await expect(waitForWebSocketClose(unauthorizedSocket)).resolves.toBe(4401);
+
+      const wrongOriginSocket = connect("127.0.0.1", ["paseo.bearer.secret"], {
+        Origin: "https://evil.example",
+      });
+      await expect(
+        waitForWebSocketHttpStatus(wrongOriginSocket, "Disallowed origin upgraded"),
+      ).resolves.toBe(403);
+
+      const rejectedSocket = connect("missing--repo.localhost");
+      await expect(
+        waitForWebSocketRejection(rejectedSocket, "Unknown service host upgraded"),
+      ).resolves.toBe(404);
+    } finally {
+      await daemonHandle.close();
+      for (const { server, wss } of upstreams) {
+        for (const client of wss.clients) client.terminate();
+        server.closeAllConnections();
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+      }
     }
   });
 

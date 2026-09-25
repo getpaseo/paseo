@@ -79,6 +79,16 @@ For generated URLs to be reachable, you need wildcard DNS pointing to the machin
 
 Public service URLs expose the workspace service itself. Daemon password authentication protects daemon APIs; it does not protect proxied dev services.
 
+For Paseo 0.9.2 deployments, use the separate service-only listener when a workspace
+service needs WebSocket upgrades: the primary daemon listener has competing upgrade
+handlers and can return 400 for an otherwise healthy service socket. The standalone
+listener routes upgrades to workspace services without exposing daemon `/ws` or
+`/api/*` routes. Keep it bound to loopback behind a private, access-controlled TLS
+edge, and forward `Host`, `Upgrade`, and `Connection` unchanged. Verify the actual
+application WebSocket path through that edge; HTTP page loads alone do not prove
+live updates. A future release containing the primary-listener fix must be verified
+separately before routing service upgrades through the daemon listener.
+
 If the same reverse proxy serves the daemon web UI over HTTPS, it must also set `X-Forwarded-Proto` so the web UI can auto-connect with `wss://`. The daemon trusts forwarded headers from loopback proxies by default. If your proxy reaches the daemon from another address, configure the proxy ranges explicitly:
 
 ```json

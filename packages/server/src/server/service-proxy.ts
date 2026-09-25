@@ -827,6 +827,7 @@ export interface ServiceProxySubsystem {
     publicBaseUrl?: string | null;
   }): ServiceProxyWorkspaceScriptProjection;
   middleware(): RequestHandler;
+  dispatchUpgrade(req: IncomingMessage, socket: net.Socket, head: Buffer): boolean;
   upgradeHandler(options: {
     passthroughUnknown: boolean;
   }): (req: IncomingMessage, socket: net.Socket, head: Buffer) => void;
@@ -919,6 +920,20 @@ class NodeServiceProxySubsystem implements ServiceProxySubsystem {
 
   middleware(): RequestHandler {
     return createScriptProxyMiddleware({ routeStore: this.routes, logger: this.logger });
+  }
+
+  dispatchUpgrade(req: IncomingMessage, socket: net.Socket, head: Buffer): boolean {
+    const classification = this.routes.classifyHost(req.headers.host);
+    if (classification.type === "registered-service") {
+      proxyUpgradeRequest({ req, socket, head, route: classification.route, logger: this.logger });
+      return true;
+    }
+    if (classification.type === "known-service-miss") {
+      socket.write("HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n");
+      socket.destroy();
+      return true;
+    }
+    return false;
   }
 
   upgradeHandler(options: {

@@ -4,6 +4,7 @@ import { CreationService } from "./creation/index.js";
 import { MessageReceipts } from "./message-receipts/index.js";
 import { WebSocket, WebSocketServer } from "ws";
 import type { IncomingMessage, Server as HTTPServer } from "http";
+import type { Socket } from "node:net";
 import { join } from "path";
 import { hostname as getHostname } from "node:os";
 import { randomUUID } from "node:crypto";
@@ -610,7 +611,7 @@ export class VoiceAssistantWebSocketServer {
   }
 
   constructor(
-    server: HTTPServer,
+    _server: HTTPServer,
     logger: pino.Logger,
     serverId: string,
     agentManager: AgentManager,
@@ -751,7 +752,7 @@ export class VoiceAssistantWebSocketServer {
       logger: this.logger,
     });
 
-    this.wss = this.createWebSocketServer(server, wsConfig, auth);
+    this.wss = this.createWebSocketServer(wsConfig, auth);
     this.startRuntimeMetricsInterval();
     this.startApplicationSocketLeaseInterval();
 
@@ -809,16 +810,24 @@ export class VoiceAssistantWebSocketServer {
     this.serviceProxyPublicBaseUrl = params.serviceProxyPublicBaseUrl ?? null;
     this.resolveScriptHealth = params.resolveScriptHealth ?? null;
   }
+  handleUpgrade(req: IncomingMessage, socket: Socket, head: Buffer): void {
+    if (req.url?.split("?")[0] !== "/ws") {
+      socket.write("HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n");
+      socket.destroy();
+      return;
+    }
+    this.wss.handleUpgrade(req, socket, head, (ws) => {
+      this.wss.emit("connection", ws, req);
+    });
+  }
 
   private createWebSocketServer(
-    server: HTTPServer,
     wsConfig: WebSocketServerConfig,
     auth: DaemonAuthConfig | undefined,
   ): WebSocketServer {
     const password = auth?.password;
     const wss = new WebSocketServer({
-      server,
-      path: "/ws",
+      noServer: true,
       handleProtocols: (protocols) => selectWebSocketProtocol(protocols, password),
       verifyClient: ({ req }, callback) => {
         this.verifyWsUpgrade(
