@@ -71,6 +71,10 @@ function piPrompt(input: { promptToken: string; doneToken: string }): string {
   ].join(" ");
 }
 
+function turn(token: string): { promptToken: string; doneToken: string } {
+  return { promptToken: token, doneToken: `PI_${token}_DONE` };
+}
+
 function roleItems(items: AgentTimelineItem[], role: "user_message" | "assistant_message") {
   return items.filter((item) => item.type === role);
 }
@@ -207,10 +211,6 @@ describe("daemon E2E (real pi) - rewind", () => {
 
   test("rewinds a replayed row to the selected message after an earlier rewind branched the session", async () => {
     const session = await launchPiRewindSession(harness, "pi-rewind-branched-replay-real");
-    const turn = (token: string) => ({
-      promptToken: token,
-      doneToken: `PI_${token}_DONE`,
-    });
 
     try {
       await askPi(harness, session, turn("ONE"));

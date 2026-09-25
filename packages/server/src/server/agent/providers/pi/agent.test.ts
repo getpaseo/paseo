@@ -120,6 +120,37 @@ function readUtf8File(pathname: string): string {
 
 type PaseoExtensionListener = (event: unknown, context?: unknown) => unknown;
 
+interface PiSessionEntry {
+  type: "message";
+  id: string;
+  parentId: string | null;
+  message: { role: string; content: unknown };
+}
+
+function piUserEntry(id: string, parentId: string | null, content: string): PiSessionEntry {
+  return { type: "message", id, parentId, message: { role: "user", content } };
+}
+
+function piAssistantEntry(id: string, parentId: string): PiSessionEntry {
+  return { type: "message", id, parentId, message: { role: "assistant", content: [] } };
+}
+
+// Pi's context path: the entries from the root to the leaf.
+function piBranchTo(entries: PiSessionEntry[], leafId: string): PiSessionEntry[] {
+  const byId = new Map(entries.map((entry) => [entry.id, entry]));
+  const branch: PiSessionEntry[] = [];
+  for (let entry = byId.get(leafId); entry; entry = byId.get(entry.parentId ?? "")) {
+    branch.unshift(entry);
+  }
+  return branch;
+}
+
+function parseEntryCapture(notification: string): unknown {
+  const prefix = "PASEO_ENTRY_CAPTURE ";
+  expect(notification.startsWith(prefix)).toBe(true);
+  return JSON.parse(notification.slice(prefix.length));
+}
+
 async function loadPaseoExtensionListeners(
   extensionPath: string,
 ): Promise<Map<string, PaseoExtensionListener>> {
@@ -1516,55 +1547,34 @@ describe("PiRpcAgentSession", () => {
     const session = await createClient(pi).createSession(createConfig());
     onTestFinished(() => session.close());
     const listeners = await loadPaseoExtensionListeners(pi.recordedLaunches[0]!.extensionPaths[0]!);
-    const userEntry = (id: string, parentId: string | null, content: string) => ({
-      type: "message",
-      id,
-      parentId,
-      message: { role: "user", content },
-    });
-    const assistantEntry = (id: string, parentId: string) => ({
-      type: "message",
-      id,
-      parentId,
-      message: { role: "assistant", content: [] },
-    });
     // "abandoned" was rewound; "two" was sent from the same parent afterwards.
     const entries = [
-      userEntry("one", null, "first"),
-      assistantEntry("one-reply", "one"),
-      userEntry("abandoned", "one-reply", "rewound away"),
-      assistantEntry("abandoned-reply", "abandoned"),
-      userEntry("two", "one-reply", "second"),
-      assistantEntry("two-reply", "two"),
+      piUserEntry("one", null, "first"),
+      piAssistantEntry("one-reply", "one"),
+      piUserEntry("abandoned", "one-reply", "rewound away"),
+      piAssistantEntry("abandoned-reply", "abandoned"),
+      piUserEntry("two", "one-reply", "second"),
+      piAssistantEntry("two-reply", "two"),
     ];
-    const byId = new Map(entries.map((entry) => [entry.id, entry]));
-    const buildBranchFrom = (leafId: string) => {
-      const branch = [];
-      for (let entry = byId.get(leafId); entry; entry = byId.get(entry.parentId ?? "")) {
-        branch.unshift(entry);
-      }
-      return branch;
-    };
     const notifications: string[] = [];
     const context = {
       sessionManager: {
         getEntries: () => entries,
-        buildContextEntries: () => buildBranchFrom("two-reply"),
+        buildContextEntries: () => piBranchTo(entries, "two-reply"),
       },
       ui: { notify: (message: string) => notifications.push(message) },
     };
 
     await listeners.get("session_start")?.({}, context);
 
-    expect(notifications).toEqual([
-      "PASEO_ENTRY_CAPTURE " +
-        JSON.stringify({
-          reason: "session_start",
-          entries: [
-            { id: "one", parentId: null, text: "first" },
-            { id: "two", parentId: "one-reply", text: "second" },
-          ],
-        }),
+    expect(notifications.map(parseEntryCapture)).toEqual([
+      {
+        reason: "session_start",
+        entries: [
+          { id: "one", parentId: null, text: "first" },
+          { id: "two", parentId: "one-reply", text: "second" },
+        ],
+      },
     ]);
   });
 
