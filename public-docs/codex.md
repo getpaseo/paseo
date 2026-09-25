@@ -52,7 +52,7 @@ Paseo uses this installation and its existing authentication when you start a Co
 
 ## Release idle Codex backends
 
-Paseo releases an eligible persisted Codex backend after 15 minutes of inactivity by default.
+Paseo releases an eligible persisted Codex backend after one hour of inactivity by default.
 No configuration is needed. To change the timeout or disable eviction, add this to
 `$PASEO_HOME/config.json`:
 
@@ -67,9 +67,10 @@ No configuration is needed. To change the timeout or disable eviction, add this 
 `0` disables eviction. A positive value sets a custom timeout in milliseconds (minimum 60,000).
 The agent remains in Paseo as `closed`, not archived. Opening or prompting it later resumes the same
 agent ID and Codex thread; the next response has a cold-start delay. Accessing an idle agent resets
-its timeout. A daemon restart is required after changing this setting. A Codex backend can own
-background commands even while the agent shows `idle`. Eviction stops those commands, so set the
-timeout to `0` if they must continue between turns.
+its timeout. A daemon restart is required after changing this setting. Paseo checks for Codex-tracked
+background terminals before eviction and keeps the backend open while any are running or if the
+check fails. Detached commands that Codex does not track may still be interrupted; set the timeout
+to `0` if those must continue between turns.
 
 ## Codex is missing in Paseo
 

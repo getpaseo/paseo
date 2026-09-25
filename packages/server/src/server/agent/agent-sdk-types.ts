@@ -666,6 +666,8 @@ export interface AgentSession {
   readonly capabilities: AgentCapabilityFlags;
   /** The provider can reopen this persisted session after releasing its idle runtime. */
   readonly idleBackendEvictionEligible?: boolean;
+  /** Return false while provider-owned background work needs this runtime; reject if it cannot be checked. */
+  canEvictIdleBackend?(): Promise<boolean>;
   readonly features?: AgentFeature[];
   run(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<AgentRunResult>;
   startTurn(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<{ turnId: string }>;

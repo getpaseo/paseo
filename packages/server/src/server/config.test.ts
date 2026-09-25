@@ -40,11 +40,11 @@ describe("server config", () => {
     expect(config.providerCatalogRefreshTimeoutMs).toBe(180_000);
   });
 
-  test("defaults to a 15-minute Codex idle backend timeout", async () => {
+  test("defaults to a one-hour Codex idle backend timeout", async () => {
     const paseoHome = await mkdtemp(path.join(os.tmpdir(), "paseo-config-codex-idle-default-"));
     roots.push(paseoHome);
 
-    expect(loadConfig(paseoHome, { env: {} }).codexIdleBackendTimeoutMs).toBe(900_000);
+    expect(loadConfig(paseoHome, { env: {} }).codexIdleBackendTimeoutMs).toBe(3_600_000);
   });
 
   test("loads a custom Codex idle backend timeout", async () => {

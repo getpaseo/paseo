@@ -39,7 +39,7 @@ const DEFAULT_PORT = 6767;
 const DEFAULT_RELAY_ENDPOINT = "relay.paseo.sh:443";
 const DEFAULT_APP_BASE_URL = "https://app.paseo.sh";
 const DEFAULT_TRUSTED_PROXIES = ["loopback"];
-const DEFAULT_CODEX_IDLE_BACKEND_TIMEOUT_MS = 15 * 60_000;
+const DEFAULT_CODEX_IDLE_BACKEND_TIMEOUT_MS = 60 * 60_000;
 
 interface ResolveBundledWebUiDistDirInput {
   moduleUrl?: string | URL;

@@ -185,7 +185,7 @@ function createProviderWithFakeAppServer(appServer: FakeCodexAppServer): CodexAp
 }
 
 test("only durable interactive Codex sessions allow idle backend eviction", () => {
-  const makeSession = (ephemeral: boolean, purpose: "interactive" | "history") =>
+  const makeSession = (options: { ephemeral: boolean; purpose: "interactive" | "history" }) =>
     new CodexAppServerAgentSession({
       config: createConfig(),
       resumeHandle: null,
@@ -194,15 +194,75 @@ test("only durable interactive Codex sessions allow idle backend eviction", () =
         throw new Error("Test session cannot spawn Codex app-server");
       },
       deps: {},
-      ephemeral: ephemeral,
+      ephemeral: options.ephemeral,
       goalsEnabled: false,
       autoReviewEnabled: false,
-      initialResumePurpose: purpose,
+      initialResumePurpose: options.purpose,
     });
 
-  expect(makeSession(false, "interactive").idleBackendEvictionEligible).toBe(true);
-  expect(makeSession(true, "interactive").idleBackendEvictionEligible).toBe(false);
-  expect(makeSession(false, "history").idleBackendEvictionEligible).toBe(false);
+  expect(
+    makeSession({ ephemeral: false, purpose: "interactive" }).idleBackendEvictionEligible,
+  ).toBe(true);
+  expect(makeSession({ ephemeral: true, purpose: "interactive" }).idleBackendEvictionEligible).toBe(
+    false,
+  );
+  expect(makeSession({ ephemeral: false, purpose: "history" }).idleBackendEvictionEligible).toBe(
+    false,
+  );
+});
+
+test("idle eviction checks background terminals in every loaded Codex thread", async () => {
+  let childTerminalRunning = true;
+  const appServer = createFakeCodexAppServer({
+    "thread/loaded/list": () => ({ data: ["test-thread", "child-thread"] }),
+    "thread/backgroundTerminals/list": (params) => ({
+      data:
+        (params as { threadId: string }).threadId === "child-thread" && childTerminalRunning
+          ? [{ processId: "background-process" }]
+          : [],
+      nextCursor: null,
+    }),
+  });
+  const session = createSession();
+  session.client = new CodexAppServerClient(appServer.child, createTestLogger());
+
+  try {
+    expect(await session.canEvictIdleBackend?.()).toBe(false);
+    expect(
+      appServer
+        .requests()
+        .filter((request) => request.method === "thread/backgroundTerminals/list")
+        .map((request) => request.params),
+    ).toEqual([
+      { threadId: "test-thread", limit: 1 },
+      { threadId: "child-thread", limit: 1 },
+    ]);
+
+    childTerminalRunning = false;
+    expect(await session.canEvictIdleBackend?.()).toBe(true);
+    appServer.assertNoErrors();
+  } finally {
+    await session.close();
+  }
+});
+
+test("idle eviction fails closed when Codex cannot report background terminals", async () => {
+  const appServer = createFakeCodexAppServer({
+    "thread/loaded/list": () => ({ data: ["test-thread"] }),
+    "thread/backgroundTerminals/list": () =>
+      Promise.reject(new Error("background terminal RPC unavailable")),
+  });
+  const session = createSession();
+  session.client = new CodexAppServerClient(appServer.child, createTestLogger());
+
+  try {
+    await expect(session.canEvictIdleBackend?.()).rejects.toThrow(
+      "background terminal RPC unavailable",
+    );
+    appServer.assertNoErrors();
+  } finally {
+    await session.close();
+  }
 });
 
 async function startPublicSteeringSession(

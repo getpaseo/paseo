@@ -357,9 +357,17 @@
               "maximum": 2147483647
             },
             "codexIdleBackendTimeoutMs": {
-              "type": "integer",
-              "minimum": 60000,
-              "maximum": 2147483647
+              "anyOf": [
+                {
+                  "type": "number",
+                  "const": 0
+                },
+                {
+                  "type": "integer",
+                  "minimum": 60000,
+                  "maximum": 2147483647
+                }
+              ]
             }
           },
           "additionalProperties": false

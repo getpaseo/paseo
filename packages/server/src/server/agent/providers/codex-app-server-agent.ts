@@ -139,6 +139,7 @@ function isCodexAlreadyUnarchivedError(error: unknown, threadId: string): boolea
 
 const TURN_START_TIMEOUT_MS = 90 * 1000;
 const INTERRUPT_TIMEOUT_MS = 2_000;
+const IDLE_BACKEND_PROBE_TIMEOUT_MS = 5_000;
 const CODEX_PROVIDER = "codex" as const;
 // Codex treats most app-server client names as the model-request originator.
 // This reserved Codex name is non-originating, so requests keep Codex's default
@@ -3361,6 +3362,48 @@ export class CodexAppServerAgentSession implements AgentSession {
 
   get idleBackendEvictionEligible(): boolean {
     return !this.ephemeral && this.initialResumePurpose === "interactive";
+  }
+
+  async canEvictIdleBackend(): Promise<boolean> {
+    const client = this.client;
+    const threadId = this.currentThreadId;
+    if (this.closed || this.connectionState !== "connected" || !client || !threadId) {
+      throw new Error("Cannot verify Codex background work without a connected thread");
+    }
+
+    // This app-server belongs to one Paseo agent, but can also hold its subagent threads.
+    const loaded = toObjectRecord(
+      await client.request("thread/loaded/list", {}, IDLE_BACKEND_PROBE_TIMEOUT_MS),
+    );
+    const threadIds = loaded?.data;
+    if (
+      !Array.isArray(threadIds) ||
+      !threadIds.every((id): id is string => typeof id === "string") ||
+      !threadIds.includes(threadId)
+    ) {
+      throw new Error("Codex did not report the agent thread as loaded");
+    }
+
+    for (const loadedThreadId of threadIds) {
+      const terminals = toObjectRecord(
+        await client.request(
+          "thread/backgroundTerminals/list",
+          { threadId: loadedThreadId, limit: 1 },
+          IDLE_BACKEND_PROBE_TIMEOUT_MS,
+        ),
+      );
+      if (!Array.isArray(terminals?.data)) {
+        throw new Error(`Codex did not report background terminals for ${loadedThreadId}`);
+      }
+      if (terminals.data.length > 0 || terminals.nextCursor != null) {
+        this.logger.debug(
+          { threadId: loadedThreadId },
+          "Retaining Codex backend with background work",
+        );
+        return false;
+      }
+    }
+    return true;
   }
 
   private readonly logger: Logger;
