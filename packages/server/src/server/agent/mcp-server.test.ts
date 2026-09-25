@@ -3704,11 +3704,21 @@ class HeldTurnAgentSession implements AgentSession {
   readonly prompts: string[] = [];
   private readonly subscribers = new Set<(event: AgentStreamEvent) => void>();
   private activeTurnId: string | null = null;
+  private turnStartGate: Promise<void> | null = null;
 
   constructor(
     readonly provider: AgentProvider,
     private readonly holdTurns: boolean,
   ) {}
+
+  /** Hold the next turn's acknowledgment, as a provider awaiting its turn-start request does. */
+  holdTurnStart(): () => void {
+    let release!: () => void;
+    this.turnStartGate = new Promise((resolve) => {
+      release = resolve;
+    });
+    return release;
+  }
 
   async run(): Promise<AgentRunResult> {
     return { sessionId: this.id, finalText: "", timeline: [] };
@@ -3716,8 +3726,7 @@ class HeldTurnAgentSession implements AgentSession {
 
   async startTurn(prompt: AgentPromptInput): Promise<{ turnId: string }> {
     this.prompts.push(typeof prompt === "string" ? prompt : JSON.stringify(prompt));
-    // Providers acknowledge a turn over I/O (Codex awaits its turn/start request).
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await this.turnStartGate;
     const turnId = randomUUID();
     this.activeTurnId = turnId;
     setTimeout(() => {
@@ -4118,16 +4127,21 @@ describe("send_agent_prompt MCP tool", () => {
         logger,
       });
       const tool = registeredTool(server, "send_agent_prompt");
+      const childSession = childClient.sessions[0]!;
+      const acknowledgeTurnStart = childSession.holdTurnStart();
 
-      const response = await invokeToolWithParsedInput(tool, {
+      const pending = invokeToolWithParsedInput(tool, {
         agentId: child.id,
         prompt: "Follow up",
       });
+      await vi.waitFor(() => expect(childSession.prompts).toEqual(["Follow up"]));
+      acknowledgeTurnStart();
+      const response = await pending;
 
       expect(response.structuredContent).toMatchObject({ success: true, status: "running" });
       expect(agentManager.getAgent(child.id)?.lifecycle).toBe("running");
 
-      childClient.sessions[0]!.finishTurn();
+      childSession.finishTurn();
       await vi.waitFor(() => {
         const parentPrompts = parentClient.sessions[0]!.prompts;
         expect(parentPrompts).toHaveLength(1);
