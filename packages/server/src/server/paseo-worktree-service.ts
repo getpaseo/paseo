@@ -28,7 +28,7 @@ import { resolveFirstAgentPromptTitle } from "./agent/create-agent-title.js";
 import { buildAgentBranchNameSeed } from "./agent/prompt-attachments.js";
 import type { FirstAgentContext } from "@getpaseo/protocol/messages";
 import { runWithGitCommandPriority } from "../utils/run-git-command.js";
-import type { WorktreeIncludeSummary } from "../utils/worktree-include.js";
+import type { WorktreeIncludeSummary } from "../utils/worktree-include/index.js";
 
 export interface CreatePaseoWorktreeInput extends CreateWorktreeCoreInput {
   workspaceId?: string;

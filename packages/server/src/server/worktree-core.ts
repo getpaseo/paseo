@@ -7,7 +7,7 @@ import {
   validateBranchSlug,
   type CreatedWorktree,
 } from "../utils/worktree.js";
-import type { WorktreeIncludeSummary } from "../utils/worktree-include.js";
+import type { WorktreeIncludeSummary } from "../utils/worktree-include/index.js";
 import {
   resolveWorktreeCreationIntent,
   type ResolveWorktreeCreationIntentInput,

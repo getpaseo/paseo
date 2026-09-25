@@ -49,7 +49,7 @@ import {
   materializeWorktreeIncludePlan,
   readWorktreeIncludePlan,
   type WorktreeIncludeSummary,
-} from "./worktree-include.js";
+} from "./worktree-include/index.js";
 
 export { slugify, validateBranchSlug } from "@getpaseo/protocol/branch-slug";
 

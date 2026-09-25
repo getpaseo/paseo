@@ -17,7 +17,10 @@ import {
 import { tmpdir } from "os";
 import { dirname, join, relative } from "path";
 import { isPlatform } from "../test-utils/platform.js";
-import { materializeWorktreeIncludePlan, readWorktreeIncludePlan } from "./worktree-include.js";
+import {
+  materializeWorktreeIncludePlan,
+  readWorktreeIncludePlan,
+} from "./worktree-include/index.js";
 
 describe("worktree include planning", () => {
   let tempDir: string;
