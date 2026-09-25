@@ -8,13 +8,39 @@ import {
 
 const daemonTarget = { kind: "endpoint" as const, host: "example.test:12345" };
 
+// Answers fetchAgent the way a daemon does: an unknown id is an error.
+function daemonWithAgents(...agentIds: string[]) {
+  return {
+    async fetchAgent({ agentId }: { agentId: string }) {
+      if (!agentIds.includes(agentId)) {
+        throw new Error(`Agent not found: ${agentId}`);
+      }
+      return { agent: { id: agentId } };
+    },
+  };
+}
+
 describe("managed agent caller context", () => {
-  it("propagates a trimmed PASEO_AGENT_ID", () => {
-    expect(resolveRunCallerAgentId({ PASEO_AGENT_ID: "  parent-agent  " })).toBe("parent-agent");
+  it("uses a trimmed PASEO_AGENT_ID when the target daemon runs that agent", async () => {
+    await expect(
+      resolveRunCallerAgentId(daemonWithAgents("parent-agent"), {
+        PASEO_AGENT_ID: "  parent-agent  ",
+      }),
+    ).resolves.toBe("parent-agent");
   });
 
-  it("omits blank caller ids", () => {
-    expect(resolveRunCallerAgentId({ PASEO_AGENT_ID: "   " })).toBeUndefined();
+  it("runs without a caller when PASEO_AGENT_ID belongs to another daemon", async () => {
+    await expect(
+      resolveRunCallerAgentId(daemonWithAgents("other-agent"), {
+        PASEO_AGENT_ID: "parent-agent",
+      }),
+    ).resolves.toBeUndefined();
+  });
+
+  it("omits blank caller ids", async () => {
+    await expect(
+      resolveRunCallerAgentId(daemonWithAgents(), { PASEO_AGENT_ID: "   " }),
+    ).resolves.toBeUndefined();
   });
 });
 
