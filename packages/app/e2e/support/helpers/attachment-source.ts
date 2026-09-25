@@ -67,8 +67,10 @@ export async function withAttachmentSourceFixture(
           await expect(page.getByTestId("composer-plugin-resource-attachment-pill")).toContainText(
             RESULT_TITLE,
           );
+          const screenshotPath = info.outputPath("attachment-source-new-agent.png");
+          await page.screenshot({ path: screenshotPath, animations: "disabled" });
           await info.attach("attachment-source-new-agent", {
-            body: await page.screenshot(),
+            path: screenshotPath,
             contentType: "image/png",
           });
         }),
