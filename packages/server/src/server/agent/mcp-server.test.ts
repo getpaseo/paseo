@@ -4128,6 +4128,12 @@ describe("send_agent_prompt MCP tool", () => {
       expect(agentManager.getAgent(child.id)?.lifecycle).toBe("running");
 
       childClient.sessions[0]!.finishTurn();
+      await vi.waitFor(() => {
+        const parentPrompts = parentClient.sessions[0]!.prompts;
+        expect(parentPrompts).toHaveLength(1);
+        expect(parentPrompts[0]).toContain(child.id);
+        expect(parentPrompts[0]).toContain("finished");
+      });
     } finally {
       rmSync(workdir, { recursive: true, force: true });
     }
