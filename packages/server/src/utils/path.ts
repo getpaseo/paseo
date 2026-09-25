@@ -58,7 +58,22 @@ export function createRealpathAwarePathMatcher(target: string): (candidate: stri
   };
 }
 
+let pathContainmentChecks: number | null = null;
+
+// Containment is re-derived from scratch on every call. A tree walk that asks it per entry, or
+// per ancestor of every entry, costs more than reading the tree does, so tests count the calls.
+export function startPathContainmentMetrics(): void {
+  pathContainmentChecks = 0;
+}
+
+export function stopPathContainmentMetrics(): number {
+  const checks = pathContainmentChecks ?? 0;
+  pathContainmentChecks = null;
+  return checks;
+}
+
 export function isPathInsideRoot(root: string, candidate: string): boolean {
+  if (pathContainmentChecks !== null) pathContainmentChecks += 1;
   return getRelativePathInsideRoot(root, candidate) !== null;
 }
 

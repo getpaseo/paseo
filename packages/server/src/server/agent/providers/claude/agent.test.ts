@@ -785,6 +785,29 @@ describe("ClaudeAgentSession features", () => {
     await session.close();
   });
 
+  test("passes extra Claude Code CLI arguments to the SDK", async () => {
+    const { queryFactory, launches } = createQueryMock();
+    const client = new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const session = await client.createSession({
+      provider: "claude",
+      cwd: process.cwd(),
+      providerOptions: {
+        extraArgs: { chrome: null, model: "x" },
+      },
+    });
+
+    await expect(session.startTurn("hello")).resolves.toEqual({
+      turnId: expect.stringMatching(/^foreground-turn-/),
+    });
+
+    expect(launches[0]?.options.extraArgs).toEqual({ chrome: null, model: "x" });
+    await session.close();
+  });
+
   test("lists fast mode only for supported Opus models", async () => {
     const client = new ClaudeAgentClient({ logger, resolveBinary: async () => "/test/claude/bin" });
 

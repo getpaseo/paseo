@@ -4,6 +4,7 @@ import {
   StructuredAgentResponseError,
 } from "@getpaseo/server/agent-response";
 import type { AgentSnapshotPayload } from "@getpaseo/protocol/messages";
+import { DaemonConnectionError } from "@getpaseo/client/internal/daemon-client";
 import { connectToDaemon } from "../../utils/client.js";
 import type {
   CommandOptions,
@@ -526,7 +527,7 @@ export async function resolveExistingRunWorkspace(
 
 // Workspace policy for `paseo run`. Precedence:
 //   1. --workspace <id>            -> run in that existing workspace
-//   2. $PASEO_AGENT_ID             -> daemon resolves the caller's workspace
+//   2. caller agent                -> daemon resolves the caller's workspace
 //   3. $PASEO_WORKSPACE_ID         -> exported by workspace terminals
 //   4. --new-workspace <kind>      -> mint a new workspace explicitly
 //   5. bare run                    -> mint a new local-backed workspace for cwd
@@ -534,6 +535,7 @@ async function resolveRunWorkspace(
   client: ConnectedDaemonClient,
   options: AgentRunOptions,
   cwd: string,
+  callerAgentId: string | undefined,
 ): Promise<RunWorkspace> {
   const newWorkspace = resolveNewWorkspaceKind(options);
   const explicit = newWorkspace ? undefined : options.workspace?.trim();
@@ -542,7 +544,7 @@ async function resolveRunWorkspace(
     return resolveExistingRunWorkspace(client, explicit);
   }
 
-  if (!newWorkspace && resolveRunCallerAgentId()) {
+  if (!newWorkspace && callerAgentId) {
     return { cwd };
   }
 
@@ -609,9 +611,9 @@ export async function runRunCommand(
     const env = parseRunEnv(options.env);
     const requestEnv = Object.keys(env).length > 0 ? env : undefined;
 
-    const workspace = await resolveRunWorkspace(client, options, cwd);
+    const callerAgentId = await resolveRunCallerAgentId(client);
+    const workspace = await resolveRunWorkspace(client, options, cwd, callerAgentId);
     const workspaceId = workspace.id;
-    const callerAgentId = resolveRunCallerAgentId();
     const runCwd = workspace.cwd;
 
     if (outputSchema) {
@@ -743,8 +745,28 @@ export async function runRunCommand(
   }
 }
 
-export function resolveRunCallerAgentId(
+export interface RunCallerLookupClient {
+  fetchAgent(options: { agentId: string }): Promise<{ agent: { id: string } } | null>;
+}
+
+// PASEO_AGENT_ID names an agent on the daemon that launched this shell. A run
+// sent to another daemon (--host or --home) has no caller there, so it runs as
+// a top-level agent instead of failing on an unknown caller.
+export async function resolveRunCallerAgentId(
+  client: RunCallerLookupClient,
   env: { PASEO_AGENT_ID?: string } = process.env,
-): string | undefined {
-  return env.PASEO_AGENT_ID?.trim() || undefined;
+): Promise<string | undefined> {
+  const agentId = env.PASEO_AGENT_ID?.trim();
+  if (!agentId) {
+    return undefined;
+  }
+  const caller = await client.fetchAgent({ agentId }).catch((error: unknown) => {
+    // A daemon without this agent answers with an error. A lost or timed-out
+    // connection is not an answer, so it must not drop the caller.
+    if (error instanceof DaemonConnectionError) {
+      throw error;
+    }
+    return null;
+  });
+  return caller?.agent.id === agentId ? agentId : undefined;
 }

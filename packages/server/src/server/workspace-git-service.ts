@@ -86,6 +86,13 @@ const FORGE_PR_STATUS_POLL_FAST_INTERVAL_MS = 20_000;
 const FORGE_PR_STATUS_POLL_SLOW_INTERVAL_MS = 120_000;
 const FORGE_PR_STATUS_POLL_ERROR_BACKOFF_CAP_MS = 300_000;
 const DEGRADED_GIT_POLL_INTERVAL_MS = 5_000;
+// Degraded polling shells out a full Git refresh per tick, and the repositories that defeat the
+// recursive watcher are the ones where that refresh is expensive. At a fixed cadence the daemon
+// therefore burns a core forever on a workspace nobody has touched. Double the gap after every
+// tick that produced an identical snapshot, and drop back to the base interval as soon as one
+// does not. Explicit reads still force a refresh, so this only bounds background discovery of
+// changes made outside Paseo.
+const DEGRADED_GIT_POLL_MAX_INTERVAL_MS = 60_000;
 // A dependency install creates directories for minutes. Collapse the burst into
 // a couple of `git ls-files` runs rather than one per event.
 const WORKING_TREE_IGNORE_REFRESH_QUIET_MS = 300;
@@ -442,6 +449,7 @@ interface RepoGitTarget {
   subscription: FileObserverSubscription | null;
   fallbackPolling: boolean;
   fallbackPollTimer: NodeJS.Timeout | null;
+  fallbackPollQuietTickCount: number;
   recovery: WatchRecoveryState;
   intervalId: NodeJS.Timeout | null;
   fetchInFlight: boolean;
@@ -501,6 +509,7 @@ interface WorkingTreeWatchTarget {
   workspaceKeys: Set<string>;
   fallbackPolling: boolean;
   fallbackPollTimer: NodeJS.Timeout | null;
+  fallbackPollQuietTickCount: number;
   recovery: WatchRecoveryState;
   listeners: Set<() => void>;
   closed: boolean;
@@ -1352,6 +1361,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       workspaceKeys: new Set(),
       fallbackPolling: false,
       fallbackPollTimer: null,
+      fallbackPollQuietTickCount: 0,
       recovery: { attemptCount: 0, timer: null, establishedAt: null },
       listeners: new Set(),
       closed: false,
@@ -1558,6 +1568,25 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     }
   }
 
+  private degradedPollDelayMs(quietTickCount: number): number {
+    return Math.min(
+      DEGRADED_GIT_POLL_MAX_INTERVAL_MS,
+      DEGRADED_GIT_POLL_INTERVAL_MS * 2 ** quietTickCount,
+    );
+  }
+
+  // A refresh that throws is swallowed by refreshWorkspaceTarget and leaves the fingerprint
+  // alone, so it reads as a quiet tick and widens the gap. That is the intended outcome: a
+  // repository whose Git commands keep failing is the last one to retry every 5 seconds.
+  private async refreshDegradedPollTarget(
+    workspaceTarget: WorkspaceGitTarget,
+    request: WorkspaceGitRefreshRequest,
+  ): Promise<boolean> {
+    const fingerprintBefore = workspaceTarget.latestFingerprint;
+    await this.refreshWorkspaceTarget(workspaceTarget, request);
+    return workspaceTarget.latestFingerprint !== fingerprintBefore;
+  }
+
   private startWorkingTreeWatchFallback(
     target: WorkingTreeWatchTarget,
     reason: WorkingTreeWatchFallbackReason,
@@ -1566,19 +1595,20 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       return;
     }
     target.fallbackPolling = true;
+    target.fallbackPollQuietTickCount = 0;
     const { cwd } = target;
     const poll = async () => {
       target.fallbackPollTimer = null;
       if (target.closed || this.workingTreeWatchTargets.get(target.cwd) !== target) {
         return;
       }
-      await Promise.all(
+      const changes = await Promise.all(
         Array.from(target.workspaceKeys, async (workspaceKey) => {
           const workspaceTarget = this.workspaceTargets.get(workspaceKey);
           if (!workspaceTarget) {
-            return;
+            return false;
           }
-          await this.refreshWorkspaceTarget(workspaceTarget, {
+          const changed = await this.refreshDegradedPollTarget(workspaceTarget, {
             force: false,
             refreshStructure: target.repoRoot === null,
             refreshWorktree: true,
@@ -1592,11 +1622,18 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
             workspaceTarget.observationSetupComplete = false;
             this.scheduleWorkspaceObservationSetup(workspaceTarget);
           }
+          return changed;
         }),
       );
       this.notifyWorkingTreeConsumers(target);
       if (!target.closed && (target.subscription === null || target.repoRoot === null)) {
-        target.fallbackPollTimer = setTimeout(poll, DEGRADED_GIT_POLL_INTERVAL_MS);
+        target.fallbackPollQuietTickCount = changes.some(Boolean)
+          ? 0
+          : target.fallbackPollQuietTickCount + 1;
+        target.fallbackPollTimer = setTimeout(
+          poll,
+          this.degradedPollDelayMs(target.fallbackPollQuietTickCount),
+        );
       } else {
         target.fallbackPolling = false;
       }
@@ -1606,6 +1643,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       {
         cwd,
         intervalMs: DEGRADED_GIT_POLL_INTERVAL_MS,
+        maxIntervalMs: DEGRADED_GIT_POLL_MAX_INTERVAL_MS,
         reason,
       },
       "Working tree watcher unavailable; using bounded polling fallback",
@@ -2107,6 +2145,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       subscription: null,
       fallbackPolling: false,
       fallbackPollTimer: null,
+      fallbackPollQuietTickCount: 0,
       recovery: { attemptCount: 0, timer: null, establishedAt: null },
       intervalId: null,
       fetchInFlight: false,
@@ -2607,17 +2646,18 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       return;
     }
     target.fallbackPolling = true;
+    target.fallbackPollQuietTickCount = 0;
     const poll = async () => {
       target.fallbackPollTimer = null;
       if (target.closed || this.repoTargets.get(target.repoGitRoot) !== target) {
         return;
       }
       const workingTreeTargets = new Set<WorkingTreeWatchTarget>();
-      await Promise.all(
+      const changes = await Promise.all(
         Array.from(target.workspaceKeys, async (workspaceKey) => {
           const workspaceTarget = this.workspaceTargets.get(workspaceKey);
           if (!workspaceTarget) {
-            return;
+            return false;
           }
           this.invalidateCheckoutDiffCache(workspaceTarget.cwd, "base");
           if (workspaceTarget.latestFacts?.isGit) {
@@ -2627,7 +2667,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
           if (workingTreeTarget) {
             workingTreeTargets.add(workingTreeTarget);
           }
-          await this.refreshWorkspaceTarget(workspaceTarget, {
+          return await this.refreshDegradedPollTarget(workspaceTarget, {
             force: false,
             refreshStructure: true,
             refreshWorktree: true,
@@ -2644,7 +2684,13 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
         this.notifyWorkingTreeConsumers(workingTreeTarget);
       }
       if (!target.closed && target.subscription === null) {
-        target.fallbackPollTimer = setTimeout(poll, DEGRADED_GIT_POLL_INTERVAL_MS);
+        target.fallbackPollQuietTickCount = changes.some(Boolean)
+          ? 0
+          : target.fallbackPollQuietTickCount + 1;
+        target.fallbackPollTimer = setTimeout(
+          poll,
+          this.degradedPollDelayMs(target.fallbackPollQuietTickCount),
+        );
       } else {
         target.fallbackPolling = false;
       }

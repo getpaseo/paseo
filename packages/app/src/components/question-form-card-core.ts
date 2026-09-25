@@ -111,10 +111,13 @@ export function buildQuestionFormAnswers(
     const q = questions[i];
     const selected = selections[i];
     const otherText = otherTexts[i]?.trim();
+    const labels = selected ? Array.from(selected).map((idx) => q.options[idx].label) : [];
 
     if (questionShowsTextInput(q)) {
       if (otherText && otherText.length > 0) {
-        answers[q.header] = otherText;
+        // Multi-select keeps the checked options and appends the custom answer, the way
+        // Claude Code's own AskUserQuestion UI does. Single-select replaces the option.
+        answers[q.header] = q.multiSelect ? [...labels, otherText].join(", ") : otherText;
         continue;
       }
       if (q.allowEmpty && q.options.length === 0) {
@@ -123,8 +126,7 @@ export function buildQuestionFormAnswers(
       }
     }
 
-    if (selected && selected.size > 0) {
-      const labels = Array.from(selected).map((idx) => q.options[idx].label);
+    if (labels.length > 0) {
       answers[q.header] = labels.join(", ");
     }
   }
