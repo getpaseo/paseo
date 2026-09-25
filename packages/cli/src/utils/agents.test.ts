@@ -90,6 +90,12 @@ describe("resolveAgent", () => {
     expect(client.fetchAgents).not.toHaveBeenCalled();
   });
 
+  it("trims the identifier before asking the daemon", async () => {
+    const client = daemon(fleet);
+    await expect(resolveAgent(client, `  ${oldest.id}\n`)).resolves.toBe(oldest);
+    expect(client.fetchAgents).not.toHaveBeenCalled();
+  });
+
   it("falls back to every page for a case-insensitive partial title", async () => {
     const client = daemon(fleet);
     await expect(resolveAgent(client, "GENT 449")).resolves.toBe(oldest);
