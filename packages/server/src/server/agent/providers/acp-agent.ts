@@ -75,6 +75,7 @@ import {
   type AgentPersistenceHandle,
   type AgentPromptContentBlock,
   type AgentPromptInput,
+  type AgentResumeSessionOptions,
   type AgentRunOptions,
   type AgentRunResult,
   type AgentRuntimeInfo,
@@ -479,6 +480,7 @@ interface ACPAgentSessionOptions {
   waitForInitialCommands?: boolean;
   initialCommandsWaitTimeoutMs?: number;
   terminateProcess?: ProcessTerminator;
+  resumePurpose?: "interactive" | "history";
 }
 
 export interface SpawnedACPProcess {
@@ -978,6 +980,7 @@ export class ACPAgentClient implements AgentClient {
     handle: AgentPersistenceHandle,
     overrides?: Partial<AgentSessionConfig>,
     launchContext?: AgentLaunchContext,
+    options?: AgentResumeSessionOptions,
   ): Promise<AgentSession> {
     if (handle.provider !== this.provider) {
       throw new Error(`Cannot resume ${handle.provider} handle with ${this.provider} provider`);
@@ -1019,6 +1022,7 @@ export class ACPAgentClient implements AgentClient {
       extensionCommandsParser: this.extensionCommandsParser,
       waitForInitialCommands: this.waitForInitialCommands,
       initialCommandsWaitTimeoutMs: this.initialCommandsWaitTimeoutMs,
+      resumePurpose: options?.purpose ?? "interactive",
     });
     await session.initializeResumedSession();
     return session;
@@ -1664,6 +1668,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private readonly terminalEntries = new Map<string, TerminalEntry>();
   private readonly persistedHistory: AgentTimelineItem[] = [];
   private readonly initialHandle?: AgentPersistenceHandle;
+  private readonly resumePurpose: "interactive" | "history";
 
   private readonly config: AgentSessionConfig;
   private child: ChildProcessWithoutNullStreams | null = null;
@@ -1716,6 +1721,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.agentId = options.agentId;
     this.launchEnv = options.launchEnv;
     this.initialHandle = options.handle;
+    this.resumePurpose = options.resumePurpose ?? "interactive";
     this.config = { ...config, provider: options.provider };
     this.currentMode = config.modeId ?? null;
     this.currentModel = config.model ?? null;
@@ -1800,10 +1806,44 @@ export class ACPAgentSession implements AgentSession, ACPClient {
         throw new Error(`${this.provider} does not support ACP session resume`);
       }
 
+      if (this.resumePurpose === "history") {
+        // A history read only needs the persistedHistory captured above by
+        // loadSession/resume; mode, model and thinking-option overrides are
+        // interactive setup that would otherwise send further requests
+        // (some of them mutating, e.g. setMode) to a session opened only to
+        // be read. Skip them and release the process now rather than
+        // holding it for the rest of this agent's (unbounded) resumed
+        // lifetime.
+        await this.releaseTransportAfterHistoryLoad();
+        return;
+      }
+
       await this.applyConfiguredOverrides();
     } catch (error) {
       await this.closeAfterInitializationFailure(error);
     }
+  }
+
+  /**
+   * Terminates the child process without the native-session-ending
+   * `unstable_closeSession` RPC that `close()` sends on a real teardown —
+   * a history read must not end the durable session it is only reading.
+   * Marks the session closed so a later `close()` call is a harmless no-op,
+   * and so no guarded manager call (getRuntimeInfo, getAvailableModes,
+   * getCurrentMode, getPendingPermissions — all cached-field reads) can
+   * respawn the process it is about to release.
+   */
+  private async releaseTransportAfterHistoryLoad(): Promise<void> {
+    if (this.closed) {
+      return;
+    }
+    this.closed = true;
+    if (this.child) {
+      await this.terminateProcess(this.child, { gracefulTimeoutMs: 2_000, forceTimeoutMs: 2_000 });
+    }
+    this.subscribers.clear();
+    this.connection = null;
+    this.child = null;
   }
 
   private async closeAfterInitializationFailure(error: unknown): Promise<never> {

@@ -21,6 +21,7 @@ import {
   type AgentPersistenceHandle,
   type AgentPromptInput,
   type AgentProvider,
+  type AgentResumeSessionOptions,
   type AgentRunOptions,
   type AgentRunResult,
   type AgentRuntimeInfo,
@@ -245,6 +246,7 @@ interface PiRpcAgentSessionOptions {
   extensionTimeoutMs?: number;
   logger: Logger;
   usagePollScheduler?: PiUsagePollScheduler;
+  resumePurpose?: "interactive" | "history";
 }
 
 interface PiResumeConfig {
@@ -1277,6 +1279,8 @@ export class PiRpcAgentSession implements AgentSession {
   private readonly logger: Logger;
   private readonly usagePoller: PiUsagePoller;
   private closed = false;
+  private readonly resumePurpose: "interactive" | "history";
+  private historyReplayCache: AgentStreamEvent[] | null = null;
   // Pi publishes the terminal before acknowledging abort. Autonomous runs have no
   // turn ID; retain their errors too until the cancellation request settles.
   private interruptingTurn: { turnId: string | undefined; error: string | null } | null = null;
@@ -1291,6 +1295,7 @@ export class PiRpcAgentSession implements AgentSession {
     this.currentModeId = options.currentModeId ?? null;
     this.cleanup = options.cleanup;
     this.extensionTimeoutMs = options.extensionTimeoutMs ?? DEFAULT_PI_EXTENSION_RESULT_TIMEOUT_MS;
+    this.resumePurpose = options.resumePurpose ?? "interactive";
     this.logger = options.logger;
     this.usagePoller = new PiUsagePoller({
       scheduler: options.usagePollScheduler,
@@ -1471,16 +1476,53 @@ export class PiRpcAgentSession implements AgentSession {
   }
 
   async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
-    await this.requestEntryCapture("history");
-    yield* streamPiHistory(
-      this.provider,
-      await this.runtimeSession.getMessages(),
-      this.capturedUserEntries,
-    );
+    if (this.historyReplayCache) {
+      yield* this.historyReplayCache;
+      return;
+    }
+
+    const events: AgentStreamEvent[] = [];
+    let completed = false;
+    try {
+      await this.requestEntryCapture("history");
+      for await (const event of streamPiHistory(
+        this.provider,
+        await this.runtimeSession.getMessages(),
+        this.capturedUserEntries,
+      )) {
+        events.push(event);
+        yield event;
+      }
+      completed = true;
+    } finally {
+      if (this.resumePurpose === "history") {
+        // A history-purpose resume only needs this one read: the `get_messages`
+        // RPC above requires the live Pi runtime (there is no session file the
+        // server can read directly), so release the runtime now rather than
+        // holding it for the rest of this agent's (unbounded) resumed
+        // lifetime. That release must happen whether the capture prompt
+        // rejected before the read began, the read finished, threw mid-fetch,
+        // or was abandoned early (the finally runs on all four), or the
+        // runtime leaks exactly the way this branch exists to stop.
+        // Only a completed read is cached — a partial one, or one where
+        // capture never succeeded, must not be replayed later as if it were
+        // the whole history. The cache also makes a second streamHistory()
+        // call (hydrateTimelineFromProvider and a manual resumeSession-then-
+        // read both reach it) replay instead of hitting the runtime this
+        // branch is about to close.
+        if (completed) {
+          this.historyReplayCache = events;
+        }
+        await this.refreshState().catch(() => undefined);
+        await this.close();
+      }
+    }
   }
 
   async getRuntimeInfo(): Promise<AgentRuntimeInfo> {
-    await this.refreshState();
+    if (!this.closed) {
+      await this.refreshState();
+    }
     return {
       provider: this.provider,
       sessionId: this.state.sessionId,
@@ -1924,6 +1966,14 @@ export class PiRpcAgentSession implements AgentSession {
   private async requestEntryCapture(reason: string): Promise<void> {
     const requestId = randomUUID();
     const resultPromise = this.waitForExtensionResult(requestId);
+    // If the prompt below rejects, this function throws before ever awaiting
+    // resultPromise. It stays pending in pendingExtensionResults and a later
+    // close() (e.g. the history-purpose release in streamHistory()) rejects
+    // it via rejectAllExtensionResults — with no awaiter, that is an
+    // unhandled rejection. Attach a no-op handler now so that rejection is
+    // always observed; it does not affect the `await resultPromise` below,
+    // which still throws normally when reached.
+    resultPromise.catch(() => undefined);
     const payload = Buffer.from(JSON.stringify({ requestId, reason })).toString("base64url");
     await this.runtimeSession.prompt(`/${PASEO_PI_CAPTURE_EXTENSION_COMMAND} ${payload}`);
     await resultPromise;
@@ -2582,6 +2632,7 @@ export class PiRpcAgentClient implements AgentClient {
     handle: AgentPersistenceHandle,
     overrides?: Partial<AgentSessionConfig>,
     launchContext?: AgentLaunchContext,
+    options?: AgentResumeSessionOptions,
   ): Promise<AgentSession> {
     const sessionFile = handle.nativeHandle;
     if (!sessionFile) {
@@ -2632,6 +2683,7 @@ export class PiRpcAgentClient implements AgentClient {
         extensionTimeoutMs: this.providerParams.extensionTimeoutMs,
         logger: this.logger,
         usagePollScheduler: this.usagePollScheduler,
+        resumePurpose: options?.purpose ?? "interactive",
       });
     } catch (error) {
       await runtimeSession.close().catch(() => undefined);

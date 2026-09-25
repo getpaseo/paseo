@@ -3888,6 +3888,9 @@ describe("ACP session/load invariant — cwd and mcpServers always passed", () =
     handle: AgentPersistenceHandle;
     loadSession?: ReturnType<typeof vi.fn>;
     unstableResumeSession?: ReturnType<typeof vi.fn>;
+    resumePurpose?: "interactive" | "history";
+    terminateProcess?: ProcessTerminator;
+    child?: ChildProcessWithoutNullStreams;
   }) {
     const loadSession =
       args.loadSession ??
@@ -3906,10 +3909,11 @@ describe("ACP session/load invariant — cwd and mcpServers always passed", () =
         configOptions: [],
       });
 
+    const child = args.child ?? createProbeChildStub();
     class TestSession extends ACPAgentSession {
       protected override async spawnProcess(): Promise<SpawnedACPProcess> {
         return {
-          child: createProbeChildStub(),
+          child,
           connection: {
             prompt: vi.fn(),
             loadSession,
@@ -3938,10 +3942,12 @@ describe("ACP session/load invariant — cwd and mcpServers always passed", () =
           ...args.capabilities,
         },
         handle: args.handle,
+        resumePurpose: args.resumePurpose,
+        terminateProcess: args.terminateProcess,
       },
     );
 
-    return { session, loadSession, unstableResumeSession };
+    return { session, loadSession, unstableResumeSession, child };
   }
 
   test("loadSession is always called with sessionId, cwd, and mcpServers even when mcpServers is empty", async () => {
@@ -4147,5 +4153,64 @@ describe("ACP session/load invariant — cwd and mcpServers always passed", () =
       cwd: "/tmp/paseo-acp-test",
       mcpServers: [],
     });
+  });
+
+  test("purpose: history releases the child process after loadSession replay, and close() afterward is a no-op", async () => {
+    const terminator = new FakeTerminator();
+    let session!: ACPAgentSession;
+    const loadSession = async () => {
+      await session.sessionUpdate({
+        sessionId: "session-1",
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          messageId: "assistant-replay-1",
+          content: { type: "text", text: "audit context restored" },
+        } as SessionUpdate,
+      });
+      return { sessionId: "session-1", modes: null, models: null, configOptions: [] };
+    };
+    const { session: built, child } = makeTestSession({
+      capabilities: { loadSession: true },
+      handle: { sessionId: "session-1", provider: "claude-acp" },
+      loadSession,
+      resumePurpose: "history",
+      terminateProcess: terminator.terminate,
+    });
+    session = built;
+
+    await session.initializeResumedSession();
+
+    // Mutant: dropping the `resumePurpose === "history"` release branch
+    // leaves the process running until some other close() call arrives —
+    // this assertion fails (terminator.terminated is empty) without it.
+    expect(terminator.terminated).toContain(child);
+    expect(terminator.terminated).toHaveLength(1);
+
+    const history: AgentStreamEvent[] = [];
+    for await (const event of session.streamHistory()) {
+      history.push(event);
+    }
+    expect(history).toEqual([
+      {
+        type: "timeline",
+        provider: "claude-acp",
+        item: {
+          type: "assistant_message",
+          text: "audit context restored",
+          messageId: "assistant-replay-1",
+        },
+      },
+    ]);
+
+    // getRuntimeInfo is a cached-field read; it must not respawn the
+    // process just released.
+    await expect(session.getRuntimeInfo()).resolves.toMatchObject({ sessionId: "session-1" });
+    expect(terminator.terminated).toHaveLength(1);
+
+    // Anything that later calls close() on this session (e.g. a normal
+    // teardown of the resumed agent record) must not terminate the
+    // (already-gone) process a second time.
+    await session.close();
+    expect(terminator.terminated).toHaveLength(1);
   });
 });
