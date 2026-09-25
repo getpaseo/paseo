@@ -39,6 +39,7 @@ const DEFAULT_PORT = 6767;
 const DEFAULT_RELAY_ENDPOINT = "relay.paseo.sh:443";
 const DEFAULT_APP_BASE_URL = "https://app.paseo.sh";
 const DEFAULT_TRUSTED_PROXIES = ["loopback"];
+const DEFAULT_CODEX_IDLE_BACKEND_TIMEOUT_MS = 15 * 60_000;
 
 interface ResolveBundledWebUiDistDirInput {
   moduleUrl?: string | URL;
@@ -648,7 +649,8 @@ export function resolveConfigFromPersisted(
     voiceLlmModel: voiceLlm.model,
     agentProviderSettings: extractAgentProviderSettings(providerOverrides),
     providerCatalogRefreshTimeoutMs: persisted.agents?.catalogRefreshTimeoutMs,
-    codexIdleBackendTimeoutMs: persisted.agents?.codexIdleBackendTimeoutMs,
+    codexIdleBackendTimeoutMs:
+      persisted.agents?.codexIdleBackendTimeoutMs ?? DEFAULT_CODEX_IDLE_BACKEND_TIMEOUT_MS,
     metadataGeneration: persisted.agents?.metadataGeneration,
     providerOverrides,
     log: resolveLogConfigFromEnv(env, persisted),

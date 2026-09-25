@@ -2536,6 +2536,41 @@ test("evicts an idle Codex backend and resumes the same agent later", async () =
   }
 });
 
+test("keeps an idle Codex backend resident when eviction is disabled", async () => {
+  vi.useFakeTimers();
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-idle-eviction-disabled-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  let session: EvictableTestAgentSession | null = null;
+  const client = new (class extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      session = new EvictableTestAgentSession(config);
+      return session;
+    }
+  })();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    codexIdleBackendTimeoutMs: 0,
+    logger,
+  });
+
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    await vi.advanceTimersByTimeAsync(900_000);
+
+    expect(session?.closed).toBe(false);
+    expect(manager.getAgent(agent.id)?.lifecycle).toBe("idle");
+    await manager.closeAgent(agent.id);
+  } finally {
+    manager.prepareForShutdown();
+    vi.useRealTimers();
+    await storage.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("keeps an active Codex backend until its turn becomes idle", async () => {
   vi.useFakeTimers();
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-active-eviction-"));

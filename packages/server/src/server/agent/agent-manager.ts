@@ -333,7 +333,7 @@ export interface AgentManagerOptions {
   resolvePaseoToolPolicy?: (provider: AgentProvider) => ProviderPaseoToolsPolicy | undefined;
   appendSystemPrompt?: string;
   agentStreamCoalesceWindowMs?: number;
-  /** Opt-in timeout for releasing idle, persisted Codex app-server backends. */
+  /** Timeout for releasing idle, persisted Codex app-server backends; 0 disables eviction. */
   codexIdleBackendTimeoutMs?: number;
   rescueTimeouts?: AgentManagerRescueTimeouts;
   beforeSteerUnavailableFallback?: (input: {
@@ -1733,6 +1733,7 @@ export class AgentManager {
     return (
       this.acceptingAgentRegistrations &&
       this.codexIdleBackendTimeoutMs !== undefined &&
+      this.codexIdleBackendTimeoutMs > 0 &&
       agent.session.idleBackendEvictionEligible === true &&
       !agent.internal &&
       agent.lifecycle === "idle" &&

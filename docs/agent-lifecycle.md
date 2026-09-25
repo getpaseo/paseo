@@ -25,12 +25,13 @@ Reload releases the old runtime before resuming its durable session: an idle pro
 still own an exclusive writer. A close failure retains that runtime for cleanup and blocks the
 replacement. Once closure succeeds, a failed resume leaves the durable agent closed and retryable.
 
-Idle agents remain resident indefinitely by default. Runtime closure happens through an explicit
-lifecycle action such as archive, replacement, reload, workspace teardown, or daemon shutdown. A
-configured Codex idle-backend timeout also closes an idle persisted runtime without archiving its
-agent. The next open or prompt resumes the same agent and provider thread. Idle status does not prove
-that provider-owned background commands have finished; closing the runtime stops that work, so the
-timeout is opt-in.
+Idle agents remain resident indefinitely by default, except eligible Codex runtimes, which close
+after 15 minutes of inactivity. Runtime closure also happens through an explicit lifecycle action
+such as archive, replacement, reload, workspace teardown, or daemon shutdown. Codex idle-backend
+eviction closes a persisted runtime without archiving its agent. The next open or prompt resumes the
+same agent and provider thread. Idle status does not prove that provider-owned background commands
+have finished; closing the runtime stops that work. Set `agents.codexIdleBackendTimeoutMs` to `0`
+to retain Codex runtimes between turns.
 
 A provider runtime can still die on its own — crash, OOM kill, host suspend. Work the agent parked
 inside that process dies with it: Claude Code's background Bash shells, `Monitor` watches, and

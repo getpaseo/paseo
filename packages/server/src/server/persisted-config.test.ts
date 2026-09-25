@@ -266,12 +266,16 @@ describe("PersistedConfigSchema agent provider runtime settings", () => {
     ).toThrow();
   });
 
-  test("accepts an opt-in Codex idle backend timeout", () => {
+  test("accepts a custom Codex idle backend timeout and a disabled override", () => {
     const parsed = PersistedConfigSchema.parse({
       agents: { codexIdleBackendTimeoutMs: 900_000 },
     });
 
     expect(parsed.agents?.codexIdleBackendTimeoutMs).toBe(900_000);
+    expect(
+      PersistedConfigSchema.parse({ agents: { codexIdleBackendTimeoutMs: 0 } }).agents
+        ?.codexIdleBackendTimeoutMs,
+    ).toBe(0);
     expect(() =>
       PersistedConfigSchema.parse({ agents: { codexIdleBackendTimeoutMs: 59_999 } }),
     ).toThrow();
