@@ -24,6 +24,7 @@ function makeWorkspace(
   };
   const entry: SidebarWorkspaceEntry = {
     ...placement,
+    lastActivityAt: null,
     workspaceDirectory: "",
     workspaceDirectoryLabel: "",
     title: null,
@@ -64,7 +65,7 @@ function makeProject(
 }
 
 function projectionInput(options?: {
-  groupMode?: "project" | "status";
+  groupMode?: "project" | "status" | "recentActivity";
   pinnedCollapsed?: boolean;
 }) {
   const pinned = makeWorkspace("pinned", "running");
@@ -92,7 +93,7 @@ function projectionInput(options?: {
  * Two projects, one workspace each, both labelled — so every grouping mode puts rows from more
  * than one project on screen, and a mode that asked for fewer icons than it renders would show it.
  */
-function twoProjectInput(groupMode: "project" | "status") {
+function twoProjectInput(groupMode: "project" | "status" | "recentActivity") {
   const first = makeWorkspace("first", "running", ["Urgent"], "project");
   const second = makeWorkspace("second", "needs_input", ["Backend"], "other-project");
   return {
@@ -113,7 +114,7 @@ function twoProjectInput(groupMode: "project" | "status") {
 describe("buildSidebarProjection", () => {
   // The rule that outlived the bug it was written for: a project icon is fetched per project, so
   // whatever a mode groups by, the rows it produces can only reference projects already covered.
-  for (const groupMode of ["project", "status"] as const) {
+  for (const groupMode of ["project", "status", "recentActivity"] as const) {
     it(`covers every row ${groupMode} grouping renders with a project icon target`, () => {
       const projection = buildSidebarProjection(twoProjectInput(groupMode));
       const covered = new Set(projection.projectIconTargets.map((target) => target.projectViewKey));
@@ -161,6 +162,59 @@ describe("buildSidebarProjection", () => {
     expect(projection.shortcutModel.shortcutTargets).toEqual([
       { serverId: "srv", workspaceId: "pinned" },
       { serverId: "srv", workspaceId: "unpinned" },
+    ]);
+  });
+
+  it("orders recent-activity rows by last activity and drops pinned chats from the group", () => {
+    const input = projectionInput({ groupMode: "recentActivity" });
+    input.workspaceEntriesByKey = new Map([
+      [
+        "srv:pinned",
+        {
+          ...input.workspaceEntriesByKey.get("srv:pinned")!,
+          lastActivityAt: new Date("2026-07-12T12:00:00.000Z"),
+        },
+      ],
+      [
+        "srv:unpinned",
+        {
+          ...input.workspaceEntriesByKey.get("srv:unpinned")!,
+          lastActivityAt: new Date("2026-07-11T12:00:00.000Z"),
+        },
+      ],
+    ]);
+
+    const projection = buildSidebarProjection(input);
+
+    expect(projection.workspaceGroups).toHaveLength(1);
+    expect(projection.workspaceGroups[0]?.key).toBe("recentActivity");
+    expect(projection.workspaceGroups[0]?.rows.map((entry) => entry.workspaceId)).toEqual([
+      "unpinned",
+    ]);
+    expect(projection.shortcutModel.shortcutTargets).toEqual([
+      { serverId: "srv", workspaceId: "pinned" },
+      { serverId: "srv", workspaceId: "unpinned" },
+    ]);
+  });
+
+  it("sorts recent-activity rows most-recently-active first", () => {
+    const older = makeWorkspace("older", "done");
+    const newer = makeWorkspace("newer", "done");
+    const input = {
+      ...projectionInput({ groupMode: "recentActivity" }),
+      projects: [makeProject([older.placement, newer.placement])],
+      pinnedKeys: { pinnedWorkspaceKeys: [], pinnedAtByKey: {} },
+      workspaceEntriesByKey: new Map([
+        ["srv:older", { ...older.entry, lastActivityAt: new Date("2026-07-10T09:00:00.000Z") }],
+        ["srv:newer", { ...newer.entry, lastActivityAt: new Date("2026-07-12T09:00:00.000Z") }],
+      ]),
+    };
+
+    const projection = buildSidebarProjection(input);
+
+    expect(projection.workspaceGroups[0]?.rows.map((entry) => entry.workspaceId)).toEqual([
+      "newer",
+      "older",
     ]);
   });
 
