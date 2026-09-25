@@ -126,6 +126,33 @@ export class AgentManagerShuttingDownError extends Error {
   }
 }
 
+const IDLE_RELOAD_ERRORS = {
+  busy: { code: "agent_reload_busy", message: "Agent is not idle; reload was skipped" },
+  in_progress: {
+    code: "agent_reload_in_progress",
+    message: "Agent reload in progress; retry the message shortly",
+  },
+  unavailable: {
+    code: "agent_reload_unavailable",
+    message: "Idle-only reload requires a loaded, unarchived idle agent",
+  },
+} as const;
+
+export class AgentIdleReloadError extends Error {
+  readonly code: string;
+  readonly retryable: boolean;
+  readonly agentId: string;
+
+  constructor(input: { agentId: string; reason: keyof typeof IDLE_RELOAD_ERRORS }) {
+    const detail = IDLE_RELOAD_ERRORS[input.reason];
+    super(detail.message);
+    this.name = "AgentIdleReloadError";
+    this.agentId = input.agentId;
+    this.code = detail.code;
+    this.retryable = input.reason !== "unavailable";
+  }
+}
+
 export class AgentRunCancellationError extends Error {
   constructor(agentId: string, action: "reload" | "replace" | "rewind" | "stop") {
     super(
@@ -722,6 +749,7 @@ export class AgentManager {
   private readonly providerEnabled = new Map<AgentProvider, boolean>();
   private readonly providerDefinitions = new Map<AgentProvider, ProviderEnabledFlag>();
   private readonly agents = new Map<string, LiveManagedAgent>();
+  private readonly idleReloads = new Set<string>();
   private readonly timelineStore = new InMemoryAgentTimelineStore();
   private readonly providerSubagents = new ProviderSubagentStore();
   private readonly agentsAwaitingInitialSnapshotPersist = new Set<string>();
@@ -1485,6 +1513,45 @@ export class AgentManager {
         await this.closeUnregisteredSession(imported.session);
       }
     }
+  }
+
+  reloadIdleAgentSession(agentId: string): Promise<ManagedAgent> {
+    if (this.idleReloads.has(agentId))
+      return Promise.reject(new AgentIdleReloadError({ agentId, reason: "busy" }));
+    return this.trackAgentRegistrationOperation(
+      this.runLifecycleMutation(agentId, () => {
+        if (!this.getAgent(agentId)) {
+          throw new AgentIdleReloadError({ agentId, reason: "unavailable" });
+        }
+        const agent = this.requireSessionAgent(agentId);
+        const hasActiveRun = agent.lifecycle !== "idle" || this.hasInFlightRun(agentId);
+        const hasPendingPermission =
+          agent.pendingPermissions.size > 0 || agent.inFlightPermissionResponses.size > 0;
+        const hasRunningSubagent = this.providerSubagents
+          .list(agentId)
+          .some((child) => child.status === "running");
+        if (
+          this.idleReloads.has(agentId) ||
+          hasActiveRun ||
+          hasPendingPermission ||
+          hasRunningSubagent
+        ) {
+          return Promise.reject(new AgentIdleReloadError({ agentId, reason: "busy" }));
+        }
+        // Claim synchronously before any I/O. streamAgent checks the same claim.
+        this.idleReloads.add(agentId);
+        return this.reloadAgentSessionInternal(agentId, undefined, {
+          rehydrateFromDisk: true,
+        })
+          .then(async (snapshot) => {
+            await this.hydrateTimelineFromProvider(agentId, { broadcast: true });
+            return snapshot;
+          })
+          .finally(() => {
+            this.idleReloads.delete(agentId);
+          });
+      }),
+    );
   }
 
   // Hot-reload an active agent session with config overrides. By default the
@@ -2469,6 +2536,9 @@ export class AgentManager {
     prompt: AgentPromptInput,
     options?: AgentRunOptions,
   ): AsyncGenerator<AgentStreamEvent> {
+    if (this.idleReloads.has(agentId)) {
+      throw new AgentIdleReloadError({ agentId, reason: "in_progress" });
+    }
     const existingAgent = this.requireSessionAgent(agentId);
     this.logger.trace(
       {

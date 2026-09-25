@@ -6899,3 +6899,49 @@ test("reviewed plugin updates gate before requests and preserve exact proposal d
     ]);
   }
 });
+
+test("idle-only reload refuses an older host without sending a reload request", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "idle-reload-old-host",
+    transportFactory: () => mock.transport,
+    reconnect: { enabled: false },
+  });
+  clients.push(client);
+  const connection = client.connect();
+  mock.triggerOpen();
+  await connection;
+  mock.sent.length = 0;
+  await expect(client.reloadIdleAgent({ agentId: "agent-1" })).rejects.toThrow("Update the host");
+  expect(mock.sent).toEqual([]);
+});
+
+test("idle-only reload uses the namespaced request and correlated response", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "idle-reload-new-host",
+    transportFactory: () => mock.transport,
+    reconnect: { enabled: false },
+  });
+  clients.push(client);
+  const connection = client.connect();
+  mock.triggerOpen({ features: { idleAgentReload: true } });
+  await connection;
+  mock.sent.length = 0;
+  const result = client.reloadIdleAgent({ agentId: "agent-1", requestId: "idle-request" });
+  expect(parseSentFrame(mock.sent[0])).toEqual({
+    type: "agent.reload_idle.request",
+    agentId: "agent-1",
+    requestId: "idle-request",
+  });
+  const payload = {
+    status: "agent_refreshed",
+    agentId: "agent-1",
+    requestId: "idle-request",
+    timelineSize: 3,
+  };
+  mock.triggerMessage(wrapSessionMessage({ type: "agent.reload_idle.response", payload }));
+  await expect(result).resolves.toEqual(payload);
+});

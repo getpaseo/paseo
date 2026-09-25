@@ -3101,6 +3101,27 @@ export class DaemonClient {
     return status.agent;
   }
 
+  async reloadIdleAgent(input: {
+    agentId: string;
+    requestId?: string;
+  }): Promise<AgentRefreshedStatusPayload> {
+    if (this.lastServerInfoMessage?.features?.idleAgentReload !== true) {
+      throw new Error("Update the host to reload an agent only when idle.");
+    }
+    const requestId = this.createRequestId(input.requestId);
+    return this.sendRequest({
+      requestId,
+      message: { type: "agent.reload_idle.request", agentId: input.agentId, requestId },
+      options: { skipQueue: true },
+      select: (msg) => {
+        if (msg.type === "agent.reload_idle.response" && msg.payload.requestId === requestId) {
+          return msg.payload;
+        }
+        return null;
+      },
+    });
+  }
+
   async refreshAgent(agentId: string, requestId?: string): Promise<AgentRefreshedStatusPayload> {
     const resolvedRequestId = this.createRequestId(requestId);
     const message = SessionInboundMessageSchema.parse({

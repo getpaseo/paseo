@@ -94,7 +94,11 @@ import {
   type WorkspaceLabelService,
 } from "./workspace-labels/index.js";
 
-import { AgentManager, AgentRunCancellationError } from "./agent/agent-manager.js";
+import {
+  AgentManager,
+  AgentRunCancellationError,
+  AgentIdleReloadError,
+} from "./agent/agent-manager.js";
 import { buildTimelinePromptIndex } from "./agent/timeline-prompt-index.js";
 import { ProviderSnapshotManager } from "./agent/provider-snapshot-manager.js";
 import type {
@@ -2273,7 +2277,7 @@ export class Session {
     const promise =
       this.dispatchSubscriptionMessage(msg, source) ??
       this.dispatchVoiceAndControlMessage(msg) ??
-      this.dispatchAgentRewindMessage(msg, source) ??
+      this.dispatchAgentRestoreMessage(msg, source) ??
       this.dispatchAgentRelationshipMessage(msg) ??
       this.dispatchAgentTimelineMessage(msg, source) ??
       this.dispatchHubExecutionMessage(msg) ??
@@ -2584,11 +2588,14 @@ export class Session {
     }
   }
 
-  private dispatchAgentRewindMessage(
+  private dispatchAgentRestoreMessage(
     msg: SessionInboundMessage,
     source?: object,
   ): Promise<void> | undefined {
     switch (msg.type) {
+      case "refresh_agent_request":
+      case "agent.reload_idle.request":
+        return this.handleRefreshAgentRequest(msg);
       case "agent.rewind.request":
         return this.handleAgentRewindRequest(msg, source);
       default:
@@ -2728,8 +2735,6 @@ export class Session {
         return this.handleResumeAgentRequest(msg);
       case "import_agent_request":
         return this.handleImportAgentRequest(msg);
-      case "refresh_agent_request":
-        return this.handleRefreshAgentRequest(msg);
       case "cancel_agent_request":
         return this.handleCancelAgentRequest(msg.agentId, msg.requestId);
       case "agent_permission_response":
@@ -4522,21 +4527,36 @@ export class Session {
   }
 
   private async handleRefreshAgentRequest(
-    msg: Extract<SessionInboundMessage, { type: "refresh_agent_request" }>,
+    msg: Extract<
+      SessionInboundMessage,
+      { type: "refresh_agent_request" | "agent.reload_idle.request" }
+    >,
   ): Promise<void> {
     const { agentId, requestId } = msg;
     this.sessionLogger.info({ agentId }, `Refreshing agent ${agentId} from persistence`);
 
     try {
-      await this.restoreOwningWorkspaceForLegacyAgentRefresh(agentId);
-      await unarchiveAgentState(this.agentStorage, this.agentManager, agentId);
+      const onlyIfIdle = msg.type === "agent.reload_idle.request";
+      if (onlyIfIdle) {
+        const record = await this.agentStorage.get(agentId);
+        if (!record || record.archivedAt || !this.agentManager.getAgent(agentId)) {
+          throw new AgentIdleReloadError({ agentId, reason: "unavailable" });
+        }
+      } else {
+        await this.restoreOwningWorkspaceForLegacyAgentRefresh(agentId);
+        await unarchiveAgentState(this.agentStorage, this.agentManager, agentId);
+      }
       let snapshot: ManagedAgent;
       const existing = this.agentManager.getAgent(agentId);
       if (existing) {
-        await this.interruptAgentIfRunning(agentId);
-        snapshot = await this.agentManager.reloadAgentSession(agentId, undefined, {
-          rehydrateFromDisk: true,
-        });
+        if (onlyIfIdle) {
+          snapshot = await this.agentManager.reloadIdleAgentSession(agentId);
+        } else {
+          await this.interruptAgentIfRunning(agentId);
+          snapshot = await this.agentManager.reloadAgentSession(agentId, undefined, {
+            rehydrateFromDisk: true,
+          });
+        }
       } else {
         const record = await this.agentStorage.get(agentId);
         if (!record) {
@@ -4559,12 +4579,14 @@ export class Session {
           logger: this.sessionLogger,
         });
       }
-      await this.agentManager.hydrateTimelineFromProvider(agentId, { broadcast: true });
+      if (!onlyIfIdle) {
+        await this.agentManager.hydrateTimelineFromProvider(agentId, { broadcast: true });
+      }
       await this.agentUpdates.forwardLiveAgent(snapshot);
       const timelineSize = this.agentManager.getTimeline(agentId).length;
       if (requestId) {
         this.emit({
-          type: "status",
+          type: onlyIfIdle ? "agent.reload_idle.response" : "status",
           payload: {
             status: "agent_refreshed",
             agentId,
@@ -4583,7 +4605,10 @@ export class Session {
             requestId,
             requestType: msg.type,
             error: message,
-            code: error instanceof WorktreeRequestError ? error.code : "agent_refresh_failed",
+            code:
+              error instanceof WorktreeRequestError || error instanceof AgentIdleReloadError
+                ? error.code
+                : "agent_refresh_failed",
           },
         });
       }

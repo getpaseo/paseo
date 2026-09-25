@@ -256,3 +256,34 @@ test.runIf(hasOpenCode)(
   },
   180000,
 );
+
+test("idle-only reload round-trips through an isolated daemon and leaves archived agents archived", async () => {
+  const cwd = tmpCwd();
+  const localCtx = await createDaemonTestContext();
+  try {
+    expect(localCtx.client.getLastServerInfoMessage()?.features?.idleAgentReload).toBe(true);
+    const agent = await localCtx.client.createAgent({ config: { provider: "codex", cwd } });
+    await expect(localCtx.client.reloadIdleAgent({ agentId: agent.id })).resolves.toMatchObject({
+      status: "agent_refreshed",
+      agentId: agent.id,
+      timelineSize: 0,
+    });
+    const archiveResult = await localCtx.client.archiveAgent(agent.id);
+    await expect(localCtx.client.reloadIdleAgent({ agentId: agent.id })).rejects.toMatchObject({
+      code: "agent_reload_unavailable",
+      requestType: "agent.reload_idle.request",
+    });
+    const archived = await localCtx.client.fetchAgent({ agentId: agent.id });
+    expect(archived?.agent.archivedAt).toBe(archiveResult.archivedAt);
+    // The legacy operation still supports its existing unarchive behavior.
+    await expect(localCtx.client.refreshAgent(agent.id)).resolves.toMatchObject({
+      status: "agent_refreshed",
+      agentId: agent.id,
+    });
+    const refreshed = await localCtx.client.fetchAgent({ agentId: agent.id });
+    expect(refreshed?.agent.archivedAt).toBeNull();
+  } finally {
+    await localCtx.cleanup();
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});

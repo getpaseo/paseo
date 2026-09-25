@@ -11244,3 +11244,166 @@ test("concurrent native restores run once before resuming the same agent", async
     rmSync(workdir, { recursive: true, force: true });
   }
 });
+
+test("idle-only reload excludes incoming turns until the replacement is registered", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "idle-reload-"));
+  const started = deferred<void>();
+  const proceed = deferred<void>();
+  class IdleClient extends TestAgentClient {
+    override async resumeSession(
+      handle: AgentPersistenceHandle,
+      config?: Partial<AgentSessionConfig>,
+    ): Promise<AgentSession> {
+      started.resolve();
+      await proceed.promise;
+      return new TestAgentSession({ provider: "codex", cwd: config?.cwd ?? workdir });
+    }
+  }
+  const manager = new AgentManager({
+    clients: { codex: new IdleClient() },
+    registry: new AgentStorage(join(workdir, "agents"), logger),
+    logger,
+  });
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    const reloading = manager.reloadIdleAgentSession(agent.id);
+    await started.promise;
+    await expect(manager.runAgent(agent.id, "new turn")).rejects.toThrow(/reload in progress/);
+    await expect(manager.reloadIdleAgentSession(agent.id)).rejects.toThrow(/not idle/);
+    proceed.resolve();
+    expect((await reloading).id).toBe(agent.id);
+    // The claim is released after success, so another idle reload can proceed.
+    expect((await manager.reloadIdleAgentSession(agent.id)).id).toBe(agent.id);
+  } finally {
+    proceed.resolve();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("idle-only reload never interrupts a turn that won the race", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "idle-reload-busy-"));
+  const client = new TestAgentClient();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: new AgentStorage(join(workdir, "agents"), logger),
+    logger,
+  });
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    const turn = manager.runAgent(agent.id, "keep working");
+    await expect(manager.reloadIdleAgentSession(agent.id)).rejects.toThrow(/not idle/);
+    await turn;
+    expect(manager.getAgent(agent.id)?.persistence?.sessionId).toBe(agent.persistence?.sessionId);
+    expect(manager.getAgent(agent.id)?.lifecycle).toBe("idle");
+    expect(manager.getAgent(agent.id)?.lastError).toBeUndefined();
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+async function createIdleReloadHistoryFixture(readHistory: () => Promise<AgentStreamEvent[]>) {
+  const workdir = mkdtempSync(join(tmpdir(), "idle-reload-history-"));
+  const historyStarted = deferred<void>();
+  const historyAllowed = deferred<void>();
+  class HistorySession extends TestAgentSession {
+    override async startTurn(): Promise<{ turnId: string }> {
+      const turnId = "after-reload-turn";
+      setTimeout(() => {
+        this.pushEvent({ type: "turn_started", provider: "codex", turnId });
+        this.pushEvent({
+          type: "timeline",
+          provider: "codex",
+          item: { type: "user_message", text: "after reload" },
+        });
+        this.pushEvent({ type: "turn_completed", provider: "codex", turnId });
+      }, 0);
+      return { turnId };
+    }
+    override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+      historyStarted.resolve();
+      await historyAllowed.promise;
+      yield* await readHistory();
+    }
+  }
+  class HistoryClient extends TestAgentClient {
+    override async resumeSession(
+      _handle: AgentPersistenceHandle,
+      config?: Partial<AgentSessionConfig>,
+    ): Promise<AgentSession> {
+      return new HistorySession({ provider: "codex", cwd: config?.cwd ?? workdir });
+    }
+  }
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const manager = new AgentManager({
+    clients: { codex: new HistoryClient() },
+    registry: storage,
+    logger,
+  });
+  const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  return {
+    manager,
+    agent,
+    historyStarted,
+    historyAllowed,
+    cleanup: async () => {
+      historyAllowed.resolve();
+      await manager.closeAgent(agent.id);
+      await storage.flush();
+      rmSync(workdir, { recursive: true, force: true });
+    },
+  };
+}
+
+test("idle-only reload excludes turns through history replay and preserves message order", async () => {
+  const fixture = await createIdleReloadHistoryFixture(async () => [
+    {
+      type: "timeline",
+      provider: "codex",
+      item: { type: "assistant_message", text: "older history" },
+    },
+  ]);
+  const { manager, agent, historyStarted, historyAllowed } = fixture;
+  try {
+    const reload = manager.reloadIdleAgentSession(agent.id);
+    await historyStarted.promise;
+    await expect(manager.runAgent(agent.id, "too early")).rejects.toMatchObject({
+      code: "agent_reload_in_progress",
+    });
+    historyAllowed.resolve();
+    await expect(reload).resolves.toMatchObject({ id: agent.id });
+    await manager.runAgent(agent.id, "after reload");
+    expect(manager.getTimeline(agent.id)).toEqual([
+      { type: "assistant_message", text: "older history" },
+      { type: "user_message", text: "after reload" },
+    ]);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test("idle-only reload releases turn admission after history replay fails", async () => {
+  const fixture = await createIdleReloadHistoryFixture(async () => {
+    throw new Error("history unavailable");
+  });
+  const { manager, agent, historyStarted, historyAllowed } = fixture;
+  try {
+    const reload = manager.reloadIdleAgentSession(agent.id);
+    const failure = expect(reload).rejects.toThrow("history unavailable");
+    await historyStarted.promise;
+    await expect(manager.runAgent(agent.id, "too early")).rejects.toMatchObject({
+      code: "agent_reload_in_progress",
+    });
+    historyAllowed.resolve();
+    await failure;
+    await manager.runAgent(agent.id, "after reload");
+    expect(manager.getTimeline(agent.id)).toEqual([{ type: "user_message", text: "after reload" }]);
+  } finally {
+    await fixture.cleanup();
+  }
+});

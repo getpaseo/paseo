@@ -1799,6 +1799,12 @@ export const RefreshAgentRequestMessageSchema = z.object({
   requestId: z.string(),
 });
 
+// A distinct request prevents older hosts from silently falling back to a
+// refresh that interrupts a newly started turn.
+export const ReloadIdleAgentRequestMessageSchema = RefreshAgentRequestMessageSchema.extend({
+  type: z.literal("agent.reload_idle.request"),
+});
+
 export const CancelAgentRequestMessageSchema = z.object({
   type: z.literal("cancel_agent_request"),
   agentId: z.string(),
@@ -3235,6 +3241,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   ResumeAgentRequestMessageSchema,
   ImportAgentRequestMessageSchema,
   RefreshAgentRequestMessageSchema,
+  ReloadIdleAgentRequestMessageSchema,
   CancelAgentRequestMessageSchema,
   ShutdownServerRequestMessageSchema,
   RestartServerRequestMessageSchema,
@@ -3670,6 +3677,7 @@ export const ServerInfoStatusPayloadSchema = z
         selectiveAgentTimeline: z.boolean().optional(),
         explicitEventSubscriptions: z.boolean().optional(),
         ownedSubscriptions: z.boolean().optional(),
+        idleAgentReload: z.boolean().optional(),
         // COMPAT(canonicalSubmittedPrompts): added in v0.2.6, remove gate after 2027-01-30.
         canonicalSubmittedPrompts: z.boolean().optional(),
         // COMPAT(agentTurnIdentity): accept peers that observed pre-release v0.2.6 through 2027-01-31.
@@ -3767,6 +3775,11 @@ export const AgentRefreshedStatusPayloadSchema = z
     status: z.literal("agent_refreshed"),
   })
   .extend(AgentStatusWithTimelineSchema.shape);
+
+export const ReloadIdleAgentResponseMessageSchema = z.object({
+  type: z.literal("agent.reload_idle.response"),
+  payload: AgentRefreshedStatusPayloadSchema,
+});
 
 export const RestartRequestedStatusPayloadSchema = z.object({
   status: z.literal("restart_requested"),
@@ -6841,6 +6854,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   AgentConfigApplyResponseMessageSchema,
   AgentDetachResponseMessageSchema,
   AgentRewindResponseMessageSchema,
+  ReloadIdleAgentResponseMessageSchema,
   UpdateAgentResponseMessageSchema,
   ProjectRenameResponseSchema,
   ProjectIconSetResponseSchema,
