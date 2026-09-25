@@ -622,9 +622,10 @@ function createPiPaseoExtensionFile(systemPrompt?: string): PiTempFile {
 	    .join("\\n\\n");
 	}
 
+	// The same entries getMessages() replays, so the nth capture is the nth replayed user message.
 	function getCapturedUserEntries(ctx) {
 	  return ctx.sessionManager
-	    .getEntries()
+	    .buildContextEntries()
 	    .filter((entry) => entry.type === "message" && entry.message?.role === "user")
 	    .map(toCapturedUserEntry);
 	}

@@ -1511,6 +1511,63 @@ describe("PiRpcAgentSession", () => {
     await session.close();
   });
 
+  test("captures only the user entries on the current branch after a rewind", async () => {
+    const pi = new FakePi();
+    const session = await createClient(pi).createSession(createConfig());
+    onTestFinished(() => session.close());
+    const listeners = await loadPaseoExtensionListeners(pi.recordedLaunches[0]!.extensionPaths[0]!);
+    const userEntry = (id: string, parentId: string | null, content: string) => ({
+      type: "message",
+      id,
+      parentId,
+      message: { role: "user", content },
+    });
+    const assistantEntry = (id: string, parentId: string) => ({
+      type: "message",
+      id,
+      parentId,
+      message: { role: "assistant", content: [] },
+    });
+    // "abandoned" was rewound; "two" was sent from the same parent afterwards.
+    const entries = [
+      userEntry("one", null, "first"),
+      assistantEntry("one-reply", "one"),
+      userEntry("abandoned", "one-reply", "rewound away"),
+      assistantEntry("abandoned-reply", "abandoned"),
+      userEntry("two", "one-reply", "second"),
+      assistantEntry("two-reply", "two"),
+    ];
+    const byId = new Map(entries.map((entry) => [entry.id, entry]));
+    const buildBranchFrom = (leafId: string) => {
+      const branch = [];
+      for (let entry = byId.get(leafId); entry; entry = byId.get(entry.parentId ?? "")) {
+        branch.unshift(entry);
+      }
+      return branch;
+    };
+    const notifications: string[] = [];
+    const context = {
+      sessionManager: {
+        getEntries: () => entries,
+        buildContextEntries: () => buildBranchFrom("two-reply"),
+      },
+      ui: { notify: (message: string) => notifications.push(message) },
+    };
+
+    await listeners.get("session_start")?.({}, context);
+
+    expect(notifications).toEqual([
+      "PASEO_ENTRY_CAPTURE " +
+        JSON.stringify({
+          reason: "session_start",
+          entries: [
+            { id: "one", parentId: null, text: "first" },
+            { id: "two", parentId: "one-reply", text: "second" },
+          ],
+        }),
+    ]);
+  });
+
   test("appends agent and daemon prompts after Pi's discovered system prompt", async () => {
     const pi = new FakePi();
     const client = createClient(pi);

@@ -204,4 +204,47 @@ describe("daemon E2E (real pi) - rewind", () => {
       await closePiRewindSession(session);
     }
   }, 420_000);
+
+  test("rewinds a replayed row to the selected message after an earlier rewind branched the session", async () => {
+    const session = await launchPiRewindSession(harness, "pi-rewind-branched-replay-real");
+    const turn = (token: string) => ({
+      promptToken: token,
+      doneToken: `PI_${token}_DONE`,
+    });
+
+    try {
+      await askPi(harness, session, turn("ONE"));
+      await askPi(harness, session, turn("ABANDONED"));
+      const abandonedId = userMessageIdForToken(
+        await fetchTimelineItems(harness.client, session.agentId),
+        "PI_REWIND_PROMPT_ABANDONED",
+      );
+      await harness.client.rewindAgent(session.agentId, abandonedId, "conversation");
+
+      await askPi(harness, session, turn("TWO"));
+      await askPi(harness, session, turn("THREE"));
+      await askPi(harness, session, turn("FOUR"));
+      const fourId = userMessageIdForToken(
+        await fetchTimelineItems(harness.client, session.agentId),
+        "PI_REWIND_PROMPT_FOUR",
+      );
+      await harness.client.rewindAgent(session.agentId, fourId, "conversation");
+
+      const replayedTimeline = await fetchTimelineItems(harness.client, session.agentId);
+      expectTimeline(replayedTimeline, {
+        userTexts: [piPrompt(turn("ONE")), piPrompt(turn("TWO")), piPrompt(turn("THREE"))],
+        assistantCount: 3,
+      });
+      const replayedThreeId = userMessageIdForToken(replayedTimeline, "PI_REWIND_PROMPT_THREE");
+      await harness.client.rewindAgent(session.agentId, replayedThreeId, "conversation");
+
+      expectTimeline(await fetchTimelineItems(harness.client, session.agentId), {
+        userTexts: [piPrompt(turn("ONE")), piPrompt(turn("TWO"))],
+        assistantCount: 2,
+      });
+      await expectNoCreatedFiles(session);
+    } finally {
+      await closePiRewindSession(session);
+    }
+  }, 900_000);
 });
