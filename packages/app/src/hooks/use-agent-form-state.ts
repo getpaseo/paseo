@@ -28,7 +28,7 @@ import {
   mergeSelectedComposerPreferences,
   buildProviderDefinitionMap,
   buildProviderDefinitionMapForStatuses,
-  isModelessProviderDefinition,
+  isModelessProvider,
   INITIAL_AGENT_FORM_RESOLUTION,
   INITIAL_USER_MODIFIED,
   RESOLVABLE_PROVIDER_STATUSES,
@@ -124,20 +124,28 @@ async function persistProviderPreferences(input: {
   formState: FormState;
   availableModels: AgentModelDefinition[] | null;
   providerDefinition: AgentProviderDefinition | undefined;
+  snapshotReady: boolean;
   updatePreferences: (
     updates: Partial<FormPreferences> | ((current: FormPreferences) => FormPreferences),
   ) => Promise<FormPreferences>;
 }): Promise<void> {
-  const { provider, formState, availableModels, providerDefinition, updatePreferences } = input;
+  const {
+    provider,
+    formState,
+    availableModels,
+    providerDefinition,
+    snapshotReady,
+    updatePreferences,
+  } = input;
   const resolvedModel = resolveEffectiveModel(availableModels, formState.model);
   const modelId = resolvedModel?.id ?? formState.model;
   // A modeless provider has no mode to remember. Clear any stale saved mode
   // so it can't fail future creations with no way to unset it in the UI.
-  // isModelessProviderDefinition requires the definition to be known, so an
-  // unloaded snapshot preserves intent instead of deleting it.
-  const modeUpdate = isModelessProviderDefinition(providerDefinition)
-    ? null
-    : formState.modeId || undefined;
+  // Require a ready snapshot: a loading entry also maps to modes: [] (e.g.
+  // OpenCode, whose static default is null), and deleting the saved mode in
+  // that window would lose the user's selection when discovery finishes.
+  const modeUpdate =
+    snapshotReady && isModelessProvider(providerDefinition) ? null : formState.modeId || undefined;
   await updatePreferences((current) =>
     mergeProviderPreferences({
       preferences: current,
@@ -467,9 +475,16 @@ export function useAgentFormState(options: UseAgentFormStateOptions): UseAgentFo
       formState,
       availableModels,
       providerDefinition: providerDefinitionMap.get(formState.provider),
+      snapshotReady: snapshotSelectedEntry?.status === "ready",
       updatePreferences: updateCurrentPreferences,
     });
-  }, [availableModels, formState, providerDefinitionMap, updateCurrentPreferences]);
+  }, [
+    availableModels,
+    formState,
+    providerDefinitionMap,
+    snapshotSelectedEntry,
+    updateCurrentPreferences,
+  ]);
 
   const effectiveModel = resolveEffectiveModel(availableModels, formState.model);
   const availableThinkingOptionsRaw = effectiveModel?.thinkingOptions;

@@ -43,7 +43,7 @@ import { useDaemonConfig } from "@/hooks/use-daemon-config";
 import { resolveTerminalProfiles } from "@getpaseo/protocol/terminal-profiles";
 import type { TerminalProfile } from "@getpaseo/protocol/messages";
 import { LaunchControl } from "@/new-workspace-launch/launch-control";
-import { isModelessProviderDefinition } from "@/provider-selection/resolve-agent-form";
+import { isModelessProvider } from "@/provider-selection/resolve-agent-form";
 import { resolveLaunchTarget, type LaunchTarget } from "@/new-workspace-launch/target";
 import { useTerminalComposerState } from "@/new-workspace-launch/composer-state";
 import { runCreateTerminalWorkspace } from "./new-workspace-terminal";
@@ -791,7 +791,15 @@ type NewWorkspaceComposerState = NonNullable<
 // Providers with modes keep existing behavior: the selected value is sent
 // as-is and server-side validation decides.
 function resolveSubmitModeId(composerState: NewWorkspaceComposerState): string | undefined {
-  if (isModelessProviderDefinition(composerState.agentDefinition)) {
+  // Require a ready snapshot: a loading entry also maps to modes: [] (e.g.
+  // OpenCode, whose static default is null), and stripping the mode in that
+  // window would submit the provider default instead of the user's selection.
+  const entry = composerState.selectedProvider
+    ? composerState.allProviderEntries?.find(
+        (candidate) => candidate.provider === composerState.selectedProvider,
+      )
+    : undefined;
+  if (entry?.status === "ready" && isModelessProvider(composerState.agentDefinition)) {
     return undefined;
   }
   return composerState.selectedMode || undefined;

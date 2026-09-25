@@ -7,6 +7,7 @@ import {
   mergeSelectedComposerPreferences,
   buildProviderDefinitionMap,
   buildProviderDefinitionMapForStatuses,
+  isModelessProvider,
   resolveDefaultModel,
   INITIAL_USER_MODIFIED,
   PENDING_AGENT_FORM_RESOLUTION,
@@ -626,38 +627,23 @@ describe("resolveFormState", () => {
     expect(resolved.modeId).toBe("workspace-write");
   });
 
-  it("drops a stale saved mode for a modeless provider", () => {
-    const resolved = resolveFormState(
-      undefined,
-      {
-        provider: "pi",
-        providerPreferences: { pi: { mode: "build", model: "anthropic/sonnet" } },
-      },
-      null,
-      INITIAL_USER_MODIFIED,
-      makeState({ provider: "pi" }).form,
-      makeProviderMap(TEST_PI_DEFINITION),
-    );
-
-    expect(resolved.provider).toBe("pi");
-    expect(resolved.modeId).toBe("");
+  it("classifies an explicitly modeless definition as modeless", () => {
+    expect(isModelessProvider(TEST_PI_DEFINITION)).toBe(true);
   });
 
-  it("drops a carried-over initial mode for a modeless provider", () => {
-    const resolved = resolveFormState(
-      { provider: "pi", modeId: "build" },
-      {
-        provider: "pi",
-        providerPreferences: { pi: { mode: "build" } },
-      },
-      null,
-      INITIAL_USER_MODIFIED,
-      makeState({ provider: "pi" }).form,
-      makeProviderMap(TEST_PI_DEFINITION),
-    );
+  it("does not classify a provider with modes as modeless", () => {
+    expect(isModelessProvider(TEST_CODEX_DEFINITION)).toBe(false);
+  });
 
-    expect(resolved.provider).toBe("pi");
-    expect(resolved.modeId).toBe("");
+  it("does not classify a loading-shaped definition with a default as modeless", () => {
+    expect(
+      isModelessProvider({ modes: [], defaultModeId: TEST_CODEX_DEFINITION.defaultModeId }),
+    ).toBe(false);
+  });
+
+  it("does not classify an unknown definition as modeless", () => {
+    expect(isModelessProvider(undefined)).toBe(false);
+    expect(isModelessProvider(null)).toBe(false);
   });
 
   it("falls back when the provider cannot advertise its preferred default mode", () => {

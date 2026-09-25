@@ -189,14 +189,15 @@ export function resolveThinkingOptionId(args: {
 
 const normalizeSelectedModeId = normalizeSelectedModelId;
 
-export function isModelessProviderDefinition(
-  definition: AgentProviderDefinition | undefined | null,
+export function isModelessProvider(
+  input: { modes?: { id: string }[] | null; defaultModeId?: string | null } | undefined | null,
 ): boolean {
   // Zero modes with no default means the provider explicitly offers nothing
-  // to select. A loading snapshot also reports zero modes but keeps its
-  // defaultModeId, so requiring the default to be absent keeps intent
-  // preserved while modes are still loading.
-  return !!definition && (definition.modes ?? []).length === 0 && !definition.defaultModeId;
+  // to select. Shape alone cannot tell "explicitly empty" from "not yet
+  // loaded" (a loading snapshot also maps to modes: []), so callers must
+  // additionally gate destructive actions on snapshot entry status ===
+  // "ready" before treating this as modeless.
+  return !!input && (input.modes ?? []).length === 0 && !input.defaultModeId;
 }
 
 function resolvePreferredModeId(input: {
@@ -204,13 +205,6 @@ function resolvePreferredModeId(input: {
   preferredModeId?: string | null;
   providerDef: AgentProviderDefinition | undefined;
 }): string {
-  // A provider with zero modes and no default has nothing to select. Prune
-  // any remembered or carried-over mode so a stale preference can't stick to
-  // the form and get submitted. See isModelessProviderDefinition: loading
-  // snapshots keep their defaultModeId, so intent is preserved while loading.
-  if (isModelessProviderDefinition(input.providerDef)) {
-    return "";
-  }
   // Saved modes are user intent. Provider create config validates unknown modes
   // at submission time, so background form resolution should not erase them.
   const initialModeId = normalizeSelectedModeId(input.initialModeId);
