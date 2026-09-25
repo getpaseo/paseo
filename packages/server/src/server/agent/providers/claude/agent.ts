@@ -30,7 +30,7 @@ import {
   mapTaskNotificationUserContentToToolCall,
   readTaskNotificationToolUseIdFromHistoryRecord,
 } from "./task-notification-tool-call.js";
-import { fetchDiscoveredClaudeModels } from "./model-discovery.js";
+import { fetchDiscoveredClaudeModels, mergeDiscoveredClaudeModels } from "./model-discovery.js";
 import {
   findClaudeModel,
   getClaudeModelsWithSettings,
@@ -1603,7 +1603,7 @@ export class ClaudeAgentClient implements AgentClient {
       createProviderEnv({ baseEnv: process.env, runtimeSettings: this.runtimeSettings }),
     );
     return {
-      models: [...models, ...discoveredModels],
+      models: mergeDiscoveredClaudeModels(models, discoveredModels),
       ...modeCatalog,
     };
   }

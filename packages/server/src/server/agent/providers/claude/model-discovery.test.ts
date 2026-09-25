@@ -6,7 +6,11 @@ import * as path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { createTestLogger } from "../../../../test-utils/test-logger.js";
-import { CLAUDE_MODEL_DISCOVERY_ENV, fetchDiscoveredClaudeModels } from "./model-discovery.js";
+import {
+  CLAUDE_MODEL_DISCOVERY_ENV,
+  fetchDiscoveredClaudeModels,
+  mergeDiscoveredClaudeModels,
+} from "./model-discovery.js";
 
 const cleanup: Array<() => Promise<void> | void> = [];
 
@@ -214,5 +218,40 @@ describe("fetchDiscoveredClaudeModels", () => {
     });
 
     expect(models).toEqual([]);
+  });
+
+  it("treats a corrupt cache as a cold start and refetches", async () => {
+    const stub = await stubModelsDev(200, API_BODY);
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "paseo-model-discovery-"));
+    cleanup.push(() => fs.rm(dir, { recursive: true, force: true }));
+    const cacheFile = path.join(dir, "claude-models.json");
+    await fs.writeFile(cacheFile, "{not json");
+
+    const models = await fetchDiscoveredClaudeModels(createTestLogger(), {
+      apiUrl: stub.apiUrl,
+      cacheFile,
+    });
+
+    expect(models.map((model) => model.id)).toEqual([
+      "claude-opus-6",
+      "claude-haiku-6",
+      "claude-opus-5-6",
+    ]);
+    expect(stub.requestCount()).toBe(1);
+  });
+});
+
+describe("mergeDiscoveredClaudeModels", () => {
+  it("does not duplicate a row the configured catalog already offers", () => {
+    const merged = mergeDiscoveredClaudeModels(
+      [{ provider: "claude", id: "claude-opus-6", label: "From Claude settings.json model" }],
+      [
+        { provider: "claude", id: "claude-opus-6", label: "Opus 6" },
+        { provider: "claude", id: "claude-haiku-6", label: "Haiku 6" },
+      ],
+    );
+
+    expect(merged.map((model) => model.id)).toEqual(["claude-opus-6", "claude-haiku-6"]);
+    expect(merged[0].label).toBe("From Claude settings.json model");
   });
 });

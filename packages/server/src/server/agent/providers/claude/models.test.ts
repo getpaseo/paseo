@@ -455,6 +455,12 @@ describe("normalizeClaudeRuntimeModelId", () => {
       "claude-opus-5",
     );
   });
+
+  it("returns null for a minor release the manifest does not know", () => {
+    expect(normalizeClaudeRuntimeModelId("claude-opus-5-6")).toBeNull();
+    expect(normalizeClaudeRuntimeModelId("us.anthropic.claude-opus-5-6")).toBeNull();
+    expect(normalizeClaudeRuntimeModelId("claude-fable-5-2")).toBeNull();
+  });
 });
 
 describe("parseClaudeCodeVersion", () => {

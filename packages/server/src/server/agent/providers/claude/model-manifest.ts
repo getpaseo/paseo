@@ -396,6 +396,12 @@ export function normalizeClaudeRuntimeModelId(value: string | null | undefined):
     if (normalizedModelId) {
       return normalizedModelId;
     }
+    // A genuine minor segment (unlike an 8-digit date stamp) names a model the
+    // manifest does not know; collapsing it onto the major below would report a
+    // new release as its predecessor.
+    if (runtimeMatch[3].length !== 8) {
+      return null;
+    }
   }
 
   const singleSegmentMatch = trimmed.match(

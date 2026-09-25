@@ -47,7 +47,7 @@ export async function fetchDiscoveredClaudeModels(
   const cacheFile =
     options.cacheFile ?? path.join(resolvePaseoHome(env), "cache", "claude-models.json");
 
-  const cached = await readDiscoveryCache(cacheFile);
+  const cached = await readDiscoveryCache(logger, cacheFile);
   const now = Date.now();
   if (cached && now - cached.fetchedAt < CACHE_TTL_MS) {
     return toModelDefinitions(cached.models);
@@ -123,14 +123,39 @@ function toModelDefinitions(models: unknown): AgentModelDefinition[] {
   return definitions;
 }
 
-async function readDiscoveryCache(cacheFile: string): Promise<DiscoveryCache | null> {
+/**
+ * Catalog rows a settings.json entry or another config source already offers
+ * stay single: discovery only ever appends ids the catalog does not have.
+ */
+export function mergeDiscoveredClaudeModels(
+  models: AgentModelDefinition[],
+  discovered: AgentModelDefinition[],
+): AgentModelDefinition[] {
+  const known = new Set(models.map((model) => model.id));
+  return [...models, ...discovered.filter((model) => !known.has(model.id))];
+}
+
+async function readDiscoveryCache(
+  logger: Logger,
+  cacheFile: string,
+): Promise<DiscoveryCache | null> {
+  let raw: string;
   try {
-    const parsed: unknown = JSON.parse(await fs.readFile(cacheFile, "utf8"));
+    raw = await fs.readFile(cacheFile, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      logger.warn({ err: error, cacheFile }, "Could not read the Claude model discovery cache");
+    }
+    return null;
+  }
+  try {
+    const parsed: unknown = JSON.parse(raw);
     if (isRecord(parsed) && typeof parsed.fetchedAt === "number") {
       return { fetchedAt: parsed.fetchedAt, models: parsed.models };
     }
-  } catch {
-    // A missing or corrupt cache is a cold start, not an error.
+    logger.warn({ cacheFile }, "Claude model discovery cache has an unexpected shape");
+  } catch (error) {
+    logger.warn({ err: error, cacheFile }, "Claude model discovery cache is not valid JSON");
   }
   return null;
 }
