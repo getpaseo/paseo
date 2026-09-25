@@ -2293,6 +2293,8 @@ export const ru: TranslationResources = {
         cycleTheme: "Переключить тему",
         focusMessageInput: "Перейти к полю ввода сообщения",
         cycleAgentMode: "Переключить режим агента",
+        decreaseThinkingEffort: "Уменьшить глубину рассуждений",
+        increaseThinkingEffort: "Увеличить глубину рассуждений",
         toggleVoiceMode: "Переключить голосовой режим",
         startStopDictation: "Начать/остановить диктовку",
         interruptAgent: "Прервать агента",

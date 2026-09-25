@@ -5,6 +5,7 @@ import {
   getAgentControlHintKey,
   normalizeModelId,
   resolveAgentModelSelection,
+  resolveAdjacentThinkingOptionId,
 } from "./utils";
 
 describe("getAgentControlHintKey", () => {
@@ -185,5 +186,40 @@ describe("resolveAgentModelSelection", () => {
     expect(selection.displayModel).toBe("Default (Sonnet 4.6)");
     expect(selection.selectedThinkingId).toBe("low");
     expect(selection.displayThinking).toBe("Low");
+  });
+});
+
+describe("resolveAdjacentThinkingOptionId", () => {
+  const thinkingOptions = [{ id: "low" }, { id: "high" }, { id: "max" }];
+  it.each([
+    ["low", 1, "high"],
+    ["high", 1, "max"],
+    ["max", -1, "high"],
+    ["high", -1, "low"],
+    ["low", -1, null],
+    ["max", 1, null],
+    [undefined, 1, "high"],
+    ["retired", 1, "high"],
+    [undefined, -1, null],
+  ] as const)(
+    "steps from %s by %s without wrapping",
+    (selectedThinkingOptionId, delta, expected) => {
+      expect(
+        resolveAdjacentThinkingOptionId({ thinkingOptions, selectedThinkingOptionId, delta }),
+      ).toBe(expected);
+    },
+  );
+  it("does nothing for models with zero or one level", () => {
+    for (const options of [[], [{ id: "max" }]]) {
+      for (const delta of [-1, 1] as const) {
+        expect(
+          resolveAdjacentThinkingOptionId({
+            thinkingOptions: options,
+            selectedThinkingOptionId: "max",
+            delta,
+          }),
+        ).toBeNull();
+      }
+    }
   });
 });

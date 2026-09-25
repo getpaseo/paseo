@@ -2307,6 +2307,8 @@ export const es: TranslationResources = {
         cycleTheme: "Tema del ciclo",
         focusMessageInput: "Entrada de mensaje de enfoque",
         cycleAgentMode: "Alternar modo del agente",
+        decreaseThinkingEffort: "Reducir el esfuerzo de razonamiento",
+        increaseThinkingEffort: "Aumentar el esfuerzo de razonamiento",
         toggleVoiceMode: "Alternar modo de voz",
         startStopDictation: "Iniciar dictado/stop",
         interruptAgent: "agente de interrupción",
