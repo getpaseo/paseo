@@ -52,6 +52,7 @@ import { z } from "zod";
 import { renderPromptAttachmentAsText } from "../prompt-attachments.js";
 import { composeSystemPromptParts } from "../system-prompt.js";
 import { curateAgentActivity } from "../activity-curator.js";
+import { limitAgentTimelineItemContent } from "../agent-timeline-content.js";
 import { CodexAsyncQuestions, codexAsyncQuestionToTimeline } from "./codex/async-questions.js";
 import {
   mapCodexToolCallEnvelope,
@@ -161,6 +162,8 @@ const CODEX_TOOL_THREAD_ITEM_TYPES = new Set([
   "subAgentActivity",
 ]);
 const CODEX_CONTEXT_COMPACTION_TYPE = "contextCompaction";
+const CODEX_HISTORY_ITEM_PAGE_SIZE = 64;
+const CODEX_HISTORY_TURN_PAGE_SIZE = 256;
 const CODEX_PLAN_IMPLEMENTATION_PROMPT_PREFIX =
   "The user approved the plan. Implement it now. Do not restate or revise the plan unless blocked.";
 
@@ -1984,6 +1987,7 @@ const CodexThreadReadResponseSchema = z
   .object({
     thread: z
       .object({
+        historyMode: z.enum(["legacy", "paginated"]).optional(),
         turns: z
           .array(
             z
@@ -2000,81 +2004,228 @@ const CodexThreadReadResponseSchema = z
   .passthrough();
 
 type CodexThreadReadResponse = z.infer<typeof CodexThreadReadResponseSchema>;
-type CodexThreadReadRequest = (threadId: string) => Promise<unknown>;
+const CodexThreadTurnsListResponseSchema = z
+  .object({
+    data: z.array(
+      z
+        .object({
+          id: z.string(),
+          items: z.array(z.unknown()).default([]),
+        })
+        .passthrough(),
+    ),
+    nextCursor: z.string().nullable().optional(),
+  })
+  .passthrough();
+const CodexThreadItemsListResponseSchema = z
+  .object({
+    data: z.array(
+      z
+        .object({
+          turnId: z.string(),
+          item: z.unknown(),
+        })
+        .passthrough(),
+    ),
+    nextCursor: z.string().nullable().optional(),
+  })
+  .passthrough();
 
-async function requestCodexThreadHistory(
-  requestThread: CodexThreadReadRequest,
-  threadId: string,
-): Promise<CodexThreadReadResponse> {
-  const response = await requestThread(threadId);
-  return CodexThreadReadResponseSchema.parse(response);
+type CodexThreadTurn = CodexThreadReadResponse["thread"]["turns"][number];
+type CodexAppServerHistoryRequest = (method: string, params: unknown) => Promise<unknown>;
+
+interface CodexThreadHistoryAccumulator {
+  timeline: PersistedTimelineEntry[];
+  subAgentTimelineIndexByThreadId: Map<string, number>;
 }
 
-async function loadCodexThreadHistoryTimeline(params: {
-  threadId: string;
+function appendCodexThreadHistoryItem(params: {
+  accumulator: CodexThreadHistoryAccumulator;
+  item: unknown;
+  turn: CodexThreadTurn | undefined;
+  turnId: string | undefined;
   cwd: string | null;
-  requestThread: CodexThreadReadRequest;
-}): Promise<CodexThreadHistoryProjection> {
-  const response = await requestCodexThreadHistory(params.requestThread, params.threadId);
-  const timeline: PersistedTimelineEntry[] = [];
-  const subAgentTimelineIndexByThreadId = new Map<string, number>();
-  for (const turn of response.thread.turns) {
-    for (const item of turn.items) {
-      const historicalSubAgentActivity = readCodexSubAgentActivity(item);
-      if (historicalSubAgentActivity) {
-        const existingIndex = subAgentTimelineIndexByThreadId.get(
-          historicalSubAgentActivity.agentThreadId,
-        );
-        if (existingIndex !== undefined) {
-          const activityTimelineItem = threadItemToTimeline(item, { cwd: params.cwd });
-          updateHistoricalSubAgentActivity(
-            timeline,
-            existingIndex,
-            historicalSubAgentActivity.kind,
-            activityTimelineItem?.type === "tool_call" &&
-              activityTimelineItem.detail.type === "sub_agent"
-              ? activityTimelineItem.detail.subAgentType
-              : undefined,
-          );
-          continue;
-        }
-      }
-      for (const timelineItem of threadItemToTimelineEntries(item, { cwd: params.cwd })) {
-        const timestamp =
-          readCodexHistoryTimestamp(item) ?? readCodexTurnHistoryTimestamp(turn, timelineItem);
-        const settledTimelineItem =
-          historicalSubAgentActivity && timelineItem.type === "tool_call"
-            ? settleHistoricalSubAgentActivity(timelineItem, historicalSubAgentActivity.kind)
-            : timelineItem;
-        timeline.push({
-          item: settledTimelineItem,
-          timestamp: timestamp ?? undefined,
-          ...(timelineItem.type === "user_message" && typeof turn.id === "string"
-            ? { providerTurnId: turn.id }
-            : {}),
-        });
-        for (const childThreadId of readCodexHistoricalSubAgentThreadIds(item)) {
-          subAgentTimelineIndexByThreadId.set(childThreadId, timeline.length - 1);
-        }
-      }
+}): void {
+  const { accumulator, item, turn, turnId, cwd } = params;
+  const historicalSubAgentActivity = readCodexSubAgentActivity(item);
+  if (historicalSubAgentActivity) {
+    const existingIndex = accumulator.subAgentTimelineIndexByThreadId.get(
+      historicalSubAgentActivity.agentThreadId,
+    );
+    if (existingIndex !== undefined) {
+      const activityTimelineItem = threadItemToTimeline(item, { cwd });
+      updateHistoricalSubAgentActivity(
+        accumulator.timeline,
+        existingIndex,
+        historicalSubAgentActivity.kind,
+        activityTimelineItem?.type === "tool_call" &&
+          activityTimelineItem.detail.type === "sub_agent"
+          ? activityTimelineItem.detail.subAgentType
+          : undefined,
+      );
+      return;
     }
   }
-  const subAgentRoutes = Array.from(subAgentTimelineIndexByThreadId.entries()).flatMap(
+
+  for (const timelineItem of threadItemToTimelineEntries(item, { cwd })) {
+    const timestamp =
+      readCodexHistoryTimestamp(item) ?? readCodexTurnHistoryTimestamp(turn, timelineItem);
+    const settledTimelineItem =
+      historicalSubAgentActivity && timelineItem.type === "tool_call"
+        ? settleHistoricalSubAgentActivity(timelineItem, historicalSubAgentActivity.kind)
+        : timelineItem;
+    const limitedTimelineItem = limitAgentTimelineItemContent(settledTimelineItem);
+    accumulator.timeline.push({
+      item: limitedTimelineItem,
+      timestamp: timestamp ?? undefined,
+      ...(limitedTimelineItem.type === "user_message" && turnId ? { providerTurnId: turnId } : {}),
+    });
+    for (const childThreadId of readCodexHistoricalSubAgentThreadIds(item)) {
+      accumulator.subAgentTimelineIndexByThreadId.set(
+        childThreadId,
+        accumulator.timeline.length - 1,
+      );
+    }
+  }
+}
+
+function finishCodexThreadHistory(
+  accumulator: CodexThreadHistoryAccumulator,
+): CodexThreadHistoryProjection {
+  const subAgentRoutes = Array.from(accumulator.subAgentTimelineIndexByThreadId.entries()).flatMap(
     ([childThreadId, timelineIndex]): PersistedSubAgentRoute[] => {
-      const item = timeline[timelineIndex]?.item;
+      const item = accumulator.timeline[timelineIndex]?.item;
       return item?.type === "tool_call" && item.detail.type === "sub_agent"
         ? [{ childThreadId, toolCall: item }]
         : [];
     },
   );
-  return { timeline, subAgentRoutes };
+  return { timeline: accumulator.timeline, subAgentRoutes };
 }
 
-function readCodexThread(client: CodexAppServerClientLike, threadId: string): Promise<unknown> {
-  return client.request("thread/read", {
-    threadId,
-    includeTurns: true,
-  });
+function projectCodexThreadTurns(params: {
+  turns: CodexThreadReadResponse["thread"]["turns"];
+  cwd: string | null;
+}): CodexThreadHistoryProjection {
+  const accumulator: CodexThreadHistoryAccumulator = {
+    timeline: [],
+    subAgentTimelineIndexByThreadId: new Map(),
+  };
+  for (const turn of params.turns) {
+    for (const item of turn.items) {
+      appendCodexThreadHistoryItem({
+        accumulator,
+        item,
+        turn,
+        turnId: typeof turn.id === "string" ? turn.id : undefined,
+        cwd: params.cwd,
+      });
+    }
+  }
+  return finishCodexThreadHistory(accumulator);
+}
+
+function advanceCodexHistoryCursor(params: {
+  nextCursor: string | null | undefined;
+  seenCursors: Set<string>;
+  method: string;
+}): string | null {
+  if (params.nextCursor == null) {
+    return null;
+  }
+  if (params.seenCursors.has(params.nextCursor)) {
+    throw new Error(`${params.method} returned a repeated pagination cursor`);
+  }
+  params.seenCursors.add(params.nextCursor);
+  return params.nextCursor;
+}
+
+async function loadPaginatedCodexThreadHistory(params: {
+  threadId: string;
+  cwd: string | null;
+  request: CodexAppServerHistoryRequest;
+}): Promise<CodexThreadHistoryProjection> {
+  const turnsById = new Map<string, CodexThreadTurn>();
+  const seenTurnCursors = new Set<string>();
+  let turnCursor: string | null = null;
+  do {
+    const response = CodexThreadTurnsListResponseSchema.parse(
+      await params.request("thread/turns/list", {
+        threadId: params.threadId,
+        limit: CODEX_HISTORY_TURN_PAGE_SIZE,
+        sortDirection: "asc",
+        itemsView: "notLoaded",
+        ...(turnCursor === null ? {} : { cursor: turnCursor }),
+      }),
+    );
+    for (const turn of response.data) {
+      turnsById.set(turn.id, turn);
+    }
+    turnCursor = advanceCodexHistoryCursor({
+      nextCursor: response.nextCursor,
+      seenCursors: seenTurnCursors,
+      method: "thread/turns/list",
+    });
+  } while (turnCursor !== null);
+
+  const accumulator: CodexThreadHistoryAccumulator = {
+    timeline: [],
+    subAgentTimelineIndexByThreadId: new Map(),
+  };
+  const seenItemCursors = new Set<string>();
+  let itemCursor: string | null = null;
+  do {
+    const response = CodexThreadItemsListResponseSchema.parse(
+      await params.request("thread/items/list", {
+        threadId: params.threadId,
+        limit: CODEX_HISTORY_ITEM_PAGE_SIZE,
+        sortDirection: "asc",
+        ...(itemCursor === null ? {} : { cursor: itemCursor }),
+      }),
+    );
+    for (const entry of response.data) {
+      appendCodexThreadHistoryItem({
+        accumulator,
+        item: entry.item,
+        turn: turnsById.get(entry.turnId),
+        turnId: entry.turnId,
+        cwd: params.cwd,
+      });
+    }
+    itemCursor = advanceCodexHistoryCursor({
+      nextCursor: response.nextCursor,
+      seenCursors: seenItemCursors,
+      method: "thread/items/list",
+    });
+  } while (itemCursor !== null);
+
+  return finishCodexThreadHistory(accumulator);
+}
+
+async function loadCodexThreadHistoryTimeline(params: {
+  threadId: string;
+  cwd: string | null;
+  request: CodexAppServerHistoryRequest;
+}): Promise<CodexThreadHistoryProjection> {
+  const response = CodexThreadReadResponseSchema.parse(
+    await params.request("thread/read", {
+      threadId: params.threadId,
+      includeTurns: false,
+    }),
+  );
+  if (response.thread.historyMode === "paginated") {
+    return loadPaginatedCodexThreadHistory(params);
+  }
+  if (response.thread.turns.length > 0) {
+    return projectCodexThreadTurns({ turns: response.thread.turns, cwd: params.cwd });
+  }
+  const legacyResponse = CodexThreadReadResponseSchema.parse(
+    await params.request("thread/read", {
+      threadId: params.threadId,
+      includeTurns: true,
+    }),
+  );
+  return projectCodexThreadTurns({ turns: legacyResponse.thread.turns, cwd: params.cwd });
 }
 
 export async function forkCodexThread(
@@ -3865,9 +4016,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     const history = await loadCodexThreadHistoryTimeline({
       threadId,
       cwd: this.config.cwd ?? null,
-      requestThread: (threadIdToRead) => {
-        return readCodexThread(client, threadIdToRead);
-      },
+      request: (method, requestParams) => client.request(method, requestParams),
     });
     const { timeline, subAgentRoutes } = history;
     this.subAgentCallsByCallId.clear();
@@ -3919,7 +4068,7 @@ export class CodexAppServerAgentSession implements AgentSession {
         const childHistory = await loadCodexThreadHistoryTimeline({
           threadId: next.route.childThreadId,
           cwd: this.config.cwd ?? null,
-          requestThread: (childThreadId) => readCodexThread(client, childThreadId),
+          request: (method, requestParams) => client.request(method, requestParams),
         });
         for (const entry of childHistory.timeline) {
           this.emitProviderSubagentTimeline(next.route.childThreadId, entry.item, entry.timestamp);
@@ -3942,7 +4091,10 @@ export class CodexAppServerAgentSession implements AgentSession {
 
   private async ensureThreadLoaded(): Promise<void> {
     if (!this.client || !this.currentThreadId) return;
-    const params: Record<string, unknown> = { threadId: this.currentThreadId };
+    const params: Record<string, unknown> = {
+      threadId: this.currentThreadId,
+      excludeTurns: true,
+    };
     const developerInstructions = composeSystemPromptParts(
       this.config.systemPrompt,
       this.config.daemonAppendSystemPrompt,
