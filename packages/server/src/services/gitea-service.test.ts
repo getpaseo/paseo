@@ -2304,6 +2304,7 @@ describe("createGiteaService", () => {
       headRepositoryUrl: null,
       isCrossRepository: false,
       hasOriginHeadBranch: true,
+      hasHeadBranch: true,
     });
   });
 
@@ -2341,6 +2342,7 @@ describe("createGiteaService", () => {
       headRepositoryUrl: "https://gitea.com/contributor/sample-repo",
       isCrossRepository: true,
       hasOriginHeadBranch: false,
+      hasHeadBranch: true,
     });
 
     expect(calls).toContainEqual(["api", "repos/example-user/sample-repo/pulls/5"]);
@@ -2368,7 +2370,32 @@ describe("createGiteaService", () => {
       ],
       isCrossRepository: false,
       hasOriginHeadBranch: false,
+      hasHeadBranch: false,
     });
+  });
+
+  it("names the local branch pr-<number> end to end for an agit pull request", async () => {
+    // the tea CLI reports head as the raw pull ref too when there's no real
+    // branch, same as the Forgejo API's head.ref
+    const { service } = makeService((args) =>
+      args[0] === "api"
+        ? ok(
+            JSON.stringify({
+              flow: 1,
+              head: { ref: "refs/pull/5/head", repo: { id: 1 } },
+              base: { repo: { id: 1 } },
+            }),
+          )
+        : ok(JSON.stringify({ ...STATUS_PR_VIEW, head: "refs/pull/5/head" })),
+    );
+
+    const target = await service.getPullRequestCheckoutTarget({ cwd: "/repo", number: 5 });
+    const localBranchName = service.buildPrLocalBranchName?.({
+      headRef: target.headRefName,
+      checkoutTarget: target,
+    });
+
+    expect(localBranchName).toBe("pr-5");
   });
 
   it("skips the origin branch fallback when the head branch was deleted", async () => {
@@ -2392,6 +2419,7 @@ describe("createGiteaService", () => {
       ],
       isCrossRepository: false,
       hasOriginHeadBranch: false,
+      hasHeadBranch: false,
     });
   });
 
@@ -2412,6 +2440,7 @@ describe("createGiteaService", () => {
       headOwnerLogin: null,
       isCrossRepository: true,
       hasOriginHeadBranch: false,
+      hasHeadBranch: true,
     });
   });
 
@@ -2448,6 +2477,66 @@ describe("createGiteaService", () => {
     });
 
     expect(localBranchName).toBe("contributor/patch-1");
+  });
+
+  it("names the local branch pr-<number> for a same-repo pull-ref-only head", () => {
+    const { service } = makeService(() => ok(""));
+
+    const localBranchName = service.buildPrLocalBranchName?.({
+      headRef: "refs/pull/5/head",
+      checkoutTarget: {
+        number: 5,
+        baseRefName: "main",
+        headRefName: "refs/pull/5/head",
+        headOwnerLogin: null,
+        headRepositorySshUrl: null,
+        headRepositoryUrl: null,
+        isCrossRepository: false,
+        hasHeadBranch: false,
+      },
+    });
+
+    expect(localBranchName).toBe("pr-5");
+  });
+
+  it("prefixes pr-<number> with the fork owner for a pull-ref-only head", () => {
+    const { service } = makeService(() => ok(""));
+
+    const localBranchName = service.buildPrLocalBranchName?.({
+      headRef: "refs/pull/5/head",
+      checkoutTarget: {
+        number: 5,
+        baseRefName: "main",
+        headRefName: "refs/pull/5/head",
+        headOwnerLogin: "contributor",
+        headRepositorySshUrl: null,
+        headRepositoryUrl: null,
+        isCrossRepository: true,
+        hasHeadBranch: false,
+      },
+    });
+
+    expect(localBranchName).toBe("contributor/pr-5");
+  });
+
+  it("does not double the pr number for a deleted fork's pull-ref-only head", () => {
+    const { service } = makeService(() => ok(""));
+
+    const localBranchName = service.buildPrLocalBranchName?.({
+      headRef: "refs/pull/5/head",
+      checkoutTarget: {
+        number: 5,
+        baseRefName: "main",
+        headRefName: "refs/pull/5/head",
+        headOwnerLogin: null,
+        headRepositorySshUrl: null,
+        headRepositoryUrl: null,
+        isCrossRepository: true,
+        hasHeadBranch: false,
+      },
+    });
+
+    expect(localBranchName).toBe("pr-5");
   });
 
   it("returns the pull head ref for default checkout refs", () => {

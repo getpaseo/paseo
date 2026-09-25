@@ -2049,6 +2049,7 @@ export function createGiteaService(options: CreateGiteaServiceOptions = {}): For
         headRepositoryUrl: fork.headRepositoryUrl,
         isCrossRepository: fork.isCrossRepository,
         hasOriginHeadBranch: headBranchOnOrigin,
+        hasHeadBranch: fork.hasHeadBranch,
       };
     },
 
