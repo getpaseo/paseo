@@ -8,6 +8,7 @@ export const OmpThinkingLevelSchema = z.enum([
   "high",
   "xhigh",
   "max",
+  "auto",
 ]);
 
 export const OmpImageContentSchema = z

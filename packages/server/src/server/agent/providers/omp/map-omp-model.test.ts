@@ -26,7 +26,7 @@ describe("mapOmpModel thinking options", () => {
 
     const result = mapOmpModel(model, "omp");
 
-    expect(result.thinkingOptions?.map((option) => option.id)).toEqual(["high", "xhigh"]);
+    expect(result.thinkingOptions?.map((option) => option.id)).toEqual(["high", "xhigh", "auto"]);
     expect(result.defaultThinkingOptionId).toBe("xhigh");
     expect(result.thinkingOptions?.find((option) => option.isDefault)?.id).toBe("xhigh");
   });
@@ -44,6 +44,7 @@ describe("mapOmpModel thinking options", () => {
       "high",
       "xhigh",
       "max",
+      "auto",
     ]);
     expect(result.defaultThinkingOptionId).toBe("medium");
   });
@@ -64,6 +65,7 @@ describe("mapOmpModel thinking options", () => {
       "high",
       "xhigh",
       "max",
+      "auto",
     ]);
   });
 
@@ -93,7 +95,7 @@ describe("mapOmpModel thinking options", () => {
 
     const result = mapOmpModel(model, "omp");
 
-    expect(result.thinkingOptions?.map((option) => option.id)).toEqual(["low", "high"]);
+    expect(result.thinkingOptions?.map((option) => option.id)).toEqual(["low", "high", "auto"]);
     expect(result.defaultThinkingOptionId).toBe("low");
     expect(result.thinkingOptions?.find((option) => option.isDefault)?.id).toBe("low");
   });
@@ -106,7 +108,12 @@ describe("mapOmpModel thinking options", () => {
 
     const result = mapOmpModel(model, "omp");
 
-    expect(result.thinkingOptions?.map((option) => option.id)).toEqual(["low", "medium", "high"]);
+    expect(result.thinkingOptions?.map((option) => option.id)).toEqual([
+      "low",
+      "medium",
+      "high",
+      "auto",
+    ]);
     expect(result.defaultThinkingOptionId).toBe("low");
   });
 
@@ -126,8 +133,25 @@ describe("mapOmpModel thinking options", () => {
       "high",
       "xhigh",
       "max",
+      "auto",
     ]);
     expect(result.defaultThinkingOptionId).toBe("medium");
+  });
+
+  test("offers auto alongside reported efforts without making it the default", () => {
+    const model = baseModel({
+      reasoning: true,
+      thinking: { mode: "effort", efforts: ["low", "high"], defaultLevel: "high" },
+    });
+
+    const result = mapOmpModel(model, "omp");
+
+    expect(result.thinkingOptions?.at(-1)).toEqual({
+      id: "auto",
+      label: "Auto",
+      description: "OMP picks the effort each turn",
+    });
+    expect(result.defaultThinkingOptionId).toBe("high");
   });
 
   test("preserves provider and model id in the mapped definition", () => {
