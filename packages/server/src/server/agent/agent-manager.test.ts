@@ -2552,11 +2552,9 @@ test("keeps a Codex backend with provider background work until a later idle pro
       return !this.backgroundWorkRunning;
     }
   }
-  let session: BackgroundWorkSession | null = null;
   const client = new (class extends TestAgentClient {
     override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
-      session = new BackgroundWorkSession(config);
-      return session;
+      return new BackgroundWorkSession(config);
     }
   })();
   const manager = new AgentManager({
@@ -2569,17 +2567,19 @@ test("keeps a Codex backend with provider background work until a later idle pro
     const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
       workspaceId: undefined,
     });
+    const session = manager.getAgent(agent.id)?.session as BackgroundWorkSession;
+    expect(session).toBeInstanceOf(BackgroundWorkSession);
 
     await vi.advanceTimersByTimeAsync(10_000);
     await manager.waitForAgentClose(agent.id);
-    expect(session?.probeCount).toBe(1);
-    expect(session?.closed).toBe(false);
+    expect(session.probeCount).toBe(1);
+    expect(session.closed).toBe(false);
 
-    if (session) session.backgroundWorkRunning = false;
+    session.backgroundWorkRunning = false;
     await vi.advanceTimersByTimeAsync(10_000);
     await manager.waitForAgentClose(agent.id);
-    expect(session?.probeCount).toBe(2);
-    expect(session?.closed).toBe(true);
+    expect(session.probeCount).toBe(2);
+    expect(session.closed).toBe(true);
   } finally {
     manager.prepareForShutdown();
     vi.useRealTimers();
@@ -2598,11 +2598,9 @@ test("keeps a Codex backend when its background-work probe fails", async () => {
       return true;
     }
   }
-  let session: FailingProbeSession | null = null;
   const client = new (class extends TestAgentClient {
     override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
-      session = new FailingProbeSession(config);
-      return session;
+      return new FailingProbeSession(config);
     }
   })();
   const manager = new AgentManager({
@@ -2615,16 +2613,18 @@ test("keeps a Codex backend when its background-work probe fails", async () => {
     const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
       workspaceId: undefined,
     });
+    const session = manager.getAgent(agent.id)?.session as FailingProbeSession;
+    expect(session).toBeInstanceOf(FailingProbeSession);
 
     await vi.advanceTimersByTimeAsync(10_000);
     await manager.waitForAgentClose(agent.id);
-    expect(session?.closed).toBe(false);
+    expect(session.closed).toBe(false);
     expect(manager.getAgent(agent.id)?.lifecycle).toBe("idle");
 
-    if (session) session.probeFails = false;
+    session.probeFails = false;
     await vi.advanceTimersByTimeAsync(10_000);
     await manager.waitForAgentClose(agent.id);
-    expect(session?.closed).toBe(true);
+    expect(session.closed).toBe(true);
   } finally {
     manager.prepareForShutdown();
     vi.useRealTimers();
