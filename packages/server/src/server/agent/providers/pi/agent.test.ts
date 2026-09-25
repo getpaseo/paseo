@@ -127,8 +127,13 @@ interface PiSessionEntry {
   message: { role: string; content: unknown };
 }
 
-function piUserEntry(id: string, parentId: string | null, content: string): PiSessionEntry {
-  return { type: "message", id, parentId, message: { role: "user", content } };
+function piUserEntry(input: { id: string; parentId: string | null; text: string }): PiSessionEntry {
+  return {
+    type: "message",
+    id: input.id,
+    parentId: input.parentId,
+    message: { role: "user", content: input.text },
+  };
 }
 
 function piAssistantEntry(id: string, parentId: string): PiSessionEntry {
@@ -1549,11 +1554,11 @@ describe("PiRpcAgentSession", () => {
     const listeners = await loadPaseoExtensionListeners(pi.recordedLaunches[0]!.extensionPaths[0]!);
     // "abandoned" was rewound; "two" was sent from the same parent afterwards.
     const entries = [
-      piUserEntry("one", null, "first"),
+      piUserEntry({ id: "one", parentId: null, text: "first" }),
       piAssistantEntry("one-reply", "one"),
-      piUserEntry("abandoned", "one-reply", "rewound away"),
+      piUserEntry({ id: "abandoned", parentId: "one-reply", text: "rewound away" }),
       piAssistantEntry("abandoned-reply", "abandoned"),
-      piUserEntry("two", "one-reply", "second"),
+      piUserEntry({ id: "two", parentId: "one-reply", text: "second" }),
       piAssistantEntry("two-reply", "two"),
     ];
     const notifications: string[] = [];
