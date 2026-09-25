@@ -50,6 +50,7 @@ import type { ShortcutKey } from "@/utils/format-shortcut";
 import { Shortcut } from "@/components/ui/shortcut";
 import { useWorkspaceTabLayout } from "@/screens/workspace/use-workspace-tab-layout";
 import { retainWorkspaceTabMeasuredWidth } from "@/screens/workspace/workspace-tab-layout";
+import { useWorkspaceTabsWheelScroll } from "@/screens/workspace/workspace-tabs-wheel-scroll";
 import {
   WorkspaceTabPresentationResolver,
   WorkspaceTabIcon,
@@ -1189,6 +1190,10 @@ function ResolvedWorkspaceDesktopTabsRow({
     metrics: layoutMetrics,
   });
 
+  // The strip hides its scrollbar and relies on the edge shades, so a plain mouse wheel
+  // has to pan it; otherwise tabs past the viewport are unreachable without a trackpad.
+  const tabsScrollRef = useWorkspaceTabsWheelScroll(layout.requiresHorizontalScrollFallback);
+
   const handleDragEnd = useCallback(
     (nextTabs: ResolvedWorkspaceDesktopTabRowItem[]) => {
       onReorderTabs(nextTabs.map((tab) => tab.tab));
@@ -1342,6 +1347,7 @@ function ResolvedWorkspaceDesktopTabsRow({
       />
       <View style={styles.tabsScrollContainer}>
         <Animated.ScrollView
+          ref={tabsScrollRef}
           horizontal
           scrollEnabled={layout.requiresHorizontalScrollFallback}
           testID="workspace-tabs-scroll"
