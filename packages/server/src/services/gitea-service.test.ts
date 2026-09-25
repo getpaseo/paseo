@@ -448,6 +448,9 @@ describe("createGiteaService", () => {
       if (args[0] === "api" && args[1].includes("/commits/")) {
         return ok(JSON.stringify(SAMPLE_COMBINED_STATUS));
       }
+      if (args[0] === "api" && args[1] === "-i" && args[2].includes("/issues/5/timeline")) {
+        return { stdout: "[]", stderr: "HTTP/1.1 200 OK\nX-Total-Count: 0\n" };
+      }
       throw new Error(`unexpected call: ${args.join(" ")}`);
     });
 
@@ -490,7 +493,7 @@ describe("createGiteaService", () => {
       mergeable: true,
       hasMerged: false,
       ciStatus: "success",
-      // ci isn't pending and there's no cache entry, so no timeline fetch happens
+      // empty timeline, so nothing scheduled
       autoMergeScheduled: false,
     });
     // Requests the explicit field set; tea's default omits url/mergeable/base/head/ci.
@@ -2664,12 +2667,21 @@ describe("createGiteaService", () => {
     expect(calls).toHaveLength(0);
   });
 
-  it("skips the timeline fetch when ci isn't pending and nothing is cached", async () => {
+  // gitea leaves a schedule armed when checks go red, so a settled ci is no
+  // reason to skip the lookup. do that and the user can't cancel it any more.
+  it("still reads the timeline for a scheduled merge once ci has failed", async () => {
+    const failedPr = { ...OPEN_PR, ci: "failure" };
     const { service, calls } = makeService((args) => {
-      if (args[0] === "pr" && args[1] === "list") return ok(JSON.stringify([OPEN_PR]));
+      if (args[0] === "pr" && args[1] === "list") return ok(JSON.stringify([failedPr]));
       if (args[0] === "pr" && args[1] === "5") return ok(JSON.stringify(STATUS_PR_VIEW));
       if (args[0] === "api" && args[1].includes("/commits/")) {
         return ok(JSON.stringify(SAMPLE_COMBINED_STATUS));
+      }
+      if (args[0] === "api" && args[1] === "-i" && args[2].includes("/issues/5/timeline")) {
+        return {
+          stdout: JSON.stringify([{ id: 1, type: "pull_scheduled_merge" }]),
+          stderr: "HTTP/1.1 200 OK\nX-Total-Count: 1\n",
+        };
       }
       throw new Error(`unexpected call: ${args.join(" ")}`);
     });
@@ -2679,8 +2691,132 @@ describe("createGiteaService", () => {
       headRef: "feat/sample-change",
     });
 
-    expect(status?.forgeSpecific).toMatchObject({ autoMergeScheduled: false });
-    expect(calls.some((args) => isTimelineCall(args))).toBe(false);
+    expect(status?.forgeSpecific).toMatchObject({ autoMergeScheduled: true });
+    expect(calls.some((args) => isTimelineCall(args))).toBe(true);
+  });
+
+  it("answers from the cache without a second timeline fetch", async () => {
+    const pendingPr = { ...OPEN_PR, ci: "pending" };
+    const { service, calls } = makeService((args) => {
+      if (args[0] === "pr" && args[1] === "list") return ok(JSON.stringify([pendingPr]));
+      if (args[0] === "pr" && args[1] === "5") return ok(JSON.stringify(STATUS_PR_VIEW));
+      if (args[0] === "api" && args[1].includes("/commits/")) {
+        return ok(JSON.stringify(SAMPLE_COMBINED_STATUS));
+      }
+      if (args[0] === "api" && args[1] === "-i" && args[2].includes("/issues/5/timeline")) {
+        return {
+          stdout: JSON.stringify([{ id: 1, type: "pull_scheduled_merge" }]),
+          stderr: "HTTP/1.1 200 OK\nX-Total-Count: 1\n",
+        };
+      }
+      throw new Error(`unexpected call: ${args.join(" ")}`);
+    });
+
+    await service.getCurrentPullRequestStatus({ cwd: "/repo", headRef: "feat/sample-change" });
+    const second = await service.getCurrentPullRequestStatus({
+      cwd: "/repo",
+      headRef: "feat/sample-change",
+    });
+
+    expect(second?.forgeSpecific).toMatchObject({ autoMergeScheduled: true });
+    expect(calls.filter((args) => isTimelineCall(args))).toHaveLength(1);
+  });
+
+  it("parses the timeline body when tea writes the headers to stdout", async () => {
+    const pendingPr = { ...OPEN_PR, ci: "pending" };
+    const { service } = makeService((args) => {
+      if (args[0] === "pr" && args[1] === "list") return ok(JSON.stringify([pendingPr]));
+      if (args[0] === "pr" && args[1] === "5") return ok(JSON.stringify(STATUS_PR_VIEW));
+      if (args[0] === "api" && args[1].includes("/commits/")) {
+        return ok(JSON.stringify(SAMPLE_COMBINED_STATUS));
+      }
+      if (args[0] === "api" && args[1] === "-i" && args[2].includes("/issues/5/timeline")) {
+        // headers and body both on stdout, nothing on stderr
+        return {
+          stdout: `HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nX-Total-Count: 1\r\n\r\n${JSON.stringify([{ id: 1, type: "pull_scheduled_merge" }])}`,
+          stderr: "",
+        };
+      }
+      throw new Error(`unexpected call: ${args.join(" ")}`);
+    });
+
+    const status = await service.getCurrentPullRequestStatus({
+      cwd: "/repo",
+      headRef: "feat/sample-change",
+    });
+
+    expect(status?.forgeSpecific).toMatchObject({ autoMergeScheduled: true });
+  });
+
+  it("retries the timeline on the next poll when the lookup failed", async () => {
+    const pendingPr = { ...OPEN_PR, ci: "pending" };
+    let timelineAttempts = 0;
+    const { service } = makeService((args) => {
+      if (args[0] === "pr" && args[1] === "list") return ok(JSON.stringify([pendingPr]));
+      if (args[0] === "pr" && args[1] === "5") return ok(JSON.stringify(STATUS_PR_VIEW));
+      if (args[0] === "api" && args[1].includes("/commits/")) {
+        return ok(JSON.stringify(SAMPLE_COMBINED_STATUS));
+      }
+      if (isTimelineCall(args)) {
+        timelineAttempts += 1;
+        if (timelineAttempts === 1) {
+          throw new Error("boom");
+        }
+        return {
+          stdout: JSON.stringify([{ id: 1, type: "pull_scheduled_merge" }]),
+          stderr: "HTTP/1.1 200 OK\nX-Total-Count: 1\n",
+        };
+      }
+      throw new Error(`unexpected call: ${args.join(" ")}`);
+    });
+
+    const first = await service.getCurrentPullRequestStatus({
+      cwd: "/repo",
+      headRef: "feat/sample-change",
+    });
+    const second = await service.getCurrentPullRequestStatus({
+      cwd: "/repo",
+      headRef: "feat/sample-change",
+    });
+
+    expect(first?.forgeSpecific).toMatchObject({ autoMergeScheduled: false });
+    expect(second?.forgeSpecific).toMatchObject({ autoMergeScheduled: true });
+  });
+
+  it("does not cache a false result when the timeline window was truncated", async () => {
+    const pendingPr = { ...OPEN_PR, ci: "pending" };
+    let timelinePasses = 0;
+    // 500 events means the walk only reaches pages 10..7, so a schedule older
+    // than that is outside the window and the answer stays undetermined
+    const { service } = makeService((args) => {
+      if (args[0] === "pr" && args[1] === "list") return ok(JSON.stringify([pendingPr]));
+      if (args[0] === "pr" && args[1] === "5") return ok(JSON.stringify(STATUS_PR_VIEW));
+      if (args[0] === "api" && args[1].includes("/commits/")) {
+        return ok(JSON.stringify(SAMPLE_COMBINED_STATUS));
+      }
+      if (args[0] === "api" && args[1] === "-i" && args[2].includes("/issues/5/timeline?page=1")) {
+        timelinePasses += 1;
+        return { stdout: "[]", stderr: "HTTP/1.1 200 OK\nX-Total-Count: 500\n" };
+      }
+      if (isTimelineCall(args)) {
+        return timelinePasses === 1
+          ? ok("[]")
+          : ok(JSON.stringify([{ id: 1, type: "pull_scheduled_merge" }]));
+      }
+      throw new Error(`unexpected call: ${args.join(" ")}`);
+    });
+
+    const first = await service.getCurrentPullRequestStatus({
+      cwd: "/repo",
+      headRef: "feat/sample-change",
+    });
+    const second = await service.getCurrentPullRequestStatus({
+      cwd: "/repo",
+      headRef: "feat/sample-change",
+    });
+
+    expect(first?.forgeSpecific).toMatchObject({ autoMergeScheduled: false });
+    expect(second?.forgeSpecific).toMatchObject({ autoMergeScheduled: true });
   });
 
   it("reads the latest timeline page first when the total-count header is present", async () => {
