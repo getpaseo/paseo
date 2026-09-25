@@ -80,9 +80,33 @@ describe("resolveAgent", () => {
     await expect(resolveAgent(client, "no such agent")).resolves.toBeNull();
   });
 
-  it("surfaces an ambiguous identifier instead of guessing", async () => {
-    const client = pagedClient(fleet, new Error('Agent identifier "0000" is ambiguous (…)'));
-    await expect(resolveAgent(client, "0000")).rejects.toThrow(/ambiguous/);
+  it("re-judges the daemon's ambiguity on visible agents only", async () => {
+    const client = pagedClient(fleet, new Error('Agent identifier "00000449" is ambiguous (…)'));
+    await expect(resolveAgent(client, "00000449")).resolves.toBe(oldest);
+  });
+
+  it("refuses an ambiguous case-insensitive prefix instead of picking the first", async () => {
+    const pair = [
+      agent("ab000000-0000-4000-8000-000000000001"),
+      agent("ab000000-0000-4000-8000-000000000002"),
+    ];
+    const client = pagedClient([...fleet, ...pair], new Error("Agent not found: AB"));
+    await expect(resolveAgent(client, "AB")).rejects.toThrow(/ambiguous/);
+  });
+
+  it("refuses a partial title shared by several agents", async () => {
+    const client = pagedClient(fleet, new Error("Agent not found: gent 44"));
+    await expect(resolveAgent(client, "gent 44")).rejects.toThrow(/ambiguous/);
+  });
+
+  it("prefers an exact title over partial ones", async () => {
+    const client = pagedClient(fleet, new Error("Agent not found: AGENT 44"));
+    await expect(resolveAgent(client, "AGENT 44")).resolves.toBe(fleet[44]);
+  });
+
+  it("rethrows a transport failure rather than falling back", async () => {
+    const client = pagedClient(fleet, new Error("Request timed out"));
+    await expect(resolveAgent(client, oldest.id)).rejects.toThrow(/timed out/);
     expect(client.fetchAgents).not.toHaveBeenCalled();
   });
 });
