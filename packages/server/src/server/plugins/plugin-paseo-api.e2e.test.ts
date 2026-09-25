@@ -3,10 +3,8 @@ import { resolveDaemonVersion } from "../daemon-version.js";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { afterEach, expect, test } from "vitest";
 import { z } from "zod";
-import { searchAgentTranscriptsRpc } from "../../../../../plugin-examples/agent-context/shared/agent-context.js";
 import { DaemonClient } from "../test-utils/daemon-client.js";
 import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
 import { createTestAgentClient, createTestAgentClients } from "../test-utils/fake-agent-client.js";
@@ -139,63 +137,6 @@ export default function contribute(server: PluginServerContext) {
     );
   } finally {
     await client.close().catch(() => undefined);
-    await daemon.close();
-  }
-}, 60_000);
-
-test("the agent context example snapshots a real daemon timeline through its plugin RPC", async () => {
-  const directory = await mkdtemp(path.join(tmpdir(), "paseo-agent-context-"));
-  roots.push(directory);
-  const version = resolveDaemonVersion(import.meta.url);
-  const daemon = await createTestPaseoDaemon({
-    daemonVersion: version,
-    agentClients: { codex: createTestAgentClient("codex") },
-  });
-  const client = new DaemonClient({
-    url: `ws://127.0.0.1:${daemon.port}/ws`,
-    appVersion: version,
-  });
-
-  try {
-    await client.connect();
-    await client.patchDaemonConfig({ pluginsEnabled: true });
-    await client.installDirectoryPlugin(
-      fileURLToPath(new URL("../../../../../plugin-examples/agent-context", import.meta.url)),
-    );
-    const created = await client.createWorkspace({
-      source: { kind: "directory", path: directory },
-      title: "Snapshot workspace",
-    });
-    expect(created.error).toBeNull();
-    const workspace = created.workspace!;
-    const agent = await client.createAgent({
-      provider: "codex",
-      cwd: workspace.workspaceDirectory,
-      workspaceId: workspace.id,
-      title: "Snapshot source",
-    });
-    await client.sendMessage(agent.id, "Respond with exactly: SNAPSHOT_READY");
-    await client.waitForFinish(agent.id);
-
-    const output = searchAgentTranscriptsRpc.output.parse(
-      await client.invokePluginRpc("agent-context", searchAgentTranscriptsRpc.name, {
-        query: "",
-      }),
-    );
-
-    expect(output.items).toHaveLength(1);
-    expect(output.items[0]).toMatchObject({
-      id: agent.id,
-      title: "Snapshot source",
-      resourceType: "agent transcript",
-      contextKind: "chat_history",
-    });
-    expect(output.items[0]?.subtitle).toContain("Snapshot workspace");
-    expect(output.items[0]?.subtitle).toContain(path.basename(directory));
-    expect(output.items[0]?.text).toContain("[User] Respond with exactly: SNAPSHOT_READY");
-    expect(output.items[0]?.text).toContain("[Assistant] SNAPSHOT_READY");
-  } finally {
-    await client.close();
     await daemon.close();
   }
 }, 60_000);

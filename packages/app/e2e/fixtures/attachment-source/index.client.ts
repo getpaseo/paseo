@@ -1,6 +1,6 @@
 import type { PluginClientContext } from "@getpaseo/plugin/client";
-import { agentTranscriptAttachments } from "./shared/agent-context";
+import { contextAttachments } from "./shared/context";
 
 export default function contribute(client: PluginClientContext) {
-  return client.addAttachmentSource(agentTranscriptAttachments);
+  return client.addAttachmentSource(contextAttachments);
 }

@@ -39,7 +39,7 @@ import { hasGithubAuth, createTempGithubRepo } from "../support/helpers/github-f
 import { getServerId } from "../support/helpers/server-id";
 import { openFileExplorer } from "../support/helpers/file-explorer";
 import { attachFileFromMenu, controlFileUploadCompletion } from "../support/helpers/composer";
-import { withAgentContextExample } from "../support/helpers/agent-context";
+import { withAttachmentSourceFixture } from "../support/helpers/attachment-source";
 
 const MINIMAL_PNG = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
@@ -54,12 +54,12 @@ const TEST_JSON = {
 };
 
 test.describe("Composer attachments", () => {
-  test("New Agent offers a recent transcript snapshot without a search query", async ({
+  test("New Agent offers an attachment source shortcut with a default result", async ({
     page,
   }, info) => {
-    await withAgentContextExample(page, info, async (context) => {
-      await context.openPickerFromNewAgent();
-      await context.attachRecentSource();
+    await withAttachmentSourceFixture(page, info, async (context) => {
+      await context.openShortcut();
+      await context.attachDefaultResult();
       await context.expectAttachmentInDraft();
     });
   });

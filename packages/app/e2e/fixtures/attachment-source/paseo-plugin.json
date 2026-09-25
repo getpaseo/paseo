@@ -1,5 +1,5 @@
 {
-  "id": "agent-context",
+  "id": "test-attachment-source",
   "requirements": {
     "paseo": ">=0.9.0"
   }
