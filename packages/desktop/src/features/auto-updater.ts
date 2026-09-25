@@ -124,12 +124,8 @@ class ElectronAppUpdateRuntime implements AppUpdateRuntime {
   }
 
   async checkForUpdates(): Promise<RuntimeUpdateCheckResult | null> {
-    const result = await autoUpdater.checkForUpdates();
-    if (!result) return null;
-    return {
-      isUpdateAvailable: result.isUpdateAvailable,
-      updateInfo: result.updateInfo as RuntimeUpdateInfo,
-    };
+    // Disabled outright until a feed exists in the fork, to prevent updater errors.
+    return null;
   }
 
   downloadUpdate(): Promise<unknown> {
