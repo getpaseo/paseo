@@ -1000,10 +1000,6 @@ function lastAutoMergeEventState(items: readonly { type?: string }[]): boolean |
   return state;
 }
 
-function deriveAutoMergeScheduledFromTimeline(items: readonly { type?: string }[]): boolean {
-  return lastAutoMergeEventState(items) ?? false;
-}
-
 /** Parse owner/name from a Gitea PR/issue URL (`https://host/owner/repo/pulls/N`). */
 function parseGiteaRepoFromUrl(url: string): { owner?: string; name?: string } {
   try {
@@ -1324,6 +1320,25 @@ function parseHttpStatus(headerDump: string): number | null {
 // tea prints the status line on stdout or stderr depending on build, check both
 function parseTeaResponseStatus(response: { stdout: string; stderr: string }): number | null {
   return parseHttpStatus(response.stderr) ?? parseHttpStatus(response.stdout);
+}
+
+/**
+ * Drop a leading HTTP header dump from a `tea api -i` stdout so the body can be
+ * parsed as JSON. Some tea builds write the headers to stdout instead of stderr.
+ * Headers end at the first blank line; with redirects there are several blocks,
+ * so split after the last status line, matching what parseHttpStatus reads.
+ */
+function stripHttpHeaderDump(stdout: string): string {
+  const matches = [...stdout.matchAll(HTTP_STATUS_LINE)];
+  const last = matches.at(-1);
+  if (last?.index === undefined) {
+    return stdout;
+  }
+  const bodyStart = stdout.slice(last.index).search(/\r?\n\r?\n/);
+  if (bodyStart === -1) {
+    return stdout;
+  }
+  return stdout.slice(last.index + bodyStart).replace(/^\r?\n\r?\n/, "");
 }
 
 // pull the message field out of a gitea/forgejo json error body, null if not json
@@ -1845,8 +1860,9 @@ export function createGiteaService(options: CreateGiteaServiceOptions = {}): For
     }
   }
 
-  // only worth a timeline fetch while ci is pending or the cache still says
-  // scheduled, once checks settle scheduling would just merge right now
+  // a fresh cache entry answers on its own; otherwise always look, even once ci
+  // settled. gitea keeps a schedule armed when checks go red, so "not pending"
+  // is no proof there's nothing to cancel.
   async function applyGiteaAutoMergeScheduled(
     cwd: string,
     prNumber: number,
@@ -1865,12 +1881,10 @@ export function createGiteaService(options: CreateGiteaServiceOptions = {}): For
     const cacheKey = autoMergeScheduledCacheKey(cwd, prNumber);
     const cached = autoMergeScheduledCache.get(cacheKey);
     const nowMs = now();
-    const cachedScheduled = cached && cached.expiresAt > nowMs ? cached.scheduled : null;
-    const ciPending = facts.ciStatus !== null && mapGiteaCommitState(facts.ciStatus) === "pending";
-    if (!ciPending && cachedScheduled !== true) {
+    if (cached && cached.expiresAt > nowMs) {
       return {
         ...status,
-        forgeSpecific: { ...facts, autoMergeScheduled: cachedScheduled ?? false },
+        forgeSpecific: { ...facts, autoMergeScheduled: cached.scheduled },
       };
     }
     const scheduled = await loadAutoMergeScheduledBestEffort(
@@ -1879,28 +1893,33 @@ export function createGiteaService(options: CreateGiteaServiceOptions = {}): For
       status.repoOwner,
       status.repoName,
     );
-    autoMergeScheduledCache.set(cacheKey, {
-      scheduled,
-      expiresAt: nowMs + CURRENT_PR_HEAD_SHA_CACHE_TTL_MS,
-    });
+    // an undetermined lookup must not be cached: caching it would keep the
+    // wrong answer for the whole ttl instead of retrying on the next poll
+    if (scheduled !== null) {
+      autoMergeScheduledCache.set(cacheKey, {
+        scheduled,
+        expiresAt: nowMs + CURRENT_PR_HEAD_SHA_CACHE_TTL_MS,
+      });
+    }
     return {
       ...status,
-      forgeSpecific: { ...facts, autoMergeScheduled: scheduled },
+      forgeSpecific: { ...facts, autoMergeScheduled: scheduled ?? false },
     };
   }
 
   // fully local: any failure here, auth included, must not escape and discard
-  // checks that already loaded upstream in loadCurrentPullRequestChecks
+  // checks that already loaded upstream in loadCurrentPullRequestChecks.
+  // null means "couldn't tell", which is not the same as "not scheduled".
   async function loadAutoMergeScheduledBestEffort(
     cwd: string,
     prNumber: number,
     repoOwner: string,
     repoName: string,
-  ): Promise<boolean> {
+  ): Promise<boolean | null> {
     try {
       return await loadAutoMergeScheduledFromLatestPages({ cwd, prNumber, repoOwner, repoName });
     } catch {
-      return false;
+      return null;
     }
   }
 
@@ -1916,10 +1935,12 @@ export function createGiteaService(options: CreateGiteaServiceOptions = {}): For
   }
 
   // timeline is oldest first, so walk backward from the last page to find a
-  // recent schedule/cancel without reading through the whole history
+  // recent schedule/cancel without reading through the whole history.
+  // null means the walk couldn't settle it, either because the window was
+  // truncated or because nothing in it said schedule or cancel.
   async function loadAutoMergeScheduledFromLatestPages(
     input: GetPullRequestTimelineOptions,
-  ): Promise<boolean> {
+  ): Promise<boolean | null> {
     const suffix = `issues/${input.prNumber}/timeline`;
     const firstPagePath = timelineApiPath(input, `${suffix}?${timelinePageQuery(1)}`);
     const firstPageArgs = ["api", "-i", firstPagePath];
@@ -1928,12 +1949,17 @@ export function createGiteaService(options: CreateGiteaServiceOptions = {}): For
     if (totalCount === null) {
       // no header, tea build too old to support -i here; scan forward instead
       const bucket = await listTimelineBucketPages(input, suffix, GiteaTimelineEventSchema);
-      return deriveAutoMergeScheduledFromTimeline(bucket.items);
+      const state = lastAutoMergeEventState(bucket.items);
+      if (state !== null) {
+        return state;
+      }
+      return bucket.truncated ? null : false;
     }
     const firstPageItems = runJsonParse(
       firstPageArgs,
       { cwd: input.cwd },
-      first.stdout,
+      // with -i some tea builds put the header dump on stdout ahead of the body
+      stripHttpHeaderDump(first.stdout),
       z.array(GiteaTimelineEventSchema),
     );
     const lastPage = Math.max(1, Math.ceil(totalCount / TIMELINE_PAGE_SIZE));
@@ -1952,7 +1978,8 @@ export function createGiteaService(options: CreateGiteaServiceOptions = {}): For
         return state;
       }
     }
-    return false;
+    // older pages we never read could still hold the schedule event
+    return oldestPage > 1 ? null : false;
   }
 
   async function loadCombinedCommitStatusBestEffort(input: {
@@ -2549,7 +2576,9 @@ export function createGiteaService(options: CreateGiteaServiceOptions = {}): For
       const response = await runApiWithStatus(args, { cwd: input.cwd });
       // 200 = merged immediately, 201 = scheduled, 409 = already scheduled
       assertGiteaApiStatus(response, [200, 201, 409]);
-      setAutoMergeScheduledCache(input.cwd, input.prNumber, true);
+      // on 200 nothing got scheduled, the pr is already merged, so don't cache
+      // a schedule that isn't there
+      setAutoMergeScheduledCache(input.cwd, input.prNumber, response.status !== 200);
       return { success: true };
     },
 
@@ -2575,6 +2604,11 @@ export function createGiteaService(options: CreateGiteaServiceOptions = {}): For
       for (const key of currentPrHeadShaCache.keys()) {
         if (key.startsWith(prefix)) {
           currentPrHeadShaCache.delete(key);
+        }
+      }
+      for (const key of autoMergeScheduledCache.keys()) {
+        if (key.startsWith(prefix)) {
+          autoMergeScheduledCache.delete(key);
         }
       }
     },
