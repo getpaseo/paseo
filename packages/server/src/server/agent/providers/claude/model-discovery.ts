@@ -124,15 +124,31 @@ function toModelDefinitions(models: unknown): AgentModelDefinition[] {
 }
 
 /**
- * Catalog rows a settings.json entry or another config source already offers
- * stay single: discovery only ever appends ids the catalog does not have.
+ * A model id that settings.json or another config source already offers stays
+ * a single row: the configured row keeps its identity, and the discovered row
+ * fills in the capabilities a configured row does not carry.
  */
 export function mergeDiscoveredClaudeModels(
   models: AgentModelDefinition[],
   discovered: AgentModelDefinition[],
 ): AgentModelDefinition[] {
-  const known = new Set(models.map((model) => model.id));
-  return [...models, ...discovered.filter((model) => !known.has(model.id))];
+  const merged = [...models];
+  const indexById = new Map(models.map((model, index) => [model.id, index]));
+  for (const row of discovered) {
+    const existingIndex = indexById.get(row.id);
+    if (existingIndex === undefined) {
+      merged.push(row);
+      continue;
+    }
+    const existing = merged[existingIndex];
+    merged[existingIndex] = {
+      ...row,
+      ...existing,
+      thinkingOptions: existing.thinkingOptions ?? row.thinkingOptions,
+      contextWindowMaxTokens: existing.contextWindowMaxTokens ?? row.contextWindowMaxTokens,
+    };
+  }
+  return merged;
 }
 
 async function readDiscoveryCache(

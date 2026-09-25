@@ -242,16 +242,27 @@ describe("fetchDiscoveredClaudeModels", () => {
 });
 
 describe("mergeDiscoveredClaudeModels", () => {
-  it("does not duplicate a row the configured catalog already offers", () => {
+  it("keeps one row per id and fills in discovered capabilities", () => {
     const merged = mergeDiscoveredClaudeModels(
       [{ provider: "claude", id: "claude-opus-6", label: "From Claude settings.json model" }],
       [
-        { provider: "claude", id: "claude-opus-6", label: "Opus 6" },
+        {
+          provider: "claude",
+          id: "claude-opus-6",
+          label: "Opus 6",
+          description: "Discovered from models.dev",
+          contextWindowMaxTokens: 500_000,
+          thinkingOptions: [{ id: "high", label: "High", isDefault: true }],
+        },
         { provider: "claude", id: "claude-haiku-6", label: "Haiku 6" },
       ],
     );
 
     expect(merged.map((model) => model.id)).toEqual(["claude-opus-6", "claude-haiku-6"]);
-    expect(merged[0].label).toBe("From Claude settings.json model");
+    const enriched = merged[0];
+    expect(enriched.label).toBe("From Claude settings.json model");
+    expect(enriched.description).toBe("Discovered from models.dev");
+    expect(enriched.contextWindowMaxTokens).toBe(500_000);
+    expect(enriched.thinkingOptions?.[0]?.id).toBe("high");
   });
 });
