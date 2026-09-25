@@ -3342,6 +3342,13 @@ interface ConsumedRootCompaction {
   itemId?: string;
 }
 
+interface CodexInterruptTarget {
+  client: CodexAppServerClient;
+  threadId: string;
+  turnId: string;
+  foregroundTurnId: string | null;
+}
+
 export class CodexAppServerAgentSession implements AgentSession {
   readonly provider = CODEX_PROVIDER;
   readonly capabilities = CODEX_APP_SERVER_CAPABILITIES;
@@ -3369,12 +3376,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     cancelRequested: boolean;
   } | null = null;
   private client: CodexAppServerClient | null = null;
-  private timedOutInterruptTarget: {
-    client: CodexAppServerClient;
-    threadId: string;
-    turnId: string;
-    foregroundTurnId: string | null;
-  } | null = null;
+  private timedOutInterruptTarget: CodexInterruptTarget | null = null;
   private readonly subscribers = new Set<(event: AgentStreamEvent) => void>();
   private nextTurnOrdinal = 0;
   private activeForegroundTurnId: string | null = null;
@@ -4890,12 +4892,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     });
   }
 
-  private async requestTurnInterrupt(target: {
-    client: CodexAppServerClient;
-    threadId: string;
-    turnId: string;
-    foregroundTurnId: string | null;
-  }): Promise<void> {
+  private async requestTurnInterrupt(target: CodexInterruptTarget): Promise<void> {
     try {
       await target.client.request(
         "turn/interrupt",
@@ -4936,12 +4933,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     }
   }
 
-  private isInterruptTargetActive(target: {
-    client: CodexAppServerClient;
-    threadId: string;
-    turnId: string;
-    foregroundTurnId: string | null;
-  }): boolean {
+  private isInterruptTargetActive(target: CodexInterruptTarget): boolean {
     return (
       this.client === target.client &&
       this.currentThreadId === target.threadId &&
@@ -4950,12 +4942,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     );
   }
 
-  private matchesTimedOutInterruptTarget(target: {
-    client: CodexAppServerClient;
-    threadId: string;
-    turnId: string;
-    foregroundTurnId: string | null;
-  }): boolean {
+  private matchesTimedOutInterruptTarget(target: CodexInterruptTarget): boolean {
     const timedOut = this.timedOutInterruptTarget;
     return (
       timedOut?.client === target.client &&
@@ -4965,12 +4952,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     );
   }
 
-  private clearTimedOutInterruptTarget(target?: {
-    client: CodexAppServerClient;
-    threadId: string;
-    turnId: string;
-    foregroundTurnId: string | null;
-  }): void {
+  private clearTimedOutInterruptTarget(target?: CodexInterruptTarget): void {
     if (!target || this.matchesTimedOutInterruptTarget(target)) {
       this.timedOutInterruptTarget = null;
     }
@@ -4978,12 +4960,7 @@ export class CodexAppServerAgentSession implements AgentSession {
 
   // A timeout alone can be transient. Escalate only after a second explicit cancel
   // still targets the exact same active turn; never stop a newer turn for a stale RPC.
-  private async stopUnresponsiveAppServer(target: {
-    client: CodexAppServerClient;
-    threadId: string;
-    turnId: string;
-    foregroundTurnId: string | null;
-  }): Promise<void> {
+  private async stopUnresponsiveAppServer(target: CodexInterruptTarget): Promise<void> {
     if (!this.isInterruptTargetActive(target)) {
       return;
     }
