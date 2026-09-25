@@ -626,6 +626,40 @@ describe("resolveFormState", () => {
     expect(resolved.modeId).toBe("workspace-write");
   });
 
+  it("drops a stale saved mode for a modeless provider", () => {
+    const resolved = resolveFormState(
+      undefined,
+      {
+        provider: "pi",
+        providerPreferences: { pi: { mode: "build", model: "anthropic/sonnet" } },
+      },
+      null,
+      INITIAL_USER_MODIFIED,
+      makeState({ provider: "pi" }).form,
+      makeProviderMap(TEST_PI_DEFINITION),
+    );
+
+    expect(resolved.provider).toBe("pi");
+    expect(resolved.modeId).toBe("");
+  });
+
+  it("drops a carried-over initial mode for a modeless provider", () => {
+    const resolved = resolveFormState(
+      { provider: "pi", modeId: "build" },
+      {
+        provider: "pi",
+        providerPreferences: { pi: { mode: "build" } },
+      },
+      null,
+      INITIAL_USER_MODIFIED,
+      makeState({ provider: "pi" }).form,
+      makeProviderMap(TEST_PI_DEFINITION),
+    );
+
+    expect(resolved.provider).toBe("pi");
+    expect(resolved.modeId).toBe("");
+  });
+
   it("falls back when the provider cannot advertise its preferred default mode", () => {
     const providerMap = makeProviderMap({
       ...TEST_CODEX_DEFINITION,

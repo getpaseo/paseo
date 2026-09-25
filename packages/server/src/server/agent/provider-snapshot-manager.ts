@@ -545,7 +545,10 @@ export class ProviderSnapshotManager {
       featureValues: input.featureValues,
       parent,
       unattended: input.unattended || parent?.isUnattended === true,
-      availableModes: entry.modes ?? [],
+      // Keep `undefined` (modes unknown) distinct from `[]` (explicitly
+      // modeless): create-agent-mode passes unknown modes through but
+      // silently drops stale explicit modes for modeless providers.
+      availableModes: entry.modes,
     });
   }
 

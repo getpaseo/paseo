@@ -189,11 +189,28 @@ export function resolveThinkingOptionId(args: {
 
 const normalizeSelectedModeId = normalizeSelectedModelId;
 
+export function isModelessProviderDefinition(
+  definition: AgentProviderDefinition | undefined | null,
+): boolean {
+  // Zero modes with no default means the provider explicitly offers nothing
+  // to select. A loading snapshot also reports zero modes but keeps its
+  // defaultModeId, so requiring the default to be absent keeps intent
+  // preserved while modes are still loading.
+  return !!definition && (definition.modes ?? []).length === 0 && !definition.defaultModeId;
+}
+
 function resolvePreferredModeId(input: {
   initialModeId?: string | null;
   preferredModeId?: string | null;
   providerDef: AgentProviderDefinition | undefined;
 }): string {
+  // A provider with zero modes and no default has nothing to select. Prune
+  // any remembered or carried-over mode so a stale preference can't stick to
+  // the form and get submitted. See isModelessProviderDefinition: loading
+  // snapshots keep their defaultModeId, so intent is preserved while loading.
+  if (isModelessProviderDefinition(input.providerDef)) {
+    return "";
+  }
   // Saved modes are user intent. Provider create config validates unknown modes
   // at submission time, so background form resolution should not erase them.
   const initialModeId = normalizeSelectedModeId(input.initialModeId);
