@@ -1,0 +1,141 @@
+import * as fs from "node:fs/promises";
+import * as path from "node:path";
+import type { Logger } from "pino";
+
+import { resolvePaseoHome } from "../../../paseo-home.js";
+import type { AgentModelDefinition } from "../../agent-sdk-types.js";
+import {
+  getClaudeCustomModelThinkingOptions,
+  normalizeClaudeRuntimeModelId,
+} from "./model-manifest.js";
+
+const MODELS_DEV_API_URL = "https://models.dev/api.json";
+const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+const FETCH_TIMEOUT_MS = 5_000;
+export const CLAUDE_MODEL_DISCOVERY_ENV = "PASEO_CLAUDE_MODEL_DISCOVERY";
+
+// Only alias spellings are offered; dated variants (claude-*-YYYYMMDD) collapse
+// onto their alias in the picker and would duplicate it.
+const CLAUDE_MODEL_ALIAS_PATTERN = /^claude-(?:fable|opus|sonnet|haiku)-\d+(?:-\d{1,2})?$/;
+
+export interface ClaudeModelDiscoveryOptions {
+  env?: NodeJS.ProcessEnv;
+  cacheFile?: string;
+  apiUrl?: string;
+  fetchImpl?: typeof fetch;
+  signal?: AbortSignal;
+}
+
+interface DiscoveryCache {
+  fetchedAt: number;
+  models: unknown;
+}
+
+/**
+ * Anthropic models published on models.dev that the compiled manifest does not
+ * know yet, so a new release is selectable before a Paseo update ships. The
+ * manifest always wins: anything it already spells (including version-gated
+ * entries) keeps its curated capabilities instead of a guessed definition.
+ * Never throws — discovery failure leaves the manifest-only status quo.
+ */
+export async function fetchDiscoveredClaudeModels(
+  logger: Logger,
+  options: ClaudeModelDiscoveryOptions = {},
+): Promise<AgentModelDefinition[]> {
+  const env = options.env ?? process.env;
+  if (/^(off|false|0)$/i.test(env[CLAUDE_MODEL_DISCOVERY_ENV] ?? "")) {
+    return [];
+  }
+  const cacheFile =
+    options.cacheFile ?? path.join(resolvePaseoHome(env), "cache", "claude-models.json");
+
+  const cached = await readDiscoveryCache(cacheFile);
+  const now = Date.now();
+  if (cached && now - cached.fetchedAt < CACHE_TTL_MS) {
+    return toModelDefinitions(cached.models);
+  }
+
+  try {
+    const models = await fetchAnthropicModels(options);
+    await writeDiscoveryCache(cacheFile, { fetchedAt: now, models });
+    return toModelDefinitions(models);
+  } catch (error) {
+    logger.warn({ err: error }, "Claude model discovery failed; using cached or manifest models");
+    return cached ? toModelDefinitions(cached.models) : [];
+  }
+}
+
+async function fetchAnthropicModels(options: ClaudeModelDiscoveryOptions): Promise<unknown> {
+  const fetchImpl = options.fetchImpl ?? fetch;
+  const signals = [AbortSignal.timeout(FETCH_TIMEOUT_MS)];
+  if (options.signal) {
+    signals.push(options.signal);
+  }
+  const response = await fetchImpl(options.apiUrl ?? MODELS_DEV_API_URL, {
+    signal: AbortSignal.any(signals),
+    headers: { accept: "application/json" },
+  });
+  if (!response.ok) {
+    throw new Error(`models.dev responded ${response.status}`);
+  }
+  const payload: unknown = await response.json();
+  if (!isRecord(payload) || !isRecord(payload.anthropic) || !isRecord(payload.anthropic.models)) {
+    throw new Error("models.dev payload has no anthropic models map");
+  }
+  return payload.anthropic.models;
+}
+
+function toModelDefinitions(models: unknown): AgentModelDefinition[] {
+  if (!isRecord(models)) {
+    return [];
+  }
+  const definitions: AgentModelDefinition[] = [];
+  for (const [id, entry] of Object.entries(models)) {
+    if (!CLAUDE_MODEL_ALIAS_PATTERN.test(id) || normalizeClaudeRuntimeModelId(id) !== null) {
+      continue;
+    }
+    const record = isRecord(entry) ? entry : {};
+    const limit = isRecord(record.limit) ? record.limit : {};
+    const definition: AgentModelDefinition = {
+      provider: "claude",
+      id,
+      label:
+        typeof record.name === "string" && record.name.trim().length > 0
+          ? record.name.replace(/^Claude\s+/, "")
+          : id,
+      description:
+        typeof record.description === "string" && record.description.trim().length > 0
+          ? record.description
+          : "Discovered from models.dev",
+      thinkingOptions: getClaudeCustomModelThinkingOptions(),
+    };
+    if (typeof limit.context === "number" && limit.context > 0) {
+      definition.contextWindowMaxTokens = limit.context;
+    }
+    definitions.push(definition);
+  }
+  return definitions;
+}
+
+async function readDiscoveryCache(cacheFile: string): Promise<DiscoveryCache | null> {
+  try {
+    const parsed: unknown = JSON.parse(await fs.readFile(cacheFile, "utf8"));
+    if (isRecord(parsed) && typeof parsed.fetchedAt === "number") {
+      return { fetchedAt: parsed.fetchedAt, models: parsed.models };
+    }
+  } catch {
+    // A missing or corrupt cache is a cold start, not an error.
+  }
+  return null;
+}
+
+async function writeDiscoveryCache(cacheFile: string, cache: DiscoveryCache): Promise<void> {
+  await fs.mkdir(path.dirname(cacheFile), { recursive: true });
+  const temporary = `${cacheFile}.${process.pid}.tmp`;
+  await fs.writeFile(temporary, JSON.stringify(cache), { mode: 0o600 });
+  await fs.rename(temporary, cacheFile);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}

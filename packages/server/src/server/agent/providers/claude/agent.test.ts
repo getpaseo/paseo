@@ -1,7 +1,7 @@
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import { afterEach, describe, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type { PermissionResult, SDKMessage, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 
 import { createTestLogger } from "../../../../test-utils/test-logger.js";
@@ -15,6 +15,7 @@ import {
   resolveClaudeCodeVersion,
   toClaudeSdkMcpConfig,
 } from "./agent.js";
+import { CLAUDE_MODEL_DISCOVERY_ENV } from "./model-discovery.js";
 import { claudeProjectDirSync } from "./project-dir.js";
 import { streamSession } from "../test-utils/session-stream-adapter.js";
 import type {
@@ -420,6 +421,14 @@ describe("convertClaudeHistoryEntry", () => {
 
 describe("ClaudeAgentClient.fetchCatalog", () => {
   const logger = createTestLogger();
+
+  beforeEach(() => {
+    vi.stubEnv(CLAUDE_MODEL_DISCOVERY_ENV, "off");
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
 
   test("returns hardcoded claude models", async () => {
     const emptyConfigDir = await fs.mkdtemp(path.join(os.tmpdir(), "paseo-claude-models-empty-"));

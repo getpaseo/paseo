@@ -1,10 +1,11 @@
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createTestLogger } from "../../../../test-utils/test-logger.js";
 import { ClaudeAgentClient } from "./agent.js";
+import { CLAUDE_MODEL_DISCOVERY_ENV } from "./model-discovery.js";
 import {
   CLAUDE_DISABLED_THINKING_OPTION_ID,
   CLAUDE_ULTRACODE_THINKING_OPTION_ID,
@@ -16,6 +17,12 @@ import {
 import { findClaudeModel, getClaudeModels, normalizeClaudeRuntimeModelId } from "./models.js";
 
 const createdClaudeConfigDirs: string[] = [];
+
+beforeEach(() => {
+  // These tests assert the exact catalog; models.dev discovery stays off so
+  // they never depend on the network.
+  vi.stubEnv(CLAUDE_MODEL_DISCOVERY_ENV, "off");
+});
 
 afterEach(async () => {
   vi.unstubAllEnvs();

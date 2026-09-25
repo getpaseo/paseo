@@ -30,6 +30,7 @@ import {
   mapTaskNotificationUserContentToToolCall,
   readTaskNotificationToolUseIdFromHistoryRecord,
 } from "./task-notification-tool-call.js";
+import { fetchDiscoveredClaudeModels } from "./model-discovery.js";
 import {
   findClaudeModel,
   getClaudeModelsWithSettings,
@@ -1595,11 +1596,14 @@ export class ClaudeAgentClient implements AgentClient {
     const models = await runProviderRefreshActivity(context, "settings", () =>
       getClaudeModelsWithSettings(this.logger, this.configDir, claudeCodeVersion),
     );
+    const discoveredModels = await runProviderRefreshActivity(context, "discovery", () =>
+      fetchDiscoveredClaudeModels(this.logger, { signal: context?.signal }),
+    );
     const modeCatalog = claudeModeCatalog(
       createProviderEnv({ baseEnv: process.env, runtimeSettings: this.runtimeSettings }),
     );
     return {
-      models,
+      models: [...models, ...discoveredModels],
       ...modeCatalog,
     };
   }
