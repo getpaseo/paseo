@@ -83,11 +83,12 @@ export interface DesktopRuntimeConfig {
   editorRecordPath?: string;
 }
 
-interface DesktopEditorTargetConfig {
+export interface DesktopEditorTargetConfig {
   id: string;
   label: string;
   kind: "editor" | "file-manager";
   icon: { kind: "image"; dataUrl: string } | { kind: "symbol"; name: "folder" | "terminal" };
+  scope?: "workspace";
 }
 
 interface DesktopEditorOpenRecord {
