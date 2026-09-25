@@ -2023,6 +2023,96 @@ export function splitWorkspaceRootRightInLayout(
   };
 }
 
+/**
+ * The bottom dock opens at a quarter of the column so a terminal never takes half the
+ * workspace by surprise, and resizing it past half is clamped back so a drag cannot
+ * swallow the main pane.
+ */
+export const BOTTOM_DOCK_DEFAULT_SIZE = 0.25;
+export const BOTTOM_DOCK_MAX_SIZE = 0.5;
+
+/** Creates a full-width ordinary pane below the complete workspace split tree. */
+export function splitWorkspaceRootBottomInLayout(
+  input: SplitWorkspaceRootRightInLayoutInput,
+): SplitPaneInLayoutResult | null {
+  const layout = asInternalLayout(input.layout);
+  const paneId = input.createNodeId("pane");
+  const root = createGroupNode({
+    id: input.createNodeId("group"),
+    direction: "vertical",
+    children: [layout.root, createPaneNode({ id: paneId, tabs: [createNewWorkspaceTab()] })],
+    sizes: [1 - BOTTOM_DOCK_DEFAULT_SIZE, BOTTOM_DOCK_DEFAULT_SIZE],
+  });
+  if (getTreeDepth(root) > input.maxTreeDepth) return null;
+  return {
+    paneId,
+    layout: withNormalizedParentTabMap({
+      root,
+      focusedPaneId: paneId,
+      parentTabIdByTabId: input.layout.parentTabIdByTabId,
+    }),
+  };
+}
+
+function findGroupById(node: SplitNodeInternal, groupId: string): SplitGroupInternal | null {
+  if (node.kind === "group") {
+    if (node.group.id === groupId) {
+      return node.group;
+    }
+    for (const child of node.group.children) {
+      const found = findGroupById(child, groupId);
+      if (found) {
+        return found;
+      }
+    }
+  }
+  return null;
+}
+
+/** Hands size over the dock cap back to the group's other children, share by share. */
+function clampPaneSizeInGroupSizes(input: { sizes: number[]; paneIndex: number; maxSize: number }) {
+  const size = input.sizes[input.paneIndex];
+  if (size === undefined || size <= input.maxSize) {
+    return input.sizes;
+  }
+  const excess = size - input.maxSize;
+  const next = input.sizes.slice();
+  next[input.paneIndex] = input.maxSize;
+  const otherIndexes = input.sizes
+    .map((_, index) => index)
+    .filter((index) => index !== input.paneIndex);
+  const otherTotal = otherIndexes.reduce((total, index) => total + (input.sizes[index] ?? 0), 0);
+  for (const index of otherIndexes) {
+    const share = otherTotal > 0 ? (input.sizes[index] ?? 0) / otherTotal : 1 / otherIndexes.length;
+    next[index] = (input.sizes[index] ?? 0) + excess * share;
+  }
+  return next;
+}
+
+/**
+ * Caps the bottom dock's fraction when its direct parent group is resized. Sizes are
+ * returned untouched when the group does not host the dock, so ordinary splits stay free.
+ */
+export function clampBottomDockGroupSizes(input: {
+  root: SplitNode;
+  groupId: string;
+  sizes: number[];
+  bottomPaneId: string;
+  maxSize: number;
+}): number[] {
+  const group = findGroupById(asInternalNode(input.root), input.groupId);
+  if (!group) {
+    return input.sizes;
+  }
+  const paneIndex = group.children.findIndex(
+    (child) => child.kind === "pane" && child.pane.id === input.bottomPaneId,
+  );
+  if (paneIndex < 0) {
+    return input.sizes;
+  }
+  return clampPaneSizeInGroupSizes({ sizes: input.sizes, paneIndex, maxSize: input.maxSize });
+}
+
 export function moveTabToPaneInLayout(input: MoveTabToPaneInLayoutInput): WorkspaceLayout | null {
   const layout = asInternalLayout(input.layout);
   const sourcePane = findPaneContainingTab(layout.root, input.tabId);

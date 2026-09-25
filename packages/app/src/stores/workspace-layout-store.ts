@@ -48,7 +48,10 @@ import {
   selectTabInPaneInLayout,
   splitPaneEmptyInLayout,
   splitWorkspaceRootRightInLayout,
+  splitWorkspaceRootBottomInLayout,
   splitPaneInLayout,
+  BOTTOM_DOCK_MAX_SIZE,
+  clampBottomDockGroupSizes,
   stripEphemeralTabsFromLayout,
   type SplitGroup,
   type SplitNode,
@@ -116,6 +119,7 @@ interface WorkspaceLayoutStore {
   sidePaneIdByWorkspace: Record<string, string | null>;
   /** Workspaces where PR detection already added its tab once; a closed tab never returns. */
   pullRequestTabAutoOpenedByWorkspace: Record<string, true>;
+  bottomPaneIdByWorkspace: Record<string, string | null>;
   openTab: (input: OpenWorkspaceTabInput) => string | null;
   /** Placement resolves lazily so an already acknowledged workspace never creates a side pane. */
   autoOpenPullRequestTab: (
@@ -127,6 +131,8 @@ interface WorkspaceLayoutStore {
   hideExplorerSidebar: (workspaceKey: string) => void;
   /** Returns the ordinary right-side workspace pane, creating it when absent. */
   ensureSidePane: (workspaceKey: string, options?: { focus: boolean }) => string | null;
+  /** Returns the ordinary bottom workspace pane, creating it when absent. */
+  ensureBottomPane: (workspaceKey: string) => string | null;
   closeTab: (workspaceKey: string, tabId: string) => void;
   focusTab: (workspaceKey: string, tabId: string) => void;
   selectTabInPane: (workspaceKey: string, paneId: string, tabId: string) => void;
@@ -612,6 +618,20 @@ function reconcileRememberedSidePane(
   };
 }
 
+function reconcileRememberedBottomPane(
+  state: WorkspaceLayoutStore,
+  workspaceKey: string,
+  layout: WorkspaceLayout,
+): Pick<WorkspaceLayoutStore, "bottomPaneIdByWorkspace"> {
+  const paneId = state.bottomPaneIdByWorkspace[workspaceKey];
+  return {
+    bottomPaneIdByWorkspace:
+      paneId && !findPaneById(layout.root, paneId)
+        ? { ...state.bottomPaneIdByWorkspace, [workspaceKey]: null }
+        : state.bottomPaneIdByWorkspace,
+  };
+}
+
 function attachParentTab(input: {
   layout: WorkspaceLayout;
   childTabId: string | null;
@@ -685,6 +705,7 @@ export function createWorkspaceLayoutStore(
         explorerSidebarPaneIdByWorkspace: {},
         sidePaneIdByWorkspace: {},
         pullRequestTabAutoOpenedByWorkspace: {},
+        bottomPaneIdByWorkspace: {},
         openTab: (input) => {
           const normalizedWorkspaceKey = trimNonEmpty(input.workspaceKey);
           const normalizedTarget = normalizeWorkspaceTabTarget(input.target);
@@ -873,6 +894,46 @@ export function createWorkspaceLayoutStore(
           }));
           return result.paneId;
         },
+        ensureBottomPane: (workspaceKey) => {
+          const normalizedWorkspaceKey = trimNonEmpty(workspaceKey);
+          if (!normalizedWorkspaceKey) {
+            return null;
+          }
+          const currentState = get();
+          const layout = getWorkspaceLayout(currentState.layoutByWorkspace, normalizedWorkspaceKey);
+          const explorerPaneId = resolveExplorerSidebarPaneId(
+            layout,
+            currentState.explorerSidebarPaneIdByWorkspace[normalizedWorkspaceKey],
+          );
+          const rememberedPaneId = trimNonEmpty(
+            currentState.bottomPaneIdByWorkspace[normalizedWorkspaceKey],
+          );
+          const rememberedPane = findPaneById(layout.root, rememberedPaneId);
+          if (rememberedPane && rememberedPane.id !== explorerPaneId) {
+            return rememberedPane.id;
+          }
+
+          const result = splitWorkspaceRootBottomInLayout({
+            layout,
+            maxTreeDepth: MAX_TREE_DEPTH,
+            createNodeId: ids.createNodeId,
+          });
+          if (!result) {
+            return null;
+          }
+          set((state) => ({
+            ...withoutFocusRestoration(state, normalizedWorkspaceKey),
+            layoutByWorkspace: {
+              ...state.layoutByWorkspace,
+              [normalizedWorkspaceKey]: result.layout,
+            },
+            bottomPaneIdByWorkspace: {
+              ...state.bottomPaneIdByWorkspace,
+              [normalizedWorkspaceKey]: result.paneId,
+            },
+          }));
+          return result.paneId;
+        },
         closeTab: (workspaceKey, tabId) => {
           const normalizedWorkspaceKey = trimNonEmpty(workspaceKey);
           const normalizedTabId = trimNonEmpty(tabId);
@@ -909,6 +970,7 @@ export function createWorkspaceLayoutStore(
               return {
                 ...withoutFocusRestoration(state, normalizedWorkspaceKey),
                 ...reconcileRememberedSidePane(state, normalizedWorkspaceKey, nextLayout),
+                ...reconcileRememberedBottomPane(state, normalizedWorkspaceKey, nextLayout),
                 layoutByWorkspace: {
                   ...state.layoutByWorkspace,
                   [normalizedWorkspaceKey]: nextLayout,
@@ -944,6 +1006,7 @@ export function createWorkspaceLayoutStore(
             return {
               ...withoutFocusRestoration(state, normalizedWorkspaceKey),
               ...reconcileRememberedSidePane(state, normalizedWorkspaceKey, nextLayout),
+              ...reconcileRememberedBottomPane(state, normalizedWorkspaceKey, nextLayout),
               layoutByWorkspace: {
                 ...state.layoutByWorkspace,
                 [normalizedWorkspaceKey]: nextLayout,
@@ -1334,6 +1397,7 @@ export function createWorkspaceLayoutStore(
               layout.focusedPaneId,
             );
             const rememberedSidePaneId = state.sidePaneIdByWorkspace[normalizedWorkspaceKey];
+            const rememberedBottomPaneId = state.bottomPaneIdByWorkspace[normalizedWorkspaceKey];
 
             return {
               ...withoutFocusRestoration(state, normalizedWorkspaceKey),
@@ -1346,6 +1410,11 @@ export function createWorkspaceLayoutStore(
                 !findPaneById(normalizedNextLayout.root, rememberedSidePaneId)
                   ? { ...state.sidePaneIdByWorkspace, [normalizedWorkspaceKey]: null }
                   : state.sidePaneIdByWorkspace,
+              bottomPaneIdByWorkspace:
+                rememberedBottomPaneId &&
+                !findPaneById(normalizedNextLayout.root, rememberedBottomPaneId)
+                  ? { ...state.bottomPaneIdByWorkspace, [normalizedWorkspaceKey]: null }
+                  : state.bottomPaneIdByWorkspace,
             };
           });
         },
@@ -1389,6 +1458,13 @@ export function createWorkspaceLayoutStore(
                       [normalizedWorkspaceKey]: null,
                     }
                   : state.sidePaneIdByWorkspace,
+              bottomPaneIdByWorkspace:
+                state.bottomPaneIdByWorkspace[normalizedWorkspaceKey] === normalizedPaneId
+                  ? {
+                      ...state.bottomPaneIdByWorkspace,
+                      [normalizedWorkspaceKey]: null,
+                    }
+                  : state.bottomPaneIdByWorkspace,
             };
           });
         },
@@ -1517,12 +1593,25 @@ export function createWorkspaceLayoutStore(
             return;
           }
 
+          const bottomPaneId = get().bottomPaneIdByWorkspace[normalizedWorkspaceKey] ?? null;
+          const layout = bottomPaneId ? get().layoutByWorkspace[normalizedWorkspaceKey] : undefined;
+          const nextSizes =
+            bottomPaneId && layout
+              ? clampBottomDockGroupSizes({
+                  root: layout.root,
+                  groupId: normalizedGroupId,
+                  sizes,
+                  bottomPaneId,
+                  maxSize: BOTTOM_DOCK_MAX_SIZE,
+                })
+              : sizes;
+
           set((state) => ({
             splitSizesByWorkspace: {
               ...state.splitSizesByWorkspace,
               [normalizedWorkspaceKey]: {
                 ...state.splitSizesByWorkspace[normalizedWorkspaceKey],
-                [normalizedGroupId]: clampNormalizedSizes(sizes),
+                [normalizedGroupId]: clampNormalizedSizes(nextSizes),
               },
             },
           }));
@@ -1661,7 +1750,8 @@ export function createWorkspaceLayoutStore(
               normalizedWorkspaceKey in state.focusRestorationByWorkspace ||
               normalizedWorkspaceKey in state.explorerSidebarPaneIdByWorkspace ||
               normalizedWorkspaceKey in state.sidePaneIdByWorkspace ||
-              normalizedWorkspaceKey in state.pullRequestTabAutoOpenedByWorkspace;
+              normalizedWorkspaceKey in state.pullRequestTabAutoOpenedByWorkspace ||
+              normalizedWorkspaceKey in state.bottomPaneIdByWorkspace;
             if (!hasAny) {
               return state;
             }
@@ -1689,6 +1779,8 @@ export function createWorkspaceLayoutStore(
             } = state.explorerSidebarPaneIdByWorkspace;
             const { [normalizedWorkspaceKey]: _sidePane, ...sidePaneIdByWorkspace } =
               state.sidePaneIdByWorkspace;
+            const { [normalizedWorkspaceKey]: _bottomPane, ...bottomPaneIdByWorkspace } =
+              state.bottomPaneIdByWorkspace;
             return {
               pullRequestTabAutoOpenedByWorkspace,
               layoutByWorkspace,
@@ -1699,6 +1791,7 @@ export function createWorkspaceLayoutStore(
               focusRestorationByWorkspace,
               explorerSidebarPaneIdByWorkspace,
               sidePaneIdByWorkspace,
+              bottomPaneIdByWorkspace,
             };
           });
         },
@@ -1731,6 +1824,7 @@ export function createWorkspaceLayoutStore(
             explorerPaneIdByWorkspace: state.explorerSidebarPaneIdByWorkspace,
             sidePaneIdByWorkspace: state.sidePaneIdByWorkspace,
             pullRequestTabAutoOpenedByWorkspace: state.pullRequestTabAutoOpenedByWorkspace,
+            bottomPaneIdByWorkspace: state.bottomPaneIdByWorkspace,
           };
         },
         merge: (persistedState, currentState) => {
@@ -1785,6 +1879,7 @@ export function createWorkspaceLayoutStore(
             sidePaneIdByWorkspace: result.data.sidePaneIdByWorkspace ?? {},
             pullRequestTabAutoOpenedByWorkspace:
               result.data.pullRequestTabAutoOpenedByWorkspace ?? {},
+            bottomPaneIdByWorkspace: result.data.bottomPaneIdByWorkspace ?? {},
           };
         },
       },

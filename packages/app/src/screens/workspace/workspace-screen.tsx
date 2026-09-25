@@ -57,6 +57,7 @@ import {
   openPreferredWorkspaceTarget,
   openWorkspaceTargetBeside,
 } from "@/workspace-tabs/open-beside";
+import { resolveImplicitTerminalPlacement } from "@/workspace-tabs/terminal-open-location";
 import { openWorkspacePullRequest } from "@/workspace-tabs/open-supporting-view";
 import { type ExplorerCheckoutContext } from "@/stores/explorer-checkout-context";
 import { traceInstant } from "@/performance/native-trace";
@@ -79,7 +80,7 @@ import {
   type WorkspaceTab,
   type WorkspaceTabTarget,
 } from "@/workspace-tabs/model";
-import { useSettings } from "@/hooks/use-settings";
+import { useSettings, type TerminalOpenLocation } from "@/hooks/use-settings";
 import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
 import { buildWorkspaceKeyboardHandlerId } from "@/keyboard/handler-id";
 import type {
@@ -1407,6 +1408,8 @@ function canDetectPullRequest(
 
 interface WorkspaceTerminalTabActionsInput {
   persistenceKey: string | null;
+  isCompact: boolean;
+  terminalOpenLocation: TerminalOpenLocation;
   openWorkspaceTabFocused: (
     workspaceKey: string,
     target: WorkspaceTabTarget,
@@ -1440,6 +1443,8 @@ interface WorkspaceTerminalTabActions {
 
 function useWorkspaceTerminalTabActions({
   persistenceKey,
+  isCompact,
+  terminalOpenLocation,
   openWorkspaceTabFocused,
   replaceWorkspaceTabTarget,
   labels,
@@ -1460,10 +1465,22 @@ function useWorkspaceTerminalTabActions({
       openWorkspaceTabFocused(
         persistenceKey,
         { kind: "terminal", terminalId },
-        paneLocalPlacement(destination.paneId),
+        resolveImplicitTerminalPlacement({
+          isCompact,
+          supportsPaneSplits: supportsDesktopPaneSplits(),
+          persistenceKey,
+          location: terminalOpenLocation,
+          destination,
+        }) ?? paneLocalPlacement(destination.paneId),
       );
     },
-    [openWorkspaceTabFocused, persistenceKey, replaceWorkspaceTabTarget],
+    [
+      isCompact,
+      openWorkspaceTabFocused,
+      persistenceKey,
+      replaceWorkspaceTabTarget,
+      terminalOpenLocation,
+    ],
   );
   const handleScriptTerminalSelected = useCallback(
     (terminalId: string) => {
@@ -1678,6 +1695,8 @@ function WorkspaceScreenContent({
     workspaceAgentVisibilityEqual,
   );
 
+  const terminalOpenLocation = useSettings((settings) => settings.terminalOpenLocation);
+
   const {
     handleTerminalCreated,
     handleScriptTerminalSelected,
@@ -1686,6 +1705,8 @@ function WorkspaceScreenContent({
     handleTerminalCreateFailed,
   } = useWorkspaceTerminalTabActions({
     persistenceKey,
+    isCompact: isMobile,
+    terminalOpenLocation,
     openWorkspaceTabFocused,
     replaceWorkspaceTabTarget,
     labels: {

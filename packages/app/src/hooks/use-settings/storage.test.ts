@@ -268,6 +268,28 @@ describe("loadAppSettingsFromStorage", () => {
     expect(legacySide.openInSidePane).not.toHaveProperty("pullRequests");
   });
 
+  it("defaults terminal opens to the main pane and keeps a persisted bottom dock choice", async () => {
+    const defaults = await loadAppSettingsFromStorage(makeDeps());
+    const bottomDock = await loadAppSettingsFromStorage(
+      makeDeps({
+        storage: createInMemoryKeyValueStorage({
+          [APP_SETTINGS_KEY]: JSON.stringify({ terminalOpenLocation: "bottom" }),
+        }),
+      }),
+    );
+    const invalid = await loadAppSettingsFromStorage(
+      makeDeps({
+        storage: createInMemoryKeyValueStorage({
+          [APP_SETTINGS_KEY]: JSON.stringify({ terminalOpenLocation: "explorer" }),
+        }),
+      }),
+    );
+
+    expect(defaults.terminalOpenLocation).toBe("main");
+    expect(bottomDock.terminalOpenLocation).toBe("bottom");
+    expect(invalid.terminalOpenLocation).toBe("main");
+  });
+
   it("uses the native terminal renderer by default", async () => {
     const deps = makeDeps();
 

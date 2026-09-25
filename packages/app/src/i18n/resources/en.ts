@@ -1990,6 +1990,7 @@ export const en = {
         destinations: {
           main: "Main panel",
           side: "On the side",
+          bottom: "At the bottom",
           explorer: "Explorer sidebar",
         },
         sources: {
@@ -2012,6 +2013,9 @@ export const en = {
           subagents: {
             label: "Opening a subagent",
             description: "Open subagents beside their parent agent",
+          },
+          terminal: {
+            label: "Opening a terminal",
           },
           pullRequests: {
             label: "Opening a pull request from Changes",

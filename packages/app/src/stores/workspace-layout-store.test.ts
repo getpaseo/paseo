@@ -548,6 +548,7 @@ describe("workspace-layout-store version 2 migration", () => {
       const persisted = JSON.parse((await AsyncStorage.getItem("workspace-layout-state")) ?? "{}");
       expect(persisted.version).toBe(2);
       expect(Object.keys(persisted.state).sort()).toEqual([
+        "bottomPaneIdByWorkspace",
         "explorerPaneIdByWorkspace",
         "explorerSidebarWidthByWorkspace",
         "layoutByWorkspace",
@@ -1103,6 +1104,7 @@ describe("workspace-layout-store actions", () => {
       hiddenAgentIdsByWorkspace: {},
       focusRestorationByWorkspace: {},
       explorerSidebarPaneIdByWorkspace: {},
+      bottomPaneIdByWorkspace: {},
     });
   });
 
@@ -3148,6 +3150,7 @@ describe("workspace-layout-store actions", () => {
       explorerPaneIdByWorkspace: {},
       pullRequestTabAutoOpenedByWorkspace: currentState.pullRequestTabAutoOpenedByWorkspace,
       sidePaneIdByWorkspace: currentState.sidePaneIdByWorkspace,
+      bottomPaneIdByWorkspace: currentState.bottomPaneIdByWorkspace,
     });
     expect(layout && collectAllTabs(layout.root).map((tab) => tab.target)).toEqual([
       {
@@ -3382,6 +3385,7 @@ describe("workspace-layout-store actions", () => {
       explorerSidebarWidthByWorkspace: {},
       explorerPaneIdByWorkspace: {},
       sidePaneIdByWorkspace: {},
+      bottomPaneIdByWorkspace: {},
     });
   });
 
@@ -4414,6 +4418,97 @@ describe("workspace-layout-store actions", () => {
     expect(layout).toBe(before);
     expect(findPaneById(layout.root, "main")?.tabIds).toEqual([agentTabId]);
     expect(collectAllPanes(layout.root).map((pane) => pane.id)).toEqual(["main"]);
+  });
+
+  it("ensureBottomPane docks a quarter-height pane below the workspace", () => {
+    const workspaceKey = createWorkspaceKey();
+    const store = workspaceLayoutStore.getState();
+    store.openTab({
+      workspaceKey: workspaceKey,
+      target: { kind: "agent", agentId: "only" },
+      intent: "reveal",
+    });
+    workspaceLayoutIds.useValues(["dock-pane", "dock-group"]);
+
+    const bottomPaneId = store.ensureBottomPane(workspaceKey);
+
+    expect(bottomPaneId).toBe("pane_dock-pane");
+    expect(workspaceLayoutStore.getState().bottomPaneIdByWorkspace[workspaceKey]).toBe(
+      "pane_dock-pane",
+    );
+    const root = expectGroup(workspaceLayoutStore.getState().layoutByWorkspace[workspaceKey].root);
+    expect(root.group.direction).toBe("vertical");
+    expect(root.group.sizes).toEqual([0.75, 0.25]);
+    expect(findPaneById(root, "pane_dock-pane")?.tabIds).toHaveLength(1);
+    expect(collectAllPanes(root).map((pane) => pane.id)).toContain("main");
+  });
+
+  it("ensureBottomPane reuses the dock pane across calls", () => {
+    const workspaceKey = createWorkspaceKey();
+    const store = workspaceLayoutStore.getState();
+    workspaceLayoutIds.useValues(["dock-pane", "dock-group"]);
+    const firstPaneId = store.ensureBottomPane(workspaceKey);
+    const before = workspaceLayoutStore.getState().layoutByWorkspace[workspaceKey];
+
+    const secondPaneId = store.ensureBottomPane(workspaceKey);
+
+    expect(secondPaneId).toBe(firstPaneId);
+    expect(workspaceLayoutStore.getState().layoutByWorkspace[workspaceKey]).toBe(before);
+  });
+
+  it("clamps a resized bottom dock at half the column and hands the excess back", () => {
+    const workspaceKey = createWorkspaceKey();
+    const store = workspaceLayoutStore.getState();
+    workspaceLayoutIds.useValues(["dock-pane", "dock-group"]);
+    const dockPaneId = store.ensureBottomPane(workspaceKey) as string;
+    const dockGroupId = expectGroup(
+      workspaceLayoutStore.getState().layoutByWorkspace[workspaceKey].root,
+    ).group.id;
+
+    store.resizeSplit(workspaceKey, dockGroupId, [0.2, 0.8]);
+
+    expect(
+      workspaceLayoutStore.getState().splitSizesByWorkspace[workspaceKey][dockGroupId],
+    ).toEqual([0.5, 0.5]);
+    expect(workspaceLayoutStore.getState().bottomPaneIdByWorkspace[workspaceKey]).toBe(dockPaneId);
+  });
+
+  it("resizes a group without the dock untouched", () => {
+    const workspaceKey = createWorkspaceKey();
+    const store = workspaceLayoutStore.getState();
+    workspaceLayoutIds.useValues(["dock-pane", "dock-group"]);
+    store.ensureBottomPane(workspaceKey);
+
+    store.resizeSplit(workspaceKey, "unrelated-group", [0.9, 0.1]);
+
+    expect(
+      workspaceLayoutStore.getState().splitSizesByWorkspace[workspaceKey]["unrelated-group"],
+    ).toEqual([0.9, 0.1]);
+  });
+
+  it("clears the remembered dock when its pane closes and re-docks on the next open", () => {
+    const workspaceKey = createWorkspaceKey();
+    const store = workspaceLayoutStore.getState();
+    store.openTab({
+      workspaceKey: workspaceKey,
+      target: { kind: "agent", agentId: "only" },
+      intent: "reveal",
+    });
+    workspaceLayoutIds.useValues(["dock-pane", "dock-group"]);
+    const dockPaneId = store.ensureBottomPane(workspaceKey) as string;
+    const dockTabId = findPaneById(
+      workspaceLayoutStore.getState().layoutByWorkspace[workspaceKey].root,
+      dockPaneId,
+    )?.focusedTabId as string;
+
+    store.closeTab(workspaceKey, dockTabId);
+
+    expect(workspaceLayoutStore.getState().bottomPaneIdByWorkspace[workspaceKey]).toBeNull();
+
+    workspaceLayoutIds.useValues(["dock-pane-2", "dock-group-2"]);
+    const redockedPaneId = store.ensureBottomPane(workspaceKey);
+    expect(redockedPaneId).toBe("pane_dock-pane-2");
+    expect(redockedPaneId).not.toBe(dockPaneId);
   });
 });
 
