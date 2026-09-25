@@ -3,7 +3,13 @@ import { promisify } from "node:util";
 import { afterEach, expect, test, vi } from "vitest";
 import { createPaseoApi, createPaseoClient } from "./index.js";
 import { DaemonClient } from "./daemon-client.js";
-import type { PaseoAgent, PaseoClient, PaseoWorkspace } from "./index.js";
+import type {
+  PaseoAgent,
+  PaseoAgentForkContextOptions,
+  PaseoAgentForkContextResult,
+  PaseoClient,
+  PaseoWorkspace,
+} from "./index.js";
 
 type FakeWebSocketHandler = (...args: unknown[]) => void;
 
@@ -101,7 +107,7 @@ async function connectClient(
     providersSnapshotCwd: true,
     ownedSubscriptions: true,
   },
-): Promise<{ client: PaseoClient; ws: FakeWebSocket }> {
+): Promise<{ client: PaseoClient; ws: FakeWebSocket; host: ClientHostHarness }> {
   const client = createPaseoClient({
     url: "ws://daemon.test",
     webSocketFactory: (url) => new FakeWebSocket(url),
@@ -132,7 +138,81 @@ async function connectClient(
   );
   await connectPromise;
 
-  return { client, ws };
+  return { client, ws, host: createClientHostHarness(ws) };
+}
+
+interface ForkContextRequestExpectation {
+  agentId: string;
+  options?: PaseoAgentForkContextOptions;
+}
+
+interface ForkContextSuccess {
+  attachment: NonNullable<PaseoAgentForkContextResult["attachment"]>;
+  itemCount: number;
+}
+
+interface ClientHostHarness {
+  readonly sentCount: number;
+  resolveForkContext(
+    expected: ForkContextRequestExpectation,
+    result: ForkContextSuccess,
+  ): PaseoAgentForkContextResult;
+  rejectForkContext(expected: ForkContextRequestExpectation, error: string): void;
+}
+
+function createClientHostHarness(ws: FakeWebSocket): ClientHostHarness {
+  const receiveForkContextRequest = ({ agentId, options = {} }: ForkContextRequestExpectation) => {
+    const request = parseSentSessionMessage(ws.sent.at(-1));
+    expect(request).toEqual({
+      type: "agent.fork_context.request",
+      agentId,
+      requestId: options.requestId ?? expect.any(String),
+      ...(options.boundaryCursor ? { boundaryCursor: options.boundaryCursor } : {}),
+      ...(options.boundaryMessageId ? { boundaryMessageId: options.boundaryMessageId } : {}),
+    });
+    if (typeof request.requestId !== "string") {
+      throw new Error("Expected fork context request ID");
+    }
+    return { requestId: request.requestId, options };
+  };
+
+  const sendForkContextResponse = (
+    agentId: string,
+    requestId: string,
+    options: PaseoAgentForkContextOptions,
+    result: Pick<PaseoAgentForkContextResult, "attachment" | "itemCount" | "error">,
+  ): PaseoAgentForkContextResult => {
+    const payload: PaseoAgentForkContextResult = {
+      requestId,
+      agentId,
+      ...result,
+      boundaryCursor: options.boundaryCursor ?? null,
+      boundaryMessageId: options.boundaryMessageId ?? null,
+    };
+    ws.message(sessionMessage({ type: "agent.fork_context.response", payload }));
+    return payload;
+  };
+
+  return {
+    get sentCount() {
+      return ws.sent.length;
+    },
+    resolveForkContext(expected, result) {
+      const request = receiveForkContextRequest(expected);
+      return sendForkContextResponse(expected.agentId, request.requestId, request.options, {
+        ...result,
+        error: null,
+      });
+    },
+    rejectForkContext(expected, error) {
+      const request = receiveForkContextRequest(expected);
+      sendForkContextResponse(expected.agentId, request.requestId, request.options, {
+        attachment: null,
+        itemCount: 0,
+        error,
+      });
+    },
+  };
 }
 
 function acknowledgeObservation(ws: FakeWebSocket, subscriptionId: string): void {
@@ -1431,6 +1511,104 @@ test("waitForReady reads an older host on the existing connection", async () => 
   );
   await expect(waiting).resolves.toMatchObject({ entries: [] });
   expect(FakeWebSocket.instances).toHaveLength(1);
+  await client.close();
+});
+
+test("agent fork context returns the daemon's curated attachment without a boundary", async () => {
+  const { client, host } = await connectClient({ agentForkContext: true });
+  const contextPromise = client.agents.ref("source-agent").forkContext();
+  const payload = host.resolveForkContext(
+    { agentId: "source-agent" },
+    {
+      attachment: {
+        type: "text",
+        mimeType: "text/plain",
+        contextKind: "chat_history",
+        title: "Chat history",
+        text: "<chat-history-summary>Curated context, including the live response.</chat-history-summary>",
+      },
+      itemCount: 3,
+    },
+  );
+  await expect(contextPromise).resolves.toEqual(payload);
+  await client.close();
+});
+
+test.each([
+  { boundaryMessageId: "assistant-message" },
+  { boundaryCursor: { epoch: "timeline-1", seq: 42 } },
+  {
+    boundaryCursor: { epoch: "timeline-1", seq: 42 },
+    boundaryMessageId: "assistant-message",
+  },
+])("agent fork context forwards explicit boundaries: %j", async (boundary) => {
+  const { client, host } = await connectClient({
+    agentForkContext: true,
+    agentForkContextCursor: Boolean(boundary.boundaryCursor),
+  });
+  const options = { ...boundary, requestId: "fork-request" };
+  const contextPromise = client.agents.ref(createAgent()).forkContext(options);
+  const payload = host.resolveForkContext(
+    { agentId: "agent_sdk", options },
+    {
+      attachment: {
+        type: "text",
+        mimeType: "text/plain",
+        contextKind: "chat_history",
+        title: "Chat history",
+        text: "<chat-history-summary>Context through the selected response.</chat-history-summary>",
+      },
+      itemCount: 2,
+    },
+  );
+  await expect(contextPromise).resolves.toEqual(payload);
+  await client.close();
+});
+
+test.each<Record<string, boolean>>([{}, { agentForkContext: false }])(
+  "agent fork context requires the advertised host capability: %j",
+  async (features) => {
+    const { client, host } = await connectClient(features);
+    const sentBefore = host.sentCount;
+    await expect(client.agents.ref("source-agent").forkContext()).rejects.toThrow(
+      "Update the host to get agent fork context.",
+    );
+    expect(host.sentCount).toBe(sentBefore);
+    await client.close();
+  },
+);
+
+test.each<Record<string, boolean>>([{}, { agentForkContextCursor: false }])(
+  "agent fork context rejects unsupported cursor boundaries: %j",
+  async (features) => {
+    const { client, host } = await connectClient({ agentForkContext: true, ...features });
+    const sentBefore = host.sentCount;
+    await expect(
+      client.agents.ref("source-agent").forkContext({
+        boundaryCursor: { epoch: "timeline-1", seq: 42 },
+        boundaryMessageId: "assistant-message",
+      }),
+    ).rejects.toThrow("Update the host to get agent fork context at a timeline cursor.");
+    expect(host.sentCount).toBe(sentBefore);
+    await client.close();
+  },
+);
+
+test("agent fork context propagates daemon boundary errors", async () => {
+  const { client, host } = await connectClient({
+    agentForkContext: true,
+    agentForkContextCursor: true,
+  });
+  const boundaryCursor = { epoch: "stale-timeline", seq: 42 };
+  const options = { boundaryCursor };
+  const contextPromise = client.agents.ref("source-agent").forkContext(options);
+  host.rejectForkContext(
+    { agentId: "source-agent", options },
+    "Selected timeline position is no longer available.",
+  );
+  await expect(contextPromise).rejects.toThrow(
+    "Selected timeline position is no longer available.",
+  );
   await client.close();
 });
 
