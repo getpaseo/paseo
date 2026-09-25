@@ -333,6 +333,106 @@ describe("resolveWorktreeCreationIntent", () => {
     expect(deps.headRefLookups).toEqual([]);
   });
 
+  test("names the local branch pr-<number> for a gitea pull-ref-only head", async () => {
+    const deps = createResolverHarness({
+      forge: "gitea",
+      forgeService: {
+        defaultCheckoutRefs: ({ changeRequestNumber }) => [
+          { remoteName: "origin", remoteRef: `refs/pull/${changeRequestNumber}/head` },
+          { remoteName: "upstream", remoteRef: `refs/pull/${changeRequestNumber}/head` },
+        ],
+        buildPrLocalBranchName: ({ headRef, checkoutTarget }) =>
+          buildForkLocalBranchName({ headRef, ...checkoutTarget }),
+        getPullRequestCheckoutTarget: async ({ number }) => ({
+          number,
+          baseRefName: "main",
+          headRefName: `refs/pull/${number}/head`,
+          headOwnerLogin: null,
+          headRepositorySshUrl: null,
+          headRepositoryUrl: null,
+          isCrossRepository: false,
+          hasOriginHeadBranch: false,
+          hasHeadBranch: false,
+        }),
+      },
+    });
+
+    const intent = await resolveWorktreeCreationIntent(
+      { action: "checkout", checkoutSource: { kind: "change_request", number: 3 } },
+      repoRoot,
+      deps,
+    );
+
+    expect(intent).toMatchObject({ localBranchName: "pr-3" });
+    expect(intent).not.toHaveProperty("trackOriginHead");
+  });
+
+  test("names the local branch owner/pr-<number> for a gitea fork pull-ref-only head", async () => {
+    const deps = createResolverHarness({
+      forge: "gitea",
+      forgeService: {
+        defaultCheckoutRefs: ({ changeRequestNumber }) => [
+          { remoteName: "origin", remoteRef: `refs/pull/${changeRequestNumber}/head` },
+          { remoteName: "upstream", remoteRef: `refs/pull/${changeRequestNumber}/head` },
+        ],
+        buildPrLocalBranchName: ({ headRef, checkoutTarget }) =>
+          buildForkLocalBranchName({ headRef, ...checkoutTarget }),
+        supportsCrossRepoCheckoutWithoutRefs: true,
+        getPullRequestCheckoutTarget: async ({ number }) => ({
+          number,
+          baseRefName: "main",
+          headRefName: `refs/pull/${number}/head`,
+          headOwnerLogin: "contributor",
+          headRepositorySshUrl: "git@gitea.test:contributor/repo.git",
+          headRepositoryUrl: "https://gitea.test/contributor/repo",
+          isCrossRepository: true,
+          hasHeadBranch: false,
+        }),
+      },
+    });
+
+    const intent = await resolveWorktreeCreationIntent(
+      { action: "checkout", checkoutSource: { kind: "change_request", number: 3 } },
+      repoRoot,
+      deps,
+    );
+
+    expect(intent).toMatchObject({ localBranchName: "contributor/pr-3" });
+  });
+
+  test("does not double the pr number for a gitea deleted fork's pull-ref-only head", async () => {
+    const deps = createResolverHarness({
+      forge: "gitea",
+      forgeService: {
+        defaultCheckoutRefs: ({ changeRequestNumber }) => [
+          { remoteName: "origin", remoteRef: `refs/pull/${changeRequestNumber}/head` },
+          { remoteName: "upstream", remoteRef: `refs/pull/${changeRequestNumber}/head` },
+        ],
+        buildPrLocalBranchName: ({ headRef, checkoutTarget }) =>
+          buildForkLocalBranchName({ headRef, ...checkoutTarget }),
+        supportsCrossRepoCheckoutWithoutRefs: true,
+        getPullRequestCheckoutTarget: async ({ number }) => ({
+          number,
+          baseRefName: "main",
+          headRefName: `refs/pull/${number}/head`,
+          headOwnerLogin: null,
+          headRepositorySshUrl: null,
+          headRepositoryUrl: null,
+          isCrossRepository: true,
+          hasHeadBranch: false,
+        }),
+      },
+    });
+
+    const intent = await resolveWorktreeCreationIntent(
+      { action: "checkout", checkoutSource: { kind: "change_request", number: 3 } },
+      repoRoot,
+      deps,
+    );
+
+    expect(intent).toMatchObject({ localBranchName: "pr-3" });
+  });
+
   test("reports unsupported cross-repository checkout targets without a checkout ref", async () => {
     const deps = createResolverHarness({
       forge: "gitea",

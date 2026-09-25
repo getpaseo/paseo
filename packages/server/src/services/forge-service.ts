@@ -41,6 +41,8 @@ export interface PullRequestCheckoutTarget {
   isCrossRepository: boolean;
   /** false when origin has no head branch to track */
   hasOriginHeadBranch?: boolean;
+  /** false when headRefName is a synthetic pull ref, not a real branch name (agit PRs, deleted branches) */
+  hasHeadBranch?: boolean;
 }
 
 export interface PullRequestCheckoutRef {
