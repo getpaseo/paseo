@@ -34,11 +34,9 @@ export async function fetchAllAgents(
   return agents;
 }
 
-function isUnresolved(error: unknown): boolean {
-  return (
-    error instanceof Error &&
-    (error.message.startsWith("Agent not found") || error.message.includes("is ambiguous"))
-  );
+// Only the daemon's plain miss names the input itself; any other error resolved to some agent.
+function isPlainMiss(error: unknown, idOrName: string): boolean {
+  return error instanceof Error && error.message === `Agent not found: ${idOrName.trim()}`;
 }
 
 // Each tier must match exactly one agent; several is an error, never a first-match guess.
@@ -69,7 +67,7 @@ function matchUnique(
   return null;
 }
 
-/** Resolve an ID, prefix or name to any stored agent; the listing only adds case-insensitive matches. */
+/** Resolve an ID, prefix or name to a stored agent; the listing adds only case-insensitive matches. */
 export async function resolveAgent(
   client: AgentsClient,
   idOrName: string,
@@ -80,8 +78,8 @@ export async function resolveAgent(
       return fetched.agent;
     }
   } catch (error) {
-    // The daemon also counts agents the listing hides, so its ambiguity is re-judged on visible ones.
-    if (!isUnresolved(error)) {
+    // An ambiguity or a match on a hidden agent must not become a guess among visible ones.
+    if (!isPlainMiss(error, idOrName)) {
       throw error;
     }
   }

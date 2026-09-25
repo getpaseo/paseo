@@ -80,9 +80,17 @@ describe("resolveAgent", () => {
     await expect(resolveAgent(client, "no such agent")).resolves.toBeNull();
   });
 
-  it("re-judges the daemon's ambiguity on visible agents only", async () => {
+  it("surfaces the daemon's ambiguity instead of re-judging it", async () => {
     const client = pagedClient(fleet, new Error('Agent identifier "00000449" is ambiguous (…)'));
-    await expect(resolveAgent(client, "00000449")).resolves.toBe(oldest);
+    await expect(resolveAgent(client, "00000449")).rejects.toThrow(/ambiguous/);
+    expect(client.fetchAgents).not.toHaveBeenCalled();
+  });
+
+  it("does not trade a hidden agent's exact match for a visible partial one", async () => {
+    const hidden = "99999999-0000-4000-8000-000000000000";
+    const client = pagedClient(fleet, new Error(`Agent not found: ${hidden}`));
+    await expect(resolveAgent(client, "agent 449")).rejects.toThrow(hidden);
+    expect(client.fetchAgents).not.toHaveBeenCalled();
   });
 
   it("refuses an ambiguous case-insensitive prefix instead of picking the first", async () => {
