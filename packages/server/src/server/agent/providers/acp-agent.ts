@@ -280,6 +280,12 @@ export function buildACPClientCapabilities(
 // sign-in URL in the browser) when probing an ACP agent for models/modes.
 // NO_BROWSER is honored by Gemini CLI; other ACP agents ignore it.
 const PROBE_ENV: Record<string, string> = { NO_BROWSER: "true" };
+// Matches the codex app-server and jsonl-rpc transports: keep the tail of what the
+// child wrote, not everything it ever wrote.
+const ACP_STDERR_BUFFER_LIMIT = 8192;
+// What of that tail travels in a failure diagnostic, alongside the other rows.
+const ACP_STDERR_DIAGNOSTIC_CAP = 2000;
+
 const ACP_DIAGNOSTIC_PHASE_TIMEOUT_MS = 20_000;
 const ACP_PROBE_CLOSE_TIMEOUT_MS = 2_000;
 const ACP_IMPORT_HISTORY_LOAD_TIMEOUT_MS = 30_000;
@@ -1667,6 +1673,8 @@ export class ACPAgentSession implements AgentSession, ACPClient {
 
   private readonly config: AgentSessionConfig;
   private child: ChildProcessWithoutNullStreams | null = null;
+  /** Tail of what the ACP server wrote on stderr during the current turn. */
+  private stderrTail = "";
   private connection: ClientSideConnection | null = null;
   private agentCapabilities: ACPAgentCapabilities | null = null;
   private sessionId: string | null = null;
@@ -1850,6 +1858,10 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     }
 
     this.deliverTranslatedEvents(this.flushPendingUserMessage());
+    // A diagnostic should carry what the server wrote about THIS turn. Keeping the
+    // session's whole stderr would attach initialization output, or an earlier
+    // turn's, to a failure it has nothing to do with.
+    this.stderrTail = "";
     const turnId = randomUUID();
     const messageId = options?.clientMessageId ?? randomUUID();
     this.activeForegroundTurnId = turnId;
@@ -1869,8 +1881,17 @@ export class ACPAgentSession implements AgentSession, ACPClient {
         this.handlePromptResponse(response, turnId);
         return;
       })
-      .catch((error) => {
+      .catch(async (error) => {
         const summary = summarizeACPRequestError(error);
+        // A server that logs and then fails can have both reach us in one I/O
+        // phase, with the response handled first. Let that phase's stderr land
+        // before the diagnostic reads it.
+        await new Promise((resolve) => setImmediate(resolve));
+        // The process can exit in that pause, and its exit handler has then
+        // failed this turn already; a turn gets one terminal event.
+        if (this.activeForegroundTurnId !== turnId) {
+          return;
+        }
         this.finishTurn({
           type: "turn_failed",
           provider: this.provider,
@@ -2728,9 +2749,8 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     });
     assertChildWithPipes(child);
 
-    const stderrChunks: string[] = [];
     child.stderr.on("data", (chunk: Buffer | string) => {
-      stderrChunks.push(chunk.toString());
+      this.appendStderrTail(chunk.toString());
     });
     child.once("exit", (code, signal) => {
       if (this.closed) {
@@ -2742,7 +2762,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
           type: "turn_failed",
           provider: this.provider,
           error: `ACP agent exited unexpectedly (${code ?? "null"}${signal ? `, ${signal}` : ""})`,
-          diagnostic: stderrChunks.join("").trim() || undefined,
+          diagnostic: this.stderrTail.trim() || undefined,
           turnId: this.activeForegroundTurnId,
         });
       }
@@ -3250,6 +3270,10 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     }
   }
 
+  private appendStderrTail(chunk: string): void {
+    this.stderrTail = (this.stderrTail + chunk).slice(-ACP_STDERR_BUFFER_LIMIT);
+  }
+
   private collectDiagnostic(message: string): string | undefined {
     const parts: string[] = [message];
     if (this.child?.exitCode != null) {
@@ -3257,6 +3281,20 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     }
     if (this.child?.signalCode) {
       parts.push(`signal=${this.child.signalCode}`);
+    }
+    // What the server wrote about itself. A turn that fails while the process
+    // keeps running left daemon.log with nothing else to go on, and for a
+    // closed-source ACP server that log is the only inspection point (#4757).
+    // The END of the stream is the part that explains the failure, so the cut
+    // is taken from the front rather than through truncateForDiagnostic, which
+    // keeps the head.
+    const stderr = this.stderrTail.trim();
+    if (stderr) {
+      const tail =
+        stderr.length > ACP_STDERR_DIAGNOSTIC_CAP
+          ? `…(truncated)${stderr.slice(-ACP_STDERR_DIAGNOSTIC_CAP)}`
+          : stderr;
+      parts.push(`stderr=${tail}`);
     }
     return parts.length > 0 ? parts.join(" | ") : undefined;
   }

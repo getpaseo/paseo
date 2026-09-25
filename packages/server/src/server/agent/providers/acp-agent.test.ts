@@ -1,5 +1,8 @@
 import { type ChildProcess, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { EventEmitter } from "node:events";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import {
   AgentSideConnection,
@@ -3257,9 +3260,13 @@ describe("ACPAgentSession", () => {
 
     const { turnId } = await session.startTurn("hello");
 
+    const turnFailed = new Promise<void>((resolve) => {
+      session.subscribe((event) => {
+        if (event.type === "turn_failed") resolve();
+      });
+    });
     rejectPrompt(new Error("prompt failed"));
-    await Promise.resolve();
-    await Promise.resolve();
+    await turnFailed;
 
     const turnFailedEvent = events.find((event) => event.type === "turn_failed");
     expect(turnFailedEvent).toMatchObject({
@@ -3296,9 +3303,13 @@ describe("ACPAgentSession", () => {
       } as SessionUpdate,
     });
 
+    const turnFailed = new Promise<void>((resolve) => {
+      session.subscribe((event) => {
+        if (event.type === "turn_failed") resolve();
+      });
+    });
     rejectPrompt(new Error("prompt failed"));
-    await Promise.resolve();
-    await Promise.resolve();
+    await turnFailed;
 
     expect(
       events.filter((event) => event.type === "timeline" || event.type === "turn_failed"),
@@ -4148,4 +4159,164 @@ describe("ACP session/load invariant — cwd and mcpServers always passed", () =
       mcpServers: [],
     });
   });
+});
+
+/**
+ * A turn the ACP server rejects has to reach `daemon.log` with something that
+ * explains it. The server's own stderr is the only such thing for a
+ * closed-source wrapper, so it travels in the failed turn's diagnostic (#4757).
+ *
+ * Driven through a spawned agent rather than the session's internals: the wiring
+ * under test is `child.stderr` reaching the diagnostic, which a direct call
+ * would skip.
+ */
+const FAKE_AGENT = `
+const readline = require("node:readline");
+const rl = readline.createInterface({ input: process.stdin });
+
+function reply(id, result) {
+  process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id, result }) + "\\n");
+}
+
+rl.on("line", (line) => {
+  const message = JSON.parse(line);
+  if (message.method === "initialize") {
+    reply(message.id, { protocolVersion: message.params?.protocolVersion ?? 1, agentCapabilities: {} });
+    return;
+  }
+  if (message.method === "session/new") {
+    reply(message.id, { sessionId: "session-1" });
+    return;
+  }
+  if (message.method === "session/prompt") {
+    process.stderr.write("could not find doneCh for checkpoint\\n");
+    process.stdout.write(
+      JSON.stringify({ jsonrpc: "2.0", id: message.id, error: { code: -32000, message: "Agent execution error" } }) + "\\n",
+      () => {
+        if (JSON.stringify(message.params?.prompt).includes("EXIT_AFTER_ERROR")) process.exit(1);
+      },
+    );
+    return;
+  }
+  if (message.id !== undefined) reply(message.id, {});
+});
+`;
+
+async function withFakeAgent(
+  run: (scriptPath: string, cwd: string) => Promise<void>,
+): Promise<void> {
+  const dir = await mkdtemp(path.join(tmpdir(), "paseo-acp-stderr-"));
+  try {
+    const scriptPath = path.join(dir, "fake-acp-agent.cjs");
+    await writeFile(scriptPath, FAKE_AGENT, "utf8");
+    await run(scriptPath, dir);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
+/** The first `turn_failed` the session emits. */
+function nextTurnFailure(
+  session: ACPAgentSession,
+): Promise<Extract<AgentStreamEvent, { type: "turn_failed" }>> {
+  return new Promise((resolve) => {
+    session.subscribe((event) => {
+      if (event.type === "turn_failed") resolve(event);
+    });
+  });
+}
+
+/** Every `turn_failed` the session emits, in order. */
+function collectTurnFailures(
+  session: ACPAgentSession,
+): Extract<AgentStreamEvent, { type: "turn_failed" }>[] {
+  const failures: Extract<AgentStreamEvent, { type: "turn_failed" }>[] = [];
+  session.subscribe((event) => {
+    if (event.type === "turn_failed") failures.push(event);
+  });
+  return failures;
+}
+
+/**
+ * Resolves once something schedules a `setImmediate`. Installed over fake
+ * timers, which then hold the callback until the test runs them.
+ */
+function watchSetImmediate(): { scheduled: Promise<void>; restore: () => void } {
+  const schedule = globalThis.setImmediate;
+  let markScheduled!: () => void;
+  const scheduled = new Promise<void>((resolve) => {
+    markScheduled = resolve;
+  });
+  const spy = vi.spyOn(globalThis, "setImmediate").mockImplementation(((
+    ...args: Parameters<typeof setImmediate>
+  ) => {
+    markScheduled();
+    return schedule(...args);
+  }) as typeof setImmediate);
+  return { scheduled, restore: () => spy.mockRestore() };
+}
+
+function createFakeAgentSession(scriptPath: string, cwd: string): ACPAgentSession {
+  return new ACPAgentSession(
+    { provider: "claude-acp", cwd },
+    {
+      provider: "claude-acp",
+      logger: createTestLogger(),
+      defaultCommand: [process.execPath, scriptPath],
+      defaultModes: [],
+      capabilities: {
+        supportsStreaming: true,
+        supportsSessionPersistence: true,
+        supportsDynamicModes: false,
+        supportsMcpServers: false,
+        supportsReasoningStream: false,
+        supportsToolInvocations: true,
+      },
+    },
+  );
+}
+
+describe("ACP turn failure diagnostics", () => {
+  test("a rejected turn carries what the server wrote on stderr", async () => {
+    await withFakeAgent(async (scriptPath, cwd) => {
+      const session = createFakeAgentSession(scriptPath, cwd);
+      await session.initializeNewSession();
+      const failed = nextTurnFailure(session);
+
+      try {
+        await session.startTurn("hello");
+        expect((await failed).diagnostic).toContain("could not find doneCh for checkpoint");
+      } finally {
+        await session.close();
+      }
+    });
+  }, 20_000);
+
+  test("a turn the process exit already failed is not failed a second time", async () => {
+    await withFakeAgent(async (scriptPath, cwd) => {
+      const session = createFakeAgentSession(scriptPath, cwd);
+      await session.initializeNewSession();
+      const failures = collectTurnFailures(session);
+
+      const exitFailure = nextTurnFailure(session);
+
+      // Park the prompt error's continuation, whichever of the error and the
+      // exit arrives first, so the exit handler fails the turn before it runs.
+      vi.useFakeTimers({ toFake: ["setImmediate"] });
+      const setImmediateCalls = watchSetImmediate();
+      try {
+        const { turnId } = await session.startTurn("EXIT_AFTER_ERROR");
+        await Promise.all([exitFailure, setImmediateCalls.scheduled]);
+        await vi.runAllTimersAsync();
+
+        expect(failures).toHaveLength(1);
+        expect(failures[0].turnId).toBe(turnId);
+        expect(failures[0].error).toBe("ACP agent exited unexpectedly (1)");
+      } finally {
+        setImmediateCalls.restore();
+        vi.useRealTimers();
+        await session.close();
+      }
+    });
+  }, 20_000);
 });
