@@ -3716,6 +3716,8 @@ class HeldTurnAgentSession implements AgentSession {
 
   async startTurn(prompt: AgentPromptInput): Promise<{ turnId: string }> {
     this.prompts.push(typeof prompt === "string" ? prompt : JSON.stringify(prompt));
+    // Providers acknowledge a turn over I/O (Codex awaits its turn/start request).
+    await new Promise((resolve) => setTimeout(resolve, 0));
     const turnId = randomUUID();
     this.activeTurnId = turnId;
     setTimeout(() => {
@@ -4083,6 +4085,51 @@ describe("send_agent_prompt MCP tool", () => {
       expect(finishNotifications()).toHaveLength(1);
     } finally {
       await removeAgentStateDir(agentManager, storage, workdir);
+    }
+  });
+
+  it("reports a background prompt's accepted turn as running", async () => {
+    const workdir = await mkdtemp(join(tmpdir(), "mcp-background-send-status-"));
+    const storage = new AgentStorage(join(workdir, "agents"), logger);
+    const parentClient = new HeldTurnAgentClient("claude", false);
+    const childClient = new HeldTurnAgentClient("codex", true);
+    const agentManager = new AgentManager({
+      clients: { claude: parentClient, codex: childClient },
+      registry: storage,
+      logger,
+    });
+
+    try {
+      const parent = await agentManager.createAgent(
+        { provider: "claude", cwd: existingCwd },
+        undefined,
+        { workspaceId: "wks_parent" },
+      );
+      const child = await agentManager.createAgent(
+        { provider: "codex", cwd: existingCwd },
+        undefined,
+        { workspaceId: "wks_parent" },
+      );
+      const server = await createAgentMcpServer({
+        agentManager,
+        agentStorage: storage,
+        callerAgentId: parent.id,
+        providerSnapshotManager: createOpenCodeManager().manager,
+        logger,
+      });
+      const tool = registeredTool(server, "send_agent_prompt");
+
+      const response = await invokeToolWithParsedInput(tool, {
+        agentId: child.id,
+        prompt: "Follow up",
+      });
+
+      expect(response.structuredContent).toMatchObject({ success: true, status: "running" });
+      expect(agentManager.getAgent(child.id)?.lifecycle).toBe("running");
+
+      childClient.sessions[0]!.finishTurn();
+    } finally {
+      rmSync(workdir, { recursive: true, force: true });
     }
   });
 });
