@@ -957,7 +957,8 @@ describe("PiRpcAgentSession", () => {
     })) as PiRpcAgentSession;
     const events = new SessionEvents(session);
     const fakeSession = pi.latestSession();
-    fakeSession.capturedUserEntries = [{ id: "entry-old", parentId: null, text: "old prompt" }];
+    fakeSession.treeUserEntries = [{ id: "entry-old", parentId: null, text: "old prompt" }];
+    fakeSession.contextUserEntries = fakeSession.treeUserEntries;
 
     await session.startTurn("new prompt", { clientMessageId: "client-new" });
     fakeSession.finishSubmittedUserMessage({
@@ -1547,7 +1548,7 @@ describe("PiRpcAgentSession", () => {
     await session.close();
   });
 
-  test("captures only the user entries on the current branch after a rewind", async () => {
+  test("captures the session's user entries apart from the ones on the current branch", async () => {
     const pi = new FakePi();
     const session = await createClient(pi).createSession(createConfig());
     onTestFinished(() => session.close());
@@ -1575,7 +1576,12 @@ describe("PiRpcAgentSession", () => {
     expect(notifications.map(parseEntryCapture)).toEqual([
       {
         reason: "session_start",
-        entries: [
+        treeEntries: [
+          { id: "one", parentId: null, text: "first" },
+          { id: "abandoned", parentId: "one-reply", text: "rewound away" },
+          { id: "two", parentId: "one-reply", text: "second" },
+        ],
+        contextEntries: [
           { id: "one", parentId: null, text: "first" },
           { id: "two", parentId: "one-reply", text: "second" },
         ],
@@ -2928,10 +2934,11 @@ describe("PiRpcAgentClient", () => {
 
   test("rewinds conversation through the Pi tree navigation bridge", async () => {
     const { pi, session, events } = await createSession();
-    pi.latestSession().capturedUserEntries = [
+    pi.latestSession().treeUserEntries = [
       { id: "entry-1", parentId: null, text: "first prompt" },
       { id: "entry-3", parentId: "entry-2", text: "second prompt" },
     ];
+    pi.latestSession().contextUserEntries = pi.latestSession().treeUserEntries;
 
     await session.startTurn("first prompt");
     pi.latestSession().finishTurn({ role: "assistant", content: [] });
@@ -2945,6 +2952,23 @@ describe("PiRpcAgentClient", () => {
       supportsRewindBoth: false,
     });
     expect(pi.latestSession().treeNavigationRequests).toEqual(["entry-1"]);
+  });
+
+  test("rewinds a row whose Pi entry compaction summarized away", async () => {
+    const { pi, session } = await createSession();
+    const fakeSession = pi.latestSession();
+    // Compaction summarized entry-1, so the replayed branch starts at entry-3.
+    fakeSession.treeUserEntries = [
+      { id: "entry-1", parentId: null, text: "first prompt" },
+      { id: "entry-3", parentId: "entry-2", text: "second prompt" },
+    ];
+    fakeSession.contextUserEntries = [
+      { id: "entry-3", parentId: "entry-2", text: "second prompt" },
+    ];
+
+    await session.revertConversation?.({ messageId: "entry-1" });
+
+    expect(fakeSession.treeNavigationRequests).toEqual(["entry-1"]);
   });
 
   test("injects MCP servers without replacing the Pi global MCP config", async () => {
