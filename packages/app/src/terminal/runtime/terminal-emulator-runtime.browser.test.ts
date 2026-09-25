@@ -202,6 +202,20 @@ function dispatchTerminalKey(input: {
   );
 }
 
+/** An OSC 8 hyperlink, the escape sequence CLIs such as gh and ls --hyperlink print. */
+function hyperlink(input: { url: string; text: string }): string {
+  return `\x1b]8;;${input.url}\x1b\\${input.text}\x1b]8;;\x1b\\`;
+}
+
+function writeLines(mounted: MountedTerminal, lines: string[]): Promise<void> {
+  return new Promise((resolve) => {
+    mounted.runtime.write({
+      data: terminalOutput(lines.map((line) => `${line}\r\n`).join("")),
+      onCommitted: resolve,
+    });
+  });
+}
+
 async function clickTerminalLink(input: {
   host: HTMLElement;
   row: number;
@@ -570,14 +584,10 @@ describe("terminal emulator runtime in a real browser", () => {
 
     await waitFor({ predicate: () => mounted.sizes.length > 0 });
 
-    await new Promise<void>((resolve) => {
-      mounted.runtime.write({
-        data: terminalOutput(
-          "\x1b]8;;https://example.com/osc8\x1b\\example\x1b]8;;\x1b\\\r\nhttps://example.com/plain\r\n",
-        ),
-        onCommitted: resolve,
-      });
-    });
+    await writeLines(mounted, [
+      hyperlink({ url: "https://example.com/osc8", text: "example" }),
+      "https://example.com/plain",
+    ]);
 
     await clickTerminalLink({ host: mounted.host, row: 1, col: 4 });
     await clickTerminalLink({ host: mounted.host, row: 0, col: 2 });
