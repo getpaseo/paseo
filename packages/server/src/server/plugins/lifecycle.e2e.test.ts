@@ -1,6 +1,7 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { expect, onTestFinished, test } from "vitest";
 import { DaemonClient } from "../test-utils/daemon-client.js";
 import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
@@ -457,3 +458,80 @@ test("a provider that never acknowledges session.close does not hold the daemon 
   // test fails by timing out.
   await expect(daemon.daemon.stop()).resolves.toBeUndefined();
 }, 90_000);
+
+const repoRoot = fileURLToPath(new URL("../../../../../", import.meta.url));
+
+// Hold the provider close until the subprocess has entered shutdown cleanup.
+async function createSlowClosingProviderPlugin() {
+  const directory = await mkdtemp(path.join(tmpdir(), "paseo-slow-close-plugin-"));
+  const closeStarted = path.join(directory, "close-started");
+  const closeRelease = path.join(directory, "close-release");
+  const cleanupStarted = path.join(directory, "cleanup-started");
+  await cp(path.join(repoRoot, "plugin-examples/provider-direct"), directory, { recursive: true });
+  const providerPath = path.join(directory, "server", "provider.ts");
+  const source = (await readFile(providerPath, "utf8")).replaceAll("\r\n", "\n");
+  const patched = `import { readFile, writeFile } from "node:fs/promises";\n${source.replace(
+    "      closed = true;\n      sessions.clear();",
+    `      closed = true;
+      await writeFile(${JSON.stringify(closeStarted)}, "started");
+      while (true) {
+        try { await readFile(${JSON.stringify(closeRelease)}); break; }
+        catch { await new Promise((resolve) => setTimeout(resolve, 10)); }
+      }
+      sessions.clear();
+      console.log("provider close completed");`,
+  )}`;
+  expect(patched).toContain(`await writeFile(${JSON.stringify(closeStarted)}, "started")`);
+  await writeFile(providerPath, patched);
+  const entryPath = path.join(directory, "index.server.ts");
+  const entry = (await readFile(entryPath, "utf8")).replaceAll("\r\n", "\n");
+  const withCleanup = `import { writeFile } from "node:fs/promises";\n${entry.replace(
+    "  return () => {};",
+    `  return async () => { await writeFile(${JSON.stringify(cleanupStarted)}, "started"); console.log("plugin cleanup completed"); };`,
+  )}`;
+  expect(withCleanup).toContain(`await writeFile(${JSON.stringify(cleanupStarted)}, "started")`);
+  await writeFile(entryPath, withCleanup);
+  return { directory, closeStarted, closeRelease, cleanupStarted };
+}
+
+test("reloading a plugin does not send on a closed IPC channel", async () => {
+  const {
+    directory: pluginDirectory,
+    closeStarted,
+    closeRelease,
+    cleanupStarted,
+  } = await createSlowClosingProviderPlugin();
+  const cwd = await mkdtemp(path.join(tmpdir(), "paseo-reload-teardown-"));
+  const daemon = await createTestPaseoDaemon();
+  const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+  try {
+    await client.connect();
+    await client.patchDaemonConfig({ pluginsEnabled: true });
+    await client.installDirectoryPlugin(pluginDirectory);
+    const agent = await client.createAgent({ provider: "direct-example", cwd });
+    const turn = client.sendMessage(agent.id, "Say hello").catch(() => undefined);
+    const reload = client.reloadPlugin("provider-direct-example");
+    await expect
+      .poll(() => readFile(closeStarted, "utf8").catch(() => null), { timeout: 20_000 })
+      .toBe("started");
+    await expect
+      .poll(() => readFile(cleanupStarted, "utf8").catch(() => null), { timeout: 20_000 })
+      .toBe("started");
+    await writeFile(closeRelease, "release");
+    const reloaded = await reload;
+    expect(reloaded.status).toBe("running");
+    const entries = await client.getPluginLogs("provider-direct-example");
+    const messages = entries.map((entry) => entry.message).join("\n");
+    expect(messages).not.toContain("ERR_IPC_CHANNEL_CLOSED");
+    expect(entries.filter((entry) => entry.message === "plugin cleanup completed")).toHaveLength(1);
+    expect(entries.filter((entry) => entry.message === "provider close completed")).toHaveLength(1);
+    await turn;
+    await client.archiveAgent(agent.id).catch(() => undefined);
+  } finally {
+    await writeFile(closeRelease, "release");
+    await client.close();
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+    await rm(pluginDirectory, { recursive: true, force: true });
+  }
+}, 60_000);

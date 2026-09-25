@@ -3054,6 +3054,13 @@ class ClaudeAgentSession implements AgentSession {
     if (!messageId) {
       return;
     }
+    // Subagent frames ride the same stream as the conversation, but their uuids live on the
+    // subagent's sidechain, so forkSession cannot resolve one. Anchoring a turn on one leaves
+    // rewind throwing "Message <uuid> not found in session". The persisted history path already
+    // skips sidechain entries; the live stream has to skip them too.
+    if (readClaudeParentToolUseId(message)) {
+      return;
+    }
     if (
       message.type === "user" &&
       !isSyntheticUserEntry(message) &&

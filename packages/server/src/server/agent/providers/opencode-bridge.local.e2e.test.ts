@@ -11,6 +11,52 @@ import { OpenCodeAgentClient } from "./opencode-agent.js";
 import { OpenCodeBridge } from "./opencode/bridge.js";
 import { OpenCodeServerManager } from "./opencode/server-manager.js";
 
+test("real OpenCode server persists provider permissions across creation and resume", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "paseo-opencode-permissions-"));
+  const cwd = path.join(root, "repo");
+  const logger = createTestLogger();
+  const manager = new OpenCodeServerManager({ logger, resolveHomeDir: () => root });
+  const client = new OpenCodeAgentClient(logger, undefined, { serverManager: manager });
+  let session: Awaited<ReturnType<OpenCodeAgentClient["createSession"]>> | undefined;
+  let inspection: Awaited<ReturnType<OpenCodeServerManager["acquireCurrent"]>> | undefined;
+
+  try {
+    await mkdir(cwd);
+    session = await client.createSession({
+      provider: "opencode",
+      cwd,
+      providerOptions: { permission: { external_directory: "allow" } },
+    });
+    inspection = await manager.acquireCurrent();
+    const sdk = createOpencodeClient({ baseUrl: inspection.server.url, directory: cwd });
+    async function readPermission(sessionId: string) {
+      const response = await sdk.session.get({ sessionID: sessionId, directory: cwd });
+      if (response.error) throw new Error(JSON.stringify(response.error));
+      return response.data?.permission;
+    }
+    const handle = session.describePersistence()!;
+    expect(await readPermission(handle.sessionId)).toEqual([
+      { permission: "external_directory", pattern: "*", action: "allow" },
+    ]);
+
+    await session.close();
+    // OpenCode appends session-update rules and the last matching rule wins, so a resume
+    // with a different policy leaves both entries in order.
+    session = await client.resumeSession(handle, {
+      providerOptions: { permission: { external_directory: "deny" } },
+    });
+    expect(await readPermission(handle.sessionId)).toEqual([
+      { permission: "external_directory", pattern: "*", action: "allow" },
+      { permission: "external_directory", pattern: "*", action: "deny" },
+    ]);
+  } finally {
+    await inspection?.release();
+    await session?.close();
+    await manager.shutdown();
+    await rm(root, { recursive: true, force: true });
+  }
+}, 120_000);
+
 test("real OpenCode server shares one process while shell.env stays session-scoped", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "paseo-opencode-real-"));
   const firstCwd = path.join(root, "first");

@@ -9,7 +9,7 @@ import type { AgentSession } from "../../agent-sdk-types.js";
 const SESSION_ID = "session-1";
 
 /** Claude Code replies to a turn either with an assistant message or with nothing at all. */
-type TurnOutcome = { assistantMessageId: string } | "no-response";
+type TurnOutcome = { assistantMessageId: string; subagentMessageId?: string } | "no-response";
 
 function initMessage(): Record<string, unknown> {
   return {
@@ -37,6 +37,21 @@ function assistantReply(uuid: string): Record<string, unknown> {
     uuid,
     session_id: SESSION_ID,
     message: { id: uuid, role: "assistant", content: [{ type: "text", text: "ok" }] },
+  };
+}
+
+/**
+ * A message from a Task subagent. The CLI streams these on the same query as the main
+ * conversation, and their uuids live on the subagent's sidechain, not on the session's
+ * own message chain, so `forkSession` cannot resolve one.
+ */
+function subagentReply(uuid: string): Record<string, unknown> {
+  return {
+    type: "assistant",
+    uuid,
+    session_id: SESSION_ID,
+    parent_tool_use_id: "toolu_subagent_1",
+    message: { id: uuid, role: "assistant", content: [{ type: "text", text: "subagent work" }] },
   };
 }
 
@@ -110,6 +125,9 @@ function createConversation(outcomes: TurnOutcome[]): Conversation {
           continue;
         }
         enqueue(assistantReply(outcome.assistantMessageId));
+        if (outcome.subagentMessageId) {
+          enqueue(subagentReply(outcome.subagentMessageId));
+        }
         enqueue(successResult());
       }
       closedRef.value = true;
@@ -214,6 +232,26 @@ describe("Claude rewind across a turn that produced no response", () => {
   test("still forks at the previous turn when every turn produced a response", async () => {
     const conversation = createConversation([
       { assistantMessageId: "assistant-1" },
+      { assistantMessageId: "assistant-2" },
+    ]);
+    const rewindSdk = new FakeClaudeSdk();
+    const session = await createSession(conversation, rewindSdk);
+
+    try {
+      await runTurns(session, 2);
+      await session.revertConversation?.({ messageId: conversation.userMessageIds[1] });
+    } finally {
+      await session.close();
+    }
+
+    expect(rewindSdk.recordedForks).toEqual([{ upToMessageId: "assistant-1" }]);
+  });
+});
+
+describe("Claude rewind after a turn whose last assistant message came from a subagent", () => {
+  test("forks at the turn's own reply, not at the subagent message", async () => {
+    const conversation = createConversation([
+      { assistantMessageId: "assistant-1", subagentMessageId: "subagent-1" },
       { assistantMessageId: "assistant-2" },
     ]);
     const rewindSdk = new FakeClaudeSdk();
