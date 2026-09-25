@@ -34,27 +34,40 @@ export async function fetchAllAgents(
   return agents;
 }
 
+const AGENT_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const MISS = Symbol("miss");
+
 // Only the daemon's plain miss names the input itself; any other error resolved to some agent.
-function isPlainMiss(error: unknown, idOrName: string): boolean {
-  return error instanceof Error && error.message === `Agent not found: ${idOrName.trim()}`;
+async function askDaemon(
+  client: AgentsClient,
+  query: string,
+): Promise<AgentSnapshotPayload | typeof MISS> {
+  try {
+    const fetched = await client.fetchAgent({ agentId: query });
+    return fetched ? fetched.agent : MISS;
+  } catch (error) {
+    if (error instanceof Error && error.message === `Agent not found: ${query}`) {
+      return MISS;
+    }
+    throw error;
+  }
 }
 
-// Each tier must match exactly one agent; several is an error, never a first-match guess.
-function matchUnique(
-  idOrName: string,
+// Each title tier must match exactly one agent; several is an error, never a first-match guess.
+function matchUniqueTitle(
+  query: string,
   agents: AgentSnapshotPayload[],
 ): AgentSnapshotPayload | null {
-  const query = idOrName.toLowerCase();
+  const lower = query.toLowerCase();
   const tiers: Array<(agent: AgentSnapshotPayload) => boolean> = [
-    (agent) => agent.id.toLowerCase().startsWith(query),
-    (agent) => agent.title?.toLowerCase() === query,
-    (agent) => agent.title?.toLowerCase().includes(query) ?? false,
+    (agent) => agent.title?.toLowerCase() === lower,
+    (agent) => agent.title?.toLowerCase().includes(lower) ?? false,
   ];
   for (const matches of tiers) {
     const found = agents.filter(matches);
     if (found.length > 1) {
       throw new Error(
-        `Agent identifier "${idOrName}" is ambiguous (${found
+        `Agent title "${query}" is ambiguous (${found
           .slice(0, 5)
           .map((agent) => agent.id.slice(0, 8))
           .join(", ")}${found.length > 5 ? ", …" : ""})`,
@@ -67,22 +80,24 @@ function matchUnique(
   return null;
 }
 
-/** Resolve an ID, prefix or name to a stored agent; the listing adds only case-insensitive matches. */
+/**
+ * Resolve an ID, prefix or name to a stored agent. The daemon rules on every ID and prefix, hidden
+ * agents included; the listing adds only case-insensitive and partial title matches.
+ */
 export async function resolveAgent(
   client: AgentsClient,
   idOrName: string,
 ): Promise<AgentSnapshotPayload | null> {
-  try {
-    const fetched = await client.fetchAgent({ agentId: idOrName });
-    if (fetched) {
-      return fetched.agent;
-    }
-  } catch (error) {
-    // An ambiguity or a match on a hidden agent must not become a guess among visible ones.
-    if (!isPlainMiss(error, idOrName)) {
-      throw error;
+  const query = idOrName.trim();
+  for (const candidate of new Set([query, query.toLowerCase()])) {
+    const agent = await askDaemon(client, candidate);
+    if (agent !== MISS) {
+      return agent;
     }
   }
+  if (AGENT_ID.test(query)) {
+    return null;
+  }
   const agents = await fetchAllAgents(client, { filter: { includeArchived: true } });
-  return matchUnique(idOrName.trim(), agents);
+  return matchUniqueTitle(query, agents);
 }
