@@ -61,4 +61,29 @@ describe("buildForkLocalBranchName", () => {
   it("falls back to the pr number when the owner is not a safe ref segment", () => {
     expect(buildForkLocalBranchName({ ...fork, headOwnerLogin: "-zaphod" })).toBe("pr-42/patch-1");
   });
+
+  // pull-ref-only heads (agit PRs, deleted branches) report headRef as the
+  // literal pull ref, e.g. refs/pull/42/head, not a real branch name
+  it("collapses a same-repository pull-ref-only head to pr-<number>", () => {
+    expect(
+      buildForkLocalBranchName({
+        ...fork,
+        isCrossRepository: false,
+        headOwnerLogin: "arthur",
+        hasHeadBranch: false,
+      }),
+    ).toBe("pr-42");
+  });
+
+  it("prefixes pr-<number> with the owner for a fork pull-ref-only head", () => {
+    expect(
+      buildForkLocalBranchName({ ...fork, headOwnerLogin: "Arthur", hasHeadBranch: false }),
+    ).toBe("arthur/pr-42");
+  });
+
+  it("does not double the pr number when the fork owner is unknown and there is no head branch", () => {
+    expect(buildForkLocalBranchName({ ...fork, headOwnerLogin: null, hasHeadBranch: false })).toBe(
+      "pr-42",
+    );
+  });
 });
