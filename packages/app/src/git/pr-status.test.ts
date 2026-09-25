@@ -17,6 +17,12 @@ function payload(
 }
 
 describe("normalizeCheckoutPrStatusPayload", () => {
+  it("normalizes Windows path separators", () => {
+    expect(normalizeCheckoutPrStatusPayload(payload({ cwd: String.raw`C:\repo` })).cwd).toBe(
+      "C:/repo",
+    );
+  });
+
   it("preserves known auth states", () => {
     expect(normalizeCheckoutPrStatusPayload(payload({ authState: "cli_missing" })).authState).toBe(
       "cli_missing",

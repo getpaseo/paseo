@@ -119,6 +119,18 @@ describe("fetchCheckoutStatus", () => {
     expect(client.getCheckoutStatus).toHaveBeenCalledExactlyOnceWith(cwd);
   });
 
+  it("normalizes a Windows cwd at the cache boundary", async () => {
+    const windowsCwd = String.raw`C:\repo`;
+    const client = {
+      getCheckoutStatus: vi.fn(async () => checkoutStatus({ cwd: windowsCwd })),
+    };
+
+    const result = await fetchCheckoutStatus({ client, serverId, cwd: "C:/repo" });
+
+    expect(result.cwd).toBe("C:/repo");
+    expect(client.getCheckoutStatus).toHaveBeenCalledExactlyOnceWith("C:/repo");
+  });
+
   it("expires a manual working-diff comparison when the fetched dirty state flipped", async () => {
     selectBaseComparison(true);
     const client = { getCheckoutStatus: vi.fn(async () => checkoutStatus({ isDirty: false })) };
@@ -176,6 +188,29 @@ describe("applyCheckoutStatusUpdateFromEvent", () => {
     });
 
     expect(queryClient.getQueryData(checkoutStatusQueryKey(serverId, cwd))).toEqual(pushed);
+  });
+
+  it("applies a Windows status push to the canonical workspace cache key", () => {
+    const queryClient = createQueryClient();
+    const canonicalCwd = "C:/repo";
+    const windowsCwd = String.raw`C:\repo`;
+    queryClient.setQueryData(
+      checkoutStatusQueryKey(serverId, canonicalCwd),
+      checkoutStatus({ cwd: canonicalCwd, isDirty: false }),
+    );
+
+    applyCheckoutStatusUpdateFromEvent({
+      queryClient,
+      serverId,
+      message: checkoutStatusUpdate(checkoutStatus({ cwd: windowsCwd, isDirty: true })),
+    });
+
+    expect(
+      queryClient.getQueryData<CheckoutStatusPayload>(
+        checkoutStatusQueryKey(serverId, canonicalCwd),
+      ),
+    ).toMatchObject({ cwd: canonicalCwd, isDirty: true });
+    expect(queryClient.getQueryData(checkoutStatusQueryKey(serverId, windowsCwd))).toBeUndefined();
   });
 
   it("invalidates recent commits when checkout status is pushed", () => {
