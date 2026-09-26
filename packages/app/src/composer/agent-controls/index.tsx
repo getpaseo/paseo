@@ -29,11 +29,15 @@ import { formatThinkingOptionLabel } from "@/agent-controls/labels";
 import { ComboboxTrigger } from "@/components/ui/combobox-trigger";
 import { CombinedModelSelector } from "@/components/combined-model-selector";
 import {
+  applyModelVisibilityToProviders,
   buildProviderSelectorProviders,
   buildSelectableProviderSelectorProviders,
   type ProviderSelectorProvider,
 } from "@/provider-selection/provider-selection";
 import { filterSelectableModels } from "@/provider-selection/model-catalog";
+import { filterVisibleModels } from "@/provider-selection/model-visibility";
+import { useModelVisibility } from "@/hooks/use-model-visibility";
+import { retryModelSelection } from "@/provider-selection/model-visibility";
 import { useSessionStore } from "@/stores/session-store";
 import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
 import { resolveProviderDefinition } from "@/utils/provider-definitions";
@@ -116,6 +120,11 @@ interface ControlledAgentControlsProps {
   disabled?: boolean;
   isModelLoading?: boolean;
   modelSelectorProviders?: ProviderSelectorProvider[];
+  /**
+   * Every model the provider knows, including ones hidden from the picker, so
+   * the trigger keeps a real label for a hidden current model.
+   */
+  catalogModelOptions?: AgentControlOption[];
   agentProfiles?: AgentProfilePicker | null;
   onApplyAgentProfile?: (profileId: string) => void;
   onEditAgentProfiles?: () => void;
@@ -143,6 +152,7 @@ export interface DraftAgentControlsProps {
   onSelectModel: (modelId: string) => void;
   isModelLoading: boolean;
   modelSelectorProviders: ProviderSelectorProvider[];
+  catalogModelOptions?: AgentControlOption[];
   isAllModelsLoading: boolean;
   onSelectProviderAndModel: (provider: AgentProvider, modelId: string) => void;
   thinkingOptions: NonNullable<AgentModelDefinition["thinkingOptions"]>;
@@ -486,6 +496,7 @@ function ControlledAgentControls({
   disabled = false,
   isModelLoading = false,
   modelSelectorProviders,
+  catalogModelOptions,
   agentProfiles = null,
   onApplyAgentProfile,
   onEditAgentProfiles,
@@ -619,6 +630,7 @@ function ControlledAgentControls({
     [modelOptions, provider],
   );
   const effectiveModelSelectorProviders = modelSelectorProviders ?? fallbackModelSelectorProviders;
+  const effectiveCatalogModelOptions = catalogModelOptions ?? modelOptions ?? [];
   const comboboxThinkingOptions = useMemo<ComboboxOption[]>(
     () => toComboboxOptions(formattedThinkingOptions),
     [formattedThinkingOptions],
@@ -758,6 +770,7 @@ function ControlledAgentControls({
             canSelectModel={canSelectModel}
             canSelectThinking={canSelectThinking}
             modelSelectorProviders={effectiveModelSelectorProviders}
+            catalogModelOptions={effectiveCatalogModelOptions}
             modelDisabled={modelDisabled}
             comboboxProviderOptions={comboboxProviderOptions}
             comboboxThinkingOptions={comboboxThinkingOptions}
@@ -806,6 +819,7 @@ function ControlledAgentControls({
             canSelectModel={canSelectModel}
             canSelectThinking={canSelectThinking}
             modelSelectorProviders={effectiveModelSelectorProviders}
+            catalogModelOptions={effectiveCatalogModelOptions}
             modelDisabled={modelDisabled}
             comboboxThinkingOptions={comboboxThinkingOptions}
             openSelector={openSelector}
@@ -853,6 +867,7 @@ interface DesktopAgentControlsContentProps {
   canSelectModel: boolean;
   canSelectThinking: boolean;
   modelSelectorProviders: ProviderSelectorProvider[];
+  catalogModelOptions: AgentControlOption[];
   modelDisabled: boolean;
   comboboxProviderOptions: ComboboxOption[];
   comboboxThinkingOptions: ComboboxOption[];
@@ -915,6 +930,7 @@ function DesktopAgentControlsContent(props: DesktopAgentControlsContentProps) {
     canSelectModel,
     canSelectThinking,
     modelSelectorProviders,
+    catalogModelOptions,
     modelDisabled,
     comboboxProviderOptions,
     comboboxThinkingOptions,
@@ -986,6 +1002,7 @@ function DesktopAgentControlsContent(props: DesktopAgentControlsContentProps) {
             <View style={styles.modelControl}>
               <CombinedModelSelector
                 providers={modelSelectorProviders}
+                catalogModels={catalogModelOptions}
                 selectedProvider={provider}
                 selectedModel={selectedModelId ?? ""}
                 onSelect={handleDesktopModelSelect}
@@ -1124,6 +1141,7 @@ interface SheetAgentControlsContentProps {
   canSelectModel: boolean;
   canSelectThinking: boolean;
   modelSelectorProviders: ProviderSelectorProvider[];
+  catalogModelOptions: AgentControlOption[];
   modelDisabled: boolean;
   comboboxThinkingOptions: ComboboxOption[];
   openSelector: AgentControlSelector | null;
@@ -1168,6 +1186,7 @@ function SheetAgentControlsContent(props: SheetAgentControlsContentProps) {
     canSelectModel,
     canSelectThinking,
     modelSelectorProviders,
+    catalogModelOptions,
     modelDisabled,
     comboboxThinkingOptions,
     openSelector,
@@ -1252,6 +1271,7 @@ function SheetAgentControlsContent(props: SheetAgentControlsContentProps) {
   return canSelectModel ? (
     <CompactModelSheet
       providers={modelSelectorProviders}
+      catalogModels={catalogModelOptions}
       selectedProvider={provider}
       selectedModel={selectedModelId ?? ""}
       thinkingLabel={hasThinking ? displayThinking : null}
@@ -1565,6 +1585,15 @@ export const AgentControls = memo(function AgentControls({
 
   const models = filterSelectableModels(snapshotSelectedEntry?.models ?? null);
   const selectedProviderIsLoading = snapshotSelectedEntry?.status === "loading";
+  const modelVisibilityState = useModelVisibility(serverId);
+  const modelVisibility = modelVisibilityState.visibilityByProvider;
+  // Hiding a model changes what the user can switch to. It never rewrites the
+  // model this agent is already running, and never changes its label.
+  const visibleModels = useMemo(
+    () =>
+      agent?.provider ? filterVisibleModels(models, modelVisibility?.[agent.provider]) : models,
+    [agent?.provider, models, modelVisibility],
+  );
 
   const agentProviderDefinitions = useMemo(
     () => buildAgentProviderDefinitions(agent?.provider, snapshotEntries),
@@ -1576,14 +1605,14 @@ export const AgentControls = memo(function AgentControls({
     [agent?.provider, models],
   );
   const agentModelSelectorProviders = useMemo(() => {
-    if (snapshotSelectedEntry) {
-      return buildSelectableProviderSelectorProviders([snapshotSelectedEntry]);
-    }
-    return buildProviderSelectorProviders({
-      providerDefinitions: agentProviderDefinitions,
-      modelsByProvider: agentProviderModels,
-    });
-  }, [agentProviderDefinitions, agentProviderModels, snapshotSelectedEntry]);
+    const providers = snapshotSelectedEntry
+      ? buildSelectableProviderSelectorProviders([snapshotSelectedEntry])
+      : buildProviderSelectorProviders({
+          providerDefinitions: agentProviderDefinitions,
+          modelsByProvider: agentProviderModels,
+        });
+    return applyModelVisibilityToProviders(providers, modelVisibilityState);
+  }, [agentProviderDefinitions, agentProviderModels, modelVisibilityState, snapshotSelectedEntry]);
 
   const modelSelection = resolveAgentModelSelection({
     models,
@@ -1593,8 +1622,20 @@ export const AgentControls = memo(function AgentControls({
   });
 
   const modelOptions = useMemo<AgentControlOption[]>(() => {
-    return (models ?? []).map((model) => ({ id: model.id, label: model.label }));
-  }, [models]);
+    // A supported host with unknown visibility offers nothing rather than
+    // briefly offering models the user hid.
+    if (modelVisibilityState.status === "loading" || modelVisibilityState.status === "error") {
+      return [];
+    }
+    return (visibleModels ?? []).map((model) => ({ id: model.id, label: model.label }));
+  }, [modelVisibilityState.status, visibleModels]);
+
+  // Labels come from the whole catalog. Hiding the model an agent is already
+  // running must not turn its control into a raw ID.
+  const catalogModelOptions = useMemo<AgentControlOption[]>(
+    () => (models ?? []).map((model) => ({ id: model.id, label: model.label })),
+    [models],
+  );
 
   const thinkingOptions = useMemo<AgentControlOption[]>(() => {
     return (modelSelection.thinkingOptions ?? []).map((option) => ({
@@ -1764,9 +1805,13 @@ export const AgentControls = memo(function AgentControls({
 
   const handleRetryModelProvider = useCallback(
     (provider: AgentProvider) => {
-      void refreshSnapshot([provider]);
+      retryModelSelection({
+        status: modelVisibilityState.status,
+        retryVisibility: modelVisibilityState.retry,
+        refreshDiscovery: () => void refreshSnapshot([provider]),
+      });
     },
-    [refreshSnapshot],
+    [modelVisibilityState.retry, modelVisibilityState.status, refreshSnapshot],
   );
 
   if (!agent) {
@@ -1781,6 +1826,7 @@ export const AgentControls = memo(function AgentControls({
         provider={agent.provider}
         modelSelectorProviders={agentModelSelectorProviders}
         modelOptions={modelOptions}
+        catalogModelOptions={catalogModelOptions}
         selectedModelId={modelSelection.activeModelId ?? undefined}
         onSelectModel={handleSelectModel}
         agentProfiles={agentProfiles}
@@ -1818,6 +1864,7 @@ export function DraftAgentControls({
   onSelectModel,
   isModelLoading: _isModelLoading,
   modelSelectorProviders,
+  catalogModelOptions,
   isAllModelsLoading,
   onSelectProviderAndModel,
   thinkingOptions,
@@ -1899,6 +1946,7 @@ export function DraftAgentControls({
         provider={selectedProvider ?? ""}
         modelSelectorProviders={modelSelectorProviders}
         modelOptions={modelOptions}
+        catalogModelOptions={catalogModelOptions}
         selectedModelId={selectedModel}
         onSelectModel={onSelectModel}
         onSelectProviderAndModel={onSelectProviderAndModel}

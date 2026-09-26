@@ -57,6 +57,12 @@ export const ProviderOverrideSchema = z.object({
   params: z.record(z.string(), z.unknown()).optional(),
   models: z.array(ProviderProfileModelSchema).optional(),
   additionalModels: z.array(ProviderProfileModelSchema).optional(),
+  /**
+   * Presentation-only preference keyed by exact model ID. Absent means visible.
+   * `false` hides the model from direct model pickers on this host; discovery,
+   * resolution, labels and already-saved selections are untouched.
+   */
+  modelVisibility: z.record(z.string(), z.boolean()).optional(),
   disallowedTools: z.array(z.string()).optional(),
   paseoTools: ProviderPaseoToolsPolicySchema.optional(),
   enabled: z.boolean().optional(),

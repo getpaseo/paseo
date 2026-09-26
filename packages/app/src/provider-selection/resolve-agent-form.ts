@@ -10,6 +10,12 @@ import {
   type ProviderPreferences,
 } from "@/hooks/use-form-preferences";
 import { findModelByReference } from "./model-catalog";
+import {
+  isModelVisible,
+  resolveDefaultModelCandidates,
+  type ModelVisibilityByProvider,
+  type ProviderModelVisibility,
+} from "./model-visibility";
 
 export interface FormInitialValues {
   provider?: AgentProvider;
@@ -40,6 +46,14 @@ export interface AgentFormReducerState {
   form: FormState;
   userModified: UserModifiedFields;
   resolution: AgentFormResolutionState;
+  /**
+   * True when `form.model` names a model the user asked for: a model pick or a
+   * profile's own model. A provider-only pick, a mode change, or a thinking
+   * change leaves the defaulted model implicit, which is why this is separate
+   * from `userModified.model`. Only an explicit model survives a later
+   * visibility change; an implicit one is re-resolved. Absent means implicit.
+   */
+  modelIsExplicit?: boolean;
   inputs?: {
     serverId: string | null;
     initialValues: FormInitialValues | undefined;
@@ -76,6 +90,7 @@ interface AgentFormInputs {
   preferences: FormPreferences | null;
   providerModelsByProvider: ProviderModelsByProvider;
   allowedProviderMap: Map<AgentProvider, AgentProviderDefinition>;
+  modelVisibility?: ModelVisibilityByProvider | undefined;
 }
 
 export type AgentFormAction =
@@ -87,6 +102,7 @@ export type AgentFormAction =
       preferences: FormPreferences | null;
       providerModelsByProvider: ProviderModelsByProvider;
       allowedProviderMap: Map<AgentProvider, AgentProviderDefinition>;
+      modelVisibility?: ModelVisibilityByProvider | undefined;
     }
   | {
       type: "SET_PROVIDER_AND_MODEL_FROM_USER";
@@ -95,6 +111,7 @@ export type AgentFormAction =
       providerDef: AgentProviderDefinition | undefined;
       providerModels: AgentModelDefinition[] | null;
       providerPrefs?: ProviderPrefs | undefined;
+      modelVisibility?: ProviderModelVisibility | undefined;
     }
   | {
       type: "APPLY_PROFILE_FROM_USER";
@@ -105,6 +122,7 @@ export type AgentFormAction =
       providerDef: AgentProviderDefinition | undefined;
       providerModels: AgentModelDefinition[] | null;
       providerPrefs?: ProviderPrefs | undefined;
+      modelVisibility?: ProviderModelVisibility | undefined;
     }
   | { type: "SET_MODE_FROM_USER"; modeId: string }
   | {
@@ -112,6 +130,7 @@ export type AgentFormAction =
       modelId: string;
       availableModels: AgentModelDefinition[] | null;
       providerPrefs: ProviderPrefs | undefined;
+      modelVisibility?: ProviderModelVisibility | undefined;
     }
   | { type: "CLEAR_PROVIDER_SELECTION_FROM_USER" }
   | { type: "SET_THINKING_OPTION_FROM_USER"; thinkingOptionId: string }
@@ -133,6 +152,17 @@ export function resolveDefaultModel(
 
 export function resolveDefaultModelId(availableModels: AgentModelDefinition[] | null): string {
   return resolveDefaultModel(availableModels)?.id ?? "";
+}
+
+/**
+ * Fresh defaults only. A hidden model is never picked for the user; an explicit
+ * choice they already made is resolved through the full catalog instead.
+ */
+export function resolveVisibleDefaultModelId(
+  availableModels: AgentModelDefinition[] | null,
+  visibility: ProviderModelVisibility | undefined,
+): string {
+  return resolveDefaultModelId(resolveDefaultModelCandidates(availableModels, visibility));
 }
 
 function resolveCanonicalModelId(
@@ -297,9 +327,17 @@ function resolveModelField(input: {
   initialValues: FormInitialValues | undefined;
   providerPrefs: ProviderPrefs | undefined;
   availableModels: AgentModelDefinition[] | null;
+  visibility: ProviderModelVisibility | undefined;
 }): string {
-  const { provider, userModified, currentModel, initialValues, providerPrefs, availableModels } =
-    input;
+  const {
+    provider,
+    userModified,
+    currentModel,
+    initialValues,
+    providerPrefs,
+    availableModels,
+    visibility,
+  } = input;
   if (userModified) return currentModel;
   if (!provider) return "";
   const initialModel = normalizeSelectedModelId(initialValues?.model);
@@ -307,9 +345,11 @@ function resolveModelField(input: {
   // COMPAT(default-model-id): added in v0.7.2, remove after 2026-12-06.
   // Older drafts used "default" before providers exposed concrete model IDs.
   if ((initialModel || preferredModel) === "default" && availableModels?.length) {
-    return (
-      findModelByReference(availableModels, "default")?.id || resolveDefaultModelId(availableModels)
-    );
+    // "default" names no specific model, so it resolves like a fresh default and
+    // must not land on a hidden one.
+    const aliased = findModelByReference(availableModels, "default");
+    if (aliased && isModelVisible(visibility, aliased.id)) return aliased.id;
+    return resolveVisibleDefaultModelId(availableModels, visibility);
   }
   if (initialModel) {
     return !availableModels
@@ -317,9 +357,12 @@ function resolveModelField(input: {
       : resolveCanonicalModelId(availableModels, initialModel) || initialModel;
   }
   if (preferredModel) {
-    return !availableModels
-      ? preferredModel
-      : resolveCanonicalModelId(availableModels, preferredModel) || preferredModel;
+    if (!availableModels) return preferredModel;
+    const canonical = resolveCanonicalModelId(availableModels, preferredModel) || preferredModel;
+    // A remembered preference is a convenience default, not stated intent for
+    // this form, so a hidden one falls through to the visible default instead.
+    if (isModelVisible(visibility, canonical)) return canonical;
+    return resolveVisibleDefaultModelId(availableModels, visibility);
   }
   return "";
 }
@@ -365,6 +408,7 @@ export function resolveFormState(
   userModified: UserModifiedFields,
   currentState: FormState,
   allowedProviderMap: Map<AgentProvider, AgentProviderDefinition>,
+  modelVisibility?: ModelVisibilityByProvider | undefined,
 ): FormState {
   const result = { ...currentState };
 
@@ -396,6 +440,7 @@ export function resolveFormState(
     initialValues,
     providerPrefs,
     availableModels,
+    visibility: result.provider ? modelVisibility?.[result.provider] : undefined,
   });
 
   result.thinkingOptionId = resolveThinkingOption({
@@ -426,6 +471,7 @@ export function resolveFormStateFromProviderModels(
   userModified: UserModifiedFields,
   currentState: FormState,
   allowedProviderMap: Map<AgentProvider, AgentProviderDefinition>,
+  modelVisibility?: ModelVisibilityByProvider | undefined,
 ): FormState {
   const providerResolved = resolveFormState(
     initialValues,
@@ -434,6 +480,7 @@ export function resolveFormStateFromProviderModels(
     userModified,
     currentState,
     allowedProviderMap,
+    modelVisibility,
   );
   const availableModels = providerResolved.provider
     ? (providerModelsByProvider.get(providerResolved.provider) ?? null)
@@ -446,6 +493,7 @@ export function resolveFormStateFromProviderModels(
     userModified,
     currentState,
     allowedProviderMap,
+    modelVisibility,
   );
 }
 
@@ -517,12 +565,60 @@ function pickNextThinkingOptionForTarget(input: {
   });
 }
 
+/**
+ * A completed form keeps receiving inputs, and model visibility is one of them.
+ * An implicit model (remembered preference or fresh default) that the user hid
+ * since resolution is re-resolved the same way a fresh form would resolve it,
+ * so hide-all empties it and readiness blocks instead of launching a hidden
+ * model. Explicit choices are left alone: a stated initial model, a model the
+ * user picked, or a profile's own model.
+ */
+function reconcileImplicitModel(
+  state: AgentFormReducerState,
+  action: CompleteResolutionAction,
+): AgentFormReducerState {
+  if (state.modelIsExplicit) return state;
+  const provider = state.form.provider;
+  if (!provider) return state;
+  const visibility = action.modelVisibility?.[provider];
+  const currentModel = state.form.model;
+  if (currentModel && isModelVisible(visibility, currentModel)) return state;
+
+  const availableModels = action.providerModelsByProvider.get(provider) ?? null;
+  const providerPrefs = action.preferences?.providerPreferences?.[provider];
+  const nextModel = resolveModelField({
+    provider,
+    userModified: false,
+    currentModel,
+    // A provider-only pick moved the form off the initial context, so the
+    // initial model no longer applies to the provider it is resolving for.
+    initialValues: state.userModified.model ? undefined : action.initialValues,
+    providerPrefs,
+    availableModels,
+    visibility,
+  });
+  if (nextModel === currentModel) return state;
+
+  const requestedThinkingOptionId = state.userModified.thinkingOptionId
+    ? state.form.thinkingOptionId
+    : resolvePreferredThinkingOptionId({ availableModels, providerPrefs, modelId: nextModel });
+  const nextThinkingOptionId = resolveThinkingOptionId({
+    availableModels,
+    modelId: nextModel,
+    requestedThinkingOptionId,
+  });
+  return {
+    ...state,
+    form: { ...state.form, model: nextModel, thinkingOptionId: nextThinkingOptionId },
+  };
+}
+
 function completeResolution(
   state: AgentFormReducerState,
   action: CompleteResolutionAction,
 ): AgentFormReducerState {
   if (state.resolution.status === "completed") {
-    return state;
+    return reconcileImplicitModel(state, action);
   }
   const resolved = resolveFormStateFromProviderModels(
     action.initialValues,
@@ -531,6 +627,7 @@ function completeResolution(
     state.userModified,
     state.form,
     action.allowedProviderMap,
+    action.modelVisibility,
   );
   const nextState = { ...state, resolution: { status: "completed" } as const };
   if (!hasFormStateChanged(state.form, resolved)) return nextState;
@@ -538,9 +635,17 @@ function completeResolution(
 }
 
 function applyProfile(state: AgentFormReducerState, action: ApplyProfileAction) {
+  // A saved profile is stated intent, so its own model survives even when
+  // hidden. The remembered preference standing in for it is only a default.
+  const hasExplicitModelId = normalizeSelectedModelId(action.modelId).length > 0;
   const preferredModelId = action.modelId || action.providerPrefs?.model || "";
   const normalizedModelId = resolveCanonicalModelId(action.providerModels, preferredModelId);
-  const nextModelId = normalizedModelId || resolveDefaultModelId(action.providerModels);
+  const keepsNormalizedModelId =
+    normalizedModelId !== "" &&
+    (hasExplicitModelId || isModelVisible(action.modelVisibility, normalizedModelId));
+  const nextModelId = keepsNormalizedModelId
+    ? normalizedModelId
+    : resolveVisibleDefaultModelId(action.providerModels, action.modelVisibility);
   const availableModeIds = new Set(action.providerDef?.modes.map((mode) => mode.id) ?? []);
   const preferredModeId = action.modeId || action.providerPrefs?.mode || "";
   const defaultModeId = action.providerDef?.defaultModeId ?? "";
@@ -573,6 +678,9 @@ function applyProfile(state: AgentFormReducerState, action: ApplyProfileAction) 
       modeId: true,
       thinkingOptionId: true,
     },
+    // Only the profile's own model is stated intent; a profile that leaves the
+    // model to the remembered preference gets an implicit default.
+    modelIsExplicit: hasExplicitModelId && keepsNormalizedModelId,
   };
 }
 
@@ -620,6 +728,7 @@ export function resolveAgentForm(
         ...state,
         userModified: INITIAL_USER_MODIFIED,
         resolution: PENDING_AGENT_FORM_RESOLUTION,
+        modelIsExplicit: false,
       };
 
     case "COMPLETE_RESOLUTION":
@@ -627,7 +736,9 @@ export function resolveAgentForm(
 
     case "SET_PROVIDER_AND_MODEL_FROM_USER": {
       const normalizedModelId = resolveCanonicalModelId(action.providerModels, action.modelId);
-      const nextModelId = normalizedModelId || resolveDefaultModelId(action.providerModels);
+      const nextModelId =
+        normalizedModelId ||
+        resolveVisibleDefaultModelId(action.providerModels, action.modelVisibility);
       const nextThinkingOptionId = pickNextThinkingOptionForTarget({
         availableModels: action.providerModels,
         modelId: nextModelId,
@@ -653,6 +764,8 @@ export function resolveAgentForm(
           thinkingOptionId: nextThinkingOptionId,
         },
         userModified: { ...state.userModified, provider: true, model: true },
+        // A provider-only pick defaulted the model, so it stays implicit.
+        modelIsExplicit: normalizedModelId !== "",
       };
     }
 
@@ -669,7 +782,9 @@ export function resolveAgentForm(
 
     case "SET_MODEL_FROM_USER": {
       const normalizedModelId = resolveCanonicalModelId(action.availableModels, action.modelId);
-      const nextModelId = normalizedModelId || resolveDefaultModelId(action.availableModels);
+      const nextModelId =
+        normalizedModelId ||
+        resolveVisibleDefaultModelId(action.availableModels, action.modelVisibility);
       const nextThinkingOptionId = pickNextThinkingOptionForTarget({
         availableModels: action.availableModels,
         modelId: nextModelId,
@@ -686,6 +801,7 @@ export function resolveAgentForm(
           thinkingOptionId: nextThinkingOptionId,
         },
         userModified: { ...state.userModified, model: true },
+        modelIsExplicit: normalizedModelId !== "",
       };
     }
 
@@ -706,6 +822,7 @@ export function resolveAgentForm(
           modeId: true,
           thinkingOptionId: true,
         },
+        modelIsExplicit: false,
       };
 
     case "SET_THINKING_OPTION_FROM_USER":
@@ -720,6 +837,7 @@ export function resolveAgentForm(
         ...state,
         userModified: INITIAL_USER_MODIFIED,
         resolution: INITIAL_AGENT_FORM_RESOLUTION,
+        modelIsExplicit: false,
       };
     default:
       throw new Error("unreachable");
