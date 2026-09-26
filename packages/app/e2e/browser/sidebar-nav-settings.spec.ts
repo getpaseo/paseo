@@ -20,7 +20,9 @@ import {
   toggleNavigationGroup,
 } from "../support/helpers/sidebar-nav-group";
 
-const SHORT_WINDOW = { width: 1200, height: 360 };
+// Short enough that the group's share sits well under the rows' natural height, so the
+// overflow assertion does not ride on a couple of pixels of row padding.
+const SHORT_WINDOW = { width: 1200, height: 240 };
 
 test.describe("Sidebar items in settings", () => {
   test("owner reorders and hides top-level sidebar items", async ({ page }) => {
