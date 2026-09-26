@@ -222,6 +222,57 @@ function deferred<T>() {
 }
 
 describe("Codex active-turn steering admission", () => {
+  test("accepts multiple steers during automatic compaction without interrupting it", async () => {
+    const appServer = createFakeCodexAppServer({
+      "turn/steer": () => ({ turnId: "native-A" }),
+      "turn/interrupt": () => ({}),
+    });
+    const { session, paseoTurnId } = await startPublicSteeringSession(appServer);
+    try {
+      const loading = waitForNextTimelineItem(session);
+      appServer.startsCompaction({ threadId: "thread-1", itemId: "compact-A" });
+      await loading;
+      for (const prompt of ["First result", "Second result"]) {
+        await expect(
+          session.steerActiveTurn!(prompt, { expectedTurnId: paseoTurnId }),
+        ).resolves.toEqual({ status: "accepted" });
+      }
+      expect(
+        appServer
+          .requests()
+          .filter((request) => request.method === "turn/steer")
+          .map((request) => request.params),
+      ).toEqual([
+        {
+          threadId: "thread-1",
+          expectedTurnId: "native-A",
+          input: [{ type: "text", text: "First result", text_elements: [] }],
+        },
+        {
+          threadId: "thread-1",
+          expectedTurnId: "native-A",
+          input: [{ type: "text", text: "Second result", text_elements: [] }],
+        },
+      ]);
+      expect(appServer.requests().filter((request) => request.method === "turn/interrupt")).toEqual(
+        [],
+      );
+      expect(
+        appServer.requests().filter((request) => request.method === "turn/start"),
+      ).toHaveLength(1);
+      const completed = waitForNextTimelineItem(session);
+      appServer.completesCompaction({ threadId: "thread-1", itemId: "compact-A" });
+      expect(await completed).toMatchObject({ item: { type: "compaction", status: "completed" } });
+      await session.interrupt();
+      expect(
+        appServer.requests().filter((request) => request.method === "turn/interrupt"),
+      ).toHaveLength(1);
+    } finally {
+      await session.close();
+      appServer.assertNoErrors();
+    }
+  });
+
   test("a steer without the clearing contract leaves permissions open", async () => {
     const appServer = createFakeCodexAppServer({
       "turn/steer": () => ({ turn: { id: "native-A" } }),
@@ -387,6 +438,13 @@ describe("Codex active-turn steering admission", () => {
       "cannot steer a review turn",
       { codexErrorInfo: { activeTurnNotSteerable: { turnKind: "review" } } },
       "unavailable",
+    ],
+    [
+      "manual compaction must not fall back to replacement",
+      -32600,
+      "cannot steer a compact turn",
+      { codexErrorInfo: { activeTurnNotSteerable: { turnKind: "compact" } } },
+      "throws",
     ],
     ["unknown invalid request", -32600, "input must not be empty", undefined, "throws"],
   ] as const)("classifies JSON-RPC $0", async (_name, code, message, data, expected) => {

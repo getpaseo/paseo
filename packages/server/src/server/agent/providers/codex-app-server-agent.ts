@@ -849,7 +849,12 @@ function isDefinitiveCodexSteerRejection(error: unknown): boolean {
   if (error.code !== -32600) return false;
 
   const data = toObjectRecord(error.data);
-  if (data && isRecord(toObjectRecord(data.codexErrorInfo)?.activeTurnNotSteerable)) return true;
+  const notSteerable = toObjectRecord(toObjectRecord(data?.codexErrorInfo)?.activeTurnNotSteerable);
+  if (notSteerable) {
+    // Manual compaction rejects input; propagate that error instead of allowing
+    // the manager to cancel compaction and start a replacement turn.
+    return notSteerable.turnKind !== "compact";
+  }
 
   // These app-server invalid-request messages describe requests that reached
   // Codex but could not have submitted input. Keep this exact: a generic
