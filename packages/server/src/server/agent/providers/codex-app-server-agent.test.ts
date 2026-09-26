@@ -138,6 +138,8 @@ type TurnTerminalEvent = Extract<
 const ONE_BY_ONE_PNG_BASE64 =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+X1r0AAAAASUVORK5CYII=";
 const CODEX_PROVIDER = "codex";
+const LS = String.fromCodePoint(0x2028);
+const PS = String.fromCodePoint(0x2029);
 
 function createConfig(overrides: Partial<AgentSessionConfig> = {}): AgentSessionConfig {
   return {
@@ -1567,6 +1569,64 @@ describe("Codex app-server provider", () => {
     ]);
     await session.close();
     appServer.assertNoErrors();
+  });
+
+  test("resumes Codex history with literal Unicode separators intact", async () => {
+    const text = `History before${LS}middle${PS}after`;
+    const appServer = createFakeCodexAppServer({
+      "thread/read": () => ({
+        thread: {
+          turns: [
+            {
+              items: [
+                {
+                  type: "agentMessage",
+                  id: "unicode-history-message",
+                  text,
+                  timestamp: "2026-09-14T10:00:00.000Z",
+                },
+              ],
+            },
+          ],
+        },
+      }),
+    });
+    const provider = createProviderWithFakeAppServer(appServer);
+
+    let session: AgentSession | undefined;
+    // End the pending request even when the broken transport never parses its response.
+    const timeout = setTimeout(() => appServer.disconnect(), 1000);
+    try {
+      session = await provider.resumeSession(archivedThreadHandle());
+      const history: AgentStreamEvent[] = [];
+      for await (const event of session.streamHistory()) {
+        history.push(event);
+      }
+
+      expect(history).toEqual([
+        {
+          type: "timeline",
+          provider: "codex",
+          timestamp: "2026-09-14T10:00:00.000Z",
+          item: {
+            type: "assistant_message",
+            text,
+            messageId: "unicode-history-message",
+          },
+        },
+      ]);
+      appServer.assertNoErrors();
+    } finally {
+      clearTimeout(timeout);
+      appServer.disconnect();
+      try {
+        await session?.close();
+      } finally {
+        appServer.child.stdin.destroy();
+        appServer.child.stdout.destroy();
+        appServer.child.stderr.destroy();
+      }
+    }
   });
 
   test("closes Codex app-server when an interactive resume fails", async () => {
