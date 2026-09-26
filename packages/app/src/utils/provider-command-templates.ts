@@ -29,6 +29,9 @@ export const PROVIDER_COMMAND_TEMPLATES: Record<
   opencode: {
     resume: "opencode --session {sessionId}",
   },
+  muse: {
+    resume: "muse resume {sessionId}",
+  },
 };
 
 function renderTemplate(template: string, vars: Record<string, string>): string {

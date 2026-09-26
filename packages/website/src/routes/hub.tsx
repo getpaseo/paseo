@@ -5,6 +5,7 @@ import {
   ClaudeCodeIcon,
   CodexIcon,
   CursorIcon,
+  MuseIcon,
   OpenCodeIcon,
   PiIcon,
 } from "~/components/agent-icons";
@@ -358,6 +359,7 @@ const AGENT_LOGOS = [
   { name: "OpenCode", icon: <OpenCodeIcon className="h-6 w-6" /> },
   { name: "Cursor", icon: <CursorIcon className="h-6 w-6" /> },
   { name: "Pi", icon: <PiIcon className="h-6 w-6" /> },
+  { name: "Muse", icon: <MuseIcon className="h-6 w-6" /> },
 ];
 
 const MORE_AGENT_COUNT = AGENT_PAGES.length - AGENT_LOGOS.length;

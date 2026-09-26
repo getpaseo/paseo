@@ -368,6 +368,30 @@ export class MuseAgentSession implements AgentSession {
     });
   }
 
+  private refreshUpdatedApproval(params: Record<string, unknown>): void {
+    const approvalId = params["approvalId"];
+    if (typeof approvalId !== "string") {
+      return;
+    }
+    const pending = this.pendingRequests.get(approvalId);
+    if (!pending || pending.kind !== "approval") {
+      return;
+    }
+    const mapped = mapMuseApprovalRequest(params, this.provider);
+    if (!mapped) {
+      this.logger.debug({ approvalId }, "Ignoring unparseable Muse approval update");
+      return;
+    }
+    this.pendingRequests.set(approvalId, mapped.entry);
+    const turnId = mapped.entry.turnId ?? pending.turnId ?? this.activeTurn?.turnId;
+    this.emit({
+      type: "permission_requested",
+      provider: this.provider,
+      request: mapped.request,
+      ...(turnId ? { turnId } : {}),
+    });
+  }
+
   private async refreshPendingApproval(
     approvalId: string,
   ): Promise<Extract<MusePendingRequest, { kind: "approval" }> | null> {
@@ -576,6 +600,10 @@ export class MuseAgentSession implements AgentSession {
       if (typeof approvalId === "string") {
         this.pendingRequests.delete(approvalId);
       }
+      return;
+    }
+    if (notification.method === "approval/updated") {
+      this.refreshUpdatedApproval(notification.params);
       return;
     }
     if (notification.method === "userInput/settled") {

@@ -660,6 +660,67 @@ describe("MuseAgentSession", () => {
     expect(session.getPendingPermissions()).toHaveLength(0);
   });
 
+  test("approval/updated refreshes the pending request and re-emits it", async () => {
+    const { session, commands, routes, events, emit, request } = createHarness();
+    routes.set("approval/decide", () => ({}));
+    await request({ requestId: 1, method: "approval/request", params: approvalParams() });
+    expect(events).toHaveLength(1);
+
+    emit({
+      method: "approval/updated",
+      params: approvalParams({
+        currentRequirementId: "req-2",
+        subject: { kind: "shell", stages: [{ argv: ["ls", "-la"] }] },
+        availableChoices: [
+          {
+            choiceId: "allow-once",
+            decision: "approved",
+            label: "Allow once",
+            scope: "once",
+            acceptsFeedback: false,
+          },
+        ],
+      }),
+    });
+
+    expect(events).toHaveLength(2);
+    expect(events[1]).toMatchObject({
+      type: "permission_requested",
+      request: {
+        id: "approval-1",
+        title: "Allow shell command: ls -la",
+        actions: [{ id: "allow-once" }],
+      },
+    });
+    expect(session.getPendingPermissions()).toHaveLength(1);
+
+    await session.respondToPermission("approval-1", { behavior: "allow" });
+    expect(commands).toEqual([
+      {
+        method: "approval/decide",
+        params: {
+          sessionId: "session-1",
+          approvalId: "approval-1",
+          requirementId: "req-2",
+          choiceId: "allow-once",
+        },
+      },
+    ]);
+  });
+
+  test("approval/updated ignores unknown or unparseable updates", async () => {
+    const { session, events, emit, request } = createHarness();
+    await request({ requestId: 1, method: "approval/request", params: approvalParams() });
+    expect(events).toHaveLength(1);
+
+    emit({ method: "approval/updated", params: approvalParams({ approvalId: "ghost" }) });
+    emit({ method: "approval/updated", params: { approvalId: "approval-1" } });
+    emit({ method: "approval/updated", params: {} });
+
+    expect(events).toHaveLength(1);
+    expect(session.getPendingPermissions()[0]?.title).toBe("Allow shell command: ls");
+  });
+
   test("setMode updates the host approval mode", async () => {
     const { session, commands, routes, events } = createHarness();
     routes.set("session/setApprovalMode", () => ({}));
