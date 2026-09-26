@@ -1125,7 +1125,7 @@ export class PiRpcAgentSession implements AgentSession {
   private readonly subscribers = new Set<(event: AgentStreamEvent) => void>();
   private readonly activeToolCalls = new Map<string, PiTrackedToolCall>();
   private readonly pendingExtensionUiRequests = new Map<string, AgentPermissionRequest>();
-  private readonly extensionHost = createPiExtensionHost();
+  private readonly extensionHost: ReturnType<typeof createPiExtensionHost>;
   private activeTurnId: string | null = null;
   private activeClientMessageId: string | null = null;
   private activeAssistantMessageId: string | null = null;
@@ -1167,6 +1167,7 @@ export class PiRpcAgentSession implements AgentSession {
     this.cleanup = options.cleanup;
     this.extensionTimeoutMs = options.extensionTimeoutMs ?? DEFAULT_PI_EXTENSION_RESULT_TIMEOUT_MS;
     this.logger = options.logger;
+    this.extensionHost = createPiExtensionHost(this.logger);
     this.usagePoller = new PiUsagePoller({
       scheduler: options.usagePollScheduler,
       readStats: () => this.runtimeSession.getSessionStats(),
@@ -1352,7 +1353,8 @@ export class PiRpcAgentSession implements AgentSession {
       await this.runtimeSession.getMessages(),
       this.contextUserEntries,
       {},
-      createPiExtensionHost(),
+      // At most eight 2 MiB child files per replay; later cards retain their summaries.
+      createPiExtensionHost(this.logger, undefined, 16 * 1024 * 1024),
       this.closeController.signal,
     );
   }
@@ -1599,13 +1601,17 @@ export class PiRpcAgentSession implements AgentSession {
     for (const event of output.events) {
       this.emit(event.type === "timeline" ? { ...event, turnId } : event);
     }
-    const pending = output.hydration.then((events) => {
-      if (this.closeController.signal.aborted) return;
-      for (const event of events) this.emit(event);
-      return undefined;
-    });
+    const pending = output.hydration
+      .then((events) => {
+        if (this.closeController.signal.aborted) return;
+        for (const event of events) this.emit(event);
+        return undefined;
+      })
+      .catch((error) => {
+        this.logger.warn({ err: error }, "Pi extension hydration failed");
+      });
     this.pendingExtensionHydrations.add(pending);
-    void pending.finally(() => this.pendingExtensionHydrations.delete(pending));
+    void pending.then(() => this.pendingExtensionHydrations.delete(pending));
   }
 
   private currentTurnIdForEvent(): string | undefined {
