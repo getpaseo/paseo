@@ -121,21 +121,34 @@ An empty active list cannot cancel an explicit History selection. Agent-detail l
 not own selection or release the explicit open.
 
 Persisted resume, native restore, and both live and stored-only archive enter the same per-agent
-lifecycle queue. Resume chooses its history or interactive purpose from the durable record after
-entering that queue. Shutdown must finish before the manager releases runtime ownership; a failed
-close retains the runtime for cleanup and blocks replacement through that close operation.
+lifecycle queue. Resume checks the durable record after entering that queue; an agent archived by
+then only gets a dedicated history read, never an interactive runtime. Dedicated history reads hold
+no writer and stay outside the queue, so a slow read never delays Unarchive; the loader re-checks
+the record afterwards and promotes to interactive resume if the agent was unarchived meanwhile.
+Shutdown must finish before the manager releases runtime ownership; a failed close retains the
+runtime for cleanup and blocks replacement through that close operation.
 
-Authoritative timeline catch-up can use a runtime-only `history` resume purpose. For Codex, that
-purpose initializes a temporary app-server, reads the persisted thread and child histories, and
-releases the process before returning. It never loads, resumes, or unarchives a native thread,
-including legacy records whose native archive failed. The retained history session contains only
-the read results. Interactive resume remains responsible for repairing a provider session archived
-outside Paseo while its Paseo agent is active.
+Authoritative timeline catch-up uses the provider's dedicated history-read operation, which
+materializes history without registering an interactive runtime and must leave both Paseo's
+`archivedAt` and the provider's native archive state unchanged. For Codex, it initializes a
+temporary app-server, reads the persisted thread and child histories, and releases the process before
+returning. It never loads, resumes, or unarchives a native thread, including legacy records whose
+native archive failed. The result hydrates only the retained in-memory timeline; it does not seed or
+commit a durable timeline cache. **Unarchive** remains the only transition back to an interactive
+runtime. A provider session can also be archived outside Paseo while its Paseo agent remains active.
+Interactive resume repairs that drift through the provider's native unarchive path; dedicated history
+reads never do.
+
+Closed history snapshots retain visibility metadata such as the persisted `internal` flag. Public
+timeline and provider-subagent reads must apply the same visibility boundary to a history snapshot as
+they do to a live agent, including when a concurrent unarchive promotes that snapshot to a live
+runtime.
 
 Provider session connection owns every process it spawns until the session is registered with
-`AgentManager`. If initialization, persisted-session resume, or initial history hydration fails,
-`connect()` must dispose that process before rethrowing; the manager cannot clean up a session it never
-received.
+`AgentManager`. Dedicated history reads own their temporary process for the entire operation and close
+it before resolving or rejecting. If initialization or persisted-session resume fails, the provider
+must also dispose the unregistered process before rethrowing; the manager cannot clean up a session it
+never received.
 
 ## Tabs vs archive
 
