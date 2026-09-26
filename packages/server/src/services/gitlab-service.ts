@@ -1170,6 +1170,7 @@ export function createGitLabService(options: CreateGitLabServiceOptions = {}): F
           mr.target_project_id !== undefined &&
           mr.target_project_id !== null &&
           mr.source_project_id !== mr.target_project_id,
+        headRefKind: "branch",
       };
     },
 
