@@ -1,6 +1,7 @@
 import type { Command } from "commander";
 import type { AgentSnapshotPayload } from "@getpaseo/protocol/messages";
 import { connectToDaemon } from "../../utils/client.js";
+import { fetchAllAgents } from "../../utils/agents.js";
 import type { CommandOptions, ListResult, OutputSchema, CommandError } from "../../output/index.js";
 import { collectMultiple } from "../../utils/command-options.js";
 import { isSameOrDescendantPath } from "../../utils/paths.js";
@@ -183,8 +184,7 @@ export async function runLsCommand(
     }
 
     const labelFilters = parseLabelFilters(options.label);
-    const fetchPayload = await client.fetchAgents(buildAgentLsFetchOptions(options));
-    let agents = fetchPayload.entries.map((entry) => entry.agent);
+    let agents = await fetchAllAgents(client, buildAgentLsFetchOptions(options));
 
     // By default, exclude archived agents. `-a` includes them.
     if (!options.all) {
