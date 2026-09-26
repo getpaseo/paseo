@@ -119,6 +119,10 @@ export const ar: TranslationResources = {
       fallback: "رسالة...",
       terminal: "Prompt",
     },
+    promptSuggestions: {
+      a11yLabel: "اقتراح رسالة، اضغط Tab للقبول",
+      chipAccessibilityLabel: "استخدام الاقتراح: {{text}}",
+    },
     input: {
       accessibilityLabel: "وكيل الرسائل...",
       terminalAccessibilityLabel: "Terminal prompt",
@@ -1996,7 +2000,7 @@ export const ar: TranslationResources = {
     metadataGeneration: {
       title: "إنشاء البيانات الوصفية",
       description:
-        "اختر النموذج الذي يستخدمه Paseo لعناوين مساحات العمل وأسماء الفروع ورسائل الالتزام ومسودات طلبات السحب",
+        "اختر النموذج الذي يستخدمه Paseo لعناوين مساحات العمل وأسماء الفروع ورسائل الالتزام ومسودات طلبات السحب واقتراحات المطالبات",
       selection: "اختيار النموذج",
       automatic: "تلقائي",
       preferred: "يدوي",
@@ -2006,6 +2010,9 @@ export const ar: TranslationResources = {
       fallbackHint: "إذا لم يكن متاحًا، يستخدم Paseo نموذجًا آخر متاحًا",
       docs: "الوثائق",
       saveError: "تعذر تحديث إنشاء البيانات الوصفية",
+      suggestionSection: "اقتراحات الرسائل",
+      suggestionSharedHint: "تستخدم الاقتراحات نموذج إنشاء البيانات الوصفية",
+      suggestionCustomHint: "تستخدم اقتراحات الرسائل هذا النموذج",
     },
     general: {
       title: "عام",
@@ -2397,6 +2404,11 @@ export const ar: TranslationResources = {
           title: "تمكين أدوات Paseo",
           hint: "سيتمكن الوكلاء من إدارة أشجار العمل والوكلاء والجداول الزمنية",
           accessibilityLabel: "حقن أدوات Paseo",
+        },
+        promptSuggestions: {
+          title: "اقتراح الرسائل التالية",
+          hint: "بعد انتهاء الوكيل، اقترح ما يمكن طلبه بعد ذلك",
+          accessibilityLabel: "اقتراح الرسائل التالية",
         },
         systemPrompt: {
           title: "موجه النظام",

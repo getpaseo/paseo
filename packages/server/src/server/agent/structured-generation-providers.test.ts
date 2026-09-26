@@ -202,6 +202,70 @@ describe("resolveStructuredGenerationProviders", () => {
     expect(snapshots.calls).toEqual([{ cwd: "/tmp/repo", wait: true }]);
   });
 
+  test("prefers the providers configured for this metadata kind", async () => {
+    const snapshots = new ProviderSnapshots([
+      { provider: "current-provider", status: ERROR, enabled: true, error: "timed out" },
+    ]);
+
+    const providers = await resolveStructuredGenerationProviders({
+      cwd: "/tmp/repo",
+      providerSnapshotManager: snapshots,
+      daemonConfig: {
+        metadataGeneration: {
+          providers: [{ provider: "current-provider", model: "shared-model" }],
+          promptSuggestions: {
+            providers: [{ provider: "current-provider", model: "cheap-model" }],
+          },
+        },
+      },
+      configKey: "promptSuggestions",
+    });
+
+    expect(providers).toEqual([{ provider: "current-provider", model: "cheap-model" }]);
+  });
+
+  test("falls back to the shared providers for a kind that configures none", async () => {
+    const snapshots = new ProviderSnapshots([
+      { provider: "current-provider", status: ERROR, enabled: true, error: "timed out" },
+    ]);
+
+    const providers = await resolveStructuredGenerationProviders({
+      cwd: "/tmp/repo",
+      providerSnapshotManager: snapshots,
+      daemonConfig: {
+        metadataGeneration: {
+          providers: [{ provider: "current-provider", model: "shared-model" }],
+          promptSuggestions: {
+            providers: [{ provider: "current-provider", model: "cheap-model" }],
+          },
+        },
+      },
+      configKey: "commitMessage",
+    });
+
+    expect(providers).toEqual([{ provider: "current-provider", model: "shared-model" }]);
+  });
+
+  test("takes the first of several kinds that configures providers", async () => {
+    const snapshots = new ProviderSnapshots([
+      { provider: "current-provider", status: ERROR, enabled: true, error: "timed out" },
+    ]);
+
+    const providers = await resolveStructuredGenerationProviders({
+      cwd: "/tmp/repo",
+      providerSnapshotManager: snapshots,
+      daemonConfig: {
+        metadataGeneration: {
+          providers: [{ provider: "current-provider", model: "shared-model" }],
+          branchName: { providers: [{ provider: "current-provider", model: "slug-model" }] },
+        },
+      },
+      configKey: ["title", "branchName"],
+    });
+
+    expect(providers).toEqual([{ provider: "current-provider", model: "slug-model" }]);
+  });
+
   test("keeps explicit candidates when provider snapshots are in error state", async () => {
     const snapshots = new ProviderSnapshots([
       {

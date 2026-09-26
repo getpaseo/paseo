@@ -120,6 +120,10 @@ export const ptBR: TranslationResources = {
       fallback: "Mensagem...",
       terminal: "Prompt",
     },
+    promptSuggestions: {
+      a11yLabel: "Sugestão de mensagem, pressione Tab para aceitar",
+      chipAccessibilityLabel: "Usar sugestão: {{text}}",
+    },
     input: {
       accessibilityLabel: "Enviar mensagem ao agente...",
       terminalAccessibilityLabel: "Terminal prompt",
@@ -2029,7 +2033,7 @@ export const ptBR: TranslationResources = {
     metadataGeneration: {
       title: "Geração de metadados",
       description:
-        "Escolha o modelo usado pelo Paseo para títulos de espaços de trabalho, nomes de branches, mensagens de commit e rascunhos de pull request",
+        "Escolha o modelo usado pelo Paseo para títulos de espaços de trabalho, nomes de branches, mensagens de commit, rascunhos de pull request e sugestões de prompts",
       selection: "Seleção de modelo",
       automatic: "Automática",
       preferred: "Manual",
@@ -2039,6 +2043,9 @@ export const ptBR: TranslationResources = {
       fallbackHint: "Se ele não estiver disponível, o Paseo usa outro modelo disponível",
       docs: "Documentação",
       saveError: "Não foi possível atualizar a geração de metadados",
+      suggestionSection: "Sugestões de mensagens",
+      suggestionSharedHint: "As sugestões usam o modelo de geração de metadados",
+      suggestionCustomHint: "As sugestões de mensagens usam este modelo",
     },
     general: {
       title: "Geral",
@@ -2435,6 +2442,11 @@ export const ptBR: TranslationResources = {
           title: "Ativar ferramentas do Paseo",
           hint: "Agentes poderão gerenciar worktrees, agentes e agendamentos",
           accessibilityLabel: "Injetar ferramentas do Paseo",
+        },
+        promptSuggestions: {
+          title: "Sugerir próximas mensagens",
+          hint: "Quando um agente terminar, sugerir o que pedir em seguida",
+          accessibilityLabel: "Sugerir próximas mensagens",
         },
         systemPrompt: {
           title: "Prompt do sistema",

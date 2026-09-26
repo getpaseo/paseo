@@ -27,6 +27,8 @@ import {
 import { useTranslation } from "react-i18next";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
+import { PromptSuggestionChips } from "@/composer/prompt-suggestions/chips";
+import { usePromptSuggestions } from "@/composer/prompt-suggestions/use-prompt-suggestions";
 import { useShallow } from "zustand/shallow";
 import {
   ArrowUp,
@@ -1743,6 +1745,37 @@ function ComposerContentImpl({
     ],
   );
 
+  const promptSuggestions = usePromptSuggestions({
+    serverId,
+    agentId,
+    hasText,
+    isAgentRunning,
+    isReadOnly: readOnly || isComposerLocked,
+  });
+
+  const handleSuggestionSelect = useCallback(
+    (text: string) => {
+      replaceUserInput(text, { start: text.length, end: text.length });
+      promptSuggestions.clear();
+      messageInputRef.current?.focus();
+    },
+    [replaceUserInput, promptSuggestions],
+  );
+
+  const ghostSuggestion = useMemo(() => {
+    const ghost = promptSuggestions.ghost;
+    if (!ghost) return null;
+    return {
+      text: ghost.text,
+      accept: () => handleSuggestionSelect(ghost.text),
+      submit: () => {
+        promptSuggestions.clear();
+        handleSubmit({ text: ghost.text, attachments: selectedAttachments, cwd });
+      },
+      dismiss: promptSuggestions.dismiss,
+    };
+  }, [promptSuggestions, handleSuggestionSelect, handleSubmit, selectedAttachments, cwd]);
+
   const handlePickImage = useCallback(async () => {
     const newImages = await pickAndPersistImages({
       pickImages,
@@ -2418,6 +2451,10 @@ function ComposerContentImpl({
           <View style={styles.inputAreaContent}>
             {queueList}
             {sendErrorNode}
+            <PromptSuggestionChips
+              suggestions={promptSuggestions.chips}
+              onSelect={handleSuggestionSelect}
+            />
 
             <View ref={messageInputContainerRef} style={styles.messageInputContainer}>
               <ComposerAutocompleteBinding
@@ -2483,6 +2520,7 @@ function ComposerContentImpl({
                   readOnly={readOnly}
                   textReplacement={textReplacement}
                   submitLabel={submitLabel}
+                  ghostSuggestion={ghostSuggestion}
                 />
               </RenderProfile>
               <Combobox

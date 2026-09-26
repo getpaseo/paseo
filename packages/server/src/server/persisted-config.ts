@@ -167,9 +167,30 @@ const StructuredGenerationProviderConfigSchema = z
   })
   .strict();
 
+// Per-kind entries override the shared `providers` list for one artifact only,
+// so a cheap model can draft prompt suggestions while PR text keeps a stronger one.
+const AgentMetadataGenerationKindSchema = z
+  .object({
+    providers: z.array(StructuredGenerationProviderConfigSchema).optional(),
+  })
+  .strict();
+
 const AgentMetadataGenerationSchema = z
   .object({
     providers: z.array(StructuredGenerationProviderConfigSchema).optional(),
+    title: AgentMetadataGenerationKindSchema.optional(),
+    branchName: AgentMetadataGenerationKindSchema.optional(),
+    commitMessage: AgentMetadataGenerationKindSchema.optional(),
+    pullRequest: AgentMetadataGenerationKindSchema.optional(),
+    promptSuggestions: AgentMetadataGenerationKindSchema.optional(),
+  })
+  .strict();
+
+export type MetadataGenerationConfig = z.infer<typeof AgentMetadataGenerationSchema>;
+
+const AgentPromptSuggestionsSchema = z
+  .object({
+    enabled: z.boolean().optional(),
   })
   .strict();
 
@@ -314,6 +335,7 @@ export const PersistedConfigSchema = z
         providers: z.preprocess(normalizeAgentProviders, ProviderOverridesSchema).optional(),
         catalogRefreshTimeoutMs: z.number().int().positive().max(2_147_483_647).optional(),
         metadataGeneration: AgentMetadataGenerationSchema.optional(),
+        promptSuggestions: AgentPromptSuggestionsSchema.optional(),
         skills: z.object({ selection: AgentSkillSelectionSchema.optional() }).strict().optional(),
       })
       .strict()

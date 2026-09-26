@@ -243,6 +243,8 @@ const OUTBOUND_PERMISSION = {
   agent_attention_required: ["workspace.read", "hub.execute"],
   agent_deleted: ["workspace.read", "hub.execute"],
   agent_permission_request: ["workspace.read", "hub.execute"],
+  // Suggestions are derived from the transcript, so they carry the stream's requirement.
+  agent_prompt_suggestions: ["workspace.read", "hub.execute"],
   agent_permission_resolved: ["workspace.write", "hub.execute"],
   agent_status: ["workspace.read", "hub.execute"],
   agent_stream: ["workspace.read", "hub.execute"],

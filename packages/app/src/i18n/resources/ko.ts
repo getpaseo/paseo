@@ -119,6 +119,10 @@ export const ko: TranslationResources = {
       fallback: "메시지...",
       terminal: "Prompt",
     },
+    promptSuggestions: {
+      a11yLabel: "제안된 프롬프트, Tab 키로 적용",
+      chipAccessibilityLabel: "제안 사용: {{text}}",
+    },
     input: {
       accessibilityLabel: "에이전트에게 메시지...",
       terminalAccessibilityLabel: "Terminal prompt",
@@ -2006,7 +2010,7 @@ export const ko: TranslationResources = {
     metadataGeneration: {
       title: "메타데이터 생성",
       description:
-        "워크스페이스 제목, 브랜치 이름, 커밋 메시지 및 풀 리퀘스트 초안에 사용할 모델을 선택하세요",
+        "워크스페이스 제목, 브랜치 이름, 커밋 메시지, 풀 리퀘스트 초안 및 프롬프트 제안에 사용할 모델을 선택하세요",
       selection: "모델 선택",
       automatic: "자동",
       preferred: "수동",
@@ -2016,6 +2020,9 @@ export const ko: TranslationResources = {
       fallbackHint: "사용할 수 없으면 Paseo가 다른 사용 가능한 모델을 사용합니다",
       docs: "문서",
       saveError: "메타데이터 생성을 업데이트할 수 없습니다",
+      suggestionSection: "메시지 제안",
+      suggestionSharedHint: "제안에 메타데이터 생성 모델을 사용합니다",
+      suggestionCustomHint: "메시지 제안에 이 모델을 사용합니다",
     },
     general: {
       title: "일반",
@@ -2408,6 +2415,11 @@ export const ko: TranslationResources = {
           title: "Paseo 도구 활성화",
           hint: "에이전트가 워크트리, 에이전트, 일정을 관리할 수 있습니다",
           accessibilityLabel: "Paseo 도구 주입",
+        },
+        promptSuggestions: {
+          title: "다음 프롬프트 제안",
+          hint: "에이전트가 응답을 마치면 다음에 무엇을 요청할지 제안합니다",
+          accessibilityLabel: "다음 프롬프트 제안",
         },
         systemPrompt: {
           title: "시스템 프롬프트",

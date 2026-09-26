@@ -115,6 +115,10 @@ export const en = {
       fallback: "Message...",
       terminal: "Prompt",
     },
+    promptSuggestions: {
+      a11yLabel: "Suggested prompt, press Tab to accept",
+      chipAccessibilityLabel: "Use suggestion: {{text}}",
+    },
     input: {
       accessibilityLabel: "Message agent...",
       terminalAccessibilityLabel: "Terminal prompt",
@@ -2117,7 +2121,7 @@ export const en = {
     metadataGeneration: {
       title: "Metadata generation",
       description:
-        "Choose the model Paseo uses for workspace titles, branch names, commit messages, and pull request drafts",
+        "Choose the model Paseo uses for workspace titles, branch names, commit messages, pull request drafts, and prompt suggestions",
       selection: "Model selection",
       automatic: "Automatic",
       preferred: "Manual",
@@ -2127,6 +2131,9 @@ export const en = {
       fallbackHint: "If it is unavailable, Paseo falls back to another available model",
       docs: "Docs",
       saveError: "Unable to update metadata generation",
+      suggestionSection: "Prompt suggestions",
+      suggestionSharedHint: "Suggestions use the metadata generation model",
+      suggestionCustomHint: "Prompt suggestions use this model",
     },
     general: {
       title: "General",
@@ -2520,6 +2527,11 @@ export const en = {
           title: "Enable Paseo tools",
           hint: "Agents will be able to manage worktrees, agents and schedules",
           accessibilityLabel: "Inject Paseo tools",
+        },
+        promptSuggestions: {
+          title: "Suggest next prompts",
+          hint: "After an agent finishes, suggest what to ask next",
+          accessibilityLabel: "Suggest next prompts",
         },
         systemPrompt: {
           title: "System prompt",

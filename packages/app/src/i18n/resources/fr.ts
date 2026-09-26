@@ -122,6 +122,10 @@ export const fr: TranslationResources = {
       fallback: "Message...",
       terminal: "Prompt",
     },
+    promptSuggestions: {
+      a11yLabel: "Suggestion de message, appuyez sur Tab pour accepter",
+      chipAccessibilityLabel: "Utiliser la suggestion : {{text}}",
+    },
     input: {
       accessibilityLabel: "Agent de messagerie...",
       terminalAccessibilityLabel: "Terminal prompt",
@@ -2049,7 +2053,7 @@ export const fr: TranslationResources = {
     metadataGeneration: {
       title: "Génération de métadonnées",
       description:
-        "Choisissez le modèle utilisé par Paseo pour les titres d’espaces de travail, les noms de branches, les messages de commit et les brouillons de pull request",
+        "Choisissez le modèle utilisé par Paseo pour les titres d’espaces de travail, les noms de branches, les messages de commit, les brouillons de pull request et les suggestions de prompts",
       selection: "Sélection du modèle",
       automatic: "Automatique",
       preferred: "Manuel",
@@ -2059,6 +2063,9 @@ export const fr: TranslationResources = {
       fallbackHint: "S’il est indisponible, Paseo utilise un autre modèle disponible",
       docs: "Documentation",
       saveError: "Impossible de mettre à jour la génération de métadonnées",
+      suggestionSection: "Suggestions de messages",
+      suggestionSharedHint: "Les suggestions utilisent le modèle de génération de métadonnées",
+      suggestionCustomHint: "Les suggestions de messages utilisent ce modèle",
     },
     general: {
       title: "Général",
@@ -2458,6 +2465,11 @@ export const fr: TranslationResources = {
           title: "Activer les outilsPaseo",
           hint: "Les agents pourront gérer les arbres de travail, les agents et les horaires",
           accessibilityLabel: "Injecter les outilsPaseo",
+        },
+        promptSuggestions: {
+          title: "Suggérer les prochains messages",
+          hint: "Quand un agent a terminé, proposer quoi demander ensuite",
+          accessibilityLabel: "Suggérer les prochains messages",
         },
         systemPrompt: {
           title: "Invite système",
