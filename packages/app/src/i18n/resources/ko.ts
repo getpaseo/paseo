@@ -1952,6 +1952,7 @@ export const ko: TranslationResources = {
     addHost: "호스트 추가",
     enableBuiltInDaemon: "내장 데몬 활성화",
     projects: "프로젝트",
+    projectSearch: en.settings.projectSearch,
     projectList: {
       hostLoadFailed: "{{hostName}} 호스트에서 프로젝트를 불러올 수 없습니다: {{message}}",
       editProject: "{{projectName}} 편집",

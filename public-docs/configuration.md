@@ -86,8 +86,12 @@ See [Providers](/docs/providers) for the mental model and [Supported providers](
 
 ## Project directory search
 
-Project keyword search defaults to the daemon user's home directory. To include an external disk
-or another checkout location, set `projects.searchRoots`:
+Project keyword search defaults to the daemon user's home directory. In **Settings → Host →
+Projects → Project search directories**, select your host, add or remove directories, and select
+**Save**. Changes apply immediately. **Reset to home** restores the home-only list when saved.
+This editor requires a host that supports project search directories.
+
+You can also include an external disk or another checkout location in `projects.searchRoots`:
 
 ```json
 {

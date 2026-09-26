@@ -1975,6 +1975,7 @@ export const ru: TranslationResources = {
     addHost: "Добавить хост",
     enableBuiltInDaemon: "Включить встроенный демон",
     projects: "Проекты",
+    projectSearch: en.settings.projectSearch,
     projectList: {
       hostLoadFailed: "Не удалось загрузить проекты с хоста {{hostName}}: {{message}}",
       editProject: "Изменить {{projectName}}",

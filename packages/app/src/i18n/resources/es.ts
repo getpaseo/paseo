@@ -1990,6 +1990,7 @@ export const es: TranslationResources = {
     addHost: "Agregar anfitrión",
     enableBuiltInDaemon: "Activar el demonio integrado",
     projects: "Proyectos",
+    projectSearch: en.settings.projectSearch,
     projectList: {
       hostLoadFailed: "No se pudieron cargar proyectos desde el host{{hostName}}:{{message}}",
       editProject: "Editar{{projectName}}",

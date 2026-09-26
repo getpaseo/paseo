@@ -1962,6 +1962,7 @@ export const ja: TranslationResources = {
     addHost: "ホストを追加",
     enableBuiltInDaemon: "組み込みデーモンを有効にする",
     projects: "プロジェクト",
+    projectSearch: en.settings.projectSearch,
     projectList: {
       hostLoadFailed: "ホスト{{hostName}}からプロジェクトを読み込めませんでした: {{message}}",
       editProject: "{{projectName}}を編集",

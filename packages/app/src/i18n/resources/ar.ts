@@ -1942,6 +1942,7 @@ export const ar: TranslationResources = {
     addHost: "أضف مضيفًا",
     enableBuiltInDaemon: "تفعيل البرنامج الخفي المدمج",
     projects: "المشاريع",
+    projectSearch: en.settings.projectSearch,
     projectList: {
       hostLoadFailed: "تعذر تحميل المشاريع من المضيف{{hostName}}:{{message}}",
       editProject: "تحرير{{projectName}}",
