@@ -20,8 +20,12 @@ interface SavedSettingsHostInput {
 
 const SECTION_LABELS = {
   general: "General",
+  chat: "Chat",
   appearance: "Appearance",
+  sidebar: "Sidebar",
   editor: "Editor",
+  terminal: "Terminal",
+  browser: "Browser",
   shortcuts: "Shortcuts",
   integrations: "Integrations",
   permissions: "Permissions",
@@ -91,12 +95,15 @@ export async function selectHostConnectionType(
 
 export async function addDirectHostFromSettings(
   page: Page,
-  input: { host: string; port: number },
+  input: { host: string; port: number; password?: string },
 ): Promise<void> {
   await openAddHostFlow(page);
   await selectHostConnectionType(page, "direct");
   await page.getByTestId("direct-host-input").fill(input.host);
   await page.getByTestId("direct-port-input").fill(String(input.port));
+  if (input.password) {
+    await page.getByTestId("direct-password-input").fill(input.password);
+  }
   await page.getByTestId("direct-host-submit").click();
   await expect(page.getByTestId("add-host-modal")).toHaveCount(0, { timeout: 30_000 });
 }
@@ -417,4 +424,32 @@ export async function expectLocalHostEntryFirst(page: Page, _serverId: string): 
   const picker = sidebar.getByTestId("settings-host-picker");
   await expect(picker).toBeVisible();
   await expect(picker.getByText(TEST_HOST_LABEL, { exact: true })).toBeVisible();
+}
+
+export async function expectHostRejectedWithReAddGuidance(
+  page: Page,
+  reason: string,
+): Promise<void> {
+  const error = page.getByTestId("host-connection-error");
+  await expect(error).toContainText(reason);
+  await expect(error).toContainText(
+    "Remove this host and add it again with the password this daemon asks for.",
+  );
+}
+
+export async function expectNoHostPasswordControls(page: Page): Promise<void> {
+  await expect(page.getByText("Password", { exact: true })).toHaveCount(0);
+  await expect(page.locator('input[type="password"]')).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /password/i })).toHaveCount(0);
+}
+
+export async function removeHostFromHostPage(page: Page, serverId: string): Promise<void> {
+  await page.getByTestId("host-page-remove-host-button").click();
+  await page.getByTestId("remove-host-confirm").click();
+  await expect(page).not.toHaveURL(new RegExp(`/settings/hosts/${serverId}`));
+}
+
+export async function expectHostOnlineWithoutError(page: Page): Promise<void> {
+  await expect(page.getByTestId("host-page-identity")).toContainText("Online");
+  await expect(page.getByTestId("host-connection-error")).toHaveCount(0);
 }

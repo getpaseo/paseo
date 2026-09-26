@@ -20,10 +20,17 @@ export function createRelayE2eeTransportFactory(args: {
   daemonPublicKeyB64: string;
   logger: TransportLogger;
 }): DaemonTransportFactory {
-  return ({ url, headers }) => {
-    const base = args.baseFactory({ url, headers });
+  return ({ url }) => {
+    const base = args.baseFactory({ url });
     return createEncryptedTransport(base, args.daemonPublicKeyB64, args.logger);
   };
+}
+
+export function createRelayTransportFactory(
+  baseFactory: DaemonTransportFactory,
+): DaemonTransportFactory {
+  // The relay upgrade precedes E2EE. Only the encrypted hello may carry daemon credentials.
+  return ({ url }) => baseFactory({ url });
 }
 
 export function createEncryptedTransport(

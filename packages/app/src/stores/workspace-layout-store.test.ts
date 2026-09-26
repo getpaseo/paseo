@@ -134,6 +134,7 @@ it("feeds restored layout to timeline sync as a release signal, not a subscripti
     readCursor: () => undefined,
     fetchPage: async () => ({ hasNewer: false, endCursor: null }),
     fetchLatestTail: async () => ({ hasNewer: false, endCursor: null }),
+    onCatchUpEnded: () => undefined,
     reportError: () => undefined,
     schedule: () => () => undefined,
   });

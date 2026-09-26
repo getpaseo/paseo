@@ -2,6 +2,7 @@ import {
   waitForDaemonReady,
   resolvePaseoHome,
   type DaemonInstance,
+  readLocalCredentialForTarget,
 } from "@getpaseo/server/daemon-control";
 import { describeDaemonTarget, type DaemonTarget } from "./daemon-target.js";
 export type { DaemonTarget } from "./daemon-target.js";
@@ -28,6 +29,12 @@ export interface ConnectOptions {
   timeout?: number;
   instance?: DaemonInstance;
 }
+export function resolveClientPaseoHome(
+  target: DaemonTarget,
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): string {
+  return target.kind === "instance" ? target.home : resolvePaseoHome(env);
+}
 const DEFAULT_TIMEOUT = 15000;
 type TransportTarget =
   | { type: "tcp"; url: string }
@@ -52,11 +59,18 @@ export function buildDaemonConnectionCommandError(options: ConnectOptions & { er
   return {
     code,
     message: `Cannot connect to daemon at ${describeDaemonTarget(options.target)}: ${message}`,
-    details:
-      options.target.kind === "instance"
-        ? `Start with: paseo daemon start --home ${JSON.stringify(options.target.home)}`
-        : "Check the selected endpoint and credentials. SSH transport does not install or start the daemon.",
+    details: describeConnectionRemedy(code, options.target),
   };
+}
+
+function describeConnectionRemedy(code: string, target: DaemonTarget): string {
+  if (code === "AUTH_REQUIRED")
+    return "The daemon requires a password. Set PASEO_PASSWORD and retry.";
+  if (code === "AUTH_FAILED")
+    return "The daemon rejected the password. Check PASEO_PASSWORD and retry.";
+  if (target.kind === "instance")
+    return `Start with: paseo daemon start --home ${JSON.stringify(target.home)}`;
+  return "Check the selected endpoint and credentials. SSH transport does not install or start the daemon.";
 }
 
 export function normalizeDaemonHost(raw: string): string | null {
@@ -165,6 +179,16 @@ export function resolveDaemonPassword(host: string): string | undefined {
   return fromEnv && fromEnv.length > 0 ? fromEnv : undefined;
 }
 
+export function resolveDaemonCredential(
+  host: string,
+  home: string,
+): { kind: "password"; password: string } | { kind: "localCredential"; token: string } | null {
+  const password = resolveDaemonPassword(host);
+  if (password) return { kind: "password", password };
+  const token = readLocalCredentialForTarget(home, host);
+  return token ? { kind: "localCredential", token } : null;
+}
+
 /**
  * Create a WebSocket factory that works in Node.js
  */
@@ -186,7 +210,8 @@ function createNodeWebSocketFactory() {
  */
 async function tryConnectHost(
   host: string,
-  password: string | undefined,
+  credential: ReturnType<typeof resolveDaemonCredential>,
+  home: string,
   clientId: string,
   timeout: number,
   nodeWebSocketFactory: ReturnType<typeof createNodeWebSocketFactory>,
@@ -197,7 +222,10 @@ async function tryConnectHost(
     clientId,
     clientType: "cli",
     appVersion: resolveCliVersion(),
-    password,
+    ...(credential?.kind === "password" ? { password: credential.password } : {}),
+    ...(credential?.kind === "localCredential"
+      ? { localCredential: () => readLocalCredentialForTarget(home, host) ?? undefined }
+      : {}),
     connectTimeoutMs: timeout,
     webSocketFactory: (
       url: string,
@@ -280,7 +308,8 @@ async function connectSelectedDaemon(options: ConnectOptions): Promise<DaemonCli
             instance: options.instance,
           })
         ).listen;
-  const clientId = await getOrCreateCliClientId(resolvePaseoHome({}));
+  const home = resolveClientPaseoHome(options.target);
+  const clientId = await getOrCreateCliClientId(home);
   const nodeWebSocketFactory = createNodeWebSocketFactory();
 
   if (explicitHost?.trim().startsWith("ssh://")) {
@@ -289,7 +318,8 @@ async function connectSelectedDaemon(options: ConnectOptions): Promise<DaemonCli
     const password = resolveDaemonPassword(explicitHost);
     const result = await tryConnectHost(
       tunnel.endpoint,
-      password,
+      password ? { kind: "password", password } : null,
+      home,
       clientId,
       Math.max(1, deadline - Date.now()),
       nodeWebSocketFactory,
@@ -323,7 +353,8 @@ async function connectSelectedDaemon(options: ConnectOptions): Promise<DaemonCli
 
   const result = await tryConnectHost(
     explicitHost,
-    resolveDaemonPassword(explicitHost),
+    resolveDaemonCredential(explicitHost, home),
+    home,
     clientId,
     Math.max(1, deadline - Date.now()),
     nodeWebSocketFactory,

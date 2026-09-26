@@ -22,7 +22,7 @@ import {
 
 const SHORT_WINDOW = { width: 1200, height: 360 };
 
-test.describe("Sidebar items in Appearance settings", () => {
+test.describe("Sidebar items in settings", () => {
   test("owner reorders and hides top-level sidebar items", async ({ page }) => {
     await gotoAppShell(page);
 

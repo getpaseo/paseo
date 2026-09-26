@@ -159,6 +159,20 @@ const darkStatusColors = {
   statusMerged: "#a890d5",
 };
 
+// Status tints — the fill of a status badge. The status color itself at low opacity, so a
+// badge takes its state's hue from the same source as its text and never drifts from it.
+// Dark surfaces swallow more of the tint, so the dark band runs a little stronger.
+function statusTints(colors: typeof lightStatusColors, alphaHex: string) {
+  return {
+    statusSuccessTint: `${colors.statusSuccess}${alphaHex}`,
+    statusDangerTint: `${colors.statusDanger}${alphaHex}`,
+    statusWarningTint: `${colors.statusWarning}${alphaHex}`,
+  };
+}
+
+const lightStatusTints = statusTints(lightStatusColors, "1f"); // 12%
+const darkStatusTints = statusTints(darkStatusColors, "29"); // 16%
+
 // Status *dot* colors — the small filled discs on a sidebar row, and the glyphs that stand in
 // for them. Same four hues and the same generation rule as the status colors above, but its
 // own band, because a dot is doing a different job than a check icon or a host badge.
@@ -289,6 +303,7 @@ export function buildLightSemanticColors(tint: LightThemeConfig) {
 
     ...lightDiffColors,
     ...lightStatusColors,
+    ...lightStatusTints,
     ...lightStatusDotColors,
 
     terminal: {
@@ -420,6 +435,7 @@ export function buildDarkSemanticColors(tint: DarkThemeConfig) {
 
     ...darkDiffColors,
     ...darkStatusColors,
+    ...darkStatusTints,
     ...darkStatusDotColors,
 
     terminal: {

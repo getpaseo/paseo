@@ -108,6 +108,17 @@ describe("formatMessageTimestamp", () => {
     expect(formatted).toMatch(/10:12 PM|22:12/);
   });
 
+  it("shows the full date for last week's same weekday, even under seven days ago", () => {
+    // 2026-09-18 is a Friday. The reply is 6 days 23h45m old and lands on today's weekday,
+    // so a weekday label would read as today.
+    const now = new Date(2026, 8, 25, 11, 47);
+    const date = new Date(2026, 8, 18, 12, 2);
+    const formatted = formatMessageTimestamp(date, now);
+    expect(formatted).toMatch(/Sep|September/);
+    expect(formatted).toMatch(/18/);
+    expect(formatted).not.toMatch(/Friday/);
+  });
+
   it("includes full date for older timestamps", () => {
     const now = new Date(2026, 4, 14, 17, 30);
     const date = new Date(2026, 3, 1, 9, 5);

@@ -1,0 +1,380 @@
+{
+  "provenance": {
+    "package": "@juicesharp/rpiv-todo",
+    "version": "2.11.0",
+    "sourceCommit": "d74b1c99830a565f3df3f37e0a36616d17ffc574",
+    "piVersion": "0.84.4",
+    "captureDate": "2026-09-23",
+    "mode": "pi --mode rpc; OpenRouter google/gemini-3.6-flash"
+  },
+  "events": [
+    {
+      "type": "tool_execution_start",
+      "toolCallId": "call_406425",
+      "toolName": "todo",
+      "args": {
+        "action": "create",
+        "subject": "Inspect workspace"
+      }
+    },
+    {
+      "type": "tool_execution_end",
+      "toolCallId": "call_406425",
+      "toolName": "todo",
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Created #1: Inspect workspace (pending)"
+          }
+        ],
+        "details": {
+          "action": "create",
+          "params": {
+            "action": "create",
+            "subject": "Inspect workspace"
+          },
+          "tasks": [
+            {
+              "id": 1,
+              "subject": "Inspect workspace",
+              "status": "pending"
+            }
+          ],
+          "nextId": 2
+        }
+      },
+      "isError": false
+    },
+    {
+      "type": "tool_execution_start",
+      "toolCallId": "call_1389683",
+      "toolName": "todo",
+      "args": {
+        "subject": "Summarize findings",
+        "action": "create"
+      }
+    },
+    {
+      "type": "tool_execution_end",
+      "toolCallId": "call_1389683",
+      "toolName": "todo",
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Created #2: Summarize findings (pending)"
+          }
+        ],
+        "details": {
+          "action": "create",
+          "params": {
+            "subject": "Summarize findings",
+            "action": "create"
+          },
+          "tasks": [
+            {
+              "id": 1,
+              "subject": "Inspect workspace",
+              "status": "pending"
+            },
+            {
+              "id": 2,
+              "subject": "Summarize findings",
+              "status": "pending"
+            }
+          ],
+          "nextId": 3
+        }
+      },
+      "isError": false
+    },
+    {
+      "type": "tool_execution_start",
+      "toolCallId": "call_1228319",
+      "toolName": "todo",
+      "args": {
+        "status": "in_progress",
+        "activeForm": "inspecting workspace",
+        "action": "update",
+        "id": 1
+      }
+    },
+    {
+      "type": "tool_execution_end",
+      "toolCallId": "call_1228319",
+      "toolName": "todo",
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Updated #1 (pending → in_progress)"
+          }
+        ],
+        "details": {
+          "action": "update",
+          "params": {
+            "status": "in_progress",
+            "activeForm": "inspecting workspace",
+            "action": "update",
+            "id": 1
+          },
+          "tasks": [
+            {
+              "id": 1,
+              "subject": "Inspect workspace",
+              "status": "in_progress",
+              "activeForm": "inspecting workspace"
+            },
+            {
+              "id": 2,
+              "subject": "Summarize findings",
+              "status": "pending"
+            }
+          ],
+          "nextId": 3
+        }
+      },
+      "isError": false
+    },
+    {
+      "type": "tool_execution_start",
+      "toolCallId": "call_1444595",
+      "toolName": "todo",
+      "args": {
+        "action": "update",
+        "status": "completed",
+        "id": 1
+      }
+    },
+    {
+      "type": "tool_execution_end",
+      "toolCallId": "call_1444595",
+      "toolName": "todo",
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Updated #1 (in_progress → completed)"
+          }
+        ],
+        "details": {
+          "action": "update",
+          "params": {
+            "action": "update",
+            "status": "completed",
+            "id": 1
+          },
+          "tasks": [
+            {
+              "id": 1,
+              "subject": "Inspect workspace",
+              "status": "completed",
+              "activeForm": "inspecting workspace"
+            },
+            {
+              "id": 2,
+              "subject": "Summarize findings",
+              "status": "pending"
+            }
+          ],
+          "nextId": 3
+        }
+      },
+      "isError": false
+    }
+  ],
+  "messages": [
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "toolCall",
+          "id": "call_406425",
+          "name": "todo",
+          "arguments": {
+            "action": "create",
+            "subject": "Inspect workspace"
+          }
+        }
+      ]
+    },
+    {
+      "role": "toolResult",
+      "toolCallId": "call_406425",
+      "toolName": "todo",
+      "content": [
+        {
+          "type": "text",
+          "text": "Created #1: Inspect workspace (pending)"
+        }
+      ],
+      "details": {
+        "action": "create",
+        "params": {
+          "action": "create",
+          "subject": "Inspect workspace"
+        },
+        "tasks": [
+          {
+            "id": 1,
+            "subject": "Inspect workspace",
+            "status": "pending"
+          }
+        ],
+        "nextId": 2
+      },
+      "isError": false,
+      "timestamp": 1790195575419
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "toolCall",
+          "id": "call_1389683",
+          "name": "todo",
+          "arguments": {
+            "subject": "Summarize findings",
+            "action": "create"
+          }
+        }
+      ]
+    },
+    {
+      "role": "toolResult",
+      "toolCallId": "call_1389683",
+      "toolName": "todo",
+      "content": [
+        {
+          "type": "text",
+          "text": "Created #2: Summarize findings (pending)"
+        }
+      ],
+      "details": {
+        "action": "create",
+        "params": {
+          "subject": "Summarize findings",
+          "action": "create"
+        },
+        "tasks": [
+          {
+            "id": 1,
+            "subject": "Inspect workspace",
+            "status": "pending"
+          },
+          {
+            "id": 2,
+            "subject": "Summarize findings",
+            "status": "pending"
+          }
+        ],
+        "nextId": 3
+      },
+      "isError": false,
+      "timestamp": 1790195576353
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "toolCall",
+          "id": "call_1228319",
+          "name": "todo",
+          "arguments": {
+            "status": "in_progress",
+            "activeForm": "inspecting workspace",
+            "action": "update",
+            "id": 1
+          }
+        }
+      ]
+    },
+    {
+      "role": "toolResult",
+      "toolCallId": "call_1228319",
+      "toolName": "todo",
+      "content": [
+        {
+          "type": "text",
+          "text": "Updated #1 (pending → in_progress)"
+        }
+      ],
+      "details": {
+        "action": "update",
+        "params": {
+          "status": "in_progress",
+          "activeForm": "inspecting workspace",
+          "action": "update",
+          "id": 1
+        },
+        "tasks": [
+          {
+            "id": 1,
+            "subject": "Inspect workspace",
+            "status": "in_progress",
+            "activeForm": "inspecting workspace"
+          },
+          {
+            "id": 2,
+            "subject": "Summarize findings",
+            "status": "pending"
+          }
+        ],
+        "nextId": 3
+      },
+      "isError": false,
+      "timestamp": 1790195577401
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "toolCall",
+          "id": "call_1444595",
+          "name": "todo",
+          "arguments": {
+            "action": "update",
+            "status": "completed",
+            "id": 1
+          }
+        }
+      ]
+    },
+    {
+      "role": "toolResult",
+      "toolCallId": "call_1444595",
+      "toolName": "todo",
+      "content": [
+        {
+          "type": "text",
+          "text": "Updated #1 (in_progress → completed)"
+        }
+      ],
+      "details": {
+        "action": "update",
+        "params": {
+          "action": "update",
+          "status": "completed",
+          "id": 1
+        },
+        "tasks": [
+          {
+            "id": 1,
+            "subject": "Inspect workspace",
+            "status": "completed",
+            "activeForm": "inspecting workspace"
+          },
+          {
+            "id": 2,
+            "subject": "Summarize findings",
+            "status": "pending"
+          }
+        ],
+        "nextId": 3
+      },
+      "isError": false,
+      "timestamp": 1790195578305
+    }
+  ]
+}

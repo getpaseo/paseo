@@ -133,7 +133,7 @@ class PiCliRuntimeSession implements PiRuntimeSession {
   }
 
   async clearQueue(): Promise<void> {
-    await this.request({ type: "clear_queue" });
+    await this.requestStopWork({ type: "clear_queue" });
   }
 
   async compact(customInstructions?: string): Promise<void> {
@@ -148,7 +148,7 @@ class PiCliRuntimeSession implements PiRuntimeSession {
   }
 
   async abort(): Promise<void> {
-    await this.request({ type: "abort" });
+    await this.requestStopWork({ type: "abort" });
   }
 
   async getState(): Promise<PiSessionState> {
@@ -235,6 +235,10 @@ class PiCliRuntimeSession implements PiRuntimeSession {
 
   request(command: PiRpcCommand, timeoutMs?: number | null): Promise<unknown> {
     return this.process.request(command, timeoutMs);
+  }
+
+  private requestStopWork(command: PiRpcCommand): Promise<void> {
+    return this.process.requestStopWork(command);
   }
 
   private async waitForCompletion(command: PiRpcCommand): Promise<void> {

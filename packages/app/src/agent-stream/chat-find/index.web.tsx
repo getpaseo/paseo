@@ -11,7 +11,7 @@ import {
 import { View, Text } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
-import { PaneFind, type PaneFindHandle } from "@/pane-find";
+import { PaneFind, findShortcutPlatform, isFindShortcut, type PaneFindHandle } from "@/pane-find";
 import { Button } from "@/components/ui/button";
 import { usePaneFocus } from "@/panels/pane-context";
 import { useRetainedPanelActive } from "@/components/retained-panel";
@@ -19,11 +19,16 @@ import { hasActiveWebOverlay } from "@/lib/overlay-root";
 import { isImeComposingKeyboardEvent } from "@/utils/keyboard-ime";
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
 import { planTimelinePromptJump } from "@/timeline/timeline-sync-plan";
-import { ChatFindModel } from "./model";
+import { ChatFindModel, type ChatFindFailure } from "./model";
 import { createFindViewport } from "./viewport.web";
 import type { ChatFindProps, ChatFindExpansionProps } from "./types";
 
-const Expansion = createContext<string | null>(null);
+const SelectedMessage = createContext<string | null>(null);
+const FAILURE_TEXT: Record<ChatFindFailure, string> = {
+  connection: "paneFind.connectionFailure",
+  historyChanged: "paneFind.historyChangedFailure",
+  reveal: "paneFind.revealFailure",
+};
 const WIDGET_DATASET = { chatFindWidget: "true" };
 const ROOT_STYLE = {
   display: "flex",
@@ -34,8 +39,17 @@ const ROOT_STYLE = {
 } as const;
 let nextHighlightId = 0;
 
-export function ChatFindExpansion({ itemId, children }: ChatFindExpansionProps) {
-  return children(useContext(Expansion) === itemId);
+/**
+ * The message chat find has landed on, for surfaces that must keep it addressable:
+ * the row that lifts its render cap, and the web virtualizer that has to mount every
+ * block row of it so the whole message can be counted and highlighted.
+ */
+export function useChatFindSelectedMessageId(): string | null {
+  return useContext(SelectedMessage);
+}
+
+export function ChatFindExpansion({ messageId, children }: ChatFindExpansionProps) {
+  return children(useChatFindSelectedMessageId() === messageId);
 }
 
 export function ChatFind({
@@ -44,15 +58,15 @@ export function ChatFind({
   epoch,
   items,
   viewportRef,
-  revealLoadedItem,
-  visibleItemIds,
+  revealLoadedMessage,
+  visibleMessageIds,
   children,
 }: ChatFindProps) {
   const { t } = useTranslation();
   const widget = useRef<PaneFindHandle>(null);
   const root = useRef<HTMLDivElement>(null);
-  const bindings = useRef({ viewportRef, revealLoadedItem, visibleItemIds });
-  bindings.current = { viewportRef, revealLoadedItem, visibleItemIds };
+  const bindings = useRef({ viewportRef, revealLoadedMessage, visibleMessageIds });
+  bindings.current = { viewportRef, revealLoadedMessage, visibleMessageIds };
   const [highlightName] = useState(() => `paseo-chat-find-${++nextHighlightId}`);
   const { isInteractive } = usePaneFocus();
   const active = useRetainedPanelActive();
@@ -92,12 +106,7 @@ export function ChatFind({
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.defaultPrevented || hasActiveWebOverlay() || isImeComposingKeyboardEvent(event))
         return;
-      if (
-        (event.metaKey || event.ctrlKey) &&
-        !event.altKey &&
-        !event.shiftKey &&
-        event.key.toLowerCase() === "f"
-      ) {
+      if (isFindShortcut(event, findShortcutPlatform())) {
         event.preventDefault();
         model.open();
         widget.current?.focus();
@@ -117,12 +126,12 @@ export function ChatFind({
   else if (state.phase === "error") status = t("paneFind.failed");
   else if (state.query.trim())
     status = state.count
-      ? t("paneFind.chatPosition", { current: state.occurrence + 1, total: state.count })
+      ? t("paneFind.position", { current: state.occurrence + 1, total: state.count })
       : t("paneFind.noMatches");
   return (
     <div ref={root} tabIndex={-1} style={ROOT_STYLE}>
       <style>{`::highlight(${highlightName}) { background-color: ${styles.highlight.backgroundColor}; color: ${styles.highlight.color}; }`}</style>
-      <Expansion.Provider value={state.selectedItemId}>{children}</Expansion.Provider>
+      <SelectedMessage.Provider value={state.selectedItemId}>{children}</SelectedMessage.Provider>
       {state.open && (
         <View style={styles.overlay} dataSet={WIDGET_DATASET}>
           <PaneFind
@@ -135,9 +144,9 @@ export function ChatFind({
             onPrevious={model.previous}
             onClose={close}
           />
-          {state.error && (
+          {state.failure && (
             <View style={styles.error}>
-              <Text style={styles.errorText}>{t("paneFind.searchFailed")}</Text>
+              <Text style={styles.errorText}>{t(FAILURE_TEXT[state.failure])}</Text>
               <Button size="xs" variant="ghost" onPress={model.retry}>
                 {t("paneFind.retry")}
               </Button>
