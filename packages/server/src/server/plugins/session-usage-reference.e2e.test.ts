@@ -1,5 +1,9 @@
 import { fileURLToPath } from "node:url";
 import { expect, test } from "vitest";
+import { ACPAgentSession } from "../agent/providers/acp-agent.js";
+import { ClaudeAgentClient } from "../agent/providers/claude/agent.js";
+import { CodexAppServerAgentSession } from "../agent/providers/codex-app-server-agent.js";
+import { createTestLogger } from "../../test-utils/test-logger.js";
 import { DaemonClient } from "../test-utils/daemon-client.js";
 import { createTestAgentClient } from "../test-utils/fake-agent-client.js";
 import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
@@ -43,21 +47,69 @@ test("agent.get_usage_report resolves source IDs from default built-in and ACP s
   const directory = fileURLToPath(
     new URL("./test-fixtures/session-usage-reference/", import.meta.url),
   );
-  const sources = [
-    ["claude", "claude"],
-    ["codex", "codex"],
-    ["copilot", "copilot"],
-    ["cursor", "cursor"],
-    ["kimi", "kimi"],
-    ["generic-acp", "generic-match"],
-  ] as const;
+  const providers = ["claude", "codex", "copilot", "cursor", "kimi", "generic-acp"] as const;
+  const logger = createTestLogger();
+  const references = new Map<string, { source: string; input: Record<string, string> } | null>();
+  const claude = await new ClaudeAgentClient({
+    logger,
+    resolveBinary: async () => "/test/claude/bin",
+  }).createSession(
+    { provider: "claude", cwd: directory },
+    {
+      env: {
+        HOME: directory,
+        CLAUDE_CONFIG_DIR: "",
+        ANTHROPIC_BASE_URL: "",
+        ANTHROPIC_API_KEY: "",
+        ANTHROPIC_AUTH_TOKEN: "",
+      },
+    },
+  );
+  references.set("claude", (await claude.getUsageReference?.()) ?? null);
+  await claude.close();
+  const codex = new CodexAppServerAgentSession(
+    { provider: "codex", cwd: directory },
+    null,
+    logger,
+    () => {
+      throw new Error("Codex runtime should not start");
+    },
+    {},
+    false,
+    false,
+    false,
+    undefined,
+    "interactive",
+    { HOME: directory, OPENAI_BASE_URL: "" },
+  );
+  references.set("codex", await codex.getUsageReference());
+  for (const provider of providers.slice(2)) {
+    const session = new ACPAgentSession(
+      { provider, cwd: directory },
+      {
+        provider,
+        logger,
+        defaultCommand: ["unused"],
+        defaultModes: [],
+        capabilities: {
+          supportsStreaming: true,
+          supportsSessionPersistence: true,
+          supportsDynamicModes: true,
+          supportsMcpServers: true,
+          supportsReasoningStream: true,
+          supportsToolInvocations: true,
+        },
+      },
+    );
+    references.set(provider, await session.getUsageReference());
+  }
   const agentClients = Object.fromEntries(
-    sources.map(([provider, source]) => {
+    providers.map((provider) => {
       const client = createTestAgentClient(provider);
       const createSession = client.createSession.bind(client);
       client.createSession = async (...args) => {
         const session = await createSession(...args);
-        session.getUsageReference = async () => ({ source, input: {} });
+        session.getUsageReference = async () => references.get(provider) ?? null;
         return session;
       };
       return [provider, client];
@@ -76,10 +128,10 @@ test("agent.get_usage_report resolves source IDs from default built-in and ACP s
   const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
   try {
     await client.connect();
-    for (const [provider, source] of sources) {
+    for (const provider of providers) {
       const agent = await client.createAgent({ provider, cwd: directory });
       const result = await client.getAgentUsageReport({ agentId: agent.id });
-      expect(result.entry?.sourceId, provider).toBe(source);
+      expect(result.entry?.sourceId, provider).toBe(provider);
     }
   } finally {
     await client.close();

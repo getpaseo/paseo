@@ -6,11 +6,14 @@ import {
 import { z } from "zod";
 
 export default function contribute(server: PluginServerContext) {
-  for (const id of ["claude", "codex", "copilot", "cursor", "kimi", "generic-match"]) {
+  for (const id of ["claude", "codex", "copilot", "cursor", "kimi", "generic-acp"]) {
+    let input = z.object({}).strict();
+    if (id === "claude") input = z.object({ configDir: z.string() }).strict();
+    if (id === "codex") input = z.object({ codexHome: z.string() }).strict();
     server.registerUsageSource({
       id,
       label: id,
-      input: z.object({}).strict(),
+      input,
       fetch: async () => ({
         account: { key: "default" },
         status: "available",
