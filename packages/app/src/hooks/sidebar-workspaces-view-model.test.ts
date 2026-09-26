@@ -941,4 +941,118 @@ describe("deriveProjectStatusBucket", () => {
       }),
     ).toBe("done");
   });
+
+  it("surfaces a workspace waiting on a subagent", () => {
+    expect(
+      deriveProjectStatusBucket({
+        workspaces: [workspacePlacement({ workspaceId: "ws-1" })],
+        sessions: {
+          srv: sessionWith({
+            workspaces: [projectWorkspace("ws-1", "done")],
+            agents: [
+              agent({ id: "parent", workspaceId: "ws-1", status: "idle" }),
+              agent({
+                id: "child",
+                workspaceId: "ws-2",
+                status: "running",
+                parentAgentId: "parent",
+              }),
+            ],
+          }),
+        },
+      }),
+    ).toBe("waiting_on_subagent");
+  });
+
+  it("keeps running ahead of waiting on a collapsed project row", () => {
+    expect(
+      deriveProjectStatusBucket({
+        workspaces: [
+          workspacePlacement({ workspaceId: "ws-1" }),
+          workspacePlacement({ workspaceId: "ws-2" }),
+        ],
+        sessions: {
+          srv: sessionWith({
+            workspaces: [projectWorkspace("ws-1", "done"), projectWorkspace("ws-2", "running")],
+            agents: [
+              agent({ id: "parent", workspaceId: "ws-1", status: "idle" }),
+              agent({
+                id: "child",
+                workspaceId: "ws-3",
+                status: "running",
+                parentAgentId: "parent",
+              }),
+            ],
+          }),
+        },
+      }),
+    ).toBe("running");
+  });
+});
+
+describe("deriveEffectiveWorkspaceStatus waiting on a subagent", () => {
+  function parentWithRunningChild({
+    status,
+    childStatus,
+  }: {
+    status: WorkspaceDescriptor["status"];
+    childStatus: Agent["status"];
+  }) {
+    return createSidebarWorkspaceEntry({
+      serverId: "srv",
+      workspace: workspace({
+        id: "ws-1",
+        name: "parent",
+        projectId: "project-a",
+        projectDisplayName: "project-a",
+        status,
+      }),
+      workspaceAgentActivity: buildWorkspaceAgentActivityIndex(
+        new Map([
+          [
+            "parent",
+            agent({
+              id: "parent",
+              workspaceId: "ws-1",
+              status: "idle",
+              updatedAt: new Date(1_000),
+            }),
+          ],
+          [
+            "child",
+            agent({
+              id: "child",
+              workspaceId: "ws-2",
+              status: childStatus,
+              parentAgentId: "parent",
+            }),
+          ],
+        ]),
+      ),
+    });
+  }
+
+  it("shows waiting instead of done while a cross-workspace child runs", () => {
+    expect(parentWithRunningChild({ status: "done", childStatus: "running" }).statusBucket).toBe(
+      "waiting_on_subagent",
+    );
+  });
+
+  it("shows waiting instead of a finished turn's attention while the child runs", () => {
+    expect(
+      parentWithRunningChild({ status: "attention", childStatus: "running" }).statusBucket,
+    ).toBe("waiting_on_subagent");
+  });
+
+  it("returns to the daemon's status once the child finishes", () => {
+    expect(parentWithRunningChild({ status: "done", childStatus: "idle" }).statusBucket).toBe(
+      "done",
+    );
+  });
+
+  it("does not override a workspace the daemon already calls running", () => {
+    expect(parentWithRunningChild({ status: "running", childStatus: "running" }).statusBucket).toBe(
+      "running",
+    );
+  });
 });

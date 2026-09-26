@@ -484,6 +484,10 @@ function StatusGroupIcon({ bucket }: { bucket: StatusBucket }) {
       return <ThemedCircleCheck size={14} uniProps={attentionColorMapping} />;
     case "running":
       return <ThemedCircleDot size={14} uniProps={runningColorMapping} />;
+    case "waiting_on_subagent":
+      // Same mark as running: the child is moving on its own. The group header names the
+      // difference, which is the only place it can be named.
+      return <ThemedCircleDot size={14} uniProps={runningColorMapping} />;
     case "done":
       return <ThemedCircleCheck size={14} uniProps={foregroundMutedColorMapping} />;
   }

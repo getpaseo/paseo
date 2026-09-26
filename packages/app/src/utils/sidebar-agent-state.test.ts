@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   aggregateSidebarStateBuckets,
   deriveSidebarStateBucket,
+  getSidebarStateBucketPriority,
+  isSidebarActiveAgent,
   type SidebarStateBucket,
 } from "./sidebar-agent-state";
 
@@ -49,6 +51,106 @@ describe("deriveSidebarStateBucket", () => {
       }),
     ).toBe("done");
   });
+
+  it("keeps the agent's own running, permission, and error states", () => {
+    expect(
+      deriveSidebarStateBucket({
+        status: "running",
+        pendingPermissionCount: 0,
+        requiresAttention: false,
+        attentionReason: null,
+        subagentActivity: "active",
+      }),
+    ).toBe("running");
+    expect(
+      deriveSidebarStateBucket({
+        status: "idle",
+        pendingPermissionCount: 1,
+        requiresAttention: false,
+        attentionReason: null,
+        subagentActivity: "active",
+      }),
+    ).toBe("needs_input");
+    expect(
+      deriveSidebarStateBucket({
+        status: "error",
+        pendingPermissionCount: 0,
+        requiresAttention: false,
+        attentionReason: null,
+        subagentActivity: "active",
+      }),
+    ).toBe("failed");
+  });
+
+  it("waits instead of showing a finished turn while a subagent moves", () => {
+    expect(
+      deriveSidebarStateBucket({
+        status: "idle",
+        pendingPermissionCount: 0,
+        requiresAttention: true,
+        attentionReason: "finished",
+        subagentActivity: "active",
+      }),
+    ).toBe("waiting_on_subagent");
+    expect(
+      deriveSidebarStateBucket({
+        status: "idle",
+        pendingPermissionCount: 0,
+        requiresAttention: false,
+        attentionReason: null,
+        subagentActivity: "active",
+      }),
+    ).toBe("waiting_on_subagent");
+  });
+
+  it("surfaces a blocked child as needs_input", () => {
+    expect(
+      deriveSidebarStateBucket({
+        status: "idle",
+        pendingPermissionCount: 0,
+        requiresAttention: true,
+        attentionReason: "finished",
+        subagentActivity: "blocked",
+      }),
+    ).toBe("needs_input");
+  });
+});
+
+describe("isSidebarActiveAgent", () => {
+  it("counts waiting as active and done as inactive", () => {
+    expect(
+      isSidebarActiveAgent({
+        status: "idle",
+        pendingPermissionCount: 0,
+        requiresAttention: false,
+        attentionReason: null,
+        subagentActivity: "active",
+      }),
+    ).toBe(true);
+    expect(
+      isSidebarActiveAgent({
+        status: "idle",
+        pendingPermissionCount: 0,
+        requiresAttention: false,
+        attentionReason: null,
+        subagentActivity: "none",
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("getSidebarStateBucketPriority", () => {
+  it("ranks a blocked state above waiting and waiting above a finished turn", () => {
+    expect(getSidebarStateBucketPriority("needs_input")).toBeLessThan(
+      getSidebarStateBucketPriority("waiting_on_subagent"),
+    );
+    expect(getSidebarStateBucketPriority("waiting_on_subagent")).toBeLessThan(
+      getSidebarStateBucketPriority("attention"),
+    );
+    expect(getSidebarStateBucketPriority("running")).toBeLessThan(
+      getSidebarStateBucketPriority("waiting_on_subagent"),
+    );
+  });
 });
 
 describe("aggregateSidebarStateBuckets", () => {
@@ -80,6 +182,13 @@ describe("aggregateSidebarStateBuckets", () => {
 
   it("prefers ready-to-review over done", () => {
     expect(aggregateSidebarStateBuckets(["done", "attention", "done"])).toBe("attention");
+  });
+
+  it("keeps running ahead of waiting on a collapsed project row", () => {
+    expect(aggregateSidebarStateBuckets(["running", "waiting_on_subagent"])).toBe("running");
+    expect(aggregateSidebarStateBuckets(["waiting_on_subagent", "done"])).toBe(
+      "waiting_on_subagent",
+    );
   });
 
   it("follows the full needs_input > failed > running > attention > done ordering", () => {

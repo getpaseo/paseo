@@ -99,6 +99,11 @@ import { derivePendingPermissionKey, normalizeAgentSnapshot } from "@/utils/agen
 import { applyLegacyDaemonWorkspaceOwnership } from "@/workspace/legacy-daemon-workspaces";
 import type { WorkspaceFileOpenRequest } from "@/workspace/file-open";
 import { deriveSidebarStateBucket } from "@/utils/sidebar-agent-state";
+import { mergeSubagentActivity, selectSubagentActivity } from "@/utils/subagent-activity";
+import {
+  selectProviderSubagentActivity,
+  useProviderSubagentStore,
+} from "@/subagents/provider-store";
 import { buildDraftAgentSetup, type ClientSlashCommand } from "@/client-slash-commands";
 
 interface ChatAgentStateShape {
@@ -342,8 +347,15 @@ function useAgentPanelDescriptor(
         requiresAttention: agent?.requiresAttention ?? false,
         attentionReason: agent?.attentionReason ?? null,
         isTurnActive: selectAgentTurnPresentation(session, target.agentId).isActive,
+        // A primitive, so the shallow selector does not see a new object on every store write.
+        subagentActivity: selectSubagentActivity(session?.agents, target.agentId),
       };
     }),
+  );
+  // Provider-native children never enter the managed directory, so the daemon contributes their
+  // running state to the parent's workspace and the tab reads it here.
+  const providerSubagentActivity = useProviderSubagentStore((state) =>
+    selectProviderSubagentActivity(state.descriptors, context.serverId, target.agentId),
   );
   const provider = descriptorState.provider;
   const label = resolveWorkspaceAgentTabLabel(descriptorState.title);
@@ -361,6 +373,10 @@ function useAgentPanelDescriptor(
           pendingPermissionCount: descriptorState.pendingPermissionCount,
           requiresAttention: descriptorState.requiresAttention,
           attentionReason: descriptorState.attentionReason,
+          subagentActivity: mergeSubagentActivity(
+            descriptorState.subagentActivity,
+            providerSubagentActivity,
+          ),
         })
       : null,
   };

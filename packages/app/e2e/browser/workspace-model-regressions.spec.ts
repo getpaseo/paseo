@@ -16,9 +16,13 @@ import {
   submitNewWorkspacePrompt,
 } from "../support/helpers/new-workspace";
 import { getServerId } from "../support/helpers/server-id";
-import { selectSidebarStatusGrouping } from "../support/helpers/sidebar";
+import {
+  selectSidebarProjectGrouping,
+  selectSidebarStatusGrouping,
+} from "../support/helpers/sidebar";
 import { seedWorkspace, type SeededWorkspace } from "../support/helpers/seed-client";
 import {
+  expectSubagentRowGone,
   expectSubagentRowVisible,
   openSubagentsTrack,
   seedParentWithCrossWorkspaceSubagent,
@@ -27,7 +31,14 @@ import { expectWorkspaceHeader, waitForSidebarHydration } from "../support/helpe
 import { getVisibleWorkspaceAgentTabIds } from "../support/helpers/workspace-tabs";
 
 type NewWorkspaceDaemonClient = Awaited<ReturnType<typeof connectNewWorkspaceDaemonClient>>;
-type WorkspaceIndicator = "attention" | "done" | "failed" | "loading" | "needs_input" | "running";
+type WorkspaceIndicator =
+  | "attention"
+  | "done"
+  | "failed"
+  | "loading"
+  | "needs_input"
+  | "running"
+  | "waiting_on_subagent";
 
 interface CreatedAgentAssertion {
   workspaceId: string;
@@ -89,6 +100,13 @@ async function switchSidebarToStatusGrouping(page: import("@playwright/test").Pa
   });
 }
 
+async function switchSidebarToProjectGrouping(page: import("@playwright/test").Page) {
+  await selectSidebarProjectGrouping(page);
+  await expect(page.locator('[data-testid^="sidebar-project-row-"]').first()).toBeVisible({
+    timeout: 30_000,
+  });
+}
+
 function statusGroupRows(page: import("@playwright/test").Page, bucket: string) {
   return page.getByTestId(`sidebar-status-group-rows-${bucket}`);
 }
@@ -126,6 +144,7 @@ async function expectWorkspaceRowHasOnlyIndicator(
     "loading",
     "needs_input",
     "running",
+    "waiting_on_subagent",
   ] satisfies WorkspaceIndicator[]) {
     const locator = row.locator(`[data-testid="workspace-status-indicator-${indicator}"]`);
     if (indicator === input.indicator) {
@@ -538,9 +557,9 @@ test.describe("Workspace model regressions", () => {
     }
   });
 
-  test("cross-workspace subagent opens in its workspace and keeps its parent relationship", async ({
+  test("cross-workspace subagent shows its parent waiting, and detach clears it without reload", async ({
     page,
-  }) => {
+  }, testInfo) => {
     const serverId = getServerId();
     const seeded = await seedWorkspace({ repoPrefix: "workspace-cross-subagent-" });
 
@@ -560,14 +579,77 @@ test.describe("Workspace model regressions", () => {
         rowTestId: childRowTestId,
         indicator: "running",
       });
+      // The parent's own turn never ran; it must not read done while its child works in another
+      // workspace, which is the only place the daemon cannot fold the child into the parent.
+      await expectWorkspaceRowHasOnlyIndicator(page, {
+        rowTestId: parentRowTestId,
+        indicator: "waiting_on_subagent",
+      });
+
+      // The sidebar's status grouping names the state the row used to call done.
+      await switchSidebarToStatusGrouping(page);
+      await expectWorkspaceRowInStatusBucket(page, {
+        rowTestId: parentRowTestId,
+        bucket: "waiting_on_subagent",
+      });
+      await expectWorkspaceRowNotInStatusBuckets(page, {
+        rowTestId: parentRowTestId,
+        buckets: ["done", "running", "needs_input", "attention"],
+      });
+      await testInfo.attach("waiting-on-subagent-group", {
+        body: await page.screenshot(),
+        contentType: "image/png",
+      });
+      await switchSidebarToProjectGrouping(page);
+
+      // The parent's own tab carries the same derived state rather than a finished dot.
+      await gotoWorkspace(page, agents.parent.workspaceId);
+      await expectWorkspaceTabVisible(page, agents.parent.id);
+      const parentTab = page.getByTestId(`workspace-tab-agent_${agents.parent.id}`);
+      await expect(parentTab.locator('[data-status-bucket="waiting_on_subagent"]')).toBeVisible({
+        timeout: 30_000,
+      });
+      await openSubagentsTrack(page);
+      await expectSubagentRowVisible(page, agents.child.id);
+      await testInfo.attach("parent-waiting-on-subagent", {
+        body: await page.screenshot(),
+        contentType: "image/png",
+      });
+
+      // Detach drops the relationship. Driven through the daemon so the page does not also
+      // navigate to the child: this asserts that the daemon update reaches the open panels
+      // through their store subscriptions, with no reload. The child keeps running in its own
+      // workspace, so this is not a completion or archive transition.
+      await seeded.client.detachAgent(agents.child.id);
+      await expectSubagentRowGone(page, agents.child.id);
+      await expect(parentTab.locator('[data-status-bucket="done"]')).toBeVisible({
+        timeout: 30_000,
+      });
       await expectWorkspaceRowHasOnlyIndicator(page, {
         rowTestId: parentRowTestId,
         indicator: "done",
       });
+      await testInfo.attach("parent-cleared-after-detach", {
+        body: await page.screenshot(),
+        contentType: "image/png",
+      });
 
-      await gotoWorkspace(page, agents.parent.workspaceId);
-      await openSubagentsTrack(page);
-      await expectSubagentRowVisible(page, agents.child.id);
+      // The same cleared state under status grouping, still with no reload.
+      await gotoWorkspace(page, agents.child.workspaceId);
+      await waitForSidebarHydration(page);
+      await switchSidebarToStatusGrouping(page);
+      await expectWorkspaceRowInStatusBucket(page, {
+        rowTestId: parentRowTestId,
+        bucket: "done",
+      });
+      await expectWorkspaceRowInStatusBucket(page, {
+        rowTestId: childRowTestId,
+        bucket: "running",
+      });
+      await expectWorkspaceRowNotInStatusBuckets(page, {
+        rowTestId: parentRowTestId,
+        buckets: ["waiting_on_subagent"],
+      });
     } finally {
       await seeded.cleanup();
     }
