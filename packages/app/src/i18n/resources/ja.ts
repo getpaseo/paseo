@@ -1632,10 +1632,7 @@ export const ja: TranslationResources = {
   pairing: {
     hostPassword: {
       title: "{{host}} のパスワード",
-      body: "{{host}} に接続するためのパスワードを入力してください。",
       label: "ホストのパスワード",
-      reopen: "パスワードを入力",
-      saveError: "パスワードを保存できませんでした",
     },
     connectionMethods: {
       title: "接続を追加",
@@ -2323,13 +2320,16 @@ export const ja: TranslationResources = {
     },
     host: {
       password: {
-        title: "パスワード",
-        label: "ホストのパスワード",
-        saved: "このホストのパスワードが保存されています。",
-        unset: "パスワードは保存されていません。",
-        guidance: "このホストに再接続するには、下でパスワードを設定してください。",
-        save: "パスワードを保存",
-        clear: "パスワードを削除",
+        title: "セキュリティ",
+        label: "パスワード",
+        modalTitle: "ホストのパスワード",
+        saved: "保存済み",
+        unset: "未設定",
+        guidance: "再接続するには、セキュリティでこのホストのパスワードを設定してください。",
+        set: "パスワードを設定",
+        save: "保存",
+        saving: "保存中...",
+        clear: "削除",
       },
       appearance: {
         title: "外観",

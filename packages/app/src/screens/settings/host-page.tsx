@@ -23,11 +23,7 @@ import {
 } from "@getpaseo/protocol/terminal-profiles";
 import { AgentProfilesSection } from "@/agent-profiles";
 import { AgentSkillsSection } from "@/agent-skills";
-import {
-  AdaptiveModalSheet,
-  AdaptiveTextInput,
-  type SheetHeader,
-} from "@/components/adaptive-modal-sheet";
+import { AdaptiveModalSheet, type SheetHeader } from "@/components/adaptive-modal-sheet";
 import { SettingsTextAreaCard } from "@/components/settings-textarea";
 import { Alert as InlineAlert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -57,6 +53,7 @@ import { ProvidersSection } from "@/screens/settings/providers-section";
 import { ProviderUsageSettingsSection } from "@/provider-usage/settings-section";
 import { useProviderUsage } from "@/provider-usage/use-provider-usage";
 import { HostAppearanceSection } from "@/screens/settings/host-appearance-section";
+import { HostPasswordModal, HostPasswordSection } from "@/screens/settings/host-password-setting";
 import { SettingsSection } from "@/components/settings/headings/settings-section";
 import { useSessionStore } from "@/stores/session-store";
 import { settingsStyles } from "@/styles/settings";
@@ -231,7 +228,11 @@ function HostStatusBadges({ serverId }: { serverId: string }) {
 
 function HostConnectionError({ serverId }: { serverId: string }) {
   const { t } = useTranslation();
+  const host = useHostProfile(serverId);
   const snapshot = useHostRuntimeSnapshot(serverId);
+  const [isEditingPassword, setIsEditingPassword] = useState(false);
+  const openPasswordEditor = useCallback(() => setIsEditingPassword(true), []);
+  const closePasswordEditor = useCallback(() => setIsEditingPassword(false), []);
   const lastError = snapshot?.lastError ?? null;
   const connectionError =
     typeof lastError === "string" && lastError.trim().length > 0 ? lastError.trim() : null;
@@ -239,81 +240,23 @@ function HostConnectionError({ serverId }: { serverId: string }) {
   return (
     <View testID="host-connection-error">
       <Text style={styles.errorText}>{connectionError}</Text>
-      {snapshot?.authFailureReason ? (
-        <Text style={styles.errorText}>{t("settings.host.password.guidance")}</Text>
-      ) : null}
-    </View>
-  );
-}
-
-function HostPasswordSetting({ host }: { host: HostProfile }) {
-  const { t } = useTranslation();
-  const { setHostPassword } = useHostMutations();
-  const [password, setPassword] = useState("");
-  const [inputResetKey, setInputResetKey] = useState(0);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const save = useCallback(
-    async (nextPassword: string) => {
-      setSaving(true);
-      setError(null);
-      try {
-        await setHostPassword(host.serverId, nextPassword);
-        setPassword("");
-        setInputResetKey((key) => key + 1);
-      } catch (cause) {
-        setError(cause instanceof Error ? cause.message : String(cause));
-      } finally {
-        setSaving(false);
-      }
-    },
-    [host.serverId, setHostPassword],
-  );
-  const savePassword = useCallback(() => void save(password), [password, save]);
-  const clearPassword = useCallback(() => void save(""), [save]);
-  return (
-    <SettingsSection title={t("settings.host.password.title")}>
-      <View style={settingsStyles.card} testID="host-password-setting">
-        <View style={settingsStyles.row}>
-          <View style={settingsStyles.rowContent}>
-            <Text style={settingsStyles.rowTitle}>{t("settings.host.password.label")}</Text>
-            <Text style={settingsStyles.rowHint}>
-              {t(host.password ? "settings.host.password.saved" : "settings.host.password.unset")}
-            </Text>
-          </View>
-        </View>
-        <AdaptiveTextInput
-          resetKey={inputResetKey}
-          testID="host-password-setting-input"
-          accessibilityLabel={t("settings.host.password.label")}
-          onChangeText={setPassword}
-          secureTextEntry
-          autoCapitalize="none"
-          autoCorrect={false}
-          style={styles.passwordInput}
-        />
-        {error ? <Text style={styles.errorText}>{error}</Text> : null}
-        <View style={styles.passwordActions}>
+      {snapshot?.authFailureReason && host ? (
+        <View style={styles.passwordGuidance}>
+          <Text style={styles.passwordGuidanceText}>{t("settings.host.password.guidance")}</Text>
           <Button
-            disabled={saving || !password || password === host.password}
-            onPress={savePassword}
-            testID="host-password-save"
+            variant="outline"
+            size="sm"
+            onPress={openPasswordEditor}
+            testID="host-connection-error-set-password"
           >
-            {t("settings.host.password.save")}
+            {t("settings.host.password.set")}
           </Button>
-          {host.password ? (
-            <Button
-              disabled={saving}
-              variant="secondary"
-              onPress={clearPassword}
-              testID="host-password-clear"
-            >
-              {t("settings.host.password.clear")}
-            </Button>
+          {isEditingPassword ? (
+            <HostPasswordModal host={host} onClose={closePasswordEditor} />
           ) : null}
         </View>
-      </View>
-    </SettingsSection>
+      ) : null}
+    </View>
   );
 }
 
@@ -455,9 +398,9 @@ export function HostSettingsPage({
 
       <HostStatusBadges serverId={serverId} />
       <HostConnectionError serverId={serverId} />
-      <HostPasswordSetting host={host} />
 
       <HostAppearanceSection host={host} />
+      <HostPasswordSection host={host} />
 
       {isLocalDaemon ? <LocalDaemonSection /> : null}
 
@@ -1832,20 +1775,16 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.sm,
     marginBottom: theme.spacing[2],
   },
-  passwordInput: {
-    color: theme.colors.foreground,
-    backgroundColor: theme.colors.surface2,
-    borderColor: theme.colors.border,
-    borderWidth: 1,
-    borderRadius: theme.borderRadius.lg,
-    paddingHorizontal: theme.spacing[3],
-    paddingVertical: theme.spacing[2],
-    marginHorizontal: theme.spacing[4],
-  },
-  passwordActions: {
+  passwordGuidance: {
     flexDirection: "row",
-    gap: theme.spacing[2],
-    padding: theme.spacing[4],
+    alignItems: "center",
+    gap: theme.spacing[3],
+    marginBottom: theme.spacing[4],
+  },
+  passwordGuidanceText: {
+    flex: 1,
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
   },
   connectionLatency: {
     fontSize: theme.fontSize.base,

@@ -1598,10 +1598,7 @@ export const zhCN: TranslationResources = {
   pairing: {
     hostPassword: {
       title: "{{host}} 的密码",
-      body: "输入密码以连接到 {{host}}。",
       label: "主机密码",
-      reopen: "输入密码",
-      saveError: "无法保存密码",
     },
     connectionMethods: {
       title: "添加连接",
@@ -2276,13 +2273,16 @@ export const zhCN: TranslationResources = {
     },
     host: {
       password: {
-        title: "密码",
-        label: "主机密码",
-        saved: "已为此主机保存密码。",
-        unset: "未保存密码。",
-        guidance: "在下方设置密码以重新连接此主机。",
-        save: "保存密码",
-        clear: "清除密码",
+        title: "安全",
+        label: "密码",
+        modalTitle: "主机密码",
+        saved: "已保存",
+        unset: "未设置",
+        guidance: "在“安全”中设置此主机的密码以重新连接。",
+        set: "设置密码",
+        save: "保存",
+        saving: "正在保存...",
+        clear: "清除",
       },
       appearance: {
         title: "外观",

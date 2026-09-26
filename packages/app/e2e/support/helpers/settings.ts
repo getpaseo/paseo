@@ -418,3 +418,25 @@ export async function expectLocalHostEntryFirst(page: Page, _serverId: string): 
   await expect(picker).toBeVisible();
   await expect(picker.getByText(TEST_HOST_LABEL, { exact: true })).toBeVisible();
 }
+
+export async function expectHostPasswordRejected(page: Page, reason: string): Promise<void> {
+  const error = page.getByTestId("host-connection-error");
+  await expect(error).toContainText(reason);
+  await expect(error).toContainText("Set this host's password under Security to reconnect.");
+  await expect(page.getByTestId("host-password-row-status")).toHaveText("Not set");
+}
+
+export async function saveHostPasswordFromRow(page: Page, password: string): Promise<void> {
+  await page.getByTestId("host-password-row").click();
+  const modal = page.getByTestId("host-password-modal");
+  await expect(modal.getByTestId("host-password-modal-clear")).toHaveCount(0);
+  await modal.getByTestId("host-password-modal-input").fill(password);
+  await modal.getByTestId("host-password-modal-save").click();
+  await expect(modal).toHaveCount(0);
+}
+
+export async function expectHostPasswordAccepted(page: Page): Promise<void> {
+  await expect(page.getByTestId("host-password-row-status")).toHaveText("Saved");
+  await expect(page.getByTestId("host-page-identity")).toContainText("Online");
+  await expect(page.getByTestId("host-connection-error")).toHaveCount(0);
+}

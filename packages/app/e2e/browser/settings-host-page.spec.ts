@@ -2,6 +2,7 @@ import { expect, test } from "../support/fixtures";
 import { gotoAppShell, openSettings } from "../support/helpers/app";
 import { getE2EDaemonPort } from "../support/helpers/daemon-port";
 import { TEST_HOST_LABEL } from "../support/helpers/daemon-registry";
+import { startIsolatedHostDaemon } from "../support/helpers/isolated-host-daemon";
 import { getServerId } from "../support/helpers/server-id";
 import {
   expectSettingsHeader,
@@ -18,6 +19,9 @@ import {
   expectRetiredSidebarSectionsAbsent,
   expectHostPageVisible,
   seedSavedSettingsHosts,
+  expectHostPasswordRejected,
+  saveHostPasswordFromRow,
+  expectHostPasswordAccepted,
 } from "../support/helpers/settings";
 
 test.describe("Settings host page", () => {
@@ -87,6 +91,34 @@ test.describe("Settings host page", () => {
     await expect(updateFailure).toContainText("Update failed");
     await expect(updateFailure).toContainText("Failed to update the daemon:");
     await expect(updateButton).toBeEnabled();
+  });
+
+  test("a host rejected for its password reconnects after saving the password from its row", async ({
+    page,
+  }) => {
+    const password = "e2e host password";
+    const daemon = await startIsolatedHostDaemon("srv_e2e_password_host", {
+      environment: { ...process.env, PASEO_PASSWORD: password },
+    });
+    try {
+      await seedSavedSettingsHosts(page, [
+        {
+          serverId: daemon.serverId,
+          label: "Password host",
+          endpoint: `127.0.0.1:${daemon.port}`,
+        },
+      ]);
+      await page.reload();
+      await openSettings(page);
+      await openSettingsHost(page, daemon.serverId);
+      await openHostSection(page, daemon.serverId, "host");
+
+      await expectHostPasswordRejected(page, "Password required");
+      await saveHostPasswordFromRow(page, password);
+      await expectHostPasswordAccepted(page);
+    } finally {
+      await daemon.close();
+    }
   });
 
   test("navigating to /settings/hosts/[serverId] redirects to the connections section", async ({

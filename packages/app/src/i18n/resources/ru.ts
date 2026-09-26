@@ -1644,10 +1644,7 @@ export const ru: TranslationResources = {
   pairing: {
     hostPassword: {
       title: "Пароль для {{host}}",
-      body: "Введите пароль для подключения к {{host}}.",
       label: "Пароль хоста",
-      reopen: "Ввести пароль",
-      saveError: "Не удалось сохранить пароль",
     },
     connectionMethods: {
       title: "Добавить подключение",
@@ -2342,13 +2339,16 @@ export const ru: TranslationResources = {
     },
     host: {
       password: {
-        title: "Пароль",
-        label: "Пароль хоста",
-        saved: "Для этого хоста сохранён пароль.",
-        unset: "Пароль не сохранён.",
-        guidance: "Укажите пароль ниже, чтобы повторно подключить этот хост.",
-        save: "Сохранить пароль",
-        clear: "Удалить пароль",
+        title: "Безопасность",
+        label: "Пароль",
+        modalTitle: "Пароль хоста",
+        saved: "Сохранён",
+        unset: "Не задан",
+        guidance: "Задайте пароль этого хоста в разделе «Безопасность», чтобы переподключиться.",
+        set: "Задать пароль",
+        save: "Сохранить",
+        saving: "Сохранение...",
+        clear: "Удалить",
       },
       appearance: {
         title: "Оформление",

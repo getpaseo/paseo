@@ -1625,10 +1625,7 @@ export const ko: TranslationResources = {
   pairing: {
     hostPassword: {
       title: "{{host}}의 비밀번호",
-      body: "{{host}}에 연결할 비밀번호를 입력하세요.",
       label: "호스트 비밀번호",
-      reopen: "비밀번호 입력",
-      saveError: "비밀번호를 저장할 수 없습니다",
     },
     connectionMethods: {
       title: "연결 추가",
@@ -2312,13 +2309,16 @@ export const ko: TranslationResources = {
     },
     host: {
       password: {
-        title: "비밀번호",
-        label: "호스트 비밀번호",
-        saved: "이 호스트의 비밀번호가 저장되어 있습니다.",
-        unset: "저장된 비밀번호가 없습니다.",
-        guidance: "이 호스트에 다시 연결하려면 아래에서 비밀번호를 설정하세요.",
-        save: "비밀번호 저장",
-        clear: "비밀번호 지우기",
+        title: "보안",
+        label: "비밀번호",
+        modalTitle: "호스트 비밀번호",
+        saved: "저장됨",
+        unset: "설정 안 됨",
+        guidance: "다시 연결하려면 보안에서 이 호스트의 비밀번호를 설정하세요.",
+        set: "비밀번호 설정",
+        save: "저장",
+        saving: "저장 중...",
+        clear: "지우기",
       },
       appearance: {
         title: "모양",

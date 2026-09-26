@@ -1640,10 +1640,7 @@ export const en = {
   pairing: {
     hostPassword: {
       title: "Password for {{host}}",
-      body: "Enter the password to connect to {{host}}.",
       label: "Host password",
-      reopen: "Enter password",
-      saveError: "Could not save password",
     },
     connectionMethods: {
       title: "Add connection",
@@ -2421,13 +2418,16 @@ export const en = {
     },
     host: {
       password: {
-        title: "Password",
-        label: "Host password",
-        saved: "A password is saved for this host.",
-        unset: "No password saved.",
-        guidance: "Set the password below to reconnect this host.",
-        save: "Save password",
-        clear: "Clear password",
+        title: "Security",
+        label: "Password",
+        modalTitle: "Host password",
+        saved: "Saved",
+        unset: "Not set",
+        guidance: "Set this host's password under Security to reconnect.",
+        set: "Set password",
+        save: "Save",
+        saving: "Saving...",
+        clear: "Clear",
       },
       appearance: {
         title: "Appearance",
