@@ -45,6 +45,11 @@ import { createExternalProcessEnv } from "../server/paseo-env.js";
 import { parseGitRevParsePath, resolveGitRevParsePath } from "./git-rev-parse-path.js";
 import { expandTilde, getRealpathAwareRelativePath, isPathInsideRoot } from "./path.js";
 import { terminateWithTreeKill } from "./tree-kill.js";
+import {
+  materializeWorktreeIncludePlan,
+  readWorktreeIncludePlan,
+  type WorktreeIncludeSummary,
+} from "./worktree-include/index.js";
 
 export { slugify, validateBranchSlug } from "@getpaseo/protocol/branch-slug";
 
@@ -60,6 +65,10 @@ export interface WorktreeConfig {
 
 export interface CreatedWorktree extends WorktreeConfig {
   comparisonBaseRef: string | null;
+}
+
+export interface CreatedWorktreeConfig extends CreatedWorktree {
+  worktreeIncludeSummary: WorktreeIncludeSummary;
 }
 
 export interface WorktreeRuntimeEnv {
@@ -1151,12 +1160,18 @@ export async function deletePaseoWorktree({
 }
 
 export async function rollbackCreatedPaseoWorktree(
-  options: DeletePaseoWorktreeOptions,
+  options: DeletePaseoWorktreeOptions & { createdBranchName?: string },
   cause: unknown,
 ): Promise<never> {
   let cleanupError: unknown;
   try {
     await deletePaseoWorktree(options);
+    if (options.createdBranchName && options.cwd) {
+      await runGitCommand(["branch", "--delete", "--force", options.createdBranchName], {
+        cwd: options.cwd,
+        acceptExitCodes: [0, 1],
+      });
+    }
   } catch (error) {
     cleanupError = error;
   }
@@ -1222,8 +1237,25 @@ export const createWorktree = async ({
   runSetup,
   paseoHome,
   worktreesRoot,
-}: CreateWorktreeOptions): Promise<CreatedWorktree> => {
+}: CreateWorktreeOptions): Promise<CreatedWorktreeConfig> => {
   const sourcePlan = await resolveWorktreeSourcePlan({ cwd, source, desiredSlug: worktreeSlug });
+  const paseoWorktreesBaseRoot = resolvePaseoWorktreesBaseRoot({ paseoHome, worktreesRoot });
+  const worktreeIncludePlan = await (async () => {
+    try {
+      return await readWorktreeIncludePlan({
+        sourceRoot: cwd,
+        excludedSourceRoots: [paseoWorktreesBaseRoot],
+      });
+    } catch (error) {
+      if (sourcePlan.createdBranchName) {
+        await runGitCommand(["branch", "--delete", "--force", sourcePlan.createdBranchName], {
+          cwd,
+          acceptExitCodes: [0, 1],
+        });
+      }
+      throw error;
+    }
+  })();
   let worktreePath = join(await getPaseoWorktreesRoot(cwd, paseoHome, worktreesRoot), worktreeSlug);
   mkdirSync(dirname(worktreePath), { recursive: true });
 
@@ -1242,30 +1274,56 @@ export const createWorktree = async ({
   });
   worktreePath = normalizePathForOwnership(finalWorktreePath);
 
-  if (sourcePlan.pushRemote) {
-    await configureWorktreePushRemote({
-      cwd,
-      branchName: sourcePlan.branchName,
-      remote: sourcePlan.pushRemote,
-    });
-  }
-  if (sourcePlan.trackingRemote) {
-    await configureWorktreeTrackingRemote({
-      cwd,
-      branchName: sourcePlan.branchName,
-      remote: sourcePlan.trackingRemote,
-    });
-  }
+  let worktreeIncludeSummary: WorktreeIncludeSummary = {
+    materialized: 0,
+    skipped: [...worktreeIncludePlan.skipped],
+  };
+  try {
+    if (sourcePlan.pushRemote) {
+      await configureWorktreePushRemote({
+        cwd,
+        branchName: sourcePlan.branchName,
+        remote: sourcePlan.pushRemote,
+      });
+    }
+    if (sourcePlan.trackingRemote) {
+      await configureWorktreeTrackingRemote({
+        cwd,
+        branchName: sourcePlan.branchName,
+        remote: sourcePlan.trackingRemote,
+      });
+    }
 
-  writePaseoWorktreeMetadata(worktreePath, {
-    baseRefName: sourcePlan.metadataBaseRefName,
-    ...(sourcePlan.metadataBaseRef ? { baseRef: sourcePlan.metadataBaseRef } : {}),
-    ...(sourcePlan.changeRequestLookupTarget
-      ? { changeRequestLookupTarget: sourcePlan.changeRequestLookupTarget }
-      : {}),
-  });
+    writePaseoWorktreeMetadata(worktreePath, {
+      baseRefName: sourcePlan.metadataBaseRefName,
+      ...(sourcePlan.metadataBaseRef ? { baseRef: sourcePlan.metadataBaseRef } : {}),
+      ...(sourcePlan.changeRequestLookupTarget
+        ? { changeRequestLookupTarget: sourcePlan.changeRequestLookupTarget }
+        : {}),
+    });
 
-  await seedPaseoConfigFile({ sourceCwd: cwd, targetCwd: worktreePath });
+    await seedPaseoConfigFile({ sourceCwd: cwd, targetCwd: worktreePath });
+    const materialization = await materializeWorktreeIncludePlan({
+      plan: worktreeIncludePlan,
+      worktreeRoot: worktreePath,
+    });
+    worktreeIncludeSummary = {
+      materialized: materialization.materialized,
+      skipped: [...worktreeIncludePlan.skipped, ...materialization.skipped],
+    };
+  } catch (error) {
+    return rollbackCreatedPaseoWorktree(
+      {
+        cwd,
+        worktreePath,
+        teardownCwds: [],
+        paseoHome,
+        worktreesBaseRoot: worktreesRoot,
+        createdBranchName: sourcePlan.createdBranchName,
+      },
+      error,
+    );
+  }
 
   if (runSetup) {
     await runWorktreeSetupCommands({
@@ -1277,6 +1335,7 @@ export const createWorktree = async ({
 
   return {
     branchName: sourcePlan.branchName,
+    worktreeIncludeSummary,
     worktreePath,
     comparisonBaseRef:
       source.kind === "checkout-branch"
@@ -1293,6 +1352,7 @@ interface ResolveWorktreeSourcePlanOptions {
 
 interface WorktreeSourcePlan {
   branchName: string;
+  createdBranchName?: string;
   // Display name and exact ref are two different facts. The name cannot round-trip to a
   // commit — "main" resolves local-first even when the worktree was cut from a fork's
   // upstream — so comparisons and actions read the ref and the UI reads the name.
@@ -1357,6 +1417,7 @@ async function resolveBranchOffWorktreeSourcePlan(
 
   return {
     branchName: newBranchName,
+    createdBranchName: newBranchName,
     metadataBaseRefName: normalizedBaseBranch,
     metadataBaseRef: resolvedBaseBranch,
     changeRequestLookupTarget: createPaseoWorktreeChangeRequestHint({
@@ -1379,11 +1440,13 @@ async function resolveWorktreeSourcePlan({
       return resolveRestoredWorktreeSourcePlan(cwd, source);
     case "checkout-branch": {
       await validateGitBranchName(cwd, source.branchName);
+      const hadLocalBranch = await localBranchExists(cwd, source.branchName);
       await ensureLocalBranch(cwd, source.branchName);
       if (await isBranchCheckedOut(cwd, source.branchName)) {
         const branchName = await resolveUniqueLocalBranchName(cwd, source.branchName);
         return {
           branchName,
+          createdBranchName: branchName,
           metadataBaseRefName: source.branchName,
           changeRequestLookupTarget: createPaseoWorktreeChangeRequestHint({
             headRef: branchName,
@@ -1395,6 +1458,7 @@ async function resolveWorktreeSourcePlan({
 
       return {
         branchName: source.branchName,
+        ...(hadLocalBranch ? {} : { createdBranchName: source.branchName }),
         metadataBaseRefName: source.branchName,
         changeRequestLookupTarget: createPaseoWorktreeChangeRequestHint({
           headRef: source.branchName,
@@ -1452,6 +1516,7 @@ async function resolveWorktreeSourcePlan({
 
       return {
         branchName: localBranchName,
+        createdBranchName: localBranchName,
         metadataBaseRefName: normalizedBaseRefName,
         changeRequestLookupTarget: createPaseoWorktreeChangeRequestHint({
           headRef: source.headRef,
