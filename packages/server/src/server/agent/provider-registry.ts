@@ -39,6 +39,7 @@ import { CodexAppServerAgentClient } from "./providers/codex-app-server-agent.js
 import { CopilotACPAgentClient } from "./providers/copilot-acp-agent.js";
 import { CursorACPAgentClient } from "./providers/cursor-acp-agent.js";
 import { GenericACPAgentClient } from "./providers/generic-acp-agent.js";
+import { HermesACPAgentClient } from "./providers/hermes-acp-agent.js";
 import { KimiACPAgentClient } from "./providers/kimi-acp-agent.js";
 import { KiroACPAgentClient } from "./providers/kiro-acp-agent.js";
 import { OpenCodeRuntimeClient } from "./providers/opencode/runtime-client.js";
@@ -812,6 +813,9 @@ function addDerivedProviders(
           }
           if (providerId === "traecli") {
             return new TraeACPAgentClient(acpOptions);
+          }
+          if (providerId === "hermes") {
+            return new HermesACPAgentClient(acpOptions);
           }
           return new GenericACPAgentClient(acpOptions);
         },
