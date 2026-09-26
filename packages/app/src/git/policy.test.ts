@@ -62,6 +62,8 @@ function createInput(
     forgeBrandLabel: "GitHub",
     forgeChangeRequestNoun: "PR",
     githubAutoMergeActionsEnabled: true,
+    prSetReadyActionEnabled: true,
+    forgeSupportsPrSetReady: true,
     hasPullRequest: false,
     pullRequestUrl: null,
     pullRequestState: null,
@@ -103,6 +105,11 @@ function createInput(
         handler: () => undefined,
       },
       pr: {
+        disabled: false,
+        status: "idle",
+        handler: () => undefined,
+      },
+      "set-pr-ready": {
         disabled: false,
         status: "idle",
         handler: () => undefined,
@@ -313,6 +320,35 @@ describe("git-actions-policy", () => {
     expect(
       actions.secondary.some((action) => action.id === "pr" && action.label === "View PR"),
     ).toBe(true);
+  });
+
+  it("offers set-pr-ready only for an open draft PR on a host that serves the RPC", () => {
+    const draft = createInput({
+      hasRemote: true,
+      isOnBaseBranch: false,
+      aheadCount: 1,
+      hasPullRequest: true,
+      pullRequestUrl: "https://example.com/pr/2",
+      pullRequestState: "open",
+      pullRequestIsDraft: true,
+    });
+
+    expect(buildGitActions(draft).secondary.map((action) => action.id)).toContain("set-pr-ready");
+    expect(
+      buildGitActions({ ...draft, pullRequestIsDraft: false }).secondary.map((action) => action.id),
+    ).not.toContain("set-pr-ready");
+    expect(
+      buildGitActions({ ...draft, prSetReadyActionEnabled: false }).secondary.map(
+        (action) => action.id,
+      ),
+    ).not.toContain("set-pr-ready");
+    // A Gitea-family draft: the daemon-wide RPC is served and the PR is a real
+    // draft, but the resolved forge's adapter cannot flip it out of draft.
+    expect(
+      buildGitActions({ ...draft, forgeSupportsPrSetReady: false }).secondary.map(
+        (action) => action.id,
+      ),
+    ).not.toContain("set-pr-ready");
   });
 
   it("enables pull-and-push when the branch has both incoming and outgoing commits", () => {
