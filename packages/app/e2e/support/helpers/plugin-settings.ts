@@ -47,7 +47,7 @@ async function openPluginScreen(page: Page) {
   await expect(page.getByRole("switch", { name: "Show metadata" })).toBeVisible();
 }
 export async function groupByWorkspace(page: Page) {
-  await page.getByRole("button", { name: "Group agents by", exact: true }).click();
+  await page.getByRole("button", { name: /^Group agents by:/ }).click();
   await page.getByRole("menuitem", { name: "Workspace", exact: true }).click();
   await expect(page.getByText("Grouped by workspace", { exact: true })).toBeVisible();
 }
