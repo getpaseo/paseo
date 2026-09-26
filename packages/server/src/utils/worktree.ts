@@ -1352,6 +1352,7 @@ async function resolveBranchOffWorktreeSourcePlan(
   const resolvedBaseBranch = await resolveBaseBranchForWorktree(cwd, source.baseBranch);
   const branchExists = await localBranchExists(cwd, branchName);
   const base = branchExists ? branchName : resolvedBaseBranch;
+  await refreshRemoteTrackingBaseRef(cwd, base);
   const candidateBranch = branchExists ? desiredSlug : branchName;
   const newBranchName = await resolveUniqueLocalBranchName(cwd, candidateBranch);
 
@@ -1682,6 +1683,31 @@ async function resolveBaseBranchForWorktree(
     }
   }
   throw new Error(`Base branch not found: ${normalized}`);
+}
+
+// A remote-tracking base like refs/remotes/origin/main is only as fresh as the last fetch, and
+// nothing on the branch-off path guarantees one ran. Refresh it so the new branch starts at the
+// remote tip; when the fetch fails (offline, auth) the cached ref is still a usable base.
+async function refreshRemoteTrackingBaseRef(cwd: string, resolvedBaseRef: string): Promise<void> {
+  if (!resolvedBaseRef.startsWith("refs/remotes/")) {
+    return;
+  }
+  try {
+    // Remote names may contain slashes, so the owner is looked up rather than parsed. Git refuses
+    // a remote whose name is a prefix of another remote's, so at most one configured remote matches.
+    const { stdout } = await runGitCommand(["remote"], { cwd });
+    const remoteName = stdout
+      .split("\n")
+      .map((name) => name.trim())
+      .find((name) => name.length > 0 && resolvedBaseRef.startsWith(`refs/remotes/${name}/`));
+    if (!remoteName) {
+      return;
+    }
+    const headRef = resolvedBaseRef.slice(`refs/remotes/${remoteName}/`.length);
+    await tryFetchWorktreeTrackingRemote({ cwd, remoteName, headRef });
+  } catch {
+    // Fetch timed out or the remote config could not be read; branch from the cached ref.
+  }
 }
 
 async function ensureLocalBranch(cwd: string, branchName: string): Promise<void> {
