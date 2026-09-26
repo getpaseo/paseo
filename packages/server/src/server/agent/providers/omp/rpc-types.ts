@@ -128,6 +128,8 @@ export const OmpSessionStateSchema = z
     isStreaming: z.boolean(),
     isCompacting: z.boolean(),
     autoCompactionEnabled: z.boolean().optional(),
+    fastModeEnabled: z.boolean().optional(),
+    fastModeActive: z.boolean().optional(),
     sessionFile: z.string().optional(),
     sessionId: z.string(),
     sessionName: z.string().optional(),
@@ -135,6 +137,13 @@ export const OmpSessionStateSchema = z
     queuedMessageCount: z.number().int().nonnegative(),
     contextUsage: OmpContextUsageSchema.optional(),
     todoPhases: z.unknown().optional(),
+  })
+  .passthrough();
+
+export const OmpFastModeResultSchema = z
+  .object({
+    enabled: z.boolean(),
+    active: z.boolean(),
   })
   .passthrough();
 
@@ -328,6 +337,7 @@ export const OmpAgentSessionEventSchema = z.discriminatedUnion("type", [
   z
     .object({ type: z.literal("agent_end"), messages: z.array(OmpAgentMessageSchema).optional() })
     .passthrough(),
+  z.object({ type: z.literal("model_changed") }).passthrough(),
 ]);
 
 export const OmpTodoItemSchema = z
@@ -513,7 +523,14 @@ export const OmpRpcCommandSchema = z.discriminatedUnion("type", [
   z.object({ ...OmpCommandBase, type: z.literal("set_auto_compaction"), enabled: z.boolean() }),
   z.object({ ...OmpCommandBase, type: z.literal("abort") }),
   z.object({ ...OmpCommandBase, type: z.literal("get_state") }),
+  z.object({ ...OmpCommandBase, type: z.literal("set_fast_mode"), enabled: z.boolean() }),
   z.object({ ...OmpCommandBase, type: z.literal("get_messages") }),
+  z.object({
+    ...OmpCommandBase,
+    type: z.literal("get_messages_page"),
+    limit: z.number().optional(),
+    cursor: z.string().optional(),
+  }),
   z.object({ ...OmpCommandBase, type: z.literal("get_available_models") }),
   z.object({
     ...OmpCommandBase,
@@ -554,6 +571,13 @@ export const OmpPromptAckSchema = z
 export const OmpMessagesResultSchema = z
   .object({ messages: z.array(OmpAgentMessageSchema).optional() })
   .passthrough();
+export const OmpMessagesPageResultSchema = z
+  .object({
+    messages: z.array(OmpAgentMessageSchema).optional(),
+    totalMessages: z.number().optional(),
+    nextCursor: z.string().optional(),
+  })
+  .passthrough();
 export const OmpModelsResultSchema = z
   .object({ models: z.array(OmpModelSchema).optional() })
   .passthrough();
@@ -582,6 +606,7 @@ export type OmpAgentMessage = z.infer<typeof OmpAgentMessageSchema>;
 export type OmpModel = z.infer<typeof OmpModelSchema>;
 export type OmpModelThinking = z.infer<typeof OmpModelThinkingSchema>;
 export type OmpSessionState = z.infer<typeof OmpSessionStateSchema>;
+export type OmpFastModeResult = z.infer<typeof OmpFastModeResultSchema>;
 export type OmpSessionStats = z.infer<typeof OmpSessionStatsSchema>;
 export type OmpRpcSlashCommand = z.infer<typeof OmpRpcSlashCommandSchema>;
 export type OmpAgentToolResult = z.infer<typeof OmpAgentToolResultSchema>;
@@ -613,6 +638,7 @@ export type OmpAvailableCommand = z.infer<typeof OmpAvailableCommandSchema>;
 export type OmpAvailableCommandsUpdateEvent = z.infer<typeof OmpAvailableCommandsUpdateEventSchema>;
 export type OmpRpcCommand = z.infer<typeof OmpRpcCommandSchema>;
 export type OmpPromptAck = z.infer<typeof OmpPromptAckSchema> & { requestId?: string };
+export type OmpMessagesPageResult = z.infer<typeof OmpMessagesPageResultSchema>;
 
 export interface OmpSubagentSnapshot {
   id: string;

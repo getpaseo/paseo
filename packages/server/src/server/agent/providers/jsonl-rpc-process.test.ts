@@ -118,8 +118,8 @@ describe("JsonlRpcProcess", () => {
     const transport = startProcess();
 
     try {
-      const slow = transport.request({ type: "echo", value: "first", delayMs: 20 });
-      const fast = transport.request({ type: "echo", value: "second" });
+      const slow = transport.request({ command: { type: "echo", value: "first", delayMs: 20 } });
+      const fast = transport.request({ command: { type: "echo", value: "second" } });
 
       await expect(Promise.all([slow, fast])).resolves.toEqual([
         {
@@ -146,7 +146,7 @@ describe("JsonlRpcProcess", () => {
     transport.onMessage((message) => messages.push(message));
 
     try {
-      await transport.request({ type: "emit" });
+      await transport.request({ command: { type: "emit" } });
 
       expect(messages).toEqual([{ type: "notice", text: "a\u2028b" }]);
     } finally {
@@ -158,7 +158,7 @@ describe("JsonlRpcProcess", () => {
     const transport = startProcess();
 
     try {
-      await expect(transport.request({ type: "fail" })).rejects.toThrow(
+      await expect(transport.request({ command: { type: "fail" } })).rejects.toThrow(
         "child rejected the request",
       );
     } finally {
@@ -173,12 +173,29 @@ describe("JsonlRpcProcess", () => {
     try {
       child.stderr.write("still waiting");
 
-      await expect(transport.request({ type: "hang" })).rejects.toThrow(
+      await expect(transport.request({ command: { type: "hang" } })).rejects.toThrow(
         /JSONL RPC request timed out phase=hang elapsedMs=\d+ timeoutMs=50\nstill waiting/,
       );
     } finally {
       await transport.close();
     }
+  });
+  test("closes the transport when a control request times out", async () => {
+    const transport = startProcess();
+    const exit = nextExit(transport);
+    const request = transport.request({
+      command: { type: "hang" },
+      timeoutMs: 50,
+      requestOptions: { closeOnTimeout: true },
+    });
+
+    await expect(request).rejects.toThrow(
+      /JSONL RPC request timed out phase=hang elapsedMs=\d+ timeoutMs=50/,
+    );
+    await expect(exit).resolves.toMatchObject({ error: expect.any(Error) });
+    await expect(transport.request({ command: { type: "echo", value: "after" } })).rejects.toThrow(
+      "JSONL RPC process is closed",
+    );
   });
 
   test("null timeout waits past short wall-clock limits until the response arrives", async () => {
@@ -186,7 +203,10 @@ describe("JsonlRpcProcess", () => {
 
     try {
       await expect(
-        transport.request({ type: "echo", value: "slow", delayMs: 80 }, null),
+        transport.request({
+          command: { type: "echo", value: "slow", delayMs: 80 },
+          timeoutMs: null,
+        }),
       ).resolves.toMatchObject({ value: "slow" });
     } finally {
       await transport.close();
@@ -195,8 +215,8 @@ describe("JsonlRpcProcess", () => {
 
   test("null timeout still rejects when the process is closed", async () => {
     const transport = startProcess();
-    await transport.request({ type: "echo", value: "ready" });
-    const request = transport.request({ type: "hang" }, null);
+    await transport.request({ command: { type: "echo", value: "ready" } });
+    const request = transport.request({ command: { type: "hang" }, timeoutMs: null });
 
     const rejection = expect(request).rejects.toThrow("JSONL RPC process is closed");
     await transport.close();
@@ -208,7 +228,7 @@ describe("JsonlRpcProcess", () => {
     const transport = startProcess();
     const exit = nextExit(transport);
 
-    const request = transport.request({ type: "exit" });
+    const request = transport.request({ command: { type: "exit" } });
 
     await expect(request).rejects.toThrow("child exploded");
     await expect(exit).resolves.toMatchObject({
@@ -222,8 +242,8 @@ describe("JsonlRpcProcess", () => {
 
   test("rejects pending requests while shutting down the child process", async () => {
     const transport = startProcess();
-    await transport.request({ type: "echo", value: "ready" });
-    const request = transport.request({ type: "hang" });
+    await transport.request({ command: { type: "echo", value: "ready" } });
+    const request = transport.request({ command: { type: "hang" } });
 
     const rejection = expect(request).rejects.toThrow("JSONL RPC process is closed");
     await transport.close();
@@ -240,7 +260,7 @@ describe("JsonlRpcProcess", () => {
     };
 
     expect(() => transport.send({ type: "notice" })).not.toThrow();
-    await expect(transport.request({ type: "echo", value: "after" })).rejects.toThrow(
+    await expect(transport.request({ command: { type: "echo", value: "after" } })).rejects.toThrow(
       "JSONL RPC process is closed",
     );
   });
@@ -259,12 +279,12 @@ describe("JsonlRpcProcess", () => {
       });
 
       await stdinClosed;
-      await expect(transport.request({ type: "echo", value: "after" })).rejects.toThrow(
-        /EPIPE|stdin is not writable/,
-      );
-      await expect(transport.request({ type: "echo", value: "later" })).rejects.toThrow(
-        "JSONL RPC process is closed",
-      );
+      await expect(
+        transport.request({ command: { type: "echo", value: "after" } }),
+      ).rejects.toThrow(/EPIPE|stdin is not writable/);
+      await expect(
+        transport.request({ command: { type: "echo", value: "later" } }),
+      ).rejects.toThrow("JSONL RPC process is closed");
     },
   );
 
@@ -306,13 +326,13 @@ describe("JsonlRpcProcess", () => {
   test("stdin error events close the transport instead of becoming uncaught exceptions", async () => {
     const child = createInMemoryChildProcess();
     const transport = startProcess({ child });
-    const request = transport.request({ type: "hang" });
+    const request = transport.request({ command: { type: "hang" } });
     const err = Object.assign(new Error("write EPIPE"), { code: "EPIPE" });
 
     child.stdin.emit("error", err);
 
     await expect(request).rejects.toThrow("write EPIPE");
-    await expect(transport.request({ type: "echo", value: "after" })).rejects.toThrow(
+    await expect(transport.request({ command: { type: "echo", value: "after" } })).rejects.toThrow(
       "JSONL RPC process is closed",
     );
   });
@@ -322,10 +342,10 @@ describe("JsonlRpcProcess", () => {
     const transport = startProcess({ child });
     child.stdin.end();
 
-    await expect(transport.request({ type: "hang" })).rejects.toThrow(
+    await expect(transport.request({ command: { type: "hang" } })).rejects.toThrow(
       "JSONL RPC stdin is not writable",
     );
-    await expect(transport.request({ type: "echo", value: "after" })).rejects.toThrow(
+    await expect(transport.request({ command: { type: "echo", value: "after" } })).rejects.toThrow(
       "JSONL RPC process is closed",
     );
   });
@@ -345,7 +365,7 @@ describe("JsonlRpcProcess", () => {
         });
       });
 
-      const request = transport.request({ type: "chunked" });
+      const request = transport.request({ command: { type: "chunked" } });
       const command = await sentRequest;
 
       // Emit a logical response split into protocol v2 chunk frames.
@@ -398,7 +418,7 @@ describe("JsonlRpcProcess", () => {
         });
       });
 
-      const request = transport.request({ type: "oversized-chunks" });
+      const request = transport.request({ command: { type: "oversized-chunks" } });
       const command = await sentRequest;
       const logicalResponse = (value: string): Buffer =>
         Buffer.from(

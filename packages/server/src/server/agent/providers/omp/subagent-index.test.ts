@@ -71,7 +71,7 @@ describe("OMP provider subagent mapper", () => {
     });
   });
 
-  test("maps child message events onto the descriptor timeline", () => {
+  test("announces a child when its event arrives before lifecycle metadata", () => {
     const index = new OmpSubagentIndex();
     const parent = {};
     expect(
@@ -86,6 +86,18 @@ describe("OMP provider subagent mapper", () => {
         },
       }),
     ).toEqual([
+      {
+        type: "provider_subagent",
+        provider: "omp",
+        event: {
+          type: "upsert",
+          id: "child-1",
+          title: "OMP subagent",
+          description: null,
+          status: "running",
+          toolCallId: null,
+        },
+      },
       {
         type: "provider_subagent",
         provider: "omp",

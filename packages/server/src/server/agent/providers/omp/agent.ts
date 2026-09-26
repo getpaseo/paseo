@@ -34,6 +34,8 @@ import {
   type ListImportableSessionsOptions,
   type ProviderCatalog,
   type ProviderRefreshContext,
+  type SteerActiveTurnOptions,
+  type SteerResult,
   type ToolCallDetail,
 } from "../../agent-sdk-types.js";
 import type { PaseoToolCatalog } from "../../tools/types.js";
@@ -42,6 +44,7 @@ import { runProviderRefreshActivity } from "../../provider-refresh-deadline.js";
 import { runProviderTurn } from "../provider-runner.js";
 import {
   checkProviderLaunchAvailable,
+  createProviderEnvSpec,
   resolveProviderLaunch,
   type ProviderRuntimeSettings,
   type ResolvedProviderLaunch,
@@ -58,6 +61,7 @@ import {
 import {
   formatOmpVersionSupport,
   mergeOmpRuntimeSettings,
+  ompVersionSupportsFastMode,
   resolveOmpDiagnosticPaths,
   resolveOmpLaunchMode,
   resolveOmpProviderParams,
@@ -71,6 +75,7 @@ import { shouldDisplayOmpCustomMessage } from "./custom-message.js";
 import { getUserMessageText } from "./message-history.js";
 import { mapOmpSystemNoticeToNotification } from "./system-notice.js";
 import { materializeProviderImage } from "../provider-image-output.js";
+import { execCommand } from "../../../../utils/spawn.js";
 import { OmpCliRuntime } from "./cli-runtime.js";
 import { listOmpImportableSessions, readOmpImportSessionConfig } from "./session-descriptor.js";
 import type { OmpRuntime, OmpRuntimeSession, OmpStartSessionInput } from "./runtime.js";
@@ -108,6 +113,10 @@ import {
   mapOmpRpcUiPermissionRequest,
 } from "./rpc-ui-permission-mapper.js";
 import { DEFAULT_OMP_THINKING_LEVEL, mapOmpModel } from "./map-omp-model.js";
+import {
+  CODEX_FAST_MODE_FEATURE,
+  codexModelSupportsFastMode,
+} from "../codex-feature-definitions.js";
 
 const OMP_PROVIDER = "omp";
 const QUESTION_RESPONSE_HEADER = "Response";
@@ -137,6 +146,7 @@ export interface OmpAgentClientOptions {
   providerIdleScheduler?: OmpProviderIdleScheduler;
   noTurnScheduler?: OmpNoTurnScheduler;
   usagePollScheduler?: OmpUsagePollScheduler;
+  providerIdleDeadlineMs?: number;
 }
 
 export interface OmpProviderIdleScheduler {
@@ -153,9 +163,19 @@ export interface OmpNoTurnScheduler {
 // guarantees prompt_result waits for queued extension work.
 const OMP_NO_TURN_SETTLE_MS = 5_000;
 
+// Upper bound on how long the completion gate waits after agent_end for OMP to
+// report a non-streaming, non-compacting state before the turn fails instead of
+// retrying forever.
+const OMP_PROVIDER_IDLE_DEADLINE_MS = 600_000;
+
 interface OmpPromptPayload {
   text: string;
   images?: OmpImageContent[];
+}
+
+interface OmpPendingSteerSubmission {
+  text: string;
+  clientMessageId: string | null;
 }
 
 interface OmpModelReference {
@@ -185,7 +205,9 @@ interface OmpAgentSessionOptions {
   providerIdleScheduler?: OmpProviderIdleScheduler;
   noTurnScheduler?: OmpNoTurnScheduler;
   usagePollScheduler?: OmpUsagePollScheduler;
+  providerIdleDeadlineMs?: number;
   paseoTools?: PaseoToolCatalog;
+  nativeFastModeSupported: boolean;
   /**
    * When false (resumed sessions), replayed session events are dropped until
    * the first prompt or agent_start so history is not re-emitted as live
@@ -384,6 +406,24 @@ function parseModelReference(modelId: string | null): OmpModelReference | null {
     }
   }
   return { id: modelId };
+}
+
+function ompFastModeSupportedForModelId(modelId: string | null | undefined): boolean {
+  if (typeof modelId !== "string" || modelId.trim().length === 0) {
+    return false;
+  }
+  const reference = parseModelReference(modelId);
+  return reference?.provider === "openai-codex" && codexModelSupportsFastMode(reference.id);
+}
+
+function clearConfiguredFastMode(config: AgentSessionConfig): void {
+  const featureValues = config.featureValues;
+  if (!featureValues || !Object.hasOwn(featureValues, "fast_mode")) {
+    return;
+  }
+  const nextFeatureValues = { ...featureValues };
+  delete nextFeatureValues.fast_mode;
+  config.featureValues = Object.keys(nextFeatureValues).length > 0 ? nextFeatureValues : undefined;
 }
 
 function parsePersistenceMetadata(metadata: AgentMetadata | undefined): OmpPersistenceMetadata {
@@ -891,6 +931,7 @@ export class OmpAgentSession implements AgentSession {
   private activePromptRequestId: string | null = null;
   private activePromptAgentInvoked: boolean | null = null;
   private readonly pendingPromptResults = new Map<string, boolean>();
+  private readonly pendingSteerSubmissions: OmpPendingSteerSubmission[] = [];
   private pendingNoTurnCompletionAbort: AbortController | null = null;
   private lastKnownThinkingOptionId: string | null;
   private outOfBandCompactionEmit: ((event: AgentStreamEvent) => void) | null = null;
@@ -903,8 +944,10 @@ export class OmpAgentSession implements AgentSession {
   private state: OmpSessionState;
   private readonly currentModeId: string | null;
   private readonly providerIdleScheduler: OmpProviderIdleScheduler;
+  private readonly providerIdleDeadlineMs: number;
   private readonly noTurnScheduler: OmpNoTurnScheduler;
   private readonly usagePoller: OmpUsagePoller;
+  private readonly nativeFastModeSupported: boolean;
   private closed = false;
   private live: boolean;
   private readonly emittedUserMessageIds = new Set<string>();
@@ -916,8 +959,10 @@ export class OmpAgentSession implements AgentSession {
     this.currentModeId = options.currentModeId ?? null;
     this.logger = options.logger;
     this.paseoTools = options.paseoTools;
+    this.nativeFastModeSupported = options.nativeFastModeSupported;
     this.live = options.live ?? true;
     this.providerIdleScheduler = options.providerIdleScheduler ?? createOmpProviderIdleScheduler();
+    this.providerIdleDeadlineMs = options.providerIdleDeadlineMs ?? OMP_PROVIDER_IDLE_DEADLINE_MS;
     this.noTurnScheduler = options.noTurnScheduler ?? createOmpNoTurnScheduler();
     this.usagePoller = new OmpUsagePoller({
       scheduler: options.usagePollScheduler,
@@ -969,6 +1014,20 @@ export class OmpAgentSession implements AgentSession {
     return this.state.sessionId;
   }
 
+  get features(): AgentFeature[] {
+    if (!this.nativeFastModeSupported) {
+      return [];
+    }
+    const modelId = modelToId(this.state.model) ?? this.config.model ?? null;
+    if (!ompFastModeSupportedForModelId(modelId)) {
+      return [];
+    }
+    if (typeof this.state.fastModeEnabled !== "boolean") {
+      return [];
+    }
+    return [{ ...CODEX_FAST_MODE_FEATURE, value: this.state.fastModeEnabled }];
+  }
+
   async run(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<AgentRunResult> {
     return runProviderTurn({
       prompt,
@@ -991,6 +1050,7 @@ export class OmpAgentSession implements AgentSession {
     this.live = true;
     this.activeTurnId = turnId;
     this.activeClientMessageId = options?.clientMessageId ?? null;
+    this.pendingSteerSubmissions.length = 0;
     this.activeAssistantMessageId = null;
     this.activeTurnTerminalAssistantMessage = null;
     this.activeTurnStarted = false;
@@ -1026,6 +1086,7 @@ export class OmpAgentSession implements AgentSession {
         this.usagePoller.stopTurn();
         this.activeTurnId = null;
         this.activeClientMessageId = null;
+        this.pendingSteerSubmissions.length = 0;
         this.activeTurnStarted = false;
         this.activeTurnHasUserMessage = false;
         this.activeAssistantMessageId = null;
@@ -1052,6 +1113,55 @@ export class OmpAgentSession implements AgentSession {
     return { turnId };
   }
 
+  async steerActiveTurn(
+    prompt: AgentPromptInput,
+    options: SteerActiveTurnOptions,
+  ): Promise<SteerResult> {
+    if (this.closed || this.activeTurnId !== options.expectedTurnId) {
+      return { status: "unavailable" };
+    }
+    const payload = convertPromptInput(prompt, { model: this.state.model });
+    // OMP slash inputs run through the interrupt-and-replace command path, so
+    // they stay unavailable for steering like the Pi provider.
+    if (this.parseSlashCommandInput(payload.text)) {
+      return { status: "unavailable" };
+    }
+    this.runtimeSession.steer(payload.text, payload.images);
+    // The steer is already queued inside OMP; if the turn moved on meanwhile its
+    // fate is ambiguous, so surface it instead of replacing the wrong turn.
+    if (this.closed || this.activeTurnId !== options.expectedTurnId) {
+      return { status: "unavailable" };
+    }
+    this.pendingSteerSubmissions.push({
+      text: payload.text,
+      clientMessageId: options.clientMessageId ?? null,
+    });
+    if (options.clearPendingPermissions) {
+      await this.clearPendingPermissionsForSteer();
+    }
+    return { status: "accepted" };
+  }
+
+  private async clearPendingPermissionsForSteer(): Promise<void> {
+    const requestIds = Array.from(this.pendingExtensionUiRequests.keys());
+    for (const requestId of requestIds) {
+      if (!this.pendingExtensionUiRequests.has(requestId)) continue;
+      await this.respondToPermission(requestId, {
+        behavior: "deny",
+        message: "The user answered with a message instead of approving. Their message follows.",
+      });
+    }
+  }
+
+  private takePendingSteerSubmission(text: string): OmpPendingSteerSubmission | undefined {
+    const index = this.pendingSteerSubmissions.findIndex((submission) => submission.text === text);
+    if (index < 0) {
+      return undefined;
+    }
+    const [submission] = this.pendingSteerSubmissions.splice(index, 1);
+    return submission;
+  }
+
   subscribe(callback: (event: AgentStreamEvent) => void): () => void {
     this.subscribers.add(callback);
     return () => {
@@ -1076,6 +1186,10 @@ export class OmpAgentSession implements AgentSession {
 
   async getRuntimeInfo(): Promise<AgentRuntimeInfo> {
     await this.refreshState();
+    return this.runtimeInfoFromState();
+  }
+
+  private runtimeInfoFromState(): AgentRuntimeInfo {
     return {
       provider: this.provider,
       sessionId: this.state.sessionId,
@@ -1159,6 +1273,7 @@ export class OmpAgentSession implements AgentSession {
       this.usagePoller.stopTurn();
       this.activeTurnId = null;
       this.activeClientMessageId = null;
+      this.pendingSteerSubmissions.length = 0;
       this.activeTurnStarted = false;
       this.activeTurnHasUserMessage = false;
       this.activeAssistantMessageId = null;
@@ -1295,6 +1410,40 @@ export class OmpAgentSession implements AgentSession {
       model,
     };
     this.config.model = `${model.provider}/${model.id}`;
+    await this.refreshState();
+    if (!ompFastModeSupportedForModelId(this.config.model)) {
+      clearConfiguredFastMode(this.config);
+    } else if (typeof this.state.fastModeEnabled === "boolean") {
+      this.config.featureValues = {
+        ...this.config.featureValues,
+        fast_mode: this.state.fastModeEnabled,
+      };
+    }
+  }
+
+  async setFeature(featureId: string, value: unknown): Promise<void> {
+    if (featureId !== "fast_mode") {
+      throw new Error(`Unknown OMP feature: ${featureId}`);
+    }
+    if (typeof value !== "boolean") {
+      throw new Error(`OMP fast mode requires a boolean value, received ${typeof value}`);
+    }
+    const modelId = modelToId(this.state.model) ?? this.config.model ?? null;
+    if (value && !ompFastModeSupportedForModelId(modelId)) {
+      throw new Error(`OMP fast mode is not available for model '${modelId ?? "default"}'`);
+    }
+
+    const result = await this.runtimeSession.setFastMode(value);
+    await this.refreshState();
+    this.state = {
+      ...this.state,
+      fastModeEnabled: result.enabled,
+      fastModeActive: result.active,
+    };
+    this.config.featureValues = {
+      ...this.config.featureValues,
+      fast_mode: result.enabled,
+    };
   }
 
   async setThinkingOption(thinkingOptionId: string | null): Promise<void> {
@@ -1655,6 +1804,86 @@ export class OmpAgentSession implements AgentSession {
     });
   }
 
+  private syncFallbackModel(modelId: string): void {
+    const parsedReference = parseModelReference(modelId);
+    const provider = parsedReference?.provider ?? this.state.model?.provider;
+    if (!parsedReference || !provider) {
+      this.logger.debug({ modelId }, "OMP fallback model reference has no provider");
+      return;
+    }
+    const previousModelId = modelToId(this.state.model);
+    const model: OmpModel = {
+      ...(this.state.model?.provider === provider ? this.state.model : {}),
+      provider,
+      id: parsedReference.id,
+    };
+    const nextModelId = modelToId(model);
+    this.state = { ...this.state, model };
+    this.config.model = nextModelId ?? undefined;
+    if (!ompFastModeSupportedForModelId(nextModelId)) {
+      clearConfiguredFastMode(this.config);
+    } else if (typeof this.state.fastModeEnabled === "boolean") {
+      this.config.featureValues = {
+        ...this.config.featureValues,
+        fast_mode: this.state.fastModeEnabled,
+      };
+    }
+    if (nextModelId !== previousModelId) {
+      this.emit({
+        type: "model_changed",
+        provider: this.provider,
+        runtimeInfo: this.runtimeInfoFromState(),
+      });
+    }
+  }
+
+  private handleNativeModelChanged(): void {
+    const previousModelId = modelToId(this.state.model);
+    void this.refreshState()
+      .then(() => {
+        const nextModelId = modelToId(this.state.model);
+        if (!nextModelId) {
+          return undefined;
+        }
+        this.config.model = nextModelId;
+        if (!ompFastModeSupportedForModelId(nextModelId)) {
+          clearConfiguredFastMode(this.config);
+        } else if (typeof this.state.fastModeEnabled === "boolean") {
+          this.config.featureValues = {
+            ...this.config.featureValues,
+            fast_mode: this.state.fastModeEnabled,
+          };
+        }
+        if (nextModelId !== previousModelId) {
+          this.emit({
+            type: "model_changed",
+            provider: this.provider,
+            runtimeInfo: this.runtimeInfoFromState(),
+          });
+        }
+        return undefined;
+      })
+      .catch((error: unknown) => {
+        this.logger.debug({ err: error }, "OMP model change state refresh failed");
+      });
+  }
+
+  private handleModelChangeEvent(event: OmpRuntimeEvent): boolean {
+    switch (event.type) {
+      case "model_changed":
+        this.handleNativeModelChanged();
+        return true;
+      case "retry_fallback_applied":
+        this.syncFallbackModel(event.to);
+        return false;
+      case "retry_fallback_succeeded":
+        this.syncFallbackModel(event.model);
+        return false;
+      default:
+        return false;
+    }
+  }
+
   private handleExtraRuntimeEvent(event: OmpRuntimeEvent): boolean {
     if (
       handleOmpHostToolRuntimeEvent(event, {
@@ -1663,6 +1892,9 @@ export class OmpAgentSession implements AgentSession {
         logger: this.logger,
       })
     ) {
+      return true;
+    }
+    if (this.handleModelChangeEvent(event)) {
       return true;
     }
     if (event.type === "subagent_lifecycle") {
@@ -1818,6 +2050,7 @@ export class OmpAgentSession implements AgentSession {
     const turnId = this.activeTurnId;
     this.activeTurnId = null;
     this.activeClientMessageId = null;
+    this.pendingSteerSubmissions.length = 0;
     this.activeTurnStarted = false;
     this.activeTurnHasUserMessage = false;
     this.activeTurnTerminalAssistantMessage = null;
@@ -2071,7 +2304,10 @@ export class OmpAgentSession implements AgentSession {
     }
     const nativeMessage = event.message as OmpAgentMessage & { id?: unknown; entryId?: unknown };
     const messageId = readNativeMessageId(nativeMessage);
-    const clientMessageId = this.activeClientMessageId;
+    const pendingSteer = this.takePendingSteerSubmission(text);
+    const clientMessageId = pendingSteer
+      ? pendingSteer.clientMessageId
+      : this.activeClientMessageId;
     const emitUserMessage = (resolvedMessageId?: string): void => {
       if (resolvedMessageId) {
         // OMP re-emits user message_end frames for entries it has already
@@ -2153,9 +2389,14 @@ export class OmpAgentSession implements AgentSession {
     });
   }
 
-  private completeTurn(turnId: string | undefined, messages: OmpAgentMessage[]): void {
+  private completeTurn(
+    turnId: string | undefined,
+    messages: OmpAgentMessage[],
+    terminalError?: string,
+  ): void {
     this.activeTurnId = null;
     this.activeClientMessageId = null;
+    this.pendingSteerSubmissions.length = 0;
     this.activeAssistantMessageId = null;
     this.activeTurnTerminalAssistantMessage = null;
     this.activeTurnStarted = false;
@@ -2174,7 +2415,7 @@ export class OmpAgentSession implements AgentSession {
       });
       return;
     }
-    const errorMessage = latestOmpErrorMessage(messages);
+    const errorMessage = terminalError ?? latestOmpErrorMessage(messages);
     if (typeof errorMessage === "string" && errorMessage.length > 0) {
       this.usagePoller.stopTurn();
       this.emit({
@@ -2198,6 +2439,7 @@ export class OmpAgentSession implements AgentSession {
     turnId: string | undefined,
     messages: OmpAgentMessage[],
   ): Promise<void> {
+    const deadline = Date.now() + this.providerIdleDeadlineMs;
     while (!this.closed && this.activeTurnStarted && this.currentTurnIdForEvent() === turnId) {
       try {
         const state = await this.runtimeSession.getState();
@@ -2212,6 +2454,18 @@ export class OmpAgentSession implements AgentSession {
         }
       } catch (error) {
         this.logger.debug({ err: error }, "OMP state unavailable while waiting for provider idle");
+      }
+      if (Date.now() >= deadline) {
+        this.logger.warn(
+          { turnId, providerIdleDeadlineMs: this.providerIdleDeadlineMs },
+          "OMP completion gate deadline exceeded; failing the turn",
+        );
+        this.completeTurn(
+          turnId,
+          messages,
+          `OMP provider did not report idle within ${Math.round(this.providerIdleDeadlineMs / 1000)}s of agent_end`,
+        );
+        return;
       }
       await this.providerIdleScheduler.waitForRetry();
     }
@@ -2237,8 +2491,10 @@ export class OmpAgentClient implements AgentClient {
   private readonly subagentCardScheduler?: OmpSubagentCardScheduler;
   private readonly providerIdleScheduler?: OmpProviderIdleScheduler;
   private readonly noTurnScheduler?: OmpNoTurnScheduler;
+  private readonly providerIdleDeadlineMs?: number;
   private readonly usagePollScheduler?: OmpUsagePollScheduler;
   private readonly runtime: OmpRuntime;
+  private nativeFastModeSupport: Promise<boolean> | null = null;
 
   constructor(options: OmpAgentClientOptions) {
     const { runtimeProviderParams, modelRoleParams } = resolveOmpProviderParams(
@@ -2258,6 +2514,7 @@ export class OmpAgentClient implements AgentClient {
     this.providerParams = runtimeProviderParams;
     this.modelRoleParams = modelRoleParams;
     this.subagentCardScheduler = options.subagentCardScheduler;
+    this.providerIdleDeadlineMs = options.providerIdleDeadlineMs;
     this.providerIdleScheduler = options.providerIdleScheduler;
     this.noTurnScheduler = options.noTurnScheduler;
     this.usagePollScheduler = options.usagePollScheduler;
@@ -2293,17 +2550,47 @@ export class OmpAgentClient implements AgentClient {
     });
     try {
       await this.configureNativePaseoTools(runtimeSession, launchContext?.paseoTools);
+      const reportedState = await runtimeSession.getState();
+      const effectiveModel = modelToId(reportedState.model) ?? config.model ?? null;
+      const configuredFastMode = config.featureValues?.fast_mode;
+      const nativeFastModeSupported = await this.supportsNativeFastMode();
+      let fastModeApplied = false;
+      if (
+        typeof configuredFastMode === "boolean" &&
+        ompFastModeSupportedForModelId(effectiveModel) &&
+        nativeFastModeSupported
+      ) {
+        try {
+          const fastModeResult = await runtimeSession.setFastMode(configuredFastMode);
+          config.featureValues = {
+            ...config.featureValues,
+            fast_mode: fastModeResult.enabled,
+          };
+          fastModeApplied = true;
+        } catch (error) {
+          this.logger.debug(
+            { err: error },
+            "OMP fast mode restore failed; continuing without Fast",
+          );
+          clearConfiguredFastMode(config);
+        }
+      } else if (configuredFastMode !== undefined) {
+        clearConfiguredFastMode(config);
+      }
+      const initialState = fastModeApplied ? await runtimeSession.getState() : reportedState;
       return new OmpAgentSession({
         runtimeSession,
         config,
-        initialState: await runtimeSession.getState(),
+        initialState,
         currentModeId: launchMode.modeId,
         logger: this.logger,
         subagentCardScheduler: this.subagentCardScheduler,
         providerIdleScheduler: this.providerIdleScheduler,
         noTurnScheduler: this.noTurnScheduler,
+        providerIdleDeadlineMs: this.providerIdleDeadlineMs,
         usagePollScheduler: this.usagePollScheduler,
         paseoTools: launchContext?.paseoTools,
+        nativeFastModeSupported,
       });
     } catch (error) {
       await runtimeSession.close().catch(() => undefined);
@@ -2335,17 +2622,47 @@ export class OmpAgentClient implements AgentClient {
     );
     try {
       await this.configureNativePaseoTools(runtimeSession, launchContext?.paseoTools);
+      const reportedState = await runtimeSession.getState();
+      const effectiveModel = modelToId(reportedState.model) ?? resumeConfig.config.model ?? null;
+      const configuredFastMode = resumeConfig.config.featureValues?.fast_mode;
+      const nativeFastModeSupported = await this.supportsNativeFastMode();
+      let fastModeApplied = false;
+      if (
+        typeof configuredFastMode === "boolean" &&
+        ompFastModeSupportedForModelId(effectiveModel) &&
+        nativeFastModeSupported
+      ) {
+        try {
+          const fastModeResult = await runtimeSession.setFastMode(configuredFastMode);
+          resumeConfig.config.featureValues = {
+            ...resumeConfig.config.featureValues,
+            fast_mode: fastModeResult.enabled,
+          };
+          fastModeApplied = true;
+        } catch (error) {
+          this.logger.debug(
+            { err: error },
+            "OMP fast mode restore failed; continuing without Fast",
+          );
+          clearConfiguredFastMode(resumeConfig.config);
+        }
+      } else if (configuredFastMode !== undefined) {
+        clearConfiguredFastMode(resumeConfig.config);
+      }
+      const initialState = fastModeApplied ? await runtimeSession.getState() : reportedState;
       return new OmpAgentSession({
         runtimeSession,
         config: resumeConfig.config,
-        initialState: await runtimeSession.getState(),
+        initialState,
         currentModeId: launchMode.modeId,
         logger: this.logger,
         subagentCardScheduler: this.subagentCardScheduler,
         providerIdleScheduler: this.providerIdleScheduler,
+        providerIdleDeadlineMs: this.providerIdleDeadlineMs,
         noTurnScheduler: this.noTurnScheduler,
         usagePollScheduler: this.usagePollScheduler,
         paseoTools: launchContext?.paseoTools,
+        nativeFastModeSupported,
         live: false,
       });
     } catch (error) {
@@ -2395,8 +2712,19 @@ export class OmpAgentClient implements AgentClient {
     }
   }
 
-  async listFeatures(_config: AgentSessionConfig): Promise<AgentFeature[]> {
-    return [];
+  async listFeatures(config: AgentSessionConfig): Promise<AgentFeature[]> {
+    if (!ompFastModeSupportedForModelId(config.model)) {
+      return [];
+    }
+    if (!(await this.supportsNativeFastMode())) {
+      return [];
+    }
+    return [
+      {
+        ...CODEX_FAST_MODE_FEATURE,
+        value: config.featureValues?.fast_mode === true,
+      },
+    ];
   }
 
   async listImportableSessions(
@@ -2491,5 +2819,28 @@ export class OmpAgentClient implements AgentClient {
       commandConfig: this.runtimeSettings?.command,
       defaultBinary: "omp",
     });
+  }
+  private supportsNativeFastMode(): Promise<boolean> {
+    this.nativeFastModeSupport ??= this.probeNativeFastMode();
+    return this.nativeFastModeSupport;
+  }
+
+  private async probeNativeFastMode(): Promise<boolean> {
+    try {
+      const launch = await this.resolveOmpLaunch();
+      const availability = await checkProviderLaunchAvailable(launch);
+      if (!availability.available) {
+        return false;
+      }
+      const executable = availability.resolvedPath ?? launch.command;
+      const { stdout, stderr } = await execCommand(executable, [...launch.args, "--version"], {
+        ...createProviderEnvSpec({ runtimeSettings: this.runtimeSettings }),
+        timeout: 5_000,
+      });
+      return ompVersionSupportsFastMode(`${stdout}\n${stderr}`);
+    } catch (error) {
+      this.logger.debug({ err: error }, "OMP fast mode version probe failed");
+      return false;
+    }
   }
 }

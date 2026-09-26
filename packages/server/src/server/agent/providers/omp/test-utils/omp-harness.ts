@@ -6,11 +6,13 @@ import pino from "pino";
 
 import type {
   AgentPersistenceHandle,
+  AgentFeature,
   AgentPermissionResponse,
   AgentSessionConfig,
   AgentStreamEvent,
   AgentTimelineItem,
 } from "../../../agent-sdk-types.js";
+import type { ProviderRuntimeSettings } from "../../../provider-launch-config.js";
 import type { PaseoToolCatalog } from "../../../tools/types.js";
 import {
   OmpAgentClient,
@@ -19,7 +21,7 @@ import {
   type OmpProviderIdleScheduler,
 } from "../agent.js";
 import type { OmpUsagePollScheduler } from "../usage-poller.js";
-import type { OmpAgentMessage, OmpRpcSlashCommand, OmpRuntimeEvent } from "../rpc-types.js";
+import type { OmpAgentMessage, OmpRpcSlashCommand, OmpRuntimeEvent, OmpSessionState } from "../rpc-types.js";
 import { FakeOmp } from "./fake-omp.js";
 
 const CWD = "/tmp/paseo-omp-agent-test";
@@ -70,13 +72,17 @@ export class OmpHarness {
     options: {
       providerIdleScheduler?: OmpProviderIdleScheduler;
       noTurnScheduler?: OmpNoTurnScheduler;
+      runtimeSettings?: ProviderRuntimeSettings;
       usagePollScheduler?: OmpUsagePollScheduler;
+      providerIdleDeadlineMs?: number;
     } = {},
   ) {
     this.client = new OmpAgentClient({
       logger: pino({ level: "silent" }),
+      runtimeSettings: options.runtimeSettings,
       runtime: this.omp,
       providerIdleScheduler: options.providerIdleScheduler,
+      providerIdleDeadlineMs: options.providerIdleDeadlineMs,
       noTurnScheduler: options.noTurnScheduler,
       usagePollScheduler: options.usagePollScheduler,
     });
@@ -84,6 +90,10 @@ export class OmpHarness {
 
   queueCommands(commands: OmpRpcSlashCommand[]): void {
     this.omp.queueCommands(commands);
+  }
+
+  queueInitialState(patch: Partial<OmpSessionState>): void {
+    this.omp.queueInitialStatePatch(patch);
   }
 
   failEventSubscription(error: Error): void {
@@ -224,6 +234,23 @@ export class OmpHarness {
     runtime.emit({ type: "message_end", message });
     runtime.finishTurn(message);
     runtime.beginTurn();
+    runtime.streamAssistantText(output);
+    runtime.finishTurn();
+    return await run;
+  }
+
+  async runPromptAfterEarlyCustomNotice(input: string, output: string): Promise<unknown> {
+    const session = this.requireSession();
+    const promptStarted = this.omp.latestSession().nextPrompt();
+    const run = session.run(input);
+    await promptStarted;
+    const runtime = this.omp.latestSession();
+    runtime.emit({
+      type: "message_end",
+      message: { role: "custom", content: "extension inventory changed", display: true },
+    });
+    runtime.beginTurn();
+    runtime.acceptPrompt(input, "user-1");
     runtime.streamAssistantText(output);
     runtime.finishTurn();
     return await run;
@@ -410,6 +437,10 @@ export class OmpHarness {
     return this.events.filter((event) => event.type === "turn_completed").length;
   }
 
+  failedTurnCount(): number {
+    return this.events.filter((event) => event.type === "turn_failed").length;
+  }
+
   usageUpdates() {
     return this.events.flatMap((event) => (event.type === "usage_updated" ? [event.usage] : []));
   }
@@ -450,6 +481,22 @@ export class OmpHarness {
     return await this.requireSession().setMode(modeId);
   }
 
+  features(): AgentFeature[] {
+    return this.requireSession().features ?? [];
+  }
+
+  async clientFeatures(config: Partial<AgentSessionConfig> = {}): Promise<AgentFeature[]> {
+    return await this.client.listFeatures({ provider: "omp", cwd: CWD, ...config });
+  }
+
+  async setFeature(featureId: string, value: unknown): Promise<void> {
+    await this.requireSession().setFeature?.(featureId, value);
+  }
+
+  async setModel(modelId: string | null): Promise<void> {
+    await this.requireSession().setModel?.(modelId);
+  }
+
   async rewind(messageId: string, restoredPrompt: string): Promise<void> {
     this.omp.latestSession().branchResponse = { text: restoredPrompt };
     await this.requireSession().revertConversation({ messageId });
@@ -480,6 +527,18 @@ export class OmpHarness {
 
   runtime() {
     return this.omp.latestSession();
+  }
+
+  agentSession() {
+    return this.requireSession();
+  }
+
+  steerRequests() {
+    return this.omp.latestSession().steerRequests;
+  }
+
+  async requireRuntimeInfo() {
+    return await this.requireSession().getRuntimeInfo();
   }
 
   runningToolCallIds(): string[] {
