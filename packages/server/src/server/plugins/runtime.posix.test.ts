@@ -34,6 +34,26 @@ async function readTextIfPresent(filePath: string): Promise<string | null> {
   }
 }
 
+function pluginMessages(runtime: PluginRuntime, pluginId: string): string[] {
+  return runtime.getLogs(pluginId).map((entry) => entry.message);
+}
+
+function spawnObservedPluginProcess(onMessage: (message: unknown) => void) {
+  const loaderUrl = new URL("../../terminal/terminal-ts-loader.mjs", import.meta.url).href;
+  const setup = `import { register } from "node:module"; register(${JSON.stringify(loaderUrl)});`;
+  const child = fork(new URL("./plugin-process.ts", import.meta.url), [], {
+    execArgv: [
+      "--experimental-strip-types",
+      "--import",
+      `data:text/javascript,${encodeURIComponent(setup)}`,
+    ],
+    serialization: "advanced",
+    stdio: ["ignore", "pipe", "pipe", "ipc"],
+  });
+  child.on("message", onMessage);
+  return child;
+}
+
 function createReloadChild(
   name: string,
   events: string[],
@@ -1038,6 +1058,75 @@ export default function contribute(plugin: unknown) {
 
     await expect(readFile(cleanupFile, "utf8")).resolves.toBe("cleaned");
     await rm(cleanupFile, { force: true });
+  });
+
+  it("rejects provider input while a connection is closing", async () => {
+    const releaseDirectory = await mkdtemp(path.join(tmpdir(), "paseo-provider-close-"));
+    const releaseFile = path.join(releaseDirectory, "release");
+    const directory = await createPlugin(
+      "closing-provider",
+      `import { readFile, writeFile } from "node:fs/promises";
+import type { ProviderRegistration } from "@getpaseo/plugin/server/provider";
+const provider: ProviderRegistration = {
+  id: "delayed",
+  label: "Delayed",
+  async connect() {
+    return {
+      version: 1,
+      capabilities: [],
+      async send() { console.log("provider accepted input"); },
+      onEvent() { return () => undefined; },
+      async close() {
+        console.log("provider close started");
+        while (true) {
+          try { await readFile(${JSON.stringify(releaseFile)}); break; }
+          catch { await new Promise((resolve) => setTimeout(resolve, 10)); }
+        }
+        console.log("provider close completed");
+      },
+    };
+  },
+};
+export default function contribute(server: { registerProvider(provider: ProviderRegistration): void }) {
+  server.registerProvider(provider);
+  return () => console.log("plugin cleanup started");
+}`,
+    );
+    const closedReports: unknown[] = [];
+    const observeMessage = (message: unknown) => {
+      if ((message as { type?: string }).type === "provider.closed") closedReports.push(message);
+    };
+    const runtime = createTestRuntime({
+      spawnChild: () => spawnObservedPluginProcess(observeMessage),
+    });
+    await runtime.startPlugin("closing-provider", directory);
+    try {
+      const connection = await runtime.connectProvider("closing-provider", "delayed", {
+        versions: [1],
+        capabilities: [],
+      });
+      const closing = connection.close();
+      await expect
+        .poll(() => pluginMessages(runtime, "closing-provider"))
+        .toContain("provider close started");
+      await expect(connection.send({ type: "catalog", requestId: "during-close" })).rejects.toThrow(
+        "Provider connection is closing",
+      );
+      const stopping = runtime.stopPluginById("closing-provider");
+      await expect
+        .poll(() => pluginMessages(runtime, "closing-provider"))
+        .toContain("plugin cleanup started");
+      await writeFile(releaseFile, "release");
+      await Promise.all([closing, stopping]);
+      const messages = pluginMessages(runtime, "closing-provider");
+      expect(messages).toContain("provider close completed");
+      expect(messages).not.toContain("provider accepted input");
+      expect(closedReports).toHaveLength(1);
+    } finally {
+      await writeFile(releaseFile, "release");
+      await runtime.stopAll();
+      await rm(releaseDirectory, { recursive: true, force: true });
+    }
   });
 
   it("closes a provider connection that resolves during plugin shutdown", async () => {

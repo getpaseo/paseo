@@ -1,4 +1,7 @@
+import { mkdtempSync, rmSync } from "node:fs";
 import { readdir } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import pino from "pino";
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "vitest";
 
@@ -63,12 +66,29 @@ function expectPiSessionId(value: string): void {
   expect(value.length).toBeGreaterThan(0);
 }
 
-function piPrompt(input: { promptToken: string; doneToken: string }): string {
+interface PiTurn {
+  promptToken: string;
+  doneToken: string;
+  filler?: string;
+}
+
+function piPrompt(input: PiTurn): string {
   return [
     `PASEO_PI_REWIND_PROMPT_${input.promptToken}.`,
     "Remember this marker for the conversation.",
+    ...(input.filler ? [`Ignore this filler: ${input.filler}`] : []),
     `Reply exactly: ${input.doneToken}`,
   ].join(" ");
+}
+
+function turn(token: string): PiTurn {
+  return { promptToken: token, doneToken: `PI_${token}_DONE` };
+}
+
+// Pi keeps the most recent 20k estimated tokens (4 characters each) when it compacts.
+// A turn larger than that makes /compact summarize every turn before it.
+function turnOutlastingCompaction(token: string): PiTurn {
+  return { ...turn(token), filler: "lorem ipsum ".repeat(8_000) };
 }
 
 function roleItems(items: AgentTimelineItem[], role: "user_message" | "assistant_message") {
@@ -91,10 +111,29 @@ async function expectNoCreatedFiles(session: PiRewindSession): Promise<void> {
   await expect(readdir(session.cwd)).resolves.toEqual([]);
 }
 
+async function compactPi(harness: PiRewindHarness, session: PiRewindSession): Promise<void> {
+  await harness.client.sendMessage(session.agentId, "/compact");
+  const deadline = Date.now() + TURN_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    const items = await fetchTimelineItems(harness.client, session.agentId);
+    const failure = items.find(
+      (item) => item.type === "assistant_message" && item.text.includes("Failed to compact"),
+    );
+    if (failure) {
+      throw new Error(`Pi compaction failed: ${JSON.stringify(failure)}`);
+    }
+    if (items.some((item) => item.type === "compaction" && item.status === "completed")) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  throw new Error("Pi compaction did not complete");
+}
+
 async function askPi(
   harness: PiRewindHarness,
   session: PiRewindSession,
-  input: { promptToken: string; doneToken: string },
+  input: PiTurn,
 ): Promise<void> {
   await harness.client.sendMessage(session.agentId, piPrompt(input));
   const finish = await harness.client.waitForFinish(session.agentId, TURN_TIMEOUT_MS);
@@ -204,4 +243,126 @@ describe("daemon E2E (real pi) - rewind", () => {
       await closePiRewindSession(session);
     }
   }, 420_000);
+
+  test("rewinds a replayed row to the selected message after an earlier rewind branched the session", async () => {
+    const session = await launchPiRewindSession(harness, "pi-rewind-branched-replay-real");
+
+    try {
+      await askPi(harness, session, turn("ONE"));
+      await askPi(harness, session, turn("ABANDONED"));
+      const abandonedId = userMessageIdForToken(
+        await fetchTimelineItems(harness.client, session.agentId),
+        "PI_REWIND_PROMPT_ABANDONED",
+      );
+      await harness.client.rewindAgent(session.agentId, abandonedId, "conversation");
+
+      await askPi(harness, session, turn("TWO"));
+      await askPi(harness, session, turn("THREE"));
+      await askPi(harness, session, turn("FOUR"));
+      const fourId = userMessageIdForToken(
+        await fetchTimelineItems(harness.client, session.agentId),
+        "PI_REWIND_PROMPT_FOUR",
+      );
+      await harness.client.rewindAgent(session.agentId, fourId, "conversation");
+
+      const replayedTimeline = await fetchTimelineItems(harness.client, session.agentId);
+      expectTimeline(replayedTimeline, {
+        userTexts: [piPrompt(turn("ONE")), piPrompt(turn("TWO")), piPrompt(turn("THREE"))],
+        assistantCount: 3,
+      });
+      const replayedThreeId = userMessageIdForToken(replayedTimeline, "PI_REWIND_PROMPT_THREE");
+      await harness.client.rewindAgent(session.agentId, replayedThreeId, "conversation");
+
+      expectTimeline(await fetchTimelineItems(harness.client, session.agentId), {
+        userTexts: [piPrompt(turn("ONE")), piPrompt(turn("TWO"))],
+        assistantCount: 2,
+      });
+      await expectNoCreatedFiles(session);
+    } finally {
+      await closePiRewindSession(session);
+    }
+  }, 900_000);
+
+  test("rewinds a row whose entry an earlier compaction summarized away", async () => {
+    const session = await launchPiRewindSession(harness, "pi-rewind-compacted-real");
+
+    try {
+      await askPi(harness, session, turn("ONE"));
+      await askPi(harness, session, turn("TWO"));
+      await askPi(harness, session, turnOutlastingCompaction("THREE"));
+      const twoId = userMessageIdForToken(
+        await fetchTimelineItems(harness.client, session.agentId),
+        "PI_REWIND_PROMPT_TWO",
+      );
+      await compactPi(harness, session);
+
+      await harness.client.rewindAgent(session.agentId, twoId, "conversation");
+
+      expectTimeline(await fetchTimelineItems(harness.client, session.agentId), {
+        userTexts: [piPrompt(turn("ONE"))],
+        assistantCount: 1,
+      });
+      await expectNoCreatedFiles(session);
+    } finally {
+      await closePiRewindSession(session);
+    }
+  }, 900_000);
+
+  test("keeps a rewind after the daemon restarts", async () => {
+    const cwd = tmpRewindCwd("daemon-real-pi-rewind-");
+    const paseoHomeRoot = mkdtempSync(path.join(tmpdir(), "daemon-real-pi-rewind-home-"));
+    const logger = pino({ level: "silent" });
+    const startDaemon = async (): Promise<PiRewindHarness> => {
+      const daemon = await createTestPaseoDaemon({
+        agentClients: createRealProviderClients(["pi"], logger),
+        logger,
+        paseoHomeRoot,
+        cleanup: false,
+      });
+      const client = new DaemonClient({
+        url: `ws://127.0.0.1:${daemon.port}/ws`,
+      });
+      await client.connect();
+      await client.fetchAgents({ subscribe: {} });
+      return { client, daemon };
+    };
+    const stopDaemon = async (restarted: PiRewindHarness): Promise<void> => {
+      await restarted.client.close().catch(() => undefined);
+      await restarted.daemon.close().catch(() => undefined);
+    };
+    let current = await startDaemon();
+
+    try {
+      const agent = await current.client.createAgent({
+        cwd,
+        title: "pi-rewind-restart-real",
+        provider: "pi",
+        model: PI_REAL_TEST_MODEL,
+        thinkingOptionId: "medium",
+      });
+      const session = { agentId: agent.id, cwd };
+      for (const token of ["ONE", "TWO", "THREE", "FOUR"]) {
+        await askPi(current, session, turn(token));
+      }
+      const threeId = userMessageIdForToken(
+        await fetchTimelineItems(current.client, agent.id),
+        "PI_REWIND_PROMPT_THREE",
+      );
+      await current.client.rewindAgent(agent.id, threeId, "conversation");
+      const rewound = {
+        userTexts: [piPrompt(turn("ONE")), piPrompt(turn("TWO"))],
+        assistantCount: 2,
+      };
+      expectTimeline(await fetchTimelineItems(current.client, agent.id), rewound);
+
+      await stopDaemon(current);
+      current = await startDaemon();
+
+      expectTimeline(await fetchTimelineItems(current.client, agent.id), rewound);
+    } finally {
+      await stopDaemon(current);
+      rmSync(paseoHomeRoot, { recursive: true, force: true });
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  }, 900_000);
 });

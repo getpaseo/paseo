@@ -1,4 +1,5 @@
 export const CLIENT_CAPS = {
+  helloRejection: "hello_rejection",
   // COMPAT(ownedSubscriptions): added in v0.8.0, remove legacy ownership after 2027-03-09.
   ownedSubscriptions: "owned_subscriptions",
   // Clients outside the Paseo app version series can explicitly accept provider IDs.
