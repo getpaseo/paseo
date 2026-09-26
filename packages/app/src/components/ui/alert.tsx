@@ -61,7 +61,16 @@ export function Alert({
 
   return (
     <View style={containerStyle} testID={testID} accessibilityRole="alert">
-      {resolvedIcon ? <View style={[styles.iconSlot, sized.iconSlot]}>{resolvedIcon}</View> : null}
+      {resolvedIcon ? (
+        // A zero-width strut in the alert's font makes the slot one text line tall, so the icon
+        // centers on the first line.
+        <View style={styles.iconSlot} aria-hidden>
+          <Text style={[styles.iconStrut, sized.text]} selectable={false}>
+            {"\u200B"}
+          </Text>
+          {resolvedIcon}
+        </View>
+      ) : null}
       <View style={[styles.body, sized.body]}>
         {title ? <Text style={titleStyle}>{title}</Text> : null}
         {hasDescription && typeof description === "string" ? (
@@ -81,7 +90,6 @@ function resolveSizeStyles(size: AlertSize) {
     return {
       container: styles.containerXs,
       text: styles.textXs,
-      iconSlot: styles.iconSlotXs,
       body: styles.bodyXs,
     };
   }
@@ -89,7 +97,6 @@ function resolveSizeStyles(size: AlertSize) {
     return {
       container: styles.containerSm,
       text: styles.textSm,
-      iconSlot: styles.iconSlotSm,
       body: styles.bodySm,
     };
   }
@@ -97,14 +104,12 @@ function resolveSizeStyles(size: AlertSize) {
     return {
       container: styles.containerLg,
       text: styles.textLg,
-      iconSlot: styles.iconSlotLg,
       body: styles.bodyLg,
     };
   }
   return {
     container: styles.containerMd,
     text: styles.textMd,
-    iconSlot: styles.iconSlotMd,
     body: styles.bodyMd,
   };
 }
@@ -136,12 +141,12 @@ const styles = StyleSheet.create((theme) => {
     containerMd: alert.md.container,
     containerLg: alert.lg.container,
     iconSlot: {
-      justifyContent: "center",
+      flexDirection: "row",
+      alignItems: "center",
     },
-    iconSlotXs: alert.xs.iconSlot,
-    iconSlotSm: alert.sm.iconSlot,
-    iconSlotMd: alert.md.iconSlot,
-    iconSlotLg: alert.lg.iconSlot,
+    iconStrut: {
+      width: 0,
+    },
     body: {
       flex: 1,
       minWidth: 0,

@@ -11,6 +11,7 @@ const theme = {
     md: 6,
     lg: 8,
     xl: 12,
+    "2xl": 16,
     full: 9999,
   },
   borderWidth: {
@@ -30,10 +31,13 @@ const theme = {
   },
   spacing: {
     0: 0,
+    0.5: 2,
+    1: 4,
     2: 8,
     3: 12,
     4: 16,
     6: 24,
+    8: 32,
   },
 } as unknown as Theme;
 
@@ -156,5 +160,33 @@ describe("control geometry", () => {
     expect(geometry.segmentedSegmentMd.paddingHorizontal).toBeLessThan(
       geometry.buttonMd.paddingHorizontal,
     );
+  });
+
+  it("gives alert title and description one font size and a tight gap per size", () => {
+    const { alert } = createControlGeometry(theme);
+
+    expect(alert.xs.text).toEqual({ fontSize: 12 });
+    expect(alert.sm.text).toEqual({ fontSize: 14 });
+    expect(alert.md.text).toEqual(alert.sm.text);
+    expect(alert.lg.text).toEqual(alert.sm.text);
+    for (const size of ["xs", "sm", "md", "lg"] as const) {
+      expect(alert[size].textGap).toBeLessThanOrEqual(4);
+    }
+  });
+
+  it("keeps sm alerts as roomy and round as the original alert, and scales the rest around it", () => {
+    const { alert } = createControlGeometry(theme);
+
+    expect(alert.sm.container).toMatchObject({
+      paddingVertical: 12,
+      paddingHorizontal: 16,
+      borderRadius: 16,
+    });
+    expect(alert.xs.container.paddingVertical).toBeLessThan(alert.sm.container.paddingVertical);
+    expect(alert.md.container.paddingVertical).toBeGreaterThan(alert.sm.container.paddingVertical);
+    expect(alert.lg.container.paddingVertical).toBeGreaterThan(alert.md.container.paddingVertical);
+    for (const size of ["xs", "sm", "md", "lg"] as const) {
+      expect(alert[size].container.borderRadius).toBeGreaterThanOrEqual(12);
+    }
   });
 });

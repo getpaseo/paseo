@@ -88,34 +88,27 @@ function fieldVerticalPadding(
 }
 
 /**
- * Alerts share the button scale: same text size, icon size, horizontal padding, and radius,
- * and a one-line alert is exactly as tall as the button of the same size. The icon uses
- * `buttonIconSize` and its slot is one text line tall, so it centers on the first line.
+ * Alerts share the button's size names, text size, and icon size (`buttonIconSize`).
+ * Title and description use one font size; only `textGap` separates them.
  */
-function createAlertGeometry(theme: Theme, borderWidth: number) {
+function createAlertGeometry(theme: Theme) {
   function alertSize(input: {
+    size: ButtonControlSize;
     fontSize: number;
+    paddingVertical: number;
     paddingHorizontal: number;
     borderRadius: number;
     iconGap: number;
     textGap: number;
-    size: ButtonControlSize;
   }) {
-    const lineHeight = fieldLineHeight(input.fontSize);
     return {
       container: {
-        minHeight: buttonControlHeight[input.size],
-        paddingVertical: fieldVerticalPadding(
-          buttonControlHeight[input.size],
-          lineHeight,
-          borderWidth,
-        ),
+        paddingVertical: input.paddingVertical,
         paddingHorizontal: input.paddingHorizontal,
         borderRadius: input.borderRadius,
         gap: input.iconGap,
       },
-      text: { fontSize: input.fontSize, lineHeight },
-      iconSlot: { height: lineHeight },
+      text: { fontSize: input.fontSize },
       textGap: input.textGap,
     };
   }
@@ -124,33 +117,37 @@ function createAlertGeometry(theme: Theme, borderWidth: number) {
     xs: alertSize({
       size: "xs",
       fontSize: theme.fontSize.sm,
+      paddingVertical: theme.spacing[2],
       paddingHorizontal: theme.spacing[3],
-      borderRadius: theme.borderRadius.md,
-      iconGap: theme.spacing[1.5],
+      borderRadius: theme.borderRadius.xl,
+      iconGap: theme.spacing[2],
       textGap: 0,
     }),
     sm: alertSize({
       size: "sm",
       fontSize: theme.fontSize.base,
-      paddingHorizontal: theme.spacing[3],
-      borderRadius: theme.borderRadius.md,
-      iconGap: theme.spacing[2],
+      paddingVertical: theme.spacing[3],
+      paddingHorizontal: theme.spacing[4],
+      borderRadius: theme.borderRadius["2xl"],
+      iconGap: theme.spacing[3],
       textGap: theme.spacing[0.5],
     }),
     md: alertSize({
       size: "md",
       fontSize: theme.fontSize.base,
-      paddingHorizontal: theme.spacing[4],
-      borderRadius: theme.borderRadius.lg,
+      paddingVertical: theme.spacing[4],
+      paddingHorizontal: theme.spacing[6],
+      borderRadius: theme.borderRadius["2xl"],
       iconGap: theme.spacing[3],
       textGap: theme.spacing[0.5],
     }),
     lg: alertSize({
       size: "lg",
       fontSize: theme.fontSize.base,
-      paddingHorizontal: theme.spacing[6],
-      borderRadius: theme.borderRadius.xl,
-      iconGap: theme.spacing[3],
+      paddingVertical: theme.spacing[6],
+      paddingHorizontal: theme.spacing[8],
+      borderRadius: theme.borderRadius["2xl"],
+      iconGap: theme.spacing[4],
       textGap: theme.spacing[1],
     }),
   } satisfies Record<ButtonControlSize, unknown>;
@@ -216,7 +213,7 @@ export function createControlGeometry(theme: Theme) {
     fontSize: theme.fontSize.base,
     lineHeight: fieldTextMdLineHeight,
   };
-  const alert = createAlertGeometry(theme, controlBorderWidth);
+  const alert = createAlertGeometry(theme);
   const switchControl = {
     minHeight: CONTROL_HEIGHTS.compact,
     justifyContent: CONTROL_CENTER_JUSTIFY_CONTENT,
