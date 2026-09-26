@@ -1110,6 +1110,9 @@ class PluginAgentSession implements AgentSession {
     prompt: AgentPromptInput,
     options: SteerActiveTurnOptions,
   ): Promise<SteerResult> {
+    if (!this.bridge.negotiatedCapabilities.includes("prompt.steer")) {
+      return { status: "unavailable" };
+    }
     const result = await this.bridge.prompt({
       clientMessageId: options.clientMessageId ?? randomUUID(),
       delivery: "steer",
