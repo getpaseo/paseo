@@ -285,7 +285,8 @@ export async function* streamPiHistory(
   messages: PiAgentMessage[],
   userEntries: readonly PiCapturedUserMessageEntry[] = [],
   hooks: PiHistoryMapperHooks = {},
-  extensionHost: PiExtensionHost = createPiExtensionHost(),
+  // At most eight 2 MiB child files per replay; remaining cards keep their summaries.
+  extensionHost: PiExtensionHost = createPiExtensionHost(undefined, undefined, 16 * 1024 * 1024),
   signal?: AbortSignal,
 ): AsyncGenerator<AgentStreamEvent> {
   const mapper = new PiHistoryMapper(provider, userEntries, hooks, extensionHost);

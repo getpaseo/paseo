@@ -11,16 +11,18 @@ const MAX_ITEMS = 200;
 export async function mapPiChildSession(
   id: string,
   file: string,
+  maxBytes = MAX_BYTES,
 ): Promise<ProviderSubagentInputEvent[]> {
   try {
     const handle = await open(file, "r");
     try {
-      const size = Math.min((await handle.stat()).size, MAX_BYTES);
+      const fileSize = (await handle.stat()).size;
+      const size = Math.min(fileSize, MAX_BYTES, maxBytes);
       if (!size) return [];
       const buffer = Buffer.alloc(size);
       const { bytesRead } = await handle.read(buffer, 0, size, 0);
       const text = buffer.toString("utf8", 0, bytesRead);
-      const completeText = bytesRead === MAX_BYTES ? text.slice(0, text.lastIndexOf("\n")) : text;
+      const completeText = bytesRead < fileSize ? text.slice(0, text.lastIndexOf("\n")) : text;
       return parseChildTimeline(id, completeText);
     } finally {
       await handle.close();
