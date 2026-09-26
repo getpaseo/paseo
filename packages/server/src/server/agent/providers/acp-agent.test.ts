@@ -1,5 +1,8 @@
 import { type ChildProcess, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { EventEmitter } from "node:events";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import {
   AgentSideConnection,
@@ -3521,6 +3524,36 @@ describe("ACPAgentSession close() tree-kill", () => {
 });
 
 describe("ACPAgentSession initialization cleanup", () => {
+  test("rejects resumed session initialization when the ACP process cannot spawn", async () => {
+    const cwdRoot = await mkdtemp(path.join(tmpdir(), "paseo-acp-missing-cwd-"));
+    const missingCwd = path.join(cwdRoot, "deleted");
+    const terminator = new FakeTerminator();
+    const session = new ACPAgentSession(
+      { provider: "test-acp", cwd: missingCwd },
+      {
+        provider: "test-acp",
+        logger: createTestLogger(),
+        defaultCommand: [process.execPath, "-e", "process.stdin.resume()"],
+        defaultModes: [],
+        capabilities: {
+          supportsStreaming: true,
+          supportsSessionPersistence: true,
+        },
+        handle: { provider: "test-acp", sessionId: "session-1" },
+        terminateProcess: terminator.terminate,
+      },
+    );
+
+    try {
+      await expect(session.initializeResumedSession()).rejects.toThrow(
+        `spawn ${process.execPath} ENOENT`,
+      );
+      expect(terminator.terminated).toHaveLength(1);
+    } finally {
+      await rm(cwdRoot, { recursive: true, force: true });
+    }
+  });
+
   test("terminates the ACP process when session/new fails", async () => {
     const terminator = new FakeTerminator();
     const child = createProbeChildStub();

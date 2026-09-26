@@ -2732,6 +2732,12 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     child.stderr.on("data", (chunk: Buffer | string) => {
       stderrChunks.push(chunk.toString());
     });
+    const spawnErrorPromise = new Promise<never>((_, reject) => {
+      child.once("error", (error) => {
+        const stderr = stderrChunks.join("").trim();
+        reject(new Error(stderr ? `${String(error)}\n${stderr}` : String(error)));
+      });
+    });
     child.once("exit", (code, signal) => {
       if (this.closed) {
         return;
@@ -2759,14 +2765,17 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.child = child;
     this.connection = connection;
     const initialize = await this.runACPRequest(() =>
-      connection.initialize({
-        protocolVersion: PROTOCOL_VERSION,
-        clientCapabilities: buildACPClientCapabilities(
-          this.clientCapabilityMeta,
-          this.clientCapabilities,
-        ),
-        clientInfo: { name: "Paseo", version: "dev" },
-      }),
+      Promise.race([
+        connection.initialize({
+          protocolVersion: PROTOCOL_VERSION,
+          clientCapabilities: buildACPClientCapabilities(
+            this.clientCapabilityMeta,
+            this.clientCapabilities,
+          ),
+          clientInfo: { name: "Paseo", version: "dev" },
+        }),
+        spawnErrorPromise,
+      ]),
     );
 
     return { child, connection, initialize };
