@@ -12,7 +12,10 @@ import {
 } from "@/contexts/session-workspace-upserts";
 import { WorkspaceDirectoryReplica } from "./workspace-replica";
 
-function workspace(id: string, projectId = "project"): WorkspaceDescriptorPayload {
+function workspace(
+  id: string,
+  projectId = "project"
+): WorkspaceDescriptorPayload {
   return {
     id,
     projectId,
@@ -47,11 +50,16 @@ it("commits workspace and project-parent state with filtered removals", () => {
     {
       workspaces: new Map([
         ["kept", normalizeWorkspaceDescriptor(workspace("kept"))],
-        ["filtered", normalizeWorkspaceDescriptor(workspace("filtered", "filtered-project"))],
+        [
+          "filtered",
+          normalizeWorkspaceDescriptor(
+            workspace("filtered", "filtered-project")
+          ),
+        ],
       ]),
       projects: new Map([[empty.projectId, empty]]),
     },
-    [{ kind: "remove", id: "filtered", removedProjectId: "filtered-project" }],
+    [{ kind: "remove", id: "filtered", removedProjectId: "filtered-project" }]
   );
 
   const session = useSessionStore.getState().sessions[serverId];
@@ -65,10 +73,16 @@ it("commits the authoritative snapshot before buffered project updates", () => {
   const store = useSessionStore.getState();
   store.initializeSession(serverId, null as unknown as DaemonClient);
   const replica = new WorkspaceDirectoryReplica(serverId);
-  const attachedMain = normalizeWorkspaceDescriptor(workspace("attached-main", "attached"));
-  const attachedFeature = normalizeWorkspaceDescriptor(workspace("attached-feature", "attached"));
+  const attachedMain = normalizeWorkspaceDescriptor(
+    workspace("attached-main", "attached")
+  );
+  const attachedFeature = normalizeWorkspaceDescriptor(
+    workspace("attached-feature", "attached")
+  );
   const removed = normalizeWorkspaceDescriptor(workspace("removed", "removed"));
-  const unrelated = normalizeWorkspaceDescriptor(workspace("unrelated", "unrelated"));
+  const unrelated = normalizeWorkspaceDescriptor(
+    workspace("unrelated", "unrelated")
+  );
   const staleAttachedProject = normalizeProjectDescriptor({
     projectId: "attached",
     projectDisplayName: "Stale attached project",
@@ -124,7 +138,7 @@ it("commits the authoritative snapshot before buffered project updates", () => {
         },
       },
       { kind: "remove", projectId: "removed" },
-    ],
+    ]
   );
 
   const session = useSessionStore.getState().sessions[serverId];
@@ -178,9 +192,11 @@ it("preserves unchanged project identity when another project changes", () => {
         ["second", second],
       ]),
     },
-    [],
+    []
   );
-  const previousSecond = useSessionStore.getState().sessions[serverId]?.projects.get("second");
+  const previousSecond = useSessionStore
+    .getState()
+    .sessions[serverId]?.projects.get("second");
 
   replica.commitSnapshot(
     {
@@ -190,12 +206,12 @@ it("preserves unchanged project identity when another project changes", () => {
         ["second", { ...second }],
       ]),
     },
-    [],
+    []
   );
 
-  expect(useSessionStore.getState().sessions[serverId]?.projects.get("second")).toBe(
-    previousSecond,
-  );
+  expect(
+    useSessionStore.getState().sessions[serverId]?.projects.get("second")
+  ).toBe(previousSecond);
   store.clearSession(serverId);
 });
 
@@ -205,7 +221,10 @@ it("does not invent a null-key project from a workspace update", () => {
   store.initializeSession(serverId, null as unknown as DaemonClient);
   const replica = new WorkspaceDirectoryReplica(serverId);
 
-  replica.applyDelta({ kind: "upsert", workspace: workspace("main", "fresh-project") });
+  replica.applyDelta({
+    kind: "upsert",
+    workspace: workspace("main", "fresh-project"),
+  });
 
   const session = useSessionStore.getState().sessions[serverId];
   expect(session?.workspaces.has("main")).toBe(true);
@@ -222,11 +241,40 @@ it("does not restore a targeted cached workspace while its archive is pending", 
   markWorkspaceArchivePending({ serverId, workspaceId });
 
   try {
-    replica.commitCachedWorkspace(normalizeWorkspaceDescriptor(workspace(workspaceId)), undefined);
+    replica.commitCachedWorkspace(
+      normalizeWorkspaceDescriptor(workspace(workspaceId)),
+      undefined
+    );
 
-    expect(useSessionStore.getState().sessions[serverId]?.workspaces.has(workspaceId)).toBe(false);
+    expect(
+      useSessionStore.getState().sessions[serverId]?.workspaces.has(workspaceId)
+    ).toBe(false);
   } finally {
     clearWorkspaceArchivePending({ serverId, workspaceId });
     store.clearSession(serverId);
   }
+});
+
+it("keeps a live pin when the older workspace creation response arrives after it (#5447)", () => {
+  const serverId = "creation-response-after-pin";
+  const store = useSessionStore.getState();
+  store.initializeSession(serverId, null as unknown as DaemonClient);
+  const replica = new WorkspaceDirectoryReplica(serverId);
+  const created = workspace("created");
+  const pinnedAt = "2026-09-26T12:29:32.206Z";
+
+  replica.applyDelta({ kind: "upsert", workspace: created });
+  replica.applyDelta({ kind: "upsert", workspace: { ...created, pinnedAt } });
+  replica.acceptWorkspaces([
+    {
+      ...normalizeWorkspaceDescriptor({ ...created, pinnedAt: null }),
+      status: "running",
+    },
+  ]);
+
+  const row = useSessionStore
+    .getState()
+    .sessions[serverId]?.workspaces.get("created");
+  expect(row?.pinnedAt).toBe(pinnedAt);
+  store.clearSession(serverId);
 });
