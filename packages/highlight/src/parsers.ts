@@ -18,6 +18,7 @@ import { parser as elixirParser } from "lezer-elixir";
 import type { Parser } from "@lezer/common";
 import { csharpLanguage } from "./csharp/language.js";
 import { astroParser } from "./astro/parser.js";
+import { vueParser } from "./vue/parser.js";
 import { nixLanguage } from "./nix/language.js";
 import { parser as svelteBaseParser } from "./svelte/parser.js";
 import { configureNesting, defaultNesting } from "./svelte/nesting.js";
@@ -56,6 +57,8 @@ const languagesByExtension: Record<string, Language> = {
   svelte: language(svelteBaseParser.configure({ wrap: configureNesting(defaultNesting) })),
   // Astro
   astro: language(astroParser),
+  // Vue
+  vue: language(vueParser),
   // XML
   xml: language(xmlParser),
   // Java
