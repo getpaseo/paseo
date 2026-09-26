@@ -257,7 +257,7 @@ test("Hub completes the standard hello before rejecting a second hello", async (
   expect(hub.probeTrustedHello()).toBe(4002);
 });
 
-test("legacy Hub wire behavior still enters the common Session bootstrap", async () => {
+test("legacy Hub wire behavior immediately enters the common Session bootstrap", async () => {
   const launched = await HubRelationshipHarness.start();
   await launched.beginConnect().result;
   launched.connectLatestLegacySocket();

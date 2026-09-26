@@ -171,8 +171,16 @@ function createSession(
   return session;
 }
 
-function createProviderWithFakeAppServer(appServer: FakeCodexAppServer): CodexAppServerAgentClient {
-  const provider = new CodexAppServerAgentClient(createTestLogger());
+function createProviderWithFakeAppServer(
+  appServer: FakeCodexAppServer,
+  options?: {
+    runtimeSettings?: ConstructorParameters<typeof CodexAppServerAgentClient>[1];
+    customProvider?: { id: string; label: string; extends: string };
+  },
+): CodexAppServerAgentClient {
+  const provider = new CodexAppServerAgentClient(createTestLogger(), options?.runtimeSettings, {
+    customProvider: options?.customProvider,
+  });
   const internals = castInternals<{
     goalsEnabledPromise: Promise<boolean> | null;
     autoReviewEnabledPromise: Promise<boolean> | null;
@@ -6209,6 +6217,55 @@ describe("Codex importable sessions", () => {
     const sessions = await provider.listImportableSessions({ limit: 500, scanLimit: 500 });
 
     expect(sessions.map((session) => session.providerHandleId)).toEqual(["thread-1"]);
+    appServer.assertNoErrors();
+  });
+
+  // Codex filters thread/list by model provider: with no `modelProviders` it
+  // returns only threads of the provider its own config selects, an empty
+  // list returns every provider, and a list returns only those providers.
+  function providerFilteringThreadListHandler(threads: Array<Record<string, unknown>>) {
+    return (input: unknown) => {
+      const { modelProviders } = (input ?? {}) as { modelProviders?: string[] };
+      const included = (thread: Record<string, unknown>) => {
+        if (modelProviders === undefined) return thread.modelProvider === "openai";
+        if (modelProviders.length === 0) return true;
+        return modelProviders.includes(String(thread.modelProvider));
+      };
+      return { data: threads.filter(included), nextCursor: null };
+    };
+  }
+
+  const threadsByModelProvider = [
+    { id: "stock-thread", cwd: "/workspace/project-a", modelProvider: "openai", updatedAt: 2 },
+    { id: "custom-thread", cwd: "/workspace/project-a", modelProvider: "my-codex", updatedAt: 1 },
+  ];
+
+  test("a custom Codex provider lists the threads it created", async () => {
+    const appServer = createFakeCodexAppServer({
+      "thread/list": providerFilteringThreadListHandler(threadsByModelProvider),
+    });
+    const provider = createProviderWithFakeAppServer(appServer, {
+      runtimeSettings: {
+        env: { OPENAI_BASE_URL: "https://llm.example.test/v1", OPENAI_API_KEY: "test-key" },
+      },
+      customProvider: { id: "my-codex", label: "My Codex", extends: "codex" },
+    });
+
+    const sessions = await provider.listImportableSessions({ cwd: "/workspace/project-a" });
+
+    expect(sessions.map((session) => session.providerHandleId)).toEqual(["custom-thread"]);
+    appServer.assertNoErrors();
+  });
+
+  test("stock Codex keeps listing only its own threads", async () => {
+    const appServer = createFakeCodexAppServer({
+      "thread/list": providerFilteringThreadListHandler(threadsByModelProvider),
+    });
+    const provider = createProviderWithFakeAppServer(appServer);
+
+    const sessions = await provider.listImportableSessions({ cwd: "/workspace/project-a" });
+
+    expect(sessions.map((session) => session.providerHandleId)).toEqual(["stock-thread"]);
     appServer.assertNoErrors();
   });
 

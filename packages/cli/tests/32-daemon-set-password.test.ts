@@ -5,7 +5,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Command } from "commander";
-import { isBearerTokenValid } from "@getpaseo/server/auth";
+import { isBearerTokenValidAsync } from "@getpaseo/server/auth";
 import { runLocalPaseo } from "./helpers/local-cli.ts";
 import {
   runSetPasswordCommand,
@@ -61,7 +61,10 @@ try {
     assert.notStrictEqual(config.daemon.auth.password, "shared-secret");
     assert.match(config.daemon.auth.password, /^\$2[aby]\$12\$/);
     assert.strictEqual(
-      isBearerTokenValid({ password: config.daemon.auth.password, token: "shared-secret" }),
+      await isBearerTokenValidAsync({
+        password: config.daemon.auth.password,
+        token: "shared-secret",
+      }),
       true,
     );
     console.log("✓ set-password writes bcrypt hash without clobbering config\n");
@@ -81,7 +84,7 @@ try {
 
     assert.strictEqual(result.data.action, "password_set");
     assert.strictEqual(
-      isBearerTokenValid({ password: config.daemon.auth.password, token: "new-secret" }),
+      await isBearerTokenValidAsync({ password: config.daemon.auth.password, token: "new-secret" }),
       true,
     );
     console.log("✓ command accepts matching confirmation\n");

@@ -1642,6 +1642,10 @@ export const ru: TranslationResources = {
     },
   },
   pairing: {
+    hostPassword: {
+      title: "Пароль для {{host}}",
+      label: "Пароль хоста",
+    },
     connectionMethods: {
       title: "Добавить подключение",
       direct: {
@@ -1982,8 +1986,11 @@ export const ru: TranslationResources = {
     groupInfo: "О разделе «{{title}}»",
     sections: {
       general: "Основные",
+      chat: "Чат",
       appearance: "Оформление",
-      layout: en.settings.sections.layout,
+      sidebar: "Боковая панель",
+      terminal: "Терминал",
+      browser: "Браузер",
       editor: "Редактор",
       shortcuts: "Сочетания клавиш",
       integrations: "Интеграции",
@@ -2042,6 +2049,7 @@ export const ru: TranslationResources = {
     },
     general: {
       title: "Основные",
+      sending: "Отправка",
       browserData: {
         title: "Данные браузера",
         siteData: "Файлы cookie и данные сайтов",
@@ -2071,8 +2079,6 @@ export const ru: TranslationResources = {
         },
       },
       serviceUrls: {
-        label: "URL-адреса сервисов",
-        description: "Где открывать URL-адреса запущенных скриптов",
         options: {
           ask: "Спрашивать",
           inApp: "В Paseo",
@@ -2092,7 +2098,6 @@ export const ru: TranslationResources = {
       toolCallDetail: {
         label: "Отображение вызовов инструментов",
         description: "Как вызовы инструментов отображаются на временной шкале",
-        accessibilityLabel: "Выбрать отображение вызовов инструментов ({{value}})",
         options: {
           overview: "Сводка",
           detailed: "Все подробности",
@@ -2334,6 +2339,10 @@ export const ru: TranslationResources = {
       },
     },
     host: {
+      password: {
+        guidance:
+          "Удалите этот хост и добавьте его снова с паролем, который запрашивает этот демон.",
+      },
       appearance: {
         title: "Оформление",
         name: {
