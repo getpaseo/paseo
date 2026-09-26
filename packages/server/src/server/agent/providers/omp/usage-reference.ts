@@ -129,6 +129,7 @@ export function resolveOmpUsageReference(
   sessionId: string,
   provider: string,
   env: NodeJS.ProcessEnv,
+  platform: NodeJS.Platform = process.platform,
 ): UsageReference | null {
   let source: string;
   if (provider === "openai-codex") source = "codex";
@@ -136,7 +137,7 @@ export function resolveOmpUsageReference(
   else return null;
   if (!sessionId) return null;
   // Upstream: packages/utils/src/dirs.ts:82-94,330-343,583-585 (profile, override, agent dir).
-  const paths = resolveOmpDiagnosticPaths(env);
+  const paths = resolveOmpDiagnosticPaths(env, undefined, platform);
   if (hasKeyOverride(provider, env, paths.agentDir)) return null;
   let db: UsageDb;
   try {

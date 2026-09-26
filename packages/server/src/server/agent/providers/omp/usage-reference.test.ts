@@ -242,13 +242,18 @@ test("named profile ignores agent override and uses existing XDG profile data", 
     );
   profileDb.close();
   expect(
-    resolveOmpUsageReference("session-1", "openai-codex", {
-      OMP_PROFILE: "work",
-      PI_PROFILE: "other",
-      PI_CODING_AGENT_DIR: f.agentDir,
-      PI_CONFIG_DIR: join(root, "config"),
-      XDG_DATA_HOME: join(root, "xdg"),
-    }),
+    resolveOmpUsageReference(
+      "session-1",
+      "openai-codex",
+      {
+        OMP_PROFILE: "work",
+        PI_PROFILE: "other",
+        PI_CODING_AGENT_DIR: f.agentDir,
+        PI_CONFIG_DIR: join(root, "config"),
+        XDG_DATA_HOME: join(root, "xdg"),
+      },
+      "linux",
+    ),
   ).toEqual({ source: "codex", input: { accessToken: "profile-token" } });
 });
 

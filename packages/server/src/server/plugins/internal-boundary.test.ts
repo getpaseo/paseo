@@ -29,7 +29,7 @@ async function checkInternalPluginBoundary(directory: string): Promise<void> {
       if (hostModules.has(specifier) || isBuiltin(specifier)) continue;
       const resolved = reader.resolve(specifier, file, dependency.kind);
       const relative = resolved && path.relative(directory, resolved);
-      const owned = relative && /^(server|shared)\//.test(relative);
+      const owned = relative && /^(server|shared)[\\/]/.test(relative);
       if (!specifier.startsWith(".") || !owned) {
         throw new Error(`Internal plugin import boundary: ${file} imports ${specifier}`);
       }

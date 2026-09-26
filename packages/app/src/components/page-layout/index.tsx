@@ -11,6 +11,7 @@ interface PageLayoutProps {
   /** Compact back button. Defaults to navigating back. */
   onBack?: () => void;
   testID?: string;
+  titleTestID?: string;
   children: ReactNode;
 }
 
@@ -19,7 +20,7 @@ interface PageLayoutProps {
  * document heading inside the page and the header only keeps the titlebar drag
  * region and window controls; on compact the title moves into a back header.
  */
-export function PageLayout({ title, onBack, testID, children }: PageLayoutProps) {
+export function PageLayout({ title, onBack, testID, titleTestID, children }: PageLayoutProps) {
   const isCompact = useIsCompactFormFactor();
   const insets = useSafeAreaInsets();
   const scrollContentStyle = useMemo(() => ({ paddingBottom: insets.bottom }), [insets.bottom]);
@@ -31,7 +32,7 @@ export function PageLayout({ title, onBack, testID, children }: PageLayoutProps)
       <ScrollView style={styles.scroll} contentContainerStyle={scrollContentStyle} testID={testID}>
         <View style={styles.content}>
           {showTitle ? (
-            <Text style={styles.title} testID="page-title">
+            <Text style={styles.title} testID={titleTestID ?? "page-title"}>
               {title}
             </Text>
           ) : null}
