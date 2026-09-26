@@ -527,6 +527,25 @@ describe("ClaudeAgentClient.fetchCatalog", () => {
 describe("ClaudeAgentClient binary resolution", () => {
   const logger = createTestLogger();
 
+  test("Claude usage reference follows CLAUDE_CONFIG_DIR and excludes API overrides", async () => {
+    const client = new ClaudeAgentClient({ logger, resolveBinary: async () => "/test/claude/bin" });
+    const session = await client.createSession(
+      { provider: "claude", cwd: process.cwd() },
+      { env: { CLAUDE_CONFIG_DIR: "/accounts/second" } },
+    );
+    expect(await session.getUsageReference?.()).toEqual({
+      source: "claude",
+      input: { configDir: "/accounts/second" },
+    });
+    await session.close();
+    const custom = await client.createSession(
+      { provider: "claude", cwd: process.cwd() },
+      { env: { ANTHROPIC_AUTH_TOKEN: "token" } },
+    );
+    expect(await custom.getUsageReference?.()).toBeNull();
+    await custom.close();
+  });
+
   test("resolves the installed Claude Code version", async () => {
     await expect(resolveClaudeCodeVersion()).resolves.toMatch(/^\d+\.\d+\.\d+$/);
   });

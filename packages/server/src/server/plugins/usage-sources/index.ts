@@ -34,7 +34,12 @@ export class UsageSourceRegistry {
     for (const key of this.cache.keys()) if (key.startsWith(`${id}:`)) this.cache.delete(key);
   }
 
-  async listReports(options: { forceRefresh?: boolean } = {}): Promise<UsageReportEntry[]> {
+  async listReports(
+    options: {
+      forceRefresh?: boolean;
+      references?: Array<{ source: string; input: unknown }>;
+    } = {},
+  ): Promise<UsageReportEntry[]> {
     const discovered = await Promise.all(
       [...this.sources.values()].map(async (source) => {
         try {
@@ -47,9 +52,27 @@ export class UsageSourceRegistry {
       }),
     );
     const unique = new Map<string, UsageReportEntry>();
-    for (const entry of discovered.flat())
+    const referenced = await Promise.all(
+      (options.references ?? []).map(async (reference) => {
+        if (!this.sources.has(reference.source)) return null;
+        return this.fetch(reference.source, reference.input, options);
+      }),
+    );
+    for (const entry of [
+      ...discovered.flat(),
+      ...referenced.filter((result): result is UsageReportEntry => result !== null),
+    ])
       unique.set(`${entry.sourceId}:${entry.report.account.key}`, entry);
     return [...unique.values()];
+  }
+
+  fetchReference(
+    reference: { source: string; input: unknown },
+    options: { forceRefresh?: boolean } = {},
+  ): Promise<UsageReportEntry | null> {
+    return this.sources.has(reference.source)
+      ? this.fetch(reference.source, reference.input, options)
+      : Promise.resolve(null);
   }
 
   // COMPAT(providerUsageList): added in v0.9.3, remove after 2027-03-26.

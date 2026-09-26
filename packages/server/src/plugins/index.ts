@@ -8,6 +8,7 @@ import grokUsageSource from "./grok-usage-source/index.server.js";
 import kimiUsageSource from "./kimi-usage-source/index.server.js";
 import minimaxUsageSource from "./minimax-usage-source/index.server.js";
 import zaiUsageSource from "./zai-usage-source/index.server.js";
+import opencodeGoUsageSource from "./opencode-go-usage-source/index.server.js";
 
 export interface InternalPlugin {
   id: string;
@@ -55,5 +56,10 @@ export const INTERNAL_PLUGINS: InternalPlugin[] = [
     id: "zai-usage-source",
     directory: fileURLToPath(new URL("./zai-usage-source/", import.meta.url)),
     contribute: zaiUsageSource,
+  },
+  {
+    id: "opencode-go-usage-source",
+    directory: fileURLToPath(new URL("./opencode-go-usage-source/", import.meta.url)),
+    contribute: opencodeGoUsageSource,
   },
 ];

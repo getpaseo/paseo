@@ -95,6 +95,7 @@ import type {
   ProviderDiagnosticResponseMessage,
   ProviderUsageListResponseMessage,
   UsageListReportsResponseMessage,
+  AgentGetUsageReportResponseMessage,
   DaemonGetStatusResponse,
   DaemonGetPairingOfferResponse,
   DaemonConfigReloadResponse,
@@ -561,6 +562,7 @@ type RefreshProvidersSnapshotPayload = RefreshProvidersSnapshotResponseMessage["
 type ProviderDiagnosticPayload = ProviderDiagnosticResponseMessage["payload"];
 type ProviderUsageListPayload = ProviderUsageListResponseMessage["payload"];
 type UsageListReportsPayload = UsageListReportsResponseMessage["payload"];
+type AgentGetUsageReportPayload = AgentGetUsageReportResponseMessage["payload"];
 type DaemonStatusPayload = DaemonGetStatusResponse["payload"];
 type DaemonPairingOfferPayload = DaemonGetPairingOfferResponse["payload"];
 type DiagnosticsPayload = DiagnosticsResponse["payload"];
@@ -5247,6 +5249,21 @@ export class DaemonClient {
     return this.sendNamespacedCorrelatedSessionRequest({
       requestId: options?.requestId,
       message: { type: "usage.list_reports.request", forceRefresh: options?.forceRefresh },
+    });
+  }
+
+  async getAgentUsageReport(options: {
+    agentId: string;
+    requestId?: string;
+    forceRefresh?: boolean;
+  }): Promise<AgentGetUsageReportPayload> {
+    return this.sendNamespacedCorrelatedSessionRequest({
+      requestId: options.requestId,
+      message: {
+        type: "agent.get_usage_report.request",
+        agentId: options.agentId,
+        forceRefresh: options.forceRefresh,
+      },
     });
   }
 

@@ -333,6 +333,65 @@ describe("OpenCodeAgentClient adapter smoke tests", () => {
     model: TEST_MODEL,
   });
 
+  test("usage reference follows the active OpenCode model and OAuth account", async () => {
+    const cwd = tmpCwd();
+    const runtime = new TestOpenCodeHarness();
+    const openCode = new TestOpenCodeClient();
+    runtime.enqueueClient(openCode);
+    const client = new OpenCodeAgentClient(
+      logger,
+      {
+        env: {
+          OPENCODE_AUTH_CONTENT: JSON.stringify({
+            openai: { type: "oauth", access: "oauth-token", accountId: "acct-1" },
+            "opencode-go": { type: "api", key: "go-key" },
+          }),
+        },
+      },
+      { serverManager: runtime, createClient: runtime.createClient },
+    );
+    const session = await client.createSession(buildConfig(cwd));
+    await session.setModel?.("openai/gpt-5");
+    expect(await session.getUsageReference?.()).toEqual({
+      source: "codex",
+      input: { accessToken: "oauth-token", accountId: "acct-1" },
+    });
+    await session.setModel?.("opencode-go/qwen");
+    expect(await session.getUsageReference?.()).toEqual({
+      source: "opencode-go",
+      input: { apiKey: "go-key" },
+    });
+    await session.setModel?.("other/model");
+    expect(await session.getUsageReference?.()).toBeNull();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    const sessionId = (await session.getRuntimeInfo()).sessionId;
+    openCode.emitEvent({
+      type: "message.updated",
+      properties: {
+        info: {
+          id: "msg_changed_model",
+          sessionID: sessionId,
+          role: "user",
+          model: { providerID: "openai", modelID: "gpt-5" },
+        },
+      },
+    } as OpenCodeEvent);
+    await vi.waitFor(async () =>
+      expect(await session.getUsageReference?.()).toEqual({
+        source: "codex",
+        input: { accessToken: "oauth-token", accountId: "acct-1" },
+      }),
+    );
+    expect(events).toContainEqual({
+      type: "model_changed",
+      provider: "opencode",
+      runtimeInfo: { provider: "opencode", sessionId, model: "openai/gpt-5", modeId: null },
+    });
+    await session.close();
+    rmSync(cwd, { recursive: true, force: true });
+  });
+
   test("creates a session with valid id and provider", async () => {
     const cwd = tmpCwd();
     const runtime = new TestOpenCodeHarness();

@@ -242,6 +242,7 @@ interface PiRpcAgentSessionOptions {
   extensionTimeoutMs?: number;
   logger: Logger;
   usagePollScheduler?: PiUsagePollScheduler;
+  usageEnv?: Record<string, string>;
 }
 
 interface PiResumeConfig {
@@ -1122,6 +1123,32 @@ export class PiRpcAgentSession implements AgentSession {
   readonly provider: AgentProvider;
   readonly capabilities: AgentCapabilityFlags;
 
+  async getUsageReference() {
+    await this.refreshState();
+    const provider = this.state.model?.provider;
+    let source: string | null = null;
+    if (provider === "openai-codex") source = "codex";
+    if (provider === "anthropic") source = "claude";
+    if (!source || !provider) return null;
+    try {
+      const credentials = JSON.parse(
+        readFileSync(join(resolvePiAgentDir(this.usageEnv), "auth.json"), "utf8"),
+      ) as Record<string, unknown>;
+      const entry = credentials[provider];
+      if (!entry || typeof entry !== "object") return null;
+      const credential = entry as Record<string, unknown>;
+      if (
+        credential.type !== "oauth" ||
+        typeof credential.access !== "string" ||
+        !credential.access
+      )
+        return null;
+      return { source, input: { accessToken: credential.access } };
+    } catch {
+      return null;
+    }
+  }
+
   private readonly subscribers = new Set<(event: AgentStreamEvent) => void>();
   private readonly activeToolCalls = new Map<string, PiTrackedToolCall>();
   private readonly pendingExtensionUiRequests = new Map<string, AgentPermissionRequest>();
@@ -1149,6 +1176,7 @@ export class PiRpcAgentSession implements AgentSession {
   private readonly currentModeId: string | null;
   private readonly logger: Logger;
   private readonly usagePoller: PiUsagePoller;
+  private readonly usageEnv?: Record<string, string>;
   private closed = false;
   private readonly closeController = new AbortController();
   private readonly pendingExtensionHydrations = new Set<Promise<void>>();
@@ -1168,6 +1196,7 @@ export class PiRpcAgentSession implements AgentSession {
     this.extensionTimeoutMs = options.extensionTimeoutMs ?? DEFAULT_PI_EXTENSION_RESULT_TIMEOUT_MS;
     this.logger = options.logger;
     this.extensionHost = createPiExtensionHost(this.logger);
+    this.usageEnv = options.usageEnv;
     this.usagePoller = new PiUsagePoller({
       scheduler: options.usagePollScheduler,
       readStats: () => this.runtimeSession.getSessionStats(),
@@ -2461,6 +2490,7 @@ export class PiRpcAgentClient implements AgentClient {
         extensionTimeoutMs: this.providerParams.extensionTimeoutMs,
         logger: this.logger,
         usagePollScheduler: this.usagePollScheduler,
+        usageEnv: mcpEnv,
       });
     } catch (error) {
       await runtimeSession.close().catch(() => undefined);
@@ -2524,6 +2554,7 @@ export class PiRpcAgentClient implements AgentClient {
         extensionTimeoutMs: this.providerParams.extensionTimeoutMs,
         logger: this.logger,
         usagePollScheduler: this.usagePollScheduler,
+        usageEnv: mcpEnv,
       });
     } catch (error) {
       await runtimeSession.close().catch(() => undefined);

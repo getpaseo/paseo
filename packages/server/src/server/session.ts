@@ -509,7 +509,14 @@ export interface SessionOptions {
     subscribeSettings?(listener: (pluginId: string, settingsId: string) => void): () => void;
     catalog(): Array<{ id: string; clientBundle: string }>;
     invokePluginRpc(pluginId: string, method: string, input: unknown): Promise<unknown>;
-    listUsageReports(options?: { forceRefresh?: boolean }): Promise<UsageReportEntry[]>;
+    listUsageReports(options?: {
+      forceRefresh?: boolean;
+      references?: Array<{ source: string; input: unknown }>;
+    }): Promise<UsageReportEntry[]>;
+    fetchUsageReference(
+      reference: { source: string; input: unknown },
+      options?: { forceRefresh?: boolean },
+    ): Promise<UsageReportEntry | null>;
     listLegacyUsage(): Promise<{ fetchedAt: string; providers: ProviderUsage[] }>;
   };
   orchestrationSkills?: import("./orchestration-skills/index.js").OrchestrationSkills;
@@ -3005,6 +3012,8 @@ export class Session {
         return this.providerCatalogSession.handleProviderUsageListRequest(msg);
       case "usage.list_reports.request":
         return this.handleUsageListReportsRequest(msg);
+      case "agent.get_usage_report.request":
+        return this.handleAgentGetUsageReportRequest(msg);
       default:
         return undefined;
     }
@@ -3015,7 +3024,24 @@ export class Session {
   ): Promise<void> {
     try {
       if (!this.pluginRuntime) throw new Error("Plugin runtime is unavailable");
-      const reports = await this.pluginRuntime.listUsageReports({ forceRefresh: msg.forceRefresh });
+      const references = (
+        await Promise.all(
+          this.agentManager
+            .listAgents()
+            .map(async (agent) => agent.session?.getUsageReference?.().catch(() => null) ?? null),
+        )
+      ).filter(
+        (
+          reference,
+        ): reference is {
+          source: string;
+          input: import("@getpaseo/protocol/agent-types").JsonValue;
+        } => reference !== null,
+      );
+      const reports = await this.pluginRuntime.listUsageReports({
+        forceRefresh: msg.forceRefresh,
+        references,
+      });
       this.emit({
         type: "usage.list_reports.response",
         payload: { requestId: msg.requestId, reports },
@@ -3028,6 +3054,35 @@ export class Session {
           requestType: msg.type,
           error: error instanceof Error ? error.message : String(error),
           code: "usage_list_reports_failed",
+        },
+      });
+    }
+  }
+
+  private async handleAgentGetUsageReportRequest(
+    msg: Extract<SessionInboundMessage, { type: "agent.get_usage_report.request" }>,
+  ): Promise<void> {
+    try {
+      if (!this.pluginRuntime) throw new Error("Plugin runtime is unavailable");
+      const agent = this.agentManager.getAgent(msg.agentId);
+      const reference = (await agent?.session?.getUsageReference?.()) ?? null;
+      const entry = reference
+        ? await this.pluginRuntime.fetchUsageReference(reference, {
+            forceRefresh: msg.forceRefresh,
+          })
+        : null;
+      this.emit({
+        type: "agent.get_usage_report.response",
+        payload: { requestId: msg.requestId, entry },
+      });
+    } catch (error) {
+      this.emit({
+        type: "rpc_error",
+        payload: {
+          requestId: msg.requestId,
+          requestType: msg.type,
+          error: error instanceof Error ? error.message : String(error),
+          code: "agent_get_usage_report_failed",
         },
       });
     }

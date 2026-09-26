@@ -1779,6 +1779,12 @@ export const UsageListReportsRequestMessageSchema = z.object({
   requestId: z.string(),
   forceRefresh: z.boolean().optional(),
 });
+export const AgentGetUsageReportRequestMessageSchema = z.object({
+  type: z.literal("agent.get_usage_report.request"),
+  requestId: z.string(),
+  agentId: z.string(),
+  forceRefresh: z.boolean().optional(),
+});
 
 export const ResumeAgentRequestMessageSchema = z.object({
   type: z.literal("resume_agent_request"),
@@ -3239,6 +3245,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   ProviderDiagnosticRequestMessageSchema,
   ProviderUsageListRequestMessageSchema,
   UsageListReportsRequestMessageSchema,
+  AgentGetUsageReportRequestMessageSchema,
   ResumeAgentRequestMessageSchema,
   ImportAgentRequestMessageSchema,
   RefreshAgentRequestMessageSchema,
@@ -6255,6 +6262,10 @@ export const UsageListReportsResponseMessageSchema = z.object({
   type: z.literal("usage.list_reports.response"),
   payload: z.object({ requestId: z.string(), reports: z.array(UsageReportEntrySchema) }),
 });
+export const AgentGetUsageReportResponseMessageSchema = z.object({
+  type: z.literal("agent.get_usage_report.response"),
+  payload: z.object({ requestId: z.string(), entry: UsageReportEntrySchema.nullable() }),
+});
 
 const AgentSlashCommandSchema = z.object({
   name: z.string(),
@@ -6942,6 +6953,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   ProviderDiagnosticResponseMessageSchema,
   ProviderUsageListResponseMessageSchema,
   UsageListReportsResponseMessageSchema,
+  AgentGetUsageReportResponseMessageSchema,
   ListCommandsResponseSchema,
   ListTerminalsResponseSchema,
   TerminalsChangedSchema,
@@ -7123,6 +7135,9 @@ export type ProviderUsageTone = z.infer<typeof ProviderUsageToneSchema>;
 export type UsageReport = z.infer<typeof UsageReportSchema>;
 export type UsageReportEntry = z.infer<typeof UsageReportEntrySchema>;
 export type UsageListReportsResponseMessage = z.infer<typeof UsageListReportsResponseMessageSchema>;
+export type AgentGetUsageReportResponseMessage = z.infer<
+  typeof AgentGetUsageReportResponseMessageSchema
+>;
 export type ProviderUsageStatus = z.infer<typeof ProviderUsageStatusSchema>;
 export type ProviderUsage = z.infer<typeof ProviderUsageSchema>;
 export type ProviderUsageWindow = z.infer<typeof ProviderUsageWindowSchema>;

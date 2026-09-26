@@ -12,6 +12,8 @@ import {
   type TextPartInput as OpenCodeTextPartInput,
 } from "@opencode-ai/sdk/v2/client";
 import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { randomBytes } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { createPathEquivalenceMatcher } from "../../../utils/path.js";
@@ -1500,6 +1502,7 @@ export class OpenCodeAgentClient implements AgentClient {
         false,
         unbindBridge,
         connectServer,
+        { ...process.env, ...this.runtimeSettings?.env, ...launchContext?.env },
       );
     } catch (error) {
       await connection.release();
@@ -1554,6 +1557,7 @@ export class OpenCodeAgentClient implements AgentClient {
         registeredAcquisition !== null,
         unbindBridge,
         connectServer,
+        { ...process.env, ...this.runtimeSettings?.env, ...launchContext?.env },
       );
     } catch (error) {
       await connection.release();
@@ -3279,7 +3283,7 @@ function isOpenCodeTerminalEvent(event: OpenCodeEvent, sessionId: string): boole
 }
 
 function isOpenCodeProviderInternalEvent(event: AgentStreamEvent): boolean {
-  return event.type === "provider_subagent";
+  return event.type === "provider_subagent" || event.type === "model_changed";
 }
 
 function readOpenCodeChildSessionInfo(value: unknown): OpenCodeChildSessionInfo | null {
@@ -3358,6 +3362,56 @@ interface OpenCodeServerConnection {
   events: OpenCodeEventSource;
   url: string;
   release: () => Promise<void>;
+}
+
+async function readOpenCodeUsageAuth(
+  env: NodeJS.ProcessEnv,
+): Promise<Record<string, unknown> | null> {
+  try {
+    const content =
+      env.OPENCODE_AUTH_CONTENT ??
+      (await fs.readFile(
+        path.join(
+          env.XDG_DATA_HOME || path.join(env.HOME || os.homedir(), ".local", "share"),
+          "opencode",
+          "auth.json",
+        ),
+        "utf8",
+      ));
+    const parsed: unknown = JSON.parse(content);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function resolveOpenCodeUsageReference(
+  model: string,
+  auth: Record<string, unknown> | null,
+): { source: string; input: import("@getpaseo/protocol/agent-types").JsonValue } | null {
+  if (!auth) return null;
+  if (model.startsWith("openai/")) {
+    const entry = auth.openai;
+    if (!entry || typeof entry !== "object") return null;
+    const credential = entry as Record<string, unknown>;
+    if (credential.type !== "oauth" || typeof credential.access !== "string" || !credential.access)
+      return null;
+    return {
+      source: "codex",
+      input: {
+        accessToken: credential.access,
+        ...(typeof credential.accountId === "string" ? { accountId: credential.accountId } : {}),
+      },
+    };
+  }
+  const entry = auth["opencode-go"];
+  if (!entry || typeof entry !== "object") return null;
+  const credential = entry as Record<string, unknown>;
+  if (credential.type !== "api" || typeof credential.key !== "string" || !credential.key)
+    return null;
+  return { source: "opencode-go", input: { apiKey: credential.key } };
 }
 
 class OpenCodeAgentSession implements AgentSession {
@@ -3448,6 +3502,7 @@ class OpenCodeAgentSession implements AgentSession {
     private readonly externallyDriven = false,
     releaseBridge?: () => void,
     connectServer?: () => Promise<OpenCodeServerConnection>,
+    private readonly usageEnv: NodeJS.ProcessEnv = process.env,
   ) {
     this.config = config;
     this.server = { client, events, url: serverUrl ?? "", release: releaseServer };
@@ -3550,6 +3605,16 @@ class OpenCodeAgentSession implements AgentSession {
       model: this.config.model ?? null,
       modeId: this.currentMode,
     };
+  }
+
+  async getUsageReference(): Promise<{
+    source: string;
+    input: import("@getpaseo/protocol/agent-types").JsonValue;
+  } | null> {
+    const model = this.config.model;
+    if (!model?.startsWith("openai/") && !model?.startsWith("opencode-go/")) return null;
+    const auth = await readOpenCodeUsageAuth(this.usageEnv);
+    return resolveOpenCodeUsageReference(model, auth);
   }
 
   async setModel(modelId: string | null): Promise<void> {
@@ -5346,6 +5411,7 @@ class OpenCodeAgentSession implements AgentSession {
 
   private async translateEvent(event: OpenCodeEvent): Promise<AgentStreamEvent[]> {
     const eventSessionId = getOpenCodeEventSessionId(event);
+    const runtimeModelChanged = this.syncRuntimeModel(event, eventSessionId);
     if (
       event.type !== "session.created" &&
       eventSessionId &&
@@ -5362,6 +5428,12 @@ class OpenCodeAgentSession implements AgentSession {
       }
     }
     const translated = translateOpenCodeEvent(event, this.createTranslationState());
+    if (runtimeModelChanged)
+      translated.push({
+        type: "model_changed",
+        provider: this.provider,
+        runtimeInfo: await this.getRuntimeInfo(),
+      });
     this.appendProviderSubagentEvents(event, translated);
 
     const events: AgentStreamEvent[] = [];
@@ -5400,6 +5472,20 @@ class OpenCodeAgentSession implements AgentSession {
     }
 
     return events;
+  }
+
+  private syncRuntimeModel(event: OpenCodeEvent, eventSessionId: string | null): boolean {
+    if (event.type !== "message.updated" || eventSessionId !== this.sessionId) return false;
+    const info = event.properties.info;
+    let model: string | undefined;
+    if (info.role === "assistant") model = resolveOpenCodeModelLookupKeyFromAssistantMessage(info);
+    if (info.role === "user" && info.model)
+      model = buildOpenCodeModelLookupKey(info.model.providerID, info.model.modelID);
+    if (!model || model === this.config.model) return false;
+    this.config.model = model;
+    this.selectedModelContextWindowMaxTokens =
+      this.resolveConfiguredModelContextWindowMaxTokens(model);
+    return true;
   }
 
   private async tryAutoApproveToolPermission(

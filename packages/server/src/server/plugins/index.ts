@@ -142,8 +142,18 @@ export class PluginService {
     return [...this.providers.values()].sort((left, right) => left.id.localeCompare(right.id));
   }
 
-  listUsageReports(options?: { forceRefresh?: boolean }) {
+  listUsageReports(options?: {
+    forceRefresh?: boolean;
+    references?: Array<{ source: string; input: unknown }>;
+  }) {
     return this.usageSources.listReports(options);
+  }
+
+  fetchUsageReference(
+    reference: { source: string; input: unknown },
+    options?: { forceRefresh?: boolean },
+  ) {
+    return this.usageSources.fetchReference(reference, options);
   }
 
   listLegacyUsage() {

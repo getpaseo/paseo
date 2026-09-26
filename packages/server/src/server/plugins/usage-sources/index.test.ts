@@ -44,6 +44,24 @@ test("coalesces concurrent fetches and dedupes accounts", async () => {
   expect(await registry.listReports()).toHaveLength(1);
 });
 
+test("includes live session references and ignores unregistered sources", async () => {
+  const registry = new UsageSourceRegistry();
+  registry.register({
+    id: "fixture",
+    label: "Fixture",
+    discover: async () => [{ account: "default" }],
+    fetch: async (input) => report((input as { account: string }).account, 25),
+  });
+  const reports = await registry.listReports({
+    references: [
+      { source: "fixture", input: { account: "second" } },
+      { source: "missing", input: {} },
+    ],
+  });
+  expect(reports.map((entry) => entry.report.account.key)).toEqual(["default", "second"]);
+  expect(await registry.fetchReference({ source: "missing", input: {} })).toBeNull();
+});
+
 test("drops expired cached inputs on a later write", async () => {
   let now = 0;
   const registry = new UsageSourceRegistry(() => now, 100);

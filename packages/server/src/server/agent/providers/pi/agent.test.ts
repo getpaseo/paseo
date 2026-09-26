@@ -23,7 +23,7 @@ import {
   PiRpcAgentSession,
   transformPiModels,
 } from "./agent.js";
-import { FakePi } from "./test-utils/fake-pi.js";
+import { FakePi, type FakePiSession } from "./test-utils/fake-pi.js";
 import { createPiExtensionHost } from "./extensions/index.js";
 import { PiExtensionHost } from "./extensions/host.js";
 import type { PiModel, PiThinkingLevel } from "./rpc-types.js";
@@ -201,6 +201,57 @@ async function createSession(
   const events = new SessionEvents(session);
   return { pi, session, events };
 }
+
+test("Pi usage reference follows the current OAuth model and agent directory", async () => {
+  const agentDir = mkdtempSync(path.join(tmpdir(), "paseo-pi-usage-"));
+  try {
+    writeFileSync(
+      path.join(agentDir, "auth.json"),
+      JSON.stringify({
+        "openai-codex": {
+          type: "oauth",
+          access: "codex-token",
+          refresh: "refresh",
+          expires: Date.now() + 60_000,
+        },
+        anthropic: {
+          type: "oauth",
+          access: "claude-token",
+          refresh: "refresh",
+          expires: Date.now() + 60_000,
+        },
+      }),
+    );
+    const pi = new FakePi();
+    let runtime!: FakePiSession;
+    pi.queueSessionSetup((sessionRuntime) => {
+      runtime = sessionRuntime;
+      runtime.state.model = { provider: "openai-codex", id: "gpt", name: "GPT" };
+    });
+    const session = await createClient(pi).createSession(createConfig(), {
+      env: { PI_CODING_AGENT_DIR: agentDir },
+    });
+    expect(await session.getUsageReference?.()).toEqual({
+      source: "codex",
+      input: { accessToken: "codex-token" },
+    });
+    runtime.state.model = { provider: "anthropic", id: "claude", name: "Claude" };
+    expect(await session.getUsageReference?.()).toEqual({
+      source: "claude",
+      input: { accessToken: "claude-token" },
+    });
+    writeFileSync(
+      path.join(agentDir, "auth.json"),
+      JSON.stringify({ anthropic: { type: "api_key", key: "api-key" } }),
+    );
+    expect(await session.getUsageReference?.()).toBeNull();
+    runtime.state.model = { provider: "other", id: "other", name: "Other" };
+    expect(await session.getUsageReference?.()).toBeNull();
+    await session.close();
+  } finally {
+    rmSync(agentDir, { recursive: true, force: true });
+  }
+});
 
 test("forwards launch-context env to the Pi process launch", async () => {
   const pi = new FakePi();
