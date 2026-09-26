@@ -102,6 +102,8 @@ describe("OpenCodeBridge", () => {
     const paseoHome = await mkdtemp(path.join(tmpdir(), "paseo-opencode-bridge-"));
     temporaryDirectories.push(paseoHome);
     const catalog = createCatalog();
+    const executeTool = vi.fn(catalog.executeTool);
+    catalog.executeTool = executeTool;
     const bridge = new OpenCodeBridge({ paseoHome, logger: createTestLogger() });
     await bridge.start();
     bridge.setManifestCatalog(catalog);
@@ -179,6 +181,34 @@ describe("OpenCodeBridge", () => {
           { sessionID: "ses_one" },
         ),
       ).resolves.toMatchObject({ output: "through bundled plugin" });
+
+      const ask = vi.fn(async () => undefined);
+      await expect(
+        hooks.tool.paseo_echo_context.execute(
+          { value: "asked first" },
+          { sessionID: "ses_one", ask },
+        ),
+      ).resolves.toMatchObject({ output: "asked first" });
+      expect(ask).toHaveBeenCalledTimes(1);
+      expect(ask).toHaveBeenCalledWith(
+        expect.objectContaining({
+          permission: "paseo_echo_context",
+          patterns: ["*"],
+          always: ["*"],
+        }),
+      );
+
+      const denied = vi.fn(async () => {
+        throw new Error("permission denied");
+      });
+      const dispatchesBeforeDenial = executeTool.mock.calls.length;
+      await expect(
+        hooks.tool.paseo_echo_context.execute(
+          { value: "must not run" },
+          { sessionID: "ses_one", ask: denied },
+        ),
+      ).rejects.toThrow("permission denied");
+      expect(executeTool).toHaveBeenCalledTimes(dispatchesBeforeDenial);
 
       release();
       const pluginError = vi.spyOn(console, "error").mockImplementation(() => undefined);

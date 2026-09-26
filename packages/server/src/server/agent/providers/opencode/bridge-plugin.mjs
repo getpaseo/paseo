@@ -33,6 +33,14 @@ export default async function paseoPlugin(input, options) {
       description: definition.description,
       args: jsonSchemaObjectToZodShape(definition.inputSchema),
       execute: async (args, context) => {
+        if (typeof context?.ask === "function") {
+          await context.ask({
+            permission: `paseo_${definition.name}`,
+            patterns: ["*"],
+            always: ["*"],
+            metadata: { tool: definition.name },
+          });
+        }
         let result;
         try {
           result = await request(
