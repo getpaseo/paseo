@@ -78,6 +78,16 @@ describe("Pi tool call mapper", () => {
     expect(resolveToolCallName(toolCall, result)).toBe("browser");
   });
 
+  test("maps a running xdev write as unknown so its result survives the merge", () => {
+    const toolCall = parseToolArgs("write", { path: "xd://browser", content: "{}" });
+
+    expect(mapToolDetail(toolCall, null)).toEqual({
+      type: "unknown",
+      input: { path: "xd://browser", content: "{}" },
+      output: null,
+    });
+  });
+
   test("does not treat xdev help metadata as an executed inner tool", () => {
     const toolCall = parseToolArgs("write", {
       path: "xd://browser",

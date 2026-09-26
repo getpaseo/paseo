@@ -366,6 +366,17 @@ describe("OMP history mapper", () => {
         },
       },
     });
+    // The running row must share the completed row's detail type, or the timeline merge keeps
+    // the running detail and drops the result.
+    expect(
+      events.flatMap((event) =>
+        event.type === "timeline" &&
+        event.item.type === "tool_call" &&
+        event.item.callId === "xd-write-call"
+          ? [event.item.detail.type]
+          : [],
+      ),
+    ).toEqual(["unknown", "unknown"]);
   });
 
   test("maps only the active JSONL chain with native user ids and visible unknown roles", async () => {

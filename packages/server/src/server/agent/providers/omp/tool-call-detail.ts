@@ -374,6 +374,12 @@ function mapWriteToolDetail(args: WriteToolInput, result: OmpToolResult): ToolCa
     };
   }
 
+  // A write to `xd://` runs a tool; it is not a file write. It is `unknown` from its first
+  // event so the running and completed rows merge and the result is kept.
+  if (args.path.startsWith("xd://")) {
+    return { type: "unknown", input: args, output: result };
+  }
+
   return {
     type: "write",
     filePath: args.path,
