@@ -89,6 +89,20 @@ test("multiple rows without sticky are ambiguous", () => {
   f.db.close();
   expect(f.read()).toBeNull();
 });
+test("fallback counts only valid OAuth rows", () => {
+  const f = fixture();
+  f.row(1);
+  f.row(2, "openai-codex", { expires: Date.now() - 1 });
+  f.row(3, "openai-codex", { disabled: true });
+  f.db
+    .prepare("INSERT INTO auth_credentials VALUES (?, ?, ?, ?, ?)")
+    .run(4, "openai-codex", "oauth", "invalid-json", null);
+  f.db.close();
+  expect(f.read()).toEqual({
+    source: "codex",
+    input: { accessToken: "fixture-token-1", accountId: "account-1" },
+  });
+});
 test("disabled and expired rows do not resolve", () => {
   const a = fixture();
   a.row(1, "openai-codex", { disabled: true });
@@ -129,6 +143,20 @@ test("broker environment and config URLs block attribution", () => {
   );
   expect(f.read()).toBeNull();
 });
+test("broker config.yaml and flat keys block attribution with config.yml precedence", () => {
+  const f = fixture();
+  f.row(1);
+  f.db.close();
+  writeFileSync(join(f.agentDir, "config.yaml"), '"auth.broker.url": https://broker.invalid\n');
+  expect(f.read()).toBeNull();
+  writeFileSync(join(f.agentDir, "config.yml"), "auth:\n  broker: {}\n");
+  expect(f.read()).toEqual({
+    source: "codex",
+    input: { accessToken: "fixture-token-1", accountId: "account-1" },
+  });
+  writeFileSync(join(f.agentDir, "config.yml"), '"auth.broker.url": https://broker.invalid\n');
+  expect(f.read()).toBeNull();
+});
 test("models config API key overrides sticky OAuth", () => {
   const f = fixture();
   f.row(1);
@@ -159,7 +187,7 @@ test("Anthropic OAuth maps to Claude and changes are read on each request", () =
     }),
   ).toEqual({
     source: "claude",
-    input: { accessToken: "fixture-token-1", accountId: "account-1" },
+    input: { accessToken: "fixture-token-1" },
   });
   writeFileSync(
     join(f.agentDir, "config.yml"),

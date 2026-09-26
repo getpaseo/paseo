@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { join } from "node:path";
 
@@ -22,6 +22,7 @@ const oauthSchema = z.object({
 });
 const configSchema = z
   .object({
+    "auth.broker.url": z.string().optional(),
     auth: z
       .object({ broker: z.object({ url: z.string().optional() }).passthrough().optional() })
       .passthrough()
@@ -52,9 +53,16 @@ function readYaml(file: string): unknown {
 }
 
 function hasKeyOverride(provider: string, env: NodeJS.ProcessEnv, agentDir: string): boolean {
-  // Upstream: packages/coding-agent/src/session/auth-broker-config.ts:9-16.
-  const config = configSchema.safeParse(readYaml(join(agentDir, "config.yml")));
-  if (env.OMP_AUTH_BROKER_URL || (config.success && config.data.auth?.broker?.url)) return true;
+  // Upstream: packages/ai/src/auth-broker/discover.ts:87-110,197-225,321-329.
+  const configFile = ["config.yml", "config.yaml"]
+    .map((name) => join(agentDir, name))
+    .find((file) => existsSync(file));
+  const config = configSchema.safeParse(configFile ? readYaml(configFile) : undefined);
+  if (
+    env.OMP_AUTH_BROKER_URL ||
+    (config.success && (config.data.auth?.broker?.url ?? config.data["auth.broker.url"]))
+  )
+    return true;
   // Upstream: packages/ai/src/auth/cascade.ts:22-84.
   const models = modelsSchema.safeParse(readYaml(join(agentDir, "models.yml")));
   return models.success && models.data.providers?.[provider]?.apiKey !== undefined;
@@ -82,7 +90,25 @@ function readCredential(db: UsageDb, provider: string, sessionId: string): unkno
       "SELECT id, provider, credential_type, data, disabled_cause FROM auth_credentials WHERE provider = ? AND credential_type = 'oauth' AND disabled_cause IS NULL",
     )
     .all(provider);
-  return rows.length === 1 ? rows[0] : null;
+  const validRows = rows.filter((row) => validOAuthRow(row, provider));
+  return validRows.length === 1 ? validRows[0] : null;
+}
+
+function validOAuthRow(value: unknown, provider: string): boolean {
+  const row = rowSchema.safeParse(value);
+  if (
+    !row.success ||
+    row.data.provider !== provider ||
+    row.data.credential_type !== "oauth" ||
+    row.data.disabled_cause !== null
+  )
+    return false;
+  try {
+    const oauth = oauthSchema.safeParse(JSON.parse(row.data.data));
+    return oauth.success && oauth.data.expires > Date.now();
+  } catch {
+    return false;
+  }
 }
 
 /** Read OMP's current credential attribution without changing its store. */
@@ -120,6 +146,9 @@ export function resolveOmpUsageReference(
     // Upstream: packages/ai/src/auth/sqlite-credential-store.ts:117-155 stores OAuth data as JSON without type.
     const oauth = oauthSchema.safeParse(JSON.parse(row.data.data));
     if (!oauth.success || oauth.data.expires <= Date.now()) return null;
+    if (source === "claude") {
+      return { source, input: { accessToken: oauth.data.access } };
+    }
     return {
       source,
       input: {
