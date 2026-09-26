@@ -148,6 +148,7 @@ export interface PaseoToolHostDependencies {
   paseoToolPolicy?: ProviderPaseoToolsPolicy;
   paseoHome?: string;
   worktreesRoot?: string;
+  createRouter?: import("../../system-one/create-routing.js").CreateRouter;
   /**
    * ID of the agent that is using this tool catalog.
    * Used for cwd/mode inheritance when agents spawn child agents.
@@ -1556,6 +1557,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
           ...(options.ensureWorkspaceForCreate
             ? { ensureWorkspaceForCreate: options.ensureWorkspaceForCreate }
             : {}),
+          ...(options.createRouter ? { createRouter: options.createRouter } : {}),
         },
         {
           kind: "mcp",

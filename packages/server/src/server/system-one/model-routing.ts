@@ -1,9 +1,12 @@
 import type { AgentPromptInput } from "../agent/agent-sdk-types.js";
+import type { ProviderUsage } from "../messages.js";
+import type { ProviderUsageListResult } from "../../services/quota-fetcher/service.js";
 import { parseChoiceAnswer, type TypeSafeChoiceQuestion } from "../browser-tools/jev-client.js";
 import type { DaemonConfigStore } from "../daemon-config-store.js";
 import { loadPersistedConfig } from "../persisted-config.js";
 import { isSystemOneExcluded } from "./scope.js";
 import { createConfiguredSystemOneDecisionSource } from "./tools.js";
+import { CREATE_ROUTING_EXHAUSTED_PCT, isProviderExhaustedForCreate } from "./create-routing.js";
 
 const MAX_TASK_CHARS = 6_000;
 
@@ -34,6 +37,7 @@ export type TurnRouter = (input: TurnRouteInput) => Promise<TurnRoute | null>;
 export function createSystemOneTurnRouter(options: {
   paseoHome: string;
   daemonConfigStore: Pick<DaemonConfigStore, "get">;
+  getUsage?: () => Promise<ProviderUsageListResult | null>;
 }): TurnRouter {
   return async (input) => {
     const systemOne = options.daemonConfigStore.get().systemOne;
@@ -43,24 +47,73 @@ export function createSystemOneTurnRouter(options: {
     if (!systemOne?.enabled || !ladder || isSystemOneExcluded(options.paseoHome, input.cwd)) {
       return null;
     }
+    const exhausted = await isProviderExhausted(options.getUsage, input.provider);
+    // An exhausted provider must not burn more quota: on the first turn fall
+    // back to the cheapest rung without spending a Jev call, afterwards keep
+    // the current setting.
+    if (exhausted) {
+      if (!input.isFirstTurn) return null;
+      return cheapestRoute(ladder, input.model, input.thinkingOptionId);
+    }
     const task = promptText(input.prompt).slice(0, MAX_TASK_CHARS);
     if (task.trim().length === 0) return null;
 
-    const questions: Record<string, TypeSafeChoiceQuestion> = {
-      model: {
-        type: "choice",
-        instructions:
-          "Pick the least capable model tier that will still do this coding-agent task well. Cheaper tiers save real money; only escalate when the task needs it.",
-        criteria: tierCriteria(ladder.models.length, MODEL_TIER_TEXT),
-      },
-    };
-    if (ladder.thinking) {
-      questions.thinking = {
-        type: "choice",
-        instructions: "Pick the minimum reasoning depth that is still sufficient for this task.",
-        criteria: tierCriteria(ladder.thinking.length, THINKING_TIER_TEXT),
-      };
+    const answers = await decideTurnTiers(options, input, task, ladder);
+    // Fail-open cheap on the first turn: when Jev is unreachable, fall back
+    // to the cheapest rung instead of keeping a costly default.
+    if (!answers) {
+      if (!input.isFirstTurn) return null;
+      return cheapestRoute(ladder, input.model, input.thinkingOptionId);
     }
+    return routeFromTiers({
+      answers,
+      ladder,
+      minimumConfidence: systemOne.minimumConfidence,
+      currentModel: input.model,
+      currentThinking: input.thinkingOptionId,
+      isFirstTurn: input.isFirstTurn,
+    });
+  };
+}
+
+function cheapestRoute(
+  ladder: { models: string[]; thinking?: string[] },
+  currentModel: string | undefined,
+  currentThinking: string | undefined,
+): TurnRoute | null {
+  const route: TurnRoute = {};
+  if (ladder.models[0] && ladder.models[0] !== currentModel) route.model = ladder.models[0];
+  if (ladder.thinking?.[0] && ladder.thinking[0] !== currentThinking) {
+    route.thinkingOptionId = ladder.thinking[0];
+  }
+  return Object.keys(route).length > 0 ? route : null;
+}
+
+async function decideTurnTiers(
+  options: {
+    paseoHome: string;
+    daemonConfigStore: Pick<DaemonConfigStore, "get">;
+  },
+  input: TurnRouteInput,
+  task: string,
+  ladder: { models: string[]; thinking?: string[] },
+): Promise<Record<string, unknown> | null> {
+  const questions: Record<string, TypeSafeChoiceQuestion> = {
+    model: {
+      type: "choice",
+      instructions:
+        "Pick the least capable model tier that will still do this coding-agent task well. Cheaper tiers save real money; only escalate when the task needs it.",
+      criteria: tierCriteria(ladder.models.length, MODEL_TIER_TEXT),
+    },
+  };
+  if (ladder.thinking) {
+    questions.thinking = {
+      type: "choice",
+      instructions: "Pick the minimum reasoning depth that is still sufficient for this task.",
+      criteria: tierCriteria(ladder.thinking.length, THINKING_TIER_TEXT),
+    };
+  }
+  try {
     const decision = await createConfiguredSystemOneDecisionSource(
       options.paseoHome,
       options.daemonConfigStore,
@@ -69,27 +122,39 @@ export function createSystemOneTurnRouter(options: {
       state: { task, provider: input.provider, currentModel: input.model ?? null },
       questions,
     });
+    return decision.answers;
+  } catch {
+    return null;
+  }
+}
 
-    const route: TurnRoute = {};
-    const model = pickTier(decision.answers.model, ladder.models, systemOne.minimumConfidence);
-    if (model && allowedStep(ladder.models, input.model, model, input.isFirstTurn)) {
-      route.model = model;
+function routeFromTiers(params: {
+  answers: Record<string, unknown>;
+  ladder: { models: string[]; thinking?: string[] };
+  minimumConfidence: number;
+  currentModel: string | undefined;
+  currentThinking: string | undefined;
+  isFirstTurn: boolean;
+}): TurnRoute | null {
+  const route: TurnRoute = {};
+  const model = pickTier(params.answers.model, params.ladder.models, params.minimumConfidence);
+  if (model && allowedStep(params.ladder.models, params.currentModel, model, params.isFirstTurn)) {
+    route.model = model;
+  }
+  if (params.ladder.thinking) {
+    const thinking = pickTier(
+      params.answers.thinking,
+      params.ladder.thinking,
+      params.minimumConfidence,
+    );
+    if (
+      thinking &&
+      allowedStep(params.ladder.thinking, params.currentThinking, thinking, params.isFirstTurn)
+    ) {
+      route.thinkingOptionId = thinking;
     }
-    if (ladder.thinking) {
-      const thinking = pickTier(
-        decision.answers.thinking,
-        ladder.thinking,
-        systemOne.minimumConfidence,
-      );
-      if (
-        thinking &&
-        allowedStep(ladder.thinking, input.thinkingOptionId, thinking, input.isFirstTurn)
-      ) {
-        route.thinkingOptionId = thinking;
-      }
-    }
-    return Object.keys(route).length > 0 ? route : null;
-  };
+  }
+  return Object.keys(route).length > 0 ? route : null;
 }
 
 const MODEL_TIER_TEXT = {
@@ -153,4 +218,20 @@ function promptText(prompt: AgentPromptInput): string {
     .map((block) => (block.type === "text" ? block.text : ""))
     .filter(Boolean)
     .join("\n");
+}
+
+async function isProviderExhausted(
+  getUsage: (() => Promise<ProviderUsageListResult | null>) | undefined,
+  provider: string,
+): Promise<boolean> {
+  if (!getUsage) return false;
+  try {
+    const usage = await getUsage();
+    const entry: ProviderUsage | undefined = usage?.providers.find(
+      (candidate) => candidate.providerId === provider,
+    );
+    return isProviderExhaustedForCreate(entry, CREATE_ROUTING_EXHAUSTED_PCT);
+  } catch {
+    return false;
+  }
 }

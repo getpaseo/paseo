@@ -2,6 +2,8 @@ import { describeHookWorkspace } from "./plugins/lifecycle/index.js";
 import { isShadowModeEnabled } from "./system-one/scope.js";
 import { ShadowPredictor } from "./system-one/shadow-predictor.js";
 import { createSystemOneTurnRouter } from "./system-one/model-routing.js";
+import { createSystemOneCreateRouter } from "./system-one/create-routing.js";
+import { ProviderUsageService } from "../services/quota-fetcher/service.js";
 import { isSystemOneExcluded } from "./system-one/scope.js";
 import express from "express";
 import { createServer as createHTTPServer, type IncomingMessage, type ServerResponse } from "http";
@@ -1251,6 +1253,13 @@ export async function createPaseoDaemon(
     );
   };
 
+  const providerUsageService = new ProviderUsageService({ logger });
+  const getProviderUsageForRouting = () => providerUsageService.listUsage().catch(() => null);
+  const createRouter = createSystemOneCreateRouter({
+    paseoHome: config.paseoHome,
+    daemonConfigStore,
+    getUsage: getProviderUsageForRouting,
+  });
   const createAgentCommandDependencies: CreateAgentCommandDependencies = {
     agentManager,
     agentStorage,
@@ -1261,6 +1270,7 @@ export async function createPaseoDaemon(
     providerSnapshotManager,
     createPaseoWorktree: createPaseoWorktreeForTools,
     ensureWorkspaceForCreate: ensureWorkspaceForCreateAndBroadcastExternal,
+    createRouter,
   };
   const createAgent = (input: Parameters<typeof createAgentCommand>[1]) =>
     createAgentCommand(createAgentCommandDependencies, input);
@@ -1515,6 +1525,7 @@ export async function createPaseoDaemon(
       clearWorkspaceArchiving: clearWorkspaceArchivingExternal,
       ensureWorkspaceForCreate: createAgentCommandDependencies.ensureWorkspaceForCreate,
       createPaseoWorktree: createAgentCommandDependencies.createPaseoWorktree,
+      createRouter,
       browserToolsEnabled: browserToolsPolicy.isEnabled(),
       browserToolsBroker,
       browserActivity,
@@ -1564,7 +1575,11 @@ export async function createPaseoDaemon(
   });
   agentManager.setStreamObserver((agent, event) => shadowPredictor.observe(agent, event));
   agentManager.setTurnRouter(
-    createSystemOneTurnRouter({ paseoHome: config.paseoHome, daemonConfigStore }),
+    createSystemOneTurnRouter({
+      paseoHome: config.paseoHome,
+      daemonConfigStore,
+      getUsage: getProviderUsageForRouting,
+    }),
   );
   agentManager.setBlockedMcpServers(() =>
     browserToolsPolicy.isEnabled() ? COMPETING_BROWSER_MCP_SERVERS : [],

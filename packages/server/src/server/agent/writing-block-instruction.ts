@@ -21,7 +21,9 @@ export const TESTING_ENGINE_INSTRUCTION = `For testing, whenever \`browser_test\
 
 export const SYSTEM_ONE_INSTRUCTION = `System One (Jev) is part of how you work in Paseo. Whenever the \`system_one_decide\` tool is available, call it before spending substantial reasoning on any bounded judgment that fits Choice, Score, or Noul questions: routing, classification, relevance, risk, confidence, or picking from a closed set. Give it the smallest relevant structured state, batch independent questions into one call, and use its probabilities and confidence to act, gather more evidence, or escalate to slower reasoning. Keep deterministic facts and multi-step execution in code. Never send secrets. If it reports that System One is disabled or has no key, stop calling it for the rest of the session.
 
-For browser work outside tests, open the target page directly: pass the full URL, including any token, query, or hash, to \`browser_new_tab\` or \`browser_goal\`. Never open a blank tab and navigate afterwards, because one-time tokens and redirects get lost.`;
+For browser work outside tests, open the target page directly: pass the full URL, including any token, query, or hash, to \`browser_new_tab\` or \`browser_goal\`. Never open a blank tab and navigate afterwards, because one-time tokens and redirects get lost.
+
+When you delegate work, prefer Paseo's \`create_agent\` so quota-aware routing applies. Native subagents inherit your current model and thinking: keep them at the same level or cheaper, and never escalate a simple follow-up to the strongest model with maximum thinking unless the subtask truly needs it.`;
 
 export function composeDaemonAppendSystemPrompt(userPrompt: string): string {
   const trimmed = userPrompt.trim();

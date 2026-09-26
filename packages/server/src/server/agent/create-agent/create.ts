@@ -46,6 +46,7 @@ export interface CreateAgentCommandDependencies {
   createPaseoWorktree?: CreatePaseoWorktreeWorkflowFn;
   // Mints a fresh directory workspace for a cwd and returns its id.
   ensureWorkspaceForCreate?: EnsureWorkspaceForCreate;
+  createRouter?: import("../../system-one/create-routing.js").CreateRouter;
 }
 
 export type EnsureWorkspaceForCreate = (
@@ -308,7 +309,9 @@ async function resolveMcpCreateAgent(
   input: CreateAgentFromMcpInput,
 ): Promise<ResolvedCreateAgent> {
   const resolvedProviderModel = resolveProviderModel(input.provider);
-  const provider = resolvedProviderModel.provider;
+  let provider = resolvedProviderModel.provider;
+  let requestedModel = resolvedProviderModel.model;
+  let requestedThinking = input.thinking;
   const parentAgent = input.callerAgentId
     ? requireParentAgent(dependencies.agentManager, input.callerAgentId)
     : null;
@@ -338,9 +341,30 @@ async function resolveMcpCreateAgent(
       cwd: resolvedCwd,
     }),
   });
-  const resolvedCreateConfig = await resolveMcpProviderCreateConfig({
+  // Quota-aware auto-routing for agent-spawned children. Human top-level
+  // creates keep their explicit choice; subagents get the cheapest sufficient
+  // provider/model. Fail-open: routing never blocks creation.
+  const routedSelection = await applySubagentCreateRouting({
     dependencies,
     input,
+    provider,
+    requestedModel,
+    requestedThinking,
+    resolvedCwd,
+  });
+  provider = routedSelection.provider;
+  requestedModel = routedSelection.requestedModel;
+  requestedThinking = routedSelection.requestedThinking;
+
+  const routedInput =
+    requestedThinking !== input.thinking ? { ...input, thinking: requestedThinking } : input;
+  const routedProviderModel =
+    requestedModel !== resolvedProviderModel.model
+      ? { provider, model: requestedModel }
+      : { provider, model: resolvedProviderModel.model };
+  const resolvedCreateConfig = await resolveMcpProviderCreateConfig({
+    dependencies,
+    input: routedInput,
     provider,
     resolvedCwd,
     parentAgent,
@@ -349,8 +373,8 @@ async function resolveMcpCreateAgent(
   const trimmedPrompt = input.initialPrompt?.trim() ?? "";
   return {
     config: buildMcpSessionConfig({
-      input,
-      resolvedProviderModel,
+      input: routedInput,
+      resolvedProviderModel: routedProviderModel,
       provider,
       resolvedCwd: intent.cwd,
       trimmedPrompt,
@@ -369,6 +393,47 @@ async function resolveMcpCreateAgent(
     background: input.background,
     promptFailure: input.promptFailure ?? "log",
   };
+}
+
+async function applySubagentCreateRouting(params: {
+  dependencies: CreateAgentCommandDependencies;
+  input: CreateAgentFromMcpInput;
+  provider: string;
+  requestedModel: string | undefined;
+  requestedThinking: string | undefined;
+  resolvedCwd: string;
+}): Promise<{
+  provider: string;
+  requestedModel: string | undefined;
+  requestedThinking: string | undefined;
+}> {
+  const { dependencies, input } = params;
+  let { provider, requestedModel, requestedThinking } = params;
+  if (!dependencies.createRouter || !input.callerAgentId || input.internal) {
+    return { provider, requestedModel, requestedThinking };
+  }
+  try {
+    const route = await dependencies.createRouter({
+      requestedProvider: provider,
+      requestedModel,
+      requestedThinking,
+      prompt: input.initialPrompt ?? "",
+      cwd: params.resolvedCwd,
+      isAgentScoped: true,
+    });
+    if (route) {
+      provider = route.provider;
+      if (route.model !== undefined) requestedModel = route.model;
+      if (route.thinkingOptionId !== undefined) requestedThinking = route.thinkingOptionId;
+      dependencies.logger.info(
+        { parentAgentId: input.callerAgentId, provider, model: requestedModel },
+        "System One routed new subagent",
+      );
+    }
+  } catch (error) {
+    dependencies.logger.warn({ err: error }, "System One subagent routing failed");
+  }
+  return { provider, requestedModel, requestedThinking };
 }
 
 function resolveMcpInitialCwd(
