@@ -71,6 +71,7 @@ import {
   ClaudeCodeIcon,
   CodexIcon,
   CursorIcon,
+  MuseIcon,
   OpenCodeIcon,
   PiIcon,
 } from "~/components/agent-icons";
@@ -428,6 +429,7 @@ function MultiProviderSection() {
     { name: "OpenCode", icon: <OpenCodeIcon className={PROVIDER_ICON_CLASS} /> },
     { name: "Pi", icon: <PiIcon className={PROVIDER_ICON_CLASS} /> },
     { name: "Cursor", icon: <CursorIcon className={PROVIDER_ICON_CLASS} /> },
+    { name: "Muse", icon: <MuseIcon className={PROVIDER_ICON_CLASS} /> },
   ];
 
   return (

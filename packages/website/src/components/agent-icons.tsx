@@ -65,6 +65,24 @@ export function CursorIcon(props: React.SVGProps<SVGSVGElement>) {
   );
 }
 
+export function MuseIcon(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2.2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      {...props}
+    >
+      <path d="M4.5 19.5v-13l5 6.5 2.5-3.25 2.5 3.25 5-6.5v13" />
+    </svg>
+  );
+}
+
 export function PiIcon(props: React.SVGProps<SVGSVGElement>) {
   return (
     <svg

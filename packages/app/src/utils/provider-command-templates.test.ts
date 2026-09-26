@@ -22,4 +22,14 @@ describe("buildProviderCommand", () => {
       }),
     ).toBe("opencode --session ses_abc123");
   });
+
+  test("builds Muse resume commands from native session ids", () => {
+    expect(
+      buildProviderCommand({
+        provider: "muse",
+        id: "resume",
+        sessionId: "019a7f3e-9b1c-7c2e-9f2a-1c3d5e7a9b1c",
+      }),
+    ).toBe("muse resume 019a7f3e-9b1c-7c2e-9f2a-1c3d5e7a9b1c");
+  });
 });
