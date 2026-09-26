@@ -17,9 +17,8 @@ import {
   type PendingTerminalModifiers,
   isAppleHandheldPlatform,
   isTerminalModifierDomKey,
-  mergeTerminalModifiers,
   normalizeDomTerminalKey,
-  normalizeTerminalTransportKey,
+  resolveDomTerminalKeyInput,
   shouldInterceptDomTerminalKey,
 } from "@/utils/terminal-keys";
 import { renderTerminalSnapshotToAnsi } from "./terminal-snapshot";
@@ -344,32 +343,26 @@ export class TerminalEmulatorRuntime {
         return true;
       }
 
+      const keyEvent = {
+        key: normalizedKey,
+        ctrlKey: event.ctrlKey,
+        shiftKey: event.shiftKey,
+        altKey: event.altKey,
+        metaKey: event.metaKey,
+        pendingModifiers: this.pendingModifiers,
+        isMac: this.options.isMac,
+        isAppleHandheld,
+      };
       if (
         !shouldInterceptDomTerminalKey({
-          key: normalizedKey,
-          ctrlKey: event.ctrlKey,
-          shiftKey: event.shiftKey,
-          altKey: event.altKey,
-          metaKey: event.metaKey,
-          pendingModifiers: this.pendingModifiers,
+          ...keyEvent,
           enhancedInputActive: this.inputModeTracker.supportsModifiedEnter(),
-          isAppleHandheld,
         })
       ) {
         return true;
       }
 
-      const modifiers = mergeTerminalModifiers({
-        pendingModifiers: this.pendingModifiers,
-        ctrlKey: event.ctrlKey,
-        shiftKey: event.shiftKey,
-        altKey: event.altKey,
-        metaKey: event.metaKey,
-      });
-      this.callbacks.onTerminalKey?.({
-        key: normalizeTerminalTransportKey(normalizedKey),
-        ...modifiers,
-      });
+      this.callbacks.onTerminalKey?.(resolveDomTerminalKeyInput(keyEvent));
 
       if (this.pendingModifiers.ctrl || this.pendingModifiers.shift || this.pendingModifiers.alt) {
         this.callbacks.onPendingModifiersConsumed?.();
