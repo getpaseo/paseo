@@ -93,10 +93,11 @@ export class OmpHarness {
   async start(
     config: Partial<AgentSessionConfig> = {},
     paseoTools?: PaseoToolCatalog,
+    env?: Record<string, string>,
   ): Promise<void> {
     const session = await this.client.createSession(
       { provider: "omp", cwd: CWD, ...config },
-      paseoTools ? { paseoTools } : undefined,
+      paseoTools || env ? { paseoTools, env } : undefined,
     );
     if (!(session instanceof OmpAgentSession)) {
       throw new Error("OMP client returned a non-OMP session");
@@ -480,6 +481,10 @@ export class OmpHarness {
 
   runtime() {
     return this.omp.latestSession();
+  }
+
+  async getUsageReference() {
+    return this.requireSession().getUsageReference();
   }
 
   runningToolCallIds(): string[] {
