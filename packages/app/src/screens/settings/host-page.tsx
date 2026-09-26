@@ -364,12 +364,6 @@ export function HostSettingsPage({
 
   return (
     <View>
-      <View style={styles.daemonHeader}>
-        <Text style={styles.daemonHeaderLabel} numberOfLines={1}>
-          {host.label}
-        </Text>
-      </View>
-
       <HostStatusBadges serverId={serverId} />
 
       <HostAppearanceSection host={host} />
@@ -1699,18 +1693,6 @@ const styles = StyleSheet.create((theme) => ({
   updateFailure: {
     marginHorizontal: theme.spacing[4],
     marginBottom: theme.spacing[4],
-  },
-  daemonHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[1],
-    marginBottom: theme.spacing[4],
-  },
-  daemonHeaderLabel: {
-    flexShrink: 1,
-    fontSize: theme.fontSize.base,
-    fontWeight: theme.fontWeight.medium,
-    color: theme.colors.foreground,
   },
   identityBadges: {
     flexDirection: "row",

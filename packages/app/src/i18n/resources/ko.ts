@@ -1959,8 +1959,11 @@ export const ko: TranslationResources = {
     groupInfo: "{{title}} 정보",
     sections: {
       general: "일반",
+      chat: "채팅",
       appearance: "모양",
-      layout: en.settings.sections.layout,
+      sidebar: "사이드바",
+      terminal: "터미널",
+      browser: "브라우저",
       editor: "편집기",
       shortcuts: "단축키",
       integrations: "통합",
@@ -2019,6 +2022,7 @@ export const ko: TranslationResources = {
     },
     general: {
       title: "일반",
+      sending: "전송",
       browserData: {
         title: "브라우저 데이터",
         siteData: "쿠키 및 사이트 데이터",
@@ -2047,8 +2051,6 @@ export const ko: TranslationResources = {
         },
       },
       serviceUrls: {
-        label: "서비스 URL",
-        description: "실행 중인 스크립트의 URL을 열 위치",
         options: {
           ask: "물어보기",
           inApp: "Paseo에서",
@@ -2067,7 +2069,6 @@ export const ko: TranslationResources = {
       toolCallDetail: {
         label: "도구 호출 표시",
         description: "타임라인에 도구 호출이 표시되는 방식",
-        accessibilityLabel: "도구 호출 표시 선택({{value}})",
         options: {
           overview: "요약",
           detailed: "전체 세부정보",

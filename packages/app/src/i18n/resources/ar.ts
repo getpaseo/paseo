@@ -1949,8 +1949,11 @@ export const ar: TranslationResources = {
     groupInfo: "حول{{title}}",
     sections: {
       general: "عام",
+      chat: "الدردشة",
       appearance: "مظهر",
-      layout: en.settings.sections.layout,
+      sidebar: "الشريط الجانبي",
+      terminal: "الطرفية",
+      browser: "المتصفح",
       editor: "المحرر",
       shortcuts: "الاختصارات",
       integrations: "التكامل",
@@ -2009,6 +2012,7 @@ export const ar: TranslationResources = {
     },
     general: {
       title: "عام",
+      sending: "الإرسال",
       browserData: {
         title: "بيانات المتصفح",
         siteData: "ملفات تعريف الارتباط وبيانات المواقع",
@@ -2036,8 +2040,6 @@ export const ar: TranslationResources = {
         },
       },
       serviceUrls: {
-        label: "عناوين URL للخدمة",
-        description: "مكان فتح عناوين URL من تشغيل البرامج النصية",
         options: {
           ask: "بسأل",
           inApp: "في Paseo",
@@ -2056,7 +2058,6 @@ export const ar: TranslationResources = {
       toolCallDetail: {
         label: "عرض استدعاءات الأدوات",
         description: "كيفية ظهور استدعاءات الأدوات في المخطط الزمني",
-        accessibilityLabel: "حدد عرض استدعاءات الأدوات ({{value}})",
         options: {
           overview: "ملخص",
           detailed: "التفاصيل الكاملة",

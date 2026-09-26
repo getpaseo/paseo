@@ -57,7 +57,7 @@ export async function seedSidebarNavPreferences(
 
 export async function openSidebarNavSettings(page: Page): Promise<void> {
   await openSettings(page);
-  await openSettingsSection(page, "appearance");
+  await openSettingsSection(page, "sidebar");
   await expect(page.getByTestId("sidebar-nav-section")).toBeVisible({ timeout: 30_000 });
 }
 

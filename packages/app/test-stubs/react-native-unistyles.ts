@@ -7,6 +7,10 @@ const testTheme = {
     statusDanger: "#b91c1c",
     statusWarning: "#d97706",
     statusMerged: "#7c3aed",
+    // Same rule as the real theme: the status color at 12%.
+    statusSuccessTint: "#15803d1f",
+    statusDangerTint: "#b91c1c1f",
+    statusWarningTint: "#d977061f",
     // The light band's values, so a test can name the colour it expects.
     statusDotSuccess: "#299f51",
     statusDotDanger: "#f12e2f",

@@ -1,9 +1,9 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
-import { Text, View, type PressableStateCallbackType } from "react-native";
+import { Text, View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import { ChevronDown, Monitor, Moon, Sun } from "lucide-react-native";
+import { Monitor, Moon, Sun } from "lucide-react-native";
 import {
   SYNTAX_THEME_OPTIONS,
   type SyntaxThemeId,
@@ -14,9 +14,8 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
-  DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { SettingsCard, SettingsSwitch } from "@/components/settings";
+import { DropdownTrigger } from "@/components/ui/dropdown-trigger";
 import { SettingsSection } from "@/components/settings/headings/settings-section";
 import { useContributedThemes } from "@/appearance/provider";
 import { EditingTextInput as TextInput } from "@/components/ui/text-input";
@@ -46,7 +45,6 @@ import { isNative } from "@/constants/platform";
 import type { PluginThemeOption } from "@/plugins/themes";
 import { settingsStyles } from "@/styles/settings";
 import { AppearancePreview } from "./appearance-preview";
-import { SidebarNavSection } from "./sidebar-nav-section";
 
 // ---------------------------------------------------------------------------
 // Theme-reactive leaf icons (withUnistyles + uniProps color mapping — no
@@ -57,7 +55,6 @@ import { SidebarNavSection } from "./sidebar-nav-section";
 const ThemedSun = withUnistyles(Sun);
 const ThemedMoon = withUnistyles(Moon);
 const ThemedMonitor = withUnistyles(Monitor);
-const ThemedChevronDown = withUnistyles(ChevronDown);
 
 const mutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 
@@ -81,10 +78,6 @@ function sizeDraftToOverride(value: string): number | undefined {
   if (value.length === 0) return undefined;
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) ? parsed : undefined;
-}
-
-function dropdownTriggerStyle({ pressed }: PressableStateCallbackType) {
-  return [styles.trigger, pressed ? styles.triggerPressed : null];
 }
 
 // ---------------------------------------------------------------------------
@@ -175,26 +168,29 @@ function ThemeRow({
   const selectedLabel = selectedPluginTheme
     ? selectedPluginTheme.name
     : getThemeLabel(t, builtInValue);
+  const leading = useMemo(
+    () =>
+      selectedPluginTheme ? (
+        <ThemeSwatch color={selectedPluginTheme.swatch} />
+      ) : (
+        <ThemeLeading themeValue={builtInValue} />
+      ),
+    [builtInValue, selectedPluginTheme],
+  );
   return (
     <View style={settingsStyles.row}>
       <View style={settingsStyles.rowContent}>
         <Text style={settingsStyles.rowTitle}>{t("settings.appearance.theme.title")}</Text>
       </View>
       <DropdownMenu>
-        <DropdownMenuTrigger
-          style={dropdownTriggerStyle}
+        <DropdownTrigger
           accessibilityLabel={t("settings.appearance.theme.accessibilityLabel", {
             value: selectedLabel,
           })}
+          leading={leading}
         >
-          {selectedPluginTheme ? (
-            <ThemeSwatch color={selectedPluginTheme.swatch} />
-          ) : (
-            <ThemeLeading themeValue={builtInValue} />
-          )}
-          <Text style={styles.triggerText}>{selectedLabel}</Text>
-          <ThemedChevronDown size={ICON_SIZE.sm} uniProps={mutedColorMapping} />
-        </DropdownMenuTrigger>
+          {selectedLabel}
+        </DropdownTrigger>
         <DropdownMenuContent side="bottom" align="end" width={200} scrollable>
           {THEME_OPTIONS.map((option, index) => {
             const previousOption = THEME_OPTIONS[index - 1];
@@ -218,109 +214,6 @@ function ThemeRow({
               option={option}
               selected={selectedPluginTheme?.id === option.id}
               onSelect={onSelectPluginTheme}
-            />
-          ))}
-        </DropdownMenuContent>
-      </DropdownMenu>
-    </View>
-  );
-}
-
-interface AutoExpandReasoningRowProps {
-  value: boolean;
-  onChange: (value: boolean) => void;
-}
-
-function AutoExpandReasoningRow({ value, onChange }: AutoExpandReasoningRowProps) {
-  const { t } = useTranslation();
-  return (
-    <SettingsSwitch
-      label={t("settings.general.autoExpandReasoning.label")}
-      hint={t("settings.general.autoExpandReasoning.description")}
-      value={value}
-      onValueChange={onChange}
-    />
-  );
-}
-
-interface ChatOutlineRowProps {
-  value: boolean;
-  onChange: (value: boolean) => void;
-}
-
-function ChatOutlineRow({ value, onChange }: ChatOutlineRowProps) {
-  const { t } = useTranslation();
-  return (
-    <SettingsSwitch
-      label={t("settings.appearance.chatOutline.title")}
-      hint={t("settings.appearance.chatOutline.description")}
-      value={value}
-      onValueChange={onChange}
-    />
-  );
-}
-
-const TOOL_CALL_DETAIL_LEVELS: readonly AppSettings["toolCallDetailLevel"][] = [
-  "detailed",
-  "overview",
-];
-
-function getToolCallDetailLevelLabel(
-  t: TFunction,
-  value: AppSettings["toolCallDetailLevel"],
-): string {
-  return t(`settings.general.toolCallDetail.options.${value}`);
-}
-
-interface ToolCallDetailMenuItemProps {
-  value: AppSettings["toolCallDetailLevel"];
-  selected: boolean;
-  onChange: (value: AppSettings["toolCallDetailLevel"]) => void;
-}
-
-function ToolCallDetailMenuItem({ value, selected, onChange }: ToolCallDetailMenuItemProps) {
-  const { t } = useTranslation();
-  const handleSelect = useCallback(() => onChange(value), [onChange, value]);
-  return (
-    <DropdownMenuItem selected={selected} onSelect={handleSelect}>
-      {getToolCallDetailLevelLabel(t, value)}
-    </DropdownMenuItem>
-  );
-}
-
-interface ToolCallDetailRowProps {
-  value: AppSettings["toolCallDetailLevel"];
-  onChange: (value: AppSettings["toolCallDetailLevel"]) => void;
-}
-
-function ToolCallDetailRow({ value, onChange }: ToolCallDetailRowProps) {
-  const { t } = useTranslation();
-  const selectedLabel = getToolCallDetailLevelLabel(t, value);
-  return (
-    <View style={settingsStyles.row}>
-      <View style={settingsStyles.rowContent}>
-        <Text style={settingsStyles.rowTitle}>{t("settings.general.toolCallDetail.label")}</Text>
-        <Text style={settingsStyles.rowHint}>
-          {t("settings.general.toolCallDetail.description")}
-        </Text>
-      </View>
-      <DropdownMenu>
-        <DropdownMenuTrigger
-          style={dropdownTriggerStyle}
-          accessibilityLabel={t("settings.general.toolCallDetail.accessibilityLabel", {
-            value: selectedLabel,
-          })}
-        >
-          <Text style={styles.triggerText}>{selectedLabel}</Text>
-          <ThemedChevronDown size={ICON_SIZE.sm} uniProps={mutedColorMapping} />
-        </DropdownMenuTrigger>
-        <DropdownMenuContent side="bottom" align="end" width={200}>
-          {TOOL_CALL_DETAIL_LEVELS.map((option) => (
-            <ToolCallDetailMenuItem
-              key={option}
-              value={option}
-              selected={value === option}
-              onChange={onChange}
             />
           ))}
         </DropdownMenuContent>
@@ -478,15 +371,13 @@ function SyntaxRow({ value, onChange }: SyntaxRowProps) {
         </Text>
       </View>
       <DropdownMenu>
-        <DropdownMenuTrigger
-          style={dropdownTriggerStyle}
+        <DropdownTrigger
           accessibilityLabel={t("settings.appearance.syntax.highlightThemeAccessibility", {
             value: selectedLabel,
           })}
         >
-          <Text style={styles.triggerText}>{selectedLabel}</Text>
-          <ThemedChevronDown size={ICON_SIZE.sm} uniProps={mutedColorMapping} />
-        </DropdownMenuTrigger>
+          {selectedLabel}
+        </DropdownTrigger>
         <DropdownMenuContent side="bottom" align="end" width={200}>
           {SYNTAX_THEME_OPTIONS.map((option) => (
             <SyntaxMenuItem
@@ -552,27 +443,6 @@ export function AppearanceSection() {
   const handleSyntaxThemeChange = useCallback(
     (syntaxTheme: SyntaxThemeId) => {
       void updateSettings({ syntaxTheme });
-    },
-    [updateSettings],
-  );
-
-  const handleAutoExpandReasoningChange = useCallback(
-    (autoExpandReasoning: boolean) => {
-      void updateSettings({ autoExpandReasoning });
-    },
-    [updateSettings],
-  );
-
-  const handleToolCallDetailLevelChange = useCallback(
-    (toolCallDetailLevel: AppSettings["toolCallDetailLevel"]) => {
-      void updateSettings({ toolCallDetailLevel });
-    },
-    [updateSettings],
-  );
-
-  const handleChatOutlineChange = useCallback(
-    (chatOutlineEnabled: boolean) => {
-      void updateSettings({ chatOutlineEnabled });
     },
     [updateSettings],
   );
@@ -680,25 +550,6 @@ export function AppearanceSection() {
           />
         </View>
       </SettingsSection>
-      <SettingsSection title={t("settings.appearance.detailLevel.title")}>
-        <SettingsCard>
-          <AutoExpandReasoningRow
-            value={settings.autoExpandReasoning}
-            onChange={handleAutoExpandReasoningChange}
-          />
-          <ToolCallDetailRow
-            value={settings.toolCallDetailLevel}
-            onChange={handleToolCallDetailLevelChange}
-          />
-          {!isNative ? (
-            <ChatOutlineRow
-              value={settings.chatOutlineEnabled}
-              onChange={handleChatOutlineChange}
-            />
-          ) : null}
-        </SettingsCard>
-      </SettingsSection>
-      <SidebarNavSection />
       <SettingsSection title={t("settings.appearance.fonts.title")}>
         <View style={settingsStyles.card}>
           {showInterfaceFontFamilyRow ? (
@@ -776,23 +627,6 @@ const styles = StyleSheet.create((theme) => ({
     paddingHorizontal: theme.spacing[4],
     borderTopWidth: theme.borderWidth[1],
     borderTopColor: theme.colors.border,
-  },
-  trigger: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[1],
-    paddingVertical: theme.spacing[1],
-    paddingHorizontal: theme.spacing[2],
-    borderRadius: theme.borderRadius.md,
-    borderWidth: theme.borderWidth[1],
-    borderColor: theme.colors.border,
-  },
-  triggerPressed: {
-    opacity: 0.85,
-  },
-  triggerText: {
-    color: theme.colors.foreground,
-    fontSize: theme.fontSize.base,
   },
   swatch: {
     width: ICON_SIZE.md,
