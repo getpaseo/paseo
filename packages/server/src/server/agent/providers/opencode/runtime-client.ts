@@ -35,7 +35,7 @@ export function openCodeMajorVersion(output: string): 1 | 2 {
     const patch = Number(version[3]);
     if (minor < minimumMinor || (minor === minimumMinor && patch < minimumPatch))
       throw new Error(
-        `OpenCode ${version[0]} is not supported; update to 2.${minimumMinor}.${minimumPatch} or newer`,
+        `OpenCode ${version[1]}.${version[2]}.${version[3]} is too old for this Paseo integration. Update OpenCode to 2.${minimumMinor}.${minimumPatch} or newer, then refresh the provider in Paseo.`,
       );
     return 2;
   }
@@ -98,7 +98,11 @@ export class OpenCodeRuntimeClient implements AgentClient {
         managedProcesses: this.options.managedProcesses,
         bridge: this.options.bridge,
       });
-    })();
+    })().catch((error: unknown) => {
+      // A failed probe must not poison refresh after the user updates the binary.
+      this.selected = null;
+      throw error;
+    });
     return this.selected;
   }
   async isAvailable() {
