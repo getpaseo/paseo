@@ -4365,7 +4365,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     if (!this.matchesSteerAdmission({ client, threadId, nativeTurnId, foregroundTurnId })) {
       return { status: "unavailable" };
     }
-    const input = await this.buildUserInput(prompt);
+    const input = await this.buildUserInput(await this.attachMentionedSkills(prompt));
     if (!this.matchesSteerAdmission({ client, threadId, nativeTurnId, foregroundTurnId })) {
       return { status: "unavailable" };
     }

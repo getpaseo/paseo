@@ -242,6 +242,54 @@ describe("Codex active-turn steering admission", () => {
     appServer.assertNoErrors();
   });
 
+  test("a steer resolves a Codex skill mentioned after prose into app-server skill input", async () => {
+    const appServer = createFakeCodexAppServer({
+      "skills/list": () => ({
+        data: [
+          {
+            cwd: "/workspace/project",
+            skills: [
+              {
+                name: "paseo-implement",
+                description: "Execute an existing Paseo plan.",
+                path: "/workspace/skills/paseo-implement/SKILL.md",
+              },
+            ],
+            errors: [],
+          },
+        ],
+      }),
+      "turn/steer": () => ({ turn: { id: "native-A" } }),
+    });
+    const { session, paseoTurnId } = await startPublicSteeringSession(appServer);
+
+    await expect(
+      session.steerActiveTurn!("Then use /paseo-implement to complete it.", {
+        expectedTurnId: paseoTurnId,
+      }),
+    ).resolves.toEqual({ status: "accepted" });
+
+    const steer = appServer.requests().find((request) => request.method === "turn/steer");
+    expect(steer?.params).toEqual(
+      expect.objectContaining({
+        input: [
+          {
+            type: "skill",
+            name: "paseo-implement",
+            path: "/workspace/skills/paseo-implement/SKILL.md",
+          },
+          {
+            type: "text",
+            text: "Then use $paseo-implement to complete it.",
+            text_elements: [],
+          },
+        ],
+      }),
+    );
+    await session.close();
+    appServer.assertNoErrors();
+  });
+
   test("a clearing steer denies every pending permission through its provider handler", async () => {
     const appServer = createFakeCodexAppServer({
       "turn/steer": () => ({ turn: { id: "native-A" } }),
