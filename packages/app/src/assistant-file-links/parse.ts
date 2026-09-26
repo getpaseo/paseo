@@ -172,7 +172,7 @@ export function parseInlinePathToken(value: string): InlinePathTarget | null {
     return null;
   }
 
-  const normalizedPath = normalizePathToken(basePathRaw);
+  const normalizedPath = normalizePathToken(safeDecodeURIComponent(basePathRaw));
   if (!normalizedPath) {
     return null;
   }
@@ -315,7 +315,7 @@ export function parseAssistantFileLink(
 
   const windowsPathMatch = trimmed.match(/^([A-Za-z]:[\\/][^?#]*)(#[^?]+)?$/);
   if (windowsPathMatch) {
-    const normalizedPath = normalizePathToken(windowsPathMatch[1] ?? "");
+    const normalizedPath = normalizePathToken(safeDecodeURIComponent(windowsPathMatch[1] ?? ""));
     if (!normalizedPath) {
       return null;
     }
@@ -451,16 +451,17 @@ function parseLocalPathParts(
     };
   }
 
-  if (!beforeHash || beforeHash.includes(":")) {
+  const decodedPath = normalizePathToken(safeDecodeURIComponent(beforeHash));
+  if (!decodedPath || decodedPath.includes(":")) {
     return null;
   }
 
-  if (!isPlausibleAssistantLocalPath(beforeHash)) {
+  if (!isPlausibleAssistantLocalPath(decodedPath)) {
     return null;
   }
 
   return {
-    path: beforeHash,
+    path: decodedPath,
     lines: fragmentLines,
   };
 }
