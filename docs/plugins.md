@@ -272,6 +272,10 @@ RPC contracts validate inputs and outputs in both the app and plugin subprocess.
 typed async function. Use the host-provided `@tanstack/react-query` for request state and caching;
 Paseo gives each plugin installation its own query client.
 
+`defineRpc()` names identify methods inside the existing `plugin.rpc.invoke.request` and
+`plugin.rpc.invoke.response` WebSocket pair. Do not add `.request` or `.response` to a plugin method
+name; those direction suffixes belong to the transport messages, not the method routed inside them.
+
 `usePaseo()` and the handler's `{ paseo }` context expose the same `PaseoApi`: projects,
 workspaces, agents, terminals, providers, and daemon config. They do not expose connection lifecycle. A surface borrows the
 selected host's existing connection; switching the screen's host changes both `usePaseo()` and
@@ -498,6 +502,13 @@ Attachment sources stay scoped to the composer's host. Unlike sidebar contributi
 on several hosts are not coalesced. The selected snapshot submits as a text attachment with neutral
 external-resource presentation, so it remains readable if the plugin is removed or an older peer
 drops the optional presentation fields.
+
+Set an item's optional `contextKind` to `"chat_history"` when its text is an earlier conversation.
+Paseo then places that snapshot before the new user instruction instead of appending it as an
+ordinary resource.
+
+Set the source's optional `newAgentShortcut` to `true` when New Agent drafts should show a direct
+action beside Import Session. The source remains available from the attachment menu everywhere.
 
 ## Contribute settings
 

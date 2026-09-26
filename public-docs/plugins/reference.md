@@ -1755,7 +1755,7 @@ export default function contribute(server: PluginServerContext) {
 }
 ```
 
-Inputs and outputs are validated on both sides. RPC names start with a lowercase letter and contain lowercase letters, numbers, dots, hyphens, or underscores. `useRpc()` returns a typed async function. Use TanStack Query for request state, caching, and mutations.
+Inputs and outputs are validated on both sides. RPC names start with a lowercase letter and contain lowercase letters, numbers, dots, hyphens, or underscores. They identify methods inside the existing `plugin.rpc.invoke.request` and `plugin.rpc.invoke.response` WebSocket pair, so plugin method names do not add direction suffixes. `useRpc()` returns a typed async function. Use TanStack Query for request state, caching, and mutations.
 
 Backend handlers receive the same `PaseoApi` as `{ paseo }`. Their connection belongs to the subprocess and closes when the plugin stops. It does not subscribe to timelines or catalog events until plugin code subscribes. Follow the [SDK event contract](../../sdk/events.md) for cleanup and timeline replacements. Backend code can use Node APIs and dependencies installed in the plugin directory.
 
@@ -1819,6 +1819,7 @@ export const searchIssues = defineRpc({
         url: z.string().url(),
         text: z.string(),
         resourceType: z.string(),
+        contextKind: z.literal("chat_history").optional(),
       }),
     ),
   }),
@@ -1830,6 +1831,7 @@ export const issues = defineAttachmentSource({
   icon: "CircleDot",
   pickerTitle: "Attach Acme issue",
   searchPlaceholder: "Search by identifier or title",
+  newAgentShortcut: true,
   search: searchIssues,
 });
 ```
@@ -1870,7 +1872,9 @@ export default function contribute(server: PluginServerContext) {
 }
 ```
 
-Paseo owns the composer menu, search picker, selected pill, draft state, and submission. The `text` value is the complete snapshot sent to the agent.
+Paseo owns the composer menu, search picker, selected pill, draft state, and submission. The `text` value is the complete snapshot sent to the agent. Set `contextKind` to `"chat_history"` for an earlier conversation that must appear before the new user instruction; omit it for an ordinary resource appended afterward. Set `newAgentShortcut` to `true` to show the source beside Import Session on New Agent drafts as well as in the attachment menu.
+
+The [Linear example](https://github.com/getpaseo/paseo/tree/main/plugin-examples/linear) shows a complete attachment source for a vendor resource.
 
 ## Hosts and lifecycle
 
