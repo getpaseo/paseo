@@ -71,7 +71,7 @@ import { TitlebarDragRegion } from "@/components/desktop/titlebar-drag-region";
 import { WindowChromeRegion, WindowChromeSafeArea } from "@/utils/desktop-window";
 import { confirmDialog } from "@/utils/confirm-dialog";
 import { BackHeader } from "@/components/headers/back-header";
-import { ScreenHeader } from "@/components/headers/screen-header";
+import { PageLayout } from "@/components/page-layout";
 import { AddHostMethodModal } from "@/components/add-host-method-modal";
 import { AddHostModal } from "@/components/add-host-modal";
 import { AddRemoteSshHostModal } from "@/components/add-remote-ssh-host-modal";
@@ -1305,30 +1305,25 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
   }, []);
 
   const installedPlugins = useInstalledPlugins();
-  const detailHeader = ((): {
-    title: string;
-    titleAccessory?: ReactNode;
-  } | null => {
+  const detailTitle = ((): string | undefined => {
     if (view.kind === "plugin") {
       const screen = installedPlugins
         .find((plugin) => plugin.serverId === view.serverId && plugin.id === view.pluginId)
         ?.settingsScreens.find((candidate) => candidate.id === view.screenId);
-      return { title: `${view.pluginId} · ${screen?.title ?? t("settings.title")}` };
+      return `${view.pluginId} · ${screen?.title ?? t("settings.title")}`;
     }
     if (view.kind === "host") {
       const item = HOST_SECTION_ITEMS.find((s) => s.id === view.section);
-      if (!item) return null;
-      return { title: t(item.labelKey) };
+      return item ? t(item.labelKey) : undefined;
     }
     if (view.kind === "section") {
       const item = SIDEBAR_SECTION_ITEMS.find((s) => s.id === view.section);
-      if (!item) return null;
-      return { title: t(item.labelKey) };
+      return item ? t(item.labelKey) : undefined;
     }
     if (view.kind === "project") {
-      return { title: t("settings.projects") };
+      return t("settings.projects");
     }
-    return null;
+    return undefined;
   })();
 
   const content: ReactNode = (() => {
@@ -1399,15 +1394,6 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
     );
   }
 
-  const desktopPageTitle = detailHeader ? (
-    <View style={styles.pageTitleRow}>
-      <Text style={styles.pageTitle} testID="settings-detail-header-title">
-        {detailHeader.title}
-      </Text>
-      {detailHeader.titleAccessory}
-    </View>
-  ) : null;
-
   const addHostModals = (
     <>
       <AddHostMethodModal
@@ -1464,14 +1450,9 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
   if (isCompactLayout) {
     return (
       <View style={styles.container}>
-        <BackHeader
-          title={detailHeader?.title}
-          titleAccessory={detailHeader?.titleAccessory}
-          onBack={handleBackFromDetail}
-        />
-        <ScrollView style={styles.scrollView} contentContainerStyle={insetBottomStyle}>
-          <View style={styles.content}>{content}</View>
-        </ScrollView>
+        <PageLayout title={detailTitle} onBack={handleBackFromDetail}>
+          {content}
+        </PageLayout>
         {addHostModals}
       </View>
     );
@@ -1497,15 +1478,7 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
         </WindowChromeRegion>
         <WindowChromeRegion corners="top-right">
           <View style={desktopStyles.contentPane} testID="settings-detail-pane">
-            {/* Keeps the titlebar drag region and window controls; the page
-                title lives in the content, like a document heading. */}
-            <ScreenHeader borderless />
-            <ScrollView style={styles.scrollView} contentContainerStyle={insetBottomStyle}>
-              <View style={styles.content}>
-                {desktopPageTitle}
-                {content}
-              </View>
-            </ScrollView>
+            <PageLayout title={detailTitle}>{content}</PageLayout>
           </View>
         </WindowChromeRegion>
       </View>
@@ -1535,26 +1508,6 @@ const styles = StyleSheet.create((theme) => ({
   },
   scrollView: {
     flex: 1,
-  },
-  content: {
-    padding: theme.spacing[4],
-    paddingTop: theme.spacing[6],
-    width: "100%",
-    maxWidth: 720,
-    alignSelf: "center",
-  },
-  pageTitleRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[2],
-    // Line up with the section titles, which sit inset from their cards.
-    marginLeft: theme.spacing[1],
-    marginBottom: theme.spacing[6],
-  },
-  pageTitle: {
-    fontSize: theme.fontSize["4xl"],
-    fontWeight: theme.fontWeight.medium,
-    color: theme.colors.foreground,
   },
   aboutValue: {
     color: theme.colors.foregroundMuted,
