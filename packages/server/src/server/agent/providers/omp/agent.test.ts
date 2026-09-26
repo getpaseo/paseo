@@ -73,6 +73,11 @@ class ManualIdleScheduler implements OmpProviderIdleScheduler {
   private readonly retries: Array<() => void> = [];
   private readonly waiters: Array<{ count: number; resolve: () => void }> = [];
   private waitCount = 0;
+  private timeMs = 0;
+
+  now(): number {
+    return this.timeMs;
+  }
 
   waitForRetry(): Promise<void> {
     this.waitCount += 1;
@@ -88,9 +93,10 @@ class ManualIdleScheduler implements OmpProviderIdleScheduler {
     return new Promise((resolve) => this.waiters.push({ count, resolve }));
   }
 
-  retry(): void {
+  retry(elapsedMs = 0): void {
     const resolve = this.retries.shift();
     if (!resolve) throw new Error("OMP has not requested an idle-state retry");
+    this.timeMs += elapsedMs;
     resolve();
   }
 }
@@ -414,24 +420,45 @@ describe("OMP agent client and session", () => {
 
   test("fails a turn when the provider idle gate passes its deadline", async () => {
     const scheduler = new ManualIdleScheduler();
-    const omp = new OmpHarness({ providerIdleScheduler: scheduler, providerIdleDeadlineMs: 1 });
-    await omp.start();
-    const { completion } = await omp.startPromptUntilProviderIdle("first", "first done", {
-      isStreaming: true,
-      isCompacting: false,
+    const omp = new OmpHarness({
+      providerIdleScheduler: scheduler,
+      providerIdleDeadlineMs: 30_000,
     });
-    await scheduler.waitForWaits(1);
-    omp.runtime().emit({
+    await omp.start();
+    await omp.requireStartTurn("first");
+    const runtime = omp.runtime();
+    runtime.beginTurn();
+    runtime.acceptPrompt("first", "user-1");
+    runtime.streamAssistantText("first done");
+    runtime.state = { ...runtime.state, isStreaming: true, isCompacting: false };
+    runtime.emit({
       type: "tool_execution_start",
       toolCallId: "tool-at-deadline",
       toolName: "bash",
       args: { command: "sleep 30" },
     });
     expect(omp.runningToolCallIds()).toEqual(["tool-at-deadline"]);
-    await new Promise((resolve) => setTimeout(resolve, 2));
-    scheduler.retry();
-    await expect(completion).rejects.toThrow(/provider idle/i);
+
+    const stateChecksBeforeEnd = runtime.getStateRequestCount;
+    runtime.finishTurn();
+    await scheduler.waitForWaits(1);
+    expect(runtime.getStateRequestCount).toBe(stateChecksBeforeEnd + 1);
+    expect(omp.turnFailures()).toEqual([]);
+
+    scheduler.retry(29_999);
+    await scheduler.waitForWaits(2);
+    expect(runtime.getStateRequestCount).toBe(stateChecksBeforeEnd + 2);
+    expect(omp.completedTurnCount()).toBe(0);
+    expect(omp.turnFailures()).toEqual([]);
+    expect(omp.runningToolCallIds()).toEqual(["tool-at-deadline"]);
+
+    scheduler.retry(1);
+    await waitForImmediate();
+
+    expect(omp.turnFailures()).toEqual(["OMP provider idle deadline exceeded"]);
     expect(omp.runningToolCallIds()).toEqual([]);
+    expect(omp.completedTurnCount()).toBe(0);
+    expect(runtime.getStateRequestCount).toBe(stateChecksBeforeEnd + 2);
   });
 
   test("steers a running turn and correlates a template-expanded echo exactly once", async () => {

@@ -18,6 +18,7 @@ export interface DirectorySuggestionEntry {
 
 export interface SearchDirectoryEntriesOptions {
   root: string;
+  searchRoots?: readonly string[];
   query: string;
   pathFormat: DirectorySuggestionPathFormat;
   includeFiles?: boolean;
@@ -150,6 +151,7 @@ export async function searchDirectoryEntries(
     const relativeQuery = browsesChildren ? "." : `./${path.basename(query)}`;
     options = { ...options, root, query: relativeQuery, maxDepth: 1 };
   }
+  if (usesConfiguredRoots(options)) return searchConfiguredRoots(options);
   const root = await resolveDirectory(options.root);
   if (!root) return [];
 
@@ -173,6 +175,76 @@ export async function searchDirectoryEntries(
   return exact
     ? [exact, ...results.filter((entry) => !sameEntry(entry, exact))].slice(0, input.limit)
     : results;
+}
+
+function usesConfiguredRoots(options: SearchDirectoryEntriesOptions): boolean {
+  if (
+    !options.searchRoots ||
+    options.pathFormat !== "absolute" ||
+    options.pathQueryPolicy !== "rooted"
+  )
+    return false;
+  const root = path.resolve(options.root);
+  const plan = parseQuery({
+    query: options.query,
+    root,
+    configuredRoot: root,
+    policy: "rooted",
+    aliases: options.rootAliases ?? [],
+    blankBehavior: options.blankQueryBehavior ?? "none",
+  });
+  return plan?.isPathQuery === false;
+}
+
+async function searchConfiguredRoots(
+  options: SearchDirectoryEntriesOptions,
+): Promise<DirectorySuggestionEntry[]> {
+  const resolved = await Promise.all((options.searchRoots ?? []).map(resolveDirectory));
+  const uniqueRoots = [...new Set(resolved.filter((root): root is string => root !== null))];
+  const inputs = await Promise.all(
+    uniqueRoots.map(async (root) => {
+      const ignored = options.respectGitIgnore
+        ? await loadGitIgnoredPaths(root)
+        : new Set<string>();
+      return buildSearchInput({ ...options, root }, root, ignored);
+    }),
+  );
+  // Explicit roots behind discovery filters still need their own traversal.
+  const roots = uniqueRoots.filter(
+    (root) =>
+      !inputs.some((input) => {
+        if (!input || input.root === root || !isPathInsideRoot(input.root, root)) return false;
+        const parts = path.relative(input.root, root).split(path.sep);
+        if (parts.length >= input.maxDepth) return false;
+        let candidate = input.root;
+        return parts.every((name) => {
+          candidate = path.join(candidate, name);
+          return (
+            !input.gitIgnoredPaths.has(candidate) &&
+            !IGNORED_DIRECTORY_NAMES.has(name) &&
+            (!name.startsWith(".") || input.hiddenDirectoryNames.has(name))
+          );
+        });
+      }),
+  );
+  const budget = Math.max(0, Math.floor(options.maxEntriesScanned ?? DEFAULT_MAX_ENTRIES_SCANNED));
+  const rankedByRoot = await Promise.all(
+    roots.map(async (root, index) => {
+      const rootBudget =
+        Math.floor(budget / roots.length) + (index < budget % roots.length ? 1 : 0);
+      const gitIgnoredPaths = options.respectGitIgnore
+        ? await loadGitIgnoredPaths(root)
+        : new Set<string>();
+      const input = buildSearchInput(
+        { ...options, root, maxEntriesScanned: rootBudget },
+        root,
+        gitIgnoredPaths,
+      );
+      return input ? searchTree(input) : [];
+    }),
+  );
+  const limit = normalizeLimit(options.limit);
+  return sortAndFormat(rankedByRoot.flat(), options.root, "absolute").slice(0, limit);
 }
 
 function buildSearchInput(
