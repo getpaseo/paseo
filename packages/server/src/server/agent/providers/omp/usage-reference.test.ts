@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createRequire } from "node:module";
@@ -12,6 +12,21 @@ const { DatabaseSync } = createRequire(import.meta.url)("node:sqlite") as {
     close(): void;
   };
 };
+// Upstream: packages/ai/src/auth/sqlite-credential-store.ts:576-581,711-724.
+const OMP_AUTH_SCHEMA = `
+  CREATE TABLE cache (key TEXT PRIMARY KEY, value TEXT NOT NULL, expires_at INTEGER NOT NULL);
+  CREATE INDEX idx_cache_expires ON cache(expires_at);
+  CREATE TABLE auth_credentials (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    provider TEXT NOT NULL,
+    credential_type TEXT NOT NULL,
+    data TEXT NOT NULL,
+    disabled_cause TEXT DEFAULT NULL,
+    identity_key TEXT DEFAULT NULL,
+    created_at INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER)),
+    updated_at INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER))
+  );
+`;
 const dirs: string[] = [];
 const future = Date.now() + 3_600_000;
 function fixture() {
@@ -21,29 +36,31 @@ function fixture() {
   mkdirSync(agentDir);
   const dbFile = join(agentDir, "agent.db");
   const db = new DatabaseSync(dbFile);
-  db.exec(
-    "CREATE TABLE cache (key TEXT PRIMARY KEY, value TEXT, expires_at INTEGER); CREATE TABLE auth_credentials (id INTEGER PRIMARY KEY, provider TEXT, credential_type TEXT, data TEXT, disabled_cause TEXT)",
-  );
+  db.exec(OMP_AUTH_SCHEMA);
   const env = { OMP_PROFILE: "", PI_CODING_AGENT_DIR: agentDir, XDG_DATA_HOME: "" };
   const row = (
     id: number,
     provider = "openai-codex",
     options: { disabled?: boolean; expires?: number; type?: string } = {},
   ) =>
-    db.prepare("INSERT INTO auth_credentials VALUES (?, ?, ?, ?, ?)").run(
-      id,
-      provider,
-      options.type ?? "oauth",
-      JSON.stringify({
-        access: `fixture-token-${id}`,
-        expires: options.expires ?? future,
-        accountId: `account-${id}`,
-      }),
-      options.disabled ? "disabled" : null,
-    );
+    db
+      .prepare(
+        "INSERT INTO auth_credentials (id, provider, credential_type, data, disabled_cause) VALUES (?, ?, ?, ?, ?)",
+      )
+      .run(
+        id,
+        provider,
+        options.type ?? "oauth",
+        JSON.stringify({
+          access: `fixture-token-${id}`,
+          expires: options.expires ?? future,
+          accountId: `account-${id}`,
+        }),
+        options.disabled ? "disabled" : null,
+      );
   const sticky = (id: number, expires = Math.floor(Date.now() / 1000) + 100) =>
     db
-      .prepare("INSERT INTO cache VALUES (?, ?, ?)")
+      .prepare("INSERT INTO cache (key, value, expires_at) VALUES (?, ?, ?)")
       .run(
         "session:sticky:openai-codex:session-1",
         JSON.stringify({ type: "oauth", index: 0, credentialId: id }),
@@ -95,7 +112,9 @@ test("fallback counts only valid OAuth rows", () => {
   f.row(2, "openai-codex", { expires: Date.now() - 1 });
   f.row(3, "openai-codex", { disabled: true });
   f.db
-    .prepare("INSERT INTO auth_credentials VALUES (?, ?, ?, ?, ?)")
+    .prepare(
+      "INSERT INTO auth_credentials (id, provider, credential_type, data, disabled_cause) VALUES (?, ?, ?, ?, ?)",
+    )
     .run(4, "openai-codex", "oauth", "invalid-json", null);
   f.db.close();
   expect(f.read()).toEqual({
@@ -209,11 +228,11 @@ test("named profile ignores agent override and uses existing XDG profile data", 
   const data = join(root, "xdg", "omp", "profiles", "work");
   mkdirSync(data, { recursive: true });
   const profileDb = new DatabaseSync(join(data, "agent.db"));
-  profileDb.exec(
-    "CREATE TABLE cache (key TEXT PRIMARY KEY, value TEXT, expires_at INTEGER); CREATE TABLE auth_credentials (id INTEGER PRIMARY KEY, provider TEXT, credential_type TEXT, data TEXT, disabled_cause TEXT)",
-  );
+  profileDb.exec(OMP_AUTH_SCHEMA);
   profileDb
-    .prepare("INSERT INTO auth_credentials VALUES (?, ?, ?, ?, ?)")
+    .prepare(
+      "INSERT INTO auth_credentials (id, provider, credential_type, data, disabled_cause) VALUES (?, ?, ?, ?, ?)",
+    )
     .run(
       1,
       "openai-codex",
@@ -231,4 +250,30 @@ test("named profile ignores agent override and uses existing XDG profile data", 
       XDG_DATA_HOME: join(root, "xdg"),
     }),
   ).toEqual({ source: "codex", input: { accessToken: "profile-token" } });
+});
+
+test("missing database returns null without creating a file", () => {
+  const home = mkdtempSync(join(tmpdir(), "omp-missing-db-"));
+  dirs.push(home);
+  const agentDir = join(home, "agent");
+  mkdirSync(agentDir);
+  expect(
+    resolveOmpUsageReference("session-1", "openai-codex", {
+      OMP_PROFILE: "",
+      PI_CODING_AGENT_DIR: agentDir,
+      XDG_DATA_HOME: "",
+    }),
+  ).toBeNull();
+  expect(existsSync(join(agentDir, "agent.db"))).toBe(false);
+});
+
+test("missing cache or credentials table returns null", () => {
+  const first = fixture();
+  first.db.exec("DROP TABLE cache");
+  first.db.close();
+  expect(first.read()).toBeNull();
+  const second = fixture();
+  second.db.exec("DROP TABLE auth_credentials");
+  second.db.close();
+  expect(second.read()).toBeNull();
 });
