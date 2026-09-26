@@ -1159,6 +1159,7 @@ test("browses explicit project paths outside home without widening workspace sea
 });
 
 test("applies configured project search roots to existing sessions and preserves workspace scope", async () => {
+  expect(ctx.client.getLastServerInfoMessage()?.features?.projectSearchRoots).toBe(true);
   const outside = mkdtempSync(path.join(tmpdir(), "paseo-project-search-roots-"));
   const project = path.join(outside, "bridge");
   const workspace = path.join(outside, "workspace");
