@@ -1276,6 +1276,44 @@ describe("translateOpenCodeEvent", () => {
     expect(result).toEqual([]);
   });
 
+  it("shows OpenCode user text parts unless OpenCode marks them synthetic", () => {
+    const state = createState();
+    const userTextPart = (messageId: string, text: string, synthetic: boolean) => {
+      translateOpenCodeEvent(
+        {
+          type: "message.updated",
+          properties: { info: { id: messageId, sessionID: "session-1", role: "user" } },
+        },
+        state,
+      );
+      return translateOpenCodeEvent(
+        {
+          type: "message.part.updated",
+          properties: {
+            part: {
+              id: `part-${messageId}`,
+              sessionID: "session-1",
+              messageID: messageId,
+              type: "text",
+              text,
+              synthetic,
+            },
+          },
+        },
+        state,
+      );
+    };
+
+    expect(userTextPart("msg-continue", "Continue if you have next steps", true)).toEqual([]);
+    expect(userTextPart("msg-user", "Plugin prompt", false)).toEqual([
+      {
+        type: "timeline",
+        provider: "opencode",
+        item: { type: "user_message", text: "Plugin prompt", messageId: "msg-user" },
+      },
+    ]);
+  });
+
   it("ignores message.part.delta for user messages", () => {
     const state = createState();
 
