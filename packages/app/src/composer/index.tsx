@@ -2468,7 +2468,7 @@ function ComposerContentImpl({
                   rightContent={rightContent}
                   activeActionContent={activeActionContent}
                   voiceServerId={serverId}
-                  voiceAgentId={agentId}
+                  voiceAgentId={hasAgent ? agentId : undefined}
                   isAgentRunning={isAgentRunning}
                   defaultSendBehavior={activeSendBehavior}
                   onQueue={handleQueue}

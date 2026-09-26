@@ -1,15 +1,16 @@
 import type pino from "pino";
-import { OpenAI } from "openai";
+import type { OpenAI } from "openai";
 import { Readable } from "node:stream";
+import { ReadableStream } from "node:stream/web";
+import type { OpenAiSpeechEndpointConfig } from "./config.js";
+import { createOpenAiSpeechClient } from "./client.js";
 import type { SpeechStreamResult, TextToSpeechProvider } from "../../speech-provider.js";
 
 export type { SpeechStreamResult };
 
-export interface TTSConfig {
-  apiKey: string;
-  baseUrl?: string;
-  model?: "tts-1" | "tts-1-hd";
-  voice?: "alloy" | "echo" | "fable" | "onyx" | "nova" | "shimmer";
+export interface TTSConfig extends OpenAiSpeechEndpointConfig {
+  model?: string;
+  voice?: string;
   responseFormat?: "mp3" | "opus" | "aac" | "flac" | "wav" | "pcm";
 }
 
@@ -18,7 +19,7 @@ export class OpenAITTS implements TextToSpeechProvider {
   private readonly config: TTSConfig;
   private readonly logger: pino.Logger;
 
-  constructor(ttsConfig: TTSConfig, parentLogger: pino.Logger) {
+  constructor(ttsConfig: TTSConfig, parentLogger: pino.Logger, fetch?: typeof globalThis.fetch) {
     this.config = {
       model: "tts-1",
       voice: "alloy",
@@ -26,10 +27,7 @@ export class OpenAITTS implements TextToSpeechProvider {
       ...ttsConfig,
     };
     this.logger = parentLogger.child({ module: "agent", provider: "openai", component: "tts" });
-    this.openaiClient = new OpenAI({
-      apiKey: ttsConfig.apiKey,
-      ...(ttsConfig.baseUrl ? { baseURL: ttsConfig.baseUrl } : {}),
-    });
+    this.openaiClient = createOpenAiSpeechClient(ttsConfig, fetch);
 
     this.logger.info(
       { voice: this.config.voice, model: this.config.model, format: this.config.responseFormat },
@@ -41,7 +39,7 @@ export class OpenAITTS implements TextToSpeechProvider {
     return this.config;
   }
 
-  public async synthesizeSpeech(text: string): Promise<SpeechStreamResult> {
+  public async synthesizeSpeech(text: string, signal?: AbortSignal): Promise<SpeechStreamResult> {
     if (!text || text.trim().length === 0) {
       throw new Error("Cannot synthesize empty text");
     }
@@ -54,20 +52,26 @@ export class OpenAITTS implements TextToSpeechProvider {
         "Synthesizing speech",
       );
 
-      const response = await this.openaiClient.audio.speech.create({
-        model: this.config.model!,
-        voice: this.config.voice!,
-        input: text,
-        response_format: this.config.responseFormat as
-          | "mp3"
-          | "opus"
-          | "aac"
-          | "flac"
-          | "wav"
-          | "pcm",
-      });
+      const response = await this.openaiClient.audio.speech.create(
+        {
+          model: this.config.model!,
+          voice: this.config.voice!,
+          input: text,
+          response_format: this.config.responseFormat as
+            | "mp3"
+            | "opus"
+            | "aac"
+            | "flac"
+            | "wav"
+            | "pcm",
+        },
+        { signal },
+      );
 
-      const audioStream = response.body as unknown as Readable;
+      if (!(response.body instanceof ReadableStream)) {
+        throw new Error("Speech endpoint returned no readable audio body");
+      }
+      const audioStream = Readable.fromWeb(response.body);
 
       const duration = Date.now() - startTime;
       this.logger.debug({ duration }, "Speech synthesis stream ready");

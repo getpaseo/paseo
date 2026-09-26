@@ -2018,6 +2018,8 @@ export const ko: TranslationResources = {
       saveError: "메타데이터 생성을 업데이트할 수 없습니다",
     },
     general: {
+      voiceWaitingSound: "음성 응답 대기음",
+      voiceWaitingSoundSaveError: "대기음 설정을 저장하지 못했습니다.",
       title: "일반",
       browserData: {
         title: "브라우저 데이터",

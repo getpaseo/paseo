@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { z } from "zod";
+import { OpenAiSpeechEndpointSchema } from "./speech/providers/openai/config.js";
 
 import {
   AgentProviderRuntimeSettingsMapSchema,
@@ -45,13 +46,6 @@ const LogConfigSchema = z
       })
       .strict()
       .optional(),
-  })
-  .strict();
-
-const OpenAiSpeechEndpointSchema = z
-  .object({
-    apiKey: z.string().trim().min(1).optional(),
-    baseUrl: z.string().trim().min(1).optional(),
   })
   .strict();
 
@@ -143,7 +137,7 @@ const FeatureVoiceModeSchema = z
       .object({
         provider: SpeechProviderIdSchema.optional(),
         model: z.string().min(1).optional(),
-        voice: z.enum(["alloy", "echo", "fable", "onyx", "nova", "shimmer"]).optional(),
+        voice: z.string().trim().min(1).optional(),
         speakerId: z.number().int().optional(),
         speed: z.number().optional(),
       })

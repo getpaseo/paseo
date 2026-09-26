@@ -12,6 +12,106 @@ const ALL_OPENAI: RequestedSpeechProviders = {
 };
 
 describe("resolveOpenAiSpeechConfig", () => {
+  test.each([
+    undefined,
+    "https://api.openai.com/v1",
+    "ftp://127.0.0.1/v1",
+    "http://user:pass@localhost/v1",
+  ])("rejects unsafe no-auth baseUrl %s", (baseUrl) => {
+    expect(() =>
+      PersistedConfigSchema.parse({
+        providers: { openai: { stt: { auth: "none", baseUrl } } },
+      }),
+    ).toThrow("loopback baseUrl");
+  });
+
+  test("rejects credentials combined with no-auth", () => {
+    expect(() =>
+      PersistedConfigSchema.parse({
+        providers: {
+          openai: { tts: { auth: "none", baseUrl: "http://localhost:8000/v1", apiKey: "key" } },
+        },
+      }),
+    ).toThrow("Do not set apiKey");
+  });
+
+  test("requires explicit no-auth mode even when baseUrl is local", () => {
+    expect(
+      resolveOpenAiSpeechConfig({
+        env: {},
+        providers: ALL_OPENAI,
+        persisted: PersistedConfigSchema.parse({
+          providers: { openai: { stt: { baseUrl: "http://localhost:8000/v1" } } },
+        }),
+      }),
+    ).toBeUndefined();
+  });
+
+  test("no-auth STT does not enable unconfigured TTS", () => {
+    const resolved = resolveOpenAiSpeechConfig({
+      env: {},
+      providers: ALL_OPENAI,
+      persisted: PersistedConfigSchema.parse({
+        providers: { openai: { stt: { auth: "none", baseUrl: "http://localhost:8000/v1" } } },
+      }),
+    });
+    expect(resolved).toEqual({ stt: { auth: "none", baseUrl: "http://localhost:8000/v1" } });
+  });
+
+  test("preserves case in environment TTS names", () => {
+    const resolved = resolveOpenAiSpeechConfig({
+      env: { OPENAI_TTS_API_KEY: "key", TTS_MODEL: " Example/Model ", TTS_VOICE: " Vivian " },
+      providers: ALL_OPENAI,
+      persisted: PersistedConfigSchema.parse({}),
+    });
+    expect(resolved?.tts?.model).toBe("Example/Model");
+    expect(resolved?.tts?.voice).toBe("Vivian");
+  });
+  test("explicit no-auth endpoints ignore shared cloud credentials and URL", () => {
+    const persisted = PersistedConfigSchema.parse({
+      providers: {
+        openai: {
+          apiKey: "cloud-key",
+          baseUrl: "https://api.openai.com/v1",
+          stt: { auth: "none", baseUrl: "http://127.0.0.1:18080/v1" },
+          tts: { auth: "none", baseUrl: "http://127.0.0.1:18081/v1" },
+        },
+      },
+    });
+    const resolved = resolveOpenAiSpeechConfig({
+      env: { OPENAI_API_KEY: "env-cloud-key" },
+      persisted,
+      providers: ALL_OPENAI,
+    });
+    expect(resolved).toEqual({
+      stt: { auth: "none", baseUrl: "http://127.0.0.1:18080/v1" },
+      tts: {
+        auth: "none",
+        baseUrl: "http://127.0.0.1:18081/v1",
+        model: "tts-1",
+        voice: "alloy",
+        responseFormat: "pcm",
+      },
+    });
+  });
+  test("preserves custom TTS model and voice case", () => {
+    const persisted = PersistedConfigSchema.parse({
+      providers: { openai: { apiKey: "test-key" } },
+      features: {
+        voiceMode: {
+          tts: { provider: "openai", model: "Example/CustomVoice-8bit", voice: "Vivian" },
+        },
+      },
+    });
+    const resolved = resolveOpenAiSpeechConfig({ env: {}, persisted, providers: ALL_OPENAI });
+    expect(resolved?.tts).toEqual({
+      apiKey: "test-key",
+      model: "Example/CustomVoice-8bit",
+      voice: "Vivian",
+      responseFormat: "pcm",
+    });
+  });
+
   test("treats empty OPENAI_API_KEY as unset", () => {
     const persisted = PersistedConfigSchema.parse({});
     const env = {

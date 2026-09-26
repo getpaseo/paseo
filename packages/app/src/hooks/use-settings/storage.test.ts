@@ -42,6 +42,19 @@ function makeDeps(
 }
 
 describe("loadAppSettingsFromStorage", () => {
+  it("defaults voice waiting sounds on and persists an explicit opt-out", async () => {
+    const deps = makeDeps();
+    expect((await loadAppSettingsFromStorage(deps)).voiceWaitingSoundEnabled).toBe(true);
+    await saveAppSettings({
+      queryClient: new QueryClient(),
+      updates: { voiceWaitingSoundEnabled: false },
+      deps,
+    });
+    expect((await loadAppSettingsFromStorage(deps)).voiceWaitingSoundEnabled).toBe(false);
+    expect(JSON.parse(deps.storage.entries.get(APP_SETTINGS_KEY)!).voiceWaitingSoundEnabled).toBe(
+      false,
+    );
+  });
   it("preserves a persisted steer send behavior", async () => {
     const deps = makeDeps({
       storage: createInMemoryKeyValueStorage({

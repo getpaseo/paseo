@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  toggleRealtimeVoice,
   applyDictationTranscript,
   computeCanStartDictation,
   resolveActiveSendBehavior,
@@ -314,5 +315,72 @@ describe("stopRealtimeVoice", () => {
     });
 
     expect(calls).toEqual(["cancel agent", "stop voice"]);
+  });
+});
+
+describe("realtime voice target", () => {
+  it.each([
+    { voiceAgentId: undefined, expected: [] },
+    {
+      voiceAgentId: "8c8eae53-598e-4662-87ad-006352a72d7d",
+      expected: [{ serverId: "host", agentId: "8c8eae53-598e-4662-87ad-006352a72d7d" }],
+    },
+  ])(
+    "only starts voice when the composer supplies a persisted agent target: %s",
+    ({ voiceAgentId, expected }) => {
+      const starts: Array<{ serverId: string; agentId: string }> = [];
+      toggleRealtimeVoice({
+        voice: {
+          isVoiceSwitching: false,
+          isVoiceModeForAgent: () => false,
+          startVoice: async (serverId, agentId) => {
+            starts.push({ serverId, agentId });
+          },
+        },
+        voiceServerId: "host",
+        voiceAgentId,
+        isConnected: true,
+        disabled: false,
+        isAgentRunning: false,
+        handleStopRealtimeVoice: () => {
+          throw new Error("Unexpected stop");
+        },
+        toast: {
+          error: () => {
+            throw new Error("Unexpected error");
+          },
+        },
+        interruptBeforeVoiceMessage: "Interrupt first",
+      });
+      expect(starts).toEqual(expected);
+    },
+  );
+
+  it("stops an active voice session for an existing agent", () => {
+    let stops = 0;
+    toggleRealtimeVoice({
+      voice: {
+        isVoiceSwitching: false,
+        isVoiceModeForAgent: () => true,
+        startVoice: async () => {
+          throw new Error("Unexpected start");
+        },
+      },
+      voiceServerId: "host",
+      voiceAgentId: "8c8eae53-598e-4662-87ad-006352a72d7d",
+      isConnected: true,
+      disabled: false,
+      isAgentRunning: false,
+      handleStopRealtimeVoice: () => {
+        stops += 1;
+      },
+      toast: {
+        error: () => {
+          throw new Error("Unexpected error");
+        },
+      },
+      interruptBeforeVoiceMessage: "Interrupt first",
+    });
+    expect(stops).toBe(1);
   });
 });

@@ -82,6 +82,108 @@ function createRuntime(options?: {
 }
 
 describe("voice runtime", () => {
+  it("keeps waiting silent when waiting sounds are disabled", async () => {
+    const adapter = createSessionAdapter();
+    const { runtime, engine } = createRuntime();
+    runtime.setWaitingSoundEnabled(false);
+    runtime.registerSession(adapter);
+    await runtime.startVoice("server-1", "agent-1");
+    runtime.onTurnEvent("server-1", "agent-1", "turn_started");
+    await vi.advanceTimersByTimeAsync(10000);
+    expect(engine.play).not.toHaveBeenCalled();
+    expect(runtime.getSnapshot().phase).toBe("waiting");
+    expect(engine.stopCapture).not.toHaveBeenCalled();
+    runtime.handleAudioOutput(
+      "server-1",
+      createAudioPayload({
+        id: "silent-wait-reply",
+        groupId: "reply",
+        chunkIndex: 0,
+        isLastChunk: true,
+      }),
+    );
+    await vi.advanceTimersByTimeAsync(0);
+    expect(engine.play).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ type: SEGMENT_MIME_TYPE }),
+    );
+    expect(adapter.audioPlayed).toHaveBeenCalledExactlyOnceWith("silent-wait-reply");
+  });
+
+  it("stops an active waiting sound immediately and does not repeat it", async () => {
+    const adapter = createSessionAdapter();
+    const engine = createAudioEngineMock();
+    let finishCue!: (duration: number) => void;
+    vi.mocked(engine.play).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finishCue = resolve;
+        }),
+    );
+    const { runtime } = createRuntime({ engine });
+    runtime.registerSession(adapter);
+    await runtime.startVoice("server-1", "agent-1");
+    runtime.onTurnEvent("server-1", "agent-1", "turn_started");
+    await vi.advanceTimersByTimeAsync(THINKING_TONE_MIN_SILENCE_MS);
+    expect(engine.play).toHaveBeenCalledTimes(1);
+    vi.mocked(engine.stop).mockClear();
+    vi.mocked(engine.clearQueue).mockClear();
+
+    runtime.setWaitingSoundEnabled(false);
+    expect(engine.stop).toHaveBeenCalledTimes(1);
+    expect(engine.clearQueue).toHaveBeenCalledTimes(1);
+    expect(runtime.getSnapshot().phase).toBe("waiting");
+    finishCue(0.1);
+    await vi.advanceTimersByTimeAsync(10000);
+    expect(engine.play).toHaveBeenCalledTimes(1);
+    expect(engine.stopCapture).not.toHaveBeenCalled();
+  });
+
+  it("does not interrupt a spoken reply when disabling waiting sounds and still acknowledges playback", async () => {
+    const adapter = createSessionAdapter();
+    const engine = createAudioEngineMock();
+    let finishReply!: (duration: number) => void;
+    vi.mocked(engine.play).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finishReply = resolve;
+        }),
+    );
+    const { runtime } = createRuntime({ engine });
+    runtime.registerSession(adapter);
+    await runtime.startVoice("server-1", "agent-1");
+    runtime.onTurnEvent("server-1", "agent-1", "turn_started");
+    runtime.handleAudioOutput(
+      "server-1",
+      createAudioPayload({ id: "reply", groupId: "reply", chunkIndex: 0, isLastChunk: true }),
+    );
+    expect(engine.play).toHaveBeenCalledTimes(1);
+    vi.mocked(engine.stop).mockClear();
+    vi.mocked(engine.clearQueue).mockClear();
+
+    runtime.setWaitingSoundEnabled(false);
+    expect(engine.stop).not.toHaveBeenCalled();
+    expect(engine.clearQueue).not.toHaveBeenCalled();
+    expect(runtime.getSnapshot().phase).toBe("playing");
+    finishReply(1);
+    await vi.advanceTimersByTimeAsync(10000);
+    expect(adapter.audioPlayed).toHaveBeenCalledExactlyOnceWith("reply");
+    expect(engine.play).toHaveBeenCalledTimes(1);
+    expect(runtime.getSnapshot().phase).toBe("waiting");
+  });
+
+  it("can enable waiting sounds again without changing the voice session", async () => {
+    const adapter = createSessionAdapter();
+    const { runtime, engine } = createRuntime();
+    runtime.setWaitingSoundEnabled(false);
+    runtime.registerSession(adapter);
+    await runtime.startVoice("server-1", "agent-1");
+    runtime.onTurnEvent("server-1", "agent-1", "turn_started");
+    await vi.advanceTimersByTimeAsync(10000);
+    runtime.setWaitingSoundEnabled(true);
+    await vi.advanceTimersByTimeAsync(THINKING_TONE_MIN_SILENCE_MS);
+    expect(engine.play).toHaveBeenCalledTimes(1);
+    expect(adapter.setVoiceMode).toHaveBeenCalledExactlyOnceWith(true, "agent-1");
+  });
   beforeEach(() => {
     vi.useFakeTimers();
   });

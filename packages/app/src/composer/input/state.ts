@@ -192,3 +192,50 @@ export async function stopRealtimeVoice(ctx: StopRealtimeVoiceContext): Promise<
 
   await ctx.voice.stopVoice();
 }
+
+interface ToggleRealtimeVoiceContext {
+  voice:
+    | {
+        isVoiceSwitching: boolean;
+        isVoiceModeForAgent: (serverId: string, agentId: string) => boolean;
+        startVoice: (serverId: string, agentId: string) => Promise<unknown>;
+      }
+    | null
+    | undefined;
+  voiceServerId: string | undefined;
+  voiceAgentId: string | undefined;
+  isConnected: boolean;
+  disabled: boolean;
+  isAgentRunning: boolean;
+  handleStopRealtimeVoice: () => Promise<unknown> | void;
+  toast: { error: (msg: string) => void };
+  interruptBeforeVoiceMessage: string;
+}
+
+export function toggleRealtimeVoice(ctx: ToggleRealtimeVoiceContext): void {
+  if (!ctx.voice || !ctx.voiceServerId || !ctx.voiceAgentId || !ctx.isConnected || ctx.disabled) {
+    return;
+  }
+  if (ctx.voice.isVoiceSwitching) return;
+  if (ctx.voice.isVoiceModeForAgent(ctx.voiceServerId, ctx.voiceAgentId)) {
+    void ctx.handleStopRealtimeVoice();
+    return;
+  }
+  if (ctx.isAgentRunning) {
+    ctx.toast.error(ctx.interruptBeforeVoiceMessage);
+    return;
+  }
+  void ctx.voice.startVoice(ctx.voiceServerId, ctx.voiceAgentId).catch((error) => {
+    console.error("[MessageInput] Failed to start realtime voice", error);
+    const message = extractErrorMessage(error);
+    if (message && message.trim().length > 0) {
+      ctx.toast.error(message);
+    }
+  });
+}
+
+export function extractErrorMessage(error: unknown): string | null {
+  if (error instanceof Error) return error.message;
+  if (typeof error === "string") return error;
+  return null;
+}

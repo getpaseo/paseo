@@ -64,5 +64,5 @@ export interface SpeechStreamResult {
 }
 
 export interface TextToSpeechProvider {
-  synthesizeSpeech(text: string): Promise<SpeechStreamResult>;
+  synthesizeSpeech(text: string, signal?: AbortSignal): Promise<SpeechStreamResult>;
 }

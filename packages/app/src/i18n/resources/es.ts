@@ -2056,6 +2056,8 @@ export const es: TranslationResources = {
       saveError: "No se pudo actualizar la generación de metadatos",
     },
     general: {
+      voiceWaitingSound: "Sonido de espera de voz",
+      voiceWaitingSoundSaveError: "No se pudo guardar la preferencia del sonido de espera.",
       title: "General",
       browserData: {
         title: "Datos del navegador",

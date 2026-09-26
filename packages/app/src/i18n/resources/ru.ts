@@ -2041,6 +2041,8 @@ export const ru: TranslationResources = {
       saveError: "Не удалось обновить настройки генерации метаданных",
     },
     general: {
+      voiceWaitingSound: "Звук ожидания голосового ответа",
+      voiceWaitingSoundSaveError: "Не удалось сохранить настройку звука ожидания.",
       title: "Основные",
       browserData: {
         title: "Данные браузера",

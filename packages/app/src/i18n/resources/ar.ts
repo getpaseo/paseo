@@ -2008,6 +2008,8 @@ export const ar: TranslationResources = {
       saveError: "تعذر تحديث إنشاء البيانات الوصفية",
     },
     general: {
+      voiceWaitingSound: "صوت انتظار الرد الصوتي",
+      voiceWaitingSoundSaveError: "تعذر حفظ إعداد صوت الانتظار.",
       title: "عام",
       browserData: {
         title: "بيانات المتصفح",

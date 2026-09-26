@@ -2061,6 +2061,8 @@ export const fr: TranslationResources = {
       saveError: "Impossible de mettre à jour la génération de métadonnées",
     },
     general: {
+      voiceWaitingSound: "Son d’attente de la réponse vocale",
+      voiceWaitingSoundSaveError: "Impossible d’enregistrer la préférence du son d’attente.",
       title: "Général",
       browserData: {
         title: "Données du navigateur",

@@ -8,6 +8,7 @@ import {
   View,
   type PressableStateCallbackType,
 } from "react-native";
+import { SettingsSwitch } from "@/components/settings";
 import { EditingTextInput as TextInput } from "@/components/ui/text-input";
 import { useRouter } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
@@ -354,6 +355,37 @@ function LanguageMenuItem({ value, activeLocale, selected, onChange }: LanguageM
   );
 }
 
+function VoiceWaitingSoundSetting() {
+  const { settings, isLoading, updateSettings } = useAppSettings();
+  const { t } = useTranslation();
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | undefined>();
+  const handleChange = useCallback(
+    async (enabled: boolean) => {
+      setSaving(true);
+      setError(undefined);
+      try {
+        await updateSettings({ voiceWaitingSoundEnabled: enabled });
+      } catch {
+        setError(t("settings.general.voiceWaitingSoundSaveError"));
+      } finally {
+        setSaving(false);
+      }
+    },
+    [t, updateSettings],
+  );
+  return (
+    <SettingsSwitch
+      label={t("settings.general.voiceWaitingSound")}
+      value={settings.voiceWaitingSoundEnabled}
+      onValueChange={handleChange}
+      disabled={isLoading || saving}
+      error={error}
+      testID="voice-waiting-sound-setting"
+    />
+  );
+}
+
 function GeneralSection({
   settings,
   isDesktopApp,
@@ -507,6 +539,9 @@ function GeneralSection({
             style={styles.terminalScrollbackInput}
             accessibilityLabel={t("settings.general.terminalScrollback.accessibilityLabel")}
           />
+        </View>
+        <View style={settingsStyles.rowBorder}>
+          <VoiceWaitingSoundSetting />
         </View>
       </View>
     </SettingsSection>

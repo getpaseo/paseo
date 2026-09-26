@@ -2129,6 +2129,8 @@ export const en = {
       saveError: "Unable to update metadata generation",
     },
     general: {
+      voiceWaitingSound: "Voice waiting sound",
+      voiceWaitingSoundSaveError: "Couldn't save the waiting sound preference.",
       title: "General",
       browserData: {
         title: "Browser data",

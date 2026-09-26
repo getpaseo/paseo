@@ -1986,6 +1986,8 @@ export const zhCN: TranslationResources = {
       saveError: "无法更新元数据生成设置",
     },
     general: {
+      voiceWaitingSound: "语音等待提示音",
+      voiceWaitingSoundSaveError: "无法保存等待提示音设置。",
       title: "通用",
       browserData: {
         title: "浏览器数据",

@@ -2028,6 +2028,8 @@ export const ja: TranslationResources = {
       saveError: "メタデータ生成を更新できません",
     },
     general: {
+      voiceWaitingSound: "音声応答の待機音",
+      voiceWaitingSoundSaveError: "待機音の設定を保存できませんでした。",
       title: "一般",
       browserData: {
         title: "ブラウザーデータ",

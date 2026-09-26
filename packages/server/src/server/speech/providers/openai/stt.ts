@@ -1,6 +1,8 @@
 import { EventEmitter } from "node:events";
 import type pino from "pino";
-import { OpenAI } from "openai";
+import type { OpenAI } from "openai";
+import type { OpenAiSpeechEndpointConfig } from "./config.js";
+import { createOpenAiSpeechClient } from "./client.js";
 import { writeFile, unlink } from "fs/promises";
 import { join } from "path";
 import { tmpdir } from "os";
@@ -15,9 +17,7 @@ import type {
 
 export type { LogprobToken, TranscriptionResult };
 
-export interface STTConfig {
-  apiKey: string;
-  baseUrl?: string;
+export interface STTConfig extends OpenAiSpeechEndpointConfig {
   model?: "whisper-1" | "gpt-4o-transcribe" | "gpt-4o-mini-transcribe" | (string & {});
   confidenceThreshold?: number; // Default: -3.0
 }
@@ -52,13 +52,10 @@ export class OpenAISTT implements SpeechToTextProvider {
   private readonly logger: pino.Logger;
   public readonly id = "openai" as const;
 
-  constructor(sttConfig: STTConfig, parentLogger: pino.Logger) {
+  constructor(sttConfig: STTConfig, parentLogger: pino.Logger, fetch?: typeof globalThis.fetch) {
     this.config = sttConfig;
     this.logger = parentLogger.child({ module: "agent", provider: "openai", component: "stt" });
-    this.openaiClient = new OpenAI({
-      apiKey: sttConfig.apiKey,
-      ...(sttConfig.baseUrl ? { baseURL: sttConfig.baseUrl } : {}),
-    });
+    this.openaiClient = createOpenAiSpeechClient(sttConfig, fetch);
     this.logger.info({ model: sttConfig.model || "whisper-1" }, "STT (OpenAI Whisper) initialized");
   }
 
@@ -75,6 +72,11 @@ export class OpenAISTT implements SpeechToTextProvider {
     let segmentId = v4();
     let previousSegmentId: string | null = null;
     let pcm16: Buffer = Buffer.alloc(0);
+    const pending = new Set<AbortController>();
+    const cancelPending = () => {
+      for (const controller of pending) controller.abort();
+      pending.clear();
+    };
     const transcribeAudio = this.transcribeAudioInternal.bind(this);
 
     const convertPCMToWavBuffer = (pcmBuffer: Buffer): Buffer => {
@@ -124,11 +126,17 @@ export class OpenAISTT implements SpeechToTextProvider {
 
         const committedId = segmentId;
         const prev = previousSegmentId;
+        const committedPcm = pcm16;
+        previousSegmentId = committedId;
+        segmentId = v4();
+        pcm16 = Buffer.alloc(0);
+        const controller = new AbortController();
+        pending.add(controller);
         emitter.emit("committed", { segmentId: committedId, previousSegmentId: prev });
 
         void (async () => {
           try {
-            if (pcm16.length === 0) {
+            if (committedPcm.length === 0) {
               emitter.emit("transcript", {
                 segmentId: committedId,
                 transcript: "",
@@ -139,15 +147,17 @@ export class OpenAISTT implements SpeechToTextProvider {
               return;
             }
 
-            const wav = convertPCMToWavBuffer(pcm16);
+            const wav = convertPCMToWavBuffer(committedPcm);
             const result = await transcribeAudio(
               wav,
               "audio/wav",
               params.language ?? "en",
               logger,
               params.prompt,
+              controller.signal,
             );
 
+            if (controller.signal.aborted) return;
             emitter.emit("transcript", {
               segmentId: committedId,
               transcript: result.text,
@@ -158,11 +168,9 @@ export class OpenAISTT implements SpeechToTextProvider {
               isLowConfidence: result.isLowConfidence,
             });
           } catch (err) {
-            emitter.emit("error", err);
+            if (!controller.signal.aborted) emitter.emit("error", err);
           } finally {
-            previousSegmentId = committedId;
-            segmentId = v4();
-            pcm16 = Buffer.alloc(0);
+            pending.delete(controller);
           }
         })();
       },
@@ -171,6 +179,7 @@ export class OpenAISTT implements SpeechToTextProvider {
         segmentId = v4();
       },
       close() {
+        cancelPending();
         connected = false;
         pcm16 = Buffer.alloc(0);
       },
@@ -187,6 +196,7 @@ export class OpenAISTT implements SpeechToTextProvider {
     language: string,
     logger: pino.Logger,
     prompt?: string,
+    signal?: AbortSignal,
   ): Promise<TranscriptionResult> {
     const startTime = Date.now();
     let tempFilePath: string | null = null;
@@ -203,14 +213,17 @@ export class OpenAISTT implements SpeechToTextProvider {
         modelToUse === "gpt-4o-transcribe" || modelToUse === "gpt-4o-mini-transcribe";
       const includeLogprobs: ["logprobs"] = ["logprobs"];
 
-      const response = await this.openaiClient.audio.transcriptions.create({
-        file: await import("fs").then((fs) => fs.createReadStream(tempFilePath!)),
-        language,
-        model: modelToUse,
-        ...(prompt ? { prompt } : {}),
-        ...(supportsLogprobs ? { include: includeLogprobs } : {}),
-        response_format: "json",
-      });
+      const response = await this.openaiClient.audio.transcriptions.create(
+        {
+          file: await import("fs").then((fs) => fs.createReadStream(tempFilePath!)),
+          language,
+          model: modelToUse,
+          ...(prompt ? { prompt } : {}),
+          ...(supportsLogprobs ? { include: includeLogprobs } : {}),
+          response_format: "json",
+        },
+        { signal },
+      );
 
       const duration = Date.now() - startTime;
       const confidenceThreshold = this.config.confidenceThreshold ?? -3.0;
