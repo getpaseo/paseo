@@ -376,6 +376,12 @@ external `href` or `xlink:href` references are rejected. Fragment references suc
 allowed. Paseo reads and sanitizes the file when the plugin starts; the string is never an inline
 SVG or URL.
 
+## Usage sources
+
+Register a usage source from `index.server.ts` with `server.registerUsageSource()`. Import `UsageSourceRegistration` and normalization helpers from `@getpaseo/plugin/server/usage`. `input` is a Zod schema checked inside the plugin process before `fetch(input)` runs. `discover()` returns the inputs for accounts found on the host; an empty list omits the source from host usage. `fetch()` returns a report with a stable `account.key` so the daemon can deduplicate accounts and cache by source and input. A failed input or fetch becomes an error report for that source. `icon` uses the same sanitized SVG file rules as provider icons.
+
+The daemon calls discovery for `usage.list_reports`; the client gates this RPC on `server_info.features.usageSources`. The old `provider.usage.list` RPC maps discovered reports for older clients. See the [public usage source reference](../public-docs/plugins/reference.md#usage-sources) for the author contract and minimum version.
+
 ## Contribute buttons
 
 Header buttons and composer pills share the client-only descriptor and registration lifecycle in

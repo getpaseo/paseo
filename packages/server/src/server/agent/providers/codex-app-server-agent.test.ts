@@ -171,6 +171,44 @@ function createSession(
   return session;
 }
 
+test("Codex usage reference follows CODEX_HOME and excludes custom base URLs", async () => {
+  const session = new CodexAppServerAgentSession(
+    createConfig(),
+    null,
+    createTestLogger(),
+    () => {
+      throw new Error("unused");
+    },
+    {},
+    false,
+    false,
+    false,
+    undefined,
+    "interactive",
+    { CODEX_HOME: "/accounts/second" },
+  );
+  expect(await session.getUsageReference()).toEqual({
+    source: "codex",
+    input: { codexHome: "/accounts/second" },
+  });
+  const custom = new CodexAppServerAgentSession(
+    createConfig(),
+    null,
+    createTestLogger(),
+    () => {
+      throw new Error("unused");
+    },
+    {},
+    false,
+    false,
+    false,
+    undefined,
+    "interactive",
+    { CODEX_HOME: "/accounts/second", OPENAI_BASE_URL: "https://example.test" },
+  );
+  expect(await custom.getUsageReference()).toBeNull();
+});
+
 function createProviderWithFakeAppServer(
   appServer: FakeCodexAppServer,
   options?: {

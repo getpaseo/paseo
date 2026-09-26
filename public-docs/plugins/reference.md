@@ -304,6 +304,34 @@ external `href` or `xlink:href` references are rejected. Fragment references suc
 allowed. Paseo reads and sanitizes the file when the plugin starts; the string is never an inline
 SVG or URL.
 
+### Usage sources
+
+**Requires Paseo 0.9.3 or newer.** Server plugins can register a usage source with `server.registerUsageSource()` and import its types and helpers from `@getpaseo/plugin/server/usage`.
+
+```ts
+import { z } from "zod";
+import type { PluginServerContext } from "@getpaseo/plugin/server";
+
+const input = z.object({ account: z.string() });
+
+export default function contribute(server: PluginServerContext) {
+  server.registerUsageSource({
+    id: "example-usage",
+    label: "Example",
+    icon: "icon.svg",
+    input,
+    discover: async () => [{ account: "default" }],
+    fetch: async (value) => {
+      const { account } = input.parse(value);
+      return { account: { key: account }, status: "available", windows: [] };
+    },
+  });
+  return () => {};
+}
+```
+
+`discover()` supplies host accounts for `usage.list_reports`; return `[]` when none are configured. The daemon validates input against `input` inside the plugin process, caches each source/input result for five minutes, and deduplicates reports by source and `account.key`. `fetch()` returns a `UsageReport` with `status` (`available`, `unavailable`, or `error`), optional `planLabel`, and generic `windows`, `balances`, and `details`. Set `headline: true` on the window to show first. The icon is a path to a self-contained SVG under the plugin directory and follows the provider icon restrictions above.
+
 ## Entry point and cleanup
 
 Each present entry default-exports one contribution function and returns cleanup. Client entries

@@ -18,6 +18,7 @@ export const PROVIDER_CAPABILITIES = [
   "session.revert.files",
   "session.subsession",
   "session.unarchive",
+  "session.usage_reference",
   "permission",
   "permission.tool_policy",
   "timeline.plugin",
@@ -227,6 +228,7 @@ export type ProviderInput =
     }
   | { type: "session.prompt"; sessionId: string; prompt: ProviderPrompt }
   | { type: "session.interrupt"; requestId: string; sessionId: string }
+  | { type: "session.usage_reference"; requestId: string; sessionId: string }
   | {
       type: "session.permission";
       sessionId: string;
@@ -526,6 +528,11 @@ export type ProviderEvent =
   | { type: "catalog"; requestId: string; catalog: ProviderCatalog }
   | { type: "sessions"; requestId: string; sessions: ProviderSessionSummary[] }
   | { type: "request.completed"; requestId: string }
+  | {
+      type: "usage_reference";
+      requestId: string;
+      reference: { source: string; input: JsonValue } | null;
+    }
   | { type: "request.failed"; requestId: string; error: ProviderError }
   | {
       type: "session.opened";
@@ -609,6 +616,8 @@ export function requiredProviderCapabilities(input: ProviderInput): readonly Pro
     case "session.interrupt":
     case "session.close":
       return [];
+    case "session.usage_reference":
+      return ["session.usage_reference"];
     case "sessions":
       return ["session.list"];
     case "session.open": {
@@ -886,6 +895,13 @@ export const ProviderInputSchema: z.ZodType<ProviderInput> = z.discriminatedUnio
     .strict(),
   z
     .object({ type: z.literal("session.interrupt"), requestId: idSchema, sessionId: idSchema })
+    .strict(),
+  z
+    .object({
+      type: z.literal("session.usage_reference"),
+      requestId: idSchema,
+      sessionId: idSchema,
+    })
     .strict(),
   z
     .object({
@@ -1272,6 +1288,13 @@ export const ProviderEventSchema: z.ZodType<ProviderEvent> = z.discriminatedUnio
     })
     .strip(),
   z.object({ type: z.literal("request.completed"), requestId: idSchema }).strip(),
+  z
+    .object({
+      type: z.literal("usage_reference"),
+      requestId: idSchema,
+      reference: z.object({ source: idSchema, input: z.json() }).nullable(),
+    })
+    .strip(),
   z
     .object({ type: z.literal("request.failed"), requestId: idSchema, error: providerErrorSchema })
     .strip(),

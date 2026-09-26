@@ -10,6 +10,7 @@ const entries = {
   ".": "shared",
   "./server": "server",
   "./server/provider": "server",
+  "./server/usage": "server",
   "./server/acp": "server",
   "./client": "client",
   "./client/host": "client",
