@@ -1089,10 +1089,8 @@ function getClaudeModeLabel(modeId: PermissionMode): string {
   return DEFAULT_MODES.find((mode) => mode.id === modeId)?.label ?? modeId;
 }
 
-function buildClaudePlanPermissionActions(
-  resumeMode: PermissionMode | null,
-): AgentPermissionAction[] {
-  const actions: AgentPermissionAction[] = [
+function buildClaudePlanPermissionActions(): AgentPermissionAction[] {
+  return [
     {
       id: "reject",
       label: "Reject",
@@ -1107,19 +1105,14 @@ function buildClaudePlanPermissionActions(
       variant: "primary",
       intent: "implement",
     },
-  ];
-
-  if (resumeMode === "bypassPermissions") {
-    actions.push({
+    {
       id: "implement_resume",
-      label: `Implement with ${getClaudeModeLabel(resumeMode)}`,
+      label: `Implement with ${getClaudeModeLabel("bypassPermissions")}`,
       behavior: "allow",
       variant: "secondary",
       intent: "implement_resume",
-    });
-  }
-
-  return actions;
+    },
+  ];
 }
 
 interface TimelineFragment {
@@ -2069,7 +2062,6 @@ class ClaudeAgentSession implements AgentSession {
   private claudeSessionId: string | null;
   private persistence: AgentPersistenceHandle | null;
   private currentMode: PermissionMode;
-  private planResumeMode: PermissionMode | null = null;
   private availableModes: AgentMode[] = DEFAULT_MODES;
   private toolUseCache = new Map<string, ToolUseCacheEntry>();
   private toolUseIndexToId = new Map<number, string>();
@@ -2159,9 +2151,6 @@ class ClaudeAgentSession implements AgentSession {
     }
 
     this.currentMode = isPermissionMode(config.modeId) ? config.modeId : "default";
-    if (this.currentMode !== "plan") {
-      this.planResumeMode = this.currentMode;
-    }
   }
 
   get id(): string | null {
@@ -2423,16 +2412,8 @@ class ClaudeAgentSession implements AgentSession {
 
     const normalized = isPermissionMode(modeId) ? modeId : "default";
     assertClaudeModeCanRun(normalized, this.buildSdkEnv());
-    const previousMode = this.currentMode;
     const activeQuery = await this.ensureQuery();
     await activeQuery.setPermissionMode(normalized);
-    if (normalized === "plan") {
-      if (previousMode !== "plan") {
-        this.planResumeMode = previousMode;
-      }
-    } else {
-      this.planResumeMode = normalized;
-    }
     this.currentMode = normalized;
   }
 
@@ -2610,11 +2591,8 @@ class ClaudeAgentSession implements AgentSession {
     if (response.behavior === "allow") {
       if (pending.request.kind === "plan") {
         const selectedActionId = response.selectedActionId;
-        const shouldResumePriorMode =
-          selectedActionId === "implement_resume" && this.planResumeMode === "bypassPermissions";
-        const targetMode: PermissionMode = shouldResumePriorMode
-          ? "bypassPermissions"
-          : "acceptEdits";
+        const targetMode: PermissionMode =
+          selectedActionId === "implement_resume" ? "bypassPermissions" : "acceptEdits";
         await this.setMode(targetMode);
         this.pushToolCall(
           mapClaudeCompletedToolCall({
@@ -4603,9 +4581,6 @@ class ClaudeAgentSession implements AgentSession {
     }
     this.availableModes = DEFAULT_MODES;
     this.currentMode = message.permissionMode;
-    if (this.currentMode !== "plan") {
-      this.planResumeMode = this.currentMode;
-    }
     this.persistence = null;
     if (message.model) {
       const normalizedRuntimeModel = normalizeClaudeRuntimeModelId(message.model);
@@ -4687,7 +4662,7 @@ class ClaudeAgentSession implements AgentSession {
       suggestions: options.suggestions?.map((suggestion) => ({
         ...suggestion,
       })),
-      actions: kind === "plan" ? buildClaudePlanPermissionActions(this.planResumeMode) : undefined,
+      actions: kind === "plan" ? buildClaudePlanPermissionActions() : undefined,
       metadata: Object.keys(metadata).length ? metadata : undefined,
     };
 
