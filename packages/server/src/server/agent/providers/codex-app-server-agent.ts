@@ -502,9 +502,30 @@ export async function findCodexMicrosoftStoreBinary(): Promise<string | null> {
   return null;
 }
 
-export async function findDefaultCodexBinary(): Promise<string | null> {
-  const pathBinary = await findExecutable("codex");
+export interface CodexBinaryDiscoveryEnvironment {
+  platform: NodeJS.Platform;
+  applicationDirs: readonly string[];
+  findPathBinary: () => Promise<string | null>;
+}
+
+export async function findDefaultCodexBinary(
+  environment: CodexBinaryDiscoveryEnvironment = {
+    platform: process.platform,
+    applicationDirs: ["/Applications", path.join(os.homedir(), "Applications")],
+    findPathBinary: () => findExecutable("codex"),
+  },
+): Promise<string | null> {
+  const pathBinary = await environment.findPathBinary();
   if (pathBinary) return pathBinary;
+  if (environment.platform === "darwin") {
+    for (const applicationDir of environment.applicationDirs) {
+      for (const appName of ["Codex.app", "ChatGPT.app"]) {
+        const candidate = path.join(applicationDir, appName, "Contents", "Resources", "codex");
+        if (await probeExecutable(candidate)) return candidate;
+      }
+    }
+    return null;
+  }
   return await findCodexMicrosoftStoreBinary();
 }
 
