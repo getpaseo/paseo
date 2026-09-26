@@ -2233,6 +2233,59 @@ describe("Codex app-server provider", () => {
     );
   });
 
+  test("resolves a Codex skill mentioned after prose into app-server skill input", async () => {
+    const session = createSession();
+    const request = vi.fn(async (method: string) => {
+      if (method === "skills/list") {
+        return {
+          data: [
+            {
+              cwd: "/tmp/codex-question-test",
+              skills: [
+                {
+                  name: "paseo-implement",
+                  description: "Execute an existing Paseo plan.",
+                  path: "/tmp/skills/paseo-implement/SKILL.md",
+                },
+              ],
+              errors: [],
+            },
+          ],
+        };
+      }
+      if (method === "thread/loaded/list") {
+        return { data: ["test-thread"] };
+      }
+      if (method === "turn/start") {
+        return {};
+      }
+      throw new Error(`Unexpected request: ${method}`);
+    });
+
+    session.activeForegroundTurnId = null;
+    session.client = createStub<CodexClientLike>({ request });
+
+    await session.startTurn("Review the accepted plan, then use /paseo-implement to complete it.");
+
+    const turnStartCall = request.mock.calls.find(([method]) => method === "turn/start");
+    expect(turnStartCall?.[1]).toEqual(
+      expect.objectContaining({
+        input: [
+          {
+            type: "skill",
+            name: "paseo-implement",
+            path: "/tmp/skills/paseo-implement/SKILL.md",
+          },
+          {
+            type: "text",
+            text: "Review the accepted plan, then use $paseo-implement to complete it.",
+            text_elements: [],
+          },
+        ],
+      }),
+    );
+  });
+
   test("lists project skill commands when app-server receives the project cwd in cwds", async () => {
     const commands = await listCommandsFromFakeCodex([
       {

@@ -3169,6 +3169,26 @@ function enabledCodexSkills(
   return Array.from(skillsByName.values());
 }
 
+// Composer autocomplete inserts skills as `/name` anywhere in the prompt, while
+// Codex only injects a skill it receives as a skill input item.
+const SKILL_MENTION_PATTERN = /(^|\s)\/([^\s/"']+)/g;
+
+function resolveCodexSkillMentions(
+  text: string,
+  skills: ReadonlyArray<{ name: string; path: string }>,
+): { skills: CodexSkillPromptBlock[]; text: string } {
+  const mentioned = new Map<string, CodexSkillPromptBlock>();
+  const rewritten = text.replace(SKILL_MENTION_PATTERN, (mention, prefix: string, name: string) => {
+    const skill = skills.find((entry) => entry.name === name);
+    if (!skill) {
+      return mention;
+    }
+    mentioned.set(skill.name, { type: "skill", name: skill.name, path: skill.path });
+    return `${prefix}$${skill.name}`;
+  });
+  return { skills: Array.from(mentioned.values()), text: rewritten };
+}
+
 type CodexPromptContentBlock = AgentPromptContentBlock | CodexSkillPromptBlock;
 type CodexPromptInput = string | CodexPromptContentBlock[];
 interface CodexTextElement {
@@ -4063,6 +4083,18 @@ export class CodexAppServerAgentSession implements AgentSession {
     return args ? `$${commandName} ${args}` : `$${commandName}`;
   }
 
+  private async attachMentionedSkills(prompt: AgentPromptInput): Promise<CodexPromptInput> {
+    if (typeof prompt !== "string" || !prompt.includes("/")) {
+      return prompt;
+    }
+    await this.loadSkills();
+    const resolved = resolveCodexSkillMentions(prompt, this.cachedSkills ?? []);
+    if (resolved.skills.length === 0) {
+      return prompt;
+    }
+    return [...resolved.skills, { type: "text", text: resolved.text }];
+  }
+
   private async buildTurnStartParams(
     prompt: CodexPromptInput,
     options?: AgentRunOptions,
@@ -4266,7 +4298,7 @@ export class CodexAppServerAgentSession implements AgentSession {
       const slashCommand = await this.resolveSlashCommandInvocation(prompt);
       const effectivePrompt = slashCommand
         ? await this.buildCommandPromptInput(slashCommand.commandName, slashCommand.args)
-        : prompt;
+        : await this.attachMentionedSkills(prompt);
 
       if (this.currentThreadId) {
         await this.ensureThreadLoaded();
