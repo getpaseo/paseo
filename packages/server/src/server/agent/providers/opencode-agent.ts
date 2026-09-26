@@ -1318,7 +1318,10 @@ function buildOpenCodeReplayTimelineEvents(
   }
   if (info.role === "user") {
     const text = parts
-      .filter((part): part is Extract<OpenCodePart, { type: "text" }> => part.type === "text")
+      .filter(
+        (part): part is Extract<OpenCodePart, { type: "text" }> =>
+          part.type === "text" && isUserAuthoredOpenCodeText(part),
+      )
       .map((part) => part.text)
       .join("");
 
@@ -2854,6 +2857,11 @@ function shouldSuppressOpenCodeAssistantPart(
   );
 }
 
+// OpenCode marks text it adds to a user message itself with `synthetic` and hides it from its own UI.
+function isUserAuthoredOpenCodeText(part: { synthetic?: boolean }): boolean {
+  return part.synthetic !== true;
+}
+
 function appendOpenCodeTextPart(
   part: Extract<
     Extract<OpenCodeEvent, { type: "message.part.updated" }>["properties"]["part"],
@@ -2864,7 +2872,11 @@ function appendOpenCodeTextPart(
   events: AgentStreamEvent[],
 ): void {
   if (messageRole === "user") {
-    if (!part.text || state.emittedUserMessageIds?.has(part.messageID)) {
+    if (
+      !part.text ||
+      !isUserAuthoredOpenCodeText(part) ||
+      state.emittedUserMessageIds?.has(part.messageID)
+    ) {
       return;
     }
     state.emittedUserMessageIds?.add(part.messageID);

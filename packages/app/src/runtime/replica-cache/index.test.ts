@@ -256,6 +256,41 @@ function deleteDirectory(cache: ReplicaCache, serverId: string): void {
 }
 
 describe("ReplicaCache", () => {
+  it("rejects pre-baseline-fix checkpoints without discarding cached rows or timelines", async () => {
+    const storage = new MemoryStorage();
+    const writer = createCache(storage);
+    const baseline = directory();
+    writer.replaceDirectoryBaseline(SERVER_ID, baseline);
+    writer.commitTimeline(SERVER_ID, "agent-1", timeline());
+    await writer.flush();
+    await storage.apply({
+      deletes: [],
+      upserts: [
+        {
+          serverId: SERVER_ID,
+          kind: "checkpoint",
+          id: "singleton",
+          payload: JSON.stringify(baseline.checkpoint),
+        },
+      ],
+    });
+
+    const reader = createCache(storage);
+    const restored = await reader.readDirectory(SERVER_ID);
+    expect(restored.checkpoint).toBeUndefined();
+    expect([...restored.workspaces.keys()]).toEqual([...baseline.workspaces.keys()]);
+    expect([...restored.projects.keys()]).toEqual([...baseline.projects.keys()]);
+    expect([...restored.agents.keys()]).toEqual([...baseline.agents.keys()]);
+    expect(await reader.readTimeline(SERVER_ID, "agent-1")).toEqual(timeline());
+    expect(await storage.read(SERVER_ID, ["checkpoint"])).toEqual([]);
+
+    reader.replaceDirectoryBaseline(SERVER_ID, baseline);
+    await reader.flush();
+    expect((await createCache(storage).readDirectory(SERVER_ID)).checkpoint).toEqual(
+      baseline.checkpoint,
+    );
+  });
+
   it("does nothing until an owner explicitly commits data", async () => {
     const storage = new MemoryStorage();
     const cache = createCache(storage);

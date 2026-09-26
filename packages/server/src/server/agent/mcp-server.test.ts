@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { describe, expect, it, vi } from "vitest";
-import { realpathSync, rmSync } from "node:fs";
+import { realpathSync } from "node:fs";
 import { access, mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { join, resolve as resolvePath } from "node:path";
 import { tmpdir } from "node:os";
@@ -190,6 +190,16 @@ async function waitForUnexpectedWorkspaceNamingSideEffects(): Promise<void> {
 
 async function removeTempDir(path: string): Promise<void> {
   await rm(path, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+}
+
+async function removeAgentStateDir(
+  agentManager: AgentManager,
+  storage: AgentStorage,
+  path: string,
+): Promise<void> {
+  await agentManager.flush();
+  await storage.flush();
+  await removeTempDir(path);
 }
 
 type AgentManagerSpies = ReturnType<typeof buildAgentManagerSpies>;
@@ -3420,7 +3430,7 @@ describe("create_agent MCP tool", () => {
       expect(storedChild?.workspaceId).toBe("wks_parent");
       expect(storedChild?.labels[PARENT_AGENT_ID_LABEL]).toBe(parent.id);
     } finally {
-      rmSync(workdir, { recursive: true, force: true });
+      await removeAgentStateDir(agentManager, storage, workdir);
     }
   });
 
@@ -4012,7 +4022,7 @@ describe("send_agent_prompt MCP tool", () => {
       });
     } finally {
       vi.useRealTimers();
-      rmSync(workdir, { recursive: true, force: true });
+      await removeAgentStateDir(agentManager, storage, workdir);
     }
   });
   it("notifies the caller once when it prompts a created child that is still running", async () => {
@@ -4072,7 +4082,7 @@ describe("send_agent_prompt MCP tool", () => {
       await new Promise((resolve) => setTimeout(resolve, 100));
       expect(finishNotifications()).toHaveLength(1);
     } finally {
-      rmSync(workdir, { recursive: true, force: true });
+      await removeAgentStateDir(agentManager, storage, workdir);
     }
   });
 });
