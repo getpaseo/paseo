@@ -215,7 +215,7 @@ export function useDropListeners({
         const types = new Set(e.dataTransfer.types);
         const acceptsWorkspaceFile =
           types.has(WORKSPACE_FILE_DRAG_MIME) && Boolean(getSink()?.onWorkspaceFile);
-        const acceptsDrop = types.has("Files") || acceptsWorkspaceFile;
+        const acceptsDrop = types.has("Files") || types.has("text/plain") || acceptsWorkspaceFile;
         const canAccept = acceptsDrop && !disabledRef.current && !suppressed.value && hasSink.value;
         e.dataTransfer.dropEffect = canAccept ? "copy" : "none";
       }
@@ -233,6 +233,15 @@ export function useDropListeners({
       }
 
       async function handleDrop(e: DragEvent) {
+        const transfer = e.dataTransfer;
+        const hasFiles = Boolean(transfer && transfer.files.length > 0);
+        const hasWorkspaceFile = Boolean(transfer?.getData(WORKSPACE_FILE_DRAG_MIME));
+        // Let editable inputs handle text drops themselves. File and workspace drops
+        // remain owned by this outer drop zone.
+        if (!hasFiles && !hasWorkspaceFile && transfer?.types.includes("text/plain")) {
+          return;
+        }
+
         e.preventDefault();
         e.stopPropagation();
 
@@ -244,7 +253,7 @@ export function useDropListeners({
         const sink = getSink();
         if (!sink) return;
 
-        const serializedWorkspaceFile = e.dataTransfer?.getData(WORKSPACE_FILE_DRAG_MIME);
+        const serializedWorkspaceFile = transfer?.getData(WORKSPACE_FILE_DRAG_MIME);
         if (serializedWorkspaceFile && sink.onWorkspaceFile) {
           const payload = parseWorkspaceFileDragPayload(serializedWorkspaceFile);
           if (payload) {
@@ -252,7 +261,7 @@ export function useDropListeners({
           }
         }
 
-        const files = Array.from(e.dataTransfer?.files ?? []);
+        const files = Array.from(transfer?.files ?? []);
         const genericItems: DroppedItem[] = files.map((file) => ({
           kind: "web-file",
           file,
