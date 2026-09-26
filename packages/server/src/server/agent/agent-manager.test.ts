@@ -635,6 +635,29 @@ class UnsupportedSteeringSession extends TestAgentSession {
   }
 }
 
+class BackgroundWorkSession extends TestAgentSession {
+  interruptCount = 0;
+  startCount = 0;
+  startPrompts: AgentPromptInput[] = [];
+
+  override readonly capabilities = {
+    ...TEST_CAPABILITIES,
+    acceptsPromptDuringAutonomousTurn: true,
+  };
+
+  override async startTurn(prompt: AgentPromptInput): Promise<{ turnId: string }> {
+    this.startPrompts.push(prompt);
+    const turnId = `foreground-turn-${++this.startCount}`;
+    setTimeout(() => this.pushEvent({ type: "turn_started", provider: this.provider, turnId }), 0);
+    return { turnId };
+  }
+
+  override async interrupt(): Promise<void> {
+    this.interruptCount += 1;
+    this.pushEvent({ type: "turn_canceled", provider: this.provider, reason: "Interrupted" });
+  }
+}
+
 async function startAndSteerThroughManager(
   session: AgentSession,
   behavior: "steer" | "interrupt" = "steer",
@@ -1210,6 +1233,41 @@ test("steers a tracked autonomous turn without creating a replacement run", asyn
         clientMessageId: "autonomous-follow-up-client",
       }),
     );
+  } finally {
+    if (agentId) await manager.closeAgent(agentId).catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("a follow-up starts a turn beside background work instead of interrupting it", async () => {
+  const session = new BackgroundWorkSession({ provider: "claude", cwd: process.cwd() });
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-background-work-"));
+  const client = new (class extends TestAgentClient {
+    override async createSession() {
+      return session;
+    }
+  })();
+  const manager = new AgentManager({ clients: { claude: client }, logger });
+  let agentId: string | null = null;
+
+  try {
+    const agent = await manager.createAgent({ provider: "claude", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    agentId = agent.id;
+    // Claude announces the turn its background subagents run under without a turn id.
+    session.pushEvent({ type: "turn_started", provider: "claude" });
+    await vi.waitFor(() => expect(manager.getAgent(agent.id)?.lifecycle).toBe("running"));
+
+    const result = await startAgentRun(manager, agent.id, "how is it going?", logger, {
+      replaceRunning: true,
+      activeTurnBehavior: "steer",
+      runOptions: { clientMessageId: "background-follow-up-client" },
+    });
+
+    expect(result).toEqual({ disposition: "turn_started" });
+    expect(session.interruptCount).toBe(0);
+    expect(session.startPrompts).toEqual(["how is it going?"]);
   } finally {
     if (agentId) await manager.closeAgent(agentId).catch(() => undefined);
     rmSync(workdir, { recursive: true, force: true });

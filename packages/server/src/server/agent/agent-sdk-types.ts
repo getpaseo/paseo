@@ -192,6 +192,8 @@ export interface AgentCapabilityFlags {
   supportsRewindConversation?: boolean;
   supportsRewindFiles?: boolean;
   supportsRewindBoth?: boolean;
+  /** startTurn absorbs a live autonomous turn instead of needing it cancelled first. */
+  acceptsPromptDuringAutonomousTurn?: boolean;
 }
 
 export interface AgentPersistenceHandle {
