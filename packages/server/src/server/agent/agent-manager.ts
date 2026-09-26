@@ -945,6 +945,28 @@ export class AgentManager {
     );
   }
 
+  /**
+   * Whether in-flight work has to be cancelled before a prompt can open a turn. Autonomous work a
+   * provider absorbs on its way into startTurn does not, so a follow-up leaves it running instead
+   * of interrupting the session that owns it.
+   */
+  hasBlockingRun(agentId: string): boolean {
+    if (!this.hasInFlightRun(agentId)) {
+      return false;
+    }
+    const agent = this.agents.get(agentId);
+    return !agent || !this.hasSupersedableAutonomousRun(agent);
+  }
+
+  /** An autonomous run the provider retires inside startTurn, so a prompt supersedes it in place. */
+  private hasSupersedableAutonomousRun(agent: ManagedAgent): boolean {
+    return (
+      !agent.activeForegroundTurnId &&
+      Boolean(agent.session?.capabilities.acceptsPromptDuringAutonomousTurn) &&
+      this.runs.getRun(agent.id)?.kind === "autonomous"
+    );
+  }
+
   subscribe(callback: AgentSubscriber, options?: SubscribeOptions): () => void {
     const targetAgentId =
       options?.agentId == null ? null : validateAgentId(options.agentId, "subscribe");
@@ -2484,7 +2506,11 @@ export class AgentManager {
       },
       "agent.manager.stream.request",
     );
-    if (existingAgent.activeForegroundTurnId || this.runs.hasRun(agentId)) {
+    const supersededAutonomousRun = this.hasSupersedableAutonomousRun(existingAgent);
+    if (
+      existingAgent.activeForegroundTurnId ||
+      (this.runs.hasRun(agentId) && !supersededAutonomousRun)
+    ) {
       this.logger.trace(
         {
           agentId,
@@ -2502,6 +2528,11 @@ export class AgentManager {
     const agent = existingAgent;
     const isReplacement = agent.pendingReplacement;
     agent.lastError = undefined;
+
+    if (supersededAutonomousRun) {
+      // Settle it before the pending run takes its slot, so a cancel waiting on it cannot hang.
+      this.runs.clearAgentRun(agentId);
+    }
 
     const pendingRun = this.runs.createPendingRun(agentId);
 
