@@ -561,9 +561,13 @@ type PluginTurnOutcome =
 
 | Name                 | Request fields                                                          | Editable                                |
 | -------------------- | ----------------------------------------------------------------------- | --------------------------------------- |
-| `agent.create`       | `config`, optional `env`                                                | Public agent config except `cwd`; `env` |
+| `agent.create`       | `config`, optional `env`, optional `initialPrompt`                      | Public agent config except `cwd`; `env` |
 | `agent.session_open` | `agentId`, `workspaceId`, `provider`, `cwd`, `reason`, `purpose`, `env` | Only `env`                              |
 | `workspace.create`   | `source`, optional `title`, `firstAgentContext`                         | Entire explicit creation request        |
+
+`agent.create.initialPrompt` is the first message of the creation request, when it has one. Read it
+to choose the provider, model, or mode from the task. It is read-only: returning a different value
+fails creation, and omitting it keeps it.
 
 **`agent.create.config`** uses `AgentSessionConfig`:
 

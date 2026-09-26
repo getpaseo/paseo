@@ -229,6 +229,64 @@ export default function contribute(server) {
   }
 }, 60_000);
 
+test("agent creation hooks choose the provider from the initial prompt", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "paseo-prompt-hooks-"));
+  const daemon = await createTestPaseoDaemon({ daemonVersion: "0.8.0" });
+  const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws`, appVersion: "0.8.0" });
+  try {
+    await writeFile(
+      path.join(directory, "paseo-plugin.json"),
+      JSON.stringify({ id: "prompt-hooks", requirements: { paseo: ">=0.8.0" } }),
+    );
+    await writeFile(
+      path.join(directory, "index.server.ts"),
+      `
+export default function contribute(server) {
+  server.before("agent.create", ({ request }) => {
+    console.log(JSON.stringify({ hook: "agent.create", initialPrompt: request.initialPrompt ?? null }));
+    if (!request.initialPrompt?.startsWith("Review")) return;
+    return { ...request, config: { ...request.config, provider: "codex" } };
+  });
+  return () => {};
+}
+`,
+    );
+    await client.connect();
+    await client.fetchAgents({ subscribe: {} });
+    await client.patchDaemonConfig({ pluginsEnabled: true });
+    await client.installDirectoryPlugin(directory);
+    const reviewer = await client.createAgent({
+      provider: "claude",
+      cwd: directory,
+      initialPrompt: "Review PR 42",
+    });
+    const unprompted = await client.createAgent({ provider: "claude", cwd: directory });
+    expect(reviewer.provider).toBe("codex");
+    expect(unprompted.provider).toBe("claude");
+    await expect
+      .poll(async () => {
+        const logs = await client.getPluginLogs("prompt-hooks");
+        return logs
+          .filter((entry) => {
+            return entry.message.startsWith('{"hook":');
+          })
+          .map((entry) => {
+            return JSON.parse(entry.message);
+          });
+      })
+      .toEqual([
+        { hook: "agent.create", initialPrompt: "Review PR 42" },
+        { hook: "agent.create", initialPrompt: null },
+      ]);
+    await client.archiveAgent(reviewer.id);
+    await client.archiveAgent(unprompted.id);
+  } finally {
+    await client.close();
+    await daemon.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+}, 60_000);
+
 test("invalid output from an untyped plugin rejects creation before later callbacks run", async () => {
   const directory = await mkdtemp(path.join(tmpdir(), "paseo-invalid-hook-"));
   const daemon = await createTestPaseoDaemon({ daemonVersion: "0.8.0" });
