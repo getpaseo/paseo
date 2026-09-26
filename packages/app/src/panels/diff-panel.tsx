@@ -22,6 +22,7 @@ import { defaultChangesState, changesStateSchema } from "@/panels/changes/state"
 import { usePanelState } from "@/panels/use-panel-state";
 import { RenderProfile } from "@/utils/render-profiler";
 
+const DIFF_FIND_SCOPE = { "diff-find-scope": "true" };
 const ThemedFileDiff = withUnistyles(FileDiff);
 const ThemedGitCommitHorizontal = withUnistyles(GitCommitHorizontal);
 
@@ -127,7 +128,7 @@ function ChangesPanel() {
   const profileId = isTree ? `ChangesTreePanel:${tabId}` : `WorkingDiffPanel:${tabId}`;
 
   return (
-    <View style={styles.container} testID={testID}>
+    <View style={styles.container} testID={testID} dataSet={DIFF_FIND_SCOPE}>
       <RenderProfile id={profileId}>
         <ChangesSurface
           serverId={serverId}
@@ -192,7 +193,7 @@ function CommitDiffPanel() {
   }
 
   return (
-    <View style={styles.container} testID="commit-diff-panel">
+    <View style={styles.container} testID="commit-diff-panel" dataSet={DIFF_FIND_SCOPE}>
       {panelPreferences.canUseSplitLayout ? (
         <PaneContentToolbar style={styles.toolbar} testID="commit-diff-header">
           <View style={styles.toolbarActions} testID="commit-diff-toolbar">

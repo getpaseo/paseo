@@ -26,6 +26,12 @@ export const ru: TranslationResources = {
     position: "{{current}} из {{total}}",
     total: "Совпадений: {{total}}",
   },
+  diffFind: {
+    title: "Найти в изменениях",
+    searching: "Поиск...",
+    scope: "Только текст текущих изменений",
+    skipped: "Исключено двоичных или слишком больших файлов: {{count}}",
+  },
   common: {
     back: "Назад",
     loading: "Загрузка...",
