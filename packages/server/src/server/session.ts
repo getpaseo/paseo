@@ -506,6 +506,9 @@ export interface SessionOptions {
     subscribeSettings?(listener: (pluginId: string, settingsId: string) => void): () => void;
     catalog(): Array<{ id: string; clientBundle: string }>;
     invokePluginRpc(pluginId: string, method: string, input: unknown): Promise<unknown>;
+    listUsageReports?(options?: {
+      forceRefresh?: boolean;
+    }): Promise<import("@getpaseo/protocol/messages").UsageReportEntry[]>;
   };
   orchestrationSkills?: import("./orchestration-skills/index.js").OrchestrationSkills;
   mcpBaseUrl?: string | null;
@@ -2997,8 +3000,33 @@ export class Session {
         return this.providerCatalogSession.handleProviderDiagnosticRequest(msg);
       case "provider.usage.list.request":
         return this.providerCatalogSession.handleProviderUsageListRequest(msg);
+      case "usage.list_reports.request":
+        return this.handleUsageListReportsRequest(msg);
       default:
         return undefined;
+    }
+  }
+
+  private async handleUsageListReportsRequest(
+    msg: Extract<SessionInboundMessage, { type: "usage.list_reports.request" }>,
+  ): Promise<void> {
+    try {
+      const reports =
+        (await this.pluginRuntime?.listUsageReports?.({ forceRefresh: msg.forceRefresh })) ?? [];
+      this.emit({
+        type: "usage.list_reports.response",
+        payload: { requestId: msg.requestId, reports },
+      });
+    } catch (error) {
+      this.emit({
+        type: "rpc_error",
+        payload: {
+          requestId: msg.requestId,
+          requestType: msg.type,
+          error: error instanceof Error ? error.message : String(error),
+          code: "usage_list_reports_failed",
+        },
+      });
     }
   }
 

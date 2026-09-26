@@ -23,6 +23,11 @@
       "source": "./src/server/provider.ts",
       "default": "./dist/server/provider.js"
     },
+    "./server/usage": {
+      "types": "./dist/server/usage.d.ts",
+      "source": "./src/server/usage.ts",
+      "default": "./dist/server/usage.js"
+    },
     "./server/acp": {
       "types": "./dist/server/acp.d.ts",
       "source": "./src/server/acp.ts",

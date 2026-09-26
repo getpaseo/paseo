@@ -8,6 +8,8 @@ import { createRequire } from "node:module";
 import * as pluginSharedRuntime from "@getpaseo/plugin";
 import * as pluginProviderRuntime from "@getpaseo/plugin/server/provider";
 import * as pluginAcpRuntime from "@getpaseo/plugin/server/acp";
+import * as pluginUsageRuntime from "@getpaseo/plugin/server/usage";
+import type { UsageSourceRegistration } from "@getpaseo/plugin/server/usage";
 import type { SettingsDefinition, PluginRpcContract } from "@getpaseo/plugin";
 import type { PluginHandlerContext, PluginServerContribution } from "@getpaseo/plugin/server";
 import { fileURLToPath } from "node:url";
@@ -24,6 +26,7 @@ import { isPluginClientOnlySdkSpecifier } from "./plugin-sdk-specifiers.js";
 import { createPluginClientId } from "./plugin-session-identity.js";
 
 import { PluginSettingsStore } from "./settings/index.js";
+import { readPluginProviderIcon } from "./provider-icon.js";
 const nodeRequire = createRequire(import.meta.url);
 
 function runtimeRequire(name: string): unknown {
@@ -34,6 +37,7 @@ function runtimeRequire(name: string): unknown {
   if (name === "@getpaseo/plugin/server") return {};
   if (name === "@getpaseo/plugin/server/provider") return pluginProviderRuntime;
   if (name === "@getpaseo/plugin/server/acp") return pluginAcpRuntime;
+  if (name === "@getpaseo/plugin/server/usage") return pluginUsageRuntime;
   if (name === "@getpaseo/plugin/client/host")
     throw new Error(`${name} is private to the app host`);
   return nodeRequire(name);
@@ -93,6 +97,7 @@ export function createPluginWorker(options: {
   });
   const handlers = new Map<string, RegisteredRpc>();
   const providers = new Map<string, ProviderRegistration>();
+  const usageSources = new Map<string, UsageSourceRegistration>();
   const providerConnections = new Map<
     string,
     { connection: ProviderConnection; unsubscribe: () => void; closing?: Promise<void> }
@@ -154,6 +159,21 @@ export function createPluginWorker(options: {
     }
     if (providers.has(id)) throw new Error(`Duplicate plugin provider ID: ${id}`);
     providers.set(id, { ...provider, id });
+  }
+
+  function registerUsageSource(source: UsageSourceRegistration): void {
+    const id = source.id.trim();
+    if (
+      !/^[a-z][a-z0-9._-]*$/.test(id) ||
+      !source.label.trim() ||
+      typeof source.fetch !== "function" ||
+      !source.input ||
+      typeof source.input.parseAsync !== "function"
+    ) {
+      throw new Error(`Invalid usage source: ${source.id}`);
+    }
+    if (usageSources.has(id)) throw new Error(`Duplicate usage source: ${id}`);
+    usageSources.set(id, { ...source, id });
   }
 
   function providerMetadata(provider: ProviderRegistration) {
@@ -285,6 +305,7 @@ export function createPluginWorker(options: {
       handle: (contract, handler) =>
         register(contract, (input, context) => handler(contract.input.parse(input), context)),
       registerProvider,
+      registerUsageSource,
       registerSettings,
       on: hooks.on,
       before: hooks.before,
@@ -293,6 +314,18 @@ export function createPluginWorker(options: {
       throw new Error("Plugin contribution must return a cleanup function");
     }
     cleanup = contributedCleanup;
+    const usageSourceMetadata = await Promise.all(
+      [...usageSources.values()]
+        .sort((a, b) => a.id.localeCompare(b.id))
+        .map(async (source) => ({
+          id: source.id,
+          label: source.label,
+          icon: source.icon
+            ? await readPluginProviderIcon(message.pluginDirectory, source.icon)
+            : undefined,
+          discover: !!source.discover,
+        })),
+    );
     send({
       type: "ready",
       methods: [...handlers.keys()].sort(),
@@ -300,6 +333,7 @@ export function createPluginWorker(options: {
       providers: [...providers.values()]
         .sort((left, right) => left.id.localeCompare(right.id))
         .map(providerMetadata),
+      usageSources: usageSourceMetadata,
     });
   }
 
@@ -327,7 +361,48 @@ export function createPluginWorker(options: {
     channel.disconnect();
   }
 
-  channel.onMessage((rawMessage: unknown) => {
+  function handleUsageRequest(
+    message: Extract<PluginProcessRequest, { type: "usage.fetch" | "usage.discover" }>,
+  ): void {
+    void (async () => {
+      const source = usageSources.get(message.sourceId);
+      if (!source) throw new Error(`Unknown usage source: ${message.sourceId}`);
+      if (message.type === "usage.discover")
+        return jsonTransportValue(source.discover ? await source.discover() : []);
+      const input = await source.input.parseAsync(message.input);
+      return jsonTransportValue(await source.fetch(input));
+    })().then(
+      (output) => send({ type: "result", requestId: message.requestId, output }),
+      (error) => send({ type: "error", requestId: message.requestId, error: describeError(error) }),
+    );
+  }
+
+  function rejectWhileStopping(message: PluginProcessRequest): void {
+    if (
+      message.type === "provider.catalog_key" ||
+      message.type === "usage.fetch" ||
+      message.type === "usage.discover"
+    ) {
+      send({ type: "error", requestId: message.requestId, error: "Plugin is stopping" });
+    } else if (message.type === "provider.connect") {
+      send({
+        type: "provider.connect_failed",
+        connectionId: message.connectionId,
+        error: "Plugin is stopping",
+      });
+    } else if (message.type === "provider.send") {
+      send({
+        type: "provider.rejected",
+        connectionId: message.connectionId,
+        acceptanceId: message.acceptanceId,
+        error: "Plugin is stopping",
+      });
+    } else if (message.type === "provider.close") {
+      send({ type: "provider.closed", connectionId: message.connectionId });
+    }
+  }
+
+  function handleMessage(rawMessage: unknown): void {
     const parsed = PluginProcessRequestSchema.safeParse(rawMessage);
     if (!parsed.success) {
       const value = rawMessage as { connectionId?: unknown; acceptanceId?: unknown } | null;
@@ -365,24 +440,7 @@ export function createPluginWorker(options: {
       return;
     }
     if (stopping) {
-      if (message.type === "provider.catalog_key") {
-        send({ type: "error", requestId: message.requestId, error: "Plugin is stopping" });
-      } else if (message.type === "provider.connect") {
-        send({
-          type: "provider.connect_failed",
-          connectionId: message.connectionId,
-          error: "Plugin is stopping",
-        });
-      } else if (message.type === "provider.send") {
-        send({
-          type: "provider.rejected",
-          connectionId: message.connectionId,
-          acceptanceId: message.acceptanceId,
-          error: "Plugin is stopping",
-        });
-      } else if (message.type === "provider.close") {
-        send({ type: "provider.closed", connectionId: message.connectionId });
-      }
+      rejectWhileStopping(message);
       return;
     }
     if (message.type === "provider.catalog_key") {
@@ -396,6 +454,10 @@ export function createPluginWorker(options: {
       })().catch((error) =>
         send({ type: "error", requestId: message.requestId, error: describeError(error) }),
       );
+      return;
+    }
+    if (message.type === "usage.fetch" || message.type === "usage.discover") {
+      handleUsageRequest(message);
       return;
     }
     if (message.type === "provider.connect") {
@@ -451,7 +513,8 @@ export function createPluginWorker(options: {
         (error) =>
           send({ type: "error", requestId: message.requestId, error: describeError(error) }),
       );
-  });
+  }
+  channel.onMessage(handleMessage);
 
   function handleHookMessage(
     message: Extract<PluginProcessRequest, { type: "hook" | "hook.cancel" }>,

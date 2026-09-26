@@ -24,6 +24,7 @@ import type {
   PluginProcessMessage,
   PluginProcessRequest,
   PluginProviderMetadata,
+  PluginUsageSourceMetadata,
 } from "./plugin-process-protocol.js";
 import { PluginProcessMessageSchema } from "./plugin-process-protocol.js";
 import { PluginSessionSocket } from "./session-socket.js";
@@ -67,6 +68,7 @@ interface LoadedPlugin {
   methods: ReadonlySet<string>;
   hooks: { events: string[]; before: string[] };
   providers: readonly PluginProviderMetadata[];
+  usageSources: readonly PluginUsageSourceMetadata[];
   child: PluginChild | null;
   outputCapture: PluginOutputCapture | null;
   pending: Map<string, PendingInvocation>;
@@ -346,6 +348,7 @@ export class PluginRuntime {
     assertPluginCompatibility({ ...manifest, version: this.daemonVersion, runtime: "daemon" });
     const loaded = await this.launchPlugin({
       pluginId: input.id,
+      pluginDirectory: directory,
       requirements: manifest.requirements,
       child: new InternalPluginChild(input.contribute),
       bundle: "",
@@ -380,6 +383,22 @@ export class PluginRuntime {
 
   getProviderRegistrations(pluginId: string): readonly PluginProviderMetadata[] {
     return this.plugins.get(pluginId)?.providers ?? [];
+  }
+
+  getUsageSourceRegistrations(pluginId: string): readonly PluginUsageSourceMetadata[] {
+    return this.plugins.get(pluginId)?.usageSources ?? [];
+  }
+
+  fetchUsage(pluginId: string, sourceId: string, input: unknown): Promise<unknown> {
+    const loaded = this.plugins.get(pluginId);
+    if (!loaded) throw new Error(`Plugin is not available: ${pluginId}`);
+    return this.request(loaded, { type: "usage.fetch", requestId: randomUUID(), sourceId, input });
+  }
+
+  discoverUsage(pluginId: string, sourceId: string): Promise<unknown> {
+    const loaded = this.plugins.get(pluginId);
+    if (!loaded) throw new Error(`Plugin is not available: ${pluginId}`);
+    return this.request(loaded, { type: "usage.discover", requestId: randomUUID(), sourceId });
   }
 
   async connectProvider(
@@ -589,6 +608,7 @@ export class PluginRuntime {
         methods: new Set(),
         hooks: { events: [], before: [] },
         providers: [],
+        usageSources: [],
         child: null,
         outputCapture: null,
         pending: new Map(),
@@ -600,6 +620,7 @@ export class PluginRuntime {
     }
     return this.launchPlugin({
       pluginId,
+      pluginDirectory: directory,
       requirements: manifest.requirements,
       child: this.spawnChild(),
       bundle: serverBundle,
@@ -609,6 +630,7 @@ export class PluginRuntime {
 
   private async launchPlugin(input: {
     pluginId: string;
+    pluginDirectory: string;
     requirements: PluginRequirements | undefined;
     child: PluginChild;
     bundle: string;
@@ -692,6 +714,7 @@ export class PluginRuntime {
           void send(child, {
             type: "initialize",
             pluginId,
+            pluginDirectory: input.pluginDirectory,
             appVersion: this.daemonVersion,
             bundle,
             settingsDirectory: this.dependencies.settingsDirectory
@@ -713,6 +736,7 @@ export class PluginRuntime {
       methods: new Set(ready.methods),
       hooks: ready.hooks ?? { events: [], before: [] },
       providers: ready.providers ?? [],
+      usageSources: ready.usageSources ?? [],
       child,
       outputCapture,
       pending,
