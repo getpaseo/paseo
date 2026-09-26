@@ -3,7 +3,7 @@ import { resolveComposerCapacity, updateComposerCapacity } from "./capacity";
 
 describe("composer viewport", () => {
   it("preserves the editing capacity when the keyboard closes", () => {
-    const viewport = { height: 582, bottomInset: 24, centered: false };
+    const viewport = { height: 582, bottomInset: 24, centered: false, compact: false };
     const open = updateComposerCapacity(undefined, { ...viewport, keyboardShift: 308 });
     const closed = updateComposerCapacity(open, { ...viewport, keyboardShift: 0 });
     expect(open.capacity).toBe(245);
@@ -16,6 +16,7 @@ describe("composer viewport", () => {
       height: 582,
       bottomInset: 24,
       centered: false,
+      compact: false,
       keyboardShift: 308,
     });
     expect(
@@ -23,6 +24,7 @@ describe("composer viewport", () => {
         height: 650,
         bottomInset: 24,
         centered: false,
+        compact: false,
         keyboardShift: 0,
       }).capacity,
     ).toBe(313);
@@ -31,6 +33,7 @@ describe("composer viewport", () => {
         height: 0,
         bottomInset: 24,
         centered: false,
+        compact: false,
         keyboardShift: 0,
       }),
     ).toEqual(open);
@@ -41,6 +44,7 @@ describe("composer viewport", () => {
       bottomInset: 24,
       keyboardShift: 308,
       centered: false,
+      compact: false,
     });
     expect(height).toBe(245);
     expect(582 - 24 - 308 - height).toBe(5);
@@ -52,6 +56,7 @@ describe("composer viewport", () => {
       bottomInset: 80,
       keyboardShift: 300,
       centered: true,
+      compact: false,
     });
     expect(height).toBe(310);
     expect((1000 - 80 - height) / 2 - 300).toBe(5);
@@ -59,10 +64,46 @@ describe("composer viewport", () => {
 
   it("uses the measured viewport before the first keyboard opening", () => {
     expect(
-      resolveComposerCapacity({ height: 582, bottomInset: 24, keyboardShift: 0, centered: false }),
+      resolveComposerCapacity({
+        height: 582,
+        bottomInset: 24,
+        keyboardShift: 0,
+        centered: false,
+        compact: false,
+      }),
     ).toBe(553);
     expect(
-      resolveComposerCapacity({ height: 300, bottomInset: 0, keyboardShift: 200, centered: false }),
+      resolveComposerCapacity({
+        height: 300,
+        bottomInset: 0,
+        keyboardShift: 200,
+        centered: false,
+        compact: false,
+      }),
     ).toBe(95);
+  });
+
+  it("stops a compact chat composer around 10 lines so the timeline stays on screen", () => {
+    expect(
+      resolveComposerCapacity({
+        height: 852,
+        bottomInset: 34,
+        keyboardShift: 0,
+        centered: false,
+        compact: true,
+      }),
+    ).toBe(268);
+  });
+
+  it("lets a non-compact chat composer use the remaining window", () => {
+    expect(
+      resolveComposerCapacity({
+        height: 852,
+        bottomInset: 34,
+        keyboardShift: 0,
+        centered: false,
+        compact: false,
+      }),
+    ).toBe(813);
   });
 });
