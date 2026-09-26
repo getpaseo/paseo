@@ -660,6 +660,19 @@ describe("PersistedConfigSchema voice mode config", () => {
     expect(parsed.features?.dictation?.stt?.language).toBe("fr");
     expect(parsed.features?.voiceMode?.stt?.language).toBe("de");
   });
+
+  test("accepts a voice and model from a self-hosted OpenAI-compatible server", () => {
+    const parsed = PersistedConfigSchema.parse({
+      features: {
+        voiceMode: {
+          tts: { provider: "openai", model: "kokoro-v1:Q8_0", voice: "aiden" },
+        },
+      },
+    });
+
+    expect(parsed.features?.voiceMode?.tts?.model).toBe("kokoro-v1:Q8_0");
+    expect(parsed.features?.voiceMode?.tts?.voice).toBe("aiden");
+  });
 });
 
 describe("loadPersistedConfig", () => {
