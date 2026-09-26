@@ -39,9 +39,9 @@ interface PluginRuntimePort {
   getLogs(pluginId: string): PluginLogEntry[];
   clearLogs(pluginId: string): void;
   getProviderRegistrations?(pluginId: string): readonly PluginProviderMetadata[];
-  getUsageSourceRegistrations?(pluginId: string): readonly PluginUsageSourceMetadata[];
-  fetchUsage?: PluginRuntime["fetchUsage"];
-  discoverUsage?: PluginRuntime["discoverUsage"];
+  getUsageSourceRegistrations(pluginId: string): readonly PluginUsageSourceMetadata[];
+  fetchUsage: PluginRuntime["fetchUsage"];
+  discoverUsage: PluginRuntime["discoverUsage"];
   connectProvider: PluginRuntime["connectProvider"];
   getProviderCatalogCacheKey?: PluginRuntime["getProviderCatalogCacheKey"];
   validatePlugin?(path: string): Promise<void>;
@@ -545,7 +545,7 @@ export class PluginService {
   }
 
   private publishUsageSources(pluginId: string): void {
-    const metadata = this.runtime.getUsageSourceRegistrations?.(pluginId) ?? [];
+    const metadata = this.runtime.getUsageSourceRegistrations(pluginId);
     const registered: string[] = [];
     try {
       for (const source of metadata) {
@@ -555,13 +555,12 @@ export class PluginService {
           icon: source.icon,
           discover: async () => {
             if (!source.discover) return [];
-            const result = await this.runtime.discoverUsage?.(pluginId, source.id);
+            const result = await this.runtime.discoverUsage(pluginId, source.id);
             if (!Array.isArray(result))
               throw new Error(`Invalid usage discovery from ${source.id}`);
             return result;
           },
           fetch: (input) => {
-            if (!this.runtime.fetchUsage) throw new Error("Usage source runtime unavailable");
             return this.runtime.fetchUsage(pluginId, source.id, input);
           },
         });

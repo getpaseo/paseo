@@ -1,7 +1,7 @@
 import { searchTimeline } from "./agent/chat-search/index.js";
 import type { BrowserToolsBroker } from "./browser-tools/broker.js";
 import { BrowserAutomationHostCapabilitySchema } from "@getpaseo/protocol/browser-automation/capabilities";
-import type { SessionEventSubscription } from "@getpaseo/protocol/messages";
+import type { SessionEventSubscription, UsageReportEntry } from "@getpaseo/protocol/messages";
 import { relative } from "node:path";
 import { isAbsolute } from "node:path";
 import { CreationService } from "./creation/index.js";
@@ -506,9 +506,7 @@ export interface SessionOptions {
     subscribeSettings?(listener: (pluginId: string, settingsId: string) => void): () => void;
     catalog(): Array<{ id: string; clientBundle: string }>;
     invokePluginRpc(pluginId: string, method: string, input: unknown): Promise<unknown>;
-    listUsageReports?(options?: {
-      forceRefresh?: boolean;
-    }): Promise<import("@getpaseo/protocol/messages").UsageReportEntry[]>;
+    listUsageReports(options?: { forceRefresh?: boolean }): Promise<UsageReportEntry[]>;
   };
   orchestrationSkills?: import("./orchestration-skills/index.js").OrchestrationSkills;
   mcpBaseUrl?: string | null;
@@ -3011,8 +3009,8 @@ export class Session {
     msg: Extract<SessionInboundMessage, { type: "usage.list_reports.request" }>,
   ): Promise<void> {
     try {
-      const reports =
-        (await this.pluginRuntime?.listUsageReports?.({ forceRefresh: msg.forceRefresh })) ?? [];
+      if (!this.pluginRuntime) throw new Error("Plugin runtime is unavailable");
+      const reports = await this.pluginRuntime.listUsageReports({ forceRefresh: msg.forceRefresh });
       this.emit({
         type: "usage.list_reports.response",
         payload: { requestId: msg.requestId, reports },

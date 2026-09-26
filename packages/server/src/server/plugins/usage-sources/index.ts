@@ -70,7 +70,11 @@ export class UsageSourceRegistry {
       } catch (error) {
         entry = this.errorEntry(source, error, hash);
       }
-      this.cache.set(key, { at: this.now(), entry });
+      const now = this.now();
+      for (const [cachedKey, stored] of this.cache) {
+        if (now - stored.at >= this.ttlMs) this.cache.delete(cachedKey);
+      }
+      this.cache.set(key, { at: now, entry });
       return entry;
     })();
     this.pending.set(key, request);

@@ -44,6 +44,22 @@ test("coalesces concurrent fetches and dedupes accounts", async () => {
   expect(await registry.listReports()).toHaveLength(1);
 });
 
+test("drops expired cached inputs on a later write", async () => {
+  let now = 0;
+  const registry = new UsageSourceRegistry(() => now, 100);
+  registry.register({
+    id: "fixture",
+    label: "Fixture",
+    discover: async () => [],
+    fetch: async (input) => report(String(input), 1),
+  });
+  await registry.fetch("fixture", "old");
+  now = 101;
+  await registry.fetch("fixture", "new");
+  const cache = Reflect.get(registry, "cache") as Map<string, unknown>;
+  expect(cache.size).toBe(1);
+});
+
 test("turns fetch and discovery failures into error reports", async () => {
   const registry = new UsageSourceRegistry();
   registry.register({

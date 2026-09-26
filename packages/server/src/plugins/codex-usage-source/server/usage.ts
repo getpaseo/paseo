@@ -2,7 +2,13 @@ import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import type { UsageReport, UsageWindow } from "@getpaseo/plugin/server/usage";
+import {
+  balanceToneFromRemaining,
+  toneFromUsedPct,
+  windowFromUsedPct,
+  type UsageReport,
+  type UsageWindow,
+} from "@getpaseo/plugin/server/usage";
 import { z } from "zod";
 import type { CodexUsageInput } from "../shared/input.js";
 
@@ -55,18 +61,14 @@ function usageWindow(
 ): UsageWindow | null {
   if (!value) return null;
   const usedPct = value.used_percent ?? 0;
-  let tone: UsageWindow["tone"] = "ok";
-  if (usedPct > 90) tone = "danger";
-  else if (usedPct >= 70) tone = "warning";
-  return {
+  return windowFromUsedPct({
     id,
     label,
-    usedPct,
-    remainingPct: Math.max(0, 100 - usedPct),
+    utilizationPct: usedPct,
     resetsAt: value.reset_at != null ? new Date(value.reset_at * 1000).toISOString() : null,
-    tone,
-    ...(headline ? { headline: true } : {}),
-  };
+    tone: toneFromUsedPct(usedPct),
+    headline,
+  });
 }
 
 export async function fetchUsage(
@@ -112,7 +114,7 @@ export async function fetchUsage(
               label: "Credits",
               remaining: balance,
               unit: "usd",
-              tone: balance <= 0 ? "danger" : "ok",
+              tone: balanceToneFromRemaining(balance),
             },
           ],
     details: [],

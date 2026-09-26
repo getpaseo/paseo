@@ -521,6 +521,7 @@ test("routes plugin requests and releases its owned catalog subscription on clea
     },
     catalog: () => [{ id: "example", clientBundle: "bundle" }],
     invokePluginRpc: async () => ({ ok: true }),
+    listUsageReports: async () => [],
   };
   const session = createSessionForTest({ messages, pluginRuntime });
 
