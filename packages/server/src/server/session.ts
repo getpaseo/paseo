@@ -1079,6 +1079,8 @@ export class Session {
       isProviderVisibleToClient: (provider) => this.isProviderVisibleToClient(provider),
       buildProjectPlacementForWorkspaceId: (workspaceId) =>
         this.buildProjectPlacementForWorkspaceId(workspaceId),
+      buildActiveProjectPlacementForWorkspaceId: (workspaceId) =>
+        this.buildActiveProjectPlacementForWorkspaceId(workspaceId),
       emitWorkspaceUpdateForWorkspaceId: (workspaceId) =>
         this.emitWorkspaceUpdateForWorkspaceId(workspaceId),
       sequenceAgentUpdate: (payload, agent, project, agentId, includeSequence) =>
@@ -2078,6 +2080,22 @@ export class Session {
 
     const project = await this.projectRegistry.get(workspace.projectId);
     if (!project) return null;
+    return this.buildProjectPlacementForWorkspace(workspace, project);
+  }
+
+  /**
+   * Same placement, but only while the workspace and its project are still part
+   * of the active directory. `scope: "active"` listings use this rule, so live
+   * updates have to use it too or the two disagree about an agent's membership.
+   */
+  private async buildActiveProjectPlacementForWorkspaceId(
+    workspaceId: string,
+  ): Promise<ProjectPlacementPayload | null> {
+    const workspace = await this.workspaceRegistry.get(workspaceId);
+    if (!workspace || workspace.archivedAt) return null;
+
+    const project = await this.projectRegistry.get(workspace.projectId);
+    if (!project || project.archivedAt) return null;
     return this.buildProjectPlacementForWorkspace(workspace, project);
   }
 
@@ -6106,6 +6124,7 @@ export class Session {
           isProviderVisible: (provider) =>
             this.delivery.forSource(owner.source, () => this.isProviderVisibleToClient(provider)),
           filter: request.filter,
+          scope: request.scope,
           syncEnabled: Boolean(request.sync),
           emit: (message) => {
             if (message.type === "agent_update") owner.emit(message);
