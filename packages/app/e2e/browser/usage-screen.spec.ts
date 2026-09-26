@@ -40,6 +40,30 @@ test.describe("usage screen", () => {
     await expect(group.getByText("Unavailable", { exact: true })).toBeVisible();
   });
 
+  test("shows the host once it connects after a cold load on a phone", async ({ page }) => {
+    test.setTimeout(120_000);
+    const serverId = getServerId();
+    const usage = await installUsageReportsFixture(page, {
+      lists: [
+        [
+          {
+            sourceId: "alpha",
+            sourceLabel: "Alpha plan",
+            report: { account: { key: "a" }, status: "available", windows: [] },
+          },
+        ],
+      ],
+    });
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto("/usage");
+    await usage.waitForListRequests(1);
+
+    await expect(
+      page.getByTestId(`usage-host-${serverId}`).getByText("Alpha plan", { exact: true }),
+    ).toBeVisible({ timeout: 10_000 });
+  });
+
   test("tells the user to update a host without usage sources", async ({ page }) => {
     test.setTimeout(120_000);
     const serverId = getServerId();
