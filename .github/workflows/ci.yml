@@ -120,6 +120,9 @@ jobs:
       - name: Typecheck all packages
         run: npm run typecheck
 
+      - name: Run website tests
+        run: npx vitest run packages/website/src --bail=1
+
       - name: Install website test browsers
         run: npx playwright install --with-deps chromium webkit
 

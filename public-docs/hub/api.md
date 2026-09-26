@@ -77,7 +77,7 @@ Both endpoints accept one self-contained document:
 }
 ```
 
-Use a daemon slug and agent runtime available in your organization. Validation requires `configuration:validate` and returns `200` with `{ "name": "manual-task", "valid": true }`.
+Use a daemon slug and agent runtime available in your organization. Both operations ask the named daemon to check the agent, so it has to be connected and hold `hub.execute`; an agent it cannot run is a field issue rather than a failed first run. See [Saving checks the agent against the daemon](/docs/hub/triggers#saving-checks-the-agent-against-the-daemon). Validation requires `configuration:validate` and returns `200` with `{ "name": "manual-task", "valid": true }`.
 
 Installation requires `configuration:install`. It creates or updates the organization's trigger by the YAML `name` and returns `201`:
 

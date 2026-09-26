@@ -12,7 +12,7 @@ import { DiscordIcon, GitHubIcon, SlackIcon } from "~/components/brand-icons";
 import { AGENT_PAGES } from "~/data/agent-pages";
 import { FAQItem } from "~/components/faq-item";
 import { SiteShell } from "~/components/site-shell";
-import { getHostedOffer, type HubHostedOffer } from "~/hub-plans";
+import { getHubPlans, type HubPlanOffer, type HubPlans } from "~/hub-plans";
 import { pageMeta } from "~/meta";
 
 export const Route = createFileRoute("/hub")({
@@ -24,9 +24,9 @@ export const Route = createFileRoute("/hub")({
     ),
   loader: async () => {
     try {
-      return { hosted: await getHostedOffer() };
+      return { plans: await getHubPlans() };
     } catch {
-      return { hosted: null };
+      return { plans: null };
     }
   },
   component: Hub,
@@ -37,7 +37,7 @@ const HOSTED_HUB_URL = "https://hub.paseo.sh";
 const LINK_CLASS = "underline hover:text-white/80";
 
 function Hub() {
-  const { hosted } = Route.useLoaderData();
+  const { plans } = Route.useLoaderData();
   return (
     <SiteShell width="default">
       <h1 className="text-3xl font-medium tracking-tight mb-4">Paseo Hub</h1>
@@ -50,7 +50,7 @@ function Hub() {
         <Triggers />
         <Agents />
         <Shape />
-        <Pricing hosted={hosted} />
+        <Pricing plans={plans} />
         <FaqSection />
       </div>
     </SiteShell>
@@ -80,8 +80,8 @@ const SELF_HOSTED_FEATURES: readonly PlanFeature[] = [
     tooltip: null,
   },
 ];
-function Pricing({ hosted }: { hosted: HubHostedOffer | null }) {
-  if (hosted === null) {
+function Pricing({ plans }: { plans: HubPlans | null }) {
+  if (plans === null) {
     return (
       <section className="space-y-6" aria-labelledby="pricing-heading">
         <div className="space-y-2">
@@ -109,10 +109,11 @@ function Pricing({ hosted }: { hosted: HubHostedOffer | null }) {
           Choose how to run Hub
         </h2>
         <p className="max-w-2xl leading-relaxed text-white/70">
-          Both options use Paseo daemons to run agents on your machines.
+          Every option runs agents on the daemons you already have. {plans.free.name} needs no card,
+          and {plans.paid.name} is one click away under Billing once you are signed in.
         </p>
       </div>
-      <div className="grid gap-4 md:grid-cols-2">
+      <div className="grid gap-4 md:grid-cols-3">
         <PlanCard
           name="Self-hosted"
           price="Free"
@@ -123,18 +124,56 @@ function Pricing({ hosted }: { hosted: HubHostedOffer | null }) {
           actionLabel="Self-host Hub"
         />
         <PlanCard
-          name={hosted.name}
-          price={formatPrice(hosted.price)}
-          priceQualifier={`per ${hosted.billing.unit.label} / ${formatBillingPeriod(hosted.price)}`}
-          priceTooltip={hosted.price.tooltip}
-          features={hosted.features}
+          name={plans.free.name}
+          price={formatPrice(plans.free.price)}
+          priceQualifier={planQualifier(plans.free)}
+          priceTooltip={plans.free.price.tooltip}
+          features={planFeatures(plans.free)}
           actionHref={HOSTED_HUB_URL}
-          actionLabel="Start free trial"
+          actionLabel="Create a free account"
+          actionNote="No card, never expires."
+        />
+        <PlanCard
+          name={plans.paid.name}
+          price={formatPrice(plans.paid.price)}
+          priceQualifier={planQualifier(plans.paid)}
+          priceTooltip={plans.paid.price.tooltip}
+          features={planFeatures(plans.paid)}
+          actionHref={HOSTED_HUB_URL}
+          actionLabel={`Go to Hub for ${plans.paid.name}`}
+          actionNote={`Upgrade to ${plans.paid.name} from Billing, whether you work alone or with a team.`}
           featured
         />
       </div>
     </section>
   );
+}
+
+/** The figures the plan includes, ahead of the prose the catalog wrote for it. */
+function planFeatures(plan: HubPlanOffer): readonly PlanFeature[] {
+  return [
+    {
+      key: "included-executions",
+      label: formatAllowance(plan.included.executionsPerMonth),
+      tooltip: null,
+    },
+    {
+      key: "included-seats",
+      label: formatSeats(plan.included.seats, plan.billing.unit.label),
+      tooltip: null,
+    },
+    ...plan.features,
+  ];
+}
+
+function formatAllowance(executionsPerMonth: number | null): string {
+  if (executionsPerMonth === null) return "Unlimited agent runs";
+  return `${executionsPerMonth.toLocaleString("en")} agent runs a month`;
+}
+
+function formatSeats(seats: number | null, unitLabel: string): string {
+  if (seats === null) return `Unlimited ${unitLabel}s`;
+  return `${seats.toLocaleString("en")} ${seats === 1 ? unitLabel : `${unitLabel}s`}`;
 }
 
 function PlanCard({
@@ -145,6 +184,7 @@ function PlanCard({
   features,
   actionHref,
   actionLabel,
+  actionNote,
   featured = false,
 }: {
   name: string;
@@ -154,6 +194,7 @@ function PlanCard({
   features: readonly PlanFeature[];
   actionHref: string;
   actionLabel: string;
+  actionNote?: string;
   featured?: boolean;
 }) {
   return (
@@ -179,9 +220,12 @@ function PlanCard({
           ))}
         </ul>
       )}
+      {actionNote !== undefined && (
+        <p className="mt-8 text-center text-xs leading-relaxed text-white/35">{actionNote}</p>
+      )}
       <a
         href={actionHref}
-        className={`mt-8 rounded-md px-4 py-2 text-center text-sm font-medium transition-colors ${featured ? "bg-white text-black hover:bg-white/90" : "border border-white/15 text-white/80 hover:border-white/25 hover:text-white"}`}
+        className={`rounded-md px-4 py-2 text-center text-sm font-medium transition-colors ${actionNote === undefined ? "mt-8" : "mt-3"} ${featured ? "bg-white text-black hover:bg-white/90" : "border border-white/15 text-white/80 hover:border-white/25 hover:text-white"}`}
       >
         {actionLabel}
       </a>
@@ -203,7 +247,11 @@ function InfoTip({ text }: { text: string }) {
   );
 }
 
-function formatPrice(price: HubHostedOffer["price"]): string {
+function planQualifier(plan: HubPlanOffer): string {
+  return `per ${plan.billing.unit.label} / ${formatBillingPeriod(plan.price)}`;
+}
+
+function formatPrice(price: HubPlanOffer["price"]): string {
   return new Intl.NumberFormat("en", {
     style: "currency",
     currency: price.currency.toUpperCase(),
@@ -211,7 +259,7 @@ function formatPrice(price: HubHostedOffer["price"]): string {
   }).format(price.unitAmount / 100);
 }
 
-function formatBillingPeriod(price: HubHostedOffer["price"]): string {
+function formatBillingPeriod(price: HubPlanOffer["price"]): string {
   return price.intervalCount === 1 ? "month" : `${price.intervalCount} months`;
 }
 
@@ -586,7 +634,8 @@ function FaqSection() {
           <a href={HOSTED_HUB_URL} className={LINK_CLASS}>
             sign in to Hosted Hub
           </a>{" "}
-          to start a free trial.
+          for a free account. It needs no card and does not expire. When you want more agent runs or
+          more seats, upgrade from Billing inside Hub.
         </FAQItem>
       </div>
     </section>
