@@ -8,13 +8,17 @@ import type { AgentClient, AgentProvider, AgentSessionConfig } from "../agent/ag
 import type { ProviderRuntimeSettings } from "../agent/provider-launch-config.js";
 import { ClaudeAgentClient } from "../agent/providers/claude/agent.js";
 import { CodexAppServerAgentClient } from "../agent/providers/codex-app-server-agent.js";
+import { CopilotACPAgentClient } from "../agent/providers/copilot-acp-agent.js";
 import { OpenCodeAgentClient } from "../agent/providers/opencode-agent.js";
 import { OmpAgentClient } from "../agent/providers/omp/agent.js";
 import { PiRpcAgentClient } from "../agent/providers/pi/agent.js";
 import { isCommandAvailable } from "../../executable-resolution/executable-resolution.js";
 
+// The full real-provider matrix; ui-action-stress runs one leg per entry.
 export const realProviders = ["claude", "codex", "opencode", "pi", "omp"] as const;
-export type RealProvider = (typeof realProviders)[number];
+// Copilot authenticates through the GitHub CLI rather than OpenRouter and has no
+// stress leg, but the helpers below support it for its own focused real tests.
+export type RealProvider = (typeof realProviders)[number] | "copilot";
 export type RealProviderConfig = Pick<
   AgentSessionConfig,
   "provider" | "model" | "modeId" | "thinkingOptionId"
@@ -68,10 +72,16 @@ export function getRealProviderConfig(provider: RealProvider): RealProviderConfi
         thinkingOptionId: "medium",
         modeId: "full",
       };
+    case "copilot":
+      // Copilot picks its own default model; the mode tests never run a turn.
+      return { provider };
   }
 }
 
 export function getRealProviderRuntimeSettings(provider: RealProvider): ProviderRuntimeSettings {
+  if (provider === "copilot") {
+    return {};
+  }
   if (provider === "omp" || provider === "pi") {
     if (hasCodexAuthTokens()) {
       return {
@@ -151,6 +161,8 @@ export function createRealProviderClient(provider: RealProvider, logger: Logger)
       return new PiRpcAgentClient({ logger, runtimeSettings });
     case "omp":
       return new OmpAgentClient({ logger, runtimeSettings });
+    case "copilot":
+      return new CopilotACPAgentClient({ logger, runtimeSettings });
   }
 }
 
@@ -170,7 +182,12 @@ export function canRunRealProvider(provider: RealProvider): Promise<boolean> {
   }
 
   const availability = (async () => {
-    if (provider !== "omp" && provider !== "pi" && !getOpenRouterApiKeyOrNull()) {
+    if (
+      provider !== "omp" &&
+      provider !== "pi" &&
+      provider !== "copilot" &&
+      !getOpenRouterApiKeyOrNull()
+    ) {
       return false;
     }
     return await isCommandAvailable(getProviderBinary(provider));
