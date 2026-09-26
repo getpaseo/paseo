@@ -2,6 +2,7 @@ import { AlertTriangle, CheckCircle2, Info, XCircle, type LucideIcon } from "luc
 import { type ReactNode, useMemo } from "react";
 import { Text, View } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { hexColorWithAlpha } from "@/utils/color";
 
 export type AlertVariant = "default" | "info" | "success" | "warning" | "error";
 
@@ -31,12 +32,12 @@ export function Alert({
 }: AlertProps) {
   const { theme } = useUnistyles();
   const accentColor = resolveAccentColor(variant, theme);
-  const borderColor = variant === "success" ? theme.colors.border : accentColor;
+  const borderColor =
+    variant === "success" || !accentColor
+      ? theme.colors.border
+      : hexColorWithAlpha(accentColor, 0.5);
 
-  const containerStyle = useMemo(
-    () => [styles.container, borderColor ? { borderColor } : null],
-    [borderColor],
-  );
+  const containerStyle = useMemo(() => [styles.container, { borderColor }], [borderColor]);
 
   const titleStyle = useMemo(
     () => [styles.title, accentColor ? { color: accentColor } : null],
