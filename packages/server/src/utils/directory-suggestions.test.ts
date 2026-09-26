@@ -36,6 +36,7 @@ async function searchAbsoluteDirectoryPaths(options: {
     includeFiles: false,
     pathQueryPolicy: "rooted",
     rootAliases: ["~"],
+    absolutePathPolicy: "browse",
     blankQueryBehavior: "none",
     limit: options.limit,
     maxDepth: options.maxDepth,
@@ -517,6 +518,57 @@ describe("absolute directory-path configuration", () => {
 
   afterEach(() => {
     rmSync(tempRoot, { recursive: true, force: true });
+  });
+
+  it("browses an explicitly named directory outside home", async () => {
+    const results = await searchAbsoluteDirectoryPaths({
+      homeDir,
+      query: `${outsideDir}${path.sep}`,
+    });
+    expect(results).toEqual([path.join(outsideDir, "outside-match")]);
+  });
+
+  it("completes an absolute directory prefix outside home without descending", async () => {
+    mkdirSync(path.join(outsideDir, "nested", "outside-nested"), { recursive: true });
+    const results = await searchAbsoluteDirectoryPaths({
+      homeDir,
+      query: path.join(outsideDir, "outside-ma"),
+    });
+    expect(results).toEqual([path.join(outsideDir, "outside-match")]);
+  });
+
+  it("returns the exact outside directory when entered without a trailing separator", async () => {
+    expect(await searchAbsoluteDirectoryPaths({ homeDir, query: outsideDir })).toContain(
+      outsideDir,
+    );
+  });
+
+  it("keeps absolute paths outside workspace searches excluded by default", async () => {
+    expect(
+      await searchRelativeDirectoryEntries({
+        cwd: homeDir,
+        query: `${outsideDir}${path.sep}`,
+      }),
+    ).toEqual([]);
+  });
+
+  it("returns no suggestions for a missing absolute parent", async () => {
+    expect(
+      await searchAbsoluteDirectoryPaths({
+        homeDir,
+        query: path.join(outsideDir, "missing", "project"),
+      }),
+    ).toEqual([]);
+  });
+
+  it("preserves recursive absolute-path matching inside home", async () => {
+    const nested = path.join(homeDir, "projects", "nested", "paseo-tools");
+    mkdirSync(nested, { recursive: true });
+    const results = await searchAbsoluteDirectoryPaths({
+      homeDir,
+      query: path.join(homeDir, "projects", "paseo"),
+    });
+    expect(results).toContain(nested);
   });
 
   it("does not inspect directories when the scan budget is zero", async () => {

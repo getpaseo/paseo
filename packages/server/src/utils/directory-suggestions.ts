@@ -24,6 +24,7 @@ export interface SearchDirectoryEntriesOptions {
   includeDirectories?: boolean;
   matchMode?: DirectorySuggestionMatchMode;
   pathQueryPolicy?: PathQueryPolicy;
+  absolutePathPolicy?: "within-root" | "browse";
   rootAliases?: string[];
   blankQueryBehavior?: BlankQueryBehavior;
   traversableHiddenDirectoryNames?: readonly string[];
@@ -136,6 +137,19 @@ const gitIgnoredPathsCache = new Map<string, GitIgnoredPathsCacheEntry>();
 export async function searchDirectoryEntries(
   options: SearchDirectoryEntriesOptions,
 ): Promise<DirectorySuggestionEntry[]> {
+  const query = options.query.trim().replace(/\\/g, "/");
+  const isAbsoluteQuery = path.isAbsolute(query);
+  const permitsAbsoluteBrowsing = options.absolutePathPolicy === "browse" && isAbsoluteQuery;
+  const browsesAbsolutePath =
+    permitsAbsoluteBrowsing && !isPathInsideRoot(path.resolve(options.root), path.resolve(query));
+  if (browsesAbsolutePath) {
+    // Project pickers may browse explicitly named paths outside home. Limit this
+    // to the named parent, rather than recursively searching a filesystem root.
+    const browsesChildren = query.endsWith("/");
+    const root = browsesChildren ? path.resolve(query) : path.dirname(query);
+    const relativeQuery = browsesChildren ? "." : `./${path.basename(query)}`;
+    options = { ...options, root, query: relativeQuery, maxDepth: 1 };
+  }
   const root = await resolveDirectory(options.root);
   if (!root) return [];
 
