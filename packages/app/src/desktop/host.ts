@@ -1,6 +1,7 @@
 import { Platform } from "react-native";
 import { getElectronHost } from "@/desktop/electron/host";
 import type { BrowserKeyboardPolicy } from "@/desktop/browser/shortcuts";
+import type { WindowViewReport } from "@/desktop/window-view-report";
 import type { SessionInboundMessage, SessionOutboundMessage } from "@getpaseo/protocol/messages";
 
 type BrowserAutomationExecuteRequest = Extract<
@@ -119,6 +120,11 @@ export interface DesktopWindowBridge {
 export interface DesktopWindowModuleBridge {
   openNew?: (options?: { pendingOpenProjectPath?: string | null }) => Promise<void>;
   getCurrentWindow?: () => DesktopWindowBridge;
+  /** Report what this window currently shows, so main can route a notification click
+   * or deep link to the window already displaying the target instead of the focused
+   * or sending window. Optional: an old shell without this method leaves main's pick
+   * order unchanged. */
+  reportView?: (report: WindowViewReport) => Promise<void>;
 }
 
 export interface DesktopEventsBridge {
