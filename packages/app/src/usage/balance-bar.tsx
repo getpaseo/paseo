@@ -1,17 +1,32 @@
 import { useMemo } from "react";
 import { Text, View, type StyleProp, type ViewStyle } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
-import { clampPct, formatPct, formatResetLabel } from "./format";
-import { deriveTone } from "./tone";
-import type { ProviderUsageTone, ProviderUsageWindow } from "./types";
+import { clampPct, formatAmount, formatResetLabel } from "./format";
+import type { UsageBalance, UsageTone } from "./types";
 
-function resolveUsedPct(window: ProviderUsageWindow): number | null {
-  if (window.usedPct != null) return window.usedPct;
-  if (window.remainingPct != null) return 100 - window.remainingPct;
-  return null;
+interface ResolvedBalance {
+  amountText: string;
+  usedPct: number | null;
 }
 
-function fillToneStyle(tone: ProviderUsageTone) {
+function resolveBalance(balance: UsageBalance): ResolvedBalance {
+  const { used, remaining, limit, unit } = balance;
+  if (limit != null && limit > 0) {
+    const usedAmount = used ?? (remaining != null ? limit - remaining : null);
+    const usedPct = usedAmount != null ? (usedAmount / limit) * 100 : null;
+    const usedText = usedAmount != null ? formatAmount(usedAmount, unit) : "—";
+    return { amountText: `${usedText} / ${formatAmount(limit, unit)}`, usedPct };
+  }
+  if (remaining != null) {
+    return { amountText: `${formatAmount(remaining, unit)} left`, usedPct: null };
+  }
+  if (used != null) {
+    return { amountText: formatAmount(used, unit), usedPct: null };
+  }
+  return { amountText: "—", usedPct: null };
+}
+
+function fillToneStyle(tone: UsageTone) {
   switch (tone) {
     case "ok":
       return styles.fillOk;
@@ -24,37 +39,32 @@ function fillToneStyle(tone: ProviderUsageTone) {
   }
 }
 
-export function ProviderUsageWindowBar({ window }: { window: ProviderUsageWindow }) {
-  const usedPct = resolveUsedPct(window);
-  const tone = window.tone ?? deriveTone(usedPct);
+export function UsageBalanceBar({ balance }: { balance: UsageBalance }) {
+  const { amountText, usedPct } = resolveBalance(balance);
+  const tone = balance.tone ?? "default";
+  const resetLabel = formatResetLabel(balance.resetsAt);
 
-  const fillWidth = clampPct(usedPct ?? 0);
   const fillStyle = useMemo<StyleProp<ViewStyle>>(
-    () => [styles.fill, fillToneStyle(tone), { width: `${fillWidth}%` }],
-    [fillWidth, tone],
+    () => [styles.fill, fillToneStyle(tone), { width: `${clampPct(usedPct ?? 0)}%` }],
+    [usedPct, tone],
   );
-
-  const isAtRisk = window.runsOutAt != null && window.shortfallPct != null;
-  const trailing = isAtRisk
-    ? `runs out ${formatResetLabel(window.runsOutAt)?.replace("resets ", "") ?? ""}`.trim()
-    : formatResetLabel(window.resetsAt);
 
   return (
     <View style={styles.container}>
       <View style={styles.labelRow}>
         <Text style={styles.label} numberOfLines={1}>
-          {window.label}
+          {balance.label}
         </Text>
         <Text style={styles.value}>
-          {usedPct != null ? formatPct(usedPct) : "—"}
-          {trailing ? (
-            <Text style={isAtRisk ? styles.atRisk : styles.reset}>{` · ${trailing}`}</Text>
-          ) : null}
+          {amountText}
+          {resetLabel ? <Text style={styles.reset}>{` · ${resetLabel}`}</Text> : null}
         </Text>
       </View>
-      <View style={styles.track}>
-        <View style={fillStyle} />
-      </View>
+      {usedPct != null ? (
+        <View style={styles.track}>
+          <View style={fillStyle} />
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -81,10 +91,6 @@ const styles = StyleSheet.create((theme) => ({
   },
   reset: {
     color: theme.colors.foregroundMuted,
-    fontWeight: theme.fontWeight.normal,
-  },
-  atRisk: {
-    color: theme.colors.statusDanger,
     fontWeight: theme.fontWeight.normal,
   },
   track: {

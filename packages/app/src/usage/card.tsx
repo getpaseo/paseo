@@ -1,51 +1,27 @@
 import { useMemo } from "react";
 import { Text, View } from "react-native";
-import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import { getProviderIcon } from "@/components/provider-icons";
+import { StyleSheet } from "react-native-unistyles";
 import { StatusBadge } from "@/components/ui/status-badge";
-import type { Theme } from "@/styles/theme";
-import { ProviderUsageBalanceBar } from "./balance-bar";
-import { formatAgo } from "./format";
-import type { ProviderUsage } from "./types";
-import { ProviderUsageWindowBar } from "./window-bar";
+import { UsageBalanceBar } from "./balance-bar";
+import { UsageSourceIcon } from "./source-icon";
+import type { UsageReport, UsageReportEntry } from "./types";
+import { UsageWindowBar } from "./window-bar";
 
-interface ProviderUsageIconProps {
-  iconKey: string;
-  size: number;
-  color?: string;
+function statusText(report: UsageReport): string | null {
+  if (report.status === "available") return null;
+  return report.status === "error" ? "Error" : "Unavailable";
 }
 
-function ProviderUsageIcon({ iconKey, size, color = "" }: ProviderUsageIconProps) {
-  const Icon = getProviderIcon(iconKey);
-  return <Icon size={size} color={color} />;
-}
-
-const ThemedProviderUsageIcon = withUnistyles(ProviderUsageIcon);
-
-const mutedIconColor = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
-
-function statusText(usage: ProviderUsage): string | null {
-  if (usage.status === "available") return null;
-  return usage.status === "error" ? "Error" : "Unavailable";
-}
-
-function footerText(usage: ProviderUsage): string | null {
-  const updated = formatAgo(usage.fetchedAt);
-  const parts = [usage.sourceLabel, updated ? `Updated ${updated}` : null].filter(
-    (part): part is string => typeof part === "string" && part.length > 0,
-  );
-  return parts.length > 0 ? parts.join(" · ") : null;
-}
-
-export function ProviderUsageCard({
-  usage,
+export function UsageCard({
+  entry,
   compact = false,
 }: {
-  usage: ProviderUsage;
+  entry: UsageReportEntry;
   compact?: boolean;
 }) {
+  const usage = entry.report;
   const status = statusText(usage);
-  const footer = footerText(usage);
+  const footer = usage.account.label ?? null;
   const balances = usage.balances ?? [];
   const details = usage.details ?? [];
 
@@ -65,9 +41,9 @@ export function ProviderUsageCard({
   return (
     <View style={containerStyle}>
       <View style={styles.header}>
-        <ThemedProviderUsageIcon iconKey={usage.providerId} size={14} uniProps={mutedIconColor} />
+        <UsageSourceIcon svg={entry.icon ?? null} size={14} />
         <Text style={styles.name} numberOfLines={1}>
-          {usage.displayName}
+          {entry.sourceLabel}
         </Text>
         {usage.planLabel ? <StatusBadge label={usage.planLabel} variant="muted" /> : null}
         <View style={styles.headerSpacer} />
@@ -88,10 +64,10 @@ export function ProviderUsageCard({
       {usage.windows.length > 0 || balances.length > 0 ? (
         <View style={styles.bars}>
           {usage.windows.map((window) => (
-            <ProviderUsageWindowBar key={window.id} window={window} />
+            <UsageWindowBar key={window.id} window={window} />
           ))}
           {balances.map((balance) => (
-            <ProviderUsageBalanceBar key={balance.id} balance={balance} />
+            <UsageBalanceBar key={balance.id} balance={balance} />
           ))}
         </View>
       ) : null}

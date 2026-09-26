@@ -2,16 +2,16 @@ import { Fragment } from "react";
 import { View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { settingsStyles } from "@/styles/settings";
-import { ProviderUsageCard } from "./card";
-import type { ProviderUsage } from "./types";
+import { UsageCard } from "./card";
+import type { UsageReportEntry } from "./types";
 
-export function ProviderUsageList({ providers }: { providers: ProviderUsage[] }) {
+export function UsageList({ reports }: { reports: UsageReportEntry[] }) {
   return (
     <View style={settingsStyles.card}>
-      {providers.map((usage, index) => (
-        <Fragment key={usage.providerId}>
+      {reports.map((entry, index) => (
+        <Fragment key={`${entry.sourceId}:${entry.report.account.key}`}>
           {index > 0 ? <View style={styles.divider} /> : null}
-          <ProviderUsageCard usage={usage} />
+          <UsageCard entry={entry} />
         </Fragment>
       ))}
     </View>
