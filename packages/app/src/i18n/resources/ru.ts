@@ -342,6 +342,9 @@ export const ru: TranslationResources = {
     attachments: {
       dismissImage: "Закрыть изображение",
       closeImage: "Закрыть изображение",
+      previousImage: "Предыдущее изображение",
+      nextImage: "Следующее изображение",
+      imagePosition: "{{current}} / {{total}}",
       imageLoadFailed: "Не удалось загрузить изображение",
       imageUnavailable: "Изображение недоступно",
       imagePreviewUnavailable: "Предварительный просмотр изображения недоступен.",
@@ -1046,6 +1049,7 @@ export const ru: TranslationResources = {
         installCli: "Установите CLI {{cli}}, чтобы использовать возможности {{brand}}.",
         signIn: "Выполните {{command}}, чтобы использовать возможности {{brand}}.",
         generic: "Настройте {{brand}} на этом хосте, чтобы использовать его функции.",
+        openSettings: "Откройте настройки {{brand}}, чтобы завершить настройку.",
       },
     },
   },

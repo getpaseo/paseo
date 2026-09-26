@@ -1,8 +1,9 @@
 # Plugins
 
 Local plugins contribute daemon RPCs, native app surfaces, workspace panels, Command Center items,
-client slash commands, timeline items, header buttons, composer pills, app themes, composer attachment sources, and settings screens.
-Paseo executes `index.server.ts` in a subprocess and `index.client.tsx` in every connected app.
+client slash commands, timeline items, header buttons, composer pills, app themes, composer attachment sources,
+settings screens, and Git Forge providers. Paseo executes `index.server.ts` in a subprocess and
+`index.client.tsx` in every connected app.
 
 > **Trust every plugin you add.** `paseo plugin add` and `paseo plugin install` mean “I trust this codebase.” Plugins are unsandboxed: server code and preparation commands run with the daemon user's access on the daemon host, and client contributions run inside Paseo. The repository's dependencies and future updates are part of that trust decision. With `--host`, preparation runs on that remote daemon host.
 
@@ -187,8 +188,15 @@ Shared files import contract helpers and types from `@getpaseo/plugin`. Server h
 `@getpaseo/plugin/client/react-native`. Its `Icon` resolves a Lucide name using the client's installed icon
 set; an unknown name renders nothing so it cannot break the plugin surface.
 Its controlled modal keeps presentation metadata on `<Modal title="…" icon={…}>` and body UI in
-`<Modal.Content>`. Body layout, sheet-aware scrolling, and clipboard actions follow the
+`<Modal.Content>`. Body layout, sheet-aware scrolling, overlays, image and file picking, image
+preview, and clipboard actions follow the
 [host UI contract](../public-docs/plugins/reference.md#host-ui).
+`pickImages` hands back base64 bytes with every image because plugin code has no file API to read
+the picker's local `uri`. `pickFiles` hands back a `readBase64(offset, length)` reader instead:
+a document can be tens of megabytes, and plugins upload through their own RPC in chunks, so one
+base64 string of the whole file would only be split again. Every `layout` comes from
+`usePluginLayout` (`packages/app/src/plugins/layout.ts`), which is where the safe-area insets
+join it.
 Plugin UI runs on desktop and mobile across multiple themes: color every `Text` from
 `theme.colors.foreground` or `theme.colors.foregroundMuted`, and size layout from `layout.compact`.
 See `public-docs/plugins/reference.md`.
@@ -313,7 +321,39 @@ They use typed plugin RPC only for plugin-specific backend work. Surface and pan
 belongs to the app; plugins do not receive Expo Router or workspace-layout store access.
 See the public [navigation fields](../public-docs/plugins/reference.md#surfaces-and-sidebar-items)
 and [external links and workspace browsers](../public-docs/plugins/reference.md#external-links-and-workspace-browsers)
-for the author-facing contract.
+for the author-facing contract. Header buttons and timeline renderers get the same navigation
+object from `buildPluginHostNavigation`, the non-hook form: both render from stores, and an overflow
+menu builds several plugins' props in one pass, where a hook per entry is not available.
+
+Toasts raised by plugin callbacks go through `packages/app/src/contexts/app-toast.ts`, the app
+shell's single toast API. A button `onPress` or slash-command `onSubmit` fires outside React and has
+no context to read, so the capability is one implementation rather than a parameter every call site
+threads.
+
+Sidebar badges are pushed, not derived. `client.setSidebarBadge` mutates the registered contribution
+in place and republishes the registry snapshot — in place because `register` removes contributions
+by object identity, so replacing the array entry would leak it.
+
+A Command Center item's `shortcut` becomes a binding appended after the built-ins, so a built-in
+always wins a collision and a plugin can never capture keys the app already uses. The binding id is
+`plugin:<pluginId>:<itemId>`, which reuses ordinary override storage: rebinding works, but the
+shortcut has no row in the shortcuts dialog, whose section order is a static list. Bindings exist
+only while the item is contributed — the Command Center registration republishes them from the
+contributions it just built (`packages/app/src/plugins/command-center/shortcuts.ts`).
+Surface and panel props also expose optional
+`openAgentLaunch`, a Host-owned operation that seeds the existing native workspace draft or
+`/new` flow with immutable labels and a stable message ID. Its local journal is scoped by host,
+plugin, document incarnation, and launch ID; request-start is persisted before daemon effects,
+drafts survive app restart, and completed tombstones prevent ordinary replay. Same-key
+serialization covers one JavaScript runtime only, not multiple browser tabs or Electron renderers.
+The capability's absence is the compatibility gate for older clients. The seed prompt is not proof
+of final composer content. The journal lives in `packages/app/src/plugins/agent-launch/`; its
+draft binding is the `agentLaunch` record on the draft store (v6). Journal-backed drafts skip the
+ordinary `CREATE_FAILED → draft` restore after a request-start. Closing a journal-backed workspace draft
+tab before any request-start is the only explicit discard; emptying the composer keeps the draft
+active and bound, because the draft store's `abandoned` lifecycle also means "content emptied" and
+finalized drafts are pruned. The public contract, including the `no_eligible_workspace`
+rejection, is in the reference under "Native agent launch".
 
 ## Lifecycle hooks
 
@@ -399,6 +439,42 @@ Mounted surfaces and command invocations have shorter API lifetimes.
 Keep the client entry synchronous: return its cleanup function immediately and start asynchronous
 work inside it. See the maintained [composer pill example](../plugin-examples/local-plugin/client/main.tsx).
 
+A popover's `width` and `sheetTitle: false` apply to the button's own `MenuSurface` only. Overflow
+and menu pages share their parent surface's frame, so they keep the page title and width.
+
+## Overlays
+
+`Overlay` (`packages/app/src/plugins/react-native/overlay*.tsx`) is the plugin's own full-window
+layer. Plugins used to draw one with React Native's `Modal`; on the web that renders a browser
+dialog with its own focus trap, which fought Command Center and host menus for focus until the page
+hung. The web overlay registers with `useWebOverlayRegistration` in the shared overlay root instead,
+so the [relative layer model](floating-panels.md#gotcha-1--android-touch-hit-test-by-parent-bounds)
+decides who gets Escape and focus, and an overlay rendered inside another inherits its layer.
+
+On iOS and Android it stays a native `Modal`: a `@gorhom/portal` host would render the plugin's
+children without the providers above them, and the plugin's own contexts cannot be bridged. The
+modal window also settles Android Back. Android delivers Back to the topmost modal window, never to
+`BackHandler`, so an overlay does not join the sheet back-press chain in
+`components/ui/isolated-bottom-sheet-modal/back-press.ts` and needs no listener of its own. The cost
+is the one every native modal pays: a host sheet opened from inside an overlay renders in the app
+window, under it. Plugins nest another `Overlay` instead of opening `Modal` from one.
+
+`openOverlay` exists because the opener is often on its way out: a popover that closed itself, a
+Command Center row, a slash command whose composer just cleared. The store in
+`packages/app/src/plugins/overlays/` holds the component and `PluginOverlayHost` mounts it at the
+app root under a fresh runtime boundary, since the opener's surface runtime is disposed with it.
+Mounting waits a frame, and on iOS the menu engine's teardown grace, for the same reasons
+`WorkspaceRenameHost` and `selectItem` wait. An overlay closes when its installation changes, because
+its component belongs to the bundle that opened it.
+
+`openImagePreview` follows the same shape with the host's own viewer instead of a plugin
+component: `packages/app/src/plugins/image-preview/` keeps the images and the current index, and
+`PluginImagePreviewHost` renders `AttachmentLightbox` at the app root. A plugin used to draw its
+own preview, which had no zoom and, inside an `Overlay`, no layer of its own. The lightbox is a
+native `Modal` and a global web overlay layer, so it lands above whatever the plugin has open,
+and Escape or Android Back closes the preview alone. The store holds URIs, not components, so the
+preview needs no runtime boundary and survives a plugin reload.
+
 ## Contribute timeline items
 
 Timeline transformers and renderers are client contributions. The daemon's canonical rows and
@@ -465,6 +541,68 @@ the agent. Built-in client commands win name and alias collisions, plugin comman
 provider-command collisions, and the first plugin in stable catalog order wins collisions between
 plugins. Plugin slash commands do not run when the composer has attachments.
 
+## Contribute a Git Forge
+
+A Forge plugin registers the same provider ID from separate runtime entries. Keep the provider
+definition under `shared/` so the client and server cannot drift:
+
+```ts
+// index.server.ts
+import type { PluginServerContext } from "@getpaseo/plugin/server";
+import { acmeServerProvider } from "./server/acme";
+
+export default function contribute(server: PluginServerContext) {
+  server.addForgeServerProvider(acmeServerProvider);
+  return () => {};
+}
+```
+
+```ts
+// index.client.ts
+import type { PluginClientContext } from "@getpaseo/plugin/client";
+import { acmeClientProvider } from "./client/acme";
+
+export default function contribute(client: PluginClientContext) {
+  client.addForgeClientProvider(acmeClientProvider);
+  return () => {};
+}
+```
+
+The server provider implements `PluginForgeServerService`. It owns authentication, API/CLI calls,
+search, status, checks, timeline, create/merge commands, and change-request checkout targets. Use
+the exported `ForgeCliMissingError`, `ForgeAuthenticationError`, and `ForgeCommandError` classes so
+the daemon preserves setup and auth failure states across the subprocess boundary. If
+`isAuthenticated()` throws those classified errors, set `authProbeCanThrow: true`; otherwise return
+`false` on authentication failure. Return explicit `checkoutRefs` for cross-repository heads. Set
+`supportsCrossRepoCheckoutWithoutRefs: true` only when the forge exposes a universal fetch ref that
+does not need those entries. Take the CLI plumbing from
+`@getpaseo/plugin/server/forge-toolkit` rather than writing it again — see
+[the plugin toolkit](forge-providers.md#the-plugin-toolkit).
+
+A forge with no CLI sets `signIn: null` and names a `setup` screen instead: the PR pane's setup
+callout then opens that screen rather than telling the user to "set up" the forge with no further
+detail. Paseo fills in the owning plugin, so a provider cannot point setup at another plugin's
+screen.
+
+The client provider contributes the shared definition plus optional facts parsing, merge-capability
+derivation, source URL grammar, a declarative SVG path, and brand colors. Client contributions are
+scoped to the daemon that supplied the plugin catalog. Do not put them in a process-global Forge
+map; one app can connect to hosts with different installed providers.
+
+Provider IDs and facts families match `^[a-z0-9][a-z0-9._-]*$`. They cannot replace an existing
+registration on the same host, and built-in Forge IDs are reserved. `cloudHosts` is the bounded list
+of public hosts. Use `probeHost` only for a self-hosted forge that can recognize a host through
+existing local authentication without sending credentials or anonymous requests to a
+remote-derived host.
+
+Reload, disable, removal, subprocess failure, and the global plugin switch unregister the server
+adapter and client contribution. Registry changes stop active status polls, discard cached adapter
+resolution, and refresh affected workspaces. Async `invalidate`, `defaultCheckoutRefs`, and
+`buildPrLocalBranchName` calls finish through the subprocess proxy before the next dependent read.
+
+The generic Forge architecture and the built-in path are documented in
+[forge-providers.md](forge-providers.md).
+
 ## Contribute composer attachments
 
 Register a declarative attachment source backed by a plugin RPC. Paseo owns the attachment menu,
@@ -511,9 +649,51 @@ Its writer lives with the plugin subprocess, while its directory lives outside m
 so updates and reloads retain values. Settings-change notifications must not enter the catalog
 reload path: that path disposes the plugin and would destroy open drafts after every save.
 
-`server.registerSettings(definition)` returns a server-side handle. Use `read()` for the current
-`ready` or `invalid` state and `subscribe()` for successful saves, resets, and migrations. The
-subscription cleanup belongs in the plugin's contribution cleanup when it outlives the entry.
+`server.registerSettings(definition)` returns a server-side handle for the same document. Use
+`read()` for the current `ready` or `invalid` state (invalid states carry a stable `code`),
+`subscribe()` for successful saves, resets, migrations, and server updates, and `update(mutator)` for
+a serialized read-modify-write. Mutators are synchronous, receive a deeply frozen detached value, and
+return `commit` or `unchanged`. Server updates, client CAS writes, reset, and migration share one
+installation queue and one atomic file, and every commit notifies subscribers and clients once.
+Reentry, thenables, invalid values, and mutator throws do not write; only watchdog poisoning blocks
+later access until plugin reload. The subscription cleanup belongs in the plugin's contribution
+cleanup when it outlives the entry. `server.paseo` is the already-connected owner-authority daemon
+SDK and is available during contribution startup as well as handlers and lifecycle callbacks.
+
+## Keep secrets on the daemon
+
+**Never put an API token in a settings document.** `settings.<id>.read` is an ordinary RPC and the
+id is derivable from the plugin, so any connected client can fetch that document — the token would
+reach every phone attached to the daemon, and it is cached there.
+
+`server.secrets` stores values that never leave the daemon host: `get`, `has`, `keys`, `set`,
+`delete`, keyed by `^[a-z0-9][a-z0-9._-]*$`. It writes `_secrets.json` beside the settings documents
+with owner-only permissions and publishes no RPC handler at all. The leading underscore matters: a
+settings id must start with a letter, so a plugin's `secrets` settings document, which any client can
+overwrite or reset, can never share that file.
+
+Give the user a UI by pairing it with your own RPCs — one that only accepts a value, one that only
+reports whether a value exists:
+
+```ts
+server.handle(setTokenRpc, async ({ token }) => {
+  await server.secrets.set("api-token", token);
+  return { ok: true };
+});
+server.handle(tokenStatusRpc, async () => ({ configured: await server.secrets.has("api-token") }));
+```
+
+Settings then hold only the non-secret half: base URL, self-hosted host, which account to use.
+
+## Read client presence
+
+`server.presence()` travels over the plugin process IPC channel (`presence.request` /
+`presence.result`), not the WebSocket session protocol. Presence is per-client heartbeat state held
+by `VoiceAssistantWebSocketServer`; putting it on the session protocol would let any connected client
+read what the others are doing. The runtime answers before `ready`, so a contribution can read it
+during startup. `userPresent` comes from `isClientPresent` in
+`packages/server/src/server/agent-attention-policy.ts`, the predicate that also holds back push
+notifications; change the rule there and both follow.
 
 ## Contribute a theme
 

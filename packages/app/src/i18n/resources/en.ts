@@ -335,6 +335,9 @@ export const en = {
     attachments: {
       dismissImage: "Dismiss image",
       closeImage: "Close image",
+      previousImage: "Previous image",
+      nextImage: "Next image",
+      imagePosition: "{{current}} / {{total}}",
       imageLoadFailed: "Couldn't load image",
       imageUnavailable: "Image unavailable",
       imagePreviewUnavailable: "Image preview unavailable.",
@@ -1037,6 +1040,7 @@ export const en = {
         installCli: "Install the {{cli}} CLI to use {{brand}} features.",
         signIn: "Run {{command}} to use {{brand}} features.",
         generic: "Set up {{brand}} on this host to use its features.",
+        openSettings: "Open {{brand}} settings to finish setup.",
       },
     },
   },

@@ -1262,3 +1262,91 @@ describe("direct new-tab target shortcuts", () => {
     ).toEqual([["ctrl", "shift", "H"]]);
   });
 });
+
+describe("plugin command shortcuts", () => {
+  const capture = {
+    id: "plugin:todo:capture",
+    commandId: "todo:capture",
+    combo: "Mod+Shift+Y",
+  };
+
+  it("fires the contributed command", () => {
+    const bindings = buildEffectiveBindings({}, [capture]);
+
+    const result = resolveShortcut({
+      event: { key: "y", code: "KeyY", ctrlKey: true, shiftKey: true },
+      context: { isMac: false, isDesktop: true },
+      bindings,
+    });
+
+    expect(result.match).toEqual({
+      action: "plugin.command",
+      payload: { pluginCommandId: "todo:capture" },
+      preventDefault: true,
+      stopPropagation: true,
+    });
+  });
+
+  it("never takes keys a built-in already uses", () => {
+    const bindings = buildEffectiveBindings({}, [{ ...capture, combo: "Ctrl+Shift+T" }]);
+
+    const result = resolveShortcut({
+      event: { key: "t", code: "KeyT", ctrlKey: true, shiftKey: true },
+      context: { isMac: false, isDesktop: true },
+      bindings,
+    });
+
+    expect(result.match?.action).toBe("workspace.terminal.new");
+  });
+
+  it("stays quiet while the command center is open", () => {
+    const bindings = buildEffectiveBindings({}, [capture]);
+
+    const result = resolveShortcut({
+      event: { key: "y", code: "KeyY", ctrlKey: true, shiftKey: true },
+      context: { isMac: false, isDesktop: true, commandCenterOpen: true },
+      bindings,
+    });
+
+    expect(result.match).toBeNull();
+  });
+
+  it("takes an override, including an unassignment", () => {
+    const rebound = buildEffectiveBindings({ [capture.id]: "Ctrl+Shift+U" }, [capture]);
+
+    expect(
+      resolveShortcut({
+        event: { key: "u", code: "KeyU", ctrlKey: true, shiftKey: true },
+        context: { isMac: false, isDesktop: true },
+        bindings: rebound,
+      }).match?.action,
+    ).toBe("plugin.command");
+    expect(
+      resolveShortcut({
+        event: { key: "y", code: "KeyY", ctrlKey: true, shiftKey: true },
+        context: { isMac: false, isDesktop: true },
+        bindings: rebound,
+      }).match,
+    ).toBeNull();
+
+    const unassigned = buildEffectiveBindings({ [capture.id]: UNASSIGNED_COMBO }, [capture]);
+
+    expect(
+      resolveShortcut({
+        event: { key: "y", code: "KeyY", ctrlKey: true, shiftKey: true },
+        context: { isMac: false, isDesktop: true },
+        bindings: unassigned,
+      }).match,
+    ).toBeNull();
+  });
+
+  it("drops a combo the grammar rejects instead of throwing", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    const bindings = buildEffectiveBindings({}, [{ ...capture, combo: "Mod+Nonsense" }]);
+
+    expect(bindings).toHaveLength(buildEffectiveBindings({}).length);
+    expect(warn).toHaveBeenCalledOnce();
+    warn.mockRestore();
+  });
+});

@@ -14,6 +14,10 @@ import type { WorkspaceComposerAttachment } from "@/attachments/types";
 import { getFileTypeLabel } from "@/attachments/file-types";
 import { isPullRequestContextAttachment } from "@/attachments/workspace-attachment-utils";
 import { getForgePresentation } from "@/git/forge";
+import {
+  BUILTIN_CLIENT_FORGE_HOST,
+  type ClientForgeHostSnapshot,
+} from "@/git/client-forge-registry";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
 
 export interface AttachmentPillContent {
@@ -57,6 +61,7 @@ function getTextAttachmentSubtitle(
 export function getAgentAttachmentPillContent(
   attachment: AgentAttachment,
   t: TFunction,
+  clientForgeHost: ClientForgeHostSnapshot = BUILTIN_CLIENT_FORGE_HOST,
 ): AttachmentPillContent {
   switch (attachment.type) {
     case "review":
@@ -66,7 +71,7 @@ export function getAgentAttachmentPillContent(
         subtitle: getReviewSubtitle(attachment.comments.length, t),
       };
     case "forge_change_request": {
-      const presentation = getForgePresentation(attachment.forge ?? "github");
+      const presentation = getForgePresentation(attachment.forge ?? "github", clientForgeHost);
       return {
         icon: attachmentGithubPrIcon,
         title: attachment.title,

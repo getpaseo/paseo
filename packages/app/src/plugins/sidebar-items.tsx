@@ -50,6 +50,7 @@ export function PluginSidebarItemRow({
     <SidebarHeaderRow
       icon={resolvePluginIcon(group.icon)}
       label={group.title}
+      badge={target.item.badge}
       onPress={navigate}
       isActive={isActive}
       testID={`plugin-sidebar-${group.pluginId}-${group.contributionId}`}

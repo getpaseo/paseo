@@ -338,6 +338,9 @@ export const zhCN: TranslationResources = {
     attachments: {
       dismissImage: "关闭图片",
       closeImage: "关闭图片",
+      previousImage: "上一张图片",
+      nextImage: "下一张图片",
+      imagePosition: "{{current}} / {{total}}",
       imageLoadFailed: "无法加载图片",
       imageUnavailable: "图片不可用",
       imagePreviewUnavailable: "图片预览不可用。",
@@ -1021,6 +1024,7 @@ export const zhCN: TranslationResources = {
         installCli: "安装 {{cli}} CLI 以使用 {{brand}} 功能。",
         signIn: "运行 {{command}} 以使用 {{brand}} 功能。",
         generic: "在此主机上设置 {{brand}} 以使用其功能。",
+        openSettings: "打开 {{brand}} 设置以完成配置。",
       },
     },
   },

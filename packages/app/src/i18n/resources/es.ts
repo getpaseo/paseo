@@ -343,6 +343,9 @@ export const es: TranslationResources = {
     attachments: {
       dismissImage: "Descartar imagen",
       closeImage: "Cerrar imagen",
+      previousImage: "Imagen anterior",
+      nextImage: "Imagen siguiente",
+      imagePosition: "{{current}} / {{total}}",
       imageLoadFailed: "No se pudo cargar la imagen",
       imageUnavailable: "Imagen no disponible",
       imagePreviewUnavailable: "Vista previa de la imagen no disponible.",
@@ -1062,6 +1065,7 @@ export const es: TranslationResources = {
         installCli: "Instala la CLI de {{cli}} para usar las funciones de {{brand}}.",
         signIn: "Ejecuta {{command}} para usar las funciones de {{brand}}.",
         generic: "Configura {{brand}} en este host para usar sus funciones.",
+        openSettings: "Abre la configuración de {{brand}} para completar la instalación.",
       },
     },
   },

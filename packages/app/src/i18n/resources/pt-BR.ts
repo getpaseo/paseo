@@ -342,6 +342,9 @@ export const ptBR: TranslationResources = {
     attachments: {
       dismissImage: "Dispensar imagem",
       closeImage: "Fechar imagem",
+      previousImage: "Imagem anterior",
+      nextImage: "Próxima imagem",
+      imagePosition: "{{current}} / {{total}}",
       imageLoadFailed: "Não foi possível carregar a imagem",
       imageUnavailable: "Imagem indisponível",
       imagePreviewUnavailable: "Prévia da imagem indisponível.",
@@ -1052,6 +1055,7 @@ export const ptBR: TranslationResources = {
         installCli: "Instale a CLI {{cli}} para usar os recursos do {{brand}}.",
         signIn: "Execute {{command}} para usar os recursos do {{brand}}.",
         generic: "Configure o {{brand}} neste host para usar seus recursos.",
+        openSettings: "Abra as configurações do {{brand}} para concluir a configuração.",
       },
     },
   },

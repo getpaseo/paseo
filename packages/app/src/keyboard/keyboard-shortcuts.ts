@@ -84,7 +84,8 @@ interface ShortcutWhen {
 type ShortcutPayloadDef =
   | { type: "index" }
   | { type: "delta"; delta: 1 | -1 }
-  | { type: "message-input"; kind: MessageInputKeyboardActionKind };
+  | { type: "message-input"; kind: MessageInputKeyboardActionKind }
+  | { type: "plugin-command"; pluginCommandId: string };
 
 interface ShortcutHelp {
   id: string;
@@ -1210,33 +1211,84 @@ export const DEFAULT_BINDINGS: readonly ParsedShortcutBinding[] =
 
 export type ShortcutOverrides = Record<string, string | null>;
 
-export function buildEffectiveBindings(overrides: ShortcutOverrides): ParsedShortcutBinding[] {
-  return DEFAULT_BINDINGS.map(function (binding) {
-    const override = overrides[binding.id];
-    if (override === UNASSIGNED_COMBO) {
-      return { ...binding, combo: "", parsedChord: [] };
-    }
-    // Storage is unvalidated JSON, so anything can turn up here.
-    if (typeof override !== "string") {
-      return binding;
-    }
-    let parsedChord: KeyCombo[];
+/** A Command Center item's keybinding, contributed by a plugin while the app runs. */
+export interface PluginCommandShortcut {
+  /** Binding id, so an override rebinds it like any built-in. */
+  id: string;
+  /** Command Center contribution id to run. */
+  commandId: string;
+  combo: string;
+}
+
+/**
+ * Plugin bindings sit after the built-ins, so a plugin can never take keys the app already uses:
+ * the matcher walks bindings in order and the built-in wins. A combo the grammar rejects is
+ * dropped rather than thrown, because it arrives from plugin code, not from this file.
+ */
+function parsePluginCommandBindings(
+  shortcuts: readonly PluginCommandShortcut[],
+): ParsedShortcutBinding[] {
+  const bindings: ParsedShortcutBinding[] = [];
+  for (const shortcut of shortcuts) {
     try {
-      parsedChord = parseBindingChord(override);
-    } catch {
-      return binding;
+      bindings.push(
+        parseBinding({
+          id: shortcut.id,
+          action: "plugin.command",
+          combo: shortcut.combo,
+          when: { commandCenter: false },
+          payload: { type: "plugin-command", pluginCommandId: shortcut.commandId },
+        }),
+      );
+    } catch (error) {
+      console.warn(`[Plugins] Ignoring invalid shortcut for ${shortcut.commandId}`, error);
     }
-    const lastCombo = parsedChord.at(-1);
-    if (binding.repeat === false && lastCombo) {
-      lastCombo.repeat = false;
-    }
-    const when = withoutDefaultComboGuard(binding.when);
-    if (!binding.help?.defaultDisplayKeys) {
-      return { ...binding, combo: override, parsedChord, when };
-    }
-    const { defaultDisplayKeys: _defaultDisplayKeys, ...help } = binding.help;
-    return { ...binding, combo: override, parsedChord, when, help };
-  });
+  }
+  return bindings;
+}
+
+function applyShortcutOverride(
+  binding: ParsedShortcutBinding,
+  override: string | null | undefined,
+): ParsedShortcutBinding {
+  if (override === UNASSIGNED_COMBO) {
+    return { ...binding, combo: "", parsedChord: [] };
+  }
+  // Storage is unvalidated JSON, so anything can turn up here.
+  if (typeof override !== "string") {
+    return binding;
+  }
+  let parsedChord: KeyCombo[];
+  try {
+    parsedChord = parseBindingChord(override);
+  } catch {
+    return binding;
+  }
+  const lastCombo = parsedChord.at(-1);
+  if (binding.repeat === false && lastCombo) {
+    lastCombo.repeat = false;
+  }
+  const when = withoutDefaultComboGuard(binding.when);
+  if (!binding.help?.defaultDisplayKeys) {
+    return { ...binding, combo: override, parsedChord, when };
+  }
+  const { defaultDisplayKeys: _defaultDisplayKeys, ...help } = binding.help;
+  return { ...binding, combo: override, parsedChord, when, help };
+}
+
+export function buildEffectiveBindings(
+  overrides: ShortcutOverrides,
+  pluginShortcuts: readonly PluginCommandShortcut[] = [],
+): ParsedShortcutBinding[] {
+  const shipped: readonly ParsedShortcutBinding[] =
+    pluginShortcuts.length === 0
+      ? DEFAULT_BINDINGS
+      : [...DEFAULT_BINDINGS, ...parsePluginCommandBindings(pluginShortcuts)];
+  const effective: ParsedShortcutBinding[] = [];
+  for (const binding of shipped) {
+    effective.push(applyShortcutOverride(binding, overrides[binding.id]));
+  }
+  return effective;
 }
 
 /**
@@ -1357,6 +1409,8 @@ function resolvePayload(
       return { delta: def.delta };
     case "message-input":
       return { kind: def.kind };
+    case "plugin-command":
+      return { pluginCommandId: def.pluginCommandId };
     default:
       throw new Error("unreachable");
   }

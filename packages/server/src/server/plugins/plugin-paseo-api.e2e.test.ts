@@ -141,6 +141,91 @@ export default function contribute(server: PluginServerContext) {
   }
 }, 60_000);
 
+test("plugins read client presence from app heartbeats", async () => {
+  const pluginDirectory = await mkdtemp(path.join(tmpdir(), "paseo-presence-plugin-"));
+  roots.push(pluginDirectory);
+  await writeFile(
+    path.join(pluginDirectory, "paseo-plugin.json"),
+    JSON.stringify({
+      id: "presence",
+      requirements: { paseo: `>=${resolveDaemonVersion(import.meta.url)}` },
+    }),
+  );
+  await writeFile(
+    path.join(pluginDirectory, "index.server.ts"),
+    `import { defineRpc } from "@getpaseo/plugin";
+import type { PluginServerContext } from "@getpaseo/plugin/server";
+import { z } from "zod";
+
+const read = defineRpc({ name: "read", input: z.object({}), output: z.unknown() });
+
+export default function contribute(server: PluginServerContext) {
+  server.handle(read, () => server.presence());
+  return () => undefined;
+}`,
+  );
+
+  const daemon = await createTestPaseoDaemon({ agentClients: createTestAgentClients() });
+  const client = new DaemonClient({
+    url: `ws://127.0.0.1:${daemon.port}/ws`,
+    appVersion: "0.4.0",
+  });
+  const readPresence = () => client.invokePluginRpc("presence", "read", {});
+  // Heartbeats are fire-and-forget, so read until the daemon has applied the latest one.
+  async function waitForPresence(expected: unknown): Promise<void> {
+    for (let attempt = 0; attempt < 50; attempt += 1) {
+      const presence = await readPresence();
+      if (JSON.stringify(presence) === JSON.stringify(expected)) return;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    expect(await readPresence()).toEqual(expected);
+  }
+
+  try {
+    await client.connect();
+    await client.patchDaemonConfig({ pluginsEnabled: true });
+    await client.installDirectoryPlugin(pluginDirectory);
+
+    await expect(readPresence()).resolves.toEqual({ userPresent: false, clients: [] });
+
+    const activeAt = new Date().toISOString();
+    client.sendHeartbeat({
+      deviceType: "mobile",
+      focusedAgentId: "agent-1",
+      lastActivityAt: activeAt,
+      appVisible: true,
+    });
+    await waitForPresence({
+      userPresent: true,
+      clients: [
+        {
+          deviceType: "mobile",
+          appVisible: true,
+          focusedAgentId: "agent-1",
+          lastActivityAt: activeAt,
+        },
+      ],
+    });
+
+    const idleAt = new Date(Date.now() - 10 * 60_000).toISOString();
+    client.sendHeartbeat({
+      deviceType: "mobile",
+      focusedAgentId: null,
+      lastActivityAt: idleAt,
+      appVisible: false,
+    });
+    await waitForPresence({
+      userPresent: false,
+      clients: [
+        { deviceType: "mobile", appVisible: false, focusedAgentId: null, lastActivityAt: idleAt },
+      ],
+    });
+  } finally {
+    await client.close().catch(() => undefined);
+    await daemon.close();
+  }
+}, 60_000);
+
 test("daemon config reload enables and disables configured plugins without restarting", async () => {
   const pluginDirectory = await mkdtemp(path.join(tmpdir(), "paseo-reload-plugin-"));
   const paseoHomeRoot = await mkdtemp(path.join(tmpdir(), "paseo-reload-home-"));

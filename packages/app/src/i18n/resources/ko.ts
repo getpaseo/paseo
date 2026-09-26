@@ -339,6 +339,9 @@ export const ko: TranslationResources = {
     attachments: {
       dismissImage: "이미지 닫기",
       closeImage: "이미지 닫기",
+      previousImage: "이전 이미지",
+      nextImage: "다음 이미지",
+      imagePosition: "{{current}} / {{total}}",
       imageLoadFailed: "이미지를 불러올 수 없습니다",
       imageUnavailable: "이미지를 사용할 수 없습니다",
       imagePreviewUnavailable: "이미지 미리보기를 사용할 수 없습니다.",
@@ -1036,6 +1039,7 @@ export const ko: TranslationResources = {
         installCli: "{{brand}} 기능을 사용하려면 {{cli}} CLI를 설치하세요.",
         signIn: "{{brand}} 기능을 사용하려면 {{command}}를 실행하세요.",
         generic: "해당 기능을 사용하려면 이 호스트에 {{brand}}를 설정하세요.",
+        openSettings: "설정을 마치려면 {{brand}} 설정을 여세요.",
       },
     },
   },

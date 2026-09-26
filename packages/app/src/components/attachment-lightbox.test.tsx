@@ -62,11 +62,14 @@ vi.mock("@/constants/platform", () => ({
 
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
-    t: (key: string) =>
+    t: (key: string, values?: Record<string, unknown>) =>
       ({
         "message.attachments.closeImage": "Close image",
         "message.attachments.dismissImage": "Dismiss image",
         "message.attachments.imageLoadFailed": "Couldn't load image",
+        "message.attachments.previousImage": "Previous image",
+        "message.attachments.nextImage": "Next image",
+        "message.attachments.imagePosition": `${values?.current} / ${values?.total}`,
       })[key] ?? key,
   }),
 }));
@@ -84,6 +87,8 @@ vi.mock("lucide-react-native", () => {
   const createIcon = (name: string) => (props: Record<string, unknown>) =>
     React.createElement("span", { ...props, "data-icon": name });
   return {
+    ChevronLeft: createIcon("ChevronLeft"),
+    ChevronRight: createIcon("ChevronRight"),
     X: createIcon("X"),
   };
 });
@@ -175,6 +180,10 @@ function click(element: Element) {
   });
 }
 
+function pagingProps(index: number, count: number, onSelect: (index: number) => void) {
+  return { index, count, onSelect };
+}
+
 function queryByTestId(testID: string): HTMLElement | null {
   return document.querySelector(`[data-testid="${testID}"]`);
 }
@@ -233,6 +242,83 @@ describe("AttachmentLightbox", () => {
 
     expect(queryByTestId("attachment-lightbox-image")).toBeNull();
     expect(document.body.textContent ?? "").toContain("Couldn't load image");
+  });
+
+  it("shows no paging controls for a single image", () => {
+    render(<AttachmentLightbox source={attachmentSource} onClose={vi.fn()} title="img-1.png" />);
+
+    expect(queryByTestId("attachment-lightbox-previous")).toBeNull();
+    expect(queryByTestId("attachment-lightbox-next")).toBeNull();
+    expect(queryByTestId("attachment-lightbox-caption")?.textContent).toBe("img-1.png");
+  });
+
+  it("pages with the buttons and shows the position", () => {
+    const onSelect = vi.fn();
+    render(
+      <AttachmentLightbox
+        source={assistantImageSource}
+        onClose={vi.fn()}
+        title="second.png"
+        paging={pagingProps(1, 3, onSelect)}
+      />,
+    );
+
+    expect(queryByTestId("attachment-lightbox-caption")?.textContent).toBe("second.png2 / 3");
+    click(queryByTestId("attachment-lightbox-previous")!);
+    click(queryByTestId("attachment-lightbox-next")!);
+    expect(onSelect.mock.calls).toEqual([[0], [2]]);
+  });
+
+  it("disables paging past either end", () => {
+    const onSelect = vi.fn();
+    render(
+      <AttachmentLightbox
+        source={assistantImageSource}
+        onClose={vi.fn()}
+        paging={pagingProps(0, 2, onSelect)}
+      />,
+    );
+
+    expect(queryByTestId("attachment-lightbox-previous")?.getAttribute("aria-disabled")).toBe(
+      "true",
+    );
+    expect(queryByTestId("attachment-lightbox-next")?.getAttribute("aria-disabled")).toBeNull();
+    click(queryByTestId("attachment-lightbox-previous")!);
+    expect(onSelect).not.toHaveBeenCalled();
+    expect(queryByTestId("attachment-lightbox-caption")?.textContent).toBe("1 / 2");
+  });
+
+  it("pages with the arrow keys on web and still closes on Escape", () => {
+    const onSelect = vi.fn();
+    const onClose = vi.fn();
+    render(
+      <AttachmentLightbox
+        source={assistantImageSource}
+        onClose={onClose}
+        paging={pagingProps(1, 3, onSelect)}
+      />,
+    );
+
+    act(() => {
+      window.dispatchEvent(new window.KeyboardEvent("keydown", { key: "ArrowRight" }));
+      window.dispatchEvent(new window.KeyboardEvent("keydown", { key: "ArrowLeft" }));
+      window.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape" }));
+    });
+
+    expect(onSelect.mock.calls).toEqual([[2], [0]]);
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("ignores the arrow keys without paging", () => {
+    const onClose = vi.fn();
+    render(<AttachmentLightbox source={assistantImageSource} onClose={onClose} />);
+
+    act(() => {
+      window.dispatchEvent(new window.KeyboardEvent("keydown", { key: "ArrowRight" }));
+    });
+
+    expect(onClose).not.toHaveBeenCalled();
+    expect(queryByTestId("attachment-lightbox-caption")).toBeNull();
   });
 
   it("closes on Escape key on web", () => {

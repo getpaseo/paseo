@@ -8,6 +8,9 @@ interface HostNavigationOwner {
   openWorkspace(input: NavigateToWorkspaceInput): void;
   resolveWorkspace(input: { serverId: string; workspaceId: string }): string | null;
   createBrowser(input: { initialUrl: string }): { browserId: string };
+  /** Whether the navigating plugin currently registers this surface. */
+  hasSurface(surfaceId: string): boolean;
+  openSurface(surfaceId: string): void;
 }
 
 export function createPluginHostNavigation(
@@ -19,6 +22,11 @@ export function createPluginHostNavigation(
       owner.openAgent({ serverId: targetServerId ?? serverId, agentId }),
     openWorkspace: ({ workspaceId, serverId: targetServerId }) =>
       owner.openWorkspace({ serverId: targetServerId ?? serverId, workspaceId }),
+    openSurface: (id) => {
+      const surfaceId = id.trim();
+      if (!owner.hasSurface(surfaceId)) throw new Error(`Plugin surface is unavailable: ${id}`);
+      owner.openSurface(surfaceId);
+    },
     openBrowser: owner.browserAvailable
       ? ({ url, workspaceId, serverId: targetServerId }) => {
           if (!isHttpUrl(url)) throw new Error("Only absolute HTTP(S) URLs are supported.");

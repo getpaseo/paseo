@@ -427,6 +427,89 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
       expect(currentBranch).toBe("Feature.X");
     });
 
+    it("fetches a cross-repository change request from its direct remote URL", async () => {
+      const originDir = join(tempDir, "origin.git");
+      const forkDir = join(tempDir, "fork.git");
+      const forkCloneDir = join(tempDir, "fork-clone");
+      execFileSync("git", ["clone", "--bare", repoDir, originDir]);
+      execFileSync("git", ["clone", "--bare", repoDir, forkDir]);
+      execFileSync("git", ["remote", "add", "origin", originDir], { cwd: repoDir });
+      execFileSync("git", ["clone", forkDir, forkCloneDir]);
+      execFileSync("git", ["config", "user.email", "test@test.com"], { cwd: forkCloneDir });
+      execFileSync("git", ["config", "user.name", "Test"], { cwd: forkCloneDir });
+      execFileSync("git", ["checkout", "-b", "contributor/acme"], { cwd: forkCloneDir });
+      writeFileSync(join(forkCloneDir, "file.txt"), "from-acme-fork\n");
+      execFileSync("git", ["add", "file.txt"], { cwd: forkCloneDir });
+      execFileSync(
+        "git",
+        ["-c", "commit.gpgsign=false", "commit", "-m", "cross repository branch"],
+        { cwd: forkCloneDir },
+      );
+      execFileSync("git", ["push", "origin", "contributor/acme"], { cwd: forkCloneDir });
+
+      const result = await createLegacyWorktreeForTest({
+        cwd: repoDir,
+        worktreeSlug: "acme-cross-repo",
+        source: {
+          kind: "checkout-change-request",
+          forge: "acme",
+          changeRequestNumber: 7,
+          headRef: "contributor/acme",
+          headRepositoryOwner: "contributor/repo",
+          baseRefName: "main",
+          checkoutRefs: [
+            {
+              remoteUrl: forkDir,
+              remoteRef: "refs/heads/contributor/acme",
+            },
+          ],
+          pushRemoteUrl: forkDir,
+        },
+        runSetup: false,
+        paseoHome,
+      });
+
+      expect(readFileSync(join(result.worktreePath, "file.txt"), "utf8")).toBe("from-acme-fork\n");
+      expect(
+        execFileSync("git", ["branch", "--show-current"], { cwd: result.worktreePath })
+          .toString()
+          .trim(),
+      ).toBe("contributor/acme");
+    });
+
+    it("does not expose a direct remote URL when fetching a change request fails", async () => {
+      const remoteUrl =
+        "http://forge-user:forge-secret@127.0.0.1:1/example/repo.git?token=query-secret";
+      const error = await createLegacyWorktreeForTest({
+        cwd: repoDir,
+        worktreeSlug: "acme-private-remote",
+        source: {
+          kind: "checkout-change-request",
+          forge: "acme",
+          changeRequestNumber: 8,
+          headRef: "contributor/private",
+          baseRefName: "main",
+          checkoutRefs: [
+            {
+              remoteUrl,
+              remoteRef: "refs/heads/contributor/private",
+            },
+          ],
+        },
+        runSetup: false,
+        paseoHome,
+      }).then(
+        () => null,
+        (reason: unknown) => reason,
+      );
+
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toContain(
+        "Unable to fetch change request refs for worktree branch contributor/private: <direct remote> refs/heads/contributor/private",
+      );
+      expect((error as Error).message).not.toMatch(/forge-secret|query-secret/);
+    });
+
     it("uses the selected local or origin ref when both exist", async () => {
       const remoteDir = join(tempDir, "remote.git");
       const remoteCloneDir = join(tempDir, "remote-clone");

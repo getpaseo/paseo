@@ -343,6 +343,9 @@ export const ja: TranslationResources = {
     attachments: {
       dismissImage: "画像を閉じる",
       closeImage: "画像を閉じる",
+      previousImage: "前の画像",
+      nextImage: "次の画像",
+      imagePosition: "{{current}} / {{total}}",
       imageLoadFailed: "画像を読み込めませんでした",
       imageUnavailable: "画像が利用できません",
       imagePreviewUnavailable: "画像プレビューは利用できません。",
@@ -1042,6 +1045,7 @@ export const ja: TranslationResources = {
         installCli: "{{brand}} の機能を使うには {{cli}} CLI をインストールしてください。",
         signIn: "{{brand}} の機能を使うには {{command}} を実行してください。",
         generic: "このホストで {{brand}} をセットアップすると、その機能を使えます。",
+        openSettings: "セットアップを完了するには {{brand}} の設定を開いてください。",
       },
     },
   },

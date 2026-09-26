@@ -22,6 +22,7 @@ function installation(): InstalledPlugin {
     themes: [],
     timelineTransformers: [],
     timelineRenderers: [],
+    forgeClientProviders: [],
   };
 }
 
@@ -166,5 +167,40 @@ describe("plugin buttons", () => {
     });
     await buttons.run(key, ["nested", "run"]);
     expect(calls).toBe(2);
+  });
+
+  it("keeps a popover's presentation options and rejects malformed ones", () => {
+    const buttons = store();
+    const plugin = installation();
+    function Content() {
+      return null;
+    }
+    const popover = (behavior: Record<string, unknown>) => ({
+      id: "panel",
+      workspaceId: "workspace",
+      button: {
+        title: "Todo",
+        icon: "Scan",
+        behavior: { kind: "popover", Content, ...behavior },
+      } as PluginButton,
+    });
+
+    buttons.addHeaderButton(plugin, popover({ sheetTitle: false, width: 440 }));
+    expect(buttons.getSnapshot()[0].button.behavior).toEqual({
+      kind: "popover",
+      Content,
+      sheetTitle: false,
+      width: 440,
+    });
+
+    expect(() => buttons.addHeaderButton(installation(), popover({ width: 0 }))).toThrow(
+      "Plugin button popover width must be a positive number",
+    );
+    expect(() => buttons.addHeaderButton(installation(), popover({ width: Number.NaN }))).toThrow(
+      "Plugin button popover width must be a positive number",
+    );
+    expect(() => buttons.addHeaderButton(installation(), popover({ sheetTitle: "Todo" }))).toThrow(
+      "Plugin button popover sheetTitle can only be false",
+    );
   });
 });

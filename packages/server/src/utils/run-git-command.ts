@@ -259,6 +259,42 @@ function getEnvOverlayKeys(envOverlay: ProcessEnvRecord | undefined): string[] {
   return Object.keys(envOverlay ?? {}).sort();
 }
 
+const HTTP_URL_PATTERN = /https?:\/\/[^\s"'<>]+/giu;
+const REDACTED_URL_PART = "[REDACTED]";
+
+function redactSensitiveHttpUrl(value: string): string {
+  const schemeEnd = value.indexOf("://") + 3;
+  const authorityEndCandidates = [
+    value.indexOf("/", schemeEnd),
+    value.indexOf("?", schemeEnd),
+  ].filter((index) => index >= 0);
+  const authorityEnd =
+    authorityEndCandidates.length > 0 ? Math.min(...authorityEndCandidates) : value.length;
+  const userInfoEnd = value.lastIndexOf("@", authorityEnd);
+  const withoutUserInfo =
+    userInfoEnd >= schemeEnd
+      ? `${value.slice(0, schemeEnd)}${REDACTED_URL_PART}${value.slice(userInfoEnd)}`
+      : value;
+  const queryStart = withoutUserInfo.indexOf("?", schemeEnd);
+  if (queryStart < 0) {
+    return withoutUserInfo;
+  }
+  const fragmentStart = withoutUserInfo.indexOf("#", queryStart);
+  const fragment = fragmentStart >= 0 ? withoutUserInfo.slice(fragmentStart) : "";
+  return `${withoutUserInfo.slice(0, queryStart)}?${REDACTED_URL_PART}${fragment}`;
+}
+
+function redactGitCommandText(value: string): string {
+  return value.replace(HTTP_URL_PATTERN, redactSensitiveHttpUrl);
+}
+
+function sanitizeGitProcessError(error: unknown): Error {
+  const source = error instanceof Error ? error : new Error(String(error));
+  const sanitized = new Error(redactGitCommandText(source.message));
+  sanitized.name = redactGitCommandText(source.name);
+  return sanitized;
+}
+
 function runGitCommandWithProvenance(
   args: string[],
   options: GitCommandOptions,
@@ -281,8 +317,9 @@ function executeGitCommand<Output>(
   decode: (output: Buffer) => Output,
   provenance?: string,
 ): Promise<GitCommandResult<Output>> {
-  const metricsState = submitGitCommandMetric(args, options.cwd);
-  const commandTrace = submitGitCommandTrace(args, options.cwd, {
+  const displayArgs = args.map(redactGitCommandText);
+  const metricsState = submitGitCommandMetric(displayArgs, options.cwd);
+  const commandTrace = submitGitCommandTrace(displayArgs, options.cwd, {
     active: gitProcessScheduler.activeCount,
     pending: gitProcessScheduler.pendingCount,
   });
@@ -301,7 +338,7 @@ function executeGitCommand<Output>(
       const timeout = options.timeout ?? DEFAULT_TIMEOUT_MS;
       const maxOutputBytes = options.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES;
       const acceptExitCodes = options.acceptExitCodes ?? [0];
-      const command = formatGitCommand(args);
+      const command = formatGitCommand(displayArgs);
       const envOverlay = mergeEnvOverlays(options.env, options.envOverlay);
       const startedAt = Date.now();
       beginGitCommandMetric(metricsState);
@@ -309,7 +346,7 @@ function executeGitCommand<Output>(
       const traceContext = logger
         ? {
             command: "git",
-            args,
+            args: displayArgs,
             cwd: options.cwd,
             cwdExists: existsSync(options.cwd),
             timeout,
@@ -363,7 +400,7 @@ function executeGitCommand<Output>(
         const timedOut = timeoutError !== null;
         finishMetricOnce(
           {
-            args,
+            args: displayArgs,
             cwd: options.cwd,
             startedAtMs: startedAt,
             durationMs: Date.now() - startedAt,
@@ -381,7 +418,7 @@ function executeGitCommand<Output>(
       };
 
       const rejectSpawnFailure = (error: unknown) => {
-        processError = error instanceof Error ? error : new Error(String(error));
+        processError = sanitizeGitProcessError(error);
         markProcessExited(null, null);
         settleGitCommandTrace(commandTrace, {
           outcome: "spawn_error",
@@ -470,12 +507,12 @@ function executeGitCommand<Output>(
       });
 
       child.on("error", (error) => {
-        processError = error;
+        processError = sanitizeGitProcessError(error);
         if (logger && traceContext) {
           logger.trace(
             {
               ...traceContext,
-              err: error,
+              err: processError,
               durationMs: Date.now() - startedAt,
             },
             "Git command process error",
@@ -500,7 +537,7 @@ function executeGitCommand<Output>(
         markProcessExited(exitCode, signal);
         const result: GitCommandResult<Output> = {
           stdout: decode(Buffer.concat(stdoutChunks)),
-          stderr: Buffer.concat(stderrChunks).toString("utf8"),
+          stderr: redactGitCommandText(Buffer.concat(stderrChunks).toString("utf8")),
           truncated,
           exitCode,
           signal,

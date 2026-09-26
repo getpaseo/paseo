@@ -344,6 +344,9 @@ export const fr: TranslationResources = {
     attachments: {
       dismissImage: "Ignorer l'image",
       closeImage: "Fermer l'image",
+      previousImage: "Image précédente",
+      nextImage: "Image suivante",
+      imagePosition: "{{current}} / {{total}}",
       imageLoadFailed: "Impossible de charger l'image",
       imageUnavailable: "Image indisponible",
       imagePreviewUnavailable: "Aperçu de l'image indisponible.",
@@ -1061,6 +1064,7 @@ export const fr: TranslationResources = {
         installCli: "Installez la CLI {{cli}} pour utiliser les fonctionnalités {{brand}}.",
         signIn: "Exécutez {{command}} pour utiliser les fonctionnalités {{brand}}.",
         generic: "Configurez {{brand}} sur cet hôte pour utiliser ses fonctionnalités.",
+        openSettings: "Ouvrez les paramètres {{brand}} pour terminer la configuration.",
       },
     },
   },

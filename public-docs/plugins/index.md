@@ -18,7 +18,8 @@ A plugin is a TypeScript project installed into one Paseo daemon. It can add
 [themes](/docs/plugins/reference#contribute-a-theme),
 [attachment sources](/docs/plugins/reference#add-a-composer-attachment-source), and
 [daemon-side RPCs](/docs/plugins/reference#add-plugin-specific-backend-behavior). It can also
-[connect a coding agent as a provider](/docs/plugins/providers). Client
+[connect a coding agent as a provider](/docs/plugins/providers) or
+[add a Git Forge provider](/docs/plugins/reference#add-a-git-forge-provider). Client
 contributions run on every Paseo client connected to that daemon, including mobile.
 
 This guide scaffolds a plugin, runs it, and adds a workspace panel to it.

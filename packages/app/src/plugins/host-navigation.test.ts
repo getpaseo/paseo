@@ -6,7 +6,10 @@ describe("plugin host navigation", () => {
     const destinations: unknown[] = [];
     const browsers: string[] = [];
     const workspaces = new Set(["selected:one", "remote:two"]);
+    const surfaces = new Set(["board"]);
     const navigation = createPluginHostNavigation("selected", {
+      hasSurface: (surfaceId) => surfaces.has(surfaceId),
+      openSurface: (surfaceId) => destinations.push({ surfaceId }),
       browserAvailable: electron,
       resolveWorkspace: ({ serverId, workspaceId }) =>
         workspaces.has(`${serverId}:${workspaceId}`) ? workspaceId : null,
@@ -17,7 +20,7 @@ describe("plugin host navigation", () => {
         return { browserId: `browser-${browsers.length}` };
       },
     });
-    return { navigation, destinations, browsers, workspaces };
+    return { navigation, destinations, browsers, workspaces, surfaces };
   }
 
   it("creates and focuses a local browser in the selected or explicit host workspace", () => {
@@ -86,5 +89,14 @@ describe("plugin host navigation", () => {
       "workspaceId",
     );
     expect(browsers).toEqual([]);
+  });
+
+  it("opens only surfaces the plugin registered, and only while they are", () => {
+    const { navigation, destinations, surfaces } = setup();
+    navigation.openSurface!(" board ");
+    expect(() => navigation.openSurface!("settings")).toThrow("Plugin surface is unavailable");
+    surfaces.delete("board");
+    expect(() => navigation.openSurface!("board")).toThrow("Plugin surface is unavailable");
+    expect(destinations).toEqual([{ surfaceId: "board" }]);
   });
 });

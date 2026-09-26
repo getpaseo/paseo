@@ -6,6 +6,8 @@ import type {
   PluginWorkspaceCommandContext,
 } from "@getpaseo/plugin/client";
 import type { PluginClientStateSource } from "@getpaseo/plugin/client/host";
+import { createPluginNotifier } from "./notify";
+import { pluginOverlayStore } from "./overlays/store";
 import { resolvePluginPanelOpenLocation } from "./workspace-panels/locations";
 import type { PluginSurfaceRuntime } from "./surface-runtime";
 import type { InstalledPlugin } from "./types";
@@ -29,6 +31,7 @@ export function createPluginCapabilities(
 ): PluginCommandCapabilities {
   return {
     paseo: runtime.paseo,
+    notify: createPluginNotifier(),
     rpc: (contract, input) => callPluginRpc(contract, runtime.invoke, input),
     openSettings(screenId) {
       if (!plugin.settingsScreens.some((screen) => screen.id === screenId))
@@ -41,6 +44,8 @@ export function createPluginCapabilities(
       }
       navigation.openSurface(plugin.id, surfaceId);
     },
+    openOverlay: (Component) =>
+      pluginOverlayStore.open({ serverId: plugin.serverId, pluginId: plugin.id, Component }),
   };
 }
 

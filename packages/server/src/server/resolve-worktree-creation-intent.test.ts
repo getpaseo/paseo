@@ -211,6 +211,46 @@ describe("resolveWorktreeCreationIntent", () => {
     expect(deps.headRefLookups).toEqual([]);
   });
 
+  test("uses an adapter-selected push URL before the generic SSH preference", async () => {
+    const deps = createResolverHarness({
+      forge: "acme",
+      forgeService: {
+        getPullRequestCheckoutTarget: async () => ({
+          number: 7,
+          baseRefName: "main",
+          headRefName: "feature/acme",
+          checkoutRefs: [
+            {
+              remoteUrl: "https://forge.example.com/org/contributor/repo.git",
+              remoteRef: "refs/heads/feature/acme",
+            },
+          ],
+          headOwnerLogin: "org/contributor/repo",
+          preferredPushUrl: "https://forge.example.com/org/contributor/repo.git",
+          headRepositorySshUrl: "git@forge.example.com:org/contributor/repo.git",
+          headRepositoryUrl: "https://forge.example.com/org/contributor/repo.git",
+          isCrossRepository: true,
+        }),
+      },
+    });
+
+    await expect(
+      resolveWorktreeCreationIntent(
+        {
+          action: "checkout",
+          checkoutSource: { kind: "change_request", forge: "acme", number: 7 },
+        },
+        repoRoot,
+        deps,
+      ),
+    ).resolves.toMatchObject({
+      kind: "checkout-change-request",
+      forge: "acme",
+      changeRequestNumber: 7,
+      pushRemoteUrl: "https://forge.example.com/org/contributor/repo.git",
+    });
+  });
+
   test("uses an explicit PR head ref without calling GitHub", async () => {
     const deps = createResolverHarness();
 

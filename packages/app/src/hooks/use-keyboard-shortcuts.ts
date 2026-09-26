@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from "react";
 import { usePathname, useRouter } from "expo-router";
 import { getIsElectronRuntime } from "@/constants/layout";
 import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
@@ -36,6 +36,11 @@ import { isImeComposingKeyboardEvent } from "@/utils/keyboard-ime";
 import { buildOpenProjectRoute } from "@/utils/host-routes";
 import { hasActiveWebOverlay } from "@/lib/overlay-root";
 import {
+  getPluginCommandShortcuts,
+  runPluginCommandShortcut,
+  subscribeToPluginCommandShortcuts,
+} from "@/plugins/command-center/shortcuts";
+import {
   type ActiveWorkspaceSelection,
   navigateToLastWorkspace,
   useActiveWorkspaceSelection,
@@ -64,7 +69,15 @@ export function useKeyboardShortcuts({
   const router = useRouter();
   const resetModifiers = useKeyboardShortcutsStore((s) => s.resetModifiers);
   const { overrides } = useKeyboardShortcutOverrides();
-  const bindings = useMemo(() => buildEffectiveBindings(overrides), [overrides]);
+  const pluginShortcuts = useSyncExternalStore(
+    subscribeToPluginCommandShortcuts,
+    getPluginCommandShortcuts,
+    getPluginCommandShortcuts,
+  );
+  const bindings = useMemo(
+    () => buildEffectiveBindings(overrides, pluginShortcuts),
+    [overrides, pluginShortcuts],
+  );
   const shortcutsAvailable = keyboardShortcutsAvailable({ isNative, isCompact: isMobile });
   const isDesktopApp = getIsElectronRuntime();
   const isMac = getShortcutOs() === "mac";
@@ -211,6 +224,8 @@ export function useKeyboardShortcuts({
       case "shortcuts-dialog-toggle":
         useKeyboardShortcutsStore.getState().setShortcutsDialogOpen(action.nextOpen);
         return true;
+      case "plugin-command":
+        return runPluginCommandShortcut(action.commandId);
     }
   };
 

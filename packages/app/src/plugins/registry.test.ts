@@ -2,6 +2,7 @@ import appPackage from "../../package.json";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { pluginRegistry as registry } from "./registry";
+import { clientForgeRegistry, getClientForgeDefinition } from "@/git/client-forge-registry";
 
 vi.mock("./navigation", () => ({
   createPluginNavigation: () => ({}),
@@ -21,6 +22,7 @@ const daemonClient = {} as DaemonClient;
 const pluginRegistry = {
   getSnapshot: registry.getSnapshot,
   subscribe: registry.subscribe,
+  getEvaluationError: registry.getEvaluationError.bind(registry),
   removeHost: registry.removeHost.bind(registry),
   installCatalog(
     serverId: string,
@@ -65,6 +67,25 @@ function timelineBundle(marker: string): string {
 
 function installedPluginIds(): string[] {
   return pluginRegistry.getSnapshot().map(({ id }) => id);
+}
+
+function forgeBundle(displayName: string): string {
+  return `(function() { return { default: function(plugin) {
+    plugin.addForgeClientProvider({
+      definition: {
+        id: "acme",
+        displayName: ${JSON.stringify(displayName)},
+        changeRequestAbbrev: "MR",
+        changeRequestNoun: "merge request",
+        changeRequestNumberPrefix: "!",
+        issueNumberPrefix: "#",
+        signIn: null,
+        cloudHosts: ["forge.example.com"],
+      },
+      view: { icon: { kind: "svg-path", viewBox: [0, 0, 24, 24], path: "M0 0h24v24H0z" } },
+    });
+    return function() {};
+  } }; })`;
 }
 
 afterEach(() => {
@@ -219,5 +240,45 @@ describe("PluginRegistry", () => {
 
     expect(() => pluginRegistry.removeHost("host-a")).not.toThrow();
     expect(pluginRegistry.getSnapshot()).toEqual([]);
+  });
+
+  it("keeps Forge contributions host-scoped across reload and remove", () => {
+    pluginRegistry.installCatalog("host-a", [{ id: "acme", clientBundle: forgeBundle("Acme A") }]);
+    pluginRegistry.installCatalog("host-b", [{ id: "acme", clientBundle: forgeBundle("Acme B") }]);
+
+    expect(
+      getClientForgeDefinition(clientForgeRegistry.getHostSnapshot("host-a"), "acme")?.displayName,
+    ).toBe("Acme A");
+    expect(
+      getClientForgeDefinition(clientForgeRegistry.getHostSnapshot("host-b"), "acme")?.displayName,
+    ).toBe("Acme B");
+
+    pluginRegistry.installCatalog("host-a", [{ id: "acme", clientBundle: forgeBundle("Acme A2") }]);
+    expect(
+      getClientForgeDefinition(clientForgeRegistry.getHostSnapshot("host-a"), "acme")?.displayName,
+    ).toBe("Acme A2");
+
+    pluginRegistry.installCatalog("host-a", []);
+    expect(
+      getClientForgeDefinition(clientForgeRegistry.getHostSnapshot("host-a"), "acme"),
+    ).toBeNull();
+    expect(
+      getClientForgeDefinition(clientForgeRegistry.getHostSnapshot("host-b"), "acme")?.displayName,
+    ).toBe("Acme B");
+  });
+
+  it("removes the previous Forge contribution when replacement evaluation fails", () => {
+    pluginRegistry.installCatalog("host-a", [{ id: "acme", clientBundle: forgeBundle("Acme") }]);
+
+    pluginRegistry.installCatalog(
+      "host-a",
+      [{ id: "acme", clientBundle: `(function() { throw new Error("broken bundle"); })` }],
+      { replacePluginId: "acme" },
+    );
+
+    expect(
+      getClientForgeDefinition(clientForgeRegistry.getHostSnapshot("host-a"), "acme"),
+    ).toBeNull();
+    expect(pluginRegistry.getEvaluationError("host-a", "acme")).toContain("broken bundle");
   });
 });

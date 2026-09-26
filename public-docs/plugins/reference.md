@@ -268,10 +268,44 @@ Use `openSettings`, `openSurface`, and `openPanel` for your own registered contr
 ### Server runtime
 
 Paseo provides `@getpaseo/plugin`, `@getpaseo/plugin/server`,
-`@getpaseo/plugin/server/provider`, `@getpaseo/plugin/server/acp`, and `zod` to server code. Backend
+`@getpaseo/plugin/server/provider`, `@getpaseo/plugin/server/acp`,
+`@getpaseo/plugin/server/forge-toolkit`, and `zod` to server code. Backend
 contributions run in a daemon subprocess with Node access to the host machine. Keep filesystem,
 process, credential, and other machine-local work under `server/`. A plugin without
 `index.server.ts` starts no subprocess.
+
+`server.secrets` holds values that must stay on the daemon host — API tokens above all. Settings
+documents are served to clients over `settings.<id>.read`, so a token placed there reaches every
+connected app; `server.secrets` publishes no RPC and writes an owner-only file next to them.
+
+```ts
+await server.secrets.set("api-token", token);
+const token = await server.secrets.get("api-token"); // string | null
+await server.secrets.has("api-token");
+await server.secrets.keys(); // names only
+await server.secrets.delete("api-token");
+```
+
+Keys match `^[a-z0-9][a-z0-9._-]*$`. To collect a token from a settings screen, expose your own
+write-only RPC and a status RPC that returns whether a value exists, never the value.
+
+### Client presence
+
+`server.presence()` returns the daemon's view of connected apps, built from their heartbeats.
+`userPresent` is true when any app reported user activity in the last three minutes. Paseo uses the
+same rule to send an in-app notification instead of a push notification, so a plugin that notifies
+through another channel should skip the notification when `userPresent` is true.
+
+```ts
+const { userPresent, clients } = await server.presence();
+// clients: [{ deviceType: "mobile", appVisible: true, focusedAgentId: "…", lastActivityAt: "…" }]
+if (!userPresent) await sendToChat(message);
+```
+
+Only apps send heartbeats; CLI, MCP, and plugin sessions never appear in `clients`. Read presence
+when you are about to notify, not when the triggering event arrives: the user may have left or come
+back in between. A host without this API has no `server.presence`, so check for it before calling
+when your plugin supports older hosts.
 
 ### Providers
 
@@ -696,16 +730,78 @@ export default function contribute(client: PluginClientContext) {
 }
 ```
 
+A sidebar item may carry a count. Pass `badge` for the starting value and call
+`client.setSidebarBadge(id, count)` as it changes; `0` and `null` clear it. The call is optional on
+older hosts, so guard it — the item still renders without the count:
+
+```ts
+client.setSidebarBadge?.("main", pending.length);
+```
+
 `PluginSurfaceProps` contains:
 
-| Field        | Meaning                                                                                                                                                                                                                                                                                                                           |
-| ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `theme`      | Typed `PluginTheme` color tokens for the active Paseo theme.                                                                                                                                                                                                                                                                      |
-| `host`       | Selected host `id` and display `label`.                                                                                                                                                                                                                                                                                           |
-| `layout`     | `compact` and the `ios`, `android`, or `web` platform.                                                                                                                                                                                                                                                                            |
-| `navigation` | Optional client navigation. `openAgent({ agentId, serverId? })` and `openWorkspace({ workspaceId, serverId? })` open targets on `serverId`, or on the selected host when omitted. `openBrowser({ url, workspaceId, serverId? })` is available only on Electron; see [links and browsers](#external-links-and-workspace-browsers). |
+| Field        | Meaning                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `theme`      | Typed `PluginTheme` color tokens for the active Paseo theme.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `host`       | Selected host `id` and display `label`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `layout`     | `compact`, the `ios`, `android`, or `web` platform, and optional safe-area `insets` (`top`, `bottom`, `left`, `right`, in points).                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `navigation` | Optional client navigation. `openAgent({ agentId, serverId? })` and `openWorkspace({ workspaceId, serverId? })` open targets on `serverId`, or on the selected host when omitted. `openBrowser({ url, workspaceId, serverId? })` is available only on Electron; see [links and browsers](#external-links-and-workspace-browsers). `openAgentLaunch` opens or restores a Host-owned native launch journal and composer flow. `openSurface(id)` opens one of this plugin's registered surfaces. `openOverlay(Component)` mounts an [overlay](#overlay) over the current page. |
 
 Paseo owns the route, header, close action, host picker, error boundary, and query client. The plugin owns the surface body.
+
+## Native agent launch
+
+`navigation.openAgentLaunch(request)` on surface and panel props opens the existing workspace draft or
+`/new` flow seeded with a prompt, immutable correlation labels, and a stable `clientMessageId`. The
+user still chooses provider, model, mode, thinking, isolation, and branch in the native composer and
+submits explicitly; the plugin never creates the agent itself. The capability is optional: an older
+client omits it, and the plugin must show an upgrade notice instead of writing any claim.
+
+```ts
+const result = await navigation.openAgentLaunch({
+  launchId: attemptId,
+  documentIncarnationId,
+  requestFingerprint,
+  projectId,
+  defaultWorkspaceId,
+  title,
+  seedPrompt,
+  clientMessageId,
+  labels,
+  expectedClientInstanceId,
+  workspace: { allowExisting: true, allowCreate: false },
+  onEvent(event) {
+    // best effort; persist your own facts from these
+  },
+});
+```
+
+| Field                               | Contract                                                                                                                                                       |
+| ----------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `launchId`, `documentIncarnationId` | Together with the host and plugin IDs they key one device-local journal. A reset that changes the incarnation never resumes an old journal.                    |
+| `requestFingerprint`                | Immutable identity of this launch (project, labels, `clientMessageId`, seed). A different fingerprint for the same key is rejected with `launch_key_conflict`. |
+| `projectId`, `defaultWorkspaceId`   | Existing targets are limited to unarchived workspaces of that project; an invalid default is ignored with a diagnostic.                                        |
+| `seedPrompt`, `title`               | Stored in the persisted draft, never in a route URL, and cleared once the launch is terminal. The final composer text is not reported back.                    |
+| `labels`, `clientMessageId`         | Attached to `create_agent_request` on every path: the workspace draft, `/new`, and the background handoff after leaving `/new`.                                |
+| `expectedClientInstanceId`          | Pass the instance returned earlier to resume on the same installation; another device gets `wrong_device` and creates nothing.                                 |
+| `workspace`                         | `allowExisting` opens the draft tab of a same-project workspace; `allowCreate` opens `/new`. Neither available returns `no_eligible_workspace`.                |
+
+Results are `opened`, `restored` (same key reopened; `submissionState` is `editable` or
+`outcome_unknown_readonly`), `completed` (`terminalOutcome` is `agent_known` or `discarded`, with the
+known IDs), or `rejected` with `wrong_device`, `launch_key_conflict`, `journal_invalid`,
+`journal_persist_failed`, or `no_eligible_workspace`. An invalid journal is never deleted silently.
+
+Events are `journal_ready`, `workspace_request_started`, `workspace_created`,
+`agent_request_started`, `agent_created`, `discarded` (`not_submitted`), and `failed` with a `stage`
+and `certainty`. `discarded` means the user closed the launch's workspace draft tab before any
+request-start; clearing the composer's text or attachments does not discard a launch. Each request-start is persisted before the daemon request is sent. After a stage's
+request-start, every timeout, disconnect, error, or negative daemon response for that stage is
+`outcome_unknown`: the seeded composer becomes read-only, ordinary retry is disabled, and the
+plugin must offer status checks or an explicit new attempt instead. A stage that never started stays
+`not_submitted`. Reopening the same key replays the journal's facts to `onEvent`; a thrown callback is
+logged and never breaks the native flow. Same-key calls are serialized within one JavaScript runtime
+only; multiple browser tabs or Electron renderers sharing storage are not fenced. Removing the plugin
+clears journals on connected clients; offline devices clean up on reconnect or local GC.
 
 ## Host UI
 
@@ -791,6 +887,67 @@ the modal. Dismissal calls `onOpenChange(false)`; the plugin must update `open` 
 Modal children keep the plugin runtime context. `usePaseo`, `useRpc`, `useWorkspace`, and
 `useAgent` work inside them.
 
+### Overlay
+
+`Overlay` is a bare full-window layer for UI the plugin draws itself: a box with no host title bar,
+a width of its choosing, or a menu anchored to its own button. Use `Modal` when the host's dialog
+and sheet presentation fit; use `Overlay` when they do not.
+
+```tsx
+import { Overlay } from "@getpaseo/plugin/client/react-native";
+
+<Overlay open={open} onClose={() => setOpen(false)} accessibilityLabel="New todo">
+  <View style={{ position: "absolute", top: insets.top + 12, left: 12, right: 12 }}>
+    {/* your box */}
+  </View>
+</Overlay>;
+```
+
+| Prop                 | Type                 | Default  | Behavior                                                             |
+| -------------------- | -------------------- | -------- | -------------------------------------------------------------------- |
+| `open`               | `boolean`            | Required | Shows the layer when `true`.                                         |
+| `onClose`            | `() => void`         | Required | Escape, Android Back, and a press outside the content ask to close.  |
+| `backdrop`           | `"dim"` or `"clear"` | `"dim"`  | `"clear"` leaves the page visible, for anchored menus.               |
+| `accessibilityLabel` | `string`             | —        | Announced when the layer takes focus.                                |
+| `children`           | `ReactNode`          | Required | Laid out over the whole window. Position boxes and menus absolutely. |
+
+The host owns focus, Escape, Android Back, and stacking. An `Overlay` rendered inside another
+paints above it and closes first, so a menu or confirmation inside a box needs no dismissal stack
+of its own. Command Center and host menus open above an overlay and take focus without a fight;
+closing them returns focus to it. `onClose` is a request: keep `open` true to refuse, for example
+to close an inner menu first. The children keep the plugin runtime context. Coordinates inside the
+layer are window coordinates, so `measureInWindow` results apply directly.
+
+Render the overlay from a component that stays mounted while it is open. A header popover, a
+command, or a panel that is closing cannot hold it, so they open it with `openOverlay` instead:
+
+```tsx
+import type { PluginOverlayProps } from "@getpaseo/plugin/client";
+
+function NewTodo({ close }: PluginOverlayProps) {
+  return (
+    <Overlay open onClose={close}>
+      {/* your box */}
+    </Overlay>
+  );
+}
+
+// Popover content, surfaces, panels, and timeline items:
+props.close();
+props.navigation?.openOverlay?.(NewTodo);
+
+// Command Center items and slash commands:
+context.openOverlay?.(NewTodo);
+```
+
+`openOverlay(Component)` mounts `Component` outside the caller, over whatever page the user is on,
+and returns a handle whose `close()` unmounts it. `Component` receives `theme`, `host`, `layout`,
+`navigation`, and `close()`, and renders its own `Overlay`. It closes when the plugin reloads, is
+disabled, or is removed.
+
+`Overlay` and `openOverlay` are absent on hosts that predate them. Check `typeof Overlay` and
+`openOverlay?.` before relying on them, or raise your [requirements](#requirements).
+
 ### Scrolling
 
 Import `ScrollView` and `FlatList` from `@getpaseo/plugin/client/react-native` when content can appear in a
@@ -861,6 +1018,85 @@ API is needed for OS Paste. Avoid DOM clipboard code in native plugins and the d
 
 The runnable [modal UI example](https://github.com/getpaseo/paseo/tree/main/plugin-examples/modal-ui)
 contains a padded form, full-width rows, a virtualized list, horizontal tabs, and a copy/paste input.
+
+### Pick images
+
+`pickImages(options?)` opens the photo library on iOS and Android and a file chooser on the web and
+desktop. It resolves the chosen images, or `[]` when the user cancels:
+
+```tsx
+import { pickImages } from "@getpaseo/plugin/client/react-native";
+
+const images = await pickImages({ multiple: true, limit: 4 });
+for (const image of images) await save(image.base64, image.mimeType);
+```
+
+| Option     | Type      | Default | Behavior                                      |
+| ---------- | --------- | ------- | --------------------------------------------- |
+| `multiple` | `boolean` | `false` | Allows choosing more than one image.          |
+| `limit`    | `number`  | —       | Most images one pick returns when `multiple`. |
+
+Each `PickedImage` has `uri` (a local file on iOS and Android, a `data:` URI on the web), `base64`
+bytes without a `data:` prefix, `mimeType`, `width`, `height`, `byteLength`, and `fileName` when the
+platform reports one. Plugin code cannot read a local file, so the bytes always come with it.
+Validate `mimeType` and `byteLength` yourself; the host does not resize or re-encode. On iOS and
+Android it rejects when the user has denied photo library access. Hosts that predate it do not
+export `pickImages`; check `typeof pickImages` first.
+
+### Pick files
+
+`pickFiles(options?)` opens the document picker on iOS and Android and a file chooser on the web
+and desktop, for any kind of file. It resolves the chosen files, or `[]` when the user cancels:
+
+```tsx
+import { pickFiles } from "@getpaseo/plugin/client/react-native";
+
+const CHUNK = 256 * 1024;
+for (const file of await pickFiles({ multiple: true })) {
+  for (let offset = 0; offset < file.byteLength; offset += CHUNK) {
+    await uploadChunk(file.fileName, offset, await file.readBase64(offset, CHUNK));
+  }
+}
+```
+
+| Option     | Type      | Default | Behavior                            |
+| ---------- | --------- | ------- | ----------------------------------- |
+| `multiple` | `boolean` | `false` | Allows choosing more than one file. |
+
+Each `PickedFile` has `fileName`, `mimeType`, `byteLength`, and `readBase64(offset, length)`,
+which resolves the base64 of up to `length` bytes from `offset`: fewer at the end of the file,
+and an empty string past it. A file can be tens of megabytes, so the bytes stay behind the reader
+and a plugin uploads them a chunk at a time instead of holding one base64 string. `mimeType` is
+inferred from the name when the platform reports none, and is `application/octet-stream` when
+nothing matches. `readBase64` rejects when the file can no longer be read: on iOS and Android the
+picker copies the file into the app cache, which the OS may clear; on the web the browser reads
+the original file, which the user may have changed or removed. Hosts that predate it do not
+export `pickFiles`; check `typeof pickFiles` first.
+
+### Preview images
+
+`openImagePreview({ images, index? })` opens the host's image viewer over everything on screen,
+including the plugin's own `Overlay`: pinch and wheel zoom, a close button, and previous/next
+paging when there is more than one image.
+
+```tsx
+import { openImagePreview } from "@getpaseo/plugin/client/react-native";
+
+openImagePreview({
+  images: attachments.map((a) => ({ uri: `data:${a.mimeType};base64,${a.base64}`, name: a.name })),
+  index: 2,
+});
+```
+
+| Option   | Type                               | Default  | Behavior                                          |
+| -------- | ---------------------------------- | -------- | ------------------------------------------------- |
+| `images` | `{ uri: string; name?: string }[]` | Required | Anything `Image` can show, `data:` URIs included. |
+| `index`  | `number`                           | `0`      | Which image opens first, clamped to the list.     |
+
+`name` and the position ("2 / 3") show under the image. Escape, Android Back, the close button,
+and a press outside the image close the viewer alone; an `Overlay` under it stays open. On the
+web, `←` and `→` page. A second call replaces the open viewer. It throws when `images` is empty.
+Hosts that predate it do not export `openImagePreview`; check `typeof openImagePreview` first.
 
 ### Toasts
 
@@ -947,7 +1183,9 @@ return `undefined` until recognizable if the first text is insufficient to ident
 Each replacement may set an optional plugin-local `id`; otherwise Paseo uses its index within that
 source item's output.
 
-Renderers receive `agentId`, `item`, `timestamp`, `theme`, `host`, and `layout`. Paseo validates
+Renderers receive `agentId`, `item`, `timestamp`, `theme`, `host`, `layout`, and the optional
+`navigation` described under [surfaces](#surfaces-and-sidebar-items), so a row can open the agent or
+workspace it reports on. Paseo validates
 `item.data` with the registered schema before rendering. Keep transformers synchronous and
 deterministic. Paseo memoizes results by source-item reference and derives replacement identity from
 the source row, so updates to one streaming item do not remount its renderer. Use the exported
@@ -1007,10 +1245,13 @@ Recreate styles when `theme` or `layout.compact` changes.
 | `theme.colors.statusDanger`     | Failure copy               | Error messages and destructive text |
 | `layout.compact`                | Padding and stacking       | `true` on mobile and narrow windows |
 | `layout.platform`               | Platform-specific behavior | `ios`, `android`, or `web`          |
+| `layout.insets`                 | Full-window UI             | Status bar, notch, home indicator   |
 
 Do not hardcode `#000`, `#fff`, or React Native's default text color. Primary copy uses `foreground`. Labels use `foregroundMuted`. Tighten padding when `layout.compact` is true.
 
 Workspace and agent panels receive the same `theme`, `layout`, and optional `navigation` fields.
+`layout.insets` is optional on older hosts; keep a fallback for a box that starts under the status
+bar.
 
 ## Contribute a theme
 
@@ -1167,18 +1408,39 @@ Call `useSettings(preferences)` in any contributed component. It returns a discr
 | `invalid` | `error` and `revision`; stored data is preserved.                        |
 | `error`   | `error` from the read/connection.                                        |
 
-The server handle exposes `read()` and `subscribe()`. `read()` returns the same `ready` or
-`invalid` state as the client hook, including the opaque revision. `subscribe()` returns a cleanup
-function and receives a new `ready` state after a successful save, reset, or migration. Invalid
-writes and revision conflicts do not notify subscribers. Listener failures are logged without
-turning a committed write into a failed save.
+The server handle exposes `read()`, `subscribe()`, and `update()`. `read()` returns the same `ready`
+or `invalid` state as the client hook, including the opaque revision; an `invalid` state also has a
+stable `code`. `subscribe()` returns a cleanup function and receives a new `ready` state after a
+successful save, reset, migration, or server update. Invalid writes and revision conflicts do not
+notify subscribers. Listener failures are logged without turning a committed write into a failed
+save.
 
 ```ts
 const current = await settings.read();
 if (current.status === "ready") {
   // Use current.values and current.revision.
 }
+
+const updated = await settings.update((current) => ({
+  status: "commit",
+  values: { ...current, showMetadata: !current.showMetadata },
+  result: null,
+}));
+if (updated.status === "invalid") {
+  console.warn("Settings require explicit recovery", { code: updated.code });
+}
 ```
+
+`update()` returns `saved` or `unchanged` with `values`, `revision`, and the mutator's `result`,
+or `invalid` with `error` and `code`. The mutator runs synchronously with a deeply frozen detached
+value and must return `commit` or `unchanged`; do not perform I/O or call the same document
+recursively. Server updates, client CAS writes, reset, and migration use one serialized queue, so a
+client save with an older revision is rejected after a server update. Migration plus mutation writes
+and notifies at most once. Stable codes are `stored_invalid`, `migration_failed`, `mutator_threw`,
+`thenable_returned`, `reentrant_access`, `next_invalid`, and `store_poisoned`. A storage operation
+that never settles poisons the store; later access reports `store_poisoned` until plugin reload.
+`server.paseo` exposes the contribution's already-connected daemon SDK, so startup recovery does
+not depend on a first RPC or lifecycle event.
 
 Every state also exposes `saving`, `saveError`, and these actions:
 
@@ -1356,8 +1618,14 @@ client.addCommandCenterItem({
 | `title`    | Yes      | Search result title.                           |
 | `icon`     | Yes      | Lucide icon name.                              |
 | `keywords` | No       | Additional Command Center search terms.        |
+| `shortcut` | No       | Default keybinding, e.g. `"Mod+Shift+Y"`.      |
 | `context`  | Yes      | `global`, `workspace`, or `agent`.             |
 | `onSelect` | Yes      | Client-side callback for the matching context. |
+
+A `shortcut` joins modifiers `Mod`, `Cmd`, `Ctrl`, `Alt` and `Shift` to one key with `+`, and
+separates the steps of a chord with a space. The keys fire only while the item is contributed, they
+never take a combination a built-in shortcut already uses, and the user can rebind them like any
+Paseo shortcut. Hosts that do not support plugin keybindings ignore the field.
 
 Global items appear on the installation's selected host. Workspace items appear only when that host has an active cached workspace. Agent items appear only when the focused workspace tab is an agent or an agent-context plugin panel whose cached record belongs to that workspace. Missing context removes the item rather than calling the plugin to discover it.
 
@@ -1368,7 +1636,9 @@ Every callback receives:
 | `context`                 | All                 | Matching discriminator.                                                                                         |
 | `paseo`                   | All                 | Selected host's existing `PaseoApi`.                                                                            |
 | `rpc(contract, input)`    | All                 | Typed call to this installation's daemon-side plugin handler.                                                   |
+| `notify`                  | All                 | Optional toast: `notify?.success(message)`, `notify?.info(message)`, `notify?.error(message)`.                  |
 | `openSurface(id)`         | All                 | Opens one of this plugin's registered global surfaces.                                                          |
+| `openOverlay(Component)`  | All                 | Optional. Mounts an [overlay](#overlay) over the current page without navigating.                               |
 | `workspace`               | Workspace and agent | Synchronous workspace snapshot.                                                                                 |
 | `agent`                   | Agent               | Synchronous matching agent snapshot.                                                                            |
 | `openPanel(id, options?)` | Workspace and agent | Opens a registered panel in the callback's current context. Pass `{ location: "explorer" }` to target Explorer. |
@@ -1405,6 +1675,9 @@ client.addSlashCommand({
 `args` is `"src"`; Paseo trims only the remainder's leading and trailing whitespace and leaves
 parsing to the plugin. Paseo owns the autocomplete row, input clearing, and the error toast. It
 does not wait for `onSubmit` or show a pending state; use a composer pill or panel for that.
+Confirm what the command did with `notify?.success("Captured")` — the composer is cleared by then,
+so a command that leaves no visible trace looks like it did nothing. To ask for more input on the
+page the user is on, open a form with `openOverlay?.(Component)` instead of navigating.
 
 Precedence is built-in client commands, plugin commands, then provider commands. A lower-precedence
 collision is omitted. Built-in aliases also reserve their names. The first plugin in stable catalog
@@ -1441,6 +1714,9 @@ review.update({ visible: false });
 review.update({ visible: true });
 review.remove();
 ```
+
+Custom icon and popover components receive the same `theme`, `host`, `layout`, and optional
+`navigation` props a surface gets, plus the button's workspace and agent context.
 
 Omit `label` for an icon-only header button. Menus and popovers show a chevron on wide layouts.
 Compact header buttons use icons without labels or chevrons. Paseo moves excess contributions
@@ -1493,8 +1769,18 @@ These contracts are exported from `@getpaseo/plugin/client`.
 type PluginButtonBehavior =
   | { kind: "action"; onPress(): void | Promise<void> }
   | { kind: "menu"; items: readonly PluginButtonMenuEntry[] }
-  | { kind: "popover"; Content: React.ComponentType<PluginButtonContentProps> };
+  | {
+      kind: "popover";
+      Content: React.ComponentType<PluginButtonContentProps>;
+      sheetTitle?: false;
+      width?: number;
+    };
 ```
+
+A popover's `width` sets its exact width in points on wide layouts, capped by the window. Compact
+layouts always use a full-width sheet. `sheetTitle: false` drops the title row that sheet shows
+above `Content`, for content that labels itself. Hosts that predate these fields ignore them. Both
+apply to a button's own popover, not to a popover page inside a menu.
 
 An action runs on the client. Paseo marks the button busy until its promise settles, blocks repeated
 presses, and shows failures in a toast. A failed action can be retried. Use the client's `paseo` for
@@ -1545,7 +1831,9 @@ Render a React Native icon or indicator within the supplied size. Paseo bounds t
 owns all pointer interaction. The icon component can use plugin hooks.
 
 `PluginButtonContentProps` contains `theme`, `host`, `layout`, the target context, and `close()`.
-Render the body only; Paseo owns anchoring, scrolling, padding, and sheet presentation. Content can
+Render the body only; Paseo owns anchoring, scrolling, padding, and sheet presentation. The body
+unmounts when the popover closes. To continue in a larger form, call `close()` and then
+`navigation?.openOverlay?.(Form)`, which outlives the popover. Content can
 use `usePaseo`, `useRpc`, `useWorkspace`, `useAgent`, and the installation's React Query cache.
 
 The target context is one of:
@@ -1758,6 +2046,134 @@ export default function contribute(server: PluginServerContext) {
 Inputs and outputs are validated on both sides. RPC names start with a lowercase letter and contain lowercase letters, numbers, dots, hyphens, or underscores. `useRpc()` returns a typed async function. Use TanStack Query for request state, caching, and mutations.
 
 Backend handlers receive the same `PaseoApi` as `{ paseo }`. Their connection belongs to the subprocess and closes when the plugin stops. It does not subscribe to timelines or catalog events until plugin code subscribes. Follow the [SDK event contract](../../sdk/events.md) for cleanup and timeline replacements. Backend code can use Node APIs and dependencies installed in the plugin directory.
+
+## Add a Git Forge provider
+
+A Forge provider uses one shared definition and separate server and client registrations. Keep
+runtime code under its matching directory and wire it from the matching entry:
+
+```ts
+// index.server.ts
+import type { PluginServerContext } from "@getpaseo/plugin/server";
+import { acmeServerProvider } from "./server/acme";
+
+export default function contribute(server: PluginServerContext) {
+  server.addForgeServerProvider(acmeServerProvider);
+  return () => {};
+}
+```
+
+```ts
+// index.client.ts
+import type { PluginClientContext } from "@getpaseo/plugin/client";
+import { acmeClientProvider } from "./client/acme";
+
+export default function contribute(client: PluginClientContext) {
+  client.addForgeClientProvider(acmeClientProvider);
+  return () => {};
+}
+```
+
+The server provider lives under `server/`:
+
+```ts
+import { defineForgeServerProvider } from "@getpaseo/plugin/server";
+import { acmeDefinition } from "../shared/acme-definition";
+import { createAcmeService } from "./acme-service";
+
+export const acmeServerProvider = defineForgeServerProvider({
+  definition: acmeDefinition,
+  service: createAcmeService(),
+});
+```
+
+`service` implements `PluginForgeServerService`. It owns authentication, vendor API or CLI calls,
+change-request status and search, checks, activity, create/merge commands, and checkout targets.
+The complete interface is required; reject an unsupported command with a clear error. Throw
+`ForgeCliMissingError`, `ForgeAuthenticationError`, or `ForgeCommandError` from
+`@getpaseo/plugin/server` when the daemon must distinguish setup and authentication failures. If
+`isAuthenticated()` throws those classified errors, set `authProbeCanThrow: true`; otherwise return
+`false` on authentication failure. Return explicit `checkoutRefs` for cross-repository heads. Set
+`supportsCrossRepoCheckoutWithoutRefs: true` only when the Forge exposes a universal fetch ref that
+does not need those entries.
+
+A CLI-backed provider builds that service on `@getpaseo/plugin/server/forge-toolkit`, which is
+vendor-neutral:
+
+```ts
+import {
+  createCachedCliPathResolver,
+  createForgeCliRunner,
+  createForgePageGuard,
+  findExecutable,
+  parseCliJsonOutput,
+  parseGitRemoteLocation,
+  redactCommandArgs,
+} from "@getpaseo/plugin/server/forge-toolkit";
+```
+
+`createForgeCliRunner` returns `run` and `normalizeError`. Spawn through `run`, then pass anything
+it throws to `normalizeError`, which maps `ENOENT`, authentication text, timeouts, and non-zero
+exits onto the classified errors above so auth state stays correct across the subprocess boundary. `findExecutable` and `createCachedCliPathResolver` resolve the binary once per process.
+`parseCliJsonOutput` validates `--json` output through a Zod schema. `redactCommandArgs` strips
+flag values that carry user text before a failure is reported. `parseGitRemoteLocation` reads the
+transport, host, port, and path out of a remote URL. `createForgePageGuard` stops a page walk that
+repeats a page or runs without a reported total. Supply the binary name and command shapes; the
+toolkit holds no vendor strings.
+
+The client provider stays under `client/` and contains no Node imports. Put its Zod facts schema and
+provider definition under `shared/`:
+
+```ts
+import { defineForgeClientProvider, defineForgeFacts } from "@getpaseo/plugin";
+import { acmeDefinition } from "../shared/acme-definition";
+import { AcmeFactsSchema } from "../shared/acme-facts";
+
+const facts = defineForgeFacts({
+  family: "acme",
+  schema: AcmeFactsSchema,
+  deriveMergeCapability: ({ ready }) => ({
+    directMergeReady: ready,
+    canEnableAutoMerge: false,
+    autoMergeEnabled: false,
+    canDisableAutoMerge: false,
+    mergeBlockedByQueue: false,
+    allowedMethods: ["merge"],
+    preferredMethod: "merge",
+  }),
+});
+
+export const acmeClientProvider = defineForgeClientProvider({
+  definition: acmeDefinition,
+  facts,
+  view: {
+    icon: { kind: "svg-path", viewBox: [0, 0, 24, 24], path: "..." },
+    brandColor: { light: "#7C3AED", dark: "#A78BFA" },
+  },
+});
+```
+
+The optional client fields are:
+
+- `facts`: Zod validation and merge-capability derivation for the open `forgeSpecific` envelope;
+- `urlGrammar`: tree, blob, line-anchor, checks-page, and pasted-reference syntax. `lineAnchor` is a
+  template pair, `{ single, range }`, with `{start}` and `{end}` substituted — `GITHUB_LINE_ANCHOR`
+  (`#L12-L20`) and `GITLAB_LINE_ANCHOR` (`#L12-20`) ship for the two common shapes, and any other
+  spelling is expressible without a Paseo change. Omit `range` when the forge cannot anchor one;
+- `view`: one validated SVG path and light/dark brand colors;
+- `setup`: `{ screenId }` naming a settings screen this plugin registered. Set it when
+  `definition.signIn` is null — a token-authenticated forge has no CLI to install and no command to
+  run, so the PR pane's setup callout opens that screen instead of showing untargeted guidance.
+
+Provider IDs and facts families match `^[a-z0-9][a-z0-9._-]*$`. The provider ID must not collide
+with a built-in or another plugin provider on that host. `cloudHosts` lists known public hosts. Add
+`probeHost` to the server provider only when a self-hosted host can be recognized through existing
+local authentication; do not send credentials or anonymous probes to a remote-derived hostname.
+
+Forge contributions are scoped to their daemon. Reload, disable, removal, subprocess failure, and
+the global plugin switch unregister the adapter, stop status polling, clear resolver state, and
+remove its client presentation. Cross-repository checkout refs can set `remoteUrl` when the head is
+not fetchable through an existing Git remote.
 
 ## Debug backend output
 

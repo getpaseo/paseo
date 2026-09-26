@@ -32,6 +32,7 @@ import {
 } from "./messages.js";
 import { asUint8Array, decodeBinaryFrame } from "@getpaseo/protocol/binary-frames/index";
 import type { TerminalActivity } from "@getpaseo/protocol/terminal-activity";
+import type { PluginClientPresence, PluginPresence } from "@getpaseo/plugin/server";
 import type { HostnamesConfig } from "./hostnames.js";
 import { isHostnameAllowed } from "./hostnames.js";
 import {
@@ -68,6 +69,7 @@ import type { SpeechReadinessSnapshot, SpeechService } from "./speech/speech-run
 import type { VoiceCallerContext, VoiceSpeakHandler } from "./voice-types.js";
 import {
   computeNotificationPlan,
+  isClientPresent,
   isPushEligibleAttentionReason,
   type ClientPresenceState,
 } from "./agent-attention-policy.js";
@@ -984,6 +986,27 @@ export class VoiceAssistantWebSocketServer {
       this.incrementRuntimeCounter("relayExternalSocketAttached");
     }
     await this.attachSocket(ws, undefined, metadata, false, admission, initialHello);
+  }
+
+  public getClientPresence(): PluginPresence {
+    const nowMs = Date.now();
+    const clients: PluginClientPresence[] = [];
+    let userPresent = false;
+    for (const [ws, connection] of this.sessions) {
+      // Only app clients send heartbeats; CLI, MCP, and plugin sessions have no activity.
+      const activity = connection.session.getClientActivity(ws);
+      if (!activity) continue;
+      const lastActivityAtMs = activity.lastActivityAt.getTime();
+      const valid = Number.isFinite(lastActivityAtMs);
+      clients.push({
+        deviceType: activity.deviceType,
+        appVisible: activity.appVisible,
+        focusedAgentId: activity.focusedAgentId,
+        lastActivityAt: valid ? activity.lastActivityAt.toISOString() : null,
+      });
+      if (valid && isClientPresent(lastActivityAtMs, nowMs)) userPresent = true;
+    }
+    return { userPresent, clients };
   }
 
   public async attachPluginSocket(

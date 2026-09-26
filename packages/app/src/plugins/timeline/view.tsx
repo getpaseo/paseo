@@ -1,26 +1,22 @@
 import { PluginClientStateProvider } from "@getpaseo/plugin/client/host";
-import type { PluginHostProps, PluginTimelineItemProps } from "@getpaseo/plugin/client";
+import type { PluginTimelineItemProps } from "@getpaseo/plugin/client";
 import type { PluginTheme } from "@getpaseo/plugin";
 import React, { type ComponentType, useMemo } from "react";
-import { Platform, Text } from "react-native";
+import { Text } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { useHostRuntimeClient, useHosts } from "@/runtime/host-runtime";
 import type { Theme } from "@/styles/theme";
 import type { PluginTimelineStreamItem } from "@/types/stream";
 import { createPluginClientStateSource } from "../client-state/source";
+import { usePluginHostNavigation } from "../host-navigation";
 import { useInstalledPlugin } from "../registry";
 import { PluginRuntimeBoundary } from "../runtime-boundary";
 import { SurfaceErrorBoundary } from "../surface-error-boundary";
 import { toPluginTheme } from "../theme";
+import { usePluginLayout } from "../layout";
 
 const pluginThemeMapping = (theme: Theme) => ({ theme: toPluginTheme(theme) });
-
-function resolvePlatform(): PluginHostProps["layout"]["platform"] {
-  if (Platform.OS === "ios") return "ios";
-  if (Platform.OS === "android") return "android";
-  return "web";
-}
 
 function TimelineItemUnavailable() {
   return <Text style={styles.unavailable}>Plugin timeline item unavailable.</Text>;
@@ -60,10 +56,11 @@ function PluginTimelineItemBody({
   const parsed = parseRendererData(renderer, item.data);
   const client = useHostRuntimeClient(serverId);
   const compact = useIsCompactFormFactor();
+  const navigation = usePluginHostNavigation(serverId, item.pluginId);
   const hosts = useHosts();
   const hostLabel = hosts.find((host) => host.serverId === serverId)?.label ?? serverId;
   const host = useMemo(() => ({ id: serverId, label: hostLabel }), [hostLabel, serverId]);
-  const layout = useMemo(() => ({ compact, platform: resolvePlatform() }), [compact]);
+  const layout = usePluginLayout(compact);
   const stateSource = useMemo(() => createPluginClientStateSource(serverId), [serverId]);
 
   if (!plugin || !renderer || !parsed || !client) {
@@ -76,6 +73,7 @@ function PluginTimelineItemBody({
     theme,
     host,
     layout,
+    navigation,
     timestamp: item.timestamp,
     item: {
       type: "plugin",
