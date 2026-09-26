@@ -4,6 +4,7 @@ export interface GiteaStatusFacts {
   mergeable: boolean;
   hasMerged: boolean;
   ciStatus: string | null;
+  autoMergeScheduled: boolean;
 }
 
 export type GiteaForgeSpecificStatusFacts = ForgeSpecificStatusFacts & {
