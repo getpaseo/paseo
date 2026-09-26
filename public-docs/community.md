@@ -30,7 +30,8 @@ us, so read a plugin's source before installing it.
 
 ## Hosting and infrastructure
 
-| Project                                                            | What it does                                                                                         |
-| ------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------- |
-| [Paseo Self-hosted](https://github.com/blockfeed/paseo-selfhosted) | Packages the Paseo web UI and a local daemon as a Docker deployment.                                 |
-| [Devbox Fleet](https://github.com/omrihaviv/devbox-fleet)          | Provisions and maintains per-developer GCP devboxes with Paseo, coding agents, and Tailscale access. |
+| Project                                                                     | What it does                                                                                                                                                                                        |
+| --------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [Paseo Self-hosted](https://github.com/blockfeed/paseo-selfhosted)          | Packages the Paseo web UI and a local daemon as a Docker deployment.                                                                                                                                |
+| [Devbox Fleet](https://github.com/omrihaviv/devbox-fleet)                   | Provisions and maintains per-developer GCP devboxes with Paseo, coding agents, and Tailscale access.                                                                                                |
+| [Paseo Vercel Sandbox](https://github.com/vercel-labs/paseo-vercel-sandbox) | Runs Codex, Claude Code, OpenCode, and Pi in persistent Vercel Sandboxes, each with its own Paseo daemon paired over the relay, so sessions survive a closed laptop and stay reachable from mobile. |
