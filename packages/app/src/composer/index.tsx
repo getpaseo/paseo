@@ -2095,8 +2095,8 @@ function ComposerContentImpl({
   const beforeVoiceContent = useMemo(
     () => (
       <>
-        {hasAgent ? <UsageComposerPill serverId={serverId} agentId={agentId} /> : null}
         {resolveContextWindowPlacement(contextWindowMeter, hasAgent)}
+        {hasAgent ? <UsageComposerPill serverId={serverId} agentId={agentId} /> : null}
       </>
     ),
     [agentId, contextWindowMeter, hasAgent, serverId],
