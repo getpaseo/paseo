@@ -197,7 +197,7 @@ const CodexSubAgentActivityItemSchema = z
   .object({
     type: z.literal("subAgentActivity"),
     id: z.string().min(1),
-    kind: z.enum(["started", "interacted", "interrupted"]),
+    kind: z.enum(["started", "interacted", "interrupted", "completed"]),
     agentThreadId: z.string().min(1),
     agentPath: z.string(),
   })
@@ -545,12 +545,14 @@ function readStatus(value: unknown): string | undefined {
   return typeof value.status === "string" ? value.status : undefined;
 }
 
-function normalizeCollabAgentChildStatus(status: string): ToolCallTimelineItem["status"] {
+export function resolveCollabAgentChildStatus(status: string): ToolCallTimelineItem["status"] {
   const normalized = status.trim().toLowerCase();
   switch (normalized) {
     case "error":
     case "errored":
-      return "running";
+      // Codex `AgentStatus::Errored` is final (`is_final` in codex-rs/core/src/agent/status.rs);
+      // only `Interrupted` may still receive more input.
+      return "failed";
     case "shutdown":
       return "canceled";
     case "notfound":
@@ -558,6 +560,60 @@ function normalizeCollabAgentChildStatus(status: string): ToolCallTimelineItem["
     default:
       return normalizeToolCallStatus(status, null, null);
   }
+}
+
+export function isTerminalSubAgentStatus(
+  status: ToolCallTimelineItem["status"],
+): status is "completed" | "failed" | "canceled" {
+  return status === "completed" || status === "failed" || status === "canceled";
+}
+
+/**
+ * Terminal states are monotonic: a later terminal status settles a still-running one, while a
+ * running status never revives an already-settled child.
+ */
+export function settleCollabAgentChildStatus(
+  current: ToolCallTimelineItem["status"],
+  latest: ToolCallTimelineItem["status"] | undefined,
+): ToolCallTimelineItem["status"] {
+  if (latest === undefined || !isTerminalSubAgentStatus(latest)) {
+    return current;
+  }
+  if (isTerminalSubAgentStatus(current)) {
+    return current;
+  }
+  return latest;
+}
+
+export function aggregateCollabAgentChildStatuses(
+  statuses: readonly ToolCallTimelineItem["status"][],
+): ToolCallTimelineItem["status"] {
+  if (statuses.length === 0) {
+    return "running";
+  }
+  if (statuses.some((status) => status === "failed")) {
+    return "failed";
+  }
+  if (statuses.some((status) => status === "canceled")) {
+    return "canceled";
+  }
+  if (statuses.every((status) => status === "completed")) {
+    return "completed";
+  }
+  return "running";
+}
+
+export function applyCollabAgentToolCallStatus(
+  item: ToolCallTimelineItem,
+  status: ToolCallTimelineItem["status"],
+): ToolCallTimelineItem {
+  if (status === item.status) {
+    return item;
+  }
+  if (status === "failed") {
+    return { ...item, status, error: item.error ?? { message: "Sub-agent failed" } };
+  }
+  return { ...item, status, error: null };
 }
 
 function resolveCollabAgentStatus(
@@ -575,16 +631,10 @@ function resolveCollabAgentStatus(
   const childStatuses = Object.values(item.agentsStates ?? {})
     .map(readStatus)
     .filter((status): status is string => typeof status === "string" && status.trim().length > 0)
-    .map(normalizeCollabAgentChildStatus);
+    .map(resolveCollabAgentChildStatus);
 
-  if (childStatuses.some((status) => status === "failed")) {
-    return "failed";
-  }
-  if (childStatuses.some((status) => status === "canceled")) {
-    return "canceled";
-  }
   if (childStatuses.length > 0) {
-    return childStatuses.every((status) => status === "completed") ? "completed" : "running";
+    return aggregateCollabAgentChildStatuses(childStatuses);
   }
 
   return parentStatus;
@@ -975,6 +1025,19 @@ function mapCollabAgentToolCallItem(
   };
 }
 
+function resolveSubAgentActivityStatus(
+  kind: z.infer<typeof CodexSubAgentActivityItemSchema>["kind"],
+): ToolCallTimelineItem["status"] {
+  switch (kind) {
+    case "completed":
+      return "completed";
+    case "interrupted":
+      return "canceled";
+    default:
+      return "running";
+  }
+}
+
 function mapSubAgentActivityItem(
   item: z.infer<typeof CodexSubAgentActivityItemSchema>,
 ): ToolCallTimelineItem {
@@ -1000,7 +1063,7 @@ function mapSubAgentActivityItem(
     type: "tool_call",
     callId: item.id,
     name: "Sub-agent",
-    status: item.kind === "interrupted" ? "canceled" : "running",
+    status: resolveSubAgentActivityStatus(item.kind),
     error: null,
     detail: {
       type: "sub_agent",
