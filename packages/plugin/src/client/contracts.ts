@@ -33,16 +33,25 @@ export interface PluginHostProps {
 interface PluginNavigableHostProps extends PluginHostProps {
   /** Client-owned navigation. Undefined on older hosts; hide dependent affordances when absent. */
   readonly navigation?: {
+    /** This client supports the focusHost option on agent/workspace navigation. */
+    readonly supportsFocusHost?: boolean;
     /** Present only on Electron. The browser runs locally; serverId selects workspace ownership. */
     readonly openBrowser?: (input: {
       readonly url: string;
       readonly workspaceId: string;
       readonly serverId?: string;
     }) => void;
-    readonly openAgent: (input: { readonly agentId: string; readonly serverId?: string }) => void;
+    readonly openAgent: (input: {
+      readonly agentId: string;
+      readonly serverId?: string;
+      /** Select only the destination host in the sidebar and clear project/label filters. */
+      readonly focusHost?: boolean;
+    }) => void;
     readonly openWorkspace: (input: {
       readonly workspaceId: string;
       readonly serverId?: string;
+      /** Select only the destination host in the sidebar and clear project/label filters. */
+      readonly focusHost?: boolean;
     }) => void;
   };
 }

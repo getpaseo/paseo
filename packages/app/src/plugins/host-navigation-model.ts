@@ -8,6 +8,7 @@ interface HostNavigationOwner {
   openWorkspace(input: NavigateToWorkspaceInput): void;
   resolveWorkspace(input: { serverId: string; workspaceId: string }): string | null;
   createBrowser(input: { initialUrl: string }): { browserId: string };
+  focusHost(serverId: string): void;
 }
 
 export function createPluginHostNavigation(
@@ -15,10 +16,17 @@ export function createPluginHostNavigation(
   owner: HostNavigationOwner,
 ): NonNullable<PluginSurfaceProps["navigation"]> {
   return {
-    openAgent: ({ agentId, serverId: targetServerId }) =>
-      owner.openAgent({ serverId: targetServerId ?? serverId, agentId }),
-    openWorkspace: ({ workspaceId, serverId: targetServerId }) =>
-      owner.openWorkspace({ serverId: targetServerId ?? serverId, workspaceId }),
+    supportsFocusHost: true,
+    openAgent: ({ agentId, serverId: targetServerId, focusHost }) => {
+      const destinationServerId = targetServerId ?? serverId;
+      owner.openAgent({ serverId: destinationServerId, agentId });
+      if (focusHost) owner.focusHost(destinationServerId);
+    },
+    openWorkspace: ({ workspaceId, serverId: targetServerId, focusHost }) => {
+      const destinationServerId = targetServerId ?? serverId;
+      owner.openWorkspace({ serverId: destinationServerId, workspaceId });
+      if (focusHost) owner.focusHost(destinationServerId);
+    },
     openBrowser: owner.browserAvailable
       ? ({ url, workspaceId, serverId: targetServerId }) => {
           if (!isHttpUrl(url)) throw new Error("Only absolute HTTP(S) URLs are supported.");
