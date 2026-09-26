@@ -27,6 +27,8 @@ import type {
 } from "./plugin-process-protocol.js";
 import { PluginProcessMessageSchema } from "./plugin-process-protocol.js";
 import { PluginSessionSocket } from "./session-socket.js";
+import { InternalPluginChild } from "./internal-child.js";
+import type { PluginServerContribution } from "@getpaseo/plugin/server";
 
 const CLIENT_ENTRY_FILENAMES = ["index.client.ts", "index.client.tsx"] as const;
 const SERVER_ENTRY_FILENAMES = ["index.server.ts", "index.server.tsx"] as const;
@@ -332,6 +334,18 @@ export class PluginRuntime {
     this.appendLog(pluginId, "stdout", "[paseo] Plugin ready");
   }
 
+  async startInternalPlugin(input: {
+    id: string;
+    directory: string;
+    contribute: PluginServerContribution;
+  }): Promise<void> {
+    if (this.plugins.has(input.id)) throw new Error(`Plugin is already running: ${input.id}`);
+    this.appendLog(input.id, "stdout", "[paseo] Loading plugin");
+    const loaded = await this.loadDirectoryPlugin(input.id, input.directory, input.contribute);
+    this.plugins.set(input.id, loaded);
+    this.appendLog(input.id, "stdout", "[paseo] Plugin ready");
+  }
+
   async validatePlugin(configuredPath: string): Promise<void> {
     const directory = path.resolve(configuredPath);
     const manifest = await readPluginManifest(directory);
@@ -551,17 +565,18 @@ export class PluginRuntime {
   private async loadDirectoryPlugin(
     pluginId: string,
     configuredPath: string,
+    contribute?: PluginServerContribution,
   ): Promise<LoadedPlugin> {
     const directory = path.resolve(configuredPath);
     const manifest = await readPluginManifest(directory);
     assertPluginCompatibility({ ...manifest, version: this.daemonVersion, runtime: "daemon" });
-    const entryPaths = await resolveEntryPaths(directory);
-    const bundles = await compilePlugin(entryPaths);
-    const serverBundle = bundles.serverBundle;
-    if (!serverBundle) {
+    const entryPaths = contribute ? null : await resolveEntryPaths(directory);
+    const bundles = entryPaths ? await compilePlugin(entryPaths) : null;
+    const serverBundle = contribute ? "" : bundles?.serverBundle;
+    if (!contribute && !serverBundle) {
       return {
         id: pluginId,
-        clientBundle: bundles.clientBundle ?? "",
+        clientBundle: bundles?.clientBundle ?? "",
         requirements: manifest.requirements,
         methods: new Set(),
         hooks: { events: [], before: [] },
@@ -577,7 +592,7 @@ export class PluginRuntime {
     }
     const sessionHost = this.sessionHost;
     if (!sessionHost) throw new Error("Plugin Paseo session host is not attached");
-    const child = this.spawnChild();
+    const child = contribute ? new InternalPluginChild(contribute) : this.spawnChild();
     const outputCapture = new PluginOutputCapture(child, (stream, message) => {
       this.appendLog(pluginId, stream, message);
     });
@@ -654,7 +669,7 @@ export class PluginRuntime {
             type: "initialize",
             pluginId,
             appVersion: this.daemonVersion,
-            bundle: serverBundle,
+            bundle: serverBundle ?? "",
             settingsDirectory: this.dependencies.settingsDirectory
               ? path.join(this.dependencies.settingsDirectory, pluginId)
               : undefined,
@@ -669,7 +684,7 @@ export class PluginRuntime {
     }
     loaded = {
       id: pluginId,
-      clientBundle: bundles.clientBundle ?? "",
+      clientBundle: bundles?.clientBundle ?? "",
       requirements: manifest.requirements,
       methods: new Set(ready.methods),
       hooks: ready.hooks ?? { events: [], before: [] },
