@@ -4,6 +4,7 @@ import {
   collectAllPanes,
   DEFAULT_PANE_ID,
   findPaneById,
+  findPaneContainingTab,
   useWorkspaceLayoutStore,
   type WorkspaceTabPlacement,
 } from "@/stores/workspace-layout-store";
@@ -109,6 +110,10 @@ export function openWorkspaceTargetAtLocation(
   if (shouldOpenBeside && !targetAlreadyExists) {
     const paneId = store.ensureSidePane(input.workspaceKey);
     placement = paneId ? { mode: "prefer", paneId } : undefined;
+  } else if (!shouldOpenBeside && layout && input.parentTabId) {
+    // A target opened from a tab belongs in that tab's pane, whichever pane has focus.
+    const parentPane = findPaneContainingTab(layout.root, input.parentTabId);
+    placement = parentPane ? { mode: "prefer", paneId: parentPane.id } : undefined;
   }
   return store.openTab({
     workspaceKey: input.workspaceKey,
