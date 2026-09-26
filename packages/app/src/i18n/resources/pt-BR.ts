@@ -1819,6 +1819,9 @@ export const ptBR: TranslationResources = {
     failed: "Falha ao baixar arquivo.",
     shareFile: "Compartilhar arquivo",
     shareFileNamed: "Compartilhar {{fileName}}",
+    tooLarge: "Arquivo grande demais para baixar por esta conexão (limite de {{limit}}).",
+    incomplete: "Download incompleto. Tente novamente.",
+    contentUnavailable: "Conteúdo do arquivo indisponível para download.",
   },
   menu: {
     backdrop: "Fundo do menu",

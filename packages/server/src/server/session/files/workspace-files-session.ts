@@ -4,6 +4,7 @@ import type { FileVersion } from "@getpaseo/protocol/messages";
 import { getErrorMessage } from "@getpaseo/protocol/error-utils";
 import {
   encodeFileTransferFrame,
+  FILE_TOO_LARGE_ERROR,
   FileTransferOpcode,
   type FileTransferFrame,
 } from "@getpaseo/protocol/binary-frames/index";
@@ -291,7 +292,7 @@ export class WorkspaceFilesSession {
         if (request.maxBytes) {
           const file = await getDownloadableFileInfo({ root: cwd, relativePath: requestedPath });
           if (file.size > request.maxBytes) {
-            throw new Error("File is too large to display");
+            throw new Error(FILE_TOO_LARGE_ERROR);
           }
         }
         if (request.acceptBinary && this.host.hasBinaryChannel()) {

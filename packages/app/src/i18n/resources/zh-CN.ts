@@ -1765,6 +1765,9 @@ export const zhCN: TranslationResources = {
     failed: "下载文件失败。",
     shareFile: "共享文件",
     shareFileNamed: "共享 {{fileName}}",
+    tooLarge: "文件过大，无法通过此连接下载（上限 {{limit}}）。",
+    incomplete: "下载未完成。请重试。",
+    contentUnavailable: "文件内容无法下载。",
   },
   menu: {
     backdrop: "菜单背景",

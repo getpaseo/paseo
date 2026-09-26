@@ -1,7 +1,9 @@
 import { useCallback, useMemo } from "react";
-import { useHosts } from "@/runtime/host-runtime";
+import { useHostRuntimeActiveConnectionId, useHosts } from "@/runtime/host-runtime";
 import { useDownloadStore } from "@/stores/download-store";
 import { useFileExplorerActions } from "@/hooks/use-file-explorer-actions";
+import { resolveDownloadTransport } from "@/utils/download-transport";
+import { saveDownloadedFile } from "@/utils/download-files";
 
 interface UseFileDownloadParams {
   serverId: string;
@@ -12,8 +14,9 @@ interface UseFileDownloadParams {
 /**
  * Returns a stable callback that downloads a single workspace file by its
  * workspace-relative path. Shared by the file explorer tree and the git diff
- * pane so both surfaces download through the same host token + download-store
- * pipeline instead of duplicating the plumbing.
+ * pane so both surfaces download through the same download-store pipeline:
+ * HTTP token download on direct TCP, session streaming on every other
+ * connection type.
  */
 export function useFileDownload({
   serverId,
@@ -25,12 +28,17 @@ export function useFileDownload({
     () => daemons.find((daemon) => daemon.serverId === serverId),
     [daemons, serverId],
   );
+  const activeConnectionId = useHostRuntimeActiveConnectionId(serverId);
+  const transport = useMemo(
+    () => resolveDownloadTransport(daemonProfile, activeConnectionId),
+    [activeConnectionId, daemonProfile],
+  );
   const normalizedWorkspaceRoot = useMemo(() => workspaceRoot.trim(), [workspaceRoot]);
   const workspaceScopeId = useMemo(
     () => workspaceId?.trim() || normalizedWorkspaceRoot,
     [normalizedWorkspaceRoot, workspaceId],
   );
-  const { requestFileDownloadToken } = useFileExplorerActions({
+  const { requestFileDownloadToken, downloadFileOverSession } = useFileExplorerActions({
     serverId,
     workspaceId,
     workspaceRoot: normalizedWorkspaceRoot,
@@ -47,10 +55,19 @@ export function useFileDownload({
         scopeId: workspaceScopeId,
         fileName,
         path,
-        daemonProfile,
-        requestFileDownloadToken: (targetPath) => requestFileDownloadToken(targetPath),
+        transport,
+        requestFileDownloadToken,
+        downloadFileOverSession,
+        saveDownloadedFile,
       });
     },
-    [daemonProfile, requestFileDownloadToken, serverId, startDownload, workspaceScopeId],
+    [
+      downloadFileOverSession,
+      requestFileDownloadToken,
+      serverId,
+      startDownload,
+      transport,
+      workspaceScopeId,
+    ],
   );
 }

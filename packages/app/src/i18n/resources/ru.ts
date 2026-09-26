@@ -1818,6 +1818,9 @@ export const ru: TranslationResources = {
     failed: "Не удалось загрузить файл.",
     shareFile: "Поделиться файлом",
     shareFileNamed: "Поделиться {{fileName}}",
+    tooLarge: "Файл слишком большой для загрузки через это подключение (лимит {{limit}}).",
+    incomplete: "Загрузка не завершена. Попробуйте ещё раз.",
+    contentUnavailable: "Содержимое файла недоступно для загрузки.",
   },
   menu: {
     backdrop: "Фон меню",

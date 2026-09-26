@@ -1834,6 +1834,10 @@ export const es: TranslationResources = {
     failed: "No se pudo descargar el archivo.",
     shareFile: "compartir archivo",
     shareFileNamed: "Compartir{{fileName}}",
+    tooLarge:
+      "El archivo es demasiado grande para descargarlo por esta conexión (límite: {{limit}}).",
+    incomplete: "La descarga no se completó. Vuelve a intentarlo.",
+    contentUnavailable: "El contenido del archivo no está disponible para descargar.",
   },
   menu: {
     backdrop: "Fondo del menú",

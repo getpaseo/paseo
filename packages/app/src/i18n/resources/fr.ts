@@ -1838,6 +1838,10 @@ export const fr: TranslationResources = {
     failed: "Échec du téléchargement du fichier.",
     shareFile: "Partager un fichier",
     shareFileNamed: "Partager{{fileName}}",
+    tooLarge:
+      "Le fichier est trop volumineux pour être téléchargé via cette connexion (limite : {{limit}}).",
+    incomplete: "Le téléchargement est incomplet. Réessayez.",
+    contentUnavailable: "Le contenu du fichier n’est pas disponible au téléchargement.",
   },
   menu: {
     backdrop: "Toile de fond du menu",

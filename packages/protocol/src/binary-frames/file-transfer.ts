@@ -9,6 +9,12 @@ export const FileTransferOpcode = {
 
 export type FileTransferOpcode = (typeof FileTransferOpcode)[keyof typeof FileTransferOpcode];
 
+/**
+ * `file_explorer_response.error` when a file exceeds the request's `maxBytes`.
+ * Clients match on this exact string, so it must stay byte-identical on the wire.
+ */
+export const FILE_TOO_LARGE_ERROR = "File is too large to display";
+
 export const FileBeginMetadataSchema = z.object({
   mime: z.string().min(1),
   size: z.number().int().nonnegative(),

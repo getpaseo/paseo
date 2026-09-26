@@ -1786,6 +1786,9 @@ export const ar: TranslationResources = {
     failed: "فشل تنزيل الملف.",
     shareFile: "مشاركة الملف",
     shareFileNamed: "مشاركة{{fileName}}",
+    tooLarge: "الملف كبير جدًا بحيث لا يمكن تنزيله عبر هذا الاتصال (الحد الأقصى {{limit}}).",
+    incomplete: "لم يكتمل التنزيل. أعد المحاولة.",
+    contentUnavailable: "محتوى الملف غير متاح للتنزيل.",
   },
   menu: {
     backdrop: "خلفية القائمة",

@@ -1796,6 +1796,9 @@ export const ko: TranslationResources = {
     failed: "파일을 다운로드하지 못했습니다.",
     shareFile: "파일 공유",
     shareFileNamed: "{{fileName}} 공유",
+    tooLarge: "이 연결에서는 파일이 너무 커서 다운로드할 수 없습니다(최대 {{limit}}).",
+    incomplete: "다운로드가 완료되지 않았습니다. 다시 시도하세요.",
+    contentUnavailable: "파일 내용을 다운로드할 수 없습니다.",
   },
   menu: {
     backdrop: "메뉴 배경",

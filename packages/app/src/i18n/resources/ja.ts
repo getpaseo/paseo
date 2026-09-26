@@ -1805,6 +1805,9 @@ export const ja: TranslationResources = {
     failed: "ファイルのダウンロードに失敗しました。",
     shareFile: "ファイルを共有",
     shareFileNamed: "{{fileName}}を共有",
+    tooLarge: "ファイルが大きすぎるため、この接続ではダウンロードできません（上限 {{limit}}）。",
+    incomplete: "ダウンロードが完了しませんでした。もう一度お試しください。",
+    contentUnavailable: "ファイルの内容をダウンロードできません。",
   },
   menu: {
     backdrop: "メニューの背景",

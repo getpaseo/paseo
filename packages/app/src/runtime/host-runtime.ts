@@ -2493,6 +2493,15 @@ export function useHostRuntimeIsConnected(serverId: string): boolean {
   );
 }
 
+export function useHostRuntimeActiveConnectionId(serverId: string): string | null {
+  const store = getHostRuntimeStore();
+  return useSyncExternalStore(
+    (onStoreChange) => store.subscribe(serverId, onStoreChange),
+    () => store.getSnapshot(serverId)?.activeConnectionId ?? null,
+    () => store.getSnapshot(serverId)?.activeConnectionId ?? null,
+  );
+}
+
 export function useHostRuntimeConnectionStatus(serverId: string): HostRuntimeConnectionStatus {
   const store = getHostRuntimeStore();
   return useSyncExternalStore(

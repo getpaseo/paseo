@@ -2,6 +2,7 @@ import { afterEach, expect, expectTypeOf, test, vi } from "vitest";
 import { z } from "zod";
 import {
   DaemonClient,
+  FileDownloadError,
   type DaemonClientTrace,
   type CreateAgentRequestOptions,
   type DaemonTransport,
@@ -12,6 +13,7 @@ import { BROWSER_AUTOMATION_COMMAND_NAMES } from "@getpaseo/protocol/browser-aut
 import {
   decodeFileTransferFrame,
   encodeFileTransferFrame,
+  FILE_TOO_LARGE_ERROR,
   FileTransferOpcode,
 } from "@getpaseo/protocol/binary-frames/index";
 import {
@@ -2605,6 +2607,328 @@ test("readFile resolves from binary file frames when the daemon supports them", 
     modifiedAt: "2026-05-02T00:00:00.000Z",
   });
   expect(new TextDecoder().decode(result.bytes)).toBe("hello");
+});
+
+test("downloadFile assembles binary file frames and reports progress", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_download_file",
+    logger: createMockLogger(),
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const progress: Array<{ receivedBytes: number; totalBytes: number }> = [];
+  const responsePromise = client.downloadFile("/tmp/project", "archive.bin", {
+    requestId: "req-download",
+    maxBytes: 1024,
+    onProgress: (update) => progress.push(update),
+  });
+
+  expect(JSON.parse(assertStr(mock.sent[0]))).toEqual({
+    type: "session",
+    message: {
+      type: "file_explorer_request",
+      cwd: "/tmp/project",
+      path: "archive.bin",
+      mode: "file",
+      acceptBinary: true,
+      maxBytes: 1024,
+      requestId: "req-download",
+    },
+  });
+
+  mock.triggerMessage(
+    encodeFileTransferFrame({
+      opcode: FileTransferOpcode.FileBegin,
+      requestId: "req-download",
+      metadata: {
+        mime: "application/octet-stream",
+        size: 11,
+        encoding: "binary",
+        modifiedAt: "2026-05-02T00:00:00.000Z",
+      },
+    }),
+  );
+  mock.triggerMessage(
+    encodeFileTransferFrame({
+      opcode: FileTransferOpcode.FileChunk,
+      requestId: "req-download",
+      payload: new TextEncoder().encode("hello "),
+    }),
+  );
+  mock.triggerMessage(
+    encodeFileTransferFrame({
+      opcode: FileTransferOpcode.FileChunk,
+      requestId: "req-download",
+      payload: new TextEncoder().encode("world"),
+    }),
+  );
+  mock.triggerMessage(
+    encodeFileTransferFrame({
+      opcode: FileTransferOpcode.FileEnd,
+      requestId: "req-download",
+    }),
+  );
+
+  const result = await responsePromise;
+  expect(result).toMatchObject({
+    mime: "application/octet-stream",
+    size: 11,
+    path: "archive.bin",
+    kind: "binary",
+  });
+  expect(new TextDecoder().decode(result.bytes)).toBe("hello world");
+  expect(progress).toEqual([
+    { receivedBytes: 0, totalBytes: 11 },
+    { receivedBytes: 6, totalBytes: 11 },
+    { receivedBytes: 11, totalBytes: 11 },
+  ]);
+});
+
+test("downloadFile rejects a legacy file payload that omits the content", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_download_legacy",
+    logger: createMockLogger(),
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const responsePromise = client.downloadFile("/tmp/project", "archive.bin", {
+    requestId: "req-download-legacy",
+  });
+
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "file_explorer_response",
+      payload: {
+        cwd: "/tmp/project",
+        path: "archive.bin",
+        mode: "file",
+        directory: null,
+        file: {
+          path: "archive.bin",
+          kind: "binary",
+          encoding: "none",
+          mimeType: "application/octet-stream",
+          size: 11,
+          modifiedAt: "2026-05-02T00:00:00.000Z",
+        },
+        error: null,
+        requestId: "req-download-legacy",
+      },
+    }),
+  );
+
+  const error = await settle(responsePromise);
+  expect(error).toBeInstanceOf(FileDownloadError);
+  expect(error).toMatchObject({
+    code: "content_unavailable",
+    message: "File content unavailable for download.",
+  });
+});
+
+async function connectDownloadClient(clientId: string) {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId,
+    logger: createMockLogger(),
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+  return { mock, client };
+}
+
+function settle(promise: Promise<unknown>): Promise<unknown> {
+  return promise.then(
+    () => null,
+    (error: unknown) => error,
+  );
+}
+
+test("downloadFile maps the daemon's size refusal to a too_large FileDownloadError", async () => {
+  const { mock, client } = await connectDownloadClient("clsk_download_refused");
+
+  const settled = settle(
+    client.downloadFile("/tmp/project", "huge.bin", {
+      requestId: "req-download-refused",
+      maxBytes: 10,
+    }),
+  );
+
+  expect(JSON.parse(assertStr(mock.sent[0]))).toMatchObject({
+    message: { type: "file_explorer_request", maxBytes: 10, requestId: "req-download-refused" },
+  });
+
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "file_explorer_response",
+      payload: {
+        cwd: "/tmp/project",
+        path: "huge.bin",
+        mode: "file",
+        directory: null,
+        file: null,
+        error: FILE_TOO_LARGE_ERROR,
+        requestId: "req-download-refused",
+      },
+    }),
+  );
+
+  const error = await settled;
+  expect(error).toBeInstanceOf(FileDownloadError);
+  expect(error).toMatchObject({ code: "too_large", message: FILE_TOO_LARGE_ERROR });
+});
+
+test("downloadFile drops an old daemon's over-limit chunks and rejects with too_large", async () => {
+  const { mock, client } = await connectDownloadClient("clsk_download_budget_compat");
+
+  const progress: Array<{ receivedBytes: number; totalBytes: number }> = [];
+  const settled = settle(
+    client.downloadFile("/tmp/project", "huge.bin", {
+      requestId: "req-download-budget",
+      maxBytes: 10,
+      onProgress: (update) => progress.push(update),
+    }),
+  );
+
+  mock.triggerMessage(
+    encodeFileTransferFrame({
+      opcode: FileTransferOpcode.FileBegin,
+      requestId: "req-download-budget",
+      metadata: {
+        mime: "application/octet-stream",
+        size: 100,
+        encoding: "binary",
+        modifiedAt: "2026-05-02T00:00:00.000Z",
+      },
+    }),
+  );
+  mock.triggerMessage(
+    encodeFileTransferFrame({
+      opcode: FileTransferOpcode.FileChunk,
+      requestId: "req-download-budget",
+      payload: new Uint8Array(100),
+    }),
+  );
+  mock.triggerMessage(
+    encodeFileTransferFrame({
+      opcode: FileTransferOpcode.FileEnd,
+      requestId: "req-download-budget",
+    }),
+  );
+
+  const error = await settled;
+  expect(error).toBeInstanceOf(FileDownloadError);
+  expect(error).toMatchObject({ code: "too_large", message: FILE_TOO_LARGE_ERROR });
+  // No chunk was accumulated: progress never moved past the FileBegin announcement.
+  expect(progress).toEqual([{ receivedBytes: 0, totalBytes: 100 }]);
+});
+
+interface MismatchedFileTransfer {
+  requestId: string;
+  announcedSize: number;
+  chunks: string[];
+}
+
+async function downloadMismatchedFileTransfer(input: MismatchedFileTransfer): Promise<unknown> {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: `clsk_${input.requestId}`,
+    logger: createMockLogger(),
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const responsePromise = client.downloadFile("/tmp/project", "archive.bin", {
+    requestId: input.requestId,
+  });
+  const settled = responsePromise.then(
+    () => null,
+    (error: unknown) => error,
+  );
+
+  mock.triggerMessage(
+    encodeFileTransferFrame({
+      opcode: FileTransferOpcode.FileBegin,
+      requestId: input.requestId,
+      metadata: {
+        mime: "application/octet-stream",
+        size: input.announcedSize,
+        encoding: "binary",
+        modifiedAt: "2026-05-02T00:00:00.000Z",
+      },
+    }),
+  );
+  for (const chunk of input.chunks) {
+    mock.triggerMessage(
+      encodeFileTransferFrame({
+        opcode: FileTransferOpcode.FileChunk,
+        requestId: input.requestId,
+        payload: new TextEncoder().encode(chunk),
+      }),
+    );
+  }
+  expect(() =>
+    mock.triggerMessage(
+      encodeFileTransferFrame({ opcode: FileTransferOpcode.FileEnd, requestId: input.requestId }),
+    ),
+  ).not.toThrow();
+
+  return settled;
+}
+
+test("downloadFile rejects a transfer that ends before the announced size", async () => {
+  const error = await downloadMismatchedFileTransfer({
+    requestId: "req-download-short",
+    announcedSize: 10,
+    chunks: ["hel", "lo!"],
+  });
+
+  expect(error).toBeInstanceOf(FileDownloadError);
+  expect(error).toMatchObject({
+    code: "incomplete",
+    message: "File transfer incomplete: expected 10 bytes, received 6.",
+  });
+});
+
+test("downloadFile rejects a transfer that exceeds the announced size", async () => {
+  const error = await downloadMismatchedFileTransfer({
+    requestId: "req-download-long",
+    announcedSize: 4,
+    chunks: ["hello ", "world"],
+  });
+
+  expect(error).toBeInstanceOf(FileDownloadError);
+  expect(error).toMatchObject({
+    code: "incomplete",
+    message: "File transfer incomplete: expected 4 bytes, received 11.",
+  });
 });
 
 test("readFile drops an old daemon's over-budget binary chunks and reports the refusal", async () => {
