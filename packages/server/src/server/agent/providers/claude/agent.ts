@@ -1804,40 +1804,6 @@ function extractContextWindowSize(modelUsage: unknown): number | undefined {
   return maxContextWindow;
 }
 
-function readStreamRequestInputTokens(event: Record<string, unknown>): number | undefined {
-  const messageUsage = toObjectRecord(toObjectRecord(event.message)?.usage);
-  if (!messageUsage) {
-    return undefined;
-  }
-  const usage = messageUsage;
-  const inputTokens =
-    typeof usage.input_tokens === "number" && Number.isFinite(usage.input_tokens)
-      ? usage.input_tokens
-      : undefined;
-  const cacheCreationInputTokens =
-    typeof usage.cache_creation_input_tokens === "number" &&
-    Number.isFinite(usage.cache_creation_input_tokens)
-      ? usage.cache_creation_input_tokens
-      : 0;
-  const cacheReadInputTokens =
-    typeof usage.cache_read_input_tokens === "number" &&
-    Number.isFinite(usage.cache_read_input_tokens)
-      ? usage.cache_read_input_tokens
-      : 0;
-  if (typeof inputTokens !== "number" || inputTokens < 0) {
-    return undefined;
-  }
-  return inputTokens + cacheCreationInputTokens + cacheReadInputTokens;
-}
-
-function readStreamRequestOutputTokens(event: Record<string, unknown>): number | undefined {
-  const outputTokens = toObjectRecord(event.usage)?.output_tokens;
-  if (typeof outputTokens !== "number" || !Number.isFinite(outputTokens) || outputTokens < 0) {
-    return undefined;
-  }
-  return outputTokens;
-}
-
 function readLastUsageIteration(usage: unknown): Record<string, unknown> | undefined {
   const iterations = toObjectRecord(usage)?.iterations;
   if (!Array.isArray(iterations)) {
@@ -1900,10 +1866,16 @@ function readClaudeParentToolUseId(message: SDKMessage): string | null {
   return typeof parentToolUseId === "string" && parentToolUseId.length > 0 ? parentToolUseId : null;
 }
 
+type ClaudeStreamTokenUsage = Partial<
+  Pick<
+    SDKResultMessage["usage"],
+    "input_tokens" | "cache_creation_input_tokens" | "cache_read_input_tokens" | "output_tokens"
+  >
+>;
+
 class ClaudeContextUsageState {
   private contextWindowMaxTokens: number | undefined;
-  private streamRequestInputTokens: number | undefined;
-  private streamRequestOutputTokens: number | undefined;
+  private streamRequestUsage: ClaudeStreamTokenUsage = {};
   private compactedContextWindowUsedTokens: number | undefined;
   private completedResultTurns = 0;
 
@@ -1912,8 +1884,7 @@ class ClaudeContextUsageState {
   }
 
   beginTurn(): void {
-    this.streamRequestInputTokens = undefined;
-    this.streamRequestOutputTokens = undefined;
+    this.streamRequestUsage = {};
     this.compactedContextWindowUsedTokens = undefined;
   }
 
@@ -1935,20 +1906,34 @@ class ClaudeContextUsageState {
       return null;
     }
     const eventType = readTrimmedString(streamEvent.type);
+    let usage: Record<string, unknown> | undefined;
     if (eventType === "message_start") {
-      const inputTokens = readStreamRequestInputTokens(streamEvent);
-      if (typeof inputTokens !== "number") {
-        return null;
-      }
-      this.streamRequestInputTokens = inputTokens;
-      this.streamRequestOutputTokens = 0;
+      this.streamRequestUsage = { output_tokens: 0 };
+      usage = toObjectRecord(toObjectRecord(streamEvent.message)?.usage);
     } else if (eventType === "message_delta") {
-      const outputTokens = readStreamRequestOutputTokens(streamEvent);
-      if (typeof outputTokens !== "number") {
-        return null;
-      }
-      this.streamRequestOutputTokens = outputTokens;
+      usage = toObjectRecord(streamEvent.usage);
     } else {
+      return null;
+    }
+    if (!usage) {
+      return null;
+    }
+
+    // 网关可能直到 message_delta 才补报输入量；各字段是当前请求的累计值。
+    let hasUsageUpdate = false;
+    for (const key of [
+      "input_tokens",
+      "cache_creation_input_tokens",
+      "cache_read_input_tokens",
+      "output_tokens",
+    ] as const) {
+      const value = usage[key];
+      if (typeof value === "number" && Number.isFinite(value) && value >= 0) {
+        this.streamRequestUsage[key] = value;
+        hasUsageUpdate = true;
+      }
+    }
+    if (!hasUsageUpdate) {
       return null;
     }
 
@@ -1994,13 +1979,16 @@ class ClaudeContextUsageState {
   }
 
   private streamUsedTokens(): number | undefined {
-    if (
-      typeof this.streamRequestInputTokens !== "number" ||
-      typeof this.streamRequestOutputTokens !== "number"
-    ) {
+    const { input_tokens, output_tokens, cache_creation_input_tokens, cache_read_input_tokens } =
+      this.streamRequestUsage;
+    if (input_tokens === undefined || output_tokens === undefined) {
       return undefined;
     }
-    const usedTokens = this.streamRequestInputTokens + this.streamRequestOutputTokens;
+    const usedTokens =
+      input_tokens +
+      (cache_creation_input_tokens ?? 0) +
+      (cache_read_input_tokens ?? 0) +
+      output_tokens;
     return usedTokens > 0 ? usedTokens : undefined;
   }
 
@@ -2019,8 +2007,7 @@ class ClaudeContextUsageState {
   }
 
   buildCompactionUsageEvent(postTokens: number | undefined): AgentStreamEvent {
-    this.streamRequestInputTokens = undefined;
-    this.streamRequestOutputTokens = undefined;
+    this.streamRequestUsage = {};
     this.compactedContextWindowUsedTokens = postTokens;
     const usage: AgentUsage = {};
     if (this.contextWindowMaxTokens !== undefined) {

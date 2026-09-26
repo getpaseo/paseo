@@ -2039,13 +2039,17 @@ describe("ClaudeAgentSession context window usage", () => {
     };
   }
 
-  function createMessageDeltaEvent(outputTokens: number): Record<string, unknown> {
+  function createMessageDeltaEvent(
+    outputTokens: number,
+    inputUsage: Record<string, unknown> = {},
+  ): Record<string, unknown> {
     return {
       type: "stream_event",
       event: {
         type: "message_delta",
         usage: {
           output_tokens: outputTokens,
+          ...inputUsage,
         },
       },
       session_id: "session-1",
@@ -2787,6 +2791,132 @@ describe("ClaudeAgentSession context window usage", () => {
           },
         }),
       );
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("message_delta corrects input usage reported as zero at message_start", async () => {
+    const session = await createSessionForTurns([
+      [
+        createInitMessage(),
+        createMessageStartEvent({ input_tokens: 0, output_tokens: 0 }),
+        createMessageDeltaEvent(49, { input_tokens: 703 }),
+        createSuccessResult(),
+      ],
+    ]);
+
+    try {
+      const events = await collectStreamEvents(session);
+
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: "usage_updated",
+          usage: { contextWindowUsedTokens: 752 },
+        }),
+      );
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: "turn_completed",
+          usage: expect.objectContaining({ contextWindowUsedTokens: 752 }),
+        }),
+      );
+    } finally {
+      await session.close();
+    }
+  });
+
+  test.each([
+    {
+      name: "late cache usage and subsequent output-only updates",
+      start: { input_tokens: 0 },
+      deltas: [
+        { input_tokens: 1_986, cache_read_input_tokens: 194_360, output_tokens: 3_651 },
+        { output_tokens: 4_000 },
+      ],
+      expected: [199_997, 200_346],
+    },
+    {
+      name: "partial cumulative updates preserve omitted cache fields",
+      start: { input_tokens: 100, cache_creation_input_tokens: 20, cache_read_input_tokens: 30 },
+      deltas: [
+        { input_tokens: 120, output_tokens: 25 },
+        { cache_read_input_tokens: 40, output_tokens: 30 },
+        { cache_read_input_tokens: 40, output_tokens: 30 },
+      ],
+      expected: [150, 195, 210, 210],
+    },
+    {
+      name: "explicit zero values replace earlier input and cache values",
+      start: { input_tokens: 100, cache_creation_input_tokens: 20, cache_read_input_tokens: 30 },
+      deltas: [
+        {
+          input_tokens: 0,
+          cache_creation_input_tokens: 0,
+          cache_read_input_tokens: 0,
+          output_tokens: 25,
+        },
+      ],
+      expected: [150, 25],
+    },
+    {
+      name: "invalid token values do not replace known usage",
+      start: { input_tokens: 100, cache_creation_input_tokens: 20, cache_read_input_tokens: 30 },
+      deltas: [
+        {
+          input_tokens: Number.NaN,
+          cache_creation_input_tokens: -1,
+          cache_read_input_tokens: Number.POSITIVE_INFINITY,
+          output_tokens: 25,
+        },
+      ],
+      expected: [150, 175],
+    },
+  ])("message_delta merges $name", async ({ start, deltas, expected }) => {
+    const session = await createSessionForTurns([
+      [
+        createInitMessage(),
+        createMessageStartEvent(start),
+        ...deltas.map((usage) => createMessageDeltaEvent(usage.output_tokens, usage)),
+        createSuccessResult(),
+      ],
+    ]);
+
+    try {
+      const events = await collectStreamEvents(session);
+      const usageEvents = events.filter((event) => event.type === "usage_updated");
+
+      expect(usageEvents.map((event) => event.usage.contextWindowUsedTokens)).toEqual(expected);
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: "turn_completed",
+          usage: expect.objectContaining({ contextWindowUsedTokens: expected.at(-1) }),
+        }),
+      );
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("new message_start clears cached usage from the previous request", async () => {
+    const session = await createSessionForTurns([
+      [
+        createInitMessage(),
+        createMessageStartEvent(),
+        createMessageDeltaEvent(25, { cache_read_input_tokens: 200 }),
+        createMessageStartEvent({ input_tokens: 40 }),
+        createMessageDeltaEvent(7),
+        createSuccessResult(),
+      ],
+    ]);
+
+    try {
+      const events = await collectStreamEvents(session);
+      const usageEvents = events.filter((event) => event.type === "usage_updated");
+
+      expect(usageEvents.map((event) => event.usage.contextWindowUsedTokens)).toEqual([
+        150, 345, 40, 47,
+      ]);
     } finally {
       await session.close();
     }
