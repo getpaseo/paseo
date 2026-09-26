@@ -478,15 +478,17 @@ async function runRemoteRegression({ page, client, browserId, artifactDir }) {
   }
   const frameBox = await page.getByTestId(`remote-browser-frame-${browserId}`).boundingBox();
   let followed = null;
-  for (let attempt = 0; attempt < 20 && frameBox; attempt += 1) {
-    followed = await readViewport(client, browserId);
-    if (
-      Math.abs(followed.width - frameBox.width) <= 2 &&
-      Math.abs(followed.height - frameBox.height) <= 2
-    ) {
-      break;
+  if (frameBox) {
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      followed = await readViewport(client, browserId);
+      if (
+        Math.abs(followed.width - frameBox.width) <= 2 &&
+        Math.abs(followed.height - frameBox.height) <= 2
+      ) {
+        break;
+      }
+      await delay(250);
     }
-    await delay(250);
   }
   if (
     !frameBox ||
