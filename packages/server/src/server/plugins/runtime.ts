@@ -27,6 +27,8 @@ import type {
 } from "./plugin-process-protocol.js";
 import { PluginProcessMessageSchema } from "./plugin-process-protocol.js";
 import { PluginSessionSocket } from "./session-socket.js";
+import { PluginSubagentRequests, type PluginSubagentHost } from "./subagents/host.js";
+import { assertSubagentRequestSize, subagentRequestId } from "./subagents/protocol.js";
 
 const CLIENT_ENTRY_FILENAMES = ["index.client.ts", "index.client.tsx"] as const;
 const SERVER_ENTRY_FILENAMES = ["index.server.ts", "index.server.tsx"] as const;
@@ -72,6 +74,7 @@ interface LoadedPlugin {
   providerConnectionTombstones: Set<string>;
   sessionSocket: PluginSessionSocket | null;
   sessionClosed: Promise<void> | null;
+  subagents: PluginSubagentRequests | null;
 }
 
 /** The session socket a loaded plugin currently speaks through. */
@@ -116,6 +119,7 @@ interface PluginRuntimeDependencies {
   onSettingsChanged?: (pluginId: string, settingsId: string) => void;
   spawnChild?: () => PluginChild;
   sessionHost?: PluginPaseoSessionHost;
+  subagentHost?: PluginSubagentHost;
 }
 
 interface PluginLogTail {
@@ -290,6 +294,7 @@ export class PluginRuntime {
   private readonly logger: pino.Logger;
   private readonly spawnChild: () => PluginChild;
   private sessionHost: PluginPaseoSessionHost | null;
+  private subagentHost: PluginSubagentHost | null;
   private readonly listeners = new Set<(pluginId: string, error?: string) => void>();
 
   constructor(
@@ -300,12 +305,18 @@ export class PluginRuntime {
     this.logger = logger.child({ module: "plugins" });
     this.spawnChild = dependencies.spawnChild ?? spawnPluginChild;
     this.sessionHost = dependencies.sessionHost ?? null;
+    this.subagentHost = dependencies.subagentHost ?? null;
   }
 
   bindPaseoSessionHost(sessionHost: PluginPaseoSessionHost): void {
     if (this.plugins.size > 0)
       throw new Error("Cannot replace the plugin session host while running");
     this.sessionHost = sessionHost;
+  }
+
+  bindSubagentHost(host: PluginSubagentHost): void {
+    if (this.plugins.size > 0) throw new Error("Cannot replace the subagent host while running");
+    this.subagentHost = host;
   }
 
   subscribe(listener: (pluginId: string, error?: string) => void): () => void {
@@ -573,6 +584,7 @@ export class PluginRuntime {
         providerConnectionTombstones: new Set(),
         sessionSocket: null,
         sessionClosed: null,
+        subagents: null,
       };
     }
     const sessionHost = this.sessionHost;
@@ -610,8 +622,29 @@ export class PluginRuntime {
             reject(error);
           };
           child.on("message", (rawMessage) => {
+            const requestId = subagentRequestId(rawMessage);
+            if (requestId) {
+              try {
+                assertSubagentRequestSize(rawMessage);
+              } catch (error) {
+                void send(child, {
+                  type: "subagents.response",
+                  requestId,
+                  error: describeError(error),
+                }).catch(() => undefined);
+                return;
+              }
+            }
             const parsed = PluginProcessMessageSchema.safeParse(rawMessage);
             if (!parsed.success) {
+              if (requestId) {
+                void send(child, {
+                  type: "subagents.response",
+                  requestId,
+                  error: `Invalid subagent request: ${parsed.error.message.slice(0, 1024)}`,
+                }).catch(() => undefined);
+                return;
+              }
               const error = new Error(
                 `Plugin ${pluginId} sent an invalid message: ${parsed.error.message}`,
               );
@@ -640,6 +673,12 @@ export class PluginRuntime {
               fail(new Error(message.error));
             } else if (loaded) {
               this.handleChildMessage(loaded, message);
+            } else if (message.type === "subagents.request") {
+              void send(child, {
+                type: "subagents.response",
+                requestId: message.requestId,
+                error: "Plugin is not ready",
+              }).catch(() => undefined);
             }
           });
           child.on("close", () => {
@@ -681,8 +720,10 @@ export class PluginRuntime {
       providerConnectionTombstones: new Set(),
       sessionSocket: session.socket,
       sessionClosed: sessionAttachment.closed,
+      subagents: null,
     };
     session.plugin = loaded;
+    loaded.subagents = new PluginSubagentRequests(loaded.id, this.subagentHost);
     this.logger.info(
       { pluginId, methods: ready.methods, providers: ready.providers },
       "Loaded plugin",
@@ -750,6 +791,25 @@ export class PluginRuntime {
   }
 
   private handleChildMessage(loaded: LoadedPlugin, message: PluginProcessMessage): void {
+    if (message.type === "subagents.request") {
+      const child = loaded.child;
+      const subagents = loaded.subagents;
+      if (!child || !subagents) return;
+      void subagents
+        .receive(message)
+        .then(
+          () =>
+            send(child, { type: "subagents.response", requestId: message.requestId, error: null }),
+          (error) =>
+            send(child, {
+              type: "subagents.response",
+              requestId: message.requestId,
+              error: describeError(error).slice(0, 1024),
+            }),
+        )
+        .catch(() => undefined);
+      return;
+    }
     if (message.type === "hooks.changed") {
       loaded.hooks = message.hooks;
       return;
@@ -1061,6 +1121,7 @@ export class PluginRuntime {
   }
 
   private async handleChildClose(loaded: LoadedPlugin): Promise<void> {
+    await loaded.subagents?.stop();
     loaded.sessionSocket?.peerClosed();
     const wasPublished = this.plugins.get(loaded.id) === loaded;
     if (wasPublished) {
@@ -1076,6 +1137,7 @@ export class PluginRuntime {
   }
 
   private async stopPlugin(loaded: LoadedPlugin): Promise<void> {
+    await loaded.subagents?.stop();
     this.appendLog(loaded.id, "stdout", "[paseo] Stopping plugin");
     for (const [connectionId, state] of loaded.providerConnections) {
       if (state.connected) continue;
