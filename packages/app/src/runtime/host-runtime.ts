@@ -2325,6 +2325,10 @@ export class HostRuntimeStore {
     }
     this.queuedAgentDrainInFlight.add(drainKey);
     const next = queue[0];
+    if (next.retryMode === "manual") {
+      this.queuedAgentDrainInFlight.delete(drainKey);
+      return;
+    }
     void sendQueuedComposerMessageNow({
       agentId,
       messageId: next.id,
