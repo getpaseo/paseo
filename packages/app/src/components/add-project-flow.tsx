@@ -68,8 +68,9 @@ import {
 } from "@/add-project-flow/options";
 import {
   buildProjectPickerOptions,
-  type ProjectPickerOption,
+  isOpenableProjectPath,
 } from "@/components/project-picker-options";
+import { Button } from "@/components/ui/button";
 import { Shortcut } from "@/components/ui/shortcut";
 import { useKeyboardShortcutsAvailable } from "@/keyboard/availability";
 import { getIsElectronRuntime } from "@/constants/layout";
@@ -110,6 +111,7 @@ interface FlowRowOption {
   disabled?: boolean;
   testID: string;
   select: () => void;
+  browse?: () => void;
 }
 
 type GithubLocationPage = Extract<AddProjectPage, { kind: "github-location" }>;
@@ -132,8 +134,12 @@ const ThemedTextInput = withUnistyles(TextInput, (theme) => ({
   placeholderTextColor: theme.colors.foregroundMuted,
 }));
 
-const foregroundColorMapping = (theme: Theme) => ({ color: theme.colors.foreground });
-const foregroundMutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
+const foregroundColorMapping = (theme: Theme) => ({
+  color: theme.colors.foreground,
+});
+const foregroundMutedColorMapping = (theme: Theme) => ({
+  color: theme.colors.foregroundMuted,
+});
 
 const lastCloneParentByHost = new Map<string, string>();
 const EMPTY_PATHS: string[] = [];
@@ -166,12 +172,6 @@ function methodIcon(method: AddProjectMethodId): FlowRowOption["icon"] {
   if (method === "browse") return FolderOpen;
   if (method === "new-directory") return FolderPlus;
   return Search;
-}
-
-function directoryOptionSubtitle(option: ProjectPickerOption, shortPath: string): string | null {
-  if (option.kind === "path") return "Open this path";
-  if (shortPath === option.path) return null;
-  return option.path;
 }
 
 function progressText(page: AddProjectPage): string {
@@ -260,34 +260,37 @@ function FlowRow({ option, active }: { option: FlowRowOption; active: boolean })
   const rowStyle = useCallback(
     ({ hovered = false, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
       styles.row,
+      styles.rowMain,
       (active || hovered || pressed) && styles.rowActive,
       option.disabled && styles.disabled,
     ],
     [active, option.disabled],
   );
   return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityState={accessibilityState}
-      disabled={option.disabled}
-      onPress={option.select}
-      style={rowStyle}
-      testID={option.testID}
-    >
-      <View style={styles.iconSlot}>
-        <MutedFlowIcon icon={option.icon} size={16} />
-      </View>
-      <View style={styles.rowText}>
-        <Text style={styles.rowTitle} numberOfLines={1}>
-          {option.title}
-        </Text>
-        {option.subtitle ? (
-          <Text style={styles.rowSubtitle} numberOfLines={1}>
-            {option.subtitle}
+    <View style={[styles.resultRow, active && styles.rowActive]}>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityState={accessibilityState}
+        disabled={option.disabled}
+        onPress={option.select}
+        style={rowStyle}
+        testID={option.testID}
+      >
+        <View style={styles.iconSlot}>
+          <MutedFlowIcon icon={option.icon} size={16} />
+        </View>
+        <View style={styles.rowText}>
+          <Text style={styles.rowTitle} numberOfLines={1}>
+            {option.title}
           </Text>
-        ) : null}
-      </View>
-    </Pressable>
+          {option.subtitle ? (
+            <Text style={styles.rowSubtitle} numberOfLines={1}>
+              {option.subtitle}
+            </Text>
+          ) : null}
+        </View>
+      </Pressable>
+    </View>
   );
 }
 
@@ -438,7 +441,10 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
     queryKey: ["add-project-flow-github", hostId, debouncedQuery],
     queryFn: async () => {
       if (!client) throw new Error("Host is unavailable");
-      const payload = await client.searchGithubRepositories({ query: debouncedQuery, limit: 30 });
+      const payload = await client.searchGithubRepositories({
+        query: debouncedQuery,
+        limit: 30,
+      });
       return { query: debouncedQuery, payload };
     },
     enabled: Boolean(client && page.kind === "github-search" && host?.canSearchGithubRepositories),
@@ -488,7 +494,10 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
         const message =
           reason === "directory_not_found" ? "Directory not found" : "Unable to add project";
         setState((current) =>
-          setPageStatus(current, sourceKind, { isSubmitting: false, error: message }),
+          setPageStatus(current, sourceKind, {
+            isSubmitting: false,
+            error: message,
+          }),
         );
       } catch {
         setState((current) =>
@@ -512,7 +521,9 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
       if (path) await openAddedProject(path, "method");
     } catch {
       setState((current) =>
-        setPageStatus(current, "method", { error: "Unable to browse for a directory" }),
+        setPageStatus(current, "method", {
+          error: "Unable to browse for a directory",
+        }),
       );
     } finally {
       browseInFlightRef.current = false;
@@ -553,7 +564,10 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
       if (submissionInFlightRef.current) return;
       submissionInFlightRef.current = true;
       setState((current) =>
-        setPageStatus(current, "github-location", { isSubmitting: true, error: null }),
+        setPageStatus(current, "github-location", {
+          isSubmitting: true,
+          error: null,
+        }),
       );
       try {
         const result = await cloneGithubProject(
@@ -585,6 +599,18 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
     },
     [cloneGithubProject, openNewWorkspaceForProject],
   );
+  const confirmDirectory = useCallback(() => {
+    if (page.kind === "directory-search" && isOpenableProjectPath(page.query)) {
+      void openAddedProject(page.query.trim(), "directory-search");
+    }
+  }, [page, openAddedProject]);
+  const browseDirectory = useCallback((path: string) => {
+    const separator = path.includes("\\") ? "\\" : "/";
+    const value = /[\\/]$/.test(path) ? path : `${path}${separator}`;
+    setState((current) => setAddProjectPageInput(current, value));
+    inputRef.current?.replaceText(value);
+    inputRef.current?.focus();
+  }, []);
   const rows = useMemo<FlowRowOption[]>(() => {
     if (page.kind === "host") {
       const choices = filterAddProjectHosts(state.hosts, page.query).map<FlowRowOption>(
@@ -625,17 +651,20 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
       }));
     }
     if (page.kind === "directory-search") {
-      return pathOptions.map((option) => {
-        const shortPath = shortenPath(option.path);
-        return {
-          id: option.path,
-          title: shortPath,
-          subtitle: directoryOptionSubtitle(option, shortPath),
-          icon: Folder,
-          testID: pathTestId(option.path),
-          select: () => void openAddedProject(option.path, "directory-search"),
-        };
-      });
+      return pathOptions
+        .filter((option) => option.kind === "suggestion")
+        .map((option) => {
+          const shortPath = shortenPath(option.path);
+          return {
+            id: option.path,
+            title: shortPath,
+            subtitle: "Browse directory",
+            icon: Folder,
+            testID: pathTestId(option.path),
+            select: () => browseDirectory(option.path),
+            browse: option.kind === "suggestion" ? () => browseDirectory(option.path) : undefined,
+          };
+        });
     }
     if (page.kind === "github-search") {
       const search = githubQuery.data?.query === page.query ? githubQuery.data.payload : null;
@@ -701,12 +730,12 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
     }
     return [];
   }, [
+    browseDirectory,
     cloneRepository,
     directoryPaths,
     githubQuery.data,
     host,
     onClose,
-    openAddedProject,
     page,
     pathOptions,
     recommendedPaths,
@@ -720,14 +749,19 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
     const name = page.name.trim();
     if (!name || name === "." || name === ".." || /[\\/]/.test(name)) {
       setState((current) =>
-        setPageStatus(current, "new-directory-name", { error: "Enter a directory name" }),
+        setPageStatus(current, "new-directory-name", {
+          error: "Enter a directory name",
+        }),
       );
       return;
     }
     if (submissionInFlightRef.current) return;
     submissionInFlightRef.current = true;
     setState((current) =>
-      setPageStatus(current, "new-directory-name", { isSubmitting: true, error: null }),
+      setPageStatus(current, "new-directory-name", {
+        isSubmitting: true,
+        error: null,
+      }),
     );
     try {
       const payload = await client.createProjectDirectory({
@@ -767,9 +801,19 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
       void createDirectory();
       return;
     }
+    if (page.kind === "directory-search" && (query !== debouncedQuery || directoryQuery.isFetching))
+      return;
     const option = rows[activeIndex];
     if (option && !option.disabled) option.select();
-  }, [activeIndex, createDirectory, page.kind, rows]);
+  }, [
+    activeIndex,
+    createDirectory,
+    page.kind,
+    rows,
+    query,
+    debouncedQuery,
+    directoryQuery.isFetching,
+  ]);
 
   const handleKey = useCallback(
     (key: string): boolean => {
@@ -796,11 +840,31 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
   const modalLayer = useGlobalWebOverlayLayer("modal", isWeb);
   const handleWebOverlayKeyDown = useCallback(
     (event: KeyboardEvent) => {
+      if (page.kind === "directory-search") {
+        if (event.key === "Enter" && !inputRef.current?.isFocused()) return false;
+        if (
+          event.key === "Tab" &&
+          !event.shiftKey &&
+          !event.ctrlKey &&
+          !event.altKey &&
+          !event.metaKey &&
+          inputRef.current?.isFocused()
+        ) {
+          if (query !== debouncedQuery || directoryQuery.isFetching) return false;
+          const option = rows[activeIndex]?.browse
+            ? rows[activeIndex]
+            : rows.find((row) => row.browse);
+          if (!option?.browse) return false;
+          option.browse();
+          event.preventDefault();
+          return true;
+        }
+      }
       if (!handleKey(event.key)) return false;
       event.preventDefault();
       return true;
     },
-    [handleKey],
+    [handleKey, page.kind, query, debouncedQuery, directoryQuery.isFetching, rows, activeIndex],
   );
   const setWebOverlayScope = useWebOverlayRegistration({
     active: isWeb,
@@ -953,9 +1017,32 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
               </Text>
             ) : null}
           </ScrollView>
+          {page.kind === "directory-search" ? (
+            <View style={styles.confirmDirectory}>
+              <Text style={styles.rowSubtitle}>Directory to add</Text>
+              <Text style={styles.rowTitle} selectable testID="add-project-flow-selected-directory">
+                {isOpenableProjectPath(page.query)
+                  ? page.query.trim()
+                  : "Browse or enter a full directory path"}
+              </Text>
+              <Button
+                testID="add-project-flow-confirm-directory"
+                disabled={isSubmitting || !isOpenableProjectPath(page.query)}
+                onPress={confirmDirectory}
+              >
+                Add this directory
+              </Button>
+            </View>
+          ) : null}
           <View style={styles.footer} testID="add-project-flow-footer">
             <FlowHint keys={NAVIGATION_HINT_KEYS} action="Navigate" />
-            <FlowHint keys={SELECT_HINT_KEYS} action="Select" />
+            {page.kind === "directory-search" ? (
+              <FlowHint keys={["Tab"]} action="Complete" />
+            ) : null}
+            <FlowHint
+              keys={SELECT_HINT_KEYS}
+              action={page.kind === "directory-search" ? "Browse" : "Select"}
+            />
             <FlowHint keys={ESCAPE_HINT_KEYS} action={state.pages.length > 1 ? "Back" : "Close"} />
           </View>
         </View>
@@ -1045,6 +1132,12 @@ const styles = StyleSheet.create((theme) => ({
   },
   results: { flexGrow: 0, flexShrink: 1, minHeight: 0 },
   resultsContent: { paddingVertical: theme.spacing[2] },
+  resultRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingRight: theme.spacing[2],
+  },
+  rowMain: { flex: 1, minWidth: 0 },
   row: {
     flexDirection: "row",
     alignItems: "center",
@@ -1057,7 +1150,11 @@ const styles = StyleSheet.create((theme) => ({
   iconSlot: { width: 18, alignItems: "center" },
   rowText: { flex: 1, minWidth: 0 },
   rowTitle: { color: theme.colors.foreground, fontSize: theme.fontSize.base },
-  rowSubtitle: { color: theme.colors.foregroundMuted, fontSize: theme.fontSize.sm, marginTop: 2 },
+  rowSubtitle: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
+    marginTop: 2,
+  },
   preview: {
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.base,
@@ -1075,6 +1172,12 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.sm,
     paddingHorizontal: theme.spacing[4],
     paddingVertical: theme.spacing[3],
+  },
+  confirmDirectory: {
+    padding: theme.spacing[4],
+    gap: theme.spacing[2],
+    borderTopWidth: 1,
+    borderTopColor: theme.colors.border,
   },
   footer: {
     flexShrink: 0,
