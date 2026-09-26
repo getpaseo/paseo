@@ -1318,6 +1318,8 @@ export const es: TranslationResources = {
       noMatchingRefs: "No hay árbitros coincidentes.",
       searchPlaceholder: "Buscar sucursales y relaciones públicas",
       title: "Empezar desde",
+      createBranch: "Crear rama",
+      newBranchFrom: "Nueva rama desde la rama predeterminada",
     },
     launch: {
       title: "What to launch",

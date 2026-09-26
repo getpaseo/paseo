@@ -46,8 +46,8 @@ import {
 import { getNextActiveIndex } from "./combobox-keyboard";
 import {
   buildVisibleComboboxOptions,
-  getComboboxFallbackIndex,
   orderVisibleComboboxOptions,
+  resolveInitialComboboxActiveIndex,
   shouldShowCustomComboboxOption,
 } from "./combobox-options";
 import type { ComboboxOptionModel } from "./combobox-options";
@@ -599,24 +599,32 @@ function useActiveIndexSync(
   effectiveOptionsPosition: "below-search" | "above-search",
   normalizedSearch: string,
   value: string,
+  showCustomOption: boolean,
+  sanitizedSearchValue: string,
   setActiveIndex: React.Dispatch<React.SetStateAction<number>>,
 ) {
   useEffect(() => {
     if (!isOpen) return;
     if (!IS_WEB && isMobile) return;
+    // The custom row's id is the sanitized query, so the active-index logic can tell it
+    // apart from a real match.
+    const customOptionId = showCustomOption ? sanitizedSearchValue : null;
     setActiveIndex(
-      resolveInitialActiveIndex(
-        orderedVisibleOptions,
-        effectiveOptionsPosition,
-        normalizedSearch,
-        value,
-      ),
+      resolveInitialComboboxActiveIndex({
+        options: orderedVisibleOptions,
+        optionsPosition: effectiveOptionsPosition,
+        hasSearch: normalizedSearch.length > 0,
+        selectedValue: value,
+        customOptionId,
+      }),
     );
   }, [
     effectiveOptionsPosition,
     isMobile,
     isOpen,
     normalizedSearch,
+    sanitizedSearchValue,
+    showCustomOption,
     value,
     orderedVisibleOptions,
     setActiveIndex,
@@ -895,22 +903,6 @@ function dispatchDesktopKey(
     return true;
   }
   return false;
-}
-
-function resolveInitialActiveIndex(
-  orderedVisibleOptions: ComboboxOption[],
-  effectiveOptionsPosition: "below-search" | "above-search",
-  normalizedSearch: string,
-  value: string,
-): number {
-  if (orderedVisibleOptions.length === 0) return -1;
-  const fallbackIndex = getComboboxFallbackIndex(
-    orderedVisibleOptions.length,
-    effectiveOptionsPosition,
-  );
-  if (normalizedSearch) return fallbackIndex;
-  const selectedIndex = orderedVisibleOptions.findIndex((opt) => opt.id === value);
-  return selectedIndex >= 0 ? selectedIndex : fallbackIndex;
 }
 
 type BottomSheetVisibility = ReturnType<typeof useIsolatedBottomSheetVisibility>;
@@ -1501,6 +1493,8 @@ export function Combobox({
     effectiveOptionsPosition,
     normalizedSearch,
     value,
+    showCustomOption,
+    sanitizedSearchValue,
     setActiveIndex,
   );
 

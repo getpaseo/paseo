@@ -1300,6 +1300,8 @@ export const ru: TranslationResources = {
       noMatchingRefs: "Нет подходящих веток или PR.",
       searchPlaceholder: "Поиск веток и PR",
       title: "Начать с",
+      createBranch: "Создать ветку",
+      newBranchFrom: "Новая ветка от ветки по умолчанию",
     },
     launch: {
       title: "Что запустить",

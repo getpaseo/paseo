@@ -1296,6 +1296,8 @@ export const ja: TranslationResources = {
       noMatchingRefs: "一致するRefがありません。",
       searchPlaceholder: "ブランチとPRを検索",
       title: "開始点",
+      createBranch: "ブランチを作成",
+      newBranchFrom: "デフォルトブランチから新しいブランチ",
     },
     launch: {
       title: "What to launch",

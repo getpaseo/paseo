@@ -1308,6 +1308,8 @@ export const ptBR: TranslationResources = {
       noMatchingRefs: "Nenhuma ref correspondente.",
       searchPlaceholder: "Buscar branches e PRs",
       title: "Começar de",
+      createBranch: "Criar branch",
+      newBranchFrom: "Nova branch a partir da branch padrão",
     },
     launch: {
       title: "What to launch",

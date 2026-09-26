@@ -4,7 +4,9 @@ import {
   buildVisibleComboboxOptions,
   filterAndRankComboboxOptions,
   getComboboxFallbackIndex,
+  isExactComboboxOptionMatch,
   orderVisibleComboboxOptions,
+  resolveInitialComboboxActiveIndex,
 } from "./combobox-options";
 
 describe("buildVisibleComboboxOptions", () => {
@@ -158,5 +160,129 @@ describe("combobox above-search ordering", () => {
       "/Users/me/project-b",
     ]);
     expect(getComboboxFallbackIndex(ordered.length, "below-search")).toBe(0);
+  });
+});
+
+describe("isExactComboboxOptionMatch", () => {
+  it("matches a PR-number query against the namespaced id", () => {
+    expect(isExactComboboxOptionMatch({ id: "github-pr:42", label: "#42 Add picker" }, "42")).toBe(
+      true,
+    );
+    expect(isExactComboboxOptionMatch({ id: "github-pr:42", label: "#42 Add picker" }, "#42")).toBe(
+      true,
+    );
+  });
+
+  it("does not match a partial branch name", () => {
+    expect(
+      isExactComboboxOptionMatch(
+        { id: "branch:refs/heads/feature-old", label: "feature-old" },
+        "feature",
+      ),
+    ).toBe(false);
+  });
+
+  it("matches an exact id or label", () => {
+    expect(isExactComboboxOptionMatch({ id: "main", label: "main" }, "main")).toBe(true);
+  });
+});
+
+describe("resolveInitialComboboxActiveIndex", () => {
+  const custom = { id: "42", label: 'Create branch "42"' };
+  const pr = { id: "github-pr:42", label: "#42 Add picker" };
+
+  it("prefers a PR-number match over the custom row below the search box", () => {
+    const options = orderVisibleComboboxOptions([custom, pr], "below-search");
+    expect(
+      resolveInitialComboboxActiveIndex({
+        options,
+        optionsPosition: "below-search",
+        hasSearch: true,
+        selectedValue: "",
+        customOptionId: custom.id,
+      }),
+    ).toBe(1);
+  });
+
+  it("prefers a PR-number match over the custom row above the search box", () => {
+    const options = orderVisibleComboboxOptions([custom, pr], "above-search");
+    expect(
+      resolveInitialComboboxActiveIndex({
+        options,
+        optionsPosition: "above-search",
+        hasSearch: true,
+        selectedValue: "",
+        customOptionId: custom.id,
+      }),
+    ).toBe(0);
+  });
+
+  it("keeps the custom row active when the adjacent option is only a fuzzy match", () => {
+    const fuzzyCustom = { id: "feature", label: 'Create branch "feature"' };
+    const fuzzy = { id: "branch:refs/heads/feature-old", label: "feature-old" };
+    const options = orderVisibleComboboxOptions([fuzzyCustom, fuzzy], "below-search");
+    expect(
+      resolveInitialComboboxActiveIndex({
+        options,
+        optionsPosition: "below-search",
+        hasSearch: true,
+        selectedValue: "",
+        customOptionId: fuzzyCustom.id,
+      }),
+    ).toBe(0);
+  });
+
+  it("selects the custom row when nothing else matches", () => {
+    const options = orderVisibleComboboxOptions([custom], "below-search");
+    expect(
+      resolveInitialComboboxActiveIndex({
+        options,
+        optionsPosition: "below-search",
+        hasSearch: true,
+        selectedValue: "",
+        customOptionId: custom.id,
+      }),
+    ).toBe(0);
+  });
+
+  it("keeps the fallback when there is no custom row", () => {
+    const options = [{ id: "feat/x", label: "feat/x" }];
+    expect(
+      resolveInitialComboboxActiveIndex({
+        options,
+        optionsPosition: "below-search",
+        hasSearch: true,
+        selectedValue: "",
+        customOptionId: null,
+      }),
+    ).toBe(0);
+  });
+
+  it("marks the selected value when not searching", () => {
+    const options = [
+      { id: "a", label: "a" },
+      { id: "b", label: "b" },
+    ];
+    expect(
+      resolveInitialComboboxActiveIndex({
+        options,
+        optionsPosition: "below-search",
+        hasSearch: false,
+        selectedValue: "b",
+        customOptionId: null,
+      }),
+    ).toBe(1);
+  });
+
+  it("returns -1 for no options", () => {
+    expect(
+      resolveInitialComboboxActiveIndex({
+        options: [],
+        optionsPosition: "below-search",
+        hasSearch: true,
+        selectedValue: "",
+        customOptionId: null,
+      }),
+    ).toBe(-1);
   });
 });

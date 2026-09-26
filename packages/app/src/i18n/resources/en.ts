@@ -1290,6 +1290,8 @@ export const en = {
       noMatchingRefs: "No matching refs.",
       searchPlaceholder: "Search branches and PRs",
       title: "Start from",
+      createBranch: "Create branch",
+      newBranchFrom: "New branch from the default branch",
     },
     launch: {
       title: "What to launch",

@@ -1282,6 +1282,8 @@ export const ar: TranslationResources = {
       noMatchingRefs: "لا توجد مراجع مطابقة.",
       searchPlaceholder: "بحث الفروع والعلاقات العامة",
       title: "ابدأ من",
+      createBranch: "إنشاء فرع",
+      newBranchFrom: "فرع جديد من الفرع الافتراضي",
     },
     launch: {
       title: "What to launch",
