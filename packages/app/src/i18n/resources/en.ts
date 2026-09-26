@@ -1952,6 +1952,26 @@ export const en = {
       saveAccessibility: "Save review comment",
     },
   },
+  intents: {
+    share: {
+      skippedFiles: "{{count}} shared files were skipped. Paseo accepts text and images.",
+    },
+    links: {
+      unknownHost: "No host named {{serverId}} is set up on this device.",
+      noHosts: "Add a host before opening Paseo links.",
+      ambiguousHost: "Several hosts are set up. Add serverId to the link.",
+      missingAgent: "The link does not name an agent.",
+      missingWorkspace: "The link does not name a workspace.",
+      promptSent: "Prompt sent.",
+      sendDisabled:
+        "Prompt added to the composer. Turn on “Send prompts from links” in Settings to send it without confirmation.",
+      hostOffline: "Prompt added to the composer. The host is offline, so it was not sent.",
+      sendFailed: "Couldn't send the prompt: {{message}}",
+    },
+    shortcuts: {
+      resume: "Resume {{name}}",
+    },
+  },
   settings: {
     title: "Settings",
     loading: "Loading settings...",
@@ -2181,6 +2201,11 @@ export const en = {
           overview: "Summary",
           detailed: "Full detail",
         },
+      },
+      linkPromptSend: {
+        label: "Send prompts from links",
+        description:
+          "Let paseo:// links and other apps send a prompt to an agent without confirmation",
       },
       language: {
         label: "Language",

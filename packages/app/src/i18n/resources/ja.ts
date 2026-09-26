@@ -1947,6 +1947,28 @@ export const ja: TranslationResources = {
       saveAccessibility: "レビューコメントを保存",
     },
   },
+  intents: {
+    share: {
+      skippedFiles:
+        "共有された {{count}} 件のファイルをスキップしました。Paseo はテキストと画像のみ受け付けます。",
+    },
+    links: {
+      unknownHost: "このデバイスに {{serverId}} という名前のホストは設定されていません。",
+      noHosts: "Paseo のリンクを開く前にホストを追加してください。",
+      ambiguousHost: "複数のホストが設定されています。リンクに serverId を追加してください。",
+      missingAgent: "リンクにエージェントが指定されていません。",
+      missingWorkspace: "リンクにワークスペースが指定されていません。",
+      promptSent: "プロンプトを送信しました。",
+      sendDisabled:
+        "プロンプトをコンポーザーに追加しました。確認なしで送信するには、設定で「リンクからプロンプトを送信」をオンにしてください。",
+      hostOffline:
+        "プロンプトをコンポーザーに追加しました。ホストがオフラインのため送信していません。",
+      sendFailed: "プロンプトを送信できませんでした: {{message}}",
+    },
+    shortcuts: {
+      resume: "{{name}} を再開",
+    },
+  },
   settings: {
     title: "設定",
     loading: "設定を読み込み中...",
@@ -2080,6 +2102,11 @@ export const ja: TranslationResources = {
           overview: "要約",
           detailed: "すべての詳細",
         },
+      },
+      linkPromptSend: {
+        label: "リンクからプロンプトを送信",
+        description:
+          "paseo:// リンクや他のアプリが確認なしでエージェントにプロンプトを送信できるようにします",
       },
       language: {
         label: "言語",

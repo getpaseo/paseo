@@ -1906,6 +1906,25 @@ export const zhCN: TranslationResources = {
       saveAccessibility: "保存 review 评论",
     },
   },
+  intents: {
+    share: {
+      skippedFiles: "已跳过 {{count}} 个共享文件。Paseo 只接受文本和图片。",
+    },
+    links: {
+      unknownHost: "此设备上没有名为 {{serverId}} 的主机。",
+      noHosts: "打开 Paseo 链接前请先添加主机。",
+      ambiguousHost: "已设置多个主机。请在链接中加入 serverId。",
+      missingAgent: "链接未指定智能体。",
+      missingWorkspace: "链接未指定工作区。",
+      promptSent: "提示已发送。",
+      sendDisabled: "提示已添加到编辑器。在设置中开启“通过链接发送提示”即可无需确认直接发送。",
+      hostOffline: "提示已添加到编辑器。主机离线，因此未发送。",
+      sendFailed: "无法发送提示：{{message}}",
+    },
+    shortcuts: {
+      resume: "继续 {{name}}",
+    },
+  },
   settings: {
     title: "设置",
     loading: "正在加载设置...",
@@ -2037,6 +2056,10 @@ export const zhCN: TranslationResources = {
           overview: "摘要",
           detailed: "完整详情",
         },
+      },
+      linkPromptSend: {
+        label: "通过链接发送提示",
+        description: "允许 paseo:// 链接和其他应用无需确认即可向智能体发送提示",
       },
       language: {
         label: "语言",

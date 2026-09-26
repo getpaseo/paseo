@@ -1960,6 +1960,26 @@ export const ru: TranslationResources = {
       saveAccessibility: "Сохранить комментарий к ревью",
     },
   },
+  intents: {
+    share: {
+      skippedFiles: "Пропущено файлов: {{count}}. Paseo принимает только текст и изображения.",
+    },
+    links: {
+      unknownHost: "Хост с именем {{serverId}} не настроен на этом устройстве.",
+      noHosts: "Добавьте хост, прежде чем открывать ссылки Paseo.",
+      ambiguousHost: "Настроено несколько хостов. Добавьте serverId в ссылку.",
+      missingAgent: "В ссылке не указан агент.",
+      missingWorkspace: "В ссылке не указано рабочее пространство.",
+      promptSent: "Запрос отправлен.",
+      sendDisabled:
+        "Запрос добавлен в редактор. Включите «Отправлять запросы из ссылок» в настройках, чтобы отправлять без подтверждения.",
+      hostOffline: "Запрос добавлен в редактор. Хост не в сети, поэтому он не отправлен.",
+      sendFailed: "Не удалось отправить запрос: {{message}}",
+    },
+    shortcuts: {
+      resume: "Продолжить {{name}}",
+    },
+  },
   settings: {
     title: "Настройки",
     loading: "Загрузка настроек...",
@@ -2097,6 +2117,11 @@ export const ru: TranslationResources = {
           overview: "Сводка",
           detailed: "Все подробности",
         },
+      },
+      linkPromptSend: {
+        label: "Отправлять запросы из ссылок",
+        description:
+          "Разрешить ссылкам paseo:// и другим приложениям отправлять запрос агенту без подтверждения",
       },
       language: {
         label: "Язык",

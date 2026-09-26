@@ -4,6 +4,13 @@ import { HostRouteBootstrapBoundary } from "@/components/host-route-bootstrap-bo
 import { useFetchQuery } from "@/data/query";
 import { resolveAgentRoute, type AgentRouteLookup } from "@/navigation/agent-route-resolution";
 import { AgentRouteResolutionView } from "@/navigation/agent-route-resolution-view";
+import { useTranslation } from "react-i18next";
+import { useToast } from "@/contexts/toast-context";
+import { useAppSettings } from "@/hooks/use-settings";
+import { readLinkFlag, readLinkPrompt } from "@/intents/automation-link";
+import { stagePendingPrompt } from "@/intents/pending-prompt-store";
+import { LinkPromptHostOfflineError, sendLinkPrompt } from "@/intents/send-link-prompt";
+import { buildDraftStoreKey } from "@/stores/draft-keys";
 import { useSessionStore } from "@/stores/session-store";
 import { getHostRuntimeStore, useHostRuntimeSnapshot, useHosts } from "@/runtime/host-runtime";
 import { buildHostRootRoute, buildSettingsHostRoute } from "@/utils/host-routes";
@@ -23,10 +30,18 @@ function HostAgentReadyRouteContent() {
   const params = useLocalSearchParams<{
     serverId?: string;
     agentId?: string;
+    prompt?: string;
+    send?: string;
   }>();
   const handledNavigationRef = useRef<string | null>(null);
   const serverId = typeof params.serverId === "string" ? params.serverId : "";
   const agentId = typeof params.agentId === "string" ? params.agentId : "";
+  const prompt = readLinkPrompt(params.prompt);
+  const send = readLinkFlag(params.send);
+  const toast = useToast();
+  const { t } = useTranslation();
+  const { settings, isLoading: settingsLoading } = useAppSettings();
+  const linkPromptSend = settings.linkPromptSend;
   const hosts = useHosts();
   const runtimeSnapshot = useHostRuntimeSnapshot(serverId);
   const client = runtimeSnapshot?.client ?? null;
@@ -103,14 +118,64 @@ function HostAgentReadyRouteContent() {
     if (!navigationKey || handledNavigationRef.current === navigationKey) {
       return;
     }
+    if (prompt && send && settingsLoading) {
+      return;
+    }
     handledNavigationRef.current = navigationKey;
 
     if (resolution.kind === "resolved") {
-      navigateToAgent({ serverId, agentId, workspaceId: resolution.workspaceId });
+      const openAgent = () =>
+        navigateToAgent({ serverId, agentId, workspaceId: resolution.workspaceId });
+      if (!prompt) {
+        openAgent();
+        return;
+      }
+      const stagePrompt = () =>
+        stagePendingPrompt({
+          draftKey: buildDraftStoreKey({ serverId, agentId }),
+          prompt: { text: prompt, attachments: [] },
+        });
+      if (!send) {
+        stagePrompt();
+        openAgent();
+        return;
+      }
+      // Sending without a tap is opt-in: any app can open a paseo:// link.
+      if (!linkPromptSend) {
+        stagePrompt();
+        openAgent();
+        toast.error(t("intents.links.sendDisabled"));
+        return;
+      }
+      void sendLinkPrompt({ serverId, agentId, text: prompt })
+        .then(() => {
+          toast.show(t("intents.links.promptSent"));
+          return undefined;
+        })
+        .catch((error: unknown) => {
+          stagePrompt();
+          toast.error(
+            error instanceof LinkPromptHostOfflineError
+              ? t("intents.links.hostOffline")
+              : t("intents.links.sendFailed", { message: toErrorMessage(error) }),
+          );
+        })
+        .finally(openAgent);
       return;
     }
     router.replace(resolution.kind === "invalid" ? ("/" as Href) : buildHostRootRoute(serverId));
-  }, [agentId, resolution, router, serverId]);
+  }, [
+    agentId,
+    linkPromptSend,
+    prompt,
+    resolution,
+    router,
+    send,
+    serverId,
+    settingsLoading,
+    t,
+    toast,
+  ]);
 
   const handleRetry = useCallback(() => {
     if (resolution.kind === "lookupError") {

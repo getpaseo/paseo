@@ -13,6 +13,8 @@ EAS profiles: `development`, `production`, and `production-apk` in `packages/app
 
 `development` uses Android `debug`.
 
+Share-sheet, text-selection, `paseo://` link, and launcher-shortcut handling is in [android-intents.md](android-intents.md).
+
 ## Version codes
 
 `packages/app/native-release-version.js` is the single definition of native and F-Droid version-code math. Do not re-derive these numbers anywhere else — a drifted copy produces changelog files that match no published APK, and nothing fails loudly.

@@ -1937,6 +1937,26 @@ export const ko: TranslationResources = {
       saveAccessibility: "리뷰 댓글 저장",
     },
   },
+  intents: {
+    share: {
+      skippedFiles: "공유된 파일 {{count}}개를 건너뛰었습니다. Paseo는 텍스트와 이미지만 받습니다.",
+    },
+    links: {
+      unknownHost: "이 기기에 {{serverId}}라는 호스트가 설정되어 있지 않습니다.",
+      noHosts: "Paseo 링크를 열기 전에 호스트를 추가하세요.",
+      ambiguousHost: "여러 호스트가 설정되어 있습니다. 링크에 serverId를 추가하세요.",
+      missingAgent: "링크에 에이전트가 지정되지 않았습니다.",
+      missingWorkspace: "링크에 워크스페이스가 지정되지 않았습니다.",
+      promptSent: "프롬프트를 보냈습니다.",
+      sendDisabled:
+        "프롬프트를 작성기에 추가했습니다. 확인 없이 보내려면 설정에서 “링크에서 프롬프트 보내기”를 켜세요.",
+      hostOffline: "프롬프트를 작성기에 추가했습니다. 호스트가 오프라인이라 보내지 않았습니다.",
+      sendFailed: "프롬프트를 보내지 못했습니다: {{message}}",
+    },
+    shortcuts: {
+      resume: "{{name}} 이어서 하기",
+    },
+  },
   settings: {
     title: "설정",
     loading: "설정 불러오는 중...",
@@ -2072,6 +2092,11 @@ export const ko: TranslationResources = {
           overview: "요약",
           detailed: "전체 세부정보",
         },
+      },
+      linkPromptSend: {
+        label: "링크에서 프롬프트 보내기",
+        description:
+          "paseo:// 링크와 다른 앱이 확인 없이 에이전트에 프롬프트를 보낼 수 있게 합니다",
       },
       language: {
         label: "언어",

@@ -1975,6 +1975,27 @@ export const es: TranslationResources = {
       saveAccessibility: "Guardar comentario de revisión",
     },
   },
+  intents: {
+    share: {
+      skippedFiles: "Se omitieron {{count}} archivos compartidos. Paseo acepta texto e imágenes.",
+    },
+    links: {
+      unknownHost: "No hay ningún host llamado {{serverId}} configurado en este dispositivo.",
+      noHosts: "Añade un host antes de abrir enlaces de Paseo.",
+      ambiguousHost: "Hay varios hosts configurados. Añade serverId al enlace.",
+      missingAgent: "El enlace no indica ningún agente.",
+      missingWorkspace: "El enlace no indica ningún espacio de trabajo.",
+      promptSent: "Instrucción enviada.",
+      sendDisabled:
+        "Instrucción añadida al compositor. Activa «Enviar instrucciones desde enlaces» en Ajustes para enviarla sin confirmación.",
+      hostOffline:
+        "Instrucción añadida al compositor. El host está desconectado, así que no se envió.",
+      sendFailed: "No se pudo enviar la instrucción: {{message}}",
+    },
+    shortcuts: {
+      resume: "Reanudar {{name}}",
+    },
+  },
   settings: {
     title: "Ajustes",
     loading: "Cargando configuración...",
@@ -2113,6 +2134,11 @@ export const es: TranslationResources = {
           overview: "Resumen",
           detailed: "Detalle completo",
         },
+      },
+      linkPromptSend: {
+        label: "Enviar instrucciones desde enlaces",
+        description:
+          "Permite que los enlaces paseo:// y otras apps envíen una instrucción a un agente sin confirmación",
       },
       language: {
         label: "Idioma",
