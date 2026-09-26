@@ -244,13 +244,17 @@ const FOOTER_GEOMETRY_TOLERANCE = 0.01;
  * Settings together at the end.
  */
 export async function expectFooterIconRow(page: Page): Promise<void> {
-  const boxes = (
-    await Promise.all(
-      FOOTER_ICON_TEST_IDS.map((testID) =>
-        page.locator(`[data-testid="${testID}"]:visible`).first().boundingBox(),
-      ),
-    )
-  ).map((box) => box!);
+  // Read the whole row in one frame while the compact sidebar can still be sliding in.
+  const boxes = await page.locator('[data-testid="sidebar-footer-bottom-line"]:visible').evaluate(
+    (row, testIDs) =>
+      testIDs.map((testID) => {
+        const icon = row.querySelector(`[data-testid="${testID}"]`);
+        if (!icon) throw new Error(`Missing footer icon: ${testID}`);
+        const { x, y, width, height } = icon.getBoundingClientRect();
+        return { x, y, width, height };
+      }),
+    FOOTER_ICON_TEST_IDS,
+  );
   const [first] = boxes;
   for (const box of boxes) {
     expect(Math.abs(box.y + box.height / 2 - first!.y - first!.height / 2)).toBeLessThan(2);
@@ -285,7 +289,10 @@ export async function hoverFooterAddProject(page: Page): Promise<void> {
   await page.locator('[data-testid="sidebar-add-project"]:visible').hover();
   const tooltip = page.getByTestId("sidebar-add-project-tooltip");
   await expect(tooltip.getByText("Add project", { exact: true })).toBeVisible();
-  await expect(tooltip.getByText("Ctrl+O", { exact: true })).toBeVisible();
+  const shortcut = await page.evaluate(() =>
+    navigator.platform.toLowerCase().includes("mac") ? "⌘O" : "Ctrl+O",
+  );
+  await expect(tooltip.getByText(shortcut, { exact: true })).toBeVisible();
 }
 
 export async function footerScreenshot(page: Page, name: string): Promise<void> {

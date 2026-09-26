@@ -25,6 +25,14 @@ export function addProjectFlowInput(page: Page): Locator {
   return page.getByTestId("add-project-flow-input");
 }
 
+export function addProjectFlowConfirmDirectory(page: Page): Locator {
+  return page.getByTestId("add-project-flow-confirm-directory");
+}
+
+export function addProjectFlowSelectedDirectory(page: Page): Locator {
+  return page.getByTestId("add-project-flow-selected-directory");
+}
+
 export function addProjectFlowBack(page: Page): Locator {
   return page.getByTestId("add-project-flow-back");
 }

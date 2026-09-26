@@ -20,6 +20,7 @@ import {
   buildAddProjectMethods,
   buildCloneLocationOptions,
   buildManualGithubRepositoryChoices,
+  directoryBrowsePath,
 } from "./options";
 
 const HOST: AddProjectHost = {
@@ -31,6 +32,24 @@ const HOST: AddProjectHost = {
   canSearchGithubRepositories: true,
   canCreateDirectory: true,
 };
+
+describe("directory browsing paths", () => {
+  it.each([
+    ["/", "/"],
+    ["/tmp/team", "/tmp/team/"],
+    ["/tmp/team/", "/tmp/team/"],
+    ["/tmp/team\\", "/tmp/team\\/"],
+    ["/tmp/team\\/", "/tmp/team\\/"],
+    ["/tmp/team\\name", "/tmp/team\\name/"],
+    ["C:\\", "C:\\"],
+    ["C:\\team", "C:\\team\\"],
+    ["C:/team", "C:/team/"],
+    ["C:\\team/", "C:\\team/"],
+    ["\\\\server\\share", "\\\\server\\share\\"],
+  ])("completes %s without changing its directory name", (input, expected) => {
+    expect(directoryBrowsePath(input)).toBe(expected);
+  });
+});
 
 describe("Add Project navigation", () => {
   it("skips a single connected host without adding it to history", () => {
