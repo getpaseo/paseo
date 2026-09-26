@@ -43,6 +43,7 @@ import { useDaemonConfig } from "@/hooks/use-daemon-config";
 import { resolveTerminalProfiles } from "@getpaseo/protocol/terminal-profiles";
 import type { TerminalProfile } from "@getpaseo/protocol/messages";
 import { LaunchControl } from "@/new-workspace-launch/launch-control";
+import { isModelessProvider } from "@/provider-selection/resolve-agent-form";
 import { resolveLaunchTarget, type LaunchTarget } from "@/new-workspace-launch/target";
 import { useTerminalComposerState } from "@/new-workspace-launch/composer-state";
 import { runCreateTerminalWorkspace } from "./new-workspace-terminal";
@@ -784,6 +785,26 @@ type NewWorkspaceComposerState = NonNullable<
   ReturnType<typeof useAgentInputDraft>["composerState"]
 >;
 
+// A modeless provider has no mode to send. Ignore any stale selected mode
+// (e.g. a globally-remembered preference from before the provider dropped
+// its modes) so creation doesn't fail with no way to clear it in the UI.
+// Providers with modes keep existing behavior: the selected value is sent
+// as-is and server-side validation decides.
+function resolveSubmitModeId(composerState: NewWorkspaceComposerState): string | undefined {
+  // Require a ready snapshot: a loading entry also maps to modes: [] (e.g.
+  // OpenCode, whose static default is null), and stripping the mode in that
+  // window would submit the provider default instead of the user's selection.
+  const entry = composerState.selectedProvider
+    ? composerState.allProviderEntries?.find(
+        (candidate) => candidate.provider === composerState.selectedProvider,
+      )
+    : undefined;
+  if (entry?.status === "ready" && isModelessProvider(composerState.agentDefinition)) {
+    return undefined;
+  }
+  return composerState.selectedMode || undefined;
+}
+
 interface WorkspaceDraftSubmissionConfig {
   cwd: string;
   provider: AgentProvider;
@@ -890,7 +911,7 @@ function buildWorkspaceDraftSetupFromComposer(input: {
   return {
     provider: input.provider,
     cwd: input.cwd,
-    modeId: input.composerState.selectedMode || null,
+    modeId: resolveSubmitModeId(input.composerState) ?? null,
     model: input.composerState.effectiveModelId || null,
     thinkingOptionId: input.composerState.effectiveThinkingOptionId || null,
     featureValues: input.composerState.featureValues ?? {},
@@ -970,7 +991,7 @@ async function createWorkspaceChatAgent(input: CreateChatAgentInput): Promise<Su
     config: {
       provider,
       cwd,
-      modeId: composerState.selectedMode || undefined,
+      modeId: resolveSubmitModeId(composerState),
       model: composerState.effectiveModelId || undefined,
       thinkingOptionId: composerState.effectiveThinkingOptionId || undefined,
       featureValues: composerState.featureValues,
@@ -1093,7 +1114,7 @@ function resolveWorkspaceDraftSubmissionConfig(input: {
   return {
     cwd: workspaceDirectory,
     provider,
-    modeId: composerState.selectedMode || null,
+    modeId: resolveSubmitModeId(composerState) ?? null,
     model: composerState.effectiveModelId || null,
     thinkingOptionId: composerState.effectiveThinkingOptionId || null,
     featureValues: composerState.featureValues,

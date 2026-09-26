@@ -28,6 +28,7 @@ import {
   mergeSelectedComposerPreferences,
   buildProviderDefinitionMap,
   buildProviderDefinitionMapForStatuses,
+  isModelessProvider,
   INITIAL_AGENT_FORM_RESOLUTION,
   INITIAL_USER_MODIFIED,
   RESOLVABLE_PROVIDER_STATUSES,
@@ -122,20 +123,36 @@ async function persistProviderPreferences(input: {
   provider: AgentProvider;
   formState: FormState;
   availableModels: AgentModelDefinition[] | null;
+  providerDefinition: AgentProviderDefinition | undefined;
+  snapshotReady: boolean;
   updatePreferences: (
     updates: Partial<FormPreferences> | ((current: FormPreferences) => FormPreferences),
   ) => Promise<FormPreferences>;
 }): Promise<void> {
-  const { provider, formState, availableModels, updatePreferences } = input;
+  const {
+    provider,
+    formState,
+    availableModels,
+    providerDefinition,
+    snapshotReady,
+    updatePreferences,
+  } = input;
   const resolvedModel = resolveEffectiveModel(availableModels, formState.model);
   const modelId = resolvedModel?.id ?? formState.model;
+  // A modeless provider has no mode to remember. Clear any stale saved mode
+  // so it can't fail future creations with no way to unset it in the UI.
+  // Require a ready snapshot: a loading entry also maps to modes: [] (e.g.
+  // OpenCode, whose static default is null), and deleting the saved mode in
+  // that window would lose the user's selection when discovery finishes.
+  const modeUpdate =
+    snapshotReady && isModelessProvider(providerDefinition) ? null : formState.modeId || undefined;
   await updatePreferences((current) =>
     mergeProviderPreferences({
       preferences: current,
       provider,
       updates: {
         model: modelId || undefined,
-        mode: formState.modeId || undefined,
+        mode: modeUpdate,
         ...(modelId && formState.thinkingOptionId
           ? { thinkingByModel: { [modelId]: formState.thinkingOptionId } }
           : {}),
@@ -445,6 +462,10 @@ export function useAgentFormState(options: UseAgentFormStateOptions): UseAgentFo
     refetchSnapshotIfStale(formState.provider);
   }, [formState.provider, refetchSnapshotIfStale]);
 
+  const agentDefinition = formState.provider
+    ? providerDefinitionMap.get(formState.provider)
+    : undefined;
+
   const persistFormPreferences = useCallback(async () => {
     if (!formState.provider) {
       return;
@@ -453,13 +474,18 @@ export function useAgentFormState(options: UseAgentFormStateOptions): UseAgentFo
       provider: formState.provider,
       formState,
       availableModels,
+      providerDefinition: providerDefinitionMap.get(formState.provider),
+      snapshotReady: snapshotSelectedEntry?.status === "ready",
       updatePreferences: updateCurrentPreferences,
     });
-  }, [availableModels, formState, updateCurrentPreferences]);
+  }, [
+    availableModels,
+    formState,
+    providerDefinitionMap,
+    snapshotSelectedEntry,
+    updateCurrentPreferences,
+  ]);
 
-  const agentDefinition = formState.provider
-    ? providerDefinitionMap.get(formState.provider)
-    : undefined;
   const effectiveModel = resolveEffectiveModel(availableModels, formState.model);
   const availableThinkingOptionsRaw = effectiveModel?.thinkingOptions;
   const availableThinkingOptions = useMemo(

@@ -122,6 +122,18 @@ describe("resolveAndValidateCreateAgentMode", () => {
     expect(resolved).toBeUndefined();
   });
 
+  it("ignores an explicit stale mode when the target provider has no modes", () => {
+    const resolved = resolveAndValidateCreateAgentMode({
+      requestedMode: "build",
+      targetProvider: "pi",
+      parent: null,
+      unattended: false,
+      availableModes: [],
+      targetUnattendedMode: undefined,
+    });
+    expect(resolved).toBeUndefined();
+  });
+
   it("passes through an explicit mode when the target provider's modes are unknown", () => {
     const resolved = resolveAndValidateCreateAgentMode({
       requestedMode: "default",

@@ -189,6 +189,17 @@ export function resolveThinkingOptionId(args: {
 
 const normalizeSelectedModeId = normalizeSelectedModelId;
 
+export function isModelessProvider(
+  input: { modes?: { id: string }[] | null; defaultModeId?: string | null } | undefined | null,
+): boolean {
+  // Zero modes with no default means the provider explicitly offers nothing
+  // to select. Shape alone cannot tell "explicitly empty" from "not yet
+  // loaded" (a loading snapshot also maps to modes: []), so callers must
+  // additionally gate destructive actions on snapshot entry status ===
+  // "ready" before treating this as modeless.
+  return !!input && (input.modes ?? []).length === 0 && !input.defaultModeId;
+}
+
 function resolvePreferredModeId(input: {
   initialModeId?: string | null;
   preferredModeId?: string | null;
