@@ -1169,6 +1169,9 @@ export const fr: TranslationResources = {
     pinned: {
       title: "Épinglés",
     },
+    nav: {
+      title: "Navigation",
+    },
     host: {
       noHost: "Aucun hôte",
       switchTitle: "Changer d'hôte",
