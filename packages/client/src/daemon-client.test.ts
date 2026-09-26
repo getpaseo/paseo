@@ -182,6 +182,70 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 
+test("Fleet control requires daemon capability and never falls back", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_fleet_test",
+    logger: createMockLogger(),
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+  const connectPromise = client.connect();
+  mock.triggerOpen({ features: {} });
+  await connectPromise;
+
+  await expect(
+    client.operateFleetCommitment({
+      operationRequestId: "728f8f21-98d5-40c8-ae69-95013fe5b120",
+      commitmentId: "64e89b9a-ff01-4cd8-b3f8-202bd276bc1d",
+      action: "pause",
+      expectedPriorDigest: "0".repeat(64),
+      expectedPortfolioAgentId: "5353a509-71ba-4b79-93ac-769b6bace206",
+    }),
+  ).rejects.toThrow("Update the host to use Fleet commitment controls.");
+  expect(mock.sent).toHaveLength(0);
+});
+
+test("Fleet read uses the native capability-gated RPC", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_fleet_read_test",
+    logger: createMockLogger(),
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+  const connectPromise = client.connect();
+  mock.triggerOpen({ features: { fleetCommitmentControls: true } });
+  await connectPromise;
+  const commitmentId = "64e89b9a-ff01-4cd8-b3f8-202bd276bc1d";
+  const read = client.readFleetCommitment({ commitmentId });
+  const request = parseSentFrame(mock.sent[0]);
+  expect(request).toMatchObject({ type: "fleet.commitment.read.request", commitmentId });
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "fleet.commitment.read.response",
+      payload: {
+        requestId: request.requestId,
+        commitmentId,
+        marker: [
+          "fleet-control.v1",
+          commitmentId,
+          "open",
+          0,
+          null,
+          "5353a509-71ba-4b79-93ac-769b6bace206",
+        ],
+        digest: "0".repeat(64),
+      },
+    }),
+  );
+  expect(await read).toMatchObject({ commitmentId, digest: "0".repeat(64) });
+});
+
 test("traces WebSocket frames, message types, and JSON parse duration", async () => {
   const mock = createMockTransport();
   const recorder = createTraceRecorder();

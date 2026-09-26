@@ -80,6 +80,23 @@ import {
 } from "./browser-automation/rpc-schemas.js";
 import { BrowserAutomationHostCapabilitySchema } from "./browser-automation/capabilities.js";
 import {
+  FleetCommitmentConfirmRequestSchema,
+  FleetCommitmentConfirmResponseSchema,
+  FleetCommitmentOperateRequestSchema,
+  FleetCommitmentOperateResponseSchema,
+  FleetCommitmentReadRequestSchema,
+  FleetCommitmentReadResponseSchema,
+} from "./fleet-control.js";
+export type {
+  FleetCommitmentConfirmRequest,
+  FleetCommitmentConfirmResponse,
+  FleetCommitmentOperateRequest,
+  FleetCommitmentOperateResponse,
+  FleetCommitmentReadRequest,
+  FleetCommitmentReadResponse,
+  FleetControlReceipt,
+} from "./fleet-control.js";
+import {
   PaseoConfigRawSchema,
   PaseoLifecycleCommandRawSchema,
   PaseoMetadataGenerationEntrySchema,
@@ -123,6 +140,7 @@ export const DAEMON_PERMISSIONS = [
   "workspace.manage",
   "automation.manage",
   "hub.execute",
+  "fleet.control",
 ] as const;
 export const DaemonPermissionSchema = z.enum(DAEMON_PERMISSIONS);
 export type DaemonPermission = z.infer<typeof DaemonPermissionSchema>;
@@ -3151,6 +3169,9 @@ export const SubscriptionReleaseResponseSchema = z.object({
 });
 
 export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
+  FleetCommitmentOperateRequestSchema,
+  FleetCommitmentReadRequestSchema,
+  FleetCommitmentConfirmRequestSchema,
   BrowserHostRegisterRequestSchema,
   SubscriptionReleaseRequestSchema,
   SessionEventsSetSubscriptionRequestSchema,
@@ -3530,6 +3551,8 @@ export const ServerInfoStatusPayloadSchema = z
         // COMPAT(workspaceRequestReceipts): added in v0.8.0; remove gate after 2027-03-07.
         workspaceRequestReceipts: z.boolean().optional(),
         creationLifecycle: z.boolean().optional(),
+        // COMPAT(fleetCommitmentControls): old daemons omit the native Fleet API.
+        fleetCommitmentControls: z.boolean().optional(),
         // COMPAT(hubAgentRpc): added in v0.8.0; remove gate after 2027-03-05.
         hubAgentRpc: z.boolean().optional(),
         providersSnapshot: z.boolean().optional(),
@@ -6723,6 +6746,9 @@ export const AgentSkillsImportLegacySelectionResponseSchema = z.object({
 });
 
 export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
+  FleetCommitmentOperateResponseSchema,
+  FleetCommitmentReadResponseSchema,
+  FleetCommitmentConfirmResponseSchema,
   BrowserHostRegisterResponseSchema,
   SubscriptionReleaseResponseSchema,
   SessionEventsSetSubscriptionResponseSchema,
