@@ -147,26 +147,7 @@ function MarkdownPartList({
 function keyMarkdownGroups(
   groups: MarkdownPartGroup[],
 ): { key: string; group: MarkdownPartGroup }[] {
-  const seen = new Map<string, number>();
-  return groups.map((group) => {
-    const identity =
-      group.kind === "part"
-        ? getMarkdownPartIdentity(group.part)
-        : `imageText:${group.images.map((i) => i.src).join(",")}:${group.lead.slice(0, 80)}`;
-    const seenCount = seen.get(identity) ?? 0;
-    seen.set(identity, seenCount + 1);
-    return { key: `${identity}:${seenCount}`, group };
-  });
-}
-
-function getMarkdownPartIdentity(part: MarkdownDisplayPart): string {
-  if (part.kind === "markdown") {
-    return `markdown:${part.text.slice(0, 80)}`;
-  }
-  if (part.kind === "inlineImage") {
-    return `inlineImage:${part.src}:${part.alt}`;
-  }
-  return `details:${part.summary.slice(0, 80)}:${part.body.slice(0, 80)}`;
+  return groups.map((group, index) => ({ key: `${group.kind}:${index}`, group }));
 }
 
 function MarkdownPart({

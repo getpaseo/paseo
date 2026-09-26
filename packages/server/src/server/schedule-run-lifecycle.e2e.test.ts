@@ -222,7 +222,7 @@ test("archiveOnFinish=false local scheduled run emits upserts and remains active
     },
     runOnCreate: false,
   });
-  await ctx.client.fetchWorkspaces({ subscribe: { subscriptionId: "schedule-local-workspaces" } });
+  await ctx.client.fetchWorkspaces({ subscribe: {} });
   const events = collectLifecycleUpdates();
 
   const ran = await runScheduleOnce(schedule.id);
@@ -256,7 +256,7 @@ test("archiveOnFinish=true scheduled run emits a workspace remove", async () => 
     runOnCreate: false,
   });
   await ctx.client.fetchWorkspaces({
-    subscribe: { subscriptionId: "schedule-archive-workspaces" },
+    subscribe: {},
   });
   const events = collectLifecycleUpdates();
 
@@ -293,7 +293,7 @@ test("worktree isolation creates a run worktree and archiveOnFinish removes it",
     runOnCreate: false,
   });
   await ctx.client.fetchWorkspaces({
-    subscribe: { subscriptionId: "schedule-worktree-workspaces" },
+    subscribe: {},
   });
   const events = collectLifecycleUpdates();
 

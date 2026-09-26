@@ -38,6 +38,7 @@ export interface EvaluatedPlugin {
 }
 
 export interface InstalledPlugin extends EvaluatedPlugin {
+  lifetime: AbortController;
   serverId: string;
   requirements?: PluginRequirements;
   clientBundle: string;

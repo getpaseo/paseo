@@ -1,3 +1,5 @@
+import type { createPluginHosts } from "./hosts";
+import { openExternalUrl } from "@/utils/open-external-url";
 import * as pluginUiRuntime from "./react-native/ui";
 import { useSettings } from "./settings/use-settings";
 import * as pluginSharedRuntime from "@getpaseo/plugin";
@@ -78,7 +80,7 @@ export type PluginClientRuntime = Pick<
   | "openPanel"
   | "addComposerPill"
   | "addHeaderButton"
->;
+> & { hosts: ReturnType<typeof createPluginHosts> };
 
 export function runPluginClientBundle(
   id: string,
@@ -374,7 +376,19 @@ export function runPluginClientBundle(
     if (name === "react/jsx-runtime") return ReactJsxRuntime;
     if (name === "react-native") return ReactNative;
     if (name === "@getpaseo/plugin") return pluginSharedRuntime;
-    if (name === "@getpaseo/plugin/client") return { ...pluginClientRuntime, useSettings };
+    if (name === "@getpaseo/plugin/client")
+      return {
+        ...pluginClientRuntime,
+        useSettings,
+        openExternalUrl,
+        getPaseoClient: (serverId: string) => runtime.hosts.getPaseoClient(serverId),
+        useHosts: () =>
+          React.useSyncExternalStore(
+            runtime.hosts.subscribe,
+            runtime.hosts.getSnapshot,
+            runtime.hosts.getSnapshot,
+          ),
+      };
     if (name === "@getpaseo/plugin/client/react-native") {
       return pluginReactNativeRuntime;
     }
@@ -392,19 +406,11 @@ export function runPluginClientBundle(
   if (typeof setup !== "function") {
     throw new Error(`Plugin ${id} must default export a function`);
   }
-  let entryCleanup: PluginCleanup;
+  let entryCleanup: PluginCleanup | undefined;
   try {
     entryCleanup = setup(pluginContext);
-    if (typeof entryCleanup !== "function") {
+    if (typeof entryCleanup !== "function")
       throw new Error(`Plugin ${id} contribution must return a cleanup function`);
-    }
-  } catch (error) {
-    stopped = true;
-    for (const remove of removals) remove();
-    throw error;
-  }
-
-  try {
     for (const item of collector.sidebarItems) {
       if (!surfaceIds.has(item.surface)) {
         throw new Error(`Sidebar item ${item.id} references missing surface ${item.surface}`);
@@ -412,22 +418,26 @@ export function runPluginClientBundle(
     }
   } catch (error) {
     stopped = true;
-    for (const remove of removals) remove();
     try {
-      void Promise.resolve(entryCleanup()).catch((cleanupError) => {
+      void Promise.resolve(
+        typeof entryCleanup === "function" ? entryCleanup() : entryCleanup,
+      ).catch((cleanupError) => {
         console.warn(`[Plugins] Cleanup failed after setup error for ${id}`, cleanupError);
       });
     } catch (cleanupError) {
       console.warn(`[Plugins] Cleanup failed after setup error for ${id}`, cleanupError);
+    } finally {
+      for (const remove of removals) remove();
     }
     throw error;
   }
   setupComplete = true;
+  const cleanupEntry = entryCleanup;
   const cleanup = async () => {
     if (stopped) return;
     stopped = true;
     try {
-      await entryCleanup();
+      await cleanupEntry();
     } finally {
       for (const remove of removals) remove();
     }

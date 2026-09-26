@@ -1,3 +1,5 @@
+import { getHostRuntimeStore } from "@/runtime/host-runtime";
+import { createPluginHosts } from "./hosts";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { PluginClientOpenPanelOptions } from "@getpaseo/plugin/client";
 import {
@@ -16,7 +18,7 @@ export function createPluginClientRuntime(
   installation: InstalledPlugin,
   daemonClient: DaemonClient,
 ): PluginClientRuntime {
-  const runtime = createPluginSurfaceRuntime(daemonClient, installation.id);
+  const runtime = createPluginSurfaceRuntime(daemonClient, installation);
   if (!runtime) throw new Error("Plugin host is offline");
   const state = createPluginClientStateSource(installation.serverId);
   const capabilities = createPluginCapabilities(
@@ -26,6 +28,7 @@ export function createPluginClientRuntime(
   );
   return {
     ...capabilities,
+    hosts: createPluginHosts(getHostRuntimeStore(), installation.lifetime.signal),
     addComposerPill(contribution) {
       return pluginButtonStore.addComposerPill(installation, contribution);
     },

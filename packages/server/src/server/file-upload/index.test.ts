@@ -1,6 +1,6 @@
-import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -37,14 +37,14 @@ describe("file uploads", () => {
     await expect(uploads.receiveFrame(uploadChunk("req-upload", "hello"))).resolves.toBeNull();
     await expect(uploads.receiveFrame(uploadChunk("req-upload", " world"))).resolves.toBeNull();
 
-    const path = join(paseoHome, "uploads", "upload_req-upload", "notes.txt");
+    const path = uploadedPath(paseoHome, "notes.txt");
     await expect(uploads.receiveFrame(uploadEnds("req-upload"))).resolves.toEqual({
       type: "file.upload.response",
       payload: {
         requestId: "req-upload",
         file: {
           type: "uploaded_file",
-          id: "upload_req-upload",
+          id: expect.any(String),
           fileName: "notes.txt",
           mimeType: "text/plain",
           size: 11,
@@ -54,6 +54,49 @@ describe("file uploads", () => {
       },
     });
     expect(readFileSync(path, "utf8")).toBe("hello world");
+  });
+
+  it("keeps the original file name for non-ASCII and punctuated names", async () => {
+    const uploads = new FileUploadStore({ paseoHome: makePaseoHome() });
+
+    for (const fileName of [
+      "2026年9月绩效计划表.xlsx",
+      "테스트 파일 (1).xlsx",
+      "résumé [final] & notes, v2.pdf",
+      "cafe\u0301 हिंदी.txt",
+    ]) {
+      const file = await uploadNamed(uploads, fileName);
+      expect(file?.fileName).toBe(fileName);
+      expect(basename(file!.path)).toBe(fileName);
+      expect(readFileSync(file!.path, "utf8")).toBe("hello world");
+    }
+  });
+
+  it("replaces path separators, control characters, and characters Windows rejects", async () => {
+    const uploads = new FileUploadStore({ paseoHome: makePaseoHome() });
+
+    await expect(uploadNamed(uploads, "../../etc/passwd")).resolves.toMatchObject({
+      fileName: "passwd",
+    });
+    const backslashed = await uploadNamed(uploads, "dir\\name.txt");
+    expect(backslashed?.fileName).not.toContain("\\");
+    expect(backslashed?.fileName).toMatch(/name\.txt$/);
+    await expect(uploadNamed(uploads, 'a<b>:"c|?*.txt')).resolves.toMatchObject({
+      fileName: "a_b___c___.txt",
+    });
+    await expect(uploadNamed(uploads, "line\nbreak.txt")).resolves.toMatchObject({
+      fileName: "line_break.txt",
+    });
+  });
+
+  it("shortens a long non-ASCII name to the file system limit and keeps its extension", async () => {
+    const uploads = new FileUploadStore({ paseoHome: makePaseoHome() });
+
+    const file = await uploadNamed(uploads, `${"绩".repeat(100)}.xlsx`);
+
+    expect(file?.fileName).toBe(`${"绩".repeat(83)}.xlsx`);
+    expect(Buffer.byteLength(file!.fileName)).toBeLessThanOrEqual(255);
+    expect(readFileSync(file!.path, "utf8")).toBe("hello world");
   });
 
   it("rejects chunks beyond the declared size and removes the partial file", async () => {
@@ -70,8 +113,8 @@ describe("file uploads", () => {
     });
     await expect(uploads.receiveFrame(uploadBegins("req-overflow"))).resolves.toBeNull();
 
-    const uploadDir = join(paseoHome, "uploads", "upload_req-overflow");
-    const path = join(uploadDir, "notes.txt");
+    const path = uploadedPath(paseoHome, "notes.txt");
+    const uploadDir = dirname(path);
     await expect(uploads.receiveFrame(uploadChunk("req-overflow", "hello!"))).resolves.toEqual({
       type: "file.upload.response",
       payload: {
@@ -106,9 +149,7 @@ describe("file uploads", () => {
 
     expect(results.slice(0, 3)).toEqual([null, null, null]);
     expect(results[3]?.payload.error).toBeNull();
-    expect(readFileSync(join(paseoHome, "uploads", "upload_req-queued", "notes.txt"), "utf8")).toBe(
-      "hello world",
-    );
+    expect(readFileSync(uploadedPath(paseoHome, "notes.txt"), "utf8")).toBe("hello world");
   });
 
   it("replaces duplicate upload starts without letting the old stale timeout evict the replacement", async () => {
@@ -139,16 +180,16 @@ describe("file uploads", () => {
     });
     await vi.advanceTimersByTimeAsync(30);
 
-    const path = join(paseoHome, "uploads", "upload_req-duplicate_2", "new.txt");
     await expect(uploads.receiveFrame(uploadBegins("req-duplicate"))).resolves.toBeNull();
     await expect(uploads.receiveFrame(uploadChunk("req-duplicate", "new"))).resolves.toBeNull();
+    const path = uploadedPath(paseoHome, "new.txt");
     await expect(uploads.receiveFrame(uploadEnds("req-duplicate"))).resolves.toEqual({
       type: "file.upload.response",
       payload: {
         requestId: "req-duplicate",
         file: {
           type: "uploaded_file",
-          id: "upload_req-duplicate_2",
+          id: expect.any(String),
           fileName: "new.txt",
           mimeType: "text/plain",
           size: 3,
@@ -184,14 +225,14 @@ describe("file uploads", () => {
       uploads.receiveFrame(uploadChunk("req-slow-active", " world")),
     ).resolves.toBeNull();
 
-    const path = join(paseoHome, "uploads", "upload_req-slow-active", "notes.txt");
+    const path = uploadedPath(paseoHome, "notes.txt");
     await expect(uploads.receiveFrame(uploadEnds("req-slow-active"))).resolves.toEqual({
       type: "file.upload.response",
       payload: {
         requestId: "req-slow-active",
         file: {
           type: "uploaded_file",
-          id: "upload_req-slow-active",
+          id: expect.any(String),
           fileName: "notes.txt",
           mimeType: "text/plain",
           size: 11,
@@ -203,6 +244,25 @@ describe("file uploads", () => {
     expect(readFileSync(path, "utf8")).toBe("hello world");
   });
 });
+
+let uploadCount = 0;
+
+async function uploadNamed(uploads: FileUploadStore, fileName: string) {
+  const requestId = `req-named-${uploadCount++}`;
+  uploads.beginUpload({
+    type: "file.upload.request",
+    fileName,
+    mimeType: "text/plain",
+    size: 11,
+    modifiedAt: "2026-05-02T00:00:00.000Z",
+    requestId,
+  });
+  await uploads.receiveFrame(uploadBegins(requestId));
+  await uploads.receiveFrame(uploadChunk(requestId, "hello world"));
+  const response = await uploads.receiveFrame(uploadEnds(requestId));
+  expect(response?.payload.error).toBeNull();
+  return response?.payload.file;
+}
 
 function makePaseoHome(): string {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "file-upload-test-")));
@@ -251,4 +311,13 @@ function decodeUploadFrame(bytes: Uint8Array): FileTransferFrame {
     throw new Error("Expected file transfer frame");
   }
   return frame;
+}
+
+function uploadedPath(paseoHome: string, fileName: string): string {
+  const root = join(paseoHome, "uploads");
+  const file = readdirSync(root)
+    .map((id) => join(root, id, fileName))
+    .find((candidate) => existsSync(candidate));
+  if (!file) throw new Error(`Upload file ${fileName} is missing`);
+  return file;
 }

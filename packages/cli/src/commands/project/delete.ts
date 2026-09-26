@@ -24,8 +24,8 @@ export async function runDeleteCommand(
   options: CommandOptions,
   _command: Command,
 ): Promise<SingleResult<ProjectDeleteResult>> {
-  const client = await connectToDaemon({ host: options.host }).catch((error: unknown) => {
-    throw buildDaemonConnectionCommandError({ host: options.host, error });
+  const client = await connectToDaemon({ target: options.daemonTarget }).catch((error: unknown) => {
+    throw buildDaemonConnectionCommandError({ target: options.daemonTarget, error });
   });
 
   try {
@@ -36,6 +36,7 @@ export async function runDeleteCommand(
       schema: projectDeleteSchema,
     };
   } catch (error) {
+    if (error && typeof error === "object" && "code" in error) throw error;
     const message = error instanceof Error ? error.message : String(error);
     throw { code: "PROJECT_DELETE_FAILED", message } satisfies CommandError;
   } finally {

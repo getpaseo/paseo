@@ -4,7 +4,7 @@ Local plugins contribute daemon RPCs, native app surfaces, workspace panels, Com
 client slash commands, timeline items, header buttons, composer pills, app themes, composer attachment sources, and settings screens.
 Paseo executes `index.server.ts` in a subprocess and `index.client.tsx` in every connected app.
 
-> **Trust every plugin you add.** `paseo plugin add` and `paseo plugin install` mean “I trust this codebase.” Plugins are unsandboxed: server code and Git preparation commands run with the daemon user's access on the daemon host, and client contributions run inside Paseo. The repository's dependencies and future updates are part of that trust decision. With `--host`, preparation runs on that remote daemon host.
+> **Trust every plugin you add.** `paseo plugin add` and `paseo plugin install` mean “I trust this codebase.” Plugins are unsandboxed: server code and preparation commands run with the daemon user's access on the daemon host, and client contributions run inside Paseo. The repository's dependencies and future updates are part of that trust decision. With `--host`, preparation runs on that remote daemon host.
 
 ## Install a directory source
 
@@ -68,7 +68,7 @@ runtime modules, so consumers do not install these packages when adding the plug
 ```
 
 Declare the supported Paseo range and keep it current when adopting newer APIs. See the
-[requirements contract](../public-docs/plugins/v0.8/reference.md#requirements), including legacy
+[requirements contract](../public-docs/plugins/reference.md#requirements), including legacy
 manifests and prerelease matching.
 
 The config key is the runtime plugin ID. The manifest ID is the default selected during install;
@@ -103,9 +103,35 @@ paseo plugin update --all
 
 Append `:relative/path` to the source when the plugin lives below the repository root.
 
-Omitting `--ref` tracks the remote's default branch. A branch passed with `--ref` also tracks;
-tags and commits stay pinned. `ls` reports the installed commit without contacting the remote.
+`--ref` chooses the initial branch, tag, or commit once. Ordinary updates resolve the remote's
+current default HEAD and ask for approval. `ls` reports the installed commit without contacting the remote.
 Removing a Git source deletes Paseo's managed checkout.
+
+## Managed source ownership
+
+The [public source reference](../public-docs/plugins/reference.md#plugin-sources) owns identifier
+syntax and npm prerequisites; the [publishing guide](../public-docs/plugins/publishing.md) owns distribution. Both clients send the source unchanged
+through `installPluginSource`; only the daemon resolves host paths and acquires sources.
+
+`ManagedPluginSources` owns acquisition and offline source description. Config stores the active
+directory; sources.json stores managed kind and the Git acquisition remote. The remote is needed
+because authenticated clones may have a rewritten placeholder origin. Fixed owned directory layout
+provides the selected subdirectory, npm package name and cleanup root. Git HEAD and the installed
+npm package.json checked against package-lock.json provide the current revision. Keep the complete
+npm dependency tree and lockfile after staging activation. No install selector governs updates.
+
+The loader sees only the configured directory and never invokes npm. npm lifecycle scripts are
+disabled during acquisition; manifest preparation owns required commands before validation.
+
+List responses retain the closed `source: directory | git` enum. The optional `installation`
+projection carries identity and current revision. Old npm metadata remains accepted but is no longer
+emitted. Installation uses `features.pluginSourceInstallation`; reviewed preview/apply uses
+`features.pluginSourceUpdates`, gated by the SDK and CLI entry. The old immediate-update request
+returns update-client guidance. Basic management remains independently available.
+
+Preview returns exact targets and expected installed identity/root/revision. Apply validates those
+values, acquires the displayed artifact or commit, then rechecks state before activation. No review
+session is stored in the daemon. PluginService owns activation/recovery and independent bulk results.
 
 ### Declare Git preparation
 
@@ -162,10 +188,10 @@ Shared files import contract helpers and types from `@getpaseo/plugin`. Server h
 set; an unknown name renders nothing so it cannot break the plugin surface.
 Its controlled modal keeps presentation metadata on `<Modal title="…" icon={…}>` and body UI in
 `<Modal.Content>`. Body layout, sheet-aware scrolling, and clipboard actions follow the
-[host UI contract](../public-docs/plugins/v0.8/reference.md#host-ui).
+[host UI contract](../public-docs/plugins/reference.md#host-ui).
 Plugin UI runs on desktop and mobile across multiple themes: color every `Text` from
 `theme.colors.foreground` or `theme.colors.foregroundMuted`, and size layout from `layout.compact`.
-See `public-docs/plugins/v0.8/reference.md`.
+See `public-docs/plugins/reference.md`.
 
 ### SDK import boundaries
 
@@ -206,7 +232,7 @@ The scaffold omits `"DOM"` from `tsconfig.json` and does not use `/// <reference
 browser globals are not available across the plugin. Put sanctioned web-only APIs in
 `client/web.ts`, declare only the globals that module uses, gate each export with
 `Platform.OS === "web"`, and provide a native implementation or no-op. See the
-[public plugin reference](../public-docs/plugins/v0.8/reference.md#works-on-mobile) for the complete
+[public plugin reference](../public-docs/plugins/reference.md#works-on-mobile) for the complete
 pattern.
 
 ```ts
@@ -253,6 +279,11 @@ selected host's existing connection; switching the screen's host changes both `u
 installation. A server handler owns an IPC-backed daemon session for the life of its subprocess.
 Use plugin RPC for plugin-specific backend behavior that is not a normal Paseo operation.
 
+Host-targeted clients and discovery are owned by `packages/app/src/plugins/hosts`, with per-installation
+bindings supplied by the bundle loader. Bind the imperative getter to that installation; do not
+resolve ownership through a mutable current-plugin global. Keep observation ownership in this module
+and transport ownership in the app host runtime. See the [public host API contract](../public-docs/plugins/reference.md#discover-hosts-and-target-another-host).
+
 Each subprocess gets an exclusively owned `plugin:<id>` session. That identity is reserved from
 normal clients, never resumes another session, and is cleaned immediately on exit without reconnect
 grace. During daemon startup, plugin sessions may connect while application WebSockets remain
@@ -261,7 +292,7 @@ catalog is complete.
 
 When the same plugin contribution exists on multiple hosts, Paseo shows it once in the sidebar and
 adds a host picker to the screen header. The selected host supplies the bundle, RPC transport, and
-query cache. Plugin code cannot address another host.
+query cache. Explicit SDK targets follow the [host API contract](../public-docs/plugins/reference.md#discover-hosts-and-target-another-host).
 
 Workspace panels, Command Center items, and client slash commands are client contributions. The
 daemon transports their compiled bundle without interpreting placement or callbacks. Panel props
@@ -278,15 +309,16 @@ when moved between hosts. Explorer configuration can create workspace-context pa
 existing agent-context instances, but it cannot create an agent panel without an agent-aware command.
 
 Command Center callbacks use the selected host's existing `PaseoApi` for normal Paseo operations.
-They use typed plugin RPC only for plugin-specific backend work. Surface and panel props expose
-optional client-owned agent and workspace navigation; its absence is the compatibility gate for
-older clients. Other navigation remains limited to registered global surfaces and workspace panels.
-Plugins do not receive Expo Router or workspace-layout store access.
+They use typed plugin RPC only for plugin-specific backend work. Surface and panel navigation
+belongs to the app; plugins do not receive Expo Router or workspace-layout store access.
+See the public [navigation fields](../public-docs/plugins/reference.md#surfaces-and-sidebar-items)
+and [external links and workspace browsers](../public-docs/plugins/reference.md#external-links-and-workspace-browsers)
+for the author-facing contract.
 
 ## Lifecycle hooks
 
 Server entries register lifecycle observers with `server.on()` and request transforms with
-`server.before()`. The [public reference](../public-docs/plugins/v0.8/reference.md#lifecycle-hooks)
+`server.before()`. The [public reference](../public-docs/plugins/reference.md#lifecycle-hooks)
 owns callback shapes, ordering, and failure behavior. `plugin-examples/lifecycle-logger` registers all
 eleven hooks; `plugin-examples/lifecycle-actions` demonstrates common automation callbacks.
 
@@ -334,7 +366,7 @@ and `plugin-examples/provider-acp-transformer`.
 Provider-emitted plugin timeline items use the same renderer registration as transformed and
 daemon-appended plugin items. The direct example includes both sides. The renderer-only
 `plugin-examples/inline-thinking` example shows that timeline presentation remains independent of a
-provider implementation. The public [provider plugin guide](../public-docs/plugins/v0.8/providers.md)
+provider implementation. The public [provider plugin guide](../public-docs/plugins/providers.md)
 owns author workflow, lifecycle, testing, and distribution guidance.
 
 `ProviderRegistration.icon` is a file path relative to the plugin directory, such as `icon.svg`.
@@ -347,7 +379,7 @@ SVG or URL.
 ## Contribute buttons
 
 Header buttons and composer pills share the client-only descriptor and registration lifecycle in
-`packages/app/src/plugins/buttons/`. The [public button reference](../public-docs/plugins/v0.8/reference.md#header-buttons)
+`packages/app/src/plugins/buttons/`. The [public button reference](../public-docs/plugins/reference.md#header-buttons)
 owns the author API and placement rules. Keep presentation policy in this module so another
 placement can reuse behavior without copying registration or action state.
 
@@ -355,12 +387,26 @@ Native sheets teleport their children. Button surfaces rebuild the installation'
 query, and toast providers inside the surface content, including overflow pages from different
 plugins. Providers only around the trigger do not reach those bodies.
 
+Request observation with `client.paseo.agents.list({ subscribe: {} })` and consume the returned
+`subscription` handle. Plain `list()` and agent/workspace directory `.subscribe(handler)` listeners create no daemon
+demand. Provider and project `subscribe()` calls establish their own demand. On capable daemons, each
+list-and-subscribe call has its own server ID, even for the same query. Older daemons retain
+[shared delivery behavior](protocol-compatibility.md#owned-observations). Handle snapshots
+also run after reconnect; replace your view before applying its subsequent updates. The installation
+owns every observation created through its API and releases them on unload, including setup failure.
+Mounted surfaces and command invocations have shorter API lifetimes.
+
+Keep the client entry synchronous: return its cleanup function immediately and start asynchronous
+work inside it. See the maintained [composer pill example](../plugin-examples/local-plugin/client/main.tsx).
+
 ## Contribute timeline items
 
 Timeline transformers and renderers are client contributions. The daemon's canonical rows and
 built-in projection stay unchanged. The app transforms each source item while building the render
-model, for both fetched history and live events. The input includes `phase: "streaming" | "complete"`.
-Paseo memoizes by source-item reference and derives every replacement ID from the source identity, so
+model, for both fetched history and live events, before native Markdown splitting and Overview
+tool grouping. Assistant callbacks receive the accumulated source text, never display fragments.
+Live assistant messages use `phase: "streaming"`; committing to history makes them `"complete"`.
+Paseo memoizes by source-item reference and phase and derives replacement IDs from source identity, so
 streaming updates preserve mounted component identity.
 
 `query.itemType` selects one public `AgentTimelineItem.type`. The callback owns any detailed
@@ -457,13 +503,17 @@ drops the optional presentation fields.
 
 Register ordinary components with `client.addSettingsScreen` and open them with `openSettings`.
 The host settings shell owns navigation and layout; plugin content must not add another page
-scroll view or header. See the [author contract](../public-docs/plugins/v0.8/reference.md#settings-screens)
+scroll view or header. See the [author contract](../public-docs/plugins/reference.md#settings-screens)
 and `plugin-examples/settings` for the named UI components and persistence API.
 
 Settings storage is scoped to the runtime installation ID, never the source path or manifest ID.
 Its writer lives with the plugin subprocess, while its directory lives outside managed sources,
 so updates and reloads retain values. Settings-change notifications must not enter the catalog
 reload path: that path disposes the plugin and would destroy open drafts after every save.
+
+`server.registerSettings(definition)` returns a server-side handle. Use `read()` for the current
+`ready` or `invalid` state and `subscribe()` for successful saves, resets, and migrations. The
+subscription cleanup belongs in the plugin's contribution cleanup when it outlives the entry.
 
 ## Contribute a theme
 
@@ -488,7 +538,7 @@ stable rather than arrival-ordered. The app resolves that id
 against the installed catalog on every change; an id nothing contributes falls back to the default
 preference instead of painting the reserved slot's placeholder colors.
 
-Existing plugin authors should follow the standalone [v0.8 runtime-entry migration guide](../public-docs/plugins/v0.8/migration.md).
+Existing plugin authors should follow the standalone [v0.8 runtime-entry migration guide](../public-docs/plugins/migration.md).
 
 See `plugin-examples/local-plugin` for a native surface, `plugin-examples/linear` for a complete
 attachment-source example, `plugin-examples/timeline-items` for timeline projection, and

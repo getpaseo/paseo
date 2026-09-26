@@ -1,6 +1,6 @@
 {
   "name": "@getpaseo/app",
-  "version": "0.8.0",
+  "version": "0.9.2",
   "private": true,
   "main": "index.ts",
   "scripts": {
@@ -109,6 +109,7 @@
     "qrcode": "^1.5.4",
     "react": "19.1.0",
     "react-dom": "19.1.0",
+    "react-freeze": "1.0.4",
     "react-i18next": "^17.0.8",
     "react-native": "0.81.5",
     "react-native-draggable-flatlist": "^4.0.3",

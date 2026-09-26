@@ -1,3 +1,4 @@
+import { SessionDelivery } from "../owned-subscriptions/index.js";
 import { describe, expect, test } from "vitest";
 import { createTestLogger } from "../../../test-utils/test-logger.js";
 import type { SessionInboundMessage, SessionOutboundMessage } from "../../messages.js";
@@ -175,4 +176,49 @@ describe("DaemonSelfUpdateSessionController", () => {
     ]);
     expect(restartIntents).toEqual([]);
   });
+});
+
+test("self-update progress is request-owned through the final delivery boundary", async () => {
+  const source = {},
+    sibling = {};
+  const frames: SessionOutboundMessage[] = [];
+  const delivery = new SessionDelivery((socket, message) => {
+    expect(socket).toBe(source);
+    expect(delivery.permits(source, message)).toBe(true);
+    expect(delivery.permits(sibling, message)).toBe(false);
+    frames.push(message);
+  });
+  delivery.attach(source, true);
+  delivery.attach(sibling, true);
+  let lateProgress: (() => void) | undefined;
+  const controller = new DaemonSelfUpdateSessionController({
+    clientId: "safe-update",
+    daemonVersion: "0.8.0",
+    sessionLogger: createTestLogger(),
+    emit: (message) => {
+      delivery.reply(message);
+    },
+    emitLifecycleIntent: () => {
+      throw new Error("No restart is allowed in this test");
+    },
+    updater: {
+      async update(input) {
+        input.onProgress("starting");
+        await Promise.resolve();
+        input.onProgress("installing");
+        lateProgress = () => input.onProgress("starting");
+        return { success: false, error: "Safe injected update stopped", newVersion: null };
+      },
+    },
+  });
+  await delivery.request(source, updateRequest, async () => {
+    await controller.dispatch(updateRequest);
+  });
+  expect(frames.map((message) => message.type)).toEqual([
+    "daemon.update.progress",
+    "daemon.update.progress",
+    "daemon.update.response",
+  ]);
+  lateProgress?.();
+  expect(frames).toHaveLength(3);
 });

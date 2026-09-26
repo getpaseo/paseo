@@ -1,4 +1,5 @@
 import { afterEach, expect, test } from "vitest";
+import type { SessionOutboundMessage } from "../messages.js";
 import { HubRelationshipHarness } from "./test-utils/relationship-harness.js";
 
 let relationship: HubRelationshipHarness | null = null;
@@ -14,6 +15,13 @@ async function launchRelationship(): Promise<HubRelationshipHarness> {
   launched.connectLatestSocket();
   relationship = launched;
   return launched;
+}
+
+function createdAgentWorkspaceId(message: SessionOutboundMessage): string {
+  if (message.type !== "status" || message.payload.status !== "agent_created")
+    throw new Error("Agent was not created");
+  if (!message.payload.agent.workspaceId) throw new Error("Workspace was not created");
+  return message.payload.agent.workspaceId;
 }
 
 test("Hub retries one durable daemon execution across concurrency and reconstruction", async () => {
@@ -54,6 +62,46 @@ test("Hub execute can steer ordinary agents while unrelated administration stays
   expect(hub.serverInfoPermissions()).toEqual([["hub.execute"]]);
 });
 
+test("Hub execute can title the workspace created with an agent", async () => {
+  const hub = await launchRelationship();
+  const created = await hub.requestOrdinary({
+    type: "create_agent_request",
+    requestId: "create-for-title",
+    config: { provider: "codex", cwd: hub.repoRoot() },
+  });
+  expect(created).toMatchObject({
+    type: "status",
+    payload: { status: "agent_created", agent: { workspaceId: expect.any(String) } },
+  });
+  const workspaceId = createdAgentWorkspaceId(created);
+
+  expect(
+    await hub.requestOrdinary({
+      type: "workspace.title.set.request",
+      requestId: "title-created-workspace",
+      workspaceId,
+      title: "Hub execution",
+    }),
+  ).toMatchObject({
+    type: "workspace.title.set.response",
+    payload: { workspaceId, accepted: true, title: "Hub execution", error: null },
+  });
+
+  expect(
+    await hub.requestOrdinary({
+      type: "fetch_workspaces_request",
+      requestId: "read-created-workspace",
+    }),
+  ).toMatchObject({
+    type: "fetch_workspaces_response",
+    payload: {
+      entries: expect.arrayContaining([
+        expect.objectContaining({ id: workspaceId, title: "Hub execution" }),
+      ]),
+    },
+  });
+});
+
 test("ordinary Hub create and message retries do not duplicate agents or prompts", async () => {
   const hub = await launchRelationship();
   const create = {
@@ -66,11 +114,34 @@ test("ordinary Hub create and message retries do not duplicate agents or prompts
     hub.requestOrdinary({ ...create, requestId: "create-duplicate" }),
   ]);
   const first = responses[0];
-  expect(first).toMatchObject({ type: "status", payload: { status: "agent_created" } });
+  expect(first).toEqual({
+    type: "status",
+    payload: {
+      status: "agent_created",
+      requestId: "create-first",
+      agentId: expect.any(String),
+      agent: expect.objectContaining({
+        id: expect.any(String),
+        workspaceId: expect.any(String),
+        provider: "codex",
+        cwd: hub.repoRoot(),
+        status: "idle",
+      }),
+    },
+  });
   if (first?.type !== "status" || first.payload.status !== "agent_created")
     throw new Error("Agent was not created");
   const agentId = first.payload.agentId;
-  expect(responses[1]).toMatchObject({ type: "status", payload: { agentId } });
+  expect(first.payload.agent.id).toBe(agentId);
+  expect(responses[1]).toEqual({
+    type: "status",
+    payload: {
+      status: "agent_created",
+      requestId: "create-duplicate",
+      agentId,
+      agent: first.payload.agent,
+    },
+  });
   expect(
     await hub.requestOrdinary({
       type: "fetch_agents_request",
@@ -92,11 +163,13 @@ test("ordinary Hub create and message retries do not duplicate agents or prompts
     text: "hello",
     activeTurnBehavior: "steer",
   };
-  expect(await hub.requestOrdinary({ ...message, requestId: "message-first" })).toMatchObject({
-    payload: { accepted: true },
+  expect(await hub.requestOrdinary({ ...message, requestId: "message-first" })).toEqual({
+    type: "send_agent_message_response",
+    payload: { requestId: "message-first", agentId, accepted: true, error: null },
   });
-  expect(await hub.requestOrdinary({ ...message, requestId: "message-duplicate" })).toMatchObject({
-    payload: { accepted: true },
+  expect(await hub.requestOrdinary({ ...message, requestId: "message-duplicate" })).toEqual({
+    type: "send_agent_message_response",
+    payload: { requestId: "message-duplicate", agentId, accepted: true, error: null },
   });
   expect(
     hub

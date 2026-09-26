@@ -1,3 +1,4 @@
+import type { SessionOutboundMessage } from "@getpaseo/protocol/messages";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -36,6 +37,10 @@ type TerminalStreamEvent =
   | { terminalId: string; type: "restore"; data: Uint8Array };
 
 class FakeTerminalStreamClient implements TerminalStreamControllerClient {
+  private readonly updates = new Set<(message: SessionOutboundMessage) => void>();
+  emitUpdate(message: SessionOutboundMessage): void {
+    for (const receive of this.updates) receive(message);
+  }
   private readonly listeners = new Set<(event: TerminalStreamEvent) => void>();
   public subscribeCalls: Array<{ terminalId: string; options?: unknown }> = [];
   public unsubscribeCalls: string[] = [];
@@ -47,18 +52,46 @@ class FakeTerminalStreamClient implements TerminalStreamControllerClient {
   }> = [];
   public nextSubscribeResults: Array<{ terminalId: string; error?: string | null }> = [];
 
-  async subscribeTerminal(terminalId: string, options?: unknown) {
+  observeTerminal: TerminalStreamControllerClient["observeTerminal"] = (
+    terminalId,
+    receive,
+    options,
+  ) => {
     this.subscribeCalls.push({ terminalId, ...(options ? { options } : {}) });
     const result = this.nextSubscribeResults.shift();
-    if (!result) {
-      throw new Error("Missing fake subscribe result");
-    }
-    return result;
-  }
-
-  unsubscribeTerminal(terminalId: string): void {
-    this.unsubscribeCalls.push(terminalId);
-  }
+    if (!result) throw new Error("Missing fake subscribe result");
+    const subscriptionId = `terminal-${this.subscribeCalls.length}`;
+    const listener = (event: TerminalStreamEvent) => {
+      if (event.terminalId === terminalId) receive({ ...event, subscriptionId });
+    };
+    this.listeners.add(listener);
+    const ready = result.error
+      ? Promise.reject(new Error(result.error))
+      : Promise.resolve({
+          terminalId,
+          subscriptionId,
+          slot: this.subscribeCalls.length,
+          error: null,
+          requestId: subscriptionId,
+        });
+    let released = false;
+    return {
+      subscriptionId,
+      ready,
+      subscribe: (observer) => {
+        this.updates.add(observer.update);
+        return () => {
+          this.updates.delete(observer.update);
+        };
+      },
+      release: async () => {
+        if (released) return;
+        released = true;
+        this.listeners.delete(listener);
+        this.unsubscribeCalls.push(terminalId);
+      },
+    };
+  };
 
   sendTerminalInput(
     terminalId: string,
@@ -70,13 +103,6 @@ class FakeTerminalStreamClient implements TerminalStreamControllerClient {
       cols: message.cols,
       ...(message.intent ? { intent: message.intent } : {}),
     });
-  }
-
-  onTerminalStreamEvent(handler: (event: TerminalStreamEvent) => void): () => void {
-    this.listeners.add(handler);
-    return () => {
-      this.listeners.delete(handler);
-    };
   }
 
   emit(event: TerminalStreamEvent): void {
@@ -92,8 +118,10 @@ function createHarness(input?: { client?: FakeTerminalStreamClient }) {
   const restores: Array<{ terminalId: string; data: Uint8Array }> = [];
   const snapshots: Array<{ terminalId: string; text: string }> = [];
   const statuses: TerminalStreamControllerStatus[] = [];
+  const exits: string[] = [];
   const controller = new TerminalStreamController({
     client,
+    onExit: (terminalId) => exits.push(terminalId),
     getPreferredSize: () => ({ rows: 24, cols: 80 }),
     onOutput: (output) => {
       outputs.push(output);
@@ -112,7 +140,7 @@ function createHarness(input?: { client?: FakeTerminalStreamClient }) {
     },
   });
 
-  return { client, controller, outputs, restores, snapshots, statuses };
+  return { client, controller, outputs, restores, snapshots, statuses, exits };
 }
 
 async function flushAsyncWork(): Promise<void> {
@@ -239,7 +267,9 @@ describe("terminal-stream-controller", () => {
         },
       },
     ]);
-    expect(client.resizeCalls).toEqual([]);
+    expect(client.resizeCalls).toEqual([
+      { terminalId: "term-1", rows: 24, cols: 80, intent: "claim" },
+    ]);
     expect(harness.restores[0]?.data).toBe(restoreData);
     expect(harness.restores).toEqual([{ terminalId: "term-1", data: terminalOutput("restored") }]);
     expect(harness.outputs).toEqual([]);
@@ -263,4 +293,29 @@ describe("terminal-stream-controller", () => {
       error: null,
     });
   });
+});
+
+it("reports observation failure without declaring the PTY exited, then allows reattach", async () => {
+  const h = createHarness();
+  h.client.nextSubscribeResults.push({ terminalId: "term-1", error: null });
+  h.controller.setTerminal({ terminalId: "term-1" });
+  await flushAsyncWork();
+  h.client.emitUpdate({
+    type: "terminal_stream_exit",
+    payload: { terminalId: "term-1", subscriptionId: "terminal-1", error: "Snapshot read failed" },
+  });
+  expect(h.statuses.at(-1)).toEqual({
+    terminalId: "term-1",
+    isAttaching: false,
+    error: "Snapshot read failed",
+  });
+  expect(h.exits).toEqual([]);
+  expect(h.client.unsubscribeCalls).toEqual(["term-1"]);
+  h.client.nextSubscribeResults.push({ terminalId: "term-1", error: null });
+  h.controller.setTerminal({ terminalId: "term-1" });
+  await flushAsyncWork();
+  h.client.emit({ terminalId: "term-1", type: "output", data: terminalOutput("STILL ALIVE") });
+  expect(h.outputs).toHaveLength(1);
+  expect(h.statuses.at(-1)?.error).toBe(null);
+  h.controller.dispose();
 });

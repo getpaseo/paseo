@@ -25,7 +25,7 @@ afterEach(async () => {
   await client.close();
   await sdk.close();
   await daemon.close();
-  await rm(cwd, { recursive: true, force: true });
+  await rm(cwd, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
 });
 
 test("SDK and workspace handles preserve ownership and actual process directories", async () => {

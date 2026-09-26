@@ -9,7 +9,7 @@ import { createPluginCapabilities, type PluginNavigation } from "../actions";
 
 export interface PluginCommandCenterSource {
   plugins: readonly InstalledPlugin[];
-  runtime(pluginId: string): PluginSurfaceRuntime;
+  runtime(plugin: InstalledPlugin): PluginSurfaceRuntime;
   state: PluginClientStateSource;
   workspaceId: string | null;
   agentId: string | null;
@@ -22,12 +22,12 @@ export function buildPluginCommandCenterContributions(
 ): CommandCenterContribution[] {
   const contributions: CommandCenterContribution[] = [];
   for (const plugin of source.plugins) {
-    const runtime = source.runtime(plugin.id);
-    const common = createPluginCapabilities(plugin, runtime, source.navigation);
     for (const [rank, item] of plugin.commandCenterItems.entries()) {
       if (item.context === "workspace" && !source.workspaceId) continue;
       if (item.context === "agent" && (!source.workspaceId || !source.agentId)) continue;
       const run = async () => {
+        const runtime = source.runtime(plugin);
+        const common = createPluginCapabilities(plugin, runtime, source.navigation);
         try {
           if (item.context === "global") {
             await item.onSelect({ context: "global", ...common });
@@ -73,6 +73,8 @@ export function buildPluginCommandCenterContributions(
           });
         } catch (error) {
           source.reportError(error);
+        } finally {
+          await runtime.paseo.dispose().catch(source.reportError);
         }
       };
       contributions.push({

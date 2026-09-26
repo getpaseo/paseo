@@ -24,10 +24,34 @@ import {
   transformPiModels,
 } from "./agent.js";
 import { FakePi } from "./test-utils/fake-pi.js";
+import type { PiModel, PiThinkingLevel } from "./rpc-types.js";
 import type { PiUsagePollScheduler } from "./usage-poller.js";
 
 const ONE_BY_ONE_PNG_BASE64 =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=";
+
+const RESTRICTED_THINKING_MODEL: PiModel = {
+  provider: "kimi-coding",
+  id: "kimi-k3",
+  name: "Kimi K3",
+  reasoning: true,
+  thinkingLevelMap: {
+    off: null,
+    minimal: null,
+    low: "low",
+    medium: null,
+    high: "high",
+    xhigh: null,
+    max: "max",
+  },
+};
+
+interface PiThinkingCatalogCase {
+  name: string;
+  model: PiModel;
+  optionIds: PiThinkingLevel[] | undefined;
+  defaultThinkingOptionId: PiThinkingLevel | undefined;
+}
 
 test("Pi RPC timeout defaults to 60 seconds and accepts an override", () => {
   expect(PiProviderParamsSchema.parse({}).rpcTimeoutMs).toBe(60_000);
@@ -95,6 +119,42 @@ function readUtf8File(pathname: string): string {
 }
 
 type PaseoExtensionListener = (event: unknown, context?: unknown) => unknown;
+
+interface PiSessionEntry {
+  type: "message";
+  id: string;
+  parentId: string | null;
+  message: { role: string; content: unknown };
+}
+
+function piUserEntry(input: { id: string; parentId: string | null; text: string }): PiSessionEntry {
+  return {
+    type: "message",
+    id: input.id,
+    parentId: input.parentId,
+    message: { role: "user", content: input.text },
+  };
+}
+
+function piAssistantEntry(id: string, parentId: string): PiSessionEntry {
+  return { type: "message", id, parentId, message: { role: "assistant", content: [] } };
+}
+
+// Pi's context path: the entries from the root to the leaf.
+function piBranchTo(entries: PiSessionEntry[], leafId: string): PiSessionEntry[] {
+  const byId = new Map(entries.map((entry) => [entry.id, entry]));
+  const branch: PiSessionEntry[] = [];
+  for (let entry = byId.get(leafId); entry; entry = byId.get(entry.parentId ?? "")) {
+    branch.unshift(entry);
+  }
+  return branch;
+}
+
+function parseEntryCapture(notification: string): unknown {
+  const prefix = "PASEO_ENTRY_CAPTURE ";
+  expect(notification.startsWith(prefix)).toBe(true);
+  return JSON.parse(notification.slice(prefix.length));
+}
 
 async function loadPaseoExtensionListeners(
   extensionPath: string,
@@ -178,6 +238,51 @@ test("keeps normal Pi agent sessions persisted", async () => {
 
   await session.close();
 });
+
+test("lets Pi choose the thinking level when none is requested", async () => {
+  const pi = new FakePi();
+  pi.queueSessionSetup((session) => {
+    session.state = {
+      ...session.state,
+      model: RESTRICTED_THINKING_MODEL,
+      thinkingLevel: "max",
+    };
+  });
+  const session = await createClient(pi).createSession(
+    createConfig({ model: "kimi-coding/kimi-k3" }),
+  );
+  onTestFinished(() => session.close());
+
+  expect(pi.recordedLaunches[0]?.thinkingOptionId).toBeUndefined();
+  expect(pi.recordedLaunches[0]?.argv).not.toContain("--thinking");
+  expect(session.describePersistence()?.metadata?.thinkingOptionId).toBe("max");
+  await expect(session.getRuntimeInfo()).resolves.toMatchObject({ thinkingOptionId: "max" });
+});
+
+test.each([
+  { requested: "medium", effective: "high" },
+  { requested: "xhigh", effective: "max" },
+] as const)(
+  "adopts Pi's $effective level when creating with $requested",
+  async ({ requested, effective }) => {
+    const pi = new FakePi();
+    pi.queueSessionSetup((session) => {
+      session.state = {
+        ...session.state,
+        model: RESTRICTED_THINKING_MODEL,
+        thinkingLevel: effective,
+      };
+    });
+    const session = await createClient(pi).createSession(
+      createConfig({ model: "kimi-coding/kimi-k3", thinkingOptionId: requested }),
+    );
+    onTestFinished(() => session.close());
+
+    expect(pi.recordedLaunches[0]?.thinkingOptionId).toBe(requested);
+    expect(session.describePersistence()?.metadata?.thinkingOptionId).toBe(effective);
+    await expect(session.getRuntimeInfo()).resolves.toMatchObject({ thinkingOptionId: effective });
+  },
+);
 
 class SessionEvents {
   private readonly events: AgentStreamEvent[] = [];
@@ -852,7 +957,8 @@ describe("PiRpcAgentSession", () => {
     })) as PiRpcAgentSession;
     const events = new SessionEvents(session);
     const fakeSession = pi.latestSession();
-    fakeSession.capturedUserEntries = [{ id: "entry-old", parentId: null, text: "old prompt" }];
+    fakeSession.treeUserEntries = [{ id: "entry-old", parentId: null, text: "old prompt" }];
+    fakeSession.contextUserEntries = fakeSession.treeUserEntries;
 
     await session.startTurn("new prompt", { clientMessageId: "client-new" });
     fakeSession.finishSubmittedUserMessage({
@@ -1370,6 +1476,32 @@ describe("PiRpcAgentSession", () => {
     ]);
   });
 
+  test("adopts Pi's clamped thinking level when resuming a session", async () => {
+    const pi = new FakePi();
+    pi.queueSessionSetup((session) => {
+      session.state = {
+        ...session.state,
+        model: RESTRICTED_THINKING_MODEL,
+        thinkingLevel: "high",
+      };
+    });
+    const session = await createClient(pi).resumeSession({
+      provider: "pi",
+      sessionId: "pi-session-1",
+      nativeHandle: "/tmp/native-pi-session",
+      metadata: {
+        cwd: "/workspace/project",
+        model: "kimi-coding/kimi-k3",
+        thinkingOptionId: "medium",
+      },
+    });
+    onTestFinished(() => session.close());
+
+    expect(pi.recordedLaunches[0]?.thinkingOptionId).toBe("medium");
+    expect(session.describePersistence()?.metadata?.thinkingOptionId).toBe("high");
+    await expect(session.getRuntimeInfo()).resolves.toMatchObject({ thinkingOptionId: "high" });
+  });
+
   test("reports the persisted Pi entry attached to the submitted message", async () => {
     const pi = new FakePi();
     const client = createClient(pi);
@@ -1416,6 +1548,47 @@ describe("PiRpcAgentSession", () => {
     await session.close();
   });
 
+  test("captures the session's user entries apart from the ones on the current branch", async () => {
+    const pi = new FakePi();
+    const session = await createClient(pi).createSession(createConfig());
+    onTestFinished(() => session.close());
+    const listeners = await loadPaseoExtensionListeners(pi.recordedLaunches[0]!.extensionPaths[0]!);
+    // "abandoned" was rewound; "two" was sent from the same parent afterwards.
+    const entries = [
+      piUserEntry({ id: "one", parentId: null, text: "first" }),
+      piAssistantEntry("one-reply", "one"),
+      piUserEntry({ id: "abandoned", parentId: "one-reply", text: "rewound away" }),
+      piAssistantEntry("abandoned-reply", "abandoned"),
+      piUserEntry({ id: "two", parentId: "one-reply", text: "second" }),
+      piAssistantEntry("two-reply", "two"),
+    ];
+    const notifications: string[] = [];
+    const context = {
+      sessionManager: {
+        getEntries: () => entries,
+        buildContextEntries: () => piBranchTo(entries, "two-reply"),
+      },
+      ui: { notify: (message: string) => notifications.push(message) },
+    };
+
+    await listeners.get("session_start")?.({}, context);
+
+    expect(notifications.map(parseEntryCapture)).toEqual([
+      {
+        reason: "session_start",
+        treeEntries: [
+          { id: "one", parentId: null, text: "first" },
+          { id: "abandoned", parentId: "one-reply", text: "rewound away" },
+          { id: "two", parentId: "one-reply", text: "second" },
+        ],
+        contextEntries: [
+          { id: "one", parentId: null, text: "first" },
+          { id: "two", parentId: "one-reply", text: "second" },
+        ],
+      },
+    ]);
+  });
+
   test("appends agent and daemon prompts after Pi's discovered system prompt", async () => {
     const pi = new FakePi();
     const client = createClient(pi);
@@ -1436,8 +1609,6 @@ describe("PiRpcAgentSession", () => {
       "pi",
       "--mode",
       "rpc",
-      "--thinking",
-      "medium",
       "--extension",
       actualLaunch.extensionPaths[0],
     ]);
@@ -1505,6 +1676,91 @@ describe("PiRpcAgentSession", () => {
 
     expect(fakeSession.setModelRequests).toEqual([{ provider: "openrouter", modelId: "model-a" }]);
     expect(fakeSession.setThinkingLevelRequests).toEqual(["high"]);
+  });
+
+  test.each([
+    { requested: "medium", effective: "high", rpcRequest: "medium" },
+    { requested: "xhigh", effective: "max", rpcRequest: "xhigh" },
+    { requested: null, effective: "high", rpcRequest: "medium" },
+  ] as const)(
+    "stores Pi's $effective thinking level after requesting $requested",
+    async ({ requested, effective, rpcRequest }) => {
+      const pi = new FakePi();
+      pi.queueSessionSetup((session) => {
+        session.state = {
+          ...session.state,
+          model: RESTRICTED_THINKING_MODEL,
+          thinkingLevel: "low",
+        };
+      });
+      const { session } = await createSession(pi);
+      onTestFinished(() => session.close());
+      const fakeSession = pi.latestSession();
+      fakeSession.state = { ...fakeSession.state, thinkingLevel: effective };
+
+      await session.setThinkingOption(requested);
+
+      expect(fakeSession.setThinkingLevelRequests).toEqual([rpcRequest]);
+      expect(session.describePersistence()?.metadata?.thinkingOptionId).toBe(effective);
+      await expect(session.getRuntimeInfo()).resolves.toEqual({
+        provider: "pi",
+        sessionId: "pi-session-1",
+        model: "kimi-coding/kimi-k3",
+        thinkingOptionId: effective,
+        modeId: null,
+      });
+    },
+  );
+
+  test("refreshes Pi's thinking level after changing models", async () => {
+    const { pi, session } = await createSession();
+    onTestFinished(() => session.close());
+    const fakeSession = pi.latestSession();
+    fakeSession.setModelResult = RESTRICTED_THINKING_MODEL;
+    fakeSession.state = { ...fakeSession.state, thinkingLevel: "high" };
+
+    await session.setModel("kimi-coding/kimi-k3");
+
+    expect(fakeSession.setModelRequests).toEqual([{ provider: "kimi-coding", modelId: "kimi-k3" }]);
+    expect(session.describePersistence()?.metadata).toEqual({
+      cwd: "/tmp/paseo-pi-rpc-test",
+      model: "kimi-coding/kimi-k3",
+      thinkingOptionId: "high",
+    });
+    await expect(session.getRuntimeInfo()).resolves.toMatchObject({
+      model: "kimi-coding/kimi-k3",
+      thinkingOptionId: "high",
+    });
+  });
+
+  test("reports updated Pi thinking state instead of a cached selection", async () => {
+    const { pi, session } = await createSession();
+    onTestFinished(() => session.close());
+    const fakeSession = pi.latestSession();
+    fakeSession.state = { ...fakeSession.state, thinkingLevel: "off" };
+
+    await expect(session.getRuntimeInfo()).resolves.toMatchObject({ thinkingOptionId: "off" });
+    expect(session.describePersistence()?.metadata?.thinkingOptionId).toBe("off");
+  });
+
+  test("surfaces state refresh failures after a Pi thinking update", async () => {
+    const { pi, session } = await createSession();
+    onTestFinished(() => session.close());
+    pi.latestSession().getStateError = new Error("Pi state unavailable");
+
+    await expect(session.setThinkingOption("high")).rejects.toThrow("Pi state unavailable");
+    expect(session.describePersistence()?.metadata?.thinkingOptionId).toBe("medium");
+  });
+
+  test("surfaces state refresh failures after a Pi model update", async () => {
+    const { pi, session } = await createSession();
+    onTestFinished(() => session.close());
+    const fakeSession = pi.latestSession();
+    fakeSession.setModelResult = RESTRICTED_THINKING_MODEL;
+    fakeSession.getStateError = new Error("Pi state unavailable");
+
+    await expect(session.setModel("kimi-coding/kimi-k3")).rejects.toThrow("Pi state unavailable");
+    expect(session.describePersistence()?.metadata?.thinkingOptionId).toBe("medium");
   });
 
   test("materializes image prompts as text hints for text-only Pi models", async () => {
@@ -2253,6 +2509,9 @@ describe("PiRpcAgentClient", () => {
       "utf8",
     );
     const pi = new FakePi();
+    pi.queueSessionSetup((session) => {
+      session.state.thinkingLevel = "high";
+    });
     const client = new PiRpcAgentClient({
       logger: pino({ level: "silent" }),
       runtime: pi,
@@ -2323,6 +2582,133 @@ describe("PiRpcAgentClient", () => {
     });
     expect(pi.recordedLaunches[0]).toMatchObject({ cwd: "/workspace/with-extension" });
   });
+
+  test("marks the model Pi resolves from its own settings as the catalog default", async () => {
+    const pi = new FakePi();
+    const unconfigured = { provider: "openai", id: "gpt-4", name: "GPT-4", reasoning: false };
+    const configured = { provider: "zai", id: "glm-5.3", name: "GLM-5.3", reasoning: true };
+    pi.queueSessionSetup((session) => {
+      session.models = [unconfigured, configured];
+      session.state = { ...session.state, model: configured };
+    });
+
+    const catalog = await createClient(pi).fetchCatalog({
+      scope: "workspace",
+      cwd: "/workspace/project",
+      force: false,
+    });
+
+    expect(catalog.models.filter((model) => model.isDefault).map((model) => model.id)).toEqual([
+      "zai/glm-5.3",
+    ]);
+  });
+
+  test("honors per-model Pi thinking maps and clamps the catalog default upward", async () => {
+    const pi = new FakePi();
+    pi.queueSessionSetup((session) => {
+      session.models = [RESTRICTED_THINKING_MODEL];
+    });
+    const client = createClient(pi);
+
+    const catalog = await client.fetchCatalog({
+      scope: "workspace",
+      cwd: "/workspace/project",
+      force: false,
+    });
+
+    expect(catalog.models).toEqual([
+      {
+        provider: "pi",
+        id: "kimi-coding/kimi-k3",
+        label: "Kimi K3",
+        description: "kimi-coding/kimi-k3",
+        metadata: { provider: "kimi-coding", modelId: "kimi-k3" },
+        thinkingOptions: [
+          { id: "low", label: "Low", description: "Faster reasoning" },
+          { id: "high", label: "High", description: "Deeper reasoning", isDefault: true },
+          { id: "max", label: "Max", description: "Extreme reasoning" },
+        ],
+        defaultThinkingOptionId: "high",
+      },
+    ]);
+  });
+
+  test.each<PiThinkingCatalogCase>([
+    {
+      name: "no thinking map",
+      model: { ...RESTRICTED_THINKING_MODEL, thinkingLevelMap: undefined },
+      optionIds: ["off", "minimal", "low", "medium", "high"],
+      defaultThinkingOptionId: "medium",
+    },
+    {
+      name: "a partial thinking map",
+      model: {
+        ...RESTRICTED_THINKING_MODEL,
+        thinkingLevelMap: { minimal: null, medium: null, xhigh: "extra-high", max: null },
+      },
+      optionIds: ["off", "low", "high", "xhigh"],
+      defaultThinkingOptionId: "high",
+    },
+    {
+      name: "explicitly mapped extended levels",
+      model: {
+        ...RESTRICTED_THINKING_MODEL,
+        thinkingLevelMap: { xhigh: "extra-high", max: "maximum" },
+      },
+      optionIds: ["off", "minimal", "low", "medium", "high", "xhigh", "max"],
+      defaultThinkingOptionId: "medium",
+    },
+    {
+      name: "only lower thinking levels",
+      model: {
+        ...RESTRICTED_THINKING_MODEL,
+        thinkingLevelMap: { medium: null, high: null },
+      },
+      optionIds: ["off", "minimal", "low"],
+      defaultThinkingOptionId: "low",
+    },
+    {
+      name: "a non-reasoning model",
+      model: { ...RESTRICTED_THINKING_MODEL, reasoning: false },
+      optionIds: undefined,
+      defaultThinkingOptionId: undefined,
+    },
+    {
+      name: "no supported thinking levels",
+      model: {
+        ...RESTRICTED_THINKING_MODEL,
+        thinkingLevelMap: {
+          ...RESTRICTED_THINKING_MODEL.thinkingLevelMap,
+          low: null,
+          high: null,
+          max: null,
+        },
+      },
+      optionIds: [],
+      defaultThinkingOptionId: "off",
+    },
+  ])(
+    "resolves Pi thinking options for $name",
+    async ({ model, optionIds, defaultThinkingOptionId }) => {
+      const pi = new FakePi();
+      pi.queueSessionSetup((session) => {
+        session.models = [model];
+      });
+      const catalog = await createClient(pi).fetchCatalog({
+        scope: "workspace",
+        cwd: "/workspace/project",
+        force: false,
+      });
+
+      expect(catalog.models).toHaveLength(1);
+      const thinkingOptions = catalog.models[0]?.thinkingOptions;
+      expect(thinkingOptions?.map((option) => option.id)).toEqual(optionIds);
+      expect(catalog.models[0]?.defaultThinkingOptionId).toBe(defaultThinkingOptionId);
+      expect(
+        thinkingOptions?.filter((option) => option.isDefault).map((option) => option.id),
+      ).toEqual(optionIds?.filter((id) => id === defaultThinkingOptionId));
+    },
+  );
 
   test("lists no draft features without starting a Pi session", async () => {
     const pi = new FakePi();
@@ -2548,10 +2934,11 @@ describe("PiRpcAgentClient", () => {
 
   test("rewinds conversation through the Pi tree navigation bridge", async () => {
     const { pi, session, events } = await createSession();
-    pi.latestSession().capturedUserEntries = [
+    pi.latestSession().treeUserEntries = [
       { id: "entry-1", parentId: null, text: "first prompt" },
       { id: "entry-3", parentId: "entry-2", text: "second prompt" },
     ];
+    pi.latestSession().contextUserEntries = pi.latestSession().treeUserEntries;
 
     await session.startTurn("first prompt");
     pi.latestSession().finishTurn({ role: "assistant", content: [] });
@@ -2565,6 +2952,23 @@ describe("PiRpcAgentClient", () => {
       supportsRewindBoth: false,
     });
     expect(pi.latestSession().treeNavigationRequests).toEqual(["entry-1"]);
+  });
+
+  test("rewinds a row whose Pi entry compaction summarized away", async () => {
+    const { pi, session } = await createSession();
+    const fakeSession = pi.latestSession();
+    // Compaction summarized entry-1, so the replayed branch starts at entry-3.
+    fakeSession.treeUserEntries = [
+      { id: "entry-1", parentId: null, text: "first prompt" },
+      { id: "entry-3", parentId: "entry-2", text: "second prompt" },
+    ];
+    fakeSession.contextUserEntries = [
+      { id: "entry-3", parentId: "entry-2", text: "second prompt" },
+    ];
+
+    await session.revertConversation?.({ messageId: "entry-1" });
+
+    expect(fakeSession.treeNavigationRequests).toEqual(["entry-1"]);
   });
 
   test("injects MCP servers without replacing the Pi global MCP config", async () => {
@@ -2622,8 +3026,6 @@ describe("PiRpcAgentClient", () => {
       "pi",
       "--mode",
       "rpc",
-      "--thinking",
-      "medium",
       "--mcp-config",
       actualLaunch.mcpConfigPath,
       "--extension",
@@ -2704,8 +3106,6 @@ describe("PiRpcAgentClient", () => {
       "pi",
       "--mode",
       "rpc",
-      "--thinking",
-      "medium",
       "--extension",
       actualLaunch.extensionPaths[0],
     ]);

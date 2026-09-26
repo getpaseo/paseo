@@ -1,12 +1,13 @@
 import path from "node:path";
 import type { Command } from "commander";
 import { isCancel, password as passwordPrompt } from "@clack/prompts";
+import { hashDaemonPassword } from "@getpaseo/server/auth";
 import {
-  hashDaemonPassword,
-  loadPersistedConfig,
+  readPersistedConfig,
   savePersistedConfig,
   type PersistedConfig,
-} from "@getpaseo/server";
+} from "@getpaseo/server/configuration";
+import { resolvePaseoHome } from "@getpaseo/server/daemon-control";
 import type {
   CommandError,
   CommandOptions,
@@ -14,7 +15,6 @@ import type {
   OutputSchema,
   SingleResult,
 } from "../../output/index.js";
-import { resolveLocalPaseoHome } from "./local-daemon.js";
 
 const CONFIG_FILENAME = "config.json";
 
@@ -57,6 +57,17 @@ function createCommandError(code: string, message: string, details?: string): Co
   return { code, message, ...(details ? { details } : {}) };
 }
 
+function terminalPasswordPrompt(): PromptPassword {
+  if (!process.stdin.isTTY) {
+    throw createCommandError(
+      "PASSWORD_TTY_REQUIRED",
+      "paseo daemon set-password needs a terminal to read the password",
+      "Run it in an interactive terminal, or set PASEO_PASSWORD in the daemon's environment instead.",
+    );
+  }
+  return (message) => passwordPrompt({ message });
+}
+
 async function promptForPassword(promptPassword: PromptPassword): Promise<string> {
   const first = await promptPassword("New daemon password");
   if (isCancel(first)) {
@@ -81,9 +92,9 @@ export async function setDaemonPasswordInConfig(
   newPassword: string,
   options: SetPasswordOptions = {},
 ): Promise<SetPasswordResult> {
-  const paseoHome = resolveLocalPaseoHome(options.home);
+  const paseoHome = resolvePaseoHome({ PASEO_HOME: options.home });
   const configPath = path.join(paseoHome, CONFIG_FILENAME);
-  const persisted = loadPersistedConfig(paseoHome);
+  const persisted = readPersistedConfig(paseoHome);
   const nextConfig: PersistedConfig = {
     ...persisted,
     daemon: {
@@ -100,8 +111,8 @@ export async function setDaemonPasswordInConfig(
   return {
     action: "password_set",
     configPath,
-    restartCommand: "paseo daemon restart",
-    message: `Password written to ${configPath}\nRestart the daemon for the change to take effect.\nRun: paseo daemon restart`,
+    restartCommand: `paseo daemon restart --home ${JSON.stringify(paseoHome)}`,
+    message: `Password written to ${configPath}\nRestart the daemon for the change to take effect.\nRun: paseo daemon restart --home ${JSON.stringify(paseoHome)}`,
   };
 }
 
@@ -112,10 +123,10 @@ export async function runSetPasswordCommand(
   const promptPassword =
     typeof options.promptPassword === "function"
       ? (options.promptPassword as PromptPassword)
-      : (message: string) => passwordPrompt({ message });
+      : terminalPasswordPrompt();
   const newPassword = await promptForPassword(promptPassword);
   const result = await setDaemonPasswordInConfig(newPassword, {
-    home: typeof options.home === "string" ? options.home : undefined,
+    home: options.daemonTarget.kind === "instance" ? options.daemonTarget.home : undefined,
   });
 
   return {

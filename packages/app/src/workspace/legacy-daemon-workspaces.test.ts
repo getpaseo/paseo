@@ -1,25 +1,11 @@
 import { afterEach, describe, expect, it } from "vitest";
 import type { DaemonClient, FetchAgentsEntry } from "@getpaseo/client/internal/daemon-client";
-import { useSessionStore, type Agent, type WorkspaceDescriptor } from "@/stores/session-store";
+import { useSessionStore, type Agent } from "@/stores/session-store";
 import { deriveWorkspaceAgentVisibility } from "@/workspace-tabs/agent-visibility";
-import { buildWorkspaceStructureProjects } from "@/projects/workspace-structure";
-import {
-  applyLegacyDaemonWorkspaceOwnership,
-  buildLegacyDaemonWorkspaceSnapshot,
-} from "./legacy-daemon-workspaces";
+import { buildAgentDirectoryState } from "@/utils/agent-directory-sync";
+import { applyLegacyDaemonWorkspaceOwnership } from "./legacy-daemon-workspaces";
 
 const SERVER_ID = "srv_legacy";
-
-function legacyProjectFromWorkspace(workspace: WorkspaceDescriptor) {
-  return {
-    projectId: workspace.projectId,
-    projectKey: null,
-    projectDisplayName: workspace.projectDisplayName,
-    projectCustomName: workspace.projectCustomName ?? null,
-    projectRootPath: workspace.projectRootPath,
-    projectKind: workspace.projectKind,
-  };
-}
 
 function legacyAgent(input: {
   id: string;
@@ -82,87 +68,9 @@ afterEach(() => {
   useSessionStore.getState().clearSession(SERVER_ID);
 });
 
-describe("buildLegacyDaemonWorkspaceSnapshot", () => {
-  it("creates path-backed workspace rows and stamps legacy agents with their workspace id", () => {
-    const snapshot = buildLegacyDaemonWorkspaceSnapshot({
-      serverId: SERVER_ID,
-      entries: [
-        legacyAgent({ id: "agent-running", cwd: "/repo/app", status: "running" }),
-        legacyAgent({ id: "agent-idle", cwd: "/repo/app", status: "idle" }),
-      ],
-    });
-
-    expect(Array.from(snapshot.workspaces.values())).toEqual([
-      expect.objectContaining({
-        id: "/repo/app",
-        projectId: "/repo",
-        projectDisplayName: "repo",
-        projectRootPath: "/repo",
-        workspaceDirectory: "/repo/app",
-        projectKind: "git",
-        workspaceKind: "checkout",
-        name: "app",
-        status: "running",
-        scripts: [],
-      }),
-    ]);
-    expect(
-      Array.from(snapshot.agents.values()).map((agent) => ({
-        id: agent.id,
-        serverId: agent.serverId,
-        cwd: agent.cwd,
-        workspaceId: agent.workspaceId,
-      })),
-    ).toEqual([
-      {
-        id: "agent-running",
-        serverId: SERVER_ID,
-        cwd: "/repo/app",
-        workspaceId: "/repo/app",
-      },
-      {
-        id: "agent-idle",
-        serverId: SERVER_ID,
-        cwd: "/repo/app",
-        workspaceId: "/repo/app",
-      },
-    ]);
-  });
-
-  it("keeps matching legacy path projects separate across hosts", () => {
-    const first = buildLegacyDaemonWorkspaceSnapshot({
-      serverId: "host-a",
-      entries: [legacyAgent({ id: "agent-a", cwd: "/repo/app" })],
-    });
-    const second = buildLegacyDaemonWorkspaceSnapshot({
-      serverId: "host-b",
-      entries: [legacyAgent({ id: "agent-b", cwd: "/repo/app" })],
-    });
-
-    const projects = buildWorkspaceStructureProjects({
-      sessions: [
-        {
-          serverId: "host-a",
-          projects: Array.from(first.workspaces.values(), legacyProjectFromWorkspace),
-          workspaces: first.workspaces.values(),
-        },
-        {
-          serverId: "host-b",
-          projects: Array.from(second.workspaces.values(), legacyProjectFromWorkspace),
-          workspaces: second.workspaces.values(),
-        },
-      ],
-    });
-
-    expect(projects).toHaveLength(2);
-    expect(projects.map((project) => project.hosts[0]?.serverId).sort()).toEqual([
-      "host-a",
-      "host-b",
-    ]);
-  });
-
+describe("applyLegacyDaemonWorkspaceOwnership", () => {
   it("keeps old-daemon agent updates attached to the path-backed workspace", () => {
-    const snapshot = buildLegacyDaemonWorkspaceSnapshot({
+    const snapshot = buildAgentDirectoryState({
       serverId: SERVER_ID,
       entries: [legacyAgent({ id: "agent-running", cwd: "/repo/app", status: "running" })],
     });
@@ -173,7 +81,8 @@ describe("buildLegacyDaemonWorkspaceSnapshot", () => {
       hostname: null,
       version: "0.1.96",
     });
-    store.setWorkspaces(SERVER_ID, snapshot.workspaces);
+    const cachedAgent = getSnapshotAgent(snapshot, "agent-running");
+    snapshot.agents.set(cachedAgent.id, { ...cachedAgent, workspaceId: "/repo/app" });
     store.setAgents(SERVER_ID, snapshot.agents);
 
     const existingAgent = getSnapshotAgent(snapshot, "agent-running");

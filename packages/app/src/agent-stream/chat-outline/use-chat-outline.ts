@@ -33,15 +33,15 @@ export interface UseChatOutlineInput {
   enabled: boolean;
   viewportRef: RefObject<StreamViewportHandle | null>;
   onJumpError: () => void;
-  visibleItemIds?: ReadonlySet<string>;
-  revealLoadedItem?: (itemId: string) => boolean;
+  visibleMessageIds?: ReadonlySet<string>;
+  revealLoadedMessage?: (messageId: string) => boolean;
 }
 
 export interface ChatOutline {
   prompts: ChatOutlinePrompt[];
   activePrompt: ActivePromptSource;
   jumpToPrompt: (seq: number) => void;
-  reportReadingPosition: (rowId: string | null) => void;
+  reportReadingPosition: (seq: number | null) => void;
 }
 
 export function useChatOutline({
@@ -53,24 +53,35 @@ export function useChatOutline({
   enabled,
   viewportRef,
   onJumpError,
-  visibleItemIds,
-  revealLoadedItem,
+  visibleMessageIds,
+  revealLoadedMessage,
 }: UseChatOutlineInput): ChatOutline {
   const [index, setIndex] = useState<AgentTimelinePromptIndexPayload | null>(null);
   const [pendingJump, setPendingJump] = useState<PendingPromptJump | null>(null);
   const [activePrompt] = useState(createActivePromptPublisher);
-  const readingRowIdRef = useRef<string | null>(null);
+  const readingSeqRef = useRef<number | null>(null);
   const nextJumpRequestIdRef = useRef(0);
   const nextIndexRequestIdRef = useRef(0);
   const loadedItems = useMemo(() => [...tail, ...(head ?? NO_STREAM_ITEMS)], [head, tail]);
   const prompts = enabled ? (index?.prompts ?? NO_PROMPTS) : NO_PROMPTS;
+
+  // The viewed timeline already owns live delivery and reconnect catch-up. Its complete
+  // loaded items (including rows outside the mounted window) invalidate the prompt index.
+  const latestPromptSeq = loadedItems.reduce(
+    (latest, item) =>
+      item.kind === "user_message" && item.timelineCursor?.epoch === timelineEpoch
+        ? Math.max(latest, item.timelineCursor.seq)
+        : latest,
+    -1,
+  );
+
+  useEffect(() => setIndex(null), [agentId, enabled, serverId, timelineEpoch]);
 
   useEffect(() => {
     if (!isWeb || !enabled) {
       setIndex(null);
       return;
     }
-    setIndex(null);
     const client = getHostRuntimeStore().getClient(serverId);
     if (!client) return;
     let active = true;
@@ -91,42 +102,26 @@ export function useChatOutline({
         .catch(() => undefined);
     };
     refresh();
-    const unsubscribe = client.on("agent_stream", (message) => {
-      if (
-        message.type === "agent_stream" &&
-        message.payload.agentId === agentId &&
-        message.payload.event.type === "timeline" &&
-        message.payload.event.item.type === "user_message"
-      ) {
-        refresh();
-      }
-    });
     return () => {
       active = false;
-      unsubscribe();
     };
-  }, [agentId, enabled, serverId, timelineEpoch]);
+  }, [agentId, enabled, serverId, timelineEpoch, latestPromptSeq]);
 
-  // The transcript names the row it is showing; the outline turns that into a prompt using the
-  // complete index, so unloaded rows never have to exist in the DOM to be marked.
+  // The transcript resolves display rows (including Markdown blocks and plugin cards) to
+  // timeline positions. The outline uses the complete index, including unloaded prompts.
   const publishActivePrompt = useStableEvent(() => {
-    const rowId = readingRowIdRef.current;
-    const anchorSeq =
-      rowId === null
-        ? null
-        : (loadedItems.find((item) => item.id === rowId)?.timelineCursor?.seq ?? null);
-    activePrompt.publish(resolveActivePromptSeq(prompts, anchorSeq));
+    activePrompt.publish(resolveActivePromptSeq(prompts, readingSeqRef.current));
   });
 
-  const reportReadingPosition = useStableEvent((rowId: string | null) => {
-    readingRowIdRef.current = rowId;
+  const reportReadingPosition = useStableEvent((seq: number | null) => {
+    readingSeqRef.current = seq;
     publishActivePrompt();
   });
 
   useEffect(() => {
     nextJumpRequestIdRef.current += 1;
     setPendingJump(null);
-    readingRowIdRef.current = null;
+    readingSeqRef.current = null;
     activePrompt.publish(null);
   }, [activePrompt, agentId, timelineEpoch]);
 
@@ -134,15 +129,15 @@ export function useChatOutline({
   // who never scrolls would otherwise sit on an unmarked rail.
   useEffect(() => {
     publishActivePrompt();
-  }, [loadedItems, prompts, publishActivePrompt]);
+  }, [prompts, publishActivePrompt]);
 
   useEffect(() => {
     if (pendingJump === null) return;
     const target = loadedItems.find((item) => item.timelineCursor?.seq === pendingJump.seq);
     if (target) {
       if (pendingJump.hasScrolled) return;
-      if (visibleItemIds?.has(target.id) === false) {
-        revealLoadedItem?.(target.id);
+      if (visibleMessageIds?.has(target.id) === false) {
+        revealLoadedMessage?.(target.id);
         return;
       }
       viewportRef.current?.scrollToMessage?.(target.id);
@@ -153,7 +148,7 @@ export function useChatOutline({
       return;
     }
     if (pendingJump.fetchSettled) setPendingJump(null);
-  }, [loadedItems, pendingJump, revealLoadedItem, viewportRef, visibleItemIds]);
+  }, [loadedItems, pendingJump, revealLoadedMessage, viewportRef, visibleMessageIds]);
 
   const jumpToPrompt = useCallback(
     (seq: number) => {
@@ -161,7 +156,7 @@ export function useChatOutline({
       setPendingJump(null);
       const loaded = loadedItems.find((item) => item.timelineCursor?.seq === seq);
       if (loaded) {
-        if (revealLoadedItem?.(loaded.id)) {
+        if (revealLoadedMessage?.(loaded.id)) {
           const requestId = nextJumpRequestIdRef.current;
           setPendingJump({ requestId, seq, fetchSettled: true, hasScrolled: false });
           return;
@@ -185,7 +180,7 @@ export function useChatOutline({
           });
         });
     },
-    [agentId, index, loadedItems, onJumpError, revealLoadedItem, serverId, viewportRef],
+    [agentId, index, loadedItems, onJumpError, revealLoadedMessage, serverId, viewportRef],
   );
 
   return { prompts, activePrompt, jumpToPrompt, reportReadingPosition };

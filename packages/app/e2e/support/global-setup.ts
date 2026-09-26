@@ -1,3 +1,5 @@
+import { warmMetro } from "./metro-warmup.mjs";
+export { warmMetro } from "./metro-warmup.mjs";
 import { spawn, type ChildProcess } from "node:child_process";
 import { killProcessTree } from "./helpers/spawn-node";
 import { existsSync } from "node:fs";
@@ -16,7 +18,8 @@ export interface WaitForServerOptions {
 type ServerProbe = (host: string, port: number) => Promise<void>;
 
 const RESERVED_LOCAL_PORTS = new Set([
-  6767, // Developer daemon.
+  6767, // Installed daemon.
+  6768, // Developer daemon.
   61680, // OpenCode's default local server.
 ]);
 
@@ -120,32 +123,6 @@ async function probeMetro(host: string, port: number): Promise<void> {
 
 export async function waitForMetro(port: number, options: WaitForServerOptions): Promise<void> {
   await waitForServer(port, options, probeMetro);
-}
-
-export async function warmMetro(port: number): Promise<void> {
-  const origin = `http://127.0.0.1:${port}`;
-  const documentResponse = await fetch(origin, { signal: AbortSignal.timeout(120_000) });
-  if (!documentResponse.ok) {
-    throw new Error(`Metro document warmup failed with HTTP ${documentResponse.status}`);
-  }
-  const document = await documentResponse.text();
-  const scriptSources = [...document.matchAll(/<script[^>]+src=["']([^"']+)["']/g)].map(
-    (match) => match[1],
-  );
-  if (scriptSources.length === 0) {
-    throw new Error("Metro document warmup found no scripts to compile");
-  }
-  for (const source of scriptSources) {
-    const scriptUrl = new URL(source, origin);
-    if (scriptUrl.origin !== origin) continue;
-    const response = await fetch(scriptUrl, { signal: AbortSignal.timeout(120_000) });
-    if (!response.ok) {
-      throw new Error(
-        `Metro bundle warmup failed for ${scriptUrl.pathname}: HTTP ${response.status}`,
-      );
-    }
-    await response.arrayBuffer();
-  }
 }
 
 function startMetro(port: number, buffer: ReturnType<typeof createLineBuffer>): ChildProcess {

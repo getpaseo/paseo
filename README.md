@@ -50,10 +50,9 @@ Run agents in parallel on your own machines. Ship from your phone or your desk.
 ## Plugins
 
 Add themes, workspace panels, commands, settings screens, and coding-agent providers with trusted
-TypeScript plugins. Install from a local directory or Git repository with `paseo plugin add <source>`.
+TypeScript plugins. Install from npm, Git, or a local directory with `paseo plugin install <source>`.
 
-See the [plugin docs](https://paseo.sh/docs/plugins) for your Paseo version, or start with the
-[0.8 beta quickstart](https://paseo.sh/docs/plugins/v0.8). Plugins run with access to your daemon
+Start with the [plugin quickstart](https://paseo.sh/docs/plugins). Plugins run with access to your daemon
 machine and inside connected clients; install only code you trust.
 
 ## Getting Started
@@ -193,6 +192,12 @@ npm run build:server
 # repo-wide checks
 npm run typecheck
 ```
+
+## Sponsors
+
+Paseo is built by one person and funded by the people who use it. Support the work on [GitHub Sponsors](https://github.com/sponsors/boudra). Companies can [sponsor Paseo](https://paseo.sh/sponsor#spot) monthly and have their logo shown here and on the paseo.sh homepage.
+
+<!-- Sponsor logos go here, in the same order as packages/website/src/data/sponsors.ts -->
 
 ## Related projects
 

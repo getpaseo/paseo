@@ -1,3 +1,4 @@
+import { SessionDelivery } from "../owned-subscriptions/index.js";
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -26,6 +27,7 @@ import {
   createNoGitWorkspaceRuntimeSnapshot,
   createNoopWorkspaceGitService,
 } from "../../test-utils/workspace-git-service-stub.js";
+import { createWorktree, deletePaseoWorktree } from "../../../utils/worktree.js";
 import { expandTilde } from "../../../utils/path.js";
 import type { GitMetadataGenerator } from "./git-metadata-generator.js";
 
@@ -48,6 +50,7 @@ function createFakeDiffSubscriber(initial: CheckoutDiffSnapshotPayload) {
   const subscriptions: FakeDiffSubscription[] = [];
   const refreshedCwds: string[] = [];
   const subscriber: CheckoutDiffSubscriber = {
+    read: async (params) => ({ ...initial, cwd: params.cwd }),
     subscribe: async (params, listener) => {
       let isSubscribed = true;
       const subscription: FakeDiffSubscription = {
@@ -104,6 +107,7 @@ interface RecordedGeneratorCalls {
 }
 
 function makeCheckoutSession(options?: {
+  paseoHome?: string;
   git?: Partial<WorkspaceGitService>;
   diff?: CheckoutDiffSubscriber;
   github?: Partial<ForgeService>;
@@ -169,11 +173,27 @@ function makeCheckoutSession(options?: {
     checkoutDiffManager:
       options?.diff ?? createFakeDiffSubscriber({ cwd: "", files: [], error: null }).subscriber,
     gitMetadataGenerator,
-    paseoHome: "/tmp/paseo-home",
+    paseoHome: options?.paseoHome ?? "/tmp/paseo-home",
     worktreesRoot: undefined,
     logger: pino({ level: "silent" }),
   });
-  return { checkout, emitted, hostCalls, gitMutationCalls, generatorCalls };
+  const delivery = new SessionDelivery((_source, message) => emitted.push(message));
+  return {
+    checkout,
+    emitted,
+    hostCalls,
+    gitMutationCalls,
+    generatorCalls,
+    subscribe: (request: Parameters<CheckoutSession["handleSubscribeDiffRequest"]>[0]) =>
+      delivery.request(undefined, request, () =>
+        checkout.handleSubscribeDiffRequest(request, delivery),
+      ),
+    unsubscribe: (request: Parameters<CheckoutSession["handleUnsubscribeDiffRequest"]>[0]) =>
+      delivery.request(undefined, request, () =>
+        checkout.handleUnsubscribeDiffRequest(request, delivery),
+      ),
+    close: () => delivery.close(),
+  };
 }
 
 function createGitSnapshot(
@@ -532,9 +552,9 @@ describe("CheckoutSession", () => {
         files: [],
         error: null,
       });
-      const { checkout, emitted } = makeCheckoutSession({ diff: subscriber });
+      const { subscribe, unsubscribe, emitted } = makeCheckoutSession({ diff: subscriber });
 
-      await checkout.handleSubscribeDiffRequest({
+      await subscribe({
         type: "subscribe_checkout_diff_request",
         subscriptionId: "s1",
         cwd: "/repo",
@@ -566,7 +586,7 @@ describe("CheckoutSession", () => {
         },
       });
 
-      checkout.handleUnsubscribeDiffRequest({
+      await unsubscribe({
         type: "unsubscribe_checkout_diff_request",
         subscriptionId: "s1",
       });
@@ -574,22 +594,22 @@ describe("CheckoutSession", () => {
       expect(subscriptions[0].unsubscribeCalls).toBe(1);
     });
 
-    it("replaces an existing subscription when the same id subscribes again", async () => {
+    it("preserves legacy replacement when an existing id when the same id subscribes again", async () => {
       const { subscriber, subscriptions } = createFakeDiffSubscriber({
         cwd: "/repo",
         files: [],
         error: null,
       });
-      const { checkout } = makeCheckoutSession({ diff: subscriber });
+      const { subscribe } = makeCheckoutSession({ diff: subscriber });
 
-      await checkout.handleSubscribeDiffRequest({
+      await subscribe({
         type: "subscribe_checkout_diff_request",
         subscriptionId: "s1",
         cwd: "/repo",
         compare: { mode: "uncommitted" },
         requestId: "first",
       });
-      await checkout.handleSubscribeDiffRequest({
+      await subscribe({
         type: "subscribe_checkout_diff_request",
         subscriptionId: "s1",
         cwd: "/repo",
@@ -608,16 +628,16 @@ describe("CheckoutSession", () => {
         files: [],
         error: null,
       });
-      const { checkout } = makeCheckoutSession({ diff: subscriber });
+      const { subscribe, close } = makeCheckoutSession({ diff: subscriber });
 
-      await checkout.handleSubscribeDiffRequest({
+      await subscribe({
         type: "subscribe_checkout_diff_request",
         subscriptionId: "s1",
         cwd: "/repo",
         compare: { mode: "uncommitted" },
         requestId: "r",
       });
-      await checkout.handleSubscribeDiffRequest({
+      await subscribe({
         type: "subscribe_checkout_diff_request",
         subscriptionId: "s2",
         cwd: "/repo",
@@ -625,7 +645,7 @@ describe("CheckoutSession", () => {
         requestId: "r",
       });
 
-      checkout.cleanup();
+      await close();
 
       expect(subscriptions[0].unsubscribeCalls).toBe(1);
       expect(subscriptions[1].unsubscribeCalls).toBe(1);
@@ -1703,4 +1723,92 @@ describe("CheckoutSession", () => {
       ]);
     });
   });
+});
+
+it("creates a PR from a restored exact base using the host metadata and a forge branch name", async () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "paseo-restored-pr-")));
+  const repo = join(root, "repo");
+  const remote = join(root, "remote.git");
+  const paseoHome = join(root, "home");
+  const git = (cwd: string, ...args: string[]) =>
+    execFileSync("git", args, { cwd, encoding: "utf8", stdio: "pipe" }).trim();
+  try {
+    git(root, "init", "-b", "main", repo);
+    git(repo, "config", "user.name", "Test");
+    git(repo, "config", "user.email", "test@example.com");
+    git(repo, "commit", "--allow-empty", "-m", "base");
+    git(root, "init", "--bare", remote);
+    git(repo, "remote", "add", "origin", remote);
+    git(repo, "push", "-u", "origin", "main");
+    const baseRef = "refs/remotes/origin/main";
+    const created = await createWorktree({
+      cwd: repo,
+      paseoHome,
+      worktreeSlug: "restored-pr",
+      source: { kind: "branch-off", baseBranch: baseRef, branchName: "restored-pr" },
+      runSetup: false,
+    });
+    writeFileSync(join(created.worktreePath, "feature.txt"), "feature\n");
+    git(created.worktreePath, "add", ".");
+    git(created.worktreePath, "commit", "-m", "feature");
+    await deletePaseoWorktree({ cwd: repo, paseoHome, worktreePath: created.worktreePath });
+    const restored = await createWorktree({
+      cwd: repo,
+      paseoHome,
+      worktreeSlug: "restored-pr",
+      source: { kind: "restore", branchName: created.branchName, baseRef },
+      runSetup: false,
+    });
+    const requests: Array<Parameters<ForgeService["createPullRequest"]>[0]> = [];
+    const service: ForgeService = {
+      ...createGitHubService(),
+      createPullRequest: async (input) => {
+        requests.push(input);
+        return { url: "https://example.com/pull/1", number: 1 };
+      },
+    };
+    const { checkout, emitted } = makeCheckoutSession({
+      paseoHome,
+      git: { resolveForge: async () => ({ forge: "github", host: "github.com", service }) },
+    });
+    await checkout.handleCheckoutPrCreateRequest({
+      type: "checkout_pr_create_request",
+      cwd: restored.worktreePath,
+      baseRef: "refs/heads/main",
+      title: "Feature",
+      body: "Description",
+      requestId: "wrong-base",
+    });
+    expect(emitted.at(-1)).toMatchObject({
+      type: "checkout_pr_create_response",
+      payload: { error: { message: expect.stringContaining("Base ref mismatch") } },
+    });
+    expect(requests).toHaveLength(0);
+    await checkout.handleCheckoutPrCreateRequest({
+      type: "checkout_pr_create_request",
+      cwd: restored.worktreePath,
+      baseRef: "main",
+      title: "Feature",
+      body: "Description",
+      requestId: "right-base",
+    });
+    expect(emitted.at(-1)).toMatchObject({
+      type: "checkout_pr_create_response",
+      payload: { error: null, number: 1 },
+    });
+    expect(requests).toEqual([
+      {
+        cwd: restored.worktreePath,
+        base: "main",
+        head: created.branchName,
+        title: "Feature",
+        body: "Description",
+      },
+    ]);
+    expect(git(remote, "rev-parse", `refs/heads/${created.branchName}`)).toBe(
+      git(restored.worktreePath, "rev-parse", "HEAD"),
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });

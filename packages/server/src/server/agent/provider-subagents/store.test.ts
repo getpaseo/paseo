@@ -45,7 +45,7 @@ describe("ProviderSubagentStore", () => {
         updatedAt: "2026-07-12T10:00:02.000Z",
       }),
     ]);
-    expect(subagents.fetchTimeline("parent-a", "child-1").rows).toEqual([
+    expect(subagents.fetchTimeline("parent-a", "child-1").rows).toMatchObject([
       {
         seq: 1,
         timestamp: "2026-07-12T10:00:01.000Z",
@@ -98,8 +98,11 @@ describe("ProviderSubagentStore", () => {
       direction: "tail",
       limit: 1,
     });
-    expect(page.rows).toHaveLength(101);
-    expect(page.rows[0]?.seq).toBe(1);
+    expect(page.rows).toHaveLength(1);
+    expect(page.rows[0]?.seqStart).toBe(1);
+    expect(page.rows[0]?.item).toMatchObject({
+      text: Array.from({ length: 101 }, (_, i) => String(i)).join(""),
+    });
     expect(page.rows.at(-1)?.seq).toBe(101);
     expect(page.hasOlder).toBe(false);
   });

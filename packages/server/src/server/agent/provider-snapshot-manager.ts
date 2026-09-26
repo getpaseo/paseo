@@ -1,3 +1,4 @@
+import { normalizeAgentModelCatalog } from "@getpaseo/protocol/agent-types";
 import { createHash } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { homedir } from "node:os";
@@ -1021,13 +1022,20 @@ export class ProviderSnapshotManager {
         return;
       }
 
+      const models = normalizeAgentModelCatalog(catalog.models);
+      if (models.length !== catalog.models.length) {
+        this.logger.warn(
+          { provider, discardedRows: catalog.models.length - models.length },
+          "Provider catalog contains repeated model IDs; retaining the first definition",
+        );
+      }
       setEntry({
         ...base,
         defaultModeId:
           catalog.defaultModeId === undefined ? base.defaultModeId : catalog.defaultModeId,
         status: "ready",
         enabled: true,
-        models: catalog.models,
+        models,
         modes: catalog.modes,
         fetchedAt: new Date().toISOString(),
       });

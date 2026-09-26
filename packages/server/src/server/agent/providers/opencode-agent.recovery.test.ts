@@ -169,6 +169,105 @@ test("orders queued live deltas behind an incomplete recovery snapshot and suppr
   await upstream.close();
 });
 
+test("sends the next turn to the new OpenCode server after the old one exits", async () => {
+  const exited = await createRecoveryUpstream();
+  const current = await createRecoveryUpstream();
+  const ports = [exited.port, current.port];
+  const processes: RecoveryServerProcess[] = [];
+  const manager = new OpenCodeServerManager({
+    logger: createTestLogger(),
+    portAllocator: async () => ports.shift() as number,
+    resolveCommandPrefix: async () => ({ command: "opencode", args: [] }),
+    resolveHomeDir: () => process.cwd(),
+    spawnServerProcess: () => {
+      const serverProcess = new RecoveryServerProcess();
+      processes.push(serverProcess);
+      return serverProcess as unknown as ChildProcess;
+    },
+    terminateProcess: async (serverProcess) => {
+      (serverProcess as unknown as RecoveryServerProcess).exit();
+      return "terminated";
+    },
+  });
+  const client = new OpenCodeAgentClient(createTestLogger(), undefined, {
+    serverManager: manager,
+    createClient: ({ baseUrl, directory }) => createOpencodeClient({ baseUrl, directory }),
+  });
+  const session = await client.createSession({ provider: "opencode", cwd: "/workspace" });
+  const observed: AgentStreamEvent[] = [];
+  session.subscribe((event) => observed.push(event));
+  await exited.connected(1);
+  exited.send(0, connectedRecord());
+  processes[0]?.exit();
+  await exited.close();
+
+  const turn = session.startTurn("after restart");
+  await current.connected(1);
+  current.send(0, connectedRecord());
+  await turn;
+  await current.dispatched(1);
+  current.send(0, idleRecord());
+
+  await eventually(() => expect(observed.map((event) => event.type)).toContain("turn_completed"));
+  expect(observed.filter((event) => event.type === "turn_failed")).toHaveLength(0);
+
+  await session.close();
+  await manager.shutdown();
+  await current.close();
+});
+
+test("adds the session's MCP servers to the new OpenCode server after the old one exits", async () => {
+  const exited = await createRecoveryUpstream();
+  const current = await createRecoveryUpstream();
+  const ports = [exited.port, current.port];
+  const processes: RecoveryServerProcess[] = [];
+  const manager = new OpenCodeServerManager({
+    logger: createTestLogger(),
+    portAllocator: async () => ports.shift() as number,
+    resolveCommandPrefix: async () => ({ command: "opencode", args: [] }),
+    resolveHomeDir: () => process.cwd(),
+    spawnServerProcess: () => {
+      const serverProcess = new RecoveryServerProcess();
+      processes.push(serverProcess);
+      return serverProcess as unknown as ChildProcess;
+    },
+    terminateProcess: async (serverProcess) => {
+      (serverProcess as unknown as RecoveryServerProcess).exit();
+      return "terminated";
+    },
+  });
+  const client = new OpenCodeAgentClient(createTestLogger(), undefined, {
+    serverManager: manager,
+    createClient: ({ baseUrl, directory }) => createOpencodeClient({ baseUrl, directory }),
+  });
+  const session = await client.createSession({
+    provider: "opencode",
+    cwd: "/workspace",
+    mcpServers: { paseo: { type: "http", url: "http://127.0.0.1:1/mcp" } },
+  });
+  await exited.connected(1);
+  exited.send(0, connectedRecord());
+  const firstTurn = session.startTurn("before restart");
+  await exited.dispatched(1);
+  exited.send(0, idleRecord());
+  await firstTurn;
+  expect(exited.mcpAdds()).toEqual(["paseo"]);
+  processes[0]?.exit();
+  await exited.close();
+
+  const turn = session.startTurn("after restart");
+  await current.connected(1);
+  current.send(0, connectedRecord());
+  await turn;
+  await current.dispatched(1);
+
+  expect(current.mcpAdds()).toEqual(["paseo"]);
+
+  await session.close();
+  await manager.shutdown();
+  await current.close();
+});
+
 class RecoveryTiming implements OpenCodeEventConsumerTiming {
   private resolveWait: (() => void) | null = null;
   arm(): () => void {
@@ -240,6 +339,7 @@ class RecoveryServerProcess extends EventEmitter {
 async function createRecoveryUpstream() {
   const streams: ServerResponse[] = [];
   const dispatchIds: string[] = [];
+  const mcpAddNames: string[] = [];
   let messages: unknown[] = [];
   let messageReadCount = 0;
   let status: "busy" | "idle" = "idle";
@@ -253,6 +353,11 @@ async function createRecoveryUpstream() {
     }
     if (request.method === "POST" && pathname === "/session") {
       return json(response, { id: "session-1", directory: "/workspace" });
+    }
+    if (request.method === "POST" && pathname === "/mcp") {
+      const body = JSON.parse(await readBody(request)) as { name: string };
+      mcpAddNames.push(body.name);
+      return json(response, {});
     }
     if (request.url?.includes("/prompt_async")) {
       const body = JSON.parse(await readBody(request)) as { messageID: string };
@@ -285,6 +390,7 @@ async function createRecoveryUpstream() {
       return [...dispatchIds];
     },
     messageReads: () => messageReadCount,
+    mcpAdds: () => [...mcpAddNames],
     setMessages(nextMessages: unknown[]) {
       messages = nextMessages;
     },

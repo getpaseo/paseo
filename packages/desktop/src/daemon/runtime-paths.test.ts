@@ -21,10 +21,6 @@ vi.mock("electron-log/main", () => ({
   default: { warn: vi.fn() },
 }));
 
-vi.mock("@getpaseo/server", () => ({
-  spawnProcess: vi.fn(),
-}));
-
 const originalPlatform = process.platform;
 const originalExecPath = process.execPath;
 const originalResourcesPath = process.resourcesPath;

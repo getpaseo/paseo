@@ -1,0 +1,27 @@
+apply plugin: 'com.android.library'
+
+group = 'sh.paseo.diffprototype'
+version = '0.1.0'
+
+def expoModulesCorePlugin = new File(project(":expo-modules-core").projectDir.absolutePath, "ExpoModulesCorePlugin.gradle")
+apply from: expoModulesCorePlugin
+applyKotlinExpoModulesCorePlugin()
+useCoreDependencies()
+useDefaultAndroidSdkVersions()
+
+def skiaPackage = new File(["node", "--print", "require.resolve('@shopify/react-native-skia/package.json')"].execute(null, projectDir).text.trim()).parentFile
+
+android {
+  namespace "sh.paseo.diffprototype"
+  defaultConfig {
+    externalNativeBuild {
+      cmake {
+        arguments "-DSKIA_PACKAGE=${skiaPackage.absolutePath}"
+        cppFlags "-std=c++20 -O2 -fexceptions -frtti"
+      }
+    }
+  }
+  externalNativeBuild {
+    cmake { path "CMakeLists.txt" }
+  }
+}

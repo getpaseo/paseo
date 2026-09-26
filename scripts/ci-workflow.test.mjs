@@ -17,6 +17,7 @@ const gatedCiJobs = new Map([
   ["typecheck", { name: "typecheck", contract: "quality" }],
   ["server-tests-ubuntu", { name: "server-tests (ubuntu-latest)", contracts: ["server", "hub"] }],
   ["server-tests-windows", { name: "server-tests (windows-latest)", contracts: ["server", "hub"] }],
+  ["server-tests-macos", { name: "server-tests (macos-14, file observation)", contract: "server" }],
   ["desktop-tests-ubuntu", { name: "desktop-tests (ubuntu-latest)", contract: "desktop" }],
   ["desktop-tests-windows", { name: "desktop-tests (windows-latest)", contract: "desktop" }],
   ["app-tests", { name: "app-tests", contract: "app" }],
@@ -172,7 +173,7 @@ test("PR routing declares stable behavior ownership", () => {
     sdk: [
       "packages/plugin/**",
       "plugin-examples/**",
-      "public-docs/plugins/v0.8/**",
+      "public-docs/plugins/**",
       "packages/client/**",
       "packages/highlight/**",
       "packages/protocol/**",
@@ -281,11 +282,24 @@ test("browser and desktop tests have exclusive, directory-owned suites", () => {
   ]);
 });
 
-test("non-required Docker and Nix workflows avoid runners with workflow path filters", () => {
+test("packaging runs on main without allocating pull-request runners", () => {
   for (const workflowPath of [dockerWorkflowPath, nixWorkflowPath]) {
     const source = readFileSync(workflowPath, "utf8");
     const trigger = source.split("jobs:", 1)[0];
-    assert.match(trigger, /^\s+paths:\s*$/m);
+    assert.match(trigger, /push:\s*\n\s+branches: \[main\]/);
+    assert.doesNotMatch(trigger, /pull_request/);
     assert.doesNotMatch(source, /dorny\/paths-filter/);
+  }
+});
+
+test("desktop packaging smokes main pushes and only the pull requests that touch packaging", () => {
+  const source = readFileSync(new URL(".github/workflows/desktop-packages.yml", repoRoot), "utf8");
+  const trigger = source.split("jobs:", 1)[0];
+  assert.match(trigger, /push:\s*\n\s+branches: \[main\]/);
+  assert.match(trigger, /pull_request:\s*\n\s+branches: \[main\]\s*\n\s+paths:/);
+  assert.match(trigger, /- "packages\/desktop\/\*\*"/);
+  assert.doesNotMatch(source, /dorny\/paths-filter/);
+  for (const action of ["actions/checkout", "actions/setup-node", "actions/upload-artifact"]) {
+    assert.match(source, new RegExp(`${action}@[0-9a-f]{40} # v\\d+\\.\\d+\\.\\d+`));
   }
 });

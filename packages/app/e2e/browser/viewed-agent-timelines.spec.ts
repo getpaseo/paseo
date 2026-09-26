@@ -5,6 +5,7 @@ import { seedWorkspace, type SeedDaemonClient } from "../support/helpers/seed-cl
 import { getServerId } from "../support/helpers/server-id";
 import { observeTimelineSubscriptions } from "../support/helpers/timeline-delivery";
 import { waitForWorkspaceTabsVisible } from "../support/helpers/workspace-tabs";
+import { selectWorkspaceInSidebar } from "../support/helpers/sidebar";
 import { installDaemonWebSocketGate } from "../support/helpers/daemon-websocket-gate";
 import { runWorkspaceActionFromCommandCenter } from "../support/helpers/command-center-workspace-actions";
 import {
@@ -20,6 +21,7 @@ import {
 interface ViewedTimelineScenario {
   client: SeedDaemonClient;
   workspaceId: string;
+  repoPath: string;
   firstAgentId: string;
   secondAgentId: string;
   cleanup(): Promise<void>;
@@ -45,14 +47,70 @@ async function seedViewedTimelineScenario(
   return {
     client: workspace.client,
     workspaceId: workspace.workspaceId,
+    repoPath: workspace.repoPath,
     firstAgentId: firstAgent.id,
     secondAgentId: secondAgent.id,
     cleanup: workspace.cleanup,
   };
 }
 
-async function openAgent(page: Page, scenario: ViewedTimelineScenario, agentId: string) {
-  await page.goto(buildHostAgentDetailRoute(getServerId(), agentId, scenario.workspaceId));
+interface RestoredLayoutChat {
+  workspaceId: string;
+  agentId: string;
+  title: string;
+}
+
+interface RestoredLayoutScenario {
+  chats: RestoredLayoutChat[];
+  cleanup(): Promise<void>;
+}
+
+/**
+ * Two workspaces with two chats each. Opening all four leaves the persisted workspace layout
+ * holding a tab per chat, which is the state a relaunch restores into.
+ */
+async function seedRestoredLayoutScenario(): Promise<RestoredLayoutScenario> {
+  const workspaces = await Promise.all([
+    seedWorkspace({ repoPrefix: "restored-layout-first-" }),
+    seedWorkspace({ repoPrefix: "restored-layout-second-" }),
+  ]);
+  try {
+    const chats = await Promise.all(
+      workspaces.flatMap((workspace, workspaceIndex) =>
+        [1, 2].map(async (chatIndex): Promise<RestoredLayoutChat> => {
+          const title = `Restored chat ${workspaceIndex + 1}-${chatIndex}`;
+          const agent = await workspace.client.createAgent({
+            provider: "mock",
+            cwd: workspace.repoPath,
+            workspaceId: workspace.workspaceId,
+            title,
+            modeId: "load-test",
+            model: "ten-second-stream",
+          });
+          return { workspaceId: workspace.workspaceId, agentId: agent.id, title };
+        }),
+      ),
+    );
+    return {
+      chats,
+      cleanup: async () => {
+        for (const workspace of workspaces) await workspace.cleanup();
+      },
+    };
+  } catch (error) {
+    for (const workspace of workspaces) await workspace.cleanup().catch(() => undefined);
+    throw error;
+  }
+}
+
+async function openAgent(
+  page: Page,
+  scenario: { workspaceId: string },
+  agentId: string,
+  options: { recordRenders?: boolean } = {},
+) {
+  const route = buildHostAgentDetailRoute(getServerId(), agentId, scenario.workspaceId);
+  await page.goto(options.recordRenders ? `${route}&renderProfile=1` : route);
   await page.waitForURL(
     (url) => url.pathname.includes("/workspace/") && !url.searchParams.has("open"),
   );
@@ -61,6 +119,62 @@ async function openAgent(page: Page, scenario: ViewedTimelineScenario, agentId: 
 
 async function selectAgent(page: Page, title: string) {
   await page.getByRole("button", { name: title, exact: true }).click();
+}
+
+async function expectForkFailureWithoutOverlappingStatus(page: Page) {
+  const expectContinuousToast = await observeToastReplacement(page);
+  await page.getByRole("button", { name: "Fork chat from here" }).last().click();
+  await page.getByRole("menuitem", { name: "Fork in a new tab", exact: true }).click();
+  await expect(
+    page.getByRole("alert").filter({ hasText: "Transport not connected" }),
+  ).toBeVisible();
+  await expectReconnectingToastGone(page, { timeout: 100 });
+  await expectReconnectingToastVisible(page);
+  await expectContinuousToast();
+}
+
+async function observeToastReplacement(page: Page) {
+  const observation = await page
+    .getByRole("alert")
+    .filter({ hasText: "Reconnecting to host" })
+    .evaluateHandle((toast) => {
+      const frames: Array<{ connected: boolean; opacity: number; transform: string }> = [];
+      let frame = 0;
+      const sample = () => {
+        const style = getComputedStyle(toast);
+        frames.push({
+          connected: toast.isConnected,
+          opacity: Number(style.opacity),
+          transform: style.transform,
+        });
+        frame = requestAnimationFrame(sample);
+      };
+      sample();
+      return {
+        stop() {
+          cancelAnimationFrame(frame);
+          return frames;
+        },
+      };
+    });
+  return async () => {
+    const frames = await observation.evaluate((recorder) => recorder.stop());
+    await observation.dispose();
+    expect(frames.length).toBeGreaterThan(1);
+    expect(frames.every((frame) => frame.connected)).toBe(true);
+    expect(Math.min(...frames.map((frame) => frame.opacity))).toBe(1);
+    expect(new Set(frames.map((frame) => frame.transform)).size).toBe(1);
+  };
+}
+
+async function countChatCommits(page: Page, agentId: string) {
+  return page.evaluate(
+    (id) =>
+      (globalThis.__PASEO_RENDER_PROFILE__ ?? []).filter(
+        (sample) => sample.id === `AgentStreamSection:${id}`,
+      ).length,
+    agentId,
+  );
 }
 
 async function enableMoveTabShortcut(page: Page) {
@@ -97,7 +211,96 @@ async function expectAgentConsistentlyIdle(page: Page, title: string): Promise<v
   await expectTurnCopyButton(page);
 }
 
+async function withViewedTimelineScenario(
+  run: (scenario: ViewedTimelineScenario) => Promise<void>,
+) {
+  const scenario = await seedViewedTimelineScenario();
+  try {
+    await run(scenario);
+  } finally {
+    await scenario.cleanup();
+  }
+}
+
+async function openSevenChats(page: Page, scenario: ViewedTimelineScenario) {
+  const subscriptions = observeTimelineSubscriptions(page);
+  const additional = [];
+  for (let index = 0; index < 5; index += 1) {
+    additional.push(
+      await scenario.client.createAgent({
+        provider: "mock",
+        cwd: scenario.repoPath,
+        workspaceId: scenario.workspaceId,
+        title: `Additional chat ${index + 1}`,
+        modeId: "load-test",
+        model: "ten-second-stream",
+      }),
+    );
+  }
+  await openAgent(page, scenario, scenario.firstAgentId);
+  await selectAgent(page, "Second viewed chat");
+  for (let index = 0; index < additional.length; index += 1) {
+    await selectAgent(page, `Additional chat ${index + 1}`);
+  }
+  await subscriptions.waitForSubscribedAgents([
+    scenario.firstAgentId,
+    scenario.secondAgentId,
+    ...additional.map((agent) => agent.id),
+  ]);
+}
+
+async function expectCurrentChatWithoutCatchUp(page: Page, message: string) {
+  await expect(page.getByText(message, { exact: true })).toBeVisible();
+  await expect(page.getByRole("alert").filter({ hasText: "Updating messages" })).toHaveCount(0);
+}
+
 test.describe("Viewed agent timelines", () => {
+  test("a reloaded layout subscribes only the chat it restores into", async ({ page }) => {
+    test.setTimeout(120_000);
+    const subscriptions = observeTimelineSubscriptions(page);
+    const scenario = await seedRestoredLayoutScenario();
+    try {
+      // One document load, then sidebar and tab clicks — the way a user reaches these chats.
+      // A `page.goto` per chat would restart the app and empty the session's set each time.
+      const [first, second, third, fourth] = scenario.chats;
+      await openAgent(page, first!, first!.agentId);
+      await selectAgent(page, second!.title);
+      await selectWorkspaceInSidebar(page, third!.workspaceId);
+      await selectAgent(page, third!.title);
+      await selectAgent(page, fourth!.title);
+      await subscriptions.waitForSubscribedAgents(scenario.chats.map((chat) => chat.agentId));
+
+      // Relaunch. Layout comes back from disk carrying a tab for every chat above; only the
+      // one on screen may be subscribed, because subscribing resumes the agent on the daemon.
+      const restored = scenario.chats.at(-1)!;
+      const sibling = scenario.chats.at(-2)!;
+      subscriptions.reset();
+      await page.reload();
+      await waitForWorkspaceTabsVisible(page);
+      await expect(page.getByRole("button", { name: restored.title, exact: true })).toHaveAttribute(
+        "aria-selected",
+        "true",
+      );
+      await expect(page.getByRole("button", { name: sibling.title, exact: true })).toBeVisible();
+      await subscriptions.waitForSubscribedAgents([restored.agentId]);
+
+      // Opening the restored sibling is what adds it, and it adds only itself.
+      await selectAgent(page, sibling.title);
+      await subscriptions.waitForSubscribedAgents([restored.agentId, sibling.agentId]);
+    } finally {
+      await scenario.cleanup();
+    }
+  });
+
+  test("open chats stay current after switching beyond five agents", async ({ page }) => {
+    await withViewedTimelineScenario(async (scenario) => {
+      await openSevenChats(page, scenario);
+      await commitMessage(scenario, scenario.firstAgentId, "Current after seven open chats.");
+      await selectAgent(page, "First viewed chat");
+      await expectCurrentChatWithoutCatchUp(page, "Current after seven open chats.");
+    });
+  });
+
   test("a turn that finishes while hidden reopens with consistently idle chrome", async ({
     page,
   }) => {
@@ -119,14 +322,18 @@ test.describe("Viewed agent timelines", () => {
     }
   });
 
-  test("a hidden hot chat stays current", async ({ page }) => {
+  test("a hidden retained chat stays current without rendering", async ({ page }) => {
     test.setTimeout(60_000);
     const subscriptions = observeTimelineSubscriptions(page);
     const scenario = await seedViewedTimelineScenario();
     try {
-      await openAgent(page, scenario, scenario.firstAgentId);
+      await openAgent(page, scenario, scenario.firstAgentId, { recordRenders: true });
+      const composer = page.getByRole("textbox", { name: "Message agent..." });
+      await composer.fill("Unsent draft survives hidden streaming");
       await selectAgent(page, "Second viewed chat");
       await subscriptions.waitForSubscribedAgents([scenario.firstAgentId, scenario.secondAgentId]);
+      const hiddenCommits = await countChatCommits(page, scenario.firstAgentId);
+      expect(hiddenCommits).toBeGreaterThan(0);
       await commitMessage(
         scenario,
         scenario.firstAgentId,
@@ -135,11 +342,15 @@ test.describe("Viewed agent timelines", () => {
       await expect(
         page.getByText("Committed while the first chat is hidden.", { exact: true }),
       ).toHaveCount(0);
+      expect(await countChatCommits(page, scenario.firstAgentId)).toBe(hiddenCommits);
       await selectAgent(page, "First viewed chat");
       await expect(
         page.getByText("Committed while the first chat is hidden.", { exact: true }),
       ).toBeVisible();
       await expect(page.getByText("(end of synthetic stream)", { exact: true })).toBeVisible();
+      await expect(composer).toHaveValue("Unsent draft survives hidden streaming");
+      await composer.fill("Draft edited after returning");
+      await expect(composer).toHaveValue("Draft edited after returning");
     } finally {
       await scenario.cleanup();
     }
@@ -170,28 +381,48 @@ test.describe("Viewed agent timelines", () => {
     }
   });
 
-  test("a visible chat catches up after reconnecting", async ({ page }) => {
+  test("a visible chat reports updating until reconnect catch-up completes", async ({
+    page,
+  }, testInfo) => {
     const gate = await installDaemonWebSocketGate(page);
     const scenario = await seedViewedTimelineScenario();
     try {
+      await commitMessage(scenario, scenario.firstAgentId, "Visible before the connection drops.");
       await openAgent(page, scenario, scenario.firstAgentId);
+      const previousMessage = page.getByText("Visible before the connection drops.", {
+        exact: true,
+      });
+      await expect(previousMessage).toBeVisible();
       await expect(page.getByRole("button", { name: "First viewed chat" })).toHaveAttribute(
         "aria-selected",
         "true",
       );
       await gate.drop();
       await gate.waitForBlockedConnection();
+      await expectReconnectingToastVisible(page);
+      await expect(page.getByTestId("agent-reconnecting-toast")).toHaveCSS("opacity", "1");
+      await page.screenshot({ path: testInfo.outputPath("reconnecting-chat.png") });
+      await expectForkFailureWithoutOverlappingStatus(page);
       await commitMessage(scenario, scenario.firstAgentId, "Committed while the chat reconnects.");
       await expect(
         page.getByText("Committed while the chat reconnects.", { exact: true }),
       ).toHaveCount(0);
-      // Hold the first authoritative catch-up response so the assertion observes
-      // the reconnect boundary instead of racing a socket that has not reopened yet.
-      gate.holdNextServerMessage("fetch_agent_timeline_response");
+      // Hold the visible response to observe the connected-but-updating state.
+      gate.holdTimelineResponses(scenario.firstAgentId);
+      const expectContinuousToast = await observeToastReplacement(page);
       gate.restore();
-      await gate.waitForHeldServerMessage("fetch_agent_timeline_response");
-      gate.releaseHeldServerMessage("fetch_agent_timeline_response");
+      await gate.waitForHeldTimelineResponse();
       await expectReconnectingToastGone(page);
+      await expect(page.getByRole("alert").filter({ hasText: "Updating messages" })).toBeVisible();
+      await expect(
+        page.getByTestId("app-toast-message").filter({ hasText: "Updating messages" }),
+      ).toBeVisible();
+      await expect(previousMessage).toBeVisible();
+      await expect(page.getByTestId("agent-updating-toast")).toHaveCSS("opacity", "1");
+      await expectContinuousToast();
+      await page.screenshot({ path: testInfo.outputPath("updating-chat.png") });
+      gate.releaseHeldTimelineResponses();
+      await expect(page.getByRole("alert").filter({ hasText: "Updating messages" })).toHaveCount(0);
       const recoveredMessage = page.getByText("Committed while the chat reconnects.", {
         exact: true,
       });

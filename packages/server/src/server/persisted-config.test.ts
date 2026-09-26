@@ -6,9 +6,10 @@ import { describe, expect, test } from "vitest";
 import {
   loadPersistedConfig,
   PersistedConfigSchema,
+  readPersistedConfig,
   savePersistedConfig,
 } from "./persisted-config.js";
-import { PRIVATE_FILE_MODE } from "./private-files.js";
+import { PRIVATE_DIRECTORY_MODE, PRIVATE_FILE_MODE } from "./private-files.js";
 
 const MODE_MASK = 0o777;
 const PERMISSIVE_FILE_MODE = 0o644;
@@ -736,6 +737,62 @@ describe("loadPersistedConfig", () => {
   });
 });
 
+describe("config.json saved with a UTF-8 byte order mark", () => {
+  // Windows Notepad writes this shape: a BOM, then CRLF line endings.
+  const notepadConfig =
+    '﻿{\r\n  "version": 1,\r\n  "daemon": { "listen": "127.0.0.1:6767" }\r\n}\r\n';
+
+  test("loadPersistedConfig reads it", () => {
+    const home = createTempHome();
+    try {
+      writeFileSync(path.join(home, "config.json"), notepadConfig);
+
+      expect(loadPersistedConfig(home).daemon?.listen).toBe("127.0.0.1:6767");
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test("readPersistedConfig reads it", () => {
+    const home = createTempHome();
+    try {
+      writeFileSync(path.join(home, "config.json"), notepadConfig);
+
+      expect(readPersistedConfig(home).daemon?.listen).toBe("127.0.0.1:6767");
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("readPersistedConfig with an unreadable config.json", () => {
+  test("names the file when it is not valid JSON", () => {
+    const home = createTempHome();
+    const configPath = path.join(home, "config.json");
+    try {
+      writeFileSync(configPath, '{"version":1,');
+
+      expect(() => readPersistedConfig(home)).toThrow(`[Config] Invalid JSON in ${configPath}: `);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test("names the file and the field when it does not match the schema", () => {
+    const home = createTempHome();
+    const configPath = path.join(home, "config.json");
+    try {
+      writeFileSync(configPath, '{"daemon":{"listen":5}}');
+
+      expect(() => readPersistedConfig(home)).toThrow(
+        `[Config] Invalid config in ${configPath}:\n  - daemon.listen: `,
+      );
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+});
+
 describe.skipIf(process.platform === "win32")("persisted config file permissions", () => {
   test("initializes config.json with private permissions", () => {
     const home = createTempHome();
@@ -764,7 +821,8 @@ describe.skipIf(process.platform === "win32")("persisted config file permissions
   });
 
   test("saves config.json with private permissions", () => {
-    const home = createTempHome();
+    const parent = createTempHome();
+    const home = path.join(parent, "home");
     try {
       savePersistedConfig(home, {
         providers: {
@@ -774,9 +832,10 @@ describe.skipIf(process.platform === "win32")("persisted config file permissions
         },
       });
 
+      expect(modeOf(home)).toBe(PRIVATE_DIRECTORY_MODE);
       expect(modeOf(path.join(home, "config.json"))).toBe(PRIVATE_FILE_MODE);
     } finally {
-      rmSync(home, { recursive: true, force: true });
+      rmSync(parent, { recursive: true, force: true });
     }
   });
 });

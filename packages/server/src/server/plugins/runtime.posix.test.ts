@@ -34,6 +34,26 @@ async function readTextIfPresent(filePath: string): Promise<string | null> {
   }
 }
 
+function pluginMessages(runtime: PluginRuntime, pluginId: string): string[] {
+  return runtime.getLogs(pluginId).map((entry) => entry.message);
+}
+
+function spawnObservedPluginProcess(onMessage: (message: unknown) => void) {
+  const loaderUrl = new URL("../../terminal/terminal-ts-loader.mjs", import.meta.url).href;
+  const setup = `import { register } from "node:module"; register(${JSON.stringify(loaderUrl)});`;
+  const child = fork(new URL("./plugin-process.ts", import.meta.url), [], {
+    execArgv: [
+      "--experimental-strip-types",
+      "--import",
+      `data:text/javascript,${encodeURIComponent(setup)}`,
+    ],
+    serialization: "advanced",
+    stdio: ["ignore", "pipe", "pipe", "ipc"],
+  });
+  child.on("message", onMessage);
+  return child;
+}
+
 function createReloadChild(
   name: string,
   events: string[],
@@ -124,8 +144,28 @@ function createTestRuntime(
 
 function createTrackedSessionHost() {
   const active = new Set<object>();
+  // One entry per hello handshake: an attached socket is not a redialled one.
+  const hellos: object[] = [];
+  const waiters = new Set<{ count: number; resolve: () => void }>();
+  function recordHello(socket: object): void {
+    hellos.push(socket);
+    for (const waiter of waiters) {
+      if (hellos.length < waiter.count) continue;
+      waiters.delete(waiter);
+      waiter.resolve();
+    }
+  }
   return {
     active,
+    hellos,
+    // Resolves on the handshake itself rather than after a delay, so the test
+    // waits for the event it cares about instead of a guess at how long it takes.
+    waitForHellos(count: number): Promise<void> {
+      if (hellos.length >= count) return Promise.resolve();
+      return new Promise<void>((resolve) => {
+        waiters.add({ count, resolve });
+      });
+    },
     host: {
       async attachPluginSocket(_pluginId: string, socket: PluginSessionSocket) {
         const closed = new Promise<void>((resolve) => socket.once("close", resolve));
@@ -135,6 +175,7 @@ function createTrackedSessionHost() {
           if (typeof data !== "string") return;
           const message = JSON.parse(data);
           if (message.type !== "hello") return;
+          recordHello(socket);
           socket.send(
             JSON.stringify({
               type: "session",
@@ -1019,6 +1060,75 @@ export default function contribute(plugin: unknown) {
     await rm(cleanupFile, { force: true });
   });
 
+  it("rejects provider input while a connection is closing", async () => {
+    const releaseDirectory = await mkdtemp(path.join(tmpdir(), "paseo-provider-close-"));
+    const releaseFile = path.join(releaseDirectory, "release");
+    const directory = await createPlugin(
+      "closing-provider",
+      `import { readFile, writeFile } from "node:fs/promises";
+import type { ProviderRegistration } from "@getpaseo/plugin/server/provider";
+const provider: ProviderRegistration = {
+  id: "delayed",
+  label: "Delayed",
+  async connect() {
+    return {
+      version: 1,
+      capabilities: [],
+      async send() { console.log("provider accepted input"); },
+      onEvent() { return () => undefined; },
+      async close() {
+        console.log("provider close started");
+        while (true) {
+          try { await readFile(${JSON.stringify(releaseFile)}); break; }
+          catch { await new Promise((resolve) => setTimeout(resolve, 10)); }
+        }
+        console.log("provider close completed");
+      },
+    };
+  },
+};
+export default function contribute(server: { registerProvider(provider: ProviderRegistration): void }) {
+  server.registerProvider(provider);
+  return () => console.log("plugin cleanup started");
+}`,
+    );
+    const closedReports: unknown[] = [];
+    const observeMessage = (message: unknown) => {
+      if ((message as { type?: string }).type === "provider.closed") closedReports.push(message);
+    };
+    const runtime = createTestRuntime({
+      spawnChild: () => spawnObservedPluginProcess(observeMessage),
+    });
+    await runtime.startPlugin("closing-provider", directory);
+    try {
+      const connection = await runtime.connectProvider("closing-provider", "delayed", {
+        versions: [1],
+        capabilities: [],
+      });
+      const closing = connection.close();
+      await expect
+        .poll(() => pluginMessages(runtime, "closing-provider"))
+        .toContain("provider close started");
+      await expect(connection.send({ type: "catalog", requestId: "during-close" })).rejects.toThrow(
+        "Provider connection is closing",
+      );
+      const stopping = runtime.stopPluginById("closing-provider");
+      await expect
+        .poll(() => pluginMessages(runtime, "closing-provider"))
+        .toContain("plugin cleanup started");
+      await writeFile(releaseFile, "release");
+      await Promise.all([closing, stopping]);
+      const messages = pluginMessages(runtime, "closing-provider");
+      expect(messages).toContain("provider close completed");
+      expect(messages).not.toContain("provider accepted input");
+      expect(closedReports).toHaveLength(1);
+    } finally {
+      await writeFile(releaseFile, "release");
+      await runtime.stopAll();
+      await rm(releaseDirectory, { recursive: true, force: true });
+    }
+  });
+
   it("closes a provider connection that resolves during plugin shutdown", async () => {
     const suffix = `${process.pid}-${Date.now()}`;
     const startedFile = path.join(tmpdir(), `paseo-provider-connect-started-${suffix}`);
@@ -1401,7 +1511,7 @@ export default function contribute(server: { registerProvider(provider: Provider
     const runtime = createTestRuntime();
 
     await expect(runtime.startPlugin("legacy", directory)).rejects.toThrow(
-      "This plugin was made for an older version of Paseo and cannot run on Paseo v0.8. Ask its author to update it. Plugin authors can follow the migration guide: https://paseo.sh/docs/plugins/v0.8/migration",
+      "This plugin was made for an older version of Paseo and cannot run on Paseo v0.8. Ask its author to update it. Plugin authors can follow the migration guide: https://paseo.sh/docs/plugins/migration",
     );
   });
 
@@ -1773,5 +1883,150 @@ export default function contribute(plugin: any) {
     await expect(runtime.invoke("crashing", "anything", {})).rejects.toThrow(
       "Plugin is not available",
     );
+  });
+
+  it("re-attaches a plugin session when the daemon closes the socket under a live child", async () => {
+    const directory = await createPlugin(
+      "reattaching",
+      `export default function contribute(plugin: unknown) { void plugin; return () => undefined; }`,
+    );
+    const sessions = createTrackedSessionHost();
+    const runtime = createTestRuntime({ sessionHost: sessions.host });
+    await runtime.startPlugin("reattaching", directory);
+
+    expect(sessions.active.size).toBe(1);
+    expect(sessions.hellos).toHaveLength(1);
+    const first = [...sessions.active][0] as PluginSessionSocket;
+
+    // What an expired lease does: drop the socket, leave the process running.
+    first.close(1000, "expired application lease");
+
+    // A second handshake, not just a second attachment: the client really redialled.
+    await sessions.waitForHellos(2);
+
+    expect(sessions.active.size).toBe(1);
+    expect([...sessions.active][0]).not.toBe(first);
+    await runtime.stopAll();
+    expect(sessions.active.size).toBe(0);
+  });
+
+  it("replaces a closed plugin session only once the child sends a fresh hello", async () => {
+    const directory = await createPlugin(
+      "lazy-reattach",
+      `export default function contribute(plugin: unknown) { void plugin; return () => undefined; }`,
+    );
+    const sessions = createTrackedSessionHost();
+    const child = createReloadChild("lazy-reattach", []);
+    const runtime = createTestRuntime({ spawnChild: () => child, sessionHost: sessions.host });
+    await runtime.startPlugin("lazy-reattach", directory);
+    const first = [...sessions.active][0] as PluginSessionSocket;
+    // This child is a stub with no real client, so no handshake has happened.
+    expect(sessions.hellos).toHaveLength(0);
+
+    first.close(1000, "expired application lease");
+    expect(sessions.active.size).toBe(0);
+
+    // Frames the child had already queued belong to the session that just died.
+    // Standing a socket up for one would leave it unspoken to until the host's
+    // hello timeout closed it, and that close would stand up another.
+    child.emitMessage({
+      type: "paseo_frame",
+      data: JSON.stringify({ type: "session", message: { type: "ping" } }),
+      isBinary: false,
+    });
+    expect(sessions.active.size).toBe(0);
+
+    child.emitMessage({
+      type: "paseo_frame",
+      data: JSON.stringify({
+        type: "hello",
+        clientId: "plugin:lazy-reattach",
+        clientType: "cli",
+        protocolVersion: 1,
+      }),
+      isBinary: false,
+    });
+    await sessions.waitForHellos(1);
+
+    expect(sessions.active.size).toBe(1);
+    expect([...sessions.active][0]).not.toBe(first);
+    await runtime.stopAll();
+    expect(sessions.active.size).toBe(0);
+  });
+
+  it("attaches no replacement session when the plugin is stopped", async () => {
+    const directory = await createPlugin(
+      "stopping",
+      `export default function contribute(plugin: unknown) { void plugin; return () => undefined; }`,
+    );
+    const sessions = createTrackedSessionHost();
+    const runtime = createTestRuntime({ sessionHost: sessions.host });
+    await runtime.startPlugin("stopping", directory);
+    expect(sessions.active.size).toBe(1);
+
+    await runtime.stopPluginById("stopping");
+
+    expect(runtime.getLogs("stopping").map((entry) => entry.message)).not.toContain(
+      "[paseo] Re-attached plugin session",
+    );
+    expect(sessions.active.size).toBe(0);
+  });
+  it("closes an in-flight replacement when the plugin stops before attachment completes", async () => {
+    const directory = await createPlugin(
+      "stopping-redial",
+      `export default function contribute() { return () => undefined; }`,
+    );
+    const child = createReloadChild("stopping-redial", []);
+    const sessions = createTrackedSessionHost();
+    let finishAttachment!: () => void;
+    const attachmentHeld = new Promise<void>((resolve) => {
+      finishAttachment = resolve;
+    });
+    let replacementAttached!: (socket: PluginSessionSocket) => void;
+    const replacementStarted = new Promise<PluginSessionSocket>((resolve) => {
+      replacementAttached = resolve;
+    });
+    let attachments = 0;
+    const runtime = createTestRuntime({
+      spawnChild: () => child,
+      sessionHost: {
+        async attachPluginSocket(pluginId, socket) {
+          const attachment = await sessions.host.attachPluginSocket(pluginId, socket);
+          attachments += 1;
+          if (attachments === 2) {
+            replacementAttached(socket);
+            await attachmentHeld;
+          }
+          return attachment;
+        },
+      },
+    });
+    try {
+      await runtime.startPlugin("stopping-redial", directory);
+      const first = [...sessions.active][0] as PluginSessionSocket;
+      first.close();
+      child.emitMessage({
+        type: "paseo_frame",
+        data: JSON.stringify({ type: "hello" }),
+        isBinary: false,
+      });
+      const replacement = await replacementStarted;
+      const replacementClosed = new Promise<void>((resolve) => replacement.once("close", resolve));
+      await runtime.stopPluginById("stopping-redial");
+      finishAttachment();
+      await replacementClosed;
+      expect(sessions.active.size).toBe(0);
+      expect(sessions.hellos).toEqual([]);
+      expect(runtime.catalog()).toEqual([]);
+      child.emitMessage({
+        type: "paseo_frame",
+        data: JSON.stringify({ type: "hello" }),
+        isBinary: false,
+      });
+      expect(attachments).toBe(2);
+    } finally {
+      finishAttachment();
+      await runtime.stopAll();
+    }
   });
 });
