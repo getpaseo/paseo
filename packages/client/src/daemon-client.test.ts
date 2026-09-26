@@ -2961,6 +2961,76 @@ test("sends worktree target and autoArchive in create_agent_request", async () =
   await expect(createPromise).rejects.toThrow("worktree auto archive sentinel");
 });
 
+test("sends internal in create_agent_request when the host advertises internal agents", async () => {
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen({ features: { internalAgents: true } });
+  await connectPromise;
+
+  const createPromise = client.createAgent({
+    provider: "codex",
+    cwd: "/tmp/project",
+    internal: true,
+  });
+
+  expect(mock.sent).toHaveLength(1);
+  const request = parseSentFrame(mock.sent[0]);
+  expect(request).toEqual(
+    expect.objectContaining({
+      type: "create_agent_request",
+      config: { provider: "codex", cwd: "/tmp/project" },
+      internal: true,
+    }),
+  );
+
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "status",
+      payload: {
+        status: "agent_create_failed",
+        requestId: request.requestId,
+        error: "internal agent sentinel",
+      },
+    }),
+  );
+
+  await expect(createPromise).rejects.toThrow("internal agent sentinel");
+});
+
+test("rejects an internal create before sending when the host predates internal agents", async () => {
+  const logger = createMockLogger();
+  const mock = createMockTransport();
+
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    logger,
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen({ features: {} });
+  await connectPromise;
+
+  await expect(
+    client.createAgent({ provider: "codex", cwd: "/tmp/project", internal: true }),
+  ).rejects.toThrow("Update the host to create internal agents.");
+  expect(mock.sent).toHaveLength(0);
+});
+
 test("sends structured attachments with create_agent_request", async () => {
   const logger = createMockLogger();
   const mock = createMockTransport();

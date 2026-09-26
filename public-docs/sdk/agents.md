@@ -105,6 +105,30 @@ const child = await workspace.agents.create({
 
 `parent` establishes parentage. Archiving a parent cascade-archives its children. Call `detach()` first when a child should continue independently.
 
+## Run a hidden helper
+
+A one-shot agent that summarizes, classifies, or names something should not appear in History, the sidebar, or the parent's subagents track, and should not notify anyone. Create it with `internal: true`, the same flag the daemon uses for its own branch-name and commit-message helpers:
+
+```ts
+const helper = await workspace.agents.create({
+  config: { provider: "codex/gpt-5.5" },
+  parent,
+  internal: true,
+  autoArchive: true,
+  outputSchema: {
+    type: "object",
+    properties: { summary: { type: "string" } },
+    required: ["summary"],
+    additionalProperties: false,
+  },
+  prompt: "Summarize what the parent agent needs in one sentence.",
+});
+
+const result = await helper.waitForFinish(60_000);
+```
+
+An internal agent is never written to agent storage, so it cannot be resumed after the daemon restarts, and its provider session is not kept either. After it is archived, its final snapshot and last message stay readable by id for ten minutes, so `waitForFinish()` and `refresh()` still answer when the helper finished and auto-archived before you asked. Plugin lifecycle hooks do not fire for it. Older hosts reject the call; check `features.internalAgents` in `server_info` when you need to degrade.
+
 ## Request structured output
 
 ```ts

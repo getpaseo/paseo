@@ -520,7 +520,8 @@ plans, and mode changes; requesting permission does not end the turn.
 | `workspace.created`          | `workspace`                              | Record created; directory available                |
 | `workspace.archived`         | `workspace`                              | Archive state is saved                             |
 
-Agent events exclude internal utility agents. Archive events can precede runtime/worktree cleanup;
+Agent events exclude internal agents, including helpers a plugin creates with
+`paseo.agents.create({ internal: true })`. Archive events can precede runtime/worktree cleanup;
 `workspace.created` is not a setup barrier before agent startup.
 
 **Shared payload shapes** (`@getpaseo/plugin/server`):
@@ -575,7 +576,7 @@ type PluginTurnOutcome =
 | `providerOptions`                             | Provider-specific validated options                                        |
 | `mcpServers`, `toolPolicy`                    | MCP configuration and exact-tool preapprovals                              |
 | `cwd`                                         | Cannot change                                                              |
-| `internal`                                    | Daemon-owned; cannot change through this hook                              |
+| `internal`                                    | Set by the creating request; cannot change through this hook               |
 
 **`agent.session_open` request example:**
 

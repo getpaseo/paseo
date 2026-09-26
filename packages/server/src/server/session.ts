@@ -3211,7 +3211,7 @@ export class Session {
       agentId,
     );
 
-    if (this.agentUpdates.hasSubscription()) {
+    if (archivedRecord && this.agentUpdates.hasSubscription()) {
       const payload = await this.agentUpdates.emitStoredRecord(archivedRecord);
       if (payload.workspaceId) {
         await this.emitWorkspaceUpdateForWorkspaceId(payload.workspaceId);
@@ -4149,9 +4149,14 @@ export class Session {
             creation.errorCode ?? "unknown",
             creation.error ?? "Agent creation failed",
           );
-        const record = await this.agentStorage.get(creation.agent.id);
-        if (!record) throw new Error("Previously created agent no longer exists");
-        agent = this.buildStoredAgentPayload(record);
+        if (msg.internal) {
+          // Internal agents are never persisted; the creation snapshot is the only record.
+          agent = creation.agent;
+        } else {
+          const record = await this.agentStorage.get(creation.agent.id);
+          if (!record) throw new Error("Previously created agent no longer exists");
+          agent = this.buildStoredAgentPayload(record);
+        }
       } else {
         agent = await this.createSessionAgent(msg);
       }
@@ -4202,6 +4207,7 @@ export class Session {
       git,
       worktree,
       autoArchive,
+      internal,
       images,
       attachments,
       env,
@@ -4266,7 +4272,7 @@ export class Session {
             await onAgentReady?.(await this.buildAgentPayload(agent));
           },
           agentId,
-          config: resolvedIntent.config,
+          config: internal ? { ...resolvedIntent.config, internal: true } : resolvedIntent.config,
           workspaceId: resolvedIntent.intent.workspaceId,
           worktreeName,
           initialPrompt,
@@ -4306,6 +4312,19 @@ export class Session {
       );
       return this.buildAgentPayload(liveSnapshot);
     } catch (error) {
+      if (internal && createdAgentId) {
+        // A public agent that fails after registration stays visible for the
+        // user to deal with. A hidden one would leak its runtime, so it is
+        // closed here, and the worktree cleanup below treats it as never made.
+        const leakedAgentId = createdAgentId;
+        createdAgentId = null;
+        await this.agentManager.archiveAgent(leakedAgentId).catch((archiveError) => {
+          this.sessionLogger.warn(
+            { err: archiveError, agentId: leakedAgentId },
+            "Failed to close internal agent after create_agent_request failed",
+          );
+        });
+      }
       await this.createAgentLifecycleDispatch.cleanupCreatedWorktreeAfterFailedAgentCreate({
         createdWorktree: createdWorktreeForCleanup,
         createdAgentId,
@@ -5202,6 +5221,13 @@ export class Session {
       return { ok: false, error: "Agent identifier cannot be empty" };
     }
 
+    // An internal agent, live or recently archived, is addressable by its exact
+    // id and nothing else: the caller that created it holds the id, and no
+    // listing ever includes it.
+    if (this.agentManager.getAgent(trimmed) || this.agentManager.getRetiredInternalAgent(trimmed)) {
+      return { ok: true, agentId: trimmed };
+    }
+
     const stored = await this.agentStorage.list();
     const storedRecords = stored.filter((record) => !record.internal);
     const knownIds = new Set<string>();
@@ -5247,6 +5273,25 @@ export class Session {
     return { ok: false, error: `Agent not found: ${trimmed}` };
   }
 
+  /**
+   * An agent that is no longer live, in its settled form: the retained snapshot
+   * of a recently archived internal agent, else its stored record. Null when
+   * neither exists, and for a stored internal record, which is never served.
+   */
+  private async readSettledAgent(
+    agentId: string,
+  ): Promise<{ record: StoredAgentRecord; lastMessage: string | null } | null> {
+    const retired = this.agentManager.getRetiredInternalAgent(agentId);
+    if (retired) {
+      return { record: retired.record, lastMessage: retired.lastMessage };
+    }
+    const record = await this.agentStorage.get(agentId);
+    if (!record || record.internal) {
+      return null;
+    }
+    return { record, lastMessage: null };
+  }
+
   private async getAgentPayloadById(agentId: string): Promise<AgentSnapshotPayload | null> {
     const live = this.agentManager.getAgent(agentId);
     if (live) {
@@ -5254,11 +5299,11 @@ export class Session {
       return this.isProviderVisibleToClient(payload.provider) ? payload : null;
     }
 
-    const record = await this.agentStorage.get(agentId);
-    if (!record || record.internal) {
+    const settled = await this.readSettledAgent(agentId);
+    if (!settled) {
       return null;
     }
-    const payload = this.buildStoredAgentPayload(record);
+    const payload = this.buildStoredAgentPayload(settled.record);
     return this.isProviderVisibleToClient(payload.provider) ? payload : null;
   }
 
@@ -8143,8 +8188,8 @@ export class Session {
     const agentId = resolved.agentId;
     const live = this.agentManager.getAgent(agentId);
     if (!live) {
-      const record = await this.agentStorage.get(agentId);
-      if (!record || record.internal) {
+      const settled = await this.readSettledAgent(agentId);
+      if (!settled) {
         this.emit({
           type: "wait_for_finish_response",
           payload: {
@@ -8157,6 +8202,7 @@ export class Session {
         });
         return;
       }
+      const { record, lastMessage } = settled;
       const final = this.buildStoredAgentPayload(record);
       let status: "permission" | "error" | "idle";
       if (record.attentionReason === "permission") {
@@ -8169,7 +8215,7 @@ export class Session {
       const error = resolveWaitForFinishError({ status, final });
       this.emit({
         type: "wait_for_finish_response",
-        payload: { requestId, status, final, error, lastMessage: null },
+        payload: { requestId, status, final, error, lastMessage },
       });
       return;
     }
