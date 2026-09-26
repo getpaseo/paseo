@@ -13,12 +13,16 @@ type AgentUpdatePayload = Extract<SessionOutboundMessage, { type: "agent_update"
 type AgentUpdatesFilter = NonNullable<
   Extract<SessionInboundMessage, { type: "fetch_agents_request" }>["filter"]
 >;
+type AgentUpdatesScope = NonNullable<
+  Extract<SessionInboundMessage, { type: "fetch_agents_request" }>["scope"]
+>;
 
 interface AgentUpdatesSubscriptionState {
   subscriptionId: string;
   emit: (message: SessionOutboundMessage) => void;
   syncEnabled: boolean;
   filter?: AgentUpdatesFilter;
+  scope?: AgentUpdatesScope;
   isProviderVisible: (provider: string) => boolean;
   isBootstrapping: boolean;
   pendingUpdatesByAgentId: Map<string, AgentUpdatePayload>;
@@ -31,6 +35,7 @@ export interface AgentUpdatesService {
     isProviderVisible?: (provider: string) => boolean;
     emit?: (message: SessionOutboundMessage) => void;
     filter?: AgentUpdatesFilter;
+    scope?: AgentUpdatesScope;
     syncEnabled?: boolean;
   }): void;
   flushBootstrapped(
@@ -52,6 +57,14 @@ export interface AgentUpdatesServiceDeps {
   buildStoredAgentPayload(record: StoredAgentRecord): AgentSnapshotPayload;
   isProviderVisibleToClient(provider: string): boolean;
   buildProjectPlacementForWorkspaceId(workspaceId: string): Promise<ProjectPlacementPayload | null>;
+  /**
+   * Placement of a workspace that is itself part of the active directory. A
+   * `scope: "active"` subscription lists exactly these agents, so the live
+   * stream has to resolve membership the same way the sequenced snapshot does.
+   */
+  buildActiveProjectPlacementForWorkspaceId(
+    workspaceId: string,
+  ): Promise<ProjectPlacementPayload | null>;
   emitWorkspaceUpdateForWorkspaceId(workspaceId: string): Promise<void>;
   sequenceAgentUpdate<T extends AgentUpdatePayload>(
     payload: T,
@@ -180,6 +193,7 @@ export function createAgentUpdatesService(deps: AgentUpdatesServiceDeps): AgentU
     isProviderVisible?: (provider: string) => boolean;
     emit?: (message: SessionOutboundMessage) => void;
     filter?: AgentUpdatesFilter;
+    scope?: AgentUpdatesScope;
     syncEnabled?: boolean;
   }): void {
     subscriptions.set(input.subscriptionId, {
@@ -234,14 +248,23 @@ export function createAgentUpdatesService(deps: AgentUpdatesServiceDeps): AgentU
     const project = payload.workspaceId
       ? await deps.buildProjectPlacementForWorkspaceId(payload.workspaceId)
       : null;
-    return (
-      project !== null &&
-      observers.some(
-        (sub) =>
-          sub.isProviderVisible(payload.provider) &&
-          matchesAgentUpdatesFilter({ agent: payload, project, filter: sub.filter }),
-      )
-    );
+    const needsActivePlacement = observers.some((sub) => sub.scope === "active");
+    const activeProject =
+      needsActivePlacement && payload.workspaceId
+        ? await deps.buildActiveProjectPlacementForWorkspaceId(payload.workspaceId)
+        : null;
+    return observers.some((sub) => {
+      const subscriberProject = sub.scope === "active" ? activeProject : project;
+      return (
+        subscriberProject !== null &&
+        sub.isProviderVisible(payload.provider) &&
+        matchesAgentUpdatesFilter({
+          agent: payload,
+          project: subscriberProject,
+          filter: sub.filter,
+        })
+      );
+    });
   }
 
   async function publishPayload(payload: AgentSnapshotPayload): Promise<void> {
@@ -250,18 +273,31 @@ export function createAgentUpdatesService(deps: AgentUpdatesServiceDeps): AgentU
     const project = payload.workspaceId
       ? await deps.buildProjectPlacementForWorkspaceId(payload.workspaceId)
       : null;
+    // The sequenced directory is the active directory: `synchronizeAgents` reads
+    // it back with the same `scope: "active"` rule. Resolve membership for the
+    // shared sequence against the active placement so a live update can never
+    // announce an agent the next catch-up will drop.
+    const directoryProject = payload.workspaceId
+      ? await deps.buildActiveProjectPlacementForWorkspaceId(payload.workspaceId)
+      : null;
     for (const sub of observers) {
+      const subscriberProject = sub.scope === "active" ? directoryProject : project;
       const matches =
-        project && matchesAgentUpdatesFilter({ agent: payload, project, filter: sub.filter });
+        subscriberProject &&
+        matchesAgentUpdatesFilter({
+          agent: payload,
+          project: subscriberProject,
+          filter: sub.filter,
+        });
       bufferOrEmit(
         sub,
         sequence(
           sub,
           matches
-            ? { kind: "upsert", agent: payload, project }
+            ? { kind: "upsert", agent: payload, project: subscriberProject }
             : { kind: "remove", agentId: payload.id },
           payload,
-          project,
+          directoryProject,
           payload.id,
         ),
       );

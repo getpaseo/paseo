@@ -98,6 +98,7 @@ function buildHarness() {
   const payloadById = new Map<string, AgentSnapshotPayload>();
   const queuedPayloadBuilds: Promise<AgentSnapshotPayload>[] = [];
   const projectByWorkspaceId = new Map<string, ProjectPlacementPayload | null>();
+  const activeProjectByWorkspaceId = new Map<string, ProjectPlacementPayload | null>();
   let providerVisible: (provider: string) => boolean = () => true;
   let buildAgentPayloadError: Error | null = null;
   let enrichProjectedPayload = false;
@@ -132,6 +133,8 @@ function buildHarness() {
     isProviderVisibleToClient: (provider) => providerVisible(provider),
     buildProjectPlacementForWorkspaceId: async (workspaceId) =>
       projectByWorkspaceId.get(workspaceId) ?? null,
+    buildActiveProjectPlacementForWorkspaceId: async (workspaceId) =>
+      activeProjectByWorkspaceId.get(workspaceId) ?? null,
     emitWorkspaceUpdateForWorkspaceId: async (workspaceId) => {
       workspaceUpdates.push(workspaceId);
     },
@@ -155,10 +158,12 @@ function buildHarness() {
     register(
       payload: AgentSnapshotPayload,
       project: ProjectPlacementPayload | null = makeProject(),
+      activeProject: ProjectPlacementPayload | null = project,
     ) {
       payloadById.set(payload.id, payload);
       if (payload.workspaceId) {
         projectByWorkspaceId.set(payload.workspaceId, project);
+        activeProjectByWorkspaceId.set(payload.workspaceId, activeProject);
       }
       return payload;
     },
@@ -415,6 +420,46 @@ describe("forwardLiveAgent", () => {
     await h.service.forwardLiveAgent(h.managed("a"));
 
     expect(h.agentUpdates()).toEqual([{ kind: "remove", agentId: "a" }]);
+  });
+
+  // A scope=active listing only contains agents whose workspace is itself
+  // active. The live stream used to resolve the placement without that rule, so
+  // it announced agents the very next sequenced catch-up dropped.
+  test("a scope=active subscriber is not told about an agent in an archived workspace", async () => {
+    const h = buildHarness();
+    h.service.beginSubscription({ subscriptionId: "sub", scope: "active", filter: {} });
+    h.service.flushBootstrapped("sub");
+    h.register(makeAgentPayload({ id: "a", workspaceId: "ws-1" }), makeProject(), null);
+
+    await h.service.forwardLiveAgent(h.managed("a"));
+
+    expect(h.agentUpdates()).toEqual([{ kind: "remove", agentId: "a" }]);
+  });
+
+  test("a subscriber without scope still sees an agent in an archived workspace", async () => {
+    const h = buildHarness();
+    h.service.beginSubscription({ subscriptionId: "sub", filter: {} });
+    h.service.flushBootstrapped("sub");
+    h.register(makeAgentPayload({ id: "a", workspaceId: "ws-1" }), makeProject(), null);
+
+    await h.service.forwardLiveAgent(h.managed("a"));
+
+    expect(h.agentUpdates()).toEqual([
+      { kind: "upsert", agent: expect.objectContaining({ id: "a" }), project: makeProject() },
+    ]);
+  });
+
+  test("a scope=active subscriber still sees an agent in an active workspace", async () => {
+    const h = buildHarness();
+    h.service.beginSubscription({ subscriptionId: "sub", scope: "active", filter: {} });
+    h.service.flushBootstrapped("sub");
+    h.register(makeAgentPayload({ id: "a", workspaceId: "ws-1" }));
+
+    await h.service.forwardLiveAgent(h.managed("a"));
+
+    expect(h.agentUpdates()).toEqual([
+      { kind: "upsert", agent: expect.objectContaining({ id: "a" }), project: makeProject() },
+    ]);
   });
 
   test("with no subscription, emits no agent_update but still updates the workspace", async () => {
