@@ -1,6 +1,9 @@
-import type { Page } from "@playwright/test";
+import { expect, type Page } from "@playwright/test";
 import type { ProviderUsage } from "@getpaseo/protocol/messages";
+import { gotoAppShell, openSettings } from "./app";
 import { daemonWsRoutePattern } from "./daemon-port";
+import { getServerId } from "./server-id";
+import { openSettingsHostSection } from "./settings";
 
 interface ProviderUsageFixturePayload {
   fetchedAt: string;
@@ -9,7 +12,50 @@ interface ProviderUsageFixturePayload {
 
 export interface ProviderUsageFixture {
   requestCount(): number;
+  releaseNextResponse(): void;
   waitForRequestCount(count: number): Promise<void>;
+}
+
+interface ProviderUsageBalanceWithinCardInput {
+  page: Page;
+  provider: ProviderUsage;
+  balanceId: string;
+}
+
+export async function expectProviderUsageBalanceWithinCard({
+  page,
+  provider,
+  balanceId,
+}: ProviderUsageBalanceWithinCardInput): Promise<void> {
+  const serverId = getServerId();
+  await installProviderUsageFixture({
+    page,
+    payloads: [
+      {
+        fetchedAt: "2026-06-19T00:00:00.000Z",
+        providers: [provider],
+      },
+    ],
+  });
+  await gotoAppShell(page);
+  await openSettings(page);
+  await openSettingsHostSection(page, serverId, "usage");
+
+  const card = page.getByTestId("provider-usage-card");
+  const value = page.getByTestId(`provider-usage-balance-${balanceId}-value`);
+  await expect(value).toBeVisible({ timeout: 10_000 });
+  const [cardBox, valueBox] = await Promise.all([card.boundingBox(), value.boundingBox()]);
+  expect(cardBox).not.toBeNull();
+  expect(valueBox).not.toBeNull();
+  expect((valueBox?.x ?? 0) + (valueBox?.width ?? 0)).toBeLessThanOrEqual(
+    (cardBox?.x ?? 0) + (cardBox?.width ?? 0),
+  );
+}
+
+interface ProviderUsageFixtureInput {
+  page: Page;
+  payloads: ProviderUsageFixturePayload[];
+  deferResponses?: boolean;
 }
 
 type WebSocketMessage = string | Buffer;
@@ -75,12 +121,14 @@ function withProviderUsageFeature(message: WebSocketMessage): string | null {
   });
 }
 
-export async function installProviderUsageFixture(
-  page: Page,
-  payloads: ProviderUsageFixturePayload[],
-): Promise<ProviderUsageFixture> {
+export async function installProviderUsageFixture({
+  page,
+  payloads,
+  deferResponses = false,
+}: ProviderUsageFixtureInput): Promise<ProviderUsageFixture> {
   let requests = 0;
   const waiters: Array<{ count: number; resolve: () => void }> = [];
+  const pendingResponses: Array<() => void> = [];
 
   function notifyWaiters() {
     for (const waiter of waiters.splice(0)) {
@@ -114,19 +162,26 @@ export async function installProviderUsageFixture(
         }
         const payload = payloadForRequest();
         notifyWaiters();
-        ws.send(
-          JSON.stringify({
-            type: "session",
-            message: {
-              type: "provider.usage.list.response",
-              payload: {
-                requestId,
-                fetchedAt: payload.fetchedAt,
-                providers: payload.providers,
+        const sendResponse = () => {
+          ws.send(
+            JSON.stringify({
+              type: "session",
+              message: {
+                type: "provider.usage.list.response",
+                payload: {
+                  requestId,
+                  fetchedAt: payload.fetchedAt,
+                  providers: payload.providers,
+                },
               },
-            },
-          }),
-        );
+            }),
+          );
+        };
+        if (deferResponses) {
+          pendingResponses.push(sendResponse);
+        } else {
+          sendResponse();
+        }
         return;
       }
       server.send(message);
@@ -141,6 +196,13 @@ export async function installProviderUsageFixture(
   return {
     requestCount() {
       return requests;
+    },
+    releaseNextResponse() {
+      const sendResponse = pendingResponses.shift();
+      if (!sendResponse) {
+        throw new Error("No deferred provider usage response is pending.");
+      }
+      sendResponse();
     },
     waitForRequestCount(count: number) {
       if (requests >= count) {

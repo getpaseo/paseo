@@ -1,17 +1,9 @@
+import { useTranslation } from "react-i18next";
 import { Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
+import { findActiveProviderUsage } from "./active-provider";
 import { ProviderUsageCard } from "./card";
-import { providerUsageCopy } from "./copy";
-import type { ProviderUsage, ProviderUsageView } from "./types";
-
-function matchProvider(
-  providers: ProviderUsage[],
-  activeProviderId: string | null | undefined,
-): ProviderUsage | null {
-  if (!activeProviderId) return null;
-  const target = activeProviderId.toLowerCase();
-  return providers.find((usage) => usage.providerId.toLowerCase() === target) ?? null;
-}
+import type { ProviderUsageView } from "./types";
 
 // Renders the active agent's provider usage inside the context-meter tooltip.
 // Returns nothing when the active provider has no usage entry, so the meter's
@@ -23,11 +15,12 @@ export function ProviderUsageTooltipSection({
   view: ProviderUsageView;
   activeProviderId: string | null | undefined;
 }) {
+  const { t } = useTranslation();
   if (view.kind === "loading") {
     return (
       <>
         <View style={styles.divider} />
-        <Text style={styles.detail}>{providerUsageCopy.tooltipLoading}</Text>
+        <Text style={styles.detail}>{t("providerUsage.tooltipLoading")}</Text>
       </>
     );
   }
@@ -41,7 +34,7 @@ export function ProviderUsageTooltipSection({
     );
   }
 
-  const usage = matchProvider(view.payload.providers, activeProviderId);
+  const usage = findActiveProviderUsage(view.payload.providers, activeProviderId);
   if (!usage) return null;
 
   return (

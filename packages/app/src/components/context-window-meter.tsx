@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import Svg, { Circle } from "react-native-svg";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
@@ -6,7 +6,7 @@ import { useTranslation } from "react-i18next";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { ProviderUsageTooltipSection } from "@/provider-usage/tooltip-section";
 import { useProviderUsage } from "@/provider-usage/use-provider-usage";
-import { formatTokenCount } from "./context-window-meter.utils";
+import { formatContextPercentage, formatTokenCount } from "./context-window-meter.utils";
 
 interface ContextWindowMeterProps {
   maxTokens: number | null;
@@ -107,16 +107,20 @@ export function ContextWindowMeter({
   glyphSize,
 }: ContextWindowMeterProps) {
   const { theme } = useUnistyles();
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const [isTooltipOpen, setIsTooltipOpen] = useState(false);
+  const tooltipOpenRef = useRef(false);
+  const shouldFetchProviderUsage = isTooltipOpen;
   const { view: providerUsageView, refresh: refreshProviderUsage } = useProviderUsage(
     serverId ?? null,
-    { enabled: isTooltipOpen },
+    { enabled: shouldFetchProviderUsage },
   );
   const percentage =
     maxTokens !== null && usedTokens !== null ? getUsagePercentage(maxTokens, usedTokens) : null;
   const handleTooltipOpenChange = useCallback(
     (nextOpen: boolean) => {
+      if (tooltipOpenRef.current === nextOpen) return;
+      tooltipOpenRef.current = nextOpen;
       setIsTooltipOpen(nextOpen);
       if (nextOpen) {
         void refreshProviderUsage().catch(() => {});
@@ -127,13 +131,11 @@ export function ContextWindowMeter({
 
   const geometry = getMeterGeometry(showPercentage, glyphSize);
 
-  // No usage yet: reserve the footprint with a track-only ring while a session is
-  // active so the real ring fades in without shifting siblings. Render nothing when
-  // no usage is expected.
+  // No context usage yet: reserve the footprint with a track-only ring while a
+  // session is active so the real ring fades in without shifting siblings. Render
+  // nothing when no context usage is expected.
   if (percentage === null || maxTokens === null || usedTokens === null) {
-    if (!pending) {
-      return null;
-    }
+    if (!pending) return null;
     return (
       <View style={geometry.containerStyle}>
         <Svg
@@ -174,48 +176,52 @@ export function ContextWindowMeter({
       enabledOnDesktop
       enabledOnMobile
     >
-      <TooltipTrigger asChild triggerRefProp="ref">
-        <Pressable
-          style={containerStyle}
-          testID="context-window-meter"
-          accessibilityRole="image"
-          accessibilityLabel={t("contextWindow.accessibility", {
-            percentage: roundedPercentage,
-          })}
-        >
-          <Svg
-            width={svgSize}
-            height={svgSize}
-            viewBox={`0 0 ${svgSize} ${svgSize}`}
-            style={styles.svg}
-            accessibilityElementsHidden
-            importantForAccessibility="no-hide-descendants"
+      <View>
+        <TooltipTrigger asChild triggerRefProp="ref">
+          <Pressable
+            style={containerStyle}
+            testID="context-window-meter"
+            accessibilityRole="image"
+            accessibilityLabel={t("contextWindow.accessibility", {
+              percentage: roundedPercentage,
+            })}
           >
-            <Circle
-              cx={center}
-              cy={center}
-              r={radius}
-              fill="none"
-              stroke={colors.track}
-              strokeWidth={strokeWidth}
-            />
-            <Circle
-              cx={center}
-              cy={center}
-              r={radius}
-              fill="none"
-              stroke={colors.progress}
-              strokeWidth={strokeWidth}
-              strokeLinecap="round"
-              strokeDasharray={circumference}
-              strokeDashoffset={dashOffset}
-            />
-          </Svg>
-          {showPercentage ? (
-            <Text style={styles.percentageLabel}>{`${roundedPercentage}%`}</Text>
-          ) : null}
-        </Pressable>
-      </TooltipTrigger>
+            <Svg
+              width={svgSize}
+              height={svgSize}
+              viewBox={`0 0 ${svgSize} ${svgSize}`}
+              style={styles.svg}
+              accessibilityElementsHidden
+              importantForAccessibility="no-hide-descendants"
+            >
+              <Circle
+                cx={center}
+                cy={center}
+                r={radius}
+                fill="none"
+                stroke={colors.track}
+                strokeWidth={strokeWidth}
+              />
+              <Circle
+                cx={center}
+                cy={center}
+                r={radius}
+                fill="none"
+                stroke={colors.progress}
+                strokeWidth={strokeWidth}
+                strokeLinecap="round"
+                strokeDasharray={circumference}
+                strokeDashoffset={dashOffset}
+              />
+            </Svg>
+            {showPercentage ? (
+              <Text style={styles.percentageLabel}>
+                {formatContextPercentage(roundedPercentage, i18n.resolvedLanguage)}
+              </Text>
+            ) : null}
+          </Pressable>
+        </TooltipTrigger>
+      </View>
       <TooltipContent side="top" align="center" offset={8}>
         <View style={styles.tooltipContent}>
           <Text style={styles.tooltipTitle}>{t("contextWindow.title")}</Text>
