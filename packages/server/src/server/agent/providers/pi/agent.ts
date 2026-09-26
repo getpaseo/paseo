@@ -1143,7 +1143,15 @@ export class PiRpcAgentSession implements AgentSession {
         !credential.access
       )
         return null;
-      return { source, input: { accessToken: credential.access } };
+      return {
+        source,
+        input: {
+          accessToken: credential.access,
+          ...(source === "codex" && typeof credential.accountId === "string" && credential.accountId
+            ? { accountId: credential.accountId }
+            : {}),
+        },
+      };
     } catch {
       return null;
     }

@@ -6,6 +6,18 @@ import {
 import { z } from "zod";
 
 export default function contribute(server: PluginServerContext) {
+  for (const id of ["claude", "codex", "copilot", "cursor", "kimi", "generic-match"]) {
+    server.registerUsageSource({
+      id,
+      label: id,
+      input: z.object({}).strict(),
+      fetch: async () => ({
+        account: { key: "default" },
+        status: "available",
+        windows: [{ id: "hour", label: "Hour", usedPct: 31, headline: true }],
+      }),
+    });
+  }
   server.registerUsageSource({
     id: "fixture-session-usage",
     label: "Fixture session usage",
@@ -25,6 +37,7 @@ export default function contribute(server: PluginServerContext) {
         "session.usage_reference",
       ]);
       const listeners = new Set<(event: ProviderEvent) => void>();
+      const models = new Map<string, string | undefined>();
       const emit = (event: ProviderEvent) => {
         for (const listener of listeners) listener(event);
       };
@@ -36,9 +49,16 @@ export default function contribute(server: PluginServerContext) {
             emit({
               type: "catalog",
               requestId: input.requestId,
-              catalog: { models: [{ id: "fixture", label: "Fixture" }], modes: [] },
+              catalog: {
+                models: [
+                  { id: "fixture", label: "Fixture" },
+                  { id: "missing", label: "Missing" },
+                ],
+                modes: [],
+              },
             });
           if (input.type === "session.open") {
+            models.set(input.sessionId, input.config.model);
             emit({
               type: "session.opened",
               requestId: input.requestId,
@@ -53,7 +73,13 @@ export default function contribute(server: PluginServerContext) {
             emit({
               type: "usage_reference",
               requestId: input.requestId,
-              reference: { source: "fixture-session-usage", input: { account: "from-session" } },
+              reference: {
+                source:
+                  models.get(input.sessionId) === "missing"
+                    ? "missing-source"
+                    : "fixture-session-usage",
+                input: { account: "from-session" },
+              },
             });
           if (input.type === "session.close")
             emit({ type: "request.completed", requestId: input.requestId });

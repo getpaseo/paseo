@@ -25,6 +25,7 @@ import type {
 } from "../../agent-sdk-types.js";
 import type { AgentAttachment } from "@getpaseo/protocol/messages";
 import { buildAgentPrompt, renderPromptAttachmentAsText } from "../../prompt-attachments.js";
+import { buildProviderRegistry } from "../../provider-registry.js";
 
 interface TestClaudeSession {
   translateMessageToEvents(message: SDKMessage): AgentStreamEvent[];
@@ -538,12 +539,43 @@ describe("ClaudeAgentClient binary resolution", () => {
       input: { configDir: "/accounts/second" },
     });
     await session.close();
-    const custom = await client.createSession(
-      { provider: "claude", cwd: process.cwd() },
-      { env: { ANTHROPIC_AUTH_TOKEN: "token" } },
-    );
-    expect(await custom.getUsageReference?.()).toBeNull();
-    await custom.close();
+  });
+
+  test.each(["ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"])(
+    "Claude usage reference is null with %s override",
+    async (name) => {
+      const client = new ClaudeAgentClient({
+        logger,
+        resolveBinary: async () => "/test/claude/bin",
+      });
+      const session = await client.createSession(
+        { provider: "claude", cwd: process.cwd() },
+        { env: { [name]: "override" } },
+      );
+      expect(await session.getUsageReference?.()).toBeNull();
+      await session.close();
+    },
+  );
+
+  test("Claude custom alias keeps its CLAUDE_CONFIG_DIR usage reference", async () => {
+    const registry = buildProviderRegistry(logger, {
+      providerOverrides: {
+        "work-claude": {
+          extends: "claude",
+          label: "Work Claude",
+          env: { CLAUDE_CONFIG_DIR: "/accounts/work" },
+        },
+      },
+    });
+    const session = await registry["work-claude"].createClient(logger).createSession({
+      provider: "work-claude",
+      cwd: process.cwd(),
+    });
+    expect(await session.getUsageReference?.()).toEqual({
+      source: "claude",
+      input: { configDir: "/accounts/work" },
+    });
+    await session.close();
   });
 
   test("resolves the installed Claude Code version", async () => {

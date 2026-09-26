@@ -211,6 +211,7 @@ test("Pi usage reference follows the current OAuth model and agent directory", a
         "openai-codex": {
           type: "oauth",
           access: "codex-token",
+          accountId: "account-1",
           refresh: "refresh",
           expires: Date.now() + 60_000,
         },
@@ -233,7 +234,7 @@ test("Pi usage reference follows the current OAuth model and agent directory", a
     });
     expect(await session.getUsageReference?.()).toEqual({
       source: "codex",
-      input: { accessToken: "codex-token" },
+      input: { accessToken: "codex-token", accountId: "account-1" },
     });
     runtime.state.model = { provider: "anthropic", id: "claude", name: "Claude" };
     expect(await session.getUsageReference?.()).toEqual({
