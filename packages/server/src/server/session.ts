@@ -30,7 +30,6 @@ import {
   type CloseItemsRequest,
   type DirectorySuggestionsRequest,
   type ProjectPlacementPayload,
-  type WorkspaceSetupSnapshot,
   type WorkspaceDescriptorPayload,
 } from "./messages.js";
 import type {
@@ -73,6 +72,7 @@ import {
 import type { DaemonConfigStore } from "./daemon-config-store.js";
 import { loadPersistedConfig } from "./persisted-config.js";
 import { releaseWorkspaceServicePortPlan } from "./workspace-service-port-registry.js";
+import { WorkspaceSetupReadiness } from "./workspace-setup-readiness.js";
 import { getErrorMessage, getErrorMessageOr } from "@getpaseo/protocol/error-utils";
 import { getAgentStatusPriority } from "@getpaseo/protocol/agent-state-bucket";
 import { getParentAgentIdFromLabels } from "@getpaseo/protocol/agent-labels";
@@ -104,7 +104,10 @@ import type {
   AgentTimelineFetchResult,
   ManagedAgent,
 } from "./agent/agent-manager.js";
-import { createAgentCommand } from "./agent/create-agent/create.js";
+import {
+  createAgentCommand,
+  type CreateAgentSessionWorktreeResult,
+} from "./agent/create-agent/create.js";
 import { resolveCreateAgentIntent, type CreateAgentIntent } from "./agent/create-agent/intent.js";
 import {
   archiveAgentCommand,
@@ -244,6 +247,7 @@ import { WorkspaceAutoName } from "./workspace-auto-name.js";
 import {
   buildAgentSessionConfig as buildWorktreeAgentSessionConfig,
   createPaseoWorktreeWorkflow as createWorktreeWorkflow,
+  normalizeGitOptions,
   type CreatePaseoWorktreeSetupContinuationInput,
   type CreatePaseoWorktreeWorkflowResult,
   handleCreatePaseoWorktreeRequest as handleCreateWorktreeRequest,
@@ -253,14 +257,7 @@ import {
   handleWorkspaceSetupRunRequest as handleWorkspaceSetupRunRequestMessage,
 } from "./worktree-session.js";
 import { archiveByScope, type ActiveWorkspaceRef } from "./workspace-archive-service.js";
-import { WorkspaceSetupRuntime } from "./workspace-setup-runtime.js";
 import { SessionAuthorization, type DaemonPermission } from "./authorization/index.js";
-
-function resolveWorkspaceSetupRuntime(
-  runtime: WorkspaceSetupRuntime | undefined,
-): WorkspaceSetupRuntime {
-  return runtime ?? new WorkspaceSetupRuntime();
-}
 import { WorktreeRequestError, toWorktreeWireError } from "./worktree-errors.js";
 import { parseGitRemoteLocation } from "@getpaseo/protocol/git-remote";
 import {
@@ -270,6 +267,7 @@ import {
 import { runGitCommand } from "../utils/run-git-command.js";
 import { CreateAgentLifecycleDispatch } from "./agent/create-agent-lifecycle-dispatch.js";
 import { resolveWorktreeSourceCwd } from "./workspace-source.js";
+import { normalizeClientMessageId } from "./client-message-id.js";
 
 type ProviderSubagentManagerEvent = Extract<
   AgentManagerEvent,
@@ -371,6 +369,19 @@ type FetchAgentsResponseEntry = FetchAgentsResponsePayload["entries"][number];
 type FetchAgentsResponsePageInfo = FetchAgentsResponsePayload["pageInfo"];
 type AgentUpdatesFilter = FetchAgentsRequestFilter;
 type CreateAgentRequestMessage = Extract<SessionInboundMessage, { type: "create_agent_request" }>;
+type CreateAgentRequestOutcome =
+  | {
+      status: "agent_created";
+      agentId: string;
+      agent: AgentSnapshotPayload;
+    }
+  | {
+      status: "agent_create_failed";
+      error: string;
+      errorCode?: string;
+    };
+
+const MAX_COMPLETED_CREATE_AGENT_REQUESTS = 100;
 
 interface ResolvedSessionCreateAgentIntent {
   config: AgentSessionConfig;
@@ -519,8 +530,7 @@ export interface SessionOptions {
   hubRelationships?: HubRelationshipManagement;
   serviceProxy?: ServiceProxySubsystem;
   scriptRuntimeStore?: WorkspaceScriptRuntimeStore;
-  workspaceSetupSnapshots?: Map<string, WorkspaceSetupSnapshot>;
-  workspaceSetupRuntime?: WorkspaceSetupRuntime;
+  workspaceSetupReadiness?: WorkspaceSetupReadiness;
   onBranchChanged?: (
     workspaceId: string,
     oldBranch: string | null,
@@ -770,8 +780,7 @@ export class Session {
   private readonly terminalController: TerminalSessionController;
   private inflightRequests = 0;
   private peakInflightRequests = 0;
-  private readonly workspaceSetupSnapshots: Map<string, WorkspaceSetupSnapshot>;
-  private readonly workspaceSetupRuntime: WorkspaceSetupRuntime;
+  private readonly workspaceSetupReadiness: WorkspaceSetupReadiness;
   private readonly workspaceGitObserver: WorkspaceGitObserverService;
   private readonly workspaceDirectory: WorkspaceDirectory;
   private readonly voiceSessions: VoiceSessions;
@@ -787,6 +796,14 @@ export class Session {
   private readonly messageReceipts: Pick<MessageReceipts, "send">;
   private readonly createAgentLifecycleDispatch: CreateAgentLifecycleDispatch;
   private readonly creationService: Pick<CreationService, "create" | "subscribe">;
+  private readonly inFlightCreateAgentRequestsByClientMessageId = new Map<
+    string,
+    Promise<CreateAgentRequestOutcome>
+  >();
+  private readonly completedCreateAgentRequestsByClientMessageId = new Map<
+    string,
+    Extract<CreateAgentRequestOutcome, { status: "agent_created" }>
+  >();
 
   constructor(options: SessionOptions) {
     const {
@@ -830,8 +847,7 @@ export class Session {
       providerUsageService,
       serviceProxy,
       scriptRuntimeStore,
-      workspaceSetupSnapshots,
-      workspaceSetupRuntime,
+      workspaceSetupReadiness,
       onBranchChanged,
       getDaemonTcpPort,
       getDaemonTcpHost,
@@ -1117,8 +1133,7 @@ export class Session {
     this.providerSnapshotManager = providerSnapshotManager;
     this.serviceProxy = serviceProxy ?? null;
     this.scriptRuntimeStore = scriptRuntimeStore ?? null;
-    this.workspaceSetupSnapshots = workspaceSetupSnapshots ?? new Map();
-    this.workspaceSetupRuntime = resolveWorkspaceSetupRuntime(workspaceSetupRuntime);
+    this.workspaceSetupReadiness = workspaceSetupReadiness ?? new WorkspaceSetupReadiness();
     this.getDaemonTcpPort = getDaemonTcpPort ?? null;
     this.getDaemonTcpHost = getDaemonTcpHost ?? null;
     this.serviceProxyPublicBaseUrl = serviceProxyPublicBaseUrl ?? null;
@@ -4137,6 +4152,55 @@ export class Session {
   }
 
   private async handleCreateAgentRequest(msg: CreateAgentRequestMessage): Promise<void> {
+    const clientMessageId =
+      msg.idempotencyKey === undefined ? normalizeClientMessageId(msg.clientMessageId) : undefined;
+    let outcome: CreateAgentRequestOutcome | undefined = clientMessageId
+      ? this.completedCreateAgentRequestsByClientMessageId.get(clientMessageId)
+      : undefined;
+    let createRequest = clientMessageId
+      ? this.inFlightCreateAgentRequestsByClientMessageId.get(clientMessageId)
+      : undefined;
+    if (!outcome && !createRequest) {
+      createRequest = this.runCreateAgentRequest(msg);
+      if (clientMessageId) {
+        this.inFlightCreateAgentRequestsByClientMessageId.set(clientMessageId, createRequest);
+      }
+    }
+
+    if (!outcome) {
+      try {
+        outcome = await createRequest!;
+      } finally {
+        if (
+          clientMessageId &&
+          this.inFlightCreateAgentRequestsByClientMessageId.get(clientMessageId) === createRequest
+        ) {
+          this.inFlightCreateAgentRequestsByClientMessageId.delete(clientMessageId);
+        }
+      }
+      if (clientMessageId && outcome.status === "agent_created") {
+        this.completedCreateAgentRequestsByClientMessageId.set(clientMessageId, outcome);
+        while (
+          this.completedCreateAgentRequestsByClientMessageId.size >
+          MAX_COMPLETED_CREATE_AGENT_REQUESTS
+        ) {
+          const oldestClientMessageId = this.completedCreateAgentRequestsByClientMessageId
+            .keys()
+            .next().value;
+          if (!oldestClientMessageId) break;
+          this.completedCreateAgentRequestsByClientMessageId.delete(oldestClientMessageId);
+        }
+      }
+    }
+    this.emit({
+      type: "status",
+      payload: { ...outcome, requestId: msg.requestId },
+    });
+  }
+
+  private async runCreateAgentRequest(
+    msg: CreateAgentRequestMessage,
+  ): Promise<CreateAgentRequestOutcome> {
     try {
       let agent: AgentSnapshotPayload;
       if (msg.idempotencyKey !== undefined) {
@@ -4155,27 +4219,10 @@ export class Session {
       } else {
         agent = await this.createSessionAgent(msg);
       }
-      this.emit({
-        type: "status",
-        payload: {
-          status: "agent_created",
-          agentId: agent.id,
-          requestId: msg.requestId,
-          agent,
-        },
-      });
+      return { status: "agent_created", agentId: agent.id, agent };
     } catch (error) {
       const wireError = error instanceof SessionRequestError ? error : toWorktreeWireError(error);
       this.sessionLogger.error({ err: error }, "Failed to create agent");
-      this.emit({
-        type: "status",
-        payload: {
-          status: "agent_create_failed",
-          requestId: msg.requestId,
-          error: wireError.message,
-          errorCode: wireError.code,
-        },
-      });
       this.emit({
         type: "activity_log",
         payload: {
@@ -4185,6 +4232,7 @@ export class Session {
           content: `Failed to create agent: ${wireError.message}`,
         },
       });
+      return { status: "agent_create_failed", error: wireError.message, errorCode: wireError.code };
     }
   }
 
@@ -4239,11 +4287,20 @@ export class Session {
         firstAgentContext,
         hasLegacyGitOptions: Boolean(git),
       });
-      createdWorktreeForCleanup = createdWorktree;
+      const prebuiltLegacyWorktree = await this.prebuildLegacyWorktreeForPlacement({
+        config,
+        git,
+        worktreeName,
+        firstAgentContext,
+        createdWorktree,
+      });
+      const placementWorktree = createdWorktree ?? prebuiltLegacyWorktree?.createdWorktree ?? null;
+      createdWorktreeForCleanup = placementWorktree;
       const resolvedIntent = await this.resolveSessionCreateAgentIntent({
         request: msg,
-        createdWorktree,
+        createdWorktree: placementWorktree,
         workspacePromptTitle,
+        prebuiltConfig: prebuiltLegacyWorktree?.sessionConfig,
       });
       const resolvedCwd = resolve(resolvedIntent.config.cwd);
       if (!(await this.filesystem.isDirectory(resolvedCwd))) {
@@ -4258,6 +4315,7 @@ export class Session {
           paseoHome: this.paseoHome,
           worktreesRoot: this.worktreesRoot,
           providerSnapshotManager: this.providerSnapshotManager,
+          workspaceSetupReadiness: this.workspaceSetupReadiness,
         },
         {
           kind: "session",
@@ -4280,7 +4338,12 @@ export class Session {
           provisionalTitle,
           firstAgentContext,
           buildSessionConfig: (sessionConfig, gitOptions, legacyWorktreeName, ctx) =>
-            this.buildAgentSessionConfig(sessionConfig, gitOptions, legacyWorktreeName, ctx),
+            this.resolveBuiltAgentSessionConfig(prebuiltLegacyWorktree, {
+              sessionConfig,
+              gitOptions,
+              legacyWorktreeName,
+              firstAgentContext: ctx,
+            }),
         },
       );
       createdAgentId = snapshot.id;
@@ -4314,10 +4377,58 @@ export class Session {
     }
   }
 
+  private async prebuildLegacyWorktreeForPlacement(input: {
+    config: AgentSessionConfig;
+    git?: GitSetupOptions;
+    worktreeName?: string;
+    firstAgentContext: FirstAgentContext;
+    createdWorktree: CreatePaseoWorktreeWorkflowResult | null;
+  }): Promise<CreateAgentSessionWorktreeResult | null> {
+    const normalizedLegacyGit = normalizeGitOptions(input.git, input.worktreeName);
+    if (input.createdWorktree || !normalizedLegacyGit?.createWorktree) {
+      return null;
+    }
+
+    // Legacy git.createWorktree requests used to reach placement first, minting an
+    // orphan workspace for the source checkout before buildAgentSessionConfig
+    // created the intended worktree workspace.
+    const result = await this.buildAgentSessionConfig(
+      input.config,
+      input.git,
+      input.worktreeName,
+      input.firstAgentContext,
+    );
+    if (!result.createdWorktree) {
+      throw new Error("Legacy worktree setup did not return its created workspace");
+    }
+    return result;
+  }
+
+  private resolveBuiltAgentSessionConfig(
+    prebuilt: CreateAgentSessionWorktreeResult | null,
+    input: {
+      sessionConfig: AgentSessionConfig;
+      gitOptions?: GitSetupOptions;
+      legacyWorktreeName?: string;
+      firstAgentContext?: FirstAgentContext;
+    },
+  ): Promise<CreateAgentSessionWorktreeResult> {
+    if (prebuilt) {
+      return Promise.resolve(prebuilt);
+    }
+    return this.buildAgentSessionConfig(
+      input.sessionConfig,
+      input.gitOptions,
+      input.legacyWorktreeName,
+      input.firstAgentContext,
+    );
+  }
+
   private async resolveSessionCreateAgentIntent(input: {
     request: CreateAgentRequestMessage;
     createdWorktree: CreatePaseoWorktreeWorkflowResult | null;
     workspacePromptTitle: string | null;
+    prebuiltConfig?: AgentSessionConfig;
   }): Promise<ResolvedSessionCreateAgentIntent> {
     const { request, createdWorktree } = input;
     const callerAgent = request.callerAgentId
@@ -4327,7 +4438,7 @@ export class Session {
       throw new Error(`Caller agent ${request.callerAgentId} not found`);
     }
 
-    let config = request.config;
+    let config = input.prebuiltConfig ?? request.config;
 
     const intent = await resolveCreateAgentIntent({
       explicitWorkspaceId: createdWorktree?.workspace.workspaceId ?? request.workspaceId,
@@ -4757,6 +4868,7 @@ export class Session {
     sessionConfig: AgentSessionConfig;
     setupContinuation?: CreatePaseoWorktreeWorkflowResult["setupContinuation"];
     createdWorkspaceId?: string;
+    createdWorktree?: CreatePaseoWorktreeWorkflowResult;
   }> {
     return buildWorktreeAgentSessionConfig(
       {
@@ -5901,6 +6013,7 @@ export class Session {
     this.workspaceGitObserver.removeForWorkspaceId(workspaceId);
     this.scriptRuntimeStore?.removeForWorkspace(workspaceId);
     releaseWorkspaceServicePortPlan(workspaceId);
+    this.workspaceSetupReadiness.forget(workspaceId);
   }
 
   private async emitWorkspaceUpdatesForWorkspaceIds(
@@ -7221,14 +7334,17 @@ export class Session {
           this.workspaceAutoName.scheduleForWorktree(autoNameInput, {
             currentSelection: this.getFocusedAgentSelectionForCwd(autoNameInput.workspace.cwd),
           }),
-        startWorkspaceSetup: (workspaceId, operation) =>
-          this.workspaceSetupRuntime.start(workspaceId, operation),
+        generateWorkspaceNameForFirstAgent: (nameInput) =>
+          this.workspaceAutoName.generateForWorktreeCreation(nameInput, {
+            currentSelection: this.getFocusedAgentSelectionForCwd(nameInput.cwd),
+          }),
+        workspaceSetupReadiness: this.workspaceSetupReadiness,
         assertWorkspaceAutomationAllowed: (workspaceId) =>
           assertWorkspaceAutomationAllowedForWorkspace(this.workspaceRegistry, workspaceId),
         emitWorkspaceUpdateForWorkspaceId: (workspaceId) =>
           this.emitWorkspaceUpdateForWorkspaceId(workspaceId),
         cacheWorkspaceSetupSnapshot: (workspaceId, snapshot) => {
-          this.workspaceSetupSnapshots.set(workspaceId, snapshot);
+          return this.workspaceSetupReadiness.setSnapshot(workspaceId, snapshot);
         },
         emit: (message) => this.emit(message),
         sessionLogger: this.sessionLogger,
@@ -7254,7 +7370,7 @@ export class Session {
     return handleWorkspaceSetupStatusRequestMessage(
       {
         emit: (message) => this.emit(message),
-        workspaceSetupSnapshots: this.workspaceSetupSnapshots,
+        workspaceSetupReadiness: this.workspaceSetupReadiness,
         getWorkspace: (workspaceId) => this.workspaceRegistry.get(workspaceId),
       },
       request,
@@ -7269,14 +7385,13 @@ export class Session {
         getWorkspace: (workspaceId) => this.workspaceRegistry.get(workspaceId),
         clearAutomationBlock: (workspaceId) =>
           clearWorkspaceAutomationBlock(this.workspaceRegistry, workspaceId),
-        startWorkspaceSetup: (workspaceId, operation) =>
-          this.workspaceSetupRuntime.start(workspaceId, operation),
+        workspaceSetupReadiness: this.workspaceSetupReadiness,
         paseoHome: this.paseoHome,
         worktreesRoot: this.worktreesRoot,
         emitWorkspaceUpdateForWorkspaceId: (workspaceId) =>
           this.emitWorkspaceUpdateForWorkspaceId(workspaceId),
         cacheWorkspaceSetupSnapshot: (workspaceId, snapshot) =>
-          this.workspaceSetupSnapshots.set(workspaceId, snapshot),
+          this.workspaceSetupReadiness.setSnapshot(workspaceId, snapshot),
         emit: (message) => this.emit(message),
         sessionLogger: this.sessionLogger,
         terminalManager: this.terminalManager,
@@ -7323,7 +7438,7 @@ export class Session {
             assertWorkspaceAutomationAllowedForWorkspace(this.workspaceRegistry, workspaceId),
           killTerminalsForWorkspace: (workspaceId) =>
             this.terminalController.killTerminalsForWorkspace(workspaceId),
-          stopWorkspaceSetup: (workspaceId) => this.workspaceSetupRuntime.stop(workspaceId),
+          stopWorkspaceSetup: (workspaceId) => this.workspaceSetupReadiness.stop(workspaceId),
           sessionLogger: this.sessionLogger,
         },
         {

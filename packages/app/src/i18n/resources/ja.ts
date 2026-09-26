@@ -555,6 +555,7 @@ export const ja: TranslationResources = {
         run: "セットアップを実行",
         runFailed: "ワークスペースのセットアップに失敗しました",
       },
+      waitingForWorkspace: "ワークスペースのセットアップ完了を待機中",
       empty: {
         noCommands: "このワークスペースでセットアップコマンドは実行されませんでした。",
       },

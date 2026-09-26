@@ -546,6 +546,7 @@ export const en = {
         run: "Run setup",
         runFailed: "Failed to run workspace setup",
       },
+      waitingForWorkspace: "Waiting for workspace setup",
       empty: {
         noCommands: "No setup commands ran for this workspace.",
       },

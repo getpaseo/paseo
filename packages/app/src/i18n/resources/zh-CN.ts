@@ -549,6 +549,7 @@ export const zhCN: TranslationResources = {
         run: "运行设置",
         runFailed: "运行工作区设置失败",
       },
+      waitingForWorkspace: "正在等待 workspace setup 完成",
       empty: {
         noCommands: "此 workspace 没有运行 setup 命令。",
       },

@@ -26,6 +26,7 @@ import {
   emitLiveTimelineItemIfAgentKnown,
 } from "../timeline-append.js";
 import { resolveCreateAgentIntent } from "./intent.js";
+import type { WorkspaceSetupReadiness } from "../../workspace-setup-readiness.js";
 
 export interface CreateAgentSessionWorktreeResult {
   sessionConfig: AgentSessionConfig;
@@ -33,6 +34,7 @@ export interface CreateAgentSessionWorktreeResult {
   // Set when this build created a fresh worktree workspace. The agent must be
   // stamped with it so workspaceId-scoped archive can find the agent later.
   createdWorkspaceId?: string;
+  createdWorktree?: CreatePaseoWorktreeWorkflowResult;
 }
 
 export interface CreateAgentCommandDependencies {
@@ -43,6 +45,7 @@ export interface CreateAgentCommandDependencies {
   worktreesRoot?: string;
   terminalManager?: TerminalManager | null;
   providerSnapshotManager: Pick<ProviderSnapshotManager, "resolveCreateConfig">;
+  workspaceSetupReadiness: Pick<WorkspaceSetupReadiness, "waitUntilReady">;
   createPaseoWorktree?: CreatePaseoWorktreeWorkflowFn;
   // Mints a fresh directory workspace for a cwd and returns its id.
   ensureWorkspaceForCreate?: EnsureWorkspaceForCreate;
@@ -242,6 +245,9 @@ async function resolveSessionCreateAgent(
     input.worktreeName,
     input.firstAgentContext,
   );
+  const workspaceId = requireResolvedWorkspaceId(
+    setupContinuation ? createdWorkspaceId : input.workspaceId,
+  );
   // Validate the requested mode against the provider's modes for the resolved
   // cwd. The app remembers mode preferences globally, so a saved mode can be
   // stale for a workspace whose provider config no longer defines it — reject
@@ -278,8 +284,6 @@ async function resolveSessionCreateAgent(
           ...(clientMessageId ? { clientMessageId } : {}),
         }
       : undefined;
-  const workspaceId = setupContinuation ? createdWorkspaceId : input.workspaceId;
-
   return {
     config: sessionConfig,
     createOptions: {
@@ -290,7 +294,7 @@ async function resolveSessionCreateAgent(
       // A legacy git/worktreeName worktree creates a fresh workspace, so the
       // agent belongs to that workspace, not the source one. createdWorkspaceId
       // is the freshly created worktree's workspace.
-      workspaceId: requireResolvedWorkspaceId(workspaceId),
+      workspaceId,
     },
     prompt: hasPromptContent ? prompt : undefined,
     runOptions,
@@ -458,7 +462,7 @@ async function sendInitialPrompt(
     if (prompt === undefined) {
       return { started: false, liveSnapshot: snapshot };
     }
-    const liveSnapshot = await startCreatedAgentInitialPrompt({
+    const started = await startCreatedAgentInitialPrompt({
       agentManager: dependencies.agentManager,
       agentId: snapshot.id,
       snapshot,
@@ -466,7 +470,7 @@ async function sendInitialPrompt(
       runOptions: resolved.runOptions,
       logger: resolved.promptLogger ?? dependencies.logger,
     });
-    return { started: true, liveSnapshot };
+    return { started: true, liveSnapshot: started.snapshot };
   } catch (error) {
     if (resolved.promptFailure === "throw") {
       throw error;
