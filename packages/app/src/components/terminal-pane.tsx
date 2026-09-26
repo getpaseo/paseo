@@ -4,7 +4,13 @@ import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { useRetainedPanelActive } from "@/components/retained-panel";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as Clipboard from "expo-clipboard";
-import { Pressable, Text, View, type PressableStateCallbackType } from "react-native";
+import {
+  Pressable,
+  Text,
+  View,
+  type LayoutChangeEvent,
+  type PressableStateCallbackType,
+} from "react-native";
 import Animated, { runOnJS, useAnimatedReaction } from "react-native-reanimated";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { Keyboard as KeyboardIcon, KeyboardOff as KeyboardOffIcon } from "lucide-react-native";
@@ -31,9 +37,10 @@ import {
 } from "@/terminal/runtime/terminal-key-dispatch";
 import {
   getTerminalVirtualKeyboardControlId,
+  isTouchTerminalSurface,
+  resolveTerminalVirtualKeyboardRows,
   shouldShowTerminalFloatingCopyAction,
   shouldShowTerminalPasteAction,
-  TERMINAL_VIRTUAL_KEYBOARD_ROWS,
   type TerminalVirtualKeyboardControl,
 } from "@/terminal/runtime/terminal-virtual-keyboard";
 import { pasteTerminalClipboard } from "@/terminal/runtime/terminal-paste";
@@ -93,6 +100,7 @@ interface TerminalPaneProps {
 
 const TERMINAL_REFIT_DELAYS_MS = [0, 48, 144, 320];
 const TERMINAL_RESIZE_DEBOUNCE_MS = 100;
+const TERMINAL_KEY_BAR_MAX_WIDTH = 880;
 
 const MODIFIER_LABELS = {
   ctrl: "Ctrl",
@@ -222,12 +230,18 @@ export function TerminalPane({
     return trimmed.length > 0 ? trimmed : undefined;
   }, [settings.monoFontFamily]);
   const isMobile = useIsCompactFormFactor();
+  const isTouchSurface = isTouchTerminalSurface({ isNative, isCompact: isMobile });
+  const [keyBarWidth, setKeyBarWidth] = useState(0);
+  const virtualKeyboardRows = resolveTerminalVirtualKeyboardRows({
+    isCompact: isMobile,
+    availableWidth: keyBarWidth,
+  });
   const mobileView = usePanelStore((state) => state.mobilePanel.target);
   const showMobileAgentList = usePanelStore((state) => state.showMobileAgentList);
   const swipeGesturesEnabled = isMobile;
   const { shift: keyboardShift, style: keyboardPaddingStyle } = useKeyboardShiftStyle({
     mode: "padding",
-    enabled: isMobile,
+    enabled: isTouchSurface,
   });
   const [keyboardInset, setKeyboardInset] = useState(0);
   const [isKeyboardVisible, setIsKeyboardVisible] = useState(false);
@@ -292,7 +306,7 @@ export function TerminalPane({
   }, [terminalId]);
 
   const refreshClipboardAvailability = useCallback(async () => {
-    if (!isMobile) {
+    if (!isTouchSurface) {
       setHasClipboardText(false);
       return;
     }
@@ -302,7 +316,7 @@ export function TerminalPane({
     } catch {
       setHasClipboardText(false);
     }
-  }, [isMobile]);
+  }, [isTouchSurface]);
 
   useEffect(() => {
     void refreshClipboardAvailability();
@@ -436,11 +450,11 @@ export function TerminalPane({
 
   const handleKeyboardChange = useCallback(
     (nextShift: number) => {
-      setKeyboardInset(isMobile ? nextShift : 0);
+      setKeyboardInset(isTouchSurface ? nextShift : 0);
       setIsKeyboardVisible(nextShift > 0);
       pulseKeyboardRefits();
     },
-    [isMobile, pulseKeyboardRefits],
+    [isTouchSurface, pulseKeyboardRefits],
   );
 
   useEffect(() => {
@@ -955,6 +969,15 @@ export function TerminalPane({
     [keyboardPaddingStyle],
   );
 
+  // A retained pane that is hidden lays out at zero. Keep the last real width so the bar does not
+  // drop to the two-row layout every time the pane is stashed. See docs/coding-standards.md.
+  const handleKeyBarLayout = useCallback((event: LayoutChangeEvent) => {
+    const width = event.nativeEvent.layout.width;
+    if (width > 0) {
+      setKeyBarWidth(width);
+    }
+  }, []);
+
   const handleSwipeRight = useCallback(() => {
     if (!swipeGesturesEnabled) return;
     emulatorRef.current?.blur();
@@ -1099,10 +1122,10 @@ export function TerminalPane({
         </View>
       ) : null}
 
-      {isMobile ? (
+      {isTouchSurface ? (
         <View style={styles.keyboardContainer} testID="terminal-virtual-keyboard">
-          <View style={styles.keyboardRows}>
-            {TERMINAL_VIRTUAL_KEYBOARD_ROWS.map((row) => (
+          <View style={styles.keyboardRows} onLayout={handleKeyBarLayout}>
+            {virtualKeyboardRows.map((row) => (
               <View
                 key={row.map(getTerminalVirtualKeyboardControlId).join(":")}
                 style={styles.keyboardRow}
@@ -1165,6 +1188,11 @@ const styles = StyleSheet.create((theme) => ({
   },
   keyboardRows: {
     gap: theme.spacing[1],
+    // Twelve keys in one row still stretch to absurd widths on a tablet. Cap the bar and center it
+    // so a key keeps a key's proportions; the container border still spans the pane.
+    width: "100%",
+    maxWidth: TERMINAL_KEY_BAR_MAX_WIDTH,
+    alignSelf: "center",
   },
   keyboardRow: {
     flexDirection: "row",
