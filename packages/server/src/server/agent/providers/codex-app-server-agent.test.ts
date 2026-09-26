@@ -3650,6 +3650,119 @@ describe("Codex app-server provider", () => {
     }
   });
 
+  test("requires a repeated cancel before stopping an app-server that never answers turn/interrupt", async () => {
+    const stuckAppServer = createFakeCodexAppServer({
+      "turn/interrupt": () => new Promise(() => undefined),
+    });
+    const replacementAppServer = createFakeCodexAppServer();
+    const spawnedChildren = [stuckAppServer.child, replacementAppServer.child];
+    let exitSignal: NodeJS.Signals | null = null;
+    stuckAppServer.child.once("exit", (_code, signal) => {
+      exitSignal = signal;
+    });
+    const session = new CodexAppServerAgentSession(
+      createConfig({ cwd: "/workspace/project" }),
+      null,
+      createTestLogger(),
+      async () => {
+        const child = spawnedChildren.shift();
+        if (!child) {
+          throw new Error("Unexpected extra Codex app-server spawn");
+        }
+        return child;
+      },
+    );
+    const terminalEvents: TurnTerminalEvent[] = [];
+    session.subscribe((event) => {
+      if (
+        event.type === "turn_completed" ||
+        event.type === "turn_failed" ||
+        event.type === "turn_canceled"
+      ) {
+        terminalEvents.push(event);
+      }
+    });
+
+    try {
+      await session.startTurn("Install dependencies.");
+      stuckAppServer.startsTurn({ threadId: "thread-1", turnId: "turn-stuck" });
+
+      const firstInterrupt = session.interrupt();
+      await stuckAppServer.waitForRequest("turn/interrupt");
+      await expect(firstInterrupt).rejects.toThrow("request timed out for turn/interrupt");
+      expect(exitSignal).toBeNull();
+      expect(terminalEvents).toEqual([]);
+
+      await expect(session.interrupt()).resolves.toBeUndefined();
+
+      expect(exitSignal).toBe("SIGKILL");
+      expect(terminalEvents).toEqual([
+        expect.objectContaining({
+          type: "turn_canceled",
+          provider: CODEX_PROVIDER,
+          reason: "interrupted",
+        }),
+      ]);
+
+      await session.startTurn("Try again.");
+      await replacementAppServer.waitForTurnStart();
+      expect(spawnedChildren).toEqual([]);
+      stuckAppServer.assertNoErrors();
+      replacementAppServer.assertNoErrors();
+    } finally {
+      await session.close();
+    }
+  }, 10_000);
+
+  test("does not let a stale interrupt timeout stop the next turn", async () => {
+    const appServer = createFakeCodexAppServer({
+      "turn/interrupt": () => new Promise(() => undefined),
+    });
+    let exitSignal: NodeJS.Signals | null = null;
+    appServer.child.once("exit", (_code, signal) => {
+      exitSignal = signal;
+    });
+    const session = new CodexAppServerAgentSession(
+      createConfig({ cwd: "/workspace/project" }),
+      null,
+      createTestLogger(),
+      async () => appServer.child,
+    );
+    const terminalEvents: TurnTerminalEvent[] = [];
+    session.subscribe((event) => {
+      if (
+        event.type === "turn_completed" ||
+        event.type === "turn_failed" ||
+        event.type === "turn_canceled"
+      ) {
+        terminalEvents.push(event);
+      }
+    });
+
+    try {
+      await session.startTurn("Finish this turn.");
+      appServer.startsTurn({ threadId: "thread-1", turnId: "turn-a" });
+      const staleInterrupt = session.interrupt();
+      await appServer.waitForRequest("turn/interrupt");
+
+      appServer.completeTurn({ status: "completed" });
+      await session.startTurn("Start the next turn.");
+      await appServer.waitForTurnStart();
+      appServer.startsTurn({ threadId: "thread-1", turnId: "turn-b" });
+
+      await expect(staleInterrupt).resolves.toBeUndefined();
+
+      expect(exitSignal).toBeNull();
+      expect(terminalEvents).toEqual([
+        expect.objectContaining({ type: "turn_completed", provider: CODEX_PROVIDER }),
+      ]);
+      appServer.completeTurn({ status: "completed" });
+      appServer.assertNoErrors();
+    } finally {
+      await session.close();
+    }
+  }, 10_000);
+
   test("treats Codex already having no active turn as an acknowledged interrupt", async () => {
     const appServer = createFakeCodexAppServer({
       "turn/interrupt": () => ({

@@ -1,4 +1,5 @@
 import { describe, expect, test, vi } from "vitest";
+import pino from "pino";
 
 import { createTestLogger } from "../../../../test-utils/test-logger.js";
 import {
@@ -48,6 +49,30 @@ describe("Codex app-server transport", () => {
       child.exitCode = 0;
       child.emit("exit", 0, null);
       await expect(client.dispose()).resolves.toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+      child.stdout.end();
+      child.stderr.end();
+    }
+  });
+
+  test("forceDispose warning names SIGKILL as the initial signal", async () => {
+    vi.useFakeTimers();
+    const warnings: string[] = [];
+    const child = createCodexAppServerChildProcess();
+    child.kill = () => true;
+    const logger = pino({ level: "warn" }, { write: (line: string) => warnings.push(line) });
+    const client = new CodexAppServerClient(child, logger);
+    try {
+      const closing = expect(client.forceDispose()).rejects.toThrow(
+        "did not report exit after SIGKILL",
+      );
+      await vi.advanceTimersByTimeAsync(3_000);
+      await closing;
+
+      expect(warnings.join("\n")).toContain(
+        "Codex app-server did not exit after SIGKILL; sending SIGKILL",
+      );
     } finally {
       vi.useRealTimers();
       child.stdout.end();
