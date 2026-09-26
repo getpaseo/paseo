@@ -8,7 +8,8 @@ This guide walks through adding a new agent provider end-to-end. There are two i
 names and nesting are the provider's native contract; options are not portable between providers.
 Paseo validates the object with the selected provider's strict schema before constructing a session.
 Unknown keys fail with their `providerOptions.*` path. Paseo-owned controls such as cwd, model,
-prompt, environment, session identity, MCP transport, callbacks, and hooks cannot be passed here.
+prompt, environment, session identity, MCP transport, callbacks, and hooks are not accepted as
+top-level provider options.
 
 This Paseo version accepts these keys:
 
@@ -19,10 +20,18 @@ This Paseo version accepts these keys:
   `allow_local_binding`, `allow_upstream_proxy`, `dangerously_allow_all_unix_sockets`,
   `dangerously_allow_non_loopback_proxy`, `domains`, and `unix_sockets`. See the
   [Codex configuration reference](https://developers.openai.com/codex/config-reference).
-- **Claude:** `allowedTools`, `disallowedTools`, `additionalDirectories`, `sandbox`, and `settings`.
-  The accepted sandbox fields cover enablement, fail-if-unavailable behavior, excluded and
-  unsandboxed commands, filesystem read/write rules, network domain/socket/local-binding rules,
-  weaker nested sandboxing, ignored violations, and the ripgrep command. `settings` accepts native
+- **Claude:** `allowedTools`, `disallowedTools`, `additionalDirectories`, `extraArgs`, `sandbox`, and
+  `settings`. `providerOptions.extraArgs` passes the SDK's documented
+  [`Options.extraArgs`](https://platform.claude.com/docs/en/agent-sdk/typescript#options) map
+  unchanged: keys omit the leading `--`, string values supply an argument value, and `null`
+  supplies a boolean flag. For example, `providerOptions: { extraArgs: { chrome: null } }`
+  passes `--chrome`, and `providerOptions: { extraArgs: { model: "x" } }` passes `--model x`.
+  Set it in session configuration or a plugin's `server.before("agent.create", ...)` hook; see
+  [plugin configuration hooks](../public-docs/plugins/reference.md#change-configuration-and-inject-an-mcp-server). Values are literal;
+  shell expressions such as `$(command)` are not evaluated. The accepted sandbox
+  fields cover enablement, fail-if-unavailable behavior, excluded and unsandboxed commands,
+  filesystem read/write rules, network domain/socket/local-binding rules, weaker nested
+  sandboxing, ignored violations, and the ripgrep command. `settings` accepts native
   `permissions.{allow,ask,deny}` and sandbox settings. See the
   [Claude Agent SDK TypeScript reference](https://platform.claude.com/docs/en/agent-sdk/typescript)
   and [Claude settings reference](https://code.claude.com/docs/en/settings).
@@ -60,7 +69,7 @@ model; it does not override the model list returned by a resolver.
 
 Implement the `AgentClient` and `AgentSession` interfaces from `agent-sdk-types.ts` yourself. This gives full control but requires you to handle process management, streaming, permissions, and session persistence from scratch.
 
-Existing direct providers: `claude` (in `providers/claude/agent.ts`), `codex` (`codex-app-server-agent.ts`), `opencode` (`opencode-agent.ts`), `pi` (`providers/pi/agent.ts`), and `omp` (`providers/omp/agent.ts`). The dev-only `mock` provider (`mock-load-test-agent.ts`) is also direct.
+Existing direct providers: `claude` (in `providers/claude/agent.ts`), `codex` (`codex-app-server-agent.ts`), `opencode` (`opencode/runtime-client.ts`), `pi` (`providers/pi/agent.ts`), and `omp` (`providers/omp/agent.ts`). The dev-only `mock` provider (`mock-load-test-agent.ts`) is also direct.
 
 Claude first-party model metadata lives in `packages/server/src/server/agent/providers/claude/model-manifest.ts`. When adding or updating a Claude model, update that manifest only; the model picker thinking options and Claude-specific feature gates are derived from the manifest. Do not add model-specific Claude capability lists in feature code.
 
@@ -86,9 +95,13 @@ OMP supports native Paseo host tools. The adapter registers the full caller-scop
 
 Pi RPC extension UI dialog requests (`select`, `input`, `editor`, `confirm`) are bridged into Paseo question permissions and answered with `extension_ui_response`. Pi extensions such as `ask_user` may chain dialogs: for example, a `select` can be followed by an optional-comment `input`. When an `ask_user` tool call declares `allowComment: true`, Paseo presents the selection and optional comment as one question permission, answers Pi's initial `select` immediately, then auto-answers the follow-up optional `input` with the comment the user already supplied (or an empty string). Preserve placeholders and optional/skip semantics for standalone optional inputs so the app can still distinguish "skip this optional input" from "cancel the whole dialog." Fire-and-forget extension UI requests such as notifications are intentionally ignored by the provider adapter unless Paseo grows first-class UI for them.
 
-OpenCode 1 keeps MCP and process environment outside the session boundary. Paseo shares one OpenCode server for ordinary agents and installs a daemon-owned plugin through `OPENCODE_CONFIG_CONTENT`. The plugin reads the exact agent environment and caller-scoped Paseo tool catalog from the daemon's private loopback bridge for each OpenCode session. Bridge context lives only in daemon memory and is removed when the Paseo session closes. The content-addressed plugin artifact contains no session data or secrets.
+OpenCode adapters target v1.14.46 and v2.0.10. V2 rejects binaries older than the tested 2.0.10 SDK at runtime selection. Runtime selection uses the configured command and environment. A recognized version is cached until provider configuration reload; a failed, timed-out, or unrecognized probe retains the v1 path and retries detection on the next operation. Load v2 code and materialize its plugin only after positive v2 selection; v1 sessions remain undecorated. Keep upstream SDK types inside the version-specific adapter. OpenCode owns storage migration; a missing native session must fail resume rather than create a replacement. V2 has no native archive/unarchive operation: archiving affects Paseo only. V1 retains native archiving.
 
-An agent with custom environment variables or user-configured MCP servers gets a dedicated OpenCode server. Keep that isolation until OpenCode exposes those values as session-owned configuration. Configure custom MCP with `mcp.add`; do not follow it with `mcp.connect`, which only toggles config-backed servers.
+V2.0.4 also removed the activation endpoint that gated a cold location, and a cold location registers its config-derived commands, skills, and providers asynchronously. Wait until `plugin.list` returns a populated inventory before reading the catalog or commands; an empty inventory means the location is still warming. Fail when the readiness deadline expires, including when an inventory request stalls.
+
+Paseo installs its OpenCode tool bridge through `OPENCODE_CONFIG_CONTENT`. V1 accepts a plugin file; v2 silently skips configured files and requires a package directory with a server entry point. Both versions use the daemon's private loopback bridge for caller-scoped tools. Bridge context lives only in daemon memory and is removed when the Paseo session closes. The content-addressed plugin artifacts contain no session data or secrets. V2 also needs this plugin when native Paseo tools are disabled: its prompt API has no structured-output format, so the plugin supplies a schema-validated final-answer tool.
+
+An agent with custom environment variables or user-configured MCP servers gets a dedicated OpenCode server. V2 supports session environment, but its MCP configuration remains location-scoped, so separate servers still prevent one agent from changing another agent's MCP setup. Configure custom MCP with `mcp.add`; do not follow it with `mcp.connect`, which only toggles config-backed servers.
 
 OpenCode owns user message IDs. Do not pass Paseo-generated IDs to OpenCode prompt APIs; let OpenCode create `msg*` IDs and record the user timeline item from the `message.updated` event.
 

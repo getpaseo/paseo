@@ -428,7 +428,7 @@ describe("ClaudeAgentClient.fetchCatalog", () => {
         logger,
         resolveBinary: async () => "/test/claude/bin",
         resolveVersion: async () => "2.1.219",
-        configDir: emptyConfigDir,
+        runtimeSettings: { env: { CLAUDE_CONFIG_DIR: emptyConfigDir } },
       });
       const { models } = await client.fetchCatalog({
         scope: "workspace",
@@ -475,7 +475,7 @@ describe("ClaudeAgentClient.fetchCatalog", () => {
         resolveVersion: async () => {
           throw new Error("unrecognized version output");
         },
-        configDir: emptyConfigDir,
+        runtimeSettings: { env: { CLAUDE_CONFIG_DIR: emptyConfigDir } },
       });
       const { models } = await client.fetchCatalog({
         scope: "workspace",
@@ -497,7 +497,7 @@ describe("ClaudeAgentClient.fetchCatalog", () => {
         logger,
         resolveBinary: async () => "/test/claude/bin",
         resolveVersion: async () => "2.1.219",
-        configDir: emptyConfigDir,
+        runtimeSettings: { env: { CLAUDE_CONFIG_DIR: emptyConfigDir } },
       });
       const { models } = await client.fetchCatalog({
         scope: "workspace",
@@ -782,6 +782,29 @@ describe("ClaudeAgentSession features", () => {
       sandbox: { enabled: true, failIfUnavailable: true },
     });
     expect(queryFactory.mock.calls[0]?.[0].options.allowedTools).not.toContain("mcp__hub__reply");
+    await session.close();
+  });
+
+  test("passes extra Claude Code CLI arguments to the SDK", async () => {
+    const { queryFactory, launches } = createQueryMock();
+    const client = new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const session = await client.createSession({
+      provider: "claude",
+      cwd: process.cwd(),
+      providerOptions: {
+        extraArgs: { chrome: null, model: "x" },
+      },
+    });
+
+    await expect(session.startTurn("hello")).resolves.toEqual({
+      turnId: expect.stringMatching(/^foreground-turn-/),
+    });
+
+    expect(launches[0]?.options.extraArgs).toEqual({ chrome: null, model: "x" });
     await session.close();
   });
 

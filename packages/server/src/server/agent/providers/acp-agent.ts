@@ -136,6 +136,17 @@ function assertChildWithPipes(
   }
 }
 
+// Node reports a failed spawn (missing binary or missing cwd) as a child
+// `error` event; without a listener it becomes an uncaught exception.
+function rejectOnSpawnError(child: ChildProcess, stderrChunks: string[]): Promise<never> {
+  return new Promise<never>((_, reject) => {
+    child.once("error", (error) => {
+      const stderr = stderrChunks.join("").trim();
+      reject(new Error(stderr ? `${String(error)}\n${stderr}` : String(error)));
+    });
+  });
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value != null && typeof value === "object" && !Array.isArray(value);
 }
@@ -1354,12 +1365,7 @@ export class ACPAgentClient implements AgentClient {
       stderrChunks.push(chunk.toString());
     });
 
-    const spawnErrorPromise = new Promise<never>((_, reject) => {
-      child.once("error", (error) => {
-        const stderr = stderrChunks.join("").trim();
-        reject(new Error(stderr ? `${String(error)}\n${stderr}` : String(error)));
-      });
-    });
+    const spawnErrorPromise = rejectOnSpawnError(child, stderrChunks);
     const spawnReadyPromise = new Promise<void>((resolve) => {
       child.once("spawn", () => {
         resolve();
@@ -2732,6 +2738,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     child.stderr.on("data", (chunk: Buffer | string) => {
       stderrChunks.push(chunk.toString());
     });
+    const spawnError = rejectOnSpawnError(child, stderrChunks);
     child.once("exit", (code, signal) => {
       if (this.closed) {
         return;
@@ -2759,14 +2766,17 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.child = child;
     this.connection = connection;
     const initialize = await this.runACPRequest(() =>
-      connection.initialize({
-        protocolVersion: PROTOCOL_VERSION,
-        clientCapabilities: buildACPClientCapabilities(
-          this.clientCapabilityMeta,
-          this.clientCapabilities,
-        ),
-        clientInfo: { name: "Paseo", version: "dev" },
-      }),
+      Promise.race([
+        connection.initialize({
+          protocolVersion: PROTOCOL_VERSION,
+          clientCapabilities: buildACPClientCapabilities(
+            this.clientCapabilityMeta,
+            this.clientCapabilities,
+          ),
+          clientInfo: { name: "Paseo", version: "dev" },
+        }),
+        spawnError,
+      ]),
     );
 
     return { child, connection, initialize };

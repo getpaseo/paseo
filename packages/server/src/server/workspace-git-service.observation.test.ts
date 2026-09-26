@@ -996,27 +996,44 @@ describe("WorkspaceGitService checkout observation", () => {
 
   test("origin/main refreshes a main checkout without configured upstream", async () => {
     const watcher = createWatcherHarness();
-    const getCheckoutSnapshotFacts = vi.fn(async (cwd: string) => ({
-      ...createCheckoutFacts(cwd),
-      currentBranch: "main",
-      remoteUrl: REMOTE_URL,
-      resolvedBaseRef: "main",
-      comparisonBaseRef: null,
-      branchRemoteName: null,
-      branchMergeRef: null,
-      upstreamStatus: null,
+    const releaseInitialFacts = createDeferred<void>();
+    const getCheckoutSnapshotFacts = vi.fn(async (cwd: string) => {
+      await releaseInitialFacts.promise;
+      return {
+        ...createCheckoutFacts(cwd),
+        currentBranch: "main",
+        remoteUrl: REMOTE_URL,
+        resolvedBaseRef: "main",
+        comparisonBaseRef: null,
+        branchRemoteName: null,
+        branchMergeRef: null,
+        upstreamStatus: null,
+      };
+    });
+    const runGitFetch = vi.fn(async () => ({
+      changes: [],
+      nonRemoteRefsChanged: false,
+      error: null,
     }));
-    const service = createService(watcher, { getCheckoutSnapshotFacts });
+    const service = createService(watcher, { getCheckoutSnapshotFacts, runGitFetch });
     const subscription = service.registerWorkspace({ cwd: REPO_CWD }, vi.fn());
     await vi.waitFor(() => {
       expect(getCheckoutSnapshotFacts).toHaveBeenCalledTimes(1);
     });
 
-    watcher.records
-      .find((record) => record.directory === GIT_DIR)
-      ?.callback(null, [
-        { path: path.join(GIT_DIR, "refs", "remotes", "origin", "main"), type: "update" },
-      ]);
+    releaseInitialFacts.resolve();
+    await vi.waitFor(() => {
+      expect(getWatcherRecordsForDirectory(watcher, GIT_DIR)).toHaveLength(1);
+      expect(service.getMetrics().workspaceRefreshInFlightCount).toBe(0);
+      expect(service.getMetrics().workspaceObservationSetupInFlightCount).toBe(0);
+      expect(service.getMetrics().fetchInFlightCount).toBe(0);
+      expect(runGitFetch).toHaveBeenCalledTimes(1);
+    });
+    expect(getCheckoutSnapshotFacts).toHaveBeenCalledTimes(1);
+    const repoWatcher = getWatcherRecordsForDirectory(watcher, GIT_DIR)[0]!;
+    repoWatcher.callback(null, [
+      { path: path.join(GIT_DIR, "refs", "remotes", "origin", "main"), type: "update" },
+    ]);
     await vi.advanceTimersByTimeAsync(1_000);
     await vi.waitFor(() => {
       expect(getCheckoutSnapshotFacts).toHaveBeenCalledTimes(2);
@@ -1539,6 +1556,87 @@ describe("WorkspaceGitService checkout observation", () => {
     service.dispose();
   });
 
+  test("degraded polling backs off while the snapshot is unchanged and resets on a change", async () => {
+    // A repository large enough to defeat the recursive watcher makes every degraded refresh
+    // expensive, so a fixed cadence keeps the daemon shelling out Git on an untouched workspace.
+    const watcher = createWatcherHarness({ failDirectories: new Set([REPO_CWD]) });
+    let isDirty = false;
+    const getCheckoutStatus = vi.fn(async (cwd: string) => createCheckoutStatus(cwd, { isDirty }));
+    const service = createService(watcher, { getCheckoutStatus });
+    const subscription = service.registerWorkspace({ cwd: REPO_CWD }, vi.fn());
+
+    await vi.waitFor(() => {
+      expect(service.getMetrics().workingTreeWatchTargetCount).toBe(1);
+      expect(getCheckoutStatus).toHaveBeenCalledTimes(1);
+    });
+
+    // Quiet ticks at 5s, 10s, 20s, 40s, then the 60s ceiling.
+    for (const [elapsedMs, expectedCalls] of [
+      [5_000, 2],
+      [10_000, 3],
+      [20_000, 4],
+      [40_000, 5],
+      [60_000, 6],
+      [60_000, 7],
+    ] as const) {
+      await vi.advanceTimersByTimeAsync(elapsedMs);
+      expect(getCheckoutStatus).toHaveBeenCalledTimes(expectedCalls);
+    }
+
+    // A fixed 5s cadence would have run 39 polls over the same 195s.
+    expect(getCheckoutStatus.mock.calls.length).toBeLessThan(10);
+
+    // A real change snaps the loop back to the base interval.
+    isDirty = true;
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(getCheckoutStatus).toHaveBeenCalledTimes(8);
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(getCheckoutStatus).toHaveBeenCalledTimes(9);
+
+    subscription.unsubscribe();
+    service.dispose();
+  });
+
+  test("degraded repository-metadata polling backs off and resets on a change", async () => {
+    // Only the Git-directory watcher fails, so the metadata fallback is the one poll loop running.
+    const watcher = createWatcherHarness({ failDirectories: new Set([GIT_DIR]) });
+    let isDirty = false;
+    const getCheckoutStatus = vi.fn(async (cwd: string) => createCheckoutStatus(cwd, { isDirty }));
+    const service = createService(watcher, { getCheckoutStatus });
+    const subscription = service.registerWorkspace({ cwd: REPO_CWD }, vi.fn());
+
+    await vi.waitFor(() => {
+      expect(service.getMetrics().workspaceObservationSetupInFlightCount).toBe(0);
+      expect(service.getMetrics().workspaceRefreshInFlightCount).toBe(0);
+    });
+    const callsBeforePolling = getCheckoutStatus.mock.calls.length;
+    function pollCount(): number {
+      return getCheckoutStatus.mock.calls.length - callsBeforePolling;
+    }
+
+    // Quiet ticks at 5s, 10s, 20s, 40s, then the 60s ceiling.
+    for (const [elapsedMs, expectedPolls] of [
+      [5_000, 1],
+      [10_000, 2],
+      [20_000, 3],
+      [40_000, 4],
+      [60_000, 5],
+      [60_000, 6],
+    ] as const) {
+      await vi.advanceTimersByTimeAsync(elapsedMs);
+      expect(pollCount()).toBe(expectedPolls);
+    }
+
+    isDirty = true;
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(pollCount()).toBe(7);
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(pollCount()).toBe(8);
+
+    subscription.unsubscribe();
+    service.dispose();
+  });
+
   test("non-Git fallback promotes an externally initialized checkout", async () => {
     const watcher = createWatcherHarness();
     let isGit = false;
@@ -1752,17 +1850,17 @@ describe("WorkspaceGitService checkout observation", () => {
       expect(service.getMetrics().workspaceObservationSetupInFlightCount).toBe(0);
     });
     const statusCallsAfterSetup = getCheckoutStatus.mock.calls.length;
-    await vi.advanceTimersByTimeAsync(5_000);
-    await vi.waitFor(() => {
-      expect(getCheckoutStatus.mock.calls.length).toBeGreaterThan(statusCallsAfterSetup);
-    });
-    await vi.advanceTimersByTimeAsync(24_000);
+    await vi.advanceTimersByTimeAsync(29_000);
     expect(getWatcherSubscribeCallCount(watcher, REPO_CWD)).toBe(1);
     await vi.advanceTimersByTimeAsync(1_000);
     await vi.waitFor(() => {
       expect(getWatcherSubscribeCallCount(watcher, REPO_CWD)).toBe(2);
     });
     expect(erroredUnsubscribe).toHaveBeenCalledTimes(1);
+    // Recovery schedules a debounced refresh. Advance the fake clock past the debounce
+    // explicitly; vi.waitFor alone runs out of real time before it on a slow runner.
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(getCheckoutStatus.mock.calls.length).toBeGreaterThan(statusCallsAfterSetup);
 
     subscription.unsubscribe();
     service.dispose();

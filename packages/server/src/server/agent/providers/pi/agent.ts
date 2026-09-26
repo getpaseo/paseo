@@ -94,6 +94,7 @@ const DEFAULT_PI_THINKING_LEVEL: PiThinkingLevel = "medium";
 const PI_BINARY_COMMAND = process.env.PI_COMMAND ?? process.env.PI_ACP_PI_COMMAND ?? "pi";
 const PASEO_PI_TREE_EXTENSION_COMMAND = "paseo_tree";
 const PASEO_PI_CAPTURE_EXTENSION_COMMAND = "paseo_capture_entries";
+const PASEO_PI_REWIND_ENTRY_TYPE = "paseo_rewind";
 const PASEO_PI_ENTRY_CAPTURE_MARKER = "PASEO_ENTRY_CAPTURE";
 const PASEO_PI_SUBMITTED_USER_ENTRY_MARKER = "PASEO_SUBMITTED_USER_ENTRY";
 const PASEO_PI_COMMAND_RESULT_MARKER = "PASEO_COMMAND_RESULT";
@@ -622,9 +623,8 @@ function createPiPaseoExtensionFile(systemPrompt?: string): PiTempFile {
 	    .join("\\n\\n");
 	}
 
-	function getCapturedUserEntries(ctx) {
-	  return ctx.sessionManager
-	    .getEntries()
+	function toCapturedUserEntries(entries) {
+	  return entries
 	    .filter((entry) => entry.type === "message" && entry.message?.role === "user")
 	    .map(toCapturedUserEntry);
 	}
@@ -640,7 +640,14 @@ function createPiPaseoExtensionFile(systemPrompt?: string): PiTempFile {
 	function emitEntryCapture(ctx, reason, requestId) {
 	  ctx.ui.notify(
 	    "${PASEO_PI_ENTRY_CAPTURE_MARKER} " +
-	      JSON.stringify({ reason, requestId, entries: getCapturedUserEntries(ctx) }),
+	      JSON.stringify({
+	        reason,
+	        requestId,
+	        // Rewind targets: rows can still show entries that a rewind or compaction left off the branch.
+	        treeEntries: toCapturedUserEntries(ctx.sessionManager.getEntries()),
+	        // The entries getMessages() replays, so the nth one is the nth replayed user message.
+	        contextEntries: toCapturedUserEntries(ctx.sessionManager.buildContextEntries()),
+	      }),
 	    "info",
 	  );
 	}
@@ -720,6 +727,8 @@ function createPiPaseoExtensionFile(systemPrompt?: string): PiTempFile {
 	      const payload = decodePayload(args.trim());
 	      try {
 	        const result = await ctx.navigateTree(payload.targetId, { summarize: false });
+	        // Pi reopens a session at its last entry, so record the rewind on the new branch to keep it.
+	        pi.appendEntry("${PASEO_PI_REWIND_ENTRY_TYPE}", { targetId: payload.targetId });
 	        emitEntryCapture(ctx, "tree_navigation");
 	        emitCommandResult(ctx, payload.requestId, { ok: true, result });
 	      } catch (error) {
@@ -1265,8 +1274,8 @@ export class PiRpcAgentSession implements AgentSession {
   private readonly pendingPromptResults = new Map<string, boolean>();
   private readonly pendingSteerSubmissions: PiPendingSteerSubmission[] = [];
   currentLeafOverrideId: string | null | undefined;
-  private readonly capturedUserEntries: PiCapturedEntry[] = [];
-  private readonly capturedUserEntriesById = new Map<string, PiCapturedEntry>();
+  private readonly contextUserEntries: PiCapturedEntry[] = [];
+  private readonly treeUserEntriesById = new Map<string, PiCapturedEntry>();
   private readonly pendingExtensionResults = new Map<string, PendingExtensionResult>();
   private outOfBandCompactionEmit: ((event: AgentStreamEvent) => void) | null = null;
   private outOfBandCompactionStarted = false;
@@ -1475,7 +1484,7 @@ export class PiRpcAgentSession implements AgentSession {
     yield* streamPiHistory(
       this.provider,
       await this.runtimeSession.getMessages(),
-      this.capturedUserEntries,
+      this.contextUserEntries,
     );
   }
 
@@ -1619,7 +1628,7 @@ export class PiRpcAgentSession implements AgentSession {
     }
     await this.refreshState().catch(() => undefined);
     await this.requestEntryCapture("rewind");
-    const targetEntry = this.capturedUserEntriesById.get(input.messageId);
+    const targetEntry = this.treeUserEntriesById.get(input.messageId);
     if (!targetEntry) {
       throw new Error(`Pi rewind target ${input.messageId} was not found in captured tree entries`);
     }
@@ -1965,11 +1974,14 @@ export class PiRpcAgentSession implements AgentSession {
     }
   }
 
-  private recordCapturedUserEntries(entries: PiCapturedEntry[]): void {
-    this.capturedUserEntries.splice(0, this.capturedUserEntries.length, ...entries);
-    this.capturedUserEntriesById.clear();
-    for (const entry of entries) {
-      this.capturedUserEntriesById.set(entry.id, entry);
+  private recordCapturedUserEntries(input: {
+    treeEntries: PiCapturedEntry[];
+    contextEntries: PiCapturedEntry[];
+  }): void {
+    this.contextUserEntries.splice(0, this.contextUserEntries.length, ...input.contextEntries);
+    this.treeUserEntriesById.clear();
+    for (const entry of input.treeEntries) {
+      this.treeUserEntriesById.set(entry.id, entry);
     }
   }
 
@@ -2005,10 +2017,12 @@ export class PiRpcAgentSession implements AgentSession {
     if (!payload) {
       return false;
     }
-    const entries = parseCapturedEntries(payload.entries);
-    this.recordCapturedUserEntries(entries);
+    this.recordCapturedUserEntries({
+      treeEntries: parseCapturedEntries(payload.treeEntries),
+      contextEntries: parseCapturedEntries(payload.contextEntries),
+    });
     if (typeof payload.requestId === "string") {
-      this.resolveExtensionResult(payload.requestId, entries);
+      this.resolveExtensionResult(payload.requestId, undefined);
     }
     return true;
   }
@@ -2664,12 +2678,23 @@ export class PiRpcAgentClient implements AgentClient {
       });
       if (!runtimeSession) throw new Error("Pi catalog runtime did not start");
       const catalogSession = runtimeSession;
+      const piModels = await runProviderRefreshActivity(context, "get_available_models", () =>
+        catalogSession.getAvailableModels(null),
+      );
+      // A fresh Pi session starts on the model Pi resolves from its own settings.
+      const { model: configuredModel } = await runProviderRefreshActivity(
+        context,
+        "get_state",
+        () => catalogSession.getState(),
+      );
       const models = transformPiModels(
-        (
-          await runProviderRefreshActivity(context, "get_available_models", () =>
-            catalogSession.getAvailableModels(null),
-          )
-        ).map((model) => mapPiModel(model, PI_PROVIDER)),
+        piModels.map((model) => {
+          const mapped = mapPiModel(model, PI_PROVIDER);
+          const isConfigured =
+            model.provider === configuredModel?.provider && model.id === configuredModel?.id;
+          if (isConfigured) mapped.isDefault = true;
+          return mapped;
+        }),
       );
       return { models, modes: [] };
     } finally {

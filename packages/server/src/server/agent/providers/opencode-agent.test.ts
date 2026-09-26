@@ -1944,6 +1944,75 @@ describe("OpenCode adapter startTurn error handling", () => {
     ]);
   });
 
+  test("streamHistory hides user text that OpenCode marks synthetic", async () => {
+    const fakeClient = {
+      session: {
+        get: vi.fn().mockResolvedValue({
+          data: { revert: undefined },
+          error: undefined,
+        }),
+        messages: vi.fn().mockResolvedValue({
+          data: [
+            {
+              info: { id: "msg_continue", sessionID: "ses_unit_test", role: "user" },
+              parts: [
+                {
+                  id: "prt_continue",
+                  sessionID: "ses_unit_test",
+                  messageID: "msg_continue",
+                  type: "text",
+                  text: "Summarize the task tool output above and continue with your task.",
+                  synthetic: true,
+                },
+              ],
+            },
+            {
+              info: { id: "msg_user", sessionID: "ses_unit_test", role: "user" },
+              parts: [
+                {
+                  id: "prt_user",
+                  sessionID: "ses_unit_test",
+                  messageID: "msg_user",
+                  type: "text",
+                  text: "Read the notes",
+                },
+                {
+                  id: "prt_resource",
+                  sessionID: "ses_unit_test",
+                  messageID: "msg_user",
+                  type: "text",
+                  text: "Reading MCP resource: notes.md",
+                  synthetic: true,
+                },
+              ],
+            },
+          ],
+          error: undefined,
+        }),
+      },
+    } as never;
+
+    const session = new __openCodeInternals.OpenCodeAgentSession(
+      { provider: "opencode", cwd: "/tmp/test" },
+      fakeClient,
+      "ses_unit_test",
+      createTestLogger(),
+    );
+
+    const history: AgentStreamEvent[] = [];
+    for await (const event of session.streamHistory()) {
+      history.push(event);
+    }
+
+    expect(history).toEqual([
+      {
+        type: "timeline",
+        provider: "opencode",
+        item: { type: "user_message", text: "Read the notes", messageId: "msg_user" },
+      },
+    ]);
+  });
+
   test("streamHistory omits replay timestamps when OpenCode omits times", async () => {
     const fakeClient = {
       session: {
@@ -2385,49 +2454,41 @@ describe("OpenCode adapter startTurn error handling", () => {
   });
 
   test("sends exact Hub MCP permission grants without approving unrelated tools", async () => {
-    const promptAsync = vi.fn(async () => ({ data: {}, error: undefined }));
-    const fakeClient = {
-      global: {
-        event: vi.fn().mockImplementation(async ({ signal }: { signal: AbortSignal }) => ({
-          stream: {
-            async *[Symbol.asyncIterator](): AsyncGenerator<OpenCodeEvent> {
-              yield { type: "server.connected", properties: {} } as OpenCodeEvent;
-              await waitForAbort(signal);
-            },
-          },
-        })),
-      },
-      session: { promptAsync },
-    } as never;
-    const session = new __openCodeInternals.OpenCodeAgentSession(
-      {
+    const cwd = tmpCwd();
+    const runtime = new TestOpenCodeHarness();
+    const openCode = new TestOpenCodeClient();
+    runtime.enqueueClient(openCode);
+    const client = new OpenCodeAgentClient(createTestLogger(), undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+    });
+    try {
+      const session = await client.createSession({
         provider: "opencode",
-        cwd: "/tmp/test",
-        providerOptions: { permission: { bash: "ask", hub_reply: "deny" } },
+        cwd,
+        providerOptions: { permission: { bash: "ask", question: "deny" } },
         toolPolicy: {
           preapproved: [{ kind: "mcp", server: "hub", tool: "finish_execution" }],
         },
-      },
-      fakeClient,
-      "ses_unit_test",
-      createTestLogger(),
-    );
-
-    await session.startTurn("finish");
-
-    expect(promptAsync).toHaveBeenCalledWith(
-      expect.objectContaining({
-        permission: [
+      });
+      try {
+        const created = openCode.calls.sessionCreate[0] as {
+          permission?: Array<{ permission: string; pattern: string; action: string }>;
+        };
+        expect(created.permission).toEqual([
           { permission: "hub_finish_execution", pattern: "*", action: "allow" },
           { permission: "bash", pattern: "*", action: "ask" },
-          { permission: "hub_reply", pattern: "*", action: "deny" },
-        ],
-      }),
-    );
-    expect(promptAsync.mock.calls[0]?.[0].permission).not.toContainEqual(
-      expect.objectContaining({ permission: "bash", action: "allow" }),
-    );
-    await session.close();
+          { permission: "question", pattern: "*", action: "deny" },
+        ]);
+        expect(created.permission).not.toContainEqual(
+          expect.objectContaining({ permission: "bash", action: "allow" }),
+        );
+      } finally {
+        await session.close();
+      }
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
   });
 
   test("waits for the stop abort and provider idle before starting the next prompt", async () => {
@@ -6731,5 +6792,126 @@ describe("OpenCode snapshot summary false-idle regression", () => {
 
     expect(events.some((event) => event.type === "turn_started")).toBe(false);
     await session.close();
+  });
+});
+
+describe("OpenCode session permission rules", () => {
+  const logger = createTestLogger();
+  function permissionConfig(cwd: string): AgentSessionConfig {
+    return {
+      provider: "opencode",
+      cwd,
+      providerOptions: { permission: { bash: "ask", external_directory: "allow" } },
+      toolPolicy: { preapproved: [{ kind: "mcp", server: "hub", tool: "finish_execution" }] },
+    };
+  }
+  // OpenCode stores permission rules on the session (POST /session, PATCH /session/{id}) and
+  // drops an unknown `permission` field on prompt_async, so rules sent with a prompt never
+  // reach the server.
+  const expectedRules = [
+    { permission: "hub_finish_execution", pattern: "*", action: "allow" },
+    { permission: "bash", pattern: "*", action: "ask" },
+    { permission: "external_directory", pattern: "*", action: "allow" },
+  ];
+
+  test("creates the session with the agent's permission rules", async () => {
+    const cwd = tmpCwd();
+    const runtime = new TestOpenCodeHarness();
+    const openCode = new TestOpenCodeClient();
+    runtime.enqueueClient(openCode);
+    const client = new OpenCodeAgentClient(logger, undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+    });
+    try {
+      const session = await client.createSession(permissionConfig(cwd));
+      try {
+        expect(openCode.calls.sessionCreate[0]).toEqual(
+          expect.objectContaining({ permission: expectedRules }),
+        );
+      } finally {
+        await session.close();
+      }
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("applies the agent's permission rules to a resumed session", async () => {
+    const cwd = tmpCwd();
+    const runtime = new TestOpenCodeHarness();
+    const openCode = new TestOpenCodeClient();
+    runtime.enqueueClient(openCode);
+    const client = new OpenCodeAgentClient(logger, undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+    });
+    try {
+      const session = await client.resumeSession(
+        { provider: "opencode", sessionId: "ses_resumed_rules", metadata: { cwd } },
+        permissionConfig(cwd),
+      );
+      try {
+        expect(openCode.calls.sessionUpdate[0]).toEqual(
+          expect.objectContaining({
+            sessionID: "ses_resumed_rules",
+            permission: expectedRules,
+          }),
+        );
+      } finally {
+        await session.close();
+      }
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("fails the resume when the rules cannot be applied", async () => {
+    const cwd = tmpCwd();
+    const runtime = new TestOpenCodeHarness();
+    const openCode = new TestOpenCodeClient();
+    openCode.sessionUpdateResponse = { error: { data: { message: "session is archived" } } };
+    runtime.enqueueClient(openCode);
+    const client = new OpenCodeAgentClient(logger, undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+    });
+    try {
+      // Resuming without the rules would run the agent under a more permissive policy than
+      // the one it was configured with, which is the failure this guards.
+      await expect(
+        client.resumeSession(
+          { provider: "opencode", sessionId: "ses_archived", metadata: { cwd } },
+          permissionConfig(cwd),
+        ),
+      ).rejects.toThrow("Failed to apply OpenCode session permission rules");
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("leaves a session without rules untouched", async () => {
+    const cwd = tmpCwd();
+    const runtime = new TestOpenCodeHarness();
+    const openCode = new TestOpenCodeClient();
+    runtime.enqueueClient(openCode);
+    const client = new OpenCodeAgentClient(logger, undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+    });
+    try {
+      const session = await client.resumeSession({
+        provider: "opencode",
+        sessionId: "ses_resumed_no_rules",
+        metadata: { cwd },
+      });
+      try {
+        expect(openCode.calls.sessionUpdate).toEqual([]);
+      } finally {
+        await session.close();
+      }
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
   });
 });
