@@ -1160,6 +1160,92 @@ describe("ACPAgentSession Zed parity", () => {
     expect(await session.getCurrentMode()).toBe("default");
   });
 
+  test("reports context window and USD cost from an ACP usage_update", async () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    session.subscribe((event) => events.push(event));
+
+    await session.sessionUpdate({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "usage_update",
+        size: 128_000,
+        used: 4_096,
+        cost: { amount: 0.25, currency: "USD" },
+      } as SessionUpdate,
+    });
+
+    expect(events).toContainEqual({
+      type: "usage_updated",
+      provider: "claude-acp",
+      usage: {
+        contextWindowMaxTokens: 128_000,
+        contextWindowUsedTokens: 4_096,
+        totalCostUsd: 0.25,
+      },
+    });
+  });
+
+  test("ignores a non-USD ACP cost instead of reporting it as dollars", async () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    session.subscribe((event) => events.push(event));
+
+    await session.sessionUpdate({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "usage_update",
+        size: 200_000,
+        used: 1_000,
+        cost: { amount: 3.5, currency: "EUR" },
+      } as SessionUpdate,
+    });
+
+    expect(events).toContainEqual({
+      type: "usage_updated",
+      provider: "claude-acp",
+      usage: { contextWindowMaxTokens: 200_000, contextWindowUsedTokens: 1_000 },
+    });
+  });
+
+  test("merges a context window reading with the completed turn's token counts", async () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    let resolvePrompt!: (value: PromptResponse) => void;
+    const prompt = vi.fn(
+      () =>
+        new Promise<PromptResponse>((resolve) => {
+          resolvePrompt = resolve;
+        }),
+    );
+    const internals = asInternals<ACPSessionInternals>(session);
+    internals.sessionId = "session-1";
+    internals.connection = { prompt };
+    session.subscribe((event) => events.push(event));
+
+    await session.startTurn("hello");
+    resolvePrompt({ stopReason: "end_turn", usage: { inputTokens: 1_200, outputTokens: 300 } });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    await session.sessionUpdate({
+      sessionId: "session-1",
+      update: { sessionUpdate: "usage_update", size: 200_000, used: 5_000 } as SessionUpdate,
+    });
+
+    const usageEvent = events.findLast((event) => event.type === "usage_updated");
+    expect(usageEvent).toMatchObject({
+      usage: {
+        inputTokens: 1_200,
+        outputTokens: 300,
+        contextWindowMaxTokens: 200_000,
+        contextWindowUsedTokens: 5_000,
+      },
+    });
+  });
+
   test("uses canonical mode returned by setSessionConfigOption response", async () => {
     const session = createSession();
     const internals = asInternals<ACPModelSelectionInternals>(session);

@@ -202,9 +202,13 @@ To add plan usage for a provider, add `packages/server/src/services/quota-fetche
 
 Keep the protocol shape provider-agnostic. Do not add provider-specific renderers for new limit windows; labels and generic bars should carry the UI. API responses should be parsed and normalized with Zod inside the fetcher, while the protocol boundary stays strict so old/new client compatibility is explicit.
 
+A fetcher's `providerId` is the upstream model provider, not the Paseo agent provider. Agents route through a Paseo provider (`opencode`, `opencode-acp`) while the usage fetcher may be named differently (`synthetic`), so the app resolves usage by the agent's provider id first and by the model's `upstream/model` prefix second (`packages/app/src/provider-usage/resolve.ts`). Name the fetcher after the model provider so the prefix match lines up.
+
 Kimi Code usage follows the CLI-managed credential file at `KIMI_CODE_HOME` or `~/.kimi-code/credentials/kimi-code.json`; do not probe the legacy `~/.kimi` path as the primary source for current Kimi Code installs.
 
 Cursor usage reads the desktop `state.vscdb` token first, then `cursor-agent`'s `~/.config/cursor/auth.json`. Headless hosts only have the CLI file.
+
+Synthetic usage reads `PASEO_SYNTHETIC_API_KEY` or `SYNTHETIC_API_KEY` from the daemon environment, then OpenCode 2's selected Synthetic credential from its SQLite database. The Paseo-prefixed variable is retained by managed daemon launches; set it in the daemon's launch environment, not an agent profile. It respects `XDG_DATA_HOME` and `OPENCODE_DB`; without an override it checks the default `opencode.db`. Channel-specific OpenCode installations must set `OPENCODE_DB` to their database. Legacy OpenCode `auth.json` is used only when no v2 Synthetic credential exists. An unreadable database or invalid selected credential produces an error rather than switching accounts.
 
 ### Usage fetchers are read-only on credentials
 

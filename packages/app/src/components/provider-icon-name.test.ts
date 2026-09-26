@@ -13,6 +13,7 @@ describe("resolveProviderIconName", () => {
     expect(resolveProviderIconName("claude")).toEqual({ kind: "builtin", id: "claude" });
     expect(resolveProviderIconName("omp")).toEqual({ kind: "builtin", id: "omp" });
     expect(resolveProviderIconName("minimax")).toEqual({ kind: "builtin", id: "minimax" });
+    expect(resolveProviderIconName("synthetic")).toEqual({ kind: "builtin", id: "synthetic" });
   });
 
   it("returns the catalog identifier for ACP catalog provider ids that ship an icon", () => {
