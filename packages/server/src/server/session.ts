@@ -134,6 +134,7 @@ import {
   type AgentPermissionResponse,
   type AgentRunOptions,
   type AgentSessionConfig,
+  type UsageReference,
 } from "./agent/agent-sdk-types.js";
 import type { StoredAgentRecord } from "./agent/agent-storage.js";
 import type { AgentStorage } from "./agent/agent-storage.js";
@@ -511,10 +512,10 @@ export interface SessionOptions {
     invokePluginRpc(pluginId: string, method: string, input: unknown): Promise<unknown>;
     listUsageReports(options?: {
       forceRefresh?: boolean;
-      references?: Array<{ source: string; input: unknown }>;
+      references?: UsageReference[];
     }): Promise<UsageReportEntry[]>;
     fetchUsageReference(
-      reference: { source: string; input: unknown },
+      reference: UsageReference,
       options?: { forceRefresh?: boolean },
     ): Promise<UsageReportEntry | null>;
     listLegacyUsage(): Promise<{ fetchedAt: string; providers: ProviderUsage[] }>;

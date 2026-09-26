@@ -58,6 +58,7 @@ import {
   type SteerResult,
   type ToolCallDetail,
   type ToolCallTimelineItem,
+  type UsageReference,
 } from "../agent-sdk-types.js";
 import { importSessionFromPersistence } from "../provider-session-import.js";
 import {
@@ -3390,7 +3391,7 @@ async function readOpenCodeUsageAuth(
 function resolveOpenCodeUsageReference(
   model: string,
   auth: Record<string, unknown> | null,
-): { source: string; input: import("@getpaseo/protocol/agent-types").JsonValue } | null {
+): UsageReference | null {
   if (!auth) return null;
   if (model.startsWith("openai/")) {
     const entry = auth.openai;
@@ -3607,10 +3608,7 @@ class OpenCodeAgentSession implements AgentSession {
     };
   }
 
-  async getUsageReference(): Promise<{
-    source: string;
-    input: import("@getpaseo/protocol/agent-types").JsonValue;
-  } | null> {
+  async getUsageReference(): Promise<UsageReference | null> {
     const model = this.config.model;
     if (!model?.startsWith("openai/") && !model?.startsWith("opencode-go/")) return null;
     const auth = await readOpenCodeUsageAuth(this.usageEnv);

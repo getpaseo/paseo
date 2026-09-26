@@ -51,6 +51,7 @@ import type {
   ProviderRefreshContext,
   SteerActiveTurnOptions,
   SteerResult,
+  UsageReference,
 } from "./agent-sdk-types.js";
 import {
   isDefaultAgentCreateConfigUnattended,
@@ -567,7 +568,7 @@ class ProviderRuntimeSession {
     return this.capabilities;
   }
 
-  async getUsageReference(): Promise<{ source: string; input: JsonValue } | null> {
+  async getUsageReference(): Promise<UsageReference | null> {
     if (!this.capabilities.includes("session.usage_reference")) return null;
     const event = await this.runtime.complete({
       type: "session.usage_reference",
@@ -1087,7 +1088,7 @@ class PluginAgentSession implements AgentSession {
     return agentCapabilities(this.bridge.negotiatedCapabilities);
   }
 
-  getUsageReference(): Promise<{ source: string; input: JsonValue } | null> {
+  getUsageReference(): Promise<UsageReference | null> {
     return this.bridge.getUsageReference();
   }
 

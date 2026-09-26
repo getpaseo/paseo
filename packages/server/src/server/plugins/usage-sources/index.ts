@@ -4,6 +4,7 @@ import {
   type UsageReportEntry,
   type ProviderUsage,
 } from "@getpaseo/protocol/messages";
+import type { UsageReference } from "../../agent/agent-sdk-types.js";
 
 export interface UsageSource {
   id: string;
@@ -37,7 +38,7 @@ export class UsageSourceRegistry {
   async listReports(
     options: {
       forceRefresh?: boolean;
-      references?: Array<{ source: string; input: unknown }>;
+      references?: UsageReference[];
     } = {},
   ): Promise<UsageReportEntry[]> {
     const discovered = await Promise.all(
@@ -67,7 +68,7 @@ export class UsageSourceRegistry {
   }
 
   fetchReference(
-    reference: { source: string; input: unknown },
+    reference: UsageReference,
     options: { forceRefresh?: boolean } = {},
   ): Promise<UsageReportEntry | null> {
     return this.sources.has(reference.source)

@@ -1,6 +1,7 @@
 import { fileURLToPath } from "node:url";
 import { expect, test } from "vitest";
 import { ACPAgentSession } from "../agent/providers/acp-agent.js";
+import type { UsageReference } from "../agent/agent-sdk-types.js";
 import { ClaudeAgentClient } from "../agent/providers/claude/agent.js";
 import { CodexAppServerAgentSession } from "../agent/providers/codex-app-server-agent.js";
 import { createTestLogger } from "../../test-utils/test-logger.js";
@@ -49,7 +50,7 @@ test("agent.get_usage_report resolves source IDs from default built-in and ACP s
   );
   const providers = ["claude", "codex", "copilot", "cursor", "kimi", "generic-acp"] as const;
   const logger = createTestLogger();
-  const references = new Map<string, { source: string; input: Record<string, string> } | null>();
+  const references = new Map<string, UsageReference | null>();
   const claude = await new ClaudeAgentClient({
     logger,
     resolveBinary: async () => "/test/claude/bin",
