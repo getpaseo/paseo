@@ -104,6 +104,14 @@ vi.mock("expo-router", () => ({
   router: { push },
 }));
 
+vi.mock("@/navigation/settings-navigation", async () => {
+  const { buildProjectSettingsRoute } = await import("@/utils/host-routes");
+  return {
+    openProjectSettings: (serverId: string, projectId: string) =>
+      push(buildProjectSettingsRoute(serverId, projectId)),
+  };
+});
+
 vi.mock("react-native-reanimated", () => ({
   default: { View: "div" },
   useAnimatedStyle: (factory: () => unknown) => factory(),
