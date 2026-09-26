@@ -3,6 +3,7 @@ import { createRequire } from "node:module";
 import { join } from "node:path";
 
 import { z } from "zod";
+import { parse as parseYaml } from "yaml";
 import type { UsageReference } from "../../agent-sdk-types.js";
 import { resolveOmpDiagnosticPaths } from "./provider-config.js";
 
@@ -42,11 +43,10 @@ interface UsageDb {
   close(): void;
 }
 const localRequire = createRequire(import.meta.url);
-const yaml = localRequire("js-yaml") as { load(value: string): unknown };
 
 function readYaml(file: string): unknown {
   try {
-    return yaml.load(readFileSync(file, "utf8"));
+    return parseYaml(readFileSync(file, "utf8"));
   } catch {
     return undefined;
   }
@@ -68,7 +68,11 @@ function hasKeyOverride(provider: string, env: NodeJS.ProcessEnv, agentDir: stri
   return models.success && models.data.providers?.[provider]?.apiKey !== undefined;
 }
 
-function readCredential(db: UsageDb, provider: string, sessionId: string): unknown {
+function readCredential(
+  db: UsageDb,
+  provider: string,
+  sessionId: string,
+): z.infer<typeof oauthSchema> | null {
   // Upstream: packages/ai/src/auth/affinity.ts:83-88,115-132; sqlite-credential-store.ts:447-448,711-722.
   const cache = db
     .prepare(
@@ -78,11 +82,14 @@ function readCredential(db: UsageDb, provider: string, sessionId: string): unkno
   if (cache) {
     const sticky = stickySchema.safeParse(JSON.parse(String(cache.value)));
     if (!sticky.success || sticky.data.type !== "oauth") return null;
-    return db
-      .prepare(
-        "SELECT id, provider, credential_type, data, disabled_cause FROM auth_credentials WHERE id = ?",
-      )
-      .get(sticky.data.credentialId);
+    return parseOAuthCredential(
+      db
+        .prepare(
+          "SELECT id, provider, credential_type, data, disabled_cause FROM auth_credentials WHERE id = ?",
+        )
+        .get(sticky.data.credentialId),
+      provider,
+    );
   }
   // Upstream: packages/ai/src/auth/cascade.ts:276-345 selects OAuth before env or stored API keys.
   const rows = db
@@ -90,11 +97,16 @@ function readCredential(db: UsageDb, provider: string, sessionId: string): unkno
       "SELECT id, provider, credential_type, data, disabled_cause FROM auth_credentials WHERE provider = ? AND credential_type = 'oauth' AND disabled_cause IS NULL",
     )
     .all(provider);
-  const validRows = rows.filter((row) => validOAuthRow(row, provider));
+  const validRows = rows
+    .map((row) => parseOAuthCredential(row, provider))
+    .filter((row): row is z.infer<typeof oauthSchema> => row !== null);
   return validRows.length === 1 ? validRows[0] : null;
 }
 
-function validOAuthRow(value: unknown, provider: string): boolean {
+function parseOAuthCredential(
+  value: unknown,
+  provider: string,
+): z.infer<typeof oauthSchema> | null {
   const row = rowSchema.safeParse(value);
   if (
     !row.success ||
@@ -102,12 +114,13 @@ function validOAuthRow(value: unknown, provider: string): boolean {
     row.data.credential_type !== "oauth" ||
     row.data.disabled_cause !== null
   )
-    return false;
+    return null;
   try {
+    // Upstream: packages/ai/src/auth/sqlite-credential-store.ts:117-155 stores OAuth data as JSON without type.
     const oauth = oauthSchema.safeParse(JSON.parse(row.data.data));
-    return oauth.success && oauth.data.expires > Date.now();
+    return oauth.success && oauth.data.expires > Date.now() ? oauth.data : null;
   } catch {
-    return false;
+    return null;
   }
 }
 
@@ -135,25 +148,16 @@ export function resolveOmpUsageReference(
     return null;
   }
   try {
-    const row = rowSchema.safeParse(readCredential(db, provider, sessionId));
-    if (
-      !row.success ||
-      row.data.provider !== provider ||
-      row.data.credential_type !== "oauth" ||
-      row.data.disabled_cause !== null
-    )
-      return null;
-    // Upstream: packages/ai/src/auth/sqlite-credential-store.ts:117-155 stores OAuth data as JSON without type.
-    const oauth = oauthSchema.safeParse(JSON.parse(row.data.data));
-    if (!oauth.success || oauth.data.expires <= Date.now()) return null;
+    const oauth = readCredential(db, provider, sessionId);
+    if (!oauth) return null;
     if (source === "claude") {
-      return { source, input: { accessToken: oauth.data.access } };
+      return { source, input: { accessToken: oauth.access } };
     }
     return {
       source,
       input: {
-        accessToken: oauth.data.access,
-        ...(oauth.data.accountId ? { accountId: oauth.data.accountId } : {}),
+        accessToken: oauth.access,
+        ...(oauth.accountId ? { accountId: oauth.accountId } : {}),
       },
     };
   } catch {
