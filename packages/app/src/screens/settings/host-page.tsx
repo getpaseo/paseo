@@ -53,7 +53,6 @@ import { ProvidersSection } from "@/screens/settings/providers-section";
 import { ProviderUsageSettingsSection } from "@/provider-usage/settings-section";
 import { useProviderUsage } from "@/provider-usage/use-provider-usage";
 import { HostAppearanceSection } from "@/screens/settings/host-appearance-section";
-import { HostPasswordModal, HostPasswordSection } from "@/screens/settings/host-password-setting";
 import { SettingsSection } from "@/components/settings/headings/settings-section";
 import { useSessionStore } from "@/stores/session-store";
 import { settingsStyles } from "@/styles/settings";
@@ -228,11 +227,7 @@ function HostStatusBadges({ serverId }: { serverId: string }) {
 
 function HostConnectionError({ serverId }: { serverId: string }) {
   const { t } = useTranslation();
-  const host = useHostProfile(serverId);
   const snapshot = useHostRuntimeSnapshot(serverId);
-  const [isEditingPassword, setIsEditingPassword] = useState(false);
-  const openPasswordEditor = useCallback(() => setIsEditingPassword(true), []);
-  const closePasswordEditor = useCallback(() => setIsEditingPassword(false), []);
   const lastError = snapshot?.lastError ?? null;
   const connectionError =
     typeof lastError === "string" && lastError.trim().length > 0 ? lastError.trim() : null;
@@ -240,21 +235,8 @@ function HostConnectionError({ serverId }: { serverId: string }) {
   return (
     <View testID="host-connection-error">
       <Text style={styles.errorText}>{connectionError}</Text>
-      {snapshot?.authFailureReason && host ? (
-        <View style={styles.passwordGuidance}>
-          <Text style={styles.passwordGuidanceText}>{t("settings.host.password.guidance")}</Text>
-          <Button
-            variant="outline"
-            size="sm"
-            onPress={openPasswordEditor}
-            testID="host-connection-error-set-password"
-          >
-            {t("settings.host.password.set")}
-          </Button>
-          {isEditingPassword ? (
-            <HostPasswordModal host={host} onClose={closePasswordEditor} />
-          ) : null}
-        </View>
+      {snapshot?.authFailureReason ? (
+        <Text style={styles.errorGuidanceText}>{t("settings.host.password.guidance")}</Text>
       ) : null}
     </View>
   );
@@ -400,7 +382,6 @@ export function HostSettingsPage({
       <HostConnectionError serverId={serverId} />
 
       <HostAppearanceSection host={host} />
-      <HostPasswordSection host={host} />
 
       {isLocalDaemon ? <LocalDaemonSection /> : null}
 
@@ -1775,16 +1756,10 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.sm,
     marginBottom: theme.spacing[2],
   },
-  passwordGuidance: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[3],
-    marginBottom: theme.spacing[4],
-  },
-  passwordGuidanceText: {
-    flex: 1,
+  errorGuidanceText: {
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.sm,
+    marginBottom: theme.spacing[4],
   },
   connectionLatency: {
     fontSize: theme.fontSize.base,

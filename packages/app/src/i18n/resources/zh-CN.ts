@@ -2273,16 +2273,7 @@ export const zhCN: TranslationResources = {
     },
     host: {
       password: {
-        title: "安全",
-        label: "密码",
-        modalTitle: "主机密码",
-        saved: "已保存",
-        unset: "未设置",
-        guidance: "在“安全”中设置此主机的密码以重新连接。",
-        set: "设置密码",
-        save: "保存",
-        saving: "正在保存...",
-        clear: "清除",
+        guidance: "移除此主机，然后使用此守护进程要求的密码重新添加。",
       },
       appearance: {
         title: "外观",

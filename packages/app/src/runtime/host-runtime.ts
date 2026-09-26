@@ -2727,7 +2727,6 @@ export function useHostRegistryLoaded(): boolean {
 }
 
 export interface HostMutations {
-  setHostPassword: (serverId: string, password: string) => Promise<void>;
   upsertDirectConnection: (input: {
     serverId: string;
     endpoint: string;
@@ -2776,7 +2775,6 @@ export function useHostMutations(): HostMutations {
   const store = getHostRuntimeStore();
   return useMemo(
     () => ({
-      setHostPassword: (serverId, password) => store.setHostPassword(serverId, password),
       upsertDirectConnection: (input) => store.upsertDirectConnection(input),
       probeAndUpsertDirectConnection: (input) => store.probeAndUpsertDirectConnection(input),
       probeAndUpsertRemoteSshConnection: (input) => store.probeAndUpsertRemoteSshConnection(input),

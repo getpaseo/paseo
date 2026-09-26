@@ -2357,16 +2357,8 @@ export const fr: TranslationResources = {
     },
     host: {
       password: {
-        title: "Sécurité",
-        label: "Mot de passe",
-        modalTitle: "Mot de passe de l’hôte",
-        saved: "Enregistré",
-        unset: "Non défini",
-        guidance: "Définissez le mot de passe de cet hôte dans Sécurité pour le reconnecter.",
-        set: "Définir le mot de passe",
-        save: "Enregistrer",
-        saving: "Enregistrement...",
-        clear: "Effacer",
+        guidance:
+          "Supprimez cet hôte puis ajoutez-le à nouveau avec le mot de passe demandé par ce daemon.",
       },
       appearance: {
         title: "Apparence",

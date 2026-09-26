@@ -2353,16 +2353,7 @@ export const es: TranslationResources = {
     },
     host: {
       password: {
-        title: "Seguridad",
-        label: "Contraseña",
-        modalTitle: "Contraseña del host",
-        saved: "Guardada",
-        unset: "Sin configurar",
-        guidance: "Establece la contraseña de este host en Seguridad para volver a conectar.",
-        set: "Establecer contraseña",
-        save: "Guardar",
-        saving: "Guardando...",
-        clear: "Borrar",
+        guidance: "Elimina este host y vuelve a añadirlo con la contraseña que pide este daemon.",
       },
       appearance: {
         title: "Apariencia",

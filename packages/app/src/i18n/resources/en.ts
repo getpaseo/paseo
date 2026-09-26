@@ -2418,16 +2418,7 @@ export const en = {
     },
     host: {
       password: {
-        title: "Security",
-        label: "Password",
-        modalTitle: "Host password",
-        saved: "Saved",
-        unset: "Not set",
-        guidance: "Set this host's password under Security to reconnect.",
-        set: "Set password",
-        save: "Save",
-        saving: "Saving...",
-        clear: "Clear",
+        guidance: "Remove this host and add it again with the password this daemon asks for.",
       },
       appearance: {
         title: "Appearance",

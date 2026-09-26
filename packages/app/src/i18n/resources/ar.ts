@@ -2299,16 +2299,7 @@ export const ar: TranslationResources = {
     },
     host: {
       password: {
-        title: "الأمان",
-        label: "كلمة المرور",
-        modalTitle: "كلمة مرور المضيف",
-        saved: "محفوظة",
-        unset: "غير معيّنة",
-        guidance: "عيّن كلمة مرور هذا المضيف ضمن الأمان لإعادة الاتصال.",
-        set: "تعيين كلمة المرور",
-        save: "حفظ",
-        saving: "جارٍ الحفظ...",
-        clear: "مسح",
+        guidance: "أزل هذا المضيف ثم أضفه مرة أخرى بكلمة المرور التي يطلبها هذا الخادم.",
       },
       appearance: {
         title: "المظهر",

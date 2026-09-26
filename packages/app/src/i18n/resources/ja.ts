@@ -2320,16 +2320,8 @@ export const ja: TranslationResources = {
     },
     host: {
       password: {
-        title: "セキュリティ",
-        label: "パスワード",
-        modalTitle: "ホストのパスワード",
-        saved: "保存済み",
-        unset: "未設定",
-        guidance: "再接続するには、セキュリティでこのホストのパスワードを設定してください。",
-        set: "パスワードを設定",
-        save: "保存",
-        saving: "保存中...",
-        clear: "削除",
+        guidance:
+          "このホストを削除し、このデーモンが求めるパスワードを入力して追加し直してください。",
       },
       appearance: {
         title: "外観",

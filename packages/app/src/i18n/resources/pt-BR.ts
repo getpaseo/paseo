@@ -2335,16 +2335,7 @@ export const ptBR: TranslationResources = {
     },
     host: {
       password: {
-        title: "Segurança",
-        label: "Senha",
-        modalTitle: "Senha do host",
-        saved: "Salva",
-        unset: "Não definida",
-        guidance: "Defina a senha deste host em Segurança para reconectar.",
-        set: "Definir senha",
-        save: "Salvar",
-        saving: "Salvando...",
-        clear: "Limpar",
+        guidance: "Remova este host e adicione-o novamente com a senha que este daemon pede.",
       },
       appearance: {
         title: "Aparência",

@@ -2309,16 +2309,7 @@ export const ko: TranslationResources = {
     },
     host: {
       password: {
-        title: "보안",
-        label: "비밀번호",
-        modalTitle: "호스트 비밀번호",
-        saved: "저장됨",
-        unset: "설정 안 됨",
-        guidance: "다시 연결하려면 보안에서 이 호스트의 비밀번호를 설정하세요.",
-        set: "비밀번호 설정",
-        save: "저장",
-        saving: "저장 중...",
-        clear: "지우기",
+        guidance: "이 호스트를 제거한 뒤 이 데몬이 요구하는 비밀번호로 다시 추가하세요.",
       },
       appearance: {
         title: "모양",

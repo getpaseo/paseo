@@ -19,9 +19,12 @@ import {
   expectRetiredSidebarSectionsAbsent,
   expectHostPageVisible,
   seedSavedSettingsHosts,
-  expectHostPasswordRejected,
-  saveHostPasswordFromRow,
-  expectHostPasswordAccepted,
+  selectSettingsHost,
+  expectHostRejectedWithReAddGuidance,
+  expectNoHostPasswordControls,
+  removeHostFromHostPage,
+  addDirectHostFromSettings,
+  expectHostOnlineWithoutError,
 } from "../support/helpers/settings";
 
 test.describe("Settings host page", () => {
@@ -93,7 +96,7 @@ test.describe("Settings host page", () => {
     await expect(updateButton).toBeEnabled();
   });
 
-  test("a host rejected for its password reconnects after saving the password from its row", async ({
+  test("a host rejected for its password reconnects after being removed and added again with it", async ({
     page,
   }) => {
     const password = "e2e host password";
@@ -103,6 +106,11 @@ test.describe("Settings host page", () => {
     try {
       await seedSavedSettingsHosts(page, [
         {
+          serverId: getServerId(),
+          label: TEST_HOST_LABEL,
+          endpoint: `127.0.0.1:${getE2EDaemonPort()}`,
+        },
+        {
           serverId: daemon.serverId,
           label: "Password host",
           endpoint: `127.0.0.1:${daemon.port}`,
@@ -110,12 +118,20 @@ test.describe("Settings host page", () => {
       ]);
       await page.reload();
       await openSettings(page);
-      await openSettingsHost(page, daemon.serverId);
+      await selectSettingsHost(page, daemon.serverId);
       await openHostSection(page, daemon.serverId, "host");
 
-      await expectHostPasswordRejected(page, "Password required");
-      await saveHostPasswordFromRow(page, password);
-      await expectHostPasswordAccepted(page);
+      await test.step("the host page shows the reason and the re-add guidance, with no password UI", async () => {
+        await expectHostRejectedWithReAddGuidance(page, "Password required");
+        await expectNoHostPasswordControls(page);
+      });
+
+      await test.step("removing the host and adding it again with the password brings it online", async () => {
+        await removeHostFromHostPage(page, daemon.serverId);
+        await addDirectHostFromSettings(page, { host: "127.0.0.1", port: daemon.port, password });
+        await openHostSection(page, daemon.serverId, "host");
+        await expectHostOnlineWithoutError(page);
+      });
     } finally {
       await daemon.close();
     }
