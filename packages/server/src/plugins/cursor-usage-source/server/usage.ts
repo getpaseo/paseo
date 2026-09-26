@@ -2,10 +2,7 @@ import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import type { Logger } from "pino";
 import { z } from "zod";
-import type { ProviderUsage, ProviderUsageBalance } from "../../../server/messages.js";
-import type { ProviderApiFetch, ProviderUsageFetcher } from "../provider.js";
 import {
   ApiNullableNumberSchema,
   toneFromUsedPct,
@@ -13,7 +10,10 @@ import {
   fetchProviderApi,
   toIsoStringOrNull,
   unavailableUsage,
-} from "../usage.js";
+  type UsageReport,
+  type UsageBalance,
+  type UsageApiFetch,
+} from "@getpaseo/plugin/server/usage";
 
 // Cursor desktop stores auth in VS Code's ItemTable (state.vscdb). Modern builds keep
 // the access token as a plain JWT string under `cursorAuth/accessToken`; older builds
@@ -63,8 +63,8 @@ const CursorAuthStatusSchema = z.object({
 type CursorUsageResponse = z.infer<typeof CursorUsageResponseSchema>;
 
 interface CursorQuotaProviderOptions {
-  logger: Logger;
-  fetch?: ProviderApiFetch;
+  logger: Console;
+  fetch?: UsageApiFetch;
   homeDir?: string;
 }
 
@@ -113,7 +113,7 @@ function cursorTokenFromDb(db: CursorStateDatabase): string | null {
   return null;
 }
 
-async function readCursorTokenFromSqlite(homeDir: string, logger: Logger): Promise<string | null> {
+async function readCursorTokenFromSqlite(homeDir: string, logger: Console): Promise<string | null> {
   const dbPaths: string[] = [];
   if (process.env["APPDATA"]) {
     dbPaths.push(join(process.env["APPDATA"], "Cursor", "User", "globalStorage", "state.vscdb"));
@@ -162,7 +162,7 @@ async function readCursorTokenFromSqlite(homeDir: string, logger: Logger): Promi
 
 async function readCursorTokenFromAuthJson(
   homeDir: string,
-  logger: Logger,
+  logger: Console,
 ): Promise<string | null> {
   const path = join(homeDir, ".config", "cursor", "auth.json");
   if (!existsSync(path)) return null;
@@ -175,12 +175,9 @@ async function readCursorTokenFromAuthJson(
   }
 }
 
-export class CursorQuotaProvider implements ProviderUsageFetcher {
-  readonly providerId = "cursor";
-  readonly displayName = "Cursor";
-
-  private readonly logger: Logger;
-  private readonly fetchApi: ProviderApiFetch;
+export class CursorQuotaProvider {
+  private readonly logger: Console;
+  private readonly fetchApi: UsageApiFetch;
   private readonly homeDir: string;
 
   constructor(options: CursorQuotaProviderOptions) {
@@ -189,14 +186,14 @@ export class CursorQuotaProvider implements ProviderUsageFetcher {
     this.homeDir = options.homeDir ?? homedir();
   }
 
-  async fetchUsage(): Promise<ProviderUsage> {
+  async fetchUsage(): Promise<UsageReport> {
     const token =
       process.env["CURSOR_ACCESS_TOKEN"] ||
       process.env["CURSOR_TOKEN"] ||
       (await readCursorTokenFromSqlite(this.homeDir, this.logger)) ||
       (await readCursorTokenFromAuthJson(this.homeDir, this.logger));
 
-    if (!token) return unavailableUsage(this);
+    if (!token) return unavailableUsage();
 
     const res = await fetchProviderApi(
       this.fetchApi,
@@ -214,12 +211,12 @@ export class CursorQuotaProvider implements ProviderUsageFetcher {
 
     if (!res.ok) {
       this.logger.debug({ status: res.status }, "Cursor usage fetch failed");
-      return unavailableUsage(this);
+      return unavailableUsage();
     }
 
     const resp = CursorUsageResponseSchema.parse(await res.json());
     const billingCycleEnd = parseCursorBillingCycleTimestamp(resp.billingCycleEnd);
-    const balances: ProviderUsageBalance[] = [];
+    const balances: UsageBalance[] = [];
     if (resp.planUsage) {
       const totalSpend = centsToDollars(resp.planUsage.totalSpend);
       const remaining = centsToDollars(resp.planUsage.remaining);
@@ -237,14 +234,12 @@ export class CursorQuotaProvider implements ProviderUsageFetcher {
     }
 
     return {
-      providerId: this.providerId,
-      displayName: this.displayName,
+      account: { key: "default" },
       status: "available",
-      planLabel: null,
+      planLabel: undefined,
       windows: [],
       balances,
       details: [],
-      error: null,
     };
   }
 }

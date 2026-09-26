@@ -1,23 +1,21 @@
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync, promises as fs } from "node:fs";
 import { homedir, userInfo } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import type { Logger } from "pino";
 import { z } from "zod";
-import type {
-  ProviderUsage,
-  ProviderUsageDetail,
-  ProviderUsageWindow,
-} from "../../../server/messages.js";
-import type { ProviderApiFetch, ProviderUsageFetcher } from "../provider.js";
 import {
   ApiNumberSchema,
   fetchProviderApi,
   toneFromUsedPct,
   unavailableUsage,
   windowFromUsedPct,
-} from "../usage.js";
+  type UsageReport,
+  type UsageWindow,
+  type UsageDetail,
+  type UsageApiFetch,
+} from "@getpaseo/plugin/server/usage";
 
 const execFileAsync = promisify(execFile);
 const CLAUDE_KEYCHAIN_TIMEOUT_MS = 2_000;
@@ -81,11 +79,13 @@ interface ClaudeCredentialRecord {
 }
 
 interface ClaudeQuotaProviderOptions {
-  logger: Logger;
+  logger: Console;
   claudeHome?: string;
+  configDir?: string;
+  accessToken?: string;
   claudeKeychainReader?: () => Promise<unknown | null>;
   platform?: typeof process.platform;
-  fetch?: ProviderApiFetch;
+  fetch?: UsageApiFetch;
 }
 
 function buildClaudePlan(
@@ -254,8 +254,8 @@ function legacyScopedLimits(resp: ClaudeUsageResponse): ScopedLimit[] {
   return limits;
 }
 
-function unscopedWindows(resp: ClaudeUsageResponse): ProviderUsageWindow[] {
-  const windows: ProviderUsageWindow[] = [];
+function unscopedWindows(resp: ClaudeUsageResponse): UsageWindow[] {
+  const windows: UsageWindow[] = [];
   for (const spec of UNSCOPED_WINDOWS) {
     const window = resp[spec.field];
     if (!window) continue;
@@ -272,7 +272,7 @@ function unscopedWindows(resp: ClaudeUsageResponse): ProviderUsageWindow[] {
   return windows;
 }
 
-function scopedWindows(limits: ScopedLimit[]): ProviderUsageWindow[] {
+function scopedWindows(limits: ScopedLimit[]): UsageWindow[] {
   const taken = new Set<string>();
   return limits.map((limit) => {
     const id = uniqueWindowId(scopedWindowId(limit), taken);
@@ -337,38 +337,40 @@ export async function readClaudeKeychainCredentials(
   return null;
 }
 
-export class ClaudeQuotaProvider implements ProviderUsageFetcher {
-  readonly providerId = "claude";
-  readonly displayName = "Claude";
-
-  private readonly logger: Logger;
+export class ClaudeQuotaProvider {
+  private readonly logger: Console;
   private readonly claudeHome: string;
+  private readonly configDir: string | undefined;
+  private readonly accessToken: string | undefined;
   private readonly readKeychainCredentials: () => Promise<unknown | null>;
   private readonly platform: typeof process.platform;
-  private readonly fetchApi: ProviderApiFetch;
+  private readonly fetchApi: UsageApiFetch;
 
   constructor(options: ClaudeQuotaProviderOptions) {
-    this.logger = options.logger.child({ module: "claude-quota-provider" });
+    this.logger = options.logger;
     this.claudeHome =
       options.claudeHome || process.env["CLAUDE_HOME"] || join(homedir(), ".claude");
+    this.configDir = options.configDir;
+    this.accessToken = options.accessToken;
     this.readKeychainCredentials = options.claudeKeychainReader ?? readClaudeKeychainCredentials;
     this.platform = options.platform ?? process.platform;
     this.fetchApi = options.fetch ?? fetch;
   }
 
-  async fetchUsage(): Promise<ProviderUsage> {
+  async fetchUsage(): Promise<UsageReport> {
     const credentials = await this.readCredentials();
     if (!credentials) {
-      return unavailableUsage(this);
+      return unavailableUsage();
     }
 
     const { oauth } = credentials;
+    const accountKey = createHash("sha256").update(oauth.accessToken).digest("hex");
     const plan = buildClaudePlan(oauth.subscriptionType, oauth.rateLimitTier);
     const resp = await this.callClaudeApi(oauth.accessToken);
 
     if (resp === "NEEDS_AUTH") {
       // Read-only on credentials; the Claude CLI owns refresh. See docs/providers.md.
-      return unavailableUsage(this);
+      return unavailableUsage(accountKey);
     }
 
     const scoped = reconcileScopedLimits(
@@ -376,6 +378,7 @@ export class ClaudeQuotaProvider implements ProviderUsageFetcher {
       this.scopedLimitsFromResponse(resp.limits),
     );
     const windows = [...unscopedWindows(resp), ...scopedWindows(scoped)];
+    if (windows[0]) windows[0].headline = true;
 
     if (windows.length === 0) {
       // The response parsed but described nothing. That silence is how the previous
@@ -384,7 +387,7 @@ export class ClaudeQuotaProvider implements ProviderUsageFetcher {
       this.logger.warn("Claude usage response parsed but produced no windows");
     }
 
-    const details: ProviderUsageDetail[] = [];
+    const details: UsageDetail[] = [];
     const extraUsageEnabled = resp.extra_usage?.is_enabled;
     if (extraUsageEnabled !== undefined) {
       details.push({
@@ -395,14 +398,12 @@ export class ClaudeQuotaProvider implements ProviderUsageFetcher {
     }
 
     return {
-      providerId: this.providerId,
-      displayName: this.displayName,
+      account: { key: accountKey },
       status: "available",
-      planLabel: plan,
+      planLabel: plan ?? undefined,
       windows,
       balances: [],
       details,
-      error: null,
     };
   }
 
@@ -435,6 +436,8 @@ export class ClaudeQuotaProvider implements ProviderUsageFetcher {
   }
 
   private async readCredentials(): Promise<ClaudeCredentialRecord | null> {
+    if (this.accessToken) return { oauth: { accessToken: this.accessToken } };
+    if (this.configDir) return this.readCredentialFile(join(this.configDir, ".credentials.json"));
     const credPath = join(this.claudeHome, ".credentials.json");
     const fileCredentials = await this.readCredentialFile(credPath);
     return (

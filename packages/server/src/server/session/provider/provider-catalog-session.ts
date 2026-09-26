@@ -19,7 +19,7 @@ import {
   type ProviderSnapshotEntry,
 } from "../../agent/agent-sdk-types.js";
 import type { ProviderAvailability } from "../../agent/agent-manager.js";
-import type { ProviderUsageService } from "../../../services/quota-fetcher/service.js";
+import type { ProviderUsage } from "@getpaseo/protocol/messages";
 import { expandTilde } from "../../../utils/path.js";
 
 // COMPAT(customModeIcons): the only mode icons known to clients before v0.1.84. Any
@@ -56,7 +56,7 @@ export interface ProviderCatalogSessionHost {
 export interface ProviderCatalogSessionOptions {
   host: ProviderCatalogSessionHost;
   providerSnapshotManager: ProviderSnapshotManager;
-  providerUsageService: ProviderUsageService;
+  listLegacyUsage(): Promise<{ fetchedAt: string; providers: ProviderUsage[] }>;
   logger: pino.Logger;
 }
 
@@ -70,14 +70,14 @@ export interface ProviderCatalogSessionOptions {
 export class ProviderCatalogSession {
   private readonly host: ProviderCatalogSessionHost;
   private readonly providerSnapshotManager: ProviderSnapshotManager;
-  private readonly providerUsageService: ProviderUsageService;
+  private readonly listLegacyUsage: ProviderCatalogSessionOptions["listLegacyUsage"];
   private readonly logger: pino.Logger;
   private unsubscribeSnapshotEvents: (() => void) | null = null;
 
   constructor(options: ProviderCatalogSessionOptions) {
     this.host = options.host;
     this.providerSnapshotManager = options.providerSnapshotManager;
-    this.providerUsageService = options.providerUsageService;
+    this.listLegacyUsage = options.listLegacyUsage;
     this.logger = options.logger;
   }
 
@@ -491,7 +491,7 @@ export class ProviderCatalogSession {
     msg: Extract<SessionInboundMessage, { type: "provider.usage.list.request" }>,
   ): Promise<void> {
     try {
-      const usage = await this.providerUsageService.listUsage();
+      const usage = await this.listLegacyUsage();
       this.host.emit({
         type: "provider.usage.list.response",
         payload: {

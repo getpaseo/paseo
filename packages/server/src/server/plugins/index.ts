@@ -146,6 +146,10 @@ export class PluginService {
     return this.usageSources.listReports(options);
   }
 
+  listLegacyUsage() {
+    return this.usageSources.listLegacyUsage();
+  }
+
   subscribeProviderRegistrations(listener: () => void): () => void {
     this.providerListeners.add(listener);
     return () => this.providerListeners.delete(listener);

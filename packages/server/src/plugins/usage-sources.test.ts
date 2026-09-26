@@ -5,16 +5,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProviderUsage } from "../../server/messages.js";
-import type { ProviderUsageFetcher } from "./provider.js";
-import { ClaudeQuotaProvider } from "./providers/claude.js";
-import { CodexQuotaProvider } from "./providers/codex.js";
-import { CopilotQuotaProvider } from "./providers/copilot.js";
-import { CursorQuotaProvider } from "./providers/cursor.js";
-import { GrokQuotaProvider } from "./providers/grok.js";
-import { KimiQuotaProvider } from "./providers/kimi.js";
-import { MiniMaxQuotaProvider } from "./providers/minimax.js";
-import { ZaiQuotaProvider } from "./providers/zai.js";
-import { ProviderUsageService } from "./service.js";
+import { ClaudeQuotaProvider } from "./claude-usage-source/server/usage.js";
+import { CopilotQuotaProvider } from "./copilot-usage-source/server/usage.js";
+import { CursorQuotaProvider } from "./cursor-usage-source/server/usage.js";
+import { GrokQuotaProvider } from "./grok-usage-source/server/usage.js";
+import { KimiQuotaProvider } from "./kimi-usage-source/server/usage.js";
+import { MiniMaxQuotaProvider } from "./minimax-usage-source/server/usage.js";
+import { ZaiQuotaProvider } from "./zai-usage-source/server/usage.js";
 
 function writeClaudeCredentials(
   dir: string,
@@ -28,13 +25,6 @@ function writeClaudeCredentials(
     JSON.stringify({
       claudeAiOauth: { accessToken, refreshToken, subscriptionType, rateLimitTier },
     }),
-  );
-}
-
-function writeCodexAuth(dir: string, accessToken: string, refreshToken = "rt_codex"): void {
-  writeFileSync(
-    join(dir, "auth.json"),
-    JSON.stringify({ tokens: { access_token: accessToken, refresh_token: refreshToken } }),
   );
 }
 
@@ -127,18 +117,6 @@ function makeClaudeResponse(
   };
 }
 
-function makeCodexResponse(overrides: object = {}) {
-  return {
-    plan_type: "plus",
-    email: "user@example.com",
-    rate_limit: {
-      primary_window: { used_percent: 42, reset_at: 1_748_812_800 },
-      secondary_window: { used_percent: 8, reset_at: 1_749_072_000 },
-    },
-    ...overrides,
-  };
-}
-
 function mockFetch(handlers: Map<string, () => Response>): typeof fetch {
   return vi.fn(async (url: RequestInfo | URL) => {
     const key = url.toString();
@@ -166,186 +144,11 @@ function createLogger() {
   return logger as never;
 }
 
-function usageFetcher(usage: ProviderUsage): ProviderUsageFetcher {
-  return {
-    providerId: usage.providerId,
-    displayName: usage.displayName,
-    fetchUsage: async () => usage,
-  };
-}
-
 function findProvider(result: { providers: ProviderUsage[] }, providerId: string): ProviderUsage {
   const provider = result.providers.find((candidate) => candidate.providerId === providerId);
-  if (!provider) {
-    throw new Error(`Missing provider ${providerId}`);
-  }
+  if (!provider) throw new Error(`Missing provider ${providerId}`);
   return provider;
 }
-
-describe("ProviderUsageService", () => {
-  it("returns arbitrary registered providers and windows as normalized usage data", async () => {
-    const service = new ProviderUsageService({
-      logger: createLogger(),
-      now: () => Date.parse("2026-06-19T00:00:00.000Z"),
-      fetchers: [
-        usageFetcher({
-          providerId: "glm",
-          displayName: "GLM coding plan",
-          status: "available",
-          planLabel: "GLM coding plan",
-          windows: [
-            {
-              id: "biweekly",
-              label: "Biweekly",
-              usedPct: 23,
-              remainingPct: 77,
-              resetsAt: "2026-07-03T00:00:00.000Z",
-            },
-          ],
-        }),
-      ],
-    });
-
-    await expect(service.listUsage()).resolves.toEqual({
-      fetchedAt: "2026-06-19T00:00:00.000Z",
-      providers: [
-        {
-          providerId: "glm",
-          displayName: "GLM coding plan",
-          status: "available",
-          planLabel: "GLM coding plan",
-          windows: [
-            {
-              id: "biweekly",
-              label: "Biweekly",
-              usedPct: 23,
-              remainingPct: 77,
-              resetsAt: "2026-07-03T00:00:00.000Z",
-            },
-          ],
-        },
-      ],
-    });
-  });
-
-  it("caches usage until forced to refresh", async () => {
-    let now = Date.parse("2026-06-19T00:00:00.000Z");
-    let calls = 0;
-    const service = new ProviderUsageService({
-      logger: createLogger(),
-      now: () => now,
-      cacheTtlMs: 60_000,
-      fetchers: [
-        {
-          providerId: "claude",
-          displayName: "Claude",
-          fetchUsage: async () => {
-            calls += 1;
-            return {
-              providerId: "claude",
-              displayName: "Claude",
-              status: "available",
-              planLabel: "Max 20x",
-              windows: [{ id: "session", label: "Session", usedPct: calls }],
-            };
-          },
-        },
-      ],
-    });
-
-    const first = await service.listUsage();
-    now += 30_000;
-    const cached = await service.listUsage();
-    const refreshed = await service.listUsage({ forceRefresh: true });
-
-    expect(calls).toBe(2);
-    expect(cached).toBe(first);
-    expect(refreshed.providers[0]?.windows[0]?.usedPct).toBe(2);
-  });
-
-  it("deduplicates concurrent cache misses", async () => {
-    let calls = 0;
-    let resolveUsage: ((usage: ProviderUsage) => void) | null = null;
-    const service = new ProviderUsageService({
-      logger: createLogger(),
-      now: () => Date.parse("2026-06-19T00:00:00.000Z"),
-      fetchers: [
-        {
-          providerId: "claude",
-          displayName: "Claude",
-          fetchUsage: () => {
-            calls += 1;
-            return new Promise<ProviderUsage>((resolve) => {
-              resolveUsage = resolve;
-            });
-          },
-        },
-      ],
-    });
-
-    const first = service.listUsage();
-    const second = service.listUsage();
-
-    expect(calls).toBe(1);
-    resolveUsage?.({
-      providerId: "claude",
-      displayName: "Claude",
-      status: "available",
-      planLabel: "Max 20x",
-      windows: [{ id: "session", label: "Session", usedPct: 12 }],
-    });
-
-    const [firstResult, secondResult] = await Promise.all([first, second]);
-    expect(firstResult).toBe(secondResult);
-    expect(calls).toBe(1);
-  });
-
-  it("isolates one provider error without dropping other providers", async () => {
-    const service = new ProviderUsageService({
-      logger: createLogger(),
-      now: () => Date.parse("2026-06-19T00:00:00.000Z"),
-      fetchers: [
-        {
-          providerId: "claude",
-          displayName: "Claude",
-          fetchUsage: async () => {
-            throw new Error("Claude auth expired");
-          },
-        },
-        usageFetcher({
-          providerId: "codex",
-          displayName: "Codex",
-          status: "available",
-          planLabel: "Pro 20x",
-          windows: [{ id: "weekly", label: "Weekly", usedPct: 29 }],
-        }),
-      ],
-    });
-
-    await expect(service.listUsage()).resolves.toEqual({
-      fetchedAt: "2026-06-19T00:00:00.000Z",
-      providers: [
-        {
-          providerId: "claude",
-          displayName: "Claude",
-          status: "error",
-          planLabel: null,
-          windows: [],
-          balances: [],
-          details: [],
-          error: "Claude auth expired",
-        },
-        {
-          providerId: "codex",
-          displayName: "Codex",
-          status: "available",
-          planLabel: "Pro 20x",
-          windows: [{ id: "weekly", label: "Weekly", usedPct: 29 }],
-        },
-      ],
-    });
-  });
-});
 
 describe("real provider usage fetchers", () => {
   let claudeHome: string;
@@ -411,49 +214,64 @@ describe("real provider usage fetchers", () => {
     const logger = createLogger();
     const fetchThroughTestDouble = ((url: RequestInfo | URL, init?: RequestInit) =>
       fetchApi(url, init)) as typeof fetch;
-    return new ProviderUsageService({
-      logger,
-      now: () => Date.parse("2026-06-19T00:00:00.000Z"),
-      fetchers: [
-        new ClaudeQuotaProvider({
-          logger,
-          claudeHome,
-          claudeKeychainReader: options.keychain ?? (async () => null),
-          platform: options.platform,
-          fetch: fetchThroughTestDouble,
-        }),
-        new CodexQuotaProvider({ logger, codexHome, fetch: fetchThroughTestDouble }),
-        new CopilotQuotaProvider({ logger, fetch: fetchThroughTestDouble }),
-        new CursorQuotaProvider({
-          logger,
-          fetch: fetchThroughTestDouble,
-          homeDir: options.cursorHomeDir,
-        }),
-        new ZaiQuotaProvider({ logger, fetch: fetchThroughTestDouble }),
-        new GrokQuotaProvider({
-          logger,
-          fetch: fetchThroughTestDouble,
-          // Match Kimi: inject temp HOME so nested auth-file tests work on Windows
-          // (os.homedir() uses USERPROFILE there and ignores process.env.HOME).
-          homeDir,
-        }),
-        new KimiQuotaProvider({
-          logger,
-          fetch: fetchThroughTestDouble,
-          // Never leave this undefined: the provider would fall back to os.homedir() and
-          // read — and now write — the developer's real Kimi credentials.
-          homeDir: options.kimiHomeDir ?? homeDir,
-        }),
-        new MiniMaxQuotaProvider({
-          logger,
-          fetch: fetchThroughTestDouble,
-          configPath: options.miniMaxConfigPath ?? join(homeDir, ".mmx", "config.json"),
-          credentialsPath:
-            options.miniMaxCredentialsPath ?? join(homeDir, ".mmx", "credentials.json"),
-        }),
-      ],
-      cacheTtlMs: 0,
-    });
+    const fetchers = [
+      new ClaudeQuotaProvider({
+        logger,
+        claudeHome,
+        claudeKeychainReader: options.keychain ?? (async () => null),
+        platform: options.platform,
+        fetch: fetchThroughTestDouble,
+      }),
+      new CopilotQuotaProvider({ logger, fetch: fetchThroughTestDouble }),
+      new CursorQuotaProvider({
+        logger,
+        fetch: fetchThroughTestDouble,
+        homeDir: options.cursorHomeDir,
+      }),
+      new ZaiQuotaProvider({ logger, fetch: fetchThroughTestDouble }),
+      new GrokQuotaProvider({
+        logger,
+        fetch: fetchThroughTestDouble,
+        // Match Kimi: inject temp HOME so nested auth-file tests work on Windows
+        // (os.homedir() uses USERPROFILE there and ignores process.env.HOME).
+        homeDir,
+      }),
+      new KimiQuotaProvider({
+        logger,
+        fetch: fetchThroughTestDouble,
+        // Never leave this undefined: the provider would fall back to os.homedir() and
+        // read — and now write — the developer's real Kimi credentials.
+        homeDir: options.kimiHomeDir ?? homeDir,
+      }),
+      new MiniMaxQuotaProvider({
+        logger,
+        fetch: fetchThroughTestDouble,
+        configPath: options.miniMaxConfigPath ?? join(homeDir, ".mmx", "config.json"),
+        credentialsPath:
+          options.miniMaxCredentialsPath ?? join(homeDir, ".mmx", "credentials.json"),
+      }),
+    ];
+    return {
+      listUsage: async () => ({
+        fetchedAt: "2026-06-19T00:00:00.000Z",
+        providers: await Promise.all(
+          fetchers.map(async (fetcher) => {
+            const report = await fetcher.fetchUsage();
+            const id = fetcher.constructor.name.replace("QuotaProvider", "").toLowerCase();
+            return {
+              providerId: id === "minimax" ? "minimax" : id,
+              displayName: id,
+              status: report.status,
+              planLabel: report.planLabel ?? null,
+              windows: report.windows,
+              balances: report.balances ?? [],
+              details: report.details ?? [],
+              error: report.error ?? null,
+            } satisfies ProviderUsage;
+          }),
+        ),
+      }),
+    };
   }
 
   it("fetches Claude usage, coerces API numbers, and attaches HTTP timeout signals", async () => {
@@ -572,91 +390,6 @@ describe("real provider usage fetchers", () => {
         headers: expect.objectContaining({ Authorization: "Bearer at_expired" }),
       }),
     );
-  });
-
-  it("fetches Codex windows and coerces string credit balances", async () => {
-    writeCodexAuth(codexHome, "at_codex_valid");
-    fetchApi = mockFetch(
-      new Map([
-        [
-          "https://chatgpt.com/backend-api/wham/usage",
-          () =>
-            jsonResponse(
-              makeCodexResponse({
-                code_review_rate_limit: null,
-                credits: { balance: "0" },
-              }),
-            ),
-        ],
-      ]),
-    );
-
-    const result = await service().listUsage();
-    const codex = findProvider(result, "codex");
-
-    expect(codex).toMatchObject({
-      status: "available",
-      planLabel: "plus",
-      windows: expect.arrayContaining([
-        expect.objectContaining({ id: "session", usedPct: 42 }),
-        expect.objectContaining({ id: "weekly", usedPct: 8 }),
-      ]),
-      balances: [expect.objectContaining({ id: "credits", remaining: 0 })],
-    });
-  });
-
-  it("treats a Codex HTML usage response as auth failure", async () => {
-    writeCodexAuth(codexHome, "at_codex_stale");
-    fetchApi = mockFetch(
-      new Map([
-        [
-          "https://chatgpt.com/backend-api/wham/usage",
-          () => new Response("<html>Login</html>", { status: 200 }),
-        ],
-      ]),
-    );
-
-    const result = await service().listUsage();
-
-    expect(findProvider(result, "codex").status).toBe("unavailable");
-  });
-
-  it("returns unavailable on 401 without refreshing or rewriting auth.json", async () => {
-    // Regression: the fetcher used to refresh the token and rewrite auth.json
-    // through a schema that dropped id_token (and OPENAI_API_KEY/last_refresh),
-    // leaving the file unparseable by the Codex CLI and forcing a re-login.
-    const authPath = join(codexHome, "auth.json");
-    writeFileSync(
-      authPath,
-      JSON.stringify({
-        OPENAI_API_KEY: null,
-        tokens: {
-          id_token: "id_codex",
-          access_token: "at_codex_stale",
-          refresh_token: "rt_codex_valid",
-          account_id: "acct_codex",
-        },
-        last_refresh: "2026-07-04T20:35:00Z",
-      }),
-    );
-    const before = readFileSync(authPath, "utf8");
-    let usageCalls = 0;
-    fetchApi = vi.fn(async (url: RequestInfo | URL) => {
-      const endpoint = url.toString();
-      if (endpoint === "https://chatgpt.com/backend-api/wham/usage") {
-        usageCalls += 1;
-        return new Response(null, { status: 401 });
-      }
-      // The read-only fetcher must never hit the OAuth token endpoint.
-      throw new Error(`Unmocked: ${endpoint}`);
-    }) as never;
-
-    const result = await service().listUsage();
-
-    expect(findProvider(result, "codex").status).toBe("unavailable");
-    expect(usageCalls).toBe(1);
-    // The auth file must be left byte-for-byte untouched for the Codex CLI to own.
-    expect(readFileSync(authPath, "utf8")).toBe(before);
   });
 
   it("fetches Copilot usage from COPILOT_TOKEN", async () => {
@@ -1425,37 +1158,6 @@ describe("usage bars escalate as they fill", () => {
   ])("a Claude window at %s%% is %s", async (utilization, tone) => {
     const usage = await claudeAt(utilization);
     expect(usage.windows).toEqual([expect.objectContaining({ id: "weekly", tone })]);
-  });
-
-  it("a Codex window can reach danger, not just warning", async () => {
-    writeCodexAuth(codexHome, "at_codex");
-    const usage = await new CodexQuotaProvider({
-      logger: createLogger(),
-      codexHome,
-      fetch: mockFetch(
-        new Map([
-          [
-            "https://chatgpt.com/backend-api/wham/usage",
-            () =>
-              jsonResponse(
-                makeCodexResponse({
-                  rate_limit: {
-                    primary_window: { used_percent: 12, reset_at: 1_748_812_800 },
-                    secondary_window: { used_percent: 96, reset_at: 1_749_072_000 },
-                  },
-                }),
-              ),
-          ],
-        ]),
-      ),
-    }).fetchUsage();
-
-    expect(usage.windows).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ id: "session", tone: "ok" }),
-        expect.objectContaining({ id: "weekly", tone: "danger" }),
-      ]),
-    );
   });
 });
 

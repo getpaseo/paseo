@@ -1,10 +1,7 @@
 import { existsSync, promises as fs } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import type { Logger } from "pino";
 import { z } from "zod";
-import type { ProviderUsage, ProviderUsageWindow } from "../../../server/messages.js";
-import type { ProviderApiFetch, ProviderUsageFetcher } from "../provider.js";
 import {
   ApiNumberSchema,
   ApiOptionalStringSchema,
@@ -12,7 +9,10 @@ import {
   toneFromUsedPct,
   unavailableUsage,
   windowFromUsedPct,
-} from "../usage.js";
+  type UsageReport,
+  type UsageWindow,
+  type UsageApiFetch,
+} from "@getpaseo/plugin/server/usage";
 
 const KIMI_USAGE_URL = "https://api.kimi.com/coding/v1/usages";
 
@@ -165,7 +165,7 @@ function windowFromFields(input: {
   id: string;
   label: string;
   fields: KimiUsageFields;
-}): ProviderUsageWindow {
+}): UsageWindow {
   const usedPct = usedPctFromFields(input.fields);
   return windowFromUsedPct({
     id: input.id,
@@ -189,10 +189,10 @@ function uniqueWindowId(baseId: string, seenIds: Set<string>): string {
 
 function kimiUsageWindowsFromPayload(
   payload: unknown,
-  logger: Pick<Logger, "debug">,
-): ProviderUsageWindow[] {
+  logger: Pick<Console, "debug">,
+): UsageWindow[] {
   const response = KimiUsageResponseSchema.parse(payload);
-  const windows: ProviderUsageWindow[] = [];
+  const windows: UsageWindow[] = [];
   const seenWindowIds = new Set<string>();
   const usage = parseUsageFields(response.usage);
 
@@ -250,48 +250,44 @@ type KimiAuth = z.infer<typeof KimiAuthSchema>;
 type KimiCredentials = KimiAuth & { access_token: string };
 
 interface KimiQuotaProviderOptions {
-  logger: Logger;
-  fetch?: ProviderApiFetch;
+  logger: Console;
+  fetch?: UsageApiFetch;
   homeDir?: string;
 }
 
-export class KimiQuotaProvider implements ProviderUsageFetcher {
-  readonly providerId = "kimi";
-  readonly displayName = "Kimi";
-
-  private readonly logger: Logger;
-  private readonly fetchApi: ProviderApiFetch;
+export class KimiQuotaProvider {
+  private readonly logger: Console;
+  private readonly fetchApi: UsageApiFetch;
   private readonly homeDir?: string;
 
   constructor(options: KimiQuotaProviderOptions) {
-    this.logger = options.logger.child({ module: "kimi-quota-provider" });
+    this.logger = options.logger;
     this.fetchApi = options.fetch ?? fetch;
     this.homeDir = options.homeDir;
   }
 
-  async fetchUsage(): Promise<ProviderUsage> {
+  async fetchUsage(): Promise<UsageReport> {
     const credentials = await this.readCredentials();
-    if (!credentials) return unavailableUsage(this);
+    if (!credentials) return unavailableUsage();
 
     const res = await this.callUsageApi(credentials.access_token);
 
     if (!res.ok) {
       // Read-only on credentials; the Kimi CLI owns refresh. See docs/providers.md.
       this.logger.debug({ status: res.status }, "Kimi usage fetch failed");
-      return unavailableUsage(this);
+      return unavailableUsage();
     }
 
     const windows = kimiUsageWindowsFromPayload(await res.json(), this.logger);
+    if (windows[0]) windows[0].headline = true;
 
     return {
-      providerId: this.providerId,
-      displayName: this.displayName,
+      account: { key: "default" },
       status: "available",
-      planLabel: null,
+      planLabel: undefined,
       windows,
       balances: [],
       details: [],
-      error: null,
     };
   }
 

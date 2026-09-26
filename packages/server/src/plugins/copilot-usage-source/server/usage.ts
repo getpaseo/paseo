@@ -1,11 +1,15 @@
 import { existsSync, promises as fs } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import type { Logger } from "pino";
 import { z } from "zod";
-import type { ProviderUsage, ProviderUsageDetail } from "../../../server/messages.js";
-import type { ProviderApiFetch, ProviderUsageFetcher } from "../provider.js";
-import { ApiOptionalStringSchema, fetchProviderApi, unavailableUsage } from "../usage.js";
+import {
+  ApiOptionalStringSchema,
+  fetchProviderApi,
+  unavailableUsage,
+  type UsageReport,
+  type UsageDetail,
+  type UsageApiFetch,
+} from "@getpaseo/plugin/server/usage";
 
 const CopilotUsageResponseSchema = z.object({
   copilot_plan: ApiOptionalStringSchema,
@@ -13,8 +17,8 @@ const CopilotUsageResponseSchema = z.object({
 });
 
 interface CopilotQuotaProviderOptions {
-  logger: Logger;
-  fetch?: ProviderApiFetch;
+  logger: Console;
+  fetch?: UsageApiFetch;
 }
 
 async function readGithubCliToken(): Promise<string | null> {
@@ -37,26 +41,23 @@ async function readGithubCliToken(): Promise<string | null> {
   return null;
 }
 
-export class CopilotQuotaProvider implements ProviderUsageFetcher {
-  readonly providerId = "copilot";
-  readonly displayName = "GitHub Copilot";
-
-  private readonly logger: Logger;
-  private readonly fetchApi: ProviderApiFetch;
+export class CopilotQuotaProvider {
+  private readonly logger: Console;
+  private readonly fetchApi: UsageApiFetch;
 
   constructor(options: CopilotQuotaProviderOptions) {
     this.logger = options.logger;
     this.fetchApi = options.fetch ?? fetch;
   }
 
-  async fetchUsage(): Promise<ProviderUsage> {
+  async fetchUsage(): Promise<UsageReport> {
     const token =
       process.env["COPILOT_TOKEN"] ||
       process.env["GITHUB_TOKEN"] ||
       process.env["GITHUB_PAT"] ||
       (await readGithubCliToken());
 
-    if (!token) return unavailableUsage(this);
+    if (!token) return unavailableUsage();
 
     const res = await fetchProviderApi(
       this.fetchApi,
@@ -75,23 +76,21 @@ export class CopilotQuotaProvider implements ProviderUsageFetcher {
 
     if (!res.ok) {
       this.logger.debug({ status: res.status }, "Copilot usage fetch failed");
-      return unavailableUsage(this);
+      return unavailableUsage();
     }
 
     const resp = CopilotUsageResponseSchema.parse(await res.json());
-    const details: ProviderUsageDetail[] = resp.quota_reset_date
+    const details: UsageDetail[] = resp.quota_reset_date
       ? [{ id: "reset", label: "Quota reset", value: resp.quota_reset_date }]
       : [];
 
     return {
-      providerId: this.providerId,
-      displayName: this.displayName,
+      account: { key: "default" },
       status: "available",
-      planLabel: resp.copilot_plan || null,
+      planLabel: resp.copilot_plan || undefined,
       windows: [],
       balances: [],
       details,
-      error: null,
     };
   }
 }

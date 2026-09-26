@@ -1,7 +1,11 @@
 import { searchTimeline } from "./agent/chat-search/index.js";
 import type { BrowserToolsBroker } from "./browser-tools/broker.js";
 import { BrowserAutomationHostCapabilitySchema } from "@getpaseo/protocol/browser-automation/capabilities";
-import type { SessionEventSubscription, UsageReportEntry } from "@getpaseo/protocol/messages";
+import type {
+  SessionEventSubscription,
+  UsageReportEntry,
+  ProviderUsage,
+} from "@getpaseo/protocol/messages";
 import { relative } from "node:path";
 import { isAbsolute } from "node:path";
 import { CreationService } from "./creation/index.js";
@@ -226,7 +230,6 @@ import {
   type GitHubService,
 } from "../services/github-service.js";
 import type { ForgeService } from "../services/forge-service.js";
-import type { ProviderUsageService } from "../services/quota-fetcher/service.js";
 import {
   resolveWorkspaceRootAgent,
   summarizeFetchWorkspacesEntries,
@@ -507,6 +510,7 @@ export interface SessionOptions {
     catalog(): Array<{ id: string; clientBundle: string }>;
     invokePluginRpc(pluginId: string, method: string, input: unknown): Promise<unknown>;
     listUsageReports(options?: { forceRefresh?: boolean }): Promise<UsageReportEntry[]>;
+    listLegacyUsage(): Promise<{ fetchedAt: string; providers: ProviderUsage[] }>;
   };
   orchestrationSkills?: import("./orchestration-skills/index.js").OrchestrationSkills;
   mcpBaseUrl?: string | null;
@@ -515,7 +519,6 @@ export interface SessionOptions {
   tts: Resolvable<TextToSpeechProvider | null>;
   terminalManager: TerminalManager | null;
   providerSnapshotManager: ProviderSnapshotManager;
-  providerUsageService: ProviderUsageService;
   hubExecutionAgents?: HubExecutionAgents;
   hubRelationships?: HubRelationshipManagement;
   serviceProxy?: ServiceProxySubsystem;
@@ -828,7 +831,6 @@ export class Session {
       tts,
       terminalManager,
       providerSnapshotManager,
-      providerUsageService,
       serviceProxy,
       scriptRuntimeStore,
       workspaceSetupSnapshots,
@@ -985,7 +987,10 @@ export class Session {
         listDraftFeatures: (config) => this.agentManager.listDraftFeatures(config),
       },
       providerSnapshotManager,
-      providerUsageService,
+      listLegacyUsage: async () => {
+        if (!pluginRuntime) throw new Error("Plugin runtime is unavailable");
+        return pluginRuntime.listLegacyUsage();
+      },
       logger: this.sessionLogger,
     });
     this.agentConfigSession = new AgentConfigSession({

@@ -83,3 +83,48 @@ test("turns fetch and discovery failures into error reports", async () => {
     "error",
   ]);
 });
+
+test("maps discovered reports to the legacy provider usage response", async () => {
+  const registry = new UsageSourceRegistry(() => Date.parse("2026-06-19T00:00:00.000Z"));
+  registry.register({
+    id: "fixture",
+    label: "Fixture Source",
+    discover: async () => [{}],
+    fetch: async () => ({
+      account: { key: "one" },
+      status: "available",
+      windows: [{ id: "weekly", label: "Weekly", usedPct: 42, headline: true }],
+    }),
+  });
+  registry.register({
+    id: "missing",
+    label: "Missing Source",
+    discover: async () => [{}],
+    fetch: async () => ({ account: { key: "default" }, status: "unavailable", windows: [] }),
+  });
+  expect(await registry.listLegacyUsage()).toEqual({
+    fetchedAt: "2026-06-19T00:00:00.000Z",
+    providers: [
+      {
+        providerId: "fixture",
+        displayName: "Fixture Source",
+        status: "available",
+        planLabel: null,
+        windows: [{ id: "weekly", label: "Weekly", usedPct: 42, headline: true }],
+        balances: [],
+        details: [],
+        error: null,
+      },
+      {
+        providerId: "missing",
+        displayName: "Missing Source",
+        status: "unavailable",
+        planLabel: null,
+        windows: [],
+        balances: [],
+        details: [],
+        error: null,
+      },
+    ],
+  });
+});

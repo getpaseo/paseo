@@ -14,7 +14,6 @@ import {
   type ProviderSnapshotTransition,
 } from "../../agent/provider-snapshot-manager.js";
 import type { ProviderSnapshotEntry } from "../../agent/agent-sdk-types.js";
-import { ProviderUsageService } from "../../../services/quota-fetcher/service.js";
 import { expandProviderSnapshot } from "@getpaseo/protocol/provider-snapshot-codec";
 
 type SnapshotChangeHandler = (transition: ProviderSnapshotTransition) => void;
@@ -24,7 +23,7 @@ interface MakeOptions {
   supportsCustomModeIcons?: boolean;
   supportsCompactProviderSnapshots?: boolean;
   snapshot?: Partial<ProviderSnapshotManager>;
-  usage?: { [K in keyof ProviderUsageService]?: unknown };
+  usage?: () => Promise<{ fetchedAt: string; providers: [] }>;
   host?: Partial<ProviderCatalogSessionHost>;
 }
 
@@ -73,7 +72,8 @@ function makeSubsystem(options: MakeOptions = {}) {
   const subsystem = new ProviderCatalogSession({
     host,
     providerSnapshotManager,
-    providerUsageService: createStub<ProviderUsageService>(options.usage ?? {}),
+    listLegacyUsage:
+      options.usage ?? (async () => ({ fetchedAt: "2026-01-01T00:00:00.000Z", providers: [] })),
     logger: pino({ level: "silent" }),
   });
   function pushSnapshotChange(
@@ -301,10 +301,8 @@ describe("ProviderCatalogSession", () => {
 
   it("surfaces a usage-list failure as an rpc_error envelope", async () => {
     const { subsystem, emitted } = makeSubsystem({
-      usage: {
-        listUsage: async () => {
-          throw new Error("quota service down");
-        },
+      usage: async () => {
+        throw new Error("quota service down");
       },
     });
 
@@ -388,10 +386,7 @@ it("announces shared content without retransmitting models or hashing discovery 
     new ProviderCatalogSession({
       providerSnapshotManager: manager,
       logger: pino({ level: "silent" }),
-      providerUsageService: new ProviderUsageService({
-        logger: pino({ level: "silent" }),
-        fetchers: [],
-      }),
+      listLegacyUsage: async () => ({ fetchedAt: "2026-01-01T00:00:00.000Z", providers: [] }),
       host: {
         emit(message) {
           emitted.push(message);

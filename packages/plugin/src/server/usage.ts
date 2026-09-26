@@ -1,4 +1,4 @@
-import type { ZodType } from "zod";
+import { z, type ZodType } from "zod";
 import type { JsonValue } from "@getpaseo/protocol/agent-types";
 
 export interface UsageWindow {
@@ -106,4 +106,42 @@ export function usedPctOf(
 ): number | null {
   if (typeof used !== "number" || typeof limit !== "number" || limit <= 0) return null;
   return (used / limit) * 100;
+}
+
+export const ApiNumberSchema = z.coerce.number().finite();
+export const ApiNullableNumberSchema = z.preprocess(
+  (value) => (value == null ? null : value),
+  ApiNumberSchema.nullable(),
+);
+export const ApiOptionalStringSchema = z.preprocess(
+  (value) => (value == null ? undefined : value),
+  z.coerce.string().optional(),
+);
+
+export type UsageApiFetch = typeof fetch;
+
+export function fetchProviderApi(
+  fetchApi: UsageApiFetch,
+  input: RequestInfo | URL,
+  init: RequestInit = {},
+): Promise<Response> {
+  return fetchApi(input, {
+    ...init,
+    signal: init.signal ?? AbortSignal.timeout(15_000),
+  });
+}
+
+export function unavailableUsage(accountKey = "default"): UsageReport {
+  return {
+    account: { key: accountKey },
+    status: "unavailable",
+    windows: [],
+    balances: [],
+    details: [],
+  };
+}
+
+export function toIsoStringOrNull(timestampMs: number): string | null {
+  const date = new Date(timestampMs);
+  return Number.isFinite(date.getTime()) ? date.toISOString() : null;
 }

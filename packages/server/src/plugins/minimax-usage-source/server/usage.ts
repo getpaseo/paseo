@@ -1,17 +1,17 @@
 import { existsSync, promises as fs } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import type { Logger } from "pino";
 import { z } from "zod";
-import type { ProviderUsage, ProviderUsageWindow } from "../../../server/messages.js";
-import type { ProviderApiFetch, ProviderUsageFetcher } from "../provider.js";
 import {
   ApiNumberSchema,
   ApiOptionalStringSchema,
   fetchProviderApi,
   unavailableUsage,
   windowFromUsedPct,
-} from "../usage.js";
+  type UsageReport,
+  type UsageWindow,
+  type UsageApiFetch,
+} from "@getpaseo/plugin/server/usage";
 
 const MINIMAX_GLOBAL_BASE_URL = "https://api.minimax.io";
 const MINIMAX_CN_BASE_URL = "https://api.minimaxi.com";
@@ -74,8 +74,8 @@ interface MiniMaxResolvedAuth {
 }
 
 interface MiniMaxQuotaProviderOptions {
-  logger: Logger;
-  fetch?: ProviderApiFetch;
+  logger: Console;
+  fetch?: UsageApiFetch;
   configPath?: string;
   credentialsPath?: string;
   env?: NodeJS.ProcessEnv;
@@ -105,16 +105,13 @@ function epochMsToIso(value: number | null | undefined): string | null {
   return new Date(value).toISOString();
 }
 
-function toneForStatus(status: number | null | undefined): ProviderUsageWindow["tone"] {
+function toneForStatus(status: number | null | undefined): UsageWindow["tone"] {
   if (status === 2) return "danger";
   if (status === 3) return "default";
   return "ok";
 }
 
-function toIntervalWindow(
-  modelName: string,
-  model: MiniMaxModelRemain,
-): ProviderUsageWindow | null {
+function toIntervalWindow(modelName: string, model: MiniMaxModelRemain): UsageWindow | null {
   const total = model.current_interval_total_count ?? null;
   const used = model.current_interval_usage_count ?? null;
   const remainingPercent = model.current_interval_remaining_percent ?? null;
@@ -135,7 +132,7 @@ function toIntervalWindow(
   });
 }
 
-function toWeeklyWindow(modelName: string, model: MiniMaxModelRemain): ProviderUsageWindow | null {
+function toWeeklyWindow(modelName: string, model: MiniMaxModelRemain): UsageWindow | null {
   const total = model.current_weekly_total_count ?? null;
   const used = model.current_weekly_usage_count ?? null;
   const remainingPercent = model.current_weekly_remaining_percent ?? null;
@@ -155,12 +152,9 @@ function toWeeklyWindow(modelName: string, model: MiniMaxModelRemain): ProviderU
   });
 }
 
-export class MiniMaxQuotaProvider implements ProviderUsageFetcher {
-  readonly providerId = "minimax";
-  readonly displayName = "MiniMax";
-
-  private readonly logger: Logger;
-  private readonly fetchApi: ProviderApiFetch;
+export class MiniMaxQuotaProvider {
+  private readonly logger: Console;
+  private readonly fetchApi: UsageApiFetch;
   private readonly configPath: string;
   private readonly credentialsPath: string;
   private readonly env: NodeJS.ProcessEnv;
@@ -175,9 +169,9 @@ export class MiniMaxQuotaProvider implements ProviderUsageFetcher {
     this.now = options.now ?? Date.now;
   }
 
-  async fetchUsage(): Promise<ProviderUsage> {
+  async fetchUsage(): Promise<UsageReport> {
     const auth = await this.resolveAuth();
-    if (!auth) return unavailableUsage(this);
+    if (!auth) return unavailableUsage();
 
     const res = await fetchProviderApi(this.fetchApi, `${auth.baseUrl}/v1/token_plan/remains`, {
       headers: {
@@ -188,7 +182,7 @@ export class MiniMaxQuotaProvider implements ProviderUsageFetcher {
 
     if (!res.ok) {
       this.logger.debug({ status: res.status }, "MiniMax usage fetch failed");
-      return unavailableUsage(this);
+      return unavailableUsage();
     }
 
     const resp = MiniMaxQuotaResponseSchema.parse(await res.json());
@@ -199,12 +193,12 @@ export class MiniMaxQuotaProvider implements ProviderUsageFetcher {
         { statusCode, statusMsg: resp.base_resp?.status_msg },
         "MiniMax usage unavailable",
       );
-      return unavailableUsage(this);
+      return unavailableUsage();
     }
 
     const models = resp.model_remains ?? [];
 
-    const windows: ProviderUsageWindow[] = [];
+    const windows: UsageWindow[] = [];
     for (const model of models) {
       const name = model.model_name ?? "token-plan";
       const intervalWindow = toIntervalWindow(name, model);
@@ -212,16 +206,15 @@ export class MiniMaxQuotaProvider implements ProviderUsageFetcher {
       const weeklyWindow = toWeeklyWindow(name, model);
       if (weeklyWindow) windows.push(weeklyWindow);
     }
+    if (windows[0]) windows[0].headline = true;
 
     return {
-      providerId: this.providerId,
-      displayName: this.displayName,
+      account: { key: "default" },
       status: windows.length > 0 ? "available" : "unavailable",
-      planLabel: null,
+      planLabel: undefined,
       windows,
       balances: [],
       details: [],
-      error: null,
     };
   }
 

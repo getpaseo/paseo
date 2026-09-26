@@ -1,14 +1,7 @@
 import { existsSync, promises as fs } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import type { Logger } from "pino";
 import { z } from "zod";
-import type {
-  ProviderUsage,
-  ProviderUsageBalance,
-  ProviderUsageWindow,
-} from "../../../server/messages.js";
-import type { ProviderApiFetch, ProviderUsageFetcher } from "../provider.js";
 import {
   ApiNumberSchema,
   ApiOptionalStringSchema,
@@ -17,7 +10,11 @@ import {
   fetchProviderApi,
   unavailableUsage,
   windowFromUsedPct,
-} from "../usage.js";
+  type UsageReport,
+  type UsageWindow,
+  type UsageBalance,
+  type UsageApiFetch,
+} from "@getpaseo/plugin/server/usage";
 
 const GrokUsageResponseSchema = z.object({
   config: z
@@ -49,8 +46,8 @@ const GrokUsageResponseSchema = z.object({
 });
 
 interface GrokQuotaProviderOptions {
-  logger: Logger;
-  fetch?: ProviderApiFetch;
+  logger: Console;
+  fetch?: UsageApiFetch;
   /** Override home directory (tests). Production uses os.homedir(). */
   homeDir?: string;
 }
@@ -82,7 +79,7 @@ export function extractGrokTokenFromAuth(auth: unknown): string | null {
 
 function grokMonthlyCreditBalance(
   response: z.infer<typeof GrokUsageResponseSchema>,
-): ProviderUsageBalance | null {
+): UsageBalance | null {
   const limit = response.config?.monthlyLimit?.val ?? null;
   const used = response.config?.used?.val ?? response.usage?.creditUsage ?? null;
   if (limit === null && used === null) return null;
@@ -97,9 +94,7 @@ function grokMonthlyCreditBalance(
   };
 }
 
-function grokUsageWindow(
-  response: z.infer<typeof GrokUsageResponseSchema>,
-): ProviderUsageWindow | null {
+function grokUsageWindow(response: z.infer<typeof GrokUsageResponseSchema>): UsageWindow | null {
   const percent = response.config?.creditUsagePercent;
   if (typeof percent !== "number") return null;
   const period = response.config?.currentPeriod;
@@ -113,12 +108,9 @@ function grokUsageWindow(
   });
 }
 
-export class GrokQuotaProvider implements ProviderUsageFetcher {
-  readonly providerId = "grok";
-  readonly displayName = "Grok";
-
-  private readonly logger: Logger;
-  private readonly fetchApi: ProviderApiFetch;
+export class GrokQuotaProvider {
+  private readonly logger: Console;
+  private readonly fetchApi: UsageApiFetch;
   private readonly homeDir: string | undefined;
 
   constructor(options: GrokQuotaProviderOptions) {
@@ -127,11 +119,11 @@ export class GrokQuotaProvider implements ProviderUsageFetcher {
     this.homeDir = options.homeDir;
   }
 
-  async fetchUsage(): Promise<ProviderUsage> {
+  async fetchUsage(): Promise<UsageReport> {
     const token =
       process.env["GROK_API_KEY"] || process.env["GROK_TOKEN"] || (await this.readGrokToken());
 
-    if (!token) return unavailableUsage(this);
+    if (!token) return unavailableUsage();
 
     // The Grok CLI's /usage uses ?format=credits; without it, unified-billing accounts
     // get a zeroed legacy monthly shape (monthlyLimit.val 0) instead of real usage.
@@ -149,22 +141,21 @@ export class GrokQuotaProvider implements ProviderUsageFetcher {
 
     if (!res.ok) {
       this.logger.debug({ status: res.status }, "Grok usage fetch failed");
-      return unavailableUsage(this);
+      return unavailableUsage();
     }
 
     const resp = GrokUsageResponseSchema.parse(await res.json());
     const balance = grokMonthlyCreditBalance(resp);
     const window = grokUsageWindow(resp);
+    if (window) window.headline = true;
 
     return {
-      providerId: this.providerId,
-      displayName: this.displayName,
+      account: { key: "default" },
       status: "available",
-      planLabel: null,
+      planLabel: undefined,
       windows: window ? [window] : [],
       balances: balance ? [balance] : [],
       details: [],
-      error: null,
     };
   }
 

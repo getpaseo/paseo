@@ -1,5 +1,9 @@
 import { createHash } from "node:crypto";
-import { UsageReportSchema, type UsageReportEntry } from "@getpaseo/protocol/messages";
+import {
+  UsageReportSchema,
+  type UsageReportEntry,
+  type ProviderUsage,
+} from "@getpaseo/protocol/messages";
 
 export interface UsageSource {
   id: string;
@@ -46,6 +50,24 @@ export class UsageSourceRegistry {
     for (const entry of discovered.flat())
       unique.set(`${entry.sourceId}:${entry.report.account.key}`, entry);
     return [...unique.values()];
+  }
+
+  // COMPAT(providerUsageList): added in v0.9.2, remove after 2027-03-26.
+  async listLegacyUsage(): Promise<{ fetchedAt: string; providers: ProviderUsage[] }> {
+    const reports = await this.listReports();
+    return {
+      fetchedAt: new Date(this.now()).toISOString(),
+      providers: reports.map((entry) => ({
+        providerId: entry.sourceId,
+        displayName: entry.sourceLabel,
+        status: entry.report.status,
+        planLabel: entry.report.planLabel ?? null,
+        windows: entry.report.windows,
+        balances: entry.report.balances ?? [],
+        details: entry.report.details ?? [],
+        error: entry.report.error ?? null,
+      })),
+    };
   }
 
   fetch(
