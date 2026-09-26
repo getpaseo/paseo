@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buttonControlHeight,
+  buttonIconSize,
   createControlGeometry,
   getControlInteractionPhase,
 } from "@/components/ui/control-geometry";
@@ -170,7 +171,16 @@ describe("control geometry", () => {
     expect(alert.md.text).toEqual(alert.sm.text);
     expect(alert.lg.text).toEqual(alert.sm.text);
     for (const size of ["xs", "sm", "md", "lg"] as const) {
-      expect(alert[size].textGap).toBeLessThanOrEqual(4);
+      expect(alert[size].container.gap).toBeLessThanOrEqual(4);
+    }
+  });
+
+  it("starts alert text below the lead row at the lead text's left edge", () => {
+    const { alert } = createControlGeometry(theme);
+
+    for (const size of ["xs", "sm", "md", "lg"] as const) {
+      expect(alert[size].iconSlot.width).toBe(buttonIconSize[size]);
+      expect(alert[size].indent.marginLeft).toBe(alert[size].iconSlot.width + alert[size].lead.gap);
     }
   });
 

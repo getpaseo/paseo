@@ -89,7 +89,9 @@ function fieldVerticalPadding(
 
 /**
  * Alerts share the button's size names, text size, and icon size (`buttonIconSize`).
- * Title and description use one font size; only `textGap` separates them.
+ * The icon and the first text sit in one centered lead row; everything below is indented
+ * by the icon slot plus its gap so it starts at the lead text's left edge. Title and
+ * description use one font size; only the container gap separates them.
  */
 function createAlertGeometry(theme: Theme) {
   function alertSize(input: {
@@ -101,15 +103,18 @@ function createAlertGeometry(theme: Theme) {
     iconGap: number;
     textGap: number;
   }) {
+    const iconSize = buttonIconSize[input.size];
     return {
       container: {
         paddingVertical: input.paddingVertical,
         paddingHorizontal: input.paddingHorizontal,
         borderRadius: input.borderRadius,
-        gap: input.iconGap,
+        gap: input.textGap,
       },
+      lead: { gap: input.iconGap },
+      iconSlot: { width: iconSize },
+      indent: { marginLeft: iconSize + input.iconGap },
       text: { fontSize: input.fontSize },
-      textGap: input.textGap,
     };
   }
 

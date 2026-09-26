@@ -57,30 +57,30 @@ export function Alert({
     return <Icon size={iconSize} color={accentColor ?? theme.colors.foreground} />;
   }, [icon, variant, theme, accentColor, iconSize]);
 
-  const hasDescription = description != null && description !== "";
+  let descriptionContent: ReactNode = null;
+  if (typeof description === "string" && description !== "") {
+    descriptionContent = <Text style={[styles.description, sized.text]}>{description}</Text>;
+  } else if (description != null && description !== "") {
+    descriptionContent = <View style={styles.descriptionSlot}>{description}</View>;
+  }
+  const leadContent = title ? <Text style={titleStyle}>{title}</Text> : descriptionContent;
+  const belowLead = title ? descriptionContent : null;
+  const hasBody = belowLead !== null || Boolean(children);
 
   return (
     <View style={containerStyle} testID={testID} accessibilityRole="alert">
-      {resolvedIcon ? (
-        // A zero-width strut in the alert's font makes the slot one text line tall, so the icon
-        // centers on the first line.
-        <View style={styles.iconSlot} aria-hidden>
-          <Text style={[styles.iconStrut, sized.text]} selectable={false}>
-            {"\u200B"}
-          </Text>
-          {resolvedIcon}
+      <View style={[styles.lead, sized.lead]}>
+        {resolvedIcon ? (
+          <View style={[styles.iconSlot, sized.iconSlot]}>{resolvedIcon}</View>
+        ) : null}
+        {leadContent ? <View style={styles.leadText}>{leadContent}</View> : null}
+      </View>
+      {hasBody ? (
+        <View style={resolvedIcon ? sized.indent : null}>
+          {belowLead}
+          {children ? <View style={styles.actions}>{children}</View> : null}
         </View>
       ) : null}
-      <View style={[styles.body, sized.body]}>
-        {title ? <Text style={titleStyle}>{title}</Text> : null}
-        {hasDescription && typeof description === "string" ? (
-          <Text style={[styles.description, sized.text]}>{description}</Text>
-        ) : null}
-        {hasDescription && typeof description !== "string" ? (
-          <View style={styles.descriptionSlot}>{description}</View>
-        ) : null}
-        {children ? <View style={styles.actions}>{children}</View> : null}
-      </View>
     </View>
   );
 }
@@ -90,27 +90,35 @@ function resolveSizeStyles(size: AlertSize) {
     return {
       container: styles.containerXs,
       text: styles.textXs,
-      body: styles.bodyXs,
+      lead: styles.leadXs,
+      iconSlot: styles.iconSlotXs,
+      indent: styles.indentXs,
     };
   }
   if (size === "sm") {
     return {
       container: styles.containerSm,
       text: styles.textSm,
-      body: styles.bodySm,
+      lead: styles.leadSm,
+      iconSlot: styles.iconSlotSm,
+      indent: styles.indentSm,
     };
   }
   if (size === "lg") {
     return {
       container: styles.containerLg,
       text: styles.textLg,
-      body: styles.bodyLg,
+      lead: styles.leadLg,
+      iconSlot: styles.iconSlotLg,
+      indent: styles.indentLg,
     };
   }
   return {
     container: styles.containerMd,
     text: styles.textMd,
-    body: styles.bodyMd,
+    lead: styles.leadMd,
+    iconSlot: styles.iconSlotMd,
+    indent: styles.indentMd,
   };
 }
 
@@ -130,8 +138,6 @@ const styles = StyleSheet.create((theme) => {
 
   return {
     container: {
-      flexDirection: "row",
-      alignItems: "flex-start",
       borderWidth: theme.borderWidth[1],
       borderColor: theme.colors.border,
       backgroundColor: "transparent",
@@ -140,21 +146,29 @@ const styles = StyleSheet.create((theme) => {
     containerSm: alert.sm.container,
     containerMd: alert.md.container,
     containerLg: alert.lg.container,
-    iconSlot: {
+    lead: {
       flexDirection: "row",
       alignItems: "center",
     },
-    iconStrut: {
-      width: 0,
+    iconSlot: {
+      alignItems: "center",
     },
-    body: {
+    leadText: {
       flex: 1,
       minWidth: 0,
     },
-    bodyXs: { gap: alert.xs.textGap },
-    bodySm: { gap: alert.sm.textGap },
-    bodyMd: { gap: alert.md.textGap },
-    bodyLg: { gap: alert.lg.textGap },
+    leadXs: alert.xs.lead,
+    leadSm: alert.sm.lead,
+    leadMd: alert.md.lead,
+    leadLg: alert.lg.lead,
+    iconSlotXs: alert.xs.iconSlot,
+    iconSlotSm: alert.sm.iconSlot,
+    iconSlotMd: alert.md.iconSlot,
+    iconSlotLg: alert.lg.iconSlot,
+    indentXs: alert.xs.indent,
+    indentSm: alert.sm.indent,
+    indentMd: alert.md.indent,
+    indentLg: alert.lg.indent,
     textXs: alert.xs.text,
     textSm: alert.sm.text,
     textMd: alert.md.text,
