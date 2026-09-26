@@ -1,10 +1,15 @@
 // POSIX-only: symlink fixtures
 /* eslint-disable max-nested-callbacks */
-import { mkdtemp, mkdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { getDownloadableFileInfo, listDirectoryEntries, readExplorerFile } from "./service.js";
+import {
+  getDownloadableFileInfo,
+  listDirectoryEntries,
+  readExplorerFile,
+  writeExplorerFile,
+} from "./service.js";
 import { isPlatform } from "../../test-utils/platform.js";
 
 async function createTempDir(prefix: string): Promise<string> {
@@ -35,21 +40,31 @@ describe.skipIf(isPlatform("win32"))("service POSIX-only", () => {
     }
   });
 
-  it("rejects symlinked files that resolve outside the workspace", async () => {
+  it("reads external symlink targets without allowing writes", async () => {
     const root = await createTempDir("paseo-file-explorer-");
     const outsideRoot = await createTempDir("paseo-file-explorer-outside-");
 
     try {
-      const externalFile = path.join(outsideRoot, "secret.txt");
-      await writeFile(externalFile, "top secret\n", "utf-8");
-      await symlink(externalFile, path.join(root, "secret-link.txt"));
+      const externalFile = path.join(outsideRoot, "sample.txt");
+      const relativePath = "assets/sample.txt";
+      await writeFile(externalFile, "outside\n", "utf-8");
+      await symlink(outsideRoot, path.join(root, "assets"));
+
+      const file = await readExplorerFile({ root, relativePath });
+      expect(file.content).toBe("outside\n");
+      await expect(
+        readExplorerFile({ root, relativePath: path.join(root, relativePath) }),
+      ).resolves.toMatchObject({ content: "outside\n" });
 
       await expect(
-        readExplorerFile({
+        writeExplorerFile({
           root,
-          relativePath: "secret-link.txt",
+          relativePath,
+          content: "changed\n",
+          expectedModifiedAt: file.modifiedAt,
         }),
-      ).rejects.toThrow("Access outside of workspace is not allowed");
+      ).resolves.toEqual({ status: "error", error: "Access outside of workspace is not allowed" });
+      expect(await readFile(externalFile, "utf-8")).toBe("outside\n");
     } finally {
       await rm(root, { recursive: true, force: true });
       await rm(outsideRoot, { recursive: true, force: true });
