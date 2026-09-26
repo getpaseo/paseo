@@ -73,6 +73,31 @@ export async function openSettingsHostSection(
   await expectAppRoute(page, buildSettingsHostSectionRoute(serverId, section));
 }
 
+export async function switchSettingsHostSectionAndPreserveSidebarScroll({
+  page,
+  serverId,
+  section,
+}: {
+  page: Page;
+  serverId: string;
+  section: HostSection;
+}): Promise<void> {
+  const scrollBody = page.locator('[data-testid="settings-sidebar-scroll-body"]:visible');
+  const sectionButton = page.getByTestId(`settings-host-section-${section}`);
+
+  await sectionButton.scrollIntoViewIfNeeded();
+  const previousOffset = await scrollBody.evaluate((element) => element.scrollTop);
+  expect(previousOffset).toBeGreaterThan(0);
+
+  await openSettingsHostSection(page, serverId, section);
+  await expect
+    .poll(async () => {
+      const currentOffset = await scrollBody.evaluate((element) => element.scrollTop);
+      return Math.abs(currentOffset - previousOffset);
+    })
+    .toBeLessThanOrEqual(1);
+}
+
 export async function expectSettingsHeader(page: Page, title: string): Promise<void> {
   await expect(page.getByTestId("settings-detail-header-title")).toHaveText(title);
 }
