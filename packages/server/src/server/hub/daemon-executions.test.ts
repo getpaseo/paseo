@@ -326,3 +326,56 @@ test("failed create never archives a reused worktree", async () => {
   });
   expect(await hub.worktreeState(worktreeCwd!)).toEqual({ exists: true, listed: true });
 });
+
+test("Hub execution derives a bounded title from a long prompt", async () => {
+  const hub = await launchRelationship();
+  const prompt = `Implement the issue.\n\n${"x".repeat(1_000)}`;
+
+  hub.beginOwnedCreate("long-prompt", "long-prompt-execution", {
+    prompt,
+  });
+
+  const response = await hub.ownedCreateResult("long-prompt");
+
+  expect(response).toMatchObject({
+    type: "hub.execution.agent.create.response",
+    payload: {
+      success: true,
+      executionId: "long-prompt-execution",
+      error: null,
+    },
+  });
+
+  expect(hub.providerPromptTexts()).toContain(prompt);
+
+  const config = hub.latestProviderCreateConfig();
+  expect(config).not.toBeNull();
+  expect(config?.title).toBe("Implement the issue.");
+  expect(config?.title?.length).toBeLessThanOrEqual(60);
+});
+
+test("Hub execution with a worktree accepts a long prompt", async () => {
+  const hub = await launchRelationship();
+  const prompt = `Implement the issue.\n\n${"x".repeat(1_000)}`;
+
+  hub.beginOwnedCreate("long-worktree", "long-worktree-execution", {
+    prompt,
+    worktree: {
+      mode: "branch-off",
+      newBranch: "long-prompt-worktree",
+    },
+  });
+
+  const response = await hub.ownedCreateResult("long-worktree");
+
+  expect(response).toMatchObject({
+    type: "hub.execution.agent.create.response",
+    payload: {
+      success: true,
+      executionId: "long-worktree-execution",
+      error: null,
+    },
+  });
+
+  expect(hub.providerPromptTexts()).toContain(prompt);
+});
