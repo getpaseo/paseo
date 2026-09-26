@@ -1,3 +1,4 @@
+import type { UsageInput } from "../shared/input.js";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, promises as fs } from "node:fs";
@@ -6,16 +7,15 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import { z } from "zod";
 import {
-  ApiNumberSchema,
-  fetchProviderApi,
   toneFromUsedPct,
   unavailableUsage,
   windowFromUsedPct,
   type UsageReport,
   type UsageWindow,
   type UsageDetail,
-  type UsageApiFetch,
 } from "@getpaseo/plugin/server/usage";
+
+const ApiNumberSchema = z.coerce.number().finite();
 
 const execFileAsync = promisify(execFile);
 const CLAUDE_KEYCHAIN_TIMEOUT_MS = 2_000;
@@ -76,16 +76,6 @@ const SCOPED_WEEKLY_KIND = "weekly_scoped";
 
 interface ClaudeCredentialRecord {
   oauth: { accessToken: string } & NonNullable<ClaudeCredentials["claudeAiOauth"]>;
-}
-
-interface ClaudeQuotaProviderOptions {
-  logger: Console;
-  claudeHome?: string;
-  configDir?: string;
-  accessToken?: string;
-  claudeKeychainReader?: () => Promise<unknown | null>;
-  platform?: typeof process.platform;
-  fetch?: UsageApiFetch;
 }
 
 function buildClaudePlan(
@@ -337,75 +327,15 @@ export async function readClaudeKeychainCredentials(
   return null;
 }
 
-export class ClaudeQuotaProvider {
-  private readonly logger: Console;
-  private readonly claudeHome: string;
-  private readonly configDir: string | undefined;
-  private readonly accessToken: string | undefined;
-  private readonly readKeychainCredentials: () => Promise<unknown | null>;
-  private readonly platform: typeof process.platform;
-  private readonly fetchApi: UsageApiFetch;
-
-  constructor(options: ClaudeQuotaProviderOptions) {
-    this.logger = options.logger;
-    this.claudeHome =
-      options.claudeHome || process.env["CLAUDE_HOME"] || join(homedir(), ".claude");
-    this.configDir = options.configDir;
-    this.accessToken = options.accessToken;
-    this.readKeychainCredentials = options.claudeKeychainReader ?? readClaudeKeychainCredentials;
-    this.platform = options.platform ?? process.platform;
-    this.fetchApi = options.fetch ?? fetch;
-  }
-
-  async fetchUsage(): Promise<UsageReport> {
-    const credentials = await this.readCredentials();
-    if (!credentials) {
-      return unavailableUsage();
-    }
-
-    const { oauth } = credentials;
-    const accountKey = createHash("sha256").update(oauth.accessToken).digest("hex");
-    const plan = buildClaudePlan(oauth.subscriptionType, oauth.rateLimitTier);
-    const resp = await this.callClaudeApi(oauth.accessToken);
-
-    if (resp === "NEEDS_AUTH") {
-      // Read-only on credentials; the Claude CLI owns refresh. See docs/providers.md.
-      return unavailableUsage(accountKey);
-    }
-
-    const scoped = reconcileScopedLimits(
-      legacyScopedLimits(resp),
-      this.scopedLimitsFromResponse(resp.limits),
-    );
-    const windows = [...unscopedWindows(resp), ...scopedWindows(scoped)];
-    if (windows[0]) windows[0].headline = true;
-
-    if (windows.length === 0) {
-      // The response parsed but described nothing. That silence is how the previous
-      // shape change went unnoticed, so make it greppable. `warn` and not `debug`
-      // because file logging defaults to `info`.
-      this.logger.warn("Claude usage response parsed but produced no windows");
-    }
-
-    const details: UsageDetail[] = [];
-    const extraUsageEnabled = resp.extra_usage?.is_enabled;
-    if (extraUsageEnabled !== undefined) {
-      details.push({
-        id: "extra_usage",
-        label: "Extra usage",
-        value: extraUsageEnabled ? "Enabled" : "Disabled",
-      });
-    }
-
-    return {
-      account: { key: accountKey },
-      status: "available",
-      planLabel: plan ?? undefined,
-      windows,
-      balances: [],
-      details,
-    };
-  }
+export async function fetchUsage(
+  input: UsageInput,
+  fetchApi: typeof fetch = fetch,
+): Promise<UsageReport> {
+  const claudeHome = process.env["CLAUDE_HOME"] || join(homedir(), ".claude");
+  const configDir = "configDir" in input ? input.configDir : undefined;
+  const accessToken = "accessToken" in input ? input.accessToken : undefined;
+  const readKeychainCredentials = readClaudeKeychainCredentials;
+  const platform = process.platform;
 
   /**
    * Scoped limits carried by `limits[]`.
@@ -413,21 +343,21 @@ export class ClaudeQuotaProvider {
    * Entries are validated one at a time so a single malformed or newly-shaped entry
    * cannot fail the whole response and take the windows that already parsed with it.
    */
-  private scopedLimitsFromResponse(limits: ClaudeUsageResponse["limits"]): ScopedLimit[] {
+  function scopedLimitsFromResponse(limits: ClaudeUsageResponse["limits"]): ScopedLimit[] {
     if (!limits) return [];
 
     const parsed: ScopedLimit[] = [];
     for (const entry of limits) {
       const result = ClaudeLimitSchema.safeParse(entry);
       if (!result.success) {
-        this.logger.warn({ err: result.error }, "Skipping unparseable Claude usage limit entry");
+        console.warn({ err: result.error }, "Skipping unparseable Claude usage limit entry");
         continue;
       }
       if (result.data.kind !== SCOPED_WEEKLY_KIND) continue;
 
       const limit = scopedLimitFromEntry(result.data);
       if (!limit) {
-        this.logger.warn("Skipping scoped Claude usage limit with no resolvable scope name");
+        console.warn("Skipping scoped Claude usage limit with no resolvable scope name");
         continue;
       }
       parsed.push(limit);
@@ -435,20 +365,18 @@ export class ClaudeQuotaProvider {
     return parsed;
   }
 
-  private async readCredentials(): Promise<ClaudeCredentialRecord | null> {
-    if (this.accessToken) return { oauth: { accessToken: this.accessToken } };
-    if (this.configDir) return this.readCredentialFile(join(this.configDir, ".credentials.json"));
-    const credPath = join(this.claudeHome, ".credentials.json");
-    const fileCredentials = await this.readCredentialFile(credPath);
-    return (
-      fileCredentials ?? (this.platform === "darwin" ? await this.readKeychainCredential() : null)
-    );
+  async function readCredentials(): Promise<ClaudeCredentialRecord | null> {
+    if (accessToken) return { oauth: { accessToken: accessToken } };
+    if (configDir) return readCredentialFile(join(configDir, ".credentials.json"));
+    const credPath = join(claudeHome, ".credentials.json");
+    const fileCredentials = await readCredentialFile(credPath);
+    return fileCredentials ?? (platform === "darwin" ? await readKeychainCredential() : null);
   }
 
-  private async readCredentialFile(path: string): Promise<ClaudeCredentialRecord | null> {
+  async function readCredentialFile(path: string): Promise<ClaudeCredentialRecord | null> {
     if (!existsSync(path)) return null;
     try {
-      return this.toCredentialRecord(
+      return toCredentialRecord(
         ClaudeCredentialsSchema.parse(JSON.parse(await fs.readFile(path, "utf8"))),
       );
     } catch {
@@ -456,20 +384,21 @@ export class ClaudeQuotaProvider {
     }
   }
 
-  private async readKeychainCredential(): Promise<ClaudeCredentialRecord | null> {
-    const parsed = ClaudeCredentialsSchema.safeParse(await this.readKeychainCredentials());
-    return parsed.success ? this.toCredentialRecord(parsed.data) : null;
+  async function readKeychainCredential(): Promise<ClaudeCredentialRecord | null> {
+    const parsed = ClaudeCredentialsSchema.safeParse(await readKeychainCredentials());
+    return parsed.success ? toCredentialRecord(parsed.data) : null;
   }
 
-  private toCredentialRecord(
+  function toCredentialRecord(
     credentials: z.infer<typeof ClaudeCredentialsSchema>,
   ): ClaudeCredentialRecord | null {
     const oauth = credentials.claudeAiOauth;
     return oauth?.accessToken ? { oauth: { ...oauth, accessToken: oauth.accessToken } } : null;
   }
 
-  private async callClaudeApi(token: string): Promise<ClaudeUsageResponse | "NEEDS_AUTH"> {
-    const res = await fetchProviderApi(this.fetchApi, "https://api.anthropic.com/api/oauth/usage", {
+  async function callClaudeApi(token: string): Promise<ClaudeUsageResponse | "NEEDS_AUTH"> {
+    const res = await fetchApi("https://api.anthropic.com/api/oauth/usage", {
+      signal: AbortSignal.timeout(15_000),
       headers: {
         Authorization: `Bearer ${token}`,
         Accept: "application/json",
@@ -480,4 +409,52 @@ export class ClaudeQuotaProvider {
     if (!res.ok) throw new Error(`Claude usage API returned ${res.status}`);
     return ClaudeUsageResponseSchema.parse(await res.json());
   }
+
+  const credentials = await readCredentials();
+  if (!credentials) {
+    return unavailableUsage();
+  }
+
+  const { oauth } = credentials;
+  const accountKey = createHash("sha256").update(oauth.accessToken).digest("hex");
+  const plan = buildClaudePlan(oauth.subscriptionType, oauth.rateLimitTier);
+  const resp = await callClaudeApi(oauth.accessToken);
+
+  if (resp === "NEEDS_AUTH") {
+    // Read-only on credentials; the Claude CLI owns refresh. See docs/providers.md.
+    return unavailableUsage(accountKey);
+  }
+
+  const scoped = reconcileScopedLimits(
+    legacyScopedLimits(resp),
+    scopedLimitsFromResponse(resp.limits),
+  );
+  const windows = [...unscopedWindows(resp), ...scopedWindows(scoped)];
+  if (windows[0]) windows[0].headline = true;
+
+  if (windows.length === 0) {
+    // The response parsed but described nothing. That silence is how the previous
+    // shape change went unnoticed, so make it greppable. `warn` and not `debug`
+    // because file logging defaults to `info`.
+    console.warn("Claude usage response parsed but produced no windows");
+  }
+
+  const details: UsageDetail[] = [];
+  const extraUsageEnabled = resp.extra_usage?.is_enabled;
+  if (extraUsageEnabled !== undefined) {
+    details.push({
+      id: "extra_usage",
+      label: "Extra usage",
+      value: extraUsageEnabled ? "Enabled" : "Disabled",
+    });
+  }
+
+  return {
+    account: { key: accountKey },
+    status: "available",
+    planLabel: plan ?? undefined,
+    windows,
+    balances: [],
+    details,
+  };
 }

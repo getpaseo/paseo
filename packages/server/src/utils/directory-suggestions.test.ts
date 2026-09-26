@@ -782,8 +782,8 @@ describe("relative typed-entry configuration", () => {
       "packages",
       "server",
       "src",
-      "services",
-      "quota-fetcher",
+      "plugins",
+      "usage-sources",
       "providers",
       "local.ts",
     );
@@ -792,7 +792,7 @@ describe("relative typed-entry configuration", () => {
 
     const results = await searchRelativeDirectoryEntries({
       cwd: workspaceDir,
-      query: "packages/server/src/services/quota-fetcher/providers/local.ts",
+      query: "packages/server/src/plugins/usage-sources/providers/local.ts",
       limit: 20,
       includeFiles: true,
       includeDirectories: false,
@@ -802,7 +802,7 @@ describe("relative typed-entry configuration", () => {
 
     expect(results).toEqual([
       {
-        path: "packages/server/src/services/quota-fetcher/providers/local.ts",
+        path: "packages/server/src/plugins/usage-sources/providers/local.ts",
         kind: "file",
       },
     ]);

@@ -1,22 +1,23 @@
+import type { UsageInput } from "../shared/input.js";
 import { existsSync, promises as fs } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
 import {
-  ApiNumberSchema,
-  ApiOptionalStringSchema,
-  fetchProviderApi,
   unavailableUsage,
   windowFromUsedPct,
   type UsageReport,
   type UsageWindow,
-  type UsageApiFetch,
 } from "@getpaseo/plugin/server/usage";
+
+const ApiNumberSchema = z.coerce.number().finite();
+const ApiOptionalStringSchema = z.preprocess(
+  (value) => (value == null ? undefined : value),
+  z.coerce.string().optional(),
+);
 
 const MINIMAX_GLOBAL_BASE_URL = "https://api.minimax.io";
 const MINIMAX_CN_BASE_URL = "https://api.minimaxi.com";
-const MINIMAX_CREDENTIALS_PATH = join(homedir(), ".mmx", "credentials.json");
-const MINIMAX_CONFIG_PATH = join(homedir(), ".mmx", "config.json");
 
 const MiniMaxModelRemainSchema = z.object({
   model_name: ApiOptionalStringSchema,
@@ -71,15 +72,6 @@ type MiniMaxModelRemain = z.infer<typeof MiniMaxModelRemainSchema>;
 interface MiniMaxResolvedAuth {
   token: string;
   baseUrl: string;
-}
-
-interface MiniMaxQuotaProviderOptions {
-  logger: Console;
-  fetch?: UsageApiFetch;
-  configPath?: string;
-  credentialsPath?: string;
-  env?: NodeJS.ProcessEnv;
-  now?: () => number;
 }
 
 function resolveBaseUrl(input: { baseUrl?: string; region?: string }): string {
@@ -152,91 +144,35 @@ function toWeeklyWindow(modelName: string, model: MiniMaxModelRemain): UsageWind
   });
 }
 
-export class MiniMaxQuotaProvider {
-  private readonly logger: Console;
-  private readonly fetchApi: UsageApiFetch;
-  private readonly configPath: string;
-  private readonly credentialsPath: string;
-  private readonly env: NodeJS.ProcessEnv;
-  private readonly now: () => number;
+export async function fetchUsage(
+  input: UsageInput,
+  fetchApi: typeof fetch = fetch,
+): Promise<UsageReport> {
+  void input;
+  const configPath = join(homedir(), ".mmx", "config.json");
+  const credentialsPath = join(homedir(), ".mmx", "credentials.json");
+  const env = process.env;
+  const now = Date.now;
 
-  constructor(options: MiniMaxQuotaProviderOptions) {
-    this.logger = options.logger;
-    this.fetchApi = options.fetch ?? fetch;
-    this.configPath = options.configPath ?? MINIMAX_CONFIG_PATH;
-    this.credentialsPath = options.credentialsPath ?? MINIMAX_CREDENTIALS_PATH;
-    this.env = options.env ?? process.env;
-    this.now = options.now ?? Date.now;
-  }
-
-  async fetchUsage(): Promise<UsageReport> {
-    const auth = await this.resolveAuth();
-    if (!auth) return unavailableUsage();
-
-    const res = await fetchProviderApi(this.fetchApi, `${auth.baseUrl}/v1/token_plan/remains`, {
-      headers: {
-        Authorization: `Bearer ${auth.token}`,
-        Accept: "application/json",
-      },
-    });
-
-    if (!res.ok) {
-      this.logger.debug({ status: res.status }, "MiniMax usage fetch failed");
-      return unavailableUsage();
-    }
-
-    const resp = MiniMaxQuotaResponseSchema.parse(await res.json());
-
-    const statusCode = resp.base_resp?.status_code;
-    if (typeof statusCode === "number" && statusCode !== 0) {
-      this.logger.debug(
-        { statusCode, statusMsg: resp.base_resp?.status_msg },
-        "MiniMax usage unavailable",
-      );
-      return unavailableUsage();
-    }
-
-    const models = resp.model_remains ?? [];
-
-    const windows: UsageWindow[] = [];
-    for (const model of models) {
-      const name = model.model_name ?? "token-plan";
-      const intervalWindow = toIntervalWindow(name, model);
-      if (intervalWindow) windows.push(intervalWindow);
-      const weeklyWindow = toWeeklyWindow(name, model);
-      if (weeklyWindow) windows.push(weeklyWindow);
-    }
-    if (windows[0]) windows[0].headline = true;
-
-    return {
-      account: { key: "default" },
-      status: windows.length > 0 ? "available" : "unavailable",
-      planLabel: undefined,
-      windows,
-      balances: [],
-      details: [],
-    };
-  }
-
-  private async resolveAuth(): Promise<MiniMaxResolvedAuth | null> {
-    const envToken = this.env["MINIMAX_API_KEY"];
+  async function resolveAuth(): Promise<MiniMaxResolvedAuth | null> {
+    const envToken = env["MINIMAX_API_KEY"];
     if (envToken) {
-      const envBase = this.env["MINIMAX_BASE_URL"];
+      const envBase = env["MINIMAX_BASE_URL"];
       return {
         token: envToken,
         baseUrl: resolveBaseUrl({ baseUrl: envBase }),
       };
     }
 
-    const credentials = await this.readCredentials();
-    if (credentials?.access_token && !this.isExpired(credentials.expires_at)) {
+    const credentials = await readCredentials();
+    if (credentials?.access_token && !isExpired(credentials.expires_at)) {
       return {
         token: credentials.access_token,
         baseUrl: resolveBaseUrl({ baseUrl: credentials.resource_url }),
       };
     }
 
-    const config = await this.readConfig();
+    const config = await readConfig();
     if (config?.api_key) {
       return {
         token: config.api_key,
@@ -247,7 +183,7 @@ export class MiniMaxQuotaProvider {
       };
     }
 
-    if (config?.oauth?.access_token && !this.isExpired(config.oauth.expires_at)) {
+    if (config?.oauth?.access_token && !isExpired(config.oauth.expires_at)) {
       return {
         token: config.oauth.access_token,
         baseUrl: resolveBaseUrl({
@@ -260,30 +196,73 @@ export class MiniMaxQuotaProvider {
     return null;
   }
 
-  private isExpired(expiresAt: string | null | undefined): boolean {
+  function isExpired(expiresAt: string | null | undefined): boolean {
     if (!expiresAt) return false;
     const parsed = Date.parse(expiresAt);
     if (!Number.isFinite(parsed)) return false;
-    return parsed <= this.now();
+    return parsed <= now();
   }
 
-  private async readCredentials(): Promise<z.infer<typeof MiniMaxCredentialsSchema> | null> {
-    if (!existsSync(this.credentialsPath)) return null;
+  async function readCredentials(): Promise<z.infer<typeof MiniMaxCredentialsSchema> | null> {
+    if (!existsSync(credentialsPath)) return null;
     try {
-      const raw = JSON.parse(await fs.readFile(this.credentialsPath, "utf8"));
+      const raw = JSON.parse(await fs.readFile(credentialsPath, "utf8"));
       return MiniMaxCredentialsSchema.parse(raw);
     } catch {
       return null;
     }
   }
 
-  private async readConfig(): Promise<z.infer<typeof MiniMaxConfigSchema> | null> {
-    if (!existsSync(this.configPath)) return null;
+  async function readConfig(): Promise<z.infer<typeof MiniMaxConfigSchema> | null> {
+    if (!existsSync(configPath)) return null;
     try {
-      const raw = JSON.parse(await fs.readFile(this.configPath, "utf8"));
+      const raw = JSON.parse(await fs.readFile(configPath, "utf8"));
       return MiniMaxConfigSchema.parse(raw);
     } catch {
       return null;
     }
   }
+
+  const auth = await resolveAuth();
+  if (!auth) return unavailableUsage();
+
+  const res = await fetchApi(`${auth.baseUrl}/v1/token_plan/remains`, {
+    signal: AbortSignal.timeout(15_000),
+    headers: {
+      Authorization: `Bearer ${auth.token}`,
+      Accept: "application/json",
+    },
+  });
+
+  if (!res.ok) {
+    return unavailableUsage();
+  }
+
+  const resp = MiniMaxQuotaResponseSchema.parse(await res.json());
+
+  const statusCode = resp.base_resp?.status_code;
+  if (typeof statusCode === "number" && statusCode !== 0) {
+    return unavailableUsage();
+  }
+
+  const models = resp.model_remains ?? [];
+
+  const windows: UsageWindow[] = [];
+  for (const model of models) {
+    const name = model.model_name ?? "token-plan";
+    const intervalWindow = toIntervalWindow(name, model);
+    if (intervalWindow) windows.push(intervalWindow);
+    const weeklyWindow = toWeeklyWindow(name, model);
+    if (weeklyWindow) windows.push(weeklyWindow);
+  }
+  if (windows[0]) windows[0].headline = true;
+
+  return {
+    account: { key: "default" },
+    status: windows.length > 0 ? "available" : "unavailable",
+    planLabel: undefined,
+    windows,
+    balances: [],
+    details: [],
+  };
 }

@@ -1,20 +1,23 @@
+import type { UsageInput } from "../shared/input.js";
 import { existsSync, promises as fs } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
 import {
-  ApiNumberSchema,
-  ApiOptionalStringSchema,
   toneFromUsedPct,
   usedPctOf,
-  fetchProviderApi,
   unavailableUsage,
   windowFromUsedPct,
   type UsageReport,
   type UsageWindow,
   type UsageBalance,
-  type UsageApiFetch,
 } from "@getpaseo/plugin/server/usage";
+
+const ApiNumberSchema = z.coerce.number().finite();
+const ApiOptionalStringSchema = z.preprocess(
+  (value) => (value == null ? undefined : value),
+  z.coerce.string().optional(),
+);
 
 const GrokUsageResponseSchema = z.object({
   config: z
@@ -44,13 +47,6 @@ const GrokUsageResponseSchema = z.object({
     })
     .nullish(),
 });
-
-interface GrokQuotaProviderOptions {
-  logger: Console;
-  fetch?: UsageApiFetch;
-  /** Override home directory (tests). Production uses os.homedir(). */
-  homeDir?: string;
-}
 
 /** Resolve a Grok CLI token from ~/.grok/auth.json (legacy or current nested shape). */
 export function extractGrokTokenFromAuth(auth: unknown): string | null {
@@ -108,60 +104,16 @@ function grokUsageWindow(response: z.infer<typeof GrokUsageResponseSchema>): Usa
   });
 }
 
-export class GrokQuotaProvider {
-  private readonly logger: Console;
-  private readonly fetchApi: UsageApiFetch;
-  private readonly homeDir: string | undefined;
+export async function fetchUsage(
+  input: UsageInput,
+  fetchApi: typeof fetch = fetch,
+): Promise<UsageReport> {
+  void input;
+  const homeDir = homedir();
 
-  constructor(options: GrokQuotaProviderOptions) {
-    this.logger = options.logger;
-    this.fetchApi = options.fetch ?? fetch;
-    this.homeDir = options.homeDir;
-  }
-
-  async fetchUsage(): Promise<UsageReport> {
-    const token =
-      process.env["GROK_API_KEY"] || process.env["GROK_TOKEN"] || (await this.readGrokToken());
-
-    if (!token) return unavailableUsage();
-
-    // The Grok CLI's /usage uses ?format=credits; without it, unified-billing accounts
-    // get a zeroed legacy monthly shape (monthlyLimit.val 0) instead of real usage.
-    const res = await fetchProviderApi(
-      this.fetchApi,
-      "https://cli-chat-proxy.grok.com/v1/billing?format=credits",
-      {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "X-XAI-Token-Auth": "xai-grok-cli",
-          Accept: "application/json",
-        },
-      },
-    );
-
-    if (!res.ok) {
-      this.logger.debug({ status: res.status }, "Grok usage fetch failed");
-      return unavailableUsage();
-    }
-
-    const resp = GrokUsageResponseSchema.parse(await res.json());
-    const balance = grokMonthlyCreditBalance(resp);
-    const window = grokUsageWindow(resp);
-    if (window) window.headline = true;
-
-    return {
-      account: { key: "default" },
-      status: "available",
-      planLabel: undefined,
-      windows: window ? [window] : [],
-      balances: balance ? [balance] : [],
-      details: [],
-    };
-  }
-
-  private async readGrokToken(): Promise<string | null> {
+  async function readGrokToken(): Promise<string | null> {
     // homeDir override is for tests: Windows os.homedir() ignores $HOME (uses USERPROFILE).
-    const path = join(this.homeDir ?? homedir(), ".grok", "auth.json");
+    const path = join(homeDir ?? homedir(), ".grok", "auth.json");
     if (!existsSync(path)) return null;
     try {
       return extractGrokTokenFromAuth(JSON.parse(await fs.readFile(path, "utf8")));
@@ -169,4 +121,37 @@ export class GrokQuotaProvider {
       return null;
     }
   }
+
+  const token = process.env["GROK_API_KEY"] || process.env["GROK_TOKEN"] || (await readGrokToken());
+
+  if (!token) return unavailableUsage();
+
+  // The Grok CLI's /usage uses ?format=credits; without it, unified-billing accounts
+  // get a zeroed legacy monthly shape (monthlyLimit.val 0) instead of real usage.
+  const res = await fetchApi("https://cli-chat-proxy.grok.com/v1/billing?format=credits", {
+    signal: AbortSignal.timeout(15_000),
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "X-XAI-Token-Auth": "xai-grok-cli",
+      Accept: "application/json",
+    },
+  });
+
+  if (!res.ok) {
+    return unavailableUsage();
+  }
+
+  const resp = GrokUsageResponseSchema.parse(await res.json());
+  const balance = grokMonthlyCreditBalance(resp);
+  const window = grokUsageWindow(resp);
+  if (window) window.headline = true;
+
+  return {
+    account: { key: "default" },
+    status: "available",
+    planLabel: undefined,
+    windows: window ? [window] : [],
+    balances: balance ? [balance] : [],
+    details: [],
+  };
 }

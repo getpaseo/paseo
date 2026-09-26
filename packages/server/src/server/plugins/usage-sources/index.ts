@@ -52,7 +52,7 @@ export class UsageSourceRegistry {
     return [...unique.values()];
   }
 
-  // COMPAT(providerUsageList): added in v0.9.2, remove after 2027-03-26.
+  // COMPAT(providerUsageList): added in v0.9.3, remove after 2027-03-26.
   async listLegacyUsage(): Promise<{ fetchedAt: string; providers: ProviderUsage[] }> {
     const reports = await this.listReports();
     return {

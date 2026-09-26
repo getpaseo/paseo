@@ -1,19 +1,26 @@
+import type { UsageInput } from "../shared/input.js";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
 import {
-  ApiNullableNumberSchema,
   toneFromUsedPct,
   usedPctOf,
-  fetchProviderApi,
-  toIsoStringOrNull,
   unavailableUsage,
   type UsageReport,
   type UsageBalance,
-  type UsageApiFetch,
 } from "@getpaseo/plugin/server/usage";
+
+const ApiNumberSchema = z.coerce.number().finite();
+const ApiNullableNumberSchema = z.preprocess(
+  (value) => (value == null ? null : value),
+  ApiNumberSchema.nullable(),
+);
+function toIsoStringOrNull(timestampMs: number): string | null {
+  const date = new Date(timestampMs);
+  return Number.isFinite(date.getTime()) ? date.toISOString() : null;
+}
 
 // Cursor desktop stores auth in VS Code's ItemTable (state.vscdb). Modern builds keep
 // the access token as a plain JWT string under `cursorAuth/accessToken`; older builds
@@ -62,12 +69,6 @@ const CursorAuthStatusSchema = z.object({
 
 type CursorUsageResponse = z.infer<typeof CursorUsageResponseSchema>;
 
-interface CursorQuotaProviderOptions {
-  logger: Console;
-  fetch?: UsageApiFetch;
-  homeDir?: string;
-}
-
 function parseCursorBillingCycleTimestamp(
   value: CursorUsageResponse["billingCycleStart"],
 ): string | null {
@@ -113,7 +114,7 @@ function cursorTokenFromDb(db: CursorStateDatabase): string | null {
   return null;
 }
 
-async function readCursorTokenFromSqlite(homeDir: string, logger: Console): Promise<string | null> {
+async function readCursorTokenFromSqlite(homeDir: string): Promise<string | null> {
   const dbPaths: string[] = [];
   if (process.env["APPDATA"]) {
     dbPaths.push(join(process.env["APPDATA"], "Cursor", "User", "globalStorage", "state.vscdb"));
@@ -137,8 +138,7 @@ async function readCursorTokenFromSqlite(homeDir: string, logger: Console): Prom
   let sqlite: NodeSqliteModule;
   try {
     sqlite = (await import(sqliteSpecifier)) as unknown as NodeSqliteModule;
-  } catch (err) {
-    logger.debug({ err }, "node:sqlite unavailable; cannot read Cursor state.vscdb");
+  } catch {
     return null; // runtime without node:sqlite
   }
 
@@ -149,10 +149,8 @@ async function readCursorTokenFromSqlite(homeDir: string, logger: Console): Prom
       db = new sqlite.DatabaseSync(path, { readOnly: true });
       const token = cursorTokenFromDb(db);
       if (token) return token;
-    } catch (err) {
-      // Locked/permission/corrupt/schema failures all land here; log so an
-      // unavailable Cursor card is diagnosable, then try the next candidate.
-      logger.debug({ err, path }, "Failed to read Cursor token from state.vscdb");
+    } catch {
+      // Locked, permission, corrupt, or schema failures try the next candidate.
     } finally {
       db?.close();
     }
@@ -160,86 +158,75 @@ async function readCursorTokenFromSqlite(homeDir: string, logger: Console): Prom
   return null;
 }
 
-async function readCursorTokenFromAuthJson(
-  homeDir: string,
-  logger: Console,
-): Promise<string | null> {
+async function readCursorTokenFromAuthJson(homeDir: string): Promise<string | null> {
   const path = join(homeDir, ".config", "cursor", "auth.json");
   if (!existsSync(path)) return null;
   try {
     const parsed = CursorAuthStatusSchema.parse(JSON.parse(await readFile(path, "utf8")));
     return parsed.accessToken?.trim() || null;
-  } catch (err) {
-    logger.debug({ err, path }, "Failed to read Cursor token from auth.json");
+  } catch {
     return null;
   }
 }
 
-export class CursorQuotaProvider {
-  private readonly logger: Console;
-  private readonly fetchApi: UsageApiFetch;
-  private readonly homeDir: string;
+export async function fetchUsage(
+  input: UsageInput,
+  fetchApi: typeof fetch = fetch,
+): Promise<UsageReport> {
+  void input;
+  const homeDir = homedir();
 
-  constructor(options: CursorQuotaProviderOptions) {
-    this.logger = options.logger;
-    this.fetchApi = options.fetch ?? fetch;
-    this.homeDir = options.homeDir ?? homedir();
-  }
+  const token =
+    process.env["CURSOR_ACCESS_TOKEN"] ||
+    process.env["CURSOR_TOKEN"] ||
+    (await readCursorTokenFromSqlite(homeDir)) ||
+    (await readCursorTokenFromAuthJson(homeDir));
 
-  async fetchUsage(): Promise<UsageReport> {
-    const token =
-      process.env["CURSOR_ACCESS_TOKEN"] ||
-      process.env["CURSOR_TOKEN"] ||
-      (await readCursorTokenFromSqlite(this.homeDir, this.logger)) ||
-      (await readCursorTokenFromAuthJson(this.homeDir, this.logger));
+  if (!token) return unavailableUsage();
 
-    if (!token) return unavailableUsage();
-
-    const res = await fetchProviderApi(
-      this.fetchApi,
-      "https://api2.cursor.sh/aiserver.v1.DashboardService/GetCurrentPeriodUsage",
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-          "Connect-Protocol-Version": "1",
-        },
-        body: JSON.stringify({}),
+  const res = await fetchApi(
+    "https://api2.cursor.sh/aiserver.v1.DashboardService/GetCurrentPeriodUsage",
+    {
+      signal: AbortSignal.timeout(15_000),
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+        "Connect-Protocol-Version": "1",
       },
-    );
+      body: JSON.stringify({}),
+    },
+  );
 
-    if (!res.ok) {
-      this.logger.debug({ status: res.status }, "Cursor usage fetch failed");
-      return unavailableUsage();
-    }
-
-    const resp = CursorUsageResponseSchema.parse(await res.json());
-    const billingCycleEnd = parseCursorBillingCycleTimestamp(resp.billingCycleEnd);
-    const balances: UsageBalance[] = [];
-    if (resp.planUsage) {
-      const totalSpend = centsToDollars(resp.planUsage.totalSpend);
-      const remaining = centsToDollars(resp.planUsage.remaining);
-      const limit = centsToDollars(resp.planUsage.limit);
-      balances.push({
-        id: "plan_usage",
-        label: "Plan usage",
-        used: totalSpend,
-        remaining,
-        limit,
-        unit: "usd",
-        resetsAt: billingCycleEnd,
-        tone: toneFromUsedPct(usedPctOf(totalSpend, limit)),
-      });
-    }
-
-    return {
-      account: { key: "default" },
-      status: "available",
-      planLabel: undefined,
-      windows: [],
-      balances,
-      details: [],
-    };
+  if (!res.ok) {
+    return unavailableUsage();
   }
+
+  const resp = CursorUsageResponseSchema.parse(await res.json());
+  const billingCycleEnd = parseCursorBillingCycleTimestamp(resp.billingCycleEnd);
+  const balances: UsageBalance[] = [];
+  if (resp.planUsage) {
+    const totalSpend = centsToDollars(resp.planUsage.totalSpend);
+    const remaining = centsToDollars(resp.planUsage.remaining);
+    const limit = centsToDollars(resp.planUsage.limit);
+    balances.push({
+      id: "plan_usage",
+      label: "Plan usage",
+      used: totalSpend,
+      remaining,
+      limit,
+      unit: "usd",
+      resetsAt: billingCycleEnd,
+      tone: toneFromUsedPct(usedPctOf(totalSpend, limit)),
+    });
+  }
+
+  return {
+    account: { key: "default" },
+    status: "available",
+    planLabel: undefined,
+    windows: [],
+    balances,
+    details: [],
+  };
 }

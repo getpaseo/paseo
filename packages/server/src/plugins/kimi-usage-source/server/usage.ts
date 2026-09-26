@@ -1,18 +1,21 @@
+import type { UsageInput } from "../shared/input.js";
 import { existsSync, promises as fs } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
 import {
-  ApiNumberSchema,
-  ApiOptionalStringSchema,
-  fetchProviderApi,
   toneFromUsedPct,
   unavailableUsage,
   windowFromUsedPct,
   type UsageReport,
   type UsageWindow,
-  type UsageApiFetch,
 } from "@getpaseo/plugin/server/usage";
+
+const ApiNumberSchema = z.coerce.number().finite();
+const ApiOptionalStringSchema = z.preprocess(
+  (value) => (value == null ? undefined : value),
+  z.coerce.string().optional(),
+);
 
 const KIMI_USAGE_URL = "https://api.kimi.com/coding/v1/usages";
 
@@ -187,10 +190,7 @@ function uniqueWindowId(baseId: string, seenIds: Set<string>): string {
   return id;
 }
 
-function kimiUsageWindowsFromPayload(
-  payload: unknown,
-  logger: Pick<Console, "debug">,
-): UsageWindow[] {
+function kimiUsageWindowsFromPayload(payload: unknown): UsageWindow[] {
   const response = KimiUsageResponseSchema.parse(payload);
   const windows: UsageWindow[] = [];
   const seenWindowIds = new Set<string>();
@@ -210,14 +210,12 @@ function kimiUsageWindowsFromPayload(
   for (const [index, rawLimit] of limits.entries()) {
     const parsedLimit = KimiUsageLimitSchema.safeParse(rawLimit);
     if (!parsedLimit.success) {
-      logger.debug({ index }, "Ignoring malformed Kimi usage limit window");
       continue;
     }
 
     const limit = parsedLimit.data;
     const { fields, metadata } = limitFields(limit);
     if (!hasUsageData(fields)) {
-      logger.debug({ index }, "Ignoring malformed Kimi usage limit window");
       continue;
     }
 
@@ -249,50 +247,16 @@ const KimiAuthSchema = z
 type KimiAuth = z.infer<typeof KimiAuthSchema>;
 type KimiCredentials = KimiAuth & { access_token: string };
 
-interface KimiQuotaProviderOptions {
-  logger: Console;
-  fetch?: UsageApiFetch;
-  homeDir?: string;
-}
+export async function fetchUsage(
+  input: UsageInput,
+  fetchApi: typeof fetch = fetch,
+): Promise<UsageReport> {
+  void input;
+  const homeDir = homedir();
 
-export class KimiQuotaProvider {
-  private readonly logger: Console;
-  private readonly fetchApi: UsageApiFetch;
-  private readonly homeDir?: string;
-
-  constructor(options: KimiQuotaProviderOptions) {
-    this.logger = options.logger;
-    this.fetchApi = options.fetch ?? fetch;
-    this.homeDir = options.homeDir;
-  }
-
-  async fetchUsage(): Promise<UsageReport> {
-    const credentials = await this.readCredentials();
-    if (!credentials) return unavailableUsage();
-
-    const res = await this.callUsageApi(credentials.access_token);
-
-    if (!res.ok) {
-      // Read-only on credentials; the Kimi CLI owns refresh. See docs/providers.md.
-      this.logger.debug({ status: res.status }, "Kimi usage fetch failed");
-      return unavailableUsage();
-    }
-
-    const windows = kimiUsageWindowsFromPayload(await res.json(), this.logger);
-    if (windows[0]) windows[0].headline = true;
-
-    return {
-      account: { key: "default" },
-      status: "available",
-      planLabel: undefined,
-      windows,
-      balances: [],
-      details: [],
-    };
-  }
-
-  private async callUsageApi(token: string): Promise<Response> {
-    return fetchProviderApi(this.fetchApi, KIMI_USAGE_URL, {
+  async function callUsageApi(token: string): Promise<Response> {
+    return fetchApi(KIMI_USAGE_URL, {
+      signal: AbortSignal.timeout(15_000),
       headers: {
         Authorization: `Bearer ${token}`,
         Accept: "application/json",
@@ -300,14 +264,14 @@ export class KimiQuotaProvider {
     });
   }
 
-  private async readCredentials(): Promise<KimiCredentials | null> {
+  async function readCredentials(): Promise<KimiCredentials | null> {
     const environmentToken = process.env["KIMI_TOKEN"] || process.env["KIMI_API_KEY"];
     if (environmentToken) {
       return { access_token: environmentToken };
     }
 
-    for (const path of this.credentialPaths()) {
-      const credentials = await this.readCredentialFile(path);
+    for (const path of credentialPaths()) {
+      const credentials = await readCredentialFile(path);
       if (credentials?.access_token) {
         return { ...credentials, access_token: credentials.access_token };
       }
@@ -315,19 +279,19 @@ export class KimiQuotaProvider {
     return null;
   }
 
-  private credentialPaths(): string[] {
-    const homeDir = this.homeDir ?? homedir();
+  function credentialPaths(): string[] {
+    const home = homeDir;
     return [
       join(
-        process.env["KIMI_CODE_HOME"] || join(homeDir, ".kimi-code"),
+        process.env["KIMI_CODE_HOME"] || join(home, ".kimi-code"),
         "credentials",
         "kimi-code.json",
       ),
-      join(homeDir, ".kimi", "credentials", "kimi-code.json"),
+      join(home, ".kimi", "credentials", "kimi-code.json"),
     ];
   }
 
-  private async readCredentialFile(path: string): Promise<KimiAuth | null> {
+  async function readCredentialFile(path: string): Promise<KimiAuth | null> {
     if (!existsSync(path)) return null;
     try {
       return KimiAuthSchema.parse(JSON.parse(await fs.readFile(path, "utf8")));
@@ -335,4 +299,27 @@ export class KimiQuotaProvider {
       return null;
     }
   }
+
+  const credentials = await readCredentials();
+  if (!credentials) return unavailableUsage();
+
+  const res = await callUsageApi(credentials.access_token);
+
+  if (!res.ok) {
+    // Read-only on credentials; the Kimi CLI owns refresh. See docs/providers.md.
+
+    return unavailableUsage();
+  }
+
+  const windows = kimiUsageWindowsFromPayload(await res.json());
+  if (windows[0]) windows[0].headline = true;
+
+  return {
+    account: { key: "default" },
+    status: "available",
+    planLabel: undefined,
+    windows,
+    balances: [],
+    details: [],
+  };
 }

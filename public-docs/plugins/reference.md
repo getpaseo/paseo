@@ -306,7 +306,7 @@ SVG or URL.
 
 ### Usage sources
 
-**Requires Paseo 0.9.2 or newer.** Server plugins can register a usage source with `server.registerUsageSource()` and import its types and helpers from `@getpaseo/plugin/server/usage`.
+**Requires Paseo 0.9.3 or newer.** Server plugins can register a usage source with `server.registerUsageSource()` and import its types and helpers from `@getpaseo/plugin/server/usage`.
 
 ```ts
 import { z } from "zod";
