@@ -64,6 +64,33 @@ describe("projectTimelineRows", () => {
     });
   });
 
+  test("keeps one assistant message whole when a steering user message lands mid-stream", () => {
+    const rows: AgentTimelineRow[] = [
+      {
+        seq: 1,
+        timestamp: "2026-02-13T00:00:00.000Z",
+        item: { type: "assistant_message", text: "with the uncommit", messageId: "msg-1" },
+      },
+      {
+        seq: 2,
+        timestamp: "2026-02-13T00:00:00.100Z",
+        item: { type: "user_message", text: "keep going" },
+      },
+      {
+        seq: 3,
+        timestamp: "2026-02-13T00:00:00.200Z",
+        item: { type: "assistant_message", text: "ted changes.", messageId: "msg-1" },
+      },
+    ];
+
+    const projected = projectTimelineRows({ rows, mode: "projected" });
+
+    expect(projected.map((entry) => entry.item)).toEqual([
+      { type: "assistant_message", text: "with the uncommitted changes.", messageId: "msg-1" },
+      { type: "user_message", text: "keep going" },
+    ]);
+  });
+
   test("keeps adjacent assistant chunks with different message ids separate in projected mode", () => {
     const rows: AgentTimelineRow[] = [
       {

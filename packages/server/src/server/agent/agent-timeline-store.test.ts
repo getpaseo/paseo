@@ -2,6 +2,27 @@ import { describe, expect, it } from "vitest";
 import { InMemoryAgentTimelineStore } from "./agent-timeline-store.js";
 
 describe("InMemoryAgentTimelineStore", () => {
+  it("keeps a streaming assistant message whole when a steering prompt is recorded mid-stream", () => {
+    const store = new InMemoryAgentTimelineStore();
+    store.initialize("agent-1");
+    store.append("agent-1", {
+      type: "assistant_message",
+      text: "with the uncommit",
+      messageId: "msg-1",
+    });
+    store.append("agent-1", { type: "user_message", text: "keep going" });
+    store.append("agent-1", {
+      type: "assistant_message",
+      text: "ted changes.",
+      messageId: "msg-1",
+    });
+
+    expect(store.getItems("agent-1")).toEqual([
+      { type: "assistant_message", text: "with the uncommitted changes.", messageId: "msg-1" },
+      { type: "user_message", text: "keep going" },
+    ]);
+  });
+
   it("clamps an overshooting before cursor into the bounded tail window", () => {
     const store = new InMemoryAgentTimelineStore();
     store.initialize("agent-1", {
