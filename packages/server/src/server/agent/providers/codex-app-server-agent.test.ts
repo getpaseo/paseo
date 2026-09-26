@@ -1825,6 +1825,79 @@ describe("Codex app-server provider", () => {
     await session.close();
   });
 
+  test.each(["legacy", "paginated"] as const)(
+    "rewinds a %s thread onto a fork that keeps the custom provider and runtime MCP servers",
+    async (historyMode) => {
+      const appServer = createFakeCodexAppServer(
+        historyMode === "paginated"
+          ? {
+              "thread/read": () => ({
+                thread: { id: "thread-1", historyMode: "paginated", turns: [] },
+              }),
+            }
+          : undefined,
+      );
+      const customCodexConfig = {
+        model_provider: "codex-custom",
+        model_providers: {
+          "codex-custom": {
+            name: "Custom Codex",
+            base_url: "https://custom-relay.example.com/v1",
+            env_key: "OPENAI_API_KEY",
+            requires_openai_auth: false,
+            wire_api: "responses",
+          },
+        },
+      };
+      const session = new CodexAppServerAgentSession(
+        createConfig({
+          cwd: "/workspace/project",
+          mcpServers: {
+            paseo: { type: "http", url: "http://127.0.0.1:6767/mcp/agents?callerAgentId=agent-1" },
+          },
+        }),
+        null,
+        createTestLogger(),
+        async () => appServer.child,
+        { customCodexConfig },
+      );
+
+      await session.startTurn("remember first");
+      emitCodexUserMessage(appServer, {
+        id: "codex-first",
+        text: "remember first",
+        turnId: "turn-first",
+      });
+      appServer.completeTurn();
+      await session.startTurn("remember second");
+      emitCodexUserMessage(appServer, {
+        id: "codex-second",
+        text: "remember second",
+        turnId: "turn-second",
+      });
+      appServer.completeTurn();
+
+      await session.revertConversation({ messageId: "codex-first" });
+
+      const forkConfigs = appServer
+        .requests()
+        .filter((request) => request.method === "thread/fork")
+        .map((request) => (request.params as { config?: unknown }).config);
+      expect(forkConfigs).toEqual([
+        expect.objectContaining({
+          ...customCodexConfig,
+          mcp_servers: {
+            paseo: expect.objectContaining({
+              url: "http://127.0.0.1:6767/mcp/agents?callerAgentId=agent-1",
+            }),
+          },
+        }),
+      ]);
+      appServer.assertNoErrors();
+      await session.close();
+    },
+  );
+
   test("correlates a Codex user message with the submitting client message", async () => {
     const appServer = createFakeCodexAppServer();
     const session = new CodexAppServerAgentSession(

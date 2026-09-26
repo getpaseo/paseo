@@ -67,6 +67,7 @@ export async function revertCodexConversation(input: {
   cwd?: string | null;
   model?: string | null;
   serviceTier?: string | null;
+  config?: Record<string, unknown> | null;
   userMessageTurns: CodexUserMessageTurnIndex;
   setThreadId: (threadId: string) => void | Promise<void>;
 }): Promise<void> {
@@ -85,19 +86,26 @@ export async function revertCodexConversation(input: {
     throw new Error(`Codex user message ${input.messageId} is outside the current thread`);
   }
 
+  // Codex does not carry the parent thread's config into a fork; without it the
+  // forked thread falls back to the default model provider.
+  const forkParams: CodexThreadForkParams = {
+    threadId: input.threadId,
+    cwd: input.cwd ?? null,
+    model: input.model ?? null,
+    serviceTier: input.serviceTier ?? null,
+    ...(input.config ? { config: input.config } : {}),
+    excludeTurns: false,
+    persistExtendedHistory: true,
+  };
+
   const historyMode = await readCodexThreadHistoryMode(input.client, input.threadId);
   if (historyMode === "paginated") {
     if (!targetTurn.turnId) {
       throw new Error(`Codex could not find the turn containing user message ${input.messageId}`);
     }
     const forked = await forkCodexThread(input.client, {
-      threadId: input.threadId,
+      ...forkParams,
       beforeTurnId: targetTurn.turnId,
-      cwd: input.cwd ?? null,
-      model: input.model ?? null,
-      serviceTier: input.serviceTier ?? null,
-      excludeTurns: false,
-      persistExtendedHistory: true,
     });
     await input.setThreadId(forked.thread.id);
     return;
@@ -105,14 +113,7 @@ export async function revertCodexConversation(input: {
 
   // Fork is non-destructive: the old thread file stays on disk and remains
   // recoverable with `codex resume <old-uuid>` if the rewind target was wrong.
-  const forked = await forkCodexThread(input.client, {
-    threadId: input.threadId,
-    cwd: input.cwd ?? null,
-    model: input.model ?? null,
-    serviceTier: input.serviceTier ?? null,
-    excludeTurns: false,
-    persistExtendedHistory: true,
-  });
+  const forked = await forkCodexThread(input.client, forkParams);
   const forkedThreadId = forked.thread.id;
 
   // Codex rollback is chat-only by design. File edits from rewound turns stay
