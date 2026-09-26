@@ -69,6 +69,7 @@ export interface DesktopEditorTargetDescriptor {
   label: string;
   kind: "editor" | "file-manager";
   icon: { kind: "image"; dataUrl: string } | { kind: "symbol"; name: "folder" | "terminal" };
+  scope?: "workspace";
 }
 
 export interface DesktopEditorOpenTargetInput {
@@ -80,7 +81,7 @@ export interface DesktopEditorOpenTargetInput {
 }
 
 export interface DesktopEditorBridge {
-  listTargets?: () => Promise<DesktopEditorTargetDescriptor[]>;
+  listTargets?: (input?: { workspacePath?: string }) => Promise<DesktopEditorTargetDescriptor[]>;
   openTarget?: (input: DesktopEditorOpenTargetInput) => Promise<void>;
 }
 

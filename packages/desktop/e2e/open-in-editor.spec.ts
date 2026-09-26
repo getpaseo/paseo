@@ -3,7 +3,7 @@ import path from "node:path";
 import { expect, test, type Page } from "../../app/e2e/support/fixtures";
 import { gotoAppShell, openSettings } from "../../app/e2e/support/helpers/app";
 import { expandFolder, openFileExplorer } from "../../app/e2e/support/helpers/file-explorer";
-import { installDesktopRuntime } from "./support/runtime";
+import { type DesktopEditorTargetConfig, installDesktopRuntime } from "./support/runtime";
 import { clickSettingsBackToWorkspace } from "../../app/e2e/support/helpers/settings";
 
 interface EditorOpenRecord {
@@ -66,6 +66,33 @@ async function expectEditorOpened(input: {
     )
     .toBe(true);
 }
+
+async function installEditorTargets(
+  page: Page,
+  editorTargets: DesktopEditorTargetConfig[],
+): Promise<string> {
+  const serverId = requireE2EEnv("E2E_SERVER_ID");
+  const recordPath = requireE2EEnv("E2E_EDITOR_RECORD_PATH");
+  await rm(recordPath, { force: true });
+  await installDesktopRuntime(page, { serverId, editorTargets, editorRecordPath: recordPath });
+  return recordPath;
+}
+
+const xcodeWorkspaceTargets: DesktopEditorTargetConfig[] = [
+  {
+    id: "vscode",
+    label: "VS Code",
+    kind: "editor",
+    icon: { kind: "symbol", name: "terminal" },
+  },
+  {
+    id: "xcode",
+    label: "Xcode",
+    kind: "editor",
+    icon: { kind: "symbol", name: "terminal" },
+    scope: "workspace",
+  },
+];
 
 test.describe("Workspace open in editor", () => {
   test("opens a nested folder in the preferred editor", async ({ page, withWorkspace }) => {
@@ -146,6 +173,28 @@ test.describe("Workspace open in editor", () => {
     await expectEditorOpened({
       recordPath,
       editorId: "zed",
+      path: workspace.repoPath,
+      afterCount: 0,
+    });
+  });
+
+  test("uses the workspace-matched Xcode target as the default", async ({
+    page,
+    withWorkspace,
+  }) => {
+    test.setTimeout(90_000);
+
+    const recordPath = await installEditorTargets(page, xcodeWorkspaceTargets);
+    const workspace = await withWorkspace({ prefix: "workspace-xcode-editor-target-" });
+    await workspace.navigateTo();
+
+    const primaryButton = page.getByTestId("workspace-open-in-editor-primary");
+    await expect(primaryButton).toHaveAccessibleName("Open workspace in Xcode");
+    await primaryButton.click();
+
+    await expectEditorOpened({
+      recordPath,
+      editorId: "xcode",
       path: workspace.repoPath,
       afterCount: 0,
     });
