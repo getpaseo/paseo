@@ -1033,6 +1033,13 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
   };
   const agentToAgentInputSchema = {
     ...canonicalCreateAgentFields,
+    background: z
+      .boolean()
+      .optional()
+      .default(true)
+      .describe(
+        "Run agent in background. Agent-scoped default is true so you can continue until the finish notification arrives. Set false only when you need to block until the created agent finishes.",
+      ),
     notifyOnFinish: z
       .boolean()
       .optional()
@@ -1061,6 +1068,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
   const legacyAgentToAgentInputSchema = {
     ...commonCreateAgentFields,
     ...legacyCreateAgentPlacementFields,
+    background: agentToAgentInputSchema.background,
     notifyOnFinish: agentToAgentInputSchema.notifyOnFinish,
   };
   const legacyTopLevelCreateAgentInputSchema = {
@@ -1449,7 +1457,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       let requestedBackground: boolean;
       let notifyOnFinish: boolean;
       if (resolvedArgs.kind === "agent-scoped") {
-        requestedBackground = true;
+        requestedBackground = resolvedArgs.parsedArgs.background ?? true;
         notifyOnFinish = parsedArgs.notifyOnFinish;
       } else {
         requestedBackground = resolvedArgs.parsedArgs.background;
