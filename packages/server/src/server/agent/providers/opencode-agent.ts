@@ -3365,9 +3365,28 @@ interface OpenCodeServerConnection {
   release: () => Promise<void>;
 }
 
-async function readOpenCodeUsageAuth(
-  env: NodeJS.ProcessEnv,
-): Promise<Record<string, unknown> | null> {
+const openCodeOAuthAuthSchema = z
+  .object({
+    openai: z
+      .object({
+        type: z.literal("oauth"),
+        access: z.string().min(1),
+        accountId: z.string().optional(),
+      })
+      .passthrough()
+      .optional(),
+  })
+  .passthrough();
+const openCodeGoAuthSchema = z
+  .object({
+    "opencode-go": z
+      .object({ type: z.literal("api"), key: z.string().min(1) })
+      .passthrough()
+      .optional(),
+  })
+  .passthrough();
+
+async function readOpenCodeUsageAuth(env: NodeJS.ProcessEnv): Promise<unknown> {
   try {
     const content =
       env.OPENCODE_AUTH_CONTENT ??
@@ -3379,39 +3398,31 @@ async function readOpenCodeUsageAuth(
         ),
         "utf8",
       ));
-    const parsed: unknown = JSON.parse(content);
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
-      ? (parsed as Record<string, unknown>)
-      : null;
+    return JSON.parse(content);
   } catch {
     return null;
   }
 }
 
-function resolveOpenCodeUsageReference(
-  model: string,
-  auth: Record<string, unknown> | null,
-): UsageReference | null {
+function resolveOpenCodeUsageReference(model: string, auth: unknown): UsageReference | null {
   if (!auth) return null;
   if (model.startsWith("openai/")) {
-    const entry = auth.openai;
-    if (!entry || typeof entry !== "object") return null;
-    const credential = entry as Record<string, unknown>;
-    if (credential.type !== "oauth" || typeof credential.access !== "string" || !credential.access)
-      return null;
+    const parsed = openCodeOAuthAuthSchema.safeParse(auth);
+    if (!parsed.success) return null;
+    const credential = parsed.data.openai;
+    if (!credential) return null;
     return {
       source: "codex",
       input: {
         accessToken: credential.access,
-        ...(typeof credential.accountId === "string" ? { accountId: credential.accountId } : {}),
+        ...(credential.accountId ? { accountId: credential.accountId } : {}),
       },
     };
   }
-  const entry = auth["opencode-go"];
-  if (!entry || typeof entry !== "object") return null;
-  const credential = entry as Record<string, unknown>;
-  if (credential.type !== "api" || typeof credential.key !== "string" || !credential.key)
-    return null;
+  const parsed = openCodeGoAuthSchema.safeParse(auth);
+  if (!parsed.success) return null;
+  const credential = parsed.data["opencode-go"];
+  if (!credential) return null;
   return { source: "opencode-go", input: { apiKey: credential.key } };
 }
 

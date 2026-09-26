@@ -23,7 +23,6 @@ interface MakeOptions {
   supportsCustomModeIcons?: boolean;
   supportsCompactProviderSnapshots?: boolean;
   snapshot?: Partial<ProviderSnapshotManager>;
-  usage?: () => Promise<{ fetchedAt: string; providers: [] }>;
   host?: Partial<ProviderCatalogSessionHost>;
 }
 
@@ -72,8 +71,6 @@ function makeSubsystem(options: MakeOptions = {}) {
   const subsystem = new ProviderCatalogSession({
     host,
     providerSnapshotManager,
-    listLegacyUsage:
-      options.usage ?? (async () => ({ fetchedAt: "2026-01-01T00:00:00.000Z", providers: [] })),
     logger: pino({ level: "silent" }),
   });
   function pushSnapshotChange(
@@ -299,23 +296,6 @@ describe("ProviderCatalogSession", () => {
     });
   });
 
-  it("surfaces a usage-list failure as an rpc_error envelope", async () => {
-    const { subsystem, emitted } = makeSubsystem({
-      usage: async () => {
-        throw new Error("quota service down");
-      },
-    });
-
-    await subsystem.handleProviderUsageListRequest({
-      type: "provider.usage.list.request",
-      requestId: "u1",
-    });
-
-    const err = findByType(emitted, "rpc_error");
-    expect(err?.payload.code).toBe("provider_usage_list_failed");
-    expect(err?.payload.requestId).toBe("u1");
-  });
-
   it("surfaces a feature-list failure inline, not as an rpc_error", async () => {
     const { subsystem, emitted } = makeSubsystem({
       host: {
@@ -386,7 +366,6 @@ it("announces shared content without retransmitting models or hashing discovery 
     new ProviderCatalogSession({
       providerSnapshotManager: manager,
       logger: pino({ level: "silent" }),
-      listLegacyUsage: async () => ({ fetchedAt: "2026-01-01T00:00:00.000Z", providers: [] }),
       host: {
         emit(message) {
           emitted.push(message);

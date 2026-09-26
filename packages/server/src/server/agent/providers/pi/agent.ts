@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve as resolvePath } from "node:path";
 import type { Logger } from "pino";
@@ -528,6 +529,27 @@ function resolvePiAgentDir(env: Record<string, string> | undefined): string {
   }
   return resolvePath(configured);
 }
+
+const piCodexUsageAuthSchema = z
+  .object({
+    "openai-codex": z
+      .object({
+        type: z.literal("oauth"),
+        access: z.string().min(1),
+        accountId: z.string().optional(),
+      })
+      .passthrough()
+      .optional(),
+  })
+  .passthrough();
+const piClaudeUsageAuthSchema = z
+  .object({
+    anthropic: z
+      .object({ type: z.literal("oauth"), access: z.string().min(1) })
+      .passthrough()
+      .optional(),
+  })
+  .passthrough();
 
 function readPiGlobalMcpConfig(env: Record<string, string> | undefined): Record<string, unknown> {
   const globalConfigPath = join(resolvePiAgentDir(env), "mcp.json");
@@ -1131,27 +1153,22 @@ export class PiRpcAgentSession implements AgentSession {
     if (provider === "anthropic") source = "claude";
     if (!source || !provider) return null;
     try {
-      const credentials = JSON.parse(
-        readFileSync(join(resolvePiAgentDir(this.usageEnv), "auth.json"), "utf8"),
-      ) as Record<string, unknown>;
-      const entry = credentials[provider];
-      if (!entry || typeof entry !== "object") return null;
-      const credential = entry as Record<string, unknown>;
-      if (
-        credential.type !== "oauth" ||
-        typeof credential.access !== "string" ||
-        !credential.access
-      )
-        return null;
-      return {
-        source,
-        input: {
-          accessToken: credential.access,
-          ...(source === "codex" && typeof credential.accountId === "string" && credential.accountId
-            ? { accountId: credential.accountId }
-            : {}),
-        },
-      };
+      const auth: unknown = JSON.parse(
+        await readFile(join(resolvePiAgentDir(this.usageEnv), "auth.json"), "utf8"),
+      );
+      if (provider === "openai-codex") {
+        const credential = piCodexUsageAuthSchema.parse(auth)["openai-codex"];
+        if (!credential) return null;
+        return {
+          source,
+          input: {
+            accessToken: credential.access,
+            ...(credential.accountId ? { accountId: credential.accountId } : {}),
+          },
+        };
+      }
+      const credential = piClaudeUsageAuthSchema.parse(auth).anthropic;
+      return credential ? { source, input: { accessToken: credential.access } } : null;
     } catch {
       return null;
     }

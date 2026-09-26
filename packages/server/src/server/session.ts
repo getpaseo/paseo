@@ -180,6 +180,7 @@ import {
 } from "./session/checkout/git-metadata-generator.js";
 import { ScheduleSession } from "./session/schedule/schedule-session.js";
 import { ProviderCatalogSession } from "./session/provider/provider-catalog-session.js";
+import { UsageSession } from "./session/usage/usage-session.js";
 import { WorkspaceFilesSession } from "./session/files/workspace-files-session.js";
 import { AgentConfigSession } from "./session/agent-config/agent-config-session.js";
 import { ProjectConfigSession } from "./session/project-config/project-config-session.js";
@@ -790,6 +791,7 @@ export class Session {
   private readonly checkoutSession: CheckoutSession;
   private readonly scheduleSession: ScheduleSession;
   private readonly providerCatalogSession: ProviderCatalogSession;
+  private readonly usageSession: UsageSession;
   private readonly workspaceFilesSession: WorkspaceFilesSession;
   private readonly agentConfigSession: AgentConfigSession;
   private readonly projectConfigSession: ProjectConfigSession;
@@ -995,10 +997,13 @@ export class Session {
         listDraftFeatures: (config) => this.agentManager.listDraftFeatures(config),
       },
       providerSnapshotManager,
-      listLegacyUsage: async () => {
-        if (!pluginRuntime) throw new Error("Plugin runtime is unavailable");
-        return pluginRuntime.listLegacyUsage();
-      },
+      logger: this.sessionLogger,
+    });
+    this.usageSession = new UsageSession({
+      emit: (msg) => this.emit(msg),
+      listAgents: () => this.agentManager.listAgents(),
+      getAgent: (agentId) => this.agentManager.getAgent(agentId),
+      runtime: pluginRuntime,
       logger: this.sessionLogger,
     });
     this.agentConfigSession = new AgentConfigSession({
@@ -3010,82 +3015,13 @@ export class Session {
       case "provider_diagnostic_request":
         return this.providerCatalogSession.handleProviderDiagnosticRequest(msg);
       case "provider.usage.list.request":
-        return this.providerCatalogSession.handleProviderUsageListRequest(msg);
+        return this.usageSession.handleLegacyList(msg);
       case "usage.list_reports.request":
-        return this.handleUsageListReportsRequest(msg);
+        return this.usageSession.handleListReports(msg);
       case "agent.get_usage_report.request":
-        return this.handleAgentGetUsageReportRequest(msg);
+        return this.usageSession.handleGetAgentReport(msg);
       default:
         return undefined;
-    }
-  }
-
-  private async handleUsageListReportsRequest(
-    msg: Extract<SessionInboundMessage, { type: "usage.list_reports.request" }>,
-  ): Promise<void> {
-    try {
-      if (!this.pluginRuntime) throw new Error("Plugin runtime is unavailable");
-      const references = (
-        await Promise.all(
-          this.agentManager
-            .listAgents()
-            .map(async (agent) => agent.session?.getUsageReference?.().catch(() => null) ?? null),
-        )
-      ).filter(
-        (
-          reference,
-        ): reference is {
-          source: string;
-          input: import("@getpaseo/protocol/agent-types").JsonValue;
-        } => reference !== null,
-      );
-      const reports = await this.pluginRuntime.listUsageReports({
-        forceRefresh: msg.forceRefresh,
-        references,
-      });
-      this.emit({
-        type: "usage.list_reports.response",
-        payload: { requestId: msg.requestId, reports },
-      });
-    } catch (error) {
-      this.emit({
-        type: "rpc_error",
-        payload: {
-          requestId: msg.requestId,
-          requestType: msg.type,
-          error: error instanceof Error ? error.message : String(error),
-          code: "usage_list_reports_failed",
-        },
-      });
-    }
-  }
-
-  private async handleAgentGetUsageReportRequest(
-    msg: Extract<SessionInboundMessage, { type: "agent.get_usage_report.request" }>,
-  ): Promise<void> {
-    try {
-      if (!this.pluginRuntime) throw new Error("Plugin runtime is unavailable");
-      const agent = this.agentManager.getAgent(msg.agentId);
-      const reference = (await agent?.session?.getUsageReference?.()) ?? null;
-      const entry = reference
-        ? await this.pluginRuntime.fetchUsageReference(reference, {
-            forceRefresh: msg.forceRefresh,
-          })
-        : null;
-      this.emit({
-        type: "agent.get_usage_report.response",
-        payload: { requestId: msg.requestId, entry },
-      });
-    } catch (error) {
-      this.emit({
-        type: "rpc_error",
-        payload: {
-          requestId: msg.requestId,
-          requestType: msg.type,
-          error: error instanceof Error ? error.message : String(error),
-          code: "agent_get_usage_report_failed",
-        },
-      });
     }
   }
 

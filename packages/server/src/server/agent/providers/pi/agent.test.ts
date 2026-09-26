@@ -243,6 +243,19 @@ test("Pi usage reference follows the current OAuth model and agent directory", a
     });
     writeFileSync(
       path.join(agentDir, "auth.json"),
+      JSON.stringify({
+        "openai-codex": { type: "oauth", access: "codex-token" },
+        anthropic: { type: "api_key", key: "api-key" },
+      }),
+    );
+    runtime.state.model = { provider: "openai-codex", id: "gpt", name: "GPT" };
+    expect(await session.getUsageReference?.()).toEqual({
+      source: "codex",
+      input: { accessToken: "codex-token" },
+    });
+    runtime.state.model = { provider: "anthropic", id: "claude", name: "Claude" };
+    writeFileSync(
+      path.join(agentDir, "auth.json"),
       JSON.stringify({ anthropic: { type: "api_key", key: "api-key" } }),
     );
     expect(await session.getUsageReference?.()).toBeNull();

@@ -392,6 +392,35 @@ describe("OpenCodeAgentClient adapter smoke tests", () => {
     rmSync(cwd, { recursive: true, force: true });
   });
 
+  test("usage reference ignores another auth entry with a different type", async () => {
+    const cwd = tmpCwd();
+    const runtime = new TestOpenCodeHarness();
+    runtime.enqueueClient(new TestOpenCodeClient());
+    const client = new OpenCodeAgentClient(
+      logger,
+      {
+        env: {
+          OPENCODE_AUTH_CONTENT: JSON.stringify({
+            openai: { type: "api", key: "other-key" },
+            "opencode-go": { type: "api", key: "go-key" },
+          }),
+        },
+      },
+      { serverManager: runtime, createClient: runtime.createClient },
+    );
+    const session = await client.createSession(buildConfig(cwd));
+    try {
+      await session.setModel?.("opencode-go/qwen");
+      expect(await session.getUsageReference?.()).toEqual({
+        source: "opencode-go",
+        input: { apiKey: "go-key" },
+      });
+    } finally {
+      await session.close();
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
   test("creates a session with valid id and provider", async () => {
     const cwd = tmpCwd();
     const runtime = new TestOpenCodeHarness();
