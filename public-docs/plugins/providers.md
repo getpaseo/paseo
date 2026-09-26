@@ -73,6 +73,49 @@ The connection has three operations:
 Keep the native SDK, process, and stream inside the connection implementation. Convert its output
 to `ProviderEvent` objects before publishing it.
 
+## Report usage and quota limits
+
+Implement optional `fetchUsage()` on `ProviderRegistration` to display rate-limit windows, plan tiers, and remaining balances in Paseo's host usage widget and Host Usage settings screen:
+
+```ts
+import type { ProviderQuotaSnapshot, ProviderRegistration } from "@getpaseo/plugin/server/provider";
+
+export function createProvider(): ProviderRegistration {
+  return {
+    id: "my-agent",
+    label: "My agent",
+    icon: "icon.svg",
+    async fetchUsage(): Promise<ProviderQuotaSnapshot> {
+      return {
+        planLabel: "Pro Plan",
+        windows: [
+          {
+            id: "session_requests",
+            label: "Session limit",
+            usedPct: 45,
+            resetsAt: new Date(Date.now() + 3600 * 1000).toISOString(),
+          },
+        ],
+        balances: [
+          {
+            id: "credits",
+            label: "Credits",
+            remaining: 120,
+            limit: 200,
+            unit: "credits",
+          },
+        ],
+      };
+    },
+    async connect(request) {
+      // ...
+    },
+  };
+}
+```
+
+The callback runs out-of-process in the plugin worker process with a 15-second timeout and strict schema validation. If it fails or times out, Paseo flags the provider with status `"error"` without affecting other providers.
+
 ## Return models, modes, and thinking options
 
 Paseo requests the catalog before creating a session. Return the choices needed by the agent form:

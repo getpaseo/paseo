@@ -15,6 +15,7 @@ import { KimiQuotaProvider } from "./providers/kimi.js";
 import { MiniMaxQuotaProvider } from "./providers/minimax.js";
 import { ZaiQuotaProvider } from "./providers/zai.js";
 import { ProviderUsageService } from "./service.js";
+import { createPluginUsageFetcher } from "./usage.js";
 
 function writeClaudeCredentials(
   dir: string,
@@ -344,6 +345,176 @@ describe("ProviderUsageService", () => {
         },
       ],
     });
+  });
+
+  it("fetches, normalizes, and isolates plugin provider usage", async () => {
+    let calls = 0;
+    const service = new ProviderUsageService({
+      logger: createLogger(),
+      fetchers: [usageFetcher({ providerId: "codex", displayName: "Codex", status: "available" })],
+      getPluginProviders: () => [
+        {
+          id: "plugin-1",
+          label: "Plugin 1",
+          connect: async () => {
+            throw new Error("unused");
+          },
+          fetchUsage: async () => {
+            calls += 1;
+            return {
+              planLabel: "Pro Plan",
+              windows: [{ id: "daily", label: "Daily", usedPct: 40 }],
+            };
+          },
+        },
+        {
+          id: "plugin-error",
+          label: "Failing Plugin",
+          connect: async () => {
+            throw new Error("unused");
+          },
+          fetchUsage: async () => {
+            throw new Error("Plugin crashed");
+          },
+        },
+        {
+          id: "no-usage",
+          label: "No Usage",
+          connect: async () => {
+            throw new Error("unused");
+          },
+        },
+      ],
+    });
+
+    const res = await service.listUsage();
+    expect(calls).toBe(1);
+    expect(res.providers).toMatchObject([
+      { providerId: "codex", status: "available" },
+      {
+        providerId: "plugin-1",
+        displayName: "Plugin 1",
+        status: "available",
+        planLabel: "Pro Plan",
+        windows: [{ id: "daily", label: "Daily", usedPct: 40 }],
+      },
+      {
+        providerId: "plugin-error",
+        displayName: "Failing Plugin",
+        status: "error",
+        error: "Plugin crashed",
+      },
+    ]);
+
+    service.clearCache();
+    await service.listUsage();
+    expect(calls).toBe(2);
+  });
+
+  it("skips duplicate plugin provider IDs and prevents ID spoofing", async () => {
+    const service = new ProviderUsageService({
+      logger: createLogger(),
+      fetchers: [
+        usageFetcher({ providerId: "builtin", displayName: "Builtin", status: "available" }),
+      ],
+      getPluginProviders: () => [
+        {
+          id: "builtin", // Collides with built-in
+          label: "Colliding",
+          connect: async () => {
+            throw new Error("unused");
+          },
+          fetchUsage: async () => ({ planLabel: "Fake" }),
+        },
+        {
+          id: "custom",
+          label: "Custom",
+          connect: async () => {
+            throw new Error("unused");
+          },
+          fetchUsage: async () => ({ providerId: "spoofed", planLabel: "Valid" }),
+        },
+        {
+          id: "custom", // Duplicate plugin ID
+          label: "Duplicate",
+          connect: async () => {
+            throw new Error("unused");
+          },
+          fetchUsage: async () => ({ planLabel: "Dup" }),
+        },
+      ],
+    });
+    const res = await service.listUsage();
+    expect(res.providers).toHaveLength(2);
+    expect(res.providers[0].providerId).toBe("builtin");
+    expect(res.providers[1].providerId).toBe("custom"); // Spoofing prevented
+  });
+
+  it("times out slow plugin fetchUsage and isolates error", async () => {
+    vi.useFakeTimers();
+    try {
+      const timeoutFetcher = createPluginUsageFetcher({
+        provider: {
+          id: "slow",
+          label: "Slow",
+          connect: async () => {
+            throw new Error("unused");
+          },
+          fetchUsage: () => new Promise<never>(() => {}),
+        },
+        logger: createLogger(),
+        timeoutMs: 30,
+      });
+
+      const fetchPromise = timeoutFetcher.fetchUsage();
+      await vi.advanceTimersByTimeAsync(30);
+
+      expect(await fetchPromise).toMatchObject({
+        providerId: "slow",
+        status: "error",
+        error: "Plugin usage fetch timed out after 30ms",
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not restore stale cache when clearCache is called while a fetch is in flight", async () => {
+    let resolveFirst!: () => void;
+    let currentProvider = {
+      id: "v1",
+      label: "v1",
+      connect: async () => {
+        throw new Error("unused");
+      },
+      fetchUsage: async () => {
+        await new Promise<void>((r) => {
+          resolveFirst = r;
+        });
+        return { planLabel: "V1 Stale" };
+      },
+    };
+    const raceService = new ProviderUsageService({
+      logger: createLogger(),
+      fetchers: [],
+      getPluginProviders: () => [currentProvider],
+    });
+    const req1 = raceService.listUsage();
+    currentProvider = {
+      id: "v2",
+      label: "v2",
+      connect: async () => {
+        throw new Error("unused");
+      },
+      fetchUsage: async () => ({ planLabel: "V2 Fresh" }),
+    };
+    raceService.clearCache();
+    const res2 = await raceService.listUsage();
+    expect(res2.providers).toMatchObject([{ providerId: "v2", planLabel: "V2 Fresh" }]);
+    resolveFirst();
+    await req1;
+    const cached = await raceService.listUsage();
+    expect(cached.providers).toMatchObject([{ providerId: "v2", planLabel: "V2 Fresh" }]);
   });
 });
 

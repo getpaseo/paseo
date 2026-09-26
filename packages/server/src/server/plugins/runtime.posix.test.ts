@@ -553,6 +553,47 @@ export default function contribute(server: PluginServerContext) {
     await runtime.stopAll();
   });
 
+  it("fetches and validates provider quota usage across the subprocess boundary", async () => {
+    const directory = await createPlugin(
+      "provider-usage-boundary",
+      `import type { PluginServerContext } from "@getpaseo/plugin/server";
+
+export default function contribute(server: PluginServerContext) {
+  server.registerProvider({
+    id: "valid",
+    label: "Valid",
+    fetchUsage: async () => ({
+      planLabel: "Pro Plan",
+      windows: [{ id: "5h", label: "5 Hours", usedPct: 42 }],
+    }),
+    connect: async () => ({ version: 1, capabilities: [], send: async () => {}, onEvent: () => () => {}, close: async () => {} }),
+  });
+  server.registerProvider({
+    id: "invalid",
+    label: "Invalid",
+    fetchUsage: async () => ({ windows: "not-an-array" }) as unknown as import("@getpaseo/plugin/server/provider").ProviderQuotaSnapshot,
+    connect: async () => ({ version: 1, capabilities: [], send: async () => {}, onEvent: () => () => {}, close: async () => {} }),
+  });
+  return () => undefined;
+}
+`,
+    );
+    const runtime = createTestRuntime();
+    try {
+      await runtime.startPlugin("provider-usage-boundary", directory);
+      const usage = await runtime.fetchProviderUsage("provider-usage-boundary", "valid");
+      expect(usage).toEqual({
+        planLabel: "Pro Plan",
+        windows: [{ id: "5h", label: "5 Hours", usedPct: 42 }],
+      });
+      await expect(
+        runtime.fetchProviderUsage("provider-usage-boundary", "invalid"),
+      ).rejects.toThrow();
+    } finally {
+      await runtime.stopAll();
+    }
+  });
+
   it("adapts an ACP command and example transformer through the AgentClient path", async () => {
     const transformerPath = fileURLToPath(
       new URL(

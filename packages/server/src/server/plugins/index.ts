@@ -38,6 +38,7 @@ interface PluginRuntimePort {
   getProviderRegistrations?(pluginId: string): readonly PluginProviderMetadata[];
   connectProvider: PluginRuntime["connectProvider"];
   getProviderCatalogCacheKey?: PluginRuntime["getProviderCatalogCacheKey"];
+  fetchProviderUsage?: PluginRuntime["fetchProviderUsage"];
   validatePlugin?(path: string): Promise<void>;
   startPlugin(pluginId: string, path: string, canPublish: () => boolean): Promise<void>;
   stopPluginById(pluginId: string): Promise<boolean>;
@@ -533,6 +534,13 @@ export class PluginService {
                 if (!this.runtime.getProviderCatalogCacheKey)
                   throw new Error("Plugin runtime cannot resolve catalogue keys");
                 return this.runtime.getProviderCatalogCacheKey(pluginId, provider.id, options);
+              }
+            : undefined,
+          fetchUsage: provider.hasFetchUsage
+            ? () => {
+                if (!this.runtime.fetchProviderUsage)
+                  throw new Error("Plugin runtime cannot fetch provider usage");
+                return this.runtime.fetchProviderUsage(pluginId, provider.id);
               }
             : undefined,
           icon: provider.iconPath

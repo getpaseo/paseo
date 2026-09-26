@@ -348,6 +348,27 @@ workspace target. Return a key covering effective configuration and execution en
 `undefined` for target-specific caching. Ignore `force` when choosing identity. Existing providers
 need no change. See [catalogue ownership](providers.md#provider-snapshot-refresh-contract).
 
+Implement optional `ProviderRegistration.fetchUsage()` to report quota limits, rate-limit windows, and credit balances to Paseo's host usage widget:
+
+```ts
+import type { ProviderQuotaSnapshot } from "@getpaseo/plugin/server/provider";
+
+server.registerProvider({
+  id: "my-provider",
+  label: "My Provider",
+  async fetchUsage(): Promise<ProviderQuotaSnapshot> {
+    return {
+      planLabel: "Pro Plan",
+      windows: [{ id: "session", label: "Session limit", usedPct: 45 }],
+      balances: [{ id: "credits", label: "Credits", remaining: 120, unit: "credits" }],
+    };
+  },
+  // ...
+});
+```
+
+`fetchUsage()` runs in the plugin subprocess with a 15-second timeout and schema validation; errors are isolated per-provider. Provider IDs are locked to `provider.id` to prevent collision. See [provider usage contract](providers.md#provider-usage-fetchers).
+
 `send()` resolves after acceptance. Publish operation completion, prompt disposition, turn state,
 configuration, permissions, persistence, and complete timeline snapshots through `onEvent()`.
 Route messages, structured commands, steering, and command side effects through `session.prompt`.

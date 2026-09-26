@@ -202,6 +202,8 @@ To add plan usage for a provider, add `packages/server/src/services/quota-fetche
 
 Keep the protocol shape provider-agnostic. Do not add provider-specific renderers for new limit windows; labels and generic bars should carry the UI. API responses should be parsed and normalized with Zod inside the fetcher, while the protocol boundary stays strict so old/new client compatibility is explicit.
 
+Plugins providing custom agents via `@getpaseo/plugin` can contribute host usage directly by implementing the optional `fetchUsage()` callback on `ProviderRegistration` instead of adding a built-in core fetcher. See [Plugin Providers](plugins.md).
+
 Kimi Code usage follows the CLI-managed credential file at `KIMI_CODE_HOME` or `~/.kimi-code/credentials/kimi-code.json`; do not probe the legacy `~/.kimi` path as the primary source for current Kimi Code installs.
 
 Cursor usage reads the desktop `state.vscdb` token first, then `cursor-agent`'s `~/.config/cursor/auth.json`. Headless hosts only have the CLI file.

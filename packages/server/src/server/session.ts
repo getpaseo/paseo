@@ -506,6 +506,8 @@ export interface SessionOptions {
     subscribeSettings?(listener: (pluginId: string, settingsId: string) => void): () => void;
     catalog(): Array<{ id: string; clientBundle: string }>;
     invokePluginRpc(pluginId: string, method: string, input: unknown): Promise<unknown>;
+    getProviderRegistrations?(): readonly import("@getpaseo/plugin/server/provider").ProviderRegistration[];
+    subscribeProviderRegistrations?(listener: () => void): () => void;
   };
   orchestrationSkills?: import("./orchestration-skills/index.js").OrchestrationSkills;
   mcpBaseUrl?: string | null;

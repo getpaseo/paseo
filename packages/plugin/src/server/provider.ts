@@ -1,5 +1,24 @@
 import type { JsonValue } from "@getpaseo/protocol/agent-types";
+import type {
+  ProviderUsage as ProtocolProviderUsage,
+  ProviderUsageWindow,
+  ProviderUsageBalance,
+  ProviderUsageDetail,
+  ProviderUsageStatus,
+  ProviderUsageTone,
+} from "@getpaseo/protocol/messages";
 import { z } from "zod";
+
+export type ProviderQuotaSnapshot = Partial<ProtocolProviderUsage>;
+export type ProviderQuotaUsage = ProtocolProviderUsage;
+
+export type {
+  ProviderUsageWindow,
+  ProviderUsageBalance,
+  ProviderUsageDetail,
+  ProviderUsageStatus,
+  ProviderUsageTone,
+};
 
 export const PROVIDER_PROTOCOL_VERSION = 1 as const;
 
@@ -28,6 +47,8 @@ export type ProviderCapability = (typeof PROVIDER_CAPABILITIES)[number];
 export interface ProviderRegistration {
   /** Equal keys share discovery within this provider. Include effective configuration and execution environment. */
   getCatalogCacheKey?(options: ProviderCatalogOptions): Promise<string | undefined>;
+  /** Optional usage and quota limits snapshot for this provider. */
+  fetchUsage?(): Promise<ProviderQuotaSnapshot | ProviderQuotaUsage>;
   id: string;
   label: string;
   description?: string;
