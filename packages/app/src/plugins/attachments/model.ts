@@ -9,6 +9,7 @@ export const PluginResourceComposerAttachmentSchema = z.object({
   sourceId: z.string().min(1),
   sourceTitle: z.string().min(1),
   sourceIcon: z.string().min(1),
+  sourceServerId: z.string().min(1).optional(),
   item: PluginAttachmentItemSchema,
 });
 
@@ -21,6 +22,7 @@ export interface PluginResourceSourceIdentity {
   sourceId: string;
   sourceTitle: string;
   sourceIcon: string;
+  sourceServerId?: string;
 }
 
 export function createPluginResourceAttachment(
@@ -42,6 +44,7 @@ export function togglePluginResourceAttachment(
     candidate.kind === "plugin_resource" &&
     candidate.pluginId === attachment.pluginId &&
     candidate.sourceId === attachment.sourceId &&
+    candidate.sourceServerId === attachment.sourceServerId &&
     candidate.item.id === attachment.item.id;
   if (current.some(matches)) {
     return current.filter((candidate) => !matches(candidate));

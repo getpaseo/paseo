@@ -18,5 +18,6 @@ export const contextAttachments = defineAttachmentSource({
   pickerTitle: "Attach example conversation",
   searchPlaceholder: "Search conversations",
   newAgentShortcut: true,
+  crossHost: true,
   search: searchContext,
 });

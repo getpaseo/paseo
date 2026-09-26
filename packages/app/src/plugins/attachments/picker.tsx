@@ -9,6 +9,7 @@ import type { UserComposerAttachment } from "@/attachments/types";
 import type { AttachmentMenuItem } from "@/composer/input/input";
 import { Combobox, type ComboboxOption } from "@/components/ui/combobox";
 import { useFetchQuery } from "@/data/query";
+import { getHostRuntimeStore, useHosts } from "@/runtime/host-runtime";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
 import { resolvePluginIcon } from "../icons";
 import { useInstalledPlugins } from "../registry";
@@ -29,6 +30,8 @@ interface InstalledAttachmentSource {
   plugin: InstalledPlugin;
   source: PluginAttachmentSourceContribution;
   key: string;
+  hostLabel: string;
+  remote: boolean;
 }
 
 interface PluginAttachmentPickerInput {
@@ -55,16 +58,20 @@ function searchEmptyText(error: unknown, isFetching: boolean): string {
 function installedAttachmentSources(
   plugins: InstalledPlugin[],
   serverId: string,
+  hosts: readonly { serverId: string; label: string }[],
 ): InstalledAttachmentSource[] {
-  return plugins
-    .filter((plugin) => plugin.serverId === serverId)
-    .flatMap((plugin) =>
-      plugin.attachmentSources.map((source) => ({
+  return plugins.flatMap((plugin) =>
+    plugin.attachmentSources
+      .filter((source) => plugin.serverId === serverId || source.crossHost === true)
+      .map((source) => ({
         plugin,
         source,
-        key: `${plugin.id}/${source.id}`,
+        key: `${plugin.serverId}/${plugin.id}/${source.id}`,
+        hostLabel:
+          hosts.find((host) => host.serverId === plugin.serverId)?.label ?? plugin.serverId,
+        remote: plugin.serverId !== serverId,
       })),
-    );
+  );
 }
 
 function attachmentOptions(items: PluginAttachmentItem[]): ComboboxOption[] {
@@ -79,11 +86,13 @@ export function usePluginAttachmentPicker(
   input: PluginAttachmentPickerInput,
 ): PluginAttachmentPickerBinding {
   const plugins = useInstalledPlugins();
+  const hosts = useHosts();
   const sources = useMemo(
-    () => installedAttachmentSources(plugins, input.serverId),
-    [input.serverId, plugins],
+    () => installedAttachmentSources(plugins, input.serverId, hosts),
+    [input.serverId, plugins, hosts],
   );
   const [activeKey, setActiveKey] = useState<string | null>(null);
+  const [approvedRemoteKey, setApprovedRemoteKey] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const active = sources.find((candidate) => candidate.key === activeKey) ?? null;
   const trimmedQuery = query.trim();
@@ -91,21 +100,28 @@ export function usePluginAttachmentPicker(
     {
       queryKey: [
         "plugin-attachment-search",
-        input.serverId,
+        active?.plugin.serverId ?? "",
         active?.plugin.id ?? "",
         active?.source.id ?? "",
         trimmedQuery,
       ],
       queryFn: async () => {
-        if (!input.client || !active) throw new Error("Plugin host is offline");
-        const client = input.client;
+        if (!active) throw new Error("Attachment source is unavailable");
+        const sourceHost = active.remote
+          ? getHostRuntimeStore().getSnapshot(active.plugin.serverId)
+          : null;
+        const client = active.remote ? sourceHost?.client : input.client;
+        if (!client || (active.remote && sourceHost?.connectionStatus !== "online")) {
+          throw new Error(`Source host ${active.hostLabel} is offline`);
+        }
         return searchPluginAttachments(
           active.source,
           (method, rpcInput) => client.invokePluginRpc(active.plugin.id, method, rpcInput),
           trimmedQuery,
         );
       },
-      enabled: input.connected && active !== null,
+      enabled:
+        input.connected && active !== null && (!active.remote || approvedRemoteKey === active.key),
       dataShape: "list",
       staleTimeMs: SEARCH_STALE_TIME_MS,
     },
@@ -117,6 +133,7 @@ export function usePluginAttachmentPicker(
   const options = useMemo(() => attachmentOptions(items), [items]);
   const close = useCallback(() => {
     setActiveKey(null);
+    setApprovedRemoteKey(null);
     setQuery("");
   }, []);
   const handleOpenChange = useCallback(
@@ -125,6 +142,9 @@ export function usePluginAttachmentPicker(
     },
     [close],
   );
+  const handleApproveRemote = useCallback(() => {
+    if (active) setApprovedRemoteKey(active.key);
+  }, [active]);
   const handleSelect = useCallback(
     (itemId: string) => {
       if (!active) return;
@@ -134,8 +154,11 @@ export function usePluginAttachmentPicker(
         {
           pluginId: active.plugin.id,
           sourceId: active.source.id,
-          sourceTitle: active.source.title,
+          sourceTitle: active.remote
+            ? `${active.source.title} · ${active.hostLabel}`
+            : active.source.title,
           sourceIcon: active.source.icon,
+          ...(active.remote ? { sourceServerId: active.plugin.serverId } : {}),
         },
         item,
       );
@@ -146,11 +169,11 @@ export function usePluginAttachmentPicker(
   );
   const menuItems = useMemo(
     () =>
-      sources.map(({ key, source }) => {
+      sources.map(({ key, source, remote, hostLabel }) => {
         const Icon = resolvePluginIcon(source.icon);
         return {
           id: `plugin:${key}`,
-          label: `Attach ${source.title}`,
+          label: remote ? `Attach ${source.title} from ${hostLabel}` : `Attach ${source.title}`,
           icon: <ThemedSourceIcon Icon={Icon} uniProps={iconColorMapping} />,
           onSelect: () => setActiveKey(key),
         };
@@ -160,12 +183,38 @@ export function usePluginAttachmentPicker(
   const newAgentShortcutItems = useMemo(() => {
     const shortcutIds = new Set(
       sources
-        .filter(({ source }) => source.newAgentShortcut === true)
+        .filter(({ source, remote }) => !remote && source.newAgentShortcut === true)
         .map(({ key }) => `plugin:${key}`),
     );
     return menuItems.filter((item) => shortcutIds.has(item.id));
   }, [menuItems, sources]);
   if (!active) return { menuItems, newAgentShortcutItems, picker: null };
+  if (active.remote && approvedRemoteKey !== active.key) {
+    return {
+      menuItems,
+      newAgentShortcutItems,
+      picker: (
+        <Combobox
+          options={[
+            {
+              id: "browse",
+              label: `Search ${active.source.title} on ${active.hostLabel}`,
+              description:
+                "Readable results will be copied to this app. Your selected snapshot goes to the destination host when you send.",
+            },
+          ]}
+          value=""
+          onSelect={handleApproveRemote}
+          keepOpenOnSelect
+          title={`Use ${active.hostLabel} as the source?`}
+          open
+          onOpenChange={handleOpenChange}
+          desktopPlacement="top-start"
+          anchorRef={input.anchorRef}
+        />
+      ),
+    };
+  }
   return {
     menuItems,
     newAgentShortcutItems,
@@ -176,7 +225,11 @@ export function usePluginAttachmentPicker(
         onSelect={handleSelect}
         searchable
         searchPlaceholder={active.source.searchPlaceholder}
-        title={active.source.pickerTitle}
+        title={
+          active.remote
+            ? `${active.source.pickerTitle} from ${active.hostLabel}`
+            : active.source.pickerTitle
+        }
         open
         onOpenChange={handleOpenChange}
         onSearchQueryChange={setQuery}

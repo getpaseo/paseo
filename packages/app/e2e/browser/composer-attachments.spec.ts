@@ -40,6 +40,10 @@ import { getServerId } from "../support/helpers/server-id";
 import { openFileExplorer } from "../support/helpers/file-explorer";
 import { attachFileFromMenu, controlFileUploadCompletion } from "../support/helpers/composer";
 import { withAttachmentSourceFixture } from "../support/helpers/attachment-source";
+import { startIsolatedHostDaemon } from "../support/helpers/isolated-host-daemon";
+import { connectNewWorkspaceDaemonClient } from "../support/helpers/new-workspace";
+import { copyPluginFixture } from "../support/helpers/plugin-fixture";
+import { addConnectedHostAndReload } from "../support/helpers/hosts";
 
 const MINIMAL_PNG = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
@@ -62,6 +66,79 @@ test.describe("Composer attachments", () => {
       await context.attachDefaultResult();
       await context.expectAttachmentInDraft();
     });
+  });
+
+  test("cross-host attachment asks before searching and retains the source host", async ({
+    page,
+  }, info) => {
+    info.setTimeout(120_000);
+    const workspace = await seedWorkspace({ repoPrefix: "cross-host-attachment-" });
+    const sourceHost = await startIsolatedHostDaemon("cross-host-attachment-source");
+    const sourceClient = await connectNewWorkspaceDaemonClient({
+      port: sourceHost.port,
+      ownProjects: false,
+    });
+    const plugin = await copyPluginFixture("attachment-source");
+    let searchRequests = 0;
+    const observeFrame = ({ payload }: { payload: string | Buffer }) => {
+      if (String(payload).includes('"plugin.rpc.invoke.request"')) searchRequests += 1;
+    };
+    page.on("websocket", (socket) => {
+      if (new URL(socket.url()).port !== String(sourceHost.port)) return;
+      socket.on("framesent", observeFrame);
+    });
+    try {
+      await sourceClient.patchDaemonConfig({ pluginsEnabled: true });
+      await sourceClient.installDirectoryPlugin(plugin.directory);
+      await gotoAppShell(page);
+      await addConnectedHostAndReload(page, {
+        serverId: sourceHost.serverId,
+        label: "Secondary",
+        port: sourceHost.port,
+        primaryLabel: "Primary",
+      });
+      await waitForSidebarHydration(page);
+      await switchWorkspaceViaSidebar({
+        page,
+        serverId: getServerId(),
+        workspaceId: workspace.workspaceId,
+      });
+      await clickNewChat(page);
+      await expectComposerVisible(page);
+
+      await expect(
+        page.getByRole("button", { name: "Attach Conversation context", exact: true }),
+      ).toHaveCount(0);
+      await openAttachmentMenu(page);
+      await page
+        .getByRole("menuitem", { name: "Attach Conversation context from Secondary" })
+        .click();
+      const approveRemoteSearch = page.getByRole("button", {
+        name: "Search Conversation context on Secondary",
+      });
+      await expect(approveRemoteSearch).toBeVisible();
+      await expect(page.getByText(/Readable results will be copied to this app/)).toBeVisible();
+      await expect(page.getByText("Example conversation")).toHaveCount(0);
+      expect(searchRequests).toBe(0);
+
+      await approveRemoteSearch.click();
+      await expect(page.getByPlaceholder("Search conversations")).toBeVisible();
+      const result = page.getByRole("button", { name: /Example conversation/ });
+      await expect(result).toBeVisible({ timeout: 30_000 });
+      expect(searchRequests).toBeGreaterThan(0);
+      await result.click();
+      await expect(page.getByTestId("composer-plugin-resource-attachment-pill")).toContainText(
+        "Secondary",
+      );
+      await expect(page.getByTestId("composer-plugin-resource-attachment-pill")).toContainText(
+        "Example conversation",
+      );
+    } finally {
+      await sourceClient.close();
+      await sourceHost.close();
+      await plugin.cleanup();
+      await workspace.cleanup();
+    }
   });
 
   test("selected file shows a loading attachment until upload is acknowledged", async ({

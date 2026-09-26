@@ -1863,6 +1863,7 @@ export const issues = defineAttachmentSource({
   pickerTitle: "Attach Acme issue",
   searchPlaceholder: "Search by identifier or title",
   newAgentShortcut: true,
+  crossHost: true,
   search: searchIssues,
 });
 ```
@@ -1903,7 +1904,9 @@ export default function contribute(server: PluginServerContext) {
 }
 ```
 
-Paseo owns the composer menu, search picker, selected pill, draft state, and submission. The `text` value is the complete snapshot sent to the agent. Set `contextKind` to `"chat_history"` for an earlier conversation that must appear before the new user instruction; omit it for an ordinary resource appended afterward. Set `newAgentShortcut` to `true` to show the source beside Import Session on New Agent drafts as well as in the attachment menu.
+Paseo owns the composer menu, search picker, selected pill, draft state, and submission. The `text` value is the complete snapshot sent to the agent. Set `contextKind` to `"chat_history"` for an earlier conversation that must appear before the new user instruction; omit it for an ordinary resource appended afterward. Set `newAgentShortcut` to `true` to show the source beside Import Session on same-host New Agent drafts as well as in the attachment menu.
+
+Set `crossHost` to `true` only when the source is safe to offer on other connected hosts. Paseo lists it under its source host in the attachment menu and asks for confirmation before searching that host. The plugin's search results, including readable `text`, are copied to the app. A selected snapshot is copied to the destination host on send. The plugin runs on the source host; it does not install or invoke itself on the destination host. Remote sources do not get the New Agent shortcut. Keep search results bounded and redact secrets before returning them.
 
 The [Linear example](https://github.com/getpaseo/paseo/tree/main/plugin-examples/linear) shows a complete attachment source for a vendor resource.
 

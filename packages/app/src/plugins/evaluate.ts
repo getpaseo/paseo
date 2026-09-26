@@ -288,6 +288,7 @@ export function runPluginClientBundle(
       const pickerTitle = contribution.pickerTitle.trim();
       const searchPlaceholder = contribution.searchPlaceholder.trim();
       const newAgentShortcut = contribution.newAgentShortcut;
+      const crossHost = contribution.crossHost;
       const method = contribution.search.name.trim();
       if (!title) throw new Error(`Attachment source ${normalizedId} has no title`);
       if (!icon) throw new Error(`Attachment source ${normalizedId} has no icon`);
@@ -297,6 +298,9 @@ export function runPluginClientBundle(
       }
       if (newAgentShortcut !== undefined && typeof newAgentShortcut !== "boolean") {
         throw new Error(`Attachment source ${normalizedId} has an invalid New Agent shortcut`);
+      }
+      if (crossHost !== undefined && typeof crossHost !== "boolean") {
+        throw new Error(`Attachment source ${normalizedId} has an invalid cross-host setting`);
       }
       if (!method) throw new Error(`Attachment source ${normalizedId} has no search RPC`);
       resolvePluginIcon(icon);
@@ -310,6 +314,7 @@ export function runPluginClientBundle(
           pickerTitle,
           searchPlaceholder,
           ...(newAgentShortcut === true ? { newAgentShortcut: true } : {}),
+          ...(crossHost === true ? { crossHost: true } : {}),
           search: { ...contribution.search, name: method },
         },
         () => attachmentSourceIds.delete(normalizedId),
