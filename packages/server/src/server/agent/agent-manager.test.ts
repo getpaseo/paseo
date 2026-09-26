@@ -18,7 +18,11 @@ import { InMemoryAgentTimelineStore } from "./agent-timeline-store.js";
 import { toAgentPayload } from "./agent-projections.js";
 import { projectTimelineRows } from "./timeline-projection.js";
 import { getOpenAgentTabLabel, PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
-import { formatSystemNotificationPrompt, startAgentRun } from "./agent-prompt.js";
+import {
+  formatSystemNotificationPrompt,
+  setupFinishNotification,
+  startAgentRun,
+} from "./agent-prompt.js";
 import { StaleProviderSessionError } from "./stale-provider-session-error.js";
 import { ensureAgentLoaded, ensureUnarchivedAgentLoaded } from "./agent-loading.js";
 import type { StoredAgentRecord } from "./agent-storage.js";
@@ -1329,6 +1333,104 @@ test("steering records concurrent early echoes as canonical submitted prompts", 
     expect(rows.filter((item) => item.clientMessageId === "client-two")).toHaveLength(1);
   } finally {
     if (agentId) await manager.closeAgent(agentId);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("delivers concurrent child completion notifications to their shared parent", async () => {
+  const firstSteerEntered = deferred<void>();
+  const releaseFirstSteer = deferred<void>();
+  const bothNotificationsDelivered = deferred<void>();
+  class HeldFirstSteerSession extends SteeringTestSession {
+    readonly deliveredPrompts: string[] = [];
+
+    override async steerActiveTurn(
+      prompt: AgentPromptInput,
+      options: import("./agent-sdk-types.js").SteerActiveTurnOptions,
+    ): Promise<import("./agent-sdk-types.js").SteerResult> {
+      if (this.steerCount === 0) {
+        firstSteerEntered.resolve();
+        await releaseFirstSteer.promise;
+      }
+      const result = await super.steerActiveTurn(prompt, options);
+      if (result.status === "accepted" && typeof prompt === "string") {
+        this.deliveredPrompts.push(prompt);
+        if (this.deliveredPrompts.length === 2) {
+          bothNotificationsDelivered.resolve();
+        }
+      }
+      return result;
+    }
+  }
+
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-concurrent-finish-notifications-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const parentSession = new HeldFirstSteerSession({ provider: "codex", cwd: workdir });
+  let sessionCount = 0;
+  const client = new (class extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      sessionCount += 1;
+      return sessionCount === 1 ? parentSession : new TestAgentSession(config);
+    }
+  })();
+  const manager = new AgentManager({ clients: { codex: client }, registry: storage, logger });
+  const createdAgentIds: string[] = [];
+
+  try {
+    const parent = await manager.createAgent(
+      { provider: "codex", cwd: workdir, title: "Parent" },
+      undefined,
+      { workspaceId: undefined },
+    );
+    createdAgentIds.push(parent.id);
+    const children = await Promise.all(
+      ["Child One", "Child Two"].map(async (title) => {
+        const child = await manager.createAgent(
+          { provider: "codex", cwd: workdir, title },
+          undefined,
+          {
+            labels: { [PARENT_AGENT_ID_LABEL]: parent.id },
+            workspaceId: undefined,
+          },
+        );
+        createdAgentIds.push(child.id);
+        setupFinishNotification({
+          agentManager: manager,
+          agentStorage: storage,
+          childAgentId: child.id,
+          callerAgentId: parent.id,
+          requireParentOwnership: true,
+          logger,
+        });
+        return child;
+      }),
+    );
+
+    await startAgentRun(manager, parent.id, "Coordinate both children", logger);
+    await manager.waitForAgentRunStart(parent.id);
+    const childIdle = children.map((child) => waitForAgentLifecycle(manager, child.id, "idle"));
+    await Promise.all(
+      children.map((child) => startAgentRun(manager, child.id, "Complete your task", logger)),
+    );
+    await firstSteerEntered.promise;
+    await Promise.all(childIdle);
+
+    releaseFirstSteer.resolve();
+    await bothNotificationsDelivered.promise;
+
+    expect(parentSession.deliveredPrompts).toHaveLength(2);
+    expect(parentSession.deliveredPrompts).toEqual(
+      expect.arrayContaining(
+        children.map((child) =>
+          formatSystemNotificationPrompt(`Agent ${child.id} (${child.config.title}) finished.`),
+        ),
+      ),
+    );
+  } finally {
+    releaseFirstSteer.resolve();
+    for (const agentId of createdAgentIds.toReversed()) {
+      await manager.closeAgent(agentId).catch(() => undefined);
+    }
     rmSync(workdir, { recursive: true, force: true });
   }
 });
