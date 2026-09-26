@@ -689,6 +689,40 @@ export function mapACPUsage(usage: Usage | null | undefined): AgentUsage | undef
   };
 }
 
+function mergeAgentUsage(base: AgentUsage | undefined, patch: AgentUsage): AgentUsage {
+  const merged: AgentUsage = { ...base };
+  if (patch.inputTokens !== undefined) {
+    merged.inputTokens = patch.inputTokens;
+  }
+  if (patch.cachedInputTokens !== undefined) {
+    merged.cachedInputTokens = patch.cachedInputTokens;
+  }
+  if (patch.outputTokens !== undefined) {
+    merged.outputTokens = patch.outputTokens;
+  }
+  if (patch.totalCostUsd !== undefined) {
+    merged.totalCostUsd = patch.totalCostUsd;
+  }
+  if (patch.contextWindowMaxTokens !== undefined) {
+    merged.contextWindowMaxTokens = patch.contextWindowMaxTokens;
+  }
+  if (patch.contextWindowUsedTokens !== undefined) {
+    merged.contextWindowUsedTokens = patch.contextWindowUsedTokens;
+  }
+  return merged;
+}
+
+function mapACPUsageUpdate(update: UsageUpdate): AgentUsage {
+  const usage: AgentUsage = {
+    contextWindowMaxTokens: update.size,
+    contextWindowUsedTokens: update.used,
+  };
+  if (update.cost && update.cost.currency === "USD") {
+    usage.totalCostUsd = update.cost.amount;
+  }
+  return usage;
+}
+
 export function resolveACPModeSelection({
   modeId,
   availableModes,
@@ -1855,6 +1889,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.activeForegroundTurnId = turnId;
     this.fallbackAssistantMessageId = null;
     this.submittedUserMessageTurnId = null;
+    this.currentTurnUsage = undefined;
     this.emitBootstrapThreadEvent();
     this.pushEvent({ type: "turn_started", provider: this.provider, turnId });
     this.emitSubmittedUserMessage(prompt, messageId, turnId, options?.clientMessageId);
@@ -2955,8 +2990,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
         this.handleSessionInfoUpdate(update);
         return pendingUserEvents;
       case "usage_update":
-        this.handleUsageUpdate(update);
-        return pendingUserEvents;
+        return [...pendingUserEvents, ...this.handleUsageUpdate(update)];
       case "available_commands_update":
         this.cachedCommands = update.availableCommands.map((command) => ({
           name: command.name,
@@ -3116,12 +3150,26 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     }
   }
 
-  private handleUsageUpdate(update: UsageUpdate): void {
-    void update;
+  private handleUsageUpdate(update: UsageUpdate): AgentStreamEvent[] {
+    const usage = mapACPUsageUpdate(update);
+    this.currentTurnUsage = mergeAgentUsage(this.currentTurnUsage, usage);
+    return [
+      {
+        type: "usage_updated",
+        provider: this.provider,
+        usage: { ...this.currentTurnUsage },
+        turnId: this.activeForegroundTurnId ?? undefined,
+      },
+    ];
   }
 
   private handlePromptResponse(response: PromptResponse, turnId: string): void {
-    this.currentTurnUsage = mapACPUsage(response.usage) ?? this.currentTurnUsage;
+    const responseUsage = mapACPUsage(response.usage);
+    if (responseUsage) {
+      // Merge rather than replace so context-window fields captured from
+      // mid-turn `usage_update` notifications survive the final prompt usage.
+      this.currentTurnUsage = mergeAgentUsage(this.currentTurnUsage, responseUsage);
+    }
 
     switch (response.stopReason) {
       case "cancelled":
