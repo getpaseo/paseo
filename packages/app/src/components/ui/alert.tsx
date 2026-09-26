@@ -17,7 +17,6 @@ export interface AlertProps {
   description?: ReactNode;
   variant?: AlertVariant;
   size?: AlertSize;
-  icon?: ReactNode;
   children?: ReactNode;
   testID?: string;
 }
@@ -34,7 +33,6 @@ export function Alert({
   description,
   variant = "default",
   size = "md",
-  icon,
   children,
   testID,
 }: AlertProps) {
@@ -51,11 +49,10 @@ export function Alert({
   const iconSize = buttonIconSize[size];
 
   const resolvedIcon = useMemo(() => {
-    if (icon !== undefined) return icon;
     if (variant === "default") return null;
     const Icon = VARIANT_ICON[variant];
     return <Icon size={iconSize} color={accentColor ?? theme.colors.foreground} />;
-  }, [icon, variant, theme, accentColor, iconSize]);
+  }, [variant, theme, accentColor, iconSize]);
 
   let descriptionContent: ReactNode = null;
   if (typeof description === "string" && description !== "") {
