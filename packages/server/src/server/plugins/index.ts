@@ -67,6 +67,7 @@ function resolvePluginStatus(input: {
 export class PluginService {
   private readonly runtime: PluginRuntimePort;
   private readonly managedSources: ManagedPluginSources | null;
+  private readonly internalPluginIds: ReadonlySet<string>;
   private readonly logger: pino.Logger;
   private readonly errors = new Map<string, string>();
   private readonly listeners = new Set<(pluginId: string) => void>();
@@ -94,6 +95,9 @@ export class PluginService {
         },
       });
     this.managedSources = dependencies.managedSources ?? null;
+    this.internalPluginIds = new Set(
+      dependencies.internalPlugins?.map((plugin) => plugin.id) ?? [],
+    );
     this.runtime.subscribe((pluginId, error) => {
       this.removeProviderRegistrations(pluginId);
       if (error) this.errors.set(pluginId, error);
@@ -141,8 +145,12 @@ export class PluginService {
     const config = this.configStore.get();
     this.globalStartsBlocked = config.pluginsEnabled !== true;
     for (const plugin of this.dependencies.internalPlugins ?? []) {
-      await this.runtime.startInternalPlugin?.(plugin);
-      await this.publishProviderRegistrations(plugin.id, plugin.directory);
+      try {
+        await this.runtime.startInternalPlugin?.(plugin);
+        await this.publishProviderRegistrations(plugin.id, plugin.directory);
+      } catch (error) {
+        this.logger.error({ err: error, pluginId: plugin.id }, "Failed to start internal plugin");
+      }
     }
     if (config.pluginsEnabled === true) {
       for (const [pluginId, source] of Object.entries(config.plugins ?? {})) {
@@ -193,16 +201,14 @@ export class PluginService {
   }
 
   getLogs(pluginId: string): PluginLogEntry[] {
-    if (!this.dependencies.internalPlugins?.some((plugin) => plugin.id === pluginId)) {
+    if (!this.internalPluginIds.has(pluginId)) {
       this.requireSource(pluginId);
     }
     return this.runtime.getLogs(pluginId);
   }
 
   catalog(): ReturnType<PluginRuntime["catalog"]> {
-    return this.runtime
-      .catalog()
-      .filter(({ id }) => !this.dependencies.internalPlugins?.some((plugin) => plugin.id === id));
+    return this.runtime.catalog().filter(({ id }) => !this.internalPluginIds.has(id));
   }
 
   async installDirectory(input: { path: string; id?: string }): Promise<PluginListItem> {
@@ -211,10 +217,7 @@ export class PluginService {
       const manifest = await readPluginManifest(directory);
       assertPluginCompatibility({ ...manifest, version: this.daemonVersion, runtime: "daemon" });
       const pluginId = PluginIdSchema.parse(input.id ?? manifest.id);
-      if (
-        this.configStore.get().plugins?.[pluginId] ||
-        this.dependencies.internalPlugins?.some((plugin) => plugin.id === pluginId)
-      ) {
+      if (this.configStore.get().plugins?.[pluginId] || this.internalPluginIds.has(pluginId)) {
         throw new Error(
           `Plugin ID "${pluginId}" is already configured; choose another ID with --id`,
         );

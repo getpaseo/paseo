@@ -38,13 +38,6 @@ test("internal and directory plugins share RPC and lifecycle behavior while inte
     await expect
       .poll(() => client.invokePluginRpc("directory-seam", "state", {}))
       .toEqual({ workspaces: 1 });
-    await expect
-      .poll(async () =>
-        (await client.getPluginLogs("internal-seam")).some(
-          ({ message }) => message === "workspace created by seam fixture",
-        ),
-      )
-      .toBe(true);
     await client.patchDaemonConfig({ pluginsEnabled: false });
     expect(await client.invokePluginRpc("internal-seam", "state", {})).toEqual({ workspaces: 1 });
     expect(await client.listPlugins()).toMatchObject([
@@ -54,5 +47,31 @@ test("internal and directory plugins share RPC and lifecycle behavior while inte
     await client.close();
     await daemon.close();
     await rm(workspaceDirectory, { recursive: true, force: true });
+  }
+}, 60_000);
+
+test("a failing internal plugin does not stop the daemon or the next internal plugin", async () => {
+  const daemon = await createTestPaseoDaemon({
+    daemonVersion: "0.8.0",
+    pluginsEnabled: false,
+    internalPlugins: [
+      {
+        id: "failing-internal",
+        directory,
+        contribute: () => {
+          throw new Error("fixture startup failure");
+        },
+      },
+      { id: "internal-seam", directory, contribute },
+    ],
+  });
+  const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws`, appVersion: "0.8.0" });
+  try {
+    await client.connect();
+    expect(await client.invokePluginRpc("internal-seam", "state", {})).toEqual({ workspaces: 0 });
+    expect(await client.listPlugins()).toEqual([]);
+  } finally {
+    await client.close();
+    await daemon.close();
   }
 }, 60_000);

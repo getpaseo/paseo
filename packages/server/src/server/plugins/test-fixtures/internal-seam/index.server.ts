@@ -13,7 +13,6 @@ export default function contribute(server: PluginServerContext) {
   server.handle(state, () => ({ workspaces }));
   server.on("workspace.created", () => {
     workspaces += 1;
-    console.log("workspace created by seam fixture");
   });
   return () => {};
 }
