@@ -40,6 +40,35 @@ describe("server config", () => {
     expect(config.providerCatalogRefreshTimeoutMs).toBe(180_000);
   });
 
+  test("defaults to a one-hour Codex idle backend timeout", async () => {
+    const paseoHome = await mkdtemp(path.join(os.tmpdir(), "paseo-config-codex-idle-default-"));
+    roots.push(paseoHome);
+
+    expect(loadConfig(paseoHome, { env: {} }).codexIdleBackendTimeoutMs).toBe(3_600_000);
+  });
+
+  test("loads a custom Codex idle backend timeout", async () => {
+    const paseoHome = await mkdtemp(path.join(os.tmpdir(), "paseo-config-codex-idle-"));
+    roots.push(paseoHome);
+    await writeFile(
+      path.join(paseoHome, "config.json"),
+      JSON.stringify({ agents: { codexIdleBackendTimeoutMs: 600_000 } }),
+    );
+
+    expect(loadConfig(paseoHome, { env: {} }).codexIdleBackendTimeoutMs).toBe(600_000);
+  });
+
+  test("allows disabling Codex idle backend eviction", async () => {
+    const paseoHome = await mkdtemp(path.join(os.tmpdir(), "paseo-config-codex-idle-disabled-"));
+    roots.push(paseoHome);
+    await writeFile(
+      path.join(paseoHome, "config.json"),
+      JSON.stringify({ agents: { codexIdleBackendTimeoutMs: 0 } }),
+    );
+
+    expect(loadConfig(paseoHome, { env: {} }).codexIdleBackendTimeoutMs).toBe(0);
+  });
+
   test("resolves reload state from the supplied validated snapshot", async () => {
     const paseoHome = await mkdtemp(path.join(os.tmpdir(), "paseo-config-snapshot-"));
     roots.push(paseoHome);

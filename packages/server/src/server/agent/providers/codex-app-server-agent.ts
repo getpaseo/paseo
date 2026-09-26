@@ -6,6 +6,7 @@ import {
   type AgentCreateSessionOptions,
   type AgentFeature,
   type AgentLaunchContext,
+  type AgentResumePurpose,
   type AgentResumeSessionOptions,
   type AgentMode,
   type AgentModelDefinition,
@@ -138,6 +139,7 @@ function isCodexAlreadyUnarchivedError(error: unknown, threadId: string): boolea
 
 const TURN_START_TIMEOUT_MS = 90 * 1000;
 const INTERRUPT_TIMEOUT_MS = 2_000;
+const IDLE_BACKEND_PROBE_TIMEOUT_MS = 5_000;
 const CODEX_PROVIDER = "codex" as const;
 // Codex treats most app-server client names as the model-request originator.
 // This reserved Codex name is non-originating, so requests keep Codex's default
@@ -3341,13 +3343,80 @@ interface ConsumedRootCompaction {
   itemId?: string;
 }
 
+interface CodexAppServerSessionOptions {
+  config: AgentSessionConfig;
+  resumeHandle: Pick<AgentPersistenceHandle, "sessionId" | "metadata"> | null;
+  logger: Logger;
+  spawnAppServer: () => Promise<ChildProcessWithoutNullStreams>;
+  deps?: CodexAppServerAgentDeps;
+  ephemeral?: boolean;
+  goalsEnabled?: boolean;
+  autoReviewEnabled?: boolean;
+  agentId?: string;
+  initialResumePurpose?: AgentResumePurpose;
+}
+
 export class CodexAppServerAgentSession implements AgentSession {
   readonly provider = CODEX_PROVIDER;
   readonly capabilities = CODEX_APP_SERVER_CAPABILITIES;
 
+  get idleBackendEvictionEligible(): boolean {
+    return !this.ephemeral && this.initialResumePurpose === "interactive";
+  }
+
+  async canEvictIdleBackend(): Promise<boolean> {
+    const client = this.client;
+    const threadId = this.currentThreadId;
+    if (this.closed || this.connectionState !== "connected" || !client || !threadId) {
+      throw new Error("Cannot verify Codex background work without a connected thread");
+    }
+
+    // This app-server belongs to one Paseo agent, but can also hold its subagent threads.
+    const loaded = toObjectRecord(
+      await client.request("thread/loaded/list", {}, IDLE_BACKEND_PROBE_TIMEOUT_MS),
+    );
+    const threadIds = loaded?.data;
+    if (
+      !Array.isArray(threadIds) ||
+      !threadIds.every((id): id is string => typeof id === "string") ||
+      !threadIds.includes(threadId)
+    ) {
+      throw new Error("Codex did not report the agent thread as loaded");
+    }
+
+    for (const loadedThreadId of threadIds) {
+      const terminals = toObjectRecord(
+        await client.request(
+          "thread/backgroundTerminals/list",
+          { threadId: loadedThreadId, limit: 1 },
+          IDLE_BACKEND_PROBE_TIMEOUT_MS,
+        ),
+      );
+      if (!Array.isArray(terminals?.data)) {
+        throw new Error(`Codex did not report background terminals for ${loadedThreadId}`);
+      }
+      if (terminals.data.length > 0 || terminals.nextCursor != null) {
+        this.logger.debug(
+          { threadId: loadedThreadId },
+          "Retaining Codex backend with background work",
+        );
+        return false;
+      }
+    }
+    return true;
+  }
+
   private readonly logger: Logger;
   private readonly config: AgentSessionConfig;
   private readonly asyncQuestions: CodexAsyncQuestions;
+  private readonly resumeHandle: CodexAppServerSessionOptions["resumeHandle"];
+  private readonly spawnAppServer: CodexAppServerSessionOptions["spawnAppServer"];
+  private readonly deps: CodexAppServerAgentDeps;
+  private readonly ephemeral: boolean;
+  private readonly goalsEnabled: boolean;
+  private readonly autoReviewEnabled: boolean;
+  private readonly agentId: string | undefined;
+  private readonly initialResumePurpose: AgentResumePurpose;
   private currentMode: string;
   private hasWorkflowModeOverride: boolean;
   private readonly providerOptions: CodexProviderOptions;
@@ -3436,18 +3505,26 @@ export class CodexAppServerAgentSession implements AgentSession {
   } | null = null;
   private cachedSkills: Array<{ name: string; description: string; path: string }> | null = null;
 
-  constructor(
-    config: AgentSessionConfig,
-    private readonly resumeHandle: { sessionId: string; metadata?: Record<string, unknown> } | null,
-    logger: Logger,
-    private readonly spawnAppServer: () => Promise<ChildProcessWithoutNullStreams>,
-    private readonly deps: CodexAppServerAgentDeps = {},
-    private readonly ephemeral: boolean = false,
-    private readonly goalsEnabled: boolean = false,
-    private readonly autoReviewEnabled: boolean = false,
-    private readonly agentId?: string,
-    private readonly initialResumePurpose: "interactive" | "history" = "interactive",
-  ) {
+  constructor({
+    config,
+    resumeHandle,
+    logger,
+    spawnAppServer,
+    deps = {},
+    ephemeral = false,
+    goalsEnabled = false,
+    autoReviewEnabled = false,
+    agentId,
+    initialResumePurpose = "interactive",
+  }: CodexAppServerSessionOptions) {
+    this.resumeHandle = resumeHandle;
+    this.spawnAppServer = spawnAppServer;
+    this.deps = deps;
+    this.ephemeral = ephemeral;
+    this.goalsEnabled = goalsEnabled;
+    this.autoReviewEnabled = autoReviewEnabled;
+    this.agentId = agentId;
+    this.initialResumePurpose = initialResumePurpose;
     this.logger = logger.child({
       module: "agent",
       provider: CODEX_PROVIDER,
@@ -7125,18 +7202,18 @@ export class CodexAppServerAgentClient implements AgentClient {
     const sessionConfig: AgentSessionConfig = { ...config, provider: CODEX_PROVIDER };
     const goalsEnabled = await this.resolveGoalsEnabled();
     const autoReviewEnabled = await this.resolveAutoReviewEnabled();
-    const session = new CodexAppServerAgentSession(
-      sessionConfig,
-      null,
-      this.logger,
-      () =>
+    const session = new CodexAppServerAgentSession({
+      config: sessionConfig,
+      resumeHandle: null,
+      logger: this.logger,
+      spawnAppServer: () =>
         this.spawnAppServer(launchContext?.env, { goalsEnabled, agentId: launchContext?.agentId }),
-      this.sessionDeps(),
-      options?.persistSession === false,
-      goalsEnabled,
-      autoReviewEnabled,
-      launchContext?.agentId,
-    );
+      deps: this.sessionDeps(),
+      ephemeral: options?.persistSession === false,
+      goalsEnabled: goalsEnabled,
+      autoReviewEnabled: autoReviewEnabled,
+      agentId: launchContext?.agentId,
+    });
     await session.connect();
     return session;
   }
@@ -7156,19 +7233,19 @@ export class CodexAppServerAgentClient implements AgentClient {
     };
     const goalsEnabled = await this.resolveGoalsEnabled();
     const autoReviewEnabled = await this.resolveAutoReviewEnabled();
-    const session = new CodexAppServerAgentSession(
-      merged,
-      handle,
-      this.logger,
-      () =>
+    const session = new CodexAppServerAgentSession({
+      config: merged,
+      resumeHandle: handle,
+      logger: this.logger,
+      spawnAppServer: () =>
         this.spawnAppServer(launchContext?.env, { goalsEnabled, agentId: launchContext?.agentId }),
-      this.sessionDeps(),
-      false,
-      goalsEnabled,
-      autoReviewEnabled,
-      launchContext?.agentId,
-      options?.purpose ?? "interactive",
-    );
+      deps: this.sessionDeps(),
+      ephemeral: false,
+      goalsEnabled: goalsEnabled,
+      autoReviewEnabled: autoReviewEnabled,
+      agentId: launchContext?.agentId,
+      initialResumePurpose: options?.purpose ?? "interactive",
+    });
     await session.connect();
     return session;
   }
