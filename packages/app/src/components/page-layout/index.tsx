@@ -32,9 +32,11 @@ export function PageLayout({ title, onBack, testID, titleTestID, children }: Pag
       <ScrollView style={styles.scroll} contentContainerStyle={scrollContentStyle} testID={testID}>
         <View style={styles.content}>
           {showTitle ? (
-            <Text style={styles.title} testID={titleTestID ?? "page-title"}>
-              {title}
-            </Text>
+            <View testID={titleTestID}>
+              <Text style={styles.title} testID="page-title">
+                {title}
+              </Text>
+            </View>
           ) : null}
           {children}
         </View>
