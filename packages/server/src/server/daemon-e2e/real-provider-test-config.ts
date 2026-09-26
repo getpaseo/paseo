@@ -8,12 +8,13 @@ import type { AgentClient, AgentProvider, AgentSessionConfig } from "../agent/ag
 import type { ProviderRuntimeSettings } from "../agent/provider-launch-config.js";
 import { ClaudeAgentClient } from "../agent/providers/claude/agent.js";
 import { CodexAppServerAgentClient } from "../agent/providers/codex-app-server-agent.js";
+import { MuseAgentClient } from "../agent/providers/muse/agent.js";
 import { OpenCodeAgentClient } from "../agent/providers/opencode-agent.js";
 import { OmpAgentClient } from "../agent/providers/omp/agent.js";
 import { PiRpcAgentClient } from "../agent/providers/pi/agent.js";
 import { isCommandAvailable } from "../../executable-resolution/executable-resolution.js";
 
-export const realProviders = ["claude", "codex", "opencode", "pi", "omp"] as const;
+export const realProviders = ["claude", "codex", "opencode", "pi", "omp", "muse"] as const;
 export type RealProvider = (typeof realProviders)[number];
 export type RealProviderConfig = Pick<
   AgentSessionConfig,
@@ -31,6 +32,8 @@ const PI_OPENROUTER_REAL_TEST_MODEL = "openrouter/google/gemini-2.5-flash-lite";
 const PI_CODEX_REAL_TEST_MODEL = "openai-codex/gpt-5.4";
 const OMP_OPENROUTER_REAL_TEST_MODEL = "openrouter/google/gemini-2.5-flash-lite";
 const OMP_CODEX_REAL_TEST_MODEL = "openai-codex/gpt-5.6-sol";
+const MUSE_AUTH_CONFIG_PATH = join(homedir(), ".config", "muse", "auth.json");
+const MUSE_REAL_TEST_MODEL = "muse-spark-1.2";
 
 const availabilityCache = new Map<RealProvider, Promise<boolean>>();
 
@@ -67,6 +70,13 @@ export function getRealProviderConfig(provider: RealProvider): RealProviderConfi
         model: getOmpRealTestModel(),
         thinkingOptionId: "medium",
         modeId: "full",
+      };
+    case "muse":
+      return {
+        provider,
+        model: process.env.MUSE_REAL_TEST_MODEL?.trim() || MUSE_REAL_TEST_MODEL,
+        thinkingOptionId: "low",
+        modeId: "allowAll",
       };
   }
 }
@@ -129,6 +139,8 @@ export function getRealProviderRuntimeSettings(provider: RealProvider): Provider
     }
     case "pi":
       return {};
+    case "muse":
+      return {};
   }
 }
 
@@ -151,6 +163,8 @@ export function createRealProviderClient(provider: RealProvider, logger: Logger)
       return new PiRpcAgentClient({ logger, runtimeSettings });
     case "omp":
       return new OmpAgentClient({ logger, runtimeSettings });
+    case "muse":
+      return new MuseAgentClient({ logger, runtimeSettings });
   }
 }
 
@@ -170,6 +184,9 @@ export function canRunRealProvider(provider: RealProvider): Promise<boolean> {
   }
 
   const availability = (async () => {
+    if (provider === "muse") {
+      return hasMuseAuth() && (await isCommandAvailable(getProviderBinary(provider)));
+    }
     if (provider !== "omp" && provider !== "pi" && !getOpenRouterApiKeyOrNull()) {
       return false;
     }
@@ -245,12 +262,22 @@ function readJsonFile(filePath: string): unknown {
   }
 }
 
+function hasMuseAuth(): boolean {
+  if (process.env.META_API_KEY?.trim()) {
+    return true;
+  }
+  return existsSync(MUSE_AUTH_CONFIG_PATH);
+}
+
 function getProviderBinary(provider: RealProvider): string {
   if (provider === "pi") {
     return process.env.PI_COMMAND ?? process.env.PI_ACP_PI_COMMAND ?? "pi";
   }
   if (provider === "omp") {
     return process.env.OMP_COMMAND ?? "omp";
+  }
+  if (provider === "muse") {
+    return process.env.MUSE_COMMAND ?? "muse";
   }
   return provider;
 }
