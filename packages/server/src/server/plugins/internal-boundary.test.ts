@@ -4,8 +4,12 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "vitest";
+import { assertPluginCompatibility } from "@getpaseo/protocol/plugin-requirements";
+import { INTERNAL_PLUGINS } from "../../plugins/index.js";
+import { resolveDaemonVersion } from "../daemon-version.js";
 import { createPluginImportReader } from "./compiler-imports.js";
 import { compilePlugin, SERVER_HOST_MODULES } from "./compiler.js";
+import { readPluginManifest } from "./manifest.js";
 
 const root = fileURLToPath(new URL("../../plugins/", import.meta.url));
 const fixture = fileURLToPath(new URL("./test-fixtures/internal-seam/", import.meta.url));
@@ -58,5 +62,15 @@ test("internal plugin boundary rejects daemon imports with the file and specifie
     );
   } finally {
     await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("every internal plugin manifest is compatible with the daemon that ships it", async () => {
+  const version = resolveDaemonVersion(import.meta.url);
+  for (const plugin of INTERNAL_PLUGINS) {
+    const manifest = await readPluginManifest(plugin.directory);
+    expect(() =>
+      assertPluginCompatibility({ ...manifest, version, runtime: "daemon" }),
+    ).not.toThrow();
   }
 });

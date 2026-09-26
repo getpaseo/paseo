@@ -1,1 +1,1 @@
-{ "id": "cursor-usage-source" }
+{ "id": "cursor-usage-source", "requirements": { "paseo": ">=0.9.2" } }
