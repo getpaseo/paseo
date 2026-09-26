@@ -2,6 +2,9 @@ import { i18n } from "@/i18n/i18next";
 import { confirmDialog } from "@/utils/confirm-dialog";
 import { getDesktopHost, isElectronRuntime } from "@/desktop/host";
 import { invokeDesktopCommand } from "@/desktop/electron/invoke";
+import { listenToDesktopEvent, type DesktopEventUnlisten } from "@/desktop/electron/events";
+import { queryClient } from "@/data/query-client";
+import { applyStartedLocalDaemon } from "./local-daemon-server-id";
 import type { AgentSkillSelection } from "@getpaseo/protocol/messages";
 
 export type DesktopDaemonState = "starting" | "running" | "stopped" | "errored";
@@ -187,7 +190,21 @@ export async function getDesktopDaemonStatus(): Promise<DesktopDaemonStatus> {
 }
 
 export async function startDesktopDaemon(): Promise<DesktopDaemonStatus> {
-  return parseDesktopDaemonStatus(await invokeDesktopCommand("start_desktop_daemon"));
+  const status = parseDesktopDaemonStatus(await invokeDesktopCommand("start_desktop_daemon"));
+  // The main process broadcasts this start to every window. Applying it here too means callers
+  // see the local server id as soon as the start resolves.
+  await applyStartedLocalDaemon(queryClient, status);
+  return status;
+}
+
+export async function listenToDesktopDaemonStarted(
+  handler: (status: DesktopDaemonStatus) => void,
+): Promise<DesktopEventUnlisten> {
+  return listenToDesktopEvent<unknown>("desktop-daemon-started", (payload) => {
+    if (isRecord(payload)) {
+      handler(parseDesktopDaemonStatus(payload));
+    }
+  });
 }
 
 export async function stopDesktopDaemon(
