@@ -2355,7 +2355,10 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       throw new Error(`No pending permission request with id '${requestId}'`);
     }
 
-    const selectedOption = selectPermissionOption(pending.options, response);
+    const selectedOption =
+      pending.request.kind === "question"
+        ? selectQuestionPermissionOption(pending.options, response)
+        : selectPermissionOption(pending.options, response);
     if (response.selectedActionId !== undefined && !selectedOption) {
       throw new Error(
         `ACP permission action '${response.selectedActionId}' does not exist or does not match '${response.behavior}' behavior`,
@@ -2467,8 +2470,18 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   }
 
   async requestPermission(params: RequestPermissionRequest): Promise<RequestPermissionResponse> {
+    // Match Zed acp.rs:3189-3220 when Paseo is not handling the request locally.
+    const requestId = randomUUID();
+    let toolSnapshot =
+      this.toolCalls.get(params.toolCall.toolCallId) ??
+      mergeToolSnapshot(params.toolCall.toolCallId, params.toolCall);
+    if (this.toolSnapshotTransformer) {
+      toolSnapshot = this.toolSnapshotTransformer(toolSnapshot);
+    }
+    // Question forms need a real answer; auto-accepting would pick an arbitrary option.
+    const questionForm = extractACPQuestionForm(params, toolSnapshot);
     const canAutoAccept =
-      isACPAutoAcceptEnabled(this.config) && !isACPChooserRequest(params.options);
+      isACPAutoAcceptEnabled(this.config) && !isACPChooserRequest(params.options) && !questionForm;
     if (canAutoAccept) {
       const allowOption = selectPermissionOption(params.options, { behavior: "allow" });
       if (allowOption) {
@@ -2482,15 +2495,13 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       }
     }
 
-    // Match Zed acp.rs:3189-3220 when Paseo is not handling the request locally.
-    const requestId = randomUUID();
-    let toolSnapshot =
-      this.toolCalls.get(params.toolCall.toolCallId) ??
-      mergeToolSnapshot(params.toolCall.toolCallId, params.toolCall);
-    if (this.toolSnapshotTransformer) {
-      toolSnapshot = this.toolSnapshotTransformer(toolSnapshot);
-    }
-    const request = mapPermissionRequest(this.provider, requestId, params, toolSnapshot);
+    const request = mapPermissionRequest(
+      this.provider,
+      requestId,
+      params,
+      toolSnapshot,
+      questionForm,
+    );
 
     const promise = new Promise<RequestPermissionResponse>((resolve, reject) => {
       this.pendingPermissions.set(requestId, {
@@ -3809,13 +3820,135 @@ function extractTerminalContent(
   };
 }
 
+interface ACPQuestionFormOption {
+  label: string;
+  description?: string;
+}
+
+interface ACPQuestionFormQuestion {
+  question: string;
+  header: string;
+  options: ACPQuestionFormOption[];
+  multiSelect: boolean;
+}
+
+// ACP agents such as Kimi Code surface AskUserQuestion as a permission request whose
+// tool call rawInput carries the structured questions. ACP permission options only
+// carry a name, so without this the client can only render plain allow/deny chips and
+// per-option descriptions are lost.
+function extractACPQuestionForm(
+  params: RequestPermissionRequest,
+  snapshot: ACPToolSnapshot,
+): ACPQuestionFormQuestion[] | null {
+  const rawInput = readRecord(params.toolCall.rawInput) ?? readRecord(snapshot.rawInput);
+  const rawQuestions = rawInput?.questions;
+  if (!Array.isArray(rawQuestions) || rawQuestions.length === 0) {
+    return null;
+  }
+  const questions: ACPQuestionFormQuestion[] = [];
+  for (const [index, item] of rawQuestions.entries()) {
+    const question = readRecord(item);
+    if (!question || typeof question.question !== "string" || !Array.isArray(question.options)) {
+      return null;
+    }
+    const options: ACPQuestionFormOption[] = [];
+    for (const rawOption of question.options) {
+      const option = readRecord(rawOption);
+      if (!option || typeof option.label !== "string") {
+        return null;
+      }
+      options.push({
+        label: option.label,
+        description: typeof option.description === "string" ? option.description : undefined,
+      });
+    }
+    if (options.length === 0) {
+      return null;
+    }
+    questions.push({
+      question: question.question,
+      // The client question form requires a non-empty header per question.
+      header: readString(question, ["header"]) ?? `Question ${index + 1}`,
+      options,
+      // ACP permission responses carry a single optionId, so a multi-select
+      // answer can never be returned in full. Render single-select to keep
+      // every offered selection answerable.
+      multiSelect: false,
+    });
+  }
+  return filterToAnswerableQuestions(questions, params.options);
+}
+
+// Kimi Code's ACP bridge degrades multi-question AskUserQuestion to single-question:
+// rawInput still lists every question, but the permission options only cover the
+// answerable ones (`q<i>_opt_<j>` / `q<i>_skip`). Rendering questions that have no
+// matching option lets the user answer them, yet their answers can never be returned
+// — the response carries a single optionId. Restrict the form to questions the
+// request can actually answer. Options outside this naming scheme (other agents)
+// leave the question list untouched.
+const ACP_QUESTION_OPTION_ID_PATTERN = /^q(\d+)_(?:opt_\d+|skip)$/;
+
+function filterToAnswerableQuestions(
+  questions: ACPQuestionFormQuestion[],
+  options: PermissionOption[],
+): ACPQuestionFormQuestion[] | null {
+  const answerable = new Set<number>();
+  for (const option of options) {
+    const match = ACP_QUESTION_OPTION_ID_PATTERN.exec(option.optionId);
+    if (match) {
+      answerable.add(Number(match[1]));
+    }
+  }
+  if (answerable.size === 0) {
+    return questions;
+  }
+  const filtered = questions.filter((_, index) => answerable.has(index));
+  return filtered.length > 0 ? filtered : null;
+}
+
+// The question form answers with updatedInput.answers (header -> selected label(s))
+// instead of a selectedActionId, but ACP can only return a single optionId. Match the
+// answer labels back to the request's options by name.
+function selectQuestionPermissionOption(
+  options: PermissionOption[],
+  response: AgentPermissionResponse,
+): PermissionOption | null {
+  if (response.behavior === "allow" && response.selectedActionId === undefined) {
+    const answers = readRecord(response.updatedInput?.answers);
+    if (answers) {
+      const values = Object.values(answers).filter(
+        (value): value is string => typeof value === "string" && value.length > 0,
+      );
+      if (values.length > 0) {
+        const match = options.find(
+          (option) =>
+            option.kind.startsWith("allow") &&
+            values.some(
+              (value) => value === option.name || value.split(", ").includes(option.name),
+            ),
+        );
+        // Question forms answer with labels, not selectedActionId. Do not fall back to the
+        // first allow_once option when labels fail to match — that would pick arbitrarily.
+        return match ?? null;
+      }
+    }
+  }
+  return selectPermissionOption(options, response);
+}
+
 function mapPermissionRequest(
   provider: string,
   requestId: string,
   params: RequestPermissionRequest,
   snapshot: ACPToolSnapshot,
+  questionForm: ACPQuestionFormQuestion[] | null,
 ): AgentPermissionRequest {
-  const kind: AgentPermissionRequestKind = snapshot.kind === "switch_mode" ? "mode" : "tool";
+  let kind: AgentPermissionRequestKind = "tool";
+  if (questionForm) {
+    kind = "question";
+  } else if (snapshot.kind === "switch_mode") {
+    kind = "mode";
+  }
   const chooserText = isACPChooserRequest(params.options)
     ? extractToolText(params.toolCall.content)
     : undefined;
@@ -3825,6 +3958,7 @@ function mapPermissionRequest(
     name: snapshot.kind ?? snapshot.title,
     kind,
     title: params.toolCall.title ?? snapshot.title,
+    input: questionForm ? { questions: questionForm } : undefined,
     detail: chooserText
       ? {
           type: "plain_text",

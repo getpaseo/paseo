@@ -222,6 +222,16 @@ function createSessionWithConfig(
   );
 }
 
+function findPermissionRequest(
+  events: AgentStreamEvent[],
+): Extract<AgentStreamEvent, { type: "permission_requested" }> {
+  const requested = events.find((event) => event.type === "permission_requested");
+  if (requested?.type !== "permission_requested") {
+    throw new Error("Expected permission request");
+  }
+  return requested;
+}
+
 function createKiroSession(
   options: { waitForInitialCommands?: boolean; initialCommandsWaitTimeoutMs?: number } = {},
   logger: ReturnType<typeof createTestLogger> = createTestLogger(),
@@ -1354,6 +1364,351 @@ describe("ACPAgentSession Zed parity", () => {
 
     await expect(permission).resolves.toEqual({
       outcome: { outcome: "selected", optionId: "q0_opt_1" },
+    });
+  });
+
+  test("maps AskUserQuestion rawInput to a question form and resolves by answer label", async () => {
+    const session = createSessionWithConfig({
+      provider: "kimi-acp",
+      modeId: "https://agentclientprotocol.com/protocol/session-modes#agent",
+    });
+    const events: AgentStreamEvent[] = [];
+
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    session.subscribe((event) => events.push(event));
+
+    const permission = session.requestPermission({
+      sessionId: "session-1",
+      toolCall: {
+        toolCallId: "question-1",
+        title: "AskUserQuestion",
+        status: "pending",
+        rawInput: {
+          questions: [
+            {
+              question: "Which path should Paseo take?",
+              header: "Approach",
+              options: [
+                { label: "Narrow fix", description: "Patch the ACP provider only" },
+                { label: "Protocol fix", description: "Extend the permission schema" },
+              ],
+              multiSelect: false,
+            },
+          ],
+        },
+      },
+      options: [
+        { optionId: "q0_opt_0", name: "Narrow fix", kind: "allow_once" },
+        { optionId: "q0_opt_1", name: "Protocol fix", kind: "allow_once" },
+        { optionId: "q0_skip", name: "Skip", kind: "reject_once" },
+      ],
+    } satisfies RequestPermissionRequest);
+
+    await Promise.resolve();
+
+    const requested = findPermissionRequest(events);
+    expect(requested).toMatchObject({
+      type: "permission_requested",
+      request: {
+        kind: "question",
+        input: {
+          questions: [
+            {
+              question: "Which path should Paseo take?",
+              header: "Approach",
+              options: [
+                { label: "Narrow fix", description: "Patch the ACP provider only" },
+                { label: "Protocol fix", description: "Extend the permission schema" },
+              ],
+              multiSelect: false,
+            },
+          ],
+        },
+      },
+    });
+
+    await session.respondToPermission(requested.request.id, {
+      behavior: "allow",
+      updatedInput: { answers: { Approach: "Protocol fix" } },
+    });
+
+    await expect(permission).resolves.toEqual({
+      outcome: { outcome: "selected", optionId: "q0_opt_1" },
+    });
+  });
+
+  test("renders multi-select questions as single-select", async () => {
+    const session = createSessionWithConfig({
+      provider: "kimi-acp",
+      modeId: "https://agentclientprotocol.com/protocol/session-modes#agent",
+    });
+    const events: AgentStreamEvent[] = [];
+
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    session.subscribe((event) => events.push(event));
+
+    // ACP permission responses carry a single optionId, so multi-select answers
+    // could never be returned in full; the form must offer single-select only.
+    const permission = session.requestPermission({
+      sessionId: "session-1",
+      toolCall: {
+        toolCallId: "question-1",
+        title: "AskUserQuestion",
+        status: "pending",
+        rawInput: {
+          questions: [
+            {
+              question: "Which features?",
+              header: "Features",
+              options: [{ label: "Autocomplete" }, { label: "Refactor" }],
+              multiSelect: true,
+            },
+          ],
+        },
+      },
+      options: [
+        { optionId: "q0_opt_0", name: "Autocomplete", kind: "allow_once" },
+        { optionId: "q0_opt_1", name: "Refactor", kind: "allow_once" },
+        { optionId: "q0_skip", name: "Skip", kind: "reject_once" },
+      ],
+    } satisfies RequestPermissionRequest);
+
+    await Promise.resolve();
+
+    const requested = findPermissionRequest(events);
+    expect(requested).toMatchObject({
+      type: "permission_requested",
+      request: {
+        kind: "question",
+        input: {
+          questions: [{ question: "Which features?", multiSelect: false }],
+        },
+      },
+    });
+
+    await session.respondToPermission(requested.request.id, {
+      behavior: "allow",
+      updatedInput: { answers: { Features: "Refactor" } },
+    });
+
+    await expect(permission).resolves.toEqual({
+      outcome: { outcome: "selected", optionId: "q0_opt_1" },
+    });
+  });
+
+  test("only shows questions the ACP options can answer", async () => {
+    const session = createSessionWithConfig({
+      provider: "kimi-acp",
+      modeId: "https://agentclientprotocol.com/protocol/session-modes#agent",
+    });
+    const events: AgentStreamEvent[] = [];
+
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    session.subscribe((event) => events.push(event));
+
+    // Kimi's ACP bridge degrades multi-question requests: rawInput lists every
+    // question but only q0 gets permission options.
+    const permission = session.requestPermission({
+      sessionId: "session-1",
+      toolCall: {
+        toolCallId: "question-1",
+        title: "AskUserQuestion",
+        status: "pending",
+        rawInput: {
+          questions: [
+            {
+              question: "Favorite language?",
+              header: "Language",
+              options: [{ label: "Go" }, { label: "Rust" }],
+            },
+            {
+              question: "Favorite editor?",
+              header: "Editor",
+              options: [{ label: "Vim" }, { label: "Emacs" }],
+            },
+          ],
+        },
+      },
+      options: [
+        { optionId: "q0_opt_0", name: "Go", kind: "allow_once" },
+        { optionId: "q0_opt_1", name: "Rust", kind: "allow_once" },
+        { optionId: "q0_skip", name: "Skip", kind: "reject_once" },
+      ],
+    } satisfies RequestPermissionRequest);
+
+    await Promise.resolve();
+
+    const requested = findPermissionRequest(events);
+    expect(requested).toMatchObject({
+      type: "permission_requested",
+      request: {
+        kind: "question",
+        input: {
+          questions: [{ question: "Favorite language?", header: "Language" }],
+        },
+      },
+    });
+    const input = requested.request.input as { questions: unknown[] };
+    expect(input.questions).toHaveLength(1);
+
+    await session.respondToPermission(requested.request.id, {
+      behavior: "allow",
+      updatedInput: { answers: { Language: "Rust" } },
+    });
+
+    await expect(permission).resolves.toEqual({
+      outcome: { outcome: "selected", optionId: "q0_opt_1" },
+    });
+  });
+
+  test("resolves question form dismissal to the reject option", async () => {
+    const session = createSessionWithConfig({
+      provider: "kimi-acp",
+      modeId: "https://agentclientprotocol.com/protocol/session-modes#agent",
+    });
+    const events: AgentStreamEvent[] = [];
+
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    session.subscribe((event) => events.push(event));
+
+    const permission = session.requestPermission({
+      sessionId: "session-1",
+      toolCall: {
+        toolCallId: "question-1",
+        title: "AskUserQuestion",
+        status: "pending",
+        rawInput: {
+          questions: [
+            {
+              question: "Which path should Paseo take?",
+              options: [{ label: "Narrow fix" }, { label: "Protocol fix" }],
+            },
+          ],
+        },
+      },
+      options: [
+        { optionId: "q0_opt_0", name: "Narrow fix", kind: "allow_once" },
+        { optionId: "q0_opt_1", name: "Protocol fix", kind: "allow_once" },
+        { optionId: "q0_skip", name: "Skip", kind: "reject_once" },
+      ],
+    } satisfies RequestPermissionRequest);
+
+    await Promise.resolve();
+
+    const requested = findPermissionRequest(events);
+    // A missing rawInput header falls back to a generated one so the client form parses.
+    expect(requested).toMatchObject({
+      type: "permission_requested",
+      request: {
+        kind: "question",
+        input: {
+          questions: [{ header: "Question 1" }],
+        },
+      },
+    });
+
+    await session.respondToPermission(requested.request.id, {
+      behavior: "deny",
+      message: "Dismissed by user",
+    });
+
+    await expect(permission).resolves.toEqual({
+      outcome: { outcome: "selected", optionId: "q0_skip" },
+    });
+  });
+
+  test("does not auto-accept question form requests", async () => {
+    const session = createSessionWithConfig({
+      provider: "kimi-acp",
+      modeId: "https://agentclientprotocol.com/protocol/session-modes#agent",
+      featureValues: { auto_accept: true },
+    });
+    const events: AgentStreamEvent[] = [];
+
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    session.subscribe((event) => events.push(event));
+
+    const permission = session.requestPermission({
+      sessionId: "session-1",
+      toolCall: {
+        toolCallId: "question-1",
+        title: "AskUserQuestion",
+        status: "pending",
+        rawInput: {
+          questions: [
+            {
+              question: "Continue?",
+              header: "Continue",
+              options: [{ label: "Yes" }],
+            },
+          ],
+        },
+      },
+      options: [{ optionId: "q0_opt_0", name: "Yes", kind: "allow_once" }],
+    } satisfies RequestPermissionRequest);
+
+    await Promise.resolve();
+
+    const requested = findPermissionRequest(events);
+    expect(requested).toMatchObject({
+      type: "permission_requested",
+      request: { kind: "question" },
+    });
+
+    await session.respondToPermission(requested.request.id, {
+      behavior: "allow",
+      updatedInput: { answers: { Continue: "Yes" } },
+    });
+
+    await expect(permission).resolves.toEqual({
+      outcome: { outcome: "selected", optionId: "q0_opt_0" },
+    });
+  });
+
+  test("cancels question form submissions when answer labels do not match options", async () => {
+    const session = createSessionWithConfig({
+      provider: "kimi-acp",
+      modeId: "https://agentclientprotocol.com/protocol/session-modes#agent",
+    });
+    const events: AgentStreamEvent[] = [];
+
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    session.subscribe((event) => events.push(event));
+
+    const permission = session.requestPermission({
+      sessionId: "session-1",
+      toolCall: {
+        toolCallId: "question-1",
+        title: "AskUserQuestion",
+        status: "pending",
+        rawInput: {
+          questions: [
+            {
+              question: "Which path should Paseo take?",
+              header: "Approach",
+              options: [{ label: "Narrow fix" }, { label: "Protocol fix" }],
+            },
+          ],
+        },
+      },
+      options: [
+        { optionId: "q0_opt_0", name: "Narrow fix", kind: "allow_once" },
+        { optionId: "q0_opt_1", name: "Protocol fix", kind: "allow_once" },
+        { optionId: "q0_skip", name: "Skip", kind: "reject_once" },
+      ],
+    } satisfies RequestPermissionRequest);
+
+    await Promise.resolve();
+
+    const requested = findPermissionRequest(events);
+
+    await session.respondToPermission(requested.request.id, {
+      behavior: "allow",
+      updatedInput: { answers: { Approach: "Unknown label" } },
+    });
+
+    await expect(permission).resolves.toEqual({
+      outcome: { outcome: "cancelled" },
     });
   });
 
