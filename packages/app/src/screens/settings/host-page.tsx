@@ -233,11 +233,13 @@ function HostConnectionError({ serverId }: { serverId: string }) {
     typeof lastError === "string" && lastError.trim().length > 0 ? lastError.trim() : null;
   if (!connectionError) return null;
   return (
-    <View testID="host-connection-error">
-      <Text style={styles.errorText}>{connectionError}</Text>
-      {snapshot?.authFailureReason ? (
-        <Text style={styles.errorGuidanceText}>{t("settings.host.password.guidance")}</Text>
-      ) : null}
+    <View style={styles.connectionError}>
+      <InlineAlert
+        variant="error"
+        title={connectionError}
+        description={snapshot?.authFailureReason ? t("settings.host.password.guidance") : undefined}
+        testID="host-connection-error"
+      />
     </View>
   );
 }
@@ -1751,15 +1753,8 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foregroundMuted,
     flexShrink: 1,
   },
-  errorText: {
-    color: theme.colors.palette.red[300],
-    fontSize: theme.fontSize.sm,
-    marginBottom: theme.spacing[2],
-  },
-  errorGuidanceText: {
-    color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
-    marginBottom: theme.spacing[4],
+  connectionError: {
+    marginBottom: theme.spacing[6],
   },
   connectionLatency: {
     fontSize: theme.fontSize.base,
