@@ -1,0 +1,12 @@
+# Start with an agent tab selected in a wide-layout workspace.
+context platform=android timeout=60000 retries=0
+env APP_ID=sh.paseo.debug
+env COPY_AGENT_ID=Copy agent id
+
+open "${APP_ID}"
+wait "id=\"workspace-tabs-scroll\"" 10000
+wait "role=\"button\" selected=true" 10000
+is absent "text=\"${COPY_AGENT_ID}\""
+longpress "role=\"button\" selected=true" 900
+wait "text=\"${COPY_AGENT_ID}\"" 10000
+close

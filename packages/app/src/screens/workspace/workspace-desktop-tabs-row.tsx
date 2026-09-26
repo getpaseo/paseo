@@ -839,7 +839,7 @@ function TabChip({
               {...(dragHandleProps?.listeners as object | undefined)}
               testID={`workspace-tab-${testIdentity}`}
               triggerRef={dragHandleProps?.setActivatorNodeRef as unknown as undefined}
-              enabledOnMobile={false}
+              enabledOnMobile
               style={tabChipStyle}
               onPressIn={handleNavigateTab}
               onPress={handleNavigateTab}
