@@ -1,3 +1,4 @@
+import { addProjectCopy } from "@/i18n/add-project-copy";
 import {
   isCompleteGitRemote,
   parseGitHubRemoteUrl,
@@ -38,47 +39,45 @@ export function buildAddProjectMethods(host: AddProjectHost): AddProjectMethodOp
   const options: AddProjectMethodOption[] = [];
   options.push({
     id: "directory-search",
-    label: "Search for directory",
-    description: `Find a directory on ${host.label}`,
+    label: addProjectCopy("searchDirectory"),
+    description: addProjectCopy("findOnHost", { host: host.label }),
   });
   if (host.canBrowse) {
     options.push({
       id: "browse",
-      label: "Browse",
-      description: "Choose or create a directory in Finder",
+      label: addProjectCopy("browse"),
+      description: addProjectCopy("finder"),
     });
   }
   options.push({
     id: "github",
-    label: "Clone from GitHub",
+    label: addProjectCopy("cloneGithub"),
     description: githubMethodDescription(host),
     disabled: !host.canCloneGithubRepositories,
   });
   options.push({
     id: "new-directory",
-    label: "New directory",
+    label: addProjectCopy("newDirectory"),
     description: host.canCreateDirectory
-      ? `Create an empty directory on ${host.label}`
-      : "Update this host to create directories",
+      ? addProjectCopy("createOnHost", { host: host.label })
+      : addProjectCopy("updateCreate"),
     disabled: !host.canCreateDirectory,
   });
   return options;
 }
 
 export function addProjectMethodEmptyText(host: AddProjectHost | null): string {
-  return host?.canAddProject === false
-    ? "Update the host to use Add Project."
-    : "No matching options";
+  return host?.canAddProject === false ? addProjectCopy("updateAdd") : addProjectCopy("noOptions");
 }
 
 function githubMethodDescription(host: AddProjectHost): string {
   if (!host.canCloneGithubRepositories) {
-    return "Update this host to clone GitHub repositories";
+    return addProjectCopy("updateClone");
   }
   if (host.canSearchGithubRepositories) {
-    return "Search projects available to your GitHub account";
+    return addProjectCopy("searchAccount");
   }
-  return "Enter a GitHub URL or owner/repo";
+  return addProjectCopy("githubInput");
 }
 
 export function pathBaseName(path: string): string {
@@ -100,7 +99,7 @@ export function buildManualGithubRepositoryChoices(query: string): GithubReposit
         id: `manual:${repo}`,
         nameWithOwner: identity?.repo ?? remoteName,
         cloneUrl: repo,
-        description: "Clone this repository URL",
+        description: addProjectCopy("cloneUrl"),
         updatedAt: null,
       },
     ];
@@ -114,7 +113,7 @@ export function buildManualGithubRepositoryChoices(query: string): GithubReposit
     nameWithOwner,
     cloneUrl: nameWithOwner,
     cloneProtocol,
-    description: `Clone owner/repo via ${cloneProtocol.toUpperCase()}`,
+    description: addProjectCopy("cloneProtocol", { protocol: cloneProtocol.toUpperCase() }),
     updatedAt: null,
   }));
 }
@@ -167,7 +166,9 @@ export function buildCloneLocationOptions(input: {
         id: parent,
         path: parent,
         displayPath: path,
-        secondaryText: pathExists ? "Already exists" : `Parent directory: ${parent}`,
+        secondaryText: pathExists
+          ? addProjectCopy("exists")
+          : addProjectCopy("parentPath", { path: parent }),
         disabled: pathExists,
       },
     ];

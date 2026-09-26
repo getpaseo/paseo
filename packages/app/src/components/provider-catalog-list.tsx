@@ -1,3 +1,4 @@
+import { translateProviderDescription } from "@/i18n/provider-descriptions";
 import { useCallback, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Pressable, Text, View } from "react-native";
@@ -89,7 +90,7 @@ function CatalogRow({ entry, installing, onInstall }: CatalogRowProps) {
           </Text>
         </View>
         <Text style={styles.description} numberOfLines={1}>
-          {entry.description || entry.id}
+          {translateProviderDescription(t, entry.id, entry.description) || entry.id}
         </Text>
         <Pressable
           accessibilityRole="link"
@@ -139,8 +140,18 @@ export function ProviderCatalogList({
     () =>
       catalogEntries
         .filter((entry) => !installedIds.has(entry.id))
-        .filter((entry) => matchesSearch(entry, search)),
-    [catalogEntries, installedIds, search],
+        .filter(
+          (entry) =>
+            matchesSearch(entry, search) ||
+            matchesSearch(
+              {
+                ...entry,
+                description: translateProviderDescription(t, entry.id, entry.description),
+              },
+              search,
+            ),
+        ),
+    [catalogEntries, installedIds, search, t],
   );
 
   return (
