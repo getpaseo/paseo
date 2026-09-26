@@ -3921,6 +3921,47 @@ describe("processAgentStreamEvents", () => {
     expect(result.sideEffects).toEqual([]);
   });
 
+  it("merges pre-bootstrap reasoning chunks into a single thought", () => {
+    const result = processAgentStreamEvents({
+      events: [
+        makeStreamReducerEvent(makeTimelineEvent("Ah", "reasoning"), 1),
+        makeStreamReducerEvent(makeTimelineEvent(", ent", "reasoning"), 2),
+        makeStreamReducerEvent(makeTimelineEvent("endi!", "reasoning"), 3),
+      ],
+      currentTail: [],
+      currentHead: [],
+      currentCursor: undefined,
+      hasAuthoritativeBaseline: false,
+    });
+
+    const thoughts = [...result.tail, ...result.head].filter((item) => item.kind === "thought");
+    expect(thoughts).toHaveLength(1);
+    expect(thoughts[0]).toMatchObject({ kind: "thought", text: "Ah, entendi!" });
+  });
+
+  it("starts a new pre-bootstrap thought after the turn completes", () => {
+    const result = processAgentStreamEvents({
+      events: [
+        makeStreamReducerEvent(makeTimelineEvent("first turn thinking", "reasoning"), 1),
+        makeStreamReducerEvent(
+          { type: "turn_completed", provider: "claude" } as AgentStreamEventPayload,
+          2,
+        ),
+        makeStreamReducerEvent(makeTimelineEvent("second turn thinking", "reasoning"), 3),
+      ],
+      currentTail: [],
+      currentHead: [],
+      currentCursor: undefined,
+      hasAuthoritativeBaseline: false,
+    });
+
+    const thoughts = [...result.tail, ...result.head].filter((item) => item.kind === "thought");
+    expect(thoughts.map((item) => item.kind === "thought" && item.text)).toEqual([
+      "first turn thinking",
+      "second turn thinking",
+    ]);
+  });
+
   it("keeps matching assistant message ids in the live head", () => {
     const result = processAgentStreamEvents({
       events: [
