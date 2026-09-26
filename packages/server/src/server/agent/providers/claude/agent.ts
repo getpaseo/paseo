@@ -2107,8 +2107,9 @@ class ClaudeAgentSession implements AgentSession {
   private compactionMarkerOpen = false;
   private queryPumpPromise: Promise<void> | null = null;
   private queryRestartNeeded = false;
-  private pendingInterruptAbort = false;
-  private foregroundHasVisibleActivity = false;
+  private readonly activeTurnUserMessageIds = new Set<string>();
+  private readonly interruptedTurnsByMessageId = new Map<string, Set<string>>();
+  private pendingInterruptedTurns: Set<string>[] = [];
   private activeTurnHasAssistantText = false;
   private readonly contextUsage: ClaudeContextUsageState;
   private userMessageIds: string[] = [];
@@ -2228,6 +2229,7 @@ class ClaudeAgentSession implements AgentSession {
     if (this.activeForegroundTurnId) {
       throw new Error("A foreground turn is already active");
     }
+    this.activeTurnUserMessageIds.clear();
 
     const slashCommand = this.resolveSlashCommandInvocation(prompt);
     if (slashCommand?.commandName === REWIND_COMMAND_NAME) {
@@ -2245,10 +2247,10 @@ class ClaudeAgentSession implements AgentSession {
     const sdkMessage = this.toSdkUserMessage(prompt);
     const sdkUserMessageId =
       typeof sdkMessage.uuid === "string" && sdkMessage.uuid.length > 0 ? sdkMessage.uuid : null;
+    if (sdkUserMessageId) this.activeTurnUserMessageIds.add(sdkUserMessageId);
     this.rememberRewindUserAnchor(sdkUserMessageId);
     const turnId = this.createTurnId("foreground");
     this.activeForegroundTurnId = turnId;
-    this.foregroundHasVisibleActivity = false;
     this.activeTurnHasAssistantText = false;
     this.contextUsage.beginTurn();
     this.transitionTurnState("foreground", "foreground turn started");
@@ -2264,6 +2266,7 @@ class ClaudeAgentSession implements AgentSession {
         this.cancelCurrentTurn = null;
       }
       this.rejectAllPendingPermissions(new Error("Permission request canceled"));
+      this.rememberInterruptedTurn();
       this.finishForegroundTurn({
         type: "turn_canceled",
         provider: "claude",
@@ -2346,6 +2349,7 @@ class ClaudeAgentSession implements AgentSession {
     }
     try {
       input.push(message);
+      if (uuid) this.activeTurnUserMessageIds.add(uuid);
       if (clearPendingPermissions) {
         this.denyPendingPermissionsSupersededBySteer();
       }
@@ -2372,6 +2376,7 @@ class ClaudeAgentSession implements AgentSession {
     }
 
     if (this.autonomousTurn) {
+      this.rememberInterruptedTurn();
       this.flushPendingToolCalls();
       this.completeAutonomousTurn();
     }
@@ -3155,6 +3160,8 @@ class ClaudeAgentSession implements AgentSession {
     const options = await this.buildOptions();
     this.logger.debug({ options: summarizeClaudeOptionsForLog(options) }, "claude query");
     this.input = input;
+    this.interruptedTurnsByMessageId.clear();
+    this.pendingInterruptedTurns = [];
     this.query = claudeQuery(
       { prompt: input.iterable, options },
       {
@@ -3635,6 +3642,7 @@ class ClaudeAgentSession implements AgentSession {
     if (this.autonomousTurn) {
       return;
     }
+    this.activeTurnUserMessageIds.clear();
     this.autonomousTurn = {
       id: this.createTurnId("autonomous"),
     };
@@ -3832,21 +3840,46 @@ class ClaudeAgentSession implements AgentSession {
   }
 
   private shouldSuppressStaleResult(message: SDKMessage): boolean {
-    // Suppress stale results from interrupted requests. The cancel path already
-    // emitted the terminal event; this result is leftover from the killed API
-    // request. Consume the flag on ANY result so it doesn't linger.
-    if (message.type === "result" && this.pendingInterruptAbort) {
-      this.pendingInterruptAbort = false;
-      if (message.subtype !== "success") {
-        this.logger.debug("Suppressing stale non-success result from interrupted request");
+    if (message.type !== "result") {
+      return false;
+    }
+
+    if (message.user_message_uuid) {
+      const interruptedTurn = this.interruptedTurnsByMessageId.get(message.user_message_uuid);
+      if (interruptedTurn) {
+        this.pendingInterruptedTurns = this.pendingInterruptedTurns.filter(
+          (turn) => turn !== interruptedTurn,
+        );
+        this.logger.debug("Suppressing result belonging to an interrupted Claude turn");
         return true;
       }
+      // An identified new result must not pay an earlier turn's cancellation debt.
+      this.pendingInterruptedTurns = [];
+      return false;
     }
-    if (message.type === "result" && message.subtype !== "success" && this.isAbortError(message)) {
-      this.logger.debug("Suppressing abort result by content");
+
+    // Some producers omit the send UUID. Text is only evidence of a stale abort
+    // while an explicit interruption is outstanding, never on an ordinary turn.
+    const isPendingAbort =
+      this.pendingInterruptedTurns.length > 0 &&
+      message.subtype !== "success" &&
+      this.isAbortError(message);
+    if (isPendingAbort) {
+      this.pendingInterruptedTurns.shift();
+      this.logger.debug("Suppressing uncorrelated abort after a Claude interruption");
       return true;
     }
+    this.pendingInterruptedTurns = [];
     return false;
+  }
+
+  private rememberInterruptedTurn(): void {
+    if (!this.query) return;
+    const messageIds = new Set(this.activeTurnUserMessageIds);
+    for (const messageId of messageIds) {
+      this.interruptedTurnsByMessageId.set(messageId, messageIds);
+    }
+    this.pendingInterruptedTurns.push(messageIds);
   }
 
   private isAssistantishMessage(message: SDKMessage): boolean {
@@ -3865,7 +3898,7 @@ class ClaudeAgentSession implements AgentSession {
    * the agent stuck reporting "running" forever.
    */
   private shouldStartAutonomousTurn(message: SDKMessage): boolean {
-    if (this.activeForegroundTurnId || this.pendingInterruptAbort) {
+    if (this.activeForegroundTurnId || this.pendingInterruptedTurns.length > 0) {
       return false;
     }
     return this.isAssistantishMessage(message);
@@ -3907,30 +3940,9 @@ class ClaudeAgentSession implements AgentSession {
       return;
     }
     if (
-      this.pendingInterruptAbort &&
-      message.type === "result" &&
-      events.some((event) => event.type === "turn_completed" || event.type === "turn_failed") &&
-      (!this.activeForegroundTurnId || !this.foregroundHasVisibleActivity)
-    ) {
-      this.pendingInterruptAbort = false;
-      this.logger.debug("Suppressing stale Claude interrupt terminal result");
-      return;
-    }
-    if (
       events.some((event) => event.type === "timeline" && event.item.type === "assistant_message")
     ) {
       this.activeTurnHasAssistantText = true;
-    }
-    if (
-      this.activeForegroundTurnId &&
-      events.some(
-        (event) =>
-          event.type === "timeline" ||
-          event.type === "permission_requested" ||
-          event.type === "permission_resolved",
-      )
-    ) {
-      this.foregroundHasVisibleActivity = true;
     }
 
     this.dispatchEvents(events);
@@ -4033,7 +4045,6 @@ class ClaudeAgentSession implements AgentSession {
       );
       return;
     }
-    this.pendingInterruptAbort = true;
     await this.discardQueuedSteers(queryToInterrupt);
     try {
       await this.awaitWithTimeout(
@@ -4252,7 +4263,6 @@ class ClaudeAgentSession implements AgentSession {
     if (events.length === 0) {
       return;
     }
-    this.foregroundHasVisibleActivity = true;
     for (const event of events) {
       if (event.type === "timeline") {
         const item =

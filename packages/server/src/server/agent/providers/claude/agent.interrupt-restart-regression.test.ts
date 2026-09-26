@@ -409,6 +409,43 @@ function buildAbortedResult(sessionId: string) {
   };
 }
 
+test("an unsolicited aborted result fails the turn and permits a follow-up on the same query", async () => {
+  const sessionId = "unsolicited-abort-session";
+  queryFactory.mockImplementation(({ prompt }: { prompt: AsyncIterable<unknown> }) =>
+    createScriptedQuery({
+      prompt,
+      sessionId,
+      handlePrompt({ promptRecord, query }) {
+        query.emit(
+          promptRecord.text === "fail"
+            ? buildAbortedResult(sessionId)
+            : buildSuccessResult(sessionId),
+        );
+      },
+    }),
+  );
+  const session = await new ClaudeAgentClient({
+    logger: createTestLogger(),
+    queryFactory,
+    resolveBinary: async () => "/test/claude/bin",
+  }).createSession({ provider: "claude", cwd: process.cwd() });
+  const events: AgentStreamEvent[] = [];
+  const unsubscribe = session.subscribe((event) => events.push(event));
+  try {
+    await session.startTurn("fail");
+    await waitFor(() => events.some((event) => event.type === "turn_failed"));
+    expect(events.filter((event) => event.type === "turn_failed")).toEqual([
+      expect.objectContaining({ type: "turn_failed", error: "Request was aborted." }),
+    ]);
+    const followUp = await collectUntilTerminal(streamSession(session, "follow-up"));
+    expect(followUp).toContainEqual(expect.objectContaining({ type: "turn_completed" }));
+    expect(queryFactory).toHaveBeenCalledTimes(1);
+  } finally {
+    unsubscribe();
+    await session.close();
+  }
+});
+
 function buildRejectedToolResult(sessionId: string) {
   return {
     type: "user",
@@ -482,6 +519,176 @@ async function startInterruptedToolTurn(sessionId: string): Promise<{
 
   return { session, query: () => query, observed, canceledIndex, unsubscribe };
 }
+
+test.each(["success", "error", "duplicate"])(
+  "a canceled %s result cannot terminate its replacement turn",
+  async (kind) => {
+    const sessionId = "identified-interrupt-session";
+    const { session, query, unsubscribe } = await startInterruptedToolTurn(sessionId);
+    try {
+      const replacement = streamSession(session, "replacement");
+      await replacement.next();
+      await waitFor(() => query()?.prompts.length === 2);
+      const stale = {
+        ...(kind === "success" ? buildSuccessResult(sessionId) : buildAbortedResult(sessionId)),
+        user_message_uuid: query()?.prompts[0]?.uuid,
+      };
+      query()?.emit(stale);
+      if (kind === "duplicate") query()?.emit(stale);
+      query()?.emit({
+        ...buildAbortedResult(sessionId),
+        errors: ["Replacement request failed"],
+        user_message_uuid: query()?.prompts[1]?.uuid,
+      });
+      const events = await collectUntilTerminal(replacement);
+      expect(events.filter((event) => event.type === "turn_failed")).toEqual([
+        expect.objectContaining({ type: "turn_failed", error: "Replacement request failed" }),
+      ]);
+      expect(events.some((event) => event.type === "turn_completed")).toBe(false);
+    } finally {
+      unsubscribe();
+      await session.close();
+    }
+  },
+);
+
+test("an identified replacement abort is delivered when the canceled turn has no result", async () => {
+  const sessionId = "missing-interrupt-result-session";
+  const { session, query, unsubscribe } = await startInterruptedToolTurn(sessionId);
+  try {
+    const replacement = streamSession(session, "replacement");
+    await replacement.next();
+    await waitFor(() => query()?.prompts.length === 2);
+    query()?.emit({
+      ...buildAbortedResult(sessionId),
+      user_message_uuid: query()?.prompts[1]?.uuid,
+    });
+    const events = await collectUntilTerminal(replacement);
+    expect(events).toContainEqual(
+      expect.objectContaining({ type: "turn_failed", error: "Request was aborted." }),
+    );
+  } finally {
+    unsubscribe();
+    await session.close();
+  }
+});
+
+test("an uncorrelated non-abort failure is delivered after cancellation", async () => {
+  const sessionId = "uncorrelated-failure-session";
+  const { session, query, unsubscribe } = await startInterruptedToolTurn(sessionId);
+  try {
+    const replacement = streamSession(session, "replacement");
+    await replacement.next();
+    await waitFor(() => query()?.prompts.length === 2);
+    query()?.emit({ ...buildAbortedResult(sessionId), errors: ["Reached maximum budget"] });
+    const events = await collectUntilTerminal(replacement);
+    expect(events).toContainEqual(
+      expect.objectContaining({ type: "turn_failed", error: "Reached maximum budget" }),
+    );
+  } finally {
+    unsubscribe();
+    await session.close();
+  }
+});
+
+test("idle interrupt does not swallow the next turn's terminal error", async () => {
+  const sessionId = "idle-interrupt-result-session";
+  const { session, query, observed, unsubscribe } = await startInterruptedToolTurn(sessionId);
+  try {
+    query()?.emit(buildAbortedResult(sessionId));
+    query()?.emit({ type: "assistant", message: { content: "DRAINED" }, session_id: sessionId });
+    query()?.emit(buildSuccessResult(sessionId));
+    await waitFor(() => observed.some((event) => event.type === "turn_completed"));
+    await session.interrupt();
+
+    const next = streamSession(session, "next");
+    await next.next();
+    await waitFor(() => query()?.prompts.length === 2);
+    query()?.emit(buildAbortedResult(sessionId));
+    expect(await collectUntilTerminal(next)).toContainEqual(
+      expect.objectContaining({ type: "turn_failed", error: "Request was aborted." }),
+    );
+  } finally {
+    unsubscribe();
+    await session.close();
+  }
+});
+
+test("two canceled turns can drain their uncorrelated abort results after replacement starts", async () => {
+  const sessionId = "multiple-interrupt-results-session";
+  const { session, query, unsubscribe } = await startInterruptedToolTurn(sessionId);
+  try {
+    const second = streamSession(session, "second canceled turn");
+    await second.next();
+    await waitFor(() => query()?.prompts.length === 2);
+    await session.interrupt();
+    await collectUntilTerminal(second);
+
+    const replacement = streamSession(session, "replacement");
+    await replacement.next();
+    await waitFor(() => query()?.prompts.length === 3);
+    query()?.emit(buildAbortedResult(sessionId));
+    query()?.emit(buildAbortedResult(sessionId));
+    query()?.emit({
+      type: "assistant",
+      message: { content: "REPLACEMENT_RESPONSE" },
+      session_id: sessionId,
+    });
+    query()?.emit(buildSuccessResult(sessionId));
+    const events = await collectUntilTerminal(replacement);
+    expect(collectAssistantText(events)).toContain("REPLACEMENT_RESPONSE");
+    expect(events).toContainEqual(expect.objectContaining({ type: "turn_completed" }));
+    expect(events.some((event) => event.type === "turn_failed")).toBe(false);
+  } finally {
+    unsubscribe();
+    await session.close();
+  }
+});
+
+test("an autonomous aborted result fails its turn after earlier cancellation has drained", async () => {
+  const sessionId = "autonomous-abort-session";
+  const { session, query, observed, unsubscribe } = await startInterruptedToolTurn(sessionId);
+  try {
+    query()?.emit(buildAbortedResult(sessionId));
+    query()?.emit({ type: "assistant", message: { content: "BACKGROUND" }, session_id: sessionId });
+    query()?.emit(buildAbortedResult(sessionId));
+    await waitFor(() => observed.some((event) => event.type === "turn_failed"));
+    expect(observed.filter((event) => event.type === "turn_failed")).toEqual([
+      expect.objectContaining({ type: "turn_failed", error: "Request was aborted." }),
+    ]);
+    await session.startTurn("follow-up");
+    await waitFor(() => query()?.prompts.length === 2);
+  } finally {
+    unsubscribe();
+    await session.close();
+  }
+});
+
+test("a canceled steer result cannot fail a replacement turn", async () => {
+  const sessionId = "canceled-steer-result-session";
+  const { session, query, turn } = await startSteeredTurn(sessionId);
+  try {
+    await session.interrupt();
+    await collectUntilTerminal(turn);
+    const replacement = streamSession(session, "replacement");
+    await replacement.next();
+    await waitFor(() => query()?.prompts.length === 3);
+    query()?.emit({
+      ...buildAbortedResult(sessionId),
+      user_message_uuid: query()?.prompts[1]?.uuid,
+    });
+    query()?.emit({
+      ...buildAbortedResult(sessionId),
+      errors: ["Replacement request failed"],
+      user_message_uuid: query()?.prompts[2]?.uuid,
+    });
+    expect(await collectUntilTerminal(replacement)).toContainEqual(
+      expect.objectContaining({ type: "turn_failed", error: "Replacement request failed" }),
+    );
+  } finally {
+    await session.close();
+  }
+});
 
 /**
  * Claude keeps reporting on the request it was told to kill: the notification for the tool it just
