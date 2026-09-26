@@ -3,6 +3,7 @@ import { describe, expect, test } from "vitest";
 import type { AgentStreamEvent } from "../../agent-sdk-types.js";
 import { streamPiHistory, type PiCapturedUserMessageEntry } from "./history-mapper.js";
 import type { PiAgentMessage } from "./rpc-types.js";
+import { HIDDEN_GOAL_CONTINUATION } from "./test-utils/hidden-custom-message.js";
 
 async function collectHistory(
   messages: PiAgentMessage[],
@@ -138,6 +139,10 @@ describe("Pi history mapper", () => {
         item: { type: "assistant_message", text: "Extension command output" },
       },
     ]);
+  });
+
+  test("drops custom messages that the extension marks display: false", async () => {
+    await expect(collectHistory([HIDDEN_GOAL_CONTINUATION])).resolves.toEqual([]);
   });
 
   test("uses Pi tree entry ids for replayed user messages", async () => {

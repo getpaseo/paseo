@@ -65,16 +65,18 @@ export async function verifySubagentFixture(
     });
     for (const message of fixture.messages) {
       if (message.role !== "custom" || typeof message.content !== "string") continue;
-      const assistantText = {
-        type: "assistant_message" as const,
-        text: message.content,
-      };
-      expect(live).toContainEqual(
-        expect.objectContaining({ type: "timeline", item: assistantText }),
-      );
-      expect(replay).toContainEqual(
-        expect.objectContaining({ type: "timeline", item: assistantText }),
-      );
+      const assistantText = expect.objectContaining({
+        type: "timeline",
+        item: { type: "assistant_message", text: message.content },
+      });
+      // Claimed notifications keep their text unless the extension hides it from the user.
+      if (message.display === false) {
+        expect(live).not.toContainEqual(assistantText);
+        expect(replay).not.toContainEqual(assistantText);
+      } else {
+        expect(live).toContainEqual(assistantText);
+        expect(replay).toContainEqual(assistantText);
+      }
     }
     const liveSubagents = live.filter((event) => event.type === "provider_subagent");
     const firstTimeline = liveSubagents.findIndex((event) => event.event.type === "timeline");

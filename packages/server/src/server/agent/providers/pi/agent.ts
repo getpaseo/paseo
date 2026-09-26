@@ -59,7 +59,7 @@ import {
   toDiagnosticErrorMessage,
 } from "../diagnostic-utils.js";
 import {
-  getUserMessageText,
+  getCustomMessageText,
   streamPiHistory,
   type PiCapturedUserMessageEntry,
 } from "./history-mapper.js";
@@ -2300,7 +2300,7 @@ export class PiRpcAgentSession implements AgentSession {
     if (event.message.role === "custom") {
       const customMapping = this.extensionHost.mapCustomMessage(event.message);
       this.emitExtensionOutput(customMapping, turnId);
-      const text = getUserMessageText(event.message.content);
+      const text = getCustomMessageText(event.message);
       if (text) {
         this.emit({
           type: "timeline",

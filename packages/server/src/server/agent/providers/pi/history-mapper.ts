@@ -20,10 +20,6 @@ export interface PiCapturedUserMessageEntry {
 }
 
 export interface PiHistoryMapperHooks {
-  mapCustomMessage?: (
-    text: string,
-    provider: string,
-  ) => Extract<AgentStreamEvent, { type: "timeline" }> | null;
   resolveToolCallId?: (toolCallId: string, toolCall: PiTrackedToolCall) => string;
   mapToolDetail?: (
     toolCall: PiTrackedToolCall,
@@ -54,6 +50,11 @@ export function getUserMessageText(content: string | (PiTextContent | PiImageCon
     }
   }
   return textParts.join("\n\n");
+}
+
+/** The text Pi shows for a custom message. Extensions hide model-only messages with `display: false`. */
+export function getCustomMessageText(message: Extract<PiAgentMessage, { role: "custom" }>): string {
+  return message.display === false ? "" : getUserMessageText(message.content);
 }
 
 export class PiHistoryMapper {
@@ -125,11 +126,7 @@ export class PiHistoryMapper {
   ): AgentStreamEvent[] {
     const extensionMapping = this.extensionHost.mapCustomMessage(message);
     const extensionEvents = this.extensionEvents(extensionMapping);
-    const text = getUserMessageText(message.content);
-    const mappedEvent = text ? this.hooks.mapCustomMessage?.(text, this.provider) : null;
-    if (mappedEvent) {
-      return [...extensionEvents, mappedEvent];
-    }
+    const text = getCustomMessageText(message);
     return [
       ...extensionEvents,
       ...(text

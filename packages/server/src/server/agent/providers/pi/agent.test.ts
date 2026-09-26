@@ -24,6 +24,7 @@ import {
   transformPiModels,
 } from "./agent.js";
 import { FakePi } from "./test-utils/fake-pi.js";
+import { HIDDEN_GOAL_CONTINUATION } from "./test-utils/hidden-custom-message.js";
 import { createPiExtensionHost } from "./extensions/index.js";
 import { PiExtensionHost } from "./extensions/host.js";
 import type { PiModel, PiThinkingLevel } from "./rpc-types.js";
@@ -1078,6 +1079,17 @@ describe("PiRpcAgentSession", () => {
       { type: "turn_started", turnId: undefined },
       { type: "turn_completed", turnId: undefined },
     ]);
+  });
+
+  test("hides Pi custom messages that the extension marks display: false", async () => {
+    const { pi, events } = await createSession();
+    const fakeSession = pi.latestSession();
+
+    fakeSession.emit({ type: "agent_start" });
+    fakeSession.emit({ type: "turn_start" });
+    fakeSession.emit({ type: "message_end", message: HIDDEN_GOAL_CONTINUATION });
+
+    expect(events.timelineItems()).toEqual([]);
   });
 
   test("canceling a silent Pi extension command leaves the session usable", async () => {
