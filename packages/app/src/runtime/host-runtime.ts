@@ -47,6 +47,7 @@ import { CLIENT_CAPS } from "@getpaseo/protocol/client-capabilities";
 import { BROWSER_AUTOMATION_COMMAND_NAMES } from "@getpaseo/protocol/browser-automation/rpc-schemas";
 import {
   useSessionStore,
+  toDaemonServerInfo,
   type Agent,
   type WorkspaceDescriptor,
   type ProjectDescriptor,
@@ -2119,6 +2120,13 @@ export class HostRuntimeStore {
     const sessionStore = useSessionStore.getState();
     sessionStore.initializeSession(serverId, snapshot.client, snapshot.clientGeneration);
     sessionStore.updateSessionClient(serverId, snapshot.client, snapshot.clientGeneration);
+    // A reconnect keeps the same client, so the daemon's handshake (a restart or upgrade can
+    // change its version and features) only reaches the store here. The client clears it while
+    // disconnected; keep the last known value until the next handshake.
+    const serverInfo = snapshot.client.getLastServerInfoMessage();
+    if (serverInfo) {
+      sessionStore.updateSessionServerInfo(serverId, toDaemonServerInfo(serverInfo));
+    }
   }
 
   private clearHostReplica(serverId: string): void {
