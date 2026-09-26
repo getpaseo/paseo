@@ -1,5 +1,6 @@
 import { z } from "zod";
-import type { AgentPermissionRequest } from "../../../../agent-sdk-types.js";
+import type { AgentPermissionRequest, AgentQuestionAnswer } from "../../../../agent-sdk-types.js";
+import { questionAnswerValues } from "../../../../question-answers.js";
 import type { PiExtension, PiExtensionDialog, PiExtensionUiResponse } from "../contract.js";
 
 const Params = z
@@ -55,38 +56,34 @@ const Result = z.object({
 type Question = z.infer<typeof Params>["questions"][number];
 const PERMISSION_PREFIX = "rpiv-question:";
 
-function answerFor(answers: Record<string, unknown>, question: Question): string | null {
-  const answer = answers[question.header];
-  return typeof answer === "string" ? answer : null;
-}
-
 function replyToDialog(
   dialog: PiExtensionDialog,
   question: Question,
-  answer: string,
+  answer: AgentQuestionAnswer,
   customInput: boolean,
 ): { response: PiExtensionUiResponse; customInput: boolean } {
   const options = z.array(z.string()).safeParse(dialog.options).data;
-  if (customInput) return { response: { value: answer }, customInput: false };
+  const text = questionAnswerValues(answer).join(", ");
+  if (customInput) return { response: { value: text }, customInput: false };
   if (question.multiSelect) {
-    const labels = answer.split(", ");
-    const indices = labels.map((label) =>
+    const indices = answer.selected.map((label) =>
       question.options.findIndex((option) => option.label === label),
     );
-    if (indices.every((index) => index >= 0)) {
+    if (!answer.text && indices.every((index) => index >= 0)) {
       return {
         response: { value: indices.map((index) => index + 1).join(",") },
         customInput: false,
       };
     }
-    return { response: { value: answer }, customInput: false };
+    return { response: { value: text }, customInput: false };
   }
-  const index = question.options.findIndex((option) => option.label === answer);
-  if (index >= 0) {
+  const [label] = answer.selected;
+  const index = question.options.findIndex((option) => option.label === label);
+  if (!answer.text && index >= 0) {
     return {
       response: {
         value:
-          options?.[index] ?? `${index + 1}. ${answer} — ${question.options[index].description}`,
+          options?.[index] ?? `${index + 1}. ${label} — ${question.options[index].description}`,
       },
       customInput: false,
     };
@@ -106,7 +103,7 @@ export const rpivAskUserQuestion: PiExtension = {
     let active: {
       callId: string;
       questions: Question[];
-      answers: Record<string, unknown> | null;
+      answers: AgentQuestionAnswer[] | null;
       cancelled: boolean;
       index: number;
       customInput: boolean;
@@ -117,8 +114,10 @@ export const rpivAskUserQuestion: PiExtension = {
       if (!active || active.cancelled) return { cancelled: true };
       const question = active.questions[active.index];
       if (!question || !active.answers) return { cancelled: true };
-      const answer = answerFor(active.answers, question);
-      if (answer === null) return { cancelled: true };
+      const answer = active.answers[active.index];
+      if (!answer || (answer.selected.length === 0 && answer.text === undefined)) {
+        return { cancelled: true };
+      }
       const mapped = replyToDialog(dialog, question, answer, active.customInput);
       active.customInput = mapped.customInput;
       if (!active.customInput) active.index++;
@@ -169,11 +168,7 @@ export const rpivAskUserQuestion: PiExtension = {
       },
       respondToPermission(request, response) {
         if (!active || request.id !== `${PERMISSION_PREFIX}${active.callId}`) return undefined;
-        const answers = response.behavior === "allow" ? response.updatedInput?.answers : undefined;
-        active.answers =
-          answers && typeof answers === "object" && !Array.isArray(answers)
-            ? (answers as Record<string, unknown>)
-            : null;
+        active.answers = (response.behavior === "allow" && response.questionAnswers) || null;
         active.cancelled = response.behavior === "deny" || !active.answers;
         const deferred = active.deferred;
         active.deferred = null;

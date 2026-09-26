@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 import {
   areQuestionsAnswered,
   buildQuestionFormAnswers,
+  buildQuestionFormResponse,
   parseQuestionFormQuestions,
   questionShowsTextInput,
   resolveDismissLabel,
@@ -145,6 +146,46 @@ describe("question form card core", () => {
     expect(areQuestionsAnswered(questions, {}, { 0: "custom" })).toBe(true);
     expect(buildQuestionFormAnswers(questions, {}, { 0: "custom" })).toEqual({
       Response: "custom",
+    });
+  });
+  test("submits each question's answer as structured labels so commas stay unambiguous", () => {
+    const input = {
+      questions: [
+        {
+          question: "Which colors?",
+          header: "Colors",
+          options: [{ label: "Red, bright" }, { label: "Blue" }],
+          multiSelect: true,
+          allowOther: true,
+        },
+        {
+          question: "Which city?",
+          header: "City",
+          options: [{ label: "Paris, France" }, { label: "Rome" }],
+          allowOther: true,
+        },
+      ],
+    };
+    const questions = parseQuestionFormQuestions(input);
+    if (!questions) throw new Error("questions did not parse");
+
+    expect(
+      buildQuestionFormResponse(
+        input,
+        questions,
+        { 0: new Set([0, 1]), 1: new Set([1]) },
+        { 0: " Green, dark ", 1: "Lyon, France" },
+      ),
+    ).toEqual({
+      behavior: "allow",
+      questionAnswers: [
+        { selected: ["Red, bright", "Blue"], text: "Green, dark" },
+        { selected: [], text: "Lyon, France" },
+      ],
+      updatedInput: {
+        ...input,
+        answers: { Colors: "Red, bright, Blue, Green, dark", City: "Lyon, France" },
+      },
     });
   });
 });

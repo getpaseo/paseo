@@ -35,17 +35,23 @@ describe("OpenCode v2 questions", () => {
     });
     const session = await client.createSession({ provider: "opencode", cwd: "/tmp/project" });
     try {
-      expect(session.getPendingPermissions()).toHaveLength(1);
+      expect(session.getPendingPermissions()).toEqual([
+        expect.objectContaining({
+          input: {
+            questions: expect.arrayContaining([
+              expect.objectContaining({ header: "features", multiSelect: true }),
+            ]),
+          },
+        }),
+      ]);
       await session.respondToPermission("question", {
         behavior: "allow",
-        updatedInput: {
-          answers: {
-            color: "Blue",
-            features: ["Search"],
-            count: "3",
-            enabled: "false",
-          },
-        },
+        questionAnswers: [
+          { selected: ["Blue"] },
+          { selected: ["Search"], text: "Web, images" },
+          { selected: [], text: "3" },
+          { selected: [], text: "false" },
+        ],
       });
       expect(answers).toEqual([
         {
@@ -53,7 +59,7 @@ describe("OpenCode v2 questions", () => {
           formID: "question",
           answer: {
             color: "blue-id",
-            features: ["search-id"],
+            features: ["search-id", "Web, images"],
             count: 3,
             enabled: false,
           },

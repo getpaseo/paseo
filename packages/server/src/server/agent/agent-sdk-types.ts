@@ -504,12 +504,22 @@ export interface AgentPermissionRequest {
   metadata?: AgentMetadata;
 }
 
+/**
+ * The answer to one question of a `question` permission request, aligned by index with
+ * `input.questions`. `selected` holds the chosen option labels; `text` holds a typed answer.
+ */
+export interface AgentQuestionAnswer {
+  selected: string[];
+  text?: string;
+}
+
 export type AgentPermissionResponse =
   | {
       behavior: "allow";
       selectedActionId?: string;
       updatedInput?: AgentMetadata;
       updatedPermissions?: AgentPermissionUpdate[];
+      questionAnswers?: AgentQuestionAnswer[];
     }
   | {
       behavior: "deny";

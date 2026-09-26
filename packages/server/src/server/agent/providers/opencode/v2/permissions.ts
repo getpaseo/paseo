@@ -4,9 +4,11 @@ import type { V2Api } from "./api.js";
 import type {
   AgentPermissionRequest,
   AgentPermissionResponse,
+  AgentQuestionAnswer,
   AgentSessionConfig,
   AgentStreamEvent,
 } from "../../../agent-sdk-types.js";
+import { questionAnswerValues } from "../../../question-answers.js";
 
 export class SessionPermissions {
   private readonly pending = new Map<string, AgentPermissionRequest>();
@@ -39,16 +41,13 @@ export class SessionPermissions {
       if (response.behavior === "deny")
         await this.client.session.form.cancel({ sessionID: form.sessionID, formID: form.id });
       else {
-        const raw = response.updatedInput?.answers;
+        const answers = response.questionAnswers;
         const answer: Record<string, FormValue> = {};
-        if (!raw || typeof raw !== "object" || Array.isArray(raw))
-          throw new Error("OpenCode question response requires answers");
-        for (const field of form.fields) {
-          const value: unknown =
-            Reflect.get(raw, field.key) ?? Reflect.get(raw, field.title ?? field.key);
-          const normalized = formAnswer(field, value);
+        if (!answers) throw new Error("OpenCode question response requires answers");
+        form.fields.forEach((field, index) => {
+          const normalized = formAnswer(field, answers[index]);
           if (normalized !== undefined) answer[field.key] = normalized;
-        }
+        });
         await this.client.session.form.reply({
           sessionID: form.sessionID,
           formID: form.id,
@@ -103,7 +102,7 @@ export class SessionPermissions {
             header: field.key,
             question: field.title ?? field.key,
             options: "options" in field ? field.options : undefined,
-            multiple: field.type === "multiselect",
+            multiSelect: field.type === "multiselect",
           })),
         },
       };
@@ -124,9 +123,13 @@ function permissionReply(response: AgentPermissionResponse): "reject" | "once" |
   return response.selectedActionId === "always" ? "always" : "once";
 }
 
-function formAnswer(field: FormInfo["fields"][number], value: unknown): FormValue | undefined {
-  if (value === undefined) return undefined;
-  if (field.type === "external") return undefined;
+function formAnswer(
+  field: FormInfo["fields"][number],
+  answer: AgentQuestionAnswer | undefined,
+): FormValue | undefined {
+  const values = questionAnswerValues(answer);
+  const [value] = values;
+  if (value === undefined || field.type === "external") return undefined;
   const labelValue = (label: string) => {
     const options = "options" in field ? field.options : undefined;
     return (
@@ -136,21 +139,15 @@ function formAnswer(field: FormInfo["fields"][number], value: unknown): FormValu
     );
   };
   if (field.type === "multiselect") {
-    if (Array.isArray(value) && value.every((item: unknown) => typeof item === "string"))
-      return value.map(labelValue);
-  } else if (field.type === "string" && typeof value === "string") {
+    return values.map(labelValue);
+  } else if (field.type === "string") {
     return labelValue(value);
   } else if (field.type === "boolean") {
-    if (typeof value === "boolean") return value;
     if (value === "true") return true;
     if (value === "false") return false;
   } else if (field.type === "number" || field.type === "integer") {
-    const numeric = typeof value === "string" && value.trim() ? Number(value) : value;
-    if (
-      typeof numeric === "number" &&
-      Number.isFinite(numeric) &&
-      (field.type !== "integer" || Number.isInteger(numeric))
-    )
+    const numeric = value.trim() ? Number(value) : Number.NaN;
+    if (Number.isFinite(numeric) && (field.type !== "integer" || Number.isInteger(numeric)))
       return numeric;
   }
   throw new Error(`Invalid answer for OpenCode question ${field.key}`);

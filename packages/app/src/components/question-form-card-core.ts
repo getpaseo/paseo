@@ -1,3 +1,5 @@
+import type { AgentPermissionResponse, AgentQuestionAnswer } from "@getpaseo/protocol/agent-types";
+
 export interface QuestionOption {
   label: string;
   description?: string;
@@ -101,35 +103,60 @@ export function areQuestionsAnswered(
   );
 }
 
-export function buildQuestionFormAnswers(
+export function buildQuestionFormResponse(
+  input: Record<string, unknown> | undefined,
   questions: QuestionFormQuestion[],
   selections: QuestionSelections,
   otherTexts: QuestionOtherTexts,
-): Record<string, string> {
-  const answers: Record<string, string> = {};
-  for (let i = 0; i < questions.length; i++) {
-    const q = questions[i];
+): AgentPermissionResponse {
+  return {
+    behavior: "allow",
+    questionAnswers: buildQuestionAnswers(questions, selections, otherTexts),
+    updatedInput: {
+      ...input,
+      // COMPAT(questionAnswers): added in v0.9.3, remove after 2027-03-26 once daemon floor >= v0.9.3.
+      // Older daemons read only these text answers; newer daemons derive them from questionAnswers.
+      answers: buildQuestionFormAnswers(questions, selections, otherTexts),
+    },
+  };
+}
+
+function buildQuestionAnswers(
+  questions: QuestionFormQuestion[],
+  selections: QuestionSelections,
+  otherTexts: QuestionOtherTexts,
+): AgentQuestionAnswer[] {
+  return questions.map((q, i) => {
     const selected = selections[i];
     const otherText = otherTexts[i]?.trim();
     const labels = selected ? Array.from(selected).map((idx) => q.options[idx].label) : [];
 
     if (questionShowsTextInput(q)) {
       if (otherText && otherText.length > 0) {
-        // Multi-select keeps the checked options and appends the custom answer, the way
+        // Multi-select keeps the checked options alongside the custom answer, the way
         // Claude Code's own AskUserQuestion UI does. Single-select replaces the option.
-        answers[q.header] = q.multiSelect ? [...labels, otherText].join(", ") : otherText;
-        continue;
+        return { selected: q.multiSelect ? labels : [], text: otherText };
       }
       if (q.allowEmpty && q.options.length === 0) {
-        answers[q.header] = "";
-        continue;
+        return { selected: [], text: "" };
       }
     }
+    return { selected: labels };
+  });
+}
 
-    if (labels.length > 0) {
-      answers[q.header] = labels.join(", ");
-    }
-  }
+export function buildQuestionFormAnswers(
+  questions: QuestionFormQuestion[],
+  selections: QuestionSelections,
+  otherTexts: QuestionOtherTexts,
+): Record<string, string> {
+  const answers: Record<string, string> = {};
+  buildQuestionAnswers(questions, selections, otherTexts).forEach((answer, i) => {
+    if (answer.selected.length === 0 && answer.text === undefined) return;
+    answers[questions[i].header] = [...answer.selected, ...(answer.text ? [answer.text] : [])].join(
+      ", ",
+    );
+  });
   return answers;
 }
 

@@ -15,12 +15,18 @@ const [start, ...rest] = fixture.frames;
 const dialogs = rest.filter((frame: { type: string }) => frame.type === "extension_ui_request");
 const end = rest.find((frame: { type: string }) => frame.type === "tool_execution_end");
 
-function startedHost() {
+const answers = [
+  { selected: ["Cookie"] },
+  { selected: ["Red", "Blue"] },
+  { selected: [], text: "Nebula" },
+];
+
+function startedHost(args: unknown = start.args) {
   const host = createPiExtensionHost();
   const permission = host.onToolStart({
     callId: start.toolCallId,
     toolName: start.toolName,
-    args: start.args,
+    args,
     status: "running",
     result: null,
   });
@@ -47,12 +53,7 @@ test("real rpiv RPC dialogs use one form and preserve choices, multi-select, and
   });
   expect(host.mapDialog(dialogs[0], "pi")).toEqual({ type: "deferred" });
   expect(
-    host.respondToPermission(permission, {
-      behavior: "allow",
-      updatedInput: {
-        answers: { Snack: "Cookie", Colors: "Red, Blue", Project: "Nebula" },
-      },
-    }),
+    host.respondToPermission(permission, { behavior: "allow", questionAnswers: answers }),
   ).toEqual({ responses: [{ id: dialogs[0].id, response: { value: dialogs[0].options[1] } }] });
   expect(host.mapDialog(dialogs[1], "pi")).toEqual({
     type: "response",
@@ -65,6 +66,21 @@ test("real rpiv RPC dialogs use one form and preserve choices, multi-select, and
   expect(host.mapDialog(dialogs[3], "pi")).toEqual({
     type: "response",
     response: { value: "Nebula" },
+  });
+});
+
+test("multi-select labels containing a comma map back to their option numbers", () => {
+  const args = structuredClone(start.args);
+  args.questions[1].options[0].label = "Red, warm";
+  const { host, permission } = startedHost(args);
+  host.respondToPermission(permission, {
+    behavior: "allow",
+    questionAnswers: [answers[0], { selected: ["Red, warm", "Blue"] }, answers[2]],
+  });
+  host.mapDialog(dialogs[0], "pi");
+  expect(host.mapDialog(dialogs[1], "pi")).toEqual({
+    type: "response",
+    response: { value: "1,2" },
   });
 });
 
@@ -153,12 +169,7 @@ test("the Pi agent releases a deferred captured dialog when the form is answered
   expect(permission.input?.questions).toHaveLength(3);
   runtime.emit(dialogs[0]);
   expect(runtime.extensionUiResponses).toEqual([]);
-  await session.respondToPermission(permission.id, {
-    behavior: "allow",
-    updatedInput: {
-      answers: { Snack: "Cookie", Colors: "Red, Blue", Project: "Nebula" },
-    },
-  });
+  await session.respondToPermission(permission.id, { behavior: "allow", questionAnswers: answers });
   for (const dialog of dialogs.slice(1)) runtime.emit(dialog);
   expect(runtime.extensionUiResponses).toEqual([
     { id: dialogs[0].id, response: { value: dialogs[0].options[1] } },

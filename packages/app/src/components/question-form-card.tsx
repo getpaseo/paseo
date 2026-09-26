@@ -12,7 +12,7 @@ import { EditingTextInput as TextInput } from "@/components/ui/text-input";
 import type { EditingTextInputHandle } from "@/components/ui/text-input/types";
 import {
   areQuestionsAnswered,
-  buildQuestionFormAnswers,
+  buildQuestionFormResponse,
   isQuestionAnswered,
   parseQuestionFormQuestions,
   questionShowsTextInput,
@@ -402,13 +402,9 @@ export function QuestionFormCard({ permission, onRespond, isResponding }: Questi
   const handleSubmit = useCallback(() => {
     if (!questions || !allAnswered || isResponding) return;
     setRespondingAction("submit");
-    onRespond({
-      behavior: "allow",
-      updatedInput: {
-        ...permission.request.input,
-        answers: buildQuestionFormAnswers(questions, selections, otherTexts),
-      },
-    });
+    onRespond(
+      buildQuestionFormResponse(permission.request.input, questions, selections, otherTexts),
+    );
   }, [
     questions,
     allAnswered,
@@ -423,13 +419,9 @@ export function QuestionFormCard({ permission, onRespond, isResponding }: Questi
     if (!questions) return;
     setRespondingAction("dismiss");
     if (shouldSubmitEmptyOnDismiss(questions)) {
-      onRespond({
-        behavior: "allow",
-        updatedInput: {
-          ...permission.request.input,
-          answers: buildQuestionFormAnswers(questions, selections, otherTexts),
-        },
-      });
+      onRespond(
+        buildQuestionFormResponse(permission.request.input, questions, selections, otherTexts),
+      );
       return;
     }
     onRespond({

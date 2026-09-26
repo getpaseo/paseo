@@ -5042,6 +5042,7 @@ describe("Codex app-server provider", () => {
 
     await session.respondToPermission("permission-call-question-2", {
       behavior: "allow",
+      questionAnswers: [{ selected: ["Tea"] }],
       updatedInput: {
         answers: {
           Drink: "Tea",
@@ -5061,6 +5062,7 @@ describe("Codex app-server provider", () => {
       requestId: "permission-call-question-2",
       resolution: {
         behavior: "allow",
+        questionAnswers: [{ selected: ["Tea"] }],
         updatedInput: {
           answers: {
             Drink: "Tea",
@@ -5097,6 +5099,33 @@ describe("Codex app-server provider", () => {
           },
         },
       },
+    });
+  });
+
+  test("answers multi-select questions with option labels that contain commas", async () => {
+    const session = createSession();
+    const pendingResponse = asInternals(session).handleToolApprovalRequest({
+      itemId: "call-question-3",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      questions: [
+        {
+          id: "colors",
+          header: "Colors",
+          question: "Which colors?",
+          multiSelect: true,
+          options: [{ label: "Red, bright" }, { label: "Blue" }],
+        },
+      ],
+    });
+
+    await session.respondToPermission("permission-call-question-3", {
+      behavior: "allow",
+      questionAnswers: [{ selected: ["Red, bright", "Blue"], text: "Green, dark" }],
+    });
+
+    await expect(pendingResponse).resolves.toEqual({
+      answers: { colors: { answers: ["Red, bright", "Blue", "Green, dark"] } },
     });
   });
 

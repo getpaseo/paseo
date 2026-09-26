@@ -456,6 +456,11 @@ const AgentPermissionActionSchema = z.object({
   intent: z.enum(["implement", "implement_resume", "dismiss"]).optional(),
 });
 
+const AgentQuestionAnswerSchema = z.object({
+  selected: z.array(z.string()),
+  text: z.string().optional(),
+});
+
 export const AgentPermissionResponseSchema: z.ZodType<AgentPermissionResponse> =
   z.discriminatedUnion("behavior", [
     z.object({
@@ -463,6 +468,7 @@ export const AgentPermissionResponseSchema: z.ZodType<AgentPermissionResponse> =
       selectedActionId: z.string().optional(),
       updatedInput: z.record(z.string(), z.unknown()).optional(),
       updatedPermissions: z.array(AgentPermissionUpdateSchema).optional(),
+      questionAnswers: z.array(AgentQuestionAnswerSchema).optional(),
     }),
     z.object({
       behavior: z.literal("deny"),

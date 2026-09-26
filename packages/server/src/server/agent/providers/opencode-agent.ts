@@ -57,6 +57,7 @@ import {
   type ToolCallDetail,
   type ToolCallTimelineItem,
 } from "../agent-sdk-types.js";
+import { questionAnswerValues } from "../question-answers.js";
 import { importSessionFromPersistence } from "../provider-session-import.js";
 import {
   raceProviderRefreshAbort,
@@ -4957,19 +4958,10 @@ class OpenCodeAgentSession implements AgentSession {
           directory,
         });
       } else {
-        const answersRecord = readOpenCodeRecord(response.updatedInput?.answers);
         const questions = Array.isArray(pending.input?.questions) ? pending.input.questions : [];
-        const answers = questions.map((item) => {
-          const header = readNonEmptyString(readOpenCodeRecord(item)?.header);
-          const rawAnswer = header ? readNonEmptyString(answersRecord?.[header]) : null;
-          if (!rawAnswer) {
-            return [];
-          }
-          return rawAnswer
-            .split(",")
-            .map((entry) => entry.trim())
-            .filter((entry) => entry.length > 0);
-        });
+        const answers = questions.map((_, index) =>
+          questionAnswerValues(response.questionAnswers?.[index]),
+        );
 
         await this.client.question.reply({
           requestID: requestId,

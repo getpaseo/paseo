@@ -5296,13 +5296,57 @@ describe("OpenCode provider subagent contract", () => {
 
     await parent.respondToPermission("question_provider_child", {
       behavior: "allow",
-      updatedInput: { answers: { Path: "A" } },
+      questionAnswers: [{ selected: ["A"] }],
     });
     expect(parentClient.calls.questionReply).toContainEqual(
       expect.objectContaining({
         requestID: "question_provider_child",
         directory: "/workspace/question-child",
         answers: [["A"]],
+      }),
+    );
+    await parent.close();
+  });
+
+  test("replies to questions with option labels and custom answers that contain commas", async () => {
+    const { parent, openCode } = await createParentSession("ses_parent_comma_question");
+    openCode.emitEvent({
+      type: "question.asked",
+      properties: {
+        id: "question_comma",
+        sessionID: "ses_parent_comma_question",
+        questions: [
+          {
+            question: "Which colors?",
+            header: "Colors",
+            multiple: true,
+            options: [
+              { label: "Red, bright", description: "Warm" },
+              { label: "Blue", description: "Cool" },
+            ],
+          },
+          {
+            question: "Which city?",
+            header: "City",
+            options: [{ label: "Paris, France", description: "Europe" }],
+          },
+        ],
+      },
+    });
+    await vi.waitFor(() => expect(parent.getPendingPermissions()).toHaveLength(1));
+
+    await parent.respondToPermission("question_comma", {
+      behavior: "allow",
+      questionAnswers: [
+        { selected: ["Red, bright", "Blue"], text: "Green, dark" },
+        { selected: ["Paris, France"] },
+      ],
+    });
+
+    expect(openCode.calls.questionReply).toContainEqual(
+      expect.objectContaining({
+        requestID: "question_comma",
+        answers: [["Red, bright", "Blue", "Green, dark"], ["Paris, France"]],
       }),
     );
     await parent.close();

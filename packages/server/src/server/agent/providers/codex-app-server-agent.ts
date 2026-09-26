@@ -38,6 +38,7 @@ import {
   type ProviderRefreshContext,
   type ResolveAgentDefaultModeInput,
 } from "../agent-sdk-types.js";
+import { questionAnswerValues } from "../question-answers.js";
 import { importSessionFromPersistence } from "../provider-session-import.js";
 import { runProviderRefreshActivity } from "../provider-refresh-deadline.js";
 import type { Logger } from "pino";
@@ -1264,39 +1265,21 @@ export function mapCodexQuestionRequestToToolCall(params: {
   };
 }
 
-function mapCodexQuestionResponseByHeader(params: {
+function mapCodexQuestionResponse(params: {
   questions: CodexQuestionPrompt[];
   response: AgentPermissionResponse;
 }): Record<string, { answers: string[] }> | null {
-  if (params.response.behavior !== "allow") {
+  if (params.response.behavior !== "allow" || !params.response.questionAnswers) {
     return null;
   }
-  const updatedInputRecord = toObjectRecord(params.response.updatedInput);
-  const answersRecord = toObjectRecord(updatedInputRecord?.answers);
-  if (!answersRecord) {
-    return null;
-  }
-
+  const questionAnswers = params.response.questionAnswers;
   const answers: Record<string, { answers: string[] }> = {};
-  for (const question of params.questions) {
-    const rawAnswer = answersRecord[question.header];
-    if (typeof rawAnswer !== "string") {
-      continue;
-    }
-    const normalizedAnswer = rawAnswer.trim();
-    if (!normalizedAnswer) {
-      continue;
-    }
-    const values = question.multiSelect
-      ? normalizedAnswer
-          .split(",")
-          .map((entry) => entry.trim())
-          .filter((entry) => entry.length > 0)
-      : [normalizedAnswer];
+  params.questions.forEach((question, index) => {
+    const values = questionAnswerValues(questionAnswers[index]);
     if (values.length > 0) {
       answers[question.id] = { answers: values };
     }
-  }
+  });
 
   return Object.keys(answers).length > 0 ? answers : null;
 }
@@ -4604,7 +4587,7 @@ export class CodexAppServerAgentSession implements AgentSession {
         ? pendingRequest.metadata.itemId
         : requestId;
     if (response.behavior === "allow") {
-      const mappedAnswers = mapCodexQuestionResponseByHeader({
+      const mappedAnswers = mapCodexQuestionResponse({
         questions,
         response,
       });

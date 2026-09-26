@@ -54,6 +54,7 @@ import {
   type ImportableProviderSession,
   type ListImportableSessionsOptions,
 } from "./agent-sdk-types.js";
+import { resolveQuestionAnswers } from "./question-answers.js";
 import { buildArchivedAgentRecord, type ArchivedStoredAgentRecord } from "./agent-archive.js";
 import type { StoredAgentRecord, AgentStorage } from "./agent-storage.js";
 import type { AgentOwner } from "./agent-owner.js";
@@ -2981,7 +2982,11 @@ export class AgentManager {
     agent.inFlightPermissionResponses.add(requestId);
 
     try {
-      const result = await agent.session.respondToPermission(requestId, response);
+      const request = agent.pendingPermissions.get(requestId);
+      const result = await agent.session.respondToPermission(
+        requestId,
+        request ? resolveQuestionAnswers(request, response) : response,
+      );
       agent.pendingPermissions.delete(requestId);
 
       try {

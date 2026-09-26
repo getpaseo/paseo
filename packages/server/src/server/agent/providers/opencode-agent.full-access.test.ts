@@ -332,7 +332,7 @@ describe("OpenCode auto_accept feature", () => {
 
     await session.respondToPermission("question-1", {
       behavior: "allow",
-      updatedInput: { answers: { Decision: "Proceed" } },
+      questionAnswers: [{ selected: ["Proceed"] }],
     });
 
     expect(openCodeClient.calls.questionReply).toHaveLength(1);
@@ -386,7 +386,7 @@ describe("OpenCode auto_accept feature", () => {
 
     await session.respondToPermission("question-1", {
       behavior: "allow",
-      updatedInput: { answers: { Decision: "Use another answer" } },
+      questionAnswers: [{ selected: [], text: "Use another answer" }],
     });
 
     expect(openCodeClient.calls.questionReply).toEqual([
