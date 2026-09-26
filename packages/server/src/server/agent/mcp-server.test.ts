@@ -3704,11 +3704,21 @@ class HeldTurnAgentSession implements AgentSession {
   readonly prompts: string[] = [];
   private readonly subscribers = new Set<(event: AgentStreamEvent) => void>();
   private activeTurnId: string | null = null;
+  private turnStartGate: Promise<void> | null = null;
 
   constructor(
     readonly provider: AgentProvider,
     private readonly holdTurns: boolean,
   ) {}
+
+  /** Hold the next turn's acknowledgment, as a provider awaiting its turn-start request does. */
+  holdTurnStart(): () => void {
+    let release!: () => void;
+    this.turnStartGate = new Promise((resolve) => {
+      release = resolve;
+    });
+    return release;
+  }
 
   async run(): Promise<AgentRunResult> {
     return { sessionId: this.id, finalText: "", timeline: [] };
@@ -3716,6 +3726,7 @@ class HeldTurnAgentSession implements AgentSession {
 
   async startTurn(prompt: AgentPromptInput): Promise<{ turnId: string }> {
     this.prompts.push(typeof prompt === "string" ? prompt : JSON.stringify(prompt));
+    await this.turnStartGate;
     const turnId = randomUUID();
     this.activeTurnId = turnId;
     setTimeout(() => {
@@ -4083,6 +4094,62 @@ describe("send_agent_prompt MCP tool", () => {
       expect(finishNotifications()).toHaveLength(1);
     } finally {
       await removeAgentStateDir(agentManager, storage, workdir);
+    }
+  });
+
+  it("reports a background prompt's accepted turn as running", async () => {
+    const workdir = await mkdtemp(join(tmpdir(), "mcp-background-send-status-"));
+    const storage = new AgentStorage(join(workdir, "agents"), logger);
+    const parentClient = new HeldTurnAgentClient("claude", false);
+    const childClient = new HeldTurnAgentClient("codex", true);
+    const agentManager = new AgentManager({
+      clients: { claude: parentClient, codex: childClient },
+      registry: storage,
+      logger,
+    });
+
+    try {
+      const parent = await agentManager.createAgent(
+        { provider: "claude", cwd: existingCwd },
+        undefined,
+        { workspaceId: "wks_parent" },
+      );
+      const child = await agentManager.createAgent(
+        { provider: "codex", cwd: existingCwd },
+        undefined,
+        { workspaceId: "wks_parent" },
+      );
+      const server = await createAgentMcpServer({
+        agentManager,
+        agentStorage: storage,
+        callerAgentId: parent.id,
+        providerSnapshotManager: createOpenCodeManager().manager,
+        logger,
+      });
+      const tool = registeredTool(server, "send_agent_prompt");
+      const childSession = childClient.sessions[0]!;
+      const acknowledgeTurnStart = childSession.holdTurnStart();
+
+      const pending = invokeToolWithParsedInput(tool, {
+        agentId: child.id,
+        prompt: "Follow up",
+      });
+      await vi.waitFor(() => expect(childSession.prompts).toEqual(["Follow up"]));
+      acknowledgeTurnStart();
+      const response = await pending;
+
+      expect(response.structuredContent).toMatchObject({ success: true, status: "running" });
+      expect(agentManager.getAgent(child.id)?.lifecycle).toBe("running");
+
+      childSession.finishTurn();
+      await vi.waitFor(() => {
+        const parentPrompts = parentClient.sessions[0]!.prompts;
+        expect(parentPrompts).toHaveLength(1);
+        expect(parentPrompts[0]).toContain(child.id);
+        expect(parentPrompts[0]).toContain("finished");
+      });
+    } finally {
+      rmSync(workdir, { recursive: true, force: true });
     }
   });
 });
