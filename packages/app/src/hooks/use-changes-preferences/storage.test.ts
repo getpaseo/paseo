@@ -33,6 +33,7 @@ describe("loadChangesPreferencesFromStorage", () => {
       hideWhitespace: false,
       inlineDiff: false,
       commitsCollapsed: true,
+      fullFile: false,
     });
     expect(storage.entries.get(CHANGES_PREFERENCES_STORAGE_KEY)).toBe(JSON.stringify(result));
   });
@@ -57,6 +58,7 @@ describe("loadChangesPreferencesFromStorage", () => {
       wrapLines: false,
       inlineDiff: false,
       commitsCollapsed: true,
+      fullFile: false,
     });
     expect(storage.entries.get(CHANGES_PREFERENCES_STORAGE_KEY)).toBe(persisted);
     expect(storage.entries.size).toBe(1);
@@ -139,5 +141,21 @@ describe("saveChangesPreferences", () => {
 
     const expected = { ...DEFAULT_CHANGES_PREFERENCES, wrapLines: true };
     expect(storage.entries.get(CHANGES_PREFERENCES_STORAGE_KEY)).toBe(JSON.stringify(expected));
+  });
+});
+
+describe("changes preferences fullFile", () => {
+  it("defaults to showing changes only", () => {
+    expect(DEFAULT_CHANGES_PREFERENCES.fullFile).toBe(false);
+  });
+
+  it("round-trips fullFile: true", async () => {
+    const storage = createInMemoryKeyValueStorage({
+      [CHANGES_PREFERENCES_STORAGE_KEY]: JSON.stringify({ fullFile: true }),
+    });
+
+    const prefs = await loadChangesPreferencesFromStorage(storage);
+
+    expect(prefs.fullFile).toBe(true);
   });
 });
