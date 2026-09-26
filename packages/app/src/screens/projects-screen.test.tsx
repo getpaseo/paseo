@@ -104,6 +104,39 @@ vi.mock("expo-router", () => ({
   router: { push },
 }));
 
+vi.mock("@/navigation/settings-navigation", async () => {
+  const { buildProjectSettingsRoute } = await import("@/utils/host-routes");
+  return {
+    openProjectSettings: (serverId: string, projectId: string) =>
+      push(buildProjectSettingsRoute(serverId, projectId)),
+  };
+});
+
+vi.mock("react-native-reanimated", () => ({
+  default: { View: "div" },
+  useAnimatedStyle: (factory: () => unknown) => factory(),
+}));
+
+vi.mock("@react-native-async-storage/async-storage", () => ({
+  default: {
+    getItem: async () => null,
+    setItem: async () => undefined,
+    removeItem: async () => undefined,
+  },
+}));
+
+vi.mock("react-native-unistyles", async () => import("../../test-stubs/react-native-unistyles"));
+
+vi.mock("@gorhom/bottom-sheet", async () => import("../../test-stubs/gorhom-bottom-sheet"));
+
+vi.mock("react-native-safe-area-context", () => ({
+  useSafeAreaInsets: () => ({ top: 0, right: 0, bottom: 0, left: 0 }),
+}));
+
+vi.mock("@/contexts/toast-context", () => ({
+  useToast: () => ({ show: vi.fn(), error: vi.fn() }),
+}));
+
 vi.mock("@/components/ui/loading-spinner", () => ({
   LoadingSpinner: ({ size }: { size?: string | number }) =>
     React.createElement("span", {
