@@ -70,7 +70,7 @@ The daemon validates the complete file before applying anything. It applies runt
 paseo daemon restart
 ```
 
-Runtime-safe settings include relay enablement, MCP settings, browser tools, hostnames, CORS origins, trusted proxies, Git process limits, agent and terminal profiles, provider definitions, metadata generation, the app base URL, provider catalog timeout, and the global plugin switch. Removing one of these settings applies its omitted-field behavior; removing a provider removes it from future launches.
+Runtime-safe settings include project search roots, relay enablement, MCP settings, browser tools, hostnames, CORS origins, trusted proxies, Git process limits, agent and terminal profiles, provider definitions, metadata generation, the app base URL, provider catalog timeout, and the global plugin switch. Removing one of these settings applies its omitted-field behavior; removing a provider removes it from future launches.
 
 New homes keep relay disabled when you remove `daemon.relay.enabled`. A daemon whose config already omitted this field when it started keeps the legacy relay-enabled behavior for compatibility. Set `daemon.relay.enabled` explicitly when editing an older config.
 
@@ -83,6 +83,34 @@ Deployment environment variables and legacy supervisor flags remain authoritativ
 Agent providers, both the first-class ones Paseo ships with and custom entries you add under `agents.providers`, are documented on their own page.
 
 See [Providers](/docs/providers) for the mental model and [Supported providers](/docs/supported-providers) for the full list of agents Paseo can launch. For pointing Claude at Anthropic-compatible endpoints (Z.AI, Alibaba/Qwen), multiple profiles, custom binaries, ACP agents, and the `additionalModels` merge behavior, see [Custom providers](/docs/custom-providers). The full field reference lives on GitHub at [docs/custom-providers.md](https://github.com/getpaseo/paseo/blob/main/docs/custom-providers.md).
+
+## Project directory search
+
+Project keyword search defaults to the daemon user's home directory. To include an external disk
+or another checkout location, set `projects.searchRoots`:
+
+```json
+{
+  "projects": {
+    "searchRoots": ["~", "/Volumes/macport"]
+  }
+}
+```
+
+The list replaces the default roots, so include `~` to keep searching home. Supply 1–16 absolute
+paths or paths beginning with `~/`; paths belong to the daemon host, not the phone or browser.
+Results from overlapping roots are deduplicated and ranked together. Search shares a bounded
+scan budget across roots and skips missing or unreadable directories, including unmounted disks.
+Remove `projects.searchRoots` to restore the home-only default.
+
+Run `paseo reload` after editing the file. Subsequent searches in existing clients use the new
+roots without restarting agents. For example, `bridge` can find `/Volumes/macport/bridge` with
+the configuration above. `~/...` and `./...` still refer to home; explicitly entered absolute
+paths browse that location even when it is outside the configured search roots. Empty queries
+do not scan the roots.
+
+These settings control project discovery, not file access permissions. They do not change
+workspace/composer search scope or which directories the daemon user can open.
 
 ## Worktrees
 

@@ -22,6 +22,22 @@ function modeOf(filePath: string): number {
   return statSync(filePath).mode & MODE_MASK;
 }
 
+describe("PersistedConfigSchema project search roots", () => {
+  test("accepts explicit roots and leaves omitted roots unset", () => {
+    expect(
+      PersistedConfigSchema.parse({
+        projects: { searchRoots: ["~", "/Volumes/macport", "D:/code"] },
+      }).projects,
+    ).toEqual({ searchRoots: ["~", "/Volumes/macport", "D:/code"] });
+    expect(PersistedConfigSchema.parse({}).projects).toBeUndefined();
+  });
+  test.each(
+    [[], [""], ["relative/code"], Array(17).fill("~")].map((searchRoots) => ({ searchRoots })),
+  )("rejects invalid roots $searchRoots", ({ searchRoots }) => {
+    expect(PersistedConfigSchema.safeParse({ projects: { searchRoots } }).success).toBe(false);
+  });
+});
+
 describe("PersistedConfigSchema daemon auth config", () => {
   test("accepts optional daemon password hash", () => {
     const hash = "$2b$12$OLxyuuP9uLK30Uzc4wQX0O6liuU/Q1t5P2b0Ebf36mULvpVK3DRZW";

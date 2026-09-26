@@ -169,10 +169,25 @@ const MutableRelayConfigSchema = z
   })
   .passthrough();
 
+export const ProjectSearchConfigSchema = z
+  .object({
+    searchRoots: z
+      .array(
+        z
+          .string()
+          .regex(/^(?:~(?:[\\/]|$)|[\\/]|[A-Za-z]:[\\/])/, "Use an absolute path or ~/ path"),
+      )
+      .min(1)
+      .max(16)
+      .optional(),
+  })
+  .passthrough();
+
 export const MutableDaemonConfigSchema = z
   .object({
     // COMPAT(relayConfig): added in v0.2.6, remove after 2027-01-31 when old daemons are unsupported.
     relay: MutableRelayConfigSchema.optional(),
+    projects: ProjectSearchConfigSchema.optional(),
     mcp: z
       .object({
         enabled: z.boolean().optional(),
@@ -212,6 +227,7 @@ export const MutableDaemonConfigSchema = z
 export const MutableDaemonConfigPatchSchema = z
   .object({
     relay: MutableRelayConfigSchema.partial().optional(),
+    projects: ProjectSearchConfigSchema.optional(),
     mcp: z.object({ injectIntoAgents: z.boolean().optional() }).passthrough().optional(),
     browserTools: MutableBrowserToolsConfigSchema.partial().optional(),
     providers: z

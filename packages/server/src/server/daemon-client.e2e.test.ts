@@ -1158,6 +1158,33 @@ test("browses explicit project paths outside home without widening workspace sea
   }
 });
 
+test("applies configured project search roots to existing sessions and preserves workspace scope", async () => {
+  const outside = mkdtempSync(path.join(tmpdir(), "paseo-project-search-roots-"));
+  const project = path.join(outside, "bridge");
+  const workspace = path.join(outside, "workspace");
+  mkdirSync(project);
+  mkdirSync(workspace);
+  const initial = await ctx.client.getDaemonConfig();
+  try {
+    await ctx.client.patchDaemonConfig({ projects: { searchRoots: [outside] } });
+    const keyword = await ctx.client.getDirectorySuggestions({ query: "bridge" });
+    expect(keyword.error).toBeNull();
+    expect(keyword.directories).toEqual([project]);
+    const scoped = await ctx.client.getDirectorySuggestions({ cwd: workspace, query: "bridge" });
+    expect(scoped.error).toBeNull();
+    expect(scoped.entries).toEqual([]);
+    await ctx.client.patchDaemonConfig({ projects: { searchRoots: [workspace] } });
+    const changed = await ctx.client.getDirectorySuggestions({ query: "bridge" });
+    expect(changed.error).toBeNull();
+    expect(changed.entries).toEqual([]);
+    const explicit = await ctx.client.getDirectorySuggestions({ query: path.join(outside, "bri") });
+    expect(explicit.directories).toEqual([project]);
+  } finally {
+    await ctx.client.patchDaemonConfig({ projects: initial.config.projects ?? {} });
+    rmSync(outside, { recursive: true, force: true });
+  }
+});
+
 test("returns typed relative suggestions within a requested directory", async () => {
   const cwd = mkdtempSync(path.join(tmpdir(), "paseo-workspace-suggestion-"));
   const target = path.join(cwd, "src", "components", "message-renderer.tsx");
