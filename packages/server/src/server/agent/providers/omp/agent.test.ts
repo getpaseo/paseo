@@ -170,6 +170,13 @@ describe("OMP agent client and session", () => {
     expect(omp.launchConfiguration().argv).toEqual(expect.arrayContaining(["--thinking", "max"]));
   });
 
+  test("launches with auto thinking when auto is selected", async () => {
+    const omp = new OmpHarness();
+    await omp.start({ thinkingOptionId: "auto" });
+
+    expect(omp.launchConfiguration().argv).toEqual(expect.arrayContaining(["--thinking", "auto"]));
+  });
+
   test("launches with write approval mode", async () => {
     const omp = new OmpHarness();
     await omp.start({ modeId: "write" });

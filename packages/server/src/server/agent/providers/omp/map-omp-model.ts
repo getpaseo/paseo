@@ -20,6 +20,7 @@ export const OMP_THINKING_OPTIONS: ReadonlyArray<{
   { id: "high", label: "High", description: "Deeper reasoning" },
   { id: "xhigh", label: "XHigh", description: "Extra-high reasoning" },
   { id: "max", label: "Max", description: "Maximum reasoning" },
+  { id: "auto", label: "Auto", description: "OMP picks the effort each turn" },
 ] as const;
 
 function mapThinkingOption(
@@ -82,8 +83,12 @@ function resolveOmpThinkingConfig(model: OmpModel): {
     reportedDefault && filtered.some((option) => option.id === reportedDefault)
       ? reportedDefault
       : (filtered[0]?.id ?? DEFAULT_OMP_THINKING_LEVEL);
+  // `auto` is a session-level OMP mode, never a per-model effort, so models do not list it.
+  const options = filtered.some((option) => option.id === "auto")
+    ? filtered
+    : [...filtered, ...OMP_THINKING_OPTIONS.filter((option) => option.id === "auto")];
   return {
-    thinkingOptions: filtered.map((option) =>
+    thinkingOptions: options.map((option) =>
       mapThinkingOption(option, option.id === defaultThinkingOptionId),
     ),
     defaultThinkingOptionId,
