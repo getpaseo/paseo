@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { DesktopDialogBridge, DesktopDialogOpenOptions } from "@/desktop/host";
 import { normalizePickedImageAssets, pickImagesWithDesktopDialog } from "./image-attachment-picker";
 
@@ -21,6 +21,10 @@ function fakeDialogReturning(selection: string | string[] | null): {
 }
 
 describe("image-attachment-picker", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
   it("normalizes a picked File into a blob source", async () => {
     const file = new File(["hello"], "picked.png", { type: "image/png" });
 
@@ -116,6 +120,22 @@ describe("image-attachment-picker", () => {
         fileName: "two.jpg",
       },
     ]);
+  });
+
+  it("uses and updates one global last image folder", async () => {
+    const values = new Map<string, string>();
+    vi.stubGlobal("localStorage", {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => values.set(key, value),
+    });
+
+    const first = fakeDialogReturning(["C:\\Pictures\\one.png"]);
+    await pickImagesWithDesktopDialog(first.dialog);
+
+    const second = fakeDialogReturning(["C:\\Pictures\\two.png"]);
+    await pickImagesWithDesktopDialog(second.dialog);
+
+    expect(second.recordedOptions[0]?.defaultPath).toBe("C:/Pictures");
   });
 
   it("throws when desktop dialog API is not available", async () => {
