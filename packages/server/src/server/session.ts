@@ -209,6 +209,7 @@ import {
 import { ScheduleSession } from "./session/schedule/schedule-session.js";
 import { ProviderCatalogSession } from "./session/provider/provider-catalog-session.js";
 import { WorkspaceFilesSession } from "./session/files/workspace-files-session.js";
+import { BrowserScreencastSession } from "./session/browser/screencast.js";
 import { AgentConfigSession } from "./session/agent-config/agent-config-session.js";
 import { ProjectConfigSession } from "./session/project-config/project-config-session.js";
 import { DaemonSession, type DaemonRuntimeConfig } from "./session/daemon/daemon-session.js";
@@ -723,12 +724,11 @@ export class Session {
       if (this.onMessageToSource) this.onMessageToSource(source, message);
       else this.onMessage(message);
     },
-    (source, frame) => {
-      if (this.onBinaryMessageToSource) {
-        void this.onBinaryMessageToSource(source, frame).catch((error) =>
-          this.sessionLogger.warn({ err: error }, "Failed to emit binary frame"),
-        );
-      } else this.emitBinary(frame);
+    async (source, frame) => {
+      if (!this.onBinaryMessageToSource) return this.emitBinary(frame);
+      await this.onBinaryMessageToSource(source, frame).catch((error) =>
+        this.sessionLogger.warn({ err: error }, "Failed to emit binary frame"),
+      );
     },
     (source, message) => this.workspaceSetupMessageForClient(message, source),
     (request, message) =>
@@ -746,6 +746,7 @@ export class Session {
   private readonly validateSystemOneApiKey: typeof isTypeSafeApiKeyAccepted;
   private readonly verifySession: VerifySession | null;
   private readonly verifyHost: DaemonPlaywrightHost | null | undefined;
+  private readonly browserScreencast: BrowserScreencastSession;
   private readonly clientId: string;
   private readonly authorization: SessionAuthorization;
   private appVersion: string | null;
@@ -1226,6 +1227,10 @@ export class Session {
     });
     this.verifySession = this.createVerifySession(options);
     this.verifyHost = options.verifyHost;
+    this.browserScreencast = new BrowserScreencastSession({
+      host: this.verifyHost,
+      emit: (msg) => this.emit(msg),
+    });
 
     this.voiceSessions = new VoiceSessions(
       {
@@ -2327,6 +2332,8 @@ export class Session {
     source?: object,
   ): Promise<void> | undefined {
     if (msg.type === "browser.remote.execute.request") return this.executeRemoteBrowser(msg);
+    if (msg.type === "browser.screencast.subscribe.request")
+      return this.browserScreencast.subscribe(msg, this.delivery);
     if (msg.type === "browser.activity.control.request") {
       this.emit({
         type: "browser.activity.control.response",
@@ -3389,6 +3396,10 @@ export class Session {
     }
     if (binaryFrame.kind === "file_transfer") {
       await this.workspaceFilesSession.handleFileTransferFrame(binaryFrame.frame, source);
+      return;
+    }
+    if (binaryFrame.kind === "browser_screencast") {
+      this.browserScreencast.handleFrame(binaryFrame.frame, source);
       return;
     }
     this.terminalController.handleBinaryFrame(binaryFrame.frame, source);

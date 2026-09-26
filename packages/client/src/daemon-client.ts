@@ -146,11 +146,15 @@ import type {
 import { isRelayClientWebSocketUrl } from "@getpaseo/protocol/daemon-endpoints";
 import {
   asUint8Array,
+  BrowserScreencastOpcode,
+  decodeBrowserScreencastFrame,
+  encodeBrowserScreencastAck,
   decodeFileTransferFrame,
   encodeFileTransferFrame,
   decodeTerminalStreamFrame,
   FileTransferOpcode,
   TerminalStreamOpcode,
+  type BrowserScreencastFrame,
   type FileTransferFrame,
 } from "@getpaseo/protocol/binary-frames/index";
 import {
@@ -178,6 +182,10 @@ import type {
   BrowserAutomationResponsePayload,
 } from "@getpaseo/protocol/browser-automation/rpc-schemas";
 import type { BrowserActivityControlRequest } from "@getpaseo/protocol/browser-activity/rpc-schemas";
+
+export type BrowserScreencastEvent =
+  | { type: "frame"; width: number; height: number; jpeg: Uint8Array }
+  | { type: "ended"; error: Error };
 
 export interface Logger {
   debug(obj: object, msg?: string): void;
@@ -1182,6 +1190,7 @@ export class DaemonClient {
   private lastErrorValue: string | null = null;
   private connectionState: ConnectionState = { status: "idle" };
   private readonly terminalStreams = new TerminalStreamRouter();
+  private readonly screencastSlots = new Map<number, (frame: BrowserScreencastFrame) => void>();
   private pendingBinaryFileReads = new Map<string, PendingBinaryFileRead>();
   private activeBinaryFileTransfers = new Map<string, BinaryFileTransferState>();
   private completedBinaryFileReads = new Map<string, FileReadResult>();
@@ -1473,6 +1482,7 @@ export class DaemonClient {
     this.rejectPendingSendQueue(new Error("Daemon client closed"));
     this.rejectPingProbe(new Error("Daemon client closed"));
     this.terminalStreams.clearSlots();
+    this.screencastSlots.clear();
     this.lastServerInfoMessage = null;
     if (this.runtimeMetricsInterval) {
       clearInterval(this.runtimeMetricsInterval);
@@ -2253,6 +2263,64 @@ export class DaemonClient {
       responseType: "browser.remote.execute.response",
       timeout: input.timeout,
     });
+  }
+
+  /**
+   * Viewport frames arrive in receive. Each frame is acked as it arrives, which paces the
+   * daemon to what this connection drains. "ended" means the tab closed or the subscription
+   * failed, including after a reconnect; no further frames follow.
+   */
+  observeBrowserScreencast(
+    input: { workspaceId: string; browserId: string },
+    receive: (event: BrowserScreencastEvent) => void,
+  ): OwnedSubscription<CorrelatedResponsePayload<"browser.screencast.subscribe.response">> {
+    const observation = this.observe("browser.screencast.subscribe.response", {
+      type: "browser.screencast.subscribe.request",
+      ...input,
+    });
+    let detach = () => {};
+    const release = () => {
+      detach();
+      return observation.release();
+    };
+    observation.subscribe({
+      snapshot: (payload) => {
+        detach();
+        if (payload.error !== null) return;
+        const { slot } = payload;
+        const handleFrame = (frame: BrowserScreencastFrame) => {
+          this.sendBinaryFrame(encodeBrowserScreencastAck({ slot, sequence: frame.sequence }));
+          receive({ type: "frame", width: frame.width, height: frame.height, jpeg: frame.payload });
+        };
+        this.screencastSlots.set(slot, handleFrame);
+        detach = () => {
+          if (this.screencastSlots.get(slot) === handleFrame) this.screencastSlots.delete(slot);
+        };
+      },
+      update: (message) => {
+        if (message.type !== "browser.screencast.ended") return;
+        detach();
+        receive({ type: "ended", error: new Error("The browser tab closed") });
+        void release().catch((error) =>
+          this.logger.error({ err: error }, "Browser screencast release failed"),
+        );
+      },
+      error: (error) => {
+        detach();
+        receive({
+          type: "ended",
+          error: error instanceof Error ? error : new Error(String(error)),
+        });
+      },
+    });
+    return {
+      get subscriptionId() {
+        return observation.subscriptionId;
+      },
+      ready: observation.ready,
+      subscribe: observation.subscribe,
+      release,
+    };
   }
 
   controlBrowserActivity(input: {
@@ -6441,6 +6509,16 @@ export class DaemonClient {
       return true;
     }
 
+    const screencastFrame = decodeBrowserScreencastFrame(rawBytes);
+    if (screencastFrame) {
+      this.consecutiveLivenessFailures = 0;
+      if (screencastFrame.opcode === BrowserScreencastOpcode.Frame) {
+        this.screencastSlots.get(screencastFrame.slot)?.(screencastFrame);
+      }
+      this.runtimeMetrics?.recordBinaryFrame("other", rawBytes.byteLength, 0);
+      return true;
+    }
+
     const frame = decodeTerminalStreamFrame(rawBytes);
     if (!frame) {
       return false;
@@ -6611,6 +6689,7 @@ export class DaemonClient {
     this.rejectPendingSendQueue(new DaemonConnectionError(reason ?? "Connection lost"));
     this.rejectPingProbe(new DaemonConnectionError(reason ?? "Connection lost"));
     this.terminalStreams.clearSlots();
+    this.screencastSlots.clear();
     this.lastServerInfoMessage = null;
 
     if (wasDisposed) {

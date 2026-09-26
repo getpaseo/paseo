@@ -39,13 +39,11 @@ import {
   getRemotePoint,
   type RemotePoint,
 } from "@/desktop/browser/remote-point";
+import { useRemoteBrowserFrames } from "@/desktop/browser/remote-frames";
 import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
 import { isHttpUrl } from "@/utils/http-url";
 import { openExternalUrl } from "@/utils/open-external-url";
-import type {
-  BrowserAutomationCommand,
-  BrowserAutomationResult,
-} from "@getpaseo/protocol/browser-automation/rpc-schemas";
+import type { BrowserAutomationCommand } from "@getpaseo/protocol/browser-automation/rpc-schemas";
 
 interface RemoteBrowserPaneProps {
   browserId: string;
@@ -53,12 +51,6 @@ interface RemoteBrowserPaneProps {
   workspaceId: string;
   isInteractive?: boolean;
   onFocusPane?: () => void;
-}
-
-interface Frame {
-  dataUri: string;
-  width: number;
-  height: number;
 }
 
 interface RemoteGestureState {
@@ -69,7 +61,7 @@ interface RemoteGestureState {
   longPressTimer: ReturnType<typeof setTimeout> | null;
 }
 
-// Frequent enough to watch an agent work, cheap enough for a phone on cellular.
+// Syncs tab titles and polls old daemons' frames; frames from current daemons are pushed.
 const FRAME_REFRESH_MS = 1_000;
 const SCROLL_FRAME_REFRESH_MS = 250;
 const RESIZE_SETTLE_MS = 150;
@@ -103,41 +95,6 @@ function useExternalBrowserLink(
     });
   }, [externalUrl, mountedRef, onError]);
   return { externalUrl, open };
-}
-
-async function captureRemoteFrame(
-  execute: (command: BrowserAutomationCommand) => Promise<BrowserAutomationResult>,
-  browserId: string,
-  viewport: { width: number; height: number },
-): Promise<Frame | null> {
-  const capture = () =>
-    execute({
-      command: "screenshot",
-      args: { browserId, fullPage: false, reveal: true, ephemeral: true },
-    });
-  let result = await capture();
-  const width = Math.round(viewport.width);
-  const height = Math.round(viewport.height);
-  if (
-    result.command === "screenshot" &&
-    width >= 50 &&
-    height >= 50 &&
-    (result.width !== width || result.height !== height)
-  ) {
-    await execute({ command: "resize", args: { browserId, width, height } });
-    result = await capture();
-  }
-  if (result.command !== "screenshot" || !result.dataBase64) {
-    throw new Error("The Linux browser returned no viewport frame");
-  }
-  if (width >= 50 && height >= 50 && (result.width !== width || result.height !== height)) {
-    return null;
-  }
-  return {
-    dataUri: `data:${result.mimeType};base64,${result.dataBase64}`,
-    width: result.width,
-    height: result.height,
-  };
 }
 
 const REMOTE_SPECIAL_KEYS = new Set([
@@ -181,13 +138,11 @@ function RemoteBrowserPane({
   const browser = useBrowserStore((state) => state.browsersById[browserId] ?? null);
   const updateBrowser = useBrowserStore((state) => state.updateBrowser);
   const upsertRemoteBrowser = useBrowserStore((state) => state.upsertRemoteBrowser);
-  const [frame, setFrame] = useState<Frame | null>(null);
   const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 });
   const [draftUrl, setDraftUrl] = useState(browser?.url ?? "https://example.com");
   // The address field shows the tab's live URL, except while the user edits it.
   const [shownUrl, setShownUrl] = useState(draftUrl);
   const isEditingUrlRef = useRef(false);
-  const requestedSizeRef = useRef<{ width: number; height: number } | null>(null);
   const resizeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [error, setError] = useState<string | null>(null);
   const mountedRef = useRef(true);
@@ -220,6 +175,14 @@ function RemoteBrowserPane({
   const remoteBrowserId = browser?.remoteBrowserId ?? null;
   const remoteBrowserIdRef = useRef(remoteBrowserId);
   remoteBrowserIdRef.current = remoteBrowserId;
+  const { frame, refreshFrame, requestedSizeRef } = useRemoteBrowserFrames({
+    client,
+    serverId,
+    workspaceId,
+    remoteBrowserId,
+    remoteBrowserIdRef,
+    viewportSize,
+  });
   const activity = useBrowserActivity(serverId, workspaceId, remoteBrowserId);
   const handoff = useActiveBrowserHandoff(serverId, workspaceId, remoteBrowserId);
   const [handoffAction, setHandoffAction] = useState<"finish_handoff" | "cancel_handoff" | null>(
@@ -263,21 +226,6 @@ function RemoteBrowserPane({
     },
     [client, workspaceId],
   );
-
-  const refreshFrame = useCallback(async () => {
-    const currentBrowserId = remoteBrowserIdRef.current;
-    if (!currentBrowserId) {
-      return;
-    }
-    const viewport = viewportSizeRef.current;
-    const nextFrame = await captureRemoteFrame(execute, currentBrowserId, viewport);
-    if (!nextFrame || !mountedRef.current) return;
-    requestedSizeRef.current = {
-      width: Math.round(viewport.width),
-      height: Math.round(viewport.height),
-    };
-    setFrame(nextFrame);
-  }, [execute]);
 
   const syncRemoteTabs = useCallback(async () => {
     const result = await execute({ command: "list_tabs", args: {} });
@@ -682,7 +630,14 @@ function RemoteBrowserPane({
         await refreshFrame();
       });
     }, RESIZE_SETTLE_MS);
-  }, [enqueueRemoteOperation, execute, refreshFrame, remoteBrowserId, viewportSize]);
+  }, [
+    enqueueRemoteOperation,
+    execute,
+    refreshFrame,
+    remoteBrowserId,
+    requestedSizeRef,
+    viewportSize,
+  ]);
 
   const handleUrlFocus = useCallback(() => {
     isEditingUrlRef.current = true;
@@ -929,7 +884,7 @@ function RemoteBrowserPane({
             style={styles.frameButton}
             testID={`remote-browser-frame-${browserId}`}
           >
-            <Image resizeMode="stretch" source={frameSource} style={frameStyle} />
+            <Image fadeDuration={0} resizeMode="stretch" source={frameSource} style={frameStyle} />
           </View>
         ) : (
           <Text style={styles.status}>Connecting to Linux browser...</Text>

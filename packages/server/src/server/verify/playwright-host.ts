@@ -21,7 +21,11 @@ import type {
 import type { BrowserImportCookie } from "@getpaseo/protocol/browser-import/rpc-schemas";
 import { writeFileAtomic } from "../atomic-file.js";
 import type { BrowserHostClient } from "../browser-tools/broker.js";
-import { browserToolsFailure, type BrowserToolsResponsePayload } from "../browser-tools/errors.js";
+import {
+  browserToolsFailure,
+  createBrowserToolsRequestError,
+  type BrowserToolsResponsePayload,
+} from "../browser-tools/errors.js";
 import { resolveBrowserExecutable } from "./browser-capability.js";
 import { launchInteractiveBrowser } from "./interactive-browser.js";
 import { EvidenceStore, formatEvidenceRef } from "./evidence-store.js";
@@ -42,10 +46,19 @@ const MAX_ERROR_MESSAGE_LENGTH = 500;
 const DEFAULT_VERIFY_VIEWPORT = { width: 1280, height: 720 };
 const IMPORTED_COOKIES_FILE = "imported-cookies.json";
 const IMPORTED_COOKIES_MARKER = ".paseo-imported-cookies-version";
+// Measured on a 390x750 phone viewport: q70 costs ~11% more bytes than q60 and keeps text legible.
+const SCREENCAST_JPEG_QUALITY = 70;
 
 interface ImportedCookieStore {
   version: string;
   cookies: BrowserImportCookie[];
+}
+
+/** A JPEG viewport frame as Chrome sent it; width and height are CSS pixels. */
+export interface ScreencastFrame {
+  dataBase64: string;
+  width: number;
+  height: number;
 }
 
 export interface ImportCookiesResult {
@@ -205,6 +218,46 @@ export class DaemonPlaywrightHost {
         message: truncateErrorMessage(error),
       });
     }
+  }
+
+  /** Streams viewport frames until the returned stop runs; onEnd fires when the tab closes. */
+  public async startScreencast(input: {
+    workspaceId: string;
+    browserId: string;
+    onFrame: (frame: ScreencastFrame) => void;
+    onEnd: () => void;
+  }): Promise<() => Promise<void>> {
+    const tab = this.tabs.get(input.browserId);
+    if (!tab || tab.page.isClosed() || tab.workspaceId !== input.workspaceId) {
+      throw createBrowserToolsRequestError({
+        code: "browser_tab_not_found",
+        message: `Browser tab ${input.browserId} is not known to the daemon browser host.`,
+      });
+    }
+    const cdp = await tab.context.newCDPSession(tab.page);
+    cdp.on("Page.screencastFrame", (event) => {
+      // Ack before pacing: Chrome skips paints while a frame is unacked, so a late ack
+      // can drop the last change of a page that then stays still.
+      void cdp.send("Page.screencastFrameAck", { sessionId: event.sessionId }).catch(() => {});
+      input.onFrame({
+        dataBase64: event.data,
+        width: Math.round(event.metadata.deviceWidth),
+        height: Math.round(event.metadata.deviceHeight),
+      });
+    });
+    tab.page.once("close", input.onEnd);
+    const stop = async () => {
+      tab.page.off("close", input.onEnd);
+      // Detaching ends the screencast; it rejects once the tab is already gone.
+      await cdp.detach().catch(() => {});
+    };
+    try {
+      await cdp.send("Page.startScreencast", { format: "jpeg", quality: SCREENCAST_JPEG_QUALITY });
+    } catch (error) {
+      await stop();
+      throw error;
+    }
+    return stop;
   }
 
   public async close(): Promise<void> {

@@ -7,7 +7,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { BrowserToolsBroker } from "../browser-tools/broker.js";
 import type { BrowserToolsResponsePayload } from "../browser-tools/errors.js";
 import { resolveBrowserExecutable } from "./browser-capability.js";
-import { DaemonPlaywrightHost } from "./playwright-host.js";
+import { DaemonPlaywrightHost, type ScreencastFrame } from "./playwright-host.js";
 import type { BrowserAutomationCommand } from "@getpaseo/protocol/browser-automation/rpc-schemas";
 import {
   FIXTURE_PASSWORD,
@@ -240,7 +240,24 @@ describe.skipIf(!BROWSER_AVAILABLE)("DaemonPlaywrightHost", { timeout: 20_000 },
       ok: true,
       result: { command: "scroll", x: 600, y: 400, deltaX: 0, deltaY: 500 },
     });
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    await expect
+      .poll(async () => {
+        const scroll = await executeTabCommand(
+          {
+            command: "evaluate",
+            args: {
+              browserId,
+              function:
+                "() => Math.max(window.scrollY, document.documentElement.scrollTop, document.body.scrollTop)",
+            },
+          },
+          "pointer-flow",
+        );
+        return scroll?.ok && scroll.result.command === "evaluate"
+          ? Number(JSON.parse(scroll.result.resultJson))
+          : 0;
+      })
+      .toBeGreaterThan(0);
 
     const state = await executeTabCommand(
       {
@@ -401,6 +418,74 @@ describe.skipIf(!BROWSER_AVAILABLE)("DaemonPlaywrightHost", { timeout: 20_000 },
     if (!updated?.ok || updated.result.command !== "screenshot") expect.unreachable();
     expect(updated.result.sha256).not.toBe(screenshot.result.sha256);
     expect([updated.result.width, updated.result.height]).toEqual([390, 691]);
+  });
+
+  it("streams JPEG viewport frames that follow page changes until stopped", async () => {
+    const browserId = await openTab(`${app?.url}/interaction`, "default");
+    await host?.executeLocal({
+      workspaceId: WORKSPACE_ID,
+      command: { command: "resize", args: { browserId, width: 390, height: 691 } },
+    });
+    const frames: ScreencastFrame[] = [];
+    const stop = await host?.startScreencast({
+      workspaceId: WORKSPACE_ID,
+      browserId,
+      onFrame: (frame) => frames.push(frame),
+      onEnd: () => {},
+    });
+    await expect.poll(() => frames.length).toBeGreaterThan(0);
+    expect(Buffer.from(frames[0].dataBase64, "base64").subarray(0, 2)).toEqual(
+      Buffer.from([0xff, 0xd8]),
+    );
+    expect([frames[0].width, frames[0].height]).toEqual([390, 691]);
+
+    const scroll = () =>
+      host?.executeLocal({
+        workspaceId: WORKSPACE_ID,
+        command: { command: "scroll", args: { browserId, deltaX: 0, deltaY: 300 } },
+      });
+    const beforeScroll = frames.length;
+    await scroll();
+    await expect.poll(() => frames.length).toBeGreaterThan(beforeScroll);
+
+    await stop?.();
+    const stoppedAt = frames.length;
+    const laterFrames: ScreencastFrame[] = [];
+    const stopLater = await host?.startScreencast({
+      workspaceId: WORKSPACE_ID,
+      browserId,
+      onFrame: (frame) => laterFrames.push(frame),
+      onEnd: () => {},
+    });
+    await scroll();
+    await expect.poll(() => laterFrames.length).toBeGreaterThan(1);
+    expect(frames).toHaveLength(stoppedAt);
+    await stopLater?.();
+  });
+
+  it("scopes screencasts to the workspace and reports a closed tab", async () => {
+    const browserId = await openTab(`${app?.url}/login`, "default");
+    const noop = () => {};
+    await expect(
+      host?.startScreencast({
+        workspaceId: OTHER_WORKSPACE_ID,
+        browserId,
+        onFrame: noop,
+        onEnd: noop,
+      }),
+    ).rejects.toMatchObject({ code: "browser_tab_not_found" });
+
+    let ended = false;
+    await host?.startScreencast({
+      workspaceId: WORKSPACE_ID,
+      browserId,
+      onFrame: noop,
+      onEnd: () => {
+        ended = true;
+      },
+    });
+    await executeTabCommand({ command: "close_tab", args: { browserId } }, "default");
+    await expect.poll(() => ended).toBe(true);
   });
 
   it("denies cross-workspace tab access", async () => {
