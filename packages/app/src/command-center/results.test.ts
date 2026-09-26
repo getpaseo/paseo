@@ -1,13 +1,17 @@
 import { describe, expect, it } from "vitest";
 import type { CommandCenterContribution } from "./contributions";
+import type { AggregatedAgent } from "@/hooks/use-aggregated-agents";
 import {
   buildContributionSections,
   filterAndRankBuiltInResults,
   joinSubtitleParts,
+  mergeAgentContentHits,
   moveActiveResultId,
   PINNED_SECTION_BAND,
   preserveActiveResultId,
   projectCommandCenterRows,
+  rankCommandCenterAgents,
+  type CommandCenterAgentResult,
   type CommandCenterWorkspaceResult,
 } from "./results";
 
@@ -542,5 +546,128 @@ describe("joinSubtitleParts", () => {
     expect(joinSubtitleParts(["host", "paseo", "master"])).toBe("host · paseo · master");
     // No branch: degrades to project (or host · project).
     expect(joinSubtitleParts([null, "paseo", null])).toBe("paseo");
+  });
+});
+
+describe("agent content hits", () => {
+  function agentRow(input: {
+    id: string;
+    title: string;
+    subtitle: string;
+    metaSubtitle?: string;
+    snippetSource?: CommandCenterAgentResult["snippetSource"];
+    excerpts?: CommandCenterAgentResult["excerpts"];
+    matchBand?: CommandCenterAgentResult["matchBand"];
+    cwd?: string;
+  }): CommandCenterAgentResult {
+    return {
+      kind: "agent",
+      id: input.id,
+      title: input.title,
+      subtitle: input.subtitle,
+      metaSubtitle: input.metaSubtitle,
+      snippetSource: input.snippetSource,
+      excerpts: input.excerpts,
+      matchBand: input.matchBand,
+      agent: { cwd: input.cwd ?? "/tmp/repo", id: input.id } as AggregatedAgent,
+      run: () => undefined,
+    };
+  }
+
+  it("keeps the title and the excerpt when both match", () => {
+    const local = agentRow({
+      id: "agent:host:kanban",
+      title: "Kanban note",
+      subtitle: "paseo · 2h",
+    });
+    const server = agentRow({
+      id: "agent:host:kanban",
+      title: "Kanban note",
+      subtitle: "the kanban board was left off",
+      snippetSource: "reply",
+      matchBand: "message",
+    });
+
+    const [row] = rankCommandCenterAgents(
+      mergeAgentContentHits([local], [server]),
+      "kanban",
+      () => 0,
+    );
+
+    expect(row?.title).toBe("Kanban note");
+    expect(row?.subtitle).toBe("the kanban board was left off");
+    expect(row?.snippetSource).toBe("reply");
+    expect(mergeAgentContentHits([local], [server])).toHaveLength(1);
+  });
+
+  it("keeps the reply excerpt ahead of a tool word from the same chat", () => {
+    const local = agentRow({
+      id: "agent:host:auth",
+      title: "Order gate",
+      subtitle: "paseo · 1h",
+    });
+    const server = agentRow({
+      id: "agent:host:auth",
+      title: "Order gate",
+      subtitle: "The reply mentions authorization at the end.",
+      snippetSource: "reply",
+      matchBand: "trace",
+      excerpts: [
+        { source: "reply", snippet: "The reply mentions authorization at the end." },
+        { source: "tool", snippet: "The authorization gate dump from the tool ran first." },
+      ],
+    });
+    const [row] = mergeAgentContentHits([local], [server]);
+    expect(row?.title).toBe("Order gate");
+    expect(row?.snippetSource).toBe("reply");
+    expect(row?.subtitle).toContain("reply mentions authorization");
+    expect(row?.excerpts?.map((excerpt) => excerpt.source)).toEqual(["reply", "tool"]);
+    expect(row?.excerpts?.[1]?.snippet).toContain("gate");
+  });
+
+  it("ranks a reply above a tool-only hit", () => {
+    const tool = agentRow({
+      id: "tool",
+      title: "Unrelated chat",
+      subtitle: "kanban in the tool dump",
+      snippetSource: "tool",
+      matchBand: "trace",
+    });
+    const reply = agentRow({
+      id: "reply",
+      title: "Also unrelated",
+      subtitle: "the reply says kanban",
+      snippetSource: "reply",
+      matchBand: "message",
+    });
+
+    expect(rankCommandCenterAgents([tool, reply], "kanban", () => 0).map((row) => row.id)).toEqual([
+      "reply",
+      "tool",
+    ]);
+  });
+
+  it("keeps a title match above a tool-only hit and still shows the tool excerpt", () => {
+    const titled = agentRow({
+      id: "titled",
+      title: "Kanban cleanup",
+      subtitle: "kanban showed up in a tool dump",
+      metaSubtitle: "paseo · 1h",
+      snippetSource: "tool",
+      matchBand: "message",
+    });
+    const toolOnly = agentRow({
+      id: "tool",
+      title: "Unrelated chat",
+      subtitle: "kanban in the tool dump",
+      snippetSource: "tool",
+      matchBand: "trace",
+    });
+
+    const ranked = rankCommandCenterAgents([toolOnly, titled], "kanban", () => 0);
+
+    expect(ranked.map((row) => row.id)).toEqual(["titled", "tool"]);
+    expect(ranked[0]?.title).toBe("Kanban cleanup");
+    expect(ranked[0]?.subtitle).toContain("tool dump");
   });
 });

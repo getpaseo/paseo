@@ -311,6 +311,12 @@ export const ja: TranslationResources = {
       pending: "{{count}}件保留中",
       attention: "注意",
     },
+    snippetSource: {
+      user: "あなたのメッセージ",
+      reply: "返信",
+      thinking: "思考",
+      tool: "ツール",
+    },
     archiveSheet: {
       hostOffline: "ホストオフライン",
       runningAgent: "このエージェントはまだ実行中です。アーカイブするとエージェントが停止します。",

@@ -311,6 +311,12 @@ export const zhCN: TranslationResources = {
       runningAgent: "此 Agent 仍在运行。归档会停止该 Agent。",
       archive: "归档",
     },
+    snippetSource: {
+      user: "你的消息",
+      reply: "回复",
+      thinking: "思考",
+      tool: "工具",
+    },
   },
   message: {
     diagram: {

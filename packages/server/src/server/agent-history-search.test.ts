@@ -1,7 +1,15 @@
 import { describe, expect, it } from "vitest";
 import {
+  conversationTextFromGrokJsonl,
+  type HistoryConversation,
+} from "./agent-history-content.js";
+import {
+  agentHistoryMatchBand,
   type AgentHistorySearchCandidate,
+  historyContentHit,
+  historyContentSnippet,
   matchesAgentHistoryQuery,
+  orderHistoryMatchesByBand,
 } from "./agent-history-search.js";
 
 function candidate(input: {
@@ -10,6 +18,8 @@ function candidate(input: {
   branch?: string | null;
   projectName?: string;
   updatedAt?: string;
+  content?: string;
+  conversation?: HistoryConversation;
 }): AgentHistorySearchCandidate & { agent: { id: string; updatedAt: string } } {
   const branch = input.branch ?? null;
   return {
@@ -32,9 +42,14 @@ function candidate(input: {
         mainRepoRoot: null,
       },
     },
-    // The module only reads the four names; the rest of the payload is the
-    // session's business.
+    content: input.content,
+    conversation: input.conversation,
+    // The module only reads the names and the conversation text.
   } as unknown as AgentHistorySearchCandidate & { agent: { id: string; updatedAt: string } };
+}
+
+function grok(rows: readonly unknown[]): HistoryConversation {
+  return conversationTextFromGrokJsonl(rows.map((row) => JSON.stringify(row)).join("\n"));
 }
 
 describe("matchesAgentHistoryQuery", () => {
@@ -95,5 +110,173 @@ describe("matchesAgentHistoryQuery", () => {
 
   it("keeps candidates for a blank query", () => {
     expect(matchesAgentHistoryQuery("   ", candidate({ title: "anything" }))).toBe(true);
+  });
+
+  it("matches a phrase that is only in the conversation", () => {
+    expect(
+      matchesAgentHistoryQuery(
+        "obsidian kanban",
+        candidate({
+          title: "Help me find the note",
+          content: "The obsidian kanban board was left with community plugins off.",
+        }),
+      ),
+    ).toBe(true);
+  });
+
+  it("lets one token match the title and another match the conversation", () => {
+    const entry = candidate({
+      title: "Invoice export",
+      content: "The failure is a missing entitlements row.",
+    });
+    expect(matchesAgentHistoryQuery("invoice entitlements", entry)).toBe(true);
+    expect(matchesAgentHistoryQuery("invoice rosetta", entry)).toBe(false);
+  });
+
+  it("does not treat an empty conversation as a match", () => {
+    expect(matchesAgentHistoryQuery("kanban", candidate({ title: "Help me find the note" }))).toBe(
+      false,
+    );
+  });
+});
+
+describe("historyContentSnippet", () => {
+  it("quotes the conversation around the matched word", () => {
+    const snippet = historyContentSnippet(
+      "authorization",
+      "The order gate checks authorization before any live placement.",
+    );
+    expect(snippet).toContain("authorization");
+    expect(snippet?.startsWith("…") || snippet?.includes("order gate")).toBe(true);
+  });
+
+  it("returns null when the conversation does not contain the query", () => {
+    expect(historyContentSnippet("authorization", "Nothing about that here.")).toBeNull();
+  });
+});
+
+describe("conversation bands", () => {
+  it("matches a word in user_query and ignores the same word in rules or user_info", () => {
+    const conversation = grok([
+      {
+        type: "user",
+        content:
+          "<user_info>kanban lives in the info block</user_info><rules>kanban lives in the rules</rules><user_query>Where is the obsidian note?</user_query>",
+      },
+      {
+        type: "user",
+        content: "<user_info>xylophone in info</user_info><rules>xylophone in rules</rules>",
+      },
+    ]);
+    const entry = candidate({ title: "Help me find the note", conversation });
+    expect(matchesAgentHistoryQuery("obsidian", entry)).toBe(true);
+    expect(historyContentHit("obsidian", conversation)?.source).toBe("user");
+    expect(matchesAgentHistoryQuery("kanban", entry)).toBe(false);
+    expect(matchesAgentHistoryQuery("xylophone", entry)).toBe(false);
+    expect(agentHistoryMatchBand("obsidian", entry)).toBe(0);
+  });
+
+  it("quotes the reply instead of an earlier tool result", () => {
+    const conversation = grok([
+      { type: "tool_result", content: "The authorization dump from the tool ran first." },
+      { type: "assistant", content: "The reply mentions authorization at the end." },
+    ]);
+    const hit = historyContentHit("authorization", conversation);
+    expect(hit?.source).toBe("reply");
+    expect(hit?.snippet).toContain("reply mentions");
+    expect(hit?.snippet).not.toContain("dump from the tool");
+    expect(agentHistoryMatchBand("authorization", candidate({ conversation }))).toBe(0);
+  });
+
+  it("matches thinking below a reply", () => {
+    const thinking = grok([
+      {
+        type: "reasoning",
+        encrypted_content: "secret xylophone blob",
+        summary: [{ type: "summary_text", text: "pondering xylophone quietly" }],
+      },
+    ]);
+    const reply = grok([{ type: "assistant", content: "The reply says xylophone plainly." }]);
+    expect(historyContentHit("xylophone", thinking)?.source).toBe("thinking");
+    expect(JSON.stringify(thinking)).not.toContain("secret xylophone blob");
+    expect(
+      agentHistoryMatchBand(
+        "xylophone",
+        candidate({ title: "Quiet notes", conversation: thinking }),
+      ),
+    ).toBe(1);
+    expect(
+      agentHistoryMatchBand("xylophone", candidate({ title: "Plain answer", conversation: reply })),
+    ).toBe(0);
+    const ordered = orderHistoryMatchesByBand([
+      { id: "newer-thinking", contentMatchBand: "trace" as const },
+      { id: "older-reply", contentMatchBand: "message" as const },
+    ]);
+    expect(ordered.map((entry) => entry.id)).toEqual(["older-reply", "newer-thinking"]);
+  });
+
+  it("matches a tool result below a reply", () => {
+    const tool = grok([{ type: "tool_result", content: "only a tool result mentions marimba" }]);
+    const reply = grok([{ type: "assistant", content: "the reply mentions marimba" }]);
+    expect(historyContentHit("marimba", tool)?.source).toBe("tool");
+    expect(agentHistoryMatchBand("marimba", candidate({ conversation: tool }))).toBe(1);
+    expect(agentHistoryMatchBand("marimba", candidate({ conversation: reply }))).toBe(0);
+    const ordered = orderHistoryMatchesByBand([
+      { id: "newest-reply", contentMatchBand: "message" as const },
+      { id: "newer-tool", contentMatchBand: "trace" as const },
+      { id: "older-reply", contentMatchBand: "message" as const },
+    ]);
+    expect(ordered.map((entry) => entry.id)).toEqual(["newest-reply", "older-reply", "newer-tool"]);
+  });
+
+  it("keeps a body excerpt when the title also matches", () => {
+    const conversation = grok([
+      { type: "tool_result", content: "kanban showed up in a tool dump" },
+      { type: "assistant", content: "The reply never says that word." },
+    ]);
+    const entry = candidate({ title: "Kanban note", conversation });
+    expect(matchesAgentHistoryQuery("kanban", entry)).toBe(true);
+    expect(agentHistoryMatchBand("kanban", entry)).toBe(0);
+    const hit = historyContentHit("kanban", conversation);
+    expect(hit?.source).toBe("tool");
+    expect(hit?.snippet).toContain("tool dump");
+  });
+
+  it("leads with the reply when a tool dump contains more of the query", () => {
+    const conversation: HistoryConversation = {
+      user: "",
+      reply: "The reply mentions authorization at the end.",
+      thinking: "",
+      tool: "The authorization gate dump from the tool ran first.",
+    };
+    const hit = historyContentHit("authorization gate", conversation);
+    expect(hit?.source).toBe("reply");
+    expect(hit?.snippet).toContain("The reply mentions authorization at the end.");
+    expect(hit?.snippet).not.toContain("gate");
+    expect(hit?.excerpts.map((excerpt) => excerpt.source)).toEqual(["reply", "tool"]);
+    expect(hit?.excerpts[1]?.snippet).toContain("gate");
+    expect(agentHistoryMatchBand("authorization gate", candidate({ conversation }))).toBe(1);
+  });
+
+  it("keeps the user sentence primary when the tool contains more tokens", () => {
+    const conversation: HistoryConversation = {
+      user: "Please check the invoice.",
+      reply: "",
+      thinking: "",
+      tool: "invoice ledger export failed in the tool dump",
+    };
+    const hit = historyContentHit("invoice ledger export", conversation);
+    expect(hit?.source).toBe("user");
+    expect(hit?.snippet).toContain("Please check the invoice.");
+    expect(hit?.excerpts.map((excerpt) => excerpt.source)).toEqual(["user", "tool"]);
+    expect(hit?.excerpts[1]?.snippet).toContain("ledger");
+    expect(hit?.excerpts[1]?.snippet).toContain("export");
+    expect(agentHistoryMatchBand("invoice ledger export", candidate({ conversation }))).toBe(1);
+  });
+
+  it("keeps every candidate for an empty query", () => {
+    expect(matchesAgentHistoryQuery("", candidate({ title: "anything" }))).toBe(true);
+    expect(matchesAgentHistoryQuery("   ", candidate({}))).toBe(true);
+    expect(agentHistoryMatchBand("   ", candidate({ title: "anything" }))).toBe(0);
   });
 });

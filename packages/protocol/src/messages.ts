@@ -4099,6 +4099,16 @@ export const AgentSearchMatchSchema = z.object({
 
 export type AgentSearchMatch = z.infer<typeof AgentSearchMatchSchema>;
 
+export const AgentHistoryContentSourceSchema = z.enum(["user", "reply", "thinking", "tool"]);
+export type AgentHistoryContentSource = z.infer<typeof AgentHistoryContentSourceSchema>;
+export const AgentHistoryMatchBandSchema = z.enum(["message", "trace"]);
+export type AgentHistoryMatchBand = z.infer<typeof AgentHistoryMatchBandSchema>;
+export const AgentHistoryContentExcerptSchema = z.object({
+  source: AgentHistoryContentSourceSchema,
+  snippet: z.string(),
+});
+export type AgentHistoryContentExcerpt = z.infer<typeof AgentHistoryContentExcerptSchema>;
+
 const AgentDirectoryResponseEntrySchema = z.object({
   agent: AgentSnapshotPayloadSchema,
   project: ProjectPlacementPayloadSchema,
@@ -4107,6 +4117,16 @@ const AgentDirectoryResponseEntrySchema = z.object({
   searchScore: z.number().optional(),
   // Legacy server-generated highlights. Current clients highlight displayed text locally.
   searchMatches: z.array(AgentSearchMatchSchema).optional(),
+  // The conversation line that matched, shown under the title.
+  contentSnippet: z.string().optional(),
+  // Where the lead line was taken from. Absent when only a name matched.
+  contentSource: AgentHistoryContentSourceSchema.optional(),
+  // Every labeled line. The first entry is the lead source. Later entries are
+  // tokens that existed only in a worse place, such as a tool trace.
+  contentExcerpts: z.array(AgentHistoryContentExcerptSchema).optional(),
+  // message: every token is in a name, a user message, or a reply.
+  // trace: some token matched only thinking or a tool trace.
+  contentMatchBand: AgentHistoryMatchBandSchema.optional(),
   // COMPAT(directorySync): sequence of this latest directory projection.
   syncSeq: z.number().int().positive().optional(),
 });

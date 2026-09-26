@@ -1,3 +1,8 @@
+import type {
+  AgentHistoryContentExcerpt,
+  AgentHistoryContentSource,
+  AgentHistoryMatchBand,
+} from "@getpaseo/protocol/messages";
 import type { Agent } from "@/stores/session-store";
 
 export type AgentDirectoryEntry = Pick<
@@ -20,4 +25,12 @@ export type AgentDirectoryEntry = Pick<
   | "projectPlacement"
 > & {
   pendingPermissionCount?: number;
+  /** Conversation line that matched a history or Search query. */
+  contentSnippet?: string | null;
+  /** Where that line was taken from. The label is not part of the snippet. */
+  contentSource?: AgentHistoryContentSource | null;
+  /** Lead excerpt first, then tokens that only matched a worse place. */
+  contentExcerpts?: readonly AgentHistoryContentExcerpt[] | null;
+  /** message outranks trace. Absent on an unscored row. */
+  contentMatchBand?: AgentHistoryMatchBand | null;
 };

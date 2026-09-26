@@ -42,7 +42,12 @@ import type { TerminalActivity } from "@getpaseo/protocol/terminal-activity";
 import type { BinaryFrame } from "@getpaseo/protocol/binary-frames/index";
 import { CursorError } from "./pagination/cursor.js";
 import { SortablePager, type SortSpec } from "./pagination/sortable-pager.js";
-import { matchesAgentHistoryQuery } from "./agent-history-search.js";
+import { loadAgentHistoryContent } from "./agent-history-content.js";
+import {
+  agentHistoryMatchBand,
+  historyContentHit,
+  orderHistoryMatchesByBand,
+} from "./agent-history-search.js";
 import type { SpeechToTextProvider, TextToSpeechProvider } from "./speech/speech-provider.js";
 import type { TurnDetectionProvider } from "./speech/turn-detection-provider.js";
 import {
@@ -5340,7 +5345,9 @@ export class Session {
       const batchEntries = await Promise.all(
         batch.map(async (agent) => {
           const project = await getPlacement(agent.workspaceId);
-          return project ? { agent, project } : null;
+          if (!project) return null;
+          const conversation = search ? await loadAgentHistoryContent(agent) : null;
+          return { agent, project, conversation };
         }),
       );
       for (const entry of batchEntries) {
@@ -5356,8 +5363,22 @@ export class Session {
         ) {
           continue;
         }
-        if (search && !matchesAgentHistoryQuery(search, entry)) continue;
-        matchedEntries.push(entry);
+        const band = search ? agentHistoryMatchBand(search, entry) : 0;
+        if (search && band === null) continue;
+        const hit =
+          search && entry.conversation ? historyContentHit(search, entry.conversation) : null;
+        matchedEntries.push({
+          agent: entry.agent,
+          project: entry.project,
+          ...(hit
+            ? {
+                contentSnippet: hit.snippet,
+                contentSource: hit.source,
+                contentExcerpts: hit.excerpts,
+              }
+            : {}),
+          ...(search ? { contentMatchBand: band === 1 ? "trace" : "message" } : {}),
+        });
         if (matchedEntries.length > limit) {
           break;
         }
@@ -5443,7 +5464,9 @@ export class Session {
         : null;
 
     return {
-      entries: pagedEntries,
+      // The cursor stays on the chronological edge. The page itself puts
+      // message and name hits above thinking and tool hits.
+      entries: search ? orderHistoryMatchesByBand(pagedEntries) : pagedEntries,
       pageInfo: {
         nextCursor,
         prevCursor: request.page?.cursor ?? null,
