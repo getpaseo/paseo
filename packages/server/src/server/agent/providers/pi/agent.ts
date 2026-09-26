@@ -94,6 +94,7 @@ const DEFAULT_PI_THINKING_LEVEL: PiThinkingLevel = "medium";
 const PI_BINARY_COMMAND = process.env.PI_COMMAND ?? process.env.PI_ACP_PI_COMMAND ?? "pi";
 const PASEO_PI_TREE_EXTENSION_COMMAND = "paseo_tree";
 const PASEO_PI_CAPTURE_EXTENSION_COMMAND = "paseo_capture_entries";
+const PASEO_PI_REWIND_ENTRY_TYPE = "paseo_rewind";
 const PASEO_PI_ENTRY_CAPTURE_MARKER = "PASEO_ENTRY_CAPTURE";
 const PASEO_PI_SUBMITTED_USER_ENTRY_MARKER = "PASEO_SUBMITTED_USER_ENTRY";
 const PASEO_PI_COMMAND_RESULT_MARKER = "PASEO_COMMAND_RESULT";
@@ -726,6 +727,8 @@ function createPiPaseoExtensionFile(systemPrompt?: string): PiTempFile {
 	      const payload = decodePayload(args.trim());
 	      try {
 	        const result = await ctx.navigateTree(payload.targetId, { summarize: false });
+	        // Pi reopens a session at its last entry, so record the rewind on the new branch to keep it.
+	        pi.appendEntry("${PASEO_PI_REWIND_ENTRY_TYPE}", { targetId: payload.targetId });
 	        emitEntryCapture(ctx, "tree_navigation");
 	        emitCommandResult(ctx, payload.requestId, { ok: true, result });
 	      } catch (error) {
