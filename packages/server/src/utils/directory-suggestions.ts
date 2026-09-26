@@ -18,12 +18,14 @@ export interface DirectorySuggestionEntry {
 
 export interface SearchDirectoryEntriesOptions {
   root: string;
+  searchRoots?: readonly string[];
   query: string;
   pathFormat: DirectorySuggestionPathFormat;
   includeFiles?: boolean;
   includeDirectories?: boolean;
   matchMode?: DirectorySuggestionMatchMode;
   pathQueryPolicy?: PathQueryPolicy;
+  absolutePathPolicy?: "within-root" | "browse";
   rootAliases?: string[];
   blankQueryBehavior?: BlankQueryBehavior;
   traversableHiddenDirectoryNames?: readonly string[];
@@ -136,6 +138,20 @@ const gitIgnoredPathsCache = new Map<string, GitIgnoredPathsCacheEntry>();
 export async function searchDirectoryEntries(
   options: SearchDirectoryEntriesOptions,
 ): Promise<DirectorySuggestionEntry[]> {
+  const query = options.query.trim().replace(/\\/g, "/");
+  const isAbsoluteQuery = path.isAbsolute(query);
+  const permitsAbsoluteBrowsing = options.absolutePathPolicy === "browse" && isAbsoluteQuery;
+  const browsesAbsolutePath =
+    permitsAbsoluteBrowsing && !isPathInsideRoot(path.resolve(options.root), path.resolve(query));
+  if (browsesAbsolutePath) {
+    // Project pickers may browse explicitly named paths outside home. Limit this
+    // to the named parent, rather than recursively searching a filesystem root.
+    const browsesChildren = query.endsWith("/");
+    const root = browsesChildren ? path.resolve(query) : path.dirname(query);
+    const relativeQuery = browsesChildren ? "." : `./${path.basename(query)}`;
+    options = { ...options, root, query: relativeQuery, maxDepth: 1 };
+  }
+  if (usesConfiguredRoots(options)) return searchConfiguredRoots(options);
   const root = await resolveDirectory(options.root);
   if (!root) return [];
 
@@ -159,6 +175,50 @@ export async function searchDirectoryEntries(
   return exact
     ? [exact, ...results.filter((entry) => !sameEntry(entry, exact))].slice(0, input.limit)
     : results;
+}
+
+function usesConfiguredRoots(options: SearchDirectoryEntriesOptions): boolean {
+  if (
+    !options.searchRoots ||
+    options.pathFormat !== "absolute" ||
+    options.pathQueryPolicy !== "rooted"
+  )
+    return false;
+  const root = path.resolve(options.root);
+  const plan = parseQuery({
+    query: options.query,
+    root,
+    configuredRoot: root,
+    policy: "rooted",
+    aliases: options.rootAliases ?? [],
+    blankBehavior: options.blankQueryBehavior ?? "none",
+  });
+  return plan?.isPathQuery === false;
+}
+
+async function searchConfiguredRoots(
+  options: SearchDirectoryEntriesOptions,
+): Promise<DirectorySuggestionEntry[]> {
+  const resolved = await Promise.all((options.searchRoots ?? []).map(resolveDirectory));
+  const roots = [...new Set(resolved.filter((root): root is string => root !== null))];
+  const budget = Math.max(0, Math.floor(options.maxEntriesScanned ?? DEFAULT_MAX_ENTRIES_SCANNED));
+  const rankedByRoot = await Promise.all(
+    roots.map(async (root, index) => {
+      const rootBudget =
+        Math.floor(budget / roots.length) + (index < budget % roots.length ? 1 : 0);
+      const gitIgnoredPaths = options.respectGitIgnore
+        ? await loadGitIgnoredPaths(root)
+        : new Set<string>();
+      const input = buildSearchInput(
+        { ...options, root, maxEntriesScanned: rootBudget },
+        root,
+        gitIgnoredPaths,
+      );
+      return input ? searchTree(input) : [];
+    }),
+  );
+  const limit = normalizeLimit(options.limit);
+  return sortAndFormat(rankedByRoot.flat(), options.root, "absolute").slice(0, limit);
 }
 
 function buildSearchInput(

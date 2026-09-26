@@ -1925,6 +1925,22 @@ export const zhCN: TranslationResources = {
     addHost: "添加主机",
     enableBuiltInDaemon: "启用内置 daemon",
     projects: "项目",
+    projectSearch: {
+      title: "项目搜索目录",
+      description:
+        "添加项目时搜索这些目录。路径属于当前主机；~ 表示主机的用户目录。保存后立即生效。",
+      directory: "目录 {{number}}",
+      removeDirectory: "移除目录 {{number}}",
+      remove: "移除",
+      add: "添加目录",
+      reset: "恢复用户目录",
+      save: "保存",
+      saving: "保存中...",
+      saved: "已保存",
+      loading: "正在加载搜索目录...",
+      updateHost: "请更新此主机以配置项目搜索目录",
+      invalidPath: "请输入绝对路径或 ~/ 路径",
+    },
     projectList: {
       hostLoadFailed: "无法从 Host {{hostName}} 加载 projects：{{message}}",
       editProject: "编辑 {{projectName}}",

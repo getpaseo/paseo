@@ -11,6 +11,8 @@ import { createProjectIconTarget } from "@/projects/icon-target";
 import { settingsStyles } from "@/styles/settings";
 import { openProjectSettings } from "@/navigation/settings-navigation";
 import type { ProjectHostEntry, ProjectSummary } from "@/utils/projects";
+import { SettingsSection } from "@/components/settings";
+import { ProjectSearchSection } from "@/screens/settings/project-search-section";
 
 interface ProjectsScreenProps {
   serverId: string;
@@ -22,6 +24,18 @@ interface HostProject {
 }
 
 export default function ProjectsScreen({ serverId }: ProjectsScreenProps) {
+  const { t } = useTranslation();
+  return (
+    <View>
+      <ProjectSearchSection serverId={serverId} />
+      <SettingsSection title={t("settings.projects")}>
+        <ProjectList serverId={serverId} />
+      </SettingsSection>
+    </View>
+  );
+}
+
+function ProjectList({ serverId }: ProjectsScreenProps) {
   const { t } = useTranslation();
   const { projects, hostErrors, isLoading } = useProjects();
   const hostProjects = useMemo<HostProject[]>(

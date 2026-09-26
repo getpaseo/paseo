@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { z } from "zod";
+import { ProjectSearchConfigSchema } from "@getpaseo/protocol/messages";
 
 import {
   AgentProviderRuntimeSettingsMapSchema,
@@ -309,6 +310,7 @@ export const PersistedConfigSchema = z
     pluginsEnabled: z.boolean().optional(),
     plugins: z.record(PluginIdSchema, PluginSourceSchema).optional(),
     worktrees: WorktreesConfigSchema.optional(),
+    projects: ProjectSearchConfigSchema.strict().optional(),
     agents: z
       .object({
         providers: z.preprocess(normalizeAgentProviders, ProviderOverridesSchema).optional(),
