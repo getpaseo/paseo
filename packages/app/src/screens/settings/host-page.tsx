@@ -235,6 +235,7 @@ function HostConnectionError({ serverId }: { serverId: string }) {
   return (
     <View style={styles.connectionError}>
       <InlineAlert
+        size="sm"
         variant="error"
         title={connectionError}
         description={snapshot?.authFailureReason ? t("settings.host.password.guidance") : undefined}
@@ -846,6 +847,7 @@ function UpdateDaemonCard({ host }: { host: HostProfile }) {
       </View>
       {updateState.status === "complete" ? (
         <InlineAlert
+          size="sm"
           variant="success"
           title={t("desktop.daemon.lifecycle.workerUpdated", {
             version: updateState.workerVersion,
@@ -856,6 +858,7 @@ function UpdateDaemonCard({ host }: { host: HostProfile }) {
       {updateState.status === "failed" ? (
         <View style={styles.updateFailure}>
           <InlineAlert
+            size="sm"
             variant="error"
             title={updateState.title}
             description={updateState.message}
