@@ -1,3 +1,4 @@
+import { PluginSpeechProvider } from "./speech";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { PaseoApiProvider, PluginRpcProvider } from "@getpaseo/plugin/client/host";
 import type { ReactNode } from "react";
@@ -19,7 +20,11 @@ export function PluginRuntimeBoundary({
   return (
     <QueryClientProvider client={plugin.queryClient}>
       <PaseoApiProvider paseo={runtime.paseo}>
-        <PluginRpcProvider invoke={runtime.invoke}>{children}</PluginRpcProvider>
+        <PluginRpcProvider invoke={runtime.invoke}>
+          <PluginSpeechProvider client={client} serverId={plugin.serverId}>
+            {children}
+          </PluginSpeechProvider>
+        </PluginRpcProvider>
       </PaseoApiProvider>
     </QueryClientProvider>
   );

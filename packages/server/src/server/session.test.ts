@@ -1,3 +1,4 @@
+import { Readable } from "node:stream";
 import {
   createMessageReceiptsStub,
   createTestCreationService,
@@ -319,6 +320,7 @@ interface SessionForTestOptions {
   providerSnapshotManager?: ProviderSnapshotManager;
   hubExecutionAgents?: SessionOptions["hubExecutionAgents"];
   stt?: SessionOptions["stt"];
+  tts?: SessionOptions["tts"];
   voice?: SessionOptions["voice"];
   paseoHome?: string;
   serverId?: SessionOptions["serverId"];
@@ -426,7 +428,7 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
     pluginRuntime: options.pluginRuntime,
     orchestrationSkills: options.orchestrationSkills,
     stt: options.stt ?? null,
-    tts: null,
+    tts: options.tts ?? null,
     terminalManager: options.terminalManager ?? null,
     providerSnapshotManager:
       options.providerSnapshotManager ?? createProviderSnapshotManagerStub().manager,
@@ -5809,4 +5811,120 @@ test("provider snapshots preserve versionless visibility while capabilities upda
     "plugin-provider",
   ]);
   expect(references.compactSnapshot!.entries[0]!.modes![0]!.icon).toBe("ShieldCheck");
+});
+
+describe("read-aloud RPC", () => {
+  function setupSpeech() {
+    const targetedMessages: Array<{ source: object; message: SessionOutboundMessage }> = [];
+    const synthesizeSpeech = vi.fn(async () => ({
+      stream: Readable.from([Buffer.from([1, 2])]),
+      format: "pcm",
+    }));
+    const session = createSessionForTest({
+      targetedMessages,
+      agentManager: {
+        waitForAgentClose: vi.fn(async () => {}),
+        getAgent: vi.fn(() => ({
+          id: "agent",
+          provider: "codex",
+          cwd: "/tmp",
+          config: { provider: "codex", cwd: "/tmp" },
+        })),
+      },
+      tts: { synthesizeSpeech },
+    });
+    const source = {};
+    const other = {};
+    session.updateClientCapabilities({ [CLIENT_CAPS.ownedSubscriptions]: true }, source);
+    session.updateClientCapabilities({ [CLIENT_CAPS.ownedSubscriptions]: true }, other);
+    return { session, synthesizeSpeech, targetedMessages, source, other };
+  }
+  test("synthesizes without voice mode and sends audio only to the requesting socket", async () => {
+    const { session, targetedMessages, source, synthesizeSpeech } = setupSpeech();
+    await session.handleMessage(
+      {
+        type: "speech.render.request",
+        requestId: "read",
+        agentId: "agent",
+        operation: "synthesize",
+        text: "Read this response.",
+      },
+      source,
+    );
+    expect(targetedMessages.filter(({ message }) => message.type === "rpc_error")).toEqual([]);
+    expect(synthesizeSpeech).toHaveBeenCalledWith("Read this response.");
+    expect(targetedMessages).toContainEqual({
+      source,
+      message: {
+        type: "speech.render.response",
+        payload: { requestId: "read", audio: "AQI=", format: "pcm" },
+      },
+    });
+    expect(
+      targetedMessages.filter(({ message }) => message.type === "speech.render.response"),
+    ).toHaveLength(1);
+  });
+  test("rejects oversized synthesis chunks before reaching the provider", async () => {
+    const { session, targetedMessages, source, synthesizeSpeech } = setupSpeech();
+    await session.handleMessage(
+      {
+        type: "speech.render.request",
+        requestId: "big",
+        agentId: "agent",
+        operation: "synthesize",
+        text: "x".repeat(1001),
+      },
+      source,
+    );
+    expect(synthesizeSpeech).not.toHaveBeenCalled();
+    expect(
+      targetedMessages.some(
+        ({ message }) => message.type === "rpc_error" && message.payload.requestId === "big",
+      ),
+    ).toBe(true);
+  });
+  test("only the owning socket can cancel a request", async () => {
+    const { session, targetedMessages, source, other, synthesizeSpeech } = setupSpeech();
+    const stream = new Readable({ read() {} });
+    synthesizeSpeech.mockResolvedValueOnce({ stream, format: "pcm" });
+    const pending = session.handleMessage(
+      {
+        type: "speech.render.request",
+        requestId: "cancel-me",
+        agentId: "agent",
+        operation: "synthesize",
+        text: "Hello",
+      },
+      source,
+    );
+    await vi.waitFor(() => expect(synthesizeSpeech).toHaveBeenCalled());
+    await session.handleMessage(
+      { type: "speech.cancel.request", requestId: "other-cancel", targetRequestId: "cancel-me" },
+      other,
+    );
+    expect(targetedMessages).toContainEqual({
+      source: other,
+      message: {
+        type: "speech.cancel.response",
+        payload: { requestId: "other-cancel", cancelled: false },
+      },
+    });
+    expect(stream.destroyed).toBe(false);
+    await session.handleMessage(
+      { type: "speech.cancel.request", requestId: "owner-cancel", targetRequestId: "cancel-me" },
+      source,
+    );
+    expect(targetedMessages).toContainEqual({
+      source,
+      message: {
+        type: "speech.cancel.response",
+        payload: { requestId: "owner-cancel", cancelled: true },
+      },
+    });
+    await pending;
+    expect(stream.destroyed).toBe(true);
+    expect(targetedMessages.some(({ message }) => message.type === "speech.render.response")).toBe(
+      false,
+    );
+  });
 });

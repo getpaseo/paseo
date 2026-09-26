@@ -1786,12 +1786,14 @@ export class DaemonClient {
   }
 
   private async sendRequest<T>(params: {
+    signal?: AbortSignal;
     requestId: string;
     message: SessionInboundMessage;
     timeout?: number;
     select: (msg: SessionOutboundMessage) => T | null;
     options?: { skipQueue?: boolean };
   }): Promise<T> {
+    params.signal?.throwIfAborted();
     const wire = this.owned.prepareRequest(params.message);
     const timeout = params.timeout ?? DEFAULT_SESSION_RPC_TIMEOUT_MS;
     const { promise, cancel } = this.waitForWithCancel<RpcWaitResult<T>>(
@@ -1817,20 +1819,20 @@ export class DaemonClient {
       { ...params.options, requestId: params.requestId },
     );
 
+    const abort = () => cancel(new Error("Request cancelled"));
+    params.signal?.addEventListener("abort", abort, { once: true });
     try {
+      params.signal?.throwIfAborted();
       await this.sendSessionMessageOrThrow(wire.message);
-    } catch (error) {
-      const err = error instanceof Error ? error : new Error(String(error));
-      cancel(err);
-      void promise.catch(() => undefined);
-      throw err;
-    }
-
-    try {
       const result = await promise;
       if (result.kind === "error") throw result.error;
       return result.value;
+    } catch (error) {
+      cancel(error instanceof Error ? error : new Error(String(error)));
+      void promise.catch(() => undefined);
+      throw error;
     } finally {
+      params.signal?.removeEventListener("abort", abort);
       await wire.finish();
     }
   }
@@ -3679,6 +3681,58 @@ export class DaemonClient {
   // ============================================================================
   // Audio / Voice
   // ============================================================================
+
+  /** Render speech on this connection without enabling voice mode or capturing audio. */
+  async renderSpeech(
+    input: { agentId: string; operation: "summarize" | "synthesize"; text: string },
+    signal?: AbortSignal,
+  ) {
+    signal?.throwIfAborted();
+    const requestId = this.createRequestId();
+    const message = SessionInboundMessageSchema.parse({
+      type: "speech.render.request",
+      requestId,
+      ...input,
+    });
+    const abort = () => {
+      try {
+        const cancelRequestId = this.createRequestId();
+        // Cancellation is a separate correlated RPC; its acknowledgement must not
+        // keep the aborted render (or the local audio controls) waiting.
+        void this.sendRequest({
+          requestId: cancelRequestId,
+          message: {
+            type: "speech.cancel.request",
+            requestId: cancelRequestId,
+            targetRequestId: requestId,
+          },
+          options: { skipQueue: true },
+          select: (msg) =>
+            msg.type === "speech.cancel.response" && msg.payload.requestId === cancelRequestId
+              ? msg.payload
+              : null,
+        }).catch(() => undefined);
+      } catch {
+        /* disconnected */
+      }
+    };
+    signal?.addEventListener("abort", abort, { once: true });
+    try {
+      return await this.sendRequest({
+        requestId,
+        message,
+        signal,
+        timeout: input.operation === "summarize" ? 605_000 : 125_000,
+        options: { skipQueue: true },
+        select: (msg) =>
+          msg.type === "speech.render.response" && msg.payload.requestId === requestId
+            ? msg.payload
+            : null,
+      });
+    } finally {
+      signal?.removeEventListener("abort", abort);
+    }
+  }
 
   async setVoiceMode(enabled: boolean, agentId?: string): Promise<SetVoiceModePayload> {
     const requestId = this.createRequestId();

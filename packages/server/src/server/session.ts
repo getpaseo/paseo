@@ -1,3 +1,5 @@
+import { summarizeForSpeech, synthesizeForSpeech } from "./speech/read-aloud.js";
+import { toResolver } from "./speech/provider-resolver.js";
 import { searchTimeline } from "./agent/chat-search/index.js";
 import type { BrowserToolsBroker } from "./browser-tools/broker.js";
 import { BrowserAutomationHostCapabilitySchema } from "@getpaseo/protocol/browser-automation/capabilities";
@@ -775,6 +777,8 @@ export class Session {
   private readonly workspaceGitObserver: WorkspaceGitObserverService;
   private readonly workspaceDirectory: WorkspaceDirectory;
   private readonly voiceSessions: VoiceSessions;
+  private readonly readAloudRequests = new Map<object, Map<string, AbortController>>();
+  private readonly resolveReadAloudTts: () => TextToSpeechProvider | null;
   private readonly checkoutSession: CheckoutSession;
   private readonly scheduleSession: ScheduleSession;
   private readonly providerCatalogSession: ProviderCatalogSession;
@@ -1153,6 +1157,7 @@ export class Session {
       buildWorkspaceDescriptor: (input) => this.buildWorkspaceDescriptor(input),
     });
 
+    this.resolveReadAloudTts = toResolver(tts);
     this.voiceSessions = new VoiceSessions(
       {
         host: {
@@ -2548,8 +2553,71 @@ export class Session {
     };
   }
 
+  private async handleSpeechRender(
+    msg: Extract<SessionInboundMessage, { type: "speech.render.request" }>,
+  ): Promise<void> {
+    const source = this.delivery.currentSource;
+    if (!source) throw new Error("Speech request has no source.");
+    const requests = this.readAloudRequests.get(source) ?? new Map<string, AbortController>();
+    if (requests.size >= 2) throw new Error("Too many pending speech requests.");
+    if (requests.has(msg.requestId)) throw new Error("Duplicate speech request.");
+    this.readAloudRequests.set(source, requests);
+    const cancellation = new AbortController();
+    requests.set(msg.requestId, cancellation);
+    const signal = AbortSignal.any([
+      this.delivery.requestSignal,
+      cancellation.signal,
+      AbortSignal.timeout(msg.operation === "summarize" ? 600_000 : 120_000),
+    ]);
+    try {
+      signal.throwIfAborted();
+      // Resolve on the selected daemon; no microphone or voice-mode state is changed.
+      const agent = await ensureAgentLoaded(msg.agentId, {
+        agentManager: this.agentManager,
+        agentStorage: this.agentStorage,
+        logger: this.sessionLogger,
+      });
+      if (msg.operation === "summarize") {
+        const generation = createAgentStructuredTextGeneration({
+          agentManager: this.agentManager,
+          providerSnapshotManager: this.providerSnapshotManager,
+          readDaemonConfig: () => this.readStructuredGenerationDaemonConfig(),
+          getFocusedSelection: () => ({ provider: agent.provider, model: agent.config.model }),
+        });
+        const text = await summarizeForSpeech(generation, agent.cwd, msg.text, signal);
+        signal.throwIfAborted();
+        this.emit({ type: "speech.render.response", payload: { requestId: msg.requestId, text } });
+      } else {
+        if (msg.text.length > 1000)
+          throw new Error("Speech synthesis accepts at most 1000 characters per chunk.");
+        const audio = await synthesizeForSpeech(this.resolveReadAloudTts(), msg.text, signal);
+        this.emit({
+          type: "speech.render.response",
+          payload: { requestId: msg.requestId, ...audio },
+        });
+      }
+    } finally {
+      requests.delete(msg.requestId);
+      if (!requests.size) this.readAloudRequests.delete(source);
+    }
+  }
+
   private dispatchVoiceAndControlMessage(msg: SessionInboundMessage): Promise<void> | undefined {
     switch (msg.type) {
+      case "speech.cancel.request": {
+        const source = this.delivery.currentSource;
+        const pending = source
+          ? this.readAloudRequests.get(source)?.get(msg.targetRequestId)
+          : undefined;
+        pending?.abort();
+        this.emit({
+          type: "speech.cancel.response",
+          payload: { requestId: msg.requestId, cancelled: Boolean(pending) },
+        });
+        return Promise.resolve();
+      }
+      case "speech.render.request":
+        return this.handleSpeechRender(msg);
       case "voice_audio_chunk":
       case "abort_request":
       case "audio_played":

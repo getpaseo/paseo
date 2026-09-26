@@ -638,3 +638,37 @@ it("binds imported getters to each originating installation across delayed callb
   await first.cleanup();
   await second.cleanup();
 });
+
+describe("response action registration", () => {
+  it("collects and removes response actions without replacing timeline renderers", async () => {
+    const plugin = evaluatePluginClientBundle(
+      "speak",
+      bundle(`
+      plugin.addResponseAction({ id: "speak", title: "Read aloud", icon: "Volume2", items() { return []; } });
+    `),
+    );
+    expect(plugin.responseActions?.map((action) => action.id)).toEqual(["speak"]);
+    expect(plugin.timelineTransformers).toEqual([]);
+    await plugin.cleanup();
+    expect(plugin.responseActions).toEqual([]);
+  });
+  it("rejects duplicate actions and invalid icons", () => {
+    expect(() =>
+      evaluatePluginClientBundle(
+        "duplicate",
+        bundle(`
+      const action = { id: "speak", title: "Read aloud", icon: "Volume2", items() { return []; } };
+      plugin.addResponseAction(action); plugin.addResponseAction(action);
+    `),
+      ),
+    ).toThrow("Duplicate response action");
+    expect(() =>
+      evaluatePluginClientBundle(
+        "bad-icon",
+        bundle(`
+      plugin.addResponseAction({ id: "speak", title: "Read aloud", icon: "NotAnIcon", items() { return []; } });
+    `),
+      ),
+    ).toThrow();
+  });
+});

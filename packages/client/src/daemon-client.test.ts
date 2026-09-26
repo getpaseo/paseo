@@ -6899,3 +6899,58 @@ test("reviewed plugin updates gate before requests and preserve exact proposal d
     ]);
   }
 });
+
+test("read-aloud requests stay correlated and cancellation never enables voice", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "speech-test",
+    transportFactory: () => mock.transport,
+    reconnect: { enabled: false },
+  });
+  clients.push(client);
+  const connected = client.connect();
+  mock.triggerOpen();
+  await connected;
+  const pending = client.renderSpeech({
+    agentId: "agent",
+    operation: "synthesize",
+    text: "Read aloud",
+  });
+  await vi.waitFor(() => expect(mock.sent.length).toBeGreaterThan(0));
+  const request = parseSentFrame(mock.sent.at(-1));
+  expect(request.type).toBe("speech.render.request");
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "speech.render.response",
+      payload: { requestId: request.requestId, audio: "AAAA", format: "pcm" },
+    }),
+  );
+  expect(await pending).toMatchObject({ audio: "AAAA", format: "pcm" });
+  const cancellation = new AbortController();
+  const cancelled = client.renderSpeech(
+    { agentId: "agent", operation: "summarize", text: "Summarize me" },
+    cancellation.signal,
+  );
+  const rejected = expect(cancelled).rejects.toThrow("cancelled");
+  const summaryRequest = mock.sent
+    .map(parseSentFrame)
+    .findLast((frame) => frame.type === "speech.render.request")!;
+  cancellation.abort();
+  await rejected;
+  const types = mock.sent.map((frame) => parseSentFrame(frame).type);
+  expect(types).toContain("speech.cancel.request");
+  const cancelRequest = mock.sent
+    .map(parseSentFrame)
+    .find((frame) => frame.type === "speech.cancel.request")!;
+  expect(cancelRequest.targetRequestId).toBe(summaryRequest.requestId);
+  expect(cancelRequest.requestId).not.toBe(cancelRequest.targetRequestId);
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "speech.cancel.response",
+      payload: { requestId: cancelRequest.requestId, cancelled: true },
+    }),
+  );
+  expect(types).not.toContain("set_voice_mode");
+  expect(types).not.toContain("voice_audio_chunk");
+});
