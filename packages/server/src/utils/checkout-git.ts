@@ -1321,6 +1321,31 @@ function resolveOperationBaseRef(input: {
   return input.storedBaseRef ?? input.requestedBaseRef ?? input.resolvedBaseRef;
 }
 
+// PR creation is the one operation where a requested base naming a different branch than the
+// workspace's pinned one is a deliberate retarget (a stacked PR, a hotfix against a release
+// branch) rather than a stale value to reconcile — diff/merge keep the strict guard above since
+// they have no such "caller picked a different target on purpose" case. The guard still applies
+// when the requested ref names the *same* branch as the pinned one through a conflicting
+// qualified form (e.g. local "refs/heads/main" against a pinned "refs/remotes/origin/main"),
+// since those can point at different commits and silently picking one risks targeting the wrong
+// commit for the PR.
+function resolvePullRequestBaseRef(input: {
+  storedBaseRef: string | null;
+  resolvedBaseRef: string | null;
+  requestedBaseRef?: string;
+}): string | null {
+  const pinned = input.storedBaseRef ?? input.resolvedBaseRef;
+  if (
+    pinned &&
+    input.requestedBaseRef &&
+    branchNameFromRef(pinned) === branchNameFromRef(input.requestedBaseRef) &&
+    !isSameBaseRef(pinned, input.requestedBaseRef)
+  ) {
+    throw baseRefMismatchError({ stored: pinned, requested: input.requestedBaseRef });
+  }
+  return input.requestedBaseRef ?? pinned;
+}
+
 async function isWorkingTreeDirty(cwd: string, context?: CheckoutContext): Promise<boolean> {
   const { stdout } = await getRunGitCommand(context)(["status", "--porcelain"], {
     cwd,
@@ -1586,6 +1611,35 @@ export async function resolveRepositoryDefaultBranch(
   }
 
   return null;
+}
+
+// Used only when creating a workspace with no explicit branch typed, to synthesize a
+// qualified ref (so it pins exactly, like any other explicit base) instead of the bare
+// local name resolveRepositoryDefaultBranch prefers for ongoing status/diff/merge.
+// Mirrors the app's own default-base-picker rule (new-workspace-picker-item.ts): prefer
+// the branch's configured git upstream, since branching off the local ref would silently
+// carry unpushed commits into the new workspace. No configured upstream means no opinion —
+// callers fall back to the bare name, same as today.
+export async function resolveBranchUpstreamRef(
+  repoRoot: string,
+  branchName: string,
+  context?: CheckoutContext,
+): Promise<string | null> {
+  const status = await getUpstreamStatus(repoRoot, branchName, context);
+  return status?.ref ?? null;
+}
+
+// Used only right after a PR is created, to pin the workspace's comparison base to
+// the PR's real target instead of whatever base it was created against. Qualifies
+// against origin, matching every other forge-facing assumption in this codebase
+// (defaultResolveRemoteUrl, PR status polling) — not a new assumption here.
+export async function resolveOriginBranchRef(
+  repoRoot: string,
+  branchName: string,
+  context?: CheckoutContext,
+): Promise<string | null> {
+  const qualifiedRef = `refs/remotes/origin/${branchNameFromRef(branchName)}`;
+  return (await doesGitRefExist(repoRoot, qualifiedRef, context)) ? qualifiedRef : null;
 }
 
 async function resolveBaseRef(repoRoot: string, context?: CheckoutContext): Promise<string | null> {
@@ -3375,7 +3429,14 @@ async function resolveCheckoutDiffRefs(
   if (!baseRef) {
     return null;
   }
-  const bestBaseRef = await resolveBestComparisonBaseRef(cwd, baseRef);
+  // A pinned/stored base ref can go stale (e.g. a stacked PR's parent branch gets deleted
+  // after merge). Every other comparison-ref resolver in this file already degrades to
+  // null/no-diff when the ref is gone instead of throwing; this call site was the one gap,
+  // surfacing as a hard "Base ref not found" error instead of an empty diff.
+  const bestBaseRef = await resolveBestComparisonBaseRef(cwd, baseRef).catch(() => null);
+  if (!bestBaseRef) {
+    return null;
+  }
   return {
     baseRef: (await tryResolveMergeBase(cwd, bestBaseRef)) ?? bestBaseRef,
     targetRef: "HEAD",
@@ -4050,12 +4111,12 @@ export async function createPullRequest(
   options: CreatePullRequestOptions,
   forgeService: ForgeService = createGitHubService(),
   context?: CheckoutContext,
-): Promise<{ url: string; number: number }> {
+): Promise<{ url: string; number: number; base: string }> {
   await requireGitRepo(cwd);
 
   const head = options.head ?? (await getCurrentBranch(cwd));
   const { storedBaseRef, resolvedBaseRef } = await resolveBaseRefForCwd(cwd, context);
-  const base = resolveOperationBaseRef({
+  const base = resolvePullRequestBaseRef({
     storedBaseRef,
     resolvedBaseRef,
     requestedBaseRef: options.base,
@@ -4084,7 +4145,7 @@ export async function createPullRequest(
     base: normalizedBase,
   });
   forgeService.invalidate({ cwd });
-  return result;
+  return { ...result, base: normalizedBase };
 }
 
 export async function getPullRequestStatus(

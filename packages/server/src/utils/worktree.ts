@@ -1358,7 +1358,10 @@ async function resolveBranchOffWorktreeSourcePlan(
   return {
     branchName: newBranchName,
     metadataBaseRefName: normalizedBaseBranch,
-    metadataBaseRef: resolvedBaseBranch,
+    // Pinning a bare name's resolved ref would freeze diff/ahead-behind comparisons to
+    // whichever of local/origin won at creation time. Leaving it unset lets
+    // resolveBestComparisonBaseRef re-prefer origin on every read instead.
+    ...(isExplicitBaseRef(source.baseBranch) ? { metadataBaseRef: resolvedBaseBranch } : {}),
     changeRequestLookupTarget: createPaseoWorktreeChangeRequestHint({
       headRef: newBranchName,
       localBranchName: newBranchName,
@@ -1650,20 +1653,24 @@ function normalizeRequiredBaseBranch(baseBranch: string): string {
   return normalizedBaseBranch;
 }
 
+// A bare display name ("main") is a moving heuristic: which commit it means gets
+// re-decided (origin-preferred) on every diff/ahead-behind read via
+// resolveBestComparisonBaseRef. A qualified ref ("refs/heads/main", "origin/main")
+// names an exact commit stream the caller picked on purpose and must not drift.
+function isExplicitBaseRef(baseBranch: string): boolean {
+  const trimmed = baseBranch.trim();
+  return trimmed.startsWith("refs/") || trimmed.startsWith("origin/");
+}
+
 async function resolveBaseBranchForWorktree(
   cwd: string,
   requestedBaseBranch: string,
 ): Promise<string> {
   const requested = requestedBaseBranch.trim();
   const normalized = normalizeRequiredBaseBranch(requested);
-  let exactRef: string | null = null;
-  if (isQualifiedRef(requested)) {
-    exactRef = requested;
-  } else if (requested.startsWith("origin/")) {
-    exactRef = `refs/remotes/${requested}`;
-  }
 
-  if (exactRef) {
+  if (isExplicitBaseRef(requested)) {
+    const exactRef = requested.startsWith("refs/") ? requested : `refs/remotes/${requested}`;
     try {
       await runGitCommand(["rev-parse", "--verify", exactRef], { cwd });
       return exactRef;

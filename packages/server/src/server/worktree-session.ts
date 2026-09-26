@@ -25,6 +25,7 @@ import type { TerminalManager } from "../terminal/terminal-manager.js";
 import type { ServiceProxySubsystem } from "./service-proxy.js";
 import type { WorkspaceScriptRuntimeStore } from "./workspace-script-runtime-store.js";
 import type { CheckoutExistingBranchResult } from "../utils/checkout-git.js";
+import { resolveBranchUpstreamRef } from "../utils/checkout-git.js";
 import { expandTilde } from "../utils/path.js";
 import {
   getWorktreeSetupCommands,
@@ -251,12 +252,7 @@ export async function buildAgentSessionConfig(
       {
         resolveDefaultBranch: normalized.baseBranch
           ? async () => normalized.baseBranch!
-          : (repoRoot) =>
-              resolveGitCreateBaseBranch(
-                repoRoot,
-                dependencies.workspaceGitService,
-                dependencies.paseoHome,
-              ),
+          : (repoRoot) => resolveGitCreateBaseBranch(repoRoot, dependencies.workspaceGitService),
       },
     );
     cwd = createdWorktree.workspace.cwd;
@@ -265,11 +261,7 @@ export async function buildAgentSessionConfig(
   } else if (normalized.createNewBranch) {
     const baseBranch =
       normalized.baseBranch ??
-      (await resolveGitCreateBaseBranch(
-        cwd,
-        dependencies.workspaceGitService,
-        dependencies.paseoHome,
-      ));
+      (await resolveGitCreateBaseBranch(cwd, dependencies.workspaceGitService));
     await dependencies.createBranchFromBase({
       cwd,
       baseBranch,
@@ -399,13 +391,14 @@ export function assertSafeGitRef(ref: string, label: string): void {
 export async function resolveGitCreateBaseBranch(
   cwd: string,
   workspaceGitService?: WorkspaceGitService,
-  _paseoHome?: string,
 ): Promise<string> {
   if (!workspaceGitService) {
     throw new Error("WorkspaceGitService is required to resolve the repository root");
   }
 
-  return workspaceGitService.resolveDefaultBranch(cwd);
+  const bareBranch = await workspaceGitService.resolveDefaultBranch(cwd);
+  const upstreamRef = await resolveBranchUpstreamRef(cwd, bareBranch);
+  return upstreamRef ?? bareBranch;
 }
 
 export async function handlePaseoWorktreeListRequest(

@@ -444,6 +444,52 @@ describe.skipIf(isPlatform("win32"))("worktree-core POSIX-only", () => {
       expect(getBranchUpstream(result.worktree.worktreePath)).toBeNull();
     });
 
+    test("pins the worktree to a qualified ref when resolveDefaultBranch returns one", async () => {
+      const { tempDir, repoDir, paseoHome } = createGitRepo();
+      cleanupPaths.push(tempDir);
+      const upstreamDir = path.join(tempDir, "upstream.git");
+      execFileSync("git", ["clone", "--bare", repoDir, upstreamDir], { stdio: "pipe" });
+      execFileSync("git", ["remote", "add", "upstream", upstreamDir], {
+        cwd: repoDir,
+        stdio: "pipe",
+      });
+      execFileSync("git", ["fetch", "upstream"], { cwd: repoDir, stdio: "pipe" });
+      const upstreamMainSha = execFileSync("git", ["rev-parse", "refs/remotes/upstream/main"], {
+        cwd: repoDir,
+        stdio: "pipe",
+      })
+        .toString()
+        .trim();
+
+      const result = await createCoreWorktree(
+        {
+          cwd: repoDir,
+          worktreeSlug: "upstream-default-feature",
+          paseoHome,
+          runSetup: false,
+        },
+        {
+          ...createCoreDeps(),
+          resolveDefaultBranch: async () => "refs/remotes/upstream/main",
+        },
+      );
+
+      expect(result.intent).toEqual({
+        kind: "branch-off",
+        baseBranch: "refs/remotes/upstream/main",
+        branchName: "upstream-default-feature",
+      });
+      const metadata = readPaseoWorktreeMetadata(result.worktree.worktreePath);
+      expect(metadata?.baseRef).toBe("refs/remotes/upstream/main");
+      const branchSha = execFileSync("git", ["rev-parse", result.worktree.branchName], {
+        cwd: result.worktree.worktreePath,
+        stdio: "pipe",
+      })
+        .toString()
+        .trim();
+      expect(branchSha).toBe(upstreamMainSha);
+    });
+
     test("creates a branch-off worktree with a mnemonic slug when no slug is supplied", async () => {
       const { tempDir, repoDir, paseoHome } = createGitRepo();
       cleanupPaths.push(tempDir);

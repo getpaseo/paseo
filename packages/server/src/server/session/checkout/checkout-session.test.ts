@@ -1,6 +1,6 @@
 import { SessionDelivery } from "../owned-subscriptions/index.js";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -29,6 +29,8 @@ import {
 } from "../../test-utils/workspace-git-service-stub.js";
 import { createWorktree, deletePaseoWorktree } from "../../../utils/worktree.js";
 import { expandTilde } from "../../../utils/path.js";
+import { createWorktree as createWorktreePrimitive } from "../../../utils/worktree.js";
+import { readPaseoWorktreeMetadata } from "../../../utils/worktree-metadata.js";
 import type { GitMetadataGenerator } from "./git-metadata-generator.js";
 
 function isCheckDetailsResponse(msg: SessionOutboundMessage): boolean {
@@ -114,6 +116,7 @@ function makeCheckoutSession(options?: {
   host?: Partial<CheckoutSessionHost>;
   gitMutation?: Partial<GitMutationFake>;
   gitMetadataGenerator?: Partial<GitMetadataGenerator>;
+  paseoHome?: string;
 }) {
   const emitted: SessionOutboundMessage[] = [];
   const hostCalls: RecordedHostCalls = {
@@ -1721,6 +1724,202 @@ describe("CheckoutSession", () => {
           },
         },
       ]);
+    });
+  });
+
+  describe("handleCheckoutPrCreateRequest", () => {
+    function createGitRepo(): { tempDir: string; repoDir: string; paseoHome: string } {
+      const tempDir = realpathSync(mkdtempSync(join(tmpdir(), "checkout-session-pr-test-")));
+      const repoDir = join(tempDir, "repo");
+      const paseoHome = join(tempDir, "paseo-home");
+      mkdirSync(repoDir, { recursive: true });
+      execFileSync("git", ["init", "-b", "main"], { cwd: repoDir, stdio: "pipe" });
+      execFileSync("git", ["config", "user.email", "test@test.com"], {
+        cwd: repoDir,
+        stdio: "pipe",
+      });
+      execFileSync("git", ["config", "user.name", "Test"], { cwd: repoDir, stdio: "pipe" });
+      writeFileSync(join(repoDir, "README.md"), "hello\n");
+      execFileSync("git", ["add", "."], { cwd: repoDir, stdio: "pipe" });
+      execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "initial"], {
+        cwd: repoDir,
+        stdio: "pipe",
+      });
+      return { tempDir, repoDir, paseoHome };
+    }
+
+    async function createPaseoWorktree(repoDir: string, paseoHome: string): Promise<string> {
+      const worktree = await createWorktreePrimitive({
+        cwd: repoDir,
+        worktreeSlug: "pr-target-feature",
+        source: { kind: "branch-off", baseBranch: "main", branchName: "pr-target-feature" },
+        runSetup: false,
+        paseoHome,
+      });
+      return worktree.worktreePath;
+    }
+
+    it("pins the stored base to the PR's real target after a successful create", async () => {
+      const { tempDir, repoDir, paseoHome } = createGitRepo();
+      try {
+        const remoteDir = join(tempDir, "remote.git");
+        execFileSync("git", ["init", "--bare", remoteDir], { stdio: "pipe" });
+        execFileSync("git", ["remote", "add", "origin", remoteDir], {
+          cwd: repoDir,
+          stdio: "pipe",
+        });
+        execFileSync("git", ["push", "-u", "origin", "main"], { cwd: repoDir, stdio: "pipe" });
+        execFileSync("git", ["push", "origin", "main:release-1.2"], {
+          cwd: repoDir,
+          stdio: "pipe",
+        });
+
+        const worktreePath = await createPaseoWorktree(repoDir, paseoHome);
+        execFileSync("git", ["fetch", "origin"], { cwd: worktreePath, stdio: "pipe" });
+
+        const github: ForgeService = {
+          ...createGitHubService(),
+          createPullRequest: async () => ({ url: "https://example.com/pr/1", number: 1 }),
+        };
+        const { checkout, emitted, gitMutationCalls } = makeCheckoutSession({
+          paseoHome,
+          git: {
+            resolveForge: async () => ({ forge: "github", host: "github.com", service: github }),
+          },
+          github,
+        });
+
+        await checkout.handleCheckoutPrCreateRequest({
+          type: "checkout_pr_create_request",
+          cwd: worktreePath,
+          title: "Test PR",
+          body: "Body",
+          baseRef: "release-1.2",
+          requestId: "pr1",
+        });
+
+        expect(emitted).toEqual([
+          {
+            type: "checkout_pr_create_response",
+            payload: {
+              cwd: worktreePath,
+              url: "https://example.com/pr/1",
+              number: 1,
+              error: null,
+              requestId: "pr1",
+            },
+          },
+        ]);
+        expect(readPaseoWorktreeMetadata(worktreePath)).toMatchObject({
+          baseRefName: "release-1.2",
+          baseRef: "refs/remotes/origin/release-1.2",
+        });
+        expect(gitMutationCalls.notifyGitMutation).toEqual([
+          { cwd: worktreePath, reason: "create-pr", options: { invalidateForge: true } },
+        ]);
+      } finally {
+        rmSync(tempDir, { recursive: true, force: true });
+      }
+    });
+
+    it("pins to the default resolved base when the caller sends no baseRef at all", async () => {
+      // This is the app's real "Create PR" call shape (checkoutPrCreate(cwd, {})) — no
+      // baseRef, ever. The pin must still fire using whatever base createPullRequest
+      // actually resolved, not silently skip because the raw request omitted one.
+      const { tempDir, repoDir, paseoHome } = createGitRepo();
+      try {
+        const remoteDir = join(tempDir, "remote.git");
+        execFileSync("git", ["init", "--bare", remoteDir], { stdio: "pipe" });
+        execFileSync("git", ["remote", "add", "origin", remoteDir], {
+          cwd: repoDir,
+          stdio: "pipe",
+        });
+        execFileSync("git", ["push", "-u", "origin", "main"], { cwd: repoDir, stdio: "pipe" });
+
+        const worktreePath = await createPaseoWorktree(repoDir, paseoHome);
+        execFileSync("git", ["fetch", "origin"], { cwd: worktreePath, stdio: "pipe" });
+
+        let requestedBase: string | undefined;
+        const github: ForgeService = {
+          ...createGitHubService(),
+          createPullRequest: async ({ base }) => {
+            requestedBase = base;
+            return { url: "https://example.com/pr/1", number: 1 };
+          },
+        };
+        const { checkout, emitted } = makeCheckoutSession({
+          paseoHome,
+          git: {
+            resolveForge: async () => ({ forge: "github", host: "github.com", service: github }),
+          },
+          github,
+        });
+
+        await checkout.handleCheckoutPrCreateRequest({
+          type: "checkout_pr_create_request",
+          cwd: worktreePath,
+          title: "Test PR",
+          body: "Body",
+          requestId: "pr3",
+        });
+
+        expect(emitted[0]).toMatchObject({
+          type: "checkout_pr_create_response",
+          payload: { error: null },
+        });
+        expect(requestedBase).toBe("main");
+        expect(readPaseoWorktreeMetadata(worktreePath)).toMatchObject({
+          baseRefName: "main",
+          baseRef: "refs/remotes/origin/main",
+        });
+      } finally {
+        rmSync(tempDir, { recursive: true, force: true });
+      }
+    });
+
+    it("leaves the stored base untouched when the PR's target hasn't been fetched locally", async () => {
+      const { tempDir, repoDir, paseoHome } = createGitRepo();
+      try {
+        const remoteDir = join(tempDir, "remote.git");
+        execFileSync("git", ["init", "--bare", remoteDir], { stdio: "pipe" });
+        execFileSync("git", ["remote", "add", "origin", remoteDir], {
+          cwd: repoDir,
+          stdio: "pipe",
+        });
+        execFileSync("git", ["push", "-u", "origin", "main"], { cwd: repoDir, stdio: "pipe" });
+
+        const worktreePath = await createPaseoWorktree(repoDir, paseoHome);
+        const originalMetadata = readPaseoWorktreeMetadata(worktreePath);
+
+        const github: ForgeService = {
+          ...createGitHubService(),
+          createPullRequest: async () => ({ url: "https://example.com/pr/1", number: 1 }),
+        };
+        const { checkout, emitted } = makeCheckoutSession({
+          paseoHome,
+          git: {
+            resolveForge: async () => ({ forge: "github", host: "github.com", service: github }),
+          },
+          github,
+        });
+
+        await checkout.handleCheckoutPrCreateRequest({
+          type: "checkout_pr_create_request",
+          cwd: worktreePath,
+          title: "Test PR",
+          body: "Body",
+          baseRef: "release-not-fetched",
+          requestId: "pr2",
+        });
+
+        expect(emitted[0]).toMatchObject({
+          type: "checkout_pr_create_response",
+          payload: { error: null },
+        });
+        expect(readPaseoWorktreeMetadata(worktreePath)).toEqual(originalMetadata);
+      } finally {
+        rmSync(tempDir, { recursive: true, force: true });
+      }
     });
   });
 });

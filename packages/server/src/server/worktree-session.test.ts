@@ -451,6 +451,42 @@ describe("resolveGitCreateBaseBranch", () => {
       rmSync(tempDir, { recursive: true, force: true });
     }
   });
+
+  test("stays on the bare branch name when the branch has a remote but no configured upstream", async () => {
+    const { tempDir, repoDir } = createGitRepo();
+    const remoteDir = path.join(tempDir, "remote.git");
+    execFileSync("git", ["init", "--bare", remoteDir], { stdio: "pipe" });
+    execFileSync("git", ["remote", "add", "origin", remoteDir], { cwd: repoDir, stdio: "pipe" });
+    // Pushed, but not with -u: no tracking config, so there is no upstream to prefer.
+    execFileSync("git", ["push", "origin", "main"], { cwd: repoDir, stdio: "pipe" });
+    const workspaceGitService = { resolveDefaultBranch: vi.fn().mockResolvedValue("main") };
+
+    try {
+      await expect(
+        resolveGitCreateBaseBranch(repoDir, workspaceGitService as unknown as WorkspaceGitService),
+      ).resolves.toBe("main");
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test("prefers the branch's configured upstream ref, whatever the remote is named", async () => {
+    const { tempDir, repoDir } = createGitRepo();
+    const remoteDir = path.join(tempDir, "remote.git");
+    execFileSync("git", ["init", "--bare", remoteDir], { stdio: "pipe" });
+    // Deliberately not "origin" — the resolver should not care what the remote is called.
+    execFileSync("git", ["remote", "add", "upstream", remoteDir], { cwd: repoDir, stdio: "pipe" });
+    execFileSync("git", ["push", "-u", "upstream", "main"], { cwd: repoDir, stdio: "pipe" });
+    const workspaceGitService = { resolveDefaultBranch: vi.fn().mockResolvedValue("main") };
+
+    try {
+      await expect(
+        resolveGitCreateBaseBranch(repoDir, workspaceGitService as unknown as WorkspaceGitService),
+      ).resolves.toBe("refs/remotes/upstream/main");
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("create-agent worktree setup boundary", () => {

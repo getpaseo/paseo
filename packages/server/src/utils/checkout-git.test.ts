@@ -40,6 +40,8 @@ import {
   pullCurrentBranch,
   pushCurrentBranch,
   resolveBranchCheckout,
+  resolveBranchUpstreamRef,
+  resolveOriginBranchRef,
   resolveRepositoryDefaultBranch,
   parseWorktreeList,
   renameCurrentBranch,
@@ -291,6 +293,7 @@ describe("checkout git utilities", () => {
     expect(result).toEqual({
       url: "https://gitlab.com/group/proj/-/merge_requests/7",
       number: 7,
+      base: "main",
     });
   });
 
@@ -323,6 +326,7 @@ describe("checkout git utilities", () => {
     expect(result).toEqual({
       url: "https://gitlab.com/group/proj/-/merge_requests/9",
       number: 9,
+      base: "main",
     });
   });
 
@@ -3628,7 +3632,76 @@ const x = 1;
 
     await expect(
       getCheckoutDiff(worktree.worktreePath, { mode: "base", baseRef: "other" }, { paseoHome }),
-    ).rejects.toThrow("Base ref mismatch: stored refs/heads/main, requested other");
+    ).rejects.toThrow("Base ref mismatch: stored main, requested other");
+  });
+
+  it("creates a pull request against a different target than the workspace's stored base", async () => {
+    // A worktree's stored base is never actually empty — it falls back to baseRefName — so
+    // this is the common case (branched off main), not an edge case: requesting a PR against
+    // a different branch must not be treated as a stale/mismatched request.
+    const worktree = await createLegacyWorktreeForTest({
+      branchName: "retarget-feature",
+      cwd: repoDir,
+      baseBranch: "main",
+      worktreeSlug: "retarget-feature",
+      paseoHome,
+    });
+    setupRemoteTrackingMain(repoDir, tempDir);
+    let requestedBase: string | undefined;
+    const adapter = createGitHubServiceForStatus(null);
+    adapter.createPullRequest = async ({ base }) => {
+      requestedBase = base;
+      return { url: "https://github.com/acme/repo/pull/9", number: 9 };
+    };
+
+    const result = await createPullRequest(
+      worktree.worktreePath,
+      { title: "Add thing", body: "desc", base: "release-1.2" },
+      adapter,
+      { paseoHome },
+    );
+
+    expect(requestedBase).toBe("release-1.2");
+    expect(result).toEqual({
+      url: "https://github.com/acme/repo/pull/9",
+      number: 9,
+      base: "release-1.2",
+    });
+  });
+
+  it("returns an empty diff instead of throwing when the pinned base ref has been deleted", async () => {
+    // Reproduces the stacked-PR report on getpaseo/paseo#4968: a workspace's diff base gets
+    // pinned to the PR's real target (e.g. a parent branch), the parent PR merges and its
+    // branch is deleted on origin, and the child workspace's changes view used to throw
+    // "Base ref not found" instead of degrading like every other comparison-ref resolver.
+    setupRemoteTrackingMain(repoDir, tempDir);
+    execFileSync("git", ["checkout", "-b", "parent-feature"], { cwd: repoDir });
+    commitFile(repoDir, "parent.txt", "parent\n", "parent commit");
+    execFileSync("git", ["push", "-u", "origin", "parent-feature"], { cwd: repoDir });
+    execFileSync("git", ["checkout", "main"], { cwd: repoDir });
+
+    const worktree = await createLegacyWorktreeForTest({
+      branchName: "child-feature",
+      cwd: repoDir,
+      baseBranch: "parent-feature",
+      worktreeSlug: "child-feature",
+      paseoHome,
+    });
+
+    // Simulate pinBaseRefToPullRequestTarget having pinned the workspace to the PR's real
+    // (qualified, origin-tracked) target.
+    writePaseoWorktreeMetadata(worktree.worktreePath, {
+      baseRefName: "parent-feature",
+      baseRef: "refs/remotes/origin/parent-feature",
+    });
+
+    // The parent PR merges and its branch is deleted on origin; the local remote-tracking
+    // ref goes with it once the workspace's origin is pruned.
+    execFileSync("git", ["push", "origin", "--delete", "parent-feature"], { cwd: repoDir });
+    execFileSync("git", ["remote", "prune", "origin"], { cwd: worktree.worktreePath });
+
+    const baseDiff = await getCheckoutDiff(worktree.worktreePath, { mode: "base" }, { paseoHome });
+    expect(baseDiff.diff).toBe("");
   });
 
   it("excludes dirty working tree changes from Paseo worktree base diffs", async () => {
@@ -3678,6 +3751,48 @@ const x = 1;
     });
 
     await expect(resolveRepositoryDefaultBranch(repoDir)).resolves.toBe("main");
+  });
+
+  it("resolves a branch's configured upstream ref", async () => {
+    execFileSync("git", ["remote", "add", "upstream", "https://github.com/acme/repo.git"], {
+      cwd: repoDir,
+    });
+    execFileSync("git", ["update-ref", "refs/remotes/upstream/main", "refs/heads/main"], {
+      cwd: repoDir,
+    });
+    execFileSync("git", ["branch", "--set-upstream-to=upstream/main", "main"], { cwd: repoDir });
+
+    await expect(resolveBranchUpstreamRef(repoDir, "main")).resolves.toBe(
+      "refs/remotes/upstream/main",
+    );
+  });
+
+  it("returns null when the branch has a remote-tracking ref but no configured upstream", async () => {
+    execFileSync("git", ["remote", "add", "upstream", "https://github.com/acme/repo.git"], {
+      cwd: repoDir,
+    });
+    execFileSync("git", ["update-ref", "refs/remotes/upstream/main", "refs/heads/main"], {
+      cwd: repoDir,
+    });
+
+    await expect(resolveBranchUpstreamRef(repoDir, "main")).resolves.toBeNull();
+  });
+
+  it("resolves a branch's origin ref when it exists", async () => {
+    execFileSync("git", ["remote", "add", "origin", "https://github.com/acme/repo.git"], {
+      cwd: repoDir,
+    });
+    execFileSync("git", ["update-ref", "refs/remotes/origin/release-1.2", "refs/heads/main"], {
+      cwd: repoDir,
+    });
+
+    await expect(resolveOriginBranchRef(repoDir, "release-1.2")).resolves.toBe(
+      "refs/remotes/origin/release-1.2",
+    );
+  });
+
+  it("returns null when the branch has no matching origin ref", async () => {
+    await expect(resolveOriginBranchRef(repoDir, "release-1.2")).resolves.toBeNull();
   });
 
   it("merges to stored baseRefName when baseRef is not provided", async () => {
