@@ -8,6 +8,7 @@ import {
 } from "react";
 import { StyleSheet, View } from "react-native";
 import { PortalHost } from "@gorhom/portal";
+import { NO_DRAG_SCOPE_ATTRIBUTE } from "@/components/desktop/titlebar-drag-region";
 
 export const DEFAULT_FLOATING_PANEL_PORTAL_HOST = "content-floating-panels";
 
@@ -73,7 +74,13 @@ export function FloatingPanelPortalHost({
   }, [name]);
 
   return (
-    <View ref={hostRef} collapsable={false} pointerEvents="box-none" style={styles.host}>
+    <View
+      ref={hostRef}
+      collapsable={false}
+      pointerEvents="box-none"
+      style={styles.host}
+      {...{ [NO_DRAG_SCOPE_ATTRIBUTE]: "true" }}
+    >
       <PortalHost name={name} />
     </View>
   );

@@ -1,3 +1,4 @@
+import React from "react";
 import { getIsElectronRuntime } from "@/constants/layout";
 import { isNative } from "@/constants/platform";
 
@@ -11,11 +12,25 @@ import { isNative } from "@/constants/platform";
  *
  * VS Code's drag region is a static DOM element — no z-index, no pointer-events,
  * no state, no event listeners. Interactive elements get no-drag from their own
- * CSS (global backstop in index.html). The drag region never re-renders.
+ * CSS (scoped backstop in index.html). The drag region never re-renders.
  *
  * The resizer is Windows/Linux only (titlebarpart.css:249 scopes to .windows/.linux).
  * On macOS, Electron handles edge resize natively.
+ *
+ * The overlay carries `data-paseo-drag-overlay`. Chromium collects draggable
+ * regions from UNCLIPPED layout bounds, so content scrolled inside a list (chat
+ * history, logs) still reports element rects through the titlebar strip — any
+ * global `no-drag` backstop would let that content punch the drag region full of
+ * holes and make the titlebar undraggable. index.html therefore applies the
+ * no-drag backstop only inside `:has(> [data-paseo-drag-overlay])` surfaces and
+ * `[data-paseo-no-drag-scope]` floating layers.
  */
+
+/** Marks the container that directly hosts a {@link TitlebarDragRegion} overlay. */
+export const TITLEBAR_DRAG_OVERLAY_ATTRIBUTE = "data-paseo-drag-overlay";
+
+/** Marks floating layers (portals, window controls) that can overlap a drag overlay. */
+export const NO_DRAG_SCOPE_ATTRIBUTE = "data-paseo-no-drag-scope";
 
 export const titlebarDragSurfaceStyle: React.CSSProperties = {
   cursor: "default",
@@ -54,7 +69,7 @@ export function TitlebarDragRegion() {
   return (
     <>
       {/* Drag overlay — VS Code .titlebar-drag-region (titlebarpart.css:57-64) */}
-      <div style={DRAG_OVERLAY_STYLE} />
+      <div {...{ [TITLEBAR_DRAG_OVERLAY_ATTRIBUTE]: "true" }} style={DRAG_OVERLAY_STYLE} />
       {/* Top-edge resizer — VS Code .resizer (titlebarpart.css:249-256) */}
       <div style={TOP_RESIZER_STYLE} />
     </>
