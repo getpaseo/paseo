@@ -17,9 +17,9 @@ Typical uses:
 - **Verify its own changes.** After editing a component, the agent opens the dev server, snapshots the page, and confirms the new text or layout is actually there.
 - **Reproduce and diagnose bugs.** Click the exact sequence from a bug report, then read the console and network logs.
 - **Exercise full flows.** Forms, multi-step wizards, hover menus, drag and drop, file uploads.
-- **Work in logged-in sessions.** Tabs keep their session state. Log in once yourself, and the agent can work behind the login.
+- **Work in logged-in sessions.** Tabs keep their session state. When a page needs your login, the agent hands you the tab; sign in once and it works behind the login.
 
-Because you share the browser with the agent, you can watch it work — and step in at any point.
+Because you share the browser with the agent, you can watch it work, step in at any point, and take over the steps only you can do.
 
 ## Enabling
 
@@ -46,7 +46,11 @@ The tools are part of the [Paseo MCP toolset](/docs/mcp), so **Enable Paseo tool
 
 Browser tabs are hosted by the Paseo daemon on the machine where your workspace runs. The app shows a remote viewport and forwards clicks, keyboard input, scrolling, hover, and long-press drags, so Mac, Android, and the web client can use the same Linux browser profile. The desktop app remains a compatibility fallback for older daemons.
 
+## Taking control of a tab
+
 While a `browser_goal` or `browser_test` run drives a tab, a status bar above the viewport shows the step, the phase, the chosen action with its accessibility target, and Jev's confidence; the browser tab shows a running dot. A recipe also shows its next step. Jev chooses its next step only after it looks at the page again, so a goal run shows **Re-check page** until it has chosen. Tap the bar for the step overview. Your input to the viewport is blocked during a run. **Take over** pauses the run after the current action and hands input back to you; **Resume** continues from a fresh snapshot of the page as you left it. The status stream carries only structured action data: no screenshots, filled values, or model reasoning.
+
+When an agent reaches a step only you can do — a login, a 2FA code, a CAPTCHA, a payment — it calls `browser_handoff` instead of asking for credentials in chat, and ends its turn. The chat shows a card with the agent's reason and **Open browser**, which opens the tab; on a phone it switches the view to the tab. A banner above the viewport repeats the reason. Until you press **Done** or **Cancel** there, the tab is yours: the agent cannot read or drive it, and every browser tool on it, including `browser_goal` and `browser_test` steps, returns an error. Done or Cancel sends the agent a message with the tab's current URL and title, shown as a note in the chat, and the card shows how the handoff ended. Closing the tab cancels the handoff.
 
 ## How an agent sees a page
 

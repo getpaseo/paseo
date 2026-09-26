@@ -433,6 +433,7 @@ const OUTBOUND_PERMISSION = {
   "browser.import.import_cookies.response": "daemon.manage",
   "browser.import.list_sources.response": "daemon.read",
   "browser.activity": "workspace.read",
+  "browser.handoff": "workspace.read",
   "browser.activity.control.response": "workspace.write",
   "verify.recipe.list.response": "workspace.read",
   "verify.recipe.run.response": "workspace.write",

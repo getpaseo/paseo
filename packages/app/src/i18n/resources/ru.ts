@@ -611,6 +611,20 @@ export const ru: TranslationResources = {
           failed: "Ошибка",
         },
       },
+      handoff: {
+        title: "Передача браузера",
+        openBrowser: "Открыть браузер",
+        youHaveControl: "Управление у вас",
+        done: "Готово",
+        cancel: "Отмена",
+        alreadyEnded: "Эта передача уже завершена",
+        endFailed: "Не удалось завершить передачу",
+        status: {
+          active: "Ждёт вас",
+          done: "Готово",
+          cancelled: "Отменено",
+        },
+      },
       controls: {
         back: "Назад",
         forward: "Вперед",

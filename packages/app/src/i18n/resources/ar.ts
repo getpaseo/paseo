@@ -605,6 +605,20 @@ export const ar: TranslationResources = {
           failed: "فشل",
         },
       },
+      handoff: {
+        title: "تسليم المتصفح",
+        openBrowser: "فتح المتصفح",
+        youHaveControl: "التحكم بيدك",
+        done: "تم",
+        cancel: "إلغاء",
+        alreadyEnded: "انتهى هذا التسليم بالفعل",
+        endFailed: "تعذّر إنهاء التسليم",
+        status: {
+          active: "بانتظارك",
+          done: "تم",
+          cancelled: "أُلغي",
+        },
+      },
       controls: {
         back: "خلف",
         forward: "إلى الأمام",

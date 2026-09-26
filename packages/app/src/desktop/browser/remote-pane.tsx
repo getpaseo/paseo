@@ -29,10 +29,11 @@ import {
 import { collectAllTabs, useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 import {
   isBrowserRunLocked,
+  useActiveBrowserHandoff,
   useBrowserActivity,
   useBrowserActivityStore,
 } from "@/desktop/browser/activity";
-import { BrowserActivityBar } from "@/desktop/browser/activity-bar";
+import { BrowserActivityBar, BrowserHandoffBar } from "@/desktop/browser/activity-bar";
 import {
   getContainedFrameRect,
   getRemotePoint,
@@ -220,6 +221,10 @@ function RemoteBrowserPane({
   const remoteBrowserIdRef = useRef(remoteBrowserId);
   remoteBrowserIdRef.current = remoteBrowserId;
   const activity = useBrowserActivity(serverId, workspaceId, remoteBrowserId);
+  const handoff = useActiveBrowserHandoff(serverId, workspaceId, remoteBrowserId);
+  const [handoffAction, setHandoffAction] = useState<"finish_handoff" | "cancel_handoff" | null>(
+    null,
+  );
   const runLocked = isBrowserRunLocked(activity);
   const canInteract = isInteractive && !runLocked;
   const frameRef = useRef(frame);
@@ -463,6 +468,29 @@ function RemoteBrowserPane({
         });
     },
     [client, workspaceId],
+  );
+
+  const handleHandoffEnd = useCallback(
+    (action: "finish_handoff" | "cancel_handoff") => {
+      if (!client || !handoff) return;
+      setError(null);
+      setHandoffAction(action);
+      void client
+        .controlBrowserActivity({ workspaceId, browserId: handoff.browserId, action })
+        .then((response) => {
+          if (!response.applied && mountedRef.current) {
+            setError(t("workspace.browser.handoff.alreadyEnded"));
+          }
+          return undefined;
+        })
+        .catch(() => {
+          if (mountedRef.current) setError(t("workspace.browser.handoff.endFailed"));
+        })
+        .finally(() => {
+          if (mountedRef.current) setHandoffAction(null);
+        });
+    },
+    [client, handoff, t, workspaceId],
   );
 
   const handleActivityDismiss = useCallback(() => {
@@ -862,6 +890,13 @@ function RemoteBrowserPane({
             <Text style={styles.retryLabel}>{t("common.actions.retry")}</Text>
           </Pressable>
         </View>
+      ) : null}
+      {handoff ? (
+        <BrowserHandoffBar
+          handoff={handoff}
+          pendingAction={handoffAction}
+          onEnd={handleHandoffEnd}
+        />
       ) : null}
       {activity ? (
         <BrowserActivityBar

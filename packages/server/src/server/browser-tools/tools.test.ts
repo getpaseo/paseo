@@ -1,9 +1,12 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, it, test } from "vitest";
 import { z } from "zod";
 import type { BrowserToolsBroker, BrowserToolsExecuteInput } from "./broker.js";
 import type { BrowserToolsResponsePayload } from "./errors.js";
 import type { JevBrowserGoalResult } from "./jev-goal-runner.js";
 import { registerBrowserTools, type RegisterBrowserToolsOptions } from "./tools.js";
+import { BrowserActivityHub } from "./browser-activity.js";
+import { describeBrowserHandoffEnd } from "./handoff.js";
+import type { BrowserHandoff } from "@getpaseo/protocol/browser-activity/rpc-schemas";
 import type {
   PaseoToolConfig,
   PaseoToolExecutionContext,
@@ -51,6 +54,7 @@ class BrowserToolHarness {
     private readonly callerAgentId: string | null = "agent-1",
     goalRunner?: RegisterBrowserToolsOptions["goalRunner"],
     verify?: RegisterBrowserToolsOptions["verify"],
+    handoff?: RegisterBrowserToolsOptions["handoff"],
   ) {
     registerBrowserTools({
       registerTool: (name, config, handler) => {
@@ -59,6 +63,7 @@ class BrowserToolHarness {
       broker: this.broker as Pick<BrowserToolsBroker, "execute">,
       ...(goalRunner ? { goalRunner } : {}),
       ...(verify ? { verify } : {}),
+      ...(handoff ? { handoff } : {}),
       ...(this.callerAgentId ? { callerAgentId: this.callerAgentId } : {}),
       resolveCallerAgent: () => this.callerAgent,
     });
@@ -1167,5 +1172,110 @@ describe("registerBrowserTools", () => {
     expect(harness.validate("browser_test", { steps: [{ action: "teleport" }] }).success).toBe(
       false,
     );
+  });
+});
+
+describe("browser_handoff", () => {
+  function createHandoffHarness() {
+    const hub = new BrowserActivityHub(() => {});
+    const ended: BrowserHandoff[] = [];
+    const harness = new BrowserToolHarness(undefined, "agent-1", undefined, undefined, {
+      hub,
+      onEnd: (handoff) => ended.push(handoff),
+    });
+    return { hub, ended, harness };
+  }
+
+  test("hands an open tab to the user and returns without waiting", async () => {
+    const { hub, ended, harness } = createHandoffHarness();
+
+    const result = await harness.execute("browser_handoff", {
+      browserId: BROWSER_ID,
+      reason: "Sign in to example.com",
+    });
+
+    const active = hub.activeHandoff(BROWSER_ID);
+    expect(active).toMatchObject({
+      workspaceId: "wks_workspace_a",
+      browserId: BROWSER_ID,
+      agentId: "agent-1",
+      reason: "Sign in to example.com",
+      status: "active",
+    });
+    expect(result.structuredContent).toMatchObject({
+      ok: true,
+      handoffId: active?.handoffId,
+      browserId: BROWSER_ID,
+      status: "active",
+    });
+    expect(result.content).toEqual([
+      {
+        type: "text",
+        text: `Handed browser tab ${BROWSER_ID} to the user (handoffId=${active?.handoffId}): "Sign in to example.com". The user controls the tab now and browser tools on it fail until they finish. End your turn now and tell the user what to do in the tab; you will receive a message when they finish or cancel.`,
+      },
+    ]);
+    expect(harness.broker.calls.map((call) => call.command.command)).toEqual(["list_tabs"]);
+    expect(ended).toEqual([]);
+  });
+
+  test("refuses a tab that is not open in the workspace", async () => {
+    const { hub, harness } = createHandoffHarness();
+    harness.broker.setResponse({
+      requestId: "req-list-tabs",
+      ok: true,
+      result: { command: "list_tabs", tabs: [] },
+    });
+
+    const result = await harness.execute("browser_handoff", {
+      browserId: BROWSER_ID,
+      reason: "Sign in",
+    });
+
+    expect(result.structuredContent).toMatchObject({
+      ok: false,
+      error: { code: "browser_tab_not_found" },
+    });
+    expect(hub.activeHandoff(BROWSER_ID)).toBeNull();
+  });
+
+  test("refuses a tab the user already controls", async () => {
+    const { harness } = createHandoffHarness();
+    await harness.execute("browser_handoff", { browserId: BROWSER_ID, reason: "Sign in" });
+
+    const second = await harness.execute("browser_handoff", {
+      browserId: BROWSER_ID,
+      reason: "Pay",
+    });
+
+    expect(second.structuredContent).toMatchObject({
+      ok: false,
+      error: { code: "browser_denied" },
+    });
+    expect(harness.broker.calls).toHaveLength(1);
+  });
+
+  test("is offered only with a handoff host", () => {
+    expect(new BrowserToolHarness().toolNames()).not.toContain("browser_handoff");
+    expect(createHandoffHarness().harness.toolNames()).toContain("browser_handoff");
+  });
+
+  test("follow-up avoids forwarding page URLs after the user signs in", () => {
+    const note = describeBrowserHandoffEnd(
+      {
+        handoffId: "handoff-1",
+        workspaceId: "wks_workspace_a",
+        browserId: BROWSER_ID,
+        agentId: "agent-1",
+        reason: "Sign in to example.com",
+        status: "done",
+        updatedAt: 1,
+      },
+      true,
+    );
+
+    expect(note).toBe(
+      'The user finished the browser handoff "Sign in to example.com". The tab is available for browser tools again; take a fresh snapshot before continuing.',
+    );
+    expect(note).not.toContain("http");
   });
 });

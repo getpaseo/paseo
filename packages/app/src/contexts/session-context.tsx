@@ -763,14 +763,20 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
   ]);
 
   const supportsBrowserActivity = useHostFeature(serverId, "browserActivity");
+  const supportsBrowserHandoff = useHostFeature(serverId, "browserHandoff");
   useEffect(() => {
     if (!supportsBrowserActivity) return;
-    const feed = client.observeEvents(["browser.activity"]);
+    const feed = client.observeEvents(
+      supportsBrowserHandoff ? ["browser.activity", "browser.handoff"] : ["browser.activity"],
+    );
     const unsubscribe = feed.subscribe({
       snapshot: () => useBrowserActivityStore.getState().resetServer(serverId),
       update: (message) => {
-        if (message.type !== "browser.activity") return;
-        useBrowserActivityStore.getState().apply(serverId, message.payload);
+        if (message.type === "browser.activity") {
+          useBrowserActivityStore.getState().apply(serverId, message.payload);
+        } else if (message.type === "browser.handoff") {
+          useBrowserActivityStore.getState().applyHandoff(serverId, message.payload);
+        }
       },
     });
     return () => {
@@ -779,7 +785,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
         .release()
         .catch((error) => console.warn("[Session] Failed to release browser activity", error));
     };
-  }, [client, serverId, supportsBrowserActivity]);
+  }, [client, serverId, supportsBrowserActivity, supportsBrowserHandoff]);
 
   const _cancelAgentRun = useCallback(
     (agentId: string) => {

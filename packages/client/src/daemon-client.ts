@@ -177,6 +177,7 @@ import type {
   BrowserAutomationExecuteResponse,
   BrowserAutomationResponsePayload,
 } from "@getpaseo/protocol/browser-automation/rpc-schemas";
+import type { BrowserActivityControlRequest } from "@getpaseo/protocol/browser-activity/rpc-schemas";
 
 export interface Logger {
   debug(obj: object, msg?: string): void;
@@ -2257,7 +2258,7 @@ export class DaemonClient {
   controlBrowserActivity(input: {
     workspaceId: string;
     browserId: string;
-    action: "pause" | "resume";
+    action: BrowserActivityControlRequest["action"];
   }): Promise<CorrelatedResponsePayload<"browser.activity.control.response">> {
     return this.sendCorrelatedSessionRequest<"browser.activity.control.response">({
       message: { type: "browser.activity.control.request", ...input },

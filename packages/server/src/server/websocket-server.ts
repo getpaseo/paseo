@@ -1764,7 +1764,7 @@ export class VoiceAssistantWebSocketServer {
         pluginTimelineItems: true,
         verifyRecipes: true,
         ...(this.verifyHost ? { browserCookieImport: true } : {}),
-        ...(this.browserActivity ? { browserActivity: true } : {}),
+        ...(this.browserActivity ? { browserActivity: true, browserHandoff: true } : {}),
         // COMPAT(skillManagement): added in v0.4.0, remove gate after 2027-08-16.
         skillManagement: true,
         // COMPAT(terminalRestoreModes): added in v0.1.81, remove gate after 2026-11-23.

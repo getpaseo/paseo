@@ -1,5 +1,6 @@
 import type { ToolCallDetail } from "@getpaseo/protocol/agent-types";
 import type { StreamItem, ToolCallItem } from "@/types/stream";
+import { isBrowserHandoffToolName } from "@/desktop/browser/handoff";
 
 export interface ToolCallDescriptor {
   detail: ToolCallDetail;
@@ -67,7 +68,12 @@ export function isGroupableToolCall(item: StreamItem): item is ToolCallItem {
     return false;
   }
   const descriptor = describeToolCall(item);
-  return descriptor.detail.type !== "plan" && descriptor.name.trim().toLowerCase() !== "speak";
+  // A handoff card waits for the user, so it must stay visible instead of folding into a run.
+  return (
+    descriptor.detail.type !== "plan" &&
+    descriptor.name.trim().toLowerCase() !== "speak" &&
+    !isBrowserHandoffToolName(descriptor.name)
+  );
 }
 
 function createRun(calls: readonly ToolCallItem[], isSealed: boolean): ToolCallRun {

@@ -469,6 +469,7 @@ type AgentMcpTransportFactory = () => Promise<unknown>;
 export interface SessionOptions {
   browserToolsBroker?: BrowserToolsBroker | null;
   browserActivity?: BrowserActivityHub | null;
+  validateSystemOneApiKey?: typeof isTypeSafeApiKeyAccepted;
   verifyHost?: DaemonPlaywrightHost | null;
   verifyEvidence?: EvidenceStore | null;
   clientId: string;
@@ -709,6 +710,12 @@ function resolveResourcePolicyRuntime(
   );
 }
 
+function resolveSystemOneApiKeyValidator(
+  validator: SessionOptions["validateSystemOneApiKey"],
+): typeof isTypeSafeApiKeyAccepted {
+  return validator ?? isTypeSafeApiKeyAccepted;
+}
+
 export class Session {
   readonly delivery = new SessionDelivery(
     (source, message) => {
@@ -736,6 +743,7 @@ export class Session {
   );
   private readonly browserToolsBroker: SessionOptions["browserToolsBroker"];
   private readonly browserActivity: SessionOptions["browserActivity"];
+  private readonly validateSystemOneApiKey: typeof isTypeSafeApiKeyAccepted;
   private readonly verifySession: VerifySession | null;
   private readonly verifyHost: DaemonPlaywrightHost | null | undefined;
   private readonly clientId: string;
@@ -901,6 +909,7 @@ export class Session {
     } = options;
     this.browserToolsBroker = options.browserToolsBroker;
     this.browserActivity = options.browserActivity;
+    this.validateSystemOneApiKey = resolveSystemOneApiKeyValidator(options.validateSystemOneApiKey);
     this.clientId = clientId;
     this.authorization = new SessionAuthorization(permissions);
     this.appVersion = appVersion ?? null;
@@ -2365,6 +2374,14 @@ export class Session {
           code: "browser_unsupported",
           message: "Remote browser hosting is unavailable.",
         });
+    // A tab the user closes can never be finished, so its handoff ends as cancelled.
+    if (payload.ok && payload.result.command === "close_tab") {
+      this.browserActivity?.control({
+        workspaceId: request.workspaceId,
+        browserId: payload.result.browserId,
+        action: "cancel_handoff",
+      });
+    }
     this.emit({ type: "browser.remote.execute.response", payload });
   }
 
@@ -2749,6 +2766,11 @@ export class Session {
             owner.emit({ type: "browser.activity", payload });
           }
         }
+        if (msg.events.includes("browser.handoff")) {
+          for (const payload of this.browserActivity?.currentHandoffs() ?? []) {
+            owner.emit({ type: "browser.handoff", payload });
+          }
+        }
         if (!msg.events.includes("checkout_status_update")) return undefined;
         return this.reconcileWorkspaceGitObservers().catch(async (error) => {
           await owner.release();
@@ -2901,7 +2923,7 @@ export class Session {
     const { systemOneApiKey, ...configPatch } = msg.config;
     if (
       typeof systemOneApiKey === "string" &&
-      !(await isTypeSafeApiKeyAccepted(
+      !(await this.validateSystemOneApiKey(
         systemOneApiKey,
         configPatch.systemOne?.model ??
           this.daemonConfigStore.get().systemOne?.model ??
@@ -9041,6 +9063,7 @@ function isValidGitHubRepoSegment(value: string): boolean {
   return /^[A-Za-z0-9._-]+$/u.test(value);
 }
 
+// eslint-disable-next-line complexity
 function sessionEventCategory(message: SessionOutboundMessage): SessionEventSubscription | null {
   switch (message.type) {
     case "project.update":
@@ -9057,6 +9080,7 @@ function sessionEventCategory(message: SessionOutboundMessage): SessionEventSubs
     case "hub.execution.agent.update":
     case "hub.execution.agent.stream":
     case "browser.activity":
+    case "browser.handoff":
       return message.type;
     case "status":
       switch (message.payload.status) {
@@ -9092,6 +9116,7 @@ function legacyWantsEvent(
     case "agent.provider_subagents.update":
       return capabilities.has(CLIENT_CAPS.providerSubagents);
     case "browser.activity":
+    case "browser.handoff":
       return false;
     default:
       return true;

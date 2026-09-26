@@ -611,6 +611,20 @@ export const ja: TranslationResources = {
           failed: "失敗",
         },
       },
+      handoff: {
+        title: "ブラウザーの引き継ぎ",
+        openBrowser: "ブラウザーを開く",
+        youHaveControl: "操作できます",
+        done: "完了",
+        cancel: "キャンセル",
+        alreadyEnded: "この引き継ぎはすでに終了しています",
+        endFailed: "引き継ぎを終了できません",
+        status: {
+          active: "あなたの操作待ち",
+          done: "完了",
+          cancelled: "キャンセル済み",
+        },
+      },
       controls: {
         back: "戻る",
         forward: "進む",

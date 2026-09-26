@@ -602,6 +602,20 @@ export const en = {
           failed: "Failed",
         },
       },
+      handoff: {
+        title: "Browser handoff",
+        openBrowser: "Open browser",
+        youHaveControl: "You have control",
+        done: "Done",
+        cancel: "Cancel",
+        alreadyEnded: "This handoff already ended",
+        endFailed: "Unable to end the handoff",
+        status: {
+          active: "Waiting for you",
+          done: "Done",
+          cancelled: "Cancelled",
+        },
+      },
       controls: {
         back: "Back",
         forward: "Forward",

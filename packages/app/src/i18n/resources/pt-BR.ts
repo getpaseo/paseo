@@ -610,6 +610,20 @@ export const ptBR: TranslationResources = {
           failed: "Falhou",
         },
       },
+      handoff: {
+        title: "Transferência do navegador",
+        openBrowser: "Abrir navegador",
+        youHaveControl: "Você está no controle",
+        done: "Concluir",
+        cancel: "Cancelar",
+        alreadyEnded: "Esta transferência já terminou",
+        endFailed: "Não foi possível encerrar a transferência",
+        status: {
+          active: "Aguardando você",
+          done: "Concluída",
+          cancelled: "Cancelada",
+        },
+      },
       controls: {
         back: "Voltar",
         forward: "Avançar",

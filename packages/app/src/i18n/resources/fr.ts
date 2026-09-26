@@ -611,6 +611,20 @@ export const fr: TranslationResources = {
           failed: "Échec",
         },
       },
+      handoff: {
+        title: "Transfert du navigateur",
+        openBrowser: "Ouvrir le navigateur",
+        youHaveControl: "Vous avez la main",
+        done: "Terminé",
+        cancel: "Annuler",
+        alreadyEnded: "Ce transfert est déjà terminé",
+        endFailed: "Impossible de terminer le transfert",
+        status: {
+          active: "En attente de vous",
+          done: "Terminé",
+          cancelled: "Annulé",
+        },
+      },
       controls: {
         back: "Dos",
         forward: "Avant",

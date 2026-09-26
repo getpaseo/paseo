@@ -606,6 +606,20 @@ export const ko: TranslationResources = {
           failed: "실패",
         },
       },
+      handoff: {
+        title: "브라우저 넘겨주기",
+        openBrowser: "브라우저 열기",
+        youHaveControl: "직접 조작 중",
+        done: "완료",
+        cancel: "취소",
+        alreadyEnded: "이미 종료된 넘겨주기입니다",
+        endFailed: "넘겨주기를 종료할 수 없습니다",
+        status: {
+          active: "사용자 대기 중",
+          done: "완료",
+          cancelled: "취소됨",
+        },
+      },
       controls: {
         back: "뒤로",
         forward: "앞으로",

@@ -611,6 +611,20 @@ export const es: TranslationResources = {
           failed: "Fallido",
         },
       },
+      handoff: {
+        title: "Traspaso del navegador",
+        openBrowser: "Abrir navegador",
+        youHaveControl: "Tienes el control",
+        done: "Listo",
+        cancel: "Cancelar",
+        alreadyEnded: "Este traspaso ya terminó",
+        endFailed: "No se pudo terminar el traspaso",
+        status: {
+          active: "Esperándote",
+          done: "Listo",
+          cancelled: "Cancelado",
+        },
+      },
       controls: {
         back: "Atrás",
         forward: "Adelante",

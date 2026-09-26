@@ -98,6 +98,8 @@ import {
   type WorkspaceFileOpenRequest,
 } from "@/workspace/file-open";
 import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
+import { readBrowserHandoffToolCall } from "@/desktop/browser/handoff";
+import { BrowserHandoffCard } from "@/desktop/browser/handoff-card";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import { useForkAgent } from "@/hooks/use-fork-agent";
 import { isWeb } from "@/constants/platform";
@@ -781,6 +783,18 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
             );
           }
 
+          const handoffCall =
+            data.status === "failed" ? null : readBrowserHandoffToolCall(data.name, data.detail);
+          if (handoffCall && context.workspaceId) {
+            return (
+              <BrowserHandoffCard
+                serverId={resolvedServerId}
+                workspaceId={context.workspaceId}
+                call={handoffCall}
+              />
+            );
+          }
+
           return (
             <ToolCallSlot
               itemId={item.id}
@@ -813,7 +827,13 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
           />
         );
       },
-      [context.cwd, setInlineDetailsExpanded, handleToolCallOpenFile],
+      [
+        context.cwd,
+        context.workspaceId,
+        resolvedServerId,
+        setInlineDetailsExpanded,
+        handleToolCallOpenFile,
+      ],
     );
 
     // Read through a stable event so live group updates do not change the renderer identity

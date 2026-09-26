@@ -35,6 +35,14 @@ Provide either `browserId` or `url`. Each `values` entry contains an `env` varia
 | `browser_close_tab` | `browserId`                | Close a tab and clean up its webview.                                     |
 | `browser_resize`    | `browserId, width, height` | Resize the tab's viewport — check a layout at phone or tablet dimensions. |
 
+## Handing a tab to the user
+
+| Tool              | Arguments           | Purpose                                                                                                     |
+| ----------------- | ------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `browser_handoff` | `browserId, reason` | Give the user the tab for a login, 2FA, CAPTCHA, or payment. Returns at once; the agent then ends its turn. |
+
+While the user holds the tab, every browser tool on it returns `browser_denied`. When the user presses Done or Cancel, the agent receives a message with the tab's URL and title. See [taking control of a tab](/docs/browser#taking-control-of-a-tab).
+
 ## Reading the page
 
 | Tool                 | Arguments                              | Purpose                                                                               |
@@ -77,10 +85,10 @@ Provide either `browserId` or `url`. Each `values` entry contains an `env` varia
 
 Tools return structured errors rather than failing silently. The ones agents see most:
 
-| Code                | Meaning                                                                         |
-| ------------------- | ------------------------------------------------------------------------------- |
-| `browser_disabled`  | Browser tools are turned off on this host.                                      |
-| `browser_no_host`   | No browser host (desktop app) is connected. Retryable.                          |
-| `browser_stale_ref` | The ref no longer matches the page — take a new snapshot.                       |
-| `browser_timeout`   | The element never became actionable, or the wait condition never held.          |
-| `browser_denied`    | The action isn't allowed — e.g. a non-`http(s)` URL, or no history to navigate. |
+| Code                | Meaning                                                                                                       |
+| ------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `browser_disabled`  | Browser tools are turned off on this host.                                                                    |
+| `browser_no_host`   | No browser host (desktop app) is connected. Retryable.                                                        |
+| `browser_stale_ref` | The ref no longer matches the page — take a new snapshot.                                                     |
+| `browser_timeout`   | The element never became actionable, or the wait condition never held.                                        |
+| `browser_denied`    | The action isn't allowed — e.g. a non-`http(s)` URL, no history to navigate, or a tab handed off to the user. |

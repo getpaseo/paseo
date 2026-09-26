@@ -3,6 +3,7 @@ import { create } from "zustand";
 import type {
   BrowserActivityEvent,
   BrowserActivityStep,
+  BrowserHandoff,
 } from "@getpaseo/protocol/browser-activity/rpc-schemas";
 import type { SidebarStateBucket } from "@/utils/sidebar-agent-state";
 
@@ -10,16 +11,37 @@ function activityKey(serverId: string, workspaceId: string, browserId: string): 
   return `${serverId}\u0000${workspaceId}\u0000${browserId}`;
 }
 
+function handoffKey(serverId: string, handoffId: string): string {
+  return `${serverId}\u0000${handoffId}`;
+}
+
 interface BrowserActivityState {
   byBrowser: Record<string, BrowserActivityEvent>;
+  /** Every known handoff by id, so a chat card can show how its own handoff ended. */
+  handoffs: Record<string, BrowserHandoff>;
+  activeHandoffByBrowser: Record<string, BrowserHandoff>;
   apply: (serverId: string, event: BrowserActivityEvent) => void;
-  /** A new subscription re-sends live runs; drop the ones that ended while disconnected. */
+  applyHandoff: (serverId: string, handoff: BrowserHandoff) => void;
+  /** A new subscription re-sends live runs and handoffs; drop the ones that ended while disconnected. */
   resetServer: (serverId: string) => void;
   dismiss: (serverId: string, event: BrowserActivityEvent) => void;
 }
 
+function withoutServerEntries<T>(
+  entries: Record<string, T>,
+  serverId: string,
+  keep: (entry: T) => boolean,
+): Record<string, T> {
+  const kept = Object.entries(entries).filter(
+    ([key, entry]) => !key.startsWith(`${serverId}\u0000`) || keep(entry),
+  );
+  return Object.fromEntries(kept);
+}
+
 export const useBrowserActivityStore = create<BrowserActivityState>((set) => ({
   byBrowser: {},
+  handoffs: {},
+  activeHandoffByBrowser: {},
   apply: (serverId, event) =>
     set((state) => ({
       byBrowser: {
@@ -27,12 +49,36 @@ export const useBrowserActivityStore = create<BrowserActivityState>((set) => ({
         [activityKey(serverId, event.workspaceId, event.browserId)]: event,
       },
     })),
+  applyHandoff: (serverId, handoff) =>
+    set((state) => {
+      const browserKey = activityKey(serverId, handoff.workspaceId, handoff.browserId);
+      const activeHandoffByBrowser = { ...state.activeHandoffByBrowser };
+      if (handoff.status === "active") {
+        activeHandoffByBrowser[browserKey] = handoff;
+      } else if (activeHandoffByBrowser[browserKey]?.handoffId === handoff.handoffId) {
+        delete activeHandoffByBrowser[browserKey];
+      }
+      return {
+        handoffs: { ...state.handoffs, [handoffKey(serverId, handoff.handoffId)]: handoff },
+        activeHandoffByBrowser,
+      };
+    }),
   resetServer: (serverId) =>
     set((state) => ({
-      byBrowser: Object.fromEntries(
-        Object.entries(state.byBrowser).filter(
-          ([key, event]) => !key.startsWith(`${serverId}\u0000`) || event.phase === "finished",
-        ),
+      byBrowser: withoutServerEntries(
+        state.byBrowser,
+        serverId,
+        (event) => event.phase === "finished",
+      ),
+      handoffs: withoutServerEntries(
+        state.handoffs,
+        serverId,
+        (handoff) => handoff.status !== "active",
+      ),
+      activeHandoffByBrowser: withoutServerEntries(
+        state.activeHandoffByBrowser,
+        serverId,
+        () => false,
       ),
     })),
   dismiss: (serverId, event) =>
@@ -51,6 +97,27 @@ export function useBrowserActivity(
 ): BrowserActivityEvent | null {
   return useBrowserActivityStore((state) =>
     browserId ? (state.byBrowser[activityKey(serverId, workspaceId, browserId)] ?? null) : null,
+  );
+}
+
+export function useBrowserHandoff(
+  serverId: string,
+  handoffId: string | null,
+): BrowserHandoff | null {
+  return useBrowserActivityStore((state) =>
+    handoffId ? (state.handoffs[handoffKey(serverId, handoffId)] ?? null) : null,
+  );
+}
+
+export function useActiveBrowserHandoff(
+  serverId: string,
+  workspaceId: string,
+  browserId: string | null | undefined,
+): BrowserHandoff | null {
+  return useBrowserActivityStore((state) =>
+    browserId
+      ? (state.activeHandoffByBrowser[activityKey(serverId, workspaceId, browserId)] ?? null)
+      : null,
   );
 }
 

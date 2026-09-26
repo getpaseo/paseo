@@ -732,8 +732,11 @@ export async function createPaseoDaemon(
     appBaseUrl = typeof value === "string" ? value : "https://app.paseo.sh";
   });
   let wsServer: VoiceAssistantWebSocketServer | null = null;
-  const browserActivity = new BrowserActivityHub((payload) =>
-    wsServer?.broadcast({ type: "session", message: { type: "browser.activity", payload } }),
+  const browserActivity = new BrowserActivityHub(
+    (payload) =>
+      wsServer?.broadcast({ type: "session", message: { type: "browser.activity", payload } }),
+    (payload) =>
+      wsServer?.broadcast({ type: "session", message: { type: "browser.handoff", payload } }),
   );
   let serviceProxyListenTarget: ListenTarget | null = null;
   const scriptHealthMonitor = new ScriptHealthMonitor({

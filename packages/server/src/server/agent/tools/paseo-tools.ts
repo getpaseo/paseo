@@ -89,6 +89,7 @@ import { registerBrowserTools } from "../../browser-tools/tools.js";
 import { JevBrowserGoalRunner } from "../../browser-tools/jev-goal-runner.js";
 import type { BrowserActivityHub } from "../../browser-tools/browser-activity.js";
 import type { BrowserToolsBroker } from "../../browser-tools/broker.js";
+import { guardBrowserToolsForHandoffs } from "../../browser-tools/handoff.js";
 import {
   createConfiguredSystemOneDecisionSource,
   registerSystemOneTools,
@@ -1273,10 +1274,16 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
   }
 
   if (options.browserToolsEnabled && options.browserToolsBroker) {
+    const { broker: browserBroker, handoff } = guardBrowserToolsForHandoffs({
+      broker: options.browserToolsBroker,
+      hub: options.browserActivity,
+      callerAgentId,
+      followUp: { agentManager, agentStorage, logger: childLogger },
+    });
     const configuredGoalRunner =
       options.paseoHome && options.daemonConfigStore
         ? new JevBrowserGoalRunner({
-            broker: options.browserToolsBroker,
+            broker: browserBroker,
             activity: options.browserActivity,
             decisionSource: createConfiguredSystemOneDecisionSource(
               options.paseoHome,
@@ -1287,7 +1294,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
         : null;
     registerBrowserTools({
       registerTool,
-      broker: options.browserToolsBroker,
+      broker: browserBroker,
       ...(configuredGoalRunner && options.daemonConfigStore
         ? {
             goalRunner: {
@@ -1306,6 +1313,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
           }
         : {}),
       verify: options.verify,
+      handoff,
       callerAgentId,
       resolveCallerAgent,
     });

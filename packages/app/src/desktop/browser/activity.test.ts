@@ -1,6 +1,9 @@
 import type { TFunction } from "i18next";
 import { beforeEach, describe, expect, it } from "vitest";
-import type { BrowserActivityEvent } from "@getpaseo/protocol/browser-activity/rpc-schemas";
+import type {
+  BrowserActivityEvent,
+  BrowserHandoff,
+} from "@getpaseo/protocol/browser-activity/rpc-schemas";
 import {
   browserActivityStatusBucket,
   describeNextBrowserActivityStep,
@@ -34,8 +37,60 @@ function lookup(serverId: string, workspaceId: string, browserId: string) {
   ];
 }
 
+function handoff(patch: Partial<BrowserHandoff> = {}): BrowserHandoff {
+  return {
+    handoffId: "handoff-1",
+    workspaceId: "ws-1",
+    browserId: "tab-a",
+    agentId: "agent-1",
+    reason: "Sign in",
+    status: "active",
+    updatedAt: 1,
+    ...patch,
+  };
+}
+
+function activeHandoffId(serverId: string, browserId: string): string | undefined {
+  return useBrowserActivityStore.getState().activeHandoffByBrowser[
+    `${serverId}\u0000ws-1\u0000${browserId}`
+  ]?.handoffId;
+}
+
+function handoffStatus(serverId: string, handoffId: string): string | undefined {
+  return useBrowserActivityStore.getState().handoffs[`${serverId}\u0000${handoffId}`]?.status;
+}
+
 describe("browser activity store", () => {
-  beforeEach(() => useBrowserActivityStore.setState({ byBrowser: {} }));
+  beforeEach(() =>
+    useBrowserActivityStore.setState({ byBrowser: {}, handoffs: {}, activeHandoffByBrowser: {} }),
+  );
+
+  it("tracks the active handoff per tab and remembers how each one ended", () => {
+    const store = useBrowserActivityStore.getState();
+    store.applyHandoff("server-1", handoff());
+    expect(activeHandoffId("server-1", "tab-a")).toBe("handoff-1");
+
+    store.applyHandoff("server-1", handoff({ status: "done" }));
+    store.applyHandoff("server-1", handoff({ handoffId: "handoff-2" }));
+    store.applyHandoff("server-1", handoff({ status: "cancelled" }));
+
+    expect(activeHandoffId("server-1", "tab-a")).toBe("handoff-2");
+    expect(handoffStatus("server-1", "handoff-1")).toBe("cancelled");
+    expect(handoffStatus("server-1", "handoff-2")).toBe("active");
+  });
+
+  it("drops active handoffs of one server on resubscribe but keeps ended ones", () => {
+    const store = useBrowserActivityStore.getState();
+    store.applyHandoff("server-1", handoff());
+    store.applyHandoff("server-1", handoff({ handoffId: "handoff-2", status: "done" }));
+    store.applyHandoff("server-2", handoff({ handoffId: "handoff-3" }));
+    store.resetServer("server-1");
+
+    expect(activeHandoffId("server-1", "tab-a")).toBeUndefined();
+    expect(handoffStatus("server-1", "handoff-1")).toBeUndefined();
+    expect(handoffStatus("server-1", "handoff-2")).toBe("done");
+    expect(activeHandoffId("server-2", "tab-a")).toBe("handoff-3");
+  });
 
   it("keeps runs apart by server, workspace, and browser", () => {
     const store = useBrowserActivityStore.getState();

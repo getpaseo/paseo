@@ -102,6 +102,7 @@ import {
   BrowserActivityControlRequestSchema,
   BrowserActivityControlResponseSchema,
   BrowserActivityMessageSchema,
+  BrowserHandoffMessageSchema,
 } from "./browser-activity/rpc-schemas.js";
 import {
   PaseoConfigRawSchema,
@@ -3303,6 +3304,7 @@ export const SessionEventSubscriptionSchema = z.enum([
   "hub.execution.agent.update",
   "hub.execution.agent.stream",
   "browser.activity",
+  "browser.handoff",
 ]);
 export type SessionEventSubscription = z.infer<typeof SessionEventSubscriptionSchema>;
 export const SessionEventsSetSubscriptionRequestSchema = z.object({
@@ -3808,6 +3810,8 @@ export const ServerInfoStatusPayloadSchema = z
         browserCookieImport: z.boolean().optional(),
         // COMPAT(browserActivity): added in v0.9.1, remove gate after 2027-03-25.
         browserActivity: z.boolean().optional(),
+        // COMPAT(browserHandoff): added in v0.9.1, remove gate after 2027-03-27.
+        browserHandoff: z.boolean().optional(),
         // COMPAT(skillManagement): added in v0.4.0, remove gate after 2027-08-16.
         skillManagement: z.boolean().optional(),
         // COMPAT(terminalRestoreModes): added in v0.1.81, remove gate after 2026-11-23.
@@ -7071,6 +7075,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   BrowserImportListSourcesResponseSchema,
   BrowserImportCookiesResponseSchema,
   BrowserActivityMessageSchema,
+  BrowserHandoffMessageSchema,
   BrowserActivityControlResponseSchema,
   LegacyListAvailableEditorsResponseMessageSchema,
   LegacyOpenInEditorResponseMessageSchema,
