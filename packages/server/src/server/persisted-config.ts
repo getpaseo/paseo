@@ -327,6 +327,25 @@ export const PersistedConfigSchema = z
       .strict()
       .optional(),
 
+    search: z
+      .object({
+        recentSources: z
+          .object({
+            zoxide: z
+              .object({
+                enabled: z.boolean().optional(),
+                path: z.string().min(1).optional(),
+                dataDir: z.string().min(1).optional(),
+              })
+              .strict()
+              .optional(),
+          })
+          .strict()
+          .optional(),
+      })
+      .strict()
+      .optional(),
+
     log: LogConfigSchema.optional(),
   })
   .strict();
