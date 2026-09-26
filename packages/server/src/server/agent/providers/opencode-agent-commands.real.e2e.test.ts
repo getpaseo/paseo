@@ -25,7 +25,7 @@ describe("opencode agent commands contract (real)", () => {
   });
 
   afterAll(async () => {
-    await OpenCodeServerManager.getInstance(logger).shutdown();
+    await OpenCodeServerManager.getInstance({ logger }).shutdown();
   });
 
   test("lists slash commands with the expected contract", async () => {

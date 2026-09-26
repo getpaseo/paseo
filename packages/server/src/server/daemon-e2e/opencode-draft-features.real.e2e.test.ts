@@ -92,7 +92,7 @@ describe("daemon E2E (real opencode) - draft feature discovery", () => {
     } finally {
       await deletePersistedSessions(provider, after);
       rmSync(cwd, { recursive: true, force: true });
-      await OpenCodeServerManager.getInstance(logger).shutdown();
+      await OpenCodeServerManager.getInstance({ logger }).shutdown();
     }
 
     expect(after).toEqual([]);
@@ -124,7 +124,7 @@ describe("daemon E2E (real opencode) - draft feature discovery", () => {
     } finally {
       await deletePersistedSessions(provider, after);
       rmSync(cwd, { recursive: true, force: true });
-      await OpenCodeServerManager.getInstance(logger).shutdown();
+      await OpenCodeServerManager.getInstance({ logger }).shutdown();
     }
 
     expect(after).toEqual([]);
