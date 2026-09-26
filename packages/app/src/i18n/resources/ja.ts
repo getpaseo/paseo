@@ -798,6 +798,11 @@ export const ja: TranslationResources = {
           pending: "プルしてプッシュ中...",
           success: "プルしてプッシュしました",
         },
+        commitAndPush: {
+          label: "コミットしてプッシュ",
+          pending: "コミットしてプッシュ中...",
+          success: "コミットしてプッシュしました",
+        },
         viewPr: "PRを表示",
         createPr: {
           label: "PRを作成",
@@ -895,6 +900,7 @@ export const ja: TranslationResources = {
           failedPull: "プルに失敗しました",
           failedPush: "プッシュに失敗しました",
           failedPullAndPush: "プル＆プッシュに失敗しました",
+          failedCommitAndPush: "コミット＆プッシュに失敗しました",
           failedCreatePr: "PRの作成に失敗しました",
           failedMergePr: "PRのマージに失敗しました",
           failedEnableAutoMerge: "自動マージの有効化に失敗しました",

@@ -11,6 +11,7 @@ export type GitActionId =
   | "pull"
   | "push"
   | "pull-and-push"
+  | "commit-and-push"
   | "pr"
   | "merge-pr-squash"
   | "merge-pr-merge"
@@ -248,6 +249,18 @@ export function buildGitActions(input: BuildGitActionsInput): GitActions {
     handler: input.runtime["pull-and-push"].handler,
   });
 
+  allActions.set("commit-and-push", {
+    id: "commit-and-push",
+    label: i18n.t("workspace.git.actions.commitAndPush.label"),
+    pendingLabel: i18n.t("workspace.git.actions.commitAndPush.pending"),
+    successLabel: i18n.t("workspace.git.actions.commitAndPush.success"),
+    disabled: input.runtime["commit-and-push"].disabled,
+    status: input.runtime["commit-and-push"].status,
+    icon: input.runtime["commit-and-push"].icon,
+    startsGroup: false,
+    handler: input.runtime["commit-and-push"].handler,
+  });
+
   for (const model of PULL_REQUEST_ACTION_MODELS) {
     allActions.set(model.id, model.build(input));
   }
@@ -297,7 +310,11 @@ export function buildGitActions(input: BuildGitActionsInput): GitActions {
   const primaryActionId = getPrimaryActionId(input);
   const primary = primaryActionId ? (allActions.get(primaryActionId) ?? null) : null;
 
-  const secondaryIds = [...REMOTE_ACTION_IDS];
+  const secondaryIds: GitActionId[] = [];
+  if (!input.isOnBaseBranch && canCommitAndPush(input)) {
+    secondaryIds.push("commit-and-push");
+  }
+  secondaryIds.push(...REMOTE_ACTION_IDS);
   if (!input.isOnBaseBranch) {
     secondaryIds.push(...getFeatureActionIds(input));
   }
@@ -371,6 +388,19 @@ function getFeatureActionIds(input: BuildGitActionsInput): GitActionId[] {
     "merge-branch",
     ...getPullRequestActionIds({ roles: ["status", "direct", "auto"], input }),
   ];
+}
+
+function canCommitAndPush(input: BuildGitActionsInput): boolean {
+  if (input.runtime["commit-and-push"].status !== "idle") {
+    return true;
+  }
+  return (
+    input.hasRemote &&
+    input.hasUncommittedChanges &&
+    input.hasPullRequest &&
+    input.pullRequestState === "open" &&
+    (input.behindOfOrigin ?? 0) === 0
+  );
 }
 
 function getDefaultDirectPullRequestMergeActionId(

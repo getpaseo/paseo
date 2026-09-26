@@ -794,6 +794,11 @@ export const ko: TranslationResources = {
           pending: "가져온 뒤 푸시하는 중...",
           success: "가져온 뒤 푸시됨",
         },
+        commitAndPush: {
+          label: "커밋 후 푸시",
+          pending: "커밋한 뒤 푸시하는 중...",
+          success: "커밋한 뒤 푸시됨",
+        },
         viewPr: "PR 보기",
         viewPr_mr: "MR 보기",
         createPr: {
@@ -889,6 +894,7 @@ export const ko: TranslationResources = {
           failedPull: "가져오지 못했습니다",
           failedPush: "푸시하지 못했습니다",
           failedPullAndPush: "풀 후 푸시하지 못했습니다",
+          failedCommitAndPush: "커밋 후 푸시하지 못했습니다",
           failedCreatePr: "PR을 생성하지 못했습니다",
           failedMergePr: "PR을 병합하지 못했습니다",
           failedEnableAutoMerge: "자동 병합을 사용 설정하지 못했습니다",

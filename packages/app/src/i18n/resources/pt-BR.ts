@@ -798,6 +798,11 @@ export const ptBR: TranslationResources = {
           pending: "Fazendo pull e push...",
           success: "Pull e push concluídos",
         },
+        commitAndPush: {
+          label: "Commit e push",
+          pending: "Fazendo commit e push...",
+          success: "Commit e push concluídos",
+        },
         viewPr: "Ver PR",
         createPr: {
           label: "Criar PR",
@@ -905,6 +910,7 @@ export const ptBR: TranslationResources = {
           failedPull: "Falha ao fazer pull",
           failedPush: "Falha ao fazer push",
           failedPullAndPush: "Falha ao fazer pull e push",
+          failedCommitAndPush: "Falha ao fazer commit e push",
           failedCreatePr: "Falha ao criar PR",
           failedMergePr: "Falha ao fazer merge da PR",
           failedEnableAutoMerge: "Falha ao ativar merge automático",

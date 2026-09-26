@@ -794,6 +794,11 @@ export const ar: TranslationResources = {
           pending: "سحب و دفع...",
           success: "سحبت ودفعت",
         },
+        commitAndPush: {
+          label: "الالتزام والدفع",
+          pending: "جارٍ الالتزام والدفع...",
+          success: "تم الالتزام والدفع",
+        },
         viewPr: "عرض PR",
         createPr: {
           label: "إنشاء PR",
@@ -882,6 +887,7 @@ export const ar: TranslationResources = {
           failedPull: "فشل في السحب",
           failedPush: "فشل في الدفع",
           failedPullAndPush: "فشل في السحب والدفع",
+          failedCommitAndPush: "فشل في الالتزام والدفع",
           failedCreatePr: "فشل في إنشاء PR",
           failedMergePr: "فشل دمج PR",
           failedEnableAutoMerge: "فشل في تمكين الدمج التلقائي",

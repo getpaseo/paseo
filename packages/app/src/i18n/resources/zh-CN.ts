@@ -790,6 +790,11 @@ export const zhCN: TranslationResources = {
           pending: "正在 pull 并 push...",
           success: "已 pull 并 push",
         },
+        commitAndPush: {
+          label: "Commit 并 push",
+          pending: "正在 commit 并 push...",
+          success: "已 commit 并 push",
+        },
         viewPr: "查看 PR",
         createPr: {
           label: "创建 PR",
@@ -874,6 +879,7 @@ export const zhCN: TranslationResources = {
           failedPull: "Pull 失败",
           failedPush: "Push 失败",
           failedPullAndPush: "Pull 并 push 失败",
+          failedCommitAndPush: "Commit 并 push 失败",
           failedCreatePr: "创建 PR 失败",
           failedMergePr: "Merge PR 失败",
           failedEnableAutoMerge: "启用 auto-merge 失败",

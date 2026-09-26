@@ -802,6 +802,11 @@ export const es: TranslationResources = {
           pending: "Tirando y empujando...",
           success: "Tirado y empujado",
         },
+        commitAndPush: {
+          label: "Confirmar y subir cambios",
+          pending: "Confirmando y subiendo cambios...",
+          success: "Cambios confirmados y subidos",
+        },
         viewPr: "VerPR",
         createPr: {
           label: "CrearPR",
@@ -915,6 +920,7 @@ export const es: TranslationResources = {
           failedPull: "No se pudo tirar",
           failedPush: "No se pudo empujar",
           failedPullAndPush: "No se pudo tirar y empujar",
+          failedCommitAndPush: "No se pudieron confirmar y subir los cambios",
           failedCreatePr: "No se pudo crearPR",
           failedMergePr: "No se pudo fusionarPR",
           failedEnableAutoMerge: "No se pudo habilitar la combinación automática",

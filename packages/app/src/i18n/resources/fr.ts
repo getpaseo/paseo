@@ -802,6 +802,11 @@ export const fr: TranslationResources = {
           pending: "Tirer et pousser...",
           success: "Tiré et poussé",
         },
+        commitAndPush: {
+          label: "Commettre et pousser",
+          pending: "Commettre et pousser...",
+          success: "Commis et poussé",
+        },
         viewPr: "VoirPR",
         createPr: {
           label: "CréerPR",
@@ -914,6 +919,7 @@ export const fr: TranslationResources = {
           failedPull: "Échec de l'extraction",
           failedPush: "Échec de la poussée",
           failedPullAndPush: "Impossible de tirer et de pousser",
+          failedCommitAndPush: "Impossible de valider et de pousser",
           failedCreatePr: "Échec de la création dePR",
           failedMergePr: "Échec de la fusion dePR",
           failedEnableAutoMerge: "Échec de l'activation de la fusion automatique",
