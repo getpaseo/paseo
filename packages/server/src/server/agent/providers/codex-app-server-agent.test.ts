@@ -242,6 +242,54 @@ describe("Codex active-turn steering admission", () => {
     appServer.assertNoErrors();
   });
 
+  test("a steer resolves a Codex skill mentioned after prose into app-server skill input", async () => {
+    const appServer = createFakeCodexAppServer({
+      "skills/list": () => ({
+        data: [
+          {
+            cwd: "/workspace/project",
+            skills: [
+              {
+                name: "paseo-implement",
+                description: "Execute an existing Paseo plan.",
+                path: "/workspace/skills/paseo-implement/SKILL.md",
+              },
+            ],
+            errors: [],
+          },
+        ],
+      }),
+      "turn/steer": () => ({ turn: { id: "native-A" } }),
+    });
+    const { session, paseoTurnId } = await startPublicSteeringSession(appServer);
+
+    await expect(
+      session.steerActiveTurn!("Then use /paseo-implement to complete it.", {
+        expectedTurnId: paseoTurnId,
+      }),
+    ).resolves.toEqual({ status: "accepted" });
+
+    const steer = appServer.requests().find((request) => request.method === "turn/steer");
+    expect(steer?.params).toEqual(
+      expect.objectContaining({
+        input: [
+          {
+            type: "skill",
+            name: "paseo-implement",
+            path: "/workspace/skills/paseo-implement/SKILL.md",
+          },
+          {
+            type: "text",
+            text: "Then use $paseo-implement to complete it.",
+            text_elements: [],
+          },
+        ],
+      }),
+    );
+    await session.close();
+    appServer.assertNoErrors();
+  });
+
   test("a clearing steer denies every pending permission through its provider handler", async () => {
     const appServer = createFakeCodexAppServer({
       "turn/steer": () => ({ turn: { id: "native-A" } }),
@@ -2226,6 +2274,59 @@ describe("Codex app-server provider", () => {
           {
             type: "text",
             text: "$paseo-implement in a worktree, remember to use Claude for the UI",
+            text_elements: [],
+          },
+        ],
+      }),
+    );
+  });
+
+  test("resolves a Codex skill mentioned after prose into app-server skill input", async () => {
+    const session = createSession();
+    const request = vi.fn(async (method: string) => {
+      if (method === "skills/list") {
+        return {
+          data: [
+            {
+              cwd: "/tmp/codex-question-test",
+              skills: [
+                {
+                  name: "paseo-implement",
+                  description: "Execute an existing Paseo plan.",
+                  path: "/tmp/skills/paseo-implement/SKILL.md",
+                },
+              ],
+              errors: [],
+            },
+          ],
+        };
+      }
+      if (method === "thread/loaded/list") {
+        return { data: ["test-thread"] };
+      }
+      if (method === "turn/start") {
+        return {};
+      }
+      throw new Error(`Unexpected request: ${method}`);
+    });
+
+    session.activeForegroundTurnId = null;
+    session.client = createStub<CodexClientLike>({ request });
+
+    await session.startTurn("Review the accepted plan, then use /paseo-implement to complete it.");
+
+    const turnStartCall = request.mock.calls.find(([method]) => method === "turn/start");
+    expect(turnStartCall?.[1]).toEqual(
+      expect.objectContaining({
+        input: [
+          {
+            type: "skill",
+            name: "paseo-implement",
+            path: "/tmp/skills/paseo-implement/SKILL.md",
+          },
+          {
+            type: "text",
+            text: "Review the accepted plan, then use $paseo-implement to complete it.",
             text_elements: [],
           },
         ],
