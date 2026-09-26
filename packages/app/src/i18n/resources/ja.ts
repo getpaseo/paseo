@@ -2273,6 +2273,8 @@ export const ja: TranslationResources = {
         cycleTheme: "テーマを順に切り替え",
         focusMessageInput: "メッセージ入力にフォーカス",
         cycleAgentMode: "エージェントモードを順に切り替え",
+        decreaseThinkingEffort: "思考の強度を下げる",
+        increaseThinkingEffort: "思考の強度を上げる",
         toggleVoiceMode: "音声モードを切り替え",
         startStopDictation: "音声入力を開始/停止",
         interruptAgent: "エージェントを中断",

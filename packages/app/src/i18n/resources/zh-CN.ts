@@ -2227,6 +2227,8 @@ export const zhCN: TranslationResources = {
         cycleTheme: "循环切换主题",
         focusMessageInput: "聚焦消息输入框",
         cycleAgentMode: "循环切换代理模式",
+        decreaseThinkingEffort: "下调思考强度",
+        increaseThinkingEffort: "上调思考强度",
         toggleVoiceMode: "切换语音模式",
         startStopDictation: "开始/停止听写",
         interruptAgent: "中断 Agent",

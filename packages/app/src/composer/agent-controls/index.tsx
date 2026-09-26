@@ -58,6 +58,7 @@ import {
   getFeatureTooltip,
   getAgentControlHintKey,
   resolveAgentModelSelection,
+  resolveAdjacentThinkingOptionId,
 } from "@/composer/agent-controls/utils";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { readMeasuredWidth } from "@/hooks/use-container-width";
@@ -68,6 +69,10 @@ import {
   useAgentControlCommandCenterActions,
   type AgentControlCommandCenterSource,
 } from "@/command-center/agent-control-registration";
+import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
+import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
+import { Shortcut } from "@/components/ui/shortcut";
+import type { KeyboardActionDefinition } from "@/keyboard/keyboard-action-dispatcher";
 import { useComposerKeyboardScope } from "@/composer/keyboard-scope";
 import { isNative } from "@/constants/platform";
 import {
@@ -471,6 +476,49 @@ function buildOpenChangeHandler(
   };
 }
 
+function useThinkingShortcuts({
+  thinkingOptions,
+  selectedThinkingOptionId,
+  onSelectThinkingOption,
+  disabled,
+}: Pick<
+  ControlledAgentControlsProps,
+  "thinkingOptions" | "selectedThinkingOptionId" | "onSelectThinkingOption" | "disabled"
+>) {
+  const { isActiveComposer } = useComposerKeyboardScope();
+  const thinkingHandlerIdRef = useRef(`thinking-control:${Math.random().toString(36).slice(2)}`);
+  const handleThinkingKeyboardAction = useCallback(
+    (action: KeyboardActionDefinition): boolean => {
+      const isThinkingAction =
+        action.id === "message-input.thinking-decrease" ||
+        action.id === "message-input.thinking-increase";
+      if (!isThinkingAction) return false;
+      if (disabled || !isActiveComposer) return false;
+      if (!thinkingOptions || !onSelectThinkingOption) return false;
+      const delta = action.id === "message-input.thinking-decrease" ? -1 : 1;
+      const nextId = resolveAdjacentThinkingOptionId({
+        thinkingOptions,
+        selectedThinkingOptionId,
+        delta,
+      });
+      if (nextId !== null) onSelectThinkingOption(nextId);
+      return true;
+    },
+    [disabled, isActiveComposer, thinkingOptions, selectedThinkingOptionId, onSelectThinkingOption],
+  );
+  useKeyboardActionHandler({
+    handlerId: thinkingHandlerIdRef.current,
+    actions: ["message-input.thinking-decrease", "message-input.thinking-increase"],
+    enabled:
+      isActiveComposer &&
+      !disabled &&
+      Boolean(onSelectThinkingOption) &&
+      (thinkingOptions?.length ?? 0) > 1,
+    priority: 200,
+    handle: handleThinkingKeyboardAction,
+  });
+}
+
 function ControlledAgentControls({
   provider,
   providerOptions,
@@ -516,6 +564,12 @@ function ControlledAgentControls({
   const providerAnchorRef = useRef<View>(null);
   const _modelAnchorRef = useRef<View>(null);
   const thinkingAnchorRef = useRef<View>(null);
+  useThinkingShortcuts({
+    thinkingOptions,
+    selectedThinkingOptionId,
+    onSelectThinkingOption,
+    disabled,
+  });
 
   const canSelectProvider = Boolean(
     onSelectProvider && providerOptions && providerOptions.length > 0,
@@ -888,6 +942,40 @@ interface DesktopAgentControlsContentProps {
 
 const DESKTOP_SEARCH_THRESHOLD = 6;
 
+function ThinkingShortcutHints({
+  disabled,
+  optionCount,
+}: {
+  disabled: boolean;
+  optionCount: number;
+}) {
+  const { t } = useTranslation();
+  const { isActiveComposer } = useComposerKeyboardScope();
+  const decreaseThinkingKeys = useShortcutKeys("decrease-thinking-effort");
+  const increaseThinkingKeys = useShortcutKeys("increase-thinking-effort");
+  if (!isActiveComposer || disabled || optionCount < 2) return null;
+  return (
+    <>
+      {decreaseThinkingKeys ? (
+        <View style={styles.thinkingShortcutRow}>
+          <Text style={styles.tooltipText}>
+            {t("settings.shortcuts.help.decreaseThinkingEffort")}
+          </Text>
+          <Shortcut chord={decreaseThinkingKeys} />
+        </View>
+      ) : null}
+      {increaseThinkingKeys ? (
+        <View style={styles.thinkingShortcutRow}>
+          <Text style={styles.tooltipText}>
+            {t("settings.shortcuts.help.increaseThinkingEffort")}
+          </Text>
+          <Shortcut chord={increaseThinkingKeys} />
+        </View>
+      ) : null}
+    </>
+  );
+}
+
 function DesktopAgentControlsContent(props: DesktopAgentControlsContentProps) {
   const { theme } = useUnistyles();
   const { t } = useTranslation();
@@ -1036,6 +1124,10 @@ function DesktopAgentControlsContent(props: DesktopAgentControlsContentProps) {
             </TooltipTrigger>
             <TooltipContent side="top" align="center" offset={8}>
               <Text style={styles.tooltipText}>{t(getAgentControlHintKey("thinking"))}</Text>
+              <ThinkingShortcutHints
+                disabled={disabled}
+                optionCount={comboboxThinkingOptions.length}
+              />
             </TooltipContent>
           </Tooltip>
           <Combobox
@@ -1979,6 +2071,11 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.normal,
+  },
+  thinkingShortcutRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
   },
   tooltipText: {
     color: theme.colors.foreground,

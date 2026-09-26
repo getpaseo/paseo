@@ -14,7 +14,9 @@ export type MessageInputKeyboardActionKind =
   | "dictation-confirm"
   | "voice-toggle"
   | "voice-mute-toggle"
-  | "mode-cycle";
+  | "mode-cycle"
+  | "thinking-decrease"
+  | "thinking-increase";
 
 export type KeyboardActionId =
   | "agent.interrupt"

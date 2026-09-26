@@ -2263,6 +2263,8 @@ export const ko: TranslationResources = {
         cycleTheme: "테마 순환",
         focusMessageInput: "메시지 입력란에 포커스",
         cycleAgentMode: "에이전트 모드 전환",
+        decreaseThinkingEffort: "추론 강도 낮추기",
+        increaseThinkingEffort: "추론 강도 높이기",
         toggleVoiceMode: "음성 모드 토글",
         startStopDictation: "받아쓰기 시작/중지",
         interruptAgent: "에이전트 중단",

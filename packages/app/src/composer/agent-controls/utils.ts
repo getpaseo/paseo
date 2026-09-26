@@ -180,3 +180,20 @@ export function resolveAgentModelSelection(input: {
     displayThinking,
   };
 }
+
+export function resolveAdjacentThinkingOptionId({
+  thinkingOptions,
+  selectedThinkingOptionId,
+  delta,
+}: {
+  thinkingOptions: readonly Pick<ThinkingOption, "id">[];
+  selectedThinkingOptionId: string | undefined;
+  delta: -1 | 1;
+}): string | null {
+  const selectedIndex = thinkingOptions.findIndex(
+    (option) => option.id === selectedThinkingOptionId,
+  );
+  // Match the control's first-option display when a selection is missing or stale.
+  const currentIndex = selectedIndex < 0 ? 0 : selectedIndex;
+  return thinkingOptions[currentIndex + delta]?.id ?? null;
+}
