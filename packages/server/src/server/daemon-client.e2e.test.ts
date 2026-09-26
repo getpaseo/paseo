@@ -1128,6 +1128,36 @@ test("returns home-scoped directory suggestions", async () => {
   }
 }, 30000);
 
+test("browses explicit project paths outside home without widening workspace search", async () => {
+  const outside = mkdtempSync(path.join(tmpdir(), "paseo-project-picker-"));
+  const project = path.join(outside, "project");
+  const workspace = path.join(outside, "workspace");
+  mkdirSync(project);
+  mkdirSync(workspace);
+
+  try {
+    const result = await ctx.client.getDirectorySuggestions({
+      query: path.join(outside, "proj"),
+      limit: 20,
+    });
+    expect(result.error).toBeNull();
+    expect(result.directories).toEqual([project]);
+
+    const browse = await ctx.client.getDirectorySuggestions({ query: `${outside}${path.sep}` });
+    expect(browse.error).toBeNull();
+    expect(browse.directories).toEqual([project, workspace]);
+
+    const scoped = await ctx.client.getDirectorySuggestions({
+      cwd: workspace,
+      query: `${outside}${path.sep}`,
+    });
+    expect(scoped.error).toBeNull();
+    expect(scoped.entries).toEqual([]);
+  } finally {
+    rmSync(outside, { recursive: true, force: true });
+  }
+});
+
 test("returns typed relative suggestions within a requested directory", async () => {
   const cwd = mkdtempSync(path.join(tmpdir(), "paseo-workspace-suggestion-"));
   const target = path.join(cwd, "src", "components", "message-renderer.tsx");
