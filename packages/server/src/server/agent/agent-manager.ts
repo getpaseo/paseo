@@ -135,6 +135,8 @@ export class AgentRunCancellationError extends Error {
   }
 }
 
+type InterruptOutcome = "acknowledged" | "timed_out" | "rejected";
+
 export type AgentRunCancellationResult =
   | { status: "not_running" }
   | { status: "settled" }
@@ -422,6 +424,8 @@ interface ManagedAgentBase {
   >;
   inFlightPermissionResponses: Set<string>;
   pendingReplacement: boolean;
+  /** Set when a cancel escalated without the provider acknowledging it released the turn. */
+  sessionMayOwnStaleTurn?: boolean;
   persistence: AgentPersistenceHandle | null;
   historyPrimed: boolean;
   lastUserMessageAt: Date | null;
@@ -1895,6 +1899,7 @@ export class AgentManager {
         bufferedPermissionResolutions: new Map(),
         inFlightPermissionResponses: new Set(),
         pendingReplacement: false,
+        sessionMayOwnStaleTurn: false,
         activeForegroundTurnId: null,
         activeTurnId: null,
         activeTurnStartedAt: null,
@@ -2683,6 +2688,7 @@ export class AgentManager {
 
     try {
       await this.cancelAgentRunBefore(agentId, "replace");
+      await this.rebuildSessionIfStale(agentId);
       return this.streamAgent(agentId, prompt, options);
     } catch (error) {
       const latest = this.agents.get(agentId);
@@ -3020,16 +3026,25 @@ export class AgentManager {
       return { status: "not_running" };
     }
 
-    const interruptAcknowledged = await this.interruptSession(agent.session, agentId);
+    const interruptOutcome = await this.interruptSession(agent.session, agentId);
     const settlement = await this.waitWithTimeout({
       operation: run.settledPromise,
-      timeoutMs: interruptAcknowledged
-        ? INTERRUPT_SESSION_TIMEOUT_MS
-        : this.rescueTimeouts.interruptSessionMs,
+      timeoutMs:
+        interruptOutcome === "acknowledged"
+          ? INTERRUPT_SESSION_TIMEOUT_MS
+          : this.rescueTimeouts.interruptSessionMs,
     });
 
-    if (!interruptAcknowledged) {
+    // Only a rejection claims the provider still owns the turn (see AgentSession#interrupt), so
+    // only a rejection refuses. A timeout makes no such claim and escalates like an ack instead.
+    if (interruptOutcome === "rejected") {
       return { status: settlement === "completed" ? "settled" : "refused" };
+    }
+
+    // An escalated timeout ends the run locally but never proved the provider let go, so the
+    // session must not carry another turn until it has been rebuilt.
+    if (interruptOutcome === "timed_out" && settlement !== "completed") {
+      agent.sessionMayOwnStaleTurn = true;
     }
 
     const runTurnId = this.runs.getTurnId(agentId);
@@ -3076,6 +3091,21 @@ export class AgentManager {
     return { status: "settled" };
   }
 
+  /** Replace a session that escalated a cancel without the provider acknowledging the release. */
+  private async rebuildSessionIfStale(agentId: string): Promise<void> {
+    const agent = this.agents.get(agentId);
+    if (!agent?.sessionMayOwnStaleTurn) {
+      return;
+    }
+    agent.sessionMayOwnStaleTurn = false;
+    const pendingReplacement = agent.pendingReplacement;
+    await this.reloadAgentSession(agentId);
+    const reloaded = this.agents.get(agentId);
+    if (reloaded) {
+      reloaded.pendingReplacement = pendingReplacement;
+    }
+  }
+
   private async cancelAgentRunBefore(
     agentId: string,
     action: "reload" | "replace" | "rewind",
@@ -3086,7 +3116,10 @@ export class AgentManager {
     }
   }
 
-  private async interruptSession(session: AgentSession, agentId: string): Promise<boolean> {
+  private async interruptSession(
+    session: AgentSession,
+    agentId: string,
+  ): Promise<InterruptOutcome> {
     try {
       const result = await this.waitWithTimeout({
         operation: session.interrupt(),
@@ -3104,12 +3137,12 @@ export class AgentManager {
           { agentId, timeoutMs: this.rescueTimeouts.interruptSessionMs },
           "Timed out interrupting session during cancel",
         );
-        return false;
+        return "timed_out";
       }
-      return true;
+      return "acknowledged";
     } catch (error) {
       this.logger.error({ err: error, agentId }, "Failed to interrupt session");
-      return false;
+      return "rejected";
     }
   }
 
