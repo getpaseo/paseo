@@ -175,6 +175,12 @@ function statusFromDaemonProbe(
   let status: DesktopDaemonState = "stopped";
   if (local === "not_ready") status = "starting";
   if (local === "running") status = "running";
+  const authenticationFailed =
+    payload.connectedDaemon === "auth_required" || payload.connectedDaemon === "auth_failed";
+  let error: string | null = null;
+  if (authenticationFailed) {
+    error = typeof payload.note === "string" ? payload.note : "Daemon authentication failed.";
+  }
   return {
     serverId: typeof payload.serverId === "string" ? payload.serverId : "",
     status,
@@ -192,7 +198,7 @@ function statusFromDaemonProbe(
       payload.pid === ownedLaunch.instance.pid &&
       payload.startedAt === ownedLaunch.instance.startedAt,
     ),
-    error: null,
+    error,
   };
 }
 

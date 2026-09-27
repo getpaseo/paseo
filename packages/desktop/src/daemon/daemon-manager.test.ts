@@ -101,6 +101,26 @@ describe("daemon-manager commands", () => {
     rmSync(fixtureRoot, { recursive: true, force: true });
   });
 
+  it.each(["auth_required", "auth_failed"])(
+    "preserves %s from a running local daemon for identity polling",
+    async (connectedDaemon) => {
+      mocks.runExternalCliJsonCommand.mockResolvedValue({
+        localDaemon: "running",
+        connectedDaemon,
+        pid: 1234,
+        listen: "127.0.0.1:6767",
+        note: "Password required",
+      });
+
+      await expect(createDaemonCommandHandlers().desktop_daemon_status()).resolves.toMatchObject({
+        status: "running",
+        serverId: "",
+        pid: 1234,
+        error: "Password required",
+      });
+    },
+  );
+
   it("returns the Electron main-process log tail from electron-log", () => {
     writeFileSync(
       mocks.appLogPath,
