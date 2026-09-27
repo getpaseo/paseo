@@ -1,5 +1,5 @@
 import type { ToolCallDetail } from "@getpaseo/protocol/agent-types";
-import type { StreamItem, ToolCallItem } from "@/types/stream";
+import type { StreamItem, ThoughtItem, ToolCallItem } from "@/types/stream";
 
 export interface ToolCallDescriptor {
   detail: ToolCallDetail;
@@ -9,8 +9,12 @@ export interface ToolCallDescriptor {
   metadata?: Record<string, unknown>;
 }
 
+export type ToolCallRunEntry = ToolCallItem | ThoughtItem;
+
 export interface ToolCallRun {
   id: string;
+  /** Tool calls and the thoughts between them, in timeline order. */
+  entries: readonly ToolCallRunEntry[];
   calls: readonly ToolCallItem[];
   latest: ToolCallItem;
   isSealed: boolean;
@@ -19,7 +23,8 @@ export interface ToolCallRun {
 export interface GroupedHistory<TGroup> {
   tail: StreamItem[];
   groupsByHostId: Map<string, TGroup>;
-  pendingCalls: readonly ToolCallItem[];
+  /** The trailing run when it ends the history, so live calls can extend it. */
+  pendingEntries: readonly ToolCallRunEntry[];
 }
 
 export interface GroupedToolCalls<TGroup> {
@@ -70,13 +75,18 @@ export function isGroupableToolCall(item: StreamItem): item is ToolCallItem {
   return descriptor.detail.type !== "plan" && descriptor.name.trim().toLowerCase() !== "speak";
 }
 
-function createRun(calls: readonly ToolCallItem[], isSealed: boolean): ToolCallRun {
+function isToolCallEntry(entry: ToolCallRunEntry): entry is ToolCallItem {
+  return entry.kind === "tool_call";
+}
+
+function createRun(entries: readonly ToolCallRunEntry[], isSealed: boolean): ToolCallRun {
+  const calls = entries.filter(isToolCallEntry);
   const first = calls[0];
   const latest = calls.at(-1);
   if (!first || !latest) {
     throw new Error("Cannot group an empty tool call run");
   }
-  return { id: first.id, calls, latest, isSealed };
+  return { id: first.id, entries, calls, latest, isSealed };
 }
 
 function createHost(run: ToolCallRun): ToolCallItem {
@@ -86,22 +96,25 @@ function createHost(run: ToolCallRun): ToolCallItem {
   return { ...run.latest, id: run.id };
 }
 
-function isRunning(call: ToolCallItem): boolean {
-  const status = describeToolCall(call).status;
+function isRunning(entry: ToolCallRunEntry): boolean {
+  if (!isToolCallEntry(entry)) {
+    return false;
+  }
+  const status = describeToolCall(entry).status;
   return status === "running" || status === "executing";
 }
 
 function appendRun<TGroup>(input: {
-  calls: readonly ToolCallItem[];
+  entries: readonly ToolCallRunEntry[];
   isSealed: boolean;
   output: StreamItem[];
   groups: Map<string, TGroup>;
   buildGroup: (run: ToolCallRun) => TGroup;
 }): void {
-  if (input.calls.length === 0) {
+  if (input.entries.length === 0) {
     return;
   }
-  const run = createRun(input.calls, input.isSealed);
+  const run = createRun(input.entries, input.isSealed);
   const host = createHost(run);
   input.output.push(host);
   input.groups.set(host.id, input.buildGroup(run));
@@ -113,36 +126,46 @@ export function prepareGroupedHistory<TGroup>(input: {
 }): GroupedHistory<TGroup> {
   const output: StreamItem[] = [];
   const groups = new Map<string, TGroup>();
-  let pending: ToolCallItem[] = [];
+  let pending: ToolCallRunEntry[] = [];
+  // Thoughts join the run of the tool call that follows them. Thoughts that no
+  // tool call follows before the next boundary stay standalone rows.
+  let thoughts: ThoughtItem[] = [];
 
   for (const item of input.tail) {
     if (isGroupableToolCall(item)) {
-      pending.push(item);
+      pending.push(...thoughts, item);
+      thoughts = [];
+      continue;
+    }
+    if (item.kind === "thought") {
+      thoughts.push(item);
       continue;
     }
     appendRun({
-      calls: pending,
+      entries: pending,
       isSealed: true,
       output,
       groups,
       buildGroup: input.buildGroup,
     });
     pending = [];
-    output.push(item);
+    output.push(...thoughts, item);
+    thoughts = [];
   }
 
   appendRun({
-    calls: pending,
+    entries: pending,
     isSealed: true,
     output,
     groups,
     buildGroup: input.buildGroup,
   });
+  output.push(...thoughts);
 
   return {
     tail: groups.size > 0 ? output : input.tail,
     groupsByHostId: groups,
-    pendingCalls: pending,
+    pendingEntries: thoughts.length > 0 ? [] : pending,
   };
 }
 
@@ -154,9 +177,10 @@ export function groupLiveToolCalls<TGroup>(input: {
 }): GroupedToolCalls<TGroup> {
   const head: StreamItem[] = [];
   const liveGroups = new Map<string, TGroup>();
-  let pending = [...input.history.pendingCalls];
+  let pending: ToolCallRunEntry[] = [...input.history.pendingEntries];
   let hostPlacement: "history" | "head" | null = pending.length > 0 ? "history" : null;
   let pendingIncludesHead = false;
+  let thoughts: ThoughtItem[] = [];
 
   const flush = (isSealed: boolean) => {
     if (pending.length === 0) {
@@ -179,20 +203,33 @@ export function groupLiveToolCalls<TGroup>(input: {
       if (pending.length === 0) {
         hostPlacement = "head";
       }
-      pending.push(item);
+      pending.push(...thoughts, item);
+      thoughts = [];
       pendingIncludesHead = true;
       continue;
     }
+    if (item.kind === "thought") {
+      thoughts.push(item);
+      continue;
+    }
     flush(true);
-    head.push(item);
+    head.push(...thoughts, item);
+    thoughts = [];
   }
-  // Tool calls live in retained tail rather than the streaming head. The agent
-  // lifecycle snapshot can still be idle while a newly received tool call is
-  // already running, so its direct timeline status is the authoritative start
-  // signal. The lifecycle state continues to keep completed calls live between
-  // sequential tool updates.
-  const trailingRunIsActive = input.isTurnActive || pending.some(isRunning);
-  flush(!trailingRunIsActive);
+  if (thoughts.length > 0) {
+    // A trailing thought is the visible latest row; the run before it seals
+    // until a following tool call pulls the thought into the run.
+    flush(true);
+    head.push(...thoughts);
+  } else {
+    // Tool calls live in retained tail rather than the streaming head. The agent
+    // lifecycle snapshot can still be idle while a newly received tool call is
+    // already running, so its direct timeline status is the authoritative start
+    // signal. The lifecycle state continues to keep completed calls live between
+    // sequential tool updates.
+    const trailingRunIsActive = input.isTurnActive || pending.some(isRunning);
+    flush(!trailingRunIsActive);
+  }
 
   if (liveGroups.size === 0) {
     return {
