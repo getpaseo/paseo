@@ -31,6 +31,10 @@ import {
   expectDirectHostSslEnabled,
   expectDirectHostUriValue,
   expectDirectHostUriHidden,
+  fillDirectHostAddress,
+  connectDirectHost,
+  expectDirectHostConnectError,
+  expectHostOnlineWithoutError,
   expectDiagnosticsContent,
   expectAboutContent,
   expectGeneralContent,
@@ -43,6 +47,7 @@ import {
 } from "../support/helpers/settings";
 import { getServerId } from "../support/helpers/server-id";
 import { expectAppRoute } from "../support/helpers/route-assertions";
+import { startIsolatedHostDaemon } from "../support/helpers/isolated-host-daemon";
 
 async function openWorkspace(
   page: import("@playwright/test").Page,
@@ -110,6 +115,63 @@ test.describe("Settings sidebar navigation", () => {
     );
     await toggleHostAdvanced(page);
     await expectDirectHostUriHidden(page);
+  });
+
+  test("direct connection connects to the advanced URI while the section is open", async ({
+    page,
+  }) => {
+    const password = "e2e advanced password";
+    const daemon = await startIsolatedHostDaemon("srv_e2e_advanced_uri_host", {
+      environment: { ...process.env, PASEO_PASSWORD: password },
+    });
+    try {
+      await gotoAppShell(page);
+      await openSettings(page);
+      await openAddHostFlow(page);
+      await selectHostConnectionType(page, "direct");
+      await toggleHostAdvanced(page);
+
+      await test.step("an advanced URI without a port is rejected in place", async () => {
+        await fillDirectHostUri(page, "tcp://127.0.0.1");
+        await expectDirectHostConnectError(page, "Connection URI port is required");
+      });
+
+      await test.step("a complete advanced URI reaches the daemon with Host left blank", async () => {
+        await fillDirectHostUri(page, `tcp://127.0.0.1:${daemon.port}`);
+        await expectDirectHostConnectError(page, "Password required");
+      });
+
+      await test.step("the password field completes an advanced URI without one", async () => {
+        await page.getByTestId("direct-password-input").fill(password);
+        await connectDirectHost(page);
+        await openSettingsHostSection(page, daemon.serverId, "host");
+        await expectHostOnlineWithoutError(page);
+      });
+    } finally {
+      await daemon.close();
+    }
+  });
+
+  test("direct connection uses an edited advanced URI over the fields it started from", async ({
+    page,
+  }) => {
+    const daemon = await startIsolatedHostDaemon("srv_e2e_edited_advanced_uri_host");
+    try {
+      await gotoAppShell(page);
+      await openSettings(page);
+      await openAddHostFlow(page);
+      await selectHostConnectionType(page, "direct");
+      await fillDirectHostAddress(page, { host: "127.0.0.1", port: Number(getE2EDaemonPort()) });
+      await toggleHostAdvanced(page);
+      await expectDirectHostUriValue(page, `tcp://127.0.0.1:${getE2EDaemonPort()}`);
+
+      await fillDirectHostUri(page, `tcp://127.0.0.1:${daemon.port}`);
+      await connectDirectHost(page);
+      await openSettingsHostSection(page, daemon.serverId, "host");
+      await expectHostOnlineWithoutError(page);
+    } finally {
+      await daemon.close();
+    }
   });
 
   test("Escape lets settings dropdowns and modals close before leaving settings", async ({

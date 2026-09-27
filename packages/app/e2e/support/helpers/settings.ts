@@ -99,13 +99,29 @@ export async function addDirectHostFromSettings(
 ): Promise<void> {
   await openAddHostFlow(page);
   await selectHostConnectionType(page, "direct");
-  await page.getByTestId("direct-host-input").fill(input.host);
-  await page.getByTestId("direct-port-input").fill(String(input.port));
+  await fillDirectHostAddress(page, input);
   if (input.password) {
     await page.getByTestId("direct-password-input").fill(input.password);
   }
+  await connectDirectHost(page);
+}
+
+export async function fillDirectHostAddress(
+  page: Page,
+  input: { host: string; port: number },
+): Promise<void> {
+  await page.getByTestId("direct-host-input").fill(input.host);
+  await page.getByTestId("direct-port-input").fill(String(input.port));
+}
+
+export async function connectDirectHost(page: Page): Promise<void> {
   await page.getByTestId("direct-host-submit").click();
   await expect(page.getByTestId("add-host-modal")).toHaveCount(0, { timeout: 30_000 });
+}
+
+export async function expectDirectHostConnectError(page: Page, message: string): Promise<void> {
+  await page.getByTestId("direct-host-submit").click();
+  await expect(page.getByTestId("add-host-modal").getByText(message)).toBeVisible();
 }
 
 export async function toggleHostAdvanced(page: Page): Promise<void> {
