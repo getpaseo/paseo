@@ -1,5 +1,11 @@
-import { createContext, useContext, useMemo, type ReactNode } from "react";
-import { ScrollView as RNScrollView, View, type ViewProps, type ViewStyle } from "react-native";
+import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from "react";
+import {
+  ScrollView as RNScrollView,
+  View,
+  type LayoutChangeEvent,
+  type ViewProps,
+  type ViewStyle,
+} from "react-native";
 import { ScrollView as GHScrollView } from "react-native-gesture-handler";
 import type { ASTNode } from "react-native-markdown-display";
 import { withUnistyles } from "react-native-unistyles";
@@ -21,6 +27,7 @@ const MAX_COLUMN_EM = 16;
 // Matches the right border on markdown-styles `th` / `td`.
 const CELL_BORDER_WIDTH = 1;
 const WORD_BREAK = /[\s-]+/;
+const OVERFLOW_EPSILON = 1;
 
 const ScrollView = isWeb ? RNScrollView : GHScrollView;
 
@@ -97,15 +104,27 @@ function MarkdownTableFrame({
     const columnsWidth = columns.reduce((width, column) => width + column.minWidth, 0);
     return inlineUnistylesStyle({ width: columnsWidth, minWidth: "100%" as const });
   }, [columns]);
+  const [frameWidth, setFrameWidth] = useState(0);
+  const [contentWidth, setContentWidth] = useState(0);
+  const onLayout = useCallback((event: LayoutChangeEvent) => {
+    setFrameWidth(event.nativeEvent.layout.width);
+  }, []);
+  const onContentSizeChange = useCallback((width: number) => {
+    setContentWidth(width);
+  }, []);
+  const overflows = frameWidth > 0 && contentWidth > frameWidth + OVERFLOW_EPSILON;
 
   return (
     <ScrollView
       horizontal
       nestedScrollEnabled
       showsHorizontalScrollIndicator
-      // Keeps the Android scrollbar visible at rest; a column edge can line up with the frame
-      // edge, and nothing else shows the table continues.
-      persistentScrollbar
+      // Keeps the Android scrollbar visible at rest on a table that scrolls; a column edge can
+      // line up with the frame edge, and nothing else shows the table continues. Android draws
+      // a persistent bar even when nothing scrolls, so tables that fit leave it off.
+      persistentScrollbar={overflows}
+      onLayout={onLayout}
+      onContentSizeChange={onContentSizeChange}
       style={frameStyle}
       contentContainerStyle={contentStyle}
     >
