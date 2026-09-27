@@ -11,10 +11,18 @@ import {
   type PointerEvent as RNPointerEvent,
   type TextInputKeyPressEventData,
 } from "react-native";
+import { ArrowLeft, ArrowRight, Globe, RotateCw } from "lucide-react-native";
 import { useTranslation } from "react-i18next";
 import { StyleSheet } from "react-native-unistyles";
 import { AdaptiveTextInput } from "@/components/adaptive-text-input";
+import {
+  PaneContentToolbar,
+  ToolbarButton,
+  ToolbarControls,
+  paneContentToolbarIconSize,
+} from "@/components/ui/pane-content-toolbar";
 import type { EditingTextInputHandle } from "@/components/ui/text-input";
+import { useIsCompactFormFactor } from "@/constants/layout";
 import { isWeb } from "@/constants/platform";
 import { useHostRuntimeClient } from "@/runtime/host-runtime";
 import {
@@ -96,6 +104,8 @@ function RemoteBrowserPane({
   onFocusPane,
 }: RemoteBrowserPaneProps) {
   const { t } = useTranslation();
+  const isCompact = useIsCompactFormFactor();
+  const toolbarIconSize = paneContentToolbarIconSize(isCompact);
   const client = useHostRuntimeClient(serverId);
   const browser = useBrowserStore((state) => state.browsersById[browserId] ?? null);
   const updateBrowser = useBrowserStore((state) => state.updateBrowser);
@@ -682,29 +692,49 @@ function RemoteBrowserPane({
 
   return (
     <View style={styles.container}>
-      <View style={styles.toolbar}>
-        <Pressable disabled={runLocked} onPress={handleBack}>
-          <Text style={styles.toolbarButton}>‹</Text>
-        </Pressable>
-        <Pressable disabled={runLocked} onPress={handleForward}>
-          <Text style={styles.toolbarButton}>›</Text>
-        </Pressable>
-        <Pressable disabled={runLocked} onPress={handleReload}>
-          <Text style={styles.toolbarButton}>↻</Text>
-        </Pressable>
-        <AdaptiveTextInput
-          autoCapitalize="none"
-          autoCorrect={false}
-          editable={!runLocked}
-          initialValue={shownUrl}
-          onChangeText={setDraftUrl}
-          onFocus={handleUrlFocus}
-          onBlur={handleUrlBlur}
-          onSubmitEditing={handleNavigate}
-          resetKey={`${remoteBrowserId ?? "initial"}|${shownUrl}`}
-          style={styles.urlInput}
-        />
-      </View>
+      <PaneContentToolbar style={styles.toolbar}>
+        <View style={styles.toolbarContent}>
+          <ToolbarControls>
+            <ToolbarButton
+              label={t("workspace.browser.controls.back")}
+              disabled={runLocked}
+              onPress={handleBack}
+            >
+              <ArrowLeft size={toolbarIconSize} color={styles.toolbarIcon.color} />
+            </ToolbarButton>
+            <ToolbarButton
+              label={t("workspace.browser.controls.forward")}
+              disabled={runLocked}
+              onPress={handleForward}
+            >
+              <ArrowRight size={toolbarIconSize} color={styles.toolbarIcon.color} />
+            </ToolbarButton>
+            <ToolbarButton
+              label={t("workspace.browser.controls.refresh")}
+              disabled={runLocked}
+              onPress={handleReload}
+            >
+              <RotateCw size={toolbarIconSize} color={styles.toolbarIcon.color} />
+            </ToolbarButton>
+          </ToolbarControls>
+          <View style={styles.urlBar}>
+            <Globe size={14} color={styles.toolbarIcon.color} />
+            <AdaptiveTextInput
+              accessibilityLabel={t("workspace.browser.controls.browserUrl")}
+              autoCapitalize="none"
+              autoCorrect={false}
+              editable={!runLocked}
+              initialValue={shownUrl}
+              onChangeText={setDraftUrl}
+              onFocus={handleUrlFocus}
+              onBlur={handleUrlBlur}
+              onSubmitEditing={handleNavigate}
+              resetKey={`${remoteBrowserId ?? "initial"}|${shownUrl}`}
+              style={styles.urlInput}
+            />
+          </View>
+        </View>
+      </PaneContentToolbar>
       {error ? (
         <View style={styles.errorRow}>
           <Text style={styles.error}>{error}</Text>
@@ -759,17 +789,33 @@ export { RemoteBrowserPane };
 
 const styles = StyleSheet.create((theme) => ({
   container: { flex: 1, minHeight: 0, backgroundColor: theme.colors.surface0 },
-  toolbar: { flexDirection: "row", alignItems: "center", gap: 8, padding: 8 },
-  toolbarButton: { fontSize: 24, paddingHorizontal: 6, color: theme.colors.foregroundMuted },
+  toolbar: { flexShrink: 0 },
+  toolbarContent: {
+    flex: 1,
+    minWidth: 0,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+    paddingHorizontal: theme.spacing[2],
+  },
+  toolbarIcon: { color: theme.colors.foregroundMuted },
+  urlBar: {
+    flex: 1,
+    minWidth: 0,
+    height: 28,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[1],
+    paddingHorizontal: theme.spacing[2],
+    borderRadius: theme.borderRadius.full,
+    backgroundColor: theme.colors.surface2,
+  },
   urlInput: {
     flex: 1,
     minWidth: 0,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    borderRadius: 6,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
+    padding: 0,
     color: theme.colors.foreground,
+    fontSize: theme.fontSize.base,
   },
   errorRow: {
     flexDirection: "row",
@@ -797,7 +843,14 @@ const styles = StyleSheet.create((theme) => ({
     opacity: 0.01,
     color: "transparent",
   },
-  frameButton: { flex: 1, minHeight: 0 },
+  frameButton: {
+    flex: 1,
+    minHeight: 0,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    borderRadius: theme.borderRadius.md,
+    overflow: "hidden",
+  },
   frame: { width: "100%", height: "100%" },
   status: { alignSelf: "center", color: theme.colors.foregroundMuted },
 }));
