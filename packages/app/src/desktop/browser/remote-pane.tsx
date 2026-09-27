@@ -629,6 +629,46 @@ function RemoteBrowserPane({
     [enqueueRemoteOperation, execute, isCompact, onFocusPane, refreshFrame],
   );
 
+  // A trackpad or mouse wheel never reaches the PanResponder, which only sees
+  // drags; without this the page scrolls only by click-and-drag, like a phone.
+  const frameViewRef = useRef<View | null>(null);
+  const hasFrame = frame !== null;
+  const wheelRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    const element = frameViewRef.current as unknown as HTMLElement | null;
+    if (!isWeb || !element || !canInteract) return;
+    const handleWheel = (event: WheelEvent) => {
+      const currentBrowserId = remoteBrowserIdRef.current;
+      if (!currentBrowserId) return;
+      event.preventDefault();
+      const bounds = element.getBoundingClientRect();
+      const point = getRemotePoint(
+        {
+          nativeEvent: {
+            offsetX: event.clientX - bounds.left,
+            offsetY: event.clientY - bounds.top,
+          },
+        },
+        frameRef.current,
+        viewportSizeRef.current,
+      );
+      if (!point) return;
+      // deltaMode 1 counts lines and 2 pages; trackpads report pixels (0).
+      const unit = [1, 16, bounds.height][event.deltaMode] ?? 1;
+      scheduleScroll(currentBrowserId, point, event.deltaX * unit, event.deltaY * unit);
+      if (wheelRefreshTimerRef.current) clearTimeout(wheelRefreshTimerRef.current);
+      wheelRefreshTimerRef.current = setTimeout(() => {
+        wheelRefreshTimerRef.current = null;
+        queueFrameRefresh();
+      }, 120);
+    };
+    element.addEventListener("wheel", handleWheel, { passive: false });
+    return () => {
+      element.removeEventListener("wheel", handleWheel);
+      if (wheelRefreshTimerRef.current) clearTimeout(wheelRefreshTimerRef.current);
+    };
+  }, [canInteract, hasFrame, queueFrameRefresh, scheduleScroll]);
+
   const handleFramePointerMove = useCallback(
     (event: RNPointerEvent) => {
       if (!isWeb || !canInteract) return;
@@ -924,6 +964,7 @@ function RemoteBrowserPane({
             accessibilityLabel={t("workspace.browser.controls.browserUrl")}
             accessible={true}
             onPointerMove={isWeb ? handleFramePointerMove : undefined}
+            ref={frameViewRef}
             style={styles.frameButton}
             testID={`remote-browser-frame-${browserId}`}
           >
