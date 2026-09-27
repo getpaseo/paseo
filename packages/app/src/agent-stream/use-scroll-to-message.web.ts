@@ -1,13 +1,16 @@
 import type React from "react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import type { Virtualizer } from "@tanstack/react-virtual";
+import type { StreamItem } from "@/types/stream";
+import { getStreamItemMessageId } from "./presentation";
 import { createPromptJumpSettleController, PROMPT_JUMP_TOP_INSET_PX } from "./prompt-jump-settle";
+import type { ScrollToMessageOccurrence } from "./strategy";
 
 interface UseScrollToMessageInput {
   active: boolean;
   scrollContainerRef: React.RefObject<HTMLElement | null>;
   rowVirtualizer: Virtualizer<HTMLElement, Element>;
-  historyVirtualized: readonly { id: string }[];
+  historyVirtualized: readonly StreamItem[];
   cancelPendingStickToBottom: () => void;
   setFollowOutput: (value: boolean) => boolean;
   onNearBottomChange: (value: boolean) => void;
@@ -32,24 +35,22 @@ export function useScrollToMessage({
   setFollowOutput,
   onNearBottomChange,
 }: UseScrollToMessageInput) {
-  const occurrenceRef = useRef<
-    { signal: AbortSignal; targetTop(row: HTMLElement): number | null } | undefined
-  >(undefined);
+  const occurrenceRef = useRef<ScrollToMessageOccurrence | undefined>(undefined);
   const removeAbortListener = useRef<(() => void) | null>(null);
   const settleController = useMemo(
     () =>
       createPromptJumpSettleController({
         viewport: {
-          findTargetTop(itemId) {
-            const container = scrollContainerRef.current;
-            const target = container?.querySelector<HTMLElement>(
-              `[data-history-row-id="${CSS.escape(itemId)}"]`,
-            );
+          findTargetTop(messageId) {
             const occurrence = occurrenceRef.current;
             if (occurrence?.signal.aborted) return null;
-            if (!target) return null;
-            if (occurrence) return occurrence.targetTop(target);
-            return target.getBoundingClientRect().top;
+            if (occurrence) return occurrence.targetTop();
+            // Every row of an assistant message carries the message id; the first one
+            // is the message's top.
+            const target = scrollContainerRef.current?.querySelector<HTMLElement>(
+              `[data-message-id="${CSS.escape(messageId)}"]`,
+            );
+            return target ? target.getBoundingClientRect().top : null;
           },
           getContainerTop() {
             return scrollContainerRef.current?.getBoundingClientRect().top ?? 0;
@@ -102,10 +103,7 @@ export function useScrollToMessage({
   }, [active, settleController]);
 
   const scrollToMessage = useCallback(
-    (
-      itemId: string,
-      occurrence?: { signal: AbortSignal; targetTop(row: HTMLElement): number | null },
-    ) => {
+    (messageId: string, occurrence?: ScrollToMessageOccurrence) => {
       occurrenceRef.current = occurrence;
       removeAbortListener.current?.();
       const cancel = () => settleController.cancel();
@@ -118,7 +116,7 @@ export function useScrollToMessage({
       setFollowOutput(false);
 
       const mounted = container.querySelector<HTMLElement>(
-        `[data-history-row-id="${CSS.escape(itemId)}"]`,
+        `[data-message-id="${CSS.escape(messageId)}"]`,
       );
       if (mounted) {
         const delta =
@@ -126,15 +124,17 @@ export function useScrollToMessage({
           container.getBoundingClientRect().top -
           PROMPT_JUMP_TOP_INSET_PX;
         container.scrollTop += delta;
-        settleController.start(itemId);
+        settleController.start(messageId);
         onNearBottomChange(false);
         return;
       }
 
-      const index = historyVirtualized.findIndex((item) => item.id === itemId);
+      const index = historyVirtualized.findIndex(
+        (item) => getStreamItemMessageId(item) === messageId,
+      );
       if (index >= 0) {
         rowVirtualizer.scrollToIndex(index, { align: "start" });
-        settleController.start(itemId);
+        settleController.start(messageId);
         onNearBottomChange(false);
       }
     },

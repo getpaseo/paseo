@@ -854,6 +854,142 @@ test("passes password as HTTP bearer header and WebSocket subprotocol", async ()
   });
 });
 
+test("keeps relay upgrade credentials out of the socket request", async () => {
+  const mock = createMockTransport();
+  const requests: Array<{ url: string; headers?: Record<string, string>; protocols?: string[] }> =
+    [];
+  const client = new DaemonClient({
+    url: "ws://relay.test/ws?role=client&serverId=srv_test&v=2",
+    clientId: "clsk_relay_auth_test",
+    password: "shared-secret",
+    authHeader: "Bearer shared-secret",
+    e2ee: { enabled: true, daemonPublicKeyB64: "daemon-public-key" },
+    reconnect: { enabled: false },
+    transportFactory: (request) => {
+      requests.push(request);
+      return mock.transport;
+    },
+  });
+  clients.push(client);
+  void client.connect();
+  await vi.waitFor(() => expect(requests).toHaveLength(1));
+  expect(requests[0]).toEqual({ url: "ws://relay.test/ws?role=client&serverId=srv_test&v=2" });
+});
+
+test("refuses relay password auth without an encrypted hello", async () => {
+  const requests: unknown[] = [];
+  const client = new DaemonClient({
+    url: "ws://relay.test/ws?role=client&serverId=srv_test&v=2",
+    clientId: "clsk_unencrypted_relay_test",
+    password: "shared-secret",
+    connectTimeoutMs: 50,
+    reconnect: { enabled: false },
+    transportFactory: (request) => {
+      requests.push(request);
+      return createMockTransport().transport;
+    },
+  });
+  clients.push(client);
+  await expect(client.connect()).rejects.toThrow("Relay credentials require E2EE");
+  expect(requests).toEqual([]);
+});
+
+test("stops reconnecting after a password rejection on an established connection", async () => {
+  const socket = createMockTransport();
+  let attempts = 0;
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_reconnect_auth_test",
+    password: "old-secret",
+    reconnect: { enabled: true, baseDelayMs: 1, maxDelayMs: 1 },
+    transportFactory: () => {
+      attempts += 1;
+      return socket.transport;
+    },
+  });
+  clients.push(client);
+  const connected = client.connect();
+  socket.triggerOpen();
+  await connected;
+  socket.triggerMessage(JSON.stringify({ type: "hello.rejected", reason: "incorrect_password" }));
+  socket.triggerClose({ code: 4003, reason: "Incorrect password" });
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  expect(client.authFailureReason).toBe("incorrect_password");
+  expect(attempts).toBe(1);
+});
+
+test("sends a password containing spaces in hello without an invalid WebSocket subprotocol", async () => {
+  const mock = createMockTransport();
+  const transportFactory = vi.fn(() => mock.transport);
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    password: "two words",
+    logger: createMockLogger(),
+    reconnect: { enabled: false },
+    transportFactory,
+  });
+  clients.push(client);
+  const connected = client.connect();
+  mock.triggerOpen({ preserveSent: true });
+  await connected;
+  expect(transportFactory).toHaveBeenCalledWith({
+    url: "ws://test",
+    headers: {},
+  });
+  expect(JSON.parse(assertStr(mock.sent[0]))).toMatchObject({
+    type: "hello",
+    auth: { kind: "password", password: "two words" },
+  });
+});
+
+test("uses a local credential over a saved password when the desktop bridge provides one", async () => {
+  const mock = createMockTransport();
+  const transportFactory = vi.fn(() => mock.transport);
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "desktop-managed",
+    password: "stale-password",
+    localCredential: async () => "current-local-token",
+    reconnect: { enabled: false },
+    transportFactory,
+  });
+  clients.push(client);
+  const connected = client.connect();
+  await vi.waitFor(() => expect(transportFactory).toHaveBeenCalled());
+  mock.triggerOpen({ preserveSent: true });
+  await connected;
+  expect(transportFactory).toHaveBeenCalledWith({ url: "ws://test", headers: {} });
+  expect(JSON.parse(assertStr(mock.sent[0]))).toMatchObject({
+    type: "hello",
+    auth: { kind: "localCredential", token: "current-local-token" },
+  });
+});
+
+test("uses the saved host password when the desktop bridge has no credential for the target", async () => {
+  const mock = createMockTransport();
+  const transportFactory = vi.fn(() => mock.transport);
+  const localCredential = vi.fn(async () => undefined);
+  const client = new DaemonClient({
+    url: "ws://remote-host",
+    clientId: "remote-saved-host",
+    password: "saved-password",
+    localCredential,
+    reconnect: { enabled: false },
+    transportFactory,
+  });
+  clients.push(client);
+  const connected = client.connect();
+  await vi.waitFor(() => expect(transportFactory).toHaveBeenCalled());
+  mock.triggerOpen({ preserveSent: true });
+  await connected;
+  expect(localCredential).toHaveBeenCalledOnce();
+  expect(JSON.parse(assertStr(mock.sent[0]))).toMatchObject({
+    type: "hello",
+    auth: { kind: "password", password: "saved-password" },
+  });
+});
+
 test("advertises client capabilities in hello", async () => {
   const logger = createMockLogger();
   const mock = createMockTransport();
@@ -900,6 +1036,7 @@ test("advertises client capabilities in hello", async () => {
       timeline_notifications: true,
       plugin_timeline_items: true,
       workspace_setup_blocked: true,
+      hello_rejection: true,
       browser_host: {
         supportedCommands: ["list_tabs"],
         hostKind: "desktop app",
@@ -2341,7 +2478,7 @@ test("file context action RPCs correlate success and error responses", async () 
   });
 });
 
-test("serializes plugin source suffixes through the legacy path field", async () => {
+test("sends plugin source identifiers unchanged for daemon-host resolution", async () => {
   const mock = createMockTransport();
   const client = new DaemonClient({
     url: "ws://test",
@@ -2353,7 +2490,7 @@ test("serializes plugin source suffixes through the legacy path field", async ()
   clients.push(client);
 
   const connectPromise = client.connect();
-  mock.triggerOpen();
+  mock.triggerOpen({ features: { pluginSourceInstallation: true } });
   await connectPromise;
 
   const installPromise = client.installPluginSource({
@@ -2363,8 +2500,7 @@ test("serializes plugin source suffixes through the legacy path field", async ()
   expect(request).toEqual({
     type: "plugin.source.install.request",
     requestId: expect.any(String),
-    source: "owner/repository",
-    pluginPath: "plugins/review",
+    source: "owner/repository:plugins/review",
   });
   mock.triggerMessage(
     wrapSessionMessage({
@@ -6802,4 +6938,101 @@ test("uploadFile stops sending chunks when the connection closes between sends",
       .map(decodeFileTransferFrame)
       .some((frame) => frame.opcode === FileTransferOpcode.FileEnd),
   ).toBe(false);
+});
+
+test("rejects source installation on an older host before sending a request", async () => {
+  const transport = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "source-gate",
+    logger: createMockLogger(),
+    reconnect: { enabled: false },
+    transportFactory: () => transport.transport,
+  });
+  clients.push(client);
+  const connecting = client.connect();
+  transport.triggerOpen({ features: { pluginGitManagement: true } });
+  await connecting;
+  const sentBefore = transport.sent.length;
+  await expect(client.installPluginSource({ source: "npm:review" })).rejects.toThrow(
+    "Update the host",
+  );
+  expect(transport.sent.length).toBe(sentBefore);
+});
+
+test("reviewed plugin updates gate before requests and preserve exact proposal data", async () => {
+  for (const supported of [false, true]) {
+    const transport = createMockTransport();
+    const client = new DaemonClient({
+      url: "ws://test",
+      clientId: "reviewed-updates",
+      logger: createMockLogger(),
+      reconnect: { enabled: false },
+      transportFactory: () => transport.transport,
+    });
+    clients.push(client);
+    const connecting = client.connect();
+    transport.triggerOpen({
+      features: {
+        pluginGitManagement: true,
+        pluginSourceInstallation: true,
+        pluginSourceUpdates: supported,
+      },
+    });
+    await connecting;
+    const proposal = {
+      id: "review",
+      expected: {
+        identity: { kind: "npm" as const, packageName: "review", pluginPath: "." },
+        installationRoot: "/plugins/review/version-root",
+        revision: "1.0.0",
+      },
+      target: {
+        kind: "npm" as const,
+        version: "1.1.0",
+        resolved: "https://registry.npmjs.org/review/-/review-1.1.0.tgz",
+        integrity: "sha512-test",
+      },
+    };
+    if (!supported) {
+      const sent = transport.sent.length;
+      await expect(client.previewPluginUpdates()).rejects.toThrow("Update the host");
+      await expect(client.applyPluginUpdates([proposal])).rejects.toThrow("Update the host");
+      expect(transport.sent.length).toBe(sent);
+      continue;
+    }
+    const checking = client.previewPluginUpdates({ pluginId: "review" });
+    const check = parseSentFrame(transport.sent.at(-1));
+    expect(check).toMatchObject({
+      type: "plugin.source.update.preview.request",
+      pluginId: "review",
+    });
+    const preview = { id: "review", outcome: "update", links: [], proposal };
+    transport.triggerMessage(
+      wrapSessionMessage({
+        type: "plugin.source.update.preview.response",
+        payload: { requestId: check.requestId, plugins: [preview] },
+      }),
+    );
+    await expect(checking).resolves.toEqual([preview]);
+    const applying = client.applyPluginUpdates([proposal]);
+    const apply = parseSentFrame(transport.sent.at(-1));
+    expect(apply).toEqual({
+      type: "plugin.source.update.apply.request",
+      requestId: expect.any(String),
+      proposals: [proposal],
+    });
+    transport.triggerMessage(
+      wrapSessionMessage({
+        type: "plugin.source.update.apply.response",
+        payload: {
+          requestId: apply.requestId,
+          plugins: [{ id: "review", outcome: "error", error: "changed since review" }],
+        },
+      }),
+    );
+    await expect(applying).resolves.toEqual([
+      { id: "review", outcome: "error", error: "changed since review" },
+    ]);
+  }
 });

@@ -12,6 +12,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { isPlatform } from "../test-utils/platform.js";
+import { startPathContainmentMetrics, stopPathContainmentMetrics } from "./path.js";
 import { startGitCommandMetrics, stopGitCommandMetrics } from "./run-git-command.js";
 import {
   searchDirectoryEntries,
@@ -168,6 +169,26 @@ describe("searchDirectoryEntries", () => {
       1,
     );
   });
+
+  it.skipIf(isWindows)(
+    "prunes a symlink whose target is inside a Git-ignored directory",
+    async () => {
+      initGitRepo(searchRoot, "generated/\n");
+      mkdirSync(path.join(searchRoot, "generated", "output"), { recursive: true });
+      symlinkSync(path.join(searchRoot, "generated", "output"), path.join(searchRoot, "linked"));
+
+      await expect(
+        searchDirectoryEntries({
+          root: searchRoot,
+          query: "linked",
+          pathFormat: "relative",
+          includeFiles: false,
+          includeDirectories: true,
+          respectGitIgnore: true,
+        }),
+      ).resolves.toEqual([]);
+    },
+  );
 
   it("configures raw blank queries independently from explicit root aliases", async () => {
     const rootEntries = [
@@ -952,4 +973,63 @@ describe("relative typed-entry configuration", () => {
 
     expect(results).toEqual([{ path: "blankpage/editor", kind: "directory" }]);
   });
+});
+
+// Reading a tree is cheap; re-deriving each entry's path state is not. A scan that asks whether
+// every ancestor of every entry is inside the root, or is Git-ignored, costs multiples of the
+// read and is what made large home directories exceed the client request timeout.
+describe("home-tree scan cost", () => {
+  const DEPTH = 8;
+  const CHAINS = 40;
+  let scanRoot: string;
+
+  beforeEach(() => {
+    scanRoot = realpathSync.native(mkdtempSync(path.join(tmpdir(), "directory-scan-cost-")));
+    for (let chain = 0; chain < CHAINS; chain += 1) {
+      const segments: string[] = [];
+      for (let level = 0; level < DEPTH; level += 1) segments.push(`c${chain}l${level}`);
+      mkdirSync(path.join(scanRoot, ...segments), { recursive: true });
+    }
+  });
+
+  afterEach(() => {
+    rmSync(scanRoot, { recursive: true, force: true });
+  });
+
+  // Nothing matches, so the scan walks the whole tree instead of stopping at a confident result.
+  function scanWholeTree() {
+    return searchAbsoluteDirectoryPaths({
+      homeDir: scanRoot,
+      query: "nomatch",
+      maxDepth: DEPTH + 4,
+    });
+  }
+
+  async function countContainmentChecks(run: () => Promise<unknown>): Promise<number> {
+    startPathContainmentMetrics();
+    await run();
+    return stopPathContainmentMetrics();
+  }
+
+  it("derives no containment for a tree that cannot leave the root", async () => {
+    const checks = await countContainmentChecks(scanWholeTree);
+
+    expect({ checks, scanned: CHAINS * DEPTH }).toEqual({ checks: 0, scanned: 320 });
+  });
+
+  it.skipIf(isWindows)(
+    "derives containment for symlinked entries, which can leave the root",
+    async () => {
+      const outside = realpathSync.native(mkdtempSync(path.join(tmpdir(), "directory-scan-away-")));
+      symlinkSync(outside, path.join(scanRoot, "escape"), "dir");
+
+      const checks = await countContainmentChecks(scanWholeTree);
+
+      expect({ checked: checks > 0, escaped: (await scanWholeTree()).includes(outside) }).toEqual({
+        checked: true,
+        escaped: false,
+      });
+      rmSync(outside, { recursive: true, force: true });
+    },
+  );
 });

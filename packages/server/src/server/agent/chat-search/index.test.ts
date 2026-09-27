@@ -19,7 +19,10 @@ it("returns source locations for formatted assistant text and literal user text"
     ]),
     query: "hello world",
   });
-  expect(result).toEqual({ locations: [{ seq: 2, role: "assistant" }], nextCursor: null });
+  expect(result).toEqual({
+    locations: [{ seq: 2, role: "assistant", count: 2 }],
+    nextCursor: null,
+  });
 });
 
 it("finds code and literal punctuation without searching tools, reasoning, or task state", async () => {
@@ -34,8 +37,8 @@ it("finds code and literal punctuation without searching tools, reasoning, or ta
     query: "a.b",
   });
   expect(result.locations).toEqual([
-    { seq: 1, role: "assistant" },
-    { seq: 5, role: "user" },
+    { seq: 1, role: "assistant", count: 1 },
+    { seq: 5, role: "user", count: 1 },
   ]);
 });
 
@@ -49,8 +52,8 @@ it("bounds results and resumes without losing locations", async () => {
   const second = await searchTimeline({ rows: source, query: "target", cursor: first.nextCursor! });
   expect(second).toEqual({
     locations: [
-      { seq: 201, role: "user" },
-      { seq: 202, role: "user" },
+      { seq: 201, role: "user", count: 1 },
+      { seq: 202, role: "user", count: 1 },
     ],
     nextCursor: null,
   });
@@ -59,9 +62,27 @@ it("bounds results and resumes without losing locations", async () => {
 it("finds ordinary Markdown entities and line breaks without requiring identical parsers", async () => {
   const source = rows([{ type: "assistant_message", text: "hello &amp; **world**\nnext line" }]);
   expect((await searchTimeline({ rows: source, query: "hello & world" })).locations).toEqual([
-    { seq: 1, role: "assistant" },
+    { seq: 1, role: "assistant", count: 1 },
   ]);
   expect((await searchTimeline({ rows: source, query: "world next" })).locations).toEqual([
-    { seq: 1, role: "assistant" },
+    { seq: 1, role: "assistant", count: 1 },
   ]);
+});
+
+it("counts occurrences per rendered block rather than across block boundaries", async () => {
+  const source = rows([
+    { type: "assistant_message", text: "target one\n\ntarget two\n\n- target three\n- end target" },
+    { type: "user_message", text: "TARGET target" },
+  ]);
+  expect((await searchTimeline({ rows: source, query: "target" })).locations).toEqual([
+    { seq: 1, role: "assistant", count: 4 },
+    { seq: 2, role: "user", count: 2 },
+  ]);
+  expect((await searchTimeline({ rows: source, query: "end target" })).locations).toEqual([
+    { seq: 1, role: "assistant", count: 1 },
+  ]);
+  expect((await searchTimeline({ rows: source, query: "two target" })).locations).toEqual([]);
+  // Rendered text never runs from the end of one block into the start of the next, so
+  // neither does a match, however contiguous the Markdown source looks.
+  expect((await searchTimeline({ rows: source, query: "one target" })).locations).toEqual([]);
 });

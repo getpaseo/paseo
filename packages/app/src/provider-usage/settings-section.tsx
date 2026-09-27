@@ -63,7 +63,12 @@ function ProviderUsageBody({
 
   if (view.kind === "error") {
     return (
-      <Alert variant="error" title={providerUsageCopy.errorTitle} description={view.message}>
+      <Alert
+        size="sm"
+        variant="error"
+        title={providerUsageCopy.errorTitle}
+        description={view.message}
+      >
         <Button variant="outline" size="sm" onPress={onRefresh}>
           {providerUsageCopy.retry}
         </Button>

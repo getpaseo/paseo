@@ -136,12 +136,27 @@ function assertChildWithPipes(
   }
 }
 
+// Node reports a failed spawn (missing binary or missing cwd) as a child
+// `error` event; without a listener it becomes an uncaught exception.
+function rejectOnSpawnError(child: ChildProcess, stderrChunks: string[]): Promise<never> {
+  return new Promise<never>((_, reject) => {
+    child.once("error", (error) => {
+      const stderr = stderrChunks.join("").trim();
+      reject(new Error(stderr ? `${String(error)}\n${stderr}` : String(error)));
+    });
+  });
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value != null && typeof value === "object" && !Array.isArray(value);
 }
 
 function isACPError(value: unknown): value is ACPError {
   return isRecord(value) && typeof value.message === "string" && typeof value.code === "number";
+}
+
+function isACPInvalidParams(error: unknown): boolean {
+  return isACPError(error) && error.code === -32602;
 }
 
 function extractACPErrorDataMessage(data: unknown): string | null {
@@ -1350,12 +1365,7 @@ export class ACPAgentClient implements AgentClient {
       stderrChunks.push(chunk.toString());
     });
 
-    const spawnErrorPromise = new Promise<never>((_, reject) => {
-      child.once("error", (error) => {
-        const stderr = stderrChunks.join("").trim();
-        reject(new Error(stderr ? `${String(error)}\n${stderr}` : String(error)));
-      });
-    });
+    const spawnErrorPromise = rejectOnSpawnError(child, stderrChunks);
     const spawnReadyPromise = new Promise<void>((resolve) => {
       child.once("spawn", () => {
         resolve();
@@ -2277,7 +2287,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
 
     const option = findSelectConfigFeatureOption(this.configOptions, featureOption);
     if (!option) {
-      throw new Error(`${this.provider} does not expose ACP feature '${featureId}'`);
+      throw new Error(this.featureUnavailableMessage(featureId));
     }
 
     const requestedValue = normalizeConfigFeatureValue(value);
@@ -2614,8 +2624,13 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       (params.env ?? []).map((entry: EnvVariable) => [entry.name, entry.value]),
     );
     const terminalCommand = resolveTerminalCommand(params.command, params.args);
+    // The terminal is a sibling of the agent process, not a child, so it inherits
+    // nothing from it. Carry the agent's launch environment the way spawnProcess
+    // does, keeping the requested terminal environment on top.
     const commandEnvOverlays =
-      terminalCommand.shell === false ? [env, createStringCommandShellEnvOverlay()] : [env];
+      terminalCommand.shell === false
+        ? [this.launchEnv, env, createStringCommandShellEnvOverlay()]
+        : [this.launchEnv, env];
     const child = spawnProcess(terminalCommand.command, terminalCommand.args, {
       cwd: params.cwd ?? this.config.cwd,
       ...createProviderEnvSpec({
@@ -2723,6 +2738,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     child.stderr.on("data", (chunk: Buffer | string) => {
       stderrChunks.push(chunk.toString());
     });
+    const spawnError = rejectOnSpawnError(child, stderrChunks);
     child.once("exit", (code, signal) => {
       if (this.closed) {
         return;
@@ -2750,14 +2766,17 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.child = child;
     this.connection = connection;
     const initialize = await this.runACPRequest(() =>
-      connection.initialize({
-        protocolVersion: PROTOCOL_VERSION,
-        clientCapabilities: buildACPClientCapabilities(
-          this.clientCapabilityMeta,
-          this.clientCapabilities,
-        ),
-        clientInfo: { name: "Paseo", version: "dev" },
-      }),
+      Promise.race([
+        connection.initialize({
+          protocolVersion: PROTOCOL_VERSION,
+          clientCapabilities: buildACPClientCapabilities(
+            this.clientCapabilityMeta,
+            this.clientCapabilities,
+          ),
+          clientInfo: { name: "Paseo", version: "dev" },
+        }),
+        spawnError,
+      ]),
     );
 
     return { child, connection, initialize };
@@ -2814,6 +2833,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       await this.setModeWithSelection({ modeId: configuredModeId, selection });
     }
     const configuredModelId = this.config.model;
+    let switchedModel = false;
     if (configuredModelId && configuredModelId !== this.currentModel) {
       const selection = resolveACPModelSelection({
         modelId: configuredModelId,
@@ -2822,6 +2842,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       });
       try {
         await this.setModelWithSelection({ modelId: configuredModelId, selection });
+        switchedModel = true;
       } catch (error) {
         if (!this.isModelSelectionUnavailableError(error)) {
           throw error;
@@ -2840,8 +2861,37 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       if (!Object.prototype.hasOwnProperty.call(configuredFeatureValues, featureOption.id)) {
         continue;
       }
-      await this.setFeature(featureOption.id, configuredFeatureValues[featureOption.id]);
+      try {
+        await this.setFeature(featureOption.id, configuredFeatureValues[featureOption.id]);
+      } catch (error) {
+        if (!this.isStaleFeatureValueError(error, featureOption.id, switchedModel)) {
+          throw error;
+        }
+        this.logger.warn(
+          { err: error, featureId: featureOption.id, model: this.currentModel },
+          `${this.provider} cannot apply ACP feature '${featureOption.id}' to the current model; using the provider default`,
+        );
+      }
     }
+  }
+
+  /**
+   * A stored feature value is a preference carried over from whichever model the user
+   * last configured, so the session it lands on may have no such option. Paseo's own
+   * guard says so when the session's options are accurate. A model switch answers with
+   * an empty response, leaving Paseo holding the previous model's options, and then the
+   * provider is the one that rejects the write as invalid params. Outside those two
+   * cases the write failed for a reason the user needs to see.
+   */
+  private isStaleFeatureValueError(
+    error: unknown,
+    featureId: string,
+    switchedModel: boolean,
+  ): boolean {
+    if (this.isFeatureUnavailableError(error, featureId)) {
+      return true;
+    }
+    return switchedModel && isACPInvalidParams(error);
   }
 
   private warnInvalidSelection(value: string, message: string): void {
@@ -2854,6 +2904,14 @@ export class ACPAgentSession implements AgentSession, ACPClient {
 
   private isModelSelectionUnavailableError(error: unknown): boolean {
     return error instanceof Error && error.message === this.modelSelectionUnavailableMessage();
+  }
+
+  private featureUnavailableMessage(featureId: string): string {
+    return `${this.provider} does not expose ACP feature '${featureId}'`;
+  }
+
+  private isFeatureUnavailableError(error: unknown, featureId: string): boolean {
+    return error instanceof Error && error.message === this.featureUnavailableMessage(featureId);
   }
 
   private translateSessionUpdate(update: SessionUpdate): AgentStreamEvent[] {

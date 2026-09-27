@@ -1,4 +1,5 @@
 import path from "node:path";
+import type { Page, TestInfo } from "@playwright/test";
 import { test, expect } from "../support/fixtures";
 import { gotoAppShell } from "../support/helpers/app";
 import {
@@ -11,6 +12,7 @@ import {
 import { seedWorkspace } from "../support/helpers/seed-client";
 import { expectWorkspaceHeader } from "../support/helpers/workspace-ui";
 import { getServerId } from "../support/helpers/server-id";
+import { getE2EDaemonPort } from "../support/helpers/daemon-port";
 import { projectEquivalenceViewKey } from "../support/helpers/project-view-key";
 import { escapeRegex } from "../support/helpers/regex";
 import { openFilesPanel } from "../support/helpers/workspace-tabs";
@@ -108,7 +110,207 @@ async function withPaseoOwnedWorktree(
   }
 }
 
+async function readCachedRowIds(
+  page: Page,
+  rowKind: "workspace" | "checkpoint",
+): Promise<string[]> {
+  return page.evaluate(
+    async ({ serverId, kind }) => {
+      const database = await new Promise<IDBDatabase>((resolve, reject) => {
+        const request = indexedDB.open("paseo-replica-row-store");
+        request.addEventListener("success", () => resolve(request.result));
+        request.addEventListener("error", () => reject(request.error));
+      });
+      try {
+        return await new Promise<string[]>((resolve, reject) => {
+          const transaction = database.transaction("rows", "readonly");
+          const request = transaction.objectStore("rows").getAll();
+          request.onsuccess = () =>
+            resolve(
+              request.result
+                .filter(
+                  (row: { serverId: string; kind: string }) =>
+                    row.serverId === serverId && row.kind === kind,
+                )
+                .map((row: { id: string }) => row.id)
+                .sort(),
+            );
+          request.addEventListener("error", () => reject(request.error));
+        });
+      } finally {
+        database.close();
+      }
+    },
+    { serverId: getServerId(), kind: rowKind },
+  );
+}
+
+async function simulateDamagedLegacyDirectoryCache(
+  page: Page,
+  workspaceIdToRemove: string,
+): Promise<void> {
+  // Stop the app before altering storage so no pending app write can repair the fixture.
+  const fixtureUrl = new URL("/__directory_cache_fixture", page.url()).href;
+  await page.route(fixtureUrl, (route) =>
+    route.fulfill({ contentType: "text/html", body: "<html><body>Cache fixture</body></html>" }),
+  );
+  await page.goto(fixtureUrl);
+  await page.evaluate(
+    async ({ serverId, missingWorkspaceId }) => {
+      const database = await new Promise<IDBDatabase>((resolve, reject) => {
+        const request = indexedDB.open("paseo-replica-row-store");
+        request.addEventListener("success", () => resolve(request.result));
+        request.addEventListener("error", () => reject(request.error));
+      });
+      try {
+        await new Promise<void>((resolve, reject) => {
+          const transaction = database.transaction("rows", "readwrite");
+          const store = transaction.objectStore("rows");
+          const request = store.getAll();
+          request.onsuccess = () => {
+            const rows = request.result as Array<{
+              serverId: string;
+              kind: string;
+              id: string;
+              payload: string;
+            }>;
+            const checkpoint = rows.find(
+              (row) => row.serverId === serverId && row.kind === "checkpoint",
+            );
+            if (!checkpoint) {
+              transaction.abort();
+              return;
+            }
+            const stored = JSON.parse(checkpoint.payload);
+            // Accept either writer so this fixture also reproduces on the unfixed client.
+            const cursors = stored.version === 1 ? stored.cursors : stored;
+            if (!cursors.workspaces?.generation) {
+              transaction.abort();
+              return;
+            }
+            store.put({ ...checkpoint, payload: JSON.stringify(cursors) });
+            for (const row of rows) {
+              if (
+                row.serverId === serverId &&
+                row.kind === "workspace" &&
+                row.id === missingWorkspaceId
+              )
+                store.delete([serverId, row.kind, row.id]);
+            }
+          };
+          transaction.addEventListener("complete", () => resolve());
+          transaction.addEventListener("abort", () =>
+            reject(transaction.error ?? new Error("Missing current directory checkpoint")),
+          );
+          transaction.addEventListener("error", () => reject(transaction.error));
+        });
+      } finally {
+        database.close();
+      }
+    },
+    { serverId: getServerId(), missingWorkspaceId: workspaceIdToRemove },
+  );
+  expect(await readCachedRowIds(page, "workspace")).not.toContain(workspaceIdToRemove);
+}
+
+async function holdHostResponsesUntilCacheIsVisible(page: Page): Promise<() => void> {
+  let release!: () => void;
+  const ready = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.routeWebSocket(new RegExp(`:${getE2EDaemonPort()}(?:/|$)`), (socket) => {
+    const server = socket.connectToServer();
+    server.onMessage(async (message) => {
+      await ready;
+      socket.send(message);
+    });
+  });
+  return release;
+}
+
+async function createPinnedSiblingWorkspace(
+  project: Awaited<ReturnType<typeof seedWorkspace>>,
+): Promise<string> {
+  const sibling = await project.client.createWorkspace({
+    source: { kind: "directory", path: project.repoPath, projectId: project.projectId },
+    title: "Pinned sibling",
+  });
+  if (!sibling.workspace) throw new Error(sibling.error ?? "Sibling workspace was not created");
+  await project.client.setWorkspacePinned(sibling.workspace.id, true);
+  return sibling.workspace.id;
+}
+
+async function expectSidebarWorkspaces(page: Page, workspaceIds: string[]): Promise<void> {
+  for (const workspaceId of workspaceIds) {
+    await waitForSidebarWorkspace(page, workspaceId);
+  }
+}
+
+async function cacheWorkspaces(page: Page, workspaceIds: string[]): Promise<void> {
+  await gotoAppShell(page);
+  await expectSidebarWorkspaces(page, workspaceIds);
+  await expect.poll(() => readCachedRowIds(page, "workspace")).toEqual(workspaceIds);
+}
+
+async function reopenDamagedCacheBeforeHostResponds(
+  page: Page,
+  missingWorkspaceId: string,
+): Promise<() => void> {
+  await simulateDamagedLegacyDirectoryCache(page, missingWorkspaceId);
+  const releaseHost = await holdHostResponsesUntilCacheIsVisible(page);
+  await gotoAppShell(page);
+  return releaseHost;
+}
+
+async function expectDamagedCacheHydrated(
+  page: Page,
+  retainedWorkspaceId: string,
+  missingWorkspaceId: string,
+): Promise<void> {
+  await waitForSidebarWorkspace(page, retainedWorkspaceId);
+  await expect(page.getByTestId(getWorkspaceRowTestId(missingWorkspaceId))).toHaveCount(0);
+  await expect.poll(() => readCachedRowIds(page, "checkpoint")).toEqual([]);
+}
+
+async function expectRecoveredWorkspacesAfterReload(
+  page: Page,
+  workspaceIds: string[],
+  testInfo: TestInfo,
+): Promise<void> {
+  await expectSidebarWorkspaces(page, workspaceIds);
+  await expect.poll(() => readCachedRowIds(page, "workspace")).toEqual(workspaceIds);
+  await page.reload();
+  await expectSidebarWorkspaces(page, workspaceIds);
+  await page.screenshot({ path: testInfo.outputPath("recovered-workspaces.png") });
+  await testInfo.attach("recovered-workspaces", {
+    path: testInfo.outputPath("recovered-workspaces.png"),
+    contentType: "image/png",
+  });
+}
+
 test.describe("Sidebar workspace list", () => {
+  test("recovers missing workspaces from a damaged legacy cache after reload", async ({
+    page,
+  }, testInfo) => {
+    const project = await seedWorkspace({ repoPrefix: "directory-cache-recovery-" });
+    try {
+      const siblingId = await createPinnedSiblingWorkspace(project);
+      const ids = [project.workspaceId, siblingId].sort();
+      await test.step("cache both workspaces", () => cacheWorkspaces(page, ids));
+
+      const releaseHost = await test.step("reopen damaged cache before host responds", () =>
+        reopenDamagedCacheBeforeHostResponds(page, project.workspaceId));
+      await test.step("keep cached workspace and discard stale checkpoint", () =>
+        expectDamagedCacheHydrated(page, siblingId, project.workspaceId));
+
+      releaseHost();
+      await test.step("recover missing workspace and retain both after reload", () =>
+        expectRecoveredWorkspacesAfterReload(page, ids, testInfo));
+    } finally {
+      await project.cleanup();
+    }
+  });
+
   test("project with GitHub remote shows its selected folder name in sidebar", async ({ page }) => {
     const workspace = await seedWorkspace({
       repoPrefix: "sidebar-remote-",

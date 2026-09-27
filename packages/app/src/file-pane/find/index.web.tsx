@@ -10,7 +10,7 @@ import { EditorView } from "@codemirror/view";
 import { View, type View as ViewInstance } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
-import { PaneFind, type PaneFindHandle } from "@/pane-find";
+import { PaneFind, findShortcutPlatform, isFindShortcut, type PaneFindHandle } from "@/pane-find";
 import { usePaneFocus } from "@/panels/pane-context";
 import { hasActiveWebOverlay } from "@/lib/overlay-root";
 import { useRetainedPanelActive } from "@/components/retained-panel";
@@ -41,12 +41,7 @@ export function FileFind({
     function onKeyDown(event: KeyboardEvent) {
       if (event.defaultPrevented || hasActiveWebOverlay() || isImeComposingKeyboardEvent(event))
         return;
-      if (
-        (event.metaKey || event.ctrlKey) &&
-        !event.altKey &&
-        !event.shiftKey &&
-        event.key.toLowerCase() === "f"
-      ) {
+      if (isFindShortcut(event, findShortcutPlatform())) {
         event.preventDefault();
         model.open(editor.current);
         widget.current?.focus();

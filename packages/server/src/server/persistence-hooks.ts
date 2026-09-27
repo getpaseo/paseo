@@ -6,6 +6,7 @@ import type {
   AgentSessionConfig,
 } from "./agent/agent-sdk-types.js";
 import type { AgentStorage, StoredAgentRecord } from "./agent/agent-storage.js";
+import type { AttentionState } from "./agent/agent-manager.js";
 
 interface LoggerLike {
   child(bindings: Record<string, unknown>): LoggerLike;
@@ -106,6 +107,30 @@ export function isStoredAgentProviderAvailable(
   return isProviderRegistered(validProviders, record.provider);
 }
 
+/**
+ * When the record last changed, from either of the two timestamps it carries. They diverge
+ * because renaming, labelling, restoring from archive, marking unread, and clearing attention
+ * all move `updatedAt` on an unloaded agent without touching `lastActivityAt`. Reading one
+ * field alone hands consumers a time older than one they have already seen, and
+ * `acceptAgentDirectoryUpdate` drops every state update that goes backwards.
+ */
+export function resolveStoredAgentUpdatedAt(record: StoredAgentRecord): string {
+  const timestamps = [record.updatedAt, record.lastActivityAt]
+    .filter((value): value is string => typeof value === "string" && value.length > 0)
+    .map((value) => ({
+      raw: value,
+      parsed: Date.parse(value),
+    }))
+    .filter((value) => !Number.isNaN(value.parsed));
+
+  if (timestamps.length === 0) {
+    return record.updatedAt;
+  }
+
+  timestamps.sort((a, b) => b.parsed - a.parsed);
+  return timestamps[0].raw;
+}
+
 export function extractTimestamps(record: StoredAgentRecord): {
   createdAt: Date;
   updatedAt: Date;
@@ -116,11 +141,27 @@ export function extractTimestamps(record: StoredAgentRecord): {
 } {
   return {
     createdAt: new Date(record.createdAt),
-    updatedAt: new Date(record.lastActivityAt ?? record.updatedAt),
+    updatedAt: new Date(resolveStoredAgentUpdatedAt(record)),
     lastUserMessageAt: record.lastUserMessageAt ? new Date(record.lastUserMessageAt) : null,
     labels: record.labels,
     workspaceId: record.workspaceId,
     owner: record.owner,
+  };
+}
+
+/**
+ * Unread state survives a resume. Attention is set by the agent finishing or failing and
+ * cleared by the user reading the chat (`workspace.clear_attention`); reloading the runtime
+ * is neither, so a resumed agent that drops it silently marks the chat read.
+ */
+export function extractAttention(record: StoredAgentRecord): AttentionState {
+  if (!record.requiresAttention || !record.attentionReason || !record.attentionTimestamp) {
+    return { requiresAttention: false };
+  }
+  return {
+    requiresAttention: true,
+    attentionReason: record.attentionReason,
+    attentionTimestamp: new Date(record.attentionTimestamp),
   };
 }
 

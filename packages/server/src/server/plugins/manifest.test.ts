@@ -45,6 +45,26 @@ describe("plugin manifest", () => {
     }
   });
 
+  it("reads an optional description", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-manifest-"));
+    directories.push(directory);
+    await writeFile(
+      path.join(directory, "paseo-plugin.json"),
+      JSON.stringify({ id: "described", description: "Reviews changes before merge" }),
+    );
+
+    await expect(readPluginManifest(directory)).resolves.toEqual({
+      id: "described",
+      description: "Reviews changes before merge",
+    });
+
+    await writeFile(
+      path.join(directory, "paseo-plugin.json"),
+      JSON.stringify({ id: "described", description: "   " }),
+    );
+    await expect(readPluginManifest(directory)).rejects.toThrow();
+  });
+
   it("accepts only non-empty argv arrays for build commands", async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-manifest-"));
     directories.push(directory);

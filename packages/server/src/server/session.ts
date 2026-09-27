@@ -48,6 +48,7 @@ import type { TurnDetectionProvider } from "./speech/turn-detection-provider.js"
 import {
   buildConfigOverrides,
   isStoredAgentProviderAvailable,
+  resolveStoredAgentUpdatedAt,
   toAgentPersistenceHandle,
 } from "./persistence-hooks.js";
 import { ensureAgentLoaded, ensureUnarchivedAgentLoaded } from "./agent/agent-loading.js";
@@ -113,11 +114,7 @@ import {
   setAgentModeCommand,
   updateAgentCommand,
 } from "./agent/lifecycle-command.js";
-import {
-  buildStoredAgentPayload,
-  resolveStoredAgentPayloadUpdatedAt,
-  toAgentPayload,
-} from "./agent/agent-projections.js";
+import { buildStoredAgentPayload, toAgentPayload } from "./agent/agent-projections.js";
 import {
   appendTimelineItemIfAgentKnown,
   emitLiveTimelineItemIfAgentKnown,
@@ -476,7 +473,7 @@ export interface SessionOptions {
   pluginRuntime?: {
     before: import("./plugins/lifecycle/index.js").PluginLifecycle["before"];
     emit: import("./plugins/lifecycle/index.js").PluginLifecycle["emit"];
-    listPlugins(): import("@getpaseo/protocol/messages").PluginListItem[];
+    listPlugins(): Promise<import("@getpaseo/protocol/messages").PluginListItem[]>;
     getLogs(pluginId: string): import("@getpaseo/protocol/messages").PluginLogEntry[];
     installDirectory(input: {
       path: string;
@@ -491,6 +488,13 @@ export interface SessionOptions {
     statusSources(
       pluginId?: string,
     ): Promise<import("@getpaseo/protocol/messages").PluginSourceStatusItem[]>;
+    previewUpdates(input: {
+      pluginId?: string;
+      target?: import("@getpaseo/protocol/messages").PluginUpdateSelection;
+    }): Promise<import("@getpaseo/protocol/messages").PluginUpdatePreview[]>;
+    applyUpdates(
+      proposals: import("@getpaseo/protocol/messages").PluginUpdateProposal[],
+    ): Promise<import("@getpaseo/protocol/messages").PluginUpdateResult[]>;
     updateSources(
       pluginId?: string,
     ): Promise<import("@getpaseo/protocol/messages").PluginSourceUpdateItem[]>;
@@ -898,6 +902,7 @@ export class Session {
       workspaceRegistry: this.workspaceRegistry,
       projectRegistry: this.projectRegistry,
       workspaceGitService: this.workspaceGitService,
+      isDirectory: (path) => this.filesystem.isDirectory(path),
       logger: this.sessionLogger,
     });
     this.workspaceRecovery = createWorkspaceRecoveryService({
@@ -2359,11 +2364,13 @@ export class Session {
 
   private dispatchPluginMessage(msg: SessionInboundMessage): Promise<void> | undefined {
     if (msg.type === "plugin.list.request") {
-      this.emit({
-        type: "plugin.list.response",
-        payload: { requestId: msg.requestId, plugins: this.pluginRuntime?.listPlugins() ?? [] },
+      return (this.pluginRuntime?.listPlugins() ?? Promise.resolve([])).then((plugins) => {
+        this.emit({
+          type: "plugin.list.response",
+          payload: { requestId: msg.requestId, plugins },
+        });
+        return undefined;
       });
-      return undefined;
     }
     if (msg.type === "plugin.logs.get.request") {
       if (!this.pluginRuntime) throw new Error("Plugin service is unavailable");
@@ -2462,6 +2469,28 @@ export class Session {
       return this.pluginRuntime.statusSources(msg.pluginId).then((plugins) => {
         this.emit({
           type: "plugin.source.status.response",
+          payload: { requestId: msg.requestId, plugins },
+        });
+        return undefined;
+      });
+    }
+    if (msg.type === "plugin.source.update.preview.request") {
+      if (!this.pluginRuntime) throw new Error("Plugin service is unavailable");
+      return this.pluginRuntime
+        .previewUpdates({ pluginId: msg.pluginId, target: msg.target })
+        .then((plugins) => {
+          this.emit({
+            type: "plugin.source.update.preview.response",
+            payload: { requestId: msg.requestId, plugins },
+          });
+          return undefined;
+        });
+    }
+    if (msg.type === "plugin.source.update.apply.request") {
+      if (!this.pluginRuntime) throw new Error("Plugin service is unavailable");
+      return this.pluginRuntime.applyUpdates(msg.proposals).then((plugins) => {
+        this.emit({
+          type: "plugin.source.update.apply.response",
           payload: { requestId: msg.requestId, plugins },
         });
         return undefined;
@@ -3300,8 +3329,8 @@ export class Session {
         return candidate;
       }
       const updatedDelta =
-        Date.parse(resolveStoredAgentPayloadUpdatedAt(candidate)) -
-        Date.parse(resolveStoredAgentPayloadUpdatedAt(latest));
+        Date.parse(resolveStoredAgentUpdatedAt(candidate)) -
+        Date.parse(resolveStoredAgentUpdatedAt(latest));
       if (updatedDelta !== 0) {
         return updatedDelta > 0 ? candidate : latest;
       }

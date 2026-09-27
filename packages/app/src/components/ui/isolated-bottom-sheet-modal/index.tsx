@@ -5,6 +5,7 @@ import {
 import React from "react";
 import { forwardRef, useCallback, useEffect, useMemo, useRef } from "react";
 import type { ElementRef, ReactNode } from "react";
+import { systemBackPress } from "./back-press";
 import {
   type BottomSheetController,
   createBottomSheetVisibilityTracker,
@@ -85,7 +86,11 @@ export function useIsolatedBottomSheetVisibility({
   onCloseRef.current = onClose;
 
   const tracker = useMemo(
-    () => createBottomSheetVisibilityTracker({ onClose: () => onCloseRef.current() }),
+    () =>
+      createBottomSheetVisibilityTracker({
+        onClose: () => onCloseRef.current(),
+        backPress: systemBackPress,
+      }),
     [],
   );
 

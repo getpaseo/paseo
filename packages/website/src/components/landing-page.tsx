@@ -78,6 +78,7 @@ import { DiscordIcon, GitHubIcon, SlackIcon } from "~/components/brand-icons";
 import { ClaudeIcon, MobileChat, MobileDiff, MobileSidebar, PhoneFrame } from "~/components/mockup";
 import { FAQItem } from "~/components/faq-item";
 import { SiteFooter } from "~/components/site-footer";
+import { SponsorSection, SponsorsSection } from "~/components/sponsorship";
 import { SiteHeader } from "~/components/site-header";
 import "~/styles.css";
 
@@ -123,7 +124,8 @@ export function LandingPage({ title, subtitle }: LandingPageProps) {
             <AutomationSection />
             <ExtensibleSection />
             <FAQ />
-            <SponsorCTA />
+            <SponsorSection />
+            <SponsorsSection />
           </div>
         </main>
         <SiteFooter />
@@ -1192,48 +1194,6 @@ function FAQ() {
           </a>
           .
         </FAQItem>
-      </div>
-    </motion.div>
-  );
-}
-
-function SponsorCTA() {
-  return (
-    <motion.div
-      initial={FADE_IN_UP}
-      whileInView={FADE_IN}
-      viewport={VIEWPORT_60}
-      transition={EASE_OUT_05}
-      className="rounded-xl bg-white/5 border border-white/10 p-8 md:p-10 text-left space-y-4 max-w-xl mx-auto"
-    >
-      <div className="text-sm text-muted-foreground leading-relaxed space-y-3">
-        <p>Paseo is an independent open source project for running coding agents.</p>
-        <p>Its guiding principle is optionality and freedom of choice.</p>
-        <p>
-          I wanted to use any provider without being locked into any ecosystem, run it on my own
-          infrastructure, access it from anywhere, and have it be fully automatable.
-        </p>
-        <p>I am hoping that you will enjoy Paseo as much as I do.</p>
-        <p>If you like Paseo, sponsorship is the best way to support continued development.</p>
-        <p>- Mo</p>
-      </div>
-      <div className="pt-2">
-        <a
-          href="/sponsor"
-          className="inline-flex items-center gap-2 rounded-lg bg-white/10 border border-white/20 px-5 py-2.5 text-sm font-medium text-white hover:bg-white/15 transition-colors"
-        >
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            width="16"
-            height="16"
-            viewBox="0 0 24 24"
-            fill="currentColor"
-            className="text-pink-400"
-          >
-            <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" />
-          </svg>
-          Sponsor Paseo
-        </a>
       </div>
     </motion.div>
   );

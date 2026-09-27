@@ -7,6 +7,8 @@ import {
   extractHostPortFromWebSocketUrl,
   normalizeRelayProtocolVersion,
   parseConnectionUri,
+  parseRelayConnectionUri,
+  serializeRelayConnectionUri,
   serializeConnectionUri,
   serializeConnectionUriForStorage,
   shouldUseTlsForDefaultHostedRelay,
@@ -209,5 +211,24 @@ describe("shouldUseTlsForDefaultHostedRelay", () => {
 
   test("returns false for malformed endpoints", () => {
     expect(shouldUseTlsForDefaultHostedRelay("not-an-endpoint")).toBe(false);
+  });
+});
+
+describe("relay connection URI", () => {
+  test("round-trips the offer and password through a direct URI and connect wrapper", () => {
+    const parts = {
+      offer: {
+        v: 2 as const,
+        serverId: "srv_test",
+        daemonPublicKeyB64: "abc+/=",
+        relay: { endpoint: "relay.paseo.sh:443", useTls: true },
+      },
+      password: "two words",
+    };
+    const uri = serializeRelayConnectionUri(parts);
+    expect(parseRelayConnectionUri(uri)).toEqual(parts);
+    expect(
+      parseRelayConnectionUri(`https://app.paseo.sh/#connect=${encodeURIComponent(uri)}`),
+    ).toEqual(parts);
   });
 });

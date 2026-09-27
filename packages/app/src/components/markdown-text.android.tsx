@@ -1,7 +1,13 @@
 import { useMemo, type ReactNode } from "react";
-import { View, type StyleProp, type TextProps, type TextStyle, type ViewStyle } from "react-native";
+import {
+  Text,
+  View,
+  type StyleProp,
+  type TextProps,
+  type TextStyle,
+  type ViewStyle,
+} from "react-native";
 import type { MarkdownCopyInlineTag } from "@/assistant-selection-copy/markup";
-import { WordFadeText } from "@/word-stream/text";
 
 interface MarkdownTextSpanProps {
   style?: StyleProp<TextStyle>;
@@ -23,9 +29,9 @@ export function MarkdownTextSpan({
   accessibilityRole,
 }: MarkdownTextSpanProps) {
   return (
-    <WordFadeText selectable style={style} onPress={onPress} accessibilityRole={accessibilityRole}>
+    <Text selectable style={style} onPress={onPress} accessibilityRole={accessibilityRole}>
       {children}
-    </WordFadeText>
+    </Text>
   );
 }
 

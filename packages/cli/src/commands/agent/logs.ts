@@ -7,7 +7,7 @@ import {
 } from "../../utils/timeline.js";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { AgentTimelineItem } from "@getpaseo/protocol/agent-types";
-import { curateAgentActivity } from "@getpaseo/server";
+import { curateAgentActivity } from "@getpaseo/server/agent-activity";
 
 export function addLogsOptions(cmd: Command): Command {
   return cmd

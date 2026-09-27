@@ -1,3 +1,5 @@
+import { V2Harness } from "./test-utils/v2-harness.js";
+import { OpenCodeV2AgentClient } from "./v2/agent.js";
 import { describe, expect, test } from "vitest";
 
 import { createTestLogger } from "../../../../test-utils/test-logger.js";
@@ -66,4 +68,38 @@ describe("OpenCode rewind", () => {
       supportsRewindBoth: true,
     });
   });
+});
+
+test("OpenCode v2 commits conversation and file rewind only after staging succeeds", async () => {
+  const harness = new V2Harness();
+  const operations: string[] = [];
+  harness.interrupt = async () => {
+    operations.push("interrupt");
+    return { interrupted: true };
+  };
+  harness.api.session.revert.stage = async (input) => {
+    expect(input).toEqual({ sessionID: "session", messageID: "user-message", files: true });
+    operations.push("stage");
+    return harness.info;
+  };
+  harness.api.session.revert.commit = async () => {
+    operations.push("commit");
+    return harness.info;
+  };
+  const client = new OpenCodeV2AgentClient({
+    logger: createTestLogger(),
+    runtime: harness.runtime,
+  });
+  const session = await client.createSession({ provider: "opencode", cwd: "/tmp/project" });
+  try {
+    await session.revertBoth!({ messageId: "user-message" });
+    expect(operations).toEqual(["interrupt", "stage", "commit"]);
+    harness.api.session.revert.stage = async () => {
+      throw new Error("snapshot missing");
+    };
+    await expect(session.revertBoth!({ messageId: "missing" })).rejects.toThrow("snapshot missing");
+    expect(operations).toEqual(["interrupt", "stage", "commit", "interrupt"]);
+  } finally {
+    await session.close();
+  }
 });

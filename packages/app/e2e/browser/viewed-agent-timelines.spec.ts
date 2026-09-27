@@ -5,6 +5,7 @@ import { seedWorkspace, type SeedDaemonClient } from "../support/helpers/seed-cl
 import { getServerId } from "../support/helpers/server-id";
 import { observeTimelineSubscriptions } from "../support/helpers/timeline-delivery";
 import { waitForWorkspaceTabsVisible } from "../support/helpers/workspace-tabs";
+import { selectWorkspaceInSidebar } from "../support/helpers/sidebar";
 import { installDaemonWebSocketGate } from "../support/helpers/daemon-websocket-gate";
 import { runWorkspaceActionFromCommandCenter } from "../support/helpers/command-center-workspace-actions";
 import {
@@ -53,9 +54,58 @@ async function seedViewedTimelineScenario(
   };
 }
 
+interface RestoredLayoutChat {
+  workspaceId: string;
+  agentId: string;
+  title: string;
+}
+
+interface RestoredLayoutScenario {
+  chats: RestoredLayoutChat[];
+  cleanup(): Promise<void>;
+}
+
+/**
+ * Two workspaces with two chats each. Opening all four leaves the persisted workspace layout
+ * holding a tab per chat, which is the state a relaunch restores into.
+ */
+async function seedRestoredLayoutScenario(): Promise<RestoredLayoutScenario> {
+  const workspaces = await Promise.all([
+    seedWorkspace({ repoPrefix: "restored-layout-first-" }),
+    seedWorkspace({ repoPrefix: "restored-layout-second-" }),
+  ]);
+  try {
+    const chats = await Promise.all(
+      workspaces.flatMap((workspace, workspaceIndex) =>
+        [1, 2].map(async (chatIndex): Promise<RestoredLayoutChat> => {
+          const title = `Restored chat ${workspaceIndex + 1}-${chatIndex}`;
+          const agent = await workspace.client.createAgent({
+            provider: "mock",
+            cwd: workspace.repoPath,
+            workspaceId: workspace.workspaceId,
+            title,
+            modeId: "load-test",
+            model: "ten-second-stream",
+          });
+          return { workspaceId: workspace.workspaceId, agentId: agent.id, title };
+        }),
+      ),
+    );
+    return {
+      chats,
+      cleanup: async () => {
+        for (const workspace of workspaces) await workspace.cleanup();
+      },
+    };
+  } catch (error) {
+    for (const workspace of workspaces) await workspace.cleanup().catch(() => undefined);
+    throw error;
+  }
+}
+
 async function openAgent(
   page: Page,
-  scenario: ViewedTimelineScenario,
+  scenario: { workspaceId: string },
   agentId: string,
   options: { recordRenders?: boolean } = {},
 ) {
@@ -205,6 +255,43 @@ async function expectCurrentChatWithoutCatchUp(page: Page, message: string) {
 }
 
 test.describe("Viewed agent timelines", () => {
+  test("a reloaded layout subscribes only the chat it restores into", async ({ page }) => {
+    test.setTimeout(120_000);
+    const subscriptions = observeTimelineSubscriptions(page);
+    const scenario = await seedRestoredLayoutScenario();
+    try {
+      // One document load, then sidebar and tab clicks — the way a user reaches these chats.
+      // A `page.goto` per chat would restart the app and empty the session's set each time.
+      const [first, second, third, fourth] = scenario.chats;
+      await openAgent(page, first!, first!.agentId);
+      await selectAgent(page, second!.title);
+      await selectWorkspaceInSidebar(page, third!.workspaceId);
+      await selectAgent(page, third!.title);
+      await selectAgent(page, fourth!.title);
+      await subscriptions.waitForSubscribedAgents(scenario.chats.map((chat) => chat.agentId));
+
+      // Relaunch. Layout comes back from disk carrying a tab for every chat above; only the
+      // one on screen may be subscribed, because subscribing resumes the agent on the daemon.
+      const restored = scenario.chats.at(-1)!;
+      const sibling = scenario.chats.at(-2)!;
+      subscriptions.reset();
+      await page.reload();
+      await waitForWorkspaceTabsVisible(page);
+      await expect(page.getByRole("button", { name: restored.title, exact: true })).toHaveAttribute(
+        "aria-selected",
+        "true",
+      );
+      await expect(page.getByRole("button", { name: sibling.title, exact: true })).toBeVisible();
+      await subscriptions.waitForSubscribedAgents([restored.agentId]);
+
+      // Opening the restored sibling is what adds it, and it adds only itself.
+      await selectAgent(page, sibling.title);
+      await subscriptions.waitForSubscribedAgents([restored.agentId, sibling.agentId]);
+    } finally {
+      await scenario.cleanup();
+    }
+  });
+
   test("open chats stay current after switching beyond five agents", async ({ page }) => {
     await withViewedTimelineScenario(async (scenario) => {
       await openSevenChats(page, scenario);

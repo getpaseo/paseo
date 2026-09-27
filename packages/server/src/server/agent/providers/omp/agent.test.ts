@@ -1,11 +1,37 @@
 import { describe, expect, test } from "vitest";
 import { setImmediate as waitForImmediate } from "node:timers/promises";
 
+import type { AgentStreamEvent } from "../../agent-sdk-types.js";
 import type { PaseoToolCatalog } from "../../tools/types.js";
+import type { OmpAgentMessage } from "./rpc-types.js";
 import type { OmpNoTurnScheduler, OmpProviderIdleScheduler } from "./agent.js";
 import type { OmpUsagePollScheduler } from "./usage-poller.js";
 import { resolveOmpProviderParams } from "./provider-config.js";
+import { OmpRuntimeEventSchema } from "./rpc-types.js";
 import { OmpHarness } from "./test-utils/omp-harness.js";
+
+const TURN_LIFECYCLE_EVENTS = new Set<AgentStreamEvent["type"]>([
+  "turn_started",
+  "turn_completed",
+  "turn_failed",
+  "turn_canceled",
+]);
+
+function isTurnLifecycle(type: AgentStreamEvent["type"]): boolean {
+  return TURN_LIFECYCLE_EVENTS.has(type);
+}
+
+// What OMP reports for a turn the user stopped: an error message on a terminal
+// response whose stop reason says the request was aborted.
+const ABORTED_TERMINAL_RESPONSE: OmpAgentMessage = {
+  role: "assistant",
+  content: [],
+  provider: "ai-harness-omp",
+  model: "glm-5.3-flash-high",
+  responseId: "chatcmpl-aborted",
+  stopReason: "aborted",
+  errorMessage: "Interrupted by user",
+};
 
 test("OMP ready timeout defaults to 20 seconds and RPC timeout overrides both", () => {
   expect(resolveOmpProviderParams({}).runtimeProviderParams).toMatchObject({
@@ -17,7 +43,6 @@ test("OMP ready timeout defaults to 20 seconds and RPC timeout overrides both", 
     rpcTimeoutMs: 90_000,
   });
 });
-
 class ManualIdleScheduler implements OmpProviderIdleScheduler {
   private readonly retries: Array<() => void> = [];
   private readonly waiters: Array<{ count: number; resolve: () => void }> = [];
@@ -351,6 +376,25 @@ describe("OMP agent client and session", () => {
     expect(omp.completedTurnCount()).toBe(1);
   });
 
+  test("does not complete a turn when a custom message arrives before its user message", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    await omp.requireStartTurn("hello OMP");
+
+    const runtime = omp.runtime();
+    runtime.beginTurn();
+    runtime.acceptCustomMessage("startup notice");
+
+    expect(omp.completedTurnCount()).toBe(0);
+
+    runtime.acceptPrompt("hello OMP", "user-1");
+    runtime.streamAssistantText("model turn completed");
+    runtime.finishTurn();
+    await waitForImmediate();
+
+    expect(omp.completedTurnCount()).toBe(1);
+  });
+
   test("omits live custom messages when display is false", async () => {
     const omp = new OmpHarness();
     await omp.start();
@@ -538,6 +582,106 @@ describe("OMP agent client and session", () => {
     ]);
   });
 
+  test("maps legacy select options without descriptions and preserves ordinary responses", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+
+    omp.emit({
+      type: "extension_ui_request",
+      id: "select-legacy",
+      method: "select",
+      title: "Choose",
+      options: ["Approve", "Deny"],
+    });
+
+    expect(omp.pendingPermissions()[0]?.input).toMatchObject({
+      questions: [{ options: [{ label: "Approve" }, { label: "Deny" }] }],
+    });
+    await omp.respondToPermission("select-legacy", {
+      behavior: "allow",
+      updatedInput: { answers: { Response: "Deny" } },
+    });
+    expect(omp.extensionUiResponses()).toContainEqual({
+      id: "select-legacy",
+      response: { value: "Deny" },
+    });
+  });
+
+  test("maps described and mixed select metadata by option index", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+
+    omp.emit({
+      type: "extension_ui_request",
+      id: "select-described",
+      method: "select",
+      title: "Choose",
+      options: ["First", "Second", "Third"],
+      optionDetails: [{ description: "First detail" }, {}, { description: " \t" }],
+    });
+
+    expect(omp.pendingPermissions()[0]?.input?.questions?.[0]?.options).toStrictEqual([
+      { label: "First", description: "First detail" },
+      { label: "Second" },
+      { label: "Third" },
+    ]);
+  });
+
+  test("accepts malformed or misaligned optional metadata and falls back to labels", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    const parsed = OmpRuntimeEventSchema.safeParse({
+      type: "extension_ui_request",
+      id: "select-malformed",
+      method: "select",
+      options: ["First", "Second"],
+      optionDetails: [{ description: 42 }, { description: "\n\t" }, { description: "extra" }],
+    });
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) throw new Error("Expected malformed metadata event to parse");
+
+    omp.emit(parsed.data);
+    expect(omp.pendingPermissions()[0]?.input?.questions?.[0]?.options).toStrictEqual([
+      { label: "First" },
+      { label: "Second" },
+    ]);
+  });
+
+  test("preserves combined selection descriptions and freeform sentinel behavior", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    omp.emit({
+      type: "tool_execution_start",
+      toolCallId: "ask-user-1",
+      toolName: "ask_user",
+      args: { allowComment: true, allowFreeform: true, allowMultiple: false },
+    });
+    omp.emit({
+      type: "extension_ui_request",
+      id: "select-combined",
+      method: "select",
+      title: "Choose",
+      options: ["First", "✏️ Type custom response..."],
+      optionDetails: [{ description: "First detail" }, { description: "ignored" }],
+    });
+
+    const combinedInput = omp.pendingPermissions()[0]?.input;
+    expect(combinedInput?.questions?.[0]?.options).toStrictEqual([
+      { label: "First", description: "First detail" },
+    ]);
+    expect(combinedInput).toMatchObject({
+      questions: [{ allowOther: true }, { header: "Comment" }],
+    });
+    await omp.respondToPermission("select-combined", {
+      behavior: "allow",
+      updatedInput: { answers: { Response: "custom", Comment: "note" } },
+    });
+    expect(omp.extensionUiResponses()).toContainEqual({
+      id: "select-combined",
+      response: { value: "✏️ Type custom response..." },
+    });
+  });
+
   test("exposes OMP modes and commands through the domain session", async () => {
     const omp = new OmpHarness();
     omp.queueCommands([{ name: "review", description: "Review changes", source: "skill" }]);
@@ -622,6 +766,74 @@ describe("OMP agent client and session", () => {
       },
     });
     expect(omp.runningToolCallIds()).toEqual([]);
+  });
+
+  test("an interrupt that OMP reports as an aborted turn cancels instead of failing", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+
+    await omp.requireStartTurn("do something long");
+    const runtime = omp.runtime();
+    runtime.beginTurn();
+    runtime.emit({
+      type: "tool_execution_start",
+      toolCallId: "tool-1",
+      toolName: "bash",
+      args: { command: "sleep 30" },
+    });
+    runtime.streamAssistantText("working on it");
+    // OMP ends the turn with an aborted terminal response before answering the abort.
+    runtime.onAbort = () => {
+      runtime.emit({ type: "message_end", message: ABORTED_TERMINAL_RESPONSE });
+      runtime.finishTurn(ABORTED_TERMINAL_RESPONSE);
+    };
+
+    await omp.interrupt();
+    await waitForImmediate();
+    await waitForImmediate();
+
+    expect(omp.eventTypes().filter(isTurnLifecycle)).toEqual(["turn_started", "turn_canceled"]);
+    expect(omp.runningToolCallIds()).toEqual([]);
+  });
+
+  test("an aborted turn that settles after the interrupt cancels exactly once", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+
+    await omp.requireStartTurn("do something long");
+    const runtime = omp.runtime();
+    runtime.beginTurn();
+    runtime.streamAssistantText("working on it");
+    // The provider-idle check is still in flight when the abort is acknowledged.
+    const releaseState = runtime.holdStateRequests();
+    runtime.emit({ type: "message_end", message: ABORTED_TERMINAL_RESPONSE });
+    runtime.finishTurn(ABORTED_TERMINAL_RESPONSE);
+
+    await omp.interrupt();
+    releaseState();
+    await waitForImmediate();
+    await waitForImmediate();
+
+    expect(omp.eventTypes().filter(isTurnLifecycle)).toEqual(["turn_started", "turn_canceled"]);
+  });
+
+  test("an autonomous OMP turn aborted with no client turn id cancels", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+
+    const runtime = omp.runtime();
+    runtime.beginTurn();
+    runtime.streamAssistantText("autonomous work");
+    runtime.onAbort = () => {
+      runtime.emit({ type: "message_end", message: ABORTED_TERMINAL_RESPONSE });
+      runtime.finishTurn(ABORTED_TERMINAL_RESPONSE);
+    };
+
+    await omp.interrupt();
+    await waitForImmediate();
+    await waitForImmediate();
+
+    expect(omp.eventTypes().filter(isTurnLifecycle)).toEqual(["turn_started", "turn_canceled"]);
   });
 
   test("a resumed session does not re-emit replayed events as live timeline items", async () => {

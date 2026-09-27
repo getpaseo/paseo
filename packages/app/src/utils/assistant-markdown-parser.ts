@@ -1,4 +1,3 @@
-import { trackMarkdownSource } from "@/word-stream";
 import type MarkdownIt from "markdown-it";
 import { createMarkdownParser } from "@/utils/markdown-parser";
 import { enableStreamingMarkdown } from "@/utils/streaming-markdown";
@@ -16,6 +15,5 @@ export function createAssistantMarkdownParser({ streaming = false } = {}): Markd
     enableStreamingMarkdown(parser);
   }
 
-  trackMarkdownSource(parser);
   return parser;
 }

@@ -1,3 +1,5 @@
+import type { ConnectionOfferV2 } from "./connection-offer.js";
+
 export interface HostPortParts {
   host: string;
   port: number;
@@ -10,6 +12,55 @@ export interface ConnectionUriParts extends HostPortParts {
 
 export interface ParsedConnectionUri extends ConnectionUriParts {
   password?: string;
+}
+
+export interface ParsedRelayConnectionUri {
+  offer: ConnectionOfferV2;
+  password?: string;
+}
+
+export function parseRelayConnectionUri(input: string): ParsedRelayConnectionUri {
+  const trimmed = input.trim();
+  const connectIndex = trimmed.indexOf("#connect=");
+  const uri =
+    connectIndex >= 0
+      ? decodeURIComponent(trimmed.slice(connectIndex + "#connect=".length))
+      : trimmed;
+  let url: URL;
+  try {
+    url = new URL(uri);
+  } catch {
+    throw new Error("Invalid relay connection URI");
+  }
+  if (url.protocol !== "relay:" || !url.hostname || !url.port || url.username || url.password) {
+    throw new Error("Invalid relay connection URI");
+  }
+  const serverId = decodeURIComponent(url.pathname.slice(1));
+  const key = url.searchParams.get("key");
+  if (!serverId || !key || serverId.includes("/")) {
+    throw new Error("Relay connection URI requires a server id and key");
+  }
+  const endpoint = normalizeHostPort(url.host);
+  const password = url.searchParams.get("password") || undefined;
+  return {
+    offer: {
+      v: 2,
+      serverId,
+      daemonPublicKeyB64: key,
+      relay: { endpoint, useTls: url.searchParams.get("ssl") === "true" },
+    },
+    ...(password ? { password } : {}),
+  };
+}
+
+export function serializeRelayConnectionUri(parts: ParsedRelayConnectionUri): string {
+  const url = new URL(
+    `relay://${parts.offer.relay.endpoint}/${encodeURIComponent(parts.offer.serverId)}`,
+  );
+  url.searchParams.set("key", parts.offer.daemonPublicKeyB64);
+  if (parts.offer.relay.useTls) url.searchParams.set("ssl", "true");
+  if (parts.password) url.searchParams.set("password", parts.password);
+  return url.toString();
 }
 
 export type RelayRole = "server" | "client";

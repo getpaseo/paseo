@@ -92,6 +92,9 @@ function deferred<Value>(): Deferred<Value> {
     resolve = onResolve;
     reject = onReject;
   });
+  // Provider events can reject before send() settles and the caller awaits this promise.
+  // Observe that interval without replacing the rejecting promise returned to the caller.
+  void promise.catch(() => undefined);
   return { promise, resolve, reject };
 }
 

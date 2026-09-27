@@ -6,7 +6,7 @@ import { writeFile } from "node:fs/promises";
 import path from "node:path";
 import net from "node:net";
 import { _electron as electron, expect } from "playwright/test";
-import { readDaemonInstance } from "@getpaseo/server";
+import { readDaemonInstance } from "@getpaseo/server/daemon-control";
 
 // Run under the test's private Xvfb display; native dialog input never targets
 // a user's desktop. All daemon operations still cross the real preload/IPC.

@@ -147,6 +147,11 @@ class WorkspaceLabelsController {
     client: DaemonClient;
     supportsWorkspaceLabels: boolean;
   }): Promise<void> {
+    const existing = this.connections.get(input.serverId);
+    if (existing?.client === input.client && input.supportsWorkspaceLabels) {
+      await this.refresh(input.serverId);
+      return;
+    }
     this.disconnect(input.serverId);
     const replica = this.replicas.get(input.serverId) ?? new HostWorkspaceLabelReplica();
     this.replicas.set(input.serverId, replica);

@@ -247,9 +247,6 @@ function finalizeProcessedTimeline(input: {
     clearAgentInitializingFlag(input.serverId, input.agentId);
   }
   if (input.synchronized) {
-    useCreateFlowStore
-      .getState()
-      .clearByAgent({ serverId: input.serverId, agentId: input.agentId });
     const session = useSessionStore.getState().sessions[input.serverId];
     const agent = session?.agents.get(input.agentId) ?? session?.agentDetails.get(input.agentId);
     if (agent && agent.turn.phase === "idle") input.drainQueuedAgentMessage(input.agentId);
@@ -317,6 +314,11 @@ export interface ViewedTimelineSyncPorts {
     request: ProjectedTimelineForwardFetchPlan,
   ): Promise<TimelinePageResult>;
   fetchLatestTail(agentId: string): Promise<TimelinePageResult>;
+  /**
+   * The sync no longer owes this chat a catch-up: it reached current, or it left the
+   * demanded set. Disconnect and backgrounding keep the obligation and do not report here.
+   */
+  onCatchUpEnded(agentId: string): void;
   reportError(error: unknown): void;
   schedule(task: () => void, delayMs: number): () => void;
 }
@@ -332,7 +334,12 @@ export interface ViewedTimelineUiBridge {
 }
 
 export interface ViewedTimelineSync extends ViewedTimelineUiBridge {
-  replaceOpenAgentIds(agentIds: string[]): void;
+  /**
+   * The agent tabs that currently exist in workspace layout. This only ever *releases*
+   * subscriptions: closing a tab drops its chat. It never adds one, because layout is
+   * restored from disk at launch and those tabs are chats the user opened days ago.
+   */
+  replaceOpenTabAgentIds(agentIds: string[]): void;
   setActive(active: boolean): void;
   setConnected(connected: boolean): void;
   recoverGap(agentId: string, cursor: { epoch: string; endSeq: number }): void;
@@ -341,7 +348,7 @@ export interface ViewedTimelineSync extends ViewedTimelineUiBridge {
 
 export type ViewedTimelineOwnerPorts = Omit<
   ViewedTimelineSyncPorts,
-  "prepare" | "replaceDemandedAgentIds"
+  "prepare" | "replaceDemandedAgentIds" | "onCatchUpEnded"
 >;
 
 export interface ViewedTimelineOwner extends ViewedTimelineSync {
@@ -371,6 +378,8 @@ export function createViewedTimelineOwner(input: {
     prepare: (agentId) => input.replica.prepare(agentId),
     readCursor: (agentId) => input.replica.readCursor(agentId) ?? input.ports.readCursor(agentId),
     replaceDemandedAgentIds: input.replaceDemandedAgentIds,
+    onCatchUpEnded: (agentId) =>
+      useCreateFlowStore.getState().clearByAgent({ serverId: input.serverId, agentId }),
   });
   const streamQueue = createSessionAgentStreamReducerQueue({
     serverId: input.serverId,
@@ -495,9 +504,20 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
   let membershipNeedsRetry = false;
   let membershipRetryDelayMs: number | undefined;
   let cancelMembershipRetry: (() => void) | null = null;
-  let openAgentIds: string[] = [];
+  // Chats this session has opened. Visibility is the only way in, so an agent is never
+  // subscribed — and never resumed on the daemon — until the user actually opens it.
+  // Membership then survives hiding, workspace switches, backgrounding and reconnect;
+  // only closing the tab or ending the session takes it out.
+  let openedAgentIds: string[] = [];
 
   const visibleAgentIds = () => normalizeAgentIds([...sources.values()].flat());
+
+  const rememberOpenedAgentIds = (agentIds: string[]) => {
+    if (agentIds.length === 0) return;
+    const next = normalizeAgentIds([...openedAgentIds, ...agentIds]);
+    if (sameAgentIds(next, openedAgentIds)) return;
+    openedAgentIds = next;
+  };
 
   const isAcknowledged = (agentId: string) => acknowledged.includes(agentId);
   const isDesired = (agentId: string) => desired.includes(agentId);
@@ -514,6 +534,7 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
     const wasPending = visibilityCatchUpPending.delete(agentId);
     const hadError = visibilityCatchUpErrors.delete(agentId);
     const wasRetrying = manualRetries.delete(agentId);
+    ports.onCatchUpEnded(agentId);
     if (wasPending || hadError || wasRetrying) notifyListeners();
   };
 
@@ -769,12 +790,14 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
       return;
     }
 
+    const released: string[] = [];
     for (const agentId of desired) {
       if (!nextDesired.includes(agentId)) {
         cancelCatchUp(agentId);
         visibilityCatchUpPending.delete(agentId);
         visibilityCatchUpErrors.delete(agentId);
         manualRetries.delete(agentId);
+        released.push(agentId);
       }
     }
     for (const agentId of nextDesired) {
@@ -790,12 +813,13 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
     desired = nextDesired;
     ports.replaceDemandedAgentIds(desired);
     membershipGeneration += 1;
+    for (const agentId of released) ports.onCatchUpEnded(agentId);
     notifyListeners();
     void reconcileMembership();
   };
 
   const publishVisibleMembership = () => {
-    commitDesiredMembership(normalizeAgentIds([...openAgentIds, ...visibleAgentIds()]));
+    commitDesiredMembership(normalizeAgentIds([...openedAgentIds, ...visibleAgentIds()]));
   };
 
   return {
@@ -812,16 +836,18 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
     getAgentTimelineError(agentId) {
       return visibilityCatchUpErrors.get(agentId) ?? null;
     },
-    replaceOpenAgentIds(agentIds) {
-      const next = normalizeAgentIds(agentIds);
-      if (sameAgentIds(next, openAgentIds)) return;
-      openAgentIds = next;
+    replaceOpenTabAgentIds(agentIds) {
+      const openTabs = new Set(agentIds);
+      const next = openedAgentIds.filter((agentId) => openTabs.has(agentId));
+      if (sameAgentIds(next, openedAgentIds)) return;
+      openedAgentIds = next;
       publishVisibleMembership();
     },
     replaceVisibleAgentIds(sourceId, agentIds) {
       const normalized = normalizeAgentIds(agentIds);
       if (normalized.length === 0) sources.delete(sourceId);
       else sources.set(sourceId, normalized);
+      rememberOpenedAgentIds(normalized);
       publishVisibleMembership();
       startAcknowledgedCatchUps();
     },
@@ -879,7 +905,7 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
       desired = [];
       ports.replaceDemandedAgentIds([]);
       acknowledged = [];
-      openAgentIds = [];
+      openedAgentIds = [];
       loadedCache.clear();
       cacheLoads.clear();
       visibilityCatchUpPending.clear();

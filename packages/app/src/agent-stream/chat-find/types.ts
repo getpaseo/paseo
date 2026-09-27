@@ -8,11 +8,11 @@ export interface ChatFindProps {
   epoch: string | null;
   items: StreamItem[];
   viewportRef: RefObject<StreamViewportHandle | null>;
-  revealLoadedItem(itemId: string): boolean;
-  visibleItemIds: ReadonlySet<string>;
+  revealLoadedMessage(messageId: string): boolean;
+  visibleMessageIds: ReadonlySet<string>;
   children: ReactNode;
 }
 export interface ChatFindExpansionProps {
-  itemId: string;
+  messageId: string;
   children(renderFullContent: boolean): ReactNode;
 }

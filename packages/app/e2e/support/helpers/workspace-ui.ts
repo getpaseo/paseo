@@ -111,6 +111,50 @@ export async function expectReconnectingToastGone(
   });
 }
 
+declare global {
+  interface Window {
+    __shownPanelToasts?: string[];
+  }
+}
+
+export interface PanelToastLog {
+  /** Test ids of every toast that entered the DOM since recording started, in order. */
+  shown(): Promise<string[]>;
+  expectNeverShown(testId: string): Promise<void>;
+}
+
+/**
+ * Record every toast that enters the DOM from the next navigation onward. A toast can appear
+ * and disappear within a few frames, so a settled `toHaveCount(0)` cannot prove one never showed.
+ */
+export async function recordPanelToasts(page: Page): Promise<PanelToastLog> {
+  await page.addInitScript(() => {
+    const shown: string[] = [];
+    window.__shownPanelToasts = shown;
+    const record = (node: Element) => {
+      if (node.getAttribute("role") !== "alert") return;
+      shown.push(node.getAttribute("data-testid") ?? "");
+    };
+    new MutationObserver((mutations) => {
+      for (const mutation of mutations) {
+        for (const node of mutation.addedNodes) {
+          if (!(node instanceof Element)) continue;
+          record(node);
+          for (const descendant of node.querySelectorAll('[role="alert"]')) record(descendant);
+        }
+      }
+    }).observe(document, { childList: true, subtree: true });
+  });
+
+  const shown = () => page.evaluate(() => window.__shownPanelToasts ?? []);
+  return {
+    shown,
+    async expectNeverShown(testId: string): Promise<void> {
+      expect(await shown()).not.toContain(testId);
+    },
+  };
+}
+
 export async function expectHostConnectingOrOffline(
   page: Page,
   options?: { timeout?: number },

@@ -4,6 +4,23 @@ const BLOCKS = ["p", "pre", "li", "td", "th", "h1", "h2", "h3", "h4", "h5", "h6"
 const IGNORED =
   '[data-paseo-markdown-ignore="true"], [aria-hidden="true"], button, [role="button"], svg, script, style';
 
+/** The rows of one message, in reading order. Each is one Markdown block. */
+export function findMessageRows(root: HTMLElement | null, messageId: string): HTMLElement[] {
+  if (!root) return [];
+  return Array.from(
+    root.querySelectorAll<HTMLElement>(`[data-message-id="${CSS.escape(messageId)}"]`),
+  );
+}
+
+/** Occurrences in one message, ordered by row and then by position inside the row. */
+export function findMessageMatches(
+  root: HTMLElement | null,
+  messageId: string,
+  query: string,
+): Range[] {
+  return findMessageRows(root, messageId).flatMap((row) => findRenderedMatches(row, query));
+}
+
 /** Local offsets belong to the DOM that supplied the text, never to a host parser. */
 export function findRenderedMatches(row: HTMLElement, query: string): Range[] {
   if (!query.trim()) return [];

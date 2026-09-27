@@ -1,4 +1,3 @@
-import { useWordFadeRules } from "@/word-stream/markdown";
 import React, {
   useCallback,
   useEffect,
@@ -81,7 +80,6 @@ export interface MarkdownRendererProps {
   allowedImageHandlers?: readonly string[];
   topLevelMaxExceededItem?: ReactNode;
   enableHtmlish?: boolean;
-  sourceOffset?: number;
 }
 
 export function MarkdownRenderer({
@@ -93,7 +91,6 @@ export function MarkdownRenderer({
   allowedImageHandlers,
   topLevelMaxExceededItem,
   enableHtmlish = true,
-  sourceOffset = 0,
 }: MarkdownRendererProps) {
   const markdownRules = useMemo(() => rules ?? createSharedMarkdownRules(), [rules]);
   const parts = useMemo(
@@ -103,7 +100,6 @@ export function MarkdownRenderer({
   const rendererProps = useMemo(
     () => ({
       compact,
-      sourceOffset,
       rules: markdownRules,
       markdownit,
       onLinkPress,
@@ -113,7 +109,6 @@ export function MarkdownRenderer({
     [
       allowedImageHandlers,
       compact,
-      sourceOffset,
       markdownRules,
       markdownit,
       onLinkPress,
@@ -179,7 +174,6 @@ function MarkdownPart({
 
 function MarkdownFragment({
   text,
-  sourceOffset = 0,
   compact,
   rules,
   markdownit,
@@ -187,12 +181,11 @@ function MarkdownFragment({
   allowedImageHandlers,
   topLevelMaxExceededItem,
 }: MarkdownRendererProps & { rules: RenderRules }) {
-  const fadeRules = useWordFadeRules(rules, sourceOffset);
   const uniProps = compact ? compactMarkdownStyleMapping : markdownStyleMapping;
   return (
     <ThemedMarkdown
       uniProps={uniProps}
-      rules={fadeRules}
+      rules={rules}
       markdownit={markdownit}
       onLinkPress={onLinkPress}
       allowedImageHandlers={allowedImageHandlers}

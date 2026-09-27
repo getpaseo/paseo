@@ -113,6 +113,8 @@ export class FakeOmpSession implements OmpRuntimeSession {
   getStateRequestCount = 0;
   abortRequested = false;
   abortError: Error | null = null;
+  onAbort: (() => void) | null = null;
+  private heldStateRequests: Array<() => void> | null = null;
   readonly canceledExtensionUiRequests: string[] = [];
   readonly extensionUiResponses: Array<{
     id: string;
@@ -243,6 +245,8 @@ export class FakeOmpSession implements OmpRuntimeSession {
       throw this.abortError;
     }
     this.abortRequested = true;
+    // OMP can stream a turn's teardown before it answers the abort request.
+    this.onAbort?.();
   }
 
   async getState(): Promise<OmpSessionState> {
@@ -250,6 +254,10 @@ export class FakeOmpSession implements OmpRuntimeSession {
     for (const waiter of this.stateRequestWaiters.splice(0)) {
       if (this.getStateRequestCount >= waiter.count) waiter.resolve();
       else this.stateRequestWaiters.push(waiter);
+    }
+    if (this.heldStateRequests) {
+      const held = this.heldStateRequests;
+      await new Promise<void>((resolve) => held.push(resolve));
     }
     if (this.getStateError) {
       throw this.getStateError;
@@ -259,6 +267,16 @@ export class FakeOmpSession implements OmpRuntimeSession {
       this.state = report;
     }
     return this.state;
+  }
+
+  /** Holds every state request until the returned function releases them. */
+  holdStateRequests(): () => void {
+    const held: Array<() => void> = [];
+    this.heldStateRequests = held;
+    return () => {
+      this.heldStateRequests = null;
+      for (const resolve of held.splice(0)) resolve();
+    };
   }
 
   queueStateReports(states: OmpSessionState[]): void {
