@@ -49,7 +49,7 @@ export class OpenCodeBridge {
   private baseUrl: string | null = null;
   private pluginUrl: string | null = null;
   private v2PluginUrl: string | null = null;
-  private manifestCatalog: PaseoToolCatalog | null = null;
+  private manifestCatalog: Pick<PaseoToolCatalog, "tools"> | null = null;
 
   constructor(options: OpenCodeBridgeOptions) {
     this.paseoHome = options.paseoHome;
@@ -78,7 +78,7 @@ export class OpenCodeBridge {
     this.baseUrl = `http://127.0.0.1:${address.port}`;
   }
 
-  setManifestCatalog(catalog: PaseoToolCatalog | null): void {
+  setManifestCatalog(catalog: Pick<PaseoToolCatalog, "tools"> | null): void {
     this.manifestCatalog = catalog;
   }
 
