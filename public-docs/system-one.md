@@ -23,6 +23,20 @@ One call contains:
 - `state`: the smallest useful structured facts about the current task.
 - `questions`: up to 32 independent Choice, Score, or Noul questions that all use that state.
 
+Both fields are required on every call. `questions` is an object keyed by question name:
+
+```json
+{
+  "state": { "task": "fix login" },
+  "questions": {
+    "next": {
+      "type": "choice",
+      "criteria": { "inspect": "Inspect the failure", "edit": "Edit the code" }
+    }
+  }
+}
+```
+
 Agents batch every currently useful question into one request. Jev returns typed answers, probabilities, confidence, model, and latency. The agent then decides whether to act, gather more evidence, or escalate to slower reasoning.
 
 Good uses include routing a task, ranking a short candidate set, checking relevance or risk, classifying an observed UI state, and choosing the next action from a closed set. Deterministic facts, multi-step planning, code execution, and final verification stay with ordinary code and the coding agent.

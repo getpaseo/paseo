@@ -12,6 +12,7 @@ import type {
   PaseoToolExecutionContext,
   PaseoToolResult,
 } from "../agent/tools/types.js";
+import { SYSTEM_ONE_CALL_EXAMPLE } from "../agent/writing-block-instruction.js";
 import { SystemOneCredentialStore } from "./credential-store.js";
 import { isSystemOneExcluded, SYSTEM_ONE_EXCLUDED_MESSAGE } from "./scope.js";
 
@@ -172,8 +173,7 @@ export function registerSystemOneTools(options: RegisterSystemOneToolsOptions): 
     "system_one_decide",
     {
       title: "Make fast structured decisions with Jev",
-      description:
-        "Ask Jev one or more independent Choice, Score, or Noul questions over shared structured state. Batch every currently useful question into one call. Use this for fast routing, classification, relevance, risk, confidence, or selecting among a closed set; keep deterministic facts and multi-step reasoning in code. Never include API keys, tokens, passwords, private keys, or other secrets in state or questions.",
+      description: `Ask Jev one or more independent Choice, Score, or Noul questions over shared structured state. Both state and questions are required. questions must be a nonempty object keyed by question name, for example ${SYSTEM_ONE_CALL_EXAMPLE}. Batch every currently useful question into one call. Use this for fast routing, classification, relevance, risk, confidence, or selecting among a closed set; keep deterministic facts and multi-step reasoning in code. Never include API keys, tokens, passwords, private keys, or other secrets in state or questions.`,
       inputSchema: SystemOneInputSchema,
     },
     async (input) => {

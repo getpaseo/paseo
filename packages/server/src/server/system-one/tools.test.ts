@@ -3,6 +3,10 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { PaseoToolConfig, PaseoToolResult } from "../agent/tools/types.js";
+import {
+  SYSTEM_ONE_CALL_EXAMPLE,
+  SYSTEM_ONE_INSTRUCTION,
+} from "../agent/writing-block-instruction.js";
 import type { DaemonConfigStore } from "../daemon-config-store.js";
 import { SystemOneCredentialStore } from "./credential-store.js";
 import { createConfiguredSystemOneDecisionSource, registerSystemOneTools } from "./tools.js";
@@ -72,6 +76,14 @@ describe("registerSystemOneTools", () => {
 
     expect(handler).not.toBeNull();
     if (!toolConfig) throw new Error("Expected System One tool registration");
+    const example = JSON.parse(SYSTEM_ONE_CALL_EXAMPLE) as unknown;
+    expect(toolConfig.description).toContain(SYSTEM_ONE_CALL_EXAMPLE);
+    expect(SYSTEM_ONE_INSTRUCTION).toContain(SYSTEM_ONE_CALL_EXAMPLE);
+    expect(
+      (toolConfig.inputSchema as { safeParse(input: unknown): { success: boolean } }).safeParse(
+        example,
+      ).success,
+    ).toBe(true);
     expect(
       (toolConfig.inputSchema as { safeParse(input: unknown): { success: boolean } }).safeParse({
         state: { apiKey: "must-not-leave-host" },
@@ -127,7 +139,9 @@ describe("registerSystemOneTools", () => {
       get: () => ({ systemOne: { enabled: true, model: "jev-latest", minimumConfidence: 0.5 } }),
     } as unknown as Pick<DaemonConfigStore, "get">);
     const previous = process.env.TYPESAFE_ENV_FILE;
+    const previousApiKey = process.env.TYPESAFE_API_KEY;
     process.env.TYPESAFE_ENV_FILE = sharedEnvFile;
+    delete process.env.TYPESAFE_API_KEY;
     try {
       const result = await source.decide({
         state: {},
@@ -138,6 +152,8 @@ describe("registerSystemOneTools", () => {
     } finally {
       if (previous === undefined) delete process.env.TYPESAFE_ENV_FILE;
       else process.env.TYPESAFE_ENV_FILE = previous;
+      if (previousApiKey === undefined) delete process.env.TYPESAFE_API_KEY;
+      else process.env.TYPESAFE_API_KEY = previousApiKey;
     }
   });
 });
