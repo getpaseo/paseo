@@ -33,6 +33,7 @@ import {
   normalizeWorkspaceBrowserUrl,
   useBrowserStore,
 } from "@/desktop/browser/store";
+import { duplicateRemoteBrowserRecordIds } from "@/desktop/browser/remote-tab-records";
 import { collectAllTabs, useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 import {
   isBrowserRunLocked,
@@ -72,6 +73,22 @@ interface RemoteGestureState {
 const FRAME_REFRESH_MS = 1_000;
 const SCROLL_FRAME_REFRESH_MS = 250;
 const RESIZE_SETTLE_MS = 150;
+
+// The daemon lists a new tab before it answers new_tab (it waits for the page to
+// load), so a listing during that window would adopt our own tab a second time.
+let remoteNewTabsInFlight = 0;
+
+function closeLocalBrowserTab(workspaceKey: string, browserId: string): void {
+  const layoutStore = useWorkspaceLayoutStore.getState();
+  const layout = layoutStore.layoutByWorkspace[workspaceKey];
+  const tabs = layout ? collectAllTabs(layout.root) : [];
+  for (const tab of tabs) {
+    if (tab.target.kind === "browser" && tab.target.browserId === browserId) {
+      layoutStore.closeTab(workspaceKey, tab.tabId);
+    }
+  }
+  useBrowserStore.getState().removeBrowser(browserId);
+}
 const ThemedKeyboard = withUnistyles(Keyboard);
 const ThemedExternalLink = withUnistyles(ExternalLink);
 const mutedIconColor = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
@@ -242,6 +259,11 @@ function RemoteBrowserPane({
     const workspaceKey = buildWorkspaceTabPersistenceKey({ serverId, workspaceId });
     if (!workspaceKey) return;
     const layoutStore = useWorkspaceLayoutStore.getState();
+    for (const duplicate of duplicateRemoteBrowserRecordIds(
+      Object.values(useBrowserStore.getState().browsersById),
+    )) {
+      closeLocalBrowserTab(workspaceKey, duplicate);
+    }
     for (const tab of result.tabs) {
       if (tab.workspaceId && tab.workspaceId !== workspaceId) continue;
       if (isRemoteBrowserClosed(tab.browserId)) continue;
@@ -249,6 +271,7 @@ function RemoteBrowserPane({
         (candidate) => candidate.remoteBrowserId === tab.browserId,
       );
       if (!existingRecord) {
+        if (remoteNewTabsInFlight > 0) continue;
         upsertRemoteBrowser({ browserId: tab.browserId, url: tab.url, title: tab.title });
       } else if (existingRecord.url !== tab.url || existingRecord.title !== tab.title) {
         updateBrowser(existingRecord.browserId, { url: tab.url, title: tab.title });
@@ -290,10 +313,16 @@ function RemoteBrowserPane({
     }
     if (!mountedRef.current) return;
     const record = getBrowserRecord(browserId);
-    const result = await execute({
-      command: "new_tab",
-      args: { url: normalizeWorkspaceBrowserUrl(record?.url ?? draftUrl) },
-    });
+    remoteNewTabsInFlight += 1;
+    let result: Awaited<ReturnType<typeof execute>>;
+    try {
+      result = await execute({
+        command: "new_tab",
+        args: { url: normalizeWorkspaceBrowserUrl(record?.url ?? draftUrl) },
+      });
+    } finally {
+      remoteNewTabsInFlight -= 1;
+    }
     if (result.command !== "new_tab") {
       throw new Error("The Linux browser did not create a tab");
     }
@@ -330,9 +359,16 @@ function RemoteBrowserPane({
     const interval = setInterval(() => {
       if (!cancelled) {
         void refreshFrame().catch((caught: unknown) => {
-          if (!cancelled && mountedRef.current) {
-            setError(caught instanceof Error ? caught.message : String(caught));
+          if (cancelled || !mountedRef.current) return;
+          // Closed from another tab showing the same daemon tab: follow it instead
+          // of offering a retry that would open it again.
+          const remoteId = remoteBrowserIdRef.current;
+          const workspaceKey = buildWorkspaceTabPersistenceKey({ serverId, workspaceId });
+          if (remoteId && workspaceKey && isRemoteBrowserClosed(remoteId)) {
+            closeLocalBrowserTab(workspaceKey, browserId);
+            return;
           }
+          setError(caught instanceof Error ? caught.message : String(caught));
         });
         void syncRemoteTabs().catch((caught: unknown) => {
           if (!cancelled && mountedRef.current) {
@@ -345,7 +381,7 @@ function RemoteBrowserPane({
       cancelled = true;
       clearInterval(interval);
     };
-  }, [ensureRemoteTab, refreshFrame, syncRemoteTabs]);
+  }, [browserId, ensureRemoteTab, refreshFrame, serverId, syncRemoteTabs, workspaceId]);
 
   const enqueueRemoteOperation = useCallback((operation: () => Promise<void>) => {
     commandQueueRef.current = commandQueueRef.current
