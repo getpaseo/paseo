@@ -102,6 +102,18 @@ Only set feature IDs returned by `inspect_provider`. For Codex fast mode, look f
 
 Schedules have the full list/inspect/update/pause/resume/run-once/log/delete surface. Heartbeats deliberately do not.
 
+## Shared project context
+
+Knowledge (research findings, codebase learnings, user preferences, decisions) shared across every agent that works on a project. Entries you save are injected automatically into every future agent on the same project — do not re-discover what an earlier agent already recorded.
+
+**`context_save`** — save durable knowledge for the project you are working in. Required: `title`, `body`. Optional: `kind` (`research`, `learning`, `preference`, `note` — defaults to `note`). Save what a later agent would otherwise have to rediscover: how the build/test system works, where traps are, the user's preferences, decisions and their reasons. Keep entries short and self-contained; entries over ~4000 characters are rejected.
+
+**`context_list`** — list the project's entries (newest first) with a short excerpt of each. Optional: `kind`, `query` (substring filter on titles and bodies).
+
+**`context_read`** — read full entries by `ids`, as returned by `context_list` or the digest injected into your context.
+
+You are running in a project whose shared context is injected into your context automatically as `<shared-project-context>`. Treat it as background — verify specifics that matter — and contribute back with `context_save` whenever you learn something durable.
+
 ## Waiting
 
 Agents take time — 10–30+ minutes is routine. Favor asynchronous workflows.
