@@ -52,6 +52,7 @@ import {
   deleteLegacySkillSelection,
   readLegacySkillSelection,
 } from "../integrations/legacy-skill-selection.js";
+import { statusFromDaemonProbe } from "./daemon-status.js";
 import { tailFile } from "../diagnostics/tail-file.js";
 
 const DAEMON_LOG_FILENAME = "daemon.log";
@@ -166,42 +167,6 @@ function logDesktopDaemonLifecycle(message: string, details?: Record<string, unk
   });
 }
 
-function statusFromDaemonProbe(
-  payload: Record<string, unknown>,
-  home: string,
-): DesktopDaemonStatus {
-  const local = typeof payload.localDaemon === "string" ? payload.localDaemon : "stopped";
-  const processAlive = local === "running" || local === "not_ready";
-  let status: DesktopDaemonState = "stopped";
-  if (local === "not_ready") status = "starting";
-  if (local === "running") status = "running";
-  const authenticationFailed =
-    payload.connectedDaemon === "auth_required" || payload.connectedDaemon === "auth_failed";
-  let error: string | null = null;
-  if (authenticationFailed) {
-    error = typeof payload.note === "string" ? payload.note : "Daemon authentication failed.";
-  }
-  return {
-    serverId: typeof payload.serverId === "string" ? payload.serverId : "",
-    status,
-    listen: typeof payload.listen === "string" ? payload.listen : null,
-    hostname:
-      status === "running" && typeof payload.hostname === "string" ? payload.hostname : null,
-    pid: processAlive && typeof payload.pid === "number" ? payload.pid : null,
-    home,
-    version: typeof payload.daemonVersion === "string" ? payload.daemonVersion : null,
-    desktopManaged: payload.desktopManaged === true,
-    startedAt: typeof payload.startedAt === "string" ? payload.startedAt : null,
-    ownedByDesktop: Boolean(
-      ownedLaunch &&
-      ownedLaunch.home === home &&
-      payload.pid === ownedLaunch.instance.pid &&
-      payload.startedAt === ownedLaunch.instance.startedAt,
-    ),
-    error,
-  };
-}
-
 function resolveDesktopAppVersion(): string {
   if (app.isPackaged) {
     return app.getVersion();
@@ -237,7 +202,7 @@ export async function resolveDesktopDaemonStatus(): Promise<DesktopDaemonStatus>
       home,
       "--json",
     ])) as Record<string, unknown>;
-    return statusFromDaemonProbe(payload, home);
+    return statusFromDaemonProbe(payload, home, ownedLaunch);
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     logDesktopDaemonLifecycle("resolveStatus CLI command failed", { error: errorMessage });

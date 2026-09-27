@@ -1,41 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
 import { getDesktopDaemonStatus, shouldUseDesktopDaemon } from "@/desktop/daemon/desktop-daemon";
-
-const DESKTOP_DAEMON_SERVER_ID_QUERY_KEY = ["desktop-daemon-server-id"] as const;
-
-interface DesktopDaemonServerIdResult {
-  serverId: string | null;
-}
-
-async function loadDesktopDaemonServerId(): Promise<DesktopDaemonServerIdResult> {
-  const status = await getDesktopDaemonStatus();
-  if (status.error) {
-    throw new Error(status.error);
-  }
-  const serverId = status.serverId.trim();
-  return {
-    serverId: serverId.length > 0 ? serverId : null,
-  };
-}
+import { localDaemonServerIdQueryOptions } from "./local-daemon-server-id-query";
 
 function useLocalDaemonServerIdQuery() {
-  const isDesktopApp = shouldUseDesktopDaemon();
-
   return useQuery({
-    queryKey: DESKTOP_DAEMON_SERVER_ID_QUERY_KEY,
-    queryFn: loadDesktopDaemonServerId,
-    enabled: isDesktopApp,
-    staleTime: Infinity,
-    gcTime: Infinity,
-    refetchInterval: (activeQuery) => {
-      // Each status probe launches the GUI executable on Windows, which flashes the busy cursor.
-      if (activeQuery.state.status === "error") return false;
-      return activeQuery.state.data?.serverId ? false : 1000;
-    },
-    refetchOnMount: true,
-    refetchOnReconnect: true,
-    refetchOnWindowFocus: true,
-    retry: false,
+    ...localDaemonServerIdQueryOptions(getDesktopDaemonStatus),
+    enabled: shouldUseDesktopDaemon(),
   });
 }
 
