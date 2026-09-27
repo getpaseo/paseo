@@ -28,5 +28,60 @@
     "typecheck": {
       "command": "npm run typecheck"
     }
+  },
+  "verification": {
+    "recipes": {
+      "browser-remote-view-renders": {
+        "params": ["workspaceUrl", "pageTitle"],
+        "steps": [
+          {
+            "url": "{{workspaceUrl}}",
+            "action": "navigate"
+          },
+          {
+            "action": "wait-text",
+            "text": "{{pageTitle}}",
+            "timeoutMs": 15000
+          },
+          {
+            "action": "assert-visible",
+            "role": "textbox",
+            "name": "Browser URL"
+          },
+          {
+            "action": "screenshot",
+            "name": "browser-remote-view"
+          }
+        ]
+      },
+      "browser-remote-external-action": {
+        "params": ["workspaceUrl", "pageTitle"],
+        "steps": [
+          {
+            "url": "{{workspaceUrl}}",
+            "action": "navigate"
+          },
+          {
+            "action": "wait-text",
+            "text": "{{pageTitle}}",
+            "timeoutMs": 15000
+          },
+          {
+            "action": "assert-visible",
+            "role": "textbox",
+            "name": "Browser URL"
+          },
+          {
+            "action": "assert-visible",
+            "role": "button",
+            "name": "Open website in device browser"
+          },
+          {
+            "action": "screenshot",
+            "name": "remote-browser-external-action"
+          }
+        ]
+      }
+    }
   }
 }

@@ -474,7 +474,7 @@ export class BrowserToolsBroker {
   }
 }
 
-function getBrowserIdForCommand(command: BrowserAutomationCommand): string | null {
+export function getBrowserIdForCommand(command: BrowserAutomationCommand): string | null {
   if (command.command === "list_tabs" || command.command === "new_tab") {
     return null;
   }

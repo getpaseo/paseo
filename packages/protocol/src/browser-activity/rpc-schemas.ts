@@ -50,12 +50,28 @@ export const BrowserActivityMessageSchema = z.object({
   payload: BrowserActivityEventSchema,
 });
 
+// The user controls a handed-off tab until they finish or cancel; agent tools on it fail meanwhile.
+export const BrowserHandoffSchema = z.object({
+  handoffId: z.string(),
+  workspaceId: z.string(),
+  browserId: z.string(),
+  agentId: z.string(),
+  reason: z.string(),
+  status: z.enum(["active", "done", "cancelled"]),
+  updatedAt: z.number(),
+});
+
+export const BrowserHandoffMessageSchema = z.object({
+  type: z.literal("browser.handoff"),
+  payload: BrowserHandoffSchema,
+});
+
 export const BrowserActivityControlRequestSchema = z.object({
   type: z.literal("browser.activity.control.request"),
   requestId: z.string(),
   workspaceId: z.string().min(1),
   browserId: z.string().min(1),
-  action: z.enum(["pause", "resume"]),
+  action: z.enum(["pause", "resume", "finish_handoff", "cancel_handoff"]),
 });
 
 export const BrowserActivityControlResponseSchema = z.object({
@@ -64,7 +80,7 @@ export const BrowserActivityControlResponseSchema = z.object({
     requestId: z.string(),
     workspaceId: z.string(),
     browserId: z.string(),
-    // False when no active run owns the browser.
+    // False when no active run or handoff on the browser took the action.
     applied: z.boolean(),
   }),
 });
@@ -73,3 +89,4 @@ export type BrowserActivityStep = z.infer<typeof BrowserActivityStepSchema>;
 export type BrowserActivityPhase = z.infer<typeof BrowserActivityPhaseSchema>;
 export type BrowserActivityEvent = z.infer<typeof BrowserActivityEventSchema>;
 export type BrowserActivityControlRequest = z.infer<typeof BrowserActivityControlRequestSchema>;
+export type BrowserHandoff = z.infer<typeof BrowserHandoffSchema>;

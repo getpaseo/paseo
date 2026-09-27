@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import {
   Image,
   PanResponder,
@@ -12,10 +12,13 @@ import {
   type TextInputKeyPressEventData,
 } from "react-native";
 import { useTranslation } from "react-i18next";
-import { StyleSheet } from "react-native-unistyles";
+import { StyleSheet, withUnistyles } from "react-native-unistyles";
+import { ExternalLink, Keyboard } from "lucide-react-native";
 import { AdaptiveTextInput } from "@/components/adaptive-text-input";
 import type { EditingTextInputHandle } from "@/components/ui/text-input";
-import { isWeb } from "@/constants/platform";
+import { isNative, isWeb } from "@/constants/platform";
+import { useIsCompactFormFactor } from "@/constants/layout";
+import type { Theme } from "@/styles/theme";
 import { useHostRuntimeClient } from "@/runtime/host-runtime";
 import {
   getBrowserRecord,
@@ -26,12 +29,20 @@ import {
 import { collectAllTabs, useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 import {
   isBrowserRunLocked,
+  useActiveBrowserHandoff,
   useBrowserActivity,
   useBrowserActivityStore,
 } from "@/desktop/browser/activity";
-import { BrowserActivityBar } from "@/desktop/browser/activity-bar";
-import { getRemotePoint, type RemotePoint } from "@/desktop/browser/remote-point";
+import { BrowserActivityBar, BrowserHandoffBar } from "@/desktop/browser/activity-bar";
+import {
+  getContainedFrameRect,
+  getRemotePoint,
+  type RemotePoint,
+} from "@/desktop/browser/remote-point";
+import { useRemoteBrowserFrames } from "@/desktop/browser/remote-frames";
 import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
+import { isHttpUrl } from "@/utils/http-url";
+import { openExternalUrl } from "@/utils/open-external-url";
 import type { BrowserAutomationCommand } from "@getpaseo/protocol/browser-automation/rpc-schemas";
 
 interface RemoteBrowserPaneProps {
@@ -42,12 +53,6 @@ interface RemoteBrowserPaneProps {
   onFocusPane?: () => void;
 }
 
-interface Frame {
-  dataUri: string;
-  width: number;
-  height: number;
-}
-
 interface RemoteGestureState {
   start: RemotePoint | null;
   last: RemotePoint | null;
@@ -56,9 +61,41 @@ interface RemoteGestureState {
   longPressTimer: ReturnType<typeof setTimeout> | null;
 }
 
-// Frequent enough to watch an agent work, cheap enough for a phone on cellular.
+// Syncs tab titles and polls old daemons' frames; frames from current daemons are pushed.
 const FRAME_REFRESH_MS = 1_000;
+const SCROLL_FRAME_REFRESH_MS = 250;
 const RESIZE_SETTLE_MS = 150;
+const ThemedKeyboard = withUnistyles(Keyboard);
+const ThemedExternalLink = withUnistyles(ExternalLink);
+const mutedIconColor = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
+
+function isGoogleAccountPage(url: string): boolean {
+  return /^https:\/\/accounts\.google\.com(?:[/:?#]|$)/i.test(url);
+}
+
+function websiteUrl(url: string | null | undefined): string | null {
+  return url && isHttpUrl(url) && !isGoogleAccountPage(url) ? url : null;
+}
+
+function useExternalBrowserLink(
+  url: string | undefined,
+  mountedRef: RefObject<boolean>,
+  onError: (message: string) => void,
+) {
+  const [lastWebsiteUrl, setLastWebsiteUrl] = useState(websiteUrl(url));
+  useEffect(() => {
+    setLastWebsiteUrl((previous) => websiteUrl(url) ?? previous);
+  }, [url]);
+  const isGoogleAccount = isGoogleAccountPage(url ?? "");
+  const externalUrl = isGoogleAccount ? lastWebsiteUrl : websiteUrl(url);
+  const open = useCallback(() => {
+    if (!externalUrl) return;
+    void openExternalUrl(externalUrl).catch((caught: unknown) => {
+      if (mountedRef.current) onError(caught instanceof Error ? caught.message : String(caught));
+    });
+  }, [externalUrl, mountedRef, onError]);
+  return { externalUrl, open };
+}
 
 const REMOTE_SPECIAL_KEYS = new Set([
   "Backspace",
@@ -96,20 +133,25 @@ function RemoteBrowserPane({
   onFocusPane,
 }: RemoteBrowserPaneProps) {
   const { t } = useTranslation();
+  const isCompact = useIsCompactFormFactor();
   const client = useHostRuntimeClient(serverId);
   const browser = useBrowserStore((state) => state.browsersById[browserId] ?? null);
   const updateBrowser = useBrowserStore((state) => state.updateBrowser);
   const upsertRemoteBrowser = useBrowserStore((state) => state.upsertRemoteBrowser);
-  const [frame, setFrame] = useState<Frame | null>(null);
   const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 });
   const [draftUrl, setDraftUrl] = useState(browser?.url ?? "https://example.com");
   // The address field shows the tab's live URL, except while the user edits it.
   const [shownUrl, setShownUrl] = useState(draftUrl);
   const isEditingUrlRef = useRef(false);
-  const requestedSizeRef = useRef<{ width: number; height: number } | null>(null);
   const resizeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [error, setError] = useState<string | null>(null);
   const mountedRef = useRef(true);
+  const onExternalError = useCallback((message: string) => setError(message), []);
+  const { externalUrl, open: openExternal } = useExternalBrowserLink(
+    browser?.url,
+    mountedRef,
+    onExternalError,
+  );
   const remoteInputRef = useRef<EditingTextInputHandle | null>(null);
   const commandQueueRef = useRef(Promise.resolve());
   const pendingScrollRef = useRef<{
@@ -119,6 +161,7 @@ function RemoteBrowserPane({
     deltaY: number;
   } | null>(null);
   const scrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastScrollFrameAtRef = useRef(0);
   const pendingHoverRef = useRef<{ browserId: string; point: RemotePoint } | null>(null);
   const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hoverRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -132,7 +175,19 @@ function RemoteBrowserPane({
   const remoteBrowserId = browser?.remoteBrowserId ?? null;
   const remoteBrowserIdRef = useRef(remoteBrowserId);
   remoteBrowserIdRef.current = remoteBrowserId;
+  const { frame, refreshFrame, requestedSizeRef } = useRemoteBrowserFrames({
+    client,
+    serverId,
+    workspaceId,
+    remoteBrowserId,
+    remoteBrowserIdRef,
+    viewportSize,
+  });
   const activity = useBrowserActivity(serverId, workspaceId, remoteBrowserId);
+  const handoff = useActiveBrowserHandoff(serverId, workspaceId, remoteBrowserId);
+  const [handoffAction, setHandoffAction] = useState<"finish_handoff" | "cancel_handoff" | null>(
+    null,
+  );
   const runLocked = isBrowserRunLocked(activity);
   const canInteract = isInteractive && !runLocked;
   const frameRef = useRef(frame);
@@ -140,6 +195,23 @@ function RemoteBrowserPane({
   const viewportSizeRef = useRef(viewportSize);
   viewportSizeRef.current = viewportSize;
   const frameSource = useMemo(() => (frame ? { uri: frame.dataUri } : undefined), [frame]);
+  const frameRect = useMemo(
+    () => getContainedFrameRect(frame, viewportSize),
+    [frame, viewportSize],
+  );
+  const frameStyle = useMemo(
+    () =>
+      frameRect
+        ? {
+            position: "absolute" as const,
+            left: frameRect.x,
+            top: frameRect.y,
+            width: frameRect.width,
+            height: frameRect.height,
+          }
+        : undefined,
+    [frameRect],
+  );
 
   const execute = useCallback(
     async (command: BrowserAutomationCommand) => {
@@ -154,26 +226,6 @@ function RemoteBrowserPane({
     },
     [client, workspaceId],
   );
-
-  const refreshFrame = useCallback(async () => {
-    const currentBrowserId = remoteBrowserIdRef.current;
-    if (!currentBrowserId) {
-      return;
-    }
-    const result = await execute({
-      command: "screenshot",
-      args: { browserId: currentBrowserId, fullPage: false, reveal: true, ephemeral: true },
-    });
-    if (result.command !== "screenshot" || !result.dataBase64) {
-      throw new Error("The Linux browser returned no viewport frame");
-    }
-    if (!mountedRef.current) return;
-    setFrame({
-      dataUri: `data:${result.mimeType};base64,${result.dataBase64}`,
-      width: result.width,
-      height: result.height,
-    });
-  }, [execute]);
 
   const syncRemoteTabs = useCallback(async () => {
     const result = await execute({ command: "list_tabs", args: {} });
@@ -366,6 +418,29 @@ function RemoteBrowserPane({
     [client, workspaceId],
   );
 
+  const handleHandoffEnd = useCallback(
+    (action: "finish_handoff" | "cancel_handoff") => {
+      if (!client || !handoff) return;
+      setError(null);
+      setHandoffAction(action);
+      void client
+        .controlBrowserActivity({ workspaceId, browserId: handoff.browserId, action })
+        .then((response) => {
+          if (!response.applied && mountedRef.current) {
+            setError(t("workspace.browser.handoff.alreadyEnded"));
+          }
+          return undefined;
+        })
+        .catch(() => {
+          if (mountedRef.current) setError(t("workspace.browser.handoff.endFailed"));
+        })
+        .finally(() => {
+          if (mountedRef.current) setHandoffAction(null);
+        });
+    },
+    [client, handoff, t, workspaceId],
+  );
+
   const handleActivityDismiss = useCallback(() => {
     if (activity) useBrowserActivityStore.getState().dismiss(serverId, activity);
   }, [activity, serverId]);
@@ -389,8 +464,12 @@ function RemoteBrowserPane({
           y: pending.point.y,
         },
       });
+      if (Date.now() - lastScrollFrameAtRef.current >= SCROLL_FRAME_REFRESH_MS) {
+        lastScrollFrameAtRef.current = Date.now();
+        await refreshFrame();
+      }
     });
-  }, [enqueueRemoteOperation, execute]);
+  }, [enqueueRemoteOperation, execute, refreshFrame]);
 
   const scheduleScroll = useCallback(
     (targetBrowserId: string, point: RemotePoint, deltaX: number, deltaY: number) => {
@@ -479,12 +558,16 @@ function RemoteBrowserPane({
     }
   }, [runAndRefresh]);
 
+  const handleShowKeyboard = useCallback(() => {
+    remoteInputRef.current?.focus();
+  }, []);
+
   const handleFrameClick = useCallback(
     (point: RemotePoint) => {
       const currentBrowserId = remoteBrowserIdRef.current;
       if (!currentBrowserId) return;
       onFocusPane?.();
-      remoteInputRef.current?.focus();
+      if (isWeb && !isCompact) remoteInputRef.current?.focus();
       enqueueRemoteOperation(async () => {
         await execute({
           command: "click",
@@ -499,7 +582,7 @@ function RemoteBrowserPane({
         await refreshFrame();
       });
     },
-    [enqueueRemoteOperation, execute, onFocusPane, refreshFrame],
+    [enqueueRemoteOperation, execute, isCompact, onFocusPane, refreshFrame],
   );
 
   const handleFramePointerMove = useCallback(
@@ -539,13 +622,22 @@ function RemoteBrowserPane({
     if (resizeTimerRef.current) clearTimeout(resizeTimerRef.current);
     resizeTimerRef.current = setTimeout(() => {
       resizeTimerRef.current = null;
+      const current = requestedSizeRef.current;
+      if (current && current.width === width && current.height === height) return;
       requestedSizeRef.current = { width, height };
       enqueueRemoteOperation(async () => {
         await execute({ command: "resize", args: { browserId: remoteBrowserId, width, height } });
         await refreshFrame();
       });
     }, RESIZE_SETTLE_MS);
-  }, [enqueueRemoteOperation, execute, refreshFrame, remoteBrowserId, viewportSize]);
+  }, [
+    enqueueRemoteOperation,
+    execute,
+    refreshFrame,
+    remoteBrowserId,
+    requestedSizeRef,
+    viewportSize,
+  ]);
 
   const handleUrlFocus = useCallback(() => {
     isEditingUrlRef.current = true;
@@ -683,16 +775,35 @@ function RemoteBrowserPane({
   return (
     <View style={styles.container}>
       <View style={styles.toolbar}>
-        <Pressable disabled={runLocked} onPress={handleBack}>
+        <Pressable
+          accessibilityLabel={t("workspace.browser.controls.back")}
+          accessibilityRole="button"
+          disabled={runLocked}
+          onPress={handleBack}
+          style={styles.toolbarAction}
+        >
           <Text style={styles.toolbarButton}>‹</Text>
         </Pressable>
-        <Pressable disabled={runLocked} onPress={handleForward}>
+        <Pressable
+          accessibilityLabel={t("workspace.browser.controls.forward")}
+          accessibilityRole="button"
+          disabled={runLocked}
+          onPress={handleForward}
+          style={styles.toolbarAction}
+        >
           <Text style={styles.toolbarButton}>›</Text>
         </Pressable>
-        <Pressable disabled={runLocked} onPress={handleReload}>
+        <Pressable
+          accessibilityLabel={t("workspace.browser.controls.refresh")}
+          accessibilityRole="button"
+          disabled={runLocked}
+          onPress={handleReload}
+          style={styles.toolbarAction}
+        >
           <Text style={styles.toolbarButton}>↻</Text>
         </Pressable>
         <AdaptiveTextInput
+          accessibilityLabel={t("workspace.browser.controls.browserUrl")}
           autoCapitalize="none"
           autoCorrect={false}
           editable={!runLocked}
@@ -704,6 +815,28 @@ function RemoteBrowserPane({
           resetKey={`${remoteBrowserId ?? "initial"}|${shownUrl}`}
           style={styles.urlInput}
         />
+        <Pressable
+          accessibilityLabel={t("workspace.browser.controls.openExternal")}
+          accessibilityRole="button"
+          disabled={!externalUrl}
+          onPress={openExternal}
+          style={styles.toolbarAction}
+          testID="remote-browser-open-external"
+        >
+          <ThemedExternalLink size={20} uniProps={mutedIconColor} />
+        </Pressable>
+        {isNative || isCompact ? (
+          <Pressable
+            accessibilityLabel={t("workspace.browser.controls.showKeyboard")}
+            accessibilityRole="button"
+            disabled={!canInteract}
+            onPress={handleShowKeyboard}
+            style={styles.toolbarAction}
+            testID="remote-browser-keyboard"
+          >
+            <ThemedKeyboard size={20} uniProps={mutedIconColor} />
+          </Pressable>
+        ) : null}
       </View>
       {error ? (
         <View style={styles.errorRow}>
@@ -712,6 +845,13 @@ function RemoteBrowserPane({
             <Text style={styles.retryLabel}>{t("common.actions.retry")}</Text>
           </Pressable>
         </View>
+      ) : null}
+      {handoff ? (
+        <BrowserHandoffBar
+          handoff={handoff}
+          pendingAction={handoffAction}
+          onEnd={handleHandoffEnd}
+        />
       ) : null}
       {activity ? (
         <BrowserActivityBar
@@ -735,7 +875,7 @@ function RemoteBrowserPane({
           showSoftInputOnFocus={true}
           style={styles.remoteInput}
         />
-        {frame ? (
+        {frame && frameRect ? (
           <View
             {...panResponder.panHandlers}
             accessibilityLabel={t("workspace.browser.controls.browserUrl")}
@@ -744,8 +884,7 @@ function RemoteBrowserPane({
             style={styles.frameButton}
             testID={`remote-browser-frame-${browserId}`}
           >
-            {/* A prop, not style: Unistyles turns web styles into classes react-native-web can't read. */}
-            <Image resizeMode="contain" source={frameSource} style={styles.frame} />
+            <Image fadeDuration={0} resizeMode="stretch" source={frameSource} style={frameStyle} />
           </View>
         ) : (
           <Text style={styles.status}>Connecting to Linux browser...</Text>
@@ -759,8 +898,9 @@ export { RemoteBrowserPane };
 
 const styles = StyleSheet.create((theme) => ({
   container: { flex: 1, minHeight: 0, backgroundColor: theme.colors.surface0 },
-  toolbar: { flexDirection: "row", alignItems: "center", gap: 8, padding: 8 },
-  toolbarButton: { fontSize: 24, paddingHorizontal: 6, color: theme.colors.foregroundMuted },
+  toolbar: { flexDirection: "row", alignItems: "center", gap: 4, padding: 8 },
+  toolbarAction: { minWidth: 40, minHeight: 40, alignItems: "center", justifyContent: "center" },
+  toolbarButton: { fontSize: 24, color: theme.colors.foregroundMuted },
   urlInput: {
     flex: 1,
     minWidth: 0,
@@ -798,6 +938,5 @@ const styles = StyleSheet.create((theme) => ({
     color: "transparent",
   },
   frameButton: { flex: 1, minHeight: 0 },
-  frame: { width: "100%", height: "100%" },
   status: { alignSelf: "center", color: theme.colors.foregroundMuted },
 }));

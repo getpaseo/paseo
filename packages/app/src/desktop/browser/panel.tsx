@@ -12,7 +12,11 @@ import {
   type PanelDescriptorContext,
   type PanelIconProps,
 } from "@/panels/panel-registry";
-import { browserActivityStatusBucket, useBrowserActivity } from "@/desktop/browser/activity";
+import {
+  browserActivityStatusBucket,
+  useActiveBrowserHandoff,
+  useBrowserActivity,
+} from "@/desktop/browser/activity";
 import { useBrowserStore } from "@/desktop/browser/store";
 import { useHostFeature } from "@/runtime/host-features";
 import { useWorkspaceDirectory } from "@/stores/session-store-hooks";
@@ -57,6 +61,13 @@ function useBrowserPanelDescriptor(
     context.workspaceId,
     browser?.remoteBrowserId,
   );
+  const handoff = useActiveBrowserHandoff(
+    context.serverId,
+    context.workspaceId,
+    browser?.remoteBrowserId,
+  );
+  const loadingBucket = browser?.isLoading ? "running" : null;
+  const runBucket = browserActivityStatusBucket(activity) ?? loadingBucket;
   const url = browser?.url ?? "https://example.com";
   const icon = createBrowserTabIcon(browser?.faviconUrl ?? null);
   const label = getBrowserLabel({ title: browser?.title ?? "", url });
@@ -67,7 +78,7 @@ function useBrowserPanelDescriptor(
     tooltip: url || label,
     titleState: "ready",
     icon,
-    statusBucket: browserActivityStatusBucket(activity) ?? (browser?.isLoading ? "running" : null),
+    statusBucket: handoff ? "needs_input" : runBucket,
   };
 }
 

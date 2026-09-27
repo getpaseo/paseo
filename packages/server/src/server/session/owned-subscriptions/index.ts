@@ -50,7 +50,8 @@ export interface OwnedSubscription {
   readonly source: object;
   readonly signal: AbortSignal;
   emit(message: SessionOutboundMessage): void;
-  emitBinary(frame: Uint8Array): void;
+  /** Resolves once the transport has written the frame; it never rejects. */
+  emitBinary(frame: Uint8Array): Promise<void>;
   release(): Promise<void>;
 }
 
@@ -68,7 +69,10 @@ export class SessionDelivery {
 
   constructor(
     private readonly send: (source: object, message: SessionOutboundMessage) => void,
-    private readonly sendBinary: (source: object, frame: Uint8Array) => void = () => {},
+    private readonly sendBinary: (
+      source: object,
+      frame: Uint8Array,
+    ) => void | Promise<void> = () => {},
     private readonly project: (
       source: object,
       message: SessionOutboundMessage,
@@ -316,10 +320,10 @@ export class SessionDelivery {
             : legacyMessage(message);
         this.sendOwned(owner, tagged);
       },
-      emitBinary: (frame) => {
+      emitBinary: async (frame) => {
         if (!owner.active || !source.active) return;
         this.proofs.set(frame, owner);
-        this.sendBinary(source.socket, frame);
+        await this.sendBinary(source.socket, frame);
       },
       release: () => this.releaseOwner(owner),
     };

@@ -24,6 +24,7 @@ import {
 } from "@getpaseo/protocol/binary-frames/index";
 import { Session } from "./session.js";
 import { BrowserActivityHub } from "./browser-tools/browser-activity.js";
+import { BrowserToolsBroker } from "./browser-tools/broker.js";
 import { OWNER_PERMISSIONS, type DaemonPermission } from "./authorization/index.js";
 import { DownloadTokenStore } from "./file-download/token-store.js";
 import { StructuredAgentFallbackError } from "./agent/agent-response-loop.js";
@@ -335,6 +336,8 @@ interface SessionForTestOptions {
   daemonConfigStore?: SessionOptions["daemonConfigStore"];
   workspaceLabelService?: WorkspaceLabelService;
   browserActivity?: SessionOptions["browserActivity"];
+  browserToolsBroker?: SessionOptions["browserToolsBroker"];
+  validateSystemOneApiKey?: SessionOptions["validateSystemOneApiKey"];
 }
 
 function createSessionForTest(options: SessionForTestOptions = {}): Session {
@@ -446,6 +449,8 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
     daemonRuntimeConfig: options.daemonRuntimeConfig,
     permissions: options.permissions ?? OWNER_PERMISSIONS,
     browserActivity: options.browserActivity,
+    browserToolsBroker: options.browserToolsBroker,
+    validateSystemOneApiKey: options.validateSystemOneApiKey,
   };
   return new Session(sessionOptions);
 }
@@ -472,6 +477,7 @@ test("stores a System One API key without echoing or persisting it in daemon con
   };
   const patch = vi.fn(() => currentConfig);
   const setSystemOneCredentialStatus = vi.fn();
+  const validateSystemOneApiKey = vi.fn(async () => true);
   const session = createSessionForTest({
     paseoHome,
     messages,
@@ -481,6 +487,7 @@ test("stores a System One API key without echoing or persisting it in daemon con
       setSystemOneCredentialStatus,
       onChange: vi.fn(() => () => {}),
     }),
+    validateSystemOneApiKey,
   });
 
   try {
@@ -490,6 +497,7 @@ test("stores a System One API key without echoing or persisting it in daemon con
       config: { systemOneApiKey: "private-sentinel", systemOne: { enabled: true } },
     });
 
+    expect(validateSystemOneApiKey).toHaveBeenCalledWith("private-sentinel", "jev-latest");
     expect(patch).toHaveBeenCalledWith({ systemOne: { enabled: true } });
     expect(setSystemOneCredentialStatus).toHaveBeenCalledWith({
       configured: true,
@@ -672,6 +680,80 @@ test("browser activity subscribers receive active runs and control their own bro
     { requestId: "takeover", workspaceId: "ws-1", browserId: "tab-a", applied: true },
   ]);
   expect(hub.current()[0]?.pauseRequested).toBe(true);
+  await session.cleanup();
+});
+
+const TAB_A = "11111111-1111-4111-8111-111111111111";
+const TAB_B = "22222222-2222-4222-8222-222222222222";
+
+test("browser handoff subscribers see handoffs end through Done and through closing the tab", async () => {
+  const messages: SessionOutboundMessage[] = [];
+  const ended: Array<[string, string]> = [];
+  const hub = new BrowserActivityHub(() => {});
+  const broker = new BrowserToolsBroker({});
+  broker.registerClient({
+    id: "daemon-host",
+    hostKind: "daemon",
+    supportedCommands: ["close_tab"],
+    sendBrowserAutomationRequest: (request) => {
+      broker.receiveResponse({
+        type: "browser.automation.execute.response",
+        payload: {
+          requestId: request.requestId,
+          ok: true,
+          result: { command: "close_tab", browserId: TAB_B },
+        },
+      });
+    },
+  });
+  for (const browserId of [TAB_A, TAB_B]) {
+    hub.startHandoff({
+      workspaceId: "ws-1",
+      browserId,
+      agentId: "agent-1",
+      reason: "Sign in",
+      onEnd: (handoff) => ended.push([handoff.browserId, handoff.status]),
+    });
+  }
+  const session = createSessionForTest({
+    messages,
+    browserActivity: hub,
+    browserToolsBroker: broker,
+  });
+
+  await session.handleMessage({
+    type: "session.events.set_subscription.request",
+    requestId: "handoffs",
+    events: ["browser.handoff"],
+  });
+  await session.handleMessage({
+    type: "browser.activity.control.request",
+    requestId: "done",
+    workspaceId: "ws-1",
+    browserId: TAB_A,
+    action: "finish_handoff",
+  });
+  await session.handleMessage({
+    type: "browser.remote.execute.request",
+    requestId: "close",
+    workspaceId: "ws-1",
+    command: { command: "close_tab", args: { browserId: TAB_B } },
+  });
+
+  expect(
+    messages.flatMap((message) =>
+      message.type === "browser.handoff" ? [message.payload.browserId] : [],
+    ),
+  ).toEqual([TAB_A, TAB_B]);
+  expect(
+    messages.flatMap((message) =>
+      message.type === "browser.activity.control.response" ? [message.payload.applied] : [],
+    ),
+  ).toEqual([true]);
+  expect(ended).toEqual([
+    [TAB_A, "done"],
+    [TAB_B, "cancelled"],
+  ]);
   await session.cleanup();
 });
 

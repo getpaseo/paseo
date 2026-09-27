@@ -209,6 +209,7 @@ import {
 import { ScheduleSession } from "./session/schedule/schedule-session.js";
 import { ProviderCatalogSession } from "./session/provider/provider-catalog-session.js";
 import { WorkspaceFilesSession } from "./session/files/workspace-files-session.js";
+import { BrowserScreencastSession } from "./session/browser/screencast.js";
 import { AgentConfigSession } from "./session/agent-config/agent-config-session.js";
 import { ProjectConfigSession } from "./session/project-config/project-config-session.js";
 import { DaemonSession, type DaemonRuntimeConfig } from "./session/daemon/daemon-session.js";
@@ -469,6 +470,7 @@ type AgentMcpTransportFactory = () => Promise<unknown>;
 export interface SessionOptions {
   browserToolsBroker?: BrowserToolsBroker | null;
   browserActivity?: BrowserActivityHub | null;
+  validateSystemOneApiKey?: typeof isTypeSafeApiKeyAccepted;
   verifyHost?: DaemonPlaywrightHost | null;
   verifyEvidence?: EvidenceStore | null;
   clientId: string;
@@ -709,6 +711,12 @@ function resolveResourcePolicyRuntime(
   );
 }
 
+function resolveSystemOneApiKeyValidator(
+  validator: SessionOptions["validateSystemOneApiKey"],
+): typeof isTypeSafeApiKeyAccepted {
+  return validator ?? isTypeSafeApiKeyAccepted;
+}
+
 export class Session {
   readonly delivery = new SessionDelivery(
     (source, message) => {
@@ -716,12 +724,11 @@ export class Session {
       if (this.onMessageToSource) this.onMessageToSource(source, message);
       else this.onMessage(message);
     },
-    (source, frame) => {
-      if (this.onBinaryMessageToSource) {
-        void this.onBinaryMessageToSource(source, frame).catch((error) =>
-          this.sessionLogger.warn({ err: error }, "Failed to emit binary frame"),
-        );
-      } else this.emitBinary(frame);
+    async (source, frame) => {
+      if (!this.onBinaryMessageToSource) return this.emitBinary(frame);
+      await this.onBinaryMessageToSource(source, frame).catch((error) =>
+        this.sessionLogger.warn({ err: error }, "Failed to emit binary frame"),
+      );
     },
     (source, message) => this.workspaceSetupMessageForClient(message, source),
     (request, message) =>
@@ -736,8 +743,10 @@ export class Session {
   );
   private readonly browserToolsBroker: SessionOptions["browserToolsBroker"];
   private readonly browserActivity: SessionOptions["browserActivity"];
+  private readonly validateSystemOneApiKey: typeof isTypeSafeApiKeyAccepted;
   private readonly verifySession: VerifySession | null;
   private readonly verifyHost: DaemonPlaywrightHost | null | undefined;
+  private readonly browserScreencast: BrowserScreencastSession;
   private readonly clientId: string;
   private readonly authorization: SessionAuthorization;
   private appVersion: string | null;
@@ -901,6 +910,7 @@ export class Session {
     } = options;
     this.browserToolsBroker = options.browserToolsBroker;
     this.browserActivity = options.browserActivity;
+    this.validateSystemOneApiKey = resolveSystemOneApiKeyValidator(options.validateSystemOneApiKey);
     this.clientId = clientId;
     this.authorization = new SessionAuthorization(permissions);
     this.appVersion = appVersion ?? null;
@@ -1217,6 +1227,10 @@ export class Session {
     });
     this.verifySession = this.createVerifySession(options);
     this.verifyHost = options.verifyHost;
+    this.browserScreencast = new BrowserScreencastSession({
+      host: this.verifyHost,
+      emit: (msg) => this.emit(msg),
+    });
 
     this.voiceSessions = new VoiceSessions(
       {
@@ -2318,6 +2332,8 @@ export class Session {
     source?: object,
   ): Promise<void> | undefined {
     if (msg.type === "browser.remote.execute.request") return this.executeRemoteBrowser(msg);
+    if (msg.type === "browser.screencast.subscribe.request")
+      return this.browserScreencast.subscribe(msg, this.delivery);
     if (msg.type === "browser.activity.control.request") {
       this.emit({
         type: "browser.activity.control.response",
@@ -2365,6 +2381,14 @@ export class Session {
           code: "browser_unsupported",
           message: "Remote browser hosting is unavailable.",
         });
+    // A tab the user closes can never be finished, so its handoff ends as cancelled.
+    if (payload.ok && payload.result.command === "close_tab") {
+      this.browserActivity?.control({
+        workspaceId: request.workspaceId,
+        browserId: payload.result.browserId,
+        action: "cancel_handoff",
+      });
+    }
     this.emit({ type: "browser.remote.execute.response", payload });
   }
 
@@ -2749,6 +2773,11 @@ export class Session {
             owner.emit({ type: "browser.activity", payload });
           }
         }
+        if (msg.events.includes("browser.handoff")) {
+          for (const payload of this.browserActivity?.currentHandoffs() ?? []) {
+            owner.emit({ type: "browser.handoff", payload });
+          }
+        }
         if (!msg.events.includes("checkout_status_update")) return undefined;
         return this.reconcileWorkspaceGitObservers().catch(async (error) => {
           await owner.release();
@@ -2901,7 +2930,7 @@ export class Session {
     const { systemOneApiKey, ...configPatch } = msg.config;
     if (
       typeof systemOneApiKey === "string" &&
-      !(await isTypeSafeApiKeyAccepted(
+      !(await this.validateSystemOneApiKey(
         systemOneApiKey,
         configPatch.systemOne?.model ??
           this.daemonConfigStore.get().systemOne?.model ??
@@ -3367,6 +3396,10 @@ export class Session {
     }
     if (binaryFrame.kind === "file_transfer") {
       await this.workspaceFilesSession.handleFileTransferFrame(binaryFrame.frame, source);
+      return;
+    }
+    if (binaryFrame.kind === "browser_screencast") {
+      this.browserScreencast.handleFrame(binaryFrame.frame, source);
       return;
     }
     this.terminalController.handleBinaryFrame(binaryFrame.frame, source);
@@ -9041,6 +9074,7 @@ function isValidGitHubRepoSegment(value: string): boolean {
   return /^[A-Za-z0-9._-]+$/u.test(value);
 }
 
+// eslint-disable-next-line complexity
 function sessionEventCategory(message: SessionOutboundMessage): SessionEventSubscription | null {
   switch (message.type) {
     case "project.update":
@@ -9057,6 +9091,7 @@ function sessionEventCategory(message: SessionOutboundMessage): SessionEventSubs
     case "hub.execution.agent.update":
     case "hub.execution.agent.stream":
     case "browser.activity":
+    case "browser.handoff":
       return message.type;
     case "status":
       switch (message.payload.status) {
@@ -9092,6 +9127,7 @@ function legacyWantsEvent(
     case "agent.provider_subagents.update":
       return capabilities.has(CLIENT_CAPS.providerSubagents);
     case "browser.activity":
+    case "browser.handoff":
       return false;
     default:
       return true;

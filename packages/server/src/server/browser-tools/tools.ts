@@ -4,10 +4,12 @@ import {
   PaseoRecipeStepSchema,
   type PaseoRecipeStep,
 } from "@getpaseo/protocol/paseo-config-schema";
+import type { BrowserHandoff } from "@getpaseo/protocol/browser-activity/rpc-schemas";
+import type { BrowserActivityHub } from "./browser-activity.js";
 import type { BrowserToolsBroker } from "./broker.js";
 import { ensureValidJson } from "../json-utils.js";
 import type { VerifySession } from "../verify/verify-session.js";
-import type { BrowserToolsResponsePayload } from "./errors.js";
+import { browserToolsFailure, type BrowserToolsResponsePayload } from "./errors.js";
 import {
   JevBrowserGoalRunner,
   type JevBrowserGoalInput,
@@ -38,6 +40,11 @@ export interface RegisterBrowserToolsOptions {
   broker: Pick<BrowserToolsBroker, "execute">;
   goalRunner?: Pick<JevBrowserGoalRunner, "run">;
   verify?: Pick<VerifySession, "runForAgent">;
+  /** Present only for a calling agent that can receive the follow-up. */
+  handoff?: {
+    hub: Pick<BrowserActivityHub, "activeHandoff" | "refuseHandedOff" | "startHandoff">;
+    onEnd: (handoff: BrowserHandoff) => void;
+  };
   callerAgentId?: string;
   resolveCallerAgent: () => CallerAgentContext | null;
 }
@@ -253,6 +260,95 @@ export function registerBrowserTools(options: RegisterBrowserToolsOptions): void
       }
     },
   );
+
+  if (options.handoff) {
+    const handoff = options.handoff;
+    options.registerTool(
+      "browser_handoff",
+      {
+        title: "Hand browser tab to the user",
+        description:
+          'Hand a Paseo browser tab to the user for a step only they can do: logins, 2FA or verification codes, CAPTCHAs, payments, and consent screens. Never ask for passwords, codes, or card details in chat, and never type them yourself. The call returns immediately; the user then controls the tab and every browser tool on it fails until they finish. End your turn right after this call and tell the user what to do in the tab. You will receive a message with the tab\'s URL and title when they finish or cancel. Use browserId from browser_new_tab or browser_list_tabs; reason is a short instruction shown to the user, such as "Sign in to example.com".',
+        inputSchema: {
+          browserId: BrowserAutomationBrowserIdSchema,
+          reason: z.string().trim().min(1).max(200),
+        },
+      },
+      async ({ browserId, reason }: { browserId: string; reason: string }) => {
+        const context = resolveBrowserToolContext(options);
+        const { agentId, workspaceId } = context;
+        if (!workspaceId || !agentId) {
+          return browserToolResult({
+            payload: browserToolsFailure({
+              requestId: "browser-handoff",
+              code: "browser_denied",
+              message: "browser_handoff needs an agent that runs in a Paseo workspace.",
+            }),
+            context,
+          });
+        }
+        const refused = handoff.hub.refuseHandedOff({ command: "snapshot", args: { browserId } });
+        if (refused) {
+          return browserToolResult({ payload: refused, context: { ...context, browserId } });
+        }
+        const tabs = await options.broker.execute({
+          agentId,
+          workspaceId,
+          ...(context.cwd ? { cwd: context.cwd } : {}),
+          command: { command: "list_tabs", args: {} },
+        });
+        if (!tabs.ok) {
+          return browserToolResult({ payload: tabs, context: { ...context, browserId } });
+        }
+        const isOpen =
+          tabs.result.command === "list_tabs" &&
+          tabs.result.tabs.some((tab) => tab.browserId === browserId);
+        if (!isOpen) {
+          return browserToolResult({
+            payload: browserToolsFailure({
+              requestId: "browser-handoff",
+              code: "browser_tab_not_found",
+              message: `Browser tab ${browserId} is not open in this workspace. Call browser_list_tabs and use one of the returned browserId values.`,
+            }),
+            context: { ...context, browserId },
+          });
+        }
+        const started = handoff.hub.startHandoff({
+          workspaceId,
+          browserId,
+          agentId,
+          reason,
+          onEnd: handoff.onEnd,
+        });
+        if (!started) {
+          return browserToolResult({
+            payload: browserToolsFailure({
+              requestId: "browser-handoff",
+              code: "browser_denied",
+              message: "This browser tab is already handed off to the user.",
+            }),
+            context: { ...context, browserId },
+          });
+        }
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Handed browser tab ${browserId} to the user (handoffId=${started.handoffId}): "${reason}". The user controls the tab now and browser tools on it fail until they finish. End your turn now and tell the user what to do in the tab; you will receive a message when they finish or cancel.`,
+            },
+          ],
+          structuredContent: {
+            ok: true,
+            handoffId: started.handoffId,
+            browserId,
+            reason,
+            status: started.status,
+            context,
+          },
+        };
+      },
+    );
+  }
 
   options.registerTool(
     "browser_snapshot",

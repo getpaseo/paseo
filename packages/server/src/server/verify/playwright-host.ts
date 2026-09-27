@@ -4,7 +4,6 @@ import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { Logger } from "pino";
 import {
-  chromium,
   type BrowserContext,
   type Dialog,
   type Page,
@@ -22,8 +21,13 @@ import type {
 import type { BrowserImportCookie } from "@getpaseo/protocol/browser-import/rpc-schemas";
 import { writeFileAtomic } from "../atomic-file.js";
 import type { BrowserHostClient } from "../browser-tools/broker.js";
-import { browserToolsFailure, type BrowserToolsResponsePayload } from "../browser-tools/errors.js";
+import {
+  browserToolsFailure,
+  createBrowserToolsRequestError,
+  type BrowserToolsResponsePayload,
+} from "../browser-tools/errors.js";
 import { resolveBrowserExecutable } from "./browser-capability.js";
+import { launchInteractiveBrowser } from "./interactive-browser.js";
 import { EvidenceStore, formatEvidenceRef } from "./evidence-store.js";
 import {
   collectSnapshotNodes,
@@ -42,10 +46,19 @@ const MAX_ERROR_MESSAGE_LENGTH = 500;
 const DEFAULT_VERIFY_VIEWPORT = { width: 1280, height: 720 };
 const IMPORTED_COOKIES_FILE = "imported-cookies.json";
 const IMPORTED_COOKIES_MARKER = ".paseo-imported-cookies-version";
+// Measured on a 390x750 phone viewport: q70 costs ~11% more bytes than q60 and keeps text legible.
+const SCREENCAST_JPEG_QUALITY = 70;
 
 interface ImportedCookieStore {
   version: string;
   cookies: BrowserImportCookie[];
+}
+
+/** A JPEG viewport frame as Chrome sent it; width and height are CSS pixels. */
+export interface ScreencastFrame {
+  dataBase64: string;
+  width: number;
+  height: number;
 }
 
 export interface ImportCookiesResult {
@@ -120,7 +133,8 @@ export class DaemonPlaywrightHost {
   private readonly contextProfileDirs = new Map<BrowserContext, string>();
   private readonly tabs = new Map<string, DaemonBrowserTab>();
   private executablePath: string | null = null;
-  private useNoSandboxFallback = false;
+  private readonly closeBrowsers = new Map<BrowserContext, () => Promise<void>>();
+  private readonly captureQueues = new Map<BrowserContext, Promise<unknown>>();
   private requestSequence = 0;
   private evidenceStore: EvidenceStore | null = null;
 
@@ -206,14 +220,56 @@ export class DaemonPlaywrightHost {
     }
   }
 
+  /** Streams viewport frames until the returned stop runs; onEnd fires when the tab closes. */
+  public async startScreencast(input: {
+    workspaceId: string;
+    browserId: string;
+    onFrame: (frame: ScreencastFrame) => void;
+    onEnd: () => void;
+  }): Promise<() => Promise<void>> {
+    const tab = this.tabs.get(input.browserId);
+    if (!tab || tab.page.isClosed() || tab.workspaceId !== input.workspaceId) {
+      throw createBrowserToolsRequestError({
+        code: "browser_tab_not_found",
+        message: `Browser tab ${input.browserId} is not known to the daemon browser host.`,
+      });
+    }
+    const cdp = await tab.context.newCDPSession(tab.page);
+    cdp.on("Page.screencastFrame", (event) => {
+      // Ack before pacing: Chrome skips paints while a frame is unacked, so a late ack
+      // can drop the last change of a page that then stays still.
+      void cdp.send("Page.screencastFrameAck", { sessionId: event.sessionId }).catch(() => {});
+      input.onFrame({
+        dataBase64: event.data,
+        width: Math.round(event.metadata.deviceWidth),
+        height: Math.round(event.metadata.deviceHeight),
+      });
+    });
+    tab.page.once("close", input.onEnd);
+    const stop = async () => {
+      tab.page.off("close", input.onEnd);
+      // Detaching ends the screencast; it rejects once the tab is already gone.
+      await cdp.detach().catch(() => {});
+    };
+    try {
+      await cdp.send("Page.startScreencast", { format: "jpeg", quality: SCREENCAST_JPEG_QUALITY });
+    } catch (error) {
+      await stop();
+      throw error;
+    }
+    return stop;
+  }
+
   public async close(): Promise<void> {
     this.tabs.clear();
     const contexts = [...this.contexts.values()];
     this.contexts.clear();
     this.contextProfileDirs.clear();
     for (const context of contexts) {
-      await context.close().catch(() => undefined);
+      await this.closeBrowsers.get(context)?.();
     }
+    this.closeBrowsers.clear();
+    this.captureQueues.clear();
   }
 
   private async handleBrokerRequest(
@@ -662,13 +718,18 @@ export class DaemonPlaywrightHost {
   }
 
   private async captureScreenshot(tab: DaemonBrowserTab, fullPage: boolean): Promise<Buffer> {
-    try {
-      return await tab.page.screenshot({ fullPage });
-    } catch {
-      // The headless compositor is occasionally not ready for the first
-      // capture in a fresh context; a single immediate retry succeeds.
-      return await tab.page.screenshot({ fullPage });
-    }
+    const previous = this.captureQueues.get(tab.context) ?? Promise.resolve();
+    const capture = previous
+      .catch(() => undefined)
+      .then(async () => {
+        // A background tab can retain its old compositor surface after navigation.
+        // Serialize activation with capture so another tab cannot hide it midway.
+        await tab.page.bringToFront();
+        await waitForPaint(tab.page);
+        return tab.page.screenshot({ fullPage, timeout: 5_000 });
+      });
+    this.captureQueues.set(tab.context, capture);
+    return capture;
   }
 
   private async runLogsCommand(input: {
@@ -773,13 +834,33 @@ export class DaemonPlaywrightHost {
       profile: input.profile,
     });
     const page = await context.newPage();
+    await page.setViewportSize(DEFAULT_VERIFY_VIEWPORT);
+    const tab = this.registerPage({ ...input, context, page });
+    if (input.url) {
+      await page.goto(input.url, { waitUntil: "domcontentloaded" });
+    }
+    await page.bringToFront();
+    // Normal Chrome keeps paint holding enabled; input before its first frame
+    // can be dropped even though DOMContentLoaded already fired.
+    await waitForPaint(page);
+    return tab;
+  }
+
+  private registerPage(input: {
+    workspaceId: string;
+    profile: string;
+    context: BrowserContext;
+    page: Page;
+  }): DaemonBrowserTab {
+    const existing = [...this.tabs.values()].find((tab) => tab.page === input.page);
+    if (existing) return existing;
     const browserId = `${Date.now().toString()}-${randomBytes(8).toString("hex")}`;
     const tab: DaemonBrowserTab = {
       browserId,
       workspaceId: input.workspaceId,
       profile: input.profile,
-      context,
-      page,
+      context: input.context,
+      page: input.page,
       snapshot: [],
       consoleEntries: [],
       networkEntries: [],
@@ -788,9 +869,7 @@ export class DaemonPlaywrightHost {
     };
     attachTabListeners(tab);
     this.tabs.set(browserId, tab);
-    if (input.url) {
-      await page.goto(input.url, { waitUntil: "domcontentloaded" });
-    }
+    input.page.once("close", () => this.tabs.delete(browserId));
     return tab;
   }
 
@@ -877,12 +956,17 @@ export class DaemonPlaywrightHost {
       sanitizeProfileSegment(input.workspaceId),
       sanitizeProfileSegment(input.profile),
     );
-    mkdirSync(userDataDir, { recursive: true });
+    mkdirSync(userDataDir, { recursive: true, mode: 0o700 });
     const context = await this.launchPersistentContext(userDataDir);
     this.contexts.set(key, context);
     this.contextProfileDirs.set(context, userDataDir);
+    // OAuth providers can open a popup; it must remain visible and controllable
+    // through the same workspace's remote tabs.
+    context.on("page", (page) => this.registerPage({ ...input, context, page }));
     context.on("close", () => {
       this.contextProfileDirs.delete(context);
+      this.closeBrowsers.delete(context);
+      this.captureQueues.delete(context);
       if (this.contexts.get(key) === context) {
         this.contexts.delete(key);
       }
@@ -950,28 +1034,21 @@ export class DaemonPlaywrightHost {
   }
 
   private async launchPersistentContext(userDataDir: string): Promise<BrowserContext> {
-    const baseOptions = {
-      headless: true,
-      executablePath: this.executablePath ?? undefined,
-      viewport: DEFAULT_VERIFY_VIEWPORT,
-      args: ["--disable-dev-shm-usage"],
-    };
-    try {
-      return await chromium.launchPersistentContext(userDataDir, baseOptions);
-    } catch (error) {
-      if (!this.useNoSandboxFallback && isSandboxLaunchError(error) && process.getuid?.() === 0) {
-        this.useNoSandboxFallback = true;
-        this.logger.warn(
-          "Daemon browser runs as root without a user namespace; retrying once with --no-sandbox.",
-        );
-        return chromium.launchPersistentContext(userDataDir, {
-          ...baseOptions,
-          args: [...baseOptions.args, "--no-sandbox"],
-        });
-      }
-      throw error;
-    }
+    const browser = await launchInteractiveBrowser({
+      executablePath: this.executablePath!,
+      userDataDir,
+    });
+    this.closeBrowsers.set(browser.context, browser.close);
+    return browser.context;
   }
+}
+
+async function waitForPaint(page: Page): Promise<void> {
+  await page.waitForFunction(
+    "() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve(true))))",
+    undefined,
+    { timeout: 5_000 },
+  );
 }
 
 function ok(requestId: string, result: CommandResult): BrowserToolsResponsePayload {
@@ -1129,11 +1206,6 @@ function truncateErrorMessage(error: unknown): string {
 function sanitizeProfileSegment(value: string): string {
   const sanitized = value.replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 64);
   return sanitized.length > 0 ? sanitized : "profile";
-}
-
-function isSandboxLaunchError(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error);
-  return /sandbox|zygote|namespace|no-sandbox/i.test(message);
 }
 
 function isTimeoutError(error: unknown): boolean {

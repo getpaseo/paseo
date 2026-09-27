@@ -4,8 +4,10 @@ import { useTranslation } from "react-i18next";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { ChevronRight, X } from "lucide-react-native";
 import type {
+  BrowserActivityControlRequest,
   BrowserActivityEvent,
   BrowserActivityStep,
+  BrowserHandoff,
 } from "@getpaseo/protocol/browser-activity/rpc-schemas";
 import { AdaptiveModalSheet } from "@/components/adaptive-modal-sheet";
 import { Button } from "@/components/ui/button";
@@ -172,6 +174,64 @@ export function BrowserActivityBar({ activity, onControl, onDismiss }: BrowserAc
           })}
         </View>
       </AdaptiveModalSheet>
+    </View>
+  );
+}
+
+type BrowserHandoffAction = Extract<
+  BrowserActivityControlRequest["action"],
+  "finish_handoff" | "cancel_handoff"
+>;
+
+interface BrowserHandoffBarProps {
+  handoff: BrowserHandoff;
+  pendingAction: BrowserHandoffAction | null;
+  onEnd: (action: BrowserHandoffAction) => void;
+}
+
+/** The user controls the tab; the agent waits until Done or Cancel. */
+export function BrowserHandoffBar({ handoff, pendingAction, onEnd }: BrowserHandoffBarProps) {
+  const { t } = useTranslation();
+  const finish = useCallback(() => onEnd("finish_handoff"), [onEnd]);
+  const cancel = useCallback(() => onEnd("cancel_handoff"), [onEnd]);
+  const isPending = pendingAction !== null;
+
+  return (
+    <View style={styles.bar} testID="browser-handoff-bar">
+      <View
+        accessible={true}
+        accessibilityLabel={`${t("workspace.browser.handoff.youHaveControl")}: ${handoff.reason}`}
+        accessibilityLiveRegion="polite"
+        style={styles.summary}
+      >
+        <View style={[styles.dot, styles.dotPaused]} />
+        <Text numberOfLines={2} style={styles.summaryText}>
+          {handoff.reason}
+        </Text>
+        <Text aria-hidden={true} numberOfLines={1} style={styles.meta}>
+          {t("workspace.browser.handoff.youHaveControl")}
+        </Text>
+      </View>
+      <Button
+        size="xs"
+        variant="ghost"
+        disabled={isPending}
+        loading={pendingAction === "cancel_handoff"}
+        onPress={cancel}
+        testID="browser-handoff-cancel"
+      >
+        {t("workspace.browser.handoff.cancel")}
+      </Button>
+      <Button
+        size="xs"
+        variant="outline"
+        disabled={isPending}
+        loading={pendingAction === "finish_handoff"}
+        onPress={finish}
+        testID="browser-handoff-done"
+      >
+        {t("workspace.browser.handoff.done")}
+      </Button>
     </View>
   );
 }

@@ -152,7 +152,9 @@ export class RecipeRunner {
   public constructor(options: RecipeRunnerOptions) {
     this.goal = options.goal;
     this.activity = options.activity;
-    this.host = options.host;
+    this.host = options.activity
+      ? { executeLocal: options.activity.guard((input) => options.host.executeLocal(input)) }
+      : options.host;
     this.evidence = options.evidence;
     this.resolveServiceUrl = options.resolveServiceUrl;
     this.env = options.env ?? process.env;

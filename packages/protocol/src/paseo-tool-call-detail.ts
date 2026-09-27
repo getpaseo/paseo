@@ -175,6 +175,7 @@ const TOOL_SPECS: Readonly<Record<string, ToolDetailSpec>> = {
   browser_scroll: { inputOrder: BROWSER_FIELDS },
   browser_resize: { inputOrder: BROWSER_FIELDS },
   browser_close_tab: { inputOrder: BROWSER_FIELDS },
+  browser_handoff: { promptField: "reason", inputOrder: BROWSER_FIELDS },
 };
 
 const FIELD_LABELS: Readonly<Record<string, string>> = {

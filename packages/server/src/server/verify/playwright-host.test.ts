@@ -7,7 +7,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { BrowserToolsBroker } from "../browser-tools/broker.js";
 import type { BrowserToolsResponsePayload } from "../browser-tools/errors.js";
 import { resolveBrowserExecutable } from "./browser-capability.js";
-import { DaemonPlaywrightHost } from "./playwright-host.js";
+import { DaemonPlaywrightHost, type ScreencastFrame } from "./playwright-host.js";
 import type { BrowserAutomationCommand } from "@getpaseo/protocol/browser-automation/rpc-schemas";
 import {
   FIXTURE_PASSWORD,
@@ -29,7 +29,7 @@ const BROWSER_AVAILABLE = isDaemonBrowserAvailable();
 const WORKSPACE_ID = "wks_verify_slice";
 const OTHER_WORKSPACE_ID = "wks_other_workspace";
 
-describe.skipIf(!BROWSER_AVAILABLE)("DaemonPlaywrightHost", () => {
+describe.skipIf(!BROWSER_AVAILABLE)("DaemonPlaywrightHost", { timeout: 20_000 }, () => {
   let paseoHome = "";
   let host: DaemonPlaywrightHost | null = null;
   let app: VerifyFixtureApp | null = null;
@@ -141,7 +141,50 @@ describe.skipIf(!BROWSER_AVAILABLE)("DaemonPlaywrightHost", () => {
       "login-flow",
     );
     expect(waited?.ok).toBe(true);
-  });
+
+    await host?.close();
+    host = new DaemonPlaywrightHost({ paseoHome, logger: pino({ enabled: false }) });
+    const restored = await openTab(`${app?.url}/report`, "login-flow");
+    expect(await readSnapshotYaml(restored, "login-flow")).toContain("Current Report");
+    const isolated = await openTab(`${app?.url}/report`, "separate-login");
+    expect(await readSnapshotYaml(isolated, "separate-login")).toContain("Sign in");
+  }, 15_000);
+
+  it("keeps Chrome's normal launch and sandbox settings", async () => {
+    const browserId = await openTab("chrome://version", "browser-security");
+    const version = await executeTabCommand(
+      {
+        command: "evaluate",
+        args: {
+          browserId,
+          function:
+            "() => ({ commandLine: document.querySelector('#command_line').textContent, userAgent: navigator.userAgent, webdriver: navigator.webdriver })",
+        },
+      },
+      "browser-security",
+    );
+    expect(version?.ok).toBe(true);
+    if (!version?.ok || version.result.command !== "evaluate") expect.unreachable();
+    const details = JSON.parse(version.result.resultJson);
+    expect(details.commandLine).not.toMatch(
+      /--(?:no-sandbox|disable-web-security|enable-automation|headless|ignore-certificate-errors|disable-client-side-phishing-detection)/,
+    );
+    expect(details.userAgent).not.toContain("HeadlessChrome");
+    expect(details.webdriver).toBe(false);
+    if (process.platform !== "linux") return;
+    await executeTabCommand(
+      { command: "navigate", args: { browserId, url: "chrome://sandbox" } },
+      "browser-security",
+    );
+    const sandbox = await executeTabCommand(
+      { command: "evaluate", args: { browserId, function: "() => document.body.innerText" } },
+      "browser-security",
+    );
+    expect(sandbox).toMatchObject({
+      ok: true,
+      result: { resultJson: expect.stringContaining("You are adequately sandboxed") },
+    });
+  }, 15_000);
 
   it("dispatches trusted coordinate pointer actions", async () => {
     const browserId = await openTab(`${app?.url}/interaction`, "pointer-flow");
@@ -197,7 +240,24 @@ describe.skipIf(!BROWSER_AVAILABLE)("DaemonPlaywrightHost", () => {
       ok: true,
       result: { command: "scroll", x: 600, y: 400, deltaX: 0, deltaY: 500 },
     });
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    await expect
+      .poll(async () => {
+        const scroll = await executeTabCommand(
+          {
+            command: "evaluate",
+            args: {
+              browserId,
+              function:
+                "() => Math.max(window.scrollY, document.documentElement.scrollTop, document.body.scrollTop)",
+            },
+          },
+          "pointer-flow",
+        );
+        return scroll?.ok && scroll.result.command === "evaluate"
+          ? Number(JSON.parse(scroll.result.resultJson))
+          : 0;
+      })
+      .toBeGreaterThan(0);
 
     const state = await executeTabCommand(
       {
@@ -220,7 +280,45 @@ describe.skipIf(!BROWSER_AVAILABLE)("DaemonPlaywrightHost", () => {
       });
       expect(JSON.parse(state.result.resultJson).scrollY).toBeGreaterThan(0);
     }
-  });
+  }, 15_000);
+
+  it("exposes a sign-in popup in its workspace and preserves its opener", async () => {
+    const openerId = await openTab(`${app?.url}/interaction`, "popup-login");
+    const before = await executeTabCommand({ command: "list_tabs", args: {} }, "popup-login");
+    if (!before?.ok || before.result.command !== "list_tabs") expect.unreachable();
+    const priorIds = new Set(before.result.tabs.map((tab) => tab.browserId));
+    const snapshot = await readSnapshotYaml(openerId, "popup-login");
+    const ref = refFor(snapshot, "button", "Open sign in");
+    expect(ref).not.toBeNull();
+    const clicked = await executeTabCommand(
+      {
+        command: "click",
+        args: { browserId: openerId, ref: ref!, button: "left", doubleClick: false, modifiers: [] },
+      },
+      "popup-login",
+    );
+    expect(clicked?.ok).toBe(true);
+    const after = await executeTabCommand({ command: "list_tabs", args: {} }, "popup-login");
+    if (!after?.ok || after.result.command !== "list_tabs") expect.unreachable();
+    const popup = after.result.tabs.find((tab) => !priorIds.has(tab.browserId));
+    expect(popup).toBeDefined();
+    const popupId = popup!.browserId;
+    await executeTabCommand(
+      { command: "wait", args: { browserId: popupId, text: "Sign in", timeoutMs: 5000 } },
+      "popup-login",
+    );
+    expect(await readSnapshotYaml(popupId, "popup-login")).toContain('textbox "Email"');
+    const opener = await executeTabCommand(
+      {
+        command: "evaluate",
+        args: { browserId: popupId, function: "() => window.opener.location.pathname" },
+      },
+      "popup-login",
+    );
+    expect(opener).toMatchObject({ ok: true, result: { resultJson: '"/interaction"' } });
+    await executeTabCommand({ command: "close_tab", args: { browserId: popupId } }, "popup-login");
+    expect(await readSnapshotYaml(openerId, "popup-login")).toContain("Open sign in");
+  }, 15_000);
 
   it("captures console errors and failed requests without recording successes", async () => {
     const created = await host?.executeLocal({
@@ -283,16 +381,11 @@ describe.skipIf(!BROWSER_AVAILABLE)("DaemonPlaywrightHost", () => {
     }
   });
 
-  it("returns inline PNG payloads only with reveal", async () => {
-    const created = await host?.executeLocal({
-      workspaceId: WORKSPACE_ID,
-      command: { command: "new_tab", args: { url: `${app?.url}/login` } },
-    });
-    const browserId =
-      created?.ok && created.result.command === "new_tab" ? created.result.browserId : "";
+  it("captures fresh phone-sized PNG frames only with reveal", async () => {
+    const browserId = await openTab(`${app?.url}/login`, "default");
     await host?.executeLocal({
       workspaceId: WORKSPACE_ID,
-      command: { command: "wait", args: { browserId, text: "Sign in", timeoutMs: 10_000 } },
+      command: { command: "resize", args: { browserId, width: 390, height: 691 } },
     });
 
     const screenshot = await host?.executeLocal({
@@ -305,9 +398,94 @@ describe.skipIf(!BROWSER_AVAILABLE)("DaemonPlaywrightHost", () => {
       expect(screenshot.result.evidenceRef).toMatch(/^evidence:\/\//);
       const bytes = Buffer.from(screenshot.result.dataBase64 ?? "", "base64");
       expect(bytes.subarray(0, 4)).toEqual(Buffer.from([137, 80, 78, 71]));
+      expect([bytes.readUInt32BE(16), bytes.readUInt32BE(20)]).toEqual([390, 691]);
     } else {
       expect.unreachable();
     }
+
+    // A second tab hides the first before it navigates; the next frame must
+    // contain the new page, not the first tab's retained compositor surface.
+    await openTab(`${app?.url}/login`, "default");
+    await host?.executeLocal({
+      workspaceId: WORKSPACE_ID,
+      command: { command: "navigate", args: { browserId, url: `${app?.url}/interaction` } },
+    });
+    const updated = await host?.executeLocal({
+      workspaceId: WORKSPACE_ID,
+      command: { command: "screenshot", args: { browserId, fullPage: false, reveal: true } },
+    });
+    expect(updated?.ok).toBe(true);
+    if (!updated?.ok || updated.result.command !== "screenshot") expect.unreachable();
+    expect(updated.result.sha256).not.toBe(screenshot.result.sha256);
+    expect([updated.result.width, updated.result.height]).toEqual([390, 691]);
+  });
+
+  it("streams JPEG viewport frames that follow page changes until stopped", async () => {
+    const browserId = await openTab(`${app?.url}/interaction`, "default");
+    await host?.executeLocal({
+      workspaceId: WORKSPACE_ID,
+      command: { command: "resize", args: { browserId, width: 390, height: 691 } },
+    });
+    const frames: ScreencastFrame[] = [];
+    const stop = await host?.startScreencast({
+      workspaceId: WORKSPACE_ID,
+      browserId,
+      onFrame: (frame) => frames.push(frame),
+      onEnd: () => {},
+    });
+    await expect.poll(() => frames.length).toBeGreaterThan(0);
+    expect(Buffer.from(frames[0].dataBase64, "base64").subarray(0, 2)).toEqual(
+      Buffer.from([0xff, 0xd8]),
+    );
+    expect([frames[0].width, frames[0].height]).toEqual([390, 691]);
+
+    const scroll = () =>
+      host?.executeLocal({
+        workspaceId: WORKSPACE_ID,
+        command: { command: "scroll", args: { browserId, deltaX: 0, deltaY: 300 } },
+      });
+    const beforeScroll = frames.length;
+    await scroll();
+    await expect.poll(() => frames.length).toBeGreaterThan(beforeScroll);
+
+    await stop?.();
+    const stoppedAt = frames.length;
+    const laterFrames: ScreencastFrame[] = [];
+    const stopLater = await host?.startScreencast({
+      workspaceId: WORKSPACE_ID,
+      browserId,
+      onFrame: (frame) => laterFrames.push(frame),
+      onEnd: () => {},
+    });
+    await scroll();
+    await expect.poll(() => laterFrames.length).toBeGreaterThan(1);
+    expect(frames).toHaveLength(stoppedAt);
+    await stopLater?.();
+  });
+
+  it("scopes screencasts to the workspace and reports a closed tab", async () => {
+    const browserId = await openTab(`${app?.url}/login`, "default");
+    const noop = () => {};
+    await expect(
+      host?.startScreencast({
+        workspaceId: OTHER_WORKSPACE_ID,
+        browserId,
+        onFrame: noop,
+        onEnd: noop,
+      }),
+    ).rejects.toMatchObject({ code: "browser_tab_not_found" });
+
+    let ended = false;
+    await host?.startScreencast({
+      workspaceId: WORKSPACE_ID,
+      browserId,
+      onFrame: noop,
+      onEnd: () => {
+        ended = true;
+      },
+    });
+    await executeTabCommand({ command: "close_tab", args: { browserId } }, "default");
+    await expect.poll(() => ended).toBe(true);
   });
 
   it("denies cross-workspace tab access", async () => {
@@ -392,65 +570,69 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-describe.skipIf(!BROWSER_AVAILABLE)("DaemonPlaywrightHost cookie import", () => {
-  let paseoHome = "";
-  let host: DaemonPlaywrightHost | null = null;
-  let app: VerifyFixtureApp | null = null;
+describe.skipIf(!BROWSER_AVAILABLE)(
+  "DaemonPlaywrightHost cookie import",
+  { timeout: 20_000 },
+  () => {
+    let paseoHome = "";
+    let host: DaemonPlaywrightHost | null = null;
+    let app: VerifyFixtureApp | null = null;
 
-  beforeAll(async () => {
-    paseoHome = mkdtempSync(join(tmpdir(), "paseo-cookie-import-test-"));
-    host = new DaemonPlaywrightHost({ paseoHome, logger: pino({ enabled: false }) });
-    app = await startVerifyFixtureApp();
-  }, 60_000);
+    beforeAll(async () => {
+      paseoHome = mkdtempSync(join(tmpdir(), "paseo-cookie-import-test-"));
+      host = new DaemonPlaywrightHost({ paseoHome, logger: pino({ enabled: false }) });
+      app = await startVerifyFixtureApp();
+    }, 60_000);
 
-  afterAll(async () => {
-    await host?.close();
-    await app?.close();
-    rmSync(paseoHome, { recursive: true, force: true });
-  });
-
-  async function openReport(profile: string): Promise<{ browserId: string; url: string }> {
-    const created = await host?.executeLocal({
-      workspaceId: WORKSPACE_ID,
-      profile,
-      command: { command: "new_tab", args: { url: `${app?.url}/report` } },
+    afterAll(async () => {
+      await host?.close();
+      await app?.close();
+      rmSync(paseoHome, { recursive: true, force: true });
     });
-    if (!created?.ok || created.result.command !== "new_tab") expect.unreachable();
-    return { browserId: created.result.browserId, url: created.result.url };
-  }
 
-  it("signs already open and later launched profiles in with imported cookies", async () => {
-    const early = await openReport("early");
-    expect(new URL(early.url).pathname).toBe("/login");
-
-    const result = await host?.importCookies([
-      {
-        name: "verify_auth",
-        value: "1",
-        domain: "127.0.0.1",
-        path: "/",
-        expires: -1,
-        httpOnly: true,
-        secure: false,
-        sameSite: "Lax",
-      },
-    ]);
-    expect(result).toEqual({ cookieCount: 1, domainCount: 1 });
-
-    const navigated = await host?.executeLocal({
-      workspaceId: WORKSPACE_ID,
-      profile: "early",
-      command: {
-        command: "navigate",
-        args: { browserId: early.browserId, url: `${app?.url}/report` },
-      },
-    });
-    expect(navigated).toMatchObject({ ok: true, result: { command: "navigate" } });
-    if (navigated?.ok && navigated.result.command === "navigate") {
-      expect(new URL(navigated.result.url).pathname).toBe("/report");
+    async function openReport(profile: string): Promise<{ browserId: string; url: string }> {
+      const created = await host?.executeLocal({
+        workspaceId: WORKSPACE_ID,
+        profile,
+        command: { command: "new_tab", args: { url: `${app?.url}/report` } },
+      });
+      if (!created?.ok || created.result.command !== "new_tab") expect.unreachable();
+      return { browserId: created.result.browserId, url: created.result.url };
     }
 
-    const late = await openReport("late");
-    expect(new URL(late.url).pathname).toBe("/report");
-  });
-});
+    it("signs already open and later launched profiles in with imported cookies", async () => {
+      const early = await openReport("early");
+      expect(new URL(early.url).pathname).toBe("/login");
+
+      const result = await host?.importCookies([
+        {
+          name: "verify_auth",
+          value: "1",
+          domain: "127.0.0.1",
+          path: "/",
+          expires: -1,
+          httpOnly: true,
+          secure: false,
+          sameSite: "Lax",
+        },
+      ]);
+      expect(result).toEqual({ cookieCount: 1, domainCount: 1 });
+
+      const navigated = await host?.executeLocal({
+        workspaceId: WORKSPACE_ID,
+        profile: "early",
+        command: {
+          command: "navigate",
+          args: { browserId: early.browserId, url: `${app?.url}/report` },
+        },
+      });
+      expect(navigated).toMatchObject({ ok: true, result: { command: "navigate" } });
+      if (navigated?.ok && navigated.result.command === "navigate") {
+        expect(new URL(navigated.result.url).pathname).toBe("/report");
+      }
+
+      const late = await openReport("late");
+      expect(new URL(late.url).pathname).toBe("/report");
+    });
+  },
+);

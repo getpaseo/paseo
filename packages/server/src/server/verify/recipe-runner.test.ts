@@ -279,6 +279,51 @@ describe.skipIf(!BROWSER_AVAILABLE)("RecipeRunner", () => {
     expect(serialized).not.toContain("hidden");
   });
 
+  it("stops at the next step once the tab is handed off to the user", async () => {
+    let handedOff = false;
+    const activity = new BrowserActivityHub((event) => {
+      if (event.step === 2 && !handedOff) {
+        handedOff = true;
+        activity.startHandoff({
+          workspaceId: WORKSPACE_ID,
+          browserId: event.browserId,
+          agentId: "agent-1",
+          reason: "Sign in",
+          onEnd: () => {},
+        });
+      }
+    });
+    const handoffRunner = new RecipeRunner({
+      host,
+      evidence,
+      env,
+      resolveServiceUrl: async ({ service }) => (service === "frontend" ? app.url : null),
+      activity,
+    });
+
+    const result = await handoffRunner.run({
+      workspaceId: WORKSPACE_ID,
+      browser: { ...testConfig().browser, defaultProfile: "handoff-test" },
+      verification: {
+        recipes: {
+          "handoff-slice": {
+            params: [],
+            steps: [
+              { action: "navigate", service: "frontend", path: "/login" },
+              { action: "assert-visible", role: "heading", name: "Sign in" },
+            ],
+          },
+        },
+      },
+      recipeName: "handoff-slice",
+    });
+
+    expect(result.status).toBe("fail");
+    expect(result.checks.at(-1)?.detail).toContain(
+      "The user controls this tab until they finish the handoff",
+    );
+  });
+
   it("fails a goal step clearly when System One is not wired in", async () => {
     const result = await runner.run({
       workspaceId: WORKSPACE_ID,

@@ -62,6 +62,7 @@ function interactionPage(): string {
     "<!doctype html><html><head><title>Interaction</title></head>",
     '<body style="height: 2400px; margin: 0">',
     '<button id="click-target" onclick="document.body.dataset.clicked = \'yes\'" style="position:absolute;left:16px;top:16px">Click target</button>',
+    "<button onclick=\"window.open('/login', 'login')\" style=\"position:absolute;left:500px;top:16px\">Open sign in</button>",
     '<div id="hover-target" onmouseenter="document.body.dataset.hovered = \'yes\'" style="position:absolute;left:220px;top:16px;width:140px;height:48px">Hover target</div>',
     '<div id="drag-source" onpointerdown="document.body.dataset.dragging = \'yes\'" style="position:absolute;left:16px;top:120px;width:100px;height:48px">Drag source</div>',
     '<div id="drag-target" onpointerup="if (document.body.dataset.dragging === \'yes\') document.body.dataset.dragged = \'yes\'" style="position:absolute;left:300px;top:120px;width:100px;height:48px">Drag target</div>',
@@ -127,7 +128,7 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse)
   if (url.pathname === "/login" && request.method === "POST") {
     const body = new URLSearchParams(await readBody(request));
     if (body.get("email") === FIXTURE_USERNAME && body.get("password") === FIXTURE_PASSWORD) {
-      redirect(response, "/report", `${AUTH_COOKIE}; Path=/; HttpOnly`);
+      redirect(response, "/report", `${AUTH_COOKIE}; Path=/; HttpOnly; Max-Age=3600`);
       return;
     }
     sendHtml(response, 200, loginPage("Invalid credentials"));
