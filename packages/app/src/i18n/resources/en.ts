@@ -2166,6 +2166,11 @@ export const en = {
           queue: "Queue",
         },
       },
+      commandEnterToSend: {
+        label: "Send with {{modifier}}+Enter",
+        description:
+          "Enter and Shift+Enter insert a new line. {{modifier}}+Enter sends the message.",
+      },
       serviceUrls: {
         options: {
           ask: "Ask",

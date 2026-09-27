@@ -2094,6 +2094,11 @@ export const es: TranslationResources = {
           queue: "Cola",
         },
       },
+      commandEnterToSend: {
+        label: "Enviar con {{modifier}}+Enter",
+        description:
+          "Intro y Mayús+Intro insertan una línea nueva. {{modifier}}+Intro envía el mensaje.",
+      },
       serviceUrls: {
         options: {
           ask: "Preguntar",

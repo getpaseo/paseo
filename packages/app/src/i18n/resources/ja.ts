@@ -2062,6 +2062,11 @@ export const ja: TranslationResources = {
           queue: "キュー",
         },
       },
+      commandEnterToSend: {
+        label: "{{modifier}}+Enter で送信",
+        description:
+          "Enter と Shift+Enter は改行します。{{modifier}}+Enter でメッセージを送信します。",
+      },
       serviceUrls: {
         options: {
           ask: "確認する",

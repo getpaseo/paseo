@@ -2077,6 +2077,11 @@ export const ptBR: TranslationResources = {
           queue: "Fila",
         },
       },
+      commandEnterToSend: {
+        label: "Enviar com {{modifier}}+Enter",
+        description:
+          "Enter e Shift+Enter inserem uma nova linha. {{modifier}}+Enter envia a mensagem.",
+      },
       serviceUrls: {
         options: {
           ask: "Perguntar",

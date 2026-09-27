@@ -2054,6 +2054,10 @@ export const ko: TranslationResources = {
           queue: "대기열",
         },
       },
+      commandEnterToSend: {
+        label: "{{modifier}}+Enter로 보내기",
+        description: "Enter와 Shift+Enter는 줄바꿈합니다. {{modifier}}+Enter로 메시지를 보냅니다.",
+      },
       serviceUrls: {
         options: {
           ask: "물어보기",

@@ -2,8 +2,10 @@ import { describe, expect, it, vi } from "vitest";
 import {
   applyDictationTranscript,
   computeCanStartDictation,
+  type MessageInputEnterContext,
   resolveActiveSendBehavior,
   resolveComposerSurfacePresentation,
+  resolveMessageInputEnterAction,
   runAlternateSendAction,
   runDefaultSendAction,
   runMessageInputKeyboardAction,
@@ -272,6 +274,212 @@ describe("composer send behavior", () => {
 
     expect(defaultAction.calls).toEqual(["queue"]);
     expect(alternateAction.calls).toEqual(["send"]);
+  });
+});
+
+describe("resolveMessageInputEnterAction", () => {
+  function enterContext(
+    overrides: Partial<MessageInputEnterContext> = {},
+  ): MessageInputEnterContext {
+    return {
+      submitOnEnter: true,
+      commandEnterToSend: false,
+      shiftKey: false,
+      metaKey: false,
+      ctrlKey: false,
+      isAgentRunning: false,
+      onQueue: () => undefined,
+      ...overrides,
+    };
+  }
+
+  it("returns null for plain, Shift, and modifier Enter when submit on enter is disabled", () => {
+    expect(resolveMessageInputEnterAction(enterContext({ submitOnEnter: false }))).toBeNull();
+    expect(
+      resolveMessageInputEnterAction(enterContext({ submitOnEnter: false, shiftKey: true })),
+    ).toBeNull();
+    expect(
+      resolveMessageInputEnterAction(enterContext({ submitOnEnter: false, metaKey: true })),
+    ).toBeNull();
+    expect(
+      resolveMessageInputEnterAction(enterContext({ submitOnEnter: false, ctrlKey: true })),
+    ).toBeNull();
+  });
+
+  it("still returns null when command enter to send is on and submit on enter is disabled", () => {
+    expect(
+      resolveMessageInputEnterAction(
+        enterContext({ commandEnterToSend: true, submitOnEnter: false, metaKey: true }),
+      ),
+    ).toBeNull();
+    expect(
+      resolveMessageInputEnterAction(
+        enterContext({ commandEnterToSend: true, submitOnEnter: false }),
+      ),
+    ).toBeNull();
+  });
+
+  it("sends on plain Enter when command enter to send is off", () => {
+    expect(resolveMessageInputEnterAction(enterContext())).toBe("default-send");
+  });
+
+  it("returns null for Shift+Enter when command enter to send is off", () => {
+    expect(resolveMessageInputEnterAction(enterContext({ shiftKey: true }))).toBeNull();
+  });
+
+  it("returns null for Shift+Cmd+Enter and Shift+Ctrl+Enter so Shift keeps its newline", () => {
+    expect(
+      resolveMessageInputEnterAction(
+        enterContext({ shiftKey: true, metaKey: true, isAgentRunning: true }),
+      ),
+    ).toBeNull();
+    expect(
+      resolveMessageInputEnterAction(
+        enterContext({ shiftKey: true, ctrlKey: true, isAgentRunning: true }),
+      ),
+    ).toBeNull();
+  });
+
+  it("sends on Cmd+Enter and Ctrl+Enter while idle even with a queue handler", () => {
+    expect(resolveMessageInputEnterAction(enterContext({ metaKey: true }))).toBe("default-send");
+    expect(resolveMessageInputEnterAction(enterContext({ ctrlKey: true }))).toBe("default-send");
+  });
+
+  it("queues on Cmd+Enter and Ctrl+Enter while the agent is running with a queue handler", () => {
+    expect(
+      resolveMessageInputEnterAction(enterContext({ metaKey: true, isAgentRunning: true })),
+    ).toBe("alternate-send");
+    expect(
+      resolveMessageInputEnterAction(enterContext({ ctrlKey: true, isAgentRunning: true })),
+    ).toBe("alternate-send");
+  });
+
+  it("sends on Cmd+Enter and Ctrl+Enter while running when no queue handler exists", () => {
+    expect(
+      resolveMessageInputEnterAction(
+        enterContext({ metaKey: true, isAgentRunning: true, onQueue: undefined }),
+      ),
+    ).toBe("default-send");
+    expect(
+      resolveMessageInputEnterAction(
+        enterContext({ ctrlKey: true, isAgentRunning: true, onQueue: undefined }),
+      ),
+    ).toBe("default-send");
+  });
+
+  it("returns null for plain and Shift+Enter when command enter to send is on", () => {
+    expect(resolveMessageInputEnterAction(enterContext({ commandEnterToSend: true }))).toBeNull();
+    expect(
+      resolveMessageInputEnterAction(enterContext({ commandEnterToSend: true, shiftKey: true })),
+    ).toBeNull();
+  });
+
+  it("returns null for Shift+Cmd+Enter and Shift+Ctrl+Enter when command enter to send is on", () => {
+    expect(
+      resolveMessageInputEnterAction(
+        enterContext({ commandEnterToSend: true, shiftKey: true, metaKey: true }),
+      ),
+    ).toBeNull();
+    expect(
+      resolveMessageInputEnterAction(
+        enterContext({ commandEnterToSend: true, shiftKey: true, ctrlKey: true }),
+      ),
+    ).toBeNull();
+  });
+
+  it("sends on Cmd+Enter and Ctrl+Enter while idle when command enter to send is on", () => {
+    expect(
+      resolveMessageInputEnterAction(enterContext({ commandEnterToSend: true, metaKey: true })),
+    ).toBe("default-send");
+    expect(
+      resolveMessageInputEnterAction(enterContext({ commandEnterToSend: true, ctrlKey: true })),
+    ).toBe("default-send");
+  });
+
+  it("never queues on modifier Enter while running when command enter to send is on", () => {
+    expect(
+      resolveMessageInputEnterAction(
+        enterContext({ commandEnterToSend: true, metaKey: true, isAgentRunning: true }),
+      ),
+    ).toBe("default-send");
+    expect(
+      resolveMessageInputEnterAction(
+        enterContext({ commandEnterToSend: true, ctrlKey: true, isAgentRunning: true }),
+      ),
+    ).toBe("default-send");
+  });
+
+  describe("composed with the send actions", () => {
+    function actions() {
+      const calls: string[] = [];
+      return {
+        calls,
+        handleSendMessage: () => calls.push("send"),
+        handleQueueMessage: () => calls.push("queue"),
+        onQueue: () => undefined,
+      };
+    }
+
+    function resolveCommandEnterToSendModifierEnter() {
+      return resolveMessageInputEnterAction(
+        enterContext({ commandEnterToSend: true, metaKey: true, isAgentRunning: true }),
+      );
+    }
+
+    it("queues through the default send action when queue behavior is selected and the agent is running", () => {
+      const sendAction = actions();
+
+      expect(resolveCommandEnterToSendModifierEnter()).toBe("default-send");
+
+      runDefaultSendAction({
+        defaultSendBehavior: "queue",
+        isAgentRunning: true,
+        onQueue: sendAction.onQueue,
+        handleSendMessage: sendAction.handleSendMessage,
+        handleQueueMessage: sendAction.handleQueueMessage,
+      });
+
+      expect(sendAction.calls).toEqual(["queue"]);
+    });
+
+    it("sends through the default send action when queue behavior is selected and the agent is idle", () => {
+      const sendAction = actions();
+
+      expect(
+        resolveMessageInputEnterAction(
+          enterContext({ commandEnterToSend: true, metaKey: true, isAgentRunning: false }),
+        ),
+      ).toBe("default-send");
+
+      runDefaultSendAction({
+        defaultSendBehavior: "queue",
+        isAgentRunning: false,
+        onQueue: sendAction.onQueue,
+        handleSendMessage: sendAction.handleSendMessage,
+        handleQueueMessage: sendAction.handleQueueMessage,
+      });
+
+      expect(sendAction.calls).toEqual(["send"]);
+    });
+
+    it.each([{ defaultSendBehavior: "steer" }, { defaultSendBehavior: "interrupt" }] as const)(
+      "sends through the default send action when $defaultSendBehavior behavior is selected and the agent is running",
+      ({ defaultSendBehavior }) => {
+        const sendAction = actions();
+
+        expect(resolveCommandEnterToSendModifierEnter()).toBe("default-send");
+
+        runDefaultSendAction({
+          defaultSendBehavior,
+          isAgentRunning: true,
+          onQueue: sendAction.onQueue,
+          handleSendMessage: sendAction.handleSendMessage,
+          handleQueueMessage: sendAction.handleQueueMessage,
+        });
+
+        expect(sendAction.calls).toEqual(["send"]);
+      },
+    );
   });
 });
 
