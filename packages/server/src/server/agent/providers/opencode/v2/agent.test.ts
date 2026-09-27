@@ -7,6 +7,60 @@ import { OpenCodeV2AgentClient } from "./agent.js";
 import { V2Harness } from "../test-utils/v2-harness.js";
 
 describe("OpenCode v2 session lifecycle", () => {
+  test("reconnects after a helper exits and restores session configuration on the next turn", async () => {
+    const first = new V2Harness();
+    const second = new V2Harness();
+    let exit!: (error: Error) => void;
+    const exited = new Promise<Error>((resolve) => {
+      exit = resolve;
+    });
+    let acquisitions = 0;
+    const client = new OpenCodeV2AgentClient({
+      logger: createTestLogger(),
+      runtime: {
+        acquire: async () => {
+          acquisitions += 1;
+          return acquisitions === 1 ? { ...first.connection, exited } : second.connection;
+        },
+        shutdown: async () => undefined,
+      },
+    });
+    first.wait = () => new Promise<void>(() => undefined);
+    second.prompt = async (input) => {
+      second.history.push({
+        id: "answer",
+        type: "assistant",
+        agent: "build",
+        model: { providerID: "test", id: "model" },
+        time: { created: 2 },
+        content: [{ type: "text", text: "recovered" }],
+      });
+      second.prompts.push(input.text);
+    };
+    const session = await client.createSession(
+      {
+        provider: "opencode",
+        cwd: "/tmp/project",
+        mcpServers: { tools: { type: "stdio", command: "tools" } },
+      },
+      { env: { TOKEN: "test" } },
+    );
+    const running = session.run("before exit");
+    await expect.poll(() => first.prompts).toEqual(["before exit"]);
+    exit(new Error("helper exited"));
+    await expect(running).rejects.toThrow("helper exited");
+    expect(acquisitions).toBe(1);
+    try {
+      expect((await session.run("after exit")).finalText).toBe("recovered");
+      expect(second.prompts).toEqual(["after exit"]);
+      expect(second.mcpAdds).toEqual(["tools"]);
+      expect(second.environments).toEqual([{ sessionID: "session", variables: { TOKEN: "test" } }]);
+      expect(first.releases).toBe(1);
+    } finally {
+      await session.close();
+    }
+    await expect(session.startTurn("after close")).rejects.toThrow("OpenCode session is closed");
+  });
   test("fails initialization when the event stream ends before connecting", async () => {
     const harness = new V2Harness();
     harness.api.event.subscribe = async function* () {};

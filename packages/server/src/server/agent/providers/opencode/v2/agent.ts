@@ -155,6 +155,11 @@ export class OpenCodeV2AgentClient implements AgentClient {
     launch: AgentLaunchContext | undefined,
     persist: boolean,
   ) {
+    const acquire = () =>
+      this.runtime.acquire(
+        requiresDedicatedV2Server(config, launch) ? { env: launch?.env, dedicated: true } : {},
+      );
+    let ownedConnection = connection;
     const unbind = this.options.bridge?.bindSession({
       sessionId: info.id,
       env: launch?.env ?? {},
@@ -162,7 +167,7 @@ export class OpenCodeV2AgentClient implements AgentClient {
     });
     const bound = new Map<string, () => void>();
     const bindChild = (childId: string) => {
-      this.connections.set(childId, connection);
+      this.connections.set(childId, ownedConnection);
       if (bound.has(childId)) return;
       const childUnbind = this.options.bridge?.bindSession({
         sessionId: childId,
@@ -176,7 +181,12 @@ export class OpenCodeV2AgentClient implements AgentClient {
       unbind?.();
       for (const cleanup of bound.values()) cleanup();
       for (const [id, owner] of this.connections)
-        if (owner === connection) this.connections.delete(id);
+        if (owner === ownedConnection) this.connections.delete(id);
+    };
+    const moved = (next: V2Connection) => {
+      for (const [id, owner] of this.connections)
+        if (owner === ownedConnection) this.connections.set(id, next);
+      ownedConnection = next;
     };
     const session = new OpenCodeV2Session(
       connection,
@@ -187,6 +197,8 @@ export class OpenCodeV2AgentClient implements AgentClient {
       Boolean(this.options.bridge),
       releaseBindings,
       bindChild,
+      acquire,
+      moved,
     );
     try {
       if (this.options.bridge) {

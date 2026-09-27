@@ -25,7 +25,7 @@ interface TurnSnapshot {
   history: SessionMessageInfo[];
 }
 interface TurnOptions {
-  client: V2Api;
+  client(): V2Api;
   id: string;
   cwd: string;
   signal: AbortSignal;
@@ -115,16 +115,16 @@ export class SessionTurns {
   ) {
     const command = input.text.match(/^\/([^\s]+)(?:\s+([\s\S]*))?$/);
     if (command?.[1] === "compact" || command?.[1] === "summarize") {
-      await this.options.client.session.compact({ sessionID: this.options.id });
+      await this.options.client().session.compact({ sessionID: this.options.id });
       return;
     }
     const selected = command
-      ? (await commands(this.options.client, this.options.cwd)).find(
+      ? (await commands(this.options.client(), this.options.cwd)).find(
           (item) => item.name === command[1],
         )
       : undefined;
     if (selected && selected.kind !== "skill") {
-      await this.options.client.session.command({
+      await this.options.client().session.command({
         sessionID: this.options.id,
         name: selected.name,
         text: command?.[2] ?? "",
@@ -132,7 +132,7 @@ export class SessionTurns {
       });
       return;
     }
-    await this.options.client.session.prompt({
+    await this.options.client().session.prompt({
       sessionID: this.options.id,
       ...input,
       ...(selected?.kind === "skill"
@@ -148,10 +148,9 @@ export class SessionTurns {
     });
   }
   private async finish(id: string) {
-    await this.options.client.session.wait(
-      { sessionID: this.options.id },
-      { signal: this.options.signal },
-    );
+    await this.options
+      .client()
+      .session.wait({ sessionID: this.options.id }, { signal: this.options.signal });
     const { info, history } = await this.options.reconcile();
     if (this.turn?.id !== id) return;
     if (info.outcome !== "failed" && info.outcome !== "interrupted")
@@ -184,10 +183,12 @@ export class SessionTurns {
   }
   private async readExecutionError(): Promise<string> {
     let message = "OpenCode execution failed";
-    for await (const event of this.options.client.session.log(
-      { sessionID: this.options.id, follow: false },
-      { signal: this.options.signal },
-    )) {
+    for await (const event of this.options
+      .client()
+      .session.log(
+        { sessionID: this.options.id, follow: false },
+        { signal: this.options.signal },
+      )) {
       if (event.type === "session.execution.failed") message = event.data.error.message;
     }
     return message;
@@ -209,7 +210,7 @@ export class SessionTurns {
     options: SteerActiveTurnOptions,
   ): Promise<SteerResult> {
     if (this.turn?.id !== options.expectedTurnId || this.stopping) return { status: "unavailable" };
-    await this.options.client.session.prompt({
+    await this.options.client().session.prompt({
       sessionID: this.options.id,
       ...this.promptInput(prompt),
       delivery: "steer",
@@ -227,7 +228,7 @@ export class SessionTurns {
       const stop = (async () => {
         // A stop sent before the queued prompt is accepted would interrupt an idle session.
         await turn?.submitted;
-        await this.options.client.session.interrupt({ sessionID: this.options.id });
+        await this.options.client().session.interrupt({ sessionID: this.options.id });
         await turn?.completion;
       })();
       this.stopping = stop;

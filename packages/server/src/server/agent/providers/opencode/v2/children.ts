@@ -10,7 +10,7 @@ import { messages } from "./history.js";
 
 import type { V2Api } from "./api.js";
 interface ChildrenOptions {
-  client: V2Api;
+  client(): V2Api;
   id: string;
   emit(event: AgentStreamEvent): void;
   reconcilePermissions(id: string): Promise<void>;
@@ -34,14 +34,14 @@ export class SessionChildren {
       this.children.has(event.data.sessionID)
     ) {
       await this.reconcileChild(
-        await this.options.client.session.get({ sessionID: event.data.sessionID }),
+        await this.options.client().session.get({ sessionID: event.data.sessionID }),
       );
     }
   }
   async reconcile(parentID: string) {
     let cursor: string | undefined;
     do {
-      const page = await this.options.client.session.list({
+      const page = await this.options.client().session.list({
         ...(cursor ? { cursor } : { parentID }),
         limit: 100,
       });
@@ -60,7 +60,7 @@ export class SessionChildren {
       this.children.set(info.id, timeline);
       this.options.bindChild?.(info.id);
     }
-    const active = await this.options.client.session.active();
+    const active = await this.options.client().session.active();
     let status: "running" | "failed" | "canceled" | "completed" = "completed";
     if (active[info.id]) status = "running";
     else if (info.outcome === "failed") status = "failed";
@@ -79,7 +79,7 @@ export class SessionChildren {
       this.childStates.set(info.id, signature);
       this.options.emit({ type: "provider_subagent", provider: "opencode", event: presentation });
     }
-    for (const event of timeline.messages(await messages(this.options.client, info.id))) {
+    for (const event of timeline.messages(await messages(this.options.client(), info.id))) {
       if (event.type === "timeline")
         this.options.emit({
           type: "provider_subagent",
