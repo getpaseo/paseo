@@ -103,6 +103,9 @@ function MarkdownTableFrame({
       horizontal
       nestedScrollEnabled
       showsHorizontalScrollIndicator
+      // Keeps the Android scrollbar visible at rest; a column edge can line up with the frame
+      // edge, and nothing else shows the table continues.
+      persistentScrollbar
       style={frameStyle}
       contentContainerStyle={contentStyle}
     >
