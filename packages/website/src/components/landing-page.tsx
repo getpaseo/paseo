@@ -78,6 +78,7 @@ import { DiscordIcon, GitHubIcon, SlackIcon } from "~/components/brand-icons";
 import { ClaudeIcon, MobileChat, MobileDiff, MobileSidebar, PhoneFrame } from "~/components/mockup";
 import { FAQItem } from "~/components/faq-item";
 import { SiteFooter } from "~/components/site-footer";
+import { PhilosophySection } from "~/components/philosophy";
 import { SponsorSection, SponsorsSection } from "~/components/sponsorship";
 import { SiteHeader } from "~/components/site-header";
 import "~/styles.css";
@@ -124,6 +125,7 @@ export function LandingPage({ title, subtitle }: LandingPageProps) {
             <AutomationSection />
             <ExtensibleSection />
             <FAQ />
+            <PhilosophySection />
             <SponsorSection />
             <SponsorsSection />
           </div>
