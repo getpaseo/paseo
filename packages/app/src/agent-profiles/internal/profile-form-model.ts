@@ -9,6 +9,8 @@ import type { AgentProfile } from "@getpaseo/protocol/messages";
 import { formatAgentModeLabel, formatThinkingOptionLabel } from "@/agent-controls/labels";
 import { applyFeatureValues, pruneFeatureValues } from "@/hooks/feature-preferences";
 import { filterSelectableModels } from "@/provider-selection/model-catalog";
+import { filterVisibleModels } from "@/provider-selection/model-visibility";
+import type { ModelVisibilitySelection } from "@/provider-selection/provider-selection";
 
 /**
  * The persisted profile minus the id; the list owns identity.
@@ -90,6 +92,8 @@ export interface AgentProfileFormState {
 
   providerOptions: AgentProfileFormOption[];
   modelOptions: AgentProfileFormOption[];
+  /** Why the model picker is empty, so the field can explain itself. */
+  modelOptionsState: AgentProfileModelOptionsState;
   modeOptions: AgentProfileFormOption[];
   thinkingOptions: AgentProfileFormOption[];
   features: AgentFeature[];
@@ -111,12 +115,20 @@ export interface AgentProfileFormState {
   submitValue: AgentProfileValue | null;
 }
 
+export type AgentProfileModelOptionsState = "ready" | "loading" | "error" | "all-hidden";
+
 export interface AgentProfileFormModel {
   getState: () => AgentProfileFormState;
   subscribe: (listener: () => void) => () => void;
   close: () => void;
   /** Late input: the host-scoped provider catalog. Never touches selections. */
   applyProviderCatalog: (entries: readonly ProviderSnapshotEntry[]) => void;
+  /**
+   * Late input: which models this host hides. Trims the picker only. A profile
+   * that already names a hidden model keeps it, along with its label and
+   * thinking options.
+   */
+  applyModelVisibility: (modelVisibility: ModelVisibilitySelection | undefined) => void;
   /** Late input: the feature list for one request. Stale keys are ignored. */
   applyFeatures: (requestKey: string, features: readonly AgentFeature[]) => void;
   /** Resolve a request that produced no usable features (provider error). */
@@ -275,10 +287,20 @@ function seedSelections(
   input: {
     entry: ProviderSnapshotEntry | null;
     models: readonly AgentModelDefinition[];
+    /**
+     * Candidates for an implicit default. Narrower than `models` once the host
+     * hides some, so a fresh profile never seeds and saves a hidden model. A
+     * value already in `next` is explicit intent and is left alone.
+     */
+    defaultModelCandidates: readonly AgentModelDefinition[];
     modes: readonly AgentMode[];
+    modelIsExplicit: boolean;
   },
 ): AgentProfileFormState {
-  const modelId = next.modelId || defaultModelId(input.models);
+  const modelId =
+    (input.modelIsExplicit ? next.modelId : "") ||
+    defaultModelId(input.defaultModelCandidates) ||
+    (input.modelIsExplicit ? next.modelId : "");
   const modeId = next.modeId || defaultModeId(input.entry, input.modes);
   const thinkingOptionId =
     next.thinkingOptionId || defaultThinkingOptionId(resolveEffectiveModel(input.models, modelId));
@@ -395,6 +417,7 @@ function buildInitialState(snapshot: AgentProfileFormSnapshot): AgentProfileForm
     featureValues: { ...profile.featureValues },
     providerOptions: [],
     modelOptions: [],
+    modelOptionsState: "ready",
     modeOptions: [],
     thinkingOptions: [],
     features: [],
@@ -421,19 +444,56 @@ function buildInitialState(snapshot: AgentProfileFormSnapshot): AgentProfileForm
 
 export function openAgentProfileForm(snapshot: AgentProfileFormSnapshot): AgentProfileFormModel {
   let entries: readonly ProviderSnapshotEntry[] = [];
+  let modelVisibility: ModelVisibilitySelection | undefined;
+  /**
+   * True when the model came from the saved profile, the seed, or the user
+   * picking one. False means `derive` auto-seeded it, and an auto-seeded value
+   * must be re-derived if visibility later rules it out.
+   */
+  let modelIsExplicit = buildInitialState(snapshot).modelId.length > 0;
   let catalogResolution: AgentProfileResolutionStatus = "idle";
   let resolvedFeatureKey: string | null = null;
   let resolvedFeatures: AgentFeature[] = [];
   let listeners = new Set<() => void>();
   let closed = false;
 
+  function resolveModelOptionsState(
+    models: readonly AgentModelDefinition[],
+    visibleModels: readonly AgentModelDefinition[],
+  ): AgentProfileModelOptionsState {
+    if (visibleModels.length > 0 || models.length === 0) return "ready";
+    if (modelVisibility?.status === "loading") return "loading";
+    if (modelVisibility?.status === "error") return "error";
+    return "all-hidden";
+  }
+
+  /**
+   * Trims the picker to visible models. A supported host with unknown
+   * visibility offers nothing rather than briefly offering hidden models; the
+   * profile's own selection, label and thinking options come from the full
+   * catalog either way.
+   */
+  function resolveVisibleModelOptions(
+    models: readonly AgentModelDefinition[],
+    provider: string,
+  ): readonly AgentModelDefinition[] {
+    if (!modelVisibility || modelVisibility.status === "unavailable") return models;
+    if (modelVisibility.status !== "ready") return [];
+    return (
+      filterVisibleModels([...models], modelVisibility.visibilityByProvider?.[provider]) ?? models
+    );
+  }
+
   function derive(incoming: AgentProfileFormState): AgentProfileFormState {
     const models = resolveModels(entries, incoming.provider);
     const modes = resolveModes(entries, incoming.provider);
+    const visibleModels = resolveVisibleModelOptions(models, incoming.provider);
     const next = seedSelections(incoming, {
       entry: findEntry(entries, incoming.provider),
       models,
+      defaultModelCandidates: visibleModels,
       modes,
+      modelIsExplicit,
     });
     const thinking = resolveThinkingOptions(entries, next.provider, next.modelId);
     const featureRequest = buildFeatureRequest(next);
@@ -448,7 +508,8 @@ export function openAgentProfileForm(snapshot: AgentProfileFormSnapshot): AgentP
     const withOptions: AgentProfileFormState = {
       ...next,
       providerOptions: buildProviderOptions(entries),
-      modelOptions: buildModelOptions(models),
+      modelOptions: buildModelOptions(visibleModels),
+      modelOptionsState: resolveModelOptionsState(models, visibleModels),
       modeOptions: buildModeOptions(modes),
       thinkingOptions: buildThinkingOptions(thinking),
       features,
@@ -494,10 +555,15 @@ export function openAgentProfileForm(snapshot: AgentProfileFormSnapshot): AgentP
         hasProvider && (thinking.length > 0 || Boolean(withOptions.thinkingOptionId)),
       showFeaturesField: hasProvider && features.length > 0,
     };
+    // Pre-feature, a provider with models always seeded one. An unset model
+    // alongside a non-empty catalog therefore means visibility hid every
+    // candidate or has not arrived, and saving would record the daemon default.
+    const awaitingVisibleModel = models.length > 0 && withOptions.modelId.length === 0;
     const canSubmit =
       withOptions.name.trim().length > 0 &&
       withOptions.provider.length > 0 &&
-      !withOptions.isSubmitting;
+      !withOptions.isSubmitting &&
+      !awaitingVisibleModel;
     const resolved: AgentProfileFormState = { ...withOptions, disclosure, canSubmit };
     return { ...resolved, submitValue: canSubmit ? buildSubmitValue(resolved) : null };
   }
@@ -531,6 +597,13 @@ export function openAgentProfileForm(snapshot: AgentProfileFormSnapshot): AgentP
       catalogResolution = "complete";
       publish((current) => current);
     },
+    applyModelVisibility: (nextModelVisibility) => {
+      if (closed || modelVisibility === nextModelVisibility) {
+        return;
+      }
+      modelVisibility = nextModelVisibility;
+      publish((current) => current);
+    },
     applyFeatures: (requestKey, features) => {
       if (requestKey !== state.featureRequestKey) {
         return;
@@ -562,6 +635,7 @@ export function openAgentProfileForm(snapshot: AgentProfileFormSnapshot): AgentP
         // Everything below the provider is provider-scoped: a model id, mode id,
         // thinking id or feature id from the old provider means nothing here.
         // Clearing them is enough — `derive` seeds the new provider's defaults.
+        modelIsExplicit = false;
         return {
           ...current,
           provider: providerId,
@@ -577,6 +651,7 @@ export function openAgentProfileForm(snapshot: AgentProfileFormSnapshot): AgentP
       }),
     setModel: (modelId, display) =>
       publish((current) => {
+        modelIsExplicit = true;
         if (current.modelId === modelId) {
           return current;
         }

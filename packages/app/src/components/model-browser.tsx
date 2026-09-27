@@ -51,6 +51,7 @@ import {
   resolveSelectedModelLabel,
   type ProviderSelectionModelRow,
   type ProviderSelectorProvider,
+  type ModelLabelSource,
 } from "@/provider-selection/provider-selection";
 import { useProviderSettingsStore } from "@/stores/provider-settings-store";
 import { useCurrentOverlayLayer } from "@/lib/overlay-root";
@@ -150,6 +151,11 @@ interface ModelBrowserInput {
   selectedProvider: string;
   selectedModel: string;
   isLoading: boolean;
+  /**
+   * Every model the provider knows, pickable or not, so a hidden current model
+   * keeps its label instead of falling back to its raw ID.
+   */
+  catalogModels?: readonly ModelLabelSource[] | null;
   autoFocusSearch?: boolean;
   /** Pinned above the provider list on the root view. `null` hides the section. */
   profiles?: AgentProfilePicker | null;
@@ -269,6 +275,7 @@ export function useModelBrowser({
   selectedProvider,
   selectedModel,
   isLoading,
+  catalogModels = null,
   autoFocusSearch = isWeb,
   profiles = null,
   serverId = null,
@@ -384,8 +391,9 @@ export function useModelBrowser({
         selectedProvider,
         selectedModel,
         isLoading,
+        catalogModels,
       }),
-    [isLoading, providers, selectedModel, selectedProvider],
+    [catalogModels, isLoading, providers, selectedModel, selectedProvider],
   );
 
   const triggerLabel = useMemo(() => {

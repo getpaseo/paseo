@@ -15,6 +15,8 @@ import {
   type ProviderModelsByProvider,
   type UserModifiedFields,
 } from "./resolve-agent-form";
+import { areAllModelsHidden } from "./model-visibility";
+import { resolveSubmissionReadiness } from "./provider-selection";
 import { buildProviderDefinitions } from "@/utils/provider-definitions";
 import type { AgentProviderDefinition } from "@getpaseo/protocol/provider-manifest";
 import type {
@@ -1268,4 +1270,332 @@ it("owns input readiness, reopening and user edits in the reducer", () => {
   expect(state.resolution.status).toBe("pending");
   state = resolveAgentForm(state, { ...inputs, isPreferencesLoading: false, hasSnapshot: true });
   expect(state.form).toMatchObject({ provider: "codex", model: "astra" });
+});
+
+describe("model visibility during resolution", () => {
+  const VISIBILITY_MODELS: AgentModelDefinition[] = [
+    { provider: "codex", id: "gpt-5.3-codex", label: "gpt-5.3-codex", isDefault: true },
+    { provider: "codex", id: "gpt-5.3-codex-mini", label: "gpt-5.3-codex-mini" },
+  ];
+
+  function resolveWithVisibility(input: {
+    initialValues?: Parameters<typeof resolveFormState>[0];
+    preferences?: Parameters<typeof resolveFormState>[1];
+    models?: AgentModelDefinition[] | null;
+    userModified?: Partial<UserModifiedFields>;
+    visibility?: Record<string, Record<string, boolean>>;
+    currentModel?: string;
+  }) {
+    return resolveFormState(
+      input.initialValues,
+      input.preferences ?? { provider: "codex" as AgentProvider },
+      input.models === undefined ? VISIBILITY_MODELS : input.models,
+      { ...INITIAL_USER_MODIFIED, ...input.userModified },
+      makeState({ provider: "codex", model: input.currentModel ?? "" }).form,
+      codexProviderMap,
+      input.visibility,
+    );
+  }
+
+  it("picks the first visible model when the provider default is hidden", () => {
+    const resolved = resolveWithVisibility({
+      preferences: { provider: "codex" as AgentProvider },
+      visibility: { codex: { "gpt-5.3-codex": false } },
+    });
+    // Nothing was requested, so the form stays unset and the composer's visible
+    // default takes over; what matters is that the hidden default is not chosen.
+    expect(resolved.model).not.toBe("gpt-5.3-codex");
+  });
+
+  it("ignores a remembered preference that names a hidden model", () => {
+    const resolved = resolveWithVisibility({
+      preferences: {
+        provider: "codex" as AgentProvider,
+        providerPreferences: { codex: { model: "gpt-5.3-codex" } },
+      },
+      visibility: { codex: { "gpt-5.3-codex": false } },
+    });
+    expect(resolved.model).toBe("gpt-5.3-codex-mini");
+  });
+
+  it("keeps a remembered preference that is still visible", () => {
+    const resolved = resolveWithVisibility({
+      preferences: {
+        provider: "codex" as AgentProvider,
+        providerPreferences: { codex: { model: "gpt-5.3-codex" } },
+      },
+      visibility: { codex: { "gpt-5.3-codex-mini": false } },
+    });
+    expect(resolved.model).toBe("gpt-5.3-codex");
+  });
+
+  it("keeps an explicit initial model even when it is hidden", () => {
+    const resolved = resolveWithVisibility({
+      initialValues: { model: "gpt-5.3-codex" },
+      visibility: { codex: { "gpt-5.3-codex": false } },
+    });
+    expect(resolved.model).toBe("gpt-5.3-codex");
+  });
+
+  it("keeps a model the user already picked even when it is hidden", () => {
+    const resolved = resolveWithVisibility({
+      currentModel: "gpt-5.3-codex",
+      userModified: { model: true },
+      visibility: { codex: { "gpt-5.3-codex": false } },
+    });
+    expect(resolved.model).toBe("gpt-5.3-codex");
+  });
+
+  it('resolves the legacy "default" alias to a visible model', () => {
+    const resolved = resolveWithVisibility({
+      initialValues: { model: "default" },
+      visibility: { codex: { "gpt-5.3-codex": false } },
+    });
+    expect(resolved.model).toBe("gpt-5.3-codex-mini");
+  });
+
+  it("leaves the model unset when every model is hidden", () => {
+    const resolved = resolveWithVisibility({
+      preferences: {
+        provider: "codex" as AgentProvider,
+        providerPreferences: { codex: { model: "gpt-5.3-codex" } },
+      },
+      visibility: { codex: { "gpt-5.3-codex": false, "gpt-5.3-codex-mini": false } },
+    });
+    expect(resolved.model).toBe("");
+  });
+
+  it("scopes hiding to the provider that owns the model ID", () => {
+    const resolved = resolveWithVisibility({
+      preferences: {
+        provider: "codex" as AgentProvider,
+        providerPreferences: { codex: { model: "gpt-5.3-codex" } },
+      },
+      visibility: { claude: { "gpt-5.3-codex": false } },
+    });
+    expect(resolved.model).toBe("gpt-5.3-codex");
+  });
+
+  it("picks a visible default when the user switches provider without a model", () => {
+    const next = resolveAgentForm(makeState({ provider: "claude" }), {
+      type: "SET_PROVIDER_AND_MODEL_FROM_USER",
+      provider: "codex" as AgentProvider,
+      modelId: "",
+      providerDef: TEST_CODEX_DEFINITION,
+      providerModels: VISIBILITY_MODELS,
+      providerPrefs: undefined,
+      modelVisibility: { "gpt-5.3-codex": false },
+    });
+    expect(next.form.model).toBe("gpt-5.3-codex-mini");
+  });
+
+  it("selects no model on a provider switch when every model is hidden", () => {
+    const next = resolveAgentForm(makeState({ provider: "claude" }), {
+      type: "SET_PROVIDER_AND_MODEL_FROM_USER",
+      provider: "codex" as AgentProvider,
+      modelId: "",
+      providerDef: TEST_CODEX_DEFINITION,
+      providerModels: VISIBILITY_MODELS,
+      providerPrefs: undefined,
+      modelVisibility: { "gpt-5.3-codex": false, "gpt-5.3-codex-mini": false },
+    });
+    expect(next.form.model).toBe("");
+  });
+
+  it("keeps a saved profile's own hidden model but not a hidden fallback preference", () => {
+    const withProfileModel = resolveAgentForm(makeState(), {
+      type: "APPLY_PROFILE_FROM_USER",
+      provider: "codex" as AgentProvider,
+      modelId: "gpt-5.3-codex",
+      modeId: "auto",
+      thinkingOptionId: "",
+      providerDef: TEST_CODEX_DEFINITION,
+      providerModels: VISIBILITY_MODELS,
+      providerPrefs: undefined,
+      modelVisibility: { "gpt-5.3-codex": false },
+    });
+    expect(withProfileModel.form.model).toBe("gpt-5.3-codex");
+
+    const withHiddenPreference = resolveAgentForm(makeState(), {
+      type: "APPLY_PROFILE_FROM_USER",
+      provider: "codex" as AgentProvider,
+      modelId: "",
+      modeId: "auto",
+      thinkingOptionId: "",
+      providerDef: TEST_CODEX_DEFINITION,
+      providerModels: VISIBILITY_MODELS,
+      providerPrefs: { model: "gpt-5.3-codex" },
+      modelVisibility: { "gpt-5.3-codex": false },
+    });
+    expect(withHiddenPreference.form.model).toBe("gpt-5.3-codex-mini");
+  });
+
+  it("falls back to a visible model when the user clears the model choice", () => {
+    const next = resolveAgentForm(makeState({ provider: "codex", model: "gpt-5.3-codex" }), {
+      type: "SET_MODEL_FROM_USER",
+      modelId: "",
+      availableModels: VISIBILITY_MODELS,
+      providerPrefs: undefined,
+      modelVisibility: { "gpt-5.3-codex": false },
+    });
+    expect(next.form.model).toBe("gpt-5.3-codex-mini");
+  });
+});
+
+// A completed draft that keeps receiving INPUTS_CHANGED while the user edits
+// visibility in settings. Implicit selections (remembered or defaulted) follow
+// the live visibility; explicit ones (initial values, a profile's own model, a
+// model pick) do not. Readiness is checked with the same helper the composer
+// uses so a hidden implicit model cannot reach a create request.
+describe("completed draft visibility updates", () => {
+  const A = "model-a";
+  const B = "model-b";
+  const LIVE_MODELS: AgentModelDefinition[] = [
+    {
+      provider: "codex",
+      id: A,
+      label: "A",
+      isDefault: true,
+      defaultThinkingOptionId: "high",
+      thinkingOptions: [{ id: "high", label: "High" }],
+    },
+    {
+      provider: "codex",
+      id: B,
+      label: "B",
+      defaultThinkingOptionId: "low",
+      thinkingOptions: [{ id: "low", label: "Low" }],
+    },
+  ];
+  const LIVE_PREFS = {
+    provider: "codex" as AgentProvider,
+    providerPreferences: { codex: { model: A, thinkingByModel: { [A]: "high", [B]: "low" } } },
+  };
+  const HIDE_A = { codex: { [A]: false } };
+  const HIDE_ALL = { codex: { [A]: false, [B]: false } };
+
+  function liveInputs(
+    modelVisibility: Record<string, Record<string, boolean>>,
+    initialValues?: Parameters<typeof resolveFormState>[0],
+  ) {
+    return {
+      type: "INPUTS_CHANGED" as const,
+      serverId: "host",
+      isVisible: true,
+      isCreateFlow: true,
+      isPreferencesLoading: false,
+      hasSnapshot: true,
+      initialValues,
+      preferences: LIVE_PREFS,
+      allowedProviderMap: codexProviderMap,
+      providerModelsByProvider: new Map([["codex", LIVE_MODELS]]) as ProviderModelsByProvider,
+      modelVisibility,
+    };
+  }
+
+  function completedDraft(initialValues?: Parameters<typeof resolveFormState>[0]) {
+    const state = resolveAgentForm(makeState(), liveInputs({}, initialValues));
+    expect(state.resolution.status).toBe("completed");
+    expect(state.form).toMatchObject({ model: A, thinkingOptionId: "high" });
+    return state;
+  }
+
+  function readiness(state: AgentFormReducerState, visibility: Record<string, boolean>) {
+    return resolveSubmissionReadiness({
+      text: "prompt",
+      allowsEmptyAutoSubmit: false,
+      providerCount: 1,
+      selection: {
+        provider: state.form.provider,
+        modelId: state.form.model,
+        availableModels: LIVE_MODELS,
+        isModelLoading: false,
+        allModelsHidden: areAllModelsHidden(LIVE_MODELS, visibility),
+      },
+      autoSubmitConfig: null,
+      workspaceDirectory: "/workspace",
+      hasClient: true,
+    });
+  }
+
+  it("moves a remembered implicit model to the visible one with its thinking option", () => {
+    const state = resolveAgentForm(completedDraft(), liveInputs(HIDE_A));
+    expect(state.form).toMatchObject({ model: B, thinkingOptionId: "low" });
+    expect(readiness(state, HIDE_A.codex)).toEqual({ ok: true });
+  });
+
+  it("clears a remembered implicit model and blocks submission when every model is hidden", () => {
+    const state = resolveAgentForm(completedDraft(), liveInputs(HIDE_ALL));
+    expect(state.form.model).toBe("");
+    expect(readiness(state, HIDE_ALL.codex).ok).toBe(false);
+  });
+
+  it("keeps an explicit initial model when every model is hidden", () => {
+    const initialValues = {
+      provider: "codex" as AgentProvider,
+      model: A,
+      thinkingOptionId: "high",
+    };
+    const state = resolveAgentForm(
+      completedDraft(initialValues),
+      liveInputs(HIDE_ALL, initialValues),
+    );
+    expect(state.form).toMatchObject({ model: A, thinkingOptionId: "high" });
+    expect(readiness(state, HIDE_ALL.codex)).toEqual({ ok: true });
+  });
+
+  it("keeps a profile's own model when every model is hidden", () => {
+    const withProfile = resolveAgentForm(completedDraft(), {
+      type: "APPLY_PROFILE_FROM_USER",
+      provider: "codex" as AgentProvider,
+      modelId: A,
+      modeId: "auto",
+      thinkingOptionId: "high",
+      providerDef: TEST_CODEX_DEFINITION,
+      providerModels: LIVE_MODELS,
+      providerPrefs: LIVE_PREFS.providerPreferences.codex,
+    });
+    const state = resolveAgentForm(withProfile, liveInputs(HIDE_ALL));
+    expect(state.form).toMatchObject({ model: A, thinkingOptionId: "high" });
+    expect(readiness(state, HIDE_ALL.codex)).toEqual({ ok: true });
+  });
+
+  it("keeps a model the user picked when every model is hidden", () => {
+    const withPick = resolveAgentForm(completedDraft(), {
+      type: "SET_MODEL_FROM_USER",
+      modelId: A,
+      availableModels: LIVE_MODELS,
+      providerPrefs: LIVE_PREFS.providerPreferences.codex,
+    });
+    const state = resolveAgentForm(withPick, liveInputs(HIDE_ALL));
+    expect(state.form).toMatchObject({ model: A, thinkingOptionId: "high" });
+    expect(readiness(state, HIDE_ALL.codex)).toEqual({ ok: true });
+  });
+
+  it("does not treat a mode or thinking edit as an explicit model pick", () => {
+    let state = resolveAgentForm(completedDraft(), { type: "SET_MODE_FROM_USER", modeId: "auto" });
+    state = resolveAgentForm(state, {
+      type: "SET_THINKING_OPTION_FROM_USER",
+      thinkingOptionId: "high",
+    });
+    state = resolveAgentForm(state, liveInputs(HIDE_ALL));
+    expect(state.form.model).toBe("");
+    expect(readiness(state, HIDE_ALL.codex).ok).toBe(false);
+  });
+
+  it("does not treat a provider-only pick as an explicit model pick", () => {
+    const providerOnly = resolveAgentForm(makeState(), {
+      type: "SET_PROVIDER_AND_MODEL_FROM_USER",
+      provider: "codex" as AgentProvider,
+      modelId: "",
+      providerDef: TEST_CODEX_DEFINITION,
+      providerModels: LIVE_MODELS,
+      providerPrefs: LIVE_PREFS.providerPreferences.codex,
+    });
+    expect(providerOnly.form.model).toBe(A);
+    let state = resolveAgentForm(providerOnly, liveInputs({}));
+    expect(state.resolution.status).toBe("completed");
+    state = resolveAgentForm(state, liveInputs(HIDE_A));
+    expect(state.form).toMatchObject({ model: B, thinkingOptionId: "low" });
+  });
 });

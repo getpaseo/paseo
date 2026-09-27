@@ -8,6 +8,7 @@ import type { FormPreferences } from "@/create-agent-preferences/preferences";
 import { describe, expect, it } from "vitest";
 import { buildProjectOptionId, type ScheduleProjectTarget } from "./schedule-project-targets";
 import { openScheduleForm, type ScheduleFormSnapshot } from "./schedule-form-model";
+import type { ModelVisibilitySelection } from "@/provider-selection/provider-selection";
 
 type TestSchedule = ScheduleSummary & { serverId: string; serverName: string };
 
@@ -758,5 +759,187 @@ describe("schedule form model", () => {
       selectedMode: "load-test",
       isolation: "worktree",
     });
+  });
+});
+
+describe("schedule model visibility", () => {
+  const TWO_MODELS: AgentModelDefinition[] = [
+    { provider: "mock", id: "model-a", label: "Model A", isDefault: true },
+    { provider: "mock", id: "model-b", label: "Model B" },
+  ];
+
+  function openScheduleWithModels(visibility: ModelVisibilitySelection) {
+    const form = open({
+      mode: "create",
+      defaults: { serverId: "host-a", projectTargets: PROJECT_TARGETS, preferences: {} },
+    });
+    form.applyModelVisibility(visibility);
+    form.applyProviderSnapshot("host-a", providerSnapshot(TWO_MODELS));
+    return form;
+  }
+
+  it("removes hidden models from the schedule picker", () => {
+    const form = openScheduleWithModels({
+      status: "ready",
+      visibilityByProvider: { mock: { "model-a": false } },
+    });
+
+    const rows = form
+      .getState()
+      .modelSelectorProviders.flatMap((provider) =>
+        provider.modelSelection.kind === "models" ? provider.modelSelection.rows : [],
+      );
+    expect(rows.map((row) => row.modelId)).toEqual(["model-b"]);
+    form.close();
+  });
+
+  it("does not default a cleared model choice to a hidden one", () => {
+    const form = openScheduleWithModels({
+      status: "ready",
+      visibilityByProvider: { mock: { "model-a": false } },
+    });
+
+    form.setModel("mock", "");
+    expect(form.getState().selectedModel).toBe("model-b");
+    form.close();
+  });
+
+  it("selects nothing when every model is hidden", () => {
+    const form = openScheduleWithModels({
+      status: "ready",
+      visibilityByProvider: { mock: { "model-a": false, "model-b": false } },
+    });
+
+    form.setModel("mock", "");
+    expect(form.getState().selectedModel).toBe("");
+    form.close();
+  });
+});
+
+describe("schedule model visibility regressions", () => {
+  const TWO: AgentModelDefinition[] = [
+    { provider: "mock", id: "model-a", label: "Model A", isDefault: true },
+    { provider: "mock", id: "model-b", label: "Model B" },
+  ];
+  const ready = (visibility: Record<string, Record<string, boolean>>) =>
+    ({ status: "ready", visibilityByProvider: visibility }) as ModelVisibilitySelection;
+
+  function directChoiceIds(form: ReturnType<typeof open>): string[] {
+    return form
+      .getState()
+      .modelSelectorProviders.flatMap((provider) =>
+        provider.modelSelection.kind === "models"
+          ? provider.modelSelection.rows.map((row) => row.modelId)
+          : [],
+      );
+  }
+
+  function createForm(preferences: FormPreferences = {}) {
+    return open({
+      mode: "create",
+      defaults: { serverId: "host-a", projectTargets: PROJECT_TARGETS, preferences },
+    });
+  }
+
+  // R2: the catalog reference never changes, so only a visibility update can
+  // rebuild the choices.
+  it("rebuilds choices when visibility goes from loading to ready", () => {
+    const form = createForm();
+    form.applyModelVisibility({ status: "loading", visibilityByProvider: undefined });
+    form.applyProviderSnapshot("host-a", providerSnapshot(TWO));
+    expect(form.getState().modelSelectorProviders[0]?.modelSelection.kind).toBe("loading");
+
+    form.applyModelVisibility(ready({ mock: { "model-a": false } }));
+    expect(directChoiceIds(form)).toEqual(["model-b"]);
+    form.close();
+  });
+
+  it("rebuilds choices when visibility goes from error to ready", () => {
+    const form = createForm();
+    form.applyModelVisibility({ status: "error", visibilityByProvider: undefined });
+    form.applyProviderSnapshot("host-a", providerSnapshot(TWO));
+    expect(form.getState().modelSelectorProviders[0]?.modelSelection.kind).toBe("error");
+
+    form.applyModelVisibility(ready({}));
+    expect(directChoiceIds(form)).toEqual(["model-a", "model-b"]);
+    form.close();
+  });
+
+  it("drops a model hidden after the choices were already ready", () => {
+    const form = createForm();
+    form.applyModelVisibility(ready({}));
+    form.applyProviderSnapshot("host-a", providerSnapshot(TWO));
+    expect(directChoiceIds(form)).toEqual(["model-a", "model-b"]);
+
+    form.applyModelVisibility(ready({ mock: { "model-a": false } }));
+    expect(directChoiceIds(form)).toEqual(["model-b"]);
+    form.close();
+  });
+
+  // R3: an omitted model lets the daemon pick, which can be the hidden one.
+  it("resolves a fresh schedule to a visible model instead of omitting it", () => {
+    // A remembered provider with no remembered model is R3's repro: resolution
+    // used to leave the model empty and the daemon picked the hidden default.
+    const form = createForm({ provider: "mock" });
+    form.applyModelVisibility(ready({ mock: { "model-a": false } }));
+    form.applyProviderSnapshot("host-a", providerSnapshot(TWO));
+
+    expect(form.getState().selectedModel).toBe("model-b");
+    form.close();
+  });
+
+  it("ignores a remembered preference naming a hidden model", () => {
+    const form = createForm({
+      provider: "mock",
+      providerPreferences: { mock: { model: "model-a" } },
+    });
+    form.applyModelVisibility(ready({ mock: { "model-a": false } }));
+    form.applyProviderSnapshot("host-a", providerSnapshot(TWO));
+
+    expect(form.getState().selectedModel).toBe("model-b");
+    form.close();
+  });
+
+  it("cannot submit a fresh schedule while every model is hidden", () => {
+    const form = createForm({ provider: "mock" });
+    form.applyModelVisibility(ready({ mock: { "model-a": false, "model-b": false } }));
+    form.applyProviderSnapshot("host-a", providerSnapshot(TWO));
+    form.setPrompt("run the nightly pass");
+
+    expect(form.getState().selectedModel).toBe("");
+    expect(form.getState().canSubmit).toBe(false);
+    form.close();
+  });
+
+  it("cannot submit a fresh schedule with no model while the provider has models", () => {
+    const form = createForm({ provider: "mock" });
+    form.applyModelVisibility({ status: "loading", visibilityByProvider: undefined });
+    form.applyProviderSnapshot("host-a", providerSnapshot(TWO));
+    form.setPrompt("run the nightly pass");
+
+    expect(form.getState().selectedModel).toBe("");
+    expect(form.getState().canSubmit).toBe(false);
+    form.close();
+  });
+
+  // R4: hiding a model must not block saving an unrelated edit.
+  it("still saves a schedule whose saved model is now hidden", () => {
+    const form = open({
+      mode: "edit",
+      schedule: scheduleOnHost({
+        serverId: "host-a",
+        serverName: "Host A",
+        cwd: "/repo/a",
+        model: "model-a",
+      }),
+      defaults: { serverId: null, projectTargets: PROJECT_TARGETS, preferences: {} },
+    });
+    form.applyModelVisibility(ready({ mock: { "model-a": false } }));
+    form.applyProviderSnapshot("host-a", providerSnapshot(TWO));
+    form.setPrompt("only the prompt changed");
+
+    expect(form.getState().selectedModel).toBe("model-a");
+    expect(form.getState().canSubmit).toBe(true);
+    form.close();
   });
 });

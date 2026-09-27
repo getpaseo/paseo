@@ -101,6 +101,11 @@ import {
   remapDraftCwdToWorkspace,
 } from "./new-workspace-fork-context";
 import {
+  assertNewWorkspaceChatSubmission,
+  ModelSelectionValidationError,
+  resolveNewWorkspaceSubmissionError,
+} from "./new-workspace-chat";
+import {
   buildPickerOptionData,
   defaultBasePickerItem,
   pickerItemLabel,
@@ -951,8 +956,9 @@ async function createWorkspaceChatAgent(input: CreateChatAgentInput): Promise<Su
   }
   const provider = composerState.selectedProvider;
   if (!provider) {
-    throw new Error(input.labels.selectModel);
+    throw new ModelSelectionValidationError(input.labels.selectModel);
   }
+  assertNewWorkspaceChatSubmission({ payload, composerState });
   const attachmentSubmitFormat = resolveComposerAttachmentSubmitFormat({
     supportsForgeAttachments: input.supportsForgeSearch,
   });
@@ -1665,7 +1671,9 @@ export function NewWorkspaceScreen({
     draftId: draftId ?? generateDraftId(),
     worktreeSlug: createNameId(),
   }));
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [submissionError, setErrorMessage] = useState<
+    string | ModelSelectionValidationError | null
+  >(null);
   const [creationResult, setCreationResult] = useState<
     WorkspaceCreationResult | { workspace: null }
   >({ workspace: null });
@@ -1776,6 +1784,7 @@ export function NewWorkspaceScreen({
     }),
   });
   const composerState = chatDraft.composerState;
+  const errorMessage = resolveNewWorkspaceSubmissionError(submissionError, composerState);
   const [pickerSelection, dispatchPickerSelection] = useReducer(
     reducePickerSelection,
     initialPickerSelectionState,
@@ -2156,7 +2165,7 @@ export function NewWorkspaceScreen({
       } catch (error) {
         const message = toErrorMessage(error);
         setPendingAction(null);
-        setErrorMessage(message);
+        setErrorMessage(error instanceof ModelSelectionValidationError ? error : message);
         toast.error(message);
       }
     },
@@ -2437,7 +2446,11 @@ export function NewWorkspaceScreen({
           formStack={formStack}
         >
           {composer}
-          {errorMessage ? <Text style={styles.errorText}>{errorMessage}</Text> : null}
+          {errorMessage ? (
+            <Text testID="new-workspace-submit-error" style={styles.errorText}>
+              {errorMessage}
+            </Text>
+          ) : null}
         </NewWorkspaceLayout>
       </View>
     </FileDropZone>

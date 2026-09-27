@@ -3,12 +3,14 @@ import type { AgentModelDefinition, ProviderSnapshotEntry } from "@getpaseo/prot
 import type { AgentProviderDefinition } from "@getpaseo/protocol/provider-manifest";
 import { i18n } from "@/i18n/i18next";
 import {
+  applyModelVisibilityToProviders,
   buildProviderQualifiedDescription,
   buildProviderSelectorProviders,
   buildSelectableProviderSelectorProviders,
   buildSelectedTriggerLabel,
   filterAndRankModelRows,
   matchesModelSearch,
+  resolveEffectiveComposerModelId,
   resolveSelectedModelLabel,
   resolveSubmissionReadiness,
 } from "./provider-selection";
@@ -441,3 +443,279 @@ function getAllModelLabels(providers: ReturnType<typeof buildSelectableProviderS
       : [],
   );
 }
+
+describe("model visibility at the choice boundary", () => {
+  const entries: ProviderSnapshotEntry[] = [
+    {
+      provider: "codex",
+      label: "Codex",
+      enabled: true,
+      status: "ready",
+      models: [
+        { provider: "codex", id: "gpt-5.3-codex", label: "GPT-5.3", isDefault: true },
+        { provider: "codex", id: "gpt-5.3-codex-mini", label: "GPT-5.3 mini" },
+      ],
+    } as ProviderSnapshotEntry,
+    {
+      provider: "claude",
+      label: "Claude",
+      enabled: true,
+      status: "ready",
+      models: [{ provider: "claude", id: "gpt-5.3-codex", label: "Same id, other provider" }],
+    } as ProviderSnapshotEntry,
+  ];
+
+  it("removes hidden rows from the provider that owns them only", () => {
+    const providers = applyModelVisibilityToProviders(
+      buildSelectableProviderSelectorProviders(entries),
+      { status: "ready", visibilityByProvider: { codex: { "gpt-5.3-codex": false } } },
+    );
+    expect(getAllModelLabels(providers)).toEqual(["GPT-5.3 mini", "Same id, other provider"]);
+  });
+
+  it("leaves an empty row list rather than manufacturing a synthetic default", () => {
+    const providers = applyModelVisibilityToProviders(
+      buildSelectableProviderSelectorProviders(entries),
+      {
+        status: "ready",
+        visibilityByProvider: { codex: { "gpt-5.3-codex": false, "gpt-5.3-codex-mini": false } },
+      },
+    );
+    const codex = providers.find((provider) => provider.id === "codex");
+    expect(codex?.modelSelection).toEqual({ kind: "models", rows: [] });
+  });
+
+  it("keeps the synthetic default for a provider that discovered nothing", () => {
+    const emptyEntry = [
+      { provider: "pi", label: "Pi", enabled: true, status: "ready", models: [] },
+    ] as ProviderSnapshotEntry[];
+    const providers = applyModelVisibilityToProviders(
+      buildSelectableProviderSelectorProviders(emptyEntry),
+      { status: "ready", visibilityByProvider: { pi: {} } },
+    );
+    expect(getAllModelLabels(providers)).toHaveLength(1);
+  });
+
+  it("returns the same providers when the host has no preference", () => {
+    const providers = buildSelectableProviderSelectorProviders(entries);
+    expect(applyModelVisibilityToProviders(providers, undefined)).toBe(providers);
+  });
+});
+
+describe("resolveEffectiveComposerModelId", () => {
+  const models: AgentModelDefinition[] = [
+    { provider: "codex", id: "gpt-5.3-codex", label: "GPT-5.3", isDefault: true },
+    { provider: "codex", id: "gpt-5.3-codex-mini", label: "GPT-5.3 mini" },
+  ];
+
+  it("never launches a hidden model as the implicit default", () => {
+    expect(
+      resolveEffectiveComposerModelId({
+        provider: "codex",
+        modelId: "",
+        modeId: "",
+        thinkingOptionId: "",
+        availableModels: models,
+        visibleModels: [models[1]],
+        modeOptions: [],
+      }),
+    ).toBe("gpt-5.3-codex-mini");
+  });
+
+  it("sends no model when every model is hidden, so nothing hidden can be launched", () => {
+    expect(
+      resolveEffectiveComposerModelId({
+        provider: "codex",
+        modelId: "",
+        modeId: "",
+        thinkingOptionId: "",
+        availableModels: models,
+        visibleModels: [],
+        modeOptions: [],
+      }),
+    ).toBe("");
+  });
+
+  it("still honours an explicit selection of a hidden model", () => {
+    expect(
+      resolveEffectiveComposerModelId({
+        provider: "codex",
+        modelId: "gpt-5.3-codex",
+        modeId: "",
+        thinkingOptionId: "",
+        availableModels: models,
+        visibleModels: [models[1]],
+        modeOptions: [],
+      }),
+    ).toBe("gpt-5.3-codex");
+  });
+});
+
+describe("submission readiness with everything hidden", () => {
+  it("blocks submission instead of letting the daemon pick a hidden default", () => {
+    expect(
+      resolveSubmissionReadiness({
+        text: "hello",
+        allowsEmptyAutoSubmit: false,
+        providerCount: 1,
+        selection: {
+          provider: "codex",
+          modelId: "",
+          availableModels: [{ id: "gpt-5.3-codex" }],
+          isModelLoading: false,
+          allModelsHidden: true,
+        },
+        autoSubmitConfig: null,
+        workspaceDirectory: "/repo",
+        hasClient: true,
+      }),
+    ).toEqual({
+      ok: false,
+      reason: "Every model for this provider is hidden. Show one in provider settings.",
+    });
+  });
+
+  it("still allows a provider that genuinely discovered no models", () => {
+    expect(
+      resolveSubmissionReadiness({
+        text: "hello",
+        allowsEmptyAutoSubmit: false,
+        providerCount: 1,
+        selection: {
+          provider: "pi",
+          modelId: "",
+          availableModels: [],
+          isModelLoading: false,
+          allModelsHidden: false,
+        },
+        autoSubmitConfig: null,
+        workspaceDirectory: "/repo",
+        hasClient: true,
+      }),
+    ).toEqual({ ok: true });
+  });
+});
+
+describe("model visibility load states at the picker", () => {
+  const entries: ProviderSnapshotEntry[] = [
+    {
+      provider: "codex",
+      label: "Codex",
+      enabled: true,
+      status: "ready",
+      models: [{ provider: "codex", id: "gpt-5.3-codex", label: "GPT-5.3", isDefault: true }],
+    } as ProviderSnapshotEntry,
+  ];
+
+  it("keeps pre-feature rows when the host cannot report visibility", () => {
+    const providers = buildSelectableProviderSelectorProviders(entries);
+    expect(
+      applyModelVisibilityToProviders(providers, {
+        status: "unavailable",
+        visibilityByProvider: undefined,
+      }),
+    ).toBe(providers);
+  });
+
+  it("shows loading rather than flashing models that may be hidden", () => {
+    const providers = applyModelVisibilityToProviders(
+      buildSelectableProviderSelectorProviders(entries),
+      { status: "loading", visibilityByProvider: undefined },
+    );
+    expect(providers[0]?.modelSelection).toEqual({ kind: "loading" });
+  });
+
+  it("shows a recoverable error rather than loading forever", () => {
+    const providers = applyModelVisibilityToProviders(
+      buildSelectableProviderSelectorProviders(entries),
+      { status: "error", visibilityByProvider: undefined },
+    );
+    expect(providers[0]?.modelSelection).toEqual({
+      kind: "error",
+      message: "Could not load which models are hidden. Retry to try again.",
+    });
+  });
+});
+
+describe("hide-all blocks fresh choices but not explicit intent (R4)", () => {
+  function readiness(selection: {
+    modelId: string;
+    allModelsHidden: boolean;
+    autoSubmitModel?: string | null;
+  }) {
+    return resolveSubmissionReadiness({
+      text: "go",
+      allowsEmptyAutoSubmit: false,
+      providerCount: 1,
+      selection: {
+        provider: "codex",
+        modelId: selection.modelId,
+        availableModels: [{ id: "gpt-5.3-codex" }],
+        isModelLoading: false,
+        allModelsHidden: selection.allModelsHidden,
+      },
+      autoSubmitConfig:
+        selection.autoSubmitModel === undefined
+          ? null
+          : { provider: "codex", model: selection.autoSubmitModel },
+      workspaceDirectory: "/repo",
+      hasClient: true,
+    });
+  }
+
+  it("sends an explicitly selected model even when every model is hidden", () => {
+    expect(readiness({ modelId: "gpt-5.3-codex", allModelsHidden: true })).toEqual({ ok: true });
+  });
+
+  it("sends an applied profile's model even when every model is hidden", () => {
+    expect(
+      readiness({ modelId: "", allModelsHidden: true, autoSubmitModel: "gpt-5.3-codex" }),
+    ).toEqual({ ok: true });
+  });
+
+  it("still blocks a fresh draft with nothing chosen and everything hidden", () => {
+    expect(readiness({ modelId: "", allModelsHidden: true })).toEqual({
+      ok: false,
+      reason: "Every model for this provider is hidden. Show one in provider settings.",
+    });
+  });
+});
+
+describe("selected model labels come from the full catalog", () => {
+  const providers = buildSelectableProviderSelectorProviders([
+    {
+      provider: "codex",
+      label: "Codex",
+      enabled: true,
+      status: "ready",
+      models: [{ provider: "codex", id: "gpt-5.3-codex-mini", label: "GPT-5.3 mini" }],
+    } as ProviderSnapshotEntry,
+  ]);
+
+  it("keeps a hidden current model's label instead of showing its raw ID", () => {
+    expect(
+      resolveSelectedModelLabel({
+        providers,
+        selectedProvider: "codex",
+        selectedModel: "gpt-5.3-codex",
+        isLoading: false,
+        catalogModels: [
+          { id: "gpt-5.3-codex", label: "GPT-5.3" },
+          { id: "gpt-5.3-codex-mini", label: "GPT-5.3 mini" },
+        ],
+      }),
+    ).toBe("GPT-5.3");
+  });
+
+  it("falls back to the ID when the catalog does not know the model", () => {
+    expect(
+      resolveSelectedModelLabel({
+        providers,
+        selectedProvider: "codex",
+        selectedModel: "retired-model",
+        isLoading: false,
+        catalogModels: [{ id: "gpt-5.3-codex-mini", label: "GPT-5.3 mini" }],
+      }),
+    ).toBe("retired-model");
+  });
+});

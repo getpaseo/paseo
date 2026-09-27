@@ -3,6 +3,12 @@ export type KeyboardFocusScope =
   | "message-input"
   | "command-center"
   | "editable"
+  /**
+   * An activatable control has focus: a switch, checkbox, radio or button. It
+   * consumes its own activation keys, so global bindings that would swallow
+   * them must not fire here.
+   */
+  | "control"
   | "browser"
   | "other";
 

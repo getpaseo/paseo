@@ -13,7 +13,10 @@ import { resolveModelBrowserScrolling } from "@/components/model-browser-view";
 import { AgentControlTrigger } from "@/composer/agent-controls/control";
 import { ComposerToolbarGlyph } from "@/composer/agent-controls/glyph";
 import { resolveModelSheetOpening } from "@/composer/agent-controls/model-sheet-flow";
-import type { ProviderSelectorProvider } from "@/provider-selection/provider-selection";
+import type {
+  ModelLabelSource,
+  ProviderSelectorProvider,
+} from "@/provider-selection/provider-selection";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { isNative, isWeb } from "@/constants/platform";
 
@@ -31,6 +34,8 @@ interface CompactModelSheetProps {
   thinkingLabel: string | null;
   onSelect: (provider: string, modelId: string) => void;
   isLoading: boolean;
+  /** Every model the provider knows, so a hidden current model keeps its label. */
+  catalogModels?: readonly ModelLabelSource[] | null;
   profiles?: AgentProfilePicker | null;
   onApplyProfile?: (profileId: string) => void;
   onEditProfiles?: () => void;
@@ -83,6 +88,7 @@ export function CompactModelSheet({
   thinkingLabel,
   onSelect,
   isLoading,
+  catalogModels = null,
   profiles = null,
   onApplyProfile,
   onEditProfiles,
@@ -117,6 +123,7 @@ export function CompactModelSheet({
     selectedProvider,
     selectedModel,
     isLoading,
+    catalogModels,
     autoFocusSearch: isWeb && !usesBottomSheet,
     profiles,
     serverId,
@@ -126,6 +133,7 @@ export function CompactModelSheet({
     selectedProvider,
     selectedModel,
     isLoading,
+    catalogModels,
     autoFocusSearch: isWeb && !usesBottomSheet,
     profiles,
     serverId,
