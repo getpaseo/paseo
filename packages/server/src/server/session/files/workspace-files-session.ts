@@ -47,6 +47,8 @@ export interface WorkspaceFilesSessionHost {
   emit(msg: SessionOutboundMessage, source?: object): void;
   emitBinary(frame: Uint8Array, source?: object): Promise<void>;
   hasBinaryChannel(): boolean;
+  /** Whether the client behind `source` accepts `file.upload.progress`. */
+  acceptsUploadProgress(source: object): boolean;
 }
 
 export interface WorkspaceFilesSessionOptions {
@@ -378,15 +380,28 @@ export class WorkspaceFilesSession {
     let cancel: (() => Promise<void>) | undefined;
     const operation = ownership.operation(
       (message) =>
-        message.type === "file.upload.response" && message.payload.requestId === request.requestId,
+        (message.type === "file.upload.response" || message.type === "file.upload.progress") &&
+        message.payload.requestId === request.requestId,
       () => cancel?.(),
     );
-    cancel = this.fileUploads.beginUpload(request, operation.source, (response) => {
-      if (response) operation.emit(response);
-      void operation
-        .release()
-        .catch((error) => this.logger.error({ err: error }, "Upload cleanup failed"));
-    });
+    const progress = this.host.acceptsUploadProgress(operation.source)
+      ? (receivedBytes: number) =>
+          operation.emit({
+            type: "file.upload.progress",
+            payload: { requestId: request.requestId, receivedBytes },
+          })
+      : undefined;
+    cancel = this.fileUploads.beginUpload(
+      request,
+      operation.source,
+      (response) => {
+        if (response) operation.emit(response);
+        void operation
+          .release()
+          .catch((error) => this.logger.error({ err: error }, "Upload cleanup failed"));
+      },
+      progress,
+    );
   }
 
   async handleFileTransferFrame(frame: FileTransferFrame, source: object): Promise<void> {

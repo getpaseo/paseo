@@ -876,6 +876,8 @@ export class Session {
         emit: (msg, source) => this.emitForSource(msg, source),
         emitBinary: (frame, source) => this.emitBinaryForFileTransfer(frame, source),
         hasBinaryChannel: () => this.onBinaryMessage !== null,
+        acceptsUploadProgress: (source) =>
+          this.supportsForSource(CLIENT_CAPS.fileUploadProgress, source),
       },
       downloadTokenStore,
       paseoHome,

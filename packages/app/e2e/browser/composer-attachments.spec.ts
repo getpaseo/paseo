@@ -38,7 +38,14 @@ import { seedWorkspace } from "../support/helpers/seed-client";
 import { hasGithubAuth, createTempGithubRepo } from "../support/helpers/github-fixtures";
 import { getServerId } from "../support/helpers/server-id";
 import { openFileExplorer } from "../support/helpers/file-explorer";
-import { attachFileFromMenu, controlFileUploadCompletion } from "../support/helpers/composer";
+import {
+  attachFileFromMenu,
+  controlFileUploadCompletion,
+  mebibytes,
+  pauseFileUploadAcknowledgements,
+} from "../support/helpers/composer";
+import { readdir } from "node:fs/promises";
+import path from "node:path";
 
 const MINIMAL_PNG = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
@@ -46,6 +53,19 @@ const MINIMAL_PNG = Buffer.from(
 );
 
 const TEST_IMAGE = { name: "test.png", mimeType: "image/png", buffer: MINIMAL_PNG };
+const LARGE_VIDEO = {
+  name: "recording.mp4",
+  mimeType: "video/mp4",
+  buffer: mebibytes(5),
+};
+
+async function uploadedFileNames(): Promise<string[]> {
+  const root = path.join(process.env.E2E_PASEO_HOME!, "uploads");
+  const dirs = await readdir(root).catch(() => []);
+  const names = await Promise.all(dirs.map((dir) => readdir(path.join(root, dir))));
+  return names.flat();
+}
+
 const TEST_JSON = {
   name: "config.json",
   mimeType: "application/json",
@@ -76,6 +96,64 @@ test.describe("Composer attachments", () => {
     await expect(pending).toHaveCount(0);
     await expect(page.getByTestId("composer-file-attachment-pill")).toContainText(TEST_JSON.name);
     await expectComposerEditable(page);
+  });
+
+  test("a pending upload shows how much the daemon has, and cancelling it discards the upload", async ({
+    page,
+    withWorkspace,
+  }) => {
+    // The client keeps 2 MiB in flight past the last acknowledgement, so holding
+    // acknowledgements beyond 2.5 MiB stops a 5 MiB upload at exactly half.
+    const acknowledgements = await pauseFileUploadAcknowledgements(page, 2.5 * 1024 * 1024);
+    const workspace = await withWorkspace({ prefix: "attach-upload-cancel-" });
+    await workspace.navigateTo();
+    await clickNewChat(page);
+    await expectComposerVisible(page);
+
+    await attachFileFromMenu(page, LARGE_VIDEO);
+
+    const pending = page.getByTestId("composer-pending-file-attachment");
+    await expect(pending).toContainText(LARGE_VIDEO.name);
+    await expect(pending.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "50");
+    await expect(pending).not.toContainText("%");
+
+    // On a wide screen the remove button shows on hover, as it does for every attachment.
+    await pending.hover();
+    await page.getByRole("button", { name: "Cancel upload" }).click();
+    await expect(pending).toHaveCount(0);
+    await acknowledgements.waitForUploadResponse();
+    acknowledgements.release();
+
+    await expect(page.getByTestId("composer-file-attachment-pill")).toHaveCount(0);
+    await expectComposerEditable(page);
+    expect(await uploadedFileNames()).not.toContain(LARGE_VIDEO.name);
+  });
+
+  test("cancelling one upload keeps the next file in the batch uploading", async ({
+    page,
+    withWorkspace,
+  }) => {
+    const acknowledgements = await pauseFileUploadAcknowledgements(page, 2.5 * 1024 * 1024);
+    const workspace = await withWorkspace({ prefix: "attach-upload-batch-" });
+    await workspace.navigateTo();
+    await clickNewChat(page);
+    await expectComposerVisible(page);
+
+    await attachFileFromMenu(page, [LARGE_VIDEO, TEST_JSON]);
+    const pending = page.getByTestId("composer-pending-file-attachment");
+    await expect(pending).toHaveCount(2);
+    await expect(pending.first().getByRole("progressbar")).toHaveAttribute("aria-valuenow", "50");
+
+    await pending.first().hover();
+    await page.getByRole("button", { name: "Cancel upload" }).first().click();
+    acknowledgements.release();
+
+    await expect(pending).toHaveCount(0);
+    await expect(page.getByTestId("composer-file-attachment-pill")).toHaveCount(1);
+    await expect(page.getByTestId("composer-file-attachment-pill")).toContainText(TEST_JSON.name);
+    const uploaded = await uploadedFileNames();
+    expect(uploaded).toContain(TEST_JSON.name);
+    expect(uploaded).not.toContain(LARGE_VIDEO.name);
   });
 
   test("compact Plus menu aligns attachment rows with its sheet title", async ({

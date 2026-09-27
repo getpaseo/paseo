@@ -18,6 +18,10 @@ import { createUserMessage, generateMessageId, type UserMessageItem } from "@/ty
 import type { MessageSubmissionRejectionOutcome } from "@/composer/submission/model";
 import type { PickedImageAttachmentInput } from "@/hooks/image-attachment-picker";
 import { i18n } from "@/i18n/i18next";
+import {
+  FileUploadAbortedError,
+  type FileUploadProgress,
+} from "@getpaseo/client/internal/daemon-client";
 
 export interface QueuedComposerMessage {
   id: string;
@@ -55,7 +59,13 @@ export interface ComposerSendClient {
       attachments: ReturnType<typeof splitComposerAttachmentsForSubmit>["attachments"];
     },
   ) => Promise<void>;
-  uploadFile: (input: { fileName: string; mimeType: string; bytes: Uint8Array }) => Promise<{
+  uploadFile: (input: {
+    fileName: string;
+    mimeType: string;
+    bytes: Uint8Array;
+    signal?: AbortSignal;
+    onProgress?: (progress: FileUploadProgress) => void;
+  }) => Promise<{
     requestId: string;
     file: {
       type: "uploaded_file";
@@ -122,9 +132,23 @@ export async function pickAndPersistImages(input: {
   );
 }
 
+export interface FileUploadControl {
+  signal?: AbortSignal;
+  onProgress?: (progress: FileUploadProgress) => void;
+}
+
+/**
+ * Uploads `files` in order. Every file is read and size-checked before the first
+ * byte is sent, so a batch with an unreadable or oversized file uploads nothing.
+ * `controls[i]` belongs to `files[i]`: aborting it drops that file alone, and the
+ * others carry on. Each finished file is handed to `onUploaded` as soon as the
+ * daemon has it.
+ */
 export async function uploadFileAttachments(input: {
   client: ComposerSendClient;
   files: SelectedFile[];
+  controls?: readonly FileUploadControl[];
+  onUploaded?: (attachment: Extract<ComposerAttachment, { kind: "file" }>, index: number) => void;
 }): Promise<Extract<ComposerAttachment, { kind: "file" }>[]> {
   const result: Extract<ComposerAttachment, { kind: "file" }>[] = [];
   const prepared: Array<{ fileName: string; mimeType: string; bytes: Uint8Array }> = [];
@@ -143,15 +167,39 @@ export async function uploadFileAttachments(input: {
     });
   }
 
-  for (const file of prepared) {
-    const response = await input.client.uploadFile(file);
-    if (response.error || !response.file) {
-      throw new Error(response.error ?? "Upload failed.");
-    }
-    result.push({ kind: "file", attachment: response.file });
+  for (const [index, file] of prepared.entries()) {
+    const attachment = await uploadOneFileAttachment(input.client, file, input.controls?.[index]);
+    if (!attachment) continue;
+    result.push(attachment);
+    input.onUploaded?.(attachment, index);
   }
 
   return result;
+}
+
+/** Null when the upload was cancelled. */
+async function uploadOneFileAttachment(
+  client: ComposerSendClient,
+  file: { fileName: string; mimeType: string; bytes: Uint8Array },
+  control: FileUploadControl | undefined,
+): Promise<Extract<ComposerAttachment, { kind: "file" }> | null> {
+  if (control?.signal?.aborted) return null;
+  let response: Awaited<ReturnType<ComposerSendClient["uploadFile"]>>;
+  try {
+    response = await client.uploadFile({
+      ...file,
+      ...(control?.signal ? { signal: control.signal } : {}),
+      ...(control?.onProgress ? { onProgress: control.onProgress } : {}),
+    });
+  } catch (error) {
+    if (error instanceof FileUploadAbortedError) return null;
+    throw error;
+  }
+  if (control?.signal?.aborted) return null;
+  if (response.error || !response.file) {
+    throw new Error(response.error ?? "Upload failed.");
+  }
+  return { kind: "file", attachment: response.file };
 }
 
 export function removeComposerAttachmentAtIndex<T extends ComposerAttachment>(input: {

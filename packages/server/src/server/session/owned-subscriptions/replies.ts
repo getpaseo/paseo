@@ -32,6 +32,7 @@ const exceptions = {
   agent_permission_resolved: ["agent_permission_response"],
   terminals_changed: ["subscribe_terminals_request"],
   "daemon.update.progress": ["daemon.update.request"],
+  "file.upload.progress": ["file.upload.request"],
   // Transcription belongs to the explicitly retained voice operation, not a request ID.
   transcription_result: [],
   // This legacy requestId is a producer marker; checkout updates require event demand.

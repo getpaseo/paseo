@@ -17,6 +17,7 @@ interface PendingUpload {
   source: object;
   completed: boolean;
   finished(response: FileUploadResponse | null): void;
+  progress?: (receivedBytes: number) => void;
   fileName: string;
   mimeType: string;
   size: number;
@@ -46,6 +47,7 @@ export class FileUploadStore {
     request: FileUploadRequest,
     source: object = this.defaultSource,
     finished: (response: FileUploadResponse | null) => void = () => {},
+    progress?: (receivedBytes: number) => void,
   ): () => Promise<void> {
     const existingUpload = this.pending.get(source)?.get(request.requestId);
     if (existingUpload) void this.cancel(existingUpload).catch(() => {});
@@ -58,6 +60,7 @@ export class FileUploadStore {
       source,
       completed: false,
       finished,
+      progress,
       fileName,
       mimeType: request.mimeType,
       size: request.size,
@@ -140,6 +143,7 @@ export class FileUploadStore {
     }
     await appendFile(upload.path, bytes);
     upload.receivedBytes += bytes.byteLength;
+    upload.progress?.(upload.receivedBytes);
   }
 
   private async completeUpload(upload: PendingUpload): Promise<FileUploadResponse> {
