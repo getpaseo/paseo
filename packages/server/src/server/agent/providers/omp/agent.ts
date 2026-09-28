@@ -75,11 +75,7 @@ import { getUserMessageText } from "./message-history.js";
 import { mapOmpSystemNoticeToNotification } from "./system-notice.js";
 import { materializeProviderImage } from "../provider-image-output.js";
 import { OmpCliRuntime } from "./cli-runtime.js";
-import {
-  listOmpImportableSessions,
-  readOmpImportSessionConfig,
-  resolveOmpSessionFile,
-} from "./session-descriptor.js";
+import { listOmpImportableSessions, readOmpImportSessionConfig } from "./session-descriptor.js";
 import type { OmpRuntime, OmpRuntimeSession, OmpStartSessionInput } from "./runtime.js";
 import type {
   OmpAgentSessionEvent,
@@ -2292,14 +2288,10 @@ export class OmpAgentClient implements AgentClient {
       sessionDir: this.providerParams.sessionDir,
       runtimeSettings: this.runtimeSettings,
     };
-    const sessionFile = await resolveOmpSessionFile(input.providerHandleId, descriptorOptions);
-    if (!sessionFile) {
-      this.logger.warn(
-        { providerHandleId: input.providerHandleId },
-        "OMP import could not locate the session file; model and thinking level will fall back to provider defaults",
-      );
-    }
-    const importConfig = sessionFile ? await readOmpImportSessionConfig(sessionFile) : {};
+    const importConfig = await readOmpImportSessionConfig(
+      input.providerHandleId,
+      descriptorOptions,
+    );
     return importSessionFromPersistence({
       provider: this.provider,
       request: input,
