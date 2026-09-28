@@ -5,6 +5,7 @@ import { SettingsSection } from "@/components/settings/headings/settings-section
 import { getIsElectron } from "@/constants/platform";
 import { BrowserDataSection } from "@/desktop/browser/settings/browser-data-section";
 import { BrowserStartPageSection } from "@/desktop/browser/settings/browser-start-page-section";
+import { BrowserStreamingSection } from "@/desktop/browser/settings/browser-streaming-section";
 import { useIsLocalDaemon } from "@/hooks/use-is-local-daemon";
 import { BrowserImportSection } from "./browser-import-section";
 import { BrowserToolsOptInCard } from "./browser-tools-card";
@@ -18,6 +19,7 @@ export function HostBrowserPage({ serverId }: { serverId: string }) {
       <SettingsSection title={t("settings.browser.title")} info={t("settings.browser.info")}>
         <BrowserToolsOptInCard serverId={serverId} />
         <BrowserStartPageSection />
+        <BrowserStreamingSection />
         <SettingsCard>
           <SettingsRow
             label={t("settings.browser.howItWorks.label")}

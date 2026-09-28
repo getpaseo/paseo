@@ -224,6 +224,8 @@ export class DaemonPlaywrightHost {
   public async startScreencast(input: {
     workspaceId: string;
     browserId: string;
+    jpegQuality?: number;
+    maxWidth?: number;
     onFrame: (frame: ScreencastFrame) => void;
     onEnd: () => void;
   }): Promise<() => Promise<void>> {
@@ -252,7 +254,11 @@ export class DaemonPlaywrightHost {
       await cdp.detach().catch(() => {});
     };
     try {
-      await cdp.send("Page.startScreencast", { format: "jpeg", quality: SCREENCAST_JPEG_QUALITY });
+      await cdp.send("Page.startScreencast", {
+        format: "jpeg",
+        quality: input.jpegQuality ?? SCREENCAST_JPEG_QUALITY,
+        ...(input.maxWidth ? { maxWidth: input.maxWidth } : {}),
+      });
     } catch (error) {
       await stop();
       throw error;

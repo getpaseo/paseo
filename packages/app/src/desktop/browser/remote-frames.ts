@@ -4,6 +4,7 @@ import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { BrowserAutomationCommand } from "@getpaseo/protocol/browser-automation/rpc-schemas";
 import { useRetainedPanelActive } from "@/components/retained-panel";
 import { useAppVisible } from "@/hooks/use-app-visible";
+import { useAppSettings } from "@/hooks/use-settings";
 import { useHostFeature } from "@/runtime/host-features";
 
 export interface RemoteBrowserFrame {
@@ -83,6 +84,7 @@ export function useRemoteBrowserFrames(input: RemoteBrowserFramesInput) {
   const isPanelActive = useRetainedPanelActive();
   const isAppVisible = useAppVisible();
   const isVisible = isPanelActive && isAppVisible;
+  const quality = useAppSettings().settings.browserStreamQuality;
   const [frame, setFrame] = useState<RemoteBrowserFrame | null>(null);
   const requestedSizeRef = useRef<ViewportSize | null>(null);
   const viewportSizeRef = useRef(input.viewportSize);
@@ -92,7 +94,7 @@ export function useRemoteBrowserFrames(input: RemoteBrowserFramesInput) {
   useEffect(() => {
     if (!supportsScreencast || !client || !remoteBrowserId || !isVisible) return;
     const subscription = client.observeBrowserScreencast(
-      { workspaceId, browserId: remoteBrowserId },
+      { workspaceId, browserId: remoteBrowserId, quality },
       (event) => {
         if (event.type === "ended") {
           stream.failure ??= event.error;
@@ -120,7 +122,7 @@ export function useRemoteBrowserFrames(input: RemoteBrowserFramesInput) {
       if (streamRef.current === stream) streamRef.current = null;
       void subscription.release().catch(() => undefined);
     };
-  }, [client, isVisible, remoteBrowserId, supportsScreencast, workspaceId]);
+  }, [client, isVisible, quality, remoteBrowserId, supportsScreencast, workspaceId]);
 
   const refreshFrame = useCallback(async () => {
     const currentBrowserId = remoteBrowserIdRef.current;

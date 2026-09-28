@@ -172,12 +172,13 @@ describe("BrowserScreencastSession", () => {
       return delivery.request(viewer, message, run);
     }
 
-    async function subscribe(browserId: string) {
+    async function subscribe(browserId: string, quality?: "smooth" | "sharp" | "saver") {
       const message = {
         type: "browser.screencast.subscribe.request" as const,
         requestId: `req-${browserId}`,
         workspaceId: "wks",
         browserId,
+        ...(quality ? { quality } : {}),
       };
       await request(message, () => screencast.subscribe(message, delivery));
     }
@@ -193,6 +194,16 @@ describe("BrowserScreencastSession", () => {
 
     return { viewer, wire, streams, screencast, subscribe, release };
   }
+
+  test("hands the viewer's quality to Chromium, smooth unless asked", async () => {
+    const { streams, subscribe } = setup();
+    await subscribe("tab-default");
+    await subscribe("tab-saver", "saver");
+
+    expect(streams[0]).toMatchObject({ jpegQuality: 70 });
+    expect(streams[0]).not.toHaveProperty("maxWidth");
+    expect(streams[1]).toMatchObject({ jpegQuality: 50, maxWidth: 960 });
+  });
 
   test("answers with a slot before the first frame and paces later frames on acks", async () => {
     const { viewer, wire, streams, screencast, subscribe } = setup();

@@ -26,6 +26,7 @@ import type { EditingTextInputHandle } from "@/components/ui/text-input";
 import { isNative, isWeb } from "@/constants/platform";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import type { Theme } from "@/styles/theme";
+import { useAppSettings } from "@/hooks/use-settings";
 import { useHostRuntimeClient } from "@/runtime/host-runtime";
 import {
   getBrowserRecord,
@@ -598,6 +599,9 @@ function RemoteBrowserPane({
 
   // A trackpad or mouse wheel never reaches the PanResponder, which only sees
   // drags; without this the page scrolls only by click-and-drag, like a phone.
+  const scrollSpeed = Number(useAppSettings().settings.browserScrollSpeed);
+  const scrollSpeedRef = useRef(scrollSpeed);
+  scrollSpeedRef.current = scrollSpeed;
   const frameViewRef = useRef<View | null>(null);
   const hasFrame = frame !== null;
   const wheelRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -622,7 +626,8 @@ function RemoteBrowserPane({
       if (!point) return;
       // deltaMode 1 counts lines and 2 pages; trackpads report pixels (0).
       const unit = [1, 16, bounds.height][event.deltaMode] ?? 1;
-      scheduleScroll(currentBrowserId, point, event.deltaX * unit, event.deltaY * unit);
+      const speed = scrollSpeedRef.current * unit;
+      scheduleScroll(currentBrowserId, point, event.deltaX * speed, event.deltaY * speed);
       if (wheelRefreshTimerRef.current) clearTimeout(wheelRefreshTimerRef.current);
       wheelRefreshTimerRef.current = setTimeout(() => {
         wheelRefreshTimerRef.current = null;

@@ -14,6 +14,7 @@ import type {
 } from "@getpaseo/protocol/messages";
 import type { z } from "zod";
 import type { SessionEventSubscription } from "@getpaseo/protocol/messages";
+import type { BrowserScreencastQuality } from "@getpaseo/protocol/browser-screencast/rpc-schemas";
 import type { ClientCapability } from "@getpaseo/protocol/client-capabilities";
 import type { AgentAttentionNotificationPayload } from "@getpaseo/protocol/agent-attention-notification";
 import {
@@ -2271,7 +2272,7 @@ export class DaemonClient {
    * failed, including after a reconnect; no further frames follow.
    */
   observeBrowserScreencast(
-    input: { workspaceId: string; browserId: string },
+    input: { workspaceId: string; browserId: string; quality?: BrowserScreencastQuality },
     receive: (event: BrowserScreencastEvent) => void,
   ): OwnedSubscription<CorrelatedResponsePayload<"browser.screencast.subscribe.response">> {
     const observation = this.observe("browser.screencast.subscribe.response", {

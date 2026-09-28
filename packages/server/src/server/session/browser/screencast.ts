@@ -7,10 +7,24 @@ import { BrowserToolsRequestError } from "../../browser-tools/errors.js";
 import type { SessionInboundMessage, SessionOutboundMessage } from "../../messages.js";
 import type { DaemonPlaywrightHost, ScreencastFrame } from "../../verify/playwright-host.js";
 import type { SessionDelivery } from "../owned-subscriptions/index.js";
+import type { BrowserScreencastQuality } from "@getpaseo/protocol/browser-screencast/rpc-schemas";
 
 // Chromium only sends a frame when the page repaints, so the cap costs nothing while
 // idle; at 12 a trackpad scroll visibly stepped.
 export const SCREENCAST_MAX_FPS = 30;
+
+interface ScreencastPreset {
+  maxFps: number;
+  jpegQuality: number;
+  /** Chromium downscales frames wider than this; saves bytes on a phone on cellular. */
+  maxWidth?: number;
+}
+
+export const SCREENCAST_PRESETS: Record<BrowserScreencastQuality, ScreencastPreset> = {
+  smooth: { maxFps: SCREENCAST_MAX_FPS, jpegQuality: 70 },
+  sharp: { maxFps: SCREENCAST_MAX_FPS, jpegQuality: 90 },
+  saver: { maxFps: 10, jpegQuality: 50, maxWidth: 960 },
+};
 // Two frames in flight hide one round trip without letting a slow link build a backlog.
 export const SCREENCAST_MAX_UNACKED_FRAMES = 2;
 const MAX_SCREENCAST_SLOTS = 256;
@@ -107,6 +121,7 @@ export class BrowserScreencastSession {
     delivery: SessionDelivery,
   ): Promise<void> {
     const { requestId, workspaceId, browserId } = request;
+    const preset = SCREENCAST_PRESETS[request.quality ?? "smooth"];
     const fail = (error: string) =>
       this.options.emit({
         type: "browser.screencast.subscribe.response",
@@ -119,7 +134,7 @@ export class BrowserScreencastSession {
 
     let stop: (() => Promise<void>) | null = null;
     const pacer = new ScreencastPacer<ScreencastFrame>({
-      minIntervalMs: 1000 / SCREENCAST_MAX_FPS,
+      minIntervalMs: 1000 / preset.maxFps,
       maxUnacked: SCREENCAST_MAX_UNACKED_FRAMES,
       send: (frame, sequence) =>
         owner.emitBinary(
@@ -147,6 +162,8 @@ export class BrowserScreencastSession {
       stop = await host.startScreencast({
         workspaceId,
         browserId,
+        jpegQuality: preset.jpegQuality,
+        ...(preset.maxWidth ? { maxWidth: preset.maxWidth } : {}),
         onFrame: (frame) => pacer.push(frame),
         onEnd: () => {
           owner.emit({ type: "browser.screencast.ended", payload: { browserId } });

@@ -83,6 +83,8 @@ export interface AppSettings {
   codeFontSize: number; // clamped px, default 12
   syntaxTheme: SyntaxThemeId; // default "one"
   accentColor: string; // "" = the theme's own accent, else "#rrggbb"
+  browserStreamQuality: "smooth" | "sharp" | "saver";
+  browserScrollSpeed: "0.5" | "1" | "1.5" | "2" | "3";
   workspaceTitleSource: WorkspaceTitleSource;
   sidebarWorkspaceTrailing: SidebarWorkspaceTrailing;
   sidebarRowItems: SidebarRowItems;
@@ -140,6 +142,8 @@ export const DEFAULT_CLIENT_SETTINGS: AppSettings = {
   codeFontSize: DEFAULT_CODE_FONT_SIZE,
   syntaxTheme: "one",
   accentColor: "",
+  browserStreamQuality: "smooth",
+  browserScrollSpeed: "1",
   workspaceTitleSource: "title",
   sidebarWorkspaceTrailing: "diff",
   sidebarRowItems: DEFAULT_SIDEBAR_ROW_ITEMS,
@@ -232,6 +236,8 @@ const StoredAppSettingsSchema = z
       .string()
       .regex(/^(#[0-9a-fA-F]{6})?$/)
       .catch(""),
+    browserStreamQuality: z.enum(["smooth", "sharp", "saver"]).catch("smooth"),
+    browserScrollSpeed: z.enum(["0.5", "1", "1.5", "2", "3"]).catch("1"),
     workspaceTitleSource: z.enum(["title", "branch"]).catch("title"),
     sidebarWorkspaceTrailing: z.enum(["diff", "timestamp", "none"]).catch("diff"),
     sidebarRowItems: SidebarRowItemsSchema,

@@ -2245,6 +2245,21 @@ export const en = {
         label: "Safety boundary",
         hint: "Screenshots and secret values are not sent to TypeSafe. Low-confidence decisions stop, stale element references are observed again, and success requires explicit text or URL checks.",
       },
+      streaming: {
+        quality: {
+          label: "Stream quality",
+          options: { smooth: "Smooth", sharp: "Sharp", saver: "Data saver" },
+          hints: {
+            smooth: "Up to 30 frames a second at good quality. Best for most setups.",
+            sharp: "Up to 30 frames a second with crisper text and code. Uses more bandwidth.",
+            saver: "Up to 10 frames a second at reduced size, for a phone on mobile data.",
+          },
+        },
+        scrollSpeed: {
+          label: "Scroll speed",
+          hint: "How far the page moves per trackpad or mouse-wheel step on this device.",
+        },
+      },
       startPage: {
         label: "Start page",
         hint: "New browser tabs on this device open this URL. Agents always open the URL they pass directly.",
