@@ -3,6 +3,7 @@ import { expect, test } from "../support/fixtures";
 import { gotoAppShell, openSettings } from "../support/helpers/app";
 import { addConnectedHostAndReload } from "../support/helpers/hosts";
 import { openHostSection, selectSettingsHost } from "../support/helpers/settings";
+import { getServerId } from "../support/helpers/server-id";
 import {
   startRestartableHostDaemon,
   type RestartableHostDaemon,
@@ -29,12 +30,27 @@ test.afterEach(async () => {
 test("host page shows the restarted daemon's version without reloading", async ({ page }) => {
   const host = await startRestartableHostDaemon(PREVIOUS_VERSION);
   hostDaemon = host;
+  const otherHostVersion =
+    await test.step("the connected host reports its current daemon version", async () => {
+      await gotoAppShell(page);
+      await addConnectedHostAndReload(page, {
+        serverId: host.serverId,
+        label: HOST_LABEL,
+        port: host.port,
+      });
+      const version = await readHelpHostVersion(page, getServerId());
+      await expectHelpHostVersion(page, host.serverId, PREVIOUS_VERSION);
+      await openHostPage(page, host);
+      await expect(hostIdentity(page)).toContainText("Online");
+      await expect(hostVersionBadge(page, PREVIOUS_VERSION)).toBeVisible();
+      await markPageForNoReloadCheck(page, NO_RELOAD_MARKER);
+      return version;
+    });
 
-  await test.step("the connected host reports its current daemon version", async () => {
-    await openHostPage(page, host);
-    await expect(hostIdentity(page)).toContainText("Online");
+  await test.step("the last known version remains on the host page when the host stops", async () => {
+    await host.stop();
+    await expect(hostIdentity(page)).toContainText("Error");
     await expect(hostVersionBadge(page, PREVIOUS_VERSION)).toBeVisible();
-    await markPageForNoReloadCheck(page, NO_RELOAD_MARKER);
   });
 
   await test.step("the host daemon restarts on the new version", async () => {
@@ -44,17 +60,28 @@ test("host page shows the restarted daemon's version without reloading", async (
   await test.step("the host page badge follows the new version", async () => {
     await expect(hostVersionBadge(page, UPDATED_VERSION)).toBeVisible({ timeout: 30_000 });
     await expect(hostVersionBadge(page, PREVIOUS_VERSION)).toHaveCount(0);
+    await page.getByRole("button", { name: "Back" }).click();
+    await expectHelpHostVersion(page, host.serverId, UPDATED_VERSION);
+    expect(await readHelpHostVersion(page, getServerId())).toBe(otherHostVersion);
     await expectNoReloadSinceMarker(page);
   });
 });
 
+async function readHelpHostVersion(page: Page, serverId: string): Promise<string> {
+  await page.getByTestId("sidebar-help").click();
+  const row = page.getByTestId(`sidebar-help-host-version-${serverId}`);
+  await expect(row).toBeVisible();
+  const text = await row.innerText();
+  await page.keyboard.press("Escape");
+  return text;
+}
+
+async function expectHelpHostVersion(page: Page, serverId: string, version: string): Promise<void> {
+  const text = await readHelpHostVersion(page, serverId);
+  expect(text).toContain(`v${version}`);
+}
+
 async function openHostPage(page: Page, host: RestartableHostDaemon): Promise<void> {
-  await gotoAppShell(page);
-  await addConnectedHostAndReload(page, {
-    serverId: host.serverId,
-    label: HOST_LABEL,
-    port: host.port,
-  });
   await openSettings(page);
   await selectSettingsHost(page, host.serverId);
   await openHostSection(page, host.serverId, "host");

@@ -17,6 +17,7 @@ const READY_TIMEOUT_MS = 30_000;
 export interface RestartableHostDaemon {
   serverId: string;
   port: number;
+  stop(): Promise<void>;
   restartWithVersion(version: string): Promise<void>;
   dispose(): Promise<void>;
 }
@@ -41,6 +42,11 @@ export async function startRestartableHostDaemon(version: string): Promise<Resta
   return {
     serverId,
     port,
+    async stop() {
+      await current?.stop();
+      current = null;
+      await waitForPortReleased(port);
+    },
     async restartWithVersion(nextVersion) {
       await current?.stop();
       current = null;
