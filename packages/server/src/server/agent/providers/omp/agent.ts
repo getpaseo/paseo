@@ -285,7 +285,8 @@ function isOmpThinkingLevel(value: string | null | undefined): value is OmpThink
     value === "medium" ||
     value === "high" ||
     value === "xhigh" ||
-    value === "max"
+    value === "max" ||
+    value === "auto"
   );
 }
 
