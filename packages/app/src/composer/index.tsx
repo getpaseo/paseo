@@ -152,6 +152,7 @@ import { readClipboardImage } from "./clipboard-image";
 import { normalizeNativePastedImages, type NativePastedFile } from "./native-pasted-image";
 import { PluginResourceAttachmentPill, usePluginAttachmentPicker } from "@/plugins";
 import { resolveClientSlashCommand, type ClientSlashCommand } from "@/client-slash-commands";
+import { ResumeSessionSheet } from "@/composer/resume-session-sheet";
 import {
   appendWorkspaceFileAttachment,
   getWorkspaceFileAttachmentKey,
@@ -1377,6 +1378,8 @@ function ComposerContentImpl({
   useEffect(() => () => cursorPublication.cancel(), [cursorPublication]);
   const autocompleteRef = useRef<ComposerAutocompleteHandle>(null);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [resumeSessionOpen, setResumeSessionOpen] = useState(false);
+  const closeResumeSession = useCallback(() => setResumeSessionOpen(false), []);
   const [pendingFiles, setPendingFiles] = useState<PendingFileAttachment[]>([]);
   const nextPendingFileId = useRef(0);
   const isUploadingFile = pendingFiles.length > 0;
@@ -1419,9 +1422,10 @@ function ComposerContentImpl({
 
   const runClientSlashCommand = useCallback(
     (command: ClientSlashCommand): boolean => {
-      if (command.execution !== "immediate" || !onClientSlashCommand) {
+      if (inputMode !== "chat" || command.execution !== "immediate") {
         return false;
       }
+      if (command.kind !== "import-session" && !onClientSlashCommand) return false;
 
       if (blurOnSubmit) {
         messageInputRef.current?.blur();
@@ -1431,6 +1435,11 @@ function ComposerContentImpl({
       setSelectedAttachments([]);
       resetSuppression();
       setSendError(null);
+      if (command.kind === "import-session") {
+        setResumeSessionOpen(true);
+        return true;
+      }
+      if (!onClientSlashCommand) return false;
       setIsProcessing(true);
       void onClientSlashCommand(command)
         .catch((error) => {
@@ -1445,6 +1454,7 @@ function ComposerContentImpl({
     [
       blurOnSubmit,
       clearDraft,
+      inputMode,
       onClientSlashCommand,
       resetSuppression,
       setSelectedAttachments,
@@ -2401,6 +2411,14 @@ function ComposerContentImpl({
 
   return (
     <>
+      {resumeSessionOpen ? (
+        <ResumeSessionSheet
+          client={client}
+          serverId={serverId}
+          preferredProviderId={agentState.provider ?? commandDraftConfig?.provider ?? undefined}
+          onClose={closeResumeSession}
+        />
+      ) : null}
       <ComposerKeyboardRegistration
         handlerId={keyboardHandlerIdRef.current}
         messageInputRef={messageInputRef}

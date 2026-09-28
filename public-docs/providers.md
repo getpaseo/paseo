@@ -21,6 +21,12 @@ A provider is the contract between Paseo and one external agent CLI: how to laun
 
 Either way, **you install the underlying CLI**. Paseo runs it.
 
+## Resume a terminal session
+
+Type `/resume` in a chat or new-workspace composer to open the selected host's import picker. It prefers the current provider when that provider supports imports and lists recent sessions across the host's working directories. Choose a session to continue it in Paseo under its original directory. Paseo creates a separate workspace for the resumed session so it has its own sidebar entry; the chat you opened the picker from stays open.
+
+The same picker is available from **Import session** in the sidebar. The provider must support session import; search by title, prompt, or directory to narrow a long list.
+
 ## Where to go next
 
 - [Supported providers](/docs/supported-providers), the full list with install links.

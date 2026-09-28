@@ -68,6 +68,7 @@ describe("resolveClientSlashCommand", () => {
     ).toEqual([
       ["exit", ["quit", "q"], "immediate"],
       ["clear", ["new"], "immediate"],
+      ["resume", [], "immediate"],
     ]);
   });
 
@@ -92,6 +93,10 @@ describe("resolveClientSlashCommand", () => {
     expect(resolveClientSlashCommand({ text: "/new", hasAttachments: false })).toMatchObject({
       name: "clear",
       kind: "replace-agent-with-draft",
+    });
+    expect(resolveClientSlashCommand({ text: "/resume", hasAttachments: false })).toMatchObject({
+      name: "resume",
+      kind: "import-session",
     });
   });
 

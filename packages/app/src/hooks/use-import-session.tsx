@@ -3,7 +3,7 @@ import { type Href, useRouter } from "expo-router";
 import { useTranslation } from "react-i18next";
 import { ImportSessionSheet } from "@/components/import-session-sheet";
 import { useHostChooser } from "@/hosts/host-chooser";
-import { useHostRuntimeClient } from "@/runtime/host-runtime";
+import { getHostRuntimeStore, useHostRuntimeClient } from "@/runtime/host-runtime";
 import { buildHostAgentDetailRoute } from "@/utils/host-routes";
 import { useOpenProject } from "@/hooks/use-open-project";
 
@@ -40,6 +40,11 @@ export function useNavigateToImportedAgent(
       if (!normalizedServerId) return;
       const project = await openProject(agent.cwd);
       if (project.ok) {
+        try {
+          await getHostRuntimeStore().refreshDirectories(normalizedServerId);
+        } catch (error) {
+          console.error("Could not refresh imported session in the sidebar", error);
+        }
         router.push(buildHostAgentDetailRoute(normalizedServerId, agent.id) as Href);
       }
     },

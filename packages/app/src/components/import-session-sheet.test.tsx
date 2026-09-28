@@ -221,6 +221,7 @@ interface RenderOptions {
   onImported?: (agent: Awaited<ReturnType<DaemonClient["importAgent"]>>) => void;
   cwd?: string | null;
   workspaceId?: string;
+  preferredProviderId?: string;
   supportsSearch?: boolean;
   projects?: Array<{ iconWorkingDir: string; projectName: string }>;
   snapshot?: {
@@ -264,6 +265,7 @@ function renderSheet(
         serverId="server-1"
         cwd={cwd}
         workspaceId={options?.workspaceId}
+        preferredProviderId={options?.preferredProviderId}
         onClose={options?.onClose ?? vi.fn()}
         onImportedAgent={options?.onImportedAgent ?? vi.fn()}
         onImported={options?.onImported}
@@ -711,6 +713,43 @@ describe("ImportSessionSheet", () => {
     await screen.findByText("Session claude");
     await screen.findByText("Session codex");
     await screen.findByText("Session z-ai");
+  });
+
+  it("starts a host-wide resume picker on the active provider", async () => {
+    const fetchRecentProviderSessions = vi.fn(async (options: { providers?: string[] }) => ({
+      requestId: `recent-${options.providers?.[0]}`,
+      entries: [
+        createProviderSessionEntry({
+          providerId: options.providers?.[0] ?? "omp",
+          providerHandleId: `${options.providers?.[0]}-session`,
+          title: `Session ${options.providers?.[0]}`,
+        }),
+      ],
+    }));
+    const importAgent = vi.fn();
+
+    renderSheet(
+      { fetchRecentProviderSessions, importAgent } as Pick<
+        DaemonClient,
+        "fetchRecentProviderSessions" | "importAgent"
+      >,
+      {
+        cwd: null,
+        preferredProviderId: "omp",
+        snapshot: {
+          supportsSnapshot: true,
+          entries: [createSnapshotEntry("codex"), createSnapshotEntry("omp")],
+        },
+      },
+    );
+
+    await screen.findByText("Session omp");
+    expect(screen.queryByText("Session codex")).toBeNull();
+    expect(fetchRecentProviderSessions).toHaveBeenCalledWith({
+      providers: ["omp"],
+      limit: 15,
+    });
+    screen.getByText("Sessions on workbench");
   });
 
   it("shows partial-failure note when one provider request fails but others succeed", async () => {

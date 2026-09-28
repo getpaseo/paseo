@@ -184,6 +184,7 @@ export const ru: TranslationResources = {
       fileTooLarge: "Файл {{fileName}} слишком большой (максимальный размер: {{size}})",
     },
     clientCommands: {
+      resumeSession: "Возобновить сеанс, запущенный в терминале",
       archiveAgent: "Архивировать текущего агента",
       freshDraft: "Архивировать этого агента и создать новый черновик",
     },

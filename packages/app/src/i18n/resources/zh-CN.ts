@@ -182,6 +182,7 @@ export const zhCN: TranslationResources = {
       fileTooLarge: "{{fileName}} is too large (max {{size}})",
     },
     clientCommands: {
+      resumeSession: "恢复在终端启动的会话",
       archiveAgent: "归档当前 Agent",
       freshDraft: "归档此 Agent 并开始新的草稿",
     },

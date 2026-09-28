@@ -183,6 +183,7 @@ export const ptBR: TranslationResources = {
       fileTooLarge: "{{fileName}} é grande demais (máximo {{size}})",
     },
     clientCommands: {
+      resumeSession: "Retomar uma sessão iniciada no terminal",
       archiveAgent: "Arquivar o agente atual",
       freshDraft: "Arquivar este agente e iniciar um novo rascunho",
     },

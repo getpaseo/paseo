@@ -178,6 +178,7 @@ export const en = {
       fileTooLarge: "{{fileName}} is too large (max {{size}})",
     },
     clientCommands: {
+      resumeSession: "Resume a session started in a terminal",
       archiveAgent: "Archive the current agent",
       freshDraft: "Archive this agent and start a fresh draft",
     },

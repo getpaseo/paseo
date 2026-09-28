@@ -186,6 +186,7 @@ export const fr: TranslationResources = {
       fileTooLarge: "{{fileName}} is too large (max {{size}})",
     },
     clientCommands: {
+      resumeSession: "Reprendre une session lancée dans un terminal",
       archiveAgent: "Archiver l'agent actuel",
       freshDraft: "Archivez cet agent et démarrez un nouveau brouillon",
     },

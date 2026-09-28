@@ -182,6 +182,7 @@ export const ko: TranslationResources = {
       fileTooLarge: "{{fileName}}이(가) 너무 큽니다 (최대 {{size}})",
     },
     clientCommands: {
+      resumeSession: "터미널에서 시작한 세션 다시 시작",
       archiveAgent: "현재 에이전트 보관",
       freshDraft: "이 에이전트를 보관하고 새 초안을 시작합니다",
     },

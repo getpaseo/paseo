@@ -227,7 +227,12 @@ function buildCommandAutocompleteOptions(input: BuildAutocompleteOptionsInput) {
         );
       },
     })
-      .filter((entry) => !input.isDraftContext || entry.source !== "built-in")
+      .filter(
+        (entry) =>
+          !input.isDraftContext ||
+          entry.source !== "built-in" ||
+          entry.command.kind === "import-session",
+      )
       .map((entry): AvailableCommand => {
         if (entry.source === "built-in") return { source: "client", command: entry.command };
         return entry;

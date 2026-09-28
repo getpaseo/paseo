@@ -182,6 +182,7 @@ export const ar: TranslationResources = {
       fileTooLarge: "{{fileName}} is too large (max {{size}})",
     },
     clientCommands: {
+      resumeSession: "استئناف جلسة بدأت في الطرفية",
       archiveAgent: "أرشفة الوكيل الحالي",
       freshDraft: "أرشفة هذا الوكيل وابدأ مسودة جديدة",
     },
