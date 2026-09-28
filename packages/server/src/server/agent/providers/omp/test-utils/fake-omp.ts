@@ -97,7 +97,6 @@ export class FakeOmp implements OmpRuntime {
 }
 
 export class FakeOmpSession implements OmpRuntimeSession {
-  version: string | null = "18.3.0";
   fastModeResult = { enabled: false, active: false };
   readonly setFastModeRequests: boolean[] = [];
   readonly prompts: Array<{ message: string; imageCount: number }> = [];
@@ -163,6 +162,8 @@ export class FakeOmpSession implements OmpRuntimeSession {
       isStreaming: false,
       isCompacting: false,
       autoCompactionEnabled: true,
+      fastModeEnabled: false,
+      fastModeActive: false,
       sessionFile: launch.session ?? "/tmp/omp-session",
       sessionId: "omp-session-1",
       messageCount: 0,
@@ -275,6 +276,11 @@ export class FakeOmpSession implements OmpRuntimeSession {
 
   async setFastMode(enabled: boolean): Promise<{ enabled: boolean; active: boolean }> {
     this.setFastModeRequests.push(enabled);
+    this.state = {
+      ...this.state,
+      fastModeEnabled: this.fastModeResult.enabled,
+      fastModeActive: this.fastModeResult.active,
+    };
     return this.fastModeResult;
   }
 

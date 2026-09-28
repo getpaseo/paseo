@@ -59,7 +59,6 @@ import {
 } from "../diagnostic-utils.js";
 import {
   formatOmpVersionSupport,
-  ompVersionSupportsFastMode,
   mergeOmpRuntimeSettings,
   resolveOmpDiagnosticPaths,
   resolveOmpLaunchMode,
@@ -157,6 +156,7 @@ export interface OmpNoTurnScheduler {
 // guarantees prompt_result waits for queued extension work.
 const OMP_NO_TURN_SETTLE_MS = 5_000;
 const OMP_PROVIDER_IDLE_DEADLINE_MS = 600_000;
+const OMP_FAST_INACTIVE_MESSAGE = "Fast is enabled but does not apply to this model.";
 
 interface OmpPromptPayload {
   text: string;
@@ -464,6 +464,20 @@ function isOmpRequestAbortError(error: unknown): boolean {
   return /\brequest was aborted\b|\babort(ed)?\b/i.test(toDiagnosticErrorMessage(error));
 }
 
+function isOmpSteerTransportFailure(error: unknown): boolean {
+  // JsonlRpcProcess currently uses plain Error for both RPC rejections and transport failures.
+  // Only its own timeout/closed-process messages are transport failures; OMP rejections are unavailable.
+  const message = toDiagnosticErrorMessage(error);
+  return (
+    /^OMP RPC request timed out phase=steer\b/.test(message) ||
+    /^OMP RPC process (?:is closed|exited\b)/.test(message)
+  );
+}
+
+function hasOmpFastMode(state: OmpSessionState): boolean {
+  return typeof state.fastModeEnabled === "boolean" && typeof state.fastModeActive === "boolean";
+}
+
 function resolveThinkingOptionId(
   cachedThinkingOptionId: string | null,
   sessionThinkingLevel: OmpThinkingLevel | undefined,
@@ -604,7 +618,6 @@ export class OmpAgentSession implements AgentSession {
   private readonly providerIdleDeadlineMs: number;
   private readonly noTurnScheduler: OmpNoTurnScheduler;
   private readonly usagePoller: OmpUsagePoller;
-  private fastMode: { enabled: boolean; active: boolean } | null = null;
   private closed = false;
   private live: boolean;
   private readonly emittedUserMessageIds = new Set<string>();
@@ -614,12 +627,6 @@ export class OmpAgentSession implements AgentSession {
     this.runtimeSession = options.runtimeSession;
     this.config = options.config;
     this.state = options.initialState;
-    if (typeof this.state.fastModeEnabled === "boolean") {
-      this.fastMode = {
-        enabled: this.state.fastModeEnabled,
-        active: this.state.fastModeActive === true,
-      };
-    }
     this.currentModeId = options.currentModeId ?? null;
     this.logger = options.logger;
     this.paseoTools = options.paseoTools;
@@ -678,14 +685,17 @@ export class OmpAgentSession implements AgentSession {
   }
 
   get features(): AgentFeature[] {
-    if (!ompVersionSupportsFastMode(this.runtimeSession.version)) return [];
+    if (!hasOmpFastMode(this.state)) return [];
     return [
       {
         type: "toggle",
         id: "fast_mode",
         label: "Fast",
         icon: "zap",
-        value: this.fastMode?.active ?? false,
+        value: this.state.fastModeEnabled === true,
+        ...(this.state.fastModeEnabled && !this.state.fastModeActive
+          ? { description: OMP_FAST_INACTIVE_MESSAGE, tooltip: OMP_FAST_INACTIVE_MESSAGE }
+          : {}),
       },
     ];
   }
@@ -693,10 +703,14 @@ export class OmpAgentSession implements AgentSession {
   async setFeature(featureId: string, value: unknown): Promise<void> {
     if (featureId !== "fast_mode") throw new Error(`Unknown OMP feature: ${featureId}`);
     if (typeof value !== "boolean") throw new Error("OMP fast mode requires a boolean");
-    if (!ompVersionSupportsFastMode(this.runtimeSession.version))
-      throw new Error("OMP fast mode requires version 18.2.1 or newer");
-    this.fastMode = await this.runtimeSession.setFastMode(value);
-    this.config.featureValues = { ...this.config.featureValues, fast_mode: this.fastMode.enabled };
+    if (!hasOmpFastMode(this.state)) throw new Error("OMP fast mode is unavailable");
+    const result = await this.runtimeSession.setFastMode(value);
+    this.state = {
+      ...this.state,
+      fastModeEnabled: result.enabled,
+      fastModeActive: result.active,
+    };
+    this.config.featureValues = { ...this.config.featureValues, fast_mode: result.enabled };
   }
 
   async run(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<AgentRunResult> {
@@ -754,12 +768,7 @@ export class OmpAgentSession implements AgentSession {
           return;
         }
         this.usagePoller.stopTurn();
-        this.activeTurnId = null;
-        this.activeTurnStarted = false;
-        this.activeTurnHasUserMessage = false;
-        this.activeAssistantMessageId = null;
-        this.activeTurnTerminalAssistantMessage = null;
-        this.clearNoTurnBuffers();
+        this.resetActiveTurn({ terminalizeWork: true });
         if (isOmpRequestAbortError(error)) {
           this.emit({
             type: "turn_canceled",
@@ -794,8 +803,7 @@ export class OmpAgentSession implements AgentSession {
       await this.runtimeSession.steer(payload.text, payload.images);
     } catch (error) {
       this.forgetClientMessage(submission);
-      const message = toDiagnosticErrorMessage(error);
-      if (/timed out|session is closed/i.test(message)) throw error;
+      if (isOmpSteerTransportFailure(error)) throw error;
       return { status: "unavailable" };
     }
     if (this.closed || this.activeTurnId !== options.expectedTurnId)
@@ -933,14 +941,8 @@ export class OmpAgentSession implements AgentSession {
     const turnId = this.activeTurnId;
     await this.runtimeSession.abort();
     if (turnId && this.activeTurnId === turnId) {
-      this.terminalizeActiveWork();
       this.usagePoller.stopTurn();
-      this.activeTurnId = null;
-      this.activeTurnStarted = false;
-      this.activeTurnHasUserMessage = false;
-      this.activeAssistantMessageId = null;
-      this.activeTurnTerminalAssistantMessage = null;
-      this.clearNoTurnBuffers();
+      this.resetActiveTurn({ terminalizeWork: true });
       this.emit({
         type: "turn_canceled",
         provider: this.provider,
@@ -996,6 +998,17 @@ export class OmpAgentSession implements AgentSession {
       this.emit(event);
     }
     this.clearOmpTurnState();
+  }
+
+  private resetActiveTurn({ terminalizeWork }: { terminalizeWork: boolean }): void {
+    if (terminalizeWork) this.terminalizeActiveWork();
+    this.activeTurnId = null;
+    this.activeAssistantMessageId = null;
+    this.activeTurnTerminalAssistantMessage = null;
+    this.activeTurnStarted = false;
+    this.activeTurnHasUserMessage = false;
+    this.pendingClientMessages.length = 0;
+    this.clearNoTurnBuffers();
   }
 
   async listCommands(): Promise<AgentSlashCommand[]> {
@@ -1067,11 +1080,8 @@ export class OmpAgentSession implements AgentSession {
     }
 
     const model = await this.runtimeSession.setModel(parsedReference.provider, parsedReference.id);
-    this.state = {
-      ...this.state,
-      model,
-    };
     this.config.model = `${model.provider}/${model.id}`;
+    await this.refreshState();
   }
 
   async setThinkingOption(thinkingOptionId: string | null): Promise<void> {
@@ -1564,17 +1574,14 @@ export class OmpAgentSession implements AgentSession {
 
   private handleProcessExit(error: string): void {
     this.usagePoller.stopTurn();
-    this.terminalizeActiveWork();
-    this.subagentIndex.clear(this.runtimeSession);
     if (!this.activeTurnId) {
+      this.terminalizeActiveWork();
+      this.subagentIndex.clear(this.runtimeSession);
       return;
     }
     const turnId = this.activeTurnId;
-    this.activeTurnId = null;
-    this.activeTurnStarted = false;
-    this.activeTurnHasUserMessage = false;
-    this.activeTurnTerminalAssistantMessage = null;
-    this.clearNoTurnBuffers();
+    this.resetActiveTurn({ terminalizeWork: true });
+    this.subagentIndex.clear(this.runtimeSession);
     this.emit({
       type: "turn_failed",
       provider: this.provider,
@@ -1912,17 +1919,11 @@ export class OmpAgentSession implements AgentSession {
   }
 
   private completeTurn(turnId: string | undefined, messages: OmpAgentMessage[]): void {
-    this.activeTurnId = null;
-    this.activeAssistantMessageId = null;
-    this.activeTurnTerminalAssistantMessage = null;
-    this.activeTurnStarted = false;
-    this.activeTurnHasUserMessage = false;
-    this.clearNoTurnBuffers();
     // OMP reports a stopped turn as a terminal response carrying its interrupt
     // text as an error. That is the user's own Stop, not a failed turn.
     if (isOmpAbortedTerminalResponse(messages)) {
       this.usagePoller.stopTurn();
-      this.terminalizeActiveWork();
+      this.resetActiveTurn({ terminalizeWork: true });
       this.emit({
         type: "turn_canceled",
         provider: this.provider,
@@ -1934,6 +1935,7 @@ export class OmpAgentSession implements AgentSession {
     const errorMessage = latestOmpErrorMessage(messages);
     if (typeof errorMessage === "string" && errorMessage.length > 0) {
       this.usagePoller.stopTurn();
+      this.resetActiveTurn({ terminalizeWork: true });
       this.emit({
         type: "turn_failed",
         provider: this.provider,
@@ -1943,6 +1945,7 @@ export class OmpAgentSession implements AgentSession {
       return;
     }
     const finalUsage = this.usagePoller.completeTurn(turnId);
+    this.resetActiveTurn({ terminalizeWork: false });
     this.emit({
       type: "turn_completed",
       provider: this.provider,
@@ -1959,9 +1962,7 @@ export class OmpAgentSession implements AgentSession {
     while (!this.closed && this.activeTurnStarted && this.currentTurnIdForEvent() === turnId) {
       if (Date.now() >= deadline) {
         this.usagePoller.stopTurn();
-        this.activeTurnId = null;
-        this.activeTurnStarted = false;
-        this.clearNoTurnBuffers();
+        this.resetActiveTurn({ terminalizeWork: true });
         this.emit({
           type: "turn_failed",
           provider: this.provider,
@@ -2051,11 +2052,13 @@ export class OmpAgentClient implements AgentClient {
   private async restoreFastMode(
     runtimeSession: OmpRuntimeSession,
     config: AgentSessionConfig,
-  ): Promise<void> {
+    state: OmpSessionState,
+  ): Promise<OmpSessionState> {
     const value = config.featureValues?.fast_mode;
-    if (typeof value === "boolean" && ompVersionSupportsFastMode(runtimeSession.version)) {
-      await runtimeSession.setFastMode(value);
-    }
+    if (typeof value !== "boolean" || !hasOmpFastMode(state) || value === state.fastModeEnabled)
+      return state;
+    const result = await runtimeSession.setFastMode(value);
+    return { ...state, fastModeEnabled: result.enabled, fastModeActive: result.active };
   }
 
   async createSession(
@@ -2076,11 +2079,15 @@ export class OmpAgentClient implements AgentClient {
     });
     try {
       await this.configureNativePaseoTools(runtimeSession, launchContext?.paseoTools);
-      await this.restoreFastMode(runtimeSession, config);
+      const initialState = await this.restoreFastMode(
+        runtimeSession,
+        config,
+        await runtimeSession.getState(),
+      );
       return new OmpAgentSession({
         runtimeSession,
         config,
-        initialState: await runtimeSession.getState(),
+        initialState,
         currentModeId: launchMode.modeId,
         logger: this.logger,
         subagentCardScheduler: this.subagentCardScheduler,
@@ -2120,11 +2127,15 @@ export class OmpAgentClient implements AgentClient {
     );
     try {
       await this.configureNativePaseoTools(runtimeSession, launchContext?.paseoTools);
-      await this.restoreFastMode(runtimeSession, resumeConfig.config);
+      const initialState = await this.restoreFastMode(
+        runtimeSession,
+        resumeConfig.config,
+        await runtimeSession.getState(),
+      );
       return new OmpAgentSession({
         runtimeSession,
         config: resumeConfig.config,
-        initialState: await runtimeSession.getState(),
+        initialState,
         currentModeId: launchMode.modeId,
         logger: this.logger,
         subagentCardScheduler: this.subagentCardScheduler,

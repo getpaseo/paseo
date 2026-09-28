@@ -395,9 +395,17 @@ describe("OMP agent client and session", () => {
       isCompacting: false,
     });
     await scheduler.waitForWaits(1);
+    omp.runtime().emit({
+      type: "tool_execution_start",
+      toolCallId: "tool-at-deadline",
+      toolName: "bash",
+      args: { command: "sleep 30" },
+    });
+    expect(omp.runningToolCallIds()).toEqual(["tool-at-deadline"]);
     await new Promise((resolve) => setTimeout(resolve, 2));
     scheduler.retry();
     await expect(completion).rejects.toThrow(/provider idle/i);
+    expect(omp.runningToolCallIds()).toEqual([]);
   });
 
   test("steers a running turn and correlates a template-expanded echo exactly once", async () => {
@@ -433,6 +441,20 @@ describe("OMP agent client and session", () => {
     ).resolves.toEqual({ status: "unavailable" });
   });
 
+  test("propagates an OMP steer transport timeout", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    const session = omp.requireSession();
+    const { turnId } = await session.startTurn("first");
+    const timeout = new Error(
+      "OMP RPC request timed out phase=steer elapsedMs=60000 timeoutMs=60000",
+    );
+    omp.runtime().steerError = timeout;
+    await expect(session.steerActiveTurn?.("second", { expectedTurnId: turnId })).rejects.toBe(
+      timeout,
+    );
+  });
+
   test("shows OMP's fallback model without persisting it as the selected model", async () => {
     const omp = new OmpHarness();
     await omp.start({ model: "openrouter/google/gemini-3.8-flash" });
@@ -448,6 +470,7 @@ describe("OMP agent client and session", () => {
       role: "primary",
     });
     runtime.state = { ...runtime.state, model: { provider: "openrouter", id: "other/model" } };
+    runtime.state = { ...runtime.state, fastModeEnabled: true, fastModeActive: false };
     runtime.emit({ type: "model_changed" });
     await waitForImmediate();
     expect(omp.eventTypes()).toContain("model_changed");
@@ -455,27 +478,88 @@ describe("OMP agent client and session", () => {
     expect(omp.requireSession().describePersistence()?.metadata?.model).toBe(
       "openrouter/google/gemini-3.8-flash",
     );
+    expect(omp.requireSession().features).toEqual([
+      expect.objectContaining({
+        value: true,
+        description: expect.stringMatching(/does not apply/i),
+      }),
+    ]);
   });
 
-  test("fast mode uses OMP's active result for the current model", async () => {
+  test("Fast stays selected when OMP says it is inactive for the current model", async () => {
     const omp = new OmpHarness();
     await omp.start({ model: "openrouter/google/gemini-3.8-flash" });
     const session = omp.requireSession();
     omp.runtime().fastModeResult = { enabled: true, active: false };
     await session.setFeature?.("fast_mode", true);
     expect(omp.runtime().setFastModeRequests).toEqual([true]);
-    expect(session.features).toEqual([expect.objectContaining({ id: "fast_mode", value: false })]);
+    expect(session.features).toEqual([
+      expect.objectContaining({
+        id: "fast_mode",
+        value: true,
+        description: expect.stringMatching(/does not apply to this model/i),
+        tooltip: expect.stringMatching(/does not apply to this model/i),
+      }),
+    ]);
   });
 
-  test("hides fast mode before OMP 18.2.1", async () => {
+  test("shows Fast only when OMP reports its state fields", async () => {
     const omp = new OmpHarness();
     await omp.start();
     const session = omp.requireSession();
-    omp.runtime().version = "18.2.0";
+    const {
+      fastModeEnabled: _enabled,
+      fastModeActive: _active,
+      ...olderState
+    } = omp.runtime().state;
+    omp.runtime().state = olderState;
+    await session.getRuntimeInfo();
     expect(session.features).toEqual([]);
-    await expect(session.setFeature?.("fast_mode", true)).rejects.toThrow("18.2.1");
-    omp.runtime().version = "18.2.1";
+    await expect(session.setFeature?.("fast_mode", true)).rejects.toThrow(/unavailable/i);
+    omp.runtime().state = { ...olderState, fastModeEnabled: false, fastModeActive: false };
+    await session.getRuntimeInfo();
     expect(session.features).toHaveLength(1);
+  });
+
+  test("switching model refreshes whether Fast applies", async () => {
+    const omp = new OmpHarness();
+    await omp.start({ model: "openrouter/google/gemini-3.8-flash" });
+    const session = omp.requireSession();
+    omp.runtime().fastModeResult = { enabled: true, active: true };
+    await session.setFeature?.("fast_mode", true);
+    expect(session.features).toEqual([expect.objectContaining({ value: true })]);
+
+    omp.runtime().setModelResult = { provider: "openrouter", id: "other/model" };
+    omp.runtime().queueStateReports([
+      {
+        ...omp.runtime().state,
+        model: omp.runtime().setModelResult,
+        fastModeEnabled: true,
+        fastModeActive: false,
+      },
+    ]);
+    await session.setModel?.("openrouter/other/model");
+    expect(session.features).toEqual([
+      expect.objectContaining({
+        value: true,
+        description: expect.stringMatching(/does not apply/i),
+      }),
+    ]);
+  });
+
+  test("restores Fast from the initial OMP state on create and resume", async () => {
+    const created = new OmpHarness();
+    await created.start({ featureValues: { fast_mode: true } });
+    expect(created.runtime().setFastModeRequests).toEqual([true]);
+    expect(created.runtime().getStateRequestCount).toBe(1);
+
+    const resumed = new OmpHarness();
+    await resumed.resume(
+      { user: { id: "user-1", text: "hello" }, assistant: { id: "assistant-1", text: "hi" } },
+      { featureValues: { fast_mode: true } },
+    );
+    expect(resumed.runtime().setFastModeRequests).toEqual([true]);
+    expect(resumed.runtime().getStateRequestCount).toBe(1);
   });
 
   test("does not complete on OMP's extension-notice agent_end", async () => {

@@ -3,7 +3,6 @@ import type { Logger } from "pino";
 import { z } from "zod";
 
 import type { ProviderRuntimeSettings } from "../../provider-launch-config.js";
-import { execCommand } from "../../../../utils/spawn.js";
 import {
   JSONL_RPC_NO_TIMEOUT,
   JsonlRpcProcess,
@@ -99,14 +98,7 @@ export class OmpCliRuntime implements OmpRuntime {
         requestTimeoutMs: this.options.requestTimeoutMs,
       });
       input.signal?.throwIfAborted();
-      const version = await execCommand(command, [...this.command.slice(1), "--version"], {
-        cwd: launch.cwd,
-        envOverlay: launch.env,
-        timeout: 5_000,
-      })
-        .then(({ stdout, stderr }) => stdout || stderr)
-        .catch(() => null);
-      return new OmpCliRuntimeSession(process, this.commandsRpcName, version);
+      return new OmpCliRuntimeSession(process, this.commandsRpcName);
     } catch (error) {
       const startupError = error instanceof Error ? error : new Error(String(error));
       await process.close(startupError);
@@ -124,7 +116,6 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
   constructor(
     private readonly process: JsonlRpcProcess,
     private readonly commandsRpcName: "get_available_commands",
-    readonly version: string | null,
   ) {
     process.onMessage((message) => {
       const event = OmpRuntimeEventSchema.safeParse(message);

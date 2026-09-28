@@ -43,7 +43,6 @@ export interface OmpStartSessionInput {
 }
 
 export interface OmpRuntimeSession {
-  readonly version: string | null;
   onEvent(callback: (event: OmpRuntimeEvent) => void): () => void;
   prompt(
     message: string,
