@@ -3616,6 +3616,7 @@ class OpenCodeAgentSession implements AgentSession {
       sessionId: this.sessionId,
       model: this.config.model ?? null,
       modeId: this.currentMode,
+      thinkingOptionId: this.config.thinkingOptionId ?? null,
     };
   }
 
@@ -3627,12 +3628,32 @@ class OpenCodeAgentSession implements AgentSession {
   }
 
   async setModel(modelId: string | null): Promise<void> {
+    await this.reconnectIfServerExited();
     const normalizedModelId =
       typeof modelId === "string" && modelId.trim().length > 0 ? modelId : null;
+    let variant = this.config.thinkingOptionId;
+    if (!normalizedModelId) {
+      variant = undefined;
+    } else if (variant) {
+      const model = this.parseModel(normalizedModelId);
+      const response = await this.client.provider.list({ directory: this.config.cwd });
+      if (response.error)
+        throw new Error(`Failed to fetch OpenCode providers: ${JSON.stringify(response.error)}`);
+      const provider = response.data?.all.find((entry) => entry.id === model?.providerID);
+      const target = model && provider?.models[model.modelID];
+      if (!target) throw new Error(`OpenCode model unavailable: ${normalizedModelId}`);
+      if (!Object.hasOwn(target.variants ?? {}, variant)) variant = undefined;
+    }
     this.config.model = normalizedModelId ?? undefined;
+    this.config.thinkingOptionId = variant;
     this.selectedModelContextWindowMaxTokens = this.resolveConfiguredModelContextWindowMaxTokens(
       this.config.model,
     );
+    this.notifySubscribers({
+      type: "thinking_option_changed",
+      provider: "opencode",
+      thinkingOptionId: variant ?? null,
+    });
   }
 
   async setThinkingOption(thinkingOptionId: string | null): Promise<void> {

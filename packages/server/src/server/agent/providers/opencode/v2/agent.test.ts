@@ -1,4 +1,4 @@
-import type { SessionMessageInfo } from "@opencode/client";
+import type { ModelInfo, SessionMessageInfo } from "@opencode/client";
 import { describe, expect, test } from "vitest";
 
 import { createTestLogger } from "../../../../../test-utils/test-logger.js";
@@ -7,6 +7,89 @@ import { OpenCodeV2AgentClient } from "./agent.js";
 import { V2Harness } from "../test-utils/v2-harness.js";
 
 describe("OpenCode v2 session lifecycle", () => {
+  test.each([
+    { variants: ["medium", "custom"], selected: "medium", expected: "medium" },
+    { variants: ["custom"], selected: "custom", expected: "custom" },
+    { variants: ["high"], selected: "medium", expected: undefined },
+    { variants: [], selected: "medium", expected: undefined },
+    { variants: ["medium"], selected: "default", expected: undefined },
+  ])(
+    "model switches retain only supported variants: $selected / $variants",
+    async ({ variants, selected, expected }) => {
+      const harness = new V2Harness();
+      const target: ModelInfo = {
+        id: "target",
+        modelID: "target",
+        providerID: "test",
+        name: "Target",
+        capabilities: { tools: true, input: ["text"], output: ["text"] },
+        variants: variants.map((id) => ({ id })),
+        time: { released: 1 },
+        cost: [],
+        status: "active",
+        enabled: true,
+        limit: { context: 200000, output: 10000 },
+      };
+      harness.info.model = { providerID: "test", id: "source", variant: selected };
+      harness.api.model.list = async () => ({ location: harness.info.location, data: [target] });
+      harness.api.session.switchModel = async ({ model }) => {
+        harness.info.model = model;
+      };
+      const client = new OpenCodeV2AgentClient({
+        logger: createTestLogger(),
+        runtime: harness.runtime,
+      });
+      const session = await client.createSession({
+        provider: "opencode",
+        cwd: "/tmp/project",
+        model: "test/source",
+        thinkingOptionId: selected,
+      });
+      const events: AgentStreamEvent[] = [];
+      session.subscribe((event) => events.push(event));
+      try {
+        await session.setModel!("test/target");
+        expect(await session.getRuntimeInfo()).toMatchObject({
+          model: "test/target",
+          thinkingOptionId: expected ?? null,
+        });
+        expect(session.describePersistence().metadata?.thinkingOptionId).toBe(expected);
+        expect(events).toContainEqual({
+          type: "thinking_option_changed",
+          provider: "opencode",
+          thinkingOptionId: expected ?? null,
+        });
+        await expect(session.setModel!("test/missing")).rejects.toThrow(
+          "OpenCode model unavailable",
+        );
+        harness.api.session.switchModel = async () => {
+          throw new Error("Switch failed");
+        };
+        await expect(session.setModel!("test/target")).rejects.toThrow("Switch failed");
+        expect(session.describePersistence().metadata?.thinkingOptionId).toBe(expected);
+        expect(harness.info.model).toEqual({
+          providerID: "test",
+          id: "target",
+          ...(expected ? { variant: expected } : {}),
+        });
+        harness.api.session.switchModel = async ({ model }) => {
+          harness.info.model = model;
+        };
+        harness.api.model.default = async () => ({ location: harness.info.location, data: target });
+        await session.setThinkingOption!("unsupported");
+        await session.setModel!(null);
+        expect((await session.getRuntimeInfo()).thinkingOptionId).toBeNull();
+        harness.api.model.list = async () => {
+          throw new Error("Catalog unavailable");
+        };
+        await expect(session.setModel!("test/source")).rejects.toThrow("Catalog unavailable");
+        expect((await session.getRuntimeInfo()).model).toBe("test/target");
+      } finally {
+        await session.close();
+      }
+    },
+  );
+
   test("restores each same-directory agent environment on reconnect and resume", async () => {
     const first = new V2Harness();
     const second = new V2Harness();

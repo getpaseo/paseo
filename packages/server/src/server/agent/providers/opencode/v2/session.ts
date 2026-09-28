@@ -276,25 +276,48 @@ export class OpenCodeV2Session implements AgentSession {
   }
   async setModel(model: string | null) {
     await this.reconnectIfExited();
-    const selected = model
-      ? modelRef(model, this.config.thinkingOptionId)
-      : (await this.client.model.default({ location: { directory: this.config.cwd } })).data;
+    const location = { directory: this.config.cwd };
+    const selected = model ? modelRef(model) : (await this.client.model.default({ location })).data;
     if (!selected) throw new Error("OpenCode has no default model");
-    await this.client.session.switchModel({
-      sessionID: this.id,
-      model: {
-        id: selected.id,
-        providerID: selected.providerID,
-        variant: this.config.thinkingOptionId,
-      },
-    });
+    const catalog = await this.client.model.list({ location });
+    const target = catalog.data.find(
+      (entry) =>
+        entry.enabled && entry.providerID === selected.providerID && entry.id === selected.id,
+    );
+    if (!target)
+      throw new Error(`OpenCode model unavailable: ${selected.providerID}/${selected.id}`);
+    const retainedVariant = this.config.thinkingOptionId;
+    const variant =
+      retainedVariant !== "default" && target.variants.some((entry) => entry.id === retainedVariant)
+        ? retainedVariant
+        : undefined;
+    const nextModel = {
+      id: selected.id,
+      providerID: selected.providerID,
+      ...(variant ? { variant } : {}),
+    };
+    await this.client.session.switchModel({ sessionID: this.id, model: nextModel });
+    this.info.model = nextModel;
     this.config.model = model ?? undefined;
+    this.config.thinkingOptionId = variant;
+    this.emit({
+      type: "thinking_option_changed",
+      provider: "opencode",
+      thinkingOptionId: variant ?? null,
+    });
     this.emit({
       type: "model_changed",
       provider: "opencode",
-      runtimeInfo: await this.getRuntimeInfo(),
+      runtimeInfo: {
+        provider: "opencode",
+        sessionId: this.id,
+        model: `${selected.providerID}/${selected.id}`,
+        modeId: this.info.agent ?? null,
+        thinkingOptionId: variant ?? null,
+      },
     });
   }
+
   async setThinkingOption(variant: string | null) {
     await this.reconnectIfExited();
     const model = this.info.model;

@@ -333,6 +333,76 @@ describe("OpenCodeAgentClient adapter smoke tests", () => {
     model: TEST_MODEL,
   });
 
+  test.each([
+    { variants: { medium: {}, custom: {} }, selected: "medium", expected: "medium" },
+    { variants: { custom: {} }, selected: "custom", expected: "custom" },
+    { variants: { high: {} }, selected: "medium", expected: undefined },
+    { variants: {}, selected: "medium", expected: undefined },
+  ])(
+    "model switches resolve the retained variant: $selected / $variants",
+    async ({ variants, selected, expected }) => {
+      const cwd = tmpCwd();
+      const runtime = new TestOpenCodeHarness();
+      const upstream = new TestOpenCodeClient();
+      upstream.providerListResponse = {
+        data: {
+          connected: ["test"],
+          all: [
+            {
+              id: "test",
+              name: "Test",
+              source: "api",
+              models: { target: { name: "Target", variants } },
+            },
+          ],
+        },
+      };
+      runtime.enqueueClient(upstream);
+      const client = new OpenCodeAgentClient(logger, undefined, {
+        serverManager: runtime,
+        createClient: runtime.createClient,
+      });
+      const session = await client.createSession({
+        provider: "opencode",
+        cwd,
+        model: "test/source",
+        thinkingOptionId: selected,
+      });
+      const events: AgentStreamEvent[] = [];
+      session.subscribe((event) => events.push(event));
+      try {
+        await session.setModel!("test/target");
+        expect((await session.getRuntimeInfo()).thinkingOptionId).toBe(expected ?? null);
+        expect(events).toContainEqual({
+          type: "thinking_option_changed",
+          provider: "opencode",
+          thinkingOptionId: expected ?? null,
+        });
+        upstream.sessionPromptAsyncEvents = [
+          { type: "session.idle", properties: { sessionID: "session-1" } },
+        ];
+        await collectTurnEvents(streamSession(session, "Use the selected model"));
+        expect(upstream.calls.sessionPromptAsync).toEqual([
+          expect.objectContaining({
+            model: { providerID: "test", modelID: "target" },
+            ...(expected ? { variant: expected } : {}),
+          }),
+        ]);
+        if (!expected) expect(upstream.calls.sessionPromptAsync[0]).not.toHaveProperty("variant");
+        await session.setThinkingOption!("medium");
+        await expect(session.setModel!("test/missing")).rejects.toThrow(
+          "OpenCode model unavailable",
+        );
+        upstream.providerListResponse = { error: "Catalog unavailable" };
+        await expect(session.setModel!("test/source")).rejects.toThrow("Catalog unavailable");
+        expect((await session.getRuntimeInfo()).model).toBe("test/target");
+      } finally {
+        await session.close();
+        rmSync(cwd, { recursive: true, force: true });
+      }
+    },
+  );
+
   test("usage reference follows the active OpenCode model and OAuth account", async () => {
     const cwd = tmpCwd();
     const runtime = new TestOpenCodeHarness();
@@ -386,7 +456,13 @@ describe("OpenCodeAgentClient adapter smoke tests", () => {
     expect(events).toContainEqual({
       type: "model_changed",
       provider: "opencode",
-      runtimeInfo: { provider: "opencode", sessionId, model: "openai/gpt-5", modeId: null },
+      runtimeInfo: {
+        provider: "opencode",
+        sessionId,
+        model: "openai/gpt-5",
+        modeId: null,
+        thinkingOptionId: null,
+      },
     });
     await session.close();
     rmSync(cwd, { recursive: true, force: true });
