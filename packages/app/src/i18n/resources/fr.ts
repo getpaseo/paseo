@@ -165,6 +165,7 @@ export const fr: TranslationResources = {
       openImage: "Ouvrir la pièce jointe de l'image",
       removeImage: "Supprimer l'image jointe",
       removeFile: "Remove file attachment",
+      cancelUpload: "Annuler l’envoi",
       openGithub: "Ouvrir {{kind}} {{number}}",
       removeGithub: "Supprimer {{kind}} {{number}}",
       element: "Élément",

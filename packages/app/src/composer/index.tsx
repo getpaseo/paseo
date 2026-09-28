@@ -128,18 +128,14 @@ import type {
   WorkspaceComposerAttachment,
 } from "@/attachments/types";
 import type { SelectedFile } from "@/attachments/selected-file";
+import { createPendingFileUpload, type PendingFileUpload } from "@/composer/pending-file-upload";
 import { resolveComposerAttachmentSubmitFormat } from "@/composer/attachments/submit";
 import { composerWorkspaceAttachment } from "@/composer/attachments/workspace";
 import { useWorkspaceAttachmentsForScopes } from "@/attachments/workspace-attachments-store";
 import { droppedItemsToSelectedFiles } from "@/composer/attachments/drop";
 import { getFileTypeLabel } from "@/attachments/file-types";
 import { Combobox, ComboboxItem, type ComboboxOption } from "@/components/ui/combobox";
-import {
-  AttachmentFrame,
-  AttachmentLabel,
-  AttachmentPill,
-  AttachmentThumbnail,
-} from "@/components/attachment-pill";
+import { AttachmentLabel, AttachmentPill, AttachmentThumbnail } from "@/components/attachment-pill";
 import { AttachmentLightbox, type ImageLightboxSource } from "@/components/attachment-lightbox";
 import { openExternalUrl } from "@/utils/open-external-url";
 import { useIsDictationReady } from "@/hooks/use-is-dictation-ready";
@@ -335,14 +331,9 @@ function renderLeftContent(args: RenderLeftContentArgs): ReactElement | null {
   );
 }
 
-interface PendingFileAttachment {
-  id: number;
-  file: SelectedFile;
-}
-
 interface RenderAttachmentTrayArgs {
   selectedAttachments: ComposerAttachment[];
-  pendingFiles: PendingFileAttachment[];
+  pendingFiles: PendingFileUpload[];
   isComposerLocked: boolean;
   handleOpenAttachment: (attachment: ComposerAttachment) => void;
   handleRemoveAttachment: (index: number) => void;
@@ -350,6 +341,7 @@ interface RenderAttachmentTrayArgs {
     openImage: string;
     removeImage: string;
     removeFile: string;
+    cancelUpload: string;
     openGithub: (kind: string, numberLabel: string) => string;
     removeGithub: (kind: string, numberLabel: string) => string;
   };
@@ -377,14 +369,12 @@ function renderAttachmentTray(args: RenderAttachmentTrayArgs): ReactElement | nu
           labels,
         }),
       )}
-      {pendingFiles.map(({ id, file }) => (
-        <AttachmentFrame key={id} testID="composer-pending-file-attachment">
-          <AttachmentLabel
-            icon={pendingFilePillIcon}
-            title={file.fileName}
-            subtitle={getFileTypeLabel(file.fileName) ?? ""}
-          />
-        </AttachmentFrame>
+      {pendingFiles.map((upload) => (
+        <PendingFileAttachmentPill
+          key={upload.id}
+          upload={upload}
+          cancelLabel={labels.cancelUpload}
+        />
       ))}
     </View>
   );
@@ -851,6 +841,53 @@ function FileAttachmentPill({
         title={fileName}
         subtitle={getFileTypeLabel(fileName) ?? t("message.attachments.file")}
       />
+    </AttachmentPill>
+  );
+}
+
+function PendingFileAttachmentPill({
+  upload,
+  cancelLabel,
+}: {
+  upload: PendingFileUpload;
+  cancelLabel: string;
+}) {
+  const progress = useSyncExternalStore(upload.subscribe, upload.getProgress, upload.getProgress);
+  const handleCancel = useCallback(() => upload.controller.abort(), [upload]);
+  const fileName = upload.file.fileName;
+  const typeLabel = getFileTypeLabel(fileName) ?? "";
+  const percent = progress === null ? null : Math.floor(progress * 100);
+  const progressFillStyle = useMemo(
+    () => [styles.pendingFileProgressFill, { width: `${percent ?? 0}%` as const }],
+    [percent],
+  );
+  return (
+    <AttachmentPill
+      testID="composer-pending-file-attachment"
+      onOpen={noopCallback}
+      onRemove={handleCancel}
+      openAccessibilityLabel={fileName}
+      removeAccessibilityLabel={cancelLabel}
+    >
+      <View>
+        <AttachmentLabel
+          icon={percent === null ? pendingFilePillIcon : filePillIcon}
+          title={fileName}
+          subtitle={typeLabel}
+        />
+        {percent === null ? null : (
+          <View
+            style={styles.pendingFileProgressTrack}
+            accessibilityRole="progressbar"
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={percent}
+            testID="composer-pending-file-progress"
+          >
+            <View style={progressFillStyle} />
+          </View>
+        )}
+      </View>
     </AttachmentPill>
   );
 }
@@ -1373,7 +1410,7 @@ function ComposerContentImpl({
   useEffect(() => () => cursorPublication.cancel(), [cursorPublication]);
   const autocompleteRef = useRef<ComposerAutocompleteHandle>(null);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [pendingFiles, setPendingFiles] = useState<PendingFileAttachment[]>([]);
+  const [pendingFiles, setPendingFiles] = useState<PendingFileUpload[]>([]);
   const nextPendingFileId = useRef(0);
   const isUploadingFile = pendingFiles.length > 0;
   const [pendingNativeImagePastes, setPendingNativeImagePastes] = useState(0);
@@ -1800,18 +1837,39 @@ function ComposerContentImpl({
         return;
       }
 
-      const placeholders = files.map((file) => ({ id: nextPendingFileId.current++, file }));
-      setPendingFiles((pending) => [...pending, ...placeholders]);
+      const uploads = files.map((file) =>
+        createPendingFileUpload(nextPendingFileId.current++, file),
+      );
+      const dropUpload = (upload: PendingFileUpload) =>
+        setPendingFiles((pending) => pending.filter((entry) => entry !== upload));
+      const cancelListeners = uploads.map((upload) => {
+        const onAbort = () => dropUpload(upload);
+        upload.controller.signal.addEventListener("abort", onAbort, { once: true });
+        return () => upload.controller.signal.removeEventListener("abort", onAbort);
+      });
+      setPendingFiles((pending) => [...pending, ...uploads]);
       try {
-        const uploaded = await uploadFileAttachments({ client, files });
-        addFiles(uploaded);
+        await uploadFileAttachments({
+          client,
+          files,
+          controls: uploads.map((upload) => ({
+            signal: upload.controller.signal,
+            onProgress: upload.reportProgress,
+          })),
+          onUploaded: (attachment, index) => {
+            addFiles([attachment]);
+            const upload = uploads[index];
+            if (upload) dropUpload(upload);
+          },
+        });
       } catch (error) {
         console.error("[Composer] Failed to upload file:", error);
         toastErrorRef.current(
           error instanceof Error ? error.message : t("composer.errors.uploadFailed"),
         );
       } finally {
-        setPendingFiles((pending) => pending.filter((entry) => !placeholders.includes(entry)));
+        for (const stopListening of cancelListeners) stopListening();
+        setPendingFiles((pending) => pending.filter((entry) => !uploads.includes(entry)));
       }
     },
     [addFiles, client, t],
@@ -2313,6 +2371,7 @@ function ComposerContentImpl({
           openImage: t("composer.attachments.openImage"),
           removeImage: t("composer.attachments.removeImage"),
           removeFile: t("composer.attachments.removeFile"),
+          cancelUpload: t("composer.attachments.cancelUpload"),
           openGithub: (kind: string, numberLabel: string) =>
             t("composer.attachments.openGithub", { kind, number: numberLabel }),
           removeGithub: (kind: string, numberLabel: string) =>
@@ -2593,6 +2652,19 @@ const styles = StyleSheet.create((theme: Theme) => ({
     flexDirection: "row",
     gap: theme.spacing[2],
     flexWrap: "wrap",
+  },
+  // Overlays the pill's bottom edge so a reporting upload keeps the pill's size.
+  pendingFileProgressTrack: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    bottom: 0,
+    height: 3,
+    backgroundColor: theme.colors.surface3,
+  },
+  pendingFileProgressFill: {
+    height: "100%",
+    backgroundColor: theme.colors.primary,
   },
   tooltipRow: {
     flexDirection: "row",

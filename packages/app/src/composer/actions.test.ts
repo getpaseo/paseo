@@ -17,6 +17,7 @@ import {
   rejectMessageSubmission,
   type MessageSubmissionRecord,
 } from "@/composer/submission/model";
+import { FileUploadAbortedError } from "@getpaseo/client/internal/daemon-client";
 import {
   uploadFileAttachments,
   cancelComposerAgent,
@@ -1122,4 +1123,126 @@ describe("file upload preparation", () => {
       expect(sends).toBe(0);
     },
   );
+
+  it("drops a cancelled file and keeps uploading the rest of the batch", async () => {
+    const cancelled = new AbortController();
+    const sent: string[] = [];
+    const uploaded: Array<[string, number]> = [];
+    const result = await uploadFileAttachments({
+      client: {
+        sendAgentMessage: async () => {},
+        uploadFile: async (file) => {
+          sent.push(file.fileName);
+          if (file.fileName === "second.bin") {
+            cancelled.abort();
+            throw new FileUploadAbortedError();
+          }
+          return {
+            requestId: file.fileName,
+            file: {
+              type: "uploaded_file",
+              id: file.fileName,
+              fileName: file.fileName,
+              mimeType: file.mimeType,
+              size: file.bytes.byteLength,
+              path: `/uploads/${file.fileName}`,
+            },
+            error: null,
+          };
+        },
+      },
+      files: ["first.bin", "second.bin", "third.bin"].map((fileName) => ({
+        fileName,
+        mimeType: "application/octet-stream",
+        readBytes: async () => new Uint8Array([1]),
+      })),
+      controls: [{}, { signal: cancelled.signal }, {}],
+      onUploaded: (attachment, index) => uploaded.push([attachment.attachment.fileName, index]),
+    });
+
+    expect(sent).toEqual(["first.bin", "second.bin", "third.bin"]);
+    expect(result.map((entry) => entry.attachment.fileName)).toEqual(["first.bin", "third.bin"]);
+    expect(uploaded).toEqual([
+      ["first.bin", 0],
+      ["third.bin", 2],
+    ]);
+  });
+
+  it("does not send a file cancelled while earlier files were uploading", async () => {
+    const cancelled = new AbortController();
+    const sent: string[] = [];
+    const result = await uploadFileAttachments({
+      client: {
+        sendAgentMessage: async () => {},
+        uploadFile: async (file) => {
+          sent.push(file.fileName);
+          cancelled.abort();
+          return {
+            requestId: file.fileName,
+            file: {
+              type: "uploaded_file",
+              id: file.fileName,
+              fileName: file.fileName,
+              mimeType: file.mimeType,
+              size: 1,
+              path: `/uploads/${file.fileName}`,
+            },
+            error: null,
+          };
+        },
+      },
+      files: ["first.bin", "queued.bin"].map((fileName) => ({
+        fileName,
+        mimeType: "application/octet-stream",
+        readBytes: async () => new Uint8Array([1]),
+      })),
+      controls: [{}, { signal: cancelled.signal }],
+    });
+
+    expect(sent).toEqual(["first.bin"]);
+    expect(result.map((entry) => entry.attachment.fileName)).toEqual(["first.bin"]);
+  });
+
+  it("passes each file its own signal and progress callback", async () => {
+    const reports: Array<[string, number]> = [];
+    const controls = ["a.bin", "b.bin"].map((fileName) => ({
+      signal: new AbortController().signal,
+      onProgress: ({ receivedBytes }: { receivedBytes: number }) =>
+        reports.push([fileName, receivedBytes]),
+    }));
+    const signals: Array<AbortSignal | undefined> = [];
+    await uploadFileAttachments({
+      client: {
+        sendAgentMessage: async () => {},
+        uploadFile: async (file) => {
+          signals.push(file.signal);
+          file.onProgress?.({ receivedBytes: 1, totalBytes: 1 });
+          return {
+            requestId: file.fileName,
+            file: {
+              type: "uploaded_file",
+              id: file.fileName,
+              fileName: file.fileName,
+              mimeType: file.mimeType,
+              size: 1,
+              path: `/uploads/${file.fileName}`,
+            },
+            error: null,
+          };
+        },
+      },
+      files: ["a.bin", "b.bin"].map((fileName) => ({
+        fileName,
+        mimeType: "application/octet-stream",
+        readBytes: async () => new Uint8Array([1]),
+      })),
+      controls,
+    });
+
+    expect(signals).toEqual(controls.map((control) => control.signal));
+    expect(reports).toEqual([
+      ["a.bin", 1],
+      ["b.bin", 1],
+    ]);
+  });
 });

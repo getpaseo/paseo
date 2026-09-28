@@ -19,6 +19,30 @@ export async function controlFileUploadCompletion(page: Page) {
   };
 }
 
+const MiB = 1024 * 1024;
+
+/**
+ * Lets the daemon acknowledge an upload up to `untilBytes`, then holds every
+ * later acknowledgement. The client keeps at most its in-flight window beyond
+ * the last acknowledgement, so the upload stops at a known point on its own.
+ */
+export async function pauseFileUploadAcknowledgements(page: Page, untilBytes: number) {
+  const gate = await installDaemonWebSocketGate(page);
+  gate.pauseServerMessagesFrom("file.upload.progress", (message) => {
+    const receivedBytes = (message.payload as { receivedBytes?: unknown } | undefined)
+      ?.receivedBytes;
+    return typeof receivedBytes === "number" && receivedBytes > untilBytes;
+  });
+  return {
+    release: () => gate.releaseServerMessagePause("file.upload.progress"),
+    waitForUploadResponse: () => gate.waitForServerMessage("file.upload.response"),
+  };
+}
+
+export function mebibytes(count: number): Buffer {
+  return Buffer.alloc(count * MiB, 7);
+}
+
 function composerInput(page: Page) {
   return page.getByRole("textbox", { name: "Message agent..." }).first();
 }
@@ -137,7 +161,9 @@ export async function expectAttachmentPill(page: Page, testID: string): Promise<
 
 export async function attachFileFromMenu(
   page: Page,
-  file: { name: string; mimeType: string; buffer: Buffer },
+  file:
+    | { name: string; mimeType: string; buffer: Buffer }
+    | Array<{ name: string; mimeType: string; buffer: Buffer }>,
 ): Promise<void> {
   await openAttachmentMenu(page);
   const chooserPromise = page.waitForEvent("filechooser");

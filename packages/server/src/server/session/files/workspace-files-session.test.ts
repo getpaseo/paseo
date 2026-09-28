@@ -41,6 +41,7 @@ function makeDir(prefix: string): string {
 function makeSubsystem(
   options: {
     hasBinaryChannel?: boolean;
+    acceptsUploadProgress?: boolean;
     emitBinary?: (frame: Uint8Array) => Promise<void> | void;
   } = {},
 ) {
@@ -54,6 +55,7 @@ function makeSubsystem(
       await options.emitBinary?.(frame);
     },
     hasBinaryChannel: () => hasBinary,
+    acceptsUploadProgress: () => options.acceptsUploadProgress ?? false,
   };
   const paseoHome = makeDir("workspace-files-home-");
   const subsystem = new WorkspaceFilesSession({
@@ -611,4 +613,67 @@ describe("WorkspaceFilesSession", () => {
     expect(readFileSync(file.path, "utf8")).toBe("hello world");
     await ownership.close();
   });
+  test.each([
+    { acceptsUploadProgress: true, progress: [5, 11] },
+    { acceptsUploadProgress: false, progress: [] },
+  ])(
+    "acknowledges written upload bytes only to clients that accept it ($acceptsUploadProgress)",
+    async ({ acceptsUploadProgress, progress }) => {
+      const { subsystem, emitted } = makeSubsystem({ acceptsUploadProgress });
+      const source = {};
+      const ownership = new SessionDelivery((_source, message) => {
+        emitted.push(message);
+      });
+      ownership.attach(source, true);
+      const request = {
+        type: "file.upload.request",
+        fileName: "notes.txt",
+        mimeType: "text/plain",
+        size: 11,
+        modifiedAt: "2026-05-02T00:00:00.000Z",
+        requestId: "req-upload",
+      } as const;
+      await ownership.request(source, request, async () =>
+        subsystem.handleFileUploadRequest(request, ownership),
+      );
+      await subsystem.handleFileTransferFrame(
+        uploadFrame({
+          opcode: FileTransferOpcode.FileBegin,
+          requestId: "req-upload",
+          metadata: {
+            mime: "text/plain",
+            size: 11,
+            encoding: "binary",
+            modifiedAt: "2026-05-02T00:00:00.000Z",
+            fileName: "notes.txt",
+          },
+        }),
+        source,
+      );
+      for (const text of ["hello", " world"]) {
+        await subsystem.handleFileTransferFrame(
+          uploadFrame({
+            opcode: FileTransferOpcode.FileChunk,
+            requestId: "req-upload",
+            payload: new TextEncoder().encode(text),
+          }),
+          source,
+        );
+      }
+      await subsystem.handleFileTransferFrame(
+        uploadFrame({ opcode: FileTransferOpcode.FileEnd, requestId: "req-upload" }),
+        source,
+      );
+
+      const acknowledged = emitted.flatMap((message) =>
+        message.type === "file.upload.progress" && message.payload.requestId === "req-upload"
+          ? [message.payload.receivedBytes]
+          : [],
+      );
+      expect(acknowledged).toEqual(progress);
+      const response = emitted.find((message) => message.type === "file.upload.response");
+      expect(response?.type === "file.upload.response" && response.payload.error).toBeNull();
+      await ownership.close();
+    },
+  );
 });

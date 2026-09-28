@@ -99,6 +99,59 @@ describe("file uploads", () => {
     expect(readFileSync(file!.path, "utf8")).toBe("hello world");
   });
 
+  it("reports the bytes written after each chunk", async () => {
+    const uploads = new FileUploadStore({ paseoHome: makePaseoHome() });
+    const written: number[] = [];
+
+    uploads.beginUpload(
+      {
+        type: "file.upload.request",
+        fileName: "notes.txt",
+        mimeType: "text/plain",
+        size: 11,
+        modifiedAt: "2026-05-02T00:00:00.000Z",
+        requestId: "req-progress",
+      },
+      undefined,
+      undefined,
+      (receivedBytes) => written.push(receivedBytes),
+    );
+    await uploads.receiveFrame(uploadBegins("req-progress"));
+    await uploads.receiveFrame(uploadChunk("req-progress", "hello"));
+    expect(written).toEqual([5]);
+    await uploads.receiveFrame(uploadChunk("req-progress", " world"));
+    await uploads.receiveFrame(uploadEnds("req-progress"));
+
+    expect(written).toEqual([5, 11]);
+  });
+
+  it("discards an upload that ends short of its declared size", async () => {
+    const paseoHome = makePaseoHome();
+    const uploads = new FileUploadStore({ paseoHome });
+
+    uploads.beginUpload({
+      type: "file.upload.request",
+      fileName: "movie.mp4",
+      mimeType: "video/mp4",
+      size: 11,
+      modifiedAt: "2026-05-02T00:00:00.000Z",
+      requestId: "req-cancelled",
+    });
+    await uploads.receiveFrame(uploadBegins("req-cancelled"));
+    await uploads.receiveFrame(uploadChunk("req-cancelled", "hello"));
+    const uploadDir = dirname(uploadedPath(paseoHome, "movie.mp4"));
+
+    await expect(uploads.receiveFrame(uploadEnds("req-cancelled"))).resolves.toEqual({
+      type: "file.upload.response",
+      payload: {
+        requestId: "req-cancelled",
+        file: null,
+        error: "Upload size mismatch: expected 11, received 5.",
+      },
+    });
+    expect(existsSync(uploadDir)).toBe(false);
+  });
+
   it("rejects chunks beyond the declared size and removes the partial file", async () => {
     const paseoHome = makePaseoHome();
     const uploads = new FileUploadStore({ paseoHome });

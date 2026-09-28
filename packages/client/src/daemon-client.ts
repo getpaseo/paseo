@@ -1,6 +1,11 @@
 import { subscribeTimeline, type TimelineMessage } from "./timeline-subscription/index.js";
 import { ProviderSnapshotUpdates } from "./provider-snapshots/index.js";
 import {
+  FileUploadAbortedError,
+  FileUploadWindow,
+  type FileUploadProgress,
+} from "./file-upload-window.js";
+import {
   ConnectionSubscriptions,
   type OwnedSubscription,
   DEFAULT_CLIENT_CAPABILITIES,
@@ -550,8 +555,17 @@ export interface FileUploadInput {
   modifiedAt?: string;
   requestId?: string;
   chunkSize?: number;
+  /** Aborting stops sending chunks and discards the partial upload on the daemon. */
+  signal?: AbortSignal;
+  /**
+   * Called with the bytes the daemon has written. Daemons that predate
+   * `server_info.features.fileUploadProgress` never report, so it is not called there.
+   */
+  onProgress?: (progress: FileUploadProgress) => void;
 }
+
 export type FileUploadResult = FileUploadResponse["payload"];
+export { FileUploadAbortedError, type FileUploadProgress } from "./file-upload-window.js";
 type FileDownloadTokenPayload = FileDownloadTokenResponse["payload"];
 type ListProviderFeaturesPayload = ListProviderFeaturesResponseMessage["payload"];
 type ListProviderModelsPayload = ListProviderModelsResponseMessage["payload"];
@@ -4846,9 +4860,28 @@ export class DaemonClient {
     if (!bytes) {
       throw new Error("File bytes are required.");
     }
-    const uploadTransport = this.transport;
+    if (input.signal?.aborted) {
+      throw new FileUploadAbortedError();
+    }
+    // The request and its frames go out together, on one live connection. While the client is
+    // reconnecting - the app coming back from the system file picker - a request would wait in
+    // the send queue while its FileBegin frame was dropped, and the daemon then saw chunks for
+    // an upload that never began.
+    await this.connectedForUpload(input.signal);
     const resolvedRequestId = this.createRequestId(input.requestId);
     const modifiedAt = input.modifiedAt ?? new Date().toISOString();
+    const window = new FileUploadWindow({
+      acknowledged: this.lastServerInfoMessage?.features?.fileUploadProgress === true,
+      totalBytes: bytes.byteLength,
+      ...(input.onProgress ? { onProgress: input.onProgress } : {}),
+    });
+    const stopProgress = this.on("file.upload.progress", (message) => {
+      if (message.payload.requestId === resolvedRequestId) {
+        window.acknowledge(message.payload.receivedBytes);
+      }
+    });
+    const onAbort = () => window.close();
+    input.signal?.addEventListener("abort", onAbort, { once: true });
     const responsePromise = this.sendCorrelatedRequest({
       requestId: resolvedRequestId,
       message: {
@@ -4862,66 +4895,133 @@ export class DaemonClient {
       responseType: "file.upload.response",
       options: { skipQueue: true },
     });
-
-    let settled = false;
-    void responsePromise.then(
-      () => {
-        settled = true;
-        return undefined;
-      },
-      () => {
-        settled = true;
-        return undefined;
-      },
-    );
     try {
-      this.sendBinaryFrame(
-        encodeFileTransferFrame({
-          opcode: FileTransferOpcode.FileBegin,
-          requestId: resolvedRequestId,
-          metadata: {
-            mime: input.mimeType,
-            size: bytes.byteLength,
-            encoding: "binary",
-            modifiedAt,
-            fileName: input.fileName,
-          },
-        }),
-      );
-
-      const chunkSize = input.chunkSize ?? 128 * 1024;
-      for (let offset = 0; offset < bytes.byteLength; offset += chunkSize) {
-        // Native WebSocket.send encodes binary synchronously. Let rendering and
-        // incoming messages run between bounded pieces on every platform.
-        await new Promise<void>((resolve) => setTimeout(resolve, 0));
-        if (settled) return await responsePromise;
-        if (this.transport !== uploadTransport || this.connectionState.status !== "connected") {
-          throw new DaemonConnectionError("Connection changed during file upload");
-        }
-        this.sendBinaryFrame(
-          encodeFileTransferFrame({
-            opcode: FileTransferOpcode.FileChunk,
-            requestId: resolvedRequestId,
-            payload: bytes.subarray(offset, Math.min(offset + chunkSize, bytes.byteLength)),
-          }),
-        );
-      }
-
-      this.sendBinaryFrame(
-        encodeFileTransferFrame({
-          opcode: FileTransferOpcode.FileEnd,
-          requestId: resolvedRequestId,
-        }),
-      );
+      return await this.sendFileUploadFrames({
+        input,
+        bytes,
+        requestId: resolvedRequestId,
+        modifiedAt,
+        window,
+        responsePromise,
+      });
     } catch (error) {
       this.rejectWaitersForRequestId(
         resolvedRequestId,
         error instanceof Error ? error : new Error(String(error)),
       );
       throw error;
+    } finally {
+      stopProgress();
+      input.signal?.removeEventListener("abort", onAbort);
+    }
+  }
+
+  private connectedForUpload(signal: AbortSignal | undefined): Promise<void> {
+    if (this.transport && this.connectionState.status === "connected") return Promise.resolve();
+    if (this.connectionState.status !== "connecting") {
+      return Promise.reject(
+        new DaemonConnectionError(
+          `Transport not connected (status: ${this.connectionState.status})`,
+        ),
+      );
+    }
+    return new Promise<void>((resolve, reject) => {
+      let stop = () => {};
+      let done = false;
+      const finish = (error?: Error) => {
+        if (done) return;
+        done = true;
+        clearTimeout(timeout);
+        stop();
+        signal?.removeEventListener("abort", onAbort);
+        if (error) reject(error);
+        else resolve();
+      };
+      const onAbort = () => finish(new FileUploadAbortedError());
+      const timeout = setTimeout(
+        () =>
+          finish(
+            new DaemonConnectionError(
+              "Timed out waiting for connection to upload a file",
+              "DAEMON_REQUEST_TIMEOUT",
+            ),
+          ),
+        DEFAULT_SEND_QUEUE_TIMEOUT_MS,
+      );
+      stop = this.subscribeConnectionStatus((state) => {
+        if (state.status === "connected" && this.transport) finish();
+        else if (state.status !== "connecting") {
+          finish(new DaemonConnectionError(`Transport not connected (status: ${state.status})`));
+        }
+      });
+      if (done) stop();
+      signal?.addEventListener("abort", onAbort, { once: true });
+    });
+  }
+
+  private async sendFileUploadFrames(params: {
+    input: FileUploadInput;
+    bytes: Uint8Array;
+    requestId: string;
+    modifiedAt: string;
+    window: FileUploadWindow;
+    responsePromise: Promise<FileUploadResult>;
+  }): Promise<FileUploadResult> {
+    const { input, bytes, requestId, window, responsePromise } = params;
+    const uploadTransport = this.transport;
+    let settled = false;
+    const settle = () => {
+      settled = true;
+      window.close();
+      return undefined;
+    };
+    void responsePromise.then(settle, settle);
+    const sendEnd = () =>
+      this.sendBinaryFrame(
+        encodeFileTransferFrame({ opcode: FileTransferOpcode.FileEnd, requestId }),
+      );
+
+    this.sendBinaryFrame(
+      encodeFileTransferFrame({
+        opcode: FileTransferOpcode.FileBegin,
+        requestId,
+        metadata: {
+          mime: input.mimeType,
+          size: bytes.byteLength,
+          encoding: "binary",
+          modifiedAt: params.modifiedAt,
+          fileName: input.fileName,
+        },
+      }),
+    );
+
+    const chunkSize = input.chunkSize ?? 128 * 1024;
+    for (let offset = 0; offset < bytes.byteLength; offset += chunkSize) {
+      // Native WebSocket.send encodes binary synchronously. Let rendering and
+      // incoming messages run between bounded pieces on every platform.
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      await window.waitForRoom(offset);
+      if (input.signal?.aborted) {
+        // A FileEnd short of the declared size is how every daemon version
+        // discards a partial upload, so no cancel message is needed.
+        sendEnd();
+        throw new FileUploadAbortedError();
+      }
+      if (settled) return await responsePromise;
+      if (this.transport !== uploadTransport || this.connectionState.status !== "connected") {
+        throw new DaemonConnectionError("Connection changed during file upload");
+      }
+      this.sendBinaryFrame(
+        encodeFileTransferFrame({
+          opcode: FileTransferOpcode.FileChunk,
+          requestId,
+          payload: bytes.subarray(offset, Math.min(offset + chunkSize, bytes.byteLength)),
+        }),
+      );
     }
 
-    return responsePromise;
+    sendEnd();
+    return await Promise.race([responsePromise, abortedBy(input.signal)]);
   }
 
   async requestDownloadToken(
@@ -6867,4 +6967,16 @@ function resolveAgentConfig(options: CreateAgentRequestOptions): AgentSessionCon
     provider: merged.provider,
     cwd: merged.cwd,
   };
+}
+
+/** Rejects once `signal` aborts; never settles without one. */
+function abortedBy(signal: AbortSignal | undefined): Promise<never> {
+  return new Promise<never>((_resolve, reject) => {
+    if (!signal) return;
+    if (signal.aborted) {
+      reject(new FileUploadAbortedError());
+      return;
+    }
+    signal.addEventListener("abort", () => reject(new FileUploadAbortedError()), { once: true });
+  });
 }

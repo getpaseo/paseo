@@ -1,7 +1,8 @@
-import { afterEach, expect, expectTypeOf, test, vi } from "vitest";
+import { afterEach, describe, expect, expectTypeOf, test, vi } from "vitest";
 import { z } from "zod";
 import {
   DaemonClient,
+  FileUploadAbortedError,
   type DaemonClientTrace,
   type CreateAgentRequestOptions,
   type DaemonTransport,
@@ -1025,6 +1026,7 @@ test("advertises client capabilities in hello", async () => {
       timeline_replacement_invalidation: true,
       provider_snapshot_references: true,
       explicit_event_subscriptions: true,
+      file_upload_progress: true,
       owned_subscriptions: true,
       compact_provider_snapshots: true,
       custom_mode_icons: true,
@@ -7035,4 +7037,189 @@ test("reviewed plugin updates gate before requests and preserve exact proposal d
       { id: "review", outcome: "error", error: "changed since review" },
     ]);
   }
+});
+
+describe("uploadFile flow control", () => {
+  const MiB = 1024 * 1024;
+
+  async function connectedClient(features?: Record<string, boolean>) {
+    const mock = createMockTransport();
+    const client = new DaemonClient({
+      url: "ws://test",
+      clientId: "upload-window",
+      logger: createMockLogger(),
+      reconnect: { enabled: false },
+      transportFactory: () => mock.transport,
+    });
+    clients.push(client);
+    const connection = client.connect();
+    mock.triggerOpen(features ? { features } : undefined);
+    await connection;
+    return { client, mock };
+  }
+
+  function uploadFrames(mock: ReturnType<typeof createMockTransport>) {
+    return mock.sent
+      .filter((frame) => typeof frame !== "string")
+      .map(assertUint8Array)
+      .map(decodeFileTransferFrame);
+  }
+
+  function chunkBytes(mock: ReturnType<typeof createMockTransport>) {
+    return uploadFrames(mock)
+      .filter((frame) => frame.opcode === FileTransferOpcode.FileChunk)
+      .reduce((total, frame) => total + frame.payload.byteLength, 0);
+  }
+
+  function acknowledge(
+    mock: ReturnType<typeof createMockTransport>,
+    requestId: string,
+    receivedBytes: number,
+  ) {
+    mock.triggerMessage(
+      wrapSessionMessage({ type: "file.upload.progress", payload: { requestId, receivedBytes } }),
+    );
+  }
+
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 20));
+
+  test("holds unacknowledged bytes to the window and reports what the daemon wrote", async () => {
+    const { client, mock } = await connectedClient({ fileUploadProgress: true });
+    const progress: number[] = [];
+    const upload = client.uploadFile({
+      fileName: "movie.mp4",
+      mimeType: "video/mp4",
+      bytes: new Uint8Array(4 * MiB),
+      requestId: "req-window",
+      chunkSize: MiB / 2,
+      onProgress: ({ receivedBytes, totalBytes }) => {
+        expect(totalBytes).toBe(4 * MiB);
+        progress.push(receivedBytes);
+      },
+    });
+
+    await settle();
+    expect(chunkBytes(mock)).toBe(2 * MiB);
+
+    acknowledge(mock, "req-window", MiB);
+    await settle();
+    expect(chunkBytes(mock)).toBe(3 * MiB);
+
+    acknowledge(mock, "req-window", 4 * MiB);
+    await vi.waitFor(() => {
+      expect(uploadFrames(mock).at(-1)?.opcode).toBe(FileTransferOpcode.FileEnd);
+    });
+    expect(chunkBytes(mock)).toBe(4 * MiB);
+    expect(progress).toEqual([MiB, 4 * MiB]);
+
+    mock.triggerMessage(
+      wrapSessionMessage({
+        type: "file.upload.response",
+        payload: { requestId: "req-window", file: null, error: "stop" },
+      }),
+    );
+    await expect(upload).resolves.toMatchObject({ error: "stop" });
+  });
+
+  test("an abort stops sending and ends the upload short so the daemon discards it", async () => {
+    const { client, mock } = await connectedClient({ fileUploadProgress: true });
+    const controller = new AbortController();
+    const upload = client.uploadFile({
+      fileName: "movie.mp4",
+      mimeType: "video/mp4",
+      bytes: new Uint8Array(8 * MiB),
+      requestId: "req-abort",
+      chunkSize: MiB / 2,
+      signal: controller.signal,
+    });
+    const rejection = expect(upload).rejects.toBeInstanceOf(FileUploadAbortedError);
+
+    await settle();
+    controller.abort();
+    await rejection;
+    await settle();
+
+    expect(chunkBytes(mock)).toBe(2 * MiB);
+    const frames = uploadFrames(mock);
+    expect(frames.at(-1)?.opcode).toBe(FileTransferOpcode.FileEnd);
+    expect(frames.filter((frame) => frame.opcode === FileTransferOpcode.FileEnd)).toHaveLength(1);
+  });
+
+  test("an abort before the upload starts sends nothing", async () => {
+    const { client, mock } = await connectedClient({ fileUploadProgress: true });
+    const controller = new AbortController();
+    controller.abort();
+    const sentBefore = mock.sent.length;
+
+    await expect(
+      client.uploadFile({
+        fileName: "movie.mp4",
+        mimeType: "video/mp4",
+        bytes: new Uint8Array(MiB),
+        signal: controller.signal,
+      }),
+    ).rejects.toBeInstanceOf(FileUploadAbortedError);
+    expect(mock.sent).toHaveLength(sentBefore);
+  });
+
+  test("a daemon without upload acknowledgements receives the whole file unthrottled", async () => {
+    const { client, mock } = await connectedClient();
+    const progress: number[] = [];
+    void client
+      .uploadFile({
+        fileName: "movie.mp4",
+        mimeType: "video/mp4",
+        bytes: new Uint8Array(4 * MiB),
+        requestId: "req-legacy",
+        chunkSize: MiB / 2,
+        onProgress: ({ receivedBytes }) => progress.push(receivedBytes),
+      })
+      .catch(() => undefined);
+
+    await vi.waitFor(() => {
+      expect(uploadFrames(mock).at(-1)?.opcode).toBe(FileTransferOpcode.FileEnd);
+    });
+    expect(chunkBytes(mock)).toBe(4 * MiB);
+    expect(progress).toEqual([]);
+  });
+});
+
+test("an upload started while the client is reconnecting waits and begins on the live connection", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "upload-reconnecting",
+    logger: createMockLogger(),
+    reconnect: { enabled: false },
+    suppressSendErrors: true,
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+  const connecting = client.connect();
+  const upload = client.uploadFile({
+    fileName: "movie.mp4",
+    mimeType: "video/mp4",
+    bytes: new TextEncoder().encode("hello world"),
+    requestId: "req-reconnecting",
+  });
+  void upload.catch(() => undefined);
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  expect(mock.sent.filter((frame) => typeof frame !== "string")).toHaveLength(0);
+
+  mock.triggerOpen();
+  await connecting;
+  await vi.waitFor(() => {
+    const frames = mock.sent.filter((frame) => typeof frame !== "string");
+    expect(frames.length).toBeGreaterThan(0);
+  });
+
+  const request = mock.sent.findIndex(
+    (frame) => typeof frame === "string" && frame.includes('"file.upload.request"'),
+  );
+  const firstBinary = mock.sent.findIndex((frame) => typeof frame !== "string");
+  expect(request).toBeGreaterThanOrEqual(0);
+  expect(request).toBeLessThan(firstBinary);
+  expect(decodeFileTransferFrame(assertUint8Array(mock.sent[firstBinary])).opcode).toBe(
+    FileTransferOpcode.FileBegin,
+  );
 });
