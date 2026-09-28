@@ -28,6 +28,13 @@ export function formatResetLabel(iso: string | null | undefined): string | null 
   return rel === "now" ? "resetting now" : `resets ${rel}`;
 }
 
+export function formatRefillLabel(iso: string | undefined): string | null {
+  if (!iso) return null;
+  const rel = relativeDuration(iso);
+  if (!rel) return null;
+  return rel === "now" ? "refilling now" : `next refill ${rel}`;
+}
+
 export function formatAgo(iso: string | null | undefined): string | null {
   if (!iso) return null;
   const diffMs = Date.now() - new Date(iso).getTime();

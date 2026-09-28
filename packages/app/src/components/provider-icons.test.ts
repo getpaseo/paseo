@@ -1,6 +1,7 @@
 import { Bot } from "lucide-react-native";
 import { SvgXml } from "react-native-svg";
 import { describe, expect, it } from "vitest";
+import { SyntheticIcon } from "./icons/synthetic-icon";
 import { replaceProviderSnapshotIcons } from "./provider-icon-name";
 import { getProviderIcon, type ProviderIconComponent } from "./provider-icons";
 
@@ -29,5 +30,9 @@ describe("getProviderIcon", () => {
     replaceProviderSnapshotIcons("server-1", [{ provider: "plain-provider" }]);
 
     expect(getProviderIcon("plain-provider", "server-1")).toBe(Bot);
+  });
+
+  it("returns the built-in Synthetic icon for the synthetic provider", () => {
+    expect(getProviderIcon("synthetic")).toBe(SyntheticIcon);
   });
 });

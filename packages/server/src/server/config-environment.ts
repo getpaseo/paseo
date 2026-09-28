@@ -64,6 +64,7 @@ const CONFIG_CONTEXT_ENV_KEYS = [
   "OPENAI_BASE_URL",
   "OPENAI_STT_API_KEY",
   "OPENAI_TTS_API_KEY",
+  "PASEO_SYNTHETIC_API_KEY",
 ] as const;
 
 export function configurationEnvironment(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {

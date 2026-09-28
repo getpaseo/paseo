@@ -1,8 +1,11 @@
-import type { Page } from "@playwright/test";
+import { expect, type Locator, type Page, type TestInfo } from "@playwright/test";
 import type { ProviderUsage } from "@getpaseo/protocol/messages";
+import { gotoAppShell, openSettings } from "./app";
 import { daemonWsRoutePattern } from "./daemon-port";
+import { getServerId } from "./server-id";
+import { openSettingsHostSection } from "./settings";
 
-interface ProviderUsageFixturePayload {
+export interface ProviderUsageFixturePayload {
   fetchedAt: string;
   providers: ProviderUsage[];
 }
@@ -151,4 +154,84 @@ export async function installProviderUsageFixture(
       });
     },
   };
+}
+
+const SYNTHETIC_CARD = "provider-usage-card";
+const SYNTHETIC_REQUEST_COUNTS = "0 / 750 requests";
+
+// Synthetic's rolling 5-hour window carries a request-count detail and its weekly
+// window reports a partial refill, so the fixture exercises both label shapes.
+export function buildSyntheticUsageFixturePayload(now = Date.now()): ProviderUsageFixturePayload {
+  return {
+    fetchedAt: new Date(now).toISOString(),
+    providers: [
+      {
+        providerId: "synthetic",
+        displayName: "Synthetic",
+        status: "available",
+        planLabel: null,
+        windows: [
+          { id: "subscription", label: "5 hours", usedPct: 0, detail: SYNTHETIC_REQUEST_COUNTS },
+          {
+            id: "weekly",
+            label: "Weekly",
+            usedPct: 38,
+            refillsAt: new Date(now + 3 * 60 * 60 * 1000).toISOString(),
+          },
+        ],
+      },
+    ],
+  };
+}
+
+export function installSyntheticUsageFixture(page: Page): Promise<ProviderUsageFixture> {
+  return installProviderUsageFixture(page, [buildSyntheticUsageFixturePayload()]);
+}
+
+export async function openProviderUsageSettings(page: Page): Promise<void> {
+  await gotoAppShell(page);
+  await openSettings(page);
+  await openSettingsHostSection(page, getServerId(), "usage");
+}
+
+export function providerUsageCard(page: Page): Locator {
+  return page.getByTestId(SYNTHETIC_CARD);
+}
+
+export async function expectSyntheticUsageWindows(page: Page): Promise<void> {
+  const card = providerUsageCard(page);
+  await expect(card.getByText(SYNTHETIC_REQUEST_COUNTS, { exact: true })).toBeVisible();
+  await expect(card.getByText(/next refill/)).toBeVisible();
+  // The rolling window refills, it never fully resets, so no "resets" label.
+  await expect(card.getByText(/resets/)).toHaveCount(0);
+}
+
+export async function expectRequestCountsAboveWeeklyWindow(page: Page): Promise<void> {
+  const card = providerUsageCard(page);
+  const countsTop = await textTop(card, SYNTHETIC_REQUEST_COUNTS);
+  const weeklyTop = await textTop(card, "Weekly");
+  expect(countsTop).toBeLessThan(weeklyTop);
+}
+
+export async function expectSyntheticUsageWindowsAtCompactWidth(page: Page): Promise<void> {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expectSyntheticUsageWindows(page);
+}
+
+export async function captureProviderUsageCard(
+  page: Page,
+  testInfo: TestInfo,
+  name: string,
+): Promise<void> {
+  await testInfo.attach(name, {
+    body: await page.screenshot({ path: testInfo.outputPath(`${name}.png`) }),
+    contentType: "image/png",
+  });
+}
+
+// Reads a text node's top edge without `boundingBox()`'s nullable result.
+function textTop(scope: Locator, text: string): Promise<number> {
+  return scope
+    .getByText(text, { exact: true })
+    .evaluate((element) => element.getBoundingClientRect().y);
 }
