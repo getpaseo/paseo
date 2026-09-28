@@ -1469,7 +1469,6 @@ export class OmpAgentSession implements AgentSession {
   ): void {
     const message = optionalString(event.message);
     if (event.method === "notify" && message) {
-      this.bufferNoTurnOutput(message);
       this.emit({
         type: "timeline",
         provider: this.provider,
