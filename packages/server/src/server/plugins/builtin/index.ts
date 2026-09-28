@@ -2,7 +2,17 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-export const builtinPlugins = ["codex-usage-source"] as const;
+export const builtinPlugins = [
+  "claude-usage-source",
+  "codex-usage-source",
+  "copilot-usage-source",
+  "cursor-usage-source",
+  "grok-usage-source",
+  "kimi-usage-source",
+  "minimax-usage-source",
+  "opencode-go-usage-source",
+  "zai-usage-source",
+] as const;
 
 export function resolveBuiltinPluginsRoot(moduleUrl: string | URL = import.meta.url): string {
   const moduleDir = path.dirname(fileURLToPath(moduleUrl));

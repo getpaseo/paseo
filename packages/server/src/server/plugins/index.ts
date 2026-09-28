@@ -23,7 +23,6 @@ import { type ManagedPluginCandidate, ManagedPluginSources } from "./managed-sou
 import { readPluginManifest } from "./manifest.js";
 import { runPluginBuild } from "./preparation.js";
 import { PluginRuntime } from "./runtime.js";
-import type { InternalPlugin } from "../../plugins/index.js";
 import { BuiltinPluginLoader, type BuiltinPlugin } from "./builtin/index.js";
 import type { PluginProviderMetadata } from "./plugin-process-protocol.js";
 import { readPluginProviderIcon } from "./provider-icon.js";
@@ -49,7 +48,6 @@ interface PluginRuntimePort {
   getProviderCatalogCacheKey?: PluginRuntime["getProviderCatalogCacheKey"];
   validatePlugin?(path: string): Promise<void>;
   startPlugin(pluginId: string, path: string, canPublish: () => boolean): Promise<void>;
-  startInternalPlugin?(plugin: InternalPlugin): Promise<void>;
   startBuiltinPlugin?(plugin: BuiltinPlugin): Promise<void>;
   stopPluginById(pluginId: string): Promise<boolean>;
   stopAll(): Promise<void>;
@@ -61,7 +59,6 @@ interface PluginServiceDependencies {
   settingsDirectory?: string;
   runtime?: PluginRuntimePort;
   managedSources?: ManagedPluginSources;
-  internalPlugins?: readonly InternalPlugin[];
   builtinPlugins?: BuiltinPluginLoader;
 }
 
@@ -77,7 +74,7 @@ function resolvePluginStatus(input: {
 export class PluginService {
   private readonly runtime: PluginRuntimePort;
   private readonly managedSources: ManagedPluginSources | null;
-  private readonly internalPluginIds: ReadonlySet<string>;
+  private readonly builtinPluginIds: ReadonlySet<string>;
   private readonly builtinPlugins: BuiltinPluginLoader;
   private readonly logger: pino.Logger;
   private readonly errors = new Map<string, string>();
@@ -109,10 +106,7 @@ export class PluginService {
       });
     this.managedSources = dependencies.managedSources ?? null;
     this.builtinPlugins = dependencies.builtinPlugins ?? new BuiltinPluginLoader(undefined, []);
-    this.internalPluginIds = new Set([
-      ...(dependencies.internalPlugins?.map((plugin) => plugin.id) ?? []),
-      ...this.builtinPlugins.ids,
-    ]);
+    this.builtinPluginIds = this.builtinPlugins.ids;
     this.runtime.subscribe((pluginId, error) => {
       this.removeProviderRegistrations(pluginId);
       this.removeUsageSources(pluginId);
@@ -176,15 +170,6 @@ export class PluginService {
     this.started = true;
     const config = this.configStore.get();
     this.globalStartsBlocked = config.pluginsEnabled !== true;
-    for (const plugin of this.dependencies.internalPlugins ?? []) {
-      try {
-        await this.runtime.startInternalPlugin?.(plugin);
-        await this.publishProviderRegistrations(plugin.id, plugin.directory);
-        this.publishUsageSources(plugin.id);
-      } catch (error) {
-        this.logger.error({ err: error, pluginId: plugin.id }, "Failed to start internal plugin");
-      }
-    }
     await this.builtinPlugins.load(async (plugin) => {
       try {
         await this.runtime.startBuiltinPlugin?.(plugin);
@@ -243,7 +228,7 @@ export class PluginService {
   }
 
   getLogs(pluginId: string): PluginLogEntry[] {
-    if (!this.internalPluginIds.has(pluginId)) {
+    if (!this.builtinPluginIds.has(pluginId)) {
       this.requireSource(pluginId);
     }
     return this.runtime.getLogs(pluginId);
@@ -259,7 +244,7 @@ export class PluginService {
       const manifest = await readPluginManifest(directory);
       assertPluginCompatibility({ ...manifest, version: this.daemonVersion, runtime: "daemon" });
       const pluginId = PluginIdSchema.parse(input.id ?? manifest.id);
-      if (this.internalPluginIds.has(pluginId)) {
+      if (this.builtinPluginIds.has(pluginId)) {
         throw new Error(`Plugin ID "${pluginId}" is reserved for a built-in plugin`);
       }
       if (this.configStore.get().plugins?.[pluginId]) {
@@ -291,7 +276,7 @@ export class PluginService {
     id?: string;
     ref?: string;
   }): Promise<PluginListItem> {
-    if (input.id && this.internalPluginIds.has(input.id)) {
+    if (input.id && this.builtinPluginIds.has(input.id)) {
       throw new Error(`Plugin ID "${input.id}" is reserved for a built-in plugin`);
     }
     const directDirectory = path.resolve(input.source);
@@ -319,7 +304,7 @@ export class PluginService {
       try {
         await this.checkRequirements(candidate.directory);
         pluginId = PluginIdSchema.parse(input.id ?? candidate.defaultId);
-        if (this.internalPluginIds.has(pluginId)) {
+        if (this.builtinPluginIds.has(pluginId)) {
           throw new Error(`Plugin ID "${pluginId}" is reserved for a built-in plugin`);
         }
         if (this.configStore.get().plugins?.[pluginId]) {

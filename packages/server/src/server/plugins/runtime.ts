@@ -30,7 +30,6 @@ import { PluginProcessMessageSchema } from "./plugin-process-protocol.js";
 import { PluginSessionSocket } from "./session-socket.js";
 import { InternalPluginChild } from "./internal-child.js";
 import { evaluateBundle } from "./bundle-evaluator.js";
-import type { PluginServerContribution } from "@getpaseo/plugin/server";
 
 const CLIENT_ENTRY_FILENAMES = ["index.client.ts", "index.client.tsx"] as const;
 const SERVER_ENTRY_FILENAMES = ["index.server.ts", "index.server.tsx"] as const;
@@ -335,28 +334,6 @@ export class PluginRuntime {
     }
     this.plugins.set(pluginId, loaded);
     this.appendLog(pluginId, "stdout", "[paseo] Plugin ready");
-  }
-
-  async startInternalPlugin(input: {
-    id: string;
-    directory: string;
-    contribute: PluginServerContribution;
-  }): Promise<void> {
-    if (this.plugins.has(input.id)) throw new Error(`Plugin is already running: ${input.id}`);
-    this.appendLog(input.id, "stdout", "[paseo] Loading plugin");
-    const directory = path.resolve(input.directory);
-    const manifest = await readPluginManifest(directory);
-    assertPluginCompatibility({ ...manifest, version: this.daemonVersion, runtime: "daemon" });
-    const loaded = await this.launchPlugin({
-      pluginId: input.id,
-      pluginDirectory: directory,
-      requirements: manifest.requirements,
-      child: new InternalPluginChild(input.contribute),
-      bundle: "",
-      clientBundle: "",
-    });
-    this.plugins.set(input.id, loaded);
-    this.appendLog(input.id, "stdout", "[paseo] Plugin ready");
   }
 
   async startBuiltinPlugin(input: { id: string; directory: string }): Promise<void> {

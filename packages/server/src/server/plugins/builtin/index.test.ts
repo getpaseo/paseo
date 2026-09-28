@@ -63,7 +63,6 @@ test("listed client bundle is published while plugins are disabled; unlisted dir
   const daemon = await createTestPaseoDaemon({
     daemonVersion: "0.9.2",
     pluginsEnabled: false,
-    internalPlugins: [],
     builtinPlugins: new BuiltinPluginLoader(root, ["listed"]),
   });
   const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws`, appVersion: "0.9.2" });
@@ -113,7 +112,6 @@ test("directory, Git, and npm installs reject a built-in ID", async () => {
   const daemon = await createTestPaseoDaemon({
     daemonVersion: "0.9.2",
     pluginsEnabled: false,
-    internalPlugins: [],
     builtinPlugins: new BuiltinPluginLoader(root, ["reserved"]),
   });
   const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws`, appVersion: "0.9.2" });
