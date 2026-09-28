@@ -37,6 +37,7 @@ import {
   type ReopenableTabTarget,
 } from "@/stores/recently-closed-tabs-store";
 import { useSessionStore } from "@/stores/session-store";
+import { getHostRuntimeStore } from "@/runtime/host-runtime";
 
 export type WorkspaceTabLaunchPurpose = "primary" | "supporting";
 
@@ -89,7 +90,11 @@ function closedTabLabel(
 ): string {
   const target = entry.target;
   if (target.kind === "agent") {
-    return agents?.get(target.agentId)?.title?.trim() || t("workspace.tabs.fallback.agent");
+    return (
+      agents?.get(target.agentId)?.title?.trim() ||
+      entry.title ||
+      t("workspace.tabs.fallback.agent")
+    );
   }
   if (target.kind === "browser")
     return entry.title || entry.url || t("workspace.tabs.fallback.browser");
@@ -328,6 +333,14 @@ export function useWorkspaceTabLaunchCatalog(input: {
           toggleTarget: null,
           launch: (destination: WorkspaceTabLaunchDestination) => {
             if (launcher.workspaceKey) forgetClosed(launcher.workspaceKey, entry.id);
+            // Closing archived the session; bring it back like the Unarchive button does,
+            // or the tab opens on an archived, possibly empty session.
+            if (entry.target.kind === "agent") {
+              void getHostRuntimeStore()
+                .getClient(serverId)
+                ?.refreshAgent(entry.target.agentId)
+                .catch(() => undefined);
+            }
             launcher.launch(reopenSelection(entry), destination);
           },
         })),

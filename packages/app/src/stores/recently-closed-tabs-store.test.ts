@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { useRecentlyClosedTabsStore } from "./recently-closed-tabs-store";
 import { createWorkspaceBrowser, useBrowserStore } from "@/desktop/browser/store";
+import { useSessionStore } from "@/stores/session-store";
 
 describe("recently closed tabs", () => {
   beforeEach(() => useRecentlyClosedTabsStore.setState({ byWorkspace: {} }));
@@ -26,6 +27,20 @@ describe("recently closed tabs", () => {
     useRecentlyClosedTabsStore.getState().record("srv:wks_a", { kind: "browser", browserId });
     expect(useRecentlyClosedTabsStore.getState().byWorkspace["srv:wks_a"]?.[0]?.url).toBe(
       "https://example.org/docs",
+    );
+  });
+
+  it("keeps a session's title, since closing archives it out of the live list", () => {
+    const sessions = useSessionStore.getState().sessions;
+    useSessionStore.setState({
+      sessions: {
+        ...sessions,
+        srv: { ...sessions.srv, agents: new Map([["a9", { id: "a9", title: "Fix login" }]]) },
+      } as never,
+    });
+    useRecentlyClosedTabsStore.getState().record("srv:wks_a", { kind: "agent", agentId: "a9" });
+    expect(useRecentlyClosedTabsStore.getState().byWorkspace["srv:wks_a"]?.[0]?.title).toBe(
+      "Fix login",
     );
   });
 });

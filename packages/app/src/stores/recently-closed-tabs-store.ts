@@ -4,6 +4,7 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { createValidatedPersistStorage } from "@/storage/validated-persist-storage";
 import { useBrowserStore } from "@/desktop/browser/store";
+import { useSessionStore } from "@/stores/session-store";
 import type { WorkspaceTabTarget } from "@/workspace-tabs/model";
 
 const MAX_CLOSED_PER_WORKSPACE = 8;
@@ -42,8 +43,21 @@ useBrowserStore.subscribe((state) => {
   }
 });
 
+/** Closing a session archives it and drops it from the live list, so its title is kept now. */
+function agentTitle(agentId: string): string | undefined {
+  for (const session of Object.values(useSessionStore.getState().sessions)) {
+    const title = session?.agents.get(agentId)?.title?.trim();
+    if (title) return title;
+  }
+  return undefined;
+}
+
 function entryFor(target: ReopenableTabTarget): ClosedTabEntry {
   const closedAt = Date.now();
+  if (target.kind === "agent") {
+    const title = agentTitle(target.agentId);
+    return { id: `agent:${closedAt}`, target, closedAt, ...(title ? { title } : {}) };
+  }
   if (target.kind !== "browser") {
     return { id: `${target.kind}:${closedAt}`, target, closedAt };
   }
