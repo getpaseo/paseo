@@ -748,6 +748,44 @@ describe("OMP agent client and session", () => {
     );
   });
 
+  test.each([
+    { kind: "initial", priorPrompt: false },
+    { kind: "follow-up", priorPrompt: true },
+  ])("correlates a $kind skill invocation without a user echo", async ({ priorPrompt }) => {
+    const omp = new OmpHarness();
+    await omp.start();
+    if (priorPrompt) {
+      await omp.runPrompt("Reply OK", "OK");
+    }
+
+    const typed = "/skill:tldr Summarize: hi.";
+    const runtime = omp.runtime();
+    const promptStarted = runtime.nextPrompt();
+    const run = omp.requireSession().run(typed, { clientMessageId: "client-skill" });
+    await promptStarted;
+    runtime.beginTurn();
+    runtime.emit({
+      type: "message_end",
+      message: {
+        role: "custom",
+        content: "[IMPORTANT] Full skill body",
+        customType: "skill-prompt",
+        attribution: "user",
+        details: { name: "tldr", args: "Summarize: hi." },
+        display: true,
+        id: "skill-1",
+      },
+    });
+    runtime.streamAssistantText("done");
+    runtime.finishTurn();
+    await run;
+
+    expect(omp.timeline().filter((item) => item.type === "user_message")).toEqual([
+      ...(priorPrompt ? [{ type: "user_message", text: "Reply OK", messageId: "user-1" }] : []),
+      { type: "user_message", text: typed, clientMessageId: "client-skill" },
+    ]);
+  });
+
   test("marks an OMP web search details error as failed even without isError", async () => {
     const omp = new OmpHarness();
     await omp.start();
