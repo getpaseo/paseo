@@ -130,7 +130,7 @@ function Pricing({ plans }: { plans: HubPlans | null }) {
           priceTooltip={plans.free.price.tooltip}
           features={planFeatures(plans.free)}
           actionHref={HOSTED_HUB_URL}
-          actionLabel="Create a free account"
+          actionLabel="Get started"
           actionNote="No card, never expires."
         />
         <PlanCard
@@ -140,8 +140,7 @@ function Pricing({ plans }: { plans: HubPlans | null }) {
           priceTooltip={plans.paid.price.tooltip}
           features={planFeatures(plans.paid)}
           actionHref={HOSTED_HUB_URL}
-          actionLabel={`Go to Hub for ${plans.paid.name}`}
-          actionNote={`Upgrade to ${plans.paid.name} from Billing, whether you work alone or with a team.`}
+          actionLabel="Get started"
           featured
         />
       </div>
