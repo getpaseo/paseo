@@ -172,6 +172,10 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
 
+      - name: Run built-in plugin tests
+        if: ${{ needs.changes.outputs.full != 'false' || needs.changes.outputs.server != 'false' }}
+        run: npm run test --workspace=@getpaseo/builtin-plugins
+
       - name: Run Hub CLI/daemon contract
         if: ${{ needs.changes.outputs.full == 'false' && needs.changes.outputs.server == 'false' && needs.changes.outputs.hub != 'false' }}
         run: npm run test:hub-cli-contract --workspace=@getpaseo/server
