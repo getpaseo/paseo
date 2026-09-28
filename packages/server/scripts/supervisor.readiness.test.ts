@@ -5,7 +5,11 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "vitest";
 
-async function runWorker(worker: string, publicationDelay = 0) {
+async function runWorker(
+  worker: string,
+  publicationDelay = 0,
+  options: { packagedSpawn?: boolean; background?: boolean; timeoutMs?: number } = {},
+) {
   const home = await mkdtemp(path.join(tmpdir(), "paseo-readiness-"));
   const workerPath = path.join(home, "worker.mjs");
   const runnerPath = path.join(home, "runner.mjs");
@@ -21,6 +25,7 @@ async function runWorker(worker: string, publicationDelay = 0) {
     runSupervisor({
       name: "ReadinessTest", startupMessage: "starting", restartOnCrash: true,
       resolveWorkerEntry: () => ${JSON.stringify(workerPath)}, workerArgs: [], workerExecArgv: [],
+      resolveWorkerSpawnSpec: ${options.packagedSpawn ? `() => ({ command: process.execPath, args: [${JSON.stringify(workerPath)}], env: process.env })` : "undefined"},
       onWorkerReady: async ({ listen }) => {
         await new Promise(resolve => setTimeout(resolve, ${publicationDelay}));
         await record(listen);
@@ -36,6 +41,8 @@ async function runWorker(worker: string, publicationDelay = 0) {
     cwd: fileURLToPath(new URL("../../../", import.meta.url)),
     env: { ...env, HOME: home, PASEO_HOME: home },
     stdio: ["ignore", "pipe", "pipe"],
+    windowsHide: true,
+    detached: options.background ?? false,
   });
   let output = "";
   child.stdout.on("data", (chunk) => {
@@ -49,7 +56,7 @@ async function runWorker(worker: string, publicationDelay = 0) {
       const timer = setTimeout(() => {
         child.kill("SIGKILL");
         reject(new Error(output));
-      }, 5_000);
+      }, options.timeoutMs ?? 5_000);
       child.once("error", reject);
       child.once("close", (exitCode) => {
         clearTimeout(timer);
@@ -120,3 +127,50 @@ test("requested shutdown before first readiness exits successfully", async () =>
   expect(result.code).toBe(0);
   expect(result.events).toEqual([null]);
 });
+
+test.runIf(process.platform === "win32").each([false, true])(
+  "keeps worker consoles hidden through restart and crash recovery (packaged spawn: %s)",
+  async (packagedSpawn) => {
+    const result = await runWorker(
+      `
+      import { existsSync, readFileSync, writeFileSync } from "node:fs";
+      import { execFileSync } from "node:child_process";
+      const marker = process.argv[1] + ".launch-count";
+      const count = existsSync(marker) ? Number(readFileSync(marker, "utf8")) + 1 : 1;
+      writeFileSync(marker, String(count));
+      process.title = "PaseoConsoleTest-" + process.pid;
+      const observation = process.argv[1] + ".console";
+      const script = \`
+        Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; public class ConsoleProbe { [DllImport("kernel32.dll", SetLastError=true)] public static extern bool AttachConsole(uint pid); [DllImport("kernel32.dll")] public static extern bool FreeConsole(); [DllImport("kernel32.dll")] public static extern IntPtr GetConsoleWindow(); [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr handle); }';
+        [ConsoleProbe]::FreeConsole() | Out-Null;
+        $attached = [ConsoleProbe]::AttachConsole(\${process.pid});
+        $consoleVisible = $attached -and [ConsoleProbe]::IsWindowVisible([ConsoleProbe]::GetConsoleWindow());
+        $terminalVisible = @(Get-Process WindowsTerminal -ErrorAction SilentlyContinue | Where-Object MainWindowTitle -EQ 'PaseoConsoleTest-\${process.pid}').Count -gt 0;
+        [System.IO.File]::WriteAllText('\${observation.replaceAll("'", "''")}', ($consoleVisible -or $terminalVisible).ToString().ToLowerInvariant());
+        if ($attached) { [ConsoleProbe]::FreeConsole() | Out-Null }
+      \`;
+      execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")], { windowsHide: true, stdio: "ignore", timeout: 5000 });
+      const visible = readFileSync(observation, "utf8");
+      process.on("message", message => {
+        if (message.type === "paseo:graceful-shutdown") process.exit(0);
+      });
+      process.send({ type: "paseo:ready", listen: count + ":visible=" + visible, serverId: "srv_fixture" }, () => {
+        if (count === 1) process.send({ type: "paseo:restart" });
+        else if (count === 2) process.exit(1);
+        else process.send({ type: "paseo:shutdown" });
+      });
+    `,
+      0,
+      { packagedSpawn, background: true, timeoutMs: 20_000 },
+    );
+    expect(result.code, result.output).toBe(0);
+    expect(result.events, result.output).toEqual([
+      "1:visible=false",
+      null,
+      "2:visible=false",
+      null,
+      "3:visible=false",
+      null,
+    ]);
+  },
+);

@@ -277,11 +277,13 @@ export function runSupervisor(options: SupervisorOptions): SupervisorController 
     writeLifecycleLog("Spawning worker", { workerEntry });
     if (spawnSpec) {
       child = spawn(spawnSpec.command, spawnSpec.args, {
+        windowsHide: true,
         stdio: ["inherit", "pipe", "pipe", "ipc"],
         env: spawnSpec.env ?? workerEnv,
       });
     } else {
       child = fork(workerEntry, workerArgs, {
+        windowsHide: true,
         stdio: ["inherit", "pipe", "pipe", "ipc"],
         env: workerEnv,
         execArgv: workerExecArgv,
