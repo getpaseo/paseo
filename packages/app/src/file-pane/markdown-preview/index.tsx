@@ -1,12 +1,60 @@
 import { useMemo } from "react";
+import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
+import type { ASTNode, RenderRules } from "react-native-markdown-display";
 import { Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
-import { MarkdownRenderer } from "@/components/markdown/renderer";
+import {
+  createSharedMarkdownRules,
+  MarkdownRenderer,
+  type MarkdownStyles,
+} from "@/components/markdown/renderer";
 import { MAX_CONTENT_WIDTH } from "@/constants/layout";
 import { parseMarkdownPreviewDocument } from "./document";
+import { resolveMarkdownPreviewImageSource } from "./image-source";
+import { FileMarkdownPreviewImage } from "./preview-image";
 
-export function FileMarkdownPreview({ source }: { source: string }) {
+export function FileMarkdownPreview({
+  source,
+  filePath,
+  workspaceRoot,
+  client,
+  serverId,
+}: {
+  source: string;
+  filePath: string;
+  workspaceRoot?: string;
+  client?: DaemonClient | null;
+  serverId?: string;
+}) {
   const document = useMemo(() => parseMarkdownPreviewDocument(source), [source]);
+  const rules = useMemo<RenderRules>(
+    () => ({
+      ...createSharedMarkdownRules(),
+      image: (node: ASTNode, _children, _parent: ASTNode[], _styles: MarkdownStyles) => {
+        const resolved = resolveMarkdownPreviewImageSource({
+          source: String(node.attributes?.src ?? ""),
+          markdownPath: filePath,
+          workspaceRoot,
+        });
+        if (!resolved) {
+          return null;
+        }
+
+        return (
+          <FileMarkdownPreviewImage
+            key={node.key}
+            source={resolved}
+            occurrenceKey={`${filePath}:${node.key}`}
+            alt={typeof node.attributes?.alt === "string" ? node.attributes.alt : undefined}
+            client={client}
+            workspaceRoot={workspaceRoot}
+            serverId={serverId}
+          />
+        );
+      },
+    }),
+    [client, filePath, serverId, workspaceRoot],
+  );
 
   return (
     <View style={styles.outerGutter}>
@@ -32,7 +80,7 @@ export function FileMarkdownPreview({ source }: { source: string }) {
             ))}
           </View>
         ) : null}
-        <MarkdownRenderer text={document.body} />
+        <MarkdownRenderer text={document.body} rules={rules} />
       </View>
     </View>
   );
