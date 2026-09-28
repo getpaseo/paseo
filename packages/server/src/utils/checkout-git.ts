@@ -1588,6 +1588,30 @@ export async function resolveRepositoryDefaultBranch(
   return null;
 }
 
+/**
+ * Base for a new branch-off worktree when the caller named none.
+ *
+ * Starts from the repository default branch, then prefers `origin/<branch>` whenever that
+ * remote-tracking ref exists. The local branch is only as fresh as the user's last pull, so
+ * branching off it silently starts work behind origin, or carries unpushed local commits
+ * into the new worktree. The daemon's background fetch keeps the remote-tracking ref current.
+ * Status and diff bases still resolve through `resolveRepositoryDefaultBranch` unchanged.
+ */
+export async function resolveWorktreeCreationBaseBranch(
+  repoRoot: string,
+  context?: CheckoutContext,
+): Promise<string | null> {
+  const defaultBranch = await resolveRepositoryDefaultBranch(repoRoot, context);
+  if (!defaultBranch || defaultBranch.startsWith("origin/")) {
+    return defaultBranch;
+  }
+  const result = await getRunGitCommand(context)(
+    ["rev-parse", "--verify", "--quiet", `refs/remotes/origin/${defaultBranch}`],
+    { cwd: repoRoot, envOverlay: READ_ONLY_GIT_ENV, acceptExitCodes: [0, 1] },
+  );
+  return result.exitCode === 0 ? `origin/${defaultBranch}` : defaultBranch;
+}
+
 async function resolveBaseRef(repoRoot: string, context?: CheckoutContext): Promise<string | null> {
   return resolveRepositoryDefaultBranch(repoRoot, context);
 }
