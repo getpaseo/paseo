@@ -3,7 +3,7 @@ import { SessionTurns } from "./turns.js";
 import { V2Timeline } from "./timeline.js";
 import { waitForLocationReady, awaitPaseoPlugin } from "./readiness.js";
 
-import type { SessionInfo, SessionMessageInfo } from "@opencode/client";
+import type { ModelRef, SessionInfo, SessionMessageInfo } from "@opencode/client";
 
 import { setTimeout as delay } from "node:timers/promises";
 import type { Logger } from "pino";
@@ -277,23 +277,34 @@ export class OpenCodeV2Session implements AgentSession {
   async setModel(model: string | null) {
     await this.reconnectIfExited();
     const selected = model
-      ? modelRef(model, this.config.thinkingOptionId)
+      ? modelRef(model)
       : (await this.client.model.default({ location: { directory: this.config.cwd } })).data;
     if (!selected) throw new Error("OpenCode has no default model");
+    // OpenCode rejects a prompt whose variant the model does not offer, so the
+    // current variant only carries over to a model that has it.
+    const variant = await this.offeredVariant(selected, this.config.thinkingOptionId);
     await this.client.session.switchModel({
       sessionID: this.id,
-      model: {
-        id: selected.id,
-        providerID: selected.providerID,
-        variant: this.config.thinkingOptionId,
-      },
+      model: { id: selected.id, providerID: selected.providerID, variant },
     });
     this.config.model = model ?? undefined;
+    if (variant !== this.config.thinkingOptionId) {
+      this.config.thinkingOptionId = variant;
+      this.emit({ type: "thinking_option_changed", provider: "opencode", thinkingOptionId: null });
+    }
     this.emit({
       type: "model_changed",
       provider: "opencode",
       runtimeInfo: await this.getRuntimeInfo(),
     });
+  }
+  private async offeredVariant(model: ModelRef, variant: string | undefined) {
+    if (!variant) return undefined;
+    const { data } = await this.client.model.list({ location: { directory: this.config.cwd } });
+    const offered = data.find(
+      (entry) => entry.providerID === model.providerID && entry.id === model.id,
+    );
+    return offered?.variants.some((entry) => entry.id === variant) ? variant : undefined;
   }
   async setThinkingOption(variant: string | null) {
     await this.reconnectIfExited();

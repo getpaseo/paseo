@@ -1,4 +1,4 @@
-import type { SessionMessageInfo } from "@opencode/client";
+import type { ModelInfo, SessionMessageInfo } from "@opencode/client";
 import { describe, expect, test } from "vitest";
 
 import { createTestLogger } from "../../../../../test-utils/test-logger.js";
@@ -535,4 +535,85 @@ describe("OpenCode v2 session lifecycle", () => {
       await session.close();
     }
   });
+
+  test("switching to a model without the current variant sends the next prompt without it", async () => {
+    const harness = offeringModels({
+      "opencode/space-bunny-free": ["low", "medium", "high"],
+      "opencode/longcat-2.5-preview-free": [],
+      "opencode/muse-spark-free": ["minimal", "medium"],
+    });
+    const client = new OpenCodeV2AgentClient({
+      logger: createTestLogger(),
+      runtime: harness.runtime,
+    });
+    const session = await client.createSession({
+      provider: "opencode",
+      cwd: "/tmp/project",
+      model: "opencode/space-bunny-free",
+      thinkingOptionId: "medium",
+    });
+    const thinkingChanges: Array<string | null> = [];
+    session.subscribe((event) => {
+      if (event.type === "thinking_option_changed") thinkingChanges.push(event.thinkingOptionId);
+    });
+    try {
+      await session.setModel!("opencode/muse-spark-free");
+      expect(await session.getRuntimeInfo!()).toMatchObject({ thinkingOptionId: "medium" });
+
+      await session.setModel!("opencode/longcat-2.5-preview-free");
+      await session.run("hello");
+      expect(harness.prompts).toEqual(["hello"]);
+      expect(await session.getRuntimeInfo!()).toMatchObject({
+        model: "opencode/longcat-2.5-preview-free",
+        thinkingOptionId: null,
+      });
+      expect(thinkingChanges).toEqual([null]);
+    } finally {
+      await session.close();
+    }
+  });
 });
+
+// Behaves like an OpenCode v2 server: switching to any listed model succeeds,
+// and a prompt fails when the session's variant is not one its model offers.
+function offeringModels(variantsByModel: Record<string, string[]>): V2Harness {
+  const harness = new V2Harness();
+  const catalog: ModelInfo[] = Object.entries(variantsByModel).map(([ref, variants]) => {
+    const [providerID, id] = ref.split("/");
+    return {
+      id,
+      modelID: id,
+      providerID,
+      name: id,
+      capabilities: { tools: true, input: ["text"], output: ["text"] },
+      variants: variants.map((variant) => ({ id: variant })),
+      time: { released: 0 },
+      cost: [],
+      status: "active",
+      enabled: true,
+      limit: { context: 1000, output: 1000 },
+    };
+  });
+  harness.api.model.list = async (input) => ({
+    location: { directory: input?.location?.directory ?? harness.info.location.directory },
+    data: catalog,
+  });
+  harness.api.session.create = async (input = {}) => {
+    harness.creates.push(input);
+    harness.info.model = input.model;
+    return harness.info;
+  };
+  harness.api.session.switchModel = async ({ model }) => {
+    harness.info.model = model;
+  };
+  harness.prompt = async (input) => {
+    const model = harness.info.model;
+    const offered = catalog.find(
+      (entry) => entry.providerID === model?.providerID && entry.id === model?.id,
+    );
+    if (model?.variant && !offered?.variants.some((variant) => variant.id === model.variant))
+      throw new Error(`Variant unavailable for ${model.providerID}/${model.id}: ${model.variant}`);
+    harness.prompts.push(input.text);
+  };
+  return harness;
+}
