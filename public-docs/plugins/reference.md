@@ -304,6 +304,8 @@ external `href` or `xlink:href` references are rejected. Fragment references suc
 allowed. Paseo reads and sanitizes the file when the plugin starts; the string is never an inline
 SVG or URL.
 
+Implement optional `ProviderRegistration.fetchUsage()` to report rate limit windows, plan tiers, and token or credit balances to Paseo's host usage widget. The callback executes out-of-process in the plugin worker with a 15-second timeout and returns `ProviderQuotaSnapshot` (or `ProviderQuotaUsage`). If it throws, times out, or fails schema validation, Paseo sets the provider's status to `"error"` with the failure message while keeping all other provider usage cards intact.
+
 ## Entry point and cleanup
 
 Each present entry default-exports one contribution function and returns cleanup. Client entries

@@ -14,8 +14,9 @@ import {
   type ProviderConnection,
   type ProviderEvent,
   type ProviderInput,
+  type ProviderQuotaSnapshot,
 } from "@getpaseo/plugin/server/provider";
-import type { PluginLogEntry } from "@getpaseo/protocol/messages";
+import { ProviderUsageSchema, type PluginLogEntry } from "@getpaseo/protocol/messages";
 import { compilePlugin } from "./compiler.js";
 import { readPluginManifest } from "./manifest.js";
 import type { PluginRequirements } from "@getpaseo/protocol/messages";
@@ -512,6 +513,17 @@ export class PluginRuntime {
     if (output !== undefined && typeof output !== "string")
       throw new Error("Invalid catalogue key from plugin");
     return output;
+  }
+
+  async fetchProviderUsage(pluginId: string, providerId: string): Promise<ProviderQuotaSnapshot> {
+    const loaded = this.plugins.get(pluginId);
+    if (!loaded) throw new Error(`Plugin is not available: ${pluginId}`);
+    const output = await this.request(loaded, {
+      type: "provider.fetch_usage",
+      requestId: randomUUID(),
+      providerId,
+    });
+    return ProviderUsageSchema.partial().parse(output);
   }
 
   private request(

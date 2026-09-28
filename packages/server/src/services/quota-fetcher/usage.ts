@@ -5,7 +5,9 @@ import type {
   ProviderUsageTone,
   ProviderUsageWindow,
 } from "../../server/messages.js";
-import type { ProviderApiFetch } from "./provider.js";
+import type { Logger } from "pino";
+import type { ProviderRegistration, ProviderQuotaSnapshot } from "@getpaseo/plugin/server/provider";
+import type { ProviderApiFetch, ProviderUsageFetcher } from "./provider.js";
 
 const PROVIDER_HTTP_TIMEOUT_MS = 15_000;
 
@@ -108,4 +110,71 @@ export function usedPctOf(
 export function toIsoStringOrNull(timestampMs: number): string | null {
   const date = new Date(timestampMs);
   return Number.isFinite(date.getTime()) ? date.toISOString() : null;
+}
+
+export const PLUGIN_USAGE_TIMEOUT_MS = 15_000;
+
+export interface CreatePluginUsageFetcherOptions {
+  provider: ProviderRegistration;
+  logger: Logger;
+  timeoutMs?: number;
+}
+
+export function createPluginUsageFetcher(
+  options: CreatePluginUsageFetcherOptions,
+): ProviderUsageFetcher {
+  const { provider, logger, timeoutMs = PLUGIN_USAGE_TIMEOUT_MS } = options;
+  return {
+    providerId: provider.id,
+    displayName: provider.label,
+    async fetchUsage(): Promise<ProviderUsage> {
+      if (!provider.fetchUsage) {
+        return unavailableUsage({
+          providerId: provider.id,
+          displayName: provider.label,
+        });
+      }
+      try {
+        let timer: NodeJS.Timeout | undefined;
+        const timeoutPromise = new Promise<never>((_, reject) => {
+          timer = setTimeout(() => {
+            reject(new Error(`Plugin usage fetch timed out after ${timeoutMs}ms`));
+          }, timeoutMs);
+        });
+        const result = await Promise.race([provider.fetchUsage(), timeoutPromise]).finally(() => {
+          if (timer) clearTimeout(timer);
+        });
+        return normalizePluginUsage({ provider, snapshot: result });
+      } catch (error) {
+        logger.debug({ err: error, providerId: provider.id }, "Plugin provider usage fetch failed");
+        return unavailableUsage({
+          providerId: provider.id,
+          displayName: provider.label,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    },
+  };
+}
+
+export interface NormalizePluginUsageOptions {
+  provider: { id: string; label: string };
+  snapshot: ProviderQuotaSnapshot;
+}
+
+export function normalizePluginUsage(options: NormalizePluginUsageOptions): ProviderUsage {
+  const { provider, snapshot } = options;
+  return {
+    providerId: provider.id,
+    displayName: snapshot.displayName || provider.label,
+    status: snapshot.status ?? (snapshot.error ? "error" : "available"),
+    planLabel: snapshot.planLabel ?? null,
+    sourceLabel: snapshot.sourceLabel ?? null,
+    fetchedAt: snapshot.fetchedAt ?? new Date().toISOString(),
+    nextRefreshAt: snapshot.nextRefreshAt ?? null,
+    windows: snapshot.windows ? [...snapshot.windows] : [],
+    balances: snapshot.balances ? [...snapshot.balances] : [],
+    details: snapshot.details ? [...snapshot.details] : [],
+    error: snapshot.error ?? null,
+  };
 }
