@@ -98,6 +98,14 @@ function replyToCommands(
   });
 }
 
+function capturePendingCommand(child: OmpChild, type: string): Promise<Record<string, unknown>> {
+  return new Promise((resolve) => {
+    onOmpCommand(child, (command) => {
+      if (command.type === type) resolve(command);
+    });
+  });
+}
+
 /** Kill the child the moment it receives `type`, so the request is in flight when it dies. */
 function exitOnCommand(child: OmpChild, type: string): void {
   onOmpCommand(child, (command) => {
@@ -291,6 +299,27 @@ describe("OMP CLI runtime", () => {
     expect(commands.map(withoutRequestId)).toEqual([
       { type: "set_subagent_subscription", level: "events" },
     ]);
+  });
+
+  test("compact waits beyond the control-plane timeout for a late response", async () => {
+    vi.useFakeTimers();
+    const child = createOmpChild();
+    const pending = capturePendingCommand(child, "compact");
+    const session = await createRuntime(child, [], { requestTimeoutMs: 100 }).startSession({
+      cwd: "/workspace/project",
+    });
+    try {
+      const compact = session.compact("focus on tests");
+      const command = await pending;
+      await vi.advanceTimersByTimeAsync(101);
+      child.stdout.write(
+        `${JSON.stringify({ id: command.id, type: "response", command: "compact", success: true, data: {} })}\n`,
+      );
+      await expect(compact).resolves.toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+      await session.close();
+    }
   });
 
   test("accepts the empty prompt acknowledgement emitted by OMP 17", async () => {
