@@ -116,6 +116,9 @@ function MarkdownTableFrame({
 
   return (
     <ScrollView
+      // Android only shows a persistent scrollbar that was on when the view was created; turning
+      // it on later leaves the bar hidden until the first scroll. Remount once overflow is known.
+      key={overflows ? "overflows" : "fits"}
       horizontal
       nestedScrollEnabled
       showsHorizontalScrollIndicator
