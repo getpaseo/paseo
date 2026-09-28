@@ -201,7 +201,7 @@ export function registerBrowserTools(options: RegisterBrowserToolsOptions): void
     {
       title: "Create browser tab",
       description:
-        "TESTING: for any test, E2E, or verification of a flow, call browser_test instead — one call replaces this step-by-step loop. Use this tool for debugging a failed browser_test run or non-test browsing. Create a new Paseo browser tab in this agent's workspace on the most recently connected browser automation host, opened in the background without switching the user's view. Pass the final target URL here, with any token, query, or hash, so the page opens directly; opening a blank tab and navigating afterwards loses one-time tokens. http(s) and scheme-less host URLs (treated as http) are accepted; the returned browserId is used by tab-scoped tools.",
+        "TESTING: for any test, E2E, or verification of a flow, call browser_test instead — one call replaces this step-by-step loop. For a multi-step task outside tests (a flow, a form, finding something), call browser_goal instead: Jev drives the steps in the daemon for a fraction of the tokens. Use this tool for a single step, to debug a failed run, or after browser_goal stopped. Create a new Paseo browser tab in this agent's workspace on the most recently connected browser automation host, opened in the background without switching the user's view. Pass the final target URL here, with any token, query, or hash, so the page opens directly; opening a blank tab and navigating afterwards loses one-time tokens. http(s) and scheme-less host URLs (treated as http) are accepted; the returned browserId is used by tab-scoped tools.",
       inputSchema: {
         url: BrowserHttpUrlInputSchema.optional(),
       },
@@ -230,7 +230,7 @@ export function registerBrowserTools(options: RegisterBrowserToolsOptions): void
     {
       title: "Run browser goal with Jev",
       description:
-        "Run a bounded Jev decision loop against an existing Paseo browser tab or a new http(s) URL. Paseo sends the page's accessibility element summary, goal, and recent action metadata to TypeSafe, but not screenshots or values loaded locally from environment-variable names in the values map. Every successful run must pass the explicit text or URL checks in verify.",
+        "The default for any multi-step browser task outside tests: describe the goal and verify checks, and Jev drives the clicks and typing inside the daemon, returning only the outcome. Run a bounded Jev decision loop against an existing Paseo browser tab or a new http(s) URL. Paseo sends the page's accessibility element summary, goal, and recent action metadata to TypeSafe, but not screenshots or values loaded locally from environment-variable names in the values map. Every successful run must pass the explicit text or URL checks in verify.",
       inputSchema: BrowserGoalInputSchema,
     },
     async (input: JevBrowserGoalInput) => {
@@ -355,7 +355,7 @@ export function registerBrowserTools(options: RegisterBrowserToolsOptions): void
     {
       title: "Snapshot browser page",
       description:
-        "TESTING: for any test, E2E, or verification of a flow, call browser_test instead — one call replaces this step-by-step loop. Use this tool for debugging a failed browser_test run or non-test browsing. Return a model-readable snapshot of a Paseo browser tab. Use browserId from browser_new_tab or browser_list_tabs; refs come from the latest browser_snapshot of the same tab and expire when the page changes.",
+        "TESTING: for any test, E2E, or verification of a flow, call browser_test instead — one call replaces this step-by-step loop. For a multi-step task outside tests (a flow, a form, finding something), call browser_goal instead: Jev drives the steps in the daemon for a fraction of the tokens. Use this tool for a single step, to debug a failed run, or after browser_goal stopped. Return a model-readable snapshot of a Paseo browser tab. Use browserId from browser_new_tab or browser_list_tabs; refs come from the latest browser_snapshot of the same tab and expire when the page changes.",
       inputSchema: {
         browserId: BrowserAutomationBrowserIdSchema,
       },
@@ -383,7 +383,7 @@ export function registerBrowserTools(options: RegisterBrowserToolsOptions): void
     {
       title: "Click browser element",
       description:
-        "TESTING: for any test, E2E, or verification of a flow, call browser_test instead — one call replaces this step-by-step loop. Use this tool for debugging a failed browser_test run or non-test browsing. Click an element in a Paseo browser tab. Use browserId from browser_new_tab or browser_list_tabs; refs come from the latest browser_snapshot of the same tab and expire when the page changes.",
+        "TESTING: for any test, E2E, or verification of a flow, call browser_test instead — one call replaces this step-by-step loop. For a multi-step task outside tests (a flow, a form, finding something), call browser_goal instead: Jev drives the steps in the daemon for a fraction of the tokens. Use this tool for a single step, to debug a failed run, or after browser_goal stopped. Click an element in a Paseo browser tab. Use browserId from browser_new_tab or browser_list_tabs; refs come from the latest browser_snapshot of the same tab and expire when the page changes.",
       inputSchema: {
         ref: BrowserRefInputSchema,
         browserId: BrowserAutomationBrowserIdSchema,
@@ -545,7 +545,7 @@ export function registerBrowserTools(options: RegisterBrowserToolsOptions): void
     {
       title: "Navigate browser",
       description:
-        "TESTING: for any test, E2E, or verification of a flow, call browser_test instead — one call replaces this step-by-step loop. Use this tool for debugging a failed browser_test run or non-test browsing. Navigate a Paseo browser tab to a URL. Use browserId from browser_new_tab or browser_list_tabs; pass an http(s) URL or a scheme-less host URL, which is treated as http.",
+        "TESTING: for any test, E2E, or verification of a flow, call browser_test instead — one call replaces this step-by-step loop. For a multi-step task outside tests (a flow, a form, finding something), call browser_goal instead: Jev drives the steps in the daemon for a fraction of the tokens. Use this tool for a single step, to debug a failed run, or after browser_goal stopped. Navigate a Paseo browser tab to a URL. Use browserId from browser_new_tab or browser_list_tabs; pass an http(s) URL or a scheme-less host URL, which is treated as http.",
       inputSchema: { url: BrowserHttpUrlInputSchema, browserId: BrowserAutomationBrowserIdSchema },
     },
     async ({ url, browserId }) => {

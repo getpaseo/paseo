@@ -939,11 +939,14 @@ export class AgentManager {
         prompt,
         isFirstTurn: agent.lastUserMessageAt === null,
       });
+      let changed = false;
       if (route?.model && route.model !== agent.config.model) {
         await this.setAgentModel(agent.id, route.model);
+        changed = true;
       }
       if (route?.thinkingOptionId && route.thinkingOptionId !== agent.config.thinkingOptionId) {
         await this.setAgentThinkingOption(agent.id, route.thinkingOptionId);
+        changed = true;
       }
       this.routedModels.set(agent.id, agent.config.model ?? null);
       if (route) {
@@ -951,6 +954,16 @@ export class AgentManager {
           { agentId: agent.id, provider: agent.provider, route },
           "System One routed turn",
         );
+      }
+      // Routing is otherwise invisible; the person should see what Jev chose and why a
+      // turn runs cheaper or deeper than the composer said.
+      if (changed) {
+        const parts = [agent.config.model, agent.config.thinkingOptionId].filter(Boolean);
+        await this.appendTimelineItem(agent.id, {
+          type: "notification",
+          level: "info",
+          message: `Jev routed this turn: ${parts.join(" · ")}`,
+        });
       }
     } catch (error) {
       this.logger.warn({ err: error, agentId: agent.id }, "System One turn routing failed");

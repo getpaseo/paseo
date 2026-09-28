@@ -11523,6 +11523,26 @@ test("moveAgentToWorkspace restarts the same provider in the target directory", 
   });
 });
 
+test("routeNextTurn tells the timeline what Jev picked, only when it changed something", async () => {
+  const { manager, agent } = await createProviderSwitchFixture({
+    agentId: "00000000-0000-4000-8000-000000000621",
+    target: new ProviderSwitchClient("claude"),
+  });
+  manager.setTurnRouter(async () => ({ thinkingOptionId: "low" }));
+  const notices = () =>
+    manager
+      .getTimeline(agent.id)
+      .filter((item) => item.type === "notification" && item.message.startsWith("Jev routed"));
+
+  await manager.routeNextTurn(agent.id, "What is the status?");
+  expect(notices()).toEqual([
+    expect.objectContaining({ message: "Jev routed this turn: gpt-5.4 · low" }),
+  ]);
+
+  await manager.routeNextTurn(agent.id, "And now?");
+  expect(notices()).toHaveLength(1);
+});
+
 test("setAgentProvider marks the provider cut in the timeline", async () => {
   const { manager, agent } = await createProviderSwitchFixture({
     agentId: "00000000-0000-4000-8000-000000000604",
