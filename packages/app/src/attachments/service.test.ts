@@ -99,6 +99,40 @@ describe("attachment service", () => {
     ]);
   });
 
+  it("rejects instead of silently dropping an unreadable image", async () => {
+    const store: AttachmentStore = {
+      ...createRecordingStore(),
+      async encodeBase64() {
+        throw new Error("file disappeared");
+      },
+    };
+    __setAttachmentStoreForTests(store);
+
+    await expect(
+      encodeAttachmentsForSend([createAttachment({ id: "missing-image" })]),
+    ).rejects.toThrow("An image attachment could not be read. Reattach the image and try again.");
+  });
+
+  it("rejects the whole image batch when one image cannot be read", async () => {
+    const store: AttachmentStore = {
+      ...createRecordingStore(),
+      async encodeBase64({ attachment }) {
+        if (attachment.id === "missing-image") {
+          throw new Error("file disappeared");
+        }
+        return `${attachment.id}:base64`;
+      },
+    };
+    __setAttachmentStoreForTests(store);
+
+    await expect(
+      encodeAttachmentsForSend([
+        createAttachment({ id: "readable-image" }),
+        createAttachment({ id: "missing-image" }),
+      ]),
+    ).rejects.toThrow("An image attachment could not be read");
+  });
+
   it("does not collect an attachment persisted while garbage collection is starting", async () => {
     let releaseSave: () => void = () => undefined;
     let reportSaveStarted: () => void = () => undefined;

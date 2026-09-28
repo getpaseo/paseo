@@ -268,13 +268,25 @@ function buildRealtimeVoiceButtonStyle(
 function buildAgentStateSelector(serverId: string, agentId: string) {
   return (state: ReturnType<typeof useSessionStore.getState>) => {
     const agent = state.sessions[serverId]?.agents?.get(agentId) ?? null;
+    if (!agent) {
+      return {
+        status: null,
+        contextWindowMaxTokens: null,
+        contextWindowUsedTokens: null,
+        totalCostUsd: null,
+        model: null,
+        provider: null,
+        capabilities: null,
+      };
+    }
     return {
-      status: agent?.status ?? null,
-      contextWindowMaxTokens: agent?.lastUsage?.contextWindowMaxTokens ?? null,
-      contextWindowUsedTokens: agent?.lastUsage?.contextWindowUsedTokens ?? null,
-      totalCostUsd: agent?.lastUsage?.totalCostUsd ?? null,
-      model: agent?.model ?? null,
-      provider: agent?.provider ?? null,
+      status: agent.status,
+      contextWindowMaxTokens: agent.lastUsage?.contextWindowMaxTokens ?? null,
+      contextWindowUsedTokens: agent.lastUsage?.contextWindowUsedTokens ?? null,
+      totalCostUsd: agent.lastUsage?.totalCostUsd ?? null,
+      model: agent.model ?? null,
+      provider: agent.provider,
+      capabilities: agent.capabilities ?? null,
     };
   };
 }
@@ -705,9 +717,16 @@ function QueuedMessageRow({
   }, [onSendNow, item.id]);
   return (
     <View style={styles.queueItem}>
-      <Text style={styles.queueText} numberOfLines={2} ellipsizeMode="tail">
-        {item.text}
-      </Text>
+      <View style={styles.queueCopy}>
+        <Text style={styles.queueText} numberOfLines={2} ellipsizeMode="tail">
+          {item.text}
+        </Text>
+        {item.sendError ? (
+          <Text accessibilityRole="alert" style={styles.queueErrorText}>
+            {item.sendError}
+          </Text>
+        ) : null}
+      </View>
       <View style={styles.queueActions}>
         <Pressable
           onPress={handleEdit}
@@ -1612,10 +1631,11 @@ function ComposerContentImpl({
     }
     return false;
   });
-  const activeSendBehavior = resolveActiveSendBehavior(
-    appSettings.sendBehavior,
+  const activeSendBehavior = resolveActiveSendBehavior({
+    sendBehavior: appSettings.sendBehavior,
     hasPendingPermission,
-  );
+    supportsSteering: agentState.capabilities?.supportsSteering,
+  });
   const hasAgent = agentState.status !== null;
 
   const queueWriter = useMemo<QueueWriter>(
@@ -2626,9 +2646,16 @@ const styles = StyleSheet.create((theme: Theme) => ({
     gap: theme.spacing[2],
   },
   queueText: {
-    flex: 1,
     color: theme.colors.foreground,
     fontSize: theme.fontSize.base,
+  },
+  queueCopy: {
+    flex: 1,
+    gap: theme.spacing[1],
+  },
+  queueErrorText: {
+    color: theme.colors.palette.red[500],
+    fontSize: theme.fontSize.sm,
   },
   queueActions: {
     flexDirection: "row",
