@@ -1,6 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Pressable, type PressableStateCallbackType, Text, View } from "react-native";
-import { keepPreviousData, useMutation, useQueries, useQueryClient } from "@tanstack/react-query";
+import {
+  keepPreviousData,
+  useIsFetching,
+  useMutation,
+  useQueries,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import type {
   DaemonClient,
@@ -15,7 +21,8 @@ import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { Combobox, ComboboxItem, type ComboboxOption } from "@/components/ui/combobox";
 import { useProviderIcon, useProviderIcons } from "@/components/provider-icons";
 import { useTimeAgo } from "@/hooks/use-time-ago";
-import { useDebouncedValue } from "@/hooks/use-debounced-value";
+import { useCachedQueryData } from "@/hooks/use-cached-query-data";
+import { useEmptySearch } from "@/hooks/use-empty-search";
 import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
 import { useHostProjects } from "@/projects/host-projects";
 import { useHostFeature } from "@/runtime/host-features";
@@ -23,6 +30,7 @@ import { useHosts } from "@/runtime/host-runtime";
 import { i18n } from "@/i18n/i18next";
 import {
   aggregateSessionEntries,
+  filterSessionEntries,
   ALL_FILTER_VALUE,
   buildProviderLabelMap,
   collectProviderErrorRows,
@@ -44,8 +52,6 @@ import {
 
 const IMPORT_SHEET_SNAP_POINTS = ["70%", "92%"];
 const DISABLED_ACCESSIBILITY_STATE = { disabled: true };
-/** Long enough that a typed word is one request, short enough to feel live. */
-const SEARCH_DEBOUNCE_MS = 200;
 
 type RecentProviderSessionsClient = Pick<
   DaemonClient,
@@ -74,6 +80,7 @@ type RecentSessionsResponse = Awaited<
 type SessionsQueryKey = ReadonlyArray<string | number | null>;
 
 function buildSessionsQueryKey(input: {
+  serverId: string | null;
   cwd: string | null;
   query: string;
   limit: number;
@@ -81,6 +88,7 @@ function buildSessionsQueryKey(input: {
 }): SessionsQueryKey {
   return [
     "recent-provider-sessions",
+    input.serverId,
     input.cwd,
     input.query,
     input.limit,
@@ -96,10 +104,15 @@ interface SessionsQueryConfig {
   // in-flight daemon requests behind a dead provider (#2512).
   retry: false;
   placeholderData: typeof keepPreviousData;
+  staleTime: number;
+  refetchOnMount: true;
+  refetchOnWindowFocus: false;
+  refetchOnReconnect: false;
   queryFn: () => Promise<RecentSessionsResponse>;
 }
 
 function buildSessionsQueriesConfig(args: {
+  serverId: string | null;
   providersToFetch: AgentProvider[] | null;
   visible: boolean;
   client: RecentProviderSessionsClient | null;
@@ -108,14 +121,27 @@ function buildSessionsQueriesConfig(args: {
   limit: number;
   hostDisconnectedMessage?: string;
 }): SessionsQueryConfig[] {
-  const { providersToFetch, visible, client, cwd, query, limit, hostDisconnectedMessage } = args;
+  const {
+    serverId,
+    providersToFetch,
+    visible,
+    client,
+    cwd,
+    query,
+    limit,
+    hostDisconnectedMessage,
+  } = args;
   if (providersToFetch === null) return [];
   const enabled = visible && Boolean(client);
   return providersToFetch.map((provider) => ({
-    queryKey: buildSessionsQueryKey({ cwd, query, limit, provider }),
+    queryKey: buildSessionsQueryKey({ serverId, cwd, query, limit, provider }),
     enabled,
     retry: false as const,
     placeholderData: keepPreviousData,
+    staleTime: 15_000,
+    refetchOnMount: true,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
     queryFn: async () => {
       if (!client) {
         throw new Error(hostDisconnectedMessage ?? i18n.t("workspace.terminal.hostDisconnected"));
@@ -403,6 +429,52 @@ function SessionRows({
   );
 }
 
+function useImportSessionSearch({
+  serverId,
+  scopeCwd,
+  query,
+  selectedProvider,
+  providersToFetch,
+  enabled,
+}: {
+  serverId: string | null;
+  scopeCwd: string | null;
+  query: string;
+  selectedProvider: string;
+  providersToFetch: AgentProvider[] | null;
+  enabled: boolean;
+}) {
+  const sessionsQueryRoot = useMemo(
+    () => ["recent-provider-sessions", serverId, scopeCwd],
+    [serverId, scopeCwd],
+  );
+  const cachedResponses = useCachedQueryData<RecentSessionsResponse>(sessionsQueryRoot);
+  const pendingSearches = useIsFetching({ queryKey: sessionsQueryRoot });
+  const cachedEntries = useMemo(
+    () =>
+      aggregateSessionEntries(cachedResponses.map((data) => ({ data }))).filter((entry) =>
+        providersToFetch?.includes(entry.providerId),
+      ),
+    [cachedResponses, providersToFetch],
+  );
+  const visibleEntries = useMemo(
+    () => filterSessionEntries(cachedEntries, query, selectedProvider),
+    [cachedEntries, query, selectedProvider],
+  );
+  const remoteSearch = useEmptySearch({
+    scope: JSON.stringify(sessionsQueryRoot),
+    query,
+    hasMatches: visibleEntries.length > 0,
+    enabled: enabled && cachedResponses.length > 0 && pendingSearches === 0,
+  });
+  return {
+    sessionsQueryRoot,
+    visibleEntries,
+    ...remoteSearch,
+    isWaiting: remoteSearch.isWaiting || (pendingSearches > 0 && visibleEntries.length === 0),
+  };
+}
+
 export function ImportSessionSheet({
   visible,
   client,
@@ -427,7 +499,7 @@ export function ImportSessionSheet({
 
   const scopeCwd = isShowingAllDirectories ? null : (cwd ?? null);
   const supportsSearch = useHostFeature(serverId, "importSessionSearch");
-  const query = useDebouncedValue(supportsSearch ? searchInput : "", SEARCH_DEBOUNCE_MS).trim();
+  const query = (supportsSearch ? searchInput : "").trim();
 
   useEffect(() => {
     if (visible) return;
@@ -462,20 +534,29 @@ export function ImportSessionSheet({
     [snapshotEntries],
   );
 
-  const sessionsQueryRoot = useMemo(() => ["recent-provider-sessions", scopeCwd], [scopeCwd]);
+  const remoteSearch = useImportSessionSearch({
+    serverId,
+    scopeCwd,
+    query,
+    selectedProvider,
+    providersToFetch,
+    enabled: visible,
+  });
+  const { sessionsQueryRoot, visibleEntries, remoteQuery } = remoteSearch;
 
   const queriesConfig = useMemo(
     () =>
       buildSessionsQueriesConfig({
+        serverId,
         providersToFetch,
         visible,
         client,
         cwd: scopeCwd,
-        query,
+        query: remoteQuery,
         limit: pageLimit,
         hostDisconnectedMessage: t("workspace.terminal.hostDisconnected"),
       }),
-    [providersToFetch, visible, client, scopeCwd, query, pageLimit, t],
+    [serverId, providersToFetch, visible, client, scopeCwd, remoteQuery, pageLimit, t],
   );
 
   const queries = useQueries({ queries: queriesConfig });
@@ -498,11 +579,6 @@ export function ImportSessionSheet({
       setSelectedProvider(ALL_FILTER_VALUE);
     }
   }, [visible, filterProviders, selectedProvider]);
-
-  const visibleEntries = useMemo(() => {
-    if (selectedProvider === ALL_FILTER_VALUE) return aggregatedEntries;
-    return aggregatedEntries.filter((entry) => entry.providerId === selectedProvider);
-  }, [aggregatedEntries, selectedProvider]);
 
   const projectServerIds = useMemo(() => (serverId ? [serverId] : []), [serverId]);
   const hostProjects = useHostProjects(projectServerIds);
@@ -624,7 +700,7 @@ export function ImportSessionSheet({
         onImportedAgent?.(agent.id);
       }
       void queryClient.invalidateQueries({
-        queryKey: sessionsQueryRoot,
+        queryKey: ["recent-provider-sessions", serverId],
         refetchType: "none",
       });
     },
@@ -651,20 +727,33 @@ export function ImportSessionSheet({
   const isRefreshing = queries.some((providerQuery) => providerQuery.isFetching);
 
   const handleRefresh = useCallback(() => {
-    void queryClient.invalidateQueries({ queryKey: sessionsQueryRoot });
+    void queryClient.invalidateQueries({ queryKey: sessionsQueryRoot }, { cancelRefetch: false });
   }, [queryClient, sessionsQueryRoot]);
 
   const handleRetryProvider = useCallback(
     (provider: string) => {
-      void queryClient.refetchQueries({
-        queryKey: buildSessionsQueryKey({ cwd: scopeCwd, query, limit: pageLimit, provider }),
-      });
+      void queryClient.refetchQueries(
+        {
+          queryKey: buildSessionsQueryKey({
+            serverId,
+            cwd: scopeCwd,
+            query: remoteQuery,
+            limit: pageLimit,
+            provider,
+          }),
+        },
+        { cancelRefetch: false },
+      );
     },
-    [pageLimit, query, queryClient, scopeCwd],
+    [serverId, pageLimit, remoteQuery, queryClient, scopeCwd],
   );
 
   const handleShowAll = useCallback(() => setIsShowingAllDirectories(true), []);
-  const handleLoadMore = useCallback(() => setPageLimit(nextPageLimit), []);
+  const searchNow = remoteSearch.searchNow;
+  const handleLoadMore = useCallback(() => {
+    searchNow();
+    setPageLimit(nextPageLimit);
+  }, [searchNow]);
 
   const hosts = useHosts();
   const hostLabel = useMemo(
@@ -704,6 +793,7 @@ export function ImportSessionSheet({
   const hasNoImportableProviders = providersToFetch !== null && providersToFetch.length === 0;
   const isQueryingProviders = queries.length > 0;
   const isLoadingSessions =
+    remoteSearch.isWaiting ||
     isWaitingForSnapshot ||
     (isQueryingProviders &&
       queries.some((providerQuery) => providerQuery.isLoading || providerQuery.isPending));
@@ -725,7 +815,7 @@ export function ImportSessionSheet({
     providerLabelById,
   });
   const showFilter = filterProviders.length > 1;
-  const showLoadMore = hasMoreSessions(queries, pageLimit);
+  const showLoadMore = query === remoteQuery && hasMoreSessions(queries, pageLimit);
 
   return (
     <AdaptiveModalSheet

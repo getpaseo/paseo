@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { FetchRecentProviderSessionEntry } from "@getpaseo/client/internal/daemon-client";
 import {
   aggregateSessionEntries,
+  filterSessionEntries,
   ALL_FILTER_VALUE,
   buildProviderLabelMap,
   collectProviderErrorRows,
@@ -464,5 +465,22 @@ describe("computeEmptyState", () => {
       aggregatedCount: 1,
     });
     expect(result.emptyStateTitle).toBe("No z-ai sessions found.");
+  });
+});
+
+describe("filterSessionEntries", () => {
+  it("filters cached titles, prompt previews, and directory names with the active provider", () => {
+    const entries = [
+      entry({ providerHandleId: "title", title: "Invoice workflow" }),
+      entry({ providerHandleId: "prompt", lastPromptPreview: "Update INVOICE status" }),
+      entry({ providerHandleId: "directory", cwd: "C:\\repo\\invoice" }),
+      entry({ providerHandleId: "other", title: "Unrelated" }),
+      entry({ providerHandleId: "codex", providerId: "codex", title: "Invoice" }),
+    ];
+    expect(
+      filterSessionEntries(entries, " invoice ", "claude").map((item) => item.providerHandleId),
+    ).toEqual(["title", "prompt", "directory"]);
+    expect(filterSessionEntries(entries, "missing", ALL_FILTER_VALUE)).toEqual([]);
+    expect(filterSessionEntries(entries, "", ALL_FILTER_VALUE)).toEqual(entries);
   });
 });

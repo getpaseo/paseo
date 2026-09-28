@@ -66,7 +66,7 @@ export function buildProviderLabelMap(
 }
 
 export function aggregateSessionEntries(
-  queries: ReadonlyArray<SessionsQueryResult>,
+  queries: ReadonlyArray<Pick<SessionsQueryResult, "data">>,
 ): FetchRecentProviderSessionEntry[] {
   const seen = new Set<string>();
   const collected: FetchRecentProviderSessionEntry[] = [];
@@ -83,6 +83,23 @@ export function aggregateSessionEntries(
     (a, b) => new Date(b.lastActivityAt).getTime() - new Date(a.lastActivityAt).getTime(),
   );
   return collected;
+}
+
+/** Match the same fields as the daemon; never leave unrelated placeholder rows visible. */
+export function filterSessionEntries(
+  entries: FetchRecentProviderSessionEntry[],
+  rawQuery: string,
+  provider: string,
+): FetchRecentProviderSessionEntry[] {
+  const query = rawQuery.trim().toLowerCase();
+  return entries.filter((entry) => {
+    if (provider !== ALL_FILTER_VALUE && entry.providerId !== provider) return false;
+    if (!query) return true;
+    const directory = entry.cwd.replaceAll("\\", "/").replace(/\/+$/, "").split("/").at(-1);
+    return [entry.title, entry.firstPromptPreview, entry.lastPromptPreview, directory].some(
+      (value) => value?.toLowerCase().includes(query),
+    );
+  });
 }
 
 export function sumFilteredAlreadyImportedCount(
