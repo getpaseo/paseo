@@ -7,6 +7,7 @@ import type { Logger } from "pino";
 import { z } from "zod";
 import type {
   ProviderUsage,
+  ProviderUsageBalance,
   ProviderUsageDetail,
   ProviderUsageWindow,
 } from "../../../server/messages.js";
@@ -40,6 +41,28 @@ const ClaudeUsageWindowSchema = z.object({
   resets_at: z.string().nullish(),
 });
 
+// Enterprise usage-based orgs are spend-metered: the rolling windows come back
+// null and a `spend` block carries the dollar meter. Each amount is expressed
+// in minor units with an exponent (USD cents -> { amount_minor, exponent: 2 }).
+const ClaudeSpendAmountSchema = z
+  .object({
+    amount_minor: ApiNumberSchema.nullish(),
+    currency: z.string().nullish(),
+    exponent: ApiNumberSchema.nullish(),
+  })
+  .nullish();
+
+const ClaudeSpendSchema = z
+  .object({
+    used: ClaudeSpendAmountSchema,
+    limit: ClaudeSpendAmountSchema,
+    percent: ApiNumberSchema.nullish(),
+    severity: z.string().nullish(),
+    enabled: z.boolean().nullish(),
+    disabled_reason: z.string().nullish(),
+  })
+  .nullish();
+
 // Model- and surface-scoped weekly limits live in a `limits[]` array rather than a
 // top-level `seven_day_<model>` key. Entries are validated one at a time (see
 // scopedLimitsFromResponse) so a single malformed or newly-shaped entry cannot take down
@@ -55,6 +78,18 @@ const ClaudeLimitSchema = z.object({
   scope: z.object({ model: ClaudeScopeLabelSchema, surface: ClaudeScopeLabelSchema }).nullish(),
 });
 
+const ClaudeExtraSpendSchema = z
+  .object({
+    is_enabled: z.boolean().optional(),
+    // Spend-metered fallback fields (used when the `spend` block is absent).
+    monthly_limit: ApiNumberSchema.nullish(),
+    used_credits: ApiNumberSchema.nullish(),
+    currency: z.string().nullish(),
+    decimal_places: ApiNumberSchema.nullish(),
+    utilization: ApiNumberSchema.nullish(),
+  })
+  .nullish();
+
 const ClaudeUsageResponseSchema = z.object({
   five_hour: ClaudeUsageWindowSchema.nullish(),
   seven_day: ClaudeUsageWindowSchema.nullish(),
@@ -63,11 +98,8 @@ const ClaudeUsageResponseSchema = z.object({
   // Deliberately permissive: an additive section must never regress the top-level
   // windows, so shape validation happens per entry rather than here.
   limits: z.array(z.unknown()).nullish(),
-  extra_usage: z
-    .object({
-      is_enabled: z.boolean().optional(),
-    })
-    .nullish(),
+  extra_usage: z.object({ is_enabled: z.boolean().optional() }).passthrough().nullish(),
+  spend: z.unknown().optional(),
 });
 
 type ClaudeCredentials = z.infer<typeof ClaudeCredentialsSchema>;
@@ -94,6 +126,9 @@ function buildClaudePlan(
 ): string | null {
   if (!subscriptionType) return null;
   const label = subscriptionType.charAt(0).toUpperCase() + subscriptionType.slice(1);
+  // Enterprise rate-limit tiers are internal quota plumbing (default_claude_zero,
+  // default_raven_enterprise), not user-facing plan variants — do not append them.
+  if (subscriptionType.toLowerCase() === "enterprise") return label;
   const tier = rateLimitTier?.split("_").pop();
   return tier ? `${label} ${tier}` : label;
 }
@@ -289,6 +324,158 @@ function scopedWindows(limits: ScopedLimit[]): ProviderUsageWindow[] {
   });
 }
 
+/**
+ * The spend cap for enterprise usage-based orgs resets at 00:00 UTC on the first
+ * of each calendar month. The usage API does not expose this instant, so it is
+ * computed locally (Anthropic's Spend Limits documentation states the rule).
+ */
+export function nextMonthlyResetUtc(now: Date = new Date()): Date {
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1, 0, 0, 0));
+}
+
+interface ClaudeSpendUsage {
+  window: ProviderUsageWindow;
+  balance: ProviderUsageBalance | null;
+}
+
+/**
+ * Normalize the spend-metered (Enterprise usage-based) shape of the usage API.
+ *
+ * The same endpoint that returns five_hour/seven_day utilization for Pro/Max
+ * returns null for those windows on enterprise usage-based orgs, and carries the
+ * real meter in a `spend` block ({ used, limit, percent } in minor units) with
+ * `extra_usage` as an older fallback. Returns null when the payload is
+ * window-metered, so callers keep the rolling-window path.
+ *
+ * Percent is computed locally from used/limit and preferred over the reported
+ * spend.percent, which has been observed to lag (a transient stale reading
+ * returned 100% while used/limit said 65%). A null limit means UNLIMITED and a
+ * zero limit means included-only — both yield 0% and are never "exhausted".
+ */
+function spendUsageFromResponse(input: {
+  resp: ClaudeUsageResponse;
+  logger: Logger;
+}): ClaudeSpendUsage | null {
+  const { resp, logger } = input;
+  // Pro/Max accounts are window-metered even when they carry a spend block; only
+  // treat the dollar meter as primary when the rolling windows are absent.
+  const windowMetered = resp.five_hour != null || resp.seven_day != null;
+  if (windowMetered) return null;
+
+  const amounts = spendAmountsFromResponse({ resp, logger });
+  if (!amounts) return null;
+
+  const percent = spendPercent({
+    used: amounts.used,
+    limit: amounts.limit,
+    reportedPercent: amounts.reportedPercent,
+  });
+  const resetsAt = nextMonthlyResetUtc().toISOString();
+
+  const window: ProviderUsageWindow = windowFromUsedPct({
+    id: "spend",
+    label: "Monthly spend",
+    utilizationPct: percent,
+    resetsAt,
+    tone: toneFromUsedPct(percent),
+  });
+
+  let balance: ProviderUsageBalance | null = null;
+  if (amounts.used != null && amounts.limit != null) {
+    balance = {
+      id: "spend",
+      label: "Monthly spend",
+      used: amounts.used,
+      remaining: amounts.limit - amounts.used,
+      limit: amounts.limit,
+      unit: "usd",
+      resetsAt,
+      tone: toneFromUsedPct(percent),
+    };
+  }
+
+  return { window, balance };
+}
+
+interface ClaudeSpendAmounts {
+  used: number | null;
+  limit: number | null;
+  reportedPercent: number | null;
+}
+
+/**
+ * Pull the spend amounts out of the `spend` block, falling back to the older
+ * `extra_usage` shape. Returns null when neither carries a usable amount.
+ */
+function spendAmountsFromResponse(input: {
+  resp: ClaudeUsageResponse;
+  logger: Logger;
+}): ClaudeSpendAmounts | null {
+  const { resp, logger } = input;
+  const parsedSpend = ClaudeSpendSchema.safeParse(resp.spend);
+  if (!parsedSpend.success) logger.warn("Skipping unparseable Claude spend block");
+  const spend = parsedSpend.success ? parsedSpend.data : null;
+  if (spend && spendHasAmounts(spend)) {
+    const unsupportedUsed = spend.used != null && spend.used.currency !== "USD";
+    const unsupportedLimit = spend.limit != null && spend.limit.currency !== "USD";
+    if (unsupportedUsed || unsupportedLimit) {
+      logger.warn("Skipping Claude spend with unsupported currency");
+      return null;
+    }
+    return {
+      used: usdAmount(spend.used),
+      limit: usdAmount(spend.limit),
+      reportedPercent: spend.percent ?? null,
+    };
+  }
+
+  const parsedExtra = ClaudeExtraSpendSchema.safeParse(resp.extra_usage);
+  if (!parsedExtra.success) logger.warn("Skipping unparseable Claude extra-usage spend fields");
+  const extra = parsedExtra.success ? parsedExtra.data : null;
+  if (extra?.is_enabled && extra.monthly_limit != null) {
+    if (extra.currency !== "USD") {
+      logger.warn("Skipping Claude extra-usage spend with unsupported currency");
+      return null;
+    }
+    return {
+      used:
+        extra.used_credits == null ? null : extra.used_credits / 10 ** (extra.decimal_places ?? 2),
+      limit: extra.monthly_limit / 10 ** (extra.decimal_places ?? 2),
+      reportedPercent: extra.utilization ?? null,
+    };
+  }
+
+  return null;
+}
+
+function usdAmount(amount: z.infer<typeof ClaudeSpendAmountSchema>): number | null {
+  if (amount?.amount_minor == null) return null;
+  return amount.amount_minor / 10 ** (amount.exponent ?? 2);
+}
+
+function spendHasAmounts(spend: NonNullable<z.infer<typeof ClaudeSpendSchema>>): boolean {
+  if (spend.used?.amount_minor != null) return true;
+  if (spend.limit?.amount_minor != null) return true;
+  return false;
+}
+
+/**
+ * Spend utilization as a percentage of the cap, preferring a locally computed
+ * ratio over the reported spend.percent (which has been observed to lag: a
+ * transient stale reading returned 100% while used/limit said 65%). A null
+ * limit means UNLIMITED and a zero limit means included-only — both yield 0%
+ * and are never "exhausted".
+ */
+function spendPercent(input: {
+  used: number | null;
+  limit: number | null;
+  reportedPercent: number | null;
+}): number {
+  if (input.limit == null || input.limit === 0) return 0;
+  if (input.used != null) return Math.min(100, (input.used / input.limit) * 100);
+  return input.reportedPercent ?? 0;
+}
+
 type ClaudeKeychainCommandRunner = (args: string[]) => Promise<string | null>;
 
 // Keep this in sync with Claude Code's Keychain account derivation.
@@ -377,7 +564,15 @@ export class ClaudeQuotaProvider implements ProviderUsageFetcher {
     );
     const windows = [...unscopedWindows(resp), ...scopedWindows(scoped)];
 
-    if (windows.length === 0) {
+    // Enterprise usage-based orgs are spend-metered: the rolling windows come
+    // back null and the `spend` (or `extra_usage`) block carries the dollar
+    // meter. Only fall back to it when there is no window data at all — Pro/Max
+    // accounts carry a spend block too, but it is just their extra-usage cap and
+    // must never hide live session/weekly usage.
+    const spend =
+      windows.length === 0 ? spendUsageFromResponse({ resp, logger: this.logger }) : null;
+
+    if (windows.length === 0 && !spend) {
       // The response parsed but described nothing. That silence is how the previous
       // shape change went unnoticed, so make it greppable. `warn` and not `debug`
       // because file logging defaults to `info`.
@@ -399,8 +594,8 @@ export class ClaudeQuotaProvider implements ProviderUsageFetcher {
       displayName: this.displayName,
       status: "available",
       planLabel: plan,
-      windows,
-      balances: [],
+      windows: spend ? [spend.window] : windows,
+      balances: spend?.balance ? [spend.balance] : [],
       details,
       error: null,
     };
