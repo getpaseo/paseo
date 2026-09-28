@@ -8,7 +8,10 @@ import { createTestLogger } from "../../test-utils/test-logger.js";
 import { DaemonClient } from "../test-utils/daemon-client.js";
 import { createTestAgentClient } from "../test-utils/fake-agent-client.js";
 import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
-import contribute from "./test-fixtures/session-usage-reference/index.server.js";
+import { BuiltinPluginLoader } from "./builtin/index.js";
+
+const fixtureRoot = fileURLToPath(new URL("./test-fixtures/", import.meta.url));
+const fixtureBuiltins = () => new BuiltinPluginLoader(fixtureRoot, ["session-usage-reference"]);
 
 test("resolves a provider plugin session reference through its usage source", async () => {
   const directory = fileURLToPath(
@@ -16,7 +19,7 @@ test("resolves a provider plugin session reference through its usage source", as
   );
   const daemon = await createTestPaseoDaemon({
     pluginsEnabled: false,
-    internalPlugins: [{ id: "fixture-session-usage-reference", directory, contribute }],
+    builtinPlugins: fixtureBuiltins(),
   });
   const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
   try {
@@ -124,7 +127,7 @@ test("agent.resolve_usage_report resolves source IDs from default built-in and A
   );
   const daemon = await createTestPaseoDaemon({
     pluginsEnabled: false,
-    internalPlugins: [{ id: "fixture-session-usage-reference", directory, contribute }],
+    builtinPlugins: fixtureBuiltins(),
     agentClients,
     providerOverrides: {
       cursor: { extends: "acp", label: "Cursor", command: ["cursor-agent", "acp"] },

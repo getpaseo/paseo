@@ -1,1 +1,1 @@
-{ "id": "usage-source-fixture", "requirements": { "paseo": ">=0.8.0" } }
+{ "id": "usage-source", "requirements": { "paseo": ">=0.8.0" } }

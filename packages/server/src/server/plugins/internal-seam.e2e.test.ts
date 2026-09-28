@@ -1,20 +1,21 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "vitest";
 import { DaemonClient } from "../test-utils/daemon-client.js";
 import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
-import contribute from "./test-fixtures/internal-seam/index.server.js";
+import { BuiltinPluginLoader } from "./builtin/index.js";
 
 const directory = fileURLToPath(new URL("./test-fixtures/internal-seam/", import.meta.url));
+const fixtureRoot = fileURLToPath(new URL("./test-fixtures/", import.meta.url));
 
-test("internal and directory plugins share RPC and lifecycle behavior while internal plugins stay hidden and enabled", async () => {
+test("built-in and directory plugins share RPC and lifecycle behavior while built-ins stay hidden and enabled", async () => {
   const workspaceDirectory = await mkdtemp(path.join(tmpdir(), "paseo-internal-seam-"));
   const daemon = await createTestPaseoDaemon({
     daemonVersion: "0.8.0",
     pluginsEnabled: false,
-    internalPlugins: [{ id: "internal-seam", directory, contribute }],
+    builtinPlugins: new BuiltinPluginLoader(fixtureRoot, ["internal-seam"]),
   });
   const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws`, appVersion: "0.8.0" });
   try {
@@ -50,20 +51,23 @@ test("internal and directory plugins share RPC and lifecycle behavior while inte
   }
 }, 60_000);
 
-test("a failing internal plugin does not stop the daemon or the next internal plugin", async () => {
+test("a failing built-in does not stop the daemon or the next built-in", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "paseo-builtin-failure-"));
+  const failingDirectory = path.join(root, "failing-builtin");
+  await mkdir(failingDirectory);
+  await writeFile(
+    path.join(failingDirectory, "paseo-plugin.json"),
+    JSON.stringify({ id: "failing-builtin", requirements: { paseo: ">=0.8.0" } }),
+  );
+  await writeFile(
+    path.join(failingDirectory, "index.server.ts"),
+    "export default function contribute() { throw new Error('fixture startup failure'); }",
+  );
+  await cp(directory, path.join(root, "internal-seam"), { recursive: true });
   const daemon = await createTestPaseoDaemon({
     daemonVersion: "0.8.0",
     pluginsEnabled: false,
-    internalPlugins: [
-      {
-        id: "failing-internal",
-        directory,
-        contribute: () => {
-          throw new Error("fixture startup failure");
-        },
-      },
-      { id: "internal-seam", directory, contribute },
-    ],
+    builtinPlugins: new BuiltinPluginLoader(root, ["failing-builtin", "internal-seam"]),
   });
   const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws`, appVersion: "0.8.0" });
   try {
@@ -73,5 +77,6 @@ test("a failing internal plugin does not stop the daemon or the next internal pl
   } finally {
     await client.close();
     await daemon.close();
+    await rm(root, { recursive: true, force: true });
   }
 }, 60_000);

@@ -121,7 +121,7 @@ test("two Codex homes and a token route resolve to their vendor account IDs", as
   const { mkdtemp, writeFile, rm } = await import("node:fs/promises");
   const { tmpdir } = await import("node:os");
   const { join } = await import("node:path");
-  const { identify } = await import("../../../plugins/codex-usage-source/server/usage.js");
+  const { identify } = await import("../../../../../../plugins/codex-usage-source/server/usage.js");
   const personal = await mkdtemp(join(tmpdir(), "usage-personal-"));
   const work = await mkdtemp(join(tmpdir(), "usage-work-"));
   try {

@@ -2,18 +2,18 @@ import { fileURLToPath } from "node:url";
 import { expect, test } from "vitest";
 import { DaemonClient } from "../test-utils/daemon-client.js";
 import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
-import contribute from "./test-fixtures/usage-source/index.server.js";
+import { BuiltinPluginLoader } from "./builtin/index.js";
 
-const directory = fileURLToPath(new URL("./test-fixtures/usage-source/", import.meta.url));
+const fixtureRoot = fileURLToPath(new URL("./test-fixtures/", import.meta.url));
 const subprocessDirectory = fileURLToPath(
   new URL("./test-fixtures/usage-source-directory/", import.meta.url),
 );
 
-test("lists internal and subprocess usage; validates input and isolates fetch errors", async () => {
+test("lists built-in and subprocess usage; validates input and isolates fetch errors", async () => {
   const daemon = await createTestPaseoDaemon({
     daemonVersion: "0.9.2",
     pluginsEnabled: false,
-    internalPlugins: [{ id: "fixture-internal", directory, contribute }],
+    builtinPlugins: new BuiltinPluginLoader(fixtureRoot, ["usage-source"]),
   });
   const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws`, appVersion: "0.9.2" });
   try {

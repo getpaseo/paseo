@@ -36,7 +36,8 @@ The daemon stores directory sources under the root `plugins` object:
 }
 ```
 
-The plugin system is disabled unless `pluginsEnabled` is `true`. Changing that root field is
+Installed plugins are disabled unless `pluginsEnabled` is `true`. Built-in plugins remain active.
+Changing that root field is
 runtime-safe: run `paseo reload` after editing `config.json`. Enabling starts every configured,
 enabled plugin; disabling tears them all down without restarting the daemon. Plugin source entries
 remain lifecycle-owned and do not reload from manual config edits.
@@ -84,6 +85,15 @@ Source changes are explicit. Run `paseo plugin reload <id>` to stop and fully te
 plugin before compiling and starting from disk. A failed reload stays failed; Paseo does not restore
 the old code. Use `enable`, `disable`, and `remove` to manage one plugin. Removing a directory source
 never deletes it. The global `pluginsEnabled` switch remains available.
+
+## Built-in plugins
+
+Built-in plugins live in `plugins/<id>/` and ship with the daemon. Add a directory and one ID to
+`builtinPlugins` in `packages/server/src/server/plugins/builtin/index.ts`. The workspace, build
+copy, and CI checks cover every listed directory; unlisted directories do not load. Built-ins run
+in process, ignore `pluginsEnabled`, and do not appear in `config.json` or the installed plugin
+list. Their client bundles appear in the plugin catalog. Editing one in development requires a
+daemon restart. Directory, Git, and npm installs cannot use a built-in ID.
 
 ## Install a Git source
 
