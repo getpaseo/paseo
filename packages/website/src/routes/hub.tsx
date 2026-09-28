@@ -12,7 +12,13 @@ import { DiscordIcon, GitHubIcon, SlackIcon } from "~/components/brand-icons";
 import { AGENT_PAGES } from "~/data/agent-pages";
 import { FAQItem } from "~/components/faq-item";
 import { SiteShell } from "~/components/site-shell";
-import { getHubPlans, type HubPlanOffer, type HubPlans } from "~/hub-plans";
+import {
+  formatPlanPrice,
+  getHubPlans,
+  planPriceQualifier,
+  type HubPlanOffer,
+  type HubPlans,
+} from "~/hub-plans";
 import { pageMeta } from "~/meta";
 
 export const Route = createFileRoute("/hub")({
@@ -104,15 +110,9 @@ function Pricing({ plans }: { plans: HubPlans | null }) {
 
   return (
     <section className="space-y-6" aria-labelledby="pricing-heading">
-      <div className="space-y-2">
-        <h2 id="pricing-heading" className="text-xl font-medium">
-          Choose how to run Hub
-        </h2>
-        <p className="max-w-2xl leading-relaxed text-white/70">
-          Every option runs agents on the daemons you already have. {plans.free.name} needs no card,
-          and {plans.paid.name} is one click away under Billing once you are signed in.
-        </p>
-      </div>
+      <h2 id="pricing-heading" className="text-xl font-medium">
+        Choose how to run Hub
+      </h2>
       <div className="grid gap-4 md:grid-cols-3">
         <PlanCard
           name="Self-hosted"
@@ -125,18 +125,17 @@ function Pricing({ plans }: { plans: HubPlans | null }) {
         />
         <PlanCard
           name={plans.free.name}
-          price={formatPrice(plans.free.price)}
-          priceQualifier={planQualifier(plans.free)}
+          price={formatPlanPrice(plans.free.price)}
+          priceQualifier={planPriceQualifier(plans.free)}
           priceTooltip={plans.free.price.tooltip}
           features={planFeatures(plans.free)}
           actionHref={HOSTED_HUB_URL}
           actionLabel="Get started"
-          actionNote="No card, never expires."
         />
         <PlanCard
           name={plans.paid.name}
-          price={formatPrice(plans.paid.price)}
-          priceQualifier={planQualifier(plans.paid)}
+          price={formatPlanPrice(plans.paid.price)}
+          priceQualifier={planPriceQualifier(plans.paid)}
           priceTooltip={plans.paid.price.tooltip}
           features={planFeatures(plans.paid)}
           actionHref={HOSTED_HUB_URL}
@@ -183,7 +182,6 @@ function PlanCard({
   features,
   actionHref,
   actionLabel,
-  actionNote,
   featured = false,
 }: {
   name: string;
@@ -193,7 +191,6 @@ function PlanCard({
   features: readonly PlanFeature[];
   actionHref: string;
   actionLabel: string;
-  actionNote?: string;
   featured?: boolean;
 }) {
   return (
@@ -219,12 +216,9 @@ function PlanCard({
           ))}
         </ul>
       )}
-      {actionNote !== undefined && (
-        <p className="mt-8 text-center text-xs leading-relaxed text-white/35">{actionNote}</p>
-      )}
       <a
         href={actionHref}
-        className={`rounded-md px-4 py-2 text-center text-sm font-medium transition-colors ${actionNote === undefined ? "mt-8" : "mt-3"} ${featured ? "bg-white text-black hover:bg-white/90" : "border border-white/15 text-white/80 hover:border-white/25 hover:text-white"}`}
+        className={`rounded-md px-4 py-2 text-center text-sm font-medium transition-colors mt-8 ${featured ? "bg-white text-black hover:bg-white/90" : "border border-white/15 text-white/80 hover:border-white/25 hover:text-white"}`}
       >
         {actionLabel}
       </a>
@@ -244,22 +238,6 @@ function InfoTip({ text }: { text: string }) {
       </span>
     </span>
   );
-}
-
-function planQualifier(plan: HubPlanOffer): string {
-  return `per ${plan.billing.unit.label} / ${formatBillingPeriod(plan.price)}`;
-}
-
-function formatPrice(price: HubPlanOffer["price"]): string {
-  return new Intl.NumberFormat("en", {
-    style: "currency",
-    currency: price.currency.toUpperCase(),
-    minimumFractionDigits: 0,
-  }).format(price.unitAmount / 100);
-}
-
-function formatBillingPeriod(price: HubPlanOffer["price"]): string {
-  return price.intervalCount === 1 ? "month" : `${price.intervalCount} months`;
 }
 
 const TRIGGER_SURFACES = [

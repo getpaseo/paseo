@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 // The documented `GET /api/billing/plans` response, copied from getpaseo/hub docs/public-api.md.
 import documentedResponse from "./hub-plans.fixture.json" with { type: "json" };
-import { parseHubPlansResponse } from "./hub-plans";
+import { formatPlanPrice, parseHubPlansResponse, planPriceQualifier } from "./hub-plans";
 
 describe("parseHubPlansResponse", () => {
   it("reads Free and Pro, their monthly prices, and the figures each includes", () => {
@@ -18,7 +18,7 @@ describe("parseHubPlansResponse", () => {
     expect(plans.paid.name).toBe("Pro");
     expect(plans.paid.included).toEqual({ seats: null, executionsPerMonth: null });
     expect(plans.paid.price.unitAmount).toBe(1500);
-    expect(plans.paid.price.currency).toBe("eur");
+    expect(plans.paid.price.currency).toBe("usd");
     expect(plans.paid.billing.unit.label).toBe("seat");
   });
 
@@ -50,5 +50,16 @@ describe("parseHubPlansResponse", () => {
     expect(() => parseHubPlansResponse(annualOnly)).toThrow(
       'Hub plan "hosted" has no monthly price',
     );
+  });
+});
+
+describe("plan price copy", () => {
+  it("shows Free as $0 a month and Pro as $15 per seat a month", () => {
+    const plans = parseHubPlansResponse(documentedResponse);
+
+    expect(formatPlanPrice(plans.free.price)).toBe("$0");
+    expect(planPriceQualifier(plans.free)).toBe("/ month");
+    expect(formatPlanPrice(plans.paid.price)).toBe("$15");
+    expect(planPriceQualifier(plans.paid)).toBe("per seat / month");
   });
 });

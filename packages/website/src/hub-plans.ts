@@ -55,6 +55,23 @@ export const getHubPlans = createServerFn({ method: "GET" }).handler(async () =>
   return parseHubPlansResponse(await response.json());
 });
 
+/** The plan's monthly figure in its own currency, e.g. "$15". */
+export function formatPlanPrice(price: HubPlanOffer["price"]): string {
+  return new Intl.NumberFormat("en", {
+    style: "currency",
+    currency: price.currency.toUpperCase(),
+    minimumFractionDigits: 0,
+  }).format(price.unitAmount / 100);
+}
+
+/** What the figure is for: "per seat / month" when each seat is charged, "/ month" when the
+ * plan costs nothing, since a free plan has no per-seat charge to describe. */
+export function planPriceQualifier(plan: HubPlanOffer): string {
+  const period = plan.price.intervalCount === 1 ? "month" : `${plan.price.intervalCount} months`;
+  if (plan.price.unitAmount === 0) return `/ ${period}`;
+  return `per ${plan.billing.unit.label} / ${period}`;
+}
+
 function selectOffer(plans: readonly HubBillingPlan[], slug: string): HubPlanOffer {
   const plan = plans.find((candidate) => candidate.slug === slug);
   if (plan === undefined) throw new Error(`Hub plan "${slug}" is unavailable`);

@@ -26,7 +26,7 @@
           "interval": "monthly",
           "intervalCount": 1,
           "unitAmount": 0,
-          "currency": "eur",
+          "currency": "usd",
           "tooltip": null
         }
       ]
@@ -57,7 +57,7 @@
           "interval": "monthly",
           "intervalCount": 1,
           "unitAmount": 1500,
-          "currency": "eur",
+          "currency": "usd",
           "tooltip": "Seats are Hub members and pending invitations. People who only trigger agents through GitHub, Slack, or Discord do not count as seats."
         }
       ]
