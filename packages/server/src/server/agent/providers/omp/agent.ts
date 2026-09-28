@@ -823,6 +823,10 @@ export class OmpAgentSession implements AgentSession {
 
   async getRuntimeInfo(): Promise<AgentRuntimeInfo> {
     await this.refreshState();
+    return this.runtimeInfoFromState();
+  }
+
+  private runtimeInfoFromState(): AgentRuntimeInfo {
     return {
       provider: this.provider,
       sessionId: this.state.sessionId,
@@ -1362,6 +1366,20 @@ export class OmpAgentSession implements AgentSession {
   }
 
   private handleExtraRuntimeEvent(event: OmpRuntimeEvent): boolean {
+    if (event.type === "model_changed") {
+      void this.refreshState()
+        .then(() =>
+          this.emit({
+            type: "model_changed",
+            provider: this.provider,
+            runtimeInfo: this.runtimeInfoFromState(),
+          }),
+        )
+        .catch((error: unknown) =>
+          this.logger.debug({ err: error }, "OMP state unavailable after model change"),
+        );
+      return true;
+    }
     if (
       handleOmpHostToolRuntimeEvent(event, {
         runtimeSession: this.runtimeSession,

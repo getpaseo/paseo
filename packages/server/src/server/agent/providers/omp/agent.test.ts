@@ -433,6 +433,30 @@ describe("OMP agent client and session", () => {
     ).resolves.toEqual({ status: "unavailable" });
   });
 
+  test("shows OMP's fallback model without persisting it as the selected model", async () => {
+    const omp = new OmpHarness();
+    await omp.start({ model: "openrouter/google/gemini-3.8-flash" });
+    const runtime = omp.runtime();
+    runtime.state = {
+      ...runtime.state,
+      model: { provider: "openrouter", id: "google/gemini-3.8-flash" },
+    };
+    runtime.emit({
+      type: "retry_fallback_applied",
+      from: "openrouter/google/gemini-3.8-flash",
+      to: "openrouter/other/model",
+      role: "primary",
+    });
+    runtime.state = { ...runtime.state, model: { provider: "openrouter", id: "other/model" } };
+    runtime.emit({ type: "model_changed" });
+    await waitForImmediate();
+    expect(omp.eventTypes()).toContain("model_changed");
+    expect((await omp.requireSession().getRuntimeInfo()).model).toBe("openrouter/other/model");
+    expect(omp.requireSession().describePersistence()?.metadata?.model).toBe(
+      "openrouter/google/gemini-3.8-flash",
+    );
+  });
+
   test("does not complete on OMP's extension-notice agent_end", async () => {
     const omp = new OmpHarness();
     await omp.start();

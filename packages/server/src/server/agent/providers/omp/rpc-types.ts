@@ -496,6 +496,7 @@ export const OmpRuntimeEventSchema = z.discriminatedUnion("type", [
   OmpRpcHostToolCallRequestSchema,
   OmpRpcHostToolCancelRequestSchema,
   OmpRpcHostToolUpdateSchema,
+  z.object({ type: z.literal("model_changed") }).passthrough(),
 ]);
 
 const OmpCommandBase = { id: z.string().optional() };
