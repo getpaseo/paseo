@@ -1,5 +1,8 @@
 import { describe, expect, test } from "vitest";
 import { setImmediate as waitForImmediate } from "node:timers/promises";
+import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 
 import type { AgentStreamEvent } from "../../agent-sdk-types.js";
 import type { PaseoToolCatalog } from "../../tools/types.js";
@@ -9,6 +12,9 @@ import type { OmpUsagePollScheduler } from "./usage-poller.js";
 import { resolveOmpProviderParams } from "./provider-config.js";
 import { OmpRuntimeEventSchema } from "./rpc-types.js";
 import { OmpHarness } from "./test-utils/omp-harness.js";
+import { OmpAgentClient } from "./agent.js";
+import { FakeOmp } from "./test-utils/fake-omp.js";
+import { createTestLogger } from "../../../../test-utils/test-logger.js";
 
 const TURN_LIFECYCLE_EVENTS = new Set<AgentStreamEvent["type"]>([
   "turn_started",
@@ -42,6 +48,26 @@ test("OMP ready timeout defaults to 20 seconds and RPC timeout overrides both", 
     readyTimeoutMs: 90_000,
     rpcTimeoutMs: 90_000,
   });
+});
+
+test("OMP import uses the runtime's custom agent directory without a configured sessionDir", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "paseo-omp-import-dir-"));
+  const agentDir = path.join(root, "agent");
+  const sessionFile = path.join(agentDir, "sessions", "project", "session.jsonl");
+  await mkdir(path.dirname(sessionFile), { recursive: true });
+  await writeFile(
+    sessionFile,
+    JSON.stringify({ type: "session", id: "custom-dir", cwd: root, timestamp: "2026-09-28" }),
+  );
+  const client = new OmpAgentClient({
+    logger: createTestLogger(),
+    runtime: new FakeOmp(),
+    runtimeSettings: { env: { PI_CODING_AGENT_DIR: agentDir } },
+  });
+
+  expect(await client.listImportableSessions({ cwd: root })).toEqual([
+    expect.objectContaining({ providerHandleId: sessionFile }),
+  ]);
 });
 class ManualIdleScheduler implements OmpProviderIdleScheduler {
   private readonly retries: Array<() => void> = [];
