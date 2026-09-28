@@ -18,6 +18,8 @@ interface ViewportSize {
   height: number;
 }
 
+type FrameListener = (dataUri: string) => void;
+
 interface FrameStream {
   browserId: string;
   settled: Promise<void>;
@@ -85,7 +87,27 @@ export function useRemoteBrowserFrames(input: RemoteBrowserFramesInput) {
   const isAppVisible = useAppVisible();
   const isVisible = isPanelActive && isAppVisible;
   const quality = useAppSettings().settings.browserStreamQuality;
-  const [frame, setFrame] = useState<RemoteBrowserFrame | null>(null);
+  // Only the frame's size lives in state: pixels go straight to the image through
+  // subscribeFrame, so a 30 fps stream does not re-render the whole pane per frame.
+  const [frame, setFrameSize] = useState<ViewportSize | null>(null);
+  const latestUriRef = useRef<string | null>(null);
+  const listenersRef = useRef(new Set<FrameListener>());
+  const setFrame = useCallback((next: RemoteBrowserFrame) => {
+    latestUriRef.current = next.dataUri;
+    for (const listener of listenersRef.current) listener(next.dataUri);
+    setFrameSize((current) =>
+      current?.width === next.width && current.height === next.height
+        ? current
+        : { width: next.width, height: next.height },
+    );
+  }, []);
+  const subscribeFrame = useCallback((listener: FrameListener) => {
+    listenersRef.current.add(listener);
+    if (latestUriRef.current) listener(latestUriRef.current);
+    return () => {
+      listenersRef.current.delete(listener);
+    };
+  }, []);
   const requestedSizeRef = useRef<ViewportSize | null>(null);
   const viewportSizeRef = useRef(input.viewportSize);
   viewportSizeRef.current = input.viewportSize;
@@ -122,7 +144,7 @@ export function useRemoteBrowserFrames(input: RemoteBrowserFramesInput) {
       if (streamRef.current === stream) streamRef.current = null;
       void subscription.release().catch(() => undefined);
     };
-  }, [client, isVisible, quality, remoteBrowserId, supportsScreencast, workspaceId]);
+  }, [client, isVisible, quality, remoteBrowserId, setFrame, supportsScreencast, workspaceId]);
 
   const refreshFrame = useCallback(async () => {
     const currentBrowserId = remoteBrowserIdRef.current;
@@ -145,7 +167,7 @@ export function useRemoteBrowserFrames(input: RemoteBrowserFramesInput) {
       height: Math.round(viewport.height),
     };
     setFrame(nextFrame);
-  }, [client, remoteBrowserIdRef, supportsScreencast, workspaceId]);
+  }, [client, remoteBrowserIdRef, setFrame, supportsScreencast, workspaceId]);
 
-  return { frame, refreshFrame, requestedSizeRef };
+  return { frame, subscribeFrame, refreshFrame, requestedSizeRef };
 }

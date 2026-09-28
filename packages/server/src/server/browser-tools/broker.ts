@@ -24,6 +24,8 @@ export interface BrowserToolsExecuteInput {
   workspaceId?: string;
   requestId?: string;
   timeoutMs?: number;
+  /** Pins the command to one host, e.g. the app's streamed tabs to the daemon's own browser. */
+  hostId?: string;
 }
 
 interface PendingBrowserToolsRequest {
@@ -131,13 +133,26 @@ export class BrowserToolsBroker {
       });
     }
 
-    if (request.data.command.command === "list_tabs") {
-      return this.executeListTabs({
-        request: request.data,
-        timeoutMs: input.timeoutMs ?? this.defaultTimeoutMs,
-      });
+    const timeoutMs = input.timeoutMs ?? this.defaultTimeoutMs;
+    if (input.hostId) {
+      const pinned = this.clients.get(input.hostId);
+      if (!pinned) return this.noBrowserHostFailure(requestId);
+      return (
+        this.unsupportedCommandFailure({
+          host: pinned,
+          commandName: request.data.command.command,
+          requestId,
+        }) ?? this.sendRequest({ host: pinned, request: request.data, timeoutMs })
+      );
     }
 
+    if (request.data.command.command === "list_tabs") {
+      return this.executeListTabs({ request: request.data, timeoutMs });
+    }
+
+    if (this.isUnknownBrowser(request.data.command)) {
+      await this.discoverUnknownBrowser(request.data, timeoutMs);
+    }
     const host = this.selectHostForCommand(request.data.command, requestId);
     if (!host.ok) {
       return host.payload;
@@ -199,6 +214,31 @@ export class BrowserToolsBroker {
     }
     pending.resolve(parsed.data.payload);
     return true;
+  }
+
+  /**
+   * A tab id the broker has not seen yet (the daemon restarted, or the app reconnected
+   * under a new host id) is looked up across the hosts instead of being refused.
+   */
+  private isUnknownBrowser(command: BrowserAutomationCommand): boolean {
+    const browserId = getBrowserIdForCommand(command);
+    if (!browserId || this.clients.size < 2) return false;
+    const owner = this.browserHostByBrowserId.get(browserId);
+    return !owner || !this.clients.has(owner);
+  }
+
+  private async discoverUnknownBrowser(
+    request: BrowserAutomationExecuteRequest,
+    timeoutMs: number,
+  ): Promise<void> {
+    await this.executeListTabs({
+      request: {
+        ...request,
+        requestId: `${request.requestId}:discover`,
+        command: { command: "list_tabs", args: {} },
+      },
+      timeoutMs,
+    });
   }
 
   private async executeListTabs(params: {
@@ -344,8 +384,7 @@ export class BrowserToolsBroker {
   }
 
   private selectBrowserHosts(): RegisteredBrowserHost[] {
-    const daemonHost = this.selectDaemonHost();
-    return daemonHost ? [daemonHost] : Array.from(this.clients.values());
+    return Array.from(this.clients.values());
   }
 
   private selectMostRecentlyRegisteredHost(): RegisteredBrowserHost | null {

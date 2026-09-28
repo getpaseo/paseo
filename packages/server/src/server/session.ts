@@ -3,6 +3,7 @@ import { isSystemOneExcluded } from "./system-one/scope.js";
 import type { BrowserToolsBroker } from "./browser-tools/broker.js";
 import type { BrowserActivityHub } from "./browser-tools/browser-activity.js";
 import { browserToolsFailure } from "./browser-tools/errors.js";
+import { DAEMON_BROWSER_HOST_ID } from "./browser-tools/host-preference.js";
 import { DaemonConfigBrowserToolsPolicy } from "./browser-tools/policy.js";
 import type { DaemonPlaywrightHost } from "./verify/playwright-host.js";
 import type { EvidenceStore } from "./verify/evidence-store.js";
@@ -2375,6 +2376,8 @@ export class Session {
           requestId: request.requestId,
           workspaceId: request.workspaceId,
           command: request.command,
+          // The app streams only the daemon's own browser; its local tabs never come here.
+          hostId: DAEMON_BROWSER_HOST_ID,
         })
       : browserToolsFailure({
           requestId: request.requestId,

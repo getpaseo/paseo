@@ -14,6 +14,7 @@ import {
 } from "@/desktop/browser/store";
 import { collectAllTabs, useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
+import { DEFAULT_BROWSER_URL } from "@/desktop/browser/store/state";
 
 type BrowserAutomationExecuteRequest = Extract<
   SessionOutboundMessage,
@@ -347,7 +348,7 @@ async function openBrowserTabForRequest(params: {
     });
   }
 
-  const url = command.args.url ?? "https://example.com";
+  const url = command.args.url ?? DEFAULT_BROWSER_URL;
   const { browserId, url: normalizedUrl } = createWorkspaceBrowser({ initialUrl: url });
   const workspaceKey = buildWorkspaceTabPersistenceKey({ serverId, workspaceId });
   if (!workspaceKey) {

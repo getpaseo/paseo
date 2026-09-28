@@ -636,3 +636,67 @@ describe.skipIf(!BROWSER_AVAILABLE)(
     });
   },
 );
+
+describe.skipIf(!BROWSER_AVAILABLE)(
+  "DaemonPlaywrightHost across a daemon restart",
+  { timeout: 60_000 },
+  () => {
+    it("reopens open tabs under the same id and forgets closed ones", async () => {
+      const paseoHome = mkdtempSync(join(tmpdir(), "paseo-verify-restart-test-"));
+      const app = await startVerifyFixtureApp();
+      const logger = pino({ enabled: false });
+      const tabId = (payload: BrowserToolsResponsePayload) =>
+        payload.ok && payload.result.command === "new_tab" ? payload.result.browserId : "";
+      try {
+        const before = new DaemonPlaywrightHost({ paseoHome, logger });
+        const kept = tabId(
+          await before.executeLocal({
+            workspaceId: WORKSPACE_ID,
+            command: { command: "new_tab", args: { url: `${app.url}/login` } },
+          }),
+        );
+        const closed = tabId(
+          await before.executeLocal({
+            workspaceId: WORKSPACE_ID,
+            command: { command: "new_tab", args: { url: `${app.url}/login?closed=1` } },
+          }),
+        );
+        await before.executeLocal({
+          workspaceId: WORKSPACE_ID,
+          command: { command: "close_tab", args: { browserId: closed } },
+        });
+        await new Promise((resolve) => setTimeout(resolve, 600));
+        await before.close();
+
+        const after = new DaemonPlaywrightHost({ paseoHome, logger });
+        try {
+          const listed = await after.executeLocal({
+            workspaceId: WORKSPACE_ID,
+            command: { command: "list_tabs", args: {} },
+          });
+          const ids =
+            listed.ok && listed.result.command === "list_tabs"
+              ? listed.result.tabs.map((tab) => tab.browserId)
+              : [];
+          expect(ids).toEqual([kept]);
+          await expect
+            .poll(async () => {
+              const snapshot = await after.executeLocal({
+                workspaceId: WORKSPACE_ID,
+                command: { command: "snapshot", args: { browserId: kept } },
+              });
+              return snapshot.ok && snapshot.result.command === "snapshot"
+                ? snapshot.result.url
+                : "";
+            })
+            .toContain("/login");
+        } finally {
+          await after.close();
+        }
+      } finally {
+        await app.close();
+        rmSync(paseoHome, { recursive: true, force: true });
+      }
+    });
+  },
+);

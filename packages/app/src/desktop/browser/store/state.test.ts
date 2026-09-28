@@ -37,8 +37,8 @@ describe("normalizeBrowserUrl", () => {
   });
 
   it("falls back to a default URL when input is blank", () => {
-    expect(normalizeBrowserUrl(null)).toBe("https://example.com");
-    expect(normalizeBrowserUrl("   ")).toBe("https://example.com");
+    expect(normalizeBrowserUrl(null)).toBe("https://www.google.com");
+    expect(normalizeBrowserUrl("   ")).toBe("https://www.google.com");
   });
 });
 

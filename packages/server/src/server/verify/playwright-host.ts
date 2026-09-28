@@ -46,6 +46,10 @@ const MAX_ERROR_MESSAGE_LENGTH = 500;
 const DEFAULT_VERIFY_VIEWPORT = { width: 1280, height: 720 };
 const IMPORTED_COOKIES_FILE = "imported-cookies.json";
 const IMPORTED_COOKIES_MARKER = ".paseo-imported-cookies-version";
+const SAVED_TABS_FILE = "open-tabs.json";
+const SAVE_TABS_DELAY_MS = 300;
+// A page closing this long after its browser died was lost, not closed by the user.
+const LOST_TAB_GRACE_MS = 1_000;
 // Measured on a 390x750 phone viewport: q70 costs ~11% more bytes than q60 and keeps text legible.
 const SCREENCAST_JPEG_QUALITY = 70;
 // A page's copy button writes to the daemon's clipboard, which the person cannot
@@ -114,6 +118,15 @@ interface VerifyNetworkEntry extends BrowserAutomationNetworkLogEntry {
   failed: boolean;
 }
 
+interface SavedTab {
+  browserId: string;
+  workspaceId: string;
+  profile: string;
+  url: string;
+  /** Null until the tab is reopened in this daemon process. */
+  context: BrowserContext | null;
+}
+
 interface DaemonBrowserTab {
   browserId: string;
   workspaceId: string;
@@ -146,6 +159,13 @@ export class DaemonPlaywrightHost {
   private readonly contexts = new Map<string, BrowserContext>();
   private readonly contextProfileDirs = new Map<BrowserContext, string>();
   private readonly tabs = new Map<string, DaemonBrowserTab>();
+  // Open tabs outlive a daemon restart: saved on every change, reopened under the same
+  // browserId the first time their workspace is used again.
+  private readonly savedTabs = new Map<string, SavedTab>();
+  private readonly savedTabsLoaded: Promise<void>;
+  private readonly restoredWorkspaces = new Map<string, Promise<void>>();
+  private saveTabsTimer: ReturnType<typeof setTimeout> | null = null;
+  private closing = false;
   private executablePath: string | null = null;
   private readonly closeBrowsers = new Map<BrowserContext, () => Promise<void>>();
   private readonly captureQueues = new Map<BrowserContext, Promise<unknown>>();
@@ -162,6 +182,100 @@ export class DaemonPlaywrightHost {
   public constructor(options: DaemonPlaywrightHostOptions) {
     this.paseoHome = options.paseoHome;
     this.logger = options.logger;
+    this.savedTabsLoaded = this.loadSavedTabs();
+  }
+
+  private savedTabsFile(): string {
+    return path.join(this.paseoHome, "browser-profiles", SAVED_TABS_FILE);
+  }
+
+  private async loadSavedTabs(): Promise<void> {
+    let raw: unknown;
+    try {
+      raw = JSON.parse(await readFile(this.savedTabsFile(), "utf8"));
+    } catch {
+      return;
+    }
+    if (!Array.isArray(raw)) return;
+    for (const entry of raw as Partial<SavedTab>[]) {
+      const { browserId, workspaceId, profile, url } = entry;
+      if (typeof browserId !== "string" || typeof workspaceId !== "string") continue;
+      if (typeof profile !== "string" || typeof url !== "string") continue;
+      if (this.savedTabs.has(browserId)) continue;
+      this.savedTabs.set(browserId, { browserId, workspaceId, profile, url, context: null });
+    }
+  }
+
+  private scheduleSaveTabs(): void {
+    if (this.closing || this.saveTabsTimer) return;
+    this.saveTabsTimer = setTimeout(() => {
+      this.saveTabsTimer = null;
+      void this.saveTabs().catch((error: unknown) => {
+        this.logger.warn({ err: error }, "Could not save the daemon browser tabs");
+      });
+    }, SAVE_TABS_DELAY_MS);
+  }
+
+  private async saveTabs(): Promise<void> {
+    await this.savedTabsLoaded;
+    if (this.closing) return;
+    const entries = [...this.savedTabs.values()].map(
+      ({ browserId, workspaceId, profile, url }) => ({
+        browserId,
+        workspaceId,
+        profile,
+        url,
+      }),
+    );
+    mkdirSync(path.dirname(this.savedTabsFile()), { recursive: true, mode: 0o700 });
+    await writeFileAtomic(this.savedTabsFile(), JSON.stringify(entries, null, 2), { mode: 0o600 });
+  }
+
+  private restoreWorkspaceTabs(workspaceId: string): Promise<void> {
+    let restoring = this.restoredWorkspaces.get(workspaceId);
+    if (!restoring) {
+      restoring = this.reopenSavedTabs(workspaceId).catch((error: unknown) => {
+        this.logger.warn({ err: error, workspaceId }, "Could not reopen saved browser tabs");
+      });
+      this.restoredWorkspaces.set(workspaceId, restoring);
+    }
+    return restoring;
+  }
+
+  private async reopenSavedTabs(workspaceId: string): Promise<void> {
+    await this.savedTabsLoaded;
+    const pending = [...this.savedTabs.values()].filter(
+      (saved) =>
+        saved.workspaceId === workspaceId && !saved.context && !this.tabs.has(saved.browserId),
+    );
+    for (const saved of pending) {
+      const context = await this.ensureContext({ workspaceId, profile: saved.profile });
+      const page = await context.newPage();
+      await page.setViewportSize(DEFAULT_VERIFY_VIEWPORT);
+      this.registerPage({
+        workspaceId,
+        profile: saved.profile,
+        context,
+        page,
+        browserId: saved.browserId,
+        url: saved.url,
+      });
+      // Load in the background: one slow or dead site must not hold up the command
+      // that woke the workspace.
+      void page.goto(saved.url, { waitUntil: "domcontentloaded" }).catch(() => undefined);
+    }
+  }
+
+  private rememberTabUrl(tab: DaemonBrowserTab, url: string): void {
+    if (!/^(https?|file):/i.test(url)) return;
+    const saved = this.savedTabs.get(tab.browserId);
+    if (!saved || saved.url === url) return;
+    saved.url = url;
+    this.scheduleSaveTabs();
+  }
+
+  private forgetTab(browserId: string): void {
+    if (this.savedTabs.delete(browserId)) this.scheduleSaveTabs();
   }
 
   public asHostClient(
@@ -243,6 +357,7 @@ export class DaemonPlaywrightHost {
     onFrame: (frame: ScreencastFrame) => void;
     onEnd: () => void;
   }): Promise<() => Promise<void>> {
+    await this.restoreWorkspaceTabs(input.workspaceId);
     const tab = this.tabs.get(input.browserId);
     if (!tab || tab.page.isClosed() || tab.workspaceId !== input.workspaceId) {
       throw createBrowserToolsRequestError({
@@ -281,6 +396,9 @@ export class DaemonPlaywrightHost {
   }
 
   public async close(): Promise<void> {
+    this.closing = true;
+    if (this.saveTabsTimer) clearTimeout(this.saveTabsTimer);
+    this.saveTabsTimer = null;
     this.tabs.clear();
     const contexts = [...this.contexts.values()];
     this.contexts.clear();
@@ -318,6 +436,7 @@ export class DaemonPlaywrightHost {
     agentId?: string;
   }): Promise<BrowserToolsResponsePayload> {
     const { command, requestId, workspaceId } = input;
+    await this.restoreWorkspaceTabs(workspaceId);
     switch (command.command) {
       case "list_tabs":
         return this.listTabs({ workspaceId, requestId });
@@ -787,6 +906,7 @@ export class DaemonPlaywrightHost {
   }): Promise<BrowserToolsResponsePayload> {
     const { tab, requestId } = input;
     const browserId = tab.browserId;
+    this.forgetTab(browserId);
     await tab.page.close().catch(() => undefined);
     this.tabs.delete(browserId);
     return ok(requestId, { command: "close_tab", browserId });
@@ -871,10 +991,23 @@ export class DaemonPlaywrightHost {
     profile: string;
     context: BrowserContext;
     page: Page;
+    browserId?: string;
+    url?: string;
   }): DaemonBrowserTab {
     const existing = [...this.tabs.values()].find((tab) => tab.page === input.page);
-    if (existing) return existing;
-    const browserId = `${Date.now().toString()}-${randomBytes(8).toString("hex")}`;
+    if (existing) {
+      // newPage() announces the page before a restore can name it; take the saved id.
+      if (input.browserId && existing.browserId !== input.browserId) {
+        this.tabs.delete(existing.browserId);
+        this.savedTabs.delete(existing.browserId);
+        existing.browserId = input.browserId;
+        this.tabs.set(existing.browserId, existing);
+        this.saveTab(existing, input.url);
+      }
+      return existing;
+    }
+    const browserId =
+      input.browserId ?? `${Date.now().toString()}-${randomBytes(8).toString("hex")}`;
     const tab: DaemonBrowserTab = {
       browserId,
       workspaceId: input.workspaceId,
@@ -889,8 +1022,31 @@ export class DaemonPlaywrightHost {
     };
     attachTabListeners(tab);
     this.tabs.set(browserId, tab);
-    input.page.once("close", () => this.tabs.delete(browserId));
+    this.saveTab(tab, input.url);
+    input.page.on("framenavigated", (frame) => {
+      if (frame === input.page.mainFrame()) this.rememberTabUrl(tab, frame.url());
+    });
+    input.page.once("close", () => {
+      if (this.tabs.get(tab.browserId) === tab) this.tabs.delete(tab.browserId);
+      setTimeout(() => {
+        if (!this.closing && [...this.contexts.values()].includes(tab.context)) {
+          this.forgetTab(tab.browserId);
+        }
+      }, LOST_TAB_GRACE_MS);
+    });
     return tab;
+  }
+
+  private saveTab(tab: DaemonBrowserTab, url: string | undefined): void {
+    this.savedTabs.set(tab.browserId, {
+      browserId: tab.browserId,
+      workspaceId: tab.workspaceId,
+      profile: tab.profile,
+      url: url ?? this.savedTabs.get(tab.browserId)?.url ?? "about:blank",
+      context: tab.context,
+    });
+    this.rememberTabUrl(tab, tab.page.url());
+    this.scheduleSaveTabs();
   }
 
   private async refreshSnapshot(tab: DaemonBrowserTab): Promise<{

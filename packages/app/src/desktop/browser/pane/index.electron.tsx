@@ -78,6 +78,7 @@ import {
   type BrowserElementSelection,
   type ElementSelectorOutcome,
 } from "./element-selector.electron";
+import { DEFAULT_BROWSER_URL } from "@/desktop/browser/store/state";
 
 type ElectronWebview = HTMLElement & {
   canGoBack?: () => boolean;
@@ -610,7 +611,7 @@ export function BrowserPane({
   const webviewHostRef = useRef<HTMLDivElement | null>(null);
   const webviewClipRef = useRef<HTMLElement | null>(null);
   const urlInputRef = useRef<EditingTextInputHandle | null>(null);
-  const initialUrlRef = useRef(browser?.url ?? "https://example.com");
+  const initialUrlRef = useRef(browser?.url ?? DEFAULT_BROWSER_URL);
   const browserIdRef = useRef(browserId);
   browserIdRef.current = browserId;
   const browserRef = useRef(browser);
@@ -632,7 +633,7 @@ export function BrowserPane({
   // Screenshot is captured at selection time (overlay already torn down, no
   // scroll drift) and reused when the annotation card is submitted.
   const pendingScreenshotRef = useRef<AttachmentMetadata | undefined>(undefined);
-  const [draftUrl, setDraftUrl] = useState(browser?.url ?? "https://example.com");
+  const [draftUrl, setDraftUrl] = useState(browser?.url ?? DEFAULT_BROWSER_URL);
   const workspaceAttachmentScopeKey = useMemo(
     () => buildBrowserAttachmentScopeKey({ cwd, serverId, workspaceId }),
     [cwd, serverId, workspaceId],
@@ -676,7 +677,7 @@ export function BrowserPane({
   browserErrorLabelsRef.current = browserErrorLabels;
 
   useEffect(() => {
-    const nextUrl = browser?.url ?? "https://example.com";
+    const nextUrl = browser?.url ?? DEFAULT_BROWSER_URL;
     urlInputRef.current?.replaceText(nextUrl);
     setDraftUrl((current) => (current === nextUrl ? current : nextUrl));
   }, [browser?.url]);

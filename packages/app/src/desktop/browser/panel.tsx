@@ -18,8 +18,8 @@ import {
   useBrowserActivity,
 } from "@/desktop/browser/activity";
 import { useBrowserStore } from "@/desktop/browser/store";
-import { useHostFeature } from "@/runtime/host-features";
 import { useWorkspaceDirectory } from "@/stores/session-store-hooks";
+import { DEFAULT_BROWSER_URL } from "@/desktop/browser/store/state";
 
 function getBrowserLabel(input: { title: string; url: string }): string {
   const title = input.title.trim();
@@ -68,7 +68,7 @@ function useBrowserPanelDescriptor(
   );
   const loadingBucket = browser?.isLoading ? "running" : null;
   const runBucket = browserActivityStatusBucket(activity) ?? loadingBucket;
-  const url = browser?.url ?? "https://example.com";
+  const url = browser?.url ?? DEFAULT_BROWSER_URL;
   const icon = createBrowserTabIcon(browser?.faviconUrl ?? null);
   const label = getBrowserLabel({ title: browser?.title ?? "", url });
 
@@ -86,9 +86,13 @@ function BrowserPanel() {
   const { serverId, workspaceId, target } = usePaneContext();
   const { focusPane, isInteractive } = usePaneFocus();
   const cwd = useWorkspaceDirectory(serverId, workspaceId);
-  const supportsRemoteBrowser = useHostFeature(serverId, "remoteBrowser");
   invariant(target.kind === "browser", "BrowserPanel requires browser target");
-  if (!supportsRemoteBrowser && getIsElectron()) {
+  const remoteBrowserId = useBrowserStore(
+    (state) => state.browsersById[target.browserId]?.remoteBrowserId ?? null,
+  );
+  // The desktop app opens its own tabs natively on this machine; only tabs that live
+  // in the daemon's browser (an agent opened them, or a phone did) are streamed.
+  if (getIsElectron() && !remoteBrowserId) {
     return (
       <BrowserPane
         browserId={target.browserId}

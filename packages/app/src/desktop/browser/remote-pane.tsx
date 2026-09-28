@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ComponentProps,
+  type RefObject,
+} from "react";
 import {
   Image,
   PanResponder,
@@ -63,6 +71,7 @@ import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
 import { isHttpUrl } from "@/utils/http-url";
 import { openExternalUrl } from "@/utils/open-external-url";
 import type { BrowserAutomationCommand } from "@getpaseo/protocol/browser-automation/rpc-schemas";
+import { DEFAULT_BROWSER_URL } from "@/desktop/browser/store/state";
 
 interface RemoteBrowserPaneProps {
   browserId: string;
@@ -165,7 +174,7 @@ function RemoteBrowserPane({
   const browser = useBrowserStore((state) => state.browsersById[browserId] ?? null);
   const updateBrowser = useBrowserStore((state) => state.updateBrowser);
   const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 });
-  const [draftUrl, setDraftUrl] = useState(browser?.url ?? "https://example.com");
+  const [draftUrl, setDraftUrl] = useState(browser?.url ?? DEFAULT_BROWSER_URL);
   // The address field shows the tab's live URL, except while the user edits it.
   const [shownUrl, setShownUrl] = useState(draftUrl);
   const isEditingUrlRef = useRef(false);
@@ -207,7 +216,7 @@ function RemoteBrowserPane({
   const remoteBrowserId = browser?.remoteBrowserId ?? null;
   const remoteBrowserIdRef = useRef(remoteBrowserId);
   remoteBrowserIdRef.current = remoteBrowserId;
-  const { frame, refreshFrame, requestedSizeRef } = useRemoteBrowserFrames({
+  const { frame, subscribeFrame, refreshFrame, requestedSizeRef } = useRemoteBrowserFrames({
     client,
     serverId,
     workspaceId,
@@ -226,7 +235,6 @@ function RemoteBrowserPane({
   frameRef.current = frame;
   const viewportSizeRef = useRef(viewportSize);
   viewportSizeRef.current = viewportSize;
-  const frameSource = useMemo(() => (frame ? { uri: frame.dataUri } : undefined), [frame]);
   const frameRect = useMemo(
     () => getContainedFrameRect(frame, viewportSize),
     [frame, viewportSize],
@@ -1017,7 +1025,7 @@ function RemoteBrowserPane({
             style={styles.frameButton}
             testID={`remote-browser-frame-${browserId}`}
           >
-            <Image fadeDuration={0} resizeMode="stretch" source={frameSource} style={frameStyle} />
+            <RemoteFrameImage subscribe={subscribeFrame} style={frameStyle} />
           </View>
         ) : (
           <Text style={styles.status}>Connecting to Linux browser...</Text>
@@ -1025,6 +1033,19 @@ function RemoteBrowserPane({
       </View>
     </View>
   );
+}
+
+function RemoteFrameImage({
+  subscribe,
+  style,
+}: {
+  subscribe: (listener: (dataUri: string) => void) => () => void;
+  style: ComponentProps<typeof Image>["style"];
+}) {
+  const [uri, setUri] = useState<string | null>(null);
+  useEffect(() => subscribe(setUri), [subscribe]);
+  const source = useMemo(() => (uri ? { uri } : undefined), [uri]);
+  return <Image fadeDuration={0} resizeMode="stretch" source={source} style={style} />;
 }
 
 export { RemoteBrowserPane };

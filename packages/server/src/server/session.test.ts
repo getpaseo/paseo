@@ -692,7 +692,7 @@ test("browser handoff subscribers see handoffs end through Done and through clos
   const hub = new BrowserActivityHub(() => {});
   const broker = new BrowserToolsBroker({});
   broker.registerClient({
-    id: "daemon-host",
+    id: "daemon-playwright",
     hostKind: "daemon",
     supportedCommands: ["close_tab"],
     sendBrowserAutomationRequest: (request) => {

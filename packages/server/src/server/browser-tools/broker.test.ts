@@ -593,11 +593,13 @@ describe("BrowserToolsBroker", () => {
         retryable: false,
       },
     });
-    expect(owner.receivedRequests.at(-1)?.command).toEqual({
-      command: "close_tab",
-      args: { browserId: BROWSER_ID },
-    });
-    expect(other.receivedRequests).toEqual([]);
+    // The closed id is unknown again, so the broker looks it up before refusing.
+    expect(owner.receivedRequests.map((request) => request.command.command)).toEqual([
+      "new_tab",
+      "close_tab",
+      "list_tabs",
+    ]);
+    expect(other.receivedRequests.map((request) => request.command.command)).toEqual(["list_tabs"]);
   });
 
   test("failed list tabs aggregation does not seed browser id affinity", async () => {
@@ -661,8 +663,15 @@ describe("BrowserToolsBroker", () => {
         retryable: false,
       },
     });
-    expect(firstHost.receivedRequests).toHaveLength(1);
-    expect(secondHost.receivedRequests).toHaveLength(1);
+    // The failed listing seeded nothing, so the snapshot's id is looked up once more.
+    expect(firstHost.receivedRequests.map((request) => request.command.command)).toEqual([
+      "list_tabs",
+      "list_tabs",
+    ]);
+    expect(secondHost.receivedRequests.map((request) => request.command.command)).toEqual([
+      "list_tabs",
+      "list_tabs",
+    ]);
   });
 
   test("unsupported commands are rejected before sending to the routed host", async () => {
@@ -971,5 +980,72 @@ describe("BrowserToolsBroker", () => {
       },
     });
     expect(broker.getPendingRequestCount()).toBe(0);
+  });
+
+  test("a pinned host gets the command even when another host is newer", async () => {
+    const broker = createBroker();
+    const daemonHost = new FakeBrowserHostClient("daemon-playwright");
+    const desktopHost = new FakeBrowserHostClient("desktop-1");
+    broker.registerClient(daemonHost);
+    broker.registerClient(desktopHost);
+
+    const snapshot = broker.execute({
+      command: snapshotCommand(),
+      workspaceId: "workspace-1",
+      hostId: "daemon-playwright",
+    });
+    expect(daemonHost.receivedRequests.map((request) => request.command.command)).toEqual([
+      "snapshot",
+    ]);
+    expect(desktopHost.receivedRequests).toEqual([]);
+    daemonHost.resolveLatestWith(broker, {
+      requestId: "req-1",
+      ok: false,
+      error: { code: "browser_tab_not_found", message: "gone", retryable: false },
+    });
+    await snapshot;
+  });
+
+  test("an id the broker never saw is found on whichever host lists it", async () => {
+    const broker = createBroker();
+    const daemonHost = new FakeBrowserHostClient("daemon-playwright");
+    const desktopHost = new FakeBrowserHostClient("desktop-1");
+    broker.registerClient(daemonHost);
+    broker.registerClient(desktopHost);
+
+    // As after a daemon restart: the tab exists again, but nothing routed it yet.
+    const snapshot = broker.execute({ command: snapshotCommand(), workspaceId: "workspace-1" });
+    await Promise.resolve();
+    daemonHost.resolveLatestWith(broker, {
+      requestId: "req-1:discover:daemon-playwright",
+      ok: true,
+      result: {
+        command: "list_tabs",
+        tabs: [{ browserId: BROWSER_ID, url: "https://one.example", title: "One" }],
+      },
+    });
+    desktopHost.resolveLatestWith(broker, {
+      requestId: "req-1:discover:desktop-1",
+      ok: true,
+      result: { command: "list_tabs", tabs: [] },
+    });
+    await vi.waitFor(() => expect(daemonHost.receivedRequests).toHaveLength(2));
+    expect(daemonHost.receivedRequests.at(-1)?.command.command).toBe("snapshot");
+    expect(desktopHost.receivedRequests).toHaveLength(1);
+    daemonHost.resolveLatestWith(broker, {
+      requestId: "req-1",
+      ok: true,
+      result: {
+        command: "snapshot",
+        browserId: BROWSER_ID,
+        format: "aria-yaml",
+        snapshot: "- document",
+        url: "https://one.example",
+        title: "One",
+        truncated: false,
+        stats: { nodeCount: 1, refCount: 0, textLength: 0 },
+      },
+    });
+    await expect(snapshot).resolves.toMatchObject({ ok: true });
   });
 });

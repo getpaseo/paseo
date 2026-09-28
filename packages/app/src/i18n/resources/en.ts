@@ -2265,7 +2265,7 @@ export const en = {
         label: "Start page",
         hint: "New browser tabs on this device open this URL. Agents always open the URL they pass directly.",
         saveLabel: "Current start page",
-        unset: "Not set (example.com)",
+        unset: "Not set (Google)",
         save: "Save",
       },
       import: {
