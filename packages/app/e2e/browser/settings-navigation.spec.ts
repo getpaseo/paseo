@@ -82,7 +82,7 @@ test.describe("Settings sidebar navigation", () => {
     await verifyLegacyHostSettingsRedirect(page);
   });
 
-  test("direct connection advanced URI round-trips SSL and password into the form", async ({
+  test("direct connection advanced URI fills and round-trips SSL and password into the form", async ({
     page,
   }) => {
     await gotoAppShell(page);
@@ -93,6 +93,16 @@ test.describe("Settings sidebar navigation", () => {
 
     await toggleHostAdvanced(page);
     await fillDirectHostUri(page, "tcp://example.paseo.test:7443?ssl=true&password=shared-secret");
+    await expectDirectHostFormValues(page, {
+      host: "example.paseo.test",
+      port: "7443",
+      password: "shared-secret",
+    });
+    await expectDirectHostSslEnabled(page);
+    await expectDirectHostUriValue(
+      page,
+      "tcp://example.paseo.test:7443?ssl=true&password=shared-secret",
+    );
     await toggleHostAdvanced(page);
 
     await expectDirectHostFormValues(page, {

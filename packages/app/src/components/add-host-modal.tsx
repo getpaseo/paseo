@@ -311,6 +311,9 @@ export function AddHostModal({ visible, onClose, onCancel, onSaved }: AddHostMod
   const [isAdvancedOpen, setIsAdvancedOpen] = useState(false);
   const [advancedUri, setAdvancedUri] = useState("");
   const [inputResetKey, bumpInputResetKey] = useReducer((key: number) => key + 1, 0);
+  // Resets only the host/port/password inputs, so syncing them from the URI
+  // never rewrites the URI input the user is typing in.
+  const [fieldsResetKey, bumpFieldsResetKey] = useReducer((key: number) => key + 1, 0);
   const advancedTarget = useRef(new PairingTargetTracker("", true));
 
   const clearInput = useCallback(() => {
@@ -497,6 +500,20 @@ export function AddHostModal({ visible, onClose, onCancel, onSaved }: AddHostMod
       setErrorMessage("");
     }
     setAdvancedUri(next);
+
+    let draft: DirectConnectionDraft;
+    try {
+      draft = draftFromConnectionUri(next);
+    } catch {
+      // Leave the fields alone while the URI is incomplete.
+      return;
+    }
+    setHost(draft.host);
+    setPort(draft.port);
+    setUseTls(draft.useTls);
+    setPassword(draft.password);
+    setErrorMessage("");
+    bumpFieldsResetKey();
   }, []);
 
   const handleToggleUseTls = useCallback(() => {
@@ -557,7 +574,7 @@ export function AddHostModal({ visible, onClose, onCancel, onSaved }: AddHostMod
             nativeID="direct-host-input"
             accessibilityLabel={t("pairing.direct.fields.host")}
             initialValue={host}
-            resetKey={`direct-host-${inputResetKey}`}
+            resetKey={`direct-host-${inputResetKey}-${fieldsResetKey}`}
             onChangeText={setHost}
             placeholder="localhost"
             placeholderTextColor={theme.colors.foregroundMuted}
@@ -576,7 +593,7 @@ export function AddHostModal({ visible, onClose, onCancel, onSaved }: AddHostMod
             nativeID="direct-port-input"
             accessibilityLabel={t("pairing.direct.fields.port")}
             initialValue={port}
-            resetKey={`direct-port-${inputResetKey}`}
+            resetKey={`direct-port-${inputResetKey}-${fieldsResetKey}`}
             onChangeText={setPort}
             placeholder="6767"
             placeholderTextColor={theme.colors.foregroundMuted}
@@ -618,7 +635,7 @@ export function AddHostModal({ visible, onClose, onCancel, onSaved }: AddHostMod
             nativeID="direct-password-input"
             accessibilityLabel={t("pairing.direct.fields.password")}
             initialValue={password}
-            resetKey={`direct-password-${inputResetKey}`}
+            resetKey={`direct-password-${inputResetKey}-${fieldsResetKey}`}
             onChangeText={setPassword}
             placeholder={t("pairing.direct.fields.optional")}
             placeholderTextColor={theme.colors.foregroundMuted}
