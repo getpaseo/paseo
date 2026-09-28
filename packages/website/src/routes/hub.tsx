@@ -611,8 +611,8 @@ function FaqSection() {
           <a href={HOSTED_HUB_URL} className={LINK_CLASS}>
             sign in to Hosted Hub
           </a>{" "}
-          for a free account. It needs no card and does not expire. When you want more agent runs or
-          more seats, upgrade from Billing inside Hub.
+          for a free account. When you want more agent runs or more seats, upgrade from Billing
+          inside Hub.
         </FAQItem>
       </div>
     </section>

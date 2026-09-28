@@ -1,6 +1,11 @@
 import { useEffect, useState } from "react";
 import { subscribeToRelativeTimeTick, type TickResolution } from "@/utils/relative-time-ticker";
-import { describeCompactTimeAgo } from "@/utils/time";
+import { describeCompactTimeAgo, describeTimeAgo, type RelativeTimeLabel } from "@/utils/time";
+
+/** A prose relative timestamp ("5m ago") that keeps itself current. See `useCompactTimeAgo`. */
+export function useTimeAgo(date: Date | null): string {
+  return useRelativeTimeLabel(date, describeTimeAgo);
+}
 
 /**
  * A compact relative timestamp that keeps itself current.
@@ -19,7 +24,14 @@ import { describeCompactTimeAgo } from "@/utils/time";
  *   never changes again.
  */
 export function useCompactTimeAgo(date: Date | null): string {
-  const [label, setLabel] = useState(() => (date ? describeCompactTimeAgo(date).label : ""));
+  return useRelativeTimeLabel(date, describeCompactTimeAgo);
+}
+
+function useRelativeTimeLabel(
+  date: Date | null,
+  describe: (date: Date) => RelativeTimeLabel,
+): string {
+  const [label, setLabel] = useState(() => (date ? describe(date).label : ""));
 
   // Keyed on the instant, not the Date object: the store parses a fresh Date on every payload, so
   // depending on identity would tear down and rebuild the subscription for an unchanged time.
@@ -32,13 +44,13 @@ export function useCompactTimeAgo(date: Date | null): string {
     }
 
     const source = new Date(time);
-    let current = describeCompactTimeAgo(source);
+    let current = describe(source);
     setLabel(current.label);
 
     let unsubscribe: (() => void) | null = null;
 
     const handleTick = () => {
-      const next = describeCompactTimeAgo(source);
+      const next = describe(source);
       if (next.label !== current.label) {
         setLabel(next.label);
       }
@@ -62,7 +74,7 @@ export function useCompactTimeAgo(date: Date | null): string {
     return () => {
       unsubscribe?.();
     };
-  }, [time]);
+  }, [time, describe]);
 
   return label;
 }
