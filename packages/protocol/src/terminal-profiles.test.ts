@@ -231,6 +231,16 @@ describe("getTerminalProfileIcon", () => {
     expect(getTerminalProfileIcon(profile)).toBe("cursor");
   });
 
+  it("keeps an explicit icon over the Cursor CLI guess", () => {
+    const profile = {
+      id: "profile_1",
+      name: "Cursor",
+      command: "cursor-agent",
+      icon: "claude",
+    };
+    expect(getTerminalProfileIcon(profile)).toBe("claude");
+  });
+
   it("returns undefined when no icon is set and command is unknown", () => {
     const profile = { id: "1", name: "Foo", command: "zsh" };
     expect(getTerminalProfileIcon(profile)).toBeUndefined();
