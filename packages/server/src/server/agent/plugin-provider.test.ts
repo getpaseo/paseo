@@ -449,6 +449,63 @@ describe("PluginAgentClientRegistry", () => {
     expect(eventsOfType(events, "turn_failed")).toHaveLength(1);
   });
 
+  test("leaves a completed session without a failure when its plugin provider is removed", async () => {
+    const harness = createProviderHarness();
+    const registry = new PluginAgentClientRegistry(createTestLogger());
+    registry.replace([harness.registration]);
+    const session = await registry.clients()[harness.registration.id]!.createSession({
+      provider: harness.registration.id,
+      cwd: "/workspace",
+    });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    await session.run("hello", { clientMessageId: "completed-message" });
+    expect(eventsOfType(events, "turn_completed")).toHaveLength(1);
+
+    registry.replace([]);
+    await harness.waitForClose();
+
+    expect(eventsOfType(events, "turn_failed")).toEqual([]);
+    await expect(
+      session.startTurn("after reload", { clientMessageId: "after-reload" }),
+    ).rejects.toBeInstanceOf(StaleProviderSessionError);
+  });
+
+  test("fails an accepted turn that has not started when its plugin provider is removed", async () => {
+    const harness = createProviderHarness({
+      handleInput: async (input, emit) => {
+        if (input.type !== "session.prompt") return false;
+        emit({
+          type: "session.prompt_result",
+          sessionId: input.sessionId,
+          clientMessageId: input.prompt.clientMessageId,
+          result: { type: "turn", turnId: "accepted-turn" },
+        });
+        return true;
+      },
+    });
+    const registry = new PluginAgentClientRegistry(createTestLogger());
+    registry.replace([harness.registration]);
+    const session = await registry.clients()[harness.registration.id]!.createSession({
+      provider: harness.registration.id,
+      cwd: "/workspace",
+    });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    await expect(
+      session.startTurn("hello", { clientMessageId: "accepted-message" }),
+    ).resolves.toEqual({ turnId: "accepted-turn" });
+
+    registry.replace([]);
+    await harness.waitForClose();
+
+    expect(eventsOfType(events, "turn_failed")).toEqual([
+      expect.objectContaining({ error: "Provider connection closed" }),
+    ]);
+  });
+
   test("closes a stale session after its plugin provider is replaced", async () => {
     const old = createProviderHarness();
     const next = createProviderHarness();
