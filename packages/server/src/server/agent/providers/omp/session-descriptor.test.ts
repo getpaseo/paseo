@@ -219,27 +219,73 @@ describe("OMP session descriptor", () => {
     ).resolves.toEqual([expect.objectContaining({ providerHandleId: sessionFile })]);
   });
 
-  test("uses a profile's XDG data directory after OMP has created it", async () => {
-    const home = await mkdtemp(path.join(tmpdir(), "paseo-omp-xdg-home-"));
-    const cwd = path.join(home, "repo");
-    const xdgDataHome = path.join(home, "xdg-data");
-    const sessionFile = path.join(
-      xdgDataHome,
-      "omp",
-      "profiles",
-      "qa",
-      "sessions",
-      "project",
-      "session.jsonl",
-    );
-    await mkdir(path.dirname(sessionFile), { recursive: true });
-    await writeFile(sessionFile, JSON.stringify({ type: "session", id: "xdg-profile", cwd }));
+  test.skipIf(process.platform === "win32")(
+    "uses a profile's XDG data directory after OMP has created it",
+    async () => {
+      const home = await mkdtemp(path.join(tmpdir(), "paseo-omp-xdg-home-"));
+      const cwd = path.join(home, "repo");
+      const xdgDataHome = path.join(home, "xdg-data");
+      const sessionFile = path.join(
+        xdgDataHome,
+        "omp",
+        "profiles",
+        "qa",
+        "sessions",
+        "project",
+        "session.jsonl",
+      );
+      await mkdir(path.dirname(sessionFile), { recursive: true });
+      await writeFile(sessionFile, JSON.stringify({ type: "session", id: "xdg-profile", cwd }));
 
-    await expect(
-      listOmpImportableSessions({
-        homeDir: home,
-        env: { OMP_PROFILE: "qa", XDG_DATA_HOME: xdgDataHome },
-      }),
-    ).resolves.toEqual([expect.objectContaining({ providerHandleId: sessionFile })]);
-  });
+      await expect(
+        listOmpImportableSessions({
+          homeDir: home,
+          env: { OMP_PROFILE: "qa", XDG_DATA_HOME: xdgDataHome },
+        }),
+      ).resolves.toEqual([expect.objectContaining({ providerHandleId: sessionFile })]);
+    },
+  );
+
+  test.runIf(process.platform === "win32")(
+    "ignores a profile's XDG data directory on Windows",
+    async () => {
+      const home = await mkdtemp(path.join(tmpdir(), "paseo-omp-windows-xdg-home-"));
+      const cwd = path.join(home, "repo");
+      const xdgDataHome = path.join(home, "xdg-data");
+      const xdgSessionFile = path.join(
+        xdgDataHome,
+        "omp",
+        "profiles",
+        "qa",
+        "sessions",
+        "project",
+        "xdg.jsonl",
+      );
+      const profileSessionFile = path.join(
+        home,
+        ".omp",
+        "profiles",
+        "qa",
+        "agent",
+        "sessions",
+        "project",
+        "profile.jsonl",
+      );
+      await Promise.all([
+        mkdir(path.dirname(xdgSessionFile), { recursive: true }),
+        mkdir(path.dirname(profileSessionFile), { recursive: true }),
+      ]);
+      await Promise.all([
+        writeFile(xdgSessionFile, JSON.stringify({ type: "session", id: "xdg-profile", cwd })),
+        writeFile(profileSessionFile, JSON.stringify({ type: "session", id: "qa-profile", cwd })),
+      ]);
+
+      await expect(
+        listOmpImportableSessions({
+          homeDir: home,
+          env: { OMP_PROFILE: "qa", XDG_DATA_HOME: xdgDataHome },
+        }),
+      ).resolves.toEqual([expect.objectContaining({ providerHandleId: profileSessionFile })]);
+    },
+  );
 });
