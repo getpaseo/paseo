@@ -53,6 +53,9 @@ const entries = [
 const additionalInputs = [
   // Agent orchestration skill catalog loaded through filesystem paths
   "packages/server/dist/server/skills/**",
+  // Internal plugin manifests and icons are read through filesystem paths.
+  "packages/server/dist/server/plugins/**/paseo-plugin.json",
+  "packages/server/dist/server/plugins/**/icon.svg",
   // Shell integration scripts loaded by the terminal manager
   "packages/server/dist/server/terminal/shell-integration/**",
   // Silero VAD ONNX model (sherpa speech provider)
