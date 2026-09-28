@@ -605,7 +605,7 @@ describe("ScheduleService", () => {
     expect(await workspaceRegistry.list()).toEqual([]);
   });
 
-  test("archiveOnFinish=false local runs create one active workspace per run", async () => {
+  test("archiveOnFinish=false local runs share one workspace until it is archived", async () => {
     const {
       workspaceRegistry,
       createDirectoryWorkspace: createScheduleDirectoryWorkspace,
@@ -627,11 +627,12 @@ describe("ScheduleService", () => {
         agentManager: manager,
         agentStorage,
       }),
+      getWorkspace: (workspaceId) => workspaceRegistry.get(workspaceId),
       now: () => now,
     });
 
     const created = await service.create({
-      prompt: "repeat in separate workspaces",
+      prompt: "repeat in one workspace",
       cadence: { type: "every", everyMs: 60_000 },
       target: {
         type: "new-agent",
@@ -643,34 +644,35 @@ describe("ScheduleService", () => {
           isolation: "local",
         },
       },
-      maxRuns: 2,
+      maxRuns: 3,
     });
 
     await service.tick();
     now = new Date("2026-01-01T00:01:00.000Z");
     await service.tick();
 
-    const inspected = await service.inspect(created.id);
+    let inspected = await service.inspect(created.id);
     expect(inspected.runs).toHaveLength(2);
     const firstAgent = await agentStorage.get(inspected.runs[0]!.agentId!);
     const secondAgent = await agentStorage.get(inspected.runs[1]!.agentId!);
     expect(firstAgent?.workspaceId).toMatch(/^wks_/);
-    expect(secondAgent?.workspaceId).toMatch(/^wks_/);
-    expect(firstAgent?.workspaceId).not.toBe(secondAgent?.workspaceId);
+    expect(secondAgent?.workspaceId).toBe(firstAgent?.workspaceId);
+    expect(firstAgent?.id).not.toBe(secondAgent?.id);
     expect(firstAgent?.archivedAt ?? null).toBeNull();
     expect(secondAgent?.archivedAt ?? null).toBeNull();
     expect(await workspaceRegistry.list()).toEqual([
-      expect.objectContaining({
-        workspaceId: firstAgent?.workspaceId,
-        cwd: tempDir,
-        archivedAt: null,
-      }),
-      expect.objectContaining({
-        workspaceId: secondAgent?.workspaceId,
-        cwd: tempDir,
-        archivedAt: null,
-      }),
+      expect.objectContaining({ workspaceId: firstAgent?.workspaceId, archivedAt: null }),
     ]);
+
+    await workspaceRegistry.archive(firstAgent!.workspaceId!, now.toISOString());
+    now = new Date("2026-01-01T00:02:00.000Z");
+    await service.tick();
+
+    inspected = await service.inspect(created.id);
+    expect(inspected.runs).toHaveLength(3);
+    const thirdAgent = await agentStorage.get(inspected.runs[2]!.agentId!);
+    expect(thirdAgent?.workspaceId).toMatch(/^wks_/);
+    expect(thirdAgent?.workspaceId).not.toBe(firstAgent?.workspaceId);
   });
 
   test("archiveOnFinish=true archives the run workspace through workspace archive", async () => {

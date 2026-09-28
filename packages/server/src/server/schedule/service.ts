@@ -136,7 +136,11 @@ function countCompletedRuns(schedule: StoredSchedule): number {
 function shouldArchiveScheduleRunWorkspace(input: {
   agentId: string | null;
   archiveOnFinish?: boolean;
+  reused?: boolean;
 }): boolean {
+  if (input.reused) {
+    return false;
+  }
   return input.agentId === null || (input.archiveOnFinish ?? true);
 }
 
@@ -241,6 +245,7 @@ export interface ScheduleServiceOptions {
     input: ScheduleWorkspaceCreateInput,
   ) => Promise<CreatePaseoWorktreeWorkflowResult>;
   archiveWorkspace: (workspaceId: string) => Promise<void>;
+  getWorkspace?: (workspaceId: string) => Promise<PersistedWorkspaceRecord | null>;
   now?: () => Date;
   runner?: (schedule: StoredSchedule, runId: string) => Promise<ScheduleExecutionResult>;
   resourcePolicyRuntime?: Pick<ResourcePolicyRuntime, "canStartAutomatedLoop">;
@@ -261,6 +266,7 @@ export class ScheduleService {
     input: ScheduleWorkspaceCreateInput,
   ) => Promise<CreatePaseoWorktreeWorkflowResult>;
   private readonly archiveWorkspace: (workspaceId: string) => Promise<void>;
+  private readonly getWorkspace: (workspaceId: string) => Promise<PersistedWorkspaceRecord | null>;
   private readonly now: () => Date;
   private readonly runner: (
     schedule: StoredSchedule,
@@ -290,6 +296,7 @@ export class ScheduleService {
     this.createDirectoryWorkspace = options.createDirectoryWorkspace;
     this.createPaseoWorktreeWorkspace = options.createPaseoWorktreeWorkspace;
     this.archiveWorkspace = options.archiveWorkspace;
+    this.getWorkspace = options.getWorkspace ?? (async () => null);
     this.now = options.now ?? (() => new Date());
     this.runner = options.runner ?? ((schedule, runId) => this.executeSchedule(schedule, runId));
     this.resourcePolicyRuntime = options.resourcePolicyRuntime ?? null;
@@ -673,6 +680,9 @@ export class ScheduleService {
         if (
           updated.target.type === "new-agent" &&
           runningRun.workspaceId &&
+          !runs.some(
+            (run, index) => index !== runningIndex && run.workspaceId === runningRun.workspaceId,
+          ) &&
           shouldArchiveScheduleRunWorkspace({
             agentId: runningRun.agentId,
             archiveOnFinish: updated.target.config.archiveOnFinish,
@@ -1019,8 +1029,10 @@ export class ScheduleService {
     await this.assertNewAgentCwdDirectory(config.cwd);
     let workspace: PersistedWorkspaceRecord | null = null;
     let agentId: string | null = null;
+    const reusedWorkspace = await this.findReusableRunWorkspace(schedule, config);
     try {
-      workspace = await this.createScheduleRunWorkspace(config, schedule.prompt);
+      workspace =
+        reusedWorkspace ?? (await this.createScheduleRunWorkspace(config, schedule.prompt));
       await this.recordRunWorkspace({
         scheduleId: schedule.id,
         runId,
@@ -1083,7 +1095,11 @@ export class ScheduleService {
     } finally {
       if (
         workspace &&
-        shouldArchiveScheduleRunWorkspace({ agentId, archiveOnFinish: config.archiveOnFinish })
+        shouldArchiveScheduleRunWorkspace({
+          agentId,
+          archiveOnFinish: config.archiveOnFinish,
+          reused: reusedWorkspace !== null,
+        })
       ) {
         await this.archiveRunWorkspace({
           workspaceId: workspace.workspaceId,
@@ -1093,6 +1109,23 @@ export class ScheduleService {
         });
       }
     }
+  }
+
+  // A kept schedule is one workspace with a tab per run, not a new sidebar entry
+  // every morning. Runs that archive on finish still get a throwaway workspace.
+  private async findReusableRunWorkspace(
+    schedule: StoredSchedule,
+    config: Extract<ScheduleTarget, { type: "new-agent" }>["config"],
+  ): Promise<PersistedWorkspaceRecord | null> {
+    if ((config.isolation ?? "local") !== "local" || (config.archiveOnFinish ?? true)) {
+      return null;
+    }
+    const previous = schedule.runs.findLast((run) => run.workspaceId && run.status !== "running");
+    if (!previous?.workspaceId) {
+      return null;
+    }
+    const workspace = await this.getWorkspace(previous.workspaceId);
+    return workspace && !workspace.archivedAt && workspace.cwd === config.cwd ? workspace : null;
   }
 
   private async createScheduleRunWorkspace(
