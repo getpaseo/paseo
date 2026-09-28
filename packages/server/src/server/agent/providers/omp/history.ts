@@ -346,6 +346,20 @@ function mapEntryMessage(entry: OmpSessionEntry): OmpAgentMessage | null {
     if (message.role === "system") {
       return null;
     }
+    if (message.role === "developer") {
+      const content = message.content;
+      if (
+        Array.isArray(content) &&
+        content.length === 1 &&
+        content[0]?.type === "text" &&
+        typeof content[0].text === "string" &&
+        content[0].text.trimStart().startsWith("<system-reminder>") &&
+        content[0].text.trimEnd().endsWith("</system-reminder>")
+      ) {
+        return null;
+      }
+      return visibleFallback(message.role, message);
+    }
     if (["user", "assistant", "toolResult", "custom", "bashExecution"].includes(message.role)) {
       return message as unknown as OmpAgentMessage;
     }
@@ -398,6 +412,8 @@ function visibleFallback(role: string, value: Record<string, unknown>): OmpAgent
   let text = "Unsupported history record";
   if (typeof value.content === "string") {
     text = value.content;
+  } else if (Array.isArray(value.content)) {
+    text = textOf(value.content) || text;
   } else if (typeof value.text === "string") {
     text = value.text;
   }

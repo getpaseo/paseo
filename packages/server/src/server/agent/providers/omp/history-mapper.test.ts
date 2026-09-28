@@ -8,7 +8,7 @@ import { streamOmpCoreHistory, type OmpCapturedUserMessageEntry } from "./messag
 import type { OmpAgentMessage } from "./rpc-types.js";
 import { FakeOmp } from "./test-utils/fake-omp.js";
 import { OMP_HISTORY_MAPPER_HOOKS } from "./history-hooks.js";
-import { streamOmpHistory } from "./history.js";
+import { readOmpHistoryTodoState, streamOmpHistory } from "./history.js";
 
 async function collectHistory(
   messages: OmpAgentMessage[],
@@ -52,6 +52,90 @@ describe("OMP history mapper", () => {
       status: "failed",
       error: "All web search providers failed",
     });
+  });
+
+  test("restores blocked and abandoned todo state from a session file", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "omp-todo-state-history-"));
+    const sessionFile = join(dir, "session.jsonl");
+    writeFileSync(
+      sessionFile,
+      [
+        { type: "session", id: "root" },
+        {
+          type: "message",
+          id: "todos",
+          parentId: "root",
+          message: {
+            role: "toolResult",
+            toolName: "todo",
+            details: {
+              phases: [
+                {
+                  name: "Tasks",
+                  tasks: [
+                    { content: "Wait for approval", status: "blocked", blocker: "review" },
+                    { content: "Old route", status: "abandoned" },
+                  ],
+                },
+              ],
+            },
+          },
+        },
+      ]
+        .map((entry) => JSON.stringify(entry))
+        .join("\n"),
+    );
+    expect(await readOmpHistoryTodoState(sessionFile)).toEqual({
+      type: "todo",
+      items: [{ text: "Wait for approval (blocked: review)", status: "pending", completed: false }],
+    });
+  });
+
+  test("hides persisted developer reminders and shows other developer messages", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "omp-developer-history-"));
+    const sessionFile = join(dir, "session.jsonl");
+    writeFileSync(
+      sessionFile,
+      [
+        { type: "session", id: "root" },
+        {
+          type: "message",
+          id: "reminder",
+          parentId: "root",
+          message: {
+            role: "developer",
+            attribution: "agent",
+            content: [
+              {
+                type: "text",
+                text: "<system-reminder>\nContinue unfinished tasks\n</system-reminder>",
+              },
+            ],
+          },
+        },
+        {
+          type: "message",
+          id: "other",
+          parentId: "reminder",
+          message: {
+            role: "developer",
+            content: [{ type: "text", text: "External instruction" }],
+          },
+        },
+      ]
+        .map((entry) => JSON.stringify(entry))
+        .join("\n"),
+    );
+    const events: AgentStreamEvent[] = [];
+    for await (const event of streamOmpHistory({ sessionFile, provider: "omp" }))
+      events.push(event);
+    expect(events.map((event) => event.item)).toEqual([
+      {
+        type: "assistant_message",
+        text: "[developer] External instruction",
+        messageId: "omp-custom-1",
+      },
+    ]);
   });
 
   test("coalesces replayed subagent poll calls by target set", async () => {
