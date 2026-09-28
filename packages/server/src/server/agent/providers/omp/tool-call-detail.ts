@@ -59,6 +59,7 @@ interface OmpToolResultObject {
 
 interface OmpToolResultDetails {
   diff?: string;
+  error?: string;
   mode?: string;
   xdev?: unknown;
 }
@@ -271,6 +272,9 @@ export function extractTextFromToolResult(result: OmpToolResult): string | undef
 }
 
 export function toolFailureMessage(result: OmpToolResult): string {
+  if (result && typeof result !== "string" && result.details?.error) {
+    return result.details.error.split("\n", 1)[0].slice(0, 240);
+  }
   const output = extractTextFromToolResult(result);
   const exitMessage = output?.match(/(?:Command|Process) exited with code \d+/i)?.[0];
   if (exitMessage) return exitMessage;
@@ -284,6 +288,20 @@ export function toolFailureMessage(result: OmpToolResult): string {
     if (typeof code === "number") return `Tool exited with code ${code}`;
   }
   return "Tool call failed";
+}
+
+export function isOmpToolFailure(
+  toolCall: OmpTrackedToolCall,
+  result: OmpToolResult,
+  isError: boolean,
+): boolean {
+  return (
+    isError ||
+    (toolCall.toolName === "web_search" &&
+      result !== null &&
+      typeof result !== "string" &&
+      typeof result.details?.error === "string")
+  );
 }
 
 export function parseToolArgs(toolName: string, rawArgs: unknown): OmpTrackedToolCall {

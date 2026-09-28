@@ -94,6 +94,7 @@ import {
   parseToolArgs,
   parseToolResult,
   toolFailureMessage,
+  isOmpToolFailure,
   resolveToolCallName,
   type OmpToolResult,
   type OmpTrackedToolCall,
@@ -1828,8 +1829,9 @@ export class OmpAgentSession implements AgentSession {
     this.questionUi.finish(event.toolName);
 
     const result = parseToolResult(event.result);
-    const error = event.isError ? toolFailureMessage(result) : null;
-    const status = event.isError ? "failed" : "completed";
+    const failed = isOmpToolFailure(toolCall, result, Boolean(event.isError));
+    const error = failed ? toolFailureMessage(result) : null;
+    const status = failed ? "failed" : "completed";
     this.emitToolCallEvent(event.toolCallId, toolCall, status, result, error);
     if (event.toolName === "task") {
       this.subagentCardTracker.delete(event.toolCallId);
@@ -1936,16 +1938,6 @@ export class OmpAgentSession implements AgentSession {
         if (text) {
           const skillPrompt = ompSkillPromptUserText(event.message);
           if (skillPrompt) {
-            const messageId = ompCustomMessageId(event.message, () => {
-              this.customMessageIndex += 1;
-              return this.customMessageIndex;
-            });
-            this.emit({
-              type: "timeline",
-              provider: this.provider,
-              turnId,
-              item: { type: "user_message", text: skillPrompt, messageId: `${messageId}-user` },
-            });
             return;
           }
           const item =

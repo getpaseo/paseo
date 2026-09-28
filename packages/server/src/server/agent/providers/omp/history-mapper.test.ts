@@ -27,6 +27,33 @@ async function collectHistory(
 }
 
 describe("OMP history mapper", () => {
+  test("replays a web search details error as failed when OMP sets isError false", async () => {
+    const events = await collectHistory([
+      {
+        role: "assistant",
+        content: [
+          { type: "toolCall", id: "web-1", name: "web_search", arguments: { query: "Paseo" } },
+        ],
+      },
+      {
+        role: "toolResult",
+        toolCallId: "web-1",
+        toolName: "web_search",
+        content: [{ type: "text", text: "Error: All web search providers failed" }],
+        details: {
+          error: "All web search providers failed",
+          response: { provider: "none", sources: [] },
+        },
+        isError: false,
+      },
+    ]);
+    expect(events.at(-1)?.item).toMatchObject({
+      type: "tool_call",
+      status: "failed",
+      error: "All web search providers failed",
+    });
+  });
+
   test("coalesces replayed subagent poll calls by target set", async () => {
     const events = await collectHistory([
       {

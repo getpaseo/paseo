@@ -11,6 +11,7 @@ import {
   parseToolResult,
   resolveToolCallName,
   toolFailureMessage,
+  isOmpToolFailure,
   type OmpToolResult,
   type OmpTrackedToolCall,
 } from "./tool-call-detail.js";
@@ -222,7 +223,7 @@ export class OmpHistoryMapper {
       item: toToolResultTimelineItem({
         callId: this.resolveToolCallId(message.toolCallId, tracked),
         name: resolveToolCallName(tracked, result),
-        isError: Boolean(message.isError),
+        isError: isOmpToolFailure(tracked, result, Boolean(message.isError)),
         detail,
         errorText: toolFailureMessage(result),
       }),

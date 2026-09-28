@@ -724,7 +724,7 @@ describe("OMP agent client and session", () => {
     expect(omp.timeline().at(-1)).toMatchObject({ error: "Command exited with code 1" });
   });
 
-  test("renders live skill expansion as only the invocation", async () => {
+  test("does not duplicate the typed invocation for a live skill expansion", async () => {
     const omp = new OmpHarness();
     await omp.start();
     await omp.runPromptWithCustomMessage(
@@ -740,14 +740,42 @@ describe("OMP agent client and session", () => {
       },
       "done",
     );
-    expect(omp.timeline()).toContainEqual({
-      type: "user_message",
-      text: "/skill:commit",
-      messageId: "omp-custom-skill-1-user",
-    });
+    expect(omp.timeline().filter((item) => item.type === "user_message")).toEqual([
+      { type: "user_message", text: "hello", messageId: "user-1" },
+    ]);
     expect(omp.timeline()).not.toContainEqual(
       expect.objectContaining({ text: "[IMPORTANT] Full skill body" }),
     );
+  });
+
+  test("marks an OMP web search details error as failed even without isError", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    omp.emit({
+      type: "tool_execution_start",
+      toolCallId: "search-failed",
+      toolName: "web_search",
+      args: { query: "Paseo" },
+    });
+    omp.emit({
+      type: "tool_execution_end",
+      toolCallId: "search-failed",
+      toolName: "web_search",
+      result: {
+        content: [{ type: "text", text: "Error: All web search providers failed" }],
+        details: {
+          response: { provider: "mojeek", sources: [] },
+          error: "All web search providers failed",
+        },
+      },
+      isError: false,
+    });
+    expect(omp.timeline().at(-1)).toMatchObject({
+      type: "tool_call",
+      status: "failed",
+      error: "All web search providers failed",
+      detail: { type: "search", query: "Paseo" },
+    });
   });
 
   test("does not complete a queued model turn from OMP's local-only hint", async () => {

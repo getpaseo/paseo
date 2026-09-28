@@ -2,6 +2,7 @@ import type { ToolCallDetail } from "../../agent-sdk-types.js";
 import {
   extractTextFromToolResult,
   mapToolDetail as mapOmpCoreToolDetail,
+  resolveToolCallName,
   type OmpToolResult,
   type OmpTrackedToolCall,
 } from "./tool-call-detail.js";
@@ -21,6 +22,8 @@ export function mapOmpToolDetail(
     const detail = mapOmpTaskDetail(toolCall.args, result);
     return context?.mapSubagentDetail?.(detail) ?? detail;
   }
+  const deviceDetail = mapOmpDeviceToolDetail(toolCall, result);
+  if (deviceDetail) return deviceDetail;
   const extended = mapOmpExtendedToolDetail(toolCall, result);
   if (extended) return extended;
   if (toolCall.toolName === "edit") {
@@ -32,10 +35,33 @@ export function mapOmpToolDetail(
   return mapOmpCoreToolDetail(toolCall, result);
 }
 
+function mapOmpDeviceToolDetail(
+  toolCall: OmpTrackedToolCall,
+  result: OmpToolResult,
+): ToolCallDetail | null {
+  if (toolCall.kind !== "write" || !toolCall.args.path.startsWith("xd://")) return null;
+  const toolName = resolveToolCallName(toolCall, result);
+  if (!OPAQUE_TEXT_TOOLS.has(toolName) && toolName !== "ast_grep") return null;
+  let args: unknown;
+  try {
+    args = JSON.parse(toolCall.args.content);
+  } catch {
+    args = null;
+  }
+  return mapOmpExtendedToolDetail({ kind: "unknown", toolName, args }, result);
+}
+
 function mapOmpExtendedToolDetail(
   toolCall: OmpTrackedToolCall,
   result: OmpToolResult,
 ): ToolCallDetail | null {
+  if (toolCall.toolName === "yield") {
+    return {
+      type: "plain_text",
+      label: "Submitted subagent result",
+      text: extractTextFromToolResult(result),
+    };
+  }
   if (toolCall.toolName === "wait") {
     return mapOmpWaitDetail(result);
   }
@@ -55,13 +81,14 @@ function mapOmpExtendedToolDetail(
     const args = isRecord(toolCall.args) ? toolCall.args : {};
     return {
       type: "search",
-      query: firstString(args.pattern, args.query) ?? toolCall.toolName,
+      query: firstString(args.pattern, args.pat, args.query) ?? toolCall.toolName,
       ...(toolCall.toolName === "glob" ? { toolName: "glob" as const } : {}),
       content: extractTextFromToolResult(result),
     };
   }
   if (toolCall.toolName === "think") {
-    return { type: "plain_text", label: "Thinking" };
+    const args = isRecord(toolCall.args) ? toolCall.args : {};
+    return { type: "plain_text", label: "Thinking", text: firstString(args.thoughts) };
   }
   return mapOmpOpaqueToolDetail(toolCall, result);
 }
@@ -146,11 +173,13 @@ const OPAQUE_TEXT_TOOLS = new Set([
 
 function mapOmpTaskDetail(args: unknown, result: OmpToolResult): ToolCallDetail {
   const argRecord = isRecord(args) ? args : {};
+  const firstTask = Array.isArray(argRecord.tasks) ? argRecord.tasks.find(isRecord) : undefined;
   const resultText = extractTextFromToolResult(result);
   const childSessionId = readChildSessionId(result);
   return {
     type: "sub_agent",
     subAgentType: firstString(
+      firstTask?.name,
       argRecord.name,
       argRecord.agent,
       argRecord.subAgentType,
@@ -158,6 +187,8 @@ function mapOmpTaskDetail(args: unknown, result: OmpToolResult): ToolCallDetail 
       argRecord.type,
     ),
     description: firstString(
+      argRecord.i,
+      taskInstructionSummary(firstTask?.task),
       argRecord.description,
       argRecord.task,
       argRecord.prompt,
@@ -166,6 +197,15 @@ function mapOmpTaskDetail(args: unknown, result: OmpToolResult): ToolCallDetail 
     ...(childSessionId ? { childSessionId } : {}),
     log: resultText?.trim() ?? "",
   };
+}
+
+function taskInstructionSummary(value: unknown): string | undefined {
+  const instruction = firstString(value);
+  if (!instruction) return undefined;
+  return instruction
+    .split("\n")
+    .map((line) => line.replace(/^#+\s*(?:Target|Goal|Task)\s*/i, "").trim())
+    .find(Boolean);
 }
 
 function mapOmpEditDetail(
