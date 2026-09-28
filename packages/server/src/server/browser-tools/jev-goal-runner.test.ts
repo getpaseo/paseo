@@ -236,7 +236,7 @@ describe("JevBrowserGoalRunner activity", () => {
       "2:selected",
       "2:executing",
       "3:observing",
-      "3:deciding",
+      // The page already shows "Welcome", so the checks pass without asking Jev again.
       "3:verifying",
       "3:finished",
     ]);
@@ -300,7 +300,7 @@ describe("JevBrowserGoalRunner activity", () => {
     const result = await run;
 
     expect(result.status).toBe("passed");
-    expect(log).toEqual(["snapshot", "decide", "click", "snapshot", "decide", "wait"]);
+    expect(log).toEqual(["snapshot", "decide", "click", "snapshot", "wait"]);
   });
 
   it("finishes the activity as failed when the run aborts", async () => {

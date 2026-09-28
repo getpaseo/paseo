@@ -1,4 +1,6 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import pino from "pino";
@@ -79,6 +81,44 @@ describe.skipIf(!RUN_REAL_E2E)("Jev browser goal real E2E", () => {
           mode: 0o600,
         });
       }
+    }
+  }, 60_000);
+
+  // Agents describe a goal in the person's words; the page may word the control differently.
+  it("follows a link whose label is worded differently from the goal", async () => {
+    const pages = createServer((request, response) => {
+      response.writeHead(200, { "content-type": "text/html" });
+      response.end(
+        request.url === "/help"
+          ? "<title>Example Domains</title><h1>Example Domains</h1>"
+          : '<title>Example Domain</title><h1>Example Domain</h1><p>This domain is for use in documentation.</p><a href="/help">Learn more</a>',
+      );
+    });
+    await new Promise<void>((resolve) => pages.listen(0, "127.0.0.1", resolve));
+    const { port } = pages.address() as AddressInfo;
+    try {
+      const runner = new JevBrowserGoalRunner({
+        broker: {
+          execute: (input: BrowserToolsExecuteInput) =>
+            host.executeLocal({
+              workspaceId: input.workspaceId ?? WORKSPACE_ID,
+              command: input.command,
+              ...(input.requestId ? { requestId: input.requestId } : {}),
+            }),
+        },
+      });
+      const result = await runner.run(
+        {
+          goal: "Follow the 'More information' link and reach the page it leads to.",
+          url: `http://127.0.0.1:${port}/`,
+          verify: [{ text: "Example Domains" }],
+          maxSteps: 4,
+        },
+        { agentId: "jev-real-e2e", cwd: process.cwd(), workspaceId: WORKSPACE_ID },
+      );
+      expect(result.status).toBe("passed");
+    } finally {
+      pages.close();
     }
   }, 60_000);
 });
