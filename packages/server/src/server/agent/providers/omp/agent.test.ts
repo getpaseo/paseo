@@ -886,10 +886,99 @@ describe("OMP agent client and session", () => {
         expect.objectContaining({ name: "review", kind: "skill" }),
       ]),
     );
+    await expect(omp.setMode("ask")).resolves.toBeUndefined();
+    await expect(omp.currentMode()).resolves.toBe("ask");
+    expect(omp.runtimeLaunches()[1]?.argv).toContain("--approval-mode");
+    expect(omp.runtimeLaunches()[1]?.argv).toContain("always-ask");
+  });
+
+  test("restarts the same conversation after an idle process exit", async () => {
+    const omp = new OmpHarness();
+    await omp.start({ modeId: "full" });
+    const previousId = omp.runtime().state.sessionId;
+    omp.processExit("OMP RPC process exited with code null and signal SIGKILL\nBun crashed");
+    expect(omp.turnFailures()).toEqual([
+      "OMP RPC process exited with code null and signal SIGKILL\nBun crashed",
+    ]);
+
+    await omp.startTurn("remember the conversation");
+    expect(omp.runtimeLaunches()).toHaveLength(2);
+    expect(omp.runtimeLaunches()[1]?.session).toBe("/tmp/omp-session");
+    expect(omp.runtime().state.sessionId).toBe(previousId);
+    expect(omp.threadStartedSessionIds()).toEqual([]);
+    expect(omp.runtime().prompts).toEqual([
+      { message: "remember the conversation", imageCount: 0 },
+    ]);
+  });
+
+  test("reports a mid-turn process exit and resumes on the following prompt", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    await omp.requireStartTurn("sleep 30");
+    omp.runtime().beginTurn();
+    omp.processExit("OMP RPC process exited with code 137 and signal null\nOOM");
+    expect(omp.turnFailures()).toEqual([
+      "OMP RPC process exited with code 137 and signal null\nOOM",
+    ]);
+    await omp.startTurn("continue");
+    expect(omp.runtimeLaunches()).toHaveLength(2);
+    expect(omp.runtime().prompts).toEqual([{ message: "continue", imageCount: 0 }]);
+  });
+
+  test("reports an immediate relaunch failure without retrying in a loop", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    omp.processExit("OMP RPC process exited with code null and signal SIGKILL");
+    omp.failNextStart(new Error("Bun failed during startup"));
+    await omp.startTurn("continue");
+    expect(omp.turnFailures()).toEqual([
+      "OMP RPC process exited with code null and signal SIGKILL",
+      "Bun failed during startup",
+    ]);
+    expect(omp.runtimeLaunches()).toHaveLength(1);
+  });
+
+  test("closes a replacement process if the session closes during relaunch", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    omp.processExit("OMP RPC process exited with code 1 and signal null");
+    const turn = omp.startTurnDetached("continue");
+    await omp.close();
+    await turn;
+    await waitForImmediate();
+    expect(omp.runtimeSessions().every((session) => session.closed)).toBe(true);
+  });
+
+  test("announces a fresh native session when an internal agent recovers", async () => {
+    const omp = new OmpHarness();
+    await omp.start({ internal: true });
+    const previousId = omp.runtime().state.sessionId;
+    omp.processExit("OMP RPC process exited with code 1 and signal null");
+    await omp.startTurn("continue");
+    expect(omp.runtimeLaunches()[1]?.argv).toContain("--no-session");
+    expect(omp.runtime().state.sessionId).not.toBe(previousId);
+    expect(omp.threadStartedSessionIds()).toEqual([omp.runtime().state.sessionId]);
+  });
+
+  test("leaves the current approval mode in place when relaunch fails", async () => {
+    const omp = new OmpHarness();
+    await omp.start({ modeId: "full" });
+    omp.failNextStart(new Error("OMP launch failed"));
+    await expect(omp.setMode("ask")).rejects.toThrow("OMP launch failed");
+    expect(await omp.currentMode()).toBe("full");
+    expect(omp.runtimeLaunches()).toHaveLength(1);
+  });
+
+  test("rejects a running approval-mode change until the turn ends", async () => {
+    const omp = new OmpHarness();
+    await omp.start({ modeId: "full" });
+    await omp.requireStartTurn("work");
     await expect(omp.setMode("ask")).resolves.toEqual({
       type: "warning",
-      message: "Start a new OMP session to change approval mode",
+      message: "Change approval mode once the current turn ends",
     });
+    expect(omp.runtimeLaunches()).toHaveLength(1);
+    expect(await omp.currentMode()).toBe("full");
   });
 
   test("rewinds natively, interrupts, and shuts down", async () => {

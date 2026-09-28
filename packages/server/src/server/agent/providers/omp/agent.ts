@@ -179,6 +179,7 @@ interface StartTurnResult {
 
 interface OmpAgentSessionOptions {
   runtimeSession: OmpRuntimeSession;
+  restartRuntime: (sessionFile: string | null, modeId: string) => Promise<OmpRuntimeSession>;
   config: AgentSessionConfig;
   initialState: OmpSessionState;
   currentModeId?: string | null;
@@ -684,7 +685,10 @@ export class OmpAgentSession implements AgentSession {
   private readonly subagentCardTracker: OmpSubagentCardTracker;
   private lastTodoItem: Extract<AgentTimelineItem, { type: "todo" }> | null = null;
   private state: OmpSessionState;
-  private readonly currentModeId: string | null;
+  private currentModeId: string | null;
+  private runtimeDead = false;
+  private replacingRuntime: Promise<void> | null = null;
+  private unsubscribeRuntime: (() => void) | null = null;
   private readonly providerIdleScheduler: OmpProviderIdleScheduler;
   private readonly providerIdleDeadlineMs: number;
   private readonly noTurnScheduler: OmpNoTurnScheduler;
@@ -696,6 +700,7 @@ export class OmpAgentSession implements AgentSession {
 
   constructor(options: OmpAgentSessionOptions) {
     this.runtimeSession = options.runtimeSession;
+    this.restartRuntime = options.restartRuntime;
     this.config = options.config;
     this.state = options.initialState;
     this.currentModeId = options.currentModeId ?? null;
@@ -727,26 +732,26 @@ export class OmpAgentSession implements AgentSession {
       normalizeOmpThinkingOption(options.config.thinkingOptionId) ??
       this.state.thinkingLevel ??
       null;
-    this.runtimeSession.onEvent((event) => {
-      this.handleRuntimeEvent(event);
+    this.attachRuntime(this.runtimeSession);
+  }
+
+  private attachRuntime(runtime: OmpRuntimeSession): void {
+    this.unsubscribeRuntime = runtime.onEvent((event) => {
+      if (!this.closed && runtime === this.runtimeSession) this.handleRuntimeEvent(event);
     });
-    void this.runtimeSession.setSubagentSubscription("events").catch((eventsError: unknown) => {
+    void runtime.setSubagentSubscription("events").catch((eventsError: unknown) => {
       this.logger.debug(
         { err: eventsError },
         "OMP subagent event subscription unavailable; falling back to progress",
       );
-      void this.runtimeSession
-        .setSubagentSubscription("progress")
-        .catch((progressError: unknown) => {
-          this.logger.debug(
-            { err: progressError },
-            "OMP subagent progress subscription unavailable",
-          );
-        });
+      void runtime.setSubagentSubscription("progress").catch((progressError: unknown) => {
+        this.logger.debug({ err: progressError }, "OMP subagent progress subscription unavailable");
+      });
     });
   }
 
-  private readonly runtimeSession: OmpRuntimeSession;
+  private runtimeSession: OmpRuntimeSession;
+  private readonly restartRuntime: OmpAgentSessionOptions["restartRuntime"];
   private readonly config: AgentSessionConfig;
   private readonly logger: Logger;
   private readonly paseoTools?: PaseoToolCatalog;
@@ -817,6 +822,8 @@ export class OmpAgentSession implements AgentSession {
 
     void (async () => {
       try {
+        if (this.runtimeDead) await this.replaceRuntime(this.currentModeId ?? "full");
+        if (this.closed) throw new Error("OMP session is closed");
         const ack = await this.runtimeSession.prompt(payload.text, payload.images);
         this.activePromptRequestId = ack.requestId ?? null;
         const correlatedResult = ack.requestId
@@ -960,10 +967,52 @@ export class OmpAgentSession implements AgentSession {
     if (!OMP_MODES.some((mode) => mode.id === modeId)) {
       throw new Error(`Invalid OMP mode '${modeId}'`);
     }
-    return {
-      type: "warning",
-      message: "Start a new OMP session to change approval mode",
+    if (modeId === this.currentModeId) return;
+    if (this.activeTurnId || this.state.isStreaming || this.state.isCompacting) {
+      return { type: "warning", message: "Change approval mode once the current turn ends" };
+    }
+    await this.replaceRuntime(modeId);
+  }
+
+  private async replaceRuntime(modeId: string): Promise<void> {
+    if (this.replacingRuntime) return this.replacingRuntime;
+    const replace = async () => {
+      const old = this.runtimeSession;
+      const previousSessionId = this.state.sessionId;
+      const next = await this.restartRuntime(
+        this.config.internal ? null : (this.state.sessionFile ?? null),
+        modeId,
+      );
+      try {
+        if (this.closed) throw new Error("OMP session is closed");
+        const state = await next.getState();
+        if (this.closed) throw new Error("OMP session is closed");
+        this.unsubscribeRuntime?.();
+        this.runtimeSession = next;
+        this.state = state;
+        this.currentModeId = modeId;
+        this.config.modeId = modeId;
+        this.runtimeDead = false;
+        this.attachRuntime(next);
+        this.subagentIndex.clear(old);
+        clearOmpHostToolState(old);
+        await old.close().catch(() => undefined);
+        if (state.sessionId !== previousSessionId) {
+          this.emit({
+            type: "thread_started",
+            provider: this.provider,
+            sessionId: state.sessionId,
+          });
+        }
+      } catch (error) {
+        await next.close().catch(() => undefined);
+        throw error;
+      }
     };
+    this.replacingRuntime = replace().finally(() => {
+      this.replacingRuntime = null;
+    });
+    return this.replacingRuntime;
   }
 
   getPendingPermissions(): AgentPermissionRequest[] {
@@ -1041,6 +1090,7 @@ export class OmpAgentSession implements AgentSession {
       return;
     }
     this.closed = true;
+    this.unsubscribeRuntime?.();
     this.usagePoller.close();
     this.cancelNoTurnPromptCompletion();
     try {
@@ -1644,10 +1694,12 @@ export class OmpAgentSession implements AgentSession {
   }
 
   private handleProcessExit(error: string): void {
+    this.runtimeDead = true;
     this.usagePoller.stopTurn();
     if (!this.activeTurnId) {
       this.terminalizeActiveWork();
       this.subagentIndex.clear(this.runtimeSession);
+      this.emit({ type: "turn_failed", provider: this.provider, error });
       return;
     }
     const turnId = this.activeTurnId;
@@ -2137,7 +2189,7 @@ export class OmpAgentClient implements AgentClient {
     launchContext?: AgentLaunchContext,
   ): Promise<AgentSession> {
     const launchMode = this.resolveLaunchMode(config.modeId);
-    const runtimeSession = await this.runtime.startSession({
+    const startInput: OmpStartSessionInput = {
       cwd: config.cwd,
       protocolMode: "rpc-ui",
       model: config.model,
@@ -2147,7 +2199,8 @@ export class OmpAgentClient implements AgentClient {
       extraArgs: launchMode.extraArgs,
       systemPrompt: composeSystemPromptParts(config.systemPrompt, config.daemonAppendSystemPrompt),
       env: launchContext?.env,
-    });
+    };
+    const runtimeSession = await this.runtime.startSession(startInput);
     try {
       await this.configureNativePaseoTools(runtimeSession, launchContext?.paseoTools);
       const initialState = await this.restoreFastMode(
@@ -2157,6 +2210,7 @@ export class OmpAgentClient implements AgentClient {
       );
       return new OmpAgentSession({
         runtimeSession,
+        restartRuntime: this.buildRestartRuntime(startInput, config, launchContext),
         config,
         initialState,
         currentModeId: launchMode.modeId,
@@ -2193,14 +2247,13 @@ export class OmpAgentClient implements AgentClient {
     }
 
     const launchMode = this.resolveLaunchMode(resumeConfig.modeId);
-    const runtimeSession = await this.runtime.startSession(
-      buildResumeStartInput({
-        resumeConfig,
-        sessionFile,
-        launchContext,
-        launchMode,
-      }),
-    );
+    const startInput = buildResumeStartInput({
+      resumeConfig,
+      sessionFile,
+      launchContext,
+      launchMode,
+    });
+    const runtimeSession = await this.runtime.startSession(startInput);
     try {
       await this.configureNativePaseoTools(runtimeSession, launchContext?.paseoTools);
       const initialState = await this.restoreFastMode(
@@ -2210,6 +2263,7 @@ export class OmpAgentClient implements AgentClient {
       );
       return new OmpAgentSession({
         runtimeSession,
+        restartRuntime: this.buildRestartRuntime(startInput, resumeConfig.config, launchContext),
         config: resumeConfig.config,
         initialState,
         currentModeId: launchMode.modeId,
@@ -2226,6 +2280,33 @@ export class OmpAgentClient implements AgentClient {
       await runtimeSession.close().catch(() => undefined);
       throw error;
     }
+  }
+
+  private buildRestartRuntime(
+    startInput: OmpStartSessionInput,
+    config: AgentSessionConfig,
+    launchContext?: AgentLaunchContext,
+  ): OmpAgentSessionOptions["restartRuntime"] {
+    return async (sessionFile, modeId) => {
+      const launchMode = this.resolveLaunchMode(modeId);
+      const next = await this.runtime.startSession({
+        ...startInput,
+        model: config.model,
+        thinkingOptionId: normalizeOmpThinkingOption(config.thinkingOptionId) ?? undefined,
+        modeId: launchMode.modeId,
+        extraArgs: launchMode.extraArgs,
+        ...(!startInput.noSession && sessionFile ? { session: sessionFile } : {}),
+      });
+      try {
+        await this.configureNativePaseoTools(next, launchContext?.paseoTools);
+        const state = await next.getState();
+        await this.restoreFastMode(next, config, state);
+        return next;
+      } catch (error) {
+        await next.close().catch(() => undefined);
+        throw error;
+      }
+    };
   }
 
   async fetchCatalog(
