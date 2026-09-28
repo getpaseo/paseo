@@ -6,6 +6,7 @@ import type {
 } from "../runtime.js";
 import type {
   PiAgentMessage,
+  PiCustomEntry,
   PiModel,
   PiPromptAck,
   PiRpcSlashCommand,
@@ -112,6 +113,7 @@ export class FakePiSession implements PiRuntimeSession {
   treeUserEntries: FakePiUserEntry[] = [];
   // The user entries on the current branch that getMessages() replays.
   contextUserEntries: FakePiUserEntry[] = [];
+  customEntries: PiCustomEntry[] = [];
   abortRequested = false;
   readonly canceledExtensionUiRequests: string[] = [];
   readonly extensionUiResponses: Array<{
@@ -459,6 +461,7 @@ export class FakePiSession implements PiRuntimeSession {
         requestId,
         treeEntries: this.treeUserEntries,
         contextEntries: this.contextUserEntries,
+        customEntries: this.customEntries,
       })}`,
     });
   }

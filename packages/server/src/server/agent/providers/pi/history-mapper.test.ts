@@ -2,7 +2,8 @@ import { describe, expect, test } from "vitest";
 
 import type { AgentStreamEvent } from "../../agent-sdk-types.js";
 import { streamPiHistory, type PiCapturedUserMessageEntry } from "./history-mapper.js";
-import type { PiAgentMessage } from "./rpc-types.js";
+import type { PiAgentMessage, PiCustomEntry } from "./rpc-types.js";
+import { PiExtensionHost } from "./extensions/host.js";
 
 async function collectHistory(
   messages: PiAgentMessage[],
@@ -16,6 +17,71 @@ async function collectHistory(
 }
 
 describe("Pi history mapper", () => {
+  test("drains entries arriving during child hydration without replaying child timelines twice", async () => {
+    const entries: PiCustomEntry[] = [
+      {
+        type: "custom",
+        id: "first",
+        customType: "test",
+        timestamp: "2026-09-28T10:00:00.000Z",
+      },
+    ];
+    const host = new PiExtensionHost(
+      [
+        {
+          id: "test",
+          createSession: () => ({
+            mapCustomEntry: (entry) => ({
+              subagents: [{ type: "upsert", id: entry.id, status: "completed" }],
+              childSessions: entry.id === "first" ? [{ id: "first", file: "/child.jsonl" }] : [],
+            }),
+          }),
+        },
+      ],
+      undefined,
+      undefined,
+      async () => {
+        entries.push({
+          type: "custom",
+          id: "late",
+          customType: "test",
+          timestamp: "2026-09-28T10:00:01.000Z",
+        });
+        return [
+          {
+            type: "timeline",
+            id: "first",
+            item: { type: "assistant_message", text: "child result" },
+          },
+        ];
+      },
+    );
+    const events: AgentStreamEvent[] = [];
+    for await (const event of streamPiHistory("pi", [], [], {}, host, undefined, entries))
+      events.push(event);
+    expect(events).toEqual([
+      {
+        type: "provider_subagent",
+        provider: "pi",
+        event: { type: "upsert", id: "first", status: "completed" },
+      },
+      {
+        type: "provider_subagent",
+        provider: "pi",
+        event: {
+          type: "timeline",
+          id: "first",
+          item: { type: "assistant_message", text: "child result" },
+        },
+      },
+      {
+        type: "provider_subagent",
+        provider: "pi",
+        event: { type: "upsert", id: "late", status: "completed" },
+      },
+    ]);
+  });
+
   test("replays user, assistant, reasoning, and completed tool calls", async () => {
     await expect(
       collectHistory([

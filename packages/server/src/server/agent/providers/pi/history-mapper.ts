@@ -4,7 +4,7 @@ import {
   type PiExtensionEventOutput,
   type PiExtensionHost,
 } from "./extensions/index.js";
-import type { PiAgentMessage, PiImageContent, PiTextContent } from "./rpc-types.js";
+import type { PiAgentMessage, PiCustomEntry, PiImageContent, PiTextContent } from "./rpc-types.js";
 import {
   extractTextFromToolResult,
   mapToolDetail,
@@ -97,7 +97,11 @@ export class PiHistoryMapper {
   }
 
   async hydrate(): Promise<AgentStreamEvent[]> {
-    return (await Promise.all(this.hydrations)).flat();
+    return (await Promise.all(this.hydrations.splice(0))).flat();
+  }
+
+  mapCustomEntry(entry: PiCustomEntry): AgentStreamEvent[] {
+    return this.extensionEvents(this.extensionHost.mapCustomEntry(entry));
   }
 
   private mapUserMessage(message: Extract<PiAgentMessage, { role: "user" }>): AgentStreamEvent[] {
@@ -288,6 +292,7 @@ export async function* streamPiHistory(
   // At most eight 2 MiB child files per replay; remaining cards keep their summaries.
   extensionHost: PiExtensionHost = createPiExtensionHost(undefined, undefined, 16 * 1024 * 1024),
   signal?: AbortSignal,
+  customEntries: readonly PiCustomEntry[] = [],
 ): AsyncGenerator<AgentStreamEvent> {
   const mapper = new PiHistoryMapper(provider, userEntries, hooks, extensionHost);
   for (const event of mapper.mapMessages(messages)) {
@@ -299,6 +304,18 @@ export async function* streamPiHistory(
   for (const event of await mapper.hydrate()) {
     if (signal?.aborted) return;
     yield event;
+  }
+  // Live background entries can arrive during getMessages or child hydration.
+  // Drain the growing replay buffer last so an old snapshot cannot win the replay.
+  for (const entry of customEntries) {
+    for (const event of mapper.mapCustomEntry(entry)) {
+      if (signal?.aborted) return;
+      yield event;
+    }
+    for (const event of await mapper.hydrate()) {
+      if (signal?.aborted) return;
+      yield event;
+    }
   }
 }
 

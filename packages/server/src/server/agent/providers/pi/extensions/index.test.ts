@@ -26,6 +26,12 @@ const throwingAdapter: PiExtension = {
     mapCustomMessage: () => {
       throw new Error("custom failed");
     },
+    mapCustomEntry: () => {
+      throw new Error("entry failed");
+    },
+    resetCustomEntries: () => {
+      throw new Error("entry reset failed");
+    },
   }),
 };
 
@@ -61,6 +67,7 @@ describe("Pi extension host", () => {
     };
     expect(host.onToolStart(call)).toBeUndefined();
     expect(() => host.onToolEnd(call)).not.toThrow();
+    expect(() => host.resetCustomEntries()).not.toThrow();
     expect(
       host.mapDialog(
         {
@@ -81,6 +88,14 @@ describe("Pi extension host", () => {
     ).toBeUndefined();
     expect(
       host.mapCustomMessage({ role: "custom", customType: "other", content: "hello" }),
+    ).toBeUndefined();
+    expect(
+      host.mapCustomEntry({
+        type: "custom",
+        id: "entry",
+        customType: "other",
+        timestamp: "2026-09-28T10:00:00.000Z",
+      }),
     ).toBeUndefined();
   });
 

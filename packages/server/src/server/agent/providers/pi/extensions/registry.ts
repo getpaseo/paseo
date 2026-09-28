@@ -7,6 +7,7 @@ import { piGoalX } from "./pi-goal-x/index.js";
 import { tintinwebPiSubagents } from "./tintinweb-pi-subagents/index.js";
 import { gotgenesPiSubagents } from "./gotgenes-pi-subagents/index.js";
 import { rpivAskUserQuestion } from "./rpiv-ask-user-question/index.js";
+import { piDynamicWorkflows } from "./pi-dynamic-workflows/index.js";
 
 export const piExtensions = [
   piAskUser, // Dialog correlation
@@ -18,4 +19,5 @@ export const piExtensions = [
   piExampleTodo,
   piGoalX,
   rpivAskUserQuestion,
+  piDynamicWorkflows,
 ];

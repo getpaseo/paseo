@@ -69,9 +69,11 @@ import { createPiExtensionHost, type PiExtensionEventOutput } from "./extensions
 import { revertPiConversation } from "./rewind.js";
 import { listPiImportableSessions, readPiImportSessionConfig } from "./session-descriptor.js";
 import type { PiRuntime, PiRuntimeSession, PiStartSessionInput } from "./runtime.js";
+import { PiCustomEntrySchema } from "./rpc-types.js";
 import type {
   PiAgentSessionEvent,
   PiAgentMessage,
+  PiCustomEntry,
   PiImageContent,
   PiModel,
   PiRpcSlashCommand,
@@ -630,6 +632,8 @@ function createPiPaseoExtensionFile(systemPrompt?: string): PiTempFile {
 	        treeEntries: toCapturedUserEntries(ctx.sessionManager.getEntries()),
 	        // The entries getMessages() replays, so the nth one is the nth replayed user message.
 	        contextEntries: toCapturedUserEntries(ctx.sessionManager.buildContextEntries()),
+	        // Extension state belongs to the active branch, including entries before compaction.
+	        customEntries: ctx.sessionManager.getBranch().filter((entry) => entry.type === "custom"),
 	      }),
 	    "info",
 	  );
@@ -1139,6 +1143,8 @@ export class PiRpcAgentSession implements AgentSession {
   private readonly pendingSteerSubmissions: PiPendingSteerSubmission[] = [];
   currentLeafOverrideId: string | null | undefined;
   private readonly contextUserEntries: PiCapturedEntry[] = [];
+  private customEntries: PiCustomEntry[] = [];
+  private readonly customEntryStreams = new Set<PiCustomEntry[]>();
   private readonly treeUserEntriesById = new Map<string, PiCapturedEntry>();
   private readonly pendingExtensionResults = new Map<string, PendingExtensionResult>();
   private outOfBandCompactionEmit: ((event: AgentStreamEvent) => void) | null = null;
@@ -1348,15 +1354,22 @@ export class PiRpcAgentSession implements AgentSession {
 
   async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
     await this.requestEntryCapture("history");
-    yield* streamPiHistory(
-      this.provider,
-      await this.runtimeSession.getMessages(),
-      this.contextUserEntries,
-      {},
-      // At most eight 2 MiB child files per replay; later cards retain their summaries.
-      createPiExtensionHost(this.logger, undefined, 16 * 1024 * 1024),
-      this.closeController.signal,
-    );
+    const customEntries = [...this.customEntries];
+    this.customEntryStreams.add(customEntries);
+    try {
+      yield* streamPiHistory(
+        this.provider,
+        await this.runtimeSession.getMessages(),
+        this.contextUserEntries,
+        {},
+        // At most eight 2 MiB child files per replay; later cards retain their summaries.
+        createPiExtensionHost(this.logger, undefined, 16 * 1024 * 1024),
+        this.closeController.signal,
+        customEntries,
+      );
+    } finally {
+      this.customEntryStreams.delete(customEntries);
+    }
   }
 
   async getRuntimeInfo(): Promise<AgentRuntimeInfo> {
@@ -1908,6 +1921,18 @@ export class PiRpcAgentSession implements AgentSession {
       treeEntries: parseCapturedEntries(payload.treeEntries),
       contextEntries: parseCapturedEntries(payload.contextEntries),
     });
+    this.customEntries = [];
+    this.extensionHost.resetCustomEntries();
+    if (Array.isArray(payload.customEntries)) {
+      for (const candidate of payload.customEntries) {
+        const entry = PiCustomEntrySchema.safeParse(candidate);
+        if (entry.success) {
+          this.customEntries.push(entry.data);
+          // Seed live delta consumers after resume; history emits through its own fresh host.
+          this.extensionHost.mapCustomEntry(entry.data);
+        }
+      }
+    }
     if (typeof payload.requestId === "string") {
       this.resolveExtensionResult(payload.requestId, undefined);
     }
@@ -2000,6 +2025,15 @@ export class PiRpcAgentSession implements AgentSession {
   }
 
   private handleRuntimeEvent(event: PiRuntimeEvent): void {
+    if (event.type === "entry_appended") {
+      const entry = PiCustomEntrySchema.safeParse(event.entry);
+      if (entry.success) {
+        this.customEntries.push(entry.data);
+        for (const entries of this.customEntryStreams) entries.push(entry.data);
+        this.emitExtensionOutput(this.extensionHost.mapCustomEntry(entry.data), undefined);
+      }
+      return;
+    }
     if (isExtensionUiRequestEvent(event)) {
       this.handleExtensionUiRequest(event);
       return;
