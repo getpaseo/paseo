@@ -1470,6 +1470,20 @@ export class OmpAgentSession implements AgentSession {
     const message = optionalString(event.message);
     if (event.method === "notify" && message) {
       this.bufferNoTurnOutput(message);
+      this.emit({
+        type: "timeline",
+        provider: this.provider,
+        turnId: this.currentTurnIdForEvent(),
+        item: {
+          type: "notification",
+          level:
+            event.notifyType === "warning" || event.notifyType === "error"
+              ? event.notifyType
+              : "info",
+          message,
+        },
+      });
+      return;
     }
 
     const sideEffectItem = this.mapExtensionUiSideEffect(event);

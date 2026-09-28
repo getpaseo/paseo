@@ -953,6 +953,31 @@ describe("OMP agent client and session", () => {
     ]);
   });
 
+  test("shows OMP notifications during a turn and while idle with their levels", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    await omp.startTurn("work");
+    omp.emit({
+      type: "extension_ui_request",
+      id: "n1",
+      method: "notify",
+      message: "Working",
+      notifyType: "warning",
+    });
+    omp.runtime().finishTurn();
+    omp.emit({
+      type: "extension_ui_request",
+      id: "n2",
+      method: "notify",
+      message: "Done",
+      notifyType: "info",
+    });
+    expect(omp.timeline().filter((item) => item.type === "notification")).toEqual([
+      { type: "notification", level: "warning", message: "Working" },
+      { type: "notification", level: "info", message: "Done" },
+    ]);
+  });
+
   test("maps legacy select options without descriptions and preserves ordinary responses", async () => {
     const omp = new OmpHarness();
     await omp.start();
