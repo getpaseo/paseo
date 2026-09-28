@@ -809,6 +809,9 @@ describe("ForgeService", () => {
     expect(runner.calls[1]?.args).toContain("owner=getpaseo");
     expect(runner.calls[1]?.args).toContain("name=paseo");
     expect(runner.calls[1]?.args).toContain("number=526");
+    const checkoutQueryArg = runner.calls[1]?.args.find((arg) => arg.startsWith("query="));
+    expect(checkoutQueryArg).toBeDefined();
+    expect(checkoutQueryArg).not.toMatch(/[\r\n]/);
   });
 
   it("populates repoOwner/repoName from a GitHub Enterprise PR URL", async () => {
@@ -1135,6 +1138,8 @@ describe("ForgeService", () => {
     expect(runner.calls[0]?.args[3]).toContain('headRefName: "feat-b"');
     expect(runner.calls[1]?.args[3]).toContain("pullRequest(number: 41)");
     expect(runner.calls[1]?.args[3]).toContain("pullRequest(number: 52)");
+    expect(runner.calls[0]?.args[3]).not.toMatch(/[\r\n]/);
+    expect(runner.calls[1]?.args[3]).not.toMatch(/[\r\n]/);
     expect(statusesA).toEqual([
       expect.objectContaining({
         number: 41,

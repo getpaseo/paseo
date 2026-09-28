@@ -771,6 +771,16 @@ function graphqlString(value: string): string {
   return JSON.stringify(value);
 }
 
+// `gh api graphql -f query=...` carries the document as a single argv entry.
+// On Windows `gh` may run through cmd.exe, which parses its command line one
+// line at a time and truncates the document at the first raw newline (GraphQL
+// then fails with `Expected NAME ... at [1, N]`). Collapse raw newlines to
+// spaces: GraphQL treats whitespace outside string literals as insignificant,
+// and literals produced by graphqlString never contain raw newlines.
+function graphqlQueryField(query: string): string {
+  return `query=${query.replace(/[\r\n]+/g, " ")}`;
+}
+
 function buildBatchPullRequestStatusQuery(
   entries: Array<{ owner: string; name: string; headRef: string }>,
 ): string {
@@ -1629,7 +1639,7 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
         headRef: entry.target.headRef,
       })),
     );
-    const args = ["api", "graphql", "-f", `query=${query}`];
+    const args = ["api", "graphql", "-f", graphqlQueryField(query)];
     const response = await loadGitHubPollBatchResponse({
       entries: addressedEntries,
       firstEntry,
@@ -1838,7 +1848,7 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
         number: item.node.number,
       })),
     );
-    const args = ["api", "graphql", "-f", `query=${query}`];
+    const args = ["api", "graphql", "-f", graphqlQueryField(query)];
     let aliasData: Record<string, unknown>;
     let responseStdout: string;
     try {
@@ -2138,7 +2148,7 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
               "api",
               "graphql",
               "-f",
-              `query=${PULL_REQUEST_CHECKOUT_TARGET_QUERY}`,
+              graphqlQueryField(PULL_REQUEST_CHECKOUT_TARGET_QUERY),
               "-F",
               `owner=${owner}`,
               "-F",
@@ -2201,7 +2211,7 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
                 "api",
                 "graphql",
                 "-f",
-                `query=${PULL_REQUEST_TIMELINE_QUERY}`,
+                graphqlQueryField(PULL_REQUEST_TIMELINE_QUERY),
                 "-F",
                 `owner=${input.repoOwner}`,
                 "-F",
@@ -3121,7 +3131,7 @@ async function loadPullRequestGithubFacts(options: {
     "api",
     "graphql",
     "-f",
-    `query=${PULL_REQUEST_STATUS_FACTS_QUERY}`,
+    graphqlQueryField(PULL_REQUEST_STATUS_FACTS_QUERY),
     "-F",
     `owner=${options.owner}`,
     "-F",

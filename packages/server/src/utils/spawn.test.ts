@@ -5,7 +5,7 @@ import path from "node:path";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 import { buildSelfNodeCommand } from "../server/paseo-env.js";
-import { execCommand, spawnProcess } from "./spawn.js";
+import { execCommand, shouldUseWindowsShell, spawnProcess } from "./spawn.js";
 
 const printEnvScript = `
 const keys = [
@@ -23,6 +23,32 @@ console.log(JSON.stringify(values));
 function parsePrintedEnv(stdout: string): Record<string, string | null> {
   return JSON.parse(stdout.trim()) as Record<string, string | null>;
 }
+
+describe("shouldUseWindowsShell", () => {
+  test("bypasses the shell when an argument contains a newline", () => {
+    // cmd.exe truncates its command line at raw newlines even inside quotes,
+    // which used to cut multi-line `gh api graphql -f query=...` documents
+    // down to their first line (GraphQL: `Expected NAME ... at [1, 35]`).
+    expect(shouldUseWindowsShell("gh", ["api", "graphql", "-f", "query=a\nb"])).toBe(false);
+    expect(shouldUseWindowsShell("gh", ["api", "graphql", "-f", "query=a\rb"])).toBe(false);
+    expect(shouldUseWindowsShell("gh", ["api", "graphql", "-f", "query=a\r\nb"])).toBe(false);
+  });
+
+  test("keeps the shell heuristic for newline-free arguments", () => {
+    const expected = process.platform === "win32";
+    expect(shouldUseWindowsShell("gh", ["api", "graphql"])).toBe(expected);
+    expect(shouldUseWindowsShell("echo", ["hello"])).toBe(expected);
+  });
+
+  test("respects an explicit shell request", () => {
+    expect(shouldUseWindowsShell("gh", ["a\nb"], true)).toBe(true);
+    expect(shouldUseWindowsShell("gh", ["api"], false)).toBe(false);
+  });
+
+  test.skipIf(process.platform !== "win32")("keeps the shell for .cmd/.bat scripts", () => {
+    expect(shouldUseWindowsShell("tool.cmd", ["a\nb"])).toBe(true);
+  });
+});
 
 describe("execCommand", () => {
   const tempDirs: string[] = [];

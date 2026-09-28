@@ -39,8 +39,9 @@ function hasPathSeparator(value: string): boolean {
   return value.includes("/") || value.includes("\\");
 }
 
-function shouldUseWindowsShell(
+export function shouldUseWindowsShell(
   command: string,
+  args: string[],
   requestedShell?: boolean | string,
 ): boolean | string {
   if (isWindowsCommandScript(command)) {
@@ -48,6 +49,13 @@ function shouldUseWindowsShell(
   }
   if (requestedShell !== undefined) {
     return requestedShell;
+  }
+  // cmd.exe parses its command line one line at a time, so an argument that
+  // contains CR/LF (a GraphQL document, a PR body) is truncated at the first
+  // newline even when quoted. Spawn the executable directly instead: Node's
+  // argv quoting round-trips newlines without a shell.
+  if (args.some((arg) => arg.includes("\n") || arg.includes("\r"))) {
+    return false;
   }
   return process.platform === "win32" && !hasPathSeparator(command) && !extname(command);
 }
@@ -60,7 +68,7 @@ export function spawnProcess(
   const { baseEnv, env, envOverlay, ...spawnOptions } = options ?? {};
   const resolvedBaseEnv = env ?? baseEnv ?? process.env;
   const isWindows = process.platform === "win32";
-  const shell = shouldUseWindowsShell(command, spawnOptions.shell);
+  const shell = shouldUseWindowsShell(command, args, spawnOptions.shell);
 
   const shouldQuoteForShell = isWindows && shell !== false;
   const resolvedCommand = shouldQuoteForShell ? quoteWindowsCommand(command) : command;
@@ -91,7 +99,7 @@ export async function execCommand(
   const { baseEnv, env, envOverlay } = options ?? {};
   const resolvedBaseEnv = env ?? baseEnv ?? process.env;
   const isWindows = process.platform === "win32";
-  const shell = shouldUseWindowsShell(command, options?.shell);
+  const shell = shouldUseWindowsShell(command, args, options?.shell);
   const shouldQuoteForShell = isWindows && shell !== false;
   const resolvedCommand = shouldQuoteForShell ? quoteWindowsCommand(command) : command;
   const resolvedArgs = shouldQuoteForShell ? args.map(quoteWindowsArgument) : args;
