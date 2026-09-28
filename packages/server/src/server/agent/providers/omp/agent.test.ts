@@ -457,6 +457,27 @@ describe("OMP agent client and session", () => {
     );
   });
 
+  test("fast mode uses OMP's active result for the current model", async () => {
+    const omp = new OmpHarness();
+    await omp.start({ model: "openrouter/google/gemini-3.8-flash" });
+    const session = omp.requireSession();
+    omp.runtime().fastModeResult = { enabled: true, active: false };
+    await session.setFeature?.("fast_mode", true);
+    expect(omp.runtime().setFastModeRequests).toEqual([true]);
+    expect(session.features).toEqual([expect.objectContaining({ id: "fast_mode", value: false })]);
+  });
+
+  test("hides fast mode before OMP 18.2.1", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    const session = omp.requireSession();
+    omp.runtime().version = "18.2.0";
+    expect(session.features).toEqual([]);
+    await expect(session.setFeature?.("fast_mode", true)).rejects.toThrow("18.2.1");
+    omp.runtime().version = "18.2.1";
+    expect(session.features).toHaveLength(1);
+  });
+
   test("does not complete on OMP's extension-notice agent_end", async () => {
     const omp = new OmpHarness();
     await omp.start();

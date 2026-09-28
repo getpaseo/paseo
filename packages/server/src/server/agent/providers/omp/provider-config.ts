@@ -12,6 +12,14 @@ const DEFAULT_OMP_READY_TIMEOUT_MS = 20_000;
 const DEFAULT_OMP_RPC_TIMEOUT_MS = 60_000;
 
 export const MIN_SUPPORTED_OMP_VERSION = "16.3.9";
+export const MIN_FAST_MODE_OMP_VERSION = "18.2.1";
+
+export function ompVersionSupportsFastMode(output: string | null): boolean {
+  const match = output?.match(/(\d+)\.(\d+)\.(\d+)/);
+  if (!match) return false;
+  const [major, minor, patch] = match.slice(1).map(Number);
+  return major! > 18 || (major === 18 && (minor! > 2 || (minor === 2 && patch! >= 1)));
+}
 export { OMP_MODES };
 
 export const OmpProviderParamsSchema = z

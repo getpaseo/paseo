@@ -97,6 +97,9 @@ export class FakeOmp implements OmpRuntime {
 }
 
 export class FakeOmpSession implements OmpRuntimeSession {
+  version: string | null = "18.3.0";
+  fastModeResult = { enabled: false, active: false };
+  readonly setFastModeRequests: boolean[] = [];
   readonly prompts: Array<{ message: string; imageCount: number }> = [];
   readonly compactRequests: Array<{ customInstructions?: string }> = [];
   readonly setAutoCompactionRequests: boolean[] = [];
@@ -268,6 +271,11 @@ export class FakeOmpSession implements OmpRuntimeSession {
       this.state = report;
     }
     return this.state;
+  }
+
+  async setFastMode(enabled: boolean): Promise<{ enabled: boolean; active: boolean }> {
+    this.setFastModeRequests.push(enabled);
+    return this.fastModeResult;
   }
 
   /** Holds every state request until the returned function releases them. */

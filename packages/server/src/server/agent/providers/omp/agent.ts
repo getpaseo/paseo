@@ -59,6 +59,7 @@ import {
 } from "../diagnostic-utils.js";
 import {
   formatOmpVersionSupport,
+  ompVersionSupportsFastMode,
   mergeOmpRuntimeSettings,
   resolveOmpDiagnosticPaths,
   resolveOmpLaunchMode,
@@ -603,6 +604,7 @@ export class OmpAgentSession implements AgentSession {
   private readonly providerIdleDeadlineMs: number;
   private readonly noTurnScheduler: OmpNoTurnScheduler;
   private readonly usagePoller: OmpUsagePoller;
+  private fastMode: { enabled: boolean; active: boolean } | null = null;
   private closed = false;
   private live: boolean;
   private readonly emittedUserMessageIds = new Set<string>();
@@ -612,6 +614,12 @@ export class OmpAgentSession implements AgentSession {
     this.runtimeSession = options.runtimeSession;
     this.config = options.config;
     this.state = options.initialState;
+    if (typeof this.state.fastModeEnabled === "boolean") {
+      this.fastMode = {
+        enabled: this.state.fastModeEnabled,
+        active: this.state.fastModeActive === true,
+      };
+    }
     this.currentModeId = options.currentModeId ?? null;
     this.logger = options.logger;
     this.paseoTools = options.paseoTools;
@@ -667,6 +675,28 @@ export class OmpAgentSession implements AgentSession {
 
   get id(): string | null {
     return this.state.sessionId;
+  }
+
+  get features(): AgentFeature[] {
+    if (!ompVersionSupportsFastMode(this.runtimeSession.version)) return [];
+    return [
+      {
+        type: "toggle",
+        id: "fast_mode",
+        label: "Fast",
+        icon: "zap",
+        value: this.fastMode?.active ?? false,
+      },
+    ];
+  }
+
+  async setFeature(featureId: string, value: unknown): Promise<void> {
+    if (featureId !== "fast_mode") throw new Error(`Unknown OMP feature: ${featureId}`);
+    if (typeof value !== "boolean") throw new Error("OMP fast mode requires a boolean");
+    if (!ompVersionSupportsFastMode(this.runtimeSession.version))
+      throw new Error("OMP fast mode requires version 18.2.1 or newer");
+    this.fastMode = await this.runtimeSession.setFastMode(value);
+    this.config.featureValues = { ...this.config.featureValues, fast_mode: this.fastMode.enabled };
   }
 
   async run(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<AgentRunResult> {
@@ -2018,6 +2048,16 @@ export class OmpAgentClient implements AgentClient {
     await setOmpHostTools(runtimeSession, catalog);
   }
 
+  private async restoreFastMode(
+    runtimeSession: OmpRuntimeSession,
+    config: AgentSessionConfig,
+  ): Promise<void> {
+    const value = config.featureValues?.fast_mode;
+    if (typeof value === "boolean" && ompVersionSupportsFastMode(runtimeSession.version)) {
+      await runtimeSession.setFastMode(value);
+    }
+  }
+
   async createSession(
     config: AgentSessionConfig,
     launchContext?: AgentLaunchContext,
@@ -2036,6 +2076,7 @@ export class OmpAgentClient implements AgentClient {
     });
     try {
       await this.configureNativePaseoTools(runtimeSession, launchContext?.paseoTools);
+      await this.restoreFastMode(runtimeSession, config);
       return new OmpAgentSession({
         runtimeSession,
         config,
@@ -2079,6 +2120,7 @@ export class OmpAgentClient implements AgentClient {
     );
     try {
       await this.configureNativePaseoTools(runtimeSession, launchContext?.paseoTools);
+      await this.restoreFastMode(runtimeSession, resumeConfig.config);
       return new OmpAgentSession({
         runtimeSession,
         config: resumeConfig.config,

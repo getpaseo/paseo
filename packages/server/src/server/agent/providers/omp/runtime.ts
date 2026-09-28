@@ -43,6 +43,7 @@ export interface OmpStartSessionInput {
 }
 
 export interface OmpRuntimeSession {
+  readonly version: string | null;
   onEvent(callback: (event: OmpRuntimeEvent) => void): () => void;
   prompt(
     message: string,
@@ -52,6 +53,7 @@ export interface OmpRuntimeSession {
   setAutoCompaction(enabled: boolean): Promise<void>;
   abort(): Promise<void>;
   getState(): Promise<OmpSessionState>;
+  setFastMode(enabled: boolean): Promise<{ enabled: boolean; active: boolean }>;
   getMessages(): Promise<OmpAgentMessage[]>;
   getAvailableModels(timeoutMs?: number | null): Promise<OmpModel[]>;
   setModel(provider: string, modelId: string): Promise<OmpModel>;
