@@ -8,8 +8,9 @@ import type { SessionInboundMessage, SessionOutboundMessage } from "../../messag
 import type { DaemonPlaywrightHost, ScreencastFrame } from "../../verify/playwright-host.js";
 import type { SessionDelivery } from "../owned-subscriptions/index.js";
 
-// Smooth enough to follow scrolling and an agent's clicks; see docs/browser-screencast.md for the byte budget.
-export const SCREENCAST_MAX_FPS = 12;
+// Chromium only sends a frame when the page repaints, so the cap costs nothing while
+// idle; at 12 a trackpad scroll visibly stepped.
+export const SCREENCAST_MAX_FPS = 30;
 // Two frames in flight hide one round trip without letting a slow link build a backlog.
 export const SCREENCAST_MAX_UNACKED_FRAMES = 2;
 const MAX_SCREENCAST_SLOTS = 256;

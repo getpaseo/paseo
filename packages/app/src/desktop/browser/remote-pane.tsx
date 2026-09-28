@@ -433,34 +433,54 @@ function RemoteBrowserPane({
     if (activity) useBrowserActivityStore.getState().dismiss(serverId, activity);
   }, [activity, serverId]);
 
+  // At most one scroll travels at a time and everything that arrives meanwhile
+  // rides in the next one: a trackpad fires ~60 events a second and the daemon
+  // takes ~60 ms per scroll, so queueing each one lagged ever further behind.
+  const scrollInFlightRef = useRef(false);
+  const lastScrollPointRef = useRef<RemotePoint | null>(null);
+  const lastScrollAtRef = useRef(0);
   const flushScroll = useCallback(() => {
     if (scrollTimerRef.current) {
       clearTimeout(scrollTimerRef.current);
       scrollTimerRef.current = null;
     }
+    if (scrollInFlightRef.current) return;
     const pending = pendingScrollRef.current;
     pendingScrollRef.current = null;
     if (!pending) return;
-    enqueueRemoteOperation(async () => {
-      await execute({
-        command: "scroll",
-        args: {
-          browserId: pending.browserId,
-          deltaX: pending.deltaX,
-          deltaY: pending.deltaY,
-          x: pending.point.x,
-          y: pending.point.y,
-        },
-      });
-      if (Date.now() - lastScrollFrameAtRef.current >= SCROLL_FRAME_REFRESH_MS) {
-        lastScrollFrameAtRef.current = Date.now();
-        await refreshFrame();
+    const last = lastScrollPointRef.current;
+    // Moving the daemon's mouse costs a round trip, so only when the pointer moved.
+    const moved =
+      !last || Math.abs(last.x - pending.point.x) > 4 || Math.abs(last.y - pending.point.y) > 4;
+    lastScrollPointRef.current = pending.point;
+    scrollInFlightRef.current = true;
+    void (async () => {
+      try {
+        await execute({
+          command: "scroll",
+          args: {
+            browserId: pending.browserId,
+            deltaX: pending.deltaX,
+            deltaY: pending.deltaY,
+            ...(moved ? { x: pending.point.x, y: pending.point.y } : {}),
+          },
+        });
+        if (Date.now() - lastScrollFrameAtRef.current >= SCROLL_FRAME_REFRESH_MS) {
+          lastScrollFrameAtRef.current = Date.now();
+          await refreshFrame();
+        }
+      } catch (caught) {
+        if (mountedRef.current) setError(caught instanceof Error ? caught.message : String(caught));
+      } finally {
+        scrollInFlightRef.current = false;
+        if (pendingScrollRef.current && mountedRef.current) flushScroll();
       }
-    });
-  }, [enqueueRemoteOperation, execute, refreshFrame]);
+    })();
+  }, [execute, refreshFrame]);
 
   const scheduleScroll = useCallback(
     (targetBrowserId: string, point: RemotePoint, deltaX: number, deltaY: number) => {
+      lastScrollAtRef.current = Date.now();
       const pending = pendingScrollRef.current;
       pendingScrollRef.current = {
         browserId: targetBrowserId,
@@ -468,17 +488,20 @@ function RemoteBrowserPane({
         deltaX: (pending?.deltaX ?? 0) + deltaX,
         deltaY: (pending?.deltaY ?? 0) + deltaY,
       };
-      if (scrollTimerRef.current) return;
+      if (scrollInFlightRef.current || scrollTimerRef.current) return;
       scrollTimerRef.current = setTimeout(() => {
         scrollTimerRef.current = null;
         flushScroll();
-      }, 32);
+      }, 16);
     },
     [flushScroll],
   );
 
   const scheduleHover = useCallback(
     (targetBrowserId: string, point: RemotePoint) => {
+      // Pointer motion during a scroll is the scroll, not a hover; sending it would
+      // put the daemon's mouse to work while the page should be moving.
+      if (Date.now() - lastScrollAtRef.current < 300) return;
       pendingHoverRef.current = { browserId: targetBrowserId, point };
       if (!hoverTimerRef.current) {
         hoverTimerRef.current = setTimeout(() => {
