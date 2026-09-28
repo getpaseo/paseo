@@ -117,8 +117,8 @@ jobs:
       - name: Build server stack
         run: npm run build:server
 
-      - name: Verify built internal plugin assets
-        run: node scripts/check-built-internal-plugins.mjs
+      - name: Verify built-in plugins from built output
+        run: node --test scripts/builtin-plugins-dist.test.mjs
 
       - name: Typecheck all packages
         run: npm run typecheck
