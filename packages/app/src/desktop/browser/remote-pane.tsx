@@ -33,8 +33,11 @@ import {
   normalizeWorkspaceBrowserUrl,
   useBrowserStore,
 } from "@/desktop/browser/store";
-import { duplicateRemoteBrowserRecordIds } from "@/desktop/browser/remote-tab-records";
-import { collectAllTabs, useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
+import {
+  closeLocalBrowserTab,
+  syncRemoteBrowserTabs,
+  whileCreatingRemoteTab,
+} from "@/desktop/browser/remote-tab-sync";
 import {
   isBrowserRunLocked,
   useActiveBrowserHandoff,
@@ -74,21 +77,6 @@ const FRAME_REFRESH_MS = 1_000;
 const SCROLL_FRAME_REFRESH_MS = 250;
 const RESIZE_SETTLE_MS = 150;
 
-// The daemon lists a new tab before it answers new_tab (it waits for the page to
-// load), so a listing during that window would adopt our own tab a second time.
-let remoteNewTabsInFlight = 0;
-
-function closeLocalBrowserTab(workspaceKey: string, browserId: string): void {
-  const layoutStore = useWorkspaceLayoutStore.getState();
-  const layout = layoutStore.layoutByWorkspace[workspaceKey];
-  const tabs = layout ? collectAllTabs(layout.root) : [];
-  for (const tab of tabs) {
-    if (tab.target.kind === "browser" && tab.target.browserId === browserId) {
-      layoutStore.closeTab(workspaceKey, tab.tabId);
-    }
-  }
-  useBrowserStore.getState().removeBrowser(browserId);
-}
 const ThemedKeyboard = withUnistyles(Keyboard);
 const ThemedExternalLink = withUnistyles(ExternalLink);
 const mutedIconColor = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
@@ -162,12 +150,17 @@ function RemoteBrowserPane({
   const client = useHostRuntimeClient(serverId);
   const browser = useBrowserStore((state) => state.browsersById[browserId] ?? null);
   const updateBrowser = useBrowserStore((state) => state.updateBrowser);
-  const upsertRemoteBrowser = useBrowserStore((state) => state.upsertRemoteBrowser);
   const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 });
   const [draftUrl, setDraftUrl] = useState(browser?.url ?? "https://example.com");
   // The address field shows the tab's live URL, except while the user edits it.
   const [shownUrl, setShownUrl] = useState(draftUrl);
   const isEditingUrlRef = useRef(false);
+  const recordUrl = useBrowserStore((state) => state.browsersById[browserId]?.url ?? null);
+  useEffect(() => {
+    if (!recordUrl || isEditingUrlRef.current) return;
+    setDraftUrl(recordUrl);
+    setShownUrl(recordUrl);
+  }, [recordUrl]);
   const resizeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [error, setError] = useState<string | null>(null);
   const mountedRef = useRef(true);
@@ -252,54 +245,14 @@ function RemoteBrowserPane({
     [client, workspaceId],
   );
 
+  // Tab listings are owned by the workspace screen; the pane only follows its
+  // own record's address.
   const syncRemoteTabs = useCallback(async () => {
     const result = await execute({ command: "list_tabs", args: {} });
-    if (result.command !== "list_tabs") return;
-    if (!mountedRef.current) return;
+    if (result.command !== "list_tabs" || !mountedRef.current) return;
     const workspaceKey = buildWorkspaceTabPersistenceKey({ serverId, workspaceId });
-    if (!workspaceKey) return;
-    const layoutStore = useWorkspaceLayoutStore.getState();
-    for (const duplicate of duplicateRemoteBrowserRecordIds(
-      Object.values(useBrowserStore.getState().browsersById),
-    )) {
-      closeLocalBrowserTab(workspaceKey, duplicate);
-    }
-    for (const tab of result.tabs) {
-      if (tab.workspaceId && tab.workspaceId !== workspaceId) continue;
-      if (isRemoteBrowserClosed(tab.browserId)) continue;
-      const existingRecord = Object.values(useBrowserStore.getState().browsersById).find(
-        (candidate) => candidate.remoteBrowserId === tab.browserId,
-      );
-      if (!existingRecord) {
-        if (remoteNewTabsInFlight > 0) continue;
-        upsertRemoteBrowser({ browserId: tab.browserId, url: tab.url, title: tab.title });
-      } else if (existingRecord.url !== tab.url || existingRecord.title !== tab.title) {
-        updateBrowser(existingRecord.browserId, { url: tab.url, title: tab.title });
-      }
-      if (tab.browserId === remoteBrowserIdRef.current && !isEditingUrlRef.current) {
-        setDraftUrl(tab.url);
-        setShownUrl(tab.url);
-      }
-      const localBrowserId = existingRecord?.browserId ?? tab.browserId;
-      const layout = useWorkspaceLayoutStore.getState().layoutByWorkspace[workspaceKey];
-      const isOpen = layout
-        ? collectAllTabs(layout.root).some(
-            (candidate) =>
-              candidate.target.kind === "browser" &&
-              (candidate.target.browserId === tab.browserId ||
-                candidate.target.browserId === localBrowserId),
-          )
-        : false;
-      if (!isOpen) {
-        if (!mountedRef.current) return;
-        layoutStore.openTab({
-          workspaceKey,
-          target: { kind: "browser", browserId: tab.browserId },
-          intent: "background",
-        });
-      }
-    }
-  }, [execute, serverId, updateBrowser, upsertRemoteBrowser, workspaceId]);
+    if (workspaceKey) syncRemoteBrowserTabs({ tabs: result.tabs, workspaceId, workspaceKey });
+  }, [execute, serverId, workspaceId]);
 
   const ensureRemoteTab = useCallback(async () => {
     if (remoteBrowserIdRef.current) {
@@ -313,16 +266,12 @@ function RemoteBrowserPane({
     }
     if (!mountedRef.current) return;
     const record = getBrowserRecord(browserId);
-    remoteNewTabsInFlight += 1;
-    let result: Awaited<ReturnType<typeof execute>>;
-    try {
-      result = await execute({
+    const result = await whileCreatingRemoteTab(() =>
+      execute({
         command: "new_tab",
         args: { url: normalizeWorkspaceBrowserUrl(record?.url ?? draftUrl) },
-      });
-    } finally {
-      remoteNewTabsInFlight -= 1;
-    }
+      }),
+    );
     if (result.command !== "new_tab") {
       throw new Error("The Linux browser did not create a tab");
     }
@@ -369,11 +318,6 @@ function RemoteBrowserPane({
             return;
           }
           setError(caught instanceof Error ? caught.message : String(caught));
-        });
-        void syncRemoteTabs().catch((caught: unknown) => {
-          if (!cancelled && mountedRef.current) {
-            setError(caught instanceof Error ? caught.message : String(caught));
-          }
         });
       }
     }, FRAME_REFRESH_MS);

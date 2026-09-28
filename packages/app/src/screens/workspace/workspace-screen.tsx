@@ -1,3 +1,4 @@
+import { syncRemoteBrowserTabs } from "@/desktop/browser/remote-tab-sync";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import type { JsonValue } from "@getpaseo/protocol/agent-types";
 import { getOpenAgentTabLabel } from "@getpaseo/protocol/agent-labels";
@@ -1668,29 +1669,11 @@ function WorkspaceScreenContent({
         });
         if (cancelled || !response.ok || response.result.command !== "list_tabs") return;
 
-        for (const tab of response.result.tabs) {
-          if (tab.workspaceId && tab.workspaceId !== normalizedWorkspaceId) continue;
-          useBrowserStore.getState().upsertRemoteBrowser({
-            browserId: tab.browserId,
-            url: tab.url,
-            title: tab.title,
-          });
-          const layout = useWorkspaceLayoutStore.getState().layoutByWorkspace[persistenceKey];
-          const isOpen = layout
-            ? collectAllTabs(layout.root).some(
-                (candidate) =>
-                  candidate.target.kind === "browser" &&
-                  candidate.target.browserId === tab.browserId,
-              )
-            : false;
-          if (!isOpen) {
-            openTab({
-              workspaceKey: persistenceKey,
-              target: { kind: "browser", browserId: tab.browserId },
-              intent: "background",
-            });
-          }
-        }
+        syncRemoteBrowserTabs({
+          tabs: response.result.tabs,
+          workspaceId: normalizedWorkspaceId,
+          workspaceKey: persistenceKey,
+        });
       } catch {
         // Connection state owns user-visible errors; this refresh is opportunistic.
       }
