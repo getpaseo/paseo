@@ -96,6 +96,7 @@ Creation options include `config`, `cwd`, `parent`, `title`, `prompt`, `env`, `o
 | `run(text, options?)`          | `PaseoAgentRunResult`             | Sends a prompt and waits for that turn. `timeoutMs` controls the wait; it defaults to 10 minutes.       |
 | `waitForFinish(timeoutMs?)`    | `PaseoAgentRunResult`             | Waits for the active turn, including an initial prompt. Default timeout: 10 minutes.                    |
 | `commands(options?)`           | `PaseoAgentCommandsResult`        | Asks the live session for its slash commands and skills, including built-in ones. Options: `requestId`. |
+| `forkContext(options?)`        | `PaseoAgentForkContextResult`     | Returns [curated Fork context](./agents.md#reuse-curated-fork-context).                                 |
 | `subscribe(handler)`           | Unsubscribe function              | Filters agent-directory updates to this ID and refreshes the handle properties.                         |
 | `archive()`                    | `{ archivedAt }`                  | Soft-deletes the agent and closes its runtime.                                                          |
 | `detach()`                     | `Promise<void>`                   | Removes the parent relationship without stopping the agent.                                             |

@@ -1,4 +1,9 @@
-import { createPaseoClient, type PaseoClient } from "@getpaseo/client";
+import {
+  createPaseoClient,
+  type PaseoClient,
+  type PaseoAgentForkContextOptions,
+  type PaseoAgentForkContextResult,
+} from "@getpaseo/client";
 
 export function createClient(url: string): PaseoClient {
   return createPaseoClient({
@@ -61,6 +66,33 @@ export async function runFollowUp(url: string, agentId: string): Promise<string 
     const result = await client.agents.ref(agentId).run("Summarize your progress and next step.");
     if (result.status !== "idle") throw new Error(result.error ?? result.status);
     return result.lastMessage;
+  } finally {
+    await client.close();
+  }
+}
+
+export async function reviewWithForkContext(
+  url: string,
+  agentId: string,
+  options?: PaseoAgentForkContextOptions,
+): Promise<string> {
+  const client = createClient(url);
+
+  try {
+    await client.connect();
+    const source = client.agents.ref(agentId);
+    await source.refresh();
+    if (!source.workspaceId) throw new Error("Source agent has no workspace");
+
+    const context: PaseoAgentForkContextResult = await source.forkContext(options);
+    if (!context.attachment) throw new Error("Fork context has no attachment");
+
+    const reviewer = await client.workspaces.ref(source.workspaceId).agents.create({
+      config: { provider: "codex/gpt-5.5" },
+      attachments: [context.attachment],
+      prompt: "Review the work described in the attached chat history.",
+    });
+    return reviewer.id;
   } finally {
     await client.close();
   }
