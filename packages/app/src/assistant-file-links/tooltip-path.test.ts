@@ -13,6 +13,12 @@ describe("formatFileLinkTooltipPath", () => {
         workspaceRoot: "C:\\Users\\me\\repo",
       }),
     ).toBe("src/app.ts:12-20");
+    expect(
+      formatFileLinkTooltipPath({
+        target: { path: "C:/src/app.ts", lineStart: 12 },
+        workspaceRoot: "C:\\",
+      }),
+    ).toBe("src/app.ts:12");
   });
 
   it("shows the workspace root as a dot", () => {
@@ -22,6 +28,12 @@ describe("formatFileLinkTooltipPath", () => {
         workspaceRoot: "/Users/me/repo",
       }),
     ).toBe(".");
+    expect(
+      formatFileLinkTooltipPath({
+        target: { path: "C:/Users/Me/Repo/", lineStart: 4 },
+        workspaceRoot: "c:\\users\\me\\repo",
+      }),
+    ).toBe(".:4");
   });
 
   it("keeps an absolute path outside the workspace", () => {
@@ -31,6 +43,12 @@ describe("formatFileLinkTooltipPath", () => {
         workspaceRoot: "/Users/me/repo",
       }),
     ).toBe("/Users/me/notes.md");
+    expect(
+      formatFileLinkTooltipPath({
+        target: { path: "C:/Users/me/notes.md", lineStart: 8 },
+        workspaceRoot: "C:\\Users\\me\\repo",
+      }),
+    ).toBe("C:/Users/me/notes.md:8");
   });
 
   it("keeps the target path when the workspace root is unavailable", () => {
