@@ -4149,7 +4149,72 @@ describe("send_agent_prompt MCP tool", () => {
         expect(parentPrompts[0]).toContain("finished");
       });
     } finally {
-      rmSync(workdir, { recursive: true, force: true });
+      await removeAgentStateDir(agentManager, storage, workdir);
+    }
+  });
+
+  it("accepts a background turn completed as the manager publishes its start", async () => {
+    const workdir = await mkdtemp(join(tmpdir(), "mcp-fast-background-send-"));
+    const storage = new AgentStorage(join(workdir, "agents"), logger);
+    const parentClient = new HeldTurnAgentClient("claude", false);
+    const childClient = new HeldTurnAgentClient("codex", true);
+    const agentManager = new AgentManager({
+      clients: { claude: parentClient, codex: childClient },
+      registry: storage,
+      logger,
+    });
+
+    try {
+      const parent = await agentManager.createAgent(
+        { provider: "claude", cwd: existingCwd },
+        undefined,
+        { workspaceId: "wks_parent" },
+      );
+      const child = await agentManager.createAgent(
+        { provider: "codex", cwd: existingCwd },
+        undefined,
+        { workspaceId: "wks_parent" },
+      );
+      const server = await createAgentMcpServer({
+        agentManager,
+        agentStorage: storage,
+        callerAgentId: parent.id,
+        providerSnapshotManager: createOpenCodeManager().manager,
+        logger,
+      });
+      let finished = false;
+      const unsubscribe = agentManager.subscribe(
+        (event) => {
+          if (
+            !finished &&
+            event.type === "agent_state" &&
+            event.agent.id === child.id &&
+            event.agent.lifecycle === "running"
+          ) {
+            finished = true;
+            childClient.sessions[0]!.finishTurn();
+          }
+        },
+        { agentId: child.id, replayState: false },
+      );
+
+      const response = await invokeToolWithParsedInput(
+        registeredTool(server, "send_agent_prompt"),
+        {
+          agentId: child.id,
+          prompt: "Fast reply",
+        },
+      );
+      unsubscribe();
+      expect(response.structuredContent).toMatchObject({ success: true, status: "idle" });
+      await vi.waitFor(() => {
+        const parentPrompts = parentClient.sessions[0]!.prompts;
+        expect(parentPrompts).toHaveLength(1);
+        expect(parentPrompts[0]).toContain(child.id);
+        expect(parentPrompts[0]).toContain("finished");
+      });
+    } finally {
+      await removeAgentStateDir(agentManager, storage, workdir);
     }
   });
 });
