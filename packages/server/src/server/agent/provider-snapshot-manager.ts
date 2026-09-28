@@ -1021,24 +1021,27 @@ export class ProviderSnapshotManager {
     } = options;
 
     try {
-      const catalog = await this.providerIntrospectionQueue.run(provider, () =>
-        runProviderRefreshWithDeadline({
-          label: definition.label,
-          timeoutMs: this.refreshTimeoutMs,
-          operation: async (context) => {
-            const available = await context.runActivity("availability", () =>
-              raceProviderRefreshAbort(
-                context.signal,
-                client.isAvailable(context.signal, catalogOptions),
-              ),
-            );
-            if (!available) {
-              return null;
-            }
+      const catalog = await this.providerIntrospectionQueue.run(
+        provider,
+        () =>
+          runProviderRefreshWithDeadline({
+            label: definition.label,
+            timeoutMs: this.refreshTimeoutMs,
+            operation: async (context) => {
+              const available = await context.runActivity("availability", () =>
+                raceProviderRefreshAbort(
+                  context.signal,
+                  client.isAvailable(context.signal, catalogOptions),
+                ),
+              );
+              if (!available) {
+                return null;
+              }
 
-            return await definition.fetchCatalog(catalogOptions, client, context);
-          },
-        }),
+              return await definition.fetchCatalog(catalogOptions, client, context);
+            },
+          }),
+        "shared",
       );
       if (!catalog) {
         setEntry({ ...base, status: "unavailable", enabled: true });
