@@ -105,7 +105,7 @@ import {
   setOmpHostTools,
 } from "./host-tools.js";
 import { OmpSubagentIndex } from "./subagent-index.js";
-import { OmpAskUi } from "./ask-ui.js";
+import { OmpQuestionUi } from "./question-ui.js";
 import { mapOmpToolDetail } from "./tool-call-mapper.js";
 import { OmpUsagePoller, type OmpUsagePollScheduler } from "./usage-poller.js";
 import {
@@ -115,11 +115,6 @@ import {
 import { DEFAULT_OMP_THINKING_LEVEL, mapOmpModel } from "./map-omp-model.js";
 
 const OMP_PROVIDER = "omp";
-const QUESTION_RESPONSE_HEADER = "Response";
-const QUESTION_COMMENT_HEADER = "Comment";
-const OMP_ASK_USER_FREEFORM_SENTINEL = "✏️ Type custom response...";
-const COMBINED_ASK_USER_METADATA = "ask_user_select_optional_comment";
-
 const OMP_CORE_CAPABILITIES: AgentCapabilityFlags = {
   supportsStreaming: true,
   supportsSessionPersistence: true,
@@ -221,24 +216,6 @@ interface OmpResumeConfig {
   thinkingOptionId?: string;
   modeId?: string;
   config: AgentSessionConfig;
-}
-
-interface ActiveAskUserDialog {
-  allowComment: boolean;
-  allowFreeform: boolean;
-  allowMultiple: boolean;
-}
-
-interface PendingCombinedAskUserResponse {
-  comment: string;
-  freeform: string | null;
-}
-
-interface ExtensionUiMappingOptions {
-  provider?: AgentProvider;
-  label?: string;
-  combineOptionalComment?: boolean;
-  allowFreeform?: boolean;
 }
 
 interface OmpSlashCommandInvocation {
@@ -537,132 +514,8 @@ function isOmpAbortedTerminalResponse(messages: OmpAgentMessage[]): boolean {
   return latestAssistant?.stopReason?.toLowerCase() === "aborted";
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 function optionalString(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
-}
-
-function optionalBoolean(value: unknown): boolean | undefined {
-  return typeof value === "boolean" ? value : undefined;
-}
-
-function readActiveAskUserDialog(toolName: string, args: unknown): ActiveAskUserDialog | null {
-  if (toolName !== "ask_user" || !isRecord(args)) {
-    return null;
-  }
-  return {
-    allowComment: optionalBoolean(args.allowComment) ?? false,
-    allowFreeform: optionalBoolean(args.allowFreeform) ?? true,
-    allowMultiple: optionalBoolean(args.allowMultiple) ?? false,
-  };
-}
-
-function isOptionalInputPlaceholder(placeholder: string | undefined): boolean {
-  return /\boptional\b|\bskip\b/i.test(placeholder ?? "");
-}
-
-function getInputQuestionTitle(title: string | undefined, placeholder: string | undefined): string {
-  if (!isOptionalInputPlaceholder(placeholder)) {
-    return title ?? "Enter a value";
-  }
-  if (/\bcomment\b/i.test(`${title ?? ""}\n${placeholder ?? ""}`)) {
-    return "Optional comment";
-  }
-  return "Optional response";
-}
-
-interface OmpSelectOption {
-  label: string;
-  description?: string;
-}
-
-function readSelectOptions(options: unknown, optionDetails: unknown): OmpSelectOption[] {
-  const labels = readStringArray(options);
-  const details = Array.isArray(optionDetails) ? optionDetails : [];
-  return labels.map((label, index) => {
-    const detail = details[index];
-    const description =
-      isRecord(detail) && typeof detail.description === "string" && detail.description.trim() !== ""
-        ? detail.description
-        : undefined;
-    return description === undefined ? { label } : { label, description };
-  });
-}
-
-function readStringArray(value: unknown): string[] {
-  return Array.isArray(value)
-    ? value.filter((item): item is string => typeof item === "string")
-    : [];
-}
-
-function isOmpAskUserFreeformOption(option: string): boolean {
-  return option === OMP_ASK_USER_FREEFORM_SENTINEL;
-}
-
-function mapExtensionUiRequestToPermission(
-  event: Extract<OmpRuntimeEvent, { type: "extension_ui_request" }>,
-  options: ExtensionUiMappingOptions = {},
-): AgentPermissionRequest | null {
-  const provider = options.provider ?? OMP_PROVIDER;
-  const label = options.label ?? "OMP";
-  switch (event.method) {
-    case "select": {
-      const selectOptions = readSelectOptions(event.options, event.optionDetails);
-      if (options.combineOptionalComment) {
-        return buildCombinedAskUserQuestionPermission(event, {
-          provider,
-          label,
-          question: optionalString(event.title) ?? "Select an option",
-          options: selectOptions,
-          allowFreeform: options.allowFreeform === true,
-        });
-      }
-      return buildExtensionUiQuestionPermission(event, {
-        provider,
-        label,
-        question: optionalString(event.title) ?? "Select an option",
-        options: selectOptions,
-        multiSelect: false,
-      });
-    }
-    case "input": {
-      const placeholder = optionalString(event.placeholder);
-      const title = optionalString(event.title);
-      const allowEmpty = isOptionalInputPlaceholder(placeholder);
-      return buildExtensionUiQuestionPermission(event, {
-        provider,
-        label,
-        question: getInputQuestionTitle(title, placeholder),
-        options: [],
-        multiSelect: false,
-        ...(placeholder ? { placeholder } : {}),
-        ...(allowEmpty ? { allowEmpty: true, dismissLabel: "Skip" } : {}),
-      });
-    }
-    case "editor":
-      return buildExtensionUiQuestionPermission(event, {
-        provider,
-        label,
-        question: optionalString(event.title) ?? "Edit text",
-        options: [],
-        multiSelect: false,
-      });
-    case "confirm":
-      return buildExtensionUiQuestionPermission(event, {
-        provider,
-        label,
-        question: [optionalString(event.title), optionalString(event.message)]
-          .filter(Boolean)
-          .join("\n\n"),
-        options: [{ label: "Yes" }, { label: "No" }],
-        multiSelect: false,
-      });
-    default:
-      return null;
-  }
 }
 
 function isExtensionUiRequestEvent(
@@ -696,172 +549,6 @@ function isOmpAgentSessionEvent(event: OmpRuntimeEvent): event is OmpAgentSessio
   }
 }
 
-function buildExtensionUiQuestionPermission(
-  event: Extract<OmpRuntimeEvent, { type: "extension_ui_request" }>,
-  input: {
-    provider: AgentProvider;
-    label: string;
-    question: string;
-    options: OmpSelectOption[];
-    multiSelect: boolean;
-    placeholder?: string;
-    allowEmpty?: boolean;
-    dismissLabel?: string;
-  },
-): AgentPermissionRequest {
-  return {
-    id: event.id,
-    provider: input.provider,
-    name: `${input.label} ${event.method}`,
-    kind: "question",
-    title: input.question,
-    input: {
-      questions: [
-        {
-          question: input.question,
-          header: QUESTION_RESPONSE_HEADER,
-          options: input.options.map((option) => ({
-            label: option.label,
-            ...(option.description === undefined ? {} : { description: option.description }),
-          })),
-          multiSelect: input.multiSelect,
-          ...(input.placeholder ? { placeholder: input.placeholder } : {}),
-          ...(input.allowEmpty ? { allowEmpty: true } : {}),
-          ...(input.dismissLabel ? { dismissLabel: input.dismissLabel } : {}),
-        },
-      ],
-    },
-    metadata: {
-      extensionUiMethod: event.method,
-      answerHeader: QUESTION_RESPONSE_HEADER,
-    },
-  };
-}
-
-function buildCombinedAskUserQuestionPermission(
-  event: Extract<OmpRuntimeEvent, { type: "extension_ui_request" }>,
-  input: {
-    provider: AgentProvider;
-    label: string;
-    question: string;
-    options: OmpSelectOption[];
-    allowFreeform: boolean;
-  },
-): AgentPermissionRequest {
-  const visibleOptions = input.options.filter(
-    (option) => !isOmpAskUserFreeformOption(option.label),
-  );
-  const allowOther = input.allowFreeform || visibleOptions.length !== input.options.length;
-  return {
-    id: event.id,
-    provider: input.provider,
-    name: `${input.label} ask_user`,
-    kind: "question",
-    title: input.question,
-    input: {
-      questions: [
-        {
-          question: input.question,
-          header: QUESTION_RESPONSE_HEADER,
-          options: visibleOptions.map((option) => ({
-            label: option.label,
-            ...(option.description === undefined ? {} : { description: option.description }),
-          })),
-          multiSelect: false,
-          ...(allowOther ? { allowOther: true } : {}),
-        },
-        {
-          question: "Optional comment",
-          header: QUESTION_COMMENT_HEADER,
-          options: [],
-          multiSelect: false,
-          placeholder: "Optional comment (press Enter to skip)...",
-          allowEmpty: true,
-        },
-      ],
-    },
-    metadata: {
-      extensionUiMethod: event.method,
-      answerHeader: QUESTION_RESPONSE_HEADER,
-      commentHeader: QUESTION_COMMENT_HEADER,
-      combinedAskUser: COMBINED_ASK_USER_METADATA,
-      selectOptions: visibleOptions.map((option) => option.label),
-      ...(allowOther ? { freeformSentinel: OMP_ASK_USER_FREEFORM_SENTINEL } : {}),
-    },
-  };
-}
-
-function permissionAnswer(input: AgentMetadata | undefined, header: string): string | null {
-  const answers = isRecord(input?.answers) ? input.answers : null;
-  if (!answers) {
-    return null;
-  }
-  const answer = answers[header];
-  return typeof answer === "string" ? answer : null;
-}
-
-function firstPermissionAnswer(input: AgentMetadata | undefined): string | null {
-  const answers = isRecord(input?.answers) ? input.answers : null;
-  if (!answers) {
-    return null;
-  }
-  const first = Object.values(answers).find((value) => typeof value === "string");
-  return typeof first === "string" ? first : null;
-}
-
-function isCombinedAskUserPermission(request: AgentPermissionRequest): boolean {
-  return request.metadata?.combinedAskUser === COMBINED_ASK_USER_METADATA;
-}
-
-function buildCombinedAskUserSelectionResponse(
-  request: AgentPermissionRequest,
-  response: AgentPermissionResponse,
-): {
-  uiResponse: { value?: string; cancelled?: boolean };
-  pendingResponse: PendingCombinedAskUserResponse | null;
-} {
-  if (response.behavior === "deny") {
-    return { uiResponse: { cancelled: true }, pendingResponse: null };
-  }
-
-  const answer = permissionAnswer(response.updatedInput, QUESTION_RESPONSE_HEADER);
-  if (answer === null) {
-    return { uiResponse: { cancelled: true }, pendingResponse: null };
-  }
-
-  const selectOptions = readStringArray(request.metadata?.selectOptions);
-  const freeformSentinel = optionalString(request.metadata?.freeformSentinel);
-  const isFreeform = Boolean(freeformSentinel) && !selectOptions.includes(answer);
-  const comment = permissionAnswer(response.updatedInput, QUESTION_COMMENT_HEADER) ?? "";
-  return {
-    uiResponse: { value: isFreeform ? freeformSentinel : answer },
-    pendingResponse: {
-      comment,
-      freeform: isFreeform ? answer : null,
-    },
-  };
-}
-
-function buildExtensionUiResponse(
-  request: AgentPermissionRequest,
-  response: AgentPermissionResponse,
-): { value?: string; confirmed?: boolean; cancelled?: boolean } {
-  if (response.behavior === "deny") {
-    return { cancelled: true };
-  }
-
-  const method = optionalString(request.metadata?.extensionUiMethod);
-  const answer = firstPermissionAnswer(response.updatedInput);
-  if (answer === null) {
-    return { cancelled: true };
-  }
-
-  if (method === "confirm") {
-    return { confirmed: /^yes$/i.test(answer.trim()) };
-  }
-  return { value: answer };
-}
-
 function createRuntime(
   logger: Logger,
   runtimeSettings: ProviderRuntimeSettings | undefined,
@@ -884,9 +571,7 @@ export class OmpAgentSession implements AgentSession {
   private readonly subscribers = new Set<(event: AgentStreamEvent) => void>();
   private readonly activeToolCalls = new Map<string, OmpTrackedToolCall>();
   private readonly pendingExtensionUiRequests = new Map<string, AgentPermissionRequest>();
-  private activeAskUserDialog: ActiveAskUserDialog | null = null;
-  private pendingCombinedAskUserResponse: PendingCombinedAskUserResponse | null = null;
-  private readonly askUi = new OmpAskUi();
+  private readonly questionUi = new OmpQuestionUi();
   private activeTurnId: string | null = null;
   private activeClientMessageId: string | null = null;
   private activeAssistantMessageId: string | null = null;
@@ -1125,21 +810,12 @@ export class OmpAgentSession implements AgentSession {
     }
     this.pendingExtensionUiRequests.delete(requestId);
 
-    if (
-      this.askUi.respond(request, response, (id, uiResponse) =>
-        this.runtimeSession.respondToExtensionUiRequest(id, uiResponse),
-      )
-    ) {
-      // The ask adapter consumes the follow-up select/editor RPC requests.
-    } else if (isCombinedAskUserPermission(request)) {
-      const combined = buildCombinedAskUserSelectionResponse(request, response);
-      this.pendingCombinedAskUserResponse = combined.pendingResponse;
-      this.runtimeSession.respondToExtensionUiRequest(requestId, combined.uiResponse);
+    const approvalResponse = buildOmpRpcUiPermissionResponse(request, response);
+    if (approvalResponse) {
+      this.runtimeSession.respondToExtensionUiRequest(requestId, approvalResponse);
     } else {
-      this.runtimeSession.respondToExtensionUiRequest(
-        requestId,
-        buildOmpRpcUiPermissionResponse(request, response) ??
-          buildExtensionUiResponse(request, response),
+      this.questionUi.respond(request, response, (id, uiResponse) =>
+        this.runtimeSession.respondToExtensionUiRequest(id, uiResponse),
       );
     }
     this.emit({
@@ -1577,30 +1253,11 @@ export class OmpAgentSession implements AgentSession {
       return;
     }
 
-    if (this.respondToCombinedAskUserFollowUp(event)) {
-      return;
-    }
-    if (
-      this.askUi.consume(event, (id, response) =>
-        this.runtimeSession.respondToExtensionUiRequest(id, response),
-      )
-    ) {
-      return;
-    }
-
-    const shouldCombineOptionalComment =
-      event.method === "select" &&
-      this.activeAskUserDialog?.allowComment === true &&
-      this.activeAskUserDialog.allowMultiple === false;
     const request =
       mapOmpRpcUiPermissionRequest(event, { provider: this.provider }) ??
-      this.askUi.map(event, this.provider) ??
-      mapExtensionUiRequestToPermission(event, {
-        provider: this.provider,
-        label: "OMP",
-        combineOptionalComment: shouldCombineOptionalComment,
-        allowFreeform: this.activeAskUserDialog?.allowFreeform,
-      });
+      this.questionUi.handleRequest(event, this.provider, (id, response) =>
+        this.runtimeSession.respondToExtensionUiRequest(id, response),
+      );
     if (!request) {
       return;
     }
@@ -1628,33 +1285,6 @@ export class OmpAgentSession implements AgentSession {
       lines.push("", event.instructions);
     }
     return { type: "assistant_message", text: lines.join("\n") };
-  }
-
-  private respondToCombinedAskUserFollowUp(
-    event: Extract<OmpRuntimeEvent, { type: "extension_ui_request" }>,
-  ): boolean {
-    const pending = this.pendingCombinedAskUserResponse;
-    if (!pending || event.method !== "input") {
-      return false;
-    }
-
-    const placeholder = optionalString(event.placeholder);
-    if (pending.freeform !== null && !isOptionalInputPlaceholder(placeholder)) {
-      this.pendingCombinedAskUserResponse = {
-        ...pending,
-        freeform: null,
-      };
-      this.runtimeSession.respondToExtensionUiRequest(event.id, { value: pending.freeform });
-      return true;
-    }
-
-    if (isOptionalInputPlaceholder(placeholder)) {
-      this.pendingCombinedAskUserResponse = null;
-      this.runtimeSession.respondToExtensionUiRequest(event.id, { value: pending.comment });
-      return true;
-    }
-
-    return false;
   }
 
   private handleCommandOutput(textValue: unknown): void {
@@ -1889,8 +1519,7 @@ export class OmpAgentSession implements AgentSession {
       case "tool_execution_start": {
         const toolCall = parseToolArgs(event.toolName, event.args);
         this.activeToolCalls.set(event.toolCallId, toolCall);
-        this.activeAskUserDialog = readActiveAskUserDialog(event.toolName, event.args);
-        this.askUi.start(event.toolName, event.args);
+        this.questionUi.start(event.toolName, event.args);
         this.emitToolCallEvent(event.toolCallId, toolCall, "running", null, null);
         return;
       }
@@ -1960,11 +1589,7 @@ export class OmpAgentSession implements AgentSession {
       this.activeToolCalls.get(event.toolCallId) ?? parseToolArgs(event.toolName, null);
     this.activeToolCalls.delete(event.toolCallId);
 
-    if (event.toolName === "ask_user") {
-      this.activeAskUserDialog = null;
-      this.pendingCombinedAskUserResponse = null;
-    }
-    this.askUi.finish(event.toolName);
+    this.questionUi.finish(event.toolName);
 
     const result = parseToolResult(event.result);
     const error = event.isError ? event.result : null;
@@ -2063,6 +1688,7 @@ export class OmpAgentSession implements AgentSession {
   ): void {
     if (event.message.role === "assistant") {
       this.activeAssistantMessageId = null;
+      this.questionUi.observeMessage(event.message);
       if (turnId) {
         this.activeTurnTerminalAssistantMessage = event.message;
       }

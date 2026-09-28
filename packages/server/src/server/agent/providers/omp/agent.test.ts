@@ -668,41 +668,6 @@ describe("OMP agent client and session", () => {
     ]);
   });
 
-  test("preserves combined selection descriptions and freeform sentinel behavior", async () => {
-    const omp = new OmpHarness();
-    await omp.start();
-    omp.emit({
-      type: "tool_execution_start",
-      toolCallId: "ask-user-1",
-      toolName: "ask_user",
-      args: { allowComment: true, allowFreeform: true, allowMultiple: false },
-    });
-    omp.emit({
-      type: "extension_ui_request",
-      id: "select-combined",
-      method: "select",
-      title: "Choose",
-      options: ["First", "✏️ Type custom response..."],
-      optionDetails: [{ description: "First detail" }, { description: "ignored" }],
-    });
-
-    const combinedInput = omp.pendingPermissions()[0]?.input;
-    expect(combinedInput?.questions?.[0]?.options).toStrictEqual([
-      { label: "First", description: "First detail" },
-    ]);
-    expect(combinedInput).toMatchObject({
-      questions: [{ allowOther: true }, { header: "Comment" }],
-    });
-    await omp.respondToPermission("select-combined", {
-      behavior: "allow",
-      updatedInput: { answers: { Response: "custom", Comment: "note" } },
-    });
-    expect(omp.extensionUiResponses()).toContainEqual({
-      id: "select-combined",
-      response: { value: "✏️ Type custom response..." },
-    });
-  });
-
   test("exposes OMP modes and commands through the domain session", async () => {
     const omp = new OmpHarness();
     omp.queueCommands([{ name: "review", description: "Review changes", source: "skill" }]);

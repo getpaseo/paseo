@@ -28,6 +28,42 @@ function select(omp: OmpHarness, id: string, title: string, options: string[]): 
 }
 
 describe("OMP ask RPC UI", () => {
+  test("recognizes ask arguments from the assistant message before the UI request", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    omp.emit({
+      type: "message_end",
+      message: {
+        role: "assistant",
+        content: [
+          {
+            type: "toolCall",
+            id: "ask-1",
+            name: "ask",
+            arguments: {
+              questions: [
+                {
+                  id: "colors",
+                  question: "Which colors?",
+                  multi: true,
+                  options: [
+                    { label: "Red", description: "Warm" },
+                    { label: "Blue", description: "Cool" },
+                  ],
+                },
+              ],
+            },
+          },
+        ],
+      },
+    });
+    select(omp, "select-1", "Which colors?", ["Red", "Blue", "Other (type your own)"]);
+    expect(omp.pendingPermissions()[0]?.input?.questions?.[0]).toMatchObject({
+      multiSelect: true,
+      allowOther: true,
+    });
+    startAsk(omp, true);
+  });
   test("answers the multi-select loop from one Paseo question", async () => {
     const omp = new OmpHarness();
     await omp.start();
@@ -87,7 +123,7 @@ describe("OMP ask RPC UI", () => {
       type: "extension_ui_request",
       id: "editor-1",
       method: "editor",
-      title: "Which colors?",
+      title: "Which colors? ○ Red ○ Blue ◉ Other (type your own) Enter your response:",
     });
 
     expect(omp.pendingPermissions()).toHaveLength(0);
@@ -187,5 +223,89 @@ describe("OMP ask RPC UI", () => {
     startAsk(omp, true);
     select(omp, "select-1", "Which colors? (1/2)", ["Red", "Blue", "Other (type your own)"]);
     expect(omp.pendingPermissions()[0]?.input?.questions?.[0]).toMatchObject({ multiSelect: true });
+  });
+
+  test("keeps descriptions with their labels when a select event reorders rows", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    startAsk(omp, true);
+    select(omp, "select-1", "Which colors?", ["Blue", "Red", "Other (type your own)"]);
+
+    expect(omp.pendingPermissions()[0]?.input?.questions?.[0]?.options).toEqual([
+      { label: "Blue", description: "Cool" },
+      { label: "Red", description: "Warm" },
+    ]);
+  });
+
+  test("keeps a recommended option's description with its display label", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    startAsk(omp, false);
+    select(omp, "select-1", "Which colors?", [
+      "Red (Recommended)",
+      "Blue",
+      "Other (type your own)",
+    ]);
+    expect(omp.pendingPermissions()[0]?.input?.questions?.[0]?.options).toEqual([
+      { label: "Red (Recommended)", description: "Warm" },
+      { label: "Blue", description: "Cool" },
+    ]);
+  });
+
+  test("cancels cleanly when OMP omits Done selecting in a multi-question ask", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    omp.emit({
+      type: "tool_execution_start",
+      toolCallId: "ask-1",
+      toolName: "ask",
+      args: {
+        questions: [
+          {
+            id: "colors",
+            question: "Which colors?",
+            multi: true,
+            options: [{ label: "Red" }, { label: "Blue" }],
+          },
+          {
+            id: "shape",
+            question: "Which shape?",
+            options: [{ label: "Round" }, { label: "Square" }],
+          },
+        ],
+      },
+    });
+    select(omp, "select-1", "Which colors? (1/2)", ["Red", "Blue", "Other (type your own)"]);
+    await omp.respondToPermission("select-1", {
+      behavior: "allow",
+      updatedInput: { answers: { Response: "Red" } },
+    });
+    // OMP's RPC select omits the right-arrow navigation callback and, with
+    // allowForward true, also omits its Done row on every follow-up request.
+    select(omp, "select-2", "(1 selected) Which colors? (1/2)", [
+      "Red",
+      "Blue",
+      "Other (type your own)",
+    ]);
+
+    expect(omp.extensionUiResponses()).toEqual([
+      { id: "select-1", response: { value: "Red" } },
+      { id: "select-2", response: { cancelled: true } },
+    ]);
+    expect(omp.pendingPermissions()).toHaveLength(0);
+    omp.emit({
+      type: "tool_execution_end",
+      toolCallId: "ask-1",
+      toolName: "ask",
+      result: "Ask tool was cancelled by the user",
+      isError: true,
+    });
+    expect(omp.timeline()).toContainEqual(
+      expect.objectContaining({
+        type: "tool_call",
+        name: "ask",
+        status: "failed",
+      }),
+    );
   });
 });
