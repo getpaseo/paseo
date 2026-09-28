@@ -4,7 +4,7 @@ import { copyFile, mkdir, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { TestInfo } from "@playwright/test";
-import { test, type Page } from "../support/fixtures";
+import { expect, test, type Page } from "../support/fixtures";
 import { ImportSessionFlow } from "../support/helpers/import-session";
 import {
   connectNewWorkspaceDaemonClient,
@@ -186,6 +186,19 @@ test("captures the compact import-session journey", async ({ page }, testInfo) =
       "Review fixture item 3",
     );
   });
+});
+
+test("an open Import Session row keeps its age current", async ({ page }) => {
+  await page.clock.install({ time: Date.now() });
+  const flow = new ImportSessionFlow(page);
+  await flow.openWorkspace(scenario.project.workspaceId, { width: 390, height: 844 });
+  await flow.revealMobileEntryPoint();
+  await flow.openGlobally();
+
+  const row = page.getByTestId(`import-session-session-claude-${scenario.importSessionId}`);
+  await expect(row).toContainText("1m ago");
+  await page.clock.fastForward("03:00");
+  await expect(row).toContainText("4m ago");
 });
 
 test("captures the desktop import sheet and command-center entry", async ({ page }, testInfo) => {

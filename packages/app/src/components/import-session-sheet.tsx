@@ -309,7 +309,6 @@ function ImportSessionSheetRow({
   const { t } = useTranslation();
   const title = getSessionTitle(entry);
   const promptPreview = getPromptPreview(entry);
-  const lastActivity = useTimeAgo(new Date(entry.lastActivityAt));
   const ProviderIcon = getProviderIcon(entry.providerId, serverId);
   const accessibilityState = useMemo(
     () => (disabled ? DISABLED_ACCESSIBILITY_STATE : undefined),
@@ -344,9 +343,11 @@ function ImportSessionSheetRow({
           <Text style={styles.rowTitle} numberOfLines={1}>
             {title}
           </Text>
-          <Text style={styles.rowMeta}>
-            {importing ? t("importSession.row.importing") : lastActivity}
-          </Text>
+          {importing ? (
+            <Text style={styles.rowMeta}>{t("importSession.row.importing")}</Text>
+          ) : (
+            <ImportSessionActivityTime date={entry.lastActivityAt} />
+          )}
         </View>
         <Text style={styles.rowPreview} numberOfLines={2}>
           {promptPreview}
@@ -363,6 +364,11 @@ function ImportSessionSheetRow({
       </View>
     </Pressable>
   );
+}
+
+function ImportSessionActivityTime({ date }: { date: string }) {
+  const label = useTimeAgo(new Date(date));
+  return <Text style={styles.rowMeta}>{label}</Text>;
 }
 
 function SessionRows({

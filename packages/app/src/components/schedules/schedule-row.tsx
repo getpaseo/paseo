@@ -122,6 +122,27 @@ function buildMeta(input: {
   return parts.join(" · ");
 }
 
+function ScheduleMeta({
+  schedule,
+  state,
+  serverName,
+  singleHost,
+}: {
+  schedule: ScheduleSummary;
+  state: ScheduleDerivedState;
+  serverName: string | undefined;
+  singleHost: boolean;
+}) {
+  const createdAgo = useTimeAgo(new Date(schedule.createdAt));
+  const lastRunAgo = useTimeAgo(schedule.lastRunAt ? new Date(schedule.lastRunAt) : null);
+  const meta = buildMeta({ schedule, state, createdAgo, lastRunAgo, serverName, singleHost });
+  return (
+    <Text style={settingsStyles.rowHint} numberOfLines={1}>
+      {meta}
+    </Text>
+  );
+}
+
 /** Small provider glyph. Reads the icon color off a StyleSheet object so the
  * dynamic component (getProviderIcon) stays compliant without useUnistyles. */
 function ProviderGlyph({
@@ -171,16 +192,6 @@ export function ScheduleRow({
   const title = resolveScheduleTitle(schedule);
   const productName = scheduleProductName(schedule);
   const badge = stateBadge(state);
-  const createdAgo = useTimeAgo(new Date(schedule.createdAt));
-  const lastRunAgo = useTimeAgo(schedule.lastRunAt ? new Date(schedule.lastRunAt) : null);
-  const meta = buildMeta({
-    schedule,
-    state,
-    createdAgo,
-    lastRunAgo,
-    serverName,
-    singleHost: singleHost ?? false,
-  });
   const canRun = schedule.target.type === "new-agent" && (state === "active" || state === "paused");
 
   const rowStyle = useCallback(
@@ -218,9 +229,12 @@ export function ScheduleRow({
             <Text style={styles.target} numberOfLines={1}>
               {targetLabel}
             </Text>
-            <Text style={settingsStyles.rowHint} numberOfLines={1}>
-              {meta}
-            </Text>
+            <ScheduleMeta
+              schedule={schedule}
+              state={state}
+              serverName={serverName}
+              singleHost={singleHost ?? false}
+            />
           </View>
         </View>
 
