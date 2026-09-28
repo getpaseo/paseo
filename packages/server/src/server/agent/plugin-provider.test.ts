@@ -396,6 +396,24 @@ describe("PluginAgentClientRegistry", () => {
     await registry.shutdown();
   });
 
+  test("returns no usage reference when a plugin provider lacks the capability", async () => {
+    const harness = createProviderHarness();
+    const registry = new PluginAgentClientRegistry(createTestLogger());
+    registry.replace([harness.registration]);
+    const client = registry.clients()[harness.registration.id]!;
+    const session = await client.createSession({
+      provider: harness.registration.id,
+      cwd: "/workspace",
+    });
+    try {
+      expect(await session.getUsageReference?.()).toBeNull();
+      expect(harness.inputs.some((input) => input.type === "session.usage_reference")).toBe(false);
+    } finally {
+      await session.close();
+      registry.replace([]);
+    }
+  });
+
   test("terminalizes an active turn exactly once when its plugin provider is removed", async () => {
     const harness = createProviderHarness({ completeTurn: false });
     const registry = new PluginAgentClientRegistry(createTestLogger());

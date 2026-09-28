@@ -274,6 +274,25 @@ describe("ClaudeAgentClient.fetchCatalog", () => {
     expect(models.some((model) => model.id === "claude-fable-5-1")).toBe(true);
   });
 
+  it("reads settings.json from the provider's own CLAUDE_CONFIG_DIR", async () => {
+    const daemonConfigDir = await createClaudeConfigDir({});
+    const providerConfigDir = await createClaudeConfigDir({ model: "glm-5.1" });
+    vi.stubEnv("CLAUDE_CONFIG_DIR", daemonConfigDir);
+    const client = new ClaudeAgentClient({
+      logger: createTestLogger(),
+      resolveVersion: async () => "2.1.280",
+      runtimeSettings: { env: { CLAUDE_CONFIG_DIR: providerConfigDir } },
+    });
+
+    const { models } = await client.fetchCatalog({
+      scope: "workspace",
+      cwd: os.tmpdir(),
+      force: true,
+    });
+
+    expect(models.map((model) => model.id)).toContain("glm-5.1");
+  });
+
   it("falls back to hardcoded models when settings.json is missing", async () => {
     const configDir = await fs.mkdtemp(path.join(os.tmpdir(), "paseo-claude-models-"));
     createdClaudeConfigDirs.push(configDir);

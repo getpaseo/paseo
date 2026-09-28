@@ -1,4 +1,4 @@
-import { page } from "@vitest/browser/context";
+import { page, userEvent } from "@vitest/browser/context";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { TerminalInputModeState } from "@getpaseo/protocol/terminal-input-mode";
 import { encodeTerminalOutput, TerminalEmulatorRuntime } from "./terminal-emulator-runtime";
@@ -40,6 +40,7 @@ interface MountedTerminal {
   sizes: TerminalSize[];
   terminalKeys: TerminalKeyRecord[];
   inputModeChanges: TerminalInputModeState[];
+  openedUrls: string[];
 }
 
 const mountedTerminals: MountedTerminal[] = [];
@@ -95,6 +96,7 @@ function createTerminalHost(input: {
   const inputs: string[] = [];
   const terminalKeys: TerminalKeyRecord[] = [];
   const inputModeChanges: TerminalInputModeState[] = [];
+  const openedUrls: string[] = [];
   const runtime = new TerminalEmulatorRuntime();
   runtime.setCallbacks({
     callbacks: {
@@ -110,6 +112,9 @@ function createTerminalHost(input: {
       onInputModeChange: (state) => {
         inputModeChanges.push(state);
       },
+      onOpenExternalUrl: (url) => {
+        openedUrls.push(url);
+      },
     },
   });
   runtime.mount({
@@ -124,7 +129,16 @@ function createTerminalHost(input: {
     },
   });
 
-  const mounted = { host, root, runtime, inputs, sizes, terminalKeys, inputModeChanges };
+  const mounted = {
+    host,
+    root,
+    runtime,
+    inputs,
+    sizes,
+    terminalKeys,
+    inputModeChanges,
+    openedUrls,
+  };
   mountedTerminals.push(mounted);
   return mounted;
 }
@@ -188,7 +202,43 @@ function dispatchTerminalKey(input: {
   );
 }
 
+/** An OSC 8 hyperlink, the escape sequence CLIs such as gh and ls --hyperlink print. */
+function hyperlink(input: { url: string; text: string }): string {
+  return `\x1b]8;;${input.url}\x1b\\${input.text}\x1b]8;;\x1b\\`;
+}
+
+function writeLines(mounted: MountedTerminal, lines: string[]): Promise<void> {
+  return new Promise((resolve) => {
+    mounted.runtime.write({
+      data: terminalOutput(lines.map((line) => `${line}\r\n`).join("")),
+      onCommitted: resolve,
+    });
+  });
+}
+
+async function clickTerminalLink(input: {
+  host: HTMLElement;
+  row: number;
+  col: number;
+}): Promise<void> {
+  const terminal = getBrowserTerminal();
+  const screen = input.host.querySelector<HTMLElement>(".xterm-screen");
+  if (!screen) {
+    throw new Error("Expected xterm screen to be mounted");
+  }
+  const position = {
+    x: (input.col + 0.5) * (screen.clientWidth / terminal.cols),
+    y: (input.row + 0.5) * (screen.clientHeight / terminal.rows),
+  };
+  await userEvent.hover(screen, { position });
+  await waitFor({
+    predicate: () => input.host.querySelector(".xterm-cursor-pointer") !== null,
+  });
+  await userEvent.click(screen, { position });
+}
+
 afterEach(() => {
+  vi.restoreAllMocks();
   for (const mounted of mountedTerminals.splice(0)) {
     mounted.runtime.unmount();
     mounted.root.remove();
@@ -525,5 +575,24 @@ describe("terminal emulator runtime in a real browser", () => {
     await nextFrame();
 
     expect(reset).not.toHaveBeenCalled();
+  });
+
+  it("opens OSC 8 hyperlinks the same way as plain-text URLs", async () => {
+    await page.viewport(900, 600);
+    const mounted = createTerminalHost({ width: 720, height: 360 });
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+
+    await waitFor({ predicate: () => mounted.sizes.length > 0 });
+
+    await writeLines(mounted, [
+      hyperlink({ url: "https://example.com/osc8", text: "example" }),
+      "https://example.com/plain",
+    ]);
+
+    await clickTerminalLink({ host: mounted.host, row: 1, col: 4 });
+    await clickTerminalLink({ host: mounted.host, row: 0, col: 2 });
+
+    expect(mounted.openedUrls).toEqual(["https://example.com/plain", "https://example.com/osc8"]);
+    expect(confirm).not.toHaveBeenCalled();
   });
 });

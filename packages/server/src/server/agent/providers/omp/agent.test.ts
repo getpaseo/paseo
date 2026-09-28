@@ -1,5 +1,9 @@
 import { describe, expect, test } from "vitest";
 import { setImmediate as waitForImmediate } from "node:timers/promises";
+import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
+import { createRequire } from "node:module";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import type { AgentStreamEvent } from "../../agent-sdk-types.js";
 import type { PaseoToolCatalog } from "../../tools/types.js";
@@ -7,6 +11,7 @@ import type { OmpAgentMessage } from "./rpc-types.js";
 import type { OmpNoTurnScheduler, OmpProviderIdleScheduler } from "./agent.js";
 import type { OmpUsagePollScheduler } from "./usage-poller.js";
 import { resolveOmpProviderParams } from "./provider-config.js";
+import { OmpRuntimeEventSchema } from "./rpc-types.js";
 import { OmpHarness } from "./test-utils/omp-harness.js";
 
 const TURN_LIFECYCLE_EVENTS = new Set<AgentStreamEvent["type"]>([
@@ -42,7 +47,6 @@ test("OMP ready timeout defaults to 20 seconds and RPC timeout overrides both", 
     rpcTimeoutMs: 90_000,
   });
 });
-
 class ManualIdleScheduler implements OmpProviderIdleScheduler {
   private readonly retries: Array<() => void> = [];
   private readonly waiters: Array<{ count: number; resolve: () => void }> = [];
@@ -144,6 +148,79 @@ function createToolCatalog(): PaseoToolCatalog {
 }
 
 describe("OMP agent client and session", () => {
+  test("usage reference reads current get_state provider and account on each call", async () => {
+    const home = mkdtempSync(join(tmpdir(), "paseo-omp-reference-"));
+    const agentDir = join(home, "agent");
+    mkdirSync(agentDir);
+    // Upstream: packages/ai/src/auth/sqlite-credential-store.ts:576-581,711-724.
+    const { DatabaseSync } = createRequire(import.meta.url)("node:sqlite") as {
+      DatabaseSync: new (path: string) => {
+        exec(sql: string): void;
+        prepare(sql: string): { run(...args: unknown[]): void };
+        close(): void;
+      };
+    };
+    const db = new DatabaseSync(join(agentDir, "agent.db"));
+    db.exec(`
+      CREATE TABLE cache (key TEXT PRIMARY KEY, value TEXT NOT NULL, expires_at INTEGER NOT NULL);
+      CREATE INDEX idx_cache_expires ON cache(expires_at);
+      CREATE TABLE auth_credentials (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        provider TEXT NOT NULL,
+        credential_type TEXT NOT NULL,
+        data TEXT NOT NULL,
+        disabled_cause TEXT DEFAULT NULL,
+        identity_key TEXT DEFAULT NULL,
+        created_at INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER)),
+        updated_at INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER))
+      );
+    `);
+    const insert = db.prepare(
+      "INSERT INTO auth_credentials (provider, credential_type, data) VALUES (?, 'oauth', ?)",
+    );
+    insert.run(
+      "openai-codex",
+      JSON.stringify({
+        access: "codex-fixture",
+        accountId: "codex-account",
+        expires: Date.now() + 60_000,
+      }),
+    );
+    insert.run(
+      "anthropic",
+      JSON.stringify({
+        access: "claude-fixture",
+        accountId: "claude-account",
+        expires: Date.now() + 60_000,
+      }),
+    );
+    db.close();
+    try {
+      const omp = new OmpHarness();
+      await omp.start({}, undefined, {
+        OMP_PROFILE: "",
+        PI_CODING_AGENT_DIR: agentDir,
+        XDG_DATA_HOME: "",
+      });
+      const runtime = omp.runtime();
+      runtime.state = { ...runtime.state, model: { provider: "openai-codex", id: "codex-model" } };
+      const requestsBefore = runtime.getStateRequestCount;
+      expect(await omp.getUsageReference()).toEqual({
+        source: "codex",
+        input: { accessToken: "codex-fixture", accountId: "codex-account" },
+      });
+      expect(runtime.getStateRequestCount).toBe(requestsBefore + 1);
+      runtime.state = { ...runtime.state, model: { provider: "anthropic", id: "claude-model" } };
+      expect(await omp.getUsageReference()).toEqual({
+        source: "claude",
+        input: { accessToken: "claude-fixture" },
+      });
+      expect(runtime.getStateRequestCount).toBe(requestsBefore + 2);
+      await omp.close();
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
   test("owns launch configuration and registers native host tools", async () => {
     const omp = new OmpHarness();
     await omp.start({ modeId: "ask" }, createToolCatalog());
@@ -580,6 +657,106 @@ describe("OMP agent client and session", () => {
     expect(omp.extensionUiResponses()).toEqual([
       { id: "approval-1", response: { value: "Approve" } },
     ]);
+  });
+
+  test("maps legacy select options without descriptions and preserves ordinary responses", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+
+    omp.emit({
+      type: "extension_ui_request",
+      id: "select-legacy",
+      method: "select",
+      title: "Choose",
+      options: ["Approve", "Deny"],
+    });
+
+    expect(omp.pendingPermissions()[0]?.input).toMatchObject({
+      questions: [{ options: [{ label: "Approve" }, { label: "Deny" }] }],
+    });
+    await omp.respondToPermission("select-legacy", {
+      behavior: "allow",
+      updatedInput: { answers: { Response: "Deny" } },
+    });
+    expect(omp.extensionUiResponses()).toContainEqual({
+      id: "select-legacy",
+      response: { value: "Deny" },
+    });
+  });
+
+  test("maps described and mixed select metadata by option index", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+
+    omp.emit({
+      type: "extension_ui_request",
+      id: "select-described",
+      method: "select",
+      title: "Choose",
+      options: ["First", "Second", "Third"],
+      optionDetails: [{ description: "First detail" }, {}, { description: " \t" }],
+    });
+
+    expect(omp.pendingPermissions()[0]?.input?.questions?.[0]?.options).toStrictEqual([
+      { label: "First", description: "First detail" },
+      { label: "Second" },
+      { label: "Third" },
+    ]);
+  });
+
+  test("accepts malformed or misaligned optional metadata and falls back to labels", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    const parsed = OmpRuntimeEventSchema.safeParse({
+      type: "extension_ui_request",
+      id: "select-malformed",
+      method: "select",
+      options: ["First", "Second"],
+      optionDetails: [{ description: 42 }, { description: "\n\t" }, { description: "extra" }],
+    });
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) throw new Error("Expected malformed metadata event to parse");
+
+    omp.emit(parsed.data);
+    expect(omp.pendingPermissions()[0]?.input?.questions?.[0]?.options).toStrictEqual([
+      { label: "First" },
+      { label: "Second" },
+    ]);
+  });
+
+  test("preserves combined selection descriptions and freeform sentinel behavior", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    omp.emit({
+      type: "tool_execution_start",
+      toolCallId: "ask-user-1",
+      toolName: "ask_user",
+      args: { allowComment: true, allowFreeform: true, allowMultiple: false },
+    });
+    omp.emit({
+      type: "extension_ui_request",
+      id: "select-combined",
+      method: "select",
+      title: "Choose",
+      options: ["First", "✏️ Type custom response..."],
+      optionDetails: [{ description: "First detail" }, { description: "ignored" }],
+    });
+
+    const combinedInput = omp.pendingPermissions()[0]?.input;
+    expect(combinedInput?.questions?.[0]?.options).toStrictEqual([
+      { label: "First", description: "First detail" },
+    ]);
+    expect(combinedInput).toMatchObject({
+      questions: [{ allowOther: true }, { header: "Comment" }],
+    });
+    await omp.respondToPermission("select-combined", {
+      behavior: "allow",
+      updatedInput: { answers: { Response: "custom", Comment: "note" } },
+    });
+    expect(omp.extensionUiResponses()).toContainEqual({
+      id: "select-combined",
+      response: { value: "✏️ Type custom response..." },
+    });
   });
 
   test("exposes OMP modes and commands through the domain session", async () => {

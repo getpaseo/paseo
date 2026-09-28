@@ -1,5 +1,48 @@
 # Changelog
 
+## 0.10.0 - 2026-09-28
+
+### Added
+
+- Added OpenCode v2 support, selected automatically from the installed `opencode` version ([#5198](https://github.com/getpaseo/paseo/pull/5198), [#5526](https://github.com/getpaseo/paseo/pull/5526) by [@karrots](https://github.com/karrots), [@dsingal0](https://github.com/dsingal0), [@gszep](https://github.com/gszep))
+- Added task lists from rpiv-todo, pi-goal-x, and Pi's example todo extension to Pi chats ([#5309](https://github.com/getpaseo/paseo/pull/5309))
+- Added subagent runs from pi-subagents, Tintinweb pi-subagents, and Gotgenes pi-subagents to the Subagents track ([#5309](https://github.com/getpaseo/paseo/pull/5309))
+- Added rpiv-ask-user-question dialogs to Pi chats as one question form ([#5309](https://github.com/getpaseo/paseo/pull/5309))
+- Added password checks to relay connections, rejecting an incorrect daemon password; a follow-up release will require the password ([#5393](https://github.com/getpaseo/paseo/pull/5393))
+- Added a password field to Add host, pairing links, and QR pairing for password-protected daemons ([#5393](https://github.com/getpaseo/paseo/pull/5393))
+- Added `relay://` connection strings to `paseo daemon pair` ([#5393](https://github.com/getpaseo/paseo/pull/5393))
+- Added OMP Ask option descriptions to question cards on OMP 17.4.2 and newer ([#3628](https://github.com/getpaseo/paseo/pull/3628) by [@joeshull](https://github.com/joeshull))
+
+### Changed
+
+- Changed the CLI and desktop app to connect to a password-protected daemon on the same machine without asking for the password ([#5393](https://github.com/getpaseo/paseo/pull/5393))
+- Changed a host rejected for its password to show "Password required" or "Incorrect password" on the host and Connections pages ([#5393](https://github.com/getpaseo/paseo/pull/5393))
+- Reorganized Settings into General, Sidebar, Chat, Terminal, Browser, and Open location pages ([#5459](https://github.com/getpaseo/paseo/pull/5459))
+
+### Fixed
+
+- Fixed direct connections failing when the daemon password contains spaces or characters such as `@` or `/` ([#5393](https://github.com/getpaseo/paseo/pull/5393))
+- Fixed existing OpenCode agents failing with `ECONNREFUSED` after the OpenCode server restarts ([#5338](https://github.com/getpaseo/paseo/pull/5338))
+- Fixed messages OpenCode adds on its own appearing in the chat as if the user typed them ([#5434](https://github.com/getpaseo/paseo/pull/5434))
+- Fixed the daemon stopping when `daemon.log` cannot be written, such as on a full disk ([#5445](https://github.com/getpaseo/paseo/pull/5445))
+- Fixed the daemon crashing when opening an archived ACP agent whose worktree was removed ([#5439](https://github.com/getpaseo/paseo/pull/5439) by [@qinkangdeid](https://github.com/qinkangdeid))
+- Fixed existing workspaces missing from the sidebar after the app starts, including after later restarts ([#5394](https://github.com/getpaseo/paseo/pull/5394))
+- Fixed agents on a custom Claude provider with its own `CLAUDE_CONFIG_DIR` opening with an empty chat after a daemon restart ([#5437](https://github.com/getpaseo/paseo/pull/5437))
+- Fixed a custom Codex provider's sessions missing from Import session ([#5446](https://github.com/getpaseo/paseo/pull/5446))
+- Fixed Update daemon and Restart in host settings failing when a provider's version check takes over 1.5s ([#5372](https://github.com/getpaseo/paseo/pull/5372))
+- Fixed `paseo --host <other daemon> run` failing with "Caller agent not found" from inside an agent session ([#5392](https://github.com/getpaseo/paseo/pull/5392))
+- Fixed a Pi chat rewind going back further than the picked message after an earlier rewind ([#5383](https://github.com/getpaseo/paseo/pull/5383))
+- Fixed a Pi chat rewind being undone when the daemon restarts ([#5432](https://github.com/getpaseo/paseo/pull/5432))
+- Fixed Pi agents started without a model ignoring Pi's configured default model ([#5343](https://github.com/getpaseo/paseo/pull/5343))
+- Fixed project skills in a new agent's `/` menu staying stale after the checkout switches branches ([#5415](https://github.com/getpaseo/paseo/pull/5415))
+- Fixed slash commands missing from a new agent's `/` menu on custom ACP providers ([#5411](https://github.com/getpaseo/paseo/pull/5411))
+- Fixed a parent agent receiving a child's finish notification twice after prompting the running child ([#5407](https://github.com/getpaseo/paseo/pull/5407))
+- Fixed a blocking `send_agent_prompt` that outlasts its 30s wait never notifying the caller when the child finishes ([#5347](https://github.com/getpaseo/paseo/pull/5347))
+- Fixed OSC 8 terminal links showing a navigation prompt and opening a blank Paseo window ([#5388](https://github.com/getpaseo/paseo/pull/5388) by [@liujin0506](https://github.com/liujin0506))
+- Fixed the Theme menu not scrolling when plugin themes overflow the window ([#5374](https://github.com/getpaseo/paseo/pull/5374))
+- Fixed a message from today's weekday last week showing only the weekday instead of its date ([#5341](https://github.com/getpaseo/paseo/pull/5341))
+- Fixed `paseo daemon set-password` exiting silently when stdin is not a terminal ([#5358](https://github.com/getpaseo/paseo/pull/5358))
+
 ## 0.9.2 - 2026-09-24
 
 ### Added

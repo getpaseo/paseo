@@ -15,12 +15,20 @@ export interface PluginProviderMetadata {
   iconPath?: string;
 }
 
+export interface PluginUsageSourceMetadata {
+  id: string;
+  label: string;
+  icon?: string;
+  discover: boolean;
+}
+
 export type PluginProcessRequest =
   | {
       type: "initialize";
       pluginId: string;
       bundle: string;
       appVersion: string;
+      pluginDirectory: string;
       settingsDirectory?: string;
     }
   | {
@@ -31,6 +39,9 @@ export type PluginProcessRequest =
     }
   | { type: "hook"; requestId: string; kind: "event" | "before"; name: string; input: unknown }
   | { type: "hook.cancel"; requestId: string }
+  | { type: "usage.identify"; requestId: string; sourceId: string; input: unknown }
+  | { type: "usage.fetch"; requestId: string; sourceId: string; input: unknown }
+  | { type: "usage.discover"; requestId: string; sourceId: string }
   | { type: "invoke"; requestId: string; method: string; input: unknown }
   | {
       type: "provider.connect";
@@ -56,6 +67,7 @@ export type PluginProcessMessage =
       type: "ready";
       methods: string[];
       providers: PluginProviderMetadata[];
+      usageSources?: PluginUsageSourceMetadata[];
       hooks?: { events: string[]; before: string[] };
     }
   | { type: "result"; requestId: string; output: unknown }
@@ -91,6 +103,14 @@ const providerMetadataSchema = z
     hasCatalogCacheKey: z.boolean().optional(),
   })
   .strict();
+const usageSourceMetadataSchema = z
+  .object({
+    id: z.string().min(1),
+    label: z.string().min(1),
+    icon: z.string().optional(),
+    discover: z.boolean(),
+  })
+  .strict();
 const providerConnectRequestSchema = z
   .object({
     versions: z.array(z.number().int().positive()),
@@ -111,6 +131,7 @@ export const PluginProcessRequestSchema: z.ZodType<PluginProcessRequest> = z.dis
         pluginId: z.string().min(1),
         bundle: z.string(),
         appVersion: z.string(),
+        pluginDirectory: z.string(),
         settingsDirectory: z.string().optional(),
       })
       .strict(),
@@ -141,6 +162,25 @@ export const PluginProcessRequestSchema: z.ZodType<PluginProcessRequest> = z.dis
       })
       .strict(),
     z.object({ type: z.literal("hook.cancel"), requestId: z.string() }).strict(),
+    z
+      .object({
+        type: z.literal("usage.identify"),
+        requestId: z.string(),
+        sourceId: z.string(),
+        input: z.unknown(),
+      })
+      .strict(),
+    z
+      .object({
+        type: z.literal("usage.fetch"),
+        requestId: z.string(),
+        sourceId: z.string(),
+        input: z.unknown(),
+      })
+      .strict(),
+    z
+      .object({ type: z.literal("usage.discover"), requestId: z.string(), sourceId: z.string() })
+      .strict(),
     z
       .object({
         type: z.literal("invoke"),
@@ -182,6 +222,7 @@ export const PluginProcessMessageSchema: z.ZodType<PluginProcessMessage> = z.dis
         type: z.literal("ready"),
         methods: z.array(z.string()),
         providers: z.array(providerMetadataSchema),
+        usageSources: z.array(usageSourceMetadataSchema).optional(),
         hooks: hooksSchema.optional(),
       })
       .strict(),

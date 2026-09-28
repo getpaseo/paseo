@@ -333,6 +333,94 @@ describe("OpenCodeAgentClient adapter smoke tests", () => {
     model: TEST_MODEL,
   });
 
+  test("usage reference follows the active OpenCode model and OAuth account", async () => {
+    const cwd = tmpCwd();
+    const runtime = new TestOpenCodeHarness();
+    const openCode = new TestOpenCodeClient();
+    runtime.enqueueClient(openCode);
+    const client = new OpenCodeAgentClient(
+      logger,
+      {
+        env: {
+          OPENCODE_AUTH_CONTENT: JSON.stringify({
+            openai: { type: "oauth", access: "oauth-token", accountId: "acct-1" },
+            "opencode-go": { type: "api", key: "go-key" },
+          }),
+        },
+      },
+      { serverManager: runtime, createClient: runtime.createClient },
+    );
+    const session = await client.createSession(buildConfig(cwd));
+    await session.setModel?.("openai/gpt-5");
+    expect(await session.getUsageReference?.()).toEqual({
+      source: "codex",
+      input: { accessToken: "oauth-token", accountId: "acct-1" },
+    });
+    await session.setModel?.("opencode-go/qwen");
+    expect(await session.getUsageReference?.()).toEqual({
+      source: "opencode-go",
+      input: { apiKey: "go-key" },
+    });
+    await session.setModel?.("other/model");
+    expect(await session.getUsageReference?.()).toBeNull();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    const sessionId = (await session.getRuntimeInfo()).sessionId;
+    openCode.emitEvent({
+      type: "message.updated",
+      properties: {
+        info: {
+          id: "msg_changed_model",
+          sessionID: sessionId,
+          role: "user",
+          model: { providerID: "openai", modelID: "gpt-5" },
+        },
+      },
+    } as OpenCodeEvent);
+    await vi.waitFor(async () =>
+      expect(await session.getUsageReference?.()).toEqual({
+        source: "codex",
+        input: { accessToken: "oauth-token", accountId: "acct-1" },
+      }),
+    );
+    expect(events).toContainEqual({
+      type: "model_changed",
+      provider: "opencode",
+      runtimeInfo: { provider: "opencode", sessionId, model: "openai/gpt-5", modeId: null },
+    });
+    await session.close();
+    rmSync(cwd, { recursive: true, force: true });
+  });
+
+  test("usage reference ignores another auth entry with a different type", async () => {
+    const cwd = tmpCwd();
+    const runtime = new TestOpenCodeHarness();
+    runtime.enqueueClient(new TestOpenCodeClient());
+    const client = new OpenCodeAgentClient(
+      logger,
+      {
+        env: {
+          OPENCODE_AUTH_CONTENT: JSON.stringify({
+            openai: { type: "api", key: "other-key" },
+            "opencode-go": { type: "api", key: "go-key" },
+          }),
+        },
+      },
+      { serverManager: runtime, createClient: runtime.createClient },
+    );
+    const session = await client.createSession(buildConfig(cwd));
+    try {
+      await session.setModel?.("opencode-go/qwen");
+      expect(await session.getUsageReference?.()).toEqual({
+        source: "opencode-go",
+        input: { apiKey: "go-key" },
+      });
+    } finally {
+      await session.close();
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
   test("creates a session with valid id and provider", async () => {
     const cwd = tmpCwd();
     const runtime = new TestOpenCodeHarness();
@@ -1940,6 +2028,75 @@ describe("OpenCode adapter startTurn error handling", () => {
           text: "probe ok",
           messageId: "msg_assistant",
         },
+      },
+    ]);
+  });
+
+  test("streamHistory hides user text that OpenCode marks synthetic", async () => {
+    const fakeClient = {
+      session: {
+        get: vi.fn().mockResolvedValue({
+          data: { revert: undefined },
+          error: undefined,
+        }),
+        messages: vi.fn().mockResolvedValue({
+          data: [
+            {
+              info: { id: "msg_continue", sessionID: "ses_unit_test", role: "user" },
+              parts: [
+                {
+                  id: "prt_continue",
+                  sessionID: "ses_unit_test",
+                  messageID: "msg_continue",
+                  type: "text",
+                  text: "Summarize the task tool output above and continue with your task.",
+                  synthetic: true,
+                },
+              ],
+            },
+            {
+              info: { id: "msg_user", sessionID: "ses_unit_test", role: "user" },
+              parts: [
+                {
+                  id: "prt_user",
+                  sessionID: "ses_unit_test",
+                  messageID: "msg_user",
+                  type: "text",
+                  text: "Read the notes",
+                },
+                {
+                  id: "prt_resource",
+                  sessionID: "ses_unit_test",
+                  messageID: "msg_user",
+                  type: "text",
+                  text: "Reading MCP resource: notes.md",
+                  synthetic: true,
+                },
+              ],
+            },
+          ],
+          error: undefined,
+        }),
+      },
+    } as never;
+
+    const session = new __openCodeInternals.OpenCodeAgentSession(
+      { provider: "opencode", cwd: "/tmp/test" },
+      fakeClient,
+      "ses_unit_test",
+      createTestLogger(),
+    );
+
+    const history: AgentStreamEvent[] = [];
+    for await (const event of session.streamHistory()) {
+      history.push(event);
+    }
+
+    expect(history).toEqual([
+      {
+        type: "timeline",
+        provider: "opencode",
+        item: { type: "user_message", text: "Read the notes", messageId: "msg_user" },
       },
     ]);
   });

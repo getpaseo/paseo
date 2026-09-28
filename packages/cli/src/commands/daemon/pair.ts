@@ -12,6 +12,8 @@ import { connectToDaemon } from "../../utils/client.js";
 import type { DaemonTarget } from "../../utils/daemon-target.js";
 import { addJsonAndDaemonHostOptions, withGlobalOptions } from "../../utils/command-options.js";
 import { formatPairingInstructions } from "../../output/pairing.js";
+import { parseConnectionOfferFromUrl } from "@getpaseo/protocol/connection-offer";
+import { serializeRelayConnectionUri } from "@getpaseo/protocol/daemon-endpoints";
 
 interface PairOptions {
   daemonTarget: DaemonTarget;
@@ -195,10 +197,13 @@ function outputPairingResult(
     return;
   }
 
+  const offer = parseConnectionOfferFromUrl(pairing.url);
+  const connectionUri = offer ? serializeRelayConnectionUri({ offer }) : null;
+
   if (options.json) {
     output.writeStdout(
       `${JSON.stringify(
-        { relayEnabled: pairing.relayEnabled, url: pairing.url, qr: pairing.qr },
+        { relayEnabled: pairing.relayEnabled, url: pairing.url, qr: pairing.qr, connectionUri },
         null,
         2,
       )}\n`,
@@ -210,6 +215,7 @@ function outputPairingResult(
     formatPairingInstructions({
       url: pairing.url,
       qr: pairing.qr,
+      connectionUri,
       columns: output.columns,
     }),
   );
