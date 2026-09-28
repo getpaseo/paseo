@@ -77,7 +77,11 @@ function mapOmpWaitDetail(result: OmpToolResult): ToolCallDetail {
     jobType && jobStatus && jobLabel
       ? `${jobType} ${jobStatus}: ${jobLabel}`
       : (text?.split("\n", 1)[0] ?? "Waiting for background work");
-  return { type: "plain_text", label, text };
+  return {
+    type: "plain_text",
+    label,
+    text: firstString(firstJob?.resultText, firstJob?.errorText) ?? text,
+  };
 }
 
 function mapOmpAskDetail(rawArgs: unknown, result: OmpToolResult): ToolCallDetail {

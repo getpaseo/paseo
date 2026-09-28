@@ -162,11 +162,19 @@ describe("OMP tool call mapper", () => {
           content: [{ type: "text", text: resultText }],
           details: {
             op: "wait",
-            jobs: [{ id: "bg_1", type: "bash", status: "completed", label: command }],
+            jobs: [
+              {
+                id: "bg_1",
+                type: "bash",
+                status: "completed",
+                label: command,
+                resultText: "finished",
+              },
+            ],
           },
         }),
       ),
-    ).toEqual({ type: "plain_text", label: `bash completed: ${command}`, text: resultText });
+    ).toEqual({ type: "plain_text", label: `bash completed: ${command}`, text: "finished" });
   });
 
   test("maps web search and URL reads to search and fetch", () => {
