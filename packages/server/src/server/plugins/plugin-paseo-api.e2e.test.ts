@@ -50,7 +50,17 @@ const append = defineRpc({
   output: z.object({ seq: z.number(), epoch: z.string() }),
 });
 
+const setupProbe = defineRpc({
+  name: "setup-probe",
+  input: z.object({}),
+  output: z.object({ exposedAtSetup: z.boolean() }),
+});
+
 export default function contribute(server: PluginServerContext) {
+  // The contribution must already own a usable Paseo API: a plugin that has work to do
+  // at startup (before any lifecycle event fires) has no other way to reach the daemon.
+  const exposedAtSetup = typeof server.paseo?.agents?.ref === "function";
+  server.handle(setupProbe, () => ({ exposedAtSetup }));
   server.handle(create, async ({ path }, { paseo }) => {
     const workspace = await paseo.workspaces.create({
       source: { kind: "directory", path },
@@ -93,6 +103,11 @@ export default function contribute(server: PluginServerContext) {
     await expect(client.installDirectoryPlugin(pluginDirectory)).resolves.toMatchObject({
       id: "paseo-api",
       status: "running",
+    });
+
+    // The contribution ran with the API already in hand — not just inside hook handlers.
+    await expect(client.invokePluginRpc("paseo-api", "setup-probe", {})).resolves.toEqual({
+      exposedAtSetup: true,
     });
 
     const created = await client.invokePluginRpc("paseo-api", "create", {

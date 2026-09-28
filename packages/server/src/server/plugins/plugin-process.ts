@@ -236,7 +236,7 @@ function runtimeRequire(name: string): unknown {
   return nodeRequire(name);
 }
 
-function evaluateBundle(bundle: string): void {
+function evaluateBundle(bundle: string, api: PaseoApi): void {
   const evaluate: (source: string) => unknown = globalThis.eval;
   const factory = evaluate(bundle);
   if (typeof factory !== "function") throw new Error("Plugin server bundle is not executable");
@@ -252,6 +252,7 @@ function evaluateBundle(bundle: string): void {
     registerSettings,
     on: hooks.on,
     before: hooks.before,
+    paseo: api,
   });
   if (typeof contributedCleanup !== "function") {
     throw new Error("Plugin contribution must return a cleanup function");
@@ -277,14 +278,15 @@ async function initialize(message: Extract<PluginProcessRequest, { type: "initia
     reconnect: { enabled: true },
     transportFactory,
   });
-  paseo = createPaseoApi(daemonClient);
+  const api = createPaseoApi(daemonClient);
+  paseo = api;
   await daemonClient.connect();
   settingsStore = message.settingsDirectory
     ? new PluginSettingsStore(message.settingsDirectory, (settingsId) =>
         send({ type: "settings.changed", settingsId }),
       )
     : null;
-  evaluateBundle(message.bundle);
+  evaluateBundle(message.bundle, api);
   send({
     type: "ready",
     methods: [...handlers.keys()].sort(),
