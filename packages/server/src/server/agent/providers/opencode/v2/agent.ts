@@ -29,7 +29,10 @@ import type {
   ListImportableSessionsOptions,
   ProviderRefreshContext,
 } from "../../../agent-sdk-types.js";
-import type { ProviderRuntimeSettings } from "../../../provider-launch-config.js";
+import {
+  createProviderEnv,
+  type ProviderRuntimeSettings,
+} from "../../../provider-launch-config.js";
 import type { ManagedProcessRegistry } from "../../../../managed-processes/managed-processes.js";
 
 import { importSessionFromPersistence } from "../../../provider-session-import.js";
@@ -205,7 +208,11 @@ export class OpenCodeV2AgentClient implements AgentClient {
         const location = { directory: config.cwd };
         await awaitPaseoPlugin({ client: connection.client, location });
       }
-      await session.initialize(launch);
+      await session.initialize(
+        launch?.env
+          ? createProviderEnv({ runtimeSettings: this.options.settings, overlays: [launch.env] })
+          : undefined,
+      );
       return session;
     } catch (error) {
       await session.close();

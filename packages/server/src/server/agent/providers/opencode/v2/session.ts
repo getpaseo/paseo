@@ -8,7 +8,6 @@ import type { SessionInfo, SessionMessageInfo } from "@opencode/client";
 import { setTimeout as delay } from "node:timers/promises";
 import type { Logger } from "pino";
 import type {
-  AgentLaunchContext,
   AgentMode,
   AgentPermissionResponse,
   AgentPersistenceHandle,
@@ -37,13 +36,6 @@ import { commands } from "./commands.js";
 import { messages } from "./history.js";
 import { SessionPermissions } from "./permissions.js";
 
-function inheritedEnvironment(): Record<string, string> {
-  return Object.fromEntries(
-    Object.entries(process.env).filter(
-      (entry): entry is [string, string] => entry[1] !== undefined,
-    ),
-  );
-}
 export class OpenCodeV2Session implements AgentSession {
   readonly provider = "opencode";
   readonly capabilities = V2_CAPABILITIES;
@@ -114,9 +106,9 @@ export class OpenCodeV2Session implements AgentSession {
   private get client() {
     return this.connection.client;
   }
-  async initialize(launch?: AgentLaunchContext) {
+  async initialize(environment?: Record<string, string>) {
     // OpenCode replaces the whole local shell environment, rather than overlaying it.
-    this.launchEnv = launch?.env ? { ...inheritedEnvironment(), ...launch.env } : undefined;
+    this.launchEnv = environment;
     this.watchExit(this.connection);
     await this.configureConnection();
     const location = { directory: this.config.cwd };
