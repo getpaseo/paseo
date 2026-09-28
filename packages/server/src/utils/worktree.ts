@@ -17,7 +17,11 @@ import {
   buildStringCommandShellInvocation,
   createStringCommandShellEnv,
 } from "./string-command-shell.js";
-import { readPaseoConfigJson, resolvePaseoConfigPath } from "./paseo-config-file.js";
+import {
+  getWorktreeProjectEnv,
+  readPaseoConfigJson,
+  resolvePaseoConfigPath,
+} from "./paseo-config-file.js";
 export {
   PaseoConfigRawSchema,
   PaseoLifecycleCommandRawSchema,
@@ -660,7 +664,12 @@ export async function runWorktreeSetupCommands(options: {
       branchName: options.branchName,
       ...(options.repoRootPath ? { repoRootPath: options.repoRootPath } : {}),
     }));
-  const setupEnv = createStringCommandShellEnv(createExternalProcessEnv(process.env, runtimeEnv));
+  const setupEnv = createStringCommandShellEnv(
+    createExternalProcessEnv(process.env, {
+      ...getWorktreeProjectEnv(options.worktreePath),
+      ...runtimeEnv,
+    }),
+  );
 
   const results: WorktreeSetupCommandResult[] = [];
   for (const [index, cmd] of setupCommands.entries()) {
@@ -775,6 +784,7 @@ export async function runWorktreeTeardownCommands(options: {
 
   const teardownEnv: NodeJS.ProcessEnv = createStringCommandShellEnv(
     createExternalProcessEnv(process.env, {
+      ...getWorktreeProjectEnv(teardownCwd),
       // Source checkout path is the original git repo root (shared across worktrees), not the
       // worktree itself. This allows lifecycle scripts to copy or clean resources using paths
       // from the source checkout.
