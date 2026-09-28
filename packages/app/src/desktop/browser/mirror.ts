@@ -222,8 +222,11 @@ export const MIRROR_CAPTURE_SOURCE = String.raw`(() => {
     pending.delete(el);
     send({ kind: "fill", target: targetOf(el), value: el.isContentEditable ? el.innerText : el.value });
   };
+  let enterAt = 0;
   document.addEventListener("click", (event) => {
     if (!event.isTrusted || !(event.target instanceof Element)) return;
+    // Enter in a form clicks its submit button by itself; the Enter already covers it.
+    if (event.detail === 0 && Date.now() - enterAt < 200) return;
     const el = event.target.closest(INTERACTIVE) || event.target;
     send(Object.assign({ kind: "click", target: targetOf(el) }, event.detail === 2 ? { doubleClick: true } : {}));
   }, true);
@@ -239,6 +242,7 @@ export const MIRROR_CAPTURE_SOURCE = String.raw`(() => {
   }, true);
   document.addEventListener("keydown", (event) => {
     if (!event.isTrusted || ["Enter", "Escape", "Tab"].indexOf(event.key) < 0) return;
+    if (event.key === "Enter") enterAt = Date.now();
     const el = event.target;
     if (pending.has(el)) flush(el);
     const onElement = el instanceof Element && el !== document.body && el !== document.documentElement;
