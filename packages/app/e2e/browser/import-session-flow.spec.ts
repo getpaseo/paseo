@@ -49,6 +49,7 @@ interface ImportFlowScenario {
   worktreeDirectory: string;
   unrelatedDirectory: string;
   importSessionId: string;
+  importSessionTimestamp: number;
   repoCleanup(): Promise<void>;
   unrelatedCleanup(): Promise<void>;
 }
@@ -94,7 +95,7 @@ test.beforeAll(async () => {
   };
   const reuseTarget = await openProjectViaDaemon(client, unrelated.path);
   const importSessionId = "fixture-custom-title";
-  await seedClaudeSessions({
+  const importSessionTimestamp = await seedClaudeSessions({
     projectRoot: repo.path,
     worktreeDirectory,
     unrelatedDirectory: unrelated.path,
@@ -108,6 +109,7 @@ test.beforeAll(async () => {
     worktreeDirectory,
     unrelatedDirectory: unrelated.path,
     importSessionId,
+    importSessionTimestamp,
     repoCleanup: repo.cleanup,
     unrelatedCleanup: unrelated.cleanup,
   };
@@ -120,6 +122,19 @@ test.afterAll(async () => {
   await scenario?.repoCleanup().catch(() => undefined);
   await scenario?.unrelatedCleanup().catch(() => undefined);
   await rm(claudeConfigDirectory, { recursive: true, force: true });
+});
+
+test("an open Import Session row keeps its age current", async ({ page }) => {
+  await page.clock.install({ time: scenario.importSessionTimestamp + 60_000 });
+  const flow = new ImportSessionFlow(page);
+  await flow.openWorkspace(scenario.project.workspaceId, { width: 390, height: 844 });
+  await flow.revealMobileEntryPoint();
+  await flow.openGlobally();
+
+  const row = page.getByTestId(`import-session-session-claude-${scenario.importSessionId}`);
+  await expect(row).toContainText("1m ago");
+  await page.clock.fastForward("03:00");
+  await expect(row).toContainText("4m ago");
 });
 
 test("captures the compact import-session journey", async ({ page }, testInfo) => {
@@ -188,19 +203,6 @@ test("captures the compact import-session journey", async ({ page }, testInfo) =
   });
 });
 
-test("an open Import Session row keeps its age current", async ({ page }) => {
-  await page.clock.install({ time: Date.now() });
-  const flow = new ImportSessionFlow(page);
-  await flow.openWorkspace(scenario.project.workspaceId, { width: 390, height: 844 });
-  await flow.revealMobileEntryPoint();
-  await flow.openGlobally();
-
-  const row = page.getByTestId(`import-session-session-claude-${scenario.importSessionId}`);
-  await expect(row).toContainText("1m ago");
-  await page.clock.fastForward("03:00");
-  await expect(row).toContainText("4m ago");
-});
-
 test("captures the desktop import sheet and command-center entry", async ({ page }, testInfo) => {
   const flow = new ImportSessionFlow(page);
   await flow.openWorkspace(scenario.project.workspaceId, {
@@ -238,7 +240,7 @@ async function seedClaudeSessions(input: {
   worktreeDirectory: string;
   unrelatedDirectory: string;
   importSessionId: string;
-}): Promise<void> {
+}): Promise<number> {
   const sessions = [
     {
       cwd: input.projectRoot,
@@ -303,4 +305,5 @@ async function seedClaudeSessions(input: {
     const timestamp = new Date(newest - index * 60_000);
     await utimes(sessionPath, timestamp, timestamp);
   }
+  return newest;
 }
