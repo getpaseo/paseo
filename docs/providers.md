@@ -61,9 +61,12 @@ ACP permission options are rendered as ordered actions and Paseo returns the sel
 ACP shims can own model discovery through `catalogModelResolver`; the shared client owns the probe
 process and refresh deadline. Keep vendor RPCs in the shim. Cursor uses
 `cursor/list_available_models` because switching models during discovery writes its saved CLI
-preferences and selection history. Cursor versions without that extension must be updated. Kimi
-still probes model selections in its own shim. The initial session supplies modes and the current
-model; it does not override the model list returned by a resolver.
+preferences and selection history. Cursor versions without that extension must be updated. Kimi and
+Copilot report thinking options only for the selected model, so they use
+`resolveCatalogModelsBySwitchingModels`, which selects each model in the probe session through the
+standard `model` config option. Only use it for agents whose model switch stays in the session;
+Copilot's does (a new session starts on the CLI default again). The initial session supplies modes
+and the current model; it does not override the model list returned by a resolver.
 
 ### Direct
 
