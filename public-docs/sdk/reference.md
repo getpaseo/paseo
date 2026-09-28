@@ -123,16 +123,17 @@ See [events](./events.md#follow-provider-catalog-changes) for explicit event obs
 
 ## `client.workspaces`
 
-| Method                   | Result                        | Behavior                                                                                       |
-| ------------------------ | ----------------------------- | ---------------------------------------------------------------------------------------------- |
-| `list(options?)`         | `PaseoWorkspaceListResult`    | Lists, filters, pages, or subscribes to the workspace directory.                               |
-| `open(cwd)`              | `PaseoWorkspaceHandle`        | Reuses the active workspace for a directory or creates one.                                    |
-| `create(options)`        | `PaseoWorkspaceHandle`        | Always creates a fresh directory-backed or Paseo-worktree workspace.                           |
-| `ref(workspaceOrId)`     | `PaseoWorkspaceHandle`        | Creates a local handle.                                                                        |
-| `archive(workspaceOrId)` | `PaseoWorkspaceArchiveResult` | Archives without first creating a handle.                                                      |
-| `subscribe(handler)`     | Unsubscribe function          | Local listener for this API instance. Requires an owned `list({ subscribe: {} })` observation. |
+| Method                   | Result                          | Behavior                                                                                       |
+| ------------------------ | ------------------------------- | ---------------------------------------------------------------------------------------------- |
+| `list(options?)`         | `PaseoWorkspaceListResult`      | Lists, filters, pages, or subscribes to the workspace directory.                               |
+| `open(cwd)`              | `PaseoWorkspaceHandle`          | Reuses the active workspace for a directory or creates one.                                    |
+| `create(options)`        | `PaseoWorkspaceHandle`          | Always creates a fresh directory-backed or Paseo-worktree workspace.                           |
+| `ref(workspaceOrId)`     | `PaseoWorkspaceHandle`          | Creates a local handle.                                                                        |
+| `archive(workspaceOrId)` | `PaseoWorkspaceArchiveResult`   | Archives without first creating a handle.                                                      |
+| `subscribe(handler)`     | Unsubscribe function            | Local listener for this API instance. Requires an owned `list({ subscribe: {} })` observation. |
+| `labels.list(options?)`  | `PaseoWorkspaceLabelListResult` | Lists the host's label catalog: each label's `name` and `color`.                               |
 
-A workspace handle exposes `id`, `projectId`, `directory`, `name`, `status`, `current()`, `refresh()`, `setTitle(title)`, `archive()`, and `subscribe()`. Pass `null` to `setTitle` to restore the derived workspace name. Use `workspace.agents.create(options)` to create an agent without repeating the workspace ID or directory.
+A workspace handle exposes `id`, `projectId`, `directory`, `name`, `status`, `current()`, `refresh()`, `setTitle(title)`, `setLabel(label, assigned)`, `archive()`, and `subscribe()`. Pass `null` to `setTitle` to restore the derived workspace name. `setLabel({ name, color }, true)` assigns a label and `false` removes it; the result carries every label now on the workspace. Names match case-insensitively, and an existing label keeps its catalog color, so `color` only applies to a name the catalog does not have yet. The sidebar's label filter reads the same labels. Use `workspace.agents.create(options)` to create an agent without repeating the workspace ID or directory.
 
 ## `client.terminals`
 
