@@ -740,6 +740,8 @@ export async function createPaseoDaemon(
     (payload) =>
       wsServer?.broadcast({ type: "session", message: { type: "browser.handoff", payload } }),
   );
+  verifyHost.onMirror = (payload) =>
+    wsServer?.broadcast({ type: "session", message: { type: "browser.mirror", payload } });
   let serviceProxyListenTarget: ListenTarget | null = null;
   const scriptHealthMonitor = new ScriptHealthMonitor({
     serviceProxy,

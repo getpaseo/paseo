@@ -1,3 +1,4 @@
+import { getIsElectron } from "@/constants/platform";
 import { isRemoteBrowserClosed, useBrowserStore } from "@/desktop/browser/store";
 import { duplicateRemoteBrowserRecordIds } from "@/desktop/browser/remote-tab-records";
 import { collectAllTabs, useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
@@ -72,7 +73,9 @@ export function syncRemoteBrowserTabs(input: {
         url: tab.url,
         title: tab.title,
       });
-    } else if (record.url !== tab.url || record.title !== tab.title) {
+    } else if (!getIsElectron() && (record.url !== tab.url || record.title !== tab.title)) {
+      // In the desktop app the local tab owns its address; it follows the daemon through
+      // mirror navigations, and a page the user moved on to stays where it is.
       browserStore.updateBrowser(record.browserId, { url: tab.url, title: tab.title });
     }
     const localBrowserId = record?.browserId ?? tab.browserId;

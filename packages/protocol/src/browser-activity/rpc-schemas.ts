@@ -90,3 +90,60 @@ export type BrowserActivityPhase = z.infer<typeof BrowserActivityPhaseSchema>;
 export type BrowserActivityEvent = z.infer<typeof BrowserActivityEventSchema>;
 export type BrowserActivityControlRequest = z.infer<typeof BrowserActivityControlRequestSchema>;
 export type BrowserHandoff = z.infer<typeof BrowserHandoffSchema>;
+
+// A daemon tab's actions, replayed by a desktop app in its own local tab instead of
+// streaming pixels. Targets are CSS selectors from the daemon's snapshot, with role and
+// name as a fallback; a target missing from the local page is skipped.
+export const BrowserMirrorTargetSchema = z.object({
+  selector: z.string(),
+  role: z.string().optional(),
+  name: z.string().optional(),
+});
+
+export const BrowserMirrorActionSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("navigate"), url: z.string() }),
+  z.object({
+    kind: z.literal("click"),
+    target: BrowserMirrorTargetSchema,
+    doubleClick: z.boolean().optional(),
+  }),
+  // A password field's value never leaves the daemon; the viewer only focuses it.
+  z.object({
+    kind: z.literal("fill"),
+    target: BrowserMirrorTargetSchema,
+    value: z.string().optional(),
+  }),
+  z.object({ kind: z.literal("select"), target: BrowserMirrorTargetSchema, value: z.string() }),
+  z.object({
+    kind: z.literal("type"),
+    target: BrowserMirrorTargetSchema.optional(),
+    text: z.string().optional(),
+  }),
+  z.object({
+    kind: z.literal("keypress"),
+    target: BrowserMirrorTargetSchema.optional(),
+    key: z.string(),
+  }),
+  z.object({
+    kind: z.literal("scroll"),
+    target: BrowserMirrorTargetSchema.optional(),
+    deltaX: z.number(),
+    deltaY: z.number(),
+  }),
+]);
+
+export const BrowserMirrorEventSchema = z.object({
+  workspaceId: z.string(),
+  browserId: z.string(),
+  action: BrowserMirrorActionSchema,
+  at: z.number(),
+});
+
+export const BrowserMirrorMessageSchema = z.object({
+  type: z.literal("browser.mirror"),
+  payload: BrowserMirrorEventSchema,
+});
+
+export type BrowserMirrorTarget = z.infer<typeof BrowserMirrorTargetSchema>;
+export type BrowserMirrorAction = z.infer<typeof BrowserMirrorActionSchema>;
+export type BrowserMirrorEvent = z.infer<typeof BrowserMirrorEventSchema>;

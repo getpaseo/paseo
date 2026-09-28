@@ -183,7 +183,7 @@ async function handleBrowserAutomationRequest(params: {
   }
 
   try {
-    const payload = await executeAutomationCommand(request);
+    const payload = withoutMirroredTabs(await executeAutomationCommand(request));
     client.sendBrowserAutomationExecuteResponse({
       type: "browser.automation.execute.response",
       payload: normalizeBridgePayload(request.requestId, payload),
@@ -194,6 +194,25 @@ async function handleBrowserAutomationRequest(params: {
       payload: normalizeThrownBridgeError(request.requestId, error),
     });
   }
+}
+
+/**
+ * A tab that mirrors a daemon tab carries that tab's id. Listing it here too would let
+ * the broker route the agent's commands to this copy instead of the daemon's page.
+ */
+function withoutMirroredTabs<T>(payload: T): T {
+  const result = (
+    payload as { ok?: boolean; result?: { command?: string; tabs?: { browserId: string }[] } }
+  )?.result;
+  if (!result || result.command !== "list_tabs" || !Array.isArray(result.tabs)) return payload;
+  const records = useBrowserStore.getState().browsersById;
+  return {
+    ...payload,
+    result: {
+      ...result,
+      tabs: result.tabs.filter((tab) => !records[tab.browserId]?.remoteBrowserId),
+    },
+  };
 }
 
 function resizeBrowserTabForRequest(params: {

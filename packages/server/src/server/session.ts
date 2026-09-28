@@ -9095,6 +9095,7 @@ function sessionEventCategory(message: SessionOutboundMessage): SessionEventSubs
     case "hub.execution.agent.stream":
     case "browser.activity":
     case "browser.handoff":
+    case "browser.mirror":
       return message.type;
     case "status":
       switch (message.payload.status) {
@@ -9131,6 +9132,7 @@ function legacyWantsEvent(
       return capabilities.has(CLIENT_CAPS.providerSubagents);
     case "browser.activity":
     case "browser.handoff":
+    case "browser.mirror":
       return false;
     default:
       return true;

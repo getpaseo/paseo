@@ -19,6 +19,11 @@ import type {
   BrowserAutomationNetworkLogEntry,
 } from "@getpaseo/protocol/browser-automation/rpc-schemas";
 import type { BrowserImportCookie } from "@getpaseo/protocol/browser-import/rpc-schemas";
+import type {
+  BrowserMirrorAction,
+  BrowserMirrorEvent,
+  BrowserMirrorTarget,
+} from "@getpaseo/protocol/browser-activity/rpc-schemas";
 import { writeFileAtomic } from "../atomic-file.js";
 import type { BrowserHostClient } from "../browser-tools/broker.js";
 import {
@@ -166,6 +171,8 @@ export class DaemonPlaywrightHost {
   private readonly restoredWorkspaces = new Map<string, Promise<void>>();
   private saveTabsTimer: ReturnType<typeof setTimeout> | null = null;
   private closing = false;
+  /** Receives every action on a daemon tab so a desktop app can replay it locally. */
+  public onMirror: ((event: BrowserMirrorEvent) => void) | null = null;
   private executablePath: string | null = null;
   private readonly closeBrowsers = new Map<BrowserContext, () => Promise<void>>();
   private readonly captureQueues = new Map<BrowserContext, Promise<unknown>>();
@@ -471,6 +478,29 @@ export class DaemonPlaywrightHost {
   }
 
   private async runTabCommand(input: {
+    tab: DaemonBrowserTab;
+    command: BrowserAutomationCommand;
+    requestId: string;
+    agentId?: string;
+  }): Promise<BrowserToolsResponsePayload> {
+    const { tab, command } = input;
+    // Sent before acting: the refs expire once the page changes, and a click's navigation
+    // must reach the viewer after the click, not before it.
+    const mirror = this.onMirror ? await mirrorActionFor(tab, command) : null;
+    if (mirror) this.emitMirror(tab, mirror);
+    return this.dispatchTabCommand(input);
+  }
+
+  private emitMirror(tab: DaemonBrowserTab, action: BrowserMirrorAction): void {
+    this.onMirror?.({
+      workspaceId: tab.workspaceId,
+      browserId: tab.browserId,
+      action,
+      at: Date.now(),
+    });
+  }
+
+  private async dispatchTabCommand(input: {
     tab: DaemonBrowserTab;
     command: BrowserAutomationCommand;
     requestId: string;
@@ -1023,8 +1053,16 @@ export class DaemonPlaywrightHost {
     attachTabListeners(tab);
     this.tabs.set(browserId, tab);
     this.saveTab(tab, input.url);
+    let mirroredUrl = "";
     input.page.on("framenavigated", (frame) => {
-      if (frame === input.page.mainFrame()) this.rememberTabUrl(tab, frame.url());
+      if (frame !== input.page.mainFrame()) return;
+      const url = frame.url();
+      this.rememberTabUrl(tab, url);
+      // Link clicks, redirects and history moves all land here, not only navigate.
+      if (url !== mirroredUrl && /^(https?|file):/i.test(url)) {
+        mirroredUrl = url;
+        this.emitMirror(tab, { kind: "navigate", url });
+      }
     });
     input.page.once("close", () => {
       if (this.tabs.get(tab.browserId) === tab) this.tabs.delete(tab.browserId);
@@ -1230,6 +1268,82 @@ async function waitForPaint(page: Page): Promise<void> {
 
 function ok(requestId: string, result: CommandResult): BrowserToolsResponsePayload {
   return { requestId, ok: true, result };
+}
+
+function mirrorTarget(tab: DaemonBrowserTab, ref: string | undefined): BrowserMirrorTarget | null {
+  if (!ref) return null;
+  const index = snapshotRefIndex(ref);
+  const node = index === null ? undefined : tab.snapshot[index];
+  if (!node || node.ref !== ref) return null;
+  return { selector: node.selector, role: node.role, ...(node.name ? { name: node.name } : {}) };
+}
+
+async function isPasswordField(tab: DaemonBrowserTab, target: BrowserMirrorTarget | null) {
+  if (!target) {
+    // Keyboard input without a ref goes to whatever has focus.
+    const focused = await tab.page
+      .evaluate("document.activeElement && document.activeElement.type")
+      .catch(() => null);
+    return String(focused).toLowerCase() === "password";
+  }
+  const type = await tab.page
+    .locator(target.selector)
+    .first()
+    .getAttribute("type", { timeout: 500 })
+    .catch(() => null);
+  return type?.toLowerCase() === "password";
+}
+
+/**
+ * The DOM-level form of a command, for replay in another browser. Coordinate input has no
+ * element to name there, and navigation is reported from the page itself, so both are left out.
+ */
+async function mirrorActionFor(
+  tab: DaemonBrowserTab,
+  command: BrowserAutomationCommand,
+): Promise<BrowserMirrorAction | null> {
+  const args = command.args as Record<string, unknown>;
+  const target = mirrorTarget(tab, typeof args.ref === "string" ? args.ref : undefined);
+  switch (command.command) {
+    case "click":
+    case "fill":
+    case "select":
+      return target ? elementAction(tab, command.command, target, args) : null;
+    case "type":
+    case "keypress":
+    case "scroll":
+      return keyAction(tab, command.command, target, args);
+    default:
+      return null;
+  }
+}
+
+async function elementAction(
+  tab: DaemonBrowserTab,
+  kind: "click" | "fill" | "select",
+  target: BrowserMirrorTarget,
+  args: Record<string, unknown>,
+): Promise<BrowserMirrorAction> {
+  if (kind === "click") return { kind, target, ...(args.doubleClick ? { doubleClick: true } : {}) };
+  if (kind === "select") return { kind, target, value: String(args.value ?? "") };
+  return (await isPasswordField(tab, target))
+    ? { kind, target }
+    : { kind, target, value: String(args.value ?? "") };
+}
+
+async function keyAction(
+  tab: DaemonBrowserTab,
+  kind: "type" | "keypress" | "scroll",
+  target: BrowserMirrorTarget | null,
+  args: Record<string, unknown>,
+): Promise<BrowserMirrorAction> {
+  const at = target ? { target } : {};
+  if (kind === "keypress") return { kind, ...at, key: String(args.key ?? "") };
+  if (kind === "scroll") {
+    return { kind, ...at, deltaX: Number(args.deltaX ?? 0), deltaY: Number(args.deltaY ?? 0) };
+  }
+  const secret = await isPasswordField(tab, target);
+  return { kind, ...at, ...(secret ? {} : { text: String(args.text ?? "") }) };
 }
 
 function invalidateSnapshot(tab: DaemonBrowserTab): void {

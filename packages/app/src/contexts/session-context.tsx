@@ -51,6 +51,8 @@ import { showProviderNoticeToast } from "@/utils/provider-notice-toast";
 import { applyCheckoutStatusUpdateFromEvent } from "@/git/checkout-status-cache";
 import { useProviderSubagentStore } from "@/subagents/provider-store";
 import { useBrowserActivityStore } from "@/desktop/browser/activity";
+import { getIsElectron } from "@/constants/platform";
+import { publishBrowserMirror } from "@/desktop/browser/mirror";
 import { useHostFeature } from "@/runtime/host-features";
 
 // Re-export types from session-store and draft-store for backward compatibility
@@ -764,11 +766,15 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
 
   const supportsBrowserActivity = useHostFeature(serverId, "browserActivity");
   const supportsBrowserHandoff = useHostFeature(serverId, "browserHandoff");
+  // Only the desktop app replays daemon tabs in a local browser; phones keep the stream.
+  const wantsBrowserMirror = useHostFeature(serverId, "browserMirror") && getIsElectron();
   useEffect(() => {
     if (!supportsBrowserActivity) return;
-    const feed = client.observeEvents(
-      supportsBrowserHandoff ? ["browser.activity", "browser.handoff"] : ["browser.activity"],
-    );
+    const feed = client.observeEvents([
+      "browser.activity",
+      ...(supportsBrowserHandoff ? (["browser.handoff"] as const) : []),
+      ...(wantsBrowserMirror ? (["browser.mirror"] as const) : []),
+    ]);
     const unsubscribe = feed.subscribe({
       snapshot: () => useBrowserActivityStore.getState().resetServer(serverId),
       update: (message) => {
@@ -776,6 +782,8 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
           useBrowserActivityStore.getState().apply(serverId, message.payload);
         } else if (message.type === "browser.handoff") {
           useBrowserActivityStore.getState().applyHandoff(serverId, message.payload);
+        } else if (message.type === "browser.mirror") {
+          publishBrowserMirror(serverId, message.payload);
         }
       },
     });
@@ -785,7 +793,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
         .release()
         .catch((error) => console.warn("[Session] Failed to release browser activity", error));
     };
-  }, [client, serverId, supportsBrowserActivity, supportsBrowserHandoff]);
+  }, [client, serverId, supportsBrowserActivity, supportsBrowserHandoff, wantsBrowserMirror]);
 
   const _cancelAgentRun = useCallback(
     (agentId: string) => {

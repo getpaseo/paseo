@@ -9,6 +9,7 @@ import type { BrowserToolsResponsePayload } from "../browser-tools/errors.js";
 import { resolveBrowserExecutable } from "./browser-capability.js";
 import { DaemonPlaywrightHost, type ScreencastFrame } from "./playwright-host.js";
 import type { BrowserAutomationCommand } from "@getpaseo/protocol/browser-automation/rpc-schemas";
+import type { BrowserMirrorEvent } from "@getpaseo/protocol/browser-activity/rpc-schemas";
 import {
   FIXTURE_PASSWORD,
   FIXTURE_USERNAME,
@@ -636,6 +637,85 @@ describe.skipIf(!BROWSER_AVAILABLE)(
     });
   },
 );
+
+describe.skipIf(!BROWSER_AVAILABLE)("DaemonPlaywrightHost mirror", { timeout: 60_000 }, () => {
+  it("reports each action as a DOM-level step and never a password's value", async () => {
+    const paseoHome = mkdtempSync(join(tmpdir(), "paseo-verify-mirror-test-"));
+    const app = await startVerifyFixtureApp();
+    const host = new DaemonPlaywrightHost({ paseoHome, logger: pino({ enabled: false }) });
+    const events: BrowserMirrorEvent[] = [];
+    host.onMirror = (event) => events.push(event);
+    const run = (command: BrowserAutomationCommand) =>
+      host.executeLocal({ workspaceId: WORKSPACE_ID, command });
+    try {
+      const created = await run({ command: "new_tab", args: { url: `${app.url}/login` } });
+      const browserId =
+        created.ok && created.result.command === "new_tab" ? created.result.browserId : "";
+      const snapshotYaml = async () => {
+        const snapshot = await run({ command: "snapshot", args: { browserId } });
+        return snapshot.ok && snapshot.result.command === "snapshot"
+          ? snapshot.result.snapshot
+          : "";
+      };
+      let yaml = await snapshotYaml();
+      await run({
+        command: "fill",
+        args: { browserId, ref: refFor(yaml, "textbox", "Email") ?? "", value: FIXTURE_USERNAME },
+      });
+      yaml = await snapshotYaml();
+      await run({
+        command: "fill",
+        args: {
+          browserId,
+          ref: refFor(yaml, "textbox", "Password") ?? "",
+          value: FIXTURE_PASSWORD,
+        },
+      });
+      yaml = await snapshotYaml();
+      await run({
+        command: "click",
+        args: {
+          browserId,
+          ref: refFor(yaml, "button", "Sign in") ?? "",
+          button: "left",
+          doubleClick: false,
+          modifiers: [],
+        },
+      });
+      await run({
+        command: "wait",
+        args: { browserId, text: "Current Report", timeoutMs: 10_000 },
+      });
+
+      const actions = events
+        .filter((event) => event.browserId === browserId)
+        .map((event) => event.action);
+      expect(actions.map((action) => action.kind)).toEqual([
+        "navigate",
+        "fill",
+        "fill",
+        "click",
+        "navigate",
+      ]);
+      expect(actions[1]).toMatchObject({ kind: "fill", value: FIXTURE_USERNAME });
+      expect(actions[2]).toMatchObject({ kind: "fill" });
+      expect(actions[2]).not.toHaveProperty("value");
+      expect(JSON.stringify(events)).not.toContain(FIXTURE_PASSWORD);
+      expect(actions[3]).toMatchObject({
+        kind: "click",
+        target: { role: "button", name: "Sign in" },
+      });
+      expect(actions[4]).toMatchObject({
+        kind: "navigate",
+        url: expect.stringContaining("/report"),
+      });
+    } finally {
+      await host.close();
+      await app.close();
+      rmSync(paseoHome, { recursive: true, force: true });
+    }
+  });
+});
 
 describe.skipIf(!BROWSER_AVAILABLE)(
   "DaemonPlaywrightHost across a daemon restart",
