@@ -1,4 +1,8 @@
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { z } from "zod";
 import { create } from "zustand";
+import { persist } from "zustand/middleware";
+import { createValidatedPersistStorage } from "@/storage/validated-persist-storage";
 import { useBrowserStore } from "@/desktop/browser/store";
 import type { WorkspaceTabTarget } from "@/workspace-tabs/model";
 
@@ -55,30 +59,56 @@ function entryFor(target: ReopenableTabTarget): ClosedTabEntry {
   };
 }
 
+const ClosedTabEntrySchema = z.object({
+  id: z.string(),
+  target: z.discriminatedUnion("kind", [
+    z.object({ kind: z.literal("agent"), agentId: z.string() }),
+    z.object({ kind: z.literal("terminal"), terminalId: z.string() }),
+    z.object({ kind: z.literal("browser"), browserId: z.string() }),
+  ]),
+  url: z.string().optional(),
+  title: z.string().optional(),
+  closedAt: z.number(),
+});
+const PersistedStateSchema = z.object({
+  byWorkspace: z.record(z.string(), z.array(ClosedTabEntrySchema)),
+});
+
 /** What was closed in each workspace, newest first, so the new-tab page can bring it back. */
-export const useRecentlyClosedTabsStore = create<RecentlyClosedTabsState>()((set) => ({
-  byWorkspace: {},
-  record: (workspaceKey, target) => {
-    if (!isReopenable(target)) return;
-    set((state) => {
-      const sameTab = (entry: ClosedTabEntry) =>
-        JSON.stringify(entry.target) === JSON.stringify(target);
-      const previous = (state.byWorkspace[workspaceKey] ?? []).filter((entry) => !sameTab(entry));
-      return {
-        byWorkspace: {
-          ...state.byWorkspace,
-          [workspaceKey]: [entryFor(target), ...previous].slice(0, MAX_CLOSED_PER_WORKSPACE),
-        },
-      };
-    });
-  },
-  forget: (workspaceKey, entryId) =>
-    set((state) => ({
-      byWorkspace: {
-        ...state.byWorkspace,
-        [workspaceKey]: (state.byWorkspace[workspaceKey] ?? []).filter(
-          (entry) => entry.id !== entryId,
-        ),
+export const useRecentlyClosedTabsStore = create<RecentlyClosedTabsState>()(
+  persist(
+    (set) => ({
+      byWorkspace: {},
+      record: (workspaceKey, target) => {
+        if (!isReopenable(target)) return;
+        set((state) => {
+          const sameTab = (entry: ClosedTabEntry) =>
+            JSON.stringify(entry.target) === JSON.stringify(target);
+          const previous = (state.byWorkspace[workspaceKey] ?? []).filter(
+            (entry) => !sameTab(entry),
+          );
+          return {
+            byWorkspace: {
+              ...state.byWorkspace,
+              [workspaceKey]: [entryFor(target), ...previous].slice(0, MAX_CLOSED_PER_WORKSPACE),
+            },
+          };
+        });
       },
-    })),
-}));
+      forget: (workspaceKey, entryId) =>
+        set((state) => ({
+          byWorkspace: {
+            ...state.byWorkspace,
+            [workspaceKey]: (state.byWorkspace[workspaceKey] ?? []).filter(
+              (entry) => entry.id !== entryId,
+            ),
+          },
+        })),
+    }),
+    {
+      name: "workspace-recently-closed-tabs",
+      storage: createValidatedPersistStorage(AsyncStorage, PersistedStateSchema),
+      partialize: (state) => ({ byWorkspace: state.byWorkspace }),
+    },
+  ),
+);
