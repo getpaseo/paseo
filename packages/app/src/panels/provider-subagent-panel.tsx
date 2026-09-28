@@ -265,6 +265,7 @@ function ProviderSubagentPanel() {
         isAuthoritativeHistoryReady
         onOpenWorkspaceFile={openFileInWorkspace}
         readOnly
+        nativeChronologicalLiveHead
         historyPagination={historyPagination}
         bottomOverlayTailClearance={childTrackClearance.tail}
         bottomOverlayControlClearance={childTrackClearance.controls}

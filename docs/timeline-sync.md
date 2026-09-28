@@ -119,6 +119,9 @@ rejected it; changing steer-event ordering would also put new assistant output b
 Child transcripts use the same projected-page reconciliation as the main conversation. The client
 retains rendered items and sequence cursors, never a second cache of source events. Pagination
 uses the projected display anchor; live updates advance the source cursor without moving tools.
+Before the first page arrives, keep live child rows in the head. Moving them to the tail to fix
+native display order loses newer tool rows when a delayed first page replaces that tail. The
+provider-subagent pane orders its native header instead.
 
 Clients advertising `projected_subagent_timeline` receive child streams and projected fetches.
 Updated clients require `features.projectedSubagentTimeline` for child history; older hosts show

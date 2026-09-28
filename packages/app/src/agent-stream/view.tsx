@@ -287,6 +287,8 @@ export interface AgentStreamViewProps {
   toast?: ToastApi | null;
   onOpenWorkspaceFile?: (request: WorkspaceFileOpenRequest) => void;
   readOnly?: boolean;
+  /** Provider child panes render many rows inside one inverted native header cell. */
+  nativeChronologicalLiveHead?: boolean;
   historyPagination?: {
     hasOlder: boolean;
     isLoadingOlder: boolean;
@@ -341,6 +343,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       toast,
       onOpenWorkspaceFile,
       readOnly = false,
+      nativeChronologicalLiveHead,
       historyPagination,
     },
     ref,
@@ -1113,6 +1116,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
                 segments: renderModel.segments,
                 historyRowRevision,
                 liveHeadRowRevision: expandedToolCallGroupIds,
+                nativeChronologicalLiveHead,
                 boundary,
                 renderers,
                 listEmptyComponent,
@@ -1271,6 +1275,9 @@ function agentStreamViewPropsEqual(
   if (left.toast !== right.toast) reasons.push("toast");
   if (left.onOpenWorkspaceFile !== right.onOpenWorkspaceFile) reasons.push("onOpenWorkspaceFile");
   if (left.readOnly !== right.readOnly) reasons.push("readOnly");
+  if (left.nativeChronologicalLiveHead !== right.nativeChronologicalLiveHead) {
+    reasons.push("nativeChronologicalLiveHead");
+  }
   if (!historyPaginationPropsEqual(left.historyPagination, right.historyPagination)) {
     reasons.push("historyPagination");
   }

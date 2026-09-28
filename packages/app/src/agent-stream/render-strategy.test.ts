@@ -14,6 +14,7 @@ import {
   orderTailForStreamRenderStrategy,
   resolveBottomAnchorTransportBehavior,
 } from "./strategy";
+import { orderNativeLiveHeadRows } from "./strategy-native";
 import { resolveStreamRenderStrategy } from "./strategy-resolver";
 
 function createTimestamp(seed: number): Date {
@@ -155,6 +156,29 @@ describe("stream ordering", () => {
 
     expect(tail.map((item) => item.id)).toEqual(["a2", "a1", "u1"]);
     expect(head.map((item) => item.id)).toEqual(["a2", "a1", "u1"]);
+  });
+
+  it("orders a provider child's native header without changing ordinary agent headers", () => {
+    const strategy = resolveStreamRenderStrategy({
+      platform: "ios",
+      isMobileBreakpoint: true,
+    });
+    const nativeHead = orderHeadForStreamRenderStrategy({
+      strategy,
+      streamHead: streamItems,
+    });
+
+    expect(orderNativeLiveHeadRows(nativeHead, false).map((item) => item.id)).toEqual([
+      "a2",
+      "a1",
+      "u1",
+    ]);
+    expect(orderNativeLiveHeadRows(nativeHead, true).map((item) => item.id)).toEqual([
+      "u1",
+      "a1",
+      "a2",
+    ]);
+    expect(nativeHead.map((item) => item.id)).toEqual(["a2", "a1", "u1"]);
   });
 });
 

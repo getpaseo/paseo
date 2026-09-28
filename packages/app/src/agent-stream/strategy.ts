@@ -74,6 +74,7 @@ export interface StreamRenderInput {
   segments: StreamRenderSegments;
   historyRowRevision?: StreamHistoryRowRevision;
   liveHeadRowRevision?: unknown;
+  nativeChronologicalLiveHead?: boolean;
   boundary: StreamHistoryBoundary;
   renderers: StreamSegmentRenderers;
   listEmptyComponent: ReactNode;

@@ -578,6 +578,109 @@ describe("projected child history", () => {
     expect(text()).toBe("ABC");
     expect(current().needsRefresh).toBe(false);
   });
+  test("preserves Pi child rows newer than a racing first history page", () => {
+    const items = [
+      { type: "user_message", text: "Inspect the repo" },
+      { type: "reasoning", text: "Searching" },
+      {
+        type: "tool_call",
+        callId: "search",
+        name: "grep",
+        status: "running",
+        error: null,
+        detail: { type: "plain_text", label: "Search" },
+      },
+      {
+        type: "tool_call",
+        callId: "search",
+        name: "grep",
+        status: "completed",
+        error: null,
+        detail: { type: "plain_text", label: "Search" },
+      },
+      { type: "reasoning", text: "Reading" },
+      {
+        type: "tool_call",
+        callId: "read",
+        name: "read",
+        status: "completed",
+        error: null,
+        detail: { type: "plain_text", label: "Read" },
+      },
+      { type: "reasoning", text: "Writing summary" },
+    ] as const;
+    const store = useProviderSubagentStore.getState();
+    store.applyUpdate(SERVER_ID, {
+      kind: "upsert",
+      subagent: {
+        id: SUBAGENT_ID,
+        parentAgentId: PARENT_ID,
+        provider: "pi",
+        title: "Scout",
+        description: null,
+        status: "running",
+        createdAt: timestamp,
+        updatedAt: timestamp,
+        toolCallId: null,
+      },
+    });
+    for (const [index, item] of items.entries()) {
+      store.applyUpdate(SERVER_ID, {
+        kind: "timeline",
+        parentAgentId: PARENT_ID,
+        subagentId: SUBAGENT_ID,
+        provider: "pi",
+        epoch: "e",
+        seq: index + 1,
+        timestamp,
+        item,
+      });
+    }
+
+    expect(current().tail).toEqual([]);
+    expect(current().head.map((item) => item.kind)).toEqual([
+      "user_message",
+      "thought",
+      "tool_call",
+      "thought",
+      "tool_call",
+      "thought",
+    ]);
+
+    const snapshot = response("", 1, 1);
+    snapshot.provider = "pi";
+    snapshot.window = { minSeq: 1, maxSeq: items.length, nextSeq: items.length + 1 };
+    snapshot.hasNewer = true;
+    snapshot.rows = [
+      { seq: 1, timestamp, item: { type: "user_message", text: "Inspect the repo" } },
+    ];
+    store.replaceTimeline(SERVER_ID, snapshot);
+    expect([...current().tail, ...current().head].map((item) => item.kind)).toEqual([
+      "user_message",
+      "thought",
+      "tool_call",
+      "thought",
+      "tool_call",
+      "thought",
+    ]);
+
+    store.applyUpdate(SERVER_ID, {
+      kind: "upsert",
+      subagent: {
+        ...useProviderSubagentStore.getState().descriptors.get(key)!,
+        status: "completed",
+      },
+    });
+    expect(current().tail.map((item) => item.kind)).toEqual([
+      "user_message",
+      "thought",
+      "tool_call",
+      "thought",
+      "tool_call",
+      "thought",
+    ]);
+    expect(current().head).toEqual([]);
+  });
   test("recovers a live sequence gap while observed and stops fetching when closed", async () => {
     let calls = 0;
     const client = {

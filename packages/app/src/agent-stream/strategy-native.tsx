@@ -68,12 +68,19 @@ function keyExtractor(item: { id: string }): string {
   return item.id;
 }
 
+export function orderNativeLiveHeadRows<T>(rows: T[], chronological: boolean): T[] {
+  // FlatList counter-inverts its whole header, not each child. Provider child rows can accumulate
+  // there before a first fetch, so display them oldest-first without changing normal agent panes.
+  return chronological ? rows.toReversed() : rows;
+}
+
 function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrategy }) {
   const {
     agentId,
     segments,
     historyRowRevision,
     liveHeadRowRevision,
+    nativeChronologicalLiveHead = false,
     boundary,
     renderers,
     listEmptyComponent,
@@ -517,9 +524,12 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
     // Stable render events read the latest expansion state; this revision makes
     // the memo invoke them again when that state changes.
     void liveHeadRowRevision;
-    const liveHeadRows = segments.liveHead.map((item, index) => (
-      <Fragment key={item.id}>{renderLiveHeadRow(item, index, segments.liveHead)}</Fragment>
-    ));
+    const liveHeadRows = orderNativeLiveHeadRows(
+      segments.liveHead.map((item, index) => (
+        <Fragment key={item.id}>{renderLiveHeadRow(item, index, segments.liveHead)}</Fragment>
+      )),
+      nativeChronologicalLiveHead,
+    );
     const liveAuxiliary = renderLiveAuxiliary();
     if (
       liveHeadRows.length === 0 &&
@@ -539,6 +549,7 @@ function NativeStreamViewport(props: StreamRenderInput & { strategy: StreamStrat
     boundary,
     listEmptyComponent,
     liveHeadRowRevision,
+    nativeChronologicalLiveHead,
     renderLiveAuxiliary,
     renderLiveHeadRow,
     segments.liveHead,
