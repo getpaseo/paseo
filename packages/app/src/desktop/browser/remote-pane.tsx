@@ -27,6 +27,13 @@ import { isNative, isWeb } from "@/constants/platform";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import type { Theme } from "@/styles/theme";
 import { useAppSettings } from "@/hooks/use-settings";
+import { useToast } from "@/contexts/toast-context";
+import { copyToClipboard } from "@/utils/copy-to-clipboard";
+import {
+  parseEvaluatedText,
+  READ_SELECTION_FUNCTION,
+  TAKE_PAGE_COPY_FUNCTION,
+} from "@/desktop/browser/remote-clipboard";
 import { useHostRuntimeClient } from "@/runtime/host-runtime";
 import {
   getBrowserRecord,
@@ -110,6 +117,11 @@ function useExternalBrowserLink(
   return { externalUrl, open };
 }
 
+// A mouse or trackpad drags to select, as in any desktop browser; touch drags scroll.
+const HAS_FINE_POINTER =
+  isWeb && typeof window !== "undefined" && window.matchMedia?.("(pointer: fine)").matches === true;
+const DOUBLE_CLICK_MS = 400;
+
 const REMOTE_SPECIAL_KEYS = new Set([
   "Backspace",
   "Delete",
@@ -146,6 +158,7 @@ function RemoteBrowserPane({
   onFocusPane,
 }: RemoteBrowserPaneProps) {
   const { t } = useTranslation();
+  const toast = useToast();
   const isCompact = useIsCompactFormFactor();
   const toolbarIconSize = paneContentToolbarIconSize(isCompact);
   const client = useHostRuntimeClient(serverId);
@@ -527,17 +540,56 @@ function RemoteBrowserPane({
     [enqueueRemoteOperation, execute, queueFrameRefresh],
   );
 
+  const copySelection = useCallback(
+    (targetBrowserId: string) => {
+      enqueueRemoteOperation(async () => {
+        const selected = parseEvaluatedText(
+          await execute({
+            command: "evaluate",
+            args: { browserId: targetBrowserId, function: READ_SELECTION_FUNCTION },
+          }),
+        );
+        if (!selected) return;
+        await copyToClipboard(selected);
+        toast.copied(t("workspace.browser.copied"));
+      });
+    },
+    [enqueueRemoteOperation, execute, t, toast],
+  );
+
   const handleRemoteInputKeyPress = useCallback(
     (event: NativeSyntheticEvent<TextInputKeyPressEventData>) => {
       const key = event.nativeEvent.key;
       const currentBrowserId = remoteBrowserIdRef.current;
-      if (!currentBrowserId || !REMOTE_SPECIAL_KEYS.has(key)) return;
+      if (!currentBrowserId) return;
+      const native = event.nativeEvent as TextInputKeyPressEventData & {
+        metaKey?: boolean;
+        ctrlKey?: boolean;
+        preventDefault?: () => void;
+      };
+      if (native.metaKey || native.ctrlKey) {
+        const letter = key.toLowerCase();
+        if (letter === "c") {
+          native.preventDefault?.();
+          copySelection(currentBrowserId);
+          return;
+        }
+        if (letter === "a") {
+          native.preventDefault?.();
+          queueInputCommand({
+            command: "keypress",
+            args: { browserId: currentBrowserId, key: "Control+A" },
+          });
+          return;
+        }
+      }
+      if (!REMOTE_SPECIAL_KEYS.has(key)) return;
       queueInputCommand({
         command: "keypress",
         args: { browserId: currentBrowserId, key },
       });
     },
-    [queueInputCommand],
+    [copySelection, queueInputCommand],
   );
 
   const handleNavigate = useCallback(() => {
@@ -574,12 +626,34 @@ function RemoteBrowserPane({
     remoteInputRef.current?.focus();
   }, []);
 
+  const lastClickRef = useRef<{ at: number; point: RemotePoint } | null>(null);
+  const takePageCopy = useCallback(
+    async (targetBrowserId: string) => {
+      const copied = parseEvaluatedText(
+        await execute({
+          command: "evaluate",
+          args: { browserId: targetBrowserId, function: TAKE_PAGE_COPY_FUNCTION },
+        }),
+      );
+      if (copied) {
+        await copyToClipboard(copied);
+        toast.copied(t("workspace.browser.copied"));
+      }
+    },
+    [execute, t, toast],
+  );
   const handleFrameClick = useCallback(
     (point: RemotePoint) => {
       const currentBrowserId = remoteBrowserIdRef.current;
       if (!currentBrowserId) return;
       onFocusPane?.();
       if (isWeb && !isCompact) remoteInputRef.current?.focus();
+      const last = lastClickRef.current;
+      const doubleClick =
+        last !== null &&
+        Date.now() - last.at < DOUBLE_CLICK_MS &&
+        Math.hypot(last.point.x - point.x, last.point.y - point.y) < 6;
+      lastClickRef.current = doubleClick ? null : { at: Date.now(), point };
       enqueueRemoteOperation(async () => {
         await execute({
           command: "click",
@@ -587,14 +661,15 @@ function RemoteBrowserPane({
             browserId: currentBrowserId,
             ...point,
             button: "left",
-            doubleClick: false,
+            doubleClick,
             modifiers: [],
           },
         });
         await refreshFrame();
+        await takePageCopy(currentBrowserId);
       });
     },
-    [enqueueRemoteOperation, execute, isCompact, onFocusPane, refreshFrame],
+    [enqueueRemoteOperation, execute, isCompact, onFocusPane, refreshFrame, takePageCopy],
   );
 
   // A trackpad or mouse wheel never reaches the PanResponder, which only sees
@@ -738,7 +813,7 @@ function RemoteBrowserPane({
               current.longPressTimer = null;
             }
           }
-          if (!current.longPress && current.moved) {
+          if (!current.longPress && current.moved && !HAS_FINE_POINTER) {
             scheduleScroll(
               currentBrowserId,
               point,
@@ -765,7 +840,9 @@ function RemoteBrowserPane({
             handleFrameClick(current.start);
             return;
           }
-          if (current.longPress) {
+          if (current.longPress || HAS_FINE_POINTER) {
+            // Cmd/Ctrl+C after selecting must reach the pane's key handler.
+            if (HAS_FINE_POINTER) remoteInputRef.current?.focus();
             enqueueRemoteOperation(async () => {
               await execute({
                 command: "drag",

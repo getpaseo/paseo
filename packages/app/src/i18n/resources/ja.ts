@@ -572,6 +572,7 @@ export const ja: TranslationResources = {
       },
     },
     browser: {
+      copied: "ブラウザからコピーしました",
       unavailable: {
         title: "ブラウザはデスクトップ専用です",
         subtitle: "組み込みブラウザを使用するには、このワークスペースをElectronで開いてください。",

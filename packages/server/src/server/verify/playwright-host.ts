@@ -48,6 +48,20 @@ const IMPORTED_COOKIES_FILE = "imported-cookies.json";
 const IMPORTED_COOKIES_MARKER = ".paseo-imported-cookies-version";
 // Measured on a 390x750 phone viewport: q70 costs ~11% more bytes than q60 and keeps text legible.
 const SCREENCAST_JPEG_QUALITY = 70;
+// A page's copy button writes to the daemon's clipboard, which the person cannot
+// reach; remembering the text lets the viewer put it on the clipboard of their device.
+const REMEMBER_PAGE_COPIES_SCRIPT = `(() => {
+  const remember = (text) => { window.__paseoCopied = { text: String(text), at: Date.now() }; };
+  const clipboard = navigator.clipboard;
+  if (clipboard && typeof clipboard.writeText === "function") {
+    const writeText = clipboard.writeText.bind(clipboard);
+    clipboard.writeText = (text) => { remember(text); return writeText(text).catch(() => undefined); };
+  }
+  document.addEventListener("copy", () => {
+    const selected = String(window.getSelection() ?? "");
+    if (selected) remember(selected);
+  }, true);
+})();`;
 
 interface ImportedCookieStore {
   version: string;
@@ -964,6 +978,7 @@ export class DaemonPlaywrightHost {
     );
     mkdirSync(userDataDir, { recursive: true, mode: 0o700 });
     const context = await this.launchPersistentContext(userDataDir);
+    await context.addInitScript(REMEMBER_PAGE_COPIES_SCRIPT);
     this.contexts.set(key, context);
     this.contextProfileDirs.set(context, userDataDir);
     // OAuth providers can open a popup; it must remain visible and controllable

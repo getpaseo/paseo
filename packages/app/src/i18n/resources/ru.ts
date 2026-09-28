@@ -571,6 +571,7 @@ export const ru: TranslationResources = {
       },
     },
     browser: {
+      copied: "Скопировано из браузера",
       unavailable: {
         title: "Встроенный браузер доступен только в настольном приложении",
         subtitle:

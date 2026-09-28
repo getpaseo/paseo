@@ -566,6 +566,7 @@ export const ar: TranslationResources = {
       },
     },
     browser: {
+      copied: "تم النسخ من المتصفح",
       unavailable: {
         title: "المتصفح مخصص لسطح المكتب فقط",
         subtitle: "افتح مساحة العمل هذه في Electron لاستخدام المتصفح المدمج.",

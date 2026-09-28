@@ -571,6 +571,7 @@ export const ptBR: TranslationResources = {
       },
     },
     browser: {
+      copied: "Copiado do navegador",
       unavailable: {
         title: "O navegador é exclusivo do desktop",
         subtitle: "Abra este workspace no Electron para usar o navegador integrado.",

@@ -563,6 +563,7 @@ export const en = {
       },
     },
     browser: {
+      copied: "Copied from the browser",
       unavailable: {
         title: "Browser is desktop-only",
         subtitle: "Open this workspace in Electron to use the built-in browser.",

@@ -572,6 +572,7 @@ export const es: TranslationResources = {
       },
     },
     browser: {
+      copied: "Copiado desde el navegador",
       unavailable: {
         title: "El navegador es solo para escritorio",
         subtitle: "Abra este espacio de trabajo en Electron para usar el navegador integrado.",

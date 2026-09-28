@@ -12,6 +12,14 @@ import { getServerId } from "../support/helpers/server-id";
 async function startTestPages(): Promise<{ url: string; server: Server }> {
   const server = createServer((request, response) => {
     response.writeHead(200, { "content-type": "text/html" });
+    if (request.url === "/copy") {
+      response.end(
+        '<title>Copy page</title><p id="text" style="font:32px sans-serif;margin:20px">Paseo copy check</p>' +
+          '<button id="copy" style="font:24px sans-serif;margin:20px" ' +
+          "onclick=\"navigator.clipboard.writeText('from the page button')\">Copy</button>",
+      );
+      return;
+    }
     if (request.url === "/tall") {
       response.end(
         '<title>Tall page</title><div style="height:5000px">top</div>' +
@@ -83,6 +91,50 @@ test("the trackpad scrolls a daemon browser page", async ({ page }) => {
     await frame.hover();
     await page.mouse.wheel(0, 800);
     await expect(browserTab).toContainText("Scrolled", { timeout: 10_000 });
+  } finally {
+    await seeded.cleanup();
+    pages.server.close();
+  }
+});
+
+test("text selected in a daemon browser page copies to this device", async ({ page, context }) => {
+  test.setTimeout(90_000);
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  const pages = await startTestPages();
+  const seeded = await seedWorkspace({ repoPrefix: "remote-browser-copy-" });
+  try {
+    await page.addInitScript((startUrl) => {
+      localStorage.setItem(
+        "workspace-browser-store",
+        JSON.stringify({ state: { browsersById: {}, startUrl }, version: 0 }),
+      );
+    }, `${pages.url}copy`);
+    await page.goto(buildHostWorkspaceRoute(getServerId(), seeded.workspaceId));
+    const panel = await openCommandCenter(page);
+    await panel.getByRole("textbox").fill("New browser");
+    await page.keyboard.press("Enter");
+    const browserTab = page.locator('[data-testid^="workspace-tab-browser_"]').first();
+    await expect(browserTab).toContainText("Copy page", { timeout: 20_000 });
+    const frame = page.locator('[data-testid^="remote-browser-frame-"]').first();
+    const box = await frame.boundingBox();
+    if (!box) throw new Error("no frame");
+
+    // Drag across the paragraph like a mouse user would, then Cmd/Ctrl+C.
+    await page.mouse.move(box.x + 22, box.y + 40);
+    await page.mouse.down();
+    await page.mouse.move(box.x + 330, box.y + 40, { steps: 8 });
+    await page.mouse.up();
+    await page.waitForTimeout(500);
+    await page.keyboard.press("ControlOrMeta+c");
+    await expect
+      .poll(() => page.evaluate(() => navigator.clipboard.readText()), { timeout: 10_000 })
+      .toContain("Paseo copy");
+
+    // A copy button on the page lands on this device's clipboard too.
+    await page.mouse.click(box.x + 60, box.y + 110);
+    await expect
+      .poll(() => page.evaluate(() => navigator.clipboard.readText()), { timeout: 10_000 })
+      .toBe("from the page button");
   } finally {
     await seeded.cleanup();
     pages.server.close();

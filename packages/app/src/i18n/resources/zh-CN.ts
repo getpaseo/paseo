@@ -566,6 +566,7 @@ export const zhCN: TranslationResources = {
       },
     },
     browser: {
+      copied: "已从浏览器复制",
       unavailable: {
         title: "浏览器仅桌面端可用",
         subtitle: "在 Electron 中打开此 workspace 以使用内置浏览器。",
