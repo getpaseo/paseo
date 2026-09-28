@@ -1,12 +1,14 @@
 import { readFile } from "node:fs/promises";
 import { basename, extname, join } from "node:path";
-import type { AgentProvider, AgentStreamEvent } from "../../agent-sdk-types.js";
+import type { AgentProvider, AgentStreamEvent, AgentTimelineItem } from "../../agent-sdk-types.js";
 import { normalizeProviderReplayTimestamp } from "../../provider-history-timestamps.js";
 import { OmpHistoryMapper, type OmpCapturedUserMessageEntry } from "./message-history.js";
 import type { OmpAgentMessage } from "./rpc-types.js";
 import type { OmpRuntimeSession } from "./runtime.js";
 import { OMP_HISTORY_MAPPER_HOOKS } from "./history-hooks.js";
 import { formatOmpSubagentTitle } from "./subagent-title.js";
+import { mapOmpTodoPhases } from "./todo-mapper.js";
+import { OmpTodoPhaseSchema } from "./rpc-types.js";
 
 interface OmpSessionEntry {
   type?: string;
@@ -15,6 +17,24 @@ interface OmpSessionEntry {
   timestamp?: string | number;
   message?: Record<string, unknown>;
   [key: string]: unknown;
+}
+
+export async function readOmpHistoryTodoState(
+  sessionFile: string,
+): Promise<AgentTimelineItem | null> {
+  const entries = await readActiveOmpEntryChain(sessionFile).catch((error: unknown) => {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw error;
+  });
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const message = entries[index]?.message;
+    if (message?.role !== "toolResult" || message.toolName !== "todo") continue;
+    const details = message.details;
+    if (!details || typeof details !== "object") return null;
+    const phases = OmpTodoPhaseSchema.array().safeParse(Reflect.get(details, "phases"));
+    return phases.success ? mapOmpTodoPhases(phases.data) : null;
+  }
+  return null;
 }
 
 function extractOmpSubagentModel(entries: readonly OmpSessionEntry[]): string | null {
