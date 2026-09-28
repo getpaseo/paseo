@@ -84,6 +84,8 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { ProjectLeadingVisual } from "@/components/sidebar/project-leading-visual";
 import { useToast } from "@/contexts/toast-context";
+import { encodeWorkspaceDropTarget, type WorkspaceDropTarget } from "@/workspace-move/drop-target";
+import { moveWorkspaceSessions } from "@/workspace-move/move-sessions";
 import { getForgePresentation, normalizeForge } from "@/git/forge";
 import { toWorktreeArchiveRisk } from "@/git/worktree-archive-warning";
 import { hasVisibleOrderChanged, mergeWithRemainder } from "@/utils/sidebar-reorder";
@@ -1550,6 +1552,47 @@ function WorkspaceRow({
   );
 }
 
+/** RN web renders dataSet as data-* attributes, which the drop search reads from the DOM. */
+function workspaceDropTargetProps(serverId: string, workspaceId: string): object {
+  return { dataSet: { workspaceDropTarget: encodeWorkspaceDropTarget({ serverId, workspaceId }) } };
+}
+
+/** Dropping on a project lands in its first workspace, usually the main checkout. */
+function projectDropTargetProps(project: SidebarProjectEntry): object | null {
+  const first = project.workspaces[0];
+  return first ? workspaceDropTargetProps(first.serverId, first.workspaceId) : null;
+}
+
+/** Dragging a workspace onto another project's workspace moves its sessions there. */
+function useWorkspaceSessionsDrop(
+  project: SidebarProjectEntry,
+  toast: ReturnType<typeof useToast>,
+) {
+  const { t } = useTranslation();
+  return useCallback(
+    (item: SidebarWorkspacePlacement, target: WorkspaceDropTarget) => {
+      if (project.workspaces.some((workspace) => workspace.workspaceId === target.workspaceId)) {
+        return false;
+      }
+      if (target.serverId !== item.serverId) {
+        toast.error(t("sidebar.project.toasts.moveAcrossHosts"));
+        return true;
+      }
+      void moveWorkspaceSessions({
+        serverId: item.serverId,
+        sourceWorkspaceId: item.workspaceId,
+        targetWorkspaceId: target.workspaceId,
+      })
+        .then((result) =>
+          toast.show(t("sidebar.project.toasts.sessionsMoved", { count: result.moved })),
+        )
+        .catch(() => toast.error(t("sidebar.project.toasts.moveSessionsFailed")));
+      return true;
+    },
+    [project.workspaces, t, toast],
+  );
+}
+
 function ProjectBlock({
   project,
   workspaceEntriesByKey,
@@ -1640,23 +1683,25 @@ function ProjectBlock({
       },
     ) => {
       return (
-        <MemoWorkspaceRowItem
-          workspace={item}
-          workspaceEntry={workspaceEntriesByKey.get(item.workspaceKey) ?? null}
-          hostBadge={hostBadgeByServerId.get(item.serverId) ?? null}
-          shortcutNumber={shortcutIndexByWorkspaceKey.get(item.workspaceKey) ?? null}
-          showShortcutBadge={showShortcutBadges}
-          canCopyBranchName={project.projectKind === "git"}
-          canPin={supportsPinningByServerId.get(item.serverId) === true}
-          onToggleWorkspacePin={onToggleWorkspacePin}
-          isCreating={creatingWorkspaceIds.has(item.workspaceId)}
-          selectionEnabled={selectionEnabled}
-          activeWorkspaceSelection={activeWorkspaceSelection}
-          onWorkspacePress={onWorkspacePress}
-          drag={input?.drag}
-          isDragging={input?.isDragging}
-          dragHandleProps={input?.dragHandleProps}
-        />
+        <View {...workspaceDropTargetProps(item.serverId, item.workspaceId)}>
+          <MemoWorkspaceRowItem
+            workspace={item}
+            workspaceEntry={workspaceEntriesByKey.get(item.workspaceKey) ?? null}
+            hostBadge={hostBadgeByServerId.get(item.serverId) ?? null}
+            shortcutNumber={shortcutIndexByWorkspaceKey.get(item.workspaceKey) ?? null}
+            showShortcutBadge={showShortcutBadges}
+            canCopyBranchName={project.projectKind === "git"}
+            canPin={supportsPinningByServerId.get(item.serverId) === true}
+            onToggleWorkspacePin={onToggleWorkspacePin}
+            isCreating={creatingWorkspaceIds.has(item.workspaceId)}
+            selectionEnabled={selectionEnabled}
+            activeWorkspaceSelection={activeWorkspaceSelection}
+            onWorkspacePress={onWorkspacePress}
+            drag={input?.drag}
+            isDragging={input?.isDragging}
+            dragHandleProps={input?.dragHandleProps}
+          />
+        </View>
       );
     },
     [
@@ -1698,6 +1743,7 @@ function ProjectBlock({
   );
 
   const toast = useToast();
+  const handleDropOnWorkspace = useWorkspaceSessionsDrop(project, toast);
   const { t } = useTranslation();
   const [isRemovingProject, setIsRemovingProject] = useState(false);
 
@@ -1768,6 +1814,8 @@ function ProjectBlock({
             keyExtractor={workspaceKeyExtractor}
             renderItem={renderWorkspace}
             onDragEnd={handleWorkspaceDragEnd}
+            dropListId={project.viewKey}
+            onDropOnWorkspace={handleDropOnWorkspace}
             extraData={activeWorkspaceSelectionKey(activeWorkspaceSelection)}
             scrollEnabled={false}
             useDragHandle
@@ -1802,6 +1850,7 @@ function ProjectBlock({
       role="group"
       accessibilityLabel={displayName}
       style={projectChildren ? styles.projectBlockExpanded : undefined}
+      {...projectDropTargetProps(project)}
     >
       <ProjectHeaderRow
         project={project}

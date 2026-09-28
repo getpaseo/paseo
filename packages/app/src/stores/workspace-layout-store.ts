@@ -1,3 +1,4 @@
+import { useRecentlyClosedTabsStore } from "@/stores/recently-closed-tabs-store";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useEffect, useState } from "react";
 import { create } from "zustand";
@@ -890,6 +891,11 @@ export function createWorkspaceLayoutStore(
             const closingTab = collectAllTabs(layout.root).find(
               (tab) => tab.tabId === normalizedTabId,
             );
+            if (closingTab) {
+              useRecentlyClosedTabsStore
+                .getState()
+                .record(normalizedWorkspaceKey, closingTab.target);
+            }
             if (closingPane?.tabIds.length === 1 && closingTab?.target.kind === "new_tab") {
               const nextLayout =
                 closingPane.id === explorerSidebarPaneId

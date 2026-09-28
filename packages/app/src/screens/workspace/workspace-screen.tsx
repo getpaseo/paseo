@@ -2554,7 +2554,9 @@ function WorkspaceScreenContent({
         });
         return;
       }
-      const { browserId } = createWorkspaceBrowser();
+      const { browserId } = createWorkspaceBrowser(
+        selection.url ? { initialUrl: selection.url } : undefined,
+      );
       openTarget({ kind: "browser", browserId });
     },
     [createTerminal, createWorkspaceTab, persistenceKey, replaceWorkspaceTabTarget],
@@ -4014,8 +4016,10 @@ function WorkspaceScreenContent({
       showBrowser: showCreateBrowserTab,
       terminalDisabled: createTerminalDisabled,
       launch: launchWorkspaceTab,
+      workspaceKey: persistenceKey,
     }),
     [
+      persistenceKey,
       createTerminalDisabled,
       hasPullRequest,
       isGitCheckout,

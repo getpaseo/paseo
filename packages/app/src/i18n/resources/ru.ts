@@ -724,6 +724,7 @@ export const ru: TranslationResources = {
         files: "Файлы",
         pullRequest: "PR",
         terminalProfilesMenu: "Профили терминала",
+        recentlyClosed: "Недавно закрытые",
         editTerminalProfiles: "Изменить профили",
       },
       explorerSidebar: {
@@ -1321,6 +1322,9 @@ export const ru: TranslationResources = {
       toasts: {
         hostDisconnected: "Хост не подключён",
         removeFailed: "Не удалось удалить некоторые рабочие пространства.",
+        sessionsMoved: "Перемещено сессий: {{count}}",
+        moveSessionsFailed: "Не удалось переместить сессии",
+        moveAcrossHosts: "Сессии перемещаются только между рабочими пространствами одного хоста",
         updateHostToRemove: "Обновите хост, чтобы удалять проекты.",
       },
       empty: {

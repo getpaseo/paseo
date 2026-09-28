@@ -724,6 +724,7 @@ export const es: TranslationResources = {
         files: "Archivos",
         pullRequest: "Solicitud de extracción",
         terminalProfilesMenu: "Terminal profiles",
+        recentlyClosed: "Cerradas recientemente",
         editTerminalProfiles: "Edit profiles",
       },
       explorerSidebar: {
@@ -1337,6 +1338,9 @@ export const es: TranslationResources = {
       toasts: {
         hostDisconnected: "Hostno está conectado",
         removeFailed: "No se pudieron eliminar algunos espacios de trabajo",
+        sessionsMoved: "Se movieron {{count}} sesiones",
+        moveSessionsFailed: "No se pudieron mover las sesiones",
+        moveAcrossHosts: "Las sesiones solo se mueven entre espacios de trabajo del mismo host",
         updateHostToRemove: "Actualiza el host para eliminar proyectos.",
       },
       empty: {

@@ -34,6 +34,9 @@ import Animated, {
   type SharedValue,
 } from "react-native-reanimated";
 import { useTranslation } from "react-i18next";
+import { useToast } from "@/contexts/toast-context";
+import { dragEndPoint, findWorkspaceDropTarget } from "@/workspace-move/drop-target";
+import { moveSessionToWorkspace } from "@/workspace-move/move-sessions";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { ResizeHandle } from "@/components/resize-handle";
 import {
@@ -624,12 +627,53 @@ export function SplitContainer({
     [dropPreview, onMoveTabToPane, onSplitPane],
   );
 
+  const toast = useToast();
+  const { t } = useTranslation();
+  // A session tab dropped on another workspace in the sidebar moves there.
+  const moveTabToSidebarWorkspace = useCallback(
+    (event: DragEndEvent, tabId: string): boolean => {
+      const tab = uiTabs.find((candidate) => candidate.tabId === tabId);
+      if (tab?.target.kind !== "agent") return false;
+      const target = findWorkspaceDropTarget({
+        point: dragEndPoint(event.activatorEvent, event.delta),
+        ownListId: null,
+        draggedNode: null,
+      });
+      if (!target || target.workspaceId === normalizedWorkspaceId) return false;
+      if (target.serverId !== normalizedServerId) {
+        toast.error(t("sidebar.project.toasts.moveAcrossHosts"));
+        return true;
+      }
+      const agentId = tab.target.agentId;
+      void moveSessionToWorkspace({
+        serverId: normalizedServerId,
+        agentId,
+        targetWorkspaceId: target.workspaceId,
+      })
+        .then(() => {
+          useWorkspaceLayoutStore.getState().closeTab(workspaceKey, tabId);
+          return toast.show(t("sidebar.project.toasts.sessionsMoved", { count: 1 }));
+        })
+        .catch(() => toast.error(t("sidebar.project.toasts.moveSessionsFailed")));
+      return true;
+    },
+    [normalizedServerId, normalizedWorkspaceId, t, toast, uiTabs, workspaceKey],
+  );
+
   const handleDragEnd = useCallback(
     (event: DragEndEvent) => {
       const activeData = asWorkspaceTabDragData(event.active.data.current);
       const overData = asDragOverData(event.over?.data.current);
 
       setActiveDragTabId(null);
+      if (
+        activeData?.kind === "workspace-tab" &&
+        moveTabToSidebarWorkspace(event, activeData.tabId)
+      ) {
+        setDropPreview(null);
+        setTabDropPreview(null);
+        return;
+      }
 
       if (activeData?.kind === "workspace-tab" && event.over) {
         if (overData?.kind === "workspace-tab") {
@@ -642,7 +686,7 @@ export function SplitContainer({
       setDropPreview(null);
       setTabDropPreview(null);
     },
-    [applyTabDropEnd, applyPaneDropEnd],
+    [applyTabDropEnd, applyPaneDropEnd, moveTabToSidebarWorkspace],
   );
 
   return (

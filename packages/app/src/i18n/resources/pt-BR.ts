@@ -722,6 +722,7 @@ export const ptBR: TranslationResources = {
         files: "Arquivos",
         pullRequest: "Pull request",
         terminalProfilesMenu: "Perfis de terminal",
+        recentlyClosed: "Fechadas recentemente",
         editTerminalProfiles: "Editar perfis",
       },
       explorerSidebar: {
@@ -1327,6 +1328,9 @@ export const ptBR: TranslationResources = {
       toasts: {
         hostDisconnected: "Host não está conectado",
         removeFailed: "Falha ao remover alguns workspaces",
+        sessionsMoved: "{{count}} sessões movidas",
+        moveSessionsFailed: "Não foi possível mover as sessões",
+        moveAcrossHosts: "Sessões só podem ser movidas entre workspaces do mesmo host",
         updateHostToRemove: "Atualize o host para remover projetos.",
       },
       empty: {

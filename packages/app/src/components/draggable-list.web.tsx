@@ -6,6 +6,7 @@ import {
   KeyboardSensor,
   MouseSensor,
   TouchSensor,
+  type DragEndEvent,
   type Modifier,
   useSensor,
   useSensors,
@@ -19,6 +20,7 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import type { DraggableListProps, DraggableRenderItemInfo } from "./draggable-list.types";
 import { getDragActivationConstraints, useDragReorderState } from "./drag-reorder";
+import { dragEndPoint, findWorkspaceDropTarget } from "@/workspace-move/drop-target";
 
 export type { DraggableListProps, DraggableRenderItemInfo };
 
@@ -172,8 +174,8 @@ function SortableItemInner<T>({
   };
 
   const wrapperProps = useDragHandle
-    ? { ref: setNodeRef }
-    : { ref: setNodeRef, ...attributes, ...listeners };
+    ? { ref: setNodeRef, "data-sortable-id": id }
+    : { ref: setNodeRef, "data-sortable-id": id, ...attributes, ...listeners };
 
   return (
     <div {...wrapperProps} style={style}>
@@ -203,6 +205,8 @@ export function DraggableList<T>({
   // simultaneousGestureRef is native-only, ignored on web
   onDragBegin,
   nestable: _nestable = false,
+  dropListId,
+  onDropOnWorkspace,
 }: DraggableListProps<T>) {
   const { activeId, items, handlers } = useDragReorderState({
     data,
@@ -210,6 +214,27 @@ export function DraggableList<T>({
     onDragEnd,
     onDragBegin,
   });
+  const handleDragEnd = useCallback(
+    (event: DragEndEvent) => {
+      if (onDropOnWorkspace) {
+        const activeKey = String(event.active.id);
+        const target = findWorkspaceDropTarget({
+          point: dragEndPoint(event.activatorEvent, event.delta),
+          ownListId: dropListId ?? null,
+          draggedNode: document.querySelector(
+            `[data-sortable-id="${window.CSS.escape(activeKey)}"]`,
+          ),
+        });
+        const item = items.find((candidate, index) => keyExtractor(candidate, index) === activeKey);
+        if (target && item !== undefined && onDropOnWorkspace(item, target)) {
+          handlers.onDragCancel();
+          return;
+        }
+      }
+      handlers.onDragEnd(event);
+    },
+    [dropListId, handlers, items, keyExtractor, onDropOnWorkspace],
+  );
   const activationConstraints = getDragActivationConstraints(useDragHandle, DRAG_ACTIVATION_CONFIG);
 
   const sensors = useSensors(
@@ -237,8 +262,10 @@ export function DraggableList<T>({
     [scrollEnabled, containerStyle],
   );
 
+  // RN web renders dataSet as data-* attributes; the drop search reads them from the DOM.
+  const listMarker = dropListId ? { dataSet: { dragList: dropListId } } : null;
   return (
-    <View style={wrapperStyle}>
+    <View style={wrapperStyle} {...(listMarker as object)}>
       {scrollEnabled ? (
         <ScrollView
           testID={testID}
@@ -254,7 +281,7 @@ export function DraggableList<T>({
             modifiers={DND_MODIFIERS}
             onDragStart={handlers.onDragStart}
             onDragCancel={handlers.onDragCancel}
-            onDragEnd={handlers.onDragEnd}
+            onDragEnd={handleDragEnd}
           >
             <SortableContext items={ids} strategy={verticalListSortingStrategy}>
               {items.map((item, index) => {
@@ -285,7 +312,7 @@ export function DraggableList<T>({
             modifiers={DND_MODIFIERS}
             onDragStart={handlers.onDragStart}
             onDragCancel={handlers.onDragCancel}
-            onDragEnd={handlers.onDragEnd}
+            onDragEnd={handleDragEnd}
           >
             <SortableContext items={ids} strategy={verticalListSortingStrategy}>
               {items.map((item, index) => {

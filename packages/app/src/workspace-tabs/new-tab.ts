@@ -6,7 +6,7 @@ export type NewTabSelection =
   | { kind: "target"; target: WorkspaceTab["target"] }
   | { kind: "agent" }
   | { kind: "terminal"; profile?: TerminalProfile }
-  | { kind: "browser" };
+  | { kind: "browser"; url?: string };
 
 export function createNewWorkspaceTab(): WorkspaceTab {
   return {

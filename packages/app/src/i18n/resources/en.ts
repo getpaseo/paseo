@@ -714,6 +714,7 @@ export const en = {
         files: "Files",
         pullRequest: "Pull request",
         terminalProfilesMenu: "Terminal profiles",
+        recentlyClosed: "Recently closed",
         editTerminalProfiles: "Edit profiles",
       },
       explorerSidebar: {
@@ -1309,6 +1310,9 @@ export const en = {
       toasts: {
         hostDisconnected: "Host is not connected",
         removeFailed: "Failed to remove some workspaces",
+        sessionsMoved: "Moved {{count}} sessions",
+        moveSessionsFailed: "Could not move the sessions",
+        moveAcrossHosts: "Sessions only move between workspaces on the same host",
         updateHostToRemove: "Update the host to remove projects.",
       },
       empty: {

@@ -717,6 +717,7 @@ export const zhCN: TranslationResources = {
         files: "文件",
         pullRequest: "拉取请求",
         terminalProfilesMenu: "Terminal profiles",
+        recentlyClosed: "最近关闭",
         editTerminalProfiles: "Edit profiles",
       },
       explorerSidebar: {
@@ -1290,6 +1291,9 @@ export const zhCN: TranslationResources = {
       toasts: {
         hostDisconnected: "Host 未连接",
         removeFailed: "部分 workspace 移除失败",
+        sessionsMoved: "已移动 {{count}} 个会话",
+        moveSessionsFailed: "无法移动会话",
+        moveAcrossHosts: "会话只能在同一主机的 workspace 之间移动",
         updateHostToRemove: "更新 host 以移除 projects。",
       },
       empty: {

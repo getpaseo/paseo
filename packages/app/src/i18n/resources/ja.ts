@@ -724,6 +724,7 @@ export const ja: TranslationResources = {
         files: "ファイル",
         pullRequest: "プルリクエスト",
         terminalProfilesMenu: "ターミナルプロファイル",
+        recentlyClosed: "最近閉じたタブ",
         editTerminalProfiles: "プロファイルを編集",
       },
       explorerSidebar: {
@@ -1318,6 +1319,9 @@ export const ja: TranslationResources = {
       toasts: {
         hostDisconnected: "ホストが接続されていません",
         removeFailed: "一部のワークスペースの削除に失敗しました",
+        sessionsMoved: "{{count}} 件のセッションを移動しました",
+        moveSessionsFailed: "セッションを移動できませんでした",
+        moveAcrossHosts: "セッションは同じホストのワークスペース間でのみ移動できます",
         updateHostToRemove: "プロジェクトを削除するにはホストを更新してください。",
       },
       empty: {

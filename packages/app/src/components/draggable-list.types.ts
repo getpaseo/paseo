@@ -1,3 +1,4 @@
+import type { WorkspaceDropTarget } from "@/workspace-move/drop-target";
 import type { ReactElement, MutableRefObject } from "react";
 import type { StyleProp, ViewStyle } from "react-native";
 import type { GestureType } from "react-native-gesture-handler";
@@ -53,6 +54,13 @@ export interface DraggableListProps<T> {
   gestureHostPresented?: boolean;
   /** Gesture ref(s) that the list should wait for before handling scroll */
   waitFor?: MutableRefObject<GestureType | undefined> | MutableRefObject<GestureType | undefined>[];
+  /** Web-only: names this list's container, so drops inside it stay reorders. */
+  dropListId?: string;
+  /**
+   * Web-only: a drag that ends over a workspace outside this list. Return true when it was
+   * handled; the list then keeps its order.
+   */
+  onDropOnWorkspace?: (item: T, target: WorkspaceDropTarget) => boolean;
   /** Called when a drag gesture begins (before items are reordered) */
   onDragBegin?: () => void;
   /** Called immediately before invoking row `drag()` to lock outer owners. */

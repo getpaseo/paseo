@@ -30,6 +30,13 @@ import {
   resolveTerminalProfiles,
 } from "@getpaseo/protocol/terminal-profiles";
 import { getBuiltInLaunchOrder, type BuiltInLaunchItemId } from "./internal/catalog";
+import type { TFunction } from "i18next";
+import {
+  useRecentlyClosedTabsStore,
+  type ClosedTabEntry,
+  type ReopenableTabTarget,
+} from "@/stores/recently-closed-tabs-store";
+import { useSessionStore } from "@/stores/session-store";
 
 export type WorkspaceTabLaunchPurpose = "primary" | "supporting";
 
@@ -43,6 +50,8 @@ export interface NewTabLauncher {
   showBrowser: boolean;
   terminalDisabled: boolean;
   launch: (selection: NewTabSelection, destination: WorkspaceTabLaunchDestination) => void;
+  /** Scopes the recently closed tabs to this workspace. */
+  workspaceKey?: string | null;
 }
 
 export interface WorkspaceTabLaunchItem {
@@ -59,13 +68,41 @@ export interface WorkspaceTabLaunchItem {
 }
 
 export interface WorkspaceTabLaunchGroup {
-  id: "tabs" | "plugin-panels" | "terminal-profiles";
+  id: "tabs" | "plugin-panels" | "terminal-profiles" | "recently-closed";
   label: string | null;
   items: readonly WorkspaceTabLaunchItem[];
   accessory?: { id: string; label: string; run: () => void };
 }
 
 const NewTabLauncherContext = createContext<NewTabLauncher | null>(null);
+
+const CLOSED_TAB_ICONS: Record<ReopenableTabTarget["kind"], ComponentType<PanelIconProps>> = {
+  agent: SquarePen,
+  terminal: SquareTerminal,
+  browser: Globe,
+};
+
+function closedTabLabel(
+  entry: ClosedTabEntry,
+  t: TFunction,
+  agents: ReadonlyMap<string, { title?: string | null }> | undefined,
+): string {
+  const target = entry.target;
+  if (target.kind === "agent") {
+    return agents?.get(target.agentId)?.title?.trim() || t("workspace.tabs.fallback.agent");
+  }
+  if (target.kind === "browser")
+    return entry.title || entry.url || t("workspace.tabs.fallback.browser");
+  return t("workspace.tabs.fallback.terminal");
+}
+
+/** A closed agent reopens as itself; a browser tab at its last page; a terminal fresh. */
+function reopenSelection(entry: ClosedTabEntry): NewTabSelection {
+  if (entry.target.kind === "agent") return { kind: "target", target: entry.target };
+  if (entry.target.kind === "browser")
+    return { kind: "browser", ...(entry.url ? { url: entry.url } : {}) };
+  return { kind: "terminal" };
+}
 
 export function NewTabLauncherProvider({
   value,
@@ -113,6 +150,24 @@ export function useWorkspaceTabLaunchCatalog(input: {
       launcher.launch(selection, destination);
     },
     [launcher],
+  );
+  const closedByWorkspace = useRecentlyClosedTabsStore((state) => state.byWorkspace);
+  const forgetClosed = useRecentlyClosedTabsStore((state) => state.forget);
+  const agents = useSessionStore((state) => state.sessions[serverId]?.agents);
+  // Only what was closed here. Closing archives a session and reopening brings it back,
+  // like History does; a session that has since moved to another workspace drops out.
+  const recentlyClosed = useMemo(
+    () =>
+      (launcher.workspaceKey ? (closedByWorkspace[launcher.workspaceKey] ?? []) : []).filter(
+        (entry) => {
+          if (entry.target.kind !== "agent") return true;
+          const agent = agents?.get(entry.target.agentId);
+          return (
+            !agent?.workspaceId || launcher.workspaceKey?.endsWith(`:${agent.workspaceId}`) === true
+          );
+        },
+      ),
+    [agents, closedByWorkspace, launcher.workspaceKey],
   );
   const editTerminalProfiles = useCallback(() => {
     router.push(buildSettingsHostSectionRoute(serverId, "terminals") as Href);
@@ -260,8 +315,29 @@ export function useWorkspaceTabLaunchCatalog(input: {
         },
       });
     }
+    if (recentlyClosed.length > 0) {
+      groups.push({
+        id: "recently-closed",
+        label: t("workspace.tabs.actions.recentlyClosed"),
+        items: recentlyClosed.map((entry) => ({
+          id: `recently-closed:${entry.id}`,
+          label: closedTabLabel(entry, t, agents),
+          Icon: CLOSED_TAB_ICONS[entry.target.kind],
+          disabled: entry.target.kind === "terminal" && launcher.terminalDisabled,
+          panelKind: entry.target.kind,
+          toggleTarget: null,
+          launch: (destination: WorkspaceTabLaunchDestination) => {
+            if (launcher.workspaceKey) forgetClosed(launcher.workspaceKey, entry.id);
+            launcher.launch(reopenSelection(entry), destination);
+          },
+        })),
+      });
+    }
     return groups;
   }, [
+    agents,
+    recentlyClosed,
+    forgetClosed,
     config?.terminalProfiles,
     editTerminalProfiles,
     launchSelection,

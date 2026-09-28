@@ -717,6 +717,7 @@ export const ar: TranslationResources = {
         files: "الملفات",
         pullRequest: "طلب السحب",
         terminalProfilesMenu: "Terminal profiles",
+        recentlyClosed: "أُغلقت مؤخرًا",
         editTerminalProfiles: "Edit profiles",
       },
       explorerSidebar: {
@@ -1300,6 +1301,9 @@ export const ar: TranslationResources = {
       toasts: {
         hostDisconnected: "Host غير متصل",
         removeFailed: "فشل في إزالة بعض مساحات العمل",
+        sessionsMoved: "تم نقل {{count}} جلسات",
+        moveSessionsFailed: "تعذر نقل الجلسات",
+        moveAcrossHosts: "تنتقل الجلسات فقط بين مساحات العمل على نفس المضيف",
         updateHostToRemove: "قم بتحديث Host لإزالة المشاريع.",
       },
       empty: {
