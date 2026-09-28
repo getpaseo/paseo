@@ -14,6 +14,7 @@ import {
   providersSnapshotQueryRoot,
   fetchProvidersSnapshot,
   refreshAndApplyProvidersSnapshot,
+  ensureProvidersSnapshotEntries,
 } from "@/data/providers-snapshot";
 
 export {
@@ -21,6 +22,7 @@ export {
   providersSnapshotQueryRoot,
   fetchProvidersSnapshot,
   refreshAndApplyProvidersSnapshot,
+  ensureProvidersSnapshotEntries,
 };
 
 export type ProvidersSnapshotClient = Pick<
