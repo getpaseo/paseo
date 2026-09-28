@@ -12,11 +12,7 @@ interface ResolvedBalance {
   usedPct: number | null;
 }
 
-function resolveBalance(
-  balance: UsageBalance,
-  t: TFunction,
-  locale?: string,
-): ResolvedBalance {
+function resolveBalance(balance: UsageBalance, t: TFunction, locale?: string): ResolvedBalance {
   const { used, remaining, limit, unit } = balance;
   const format = (value: number) => formatAmount(value, unit, locale);
   if (limit != null && limit > 0) {

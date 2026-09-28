@@ -3,6 +3,7 @@ import Svg, { Circle } from "react-native-svg";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { ContextWindowUsageTooltip } from "@/usage/context-window-section";
 import { formatContextPercentage, formatTokenCount } from "./context-window-meter.utils";
 
 interface ContextWindowMeterProps {
@@ -10,6 +11,8 @@ interface ContextWindowMeterProps {
   usedTokens: number | null;
   totalCostUsd?: number | null;
   showPercentage?: boolean;
+  serverId?: string;
+  agentId?: string;
   /** Reserve the meter footprint and show a loading ring while usage is pending. */
   pending?: boolean;
   /** Optional glyph envelope for icon-toolbar alignment. */
@@ -95,6 +98,8 @@ export function ContextWindowMeter({
   usedTokens,
   totalCostUsd,
   showPercentage = false,
+  serverId,
+  agentId,
   pending = false,
   glyphSize,
 }: ContextWindowMeterProps) {
@@ -104,13 +109,9 @@ export function ContextWindowMeter({
     maxTokens !== null && usedTokens !== null ? getUsagePercentage(maxTokens, usedTokens) : null;
   const geometry = getMeterGeometry(showPercentage, glyphSize);
 
-  // No usage yet: reserve the footprint with a track-only ring while a session is
-  // active so the real ring fades in without shifting siblings. Render nothing when
-  // no usage is expected.
+  // No context telemetry yet: reserve the meter footprint while it is pending.
   if (percentage === null || maxTokens === null || usedTokens === null) {
-    if (!pending) {
-      return null;
-    }
+    if (!pending) return null;
     return (
       <View style={geometry.containerStyle}>
         <Svg
@@ -205,6 +206,9 @@ export function ContextWindowMeter({
             <Text style={styles.tooltipDetail}>
               {t("contextWindow.sessionCost", { cost: formattedSessionCost })}
             </Text>
+          ) : null}
+          {serverId && agentId ? (
+            <ContextWindowUsageTooltip serverId={serverId} agentId={agentId} />
           ) : null}
         </View>
       </TooltipContent>
