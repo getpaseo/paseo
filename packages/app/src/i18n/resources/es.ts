@@ -1568,6 +1568,8 @@ export const es: TranslationResources = {
     noFiles: "No se encontraron archivos ni directorios",
     noCommands: "No se encontraron comandos",
     failedToLoad: "No se pudo cargar",
+    chooseProjectForCommands: "Elige un proyecto para ver los comandos",
+    chooseModelForCommands: "Selecciona un modelo para ver los comandos",
   },
   loadOlderHistory: {
     failed: "No se pudo cargar el historial anterior",
