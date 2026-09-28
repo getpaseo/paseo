@@ -1674,6 +1674,10 @@ export const it: TranslationResources = {
     },
   },
   pairing: {
+    hostPassword: {
+      title: "Password per {{host}}",
+      label: "Password dell'host",
+    },
     connectionMethods: {
       title: "Aggiungi connessione",
       direct: {
@@ -2014,9 +2018,12 @@ export const it: TranslationResources = {
     groupInfo: "Informazioni su {{title}}",
     sections: {
       general: "Generali",
+      chat: "Chat",
       appearance: "Aspetto",
-      layout: "Disposizione",
+      sidebar: "Barra laterale",
       editor: "Editor",
+      terminal: "Terminale",
+      browser: "Browser",
       shortcuts: "Scorciatoie",
       integrations: "Integrazioni",
       notifications: "Notifiche",
@@ -2034,32 +2041,35 @@ export const it: TranslationResources = {
         },
         sources: {
           explorerFiles: {
-            label: "Selezione di un file in Esplora",
+            label: "Clic su un file nella barra laterale Esplora",
             description:
               "Apri i file selezionati nella barra laterale Esplora accanto al tuo lavoro",
           },
           diffs: {
-            label: "Apertura delle differenze",
+            label: "Clic su una modifica nella barra laterale Esplora o in una chat",
             description:
               "Apri le differenze da Esplora e dalle conversazioni degli agenti accanto al tuo lavoro",
           },
           chatFiles: {
-            label: "Apertura di un file dalla chat di un agente",
+            label: "Clic su un file nella chat di un agente",
             description:
               "Apri i link ai file e i file delle chiamate agli strumenti accanto alla conversazione",
           },
           diffFiles: {
-            label: "Apertura di un file da Modifiche",
+            label: "Clic su un file in un confronto",
             description:
               "Apri i file sorgente selezionati da un confronto accanto al confronto stesso",
           },
           subagents: {
-            label: "Apertura di un sottoagente",
+            label: "Clic su un sottoagente nella chat di un agente",
             description: "Apri i sottoagenti accanto all'agente principale",
           },
           pullRequests: {
-            label: "Apertura di una pull request da Modifiche",
+            label: "Clic su una pull request nella barra laterale Esplora",
             description: "Apri i dettagli della pull request accanto a Modifiche",
+          },
+          serviceUrls: {
+            label: "Clic sull'URL di servizio di uno script",
           },
         },
       },
@@ -2175,6 +2185,7 @@ export const it: TranslationResources = {
     },
     general: {
       title: "Generali",
+      sending: "Invio",
       browserData: {
         title: "Dati del browser",
         siteData: "Cookie e dati dei siti",
@@ -2204,8 +2215,6 @@ export const it: TranslationResources = {
         },
       },
       serviceUrls: {
-        label: "URL dei servizi",
-        description: "Dove aprire gli URL degli script in esecuzione",
         options: {
           ask: "Chiedi",
           inApp: "In Paseo",
@@ -2225,7 +2234,6 @@ export const it: TranslationResources = {
       toolCallDetail: {
         label: "Visualizzazione delle chiamate agli strumenti",
         description: "Come appaiono le chiamate agli strumenti nella cronologia",
-        accessibilityLabel: "Seleziona visualizzazione delle chiamate agli strumenti ({{value}})",
         options: {
           overview: "Sintesi",
           detailed: "Dettagli completi",
@@ -2467,6 +2475,9 @@ export const it: TranslationResources = {
       },
     },
     host: {
+      password: {
+        guidance: "Rimuovi questo host e aggiungilo di nuovo con la password richiesta dal daemon.",
+      },
       appearance: {
         title: "Aspetto",
         name: {
