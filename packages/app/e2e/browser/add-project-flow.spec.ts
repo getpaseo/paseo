@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { mkdtemp, rm, stat } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, mkdtemp, rm, stat } from "node:fs/promises";
+import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import { test, expect } from "../support/fixtures";
 import {
@@ -28,6 +28,7 @@ import {
 import { expectOpenedProject } from "../support/helpers/project-picker-ui";
 import { connectSeedClient } from "../support/helpers/seed-client";
 import { getServerId } from "../support/helpers/server-id";
+import { openMobileAgentSidebar } from "../support/helpers/sidebar";
 
 const SECONDARY_HOST_ID = "add-project-flow-secondary";
 const SECONDARY_HOST_LABEL = "Secondary Host";
@@ -65,6 +66,67 @@ async function expectProjectHasNoWorkspaces(projectId: string): Promise<void> {
 
 test.describe("Add Project command-center flow", () => {
   test.describe.configure({ timeout: 180_000 });
+
+  test("filters cached directories and searches only after a persistent empty result", async ({
+    page,
+  }, testInfo) => {
+    test.setTimeout(60_000);
+    const root = await mkdtemp(path.join(homedir(), "paseo-e2e-local-search-"));
+    const recentPath = path.join(root, "recent-project");
+    const discoveryPath = path.join(root, "discovery-target");
+    await mkdir(recentPath);
+    await mkdir(discoveryPath);
+    const client = await connectSeedClient();
+    const project = await client.addProject(recentPath);
+    if (!project.project) throw new Error(project.error ?? "Could not seed recent project");
+    const requests: string[] = [];
+    const recordRequest = ({ payload }: { payload: string | Buffer }) => {
+      if (typeof payload !== "string") return;
+      const frame: { message?: { type?: string; query?: string } } = JSON.parse(payload);
+      if (frame.message?.type === "directory_suggestions_request")
+        requests.push(frame.message.query ?? "");
+    };
+    page.on("websocket", (socket) => socket.on("framesent", recordRequest));
+    try {
+      await page.setViewportSize({ width: 390, height: 844 });
+      await gotoAppShell(page);
+      await page.clock.install();
+      await openMobileAgentSidebar(page);
+      await openAddProjectFlow(page);
+      await chooseAddProjectMethod(page, "directory-search");
+      await expect(addProjectFlow(page)).toContainText("recent-project");
+      await page.clock.runFor(600);
+      expect(requests).toEqual([]);
+
+      await addProjectFlowInput(page).fill("recent");
+      await page.clock.runFor(600);
+      await expect(addProjectFlow(page)).toContainText("recent-project");
+      expect(requests).toEqual([]);
+
+      const search = `${root}/discovery`;
+      await addProjectFlowInput(page).fill(search);
+      await page.clock.runFor(200);
+      expect(requests).toEqual([]);
+      await addProjectFlowInput(page).fill("recent");
+      await page.clock.runFor(600);
+      expect(requests).toEqual([]);
+
+      await addProjectFlowInput(page).fill(search);
+      await page.clock.runFor(450);
+      await expect(addProjectFlow(page)).toContainText("discovery-target");
+      expect(requests).toEqual([search]);
+
+      await addProjectFlowInput(page).fill("target");
+      await page.clock.runFor(600);
+      await expect(addProjectFlow(page)).toContainText("discovery-target");
+      expect(requests).toEqual([search]);
+      await page.screenshot({ path: testInfo.outputPath("cached-directory-search.png") });
+    } finally {
+      await client.removeProject(project.project.projectId);
+      await client.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 
   test("method selection shows the daemon's available project sources without search", async ({
     page,

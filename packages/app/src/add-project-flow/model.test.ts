@@ -1,4 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { QueryClient } from "@tanstack/react-query";
+import { createQueryDataStore } from "@/data/query-data-store";
+import { planDirectorySearch, type DirectorySearchResult } from "./directory-search";
 import {
   backAddProjectPage,
   chooseAddProjectHost,
@@ -204,5 +207,68 @@ describe("Add Project options", () => {
         disabled: false,
       },
     ]);
+  });
+});
+
+describe("local directory search", () => {
+  it("shows recent paths without searching and filters cached results before a remote fallback", () => {
+    const recommendedPaths = ["/repo/recent", "/repo/older"];
+    const cachedResults = [{ query: "app", paths: ["/src/app-mobile", "/src/app-web"] }];
+    expect(planDirectorySearch({ query: "", recommendedPaths, cachedResults })).toEqual({
+      paths: [...recommendedPaths, "/src/app-mobile", "/src/app-web"],
+      queryToFetch: null,
+    });
+    expect(planDirectorySearch({ query: "mobile", recommendedPaths, cachedResults })).toEqual({
+      paths: ["/src/app-mobile"],
+      queryToFetch: null,
+    });
+    expect(planDirectorySearch({ query: "missing", recommendedPaths, cachedResults })).toEqual({
+      paths: [],
+      queryToFetch: "missing",
+    });
+    expect(
+      planDirectorySearch({
+        query: "missing",
+        recommendedPaths,
+        cachedResults: [...cachedResults, { query: "missing", paths: [] }],
+      }),
+    ).toEqual({ paths: [], queryToFetch: null });
+  });
+
+  it("limits visible suggestions without losing the rest of the local search index", () => {
+    const recommendedPaths = Array.from(
+      { length: 100 },
+      (_, index) => `/projects/project-${index}`,
+    );
+    const cachedResults = [{ query: "~/src", paths: ["/Users/me/src/mobile"] }];
+    expect(planDirectorySearch({ query: "", recommendedPaths, cachedResults }).paths).toHaveLength(
+      30,
+    );
+    expect(planDirectorySearch({ query: "project-99", recommendedPaths, cachedResults })).toEqual({
+      paths: ["/projects/project-99"],
+      queryToFetch: null,
+    });
+    expect(planDirectorySearch({ query: "~/src", recommendedPaths: [], cachedResults })).toEqual({
+      paths: ["/Users/me/src/mobile"],
+      queryToFetch: null,
+    });
+  });
+
+  it("keeps hosts isolated and drops invalidated searches from local filtering", async () => {
+    const client = new QueryClient();
+    const root = ["add-project-flow-directories", "host-a"];
+    const store = createQueryDataStore<DirectorySearchResult>(client, root);
+    client.setQueryData([...root, "one"], { query: "one", paths: ["/one"] });
+    client.setQueryData(["add-project-flow-directories", "host-b", "private"], {
+      query: "private",
+      paths: ["/other-host/private"],
+    });
+    expect(store.getSnapshot()).toEqual([{ query: "one", paths: ["/one"] }]);
+    const before = store.getSnapshot();
+    client.setQueryData(["unrelated"], "new");
+    expect(store.getSnapshot()).toBe(before);
+    await client.invalidateQueries({ queryKey: root });
+    expect(store.getSnapshot()).toEqual([]);
+    client.clear();
   });
 });
