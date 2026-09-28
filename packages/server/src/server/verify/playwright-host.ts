@@ -173,6 +173,7 @@ export class DaemonPlaywrightHost {
   private closing = false;
   /** Receives every action on a daemon tab so a desktop app can replay it locally. */
   public onMirror: ((event: BrowserMirrorEvent) => void) | null = null;
+  private readonly mirrorQueues = new Map<string, Promise<void>>();
   private executablePath: string | null = null;
   private readonly closeBrowsers = new Map<BrowserContext, () => Promise<void>>();
   private readonly captureQueues = new Map<BrowserContext, Promise<unknown>>();
@@ -506,7 +507,24 @@ export class DaemonPlaywrightHost {
    * so agents see what the person did, and passed on to the other apps. A target this page
    * lacks is skipped, like on the apps.
    */
-  public async applyMirrorAction(input: {
+  public applyMirrorAction(input: {
+    workspaceId: string;
+    browserId: string;
+    action: BrowserMirrorAction;
+    origin: string;
+  }): Promise<void> {
+    // One tab's steps run in the order they were made: Enter must not overtake the typing.
+    const previous = this.mirrorQueues.get(input.browserId) ?? Promise.resolve();
+    const next = previous.catch(() => undefined).then(() => this.applyMirrorActionNow(input));
+    this.mirrorQueues.set(input.browserId, next);
+    void next.finally(() => {
+      if (this.mirrorQueues.get(input.browserId) === next)
+        this.mirrorQueues.delete(input.browserId);
+    });
+    return next;
+  }
+
+  private async applyMirrorActionNow(input: {
     workspaceId: string;
     browserId: string;
     action: BrowserMirrorAction;

@@ -741,8 +741,9 @@ describe.skipIf(!BROWSER_AVAILABLE)(
             action,
             origin: "mac-app",
           });
-        await apply({ kind: "fill", target: { selector: "#email" }, value: FIXTURE_USERNAME });
-        await apply({ kind: "fill", target: { selector: "#password" }, value: FIXTURE_PASSWORD });
+        // Sent back to back, as an app does: the click must still come after both fills.
+        void apply({ kind: "fill", target: { selector: "#email" }, value: FIXTURE_USERNAME });
+        void apply({ kind: "fill", target: { selector: "#password" }, value: FIXTURE_PASSWORD });
         await apply({
           kind: "click",
           target: { selector: "#gone", role: "button", name: "Sign in" },
