@@ -469,33 +469,67 @@ A pill is a per-agent button in the composer track bar next to Tasks and Subagen
 
 ```tsx
 export function contributeClient(client: PluginClientContext) {
-  const pills = new Map<string, () => void>();
-  const unsubscribe = client.paseo.agents.subscribe((update) => {
-    if (update.kind !== "upsert" || !update.agent.workspaceId) return;
-    const { id: agentId, workspaceId } = update.agent;
-    pills.get(agentId)?.();
+  const pills = new Map<string, PluginButtonRegistration>();
+  const lifetime = new AbortController();
+  const register = (agent: { id: string; workspaceId?: string | null }) => {
+    if (lifetime.signal.aborted || !agent.workspaceId) return;
+    const workspaceId = agent.workspaceId;
+    const agentId = agent.id;
+    pills.get(agentId)?.remove();
     pills.set(
       agentId,
       client.addComposerPill({
         id: "review",
-        title: "Open review",
         workspaceId,
         agentId,
-        Component: ReviewPill,
-        async onPress() {
-          client.openPanel("review", { workspaceId, agentId });
+        button: {
+          title: "Open review",
+          icon: "Scan",
+          label: "Review",
+          behavior: {
+            kind: "action",
+            onPress() {
+              client.openPanel("review", { workspaceId, agentId });
+            },
+          },
         },
       }),
     );
-  });
+  };
+  const clear = () => {
+    for (const pill of pills.values()) pill.remove();
+    pills.clear();
+  };
+  void client.paseo.agents
+    .list({ subscribe: {}, signal: lifetime.signal })
+    .then(({ subscription }) => {
+      subscription.subscribe({
+        snapshot: ({ entries }) => {
+          clear();
+          for (const { agent } of entries) register(agent);
+        },
+        update: (message) => {
+          if (message.type !== "agent_update") return;
+          const update = message.payload;
+          if (update.kind === "remove") {
+            pills.get(update.agentId)?.remove();
+            pills.delete(update.agentId);
+          } else register(update.agent);
+        },
+      });
+      return undefined;
+    })
+    .catch((error) => {
+      if (!lifetime.signal.aborted) console.error("Agent observation failed", error);
+    });
   return () => {
-    unsubscribe();
-    for (const remove of pills.values()) remove();
+    lifetime.abort();
+    clear();
   };
 }
 ```
 
-Call `contributeClient(client)` from `index.client.tsx`, or move its body into that entry. The component owns its icon and text; Paseo owns the pressable, chrome, pending state, error reporting, and placement. Removal functions are idempotent, and Paseo removes every pill when the plugin, client entrypoint, or host connection is torn down.
+Call `contributeClient(client)` from `index.client.tsx`, or move its body into that entry. The button descriptor owns its icon and label; Paseo owns the pressable, chrome, pending state, error reporting, and placement. `remove()` is idempotent, and Paseo removes every pill when the plugin, client entrypoint, or host connection is torn down.
 
 ## Transform and render timeline items
 
