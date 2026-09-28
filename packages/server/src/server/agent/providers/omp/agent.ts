@@ -34,6 +34,8 @@ import {
   type ListImportableSessionsOptions,
   type ProviderCatalog,
   type ProviderRefreshContext,
+  type SteerActiveTurnOptions,
+  type SteerResult,
   type ToolCallDetail,
 } from "../../agent-sdk-types.js";
 import type { PaseoToolCatalog } from "../../tools/types.js";
@@ -137,6 +139,7 @@ export interface OmpAgentClientOptions {
   providerIdleScheduler?: OmpProviderIdleScheduler;
   noTurnScheduler?: OmpNoTurnScheduler;
   usagePollScheduler?: OmpUsagePollScheduler;
+  providerIdleDeadlineMs?: number;
 }
 
 export interface OmpProviderIdleScheduler {
@@ -152,6 +155,7 @@ export interface OmpNoTurnScheduler {
 // v0.2.0-beta.1; remove after January 20, 2027 once the minimum OMP version
 // guarantees prompt_result waits for queued extension work.
 const OMP_NO_TURN_SETTLE_MS = 5_000;
+const OMP_PROVIDER_IDLE_DEADLINE_MS = 600_000;
 
 interface OmpPromptPayload {
   text: string;
@@ -185,6 +189,7 @@ interface OmpAgentSessionOptions {
   providerIdleScheduler?: OmpProviderIdleScheduler;
   noTurnScheduler?: OmpNoTurnScheduler;
   usagePollScheduler?: OmpUsagePollScheduler;
+  providerIdleDeadlineMs?: number;
   paseoTools?: PaseoToolCatalog;
   /**
    * When false (resumed sessions), replayed session events are dropped until
@@ -573,7 +578,7 @@ export class OmpAgentSession implements AgentSession {
   private readonly pendingExtensionUiRequests = new Map<string, AgentPermissionRequest>();
   private readonly questionUi = new OmpQuestionUi();
   private activeTurnId: string | null = null;
-  private activeClientMessageId: string | null = null;
+  private readonly pendingClientMessages: Array<{ clientMessageId: string | null }> = [];
   private activeAssistantMessageId: string | null = null;
   private activeTurnTerminalAssistantMessage: OmpAgentMessage | null = null;
   private activeTurnStarted = false;
@@ -595,6 +600,7 @@ export class OmpAgentSession implements AgentSession {
   private state: OmpSessionState;
   private readonly currentModeId: string | null;
   private readonly providerIdleScheduler: OmpProviderIdleScheduler;
+  private readonly providerIdleDeadlineMs: number;
   private readonly noTurnScheduler: OmpNoTurnScheduler;
   private readonly usagePoller: OmpUsagePoller;
   private closed = false;
@@ -611,6 +617,7 @@ export class OmpAgentSession implements AgentSession {
     this.paseoTools = options.paseoTools;
     this.live = options.live ?? true;
     this.providerIdleScheduler = options.providerIdleScheduler ?? createOmpProviderIdleScheduler();
+    this.providerIdleDeadlineMs = options.providerIdleDeadlineMs ?? OMP_PROVIDER_IDLE_DEADLINE_MS;
     this.noTurnScheduler = options.noTurnScheduler ?? createOmpNoTurnScheduler();
     this.usagePoller = new OmpUsagePoller({
       scheduler: options.usagePollScheduler,
@@ -683,7 +690,7 @@ export class OmpAgentSession implements AgentSession {
     const turnId = randomUUID();
     this.live = true;
     this.activeTurnId = turnId;
-    this.activeClientMessageId = options?.clientMessageId ?? null;
+    this.rememberClientMessage(options?.clientMessageId ?? null);
     this.activeAssistantMessageId = null;
     this.activeTurnTerminalAssistantMessage = null;
     this.activeTurnStarted = false;
@@ -718,7 +725,6 @@ export class OmpAgentSession implements AgentSession {
         }
         this.usagePoller.stopTurn();
         this.activeTurnId = null;
-        this.activeClientMessageId = null;
         this.activeTurnStarted = false;
         this.activeTurnHasUserMessage = false;
         this.activeAssistantMessageId = null;
@@ -743,6 +749,54 @@ export class OmpAgentSession implements AgentSession {
     })();
 
     return { turnId };
+  }
+
+  async steerActiveTurn(
+    prompt: AgentPromptInput,
+    options: SteerActiveTurnOptions,
+  ): Promise<SteerResult> {
+    if (this.closed || this.activeTurnId !== options.expectedTurnId)
+      return { status: "unavailable" };
+    const payload = convertPromptInput(prompt, { model: this.state.model });
+    if (this.parseSlashCommandInput(payload.text)) return { status: "unavailable" };
+    const submission = this.rememberClientMessage(options.clientMessageId ?? null);
+    try {
+      await this.runtimeSession.steer(payload.text, payload.images);
+    } catch (error) {
+      this.forgetClientMessage(submission);
+      const message = toDiagnosticErrorMessage(error);
+      if (/timed out|session is closed/i.test(message)) throw error;
+      return { status: "unavailable" };
+    }
+    if (this.closed || this.activeTurnId !== options.expectedTurnId)
+      return { status: "unavailable" };
+    if (options.clearPendingPermissions) {
+      for (const requestId of this.pendingExtensionUiRequests.keys()) {
+        await this.respondToPermission(requestId, {
+          behavior: "deny",
+          message: "The user sent a message instead of approving.",
+        });
+      }
+    }
+    return { status: "accepted" };
+  }
+
+  private rememberClientMessage(clientMessageId: string | null): {
+    clientMessageId: string | null;
+  } {
+    const submission = { clientMessageId };
+    this.pendingClientMessages.push(submission);
+    if (this.pendingClientMessages.length > 16) this.pendingClientMessages.shift();
+    return submission;
+  }
+
+  private forgetClientMessage(submission: { clientMessageId: string | null }): void {
+    const index = this.pendingClientMessages.indexOf(submission);
+    if (index >= 0) this.pendingClientMessages.splice(index, 1);
+  }
+
+  private takeClientMessageId(): string | null | undefined {
+    return this.pendingClientMessages.shift()?.clientMessageId;
   }
 
   subscribe(callback: (event: AgentStreamEvent) => void): () => void {
@@ -848,7 +902,6 @@ export class OmpAgentSession implements AgentSession {
       this.terminalizeActiveWork();
       this.usagePoller.stopTurn();
       this.activeTurnId = null;
-      this.activeClientMessageId = null;
       this.activeTurnStarted = false;
       this.activeTurnHasUserMessage = false;
       this.activeAssistantMessageId = null;
@@ -1062,6 +1115,7 @@ export class OmpAgentSession implements AgentSession {
     const outputs = this.pendingNoTurnOutputs.filter((output) => output.turnId === turnId);
     this.clearNoTurnBuffers();
     if (promptText) {
+      const clientMessageId = this.takeClientMessageId();
       this.emit({
         type: "timeline",
         provider: this.provider,
@@ -1069,7 +1123,7 @@ export class OmpAgentSession implements AgentSession {
         item: {
           type: "user_message",
           text: promptText,
-          ...(this.activeClientMessageId ? { clientMessageId: this.activeClientMessageId } : {}),
+          ...(clientMessageId ? { clientMessageId } : {}),
         },
       });
     }
@@ -1469,7 +1523,6 @@ export class OmpAgentSession implements AgentSession {
     }
     const turnId = this.activeTurnId;
     this.activeTurnId = null;
-    this.activeClientMessageId = null;
     this.activeTurnStarted = false;
     this.activeTurnHasUserMessage = false;
     this.activeTurnTerminalAssistantMessage = null;
@@ -1728,7 +1781,6 @@ export class OmpAgentSession implements AgentSession {
     }
     const nativeMessage = event.message as OmpAgentMessage & { id?: unknown; entryId?: unknown };
     const messageId = readNativeMessageId(nativeMessage);
-    const clientMessageId = this.activeClientMessageId;
     const emitUserMessage = (resolvedMessageId?: string): void => {
       if (resolvedMessageId) {
         // OMP re-emits user message_end frames for entries it has already
@@ -1739,6 +1791,7 @@ export class OmpAgentSession implements AgentSession {
         }
         this.emittedUserMessageIds.add(resolvedMessageId);
       }
+      const clientMessageId = this.takeClientMessageId();
       this.emit({
         type: "timeline",
         provider: this.provider,
@@ -1812,7 +1865,6 @@ export class OmpAgentSession implements AgentSession {
 
   private completeTurn(turnId: string | undefined, messages: OmpAgentMessage[]): void {
     this.activeTurnId = null;
-    this.activeClientMessageId = null;
     this.activeAssistantMessageId = null;
     this.activeTurnTerminalAssistantMessage = null;
     this.activeTurnStarted = false;
@@ -1855,7 +1907,21 @@ export class OmpAgentSession implements AgentSession {
     turnId: string | undefined,
     messages: OmpAgentMessage[],
   ): Promise<void> {
+    const deadline = Date.now() + this.providerIdleDeadlineMs;
     while (!this.closed && this.activeTurnStarted && this.currentTurnIdForEvent() === turnId) {
+      if (Date.now() >= deadline) {
+        this.usagePoller.stopTurn();
+        this.activeTurnId = null;
+        this.activeTurnStarted = false;
+        this.clearNoTurnBuffers();
+        this.emit({
+          type: "turn_failed",
+          provider: this.provider,
+          turnId,
+          error: "OMP provider idle deadline exceeded",
+        });
+        return;
+      }
       try {
         const state = await this.runtimeSession.getState();
         this.state = state;
@@ -1895,6 +1961,7 @@ export class OmpAgentClient implements AgentClient {
   private readonly providerIdleScheduler?: OmpProviderIdleScheduler;
   private readonly noTurnScheduler?: OmpNoTurnScheduler;
   private readonly usagePollScheduler?: OmpUsagePollScheduler;
+  private readonly providerIdleDeadlineMs?: number;
   private readonly runtime: OmpRuntime;
 
   constructor(options: OmpAgentClientOptions) {
@@ -1918,6 +1985,7 @@ export class OmpAgentClient implements AgentClient {
     this.providerIdleScheduler = options.providerIdleScheduler;
     this.noTurnScheduler = options.noTurnScheduler;
     this.usagePollScheduler = options.usagePollScheduler;
+    this.providerIdleDeadlineMs = options.providerIdleDeadlineMs;
     this.runtime =
       options.runtime ?? createRuntime(options.logger, runtimeSettings, this.providerParams);
   }
@@ -1960,6 +2028,7 @@ export class OmpAgentClient implements AgentClient {
         providerIdleScheduler: this.providerIdleScheduler,
         noTurnScheduler: this.noTurnScheduler,
         usagePollScheduler: this.usagePollScheduler,
+        providerIdleDeadlineMs: this.providerIdleDeadlineMs,
         paseoTools: launchContext?.paseoTools,
       });
     } catch (error) {
@@ -2002,6 +2071,7 @@ export class OmpAgentClient implements AgentClient {
         providerIdleScheduler: this.providerIdleScheduler,
         noTurnScheduler: this.noTurnScheduler,
         usagePollScheduler: this.usagePollScheduler,
+        providerIdleDeadlineMs: this.providerIdleDeadlineMs,
         paseoTools: launchContext?.paseoTools,
         live: false,
       });

@@ -121,6 +121,22 @@ function withoutRequestId(command: Record<string, unknown>): Record<string, unkn
 }
 
 describe("OMP CLI runtime", () => {
+  test("steer waits for OMP's response and surfaces rejection", async () => {
+    const child = createOmpChild();
+    let pending: Record<string, unknown> | null = null;
+    onOmpCommand(child, (command) => {
+      if (command.type === "steer") pending = command;
+    });
+    const session = await createRuntime(child).startSession({ cwd: "/workspace/project" });
+    const result = session.steer("change direction");
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(pending).toMatchObject({ type: "steer", message: "change direction" });
+    child.stdout.write(
+      `${JSON.stringify({ id: pending!.id, type: "response", command: "steer", success: false, error: "rejected" })}\n`,
+    );
+    await expect(result).rejects.toThrow("rejected");
+    await session.close();
+  });
   test("uses the configured RPC timeout and attributes the pending phase", async () => {
     vi.useFakeTimers();
     const child = createOmpChild();

@@ -71,6 +71,7 @@ export class OmpHarness {
       providerIdleScheduler?: OmpProviderIdleScheduler;
       noTurnScheduler?: OmpNoTurnScheduler;
       usagePollScheduler?: OmpUsagePollScheduler;
+      providerIdleDeadlineMs?: number;
     } = {},
   ) {
     this.client = new OmpAgentClient({
@@ -79,6 +80,7 @@ export class OmpHarness {
       providerIdleScheduler: options.providerIdleScheduler,
       noTurnScheduler: options.noTurnScheduler,
       usagePollScheduler: options.usagePollScheduler,
+      providerIdleDeadlineMs: options.providerIdleDeadlineMs,
     });
   }
 

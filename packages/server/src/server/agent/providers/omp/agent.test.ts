@@ -386,6 +386,53 @@ describe("OMP agent client and session", () => {
     await expect(completion).resolves.toMatchObject({ finalText: "first done" });
   });
 
+  test("fails a turn when the provider idle gate passes its deadline", async () => {
+    const scheduler = new ManualIdleScheduler();
+    const omp = new OmpHarness({ providerIdleScheduler: scheduler, providerIdleDeadlineMs: 1 });
+    await omp.start();
+    const { completion } = await omp.startPromptUntilProviderIdle("first", "first done", {
+      isStreaming: true,
+      isCompacting: false,
+    });
+    await scheduler.waitForWaits(1);
+    await new Promise((resolve) => setTimeout(resolve, 2));
+    scheduler.retry();
+    await expect(completion).rejects.toThrow(/provider idle/i);
+  });
+
+  test("steers a running turn and correlates a template-expanded echo exactly once", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    const session = omp.requireSession();
+    const { turnId } = await session.startTurn("first", { clientMessageId: "client-first" });
+    const runtime = omp.runtime();
+    runtime.beginTurn();
+    runtime.acceptPrompt("first", "native-first");
+    await expect(
+      session.steerActiveTurn?.("expand template", {
+        expectedTurnId: turnId,
+        clientMessageId: "client-steer",
+      }),
+    ).resolves.toEqual({ status: "accepted" });
+    runtime.acceptPrompt("expanded prompt", "native-steer");
+    runtime.acceptPrompt("expanded prompt", "native-steer");
+    expect(omp.timeline().filter((item) => item.type === "user_message")).toEqual([
+      expect.objectContaining({ messageId: "native-first", clientMessageId: "client-first" }),
+      expect.objectContaining({ messageId: "native-steer", clientMessageId: "client-steer" }),
+    ]);
+  });
+
+  test("reports a rejected steer as unavailable", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    const session = omp.requireSession();
+    const { turnId } = await session.startTurn("first");
+    omp.runtime().steerError = new Error("extension command cannot be steered");
+    await expect(
+      session.steerActiveTurn?.("extension input", { expectedTurnId: turnId }),
+    ).resolves.toEqual({ status: "unavailable" });
+  });
+
   test("does not complete on OMP's extension-notice agent_end", async () => {
     const omp = new OmpHarness();
     await omp.start();

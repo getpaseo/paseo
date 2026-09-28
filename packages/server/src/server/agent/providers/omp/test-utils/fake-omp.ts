@@ -106,6 +106,7 @@ export class FakeOmpSession implements OmpRuntimeSession {
   readonly setThinkingLevelRequests: OmpThinkingLevel[] = [];
   readonly handoffRequests: Array<{ customInstructions?: string }> = [];
   readonly steerRequests: Array<{ message: string; imageCount: number }> = [];
+  steerError: Error | null = null;
   readonly followUpRequests: Array<{ message: string; imageCount: number }> = [];
   readonly hostToolSetRequests: OmpRpcHostToolDefinition[][] = [];
   readonly hostToolResults: OmpRpcHostToolResult[] = [];
@@ -350,8 +351,12 @@ export class FakeOmpSession implements OmpRuntimeSession {
     return this.branchMessages;
   }
 
-  steer(message: string, images?: Array<{ type: "image"; data: string; mimeType: string }>): void {
+  async steer(
+    message: string,
+    images?: Array<{ type: "image"; data: string; mimeType: string }>,
+  ): Promise<void> {
     this.steerRequests.push({ message, imageCount: images?.length ?? 0 });
+    if (this.steerError) throw this.steerError;
   }
 
   followUp(

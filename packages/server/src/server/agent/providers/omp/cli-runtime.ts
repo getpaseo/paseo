@@ -262,8 +262,11 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
     return data.messages ?? [];
   }
 
-  steer(message: string, images?: Array<{ type: "image"; data: string; mimeType: string }>): void {
-    this.process.send({ type: "steer", message, ...(images?.length ? { images } : {}) });
+  async steer(
+    message: string,
+    images?: Array<{ type: "image"; data: string; mimeType: string }>,
+  ): Promise<void> {
+    await this.request({ type: "steer", message, ...(images?.length ? { images } : {}) });
   }
 
   followUp(
