@@ -105,6 +105,7 @@ import {
   setOmpHostTools,
 } from "./host-tools.js";
 import { OmpSubagentIndex } from "./subagent-index.js";
+import { OmpAskUi } from "./ask-ui.js";
 import { mapOmpToolDetail } from "./tool-call-mapper.js";
 import { OmpUsagePoller, type OmpUsagePollScheduler } from "./usage-poller.js";
 import {
@@ -885,6 +886,7 @@ export class OmpAgentSession implements AgentSession {
   private readonly pendingExtensionUiRequests = new Map<string, AgentPermissionRequest>();
   private activeAskUserDialog: ActiveAskUserDialog | null = null;
   private pendingCombinedAskUserResponse: PendingCombinedAskUserResponse | null = null;
+  private readonly askUi = new OmpAskUi();
   private activeTurnId: string | null = null;
   private activeClientMessageId: string | null = null;
   private activeAssistantMessageId: string | null = null;
@@ -1123,7 +1125,13 @@ export class OmpAgentSession implements AgentSession {
     }
     this.pendingExtensionUiRequests.delete(requestId);
 
-    if (isCombinedAskUserPermission(request)) {
+    if (
+      this.askUi.respond(request, response, (id, uiResponse) =>
+        this.runtimeSession.respondToExtensionUiRequest(id, uiResponse),
+      )
+    ) {
+      // The ask adapter consumes the follow-up select/editor RPC requests.
+    } else if (isCombinedAskUserPermission(request)) {
       const combined = buildCombinedAskUserSelectionResponse(request, response);
       this.pendingCombinedAskUserResponse = combined.pendingResponse;
       this.runtimeSession.respondToExtensionUiRequest(requestId, combined.uiResponse);
@@ -1572,6 +1580,13 @@ export class OmpAgentSession implements AgentSession {
     if (this.respondToCombinedAskUserFollowUp(event)) {
       return;
     }
+    if (
+      this.askUi.consume(event, (id, response) =>
+        this.runtimeSession.respondToExtensionUiRequest(id, response),
+      )
+    ) {
+      return;
+    }
 
     const shouldCombineOptionalComment =
       event.method === "select" &&
@@ -1579,6 +1594,7 @@ export class OmpAgentSession implements AgentSession {
       this.activeAskUserDialog.allowMultiple === false;
     const request =
       mapOmpRpcUiPermissionRequest(event, { provider: this.provider }) ??
+      this.askUi.map(event, this.provider) ??
       mapExtensionUiRequestToPermission(event, {
         provider: this.provider,
         label: "OMP",
@@ -1874,6 +1890,7 @@ export class OmpAgentSession implements AgentSession {
         const toolCall = parseToolArgs(event.toolName, event.args);
         this.activeToolCalls.set(event.toolCallId, toolCall);
         this.activeAskUserDialog = readActiveAskUserDialog(event.toolName, event.args);
+        this.askUi.start(event.toolName, event.args);
         this.emitToolCallEvent(event.toolCallId, toolCall, "running", null, null);
         return;
       }
@@ -1947,6 +1964,7 @@ export class OmpAgentSession implements AgentSession {
       this.activeAskUserDialog = null;
       this.pendingCombinedAskUserResponse = null;
     }
+    this.askUi.finish(event.toolName);
 
     const result = parseToolResult(event.result);
     const error = event.isError ? event.result : null;
