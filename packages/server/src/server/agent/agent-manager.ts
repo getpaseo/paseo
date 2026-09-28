@@ -4310,6 +4310,13 @@ export class AgentManager {
         return undefined;
       case "model_changed":
         agent.runtimeInfo = event.runtimeInfo;
+        // A provider-side model switch (ACP config_option_update / current_model_update,
+        // an in-session /model) must land in config.model too, like thinking_option_changed
+        // does: reloadAgentSession and the persisted record resume from config.model, and
+        // applyConfiguredOverrides() would otherwise push the stale creation-time model back.
+        if (event.runtimeInfo.model) {
+          agent.config.model = event.runtimeInfo.model;
+        }
         if (!agent.persistence && event.runtimeInfo.sessionId) {
           agent.persistence = attachPersistenceCwd(
             { provider: agent.provider, sessionId: event.runtimeInfo.sessionId },

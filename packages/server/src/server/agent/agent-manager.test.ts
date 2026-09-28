@@ -5066,6 +5066,50 @@ test("session config drift events update state through the stream channel", asyn
   expect(streams.map((event) => event.type)).toEqual([]);
 });
 
+test("provider-side model switch persists and survives reload", async () => {
+  // An ACP peer can switch model on its own (config_option_update, an in-session
+  // /model, another client of the same session). If config.model stays at the
+  // creation-time value, reloadAgentSession resumes with it and
+  // applyConfiguredOverrides() pushes the stale model back onto the live session.
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-provider-model-switch-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const client = new TestAgentClient();
+  let capturedSession: TestAgentSession | null = null;
+  const originalCreate = client.createSession.bind(client);
+  client.createSession = async (config) => {
+    const session = (await originalCreate(config)) as TestAgentSession;
+    capturedSession = session;
+    return session;
+  };
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000134",
+  });
+
+  const snapshot = await manager.createAgent(
+    { provider: "codex", cwd: workdir, model: "gpt-5.2-codex" },
+    undefined,
+    { workspaceId: undefined },
+  );
+  capturedSession!.pushEvent({
+    type: "model_changed",
+    provider: "codex",
+    runtimeInfo: { provider: "codex", sessionId: capturedSession!.id, model: "gpt-5.4" },
+  });
+  await manager.flush();
+
+  expect(manager.getAgent(snapshot.id)?.config.model).toBe("gpt-5.4");
+  const persisted = await storage.get(snapshot.id);
+  expect(persisted?.config?.model).toBe("gpt-5.4");
+
+  const reloaded = await manager.reloadAgentSession(snapshot.id);
+  expect(reloaded.config.model).toBe("gpt-5.4");
+  expect(client.resumeOverrides.at(-1)?.model).toBe("gpt-5.4");
+  rmSync(workdir, { recursive: true, force: true });
+});
+
 test("setLabels merges and persists labels", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-set-labels-"));
   const storagePath = join(workdir, "agents");
