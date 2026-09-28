@@ -1,6 +1,5 @@
 import type { PluginServerContribution } from "@getpaseo/plugin/server";
 import { fileURLToPath } from "node:url";
-import codexUsageSource from "./codex-usage-source/index.server.js";
 import claudeUsageSource from "./claude-usage-source/index.server.js";
 import copilotUsageSource from "./copilot-usage-source/index.server.js";
 import cursorUsageSource from "./cursor-usage-source/index.server.js";
@@ -21,11 +20,6 @@ export const INTERNAL_PLUGINS: InternalPlugin[] = [
     id: "claude-usage-source",
     directory: fileURLToPath(new URL("./claude-usage-source/", import.meta.url)),
     contribute: claudeUsageSource,
-  },
-  {
-    id: "codex-usage-source",
-    directory: fileURLToPath(new URL("./codex-usage-source/", import.meta.url)),
-    contribute: codexUsageSource,
   },
   {
     id: "copilot-usage-source",

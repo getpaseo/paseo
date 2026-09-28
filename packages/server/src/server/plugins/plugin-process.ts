@@ -1,14 +1,10 @@
 import { PluginHookHandlers } from "./lifecycle/index.js";
+import { evaluateBundle } from "./bundle-evaluator.js";
 import {
   PluginProcessRequestSchema,
   type PluginProcessMessage,
   type PluginProcessRequest,
 } from "./plugin-process-protocol.js";
-import { createRequire } from "node:module";
-import * as pluginSharedRuntime from "@getpaseo/plugin";
-import * as pluginProviderRuntime from "@getpaseo/plugin/server/provider";
-import * as pluginAcpRuntime from "@getpaseo/plugin/server/acp";
-import * as pluginUsageRuntime from "@getpaseo/plugin/server/usage";
 import type { UsageSourceRegistration } from "@getpaseo/plugin/server/usage";
 import type { SettingsDefinition, PluginRpcContract } from "@getpaseo/plugin";
 import type { PluginHandlerContext, PluginServerContribution } from "@getpaseo/plugin/server";
@@ -22,40 +18,10 @@ import {
 import { createPaseoApi, type PaseoApi } from "@getpaseo/client";
 import { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { createPluginDaemonTransportFactory } from "./daemon-transport.js";
-import { isPluginClientOnlySdkSpecifier } from "./plugin-sdk-specifiers.js";
 import { createPluginClientId } from "./plugin-session-identity.js";
 
 import { PluginSettingsStore } from "./settings/index.js";
 import { readPluginProviderIcon } from "./provider-icon.js";
-const nodeRequire = createRequire(import.meta.url);
-
-function runtimeRequire(name: string): unknown {
-  if (isPluginClientOnlySdkSpecifier(name)) {
-    throw new Error(`${name} is available only in plugin client code`);
-  }
-  if (name === "@getpaseo/plugin") return pluginSharedRuntime;
-  if (name === "@getpaseo/plugin/server") return {};
-  if (name === "@getpaseo/plugin/server/provider") return pluginProviderRuntime;
-  if (name === "@getpaseo/plugin/server/acp") return pluginAcpRuntime;
-  if (name === "@getpaseo/plugin/server/usage") return pluginUsageRuntime;
-  if (name === "@getpaseo/plugin/client/host")
-    throw new Error(`${name} is private to the app host`);
-  return nodeRequire(name);
-}
-
-function evaluateBundle(bundle: string): PluginServerContribution {
-  const evaluate: (source: string) => unknown = globalThis.eval;
-  const factory = evaluate(bundle);
-  if (typeof factory !== "function") throw new Error("Plugin server bundle is not executable");
-  const exports = factory(runtimeRequire);
-  const setup =
-    exports !== null && typeof exports === "object" ? Reflect.get(exports, "default") : undefined;
-  if (typeof setup !== "function") {
-    throw new Error("Plugin server bundle must default export a function");
-  }
-  return setup as PluginServerContribution;
-}
-
 function describeError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }

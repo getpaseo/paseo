@@ -29,6 +29,7 @@ import type {
 import { PluginProcessMessageSchema } from "./plugin-process-protocol.js";
 import { PluginSessionSocket } from "./session-socket.js";
 import { InternalPluginChild } from "./internal-child.js";
+import { evaluateBundle } from "./bundle-evaluator.js";
 import type { PluginServerContribution } from "@getpaseo/plugin/server";
 
 const CLIENT_ENTRY_FILENAMES = ["index.client.ts", "index.client.tsx"] as const;
@@ -353,6 +354,29 @@ export class PluginRuntime {
       child: new InternalPluginChild(input.contribute),
       bundle: "",
       clientBundle: "",
+    });
+    this.plugins.set(input.id, loaded);
+    this.appendLog(input.id, "stdout", "[paseo] Plugin ready");
+  }
+
+  async startBuiltinPlugin(input: { id: string; directory: string }): Promise<void> {
+    if (this.plugins.has(input.id)) throw new Error(`Plugin is already running: ${input.id}`);
+    this.appendLog(input.id, "stdout", "[paseo] Loading plugin");
+    const directory = path.resolve(input.directory);
+    const manifest = await readPluginManifest(directory);
+    if (manifest.id !== input.id) {
+      throw new Error(`Built-in plugin ${input.id} has manifest ID ${manifest.id}`);
+    }
+    assertPluginCompatibility({ ...manifest, version: this.daemonVersion, runtime: "daemon" });
+    const bundles = await compilePlugin(await resolveEntryPaths(directory));
+    if (!bundles.serverBundle) throw new Error(`Built-in plugin ${input.id} needs a server entry`);
+    const loaded = await this.launchPlugin({
+      pluginId: input.id,
+      pluginDirectory: directory,
+      requirements: manifest.requirements,
+      child: new InternalPluginChild(evaluateBundle(bundles.serverBundle)),
+      bundle: "",
+      clientBundle: bundles.clientBundle ?? "",
     });
     this.plugins.set(input.id, loaded);
     this.appendLog(input.id, "stdout", "[paseo] Plugin ready");
