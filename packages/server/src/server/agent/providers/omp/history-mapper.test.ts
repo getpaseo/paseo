@@ -384,7 +384,7 @@ describe("OMP history mapper", () => {
           ? [event.item.detail.type]
           : [],
       ),
-    ).toEqual(["unknown", "unknown"]);
+    ).toEqual(["plain_text", "unknown"]);
   });
 
   test("maps only the active JSONL chain with native user ids and visible unknown roles", async () => {
@@ -574,7 +574,6 @@ describe("OMP history mapper", () => {
     expect(events.map((event) => event.item)).toEqual([
       { type: "assistant_message", text: "Done.", messageId: "resp-1" },
       { type: "user_message", text: "/skill:commit", messageId: "omp-custom-skill-1-user" },
-      { type: "assistant_message", text: skillPrompt, messageId: "omp-custom-skill-1" },
       { type: "assistant_message", text: ircMessage, messageId: "omp-custom-irc-1" },
       {
         type: "assistant_message",
@@ -632,15 +631,6 @@ describe("OMP history mapper", () => {
           type: "user_message",
           text: "/skill:improve tests",
           messageId: "omp-custom-skill-args-user",
-        },
-      },
-      {
-        type: "timeline",
-        provider: "omp",
-        item: {
-          type: "assistant_message",
-          text: '[IMPORTANT: User invoked the "improve" skill; follow its instructions.]',
-          messageId: "omp-custom-skill-args",
         },
       },
       {

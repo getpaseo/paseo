@@ -117,4 +117,85 @@ describe("OMP tool call mapper", () => {
       output: null,
     });
   });
+
+  test("uses current OMP task arguments and wait results for readable rows", () => {
+    expect(
+      mapOmpToolDetail(
+        parseToolArgs("task", {
+          name: "Docs",
+          agent: "explore",
+          task: "Read src/a.ts",
+          solutionSpace: "Report findings",
+        }),
+        null,
+      ),
+    ).toMatchObject({ type: "sub_agent", subAgentType: "Docs", description: "Read src/a.ts" });
+    expect(
+      mapOmpToolDetail(
+        parseToolArgs("wait", {}),
+        parseToolResult({ content: [{ type: "text", text: "Waiting for Docs to finish" }] }),
+      ),
+    ).toMatchObject({ type: "plain_text", label: "Waiting for Docs to finish" });
+  });
+
+  test("maps web search and URL reads to search and fetch", () => {
+    expect(mapOmpToolDetail(parseToolArgs("web_search", { query: "Paseo" }), null)).toMatchObject({
+      type: "search",
+      query: "Paseo",
+      toolName: "web_search",
+    });
+    expect(
+      mapOmpToolDetail(parseToolArgs("read", { path: "https://example.com/" }), null),
+    ).toMatchObject({ type: "fetch", url: "https://example.com/" });
+  });
+
+  test("names virtual device calls from their path on failure and while running", () => {
+    expect(mapOmpToolDetail(parseToolArgs("read", { path: "xd://ast_grep" }), null)).toMatchObject({
+      type: "plain_text",
+      label: "ast_grep",
+    });
+    expect(
+      mapOmpToolDetail(parseToolArgs("write", { path: "xd://lsp", content: "{}" }), null),
+    ).toMatchObject({ type: "plain_text", label: "lsp" });
+  });
+
+  test("shows the first question in an ask row", () => {
+    expect(
+      mapOmpToolDetail(parseToolArgs("ask", { questions: [{ question: "Which file?" }] }), null),
+    ).toMatchObject({ type: "plain_text", label: "Which file?" });
+  });
+
+  test("shows the question and selected answers after ask completes", () => {
+    const detail = mapOmpToolDetail(
+      parseToolArgs("ask", { questions: [{ question: "Which colors?" }] }),
+      parseToolResult({
+        content: [{ type: "text", text: "User selected: Red, Blue" }],
+        details: { question: "Which colors?", selectedOptions: ["Red", "Blue"] },
+      }),
+    );
+    expect(detail).toEqual({
+      type: "plain_text",
+      label: "Which colors?",
+      text: "Which colors?\nRed, Blue",
+    });
+  });
+
+  test("shows meaningful labels for OMP's remaining built-in tools", () => {
+    expect(mapOmpToolDetail(parseToolArgs("glob", { pattern: "src/**/*.ts" }), null)).toMatchObject(
+      { type: "search", query: "src/**/*.ts", toolName: "glob" },
+    );
+    expect(
+      mapOmpToolDetail(parseToolArgs("ast_grep", { pattern: "console.log($X)" }), null),
+    ).toMatchObject({ type: "search", query: "console.log($X)" });
+    expect(
+      mapOmpToolDetail(parseToolArgs("checkpoint", { goal: "Inspect parser" }), null),
+    ).toMatchObject({ type: "plain_text", label: "Inspect parser" });
+    expect(
+      mapOmpToolDetail(parseToolArgs("manage_skill", { action: "create", name: "demo" }), null),
+    ).toMatchObject({ type: "plain_text", label: "create demo" });
+    expect(mapOmpToolDetail(parseToolArgs("think", { thoughts: "private" }), null)).toEqual({
+      type: "plain_text",
+      label: "Thinking",
+    });
+  });
 });

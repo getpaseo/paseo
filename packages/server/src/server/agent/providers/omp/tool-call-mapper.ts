@@ -21,6 +21,8 @@ export function mapOmpToolDetail(
     const detail = mapOmpTaskDetail(toolCall.args, result);
     return context?.mapSubagentDetail?.(detail) ?? detail;
   }
+  const extended = mapOmpExtendedToolDetail(toolCall, result);
+  if (extended) return extended;
   if (toolCall.toolName === "edit") {
     return mapOmpEditDetail(toolCall, result);
   }
@@ -30,6 +32,101 @@ export function mapOmpToolDetail(
   return mapOmpCoreToolDetail(toolCall, result);
 }
 
+function mapOmpExtendedToolDetail(
+  toolCall: OmpTrackedToolCall,
+  result: OmpToolResult,
+): ToolCallDetail | null {
+  if (toolCall.toolName === "wait") {
+    const text = extractTextFromToolResult(result)?.trim();
+    return { type: "plain_text", label: text?.split("\n", 1)[0] ?? "Waiting for tasks", text };
+  }
+  if (toolCall.toolName === "web_search") {
+    const args = isRecord(toolCall.args) ? toolCall.args : {};
+    return {
+      type: "search",
+      query: firstString(args.query) ?? "Web search",
+      toolName: "web_search",
+      content: extractTextFromToolResult(result),
+    };
+  }
+  if (toolCall.toolName === "ask" || toolCall.toolName === "ask_user") {
+    return mapOmpAskDetail(toolCall.args, result);
+  }
+  if (toolCall.toolName === "glob" || toolCall.toolName === "ast_grep") {
+    const args = isRecord(toolCall.args) ? toolCall.args : {};
+    return {
+      type: "search",
+      query: firstString(args.pattern, args.query) ?? toolCall.toolName,
+      ...(toolCall.toolName === "glob" ? { toolName: "glob" as const } : {}),
+      content: extractTextFromToolResult(result),
+    };
+  }
+  if (toolCall.toolName === "think") {
+    return { type: "plain_text", label: "Thinking" };
+  }
+  return mapOmpOpaqueToolDetail(toolCall, result);
+}
+
+function mapOmpAskDetail(rawArgs: unknown, result: OmpToolResult): ToolCallDetail {
+  const args = isRecord(rawArgs) ? rawArgs : {};
+  const firstQuestion = Array.isArray(args.questions) ? args.questions[0] : undefined;
+  const askedQuestion = isRecord(firstQuestion) ? firstString(firstQuestion.question) : undefined;
+  const details =
+    result && typeof result !== "string" && isRecord(result.details) ? result.details : {};
+  const answers = Array.isArray(details.results) ? details.results : [details];
+  const lines = answers.flatMap((answer) => {
+    if (!isRecord(answer)) return [];
+    const question = firstString(answer.question);
+    const selected = Array.isArray(answer.selectedOptions)
+      ? answer.selectedOptions.filter((option): option is string => typeof option === "string")
+      : [];
+    const response =
+      [...selected, firstString(answer.customInput)].filter(Boolean).join(", ") || "No selection";
+    return question ? [`${question}\n${response}`] : [];
+  });
+  const text = lines.length ? lines.join("\n\n") : extractTextFromToolResult(result);
+  return {
+    type: "plain_text",
+    label: firstString(details.question, askedQuestion, args.question, args.title) ?? "Question",
+    text,
+  };
+}
+
+function mapOmpOpaqueToolDetail(
+  toolCall: OmpTrackedToolCall,
+  result: OmpToolResult,
+): ToolCallDetail | null {
+  if (OPAQUE_TEXT_TOOLS.has(toolCall.toolName)) {
+    const args = isRecord(toolCall.args) ? toolCall.args : {};
+    const action = firstString(args.action, args.op, args.operation, args.command);
+    const target = firstString(args.name, args.goal, args.path, args.query, args.id, args.report);
+    const label =
+      [action, target].filter(Boolean).join(" ") || toolCall.toolName.replaceAll("_", " ");
+    return { type: "plain_text", label, text: extractTextFromToolResult(result) };
+  }
+  return null;
+}
+
+const OPAQUE_TEXT_TOOLS = new Set([
+  "ast_edit",
+  "debug",
+  "eval",
+  "github",
+  "checkpoint",
+  "rewind",
+  "context_notes",
+  "new_context",
+  "security_scan",
+  "memory_edit",
+  "retain",
+  "recall",
+  "reflect",
+  "learn",
+  "manage_skill",
+  "yield",
+  "goal",
+]);
+
 function mapOmpTaskDetail(args: unknown, result: OmpToolResult): ToolCallDetail {
   const argRecord = isRecord(args) ? args : {};
   const resultText = extractTextFromToolResult(result);
@@ -37,6 +134,7 @@ function mapOmpTaskDetail(args: unknown, result: OmpToolResult): ToolCallDetail 
   return {
     type: "sub_agent",
     subAgentType: firstString(
+      argRecord.name,
       argRecord.agent,
       argRecord.subAgentType,
       argRecord.agentType,

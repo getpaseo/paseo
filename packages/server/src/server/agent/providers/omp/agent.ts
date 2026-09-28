@@ -70,7 +70,11 @@ import {
 } from "./provider-config.js";
 export { formatOmpVersionSupport, resolveOmpDiagnosticPaths } from "./provider-config.js";
 import { OmpSubagentCardTracker, type OmpSubagentCardScheduler } from "./subagent-card-tracker.js";
-import { ompCustomMessageId, shouldDisplayOmpCustomMessage } from "./custom-message.js";
+import {
+  ompCustomMessageId,
+  ompSkillPromptUserText,
+  shouldDisplayOmpCustomMessage,
+} from "./custom-message.js";
 import { getUserMessageText } from "./message-history.js";
 import { mapOmpSystemNoticeToNotification } from "./system-notice.js";
 import { materializeProviderImage } from "../provider-image-output.js";
@@ -89,6 +93,7 @@ import type {
 import {
   parseToolArgs,
   parseToolResult,
+  toolFailureMessage,
   resolveToolCallName,
   type OmpToolResult,
   type OmpTrackedToolCall,
@@ -1823,7 +1828,7 @@ export class OmpAgentSession implements AgentSession {
     this.questionUi.finish(event.toolName);
 
     const result = parseToolResult(event.result);
-    const error = event.isError ? event.result : null;
+    const error = event.isError ? toolFailureMessage(result) : null;
     const status = event.isError ? "failed" : "completed";
     this.emitToolCallEvent(event.toolCallId, toolCall, status, result, error);
     if (event.toolName === "task") {
@@ -1929,6 +1934,20 @@ export class OmpAgentSession implements AgentSession {
       if (shouldDisplayOmpCustomMessage(event.message)) {
         const text = getUserMessageText(event.message.content);
         if (text) {
+          const skillPrompt = ompSkillPromptUserText(event.message);
+          if (skillPrompt) {
+            const messageId = ompCustomMessageId(event.message, () => {
+              this.customMessageIndex += 1;
+              return this.customMessageIndex;
+            });
+            this.emit({
+              type: "timeline",
+              provider: this.provider,
+              turnId,
+              item: { type: "user_message", text: skillPrompt, messageId: `${messageId}-user` },
+            });
+            return;
+          }
           const item =
             mapOmpAdvisorMessageToToolCall(event.message, text) ??
             mapOmpSystemNoticeToNotification(text);

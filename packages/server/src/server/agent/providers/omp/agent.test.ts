@@ -668,6 +668,61 @@ describe("OMP agent client and session", () => {
     ]);
   });
 
+  test("shows a concise error for a failed tool while keeping shell output", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    omp.emit({
+      type: "tool_execution_start",
+      toolCallId: "failed-shell",
+      toolName: "bash",
+      args: { command: "false" },
+    });
+    omp.emit({
+      type: "tool_execution_end",
+      toolCallId: "failed-shell",
+      toolName: "bash",
+      result: {
+        content: [{ type: "text", text: "Command exited with code 1" }],
+        details: {},
+        isError: true,
+        exitCode: 1,
+      },
+      isError: true,
+    });
+    expect(omp.timeline().at(-1)).toMatchObject({
+      type: "tool_call",
+      status: "failed",
+      error: "Command exited with code 1",
+      detail: { type: "shell", command: "false", exitCode: 1 },
+    });
+  });
+
+  test("renders live skill expansion as only the invocation", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    await omp.runPromptWithCustomMessage(
+      "hello",
+      {
+        role: "custom",
+        content: "[IMPORTANT] Full skill body",
+        customType: "skill-prompt",
+        attribution: "user",
+        details: { name: "commit" },
+        display: true,
+        id: "skill-1",
+      },
+      "done",
+    );
+    expect(omp.timeline()).toContainEqual({
+      type: "user_message",
+      text: "/skill:commit",
+      messageId: "omp-custom-skill-1-user",
+    });
+    expect(omp.timeline()).not.toContainEqual(
+      expect.objectContaining({ text: "[IMPORTANT] Full skill body" }),
+    );
+  });
+
   test("does not complete a queued model turn from OMP's local-only hint", async () => {
     const omp = new OmpHarness();
     await omp.start();

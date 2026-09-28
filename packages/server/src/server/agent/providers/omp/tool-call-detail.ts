@@ -270,6 +270,19 @@ export function extractTextFromToolResult(result: OmpToolResult): string | undef
   return textParts.length > 0 ? textParts.join("\n") : undefined;
 }
 
+export function toolFailureMessage(result: OmpToolResult): string {
+  const firstLine = extractTextFromToolResult(result)
+    ?.split("\n")
+    .find((line) => line.trim())
+    ?.trim();
+  if (firstLine) return firstLine.slice(0, 240);
+  if (result && typeof result !== "string") {
+    const code = result.exitCode ?? result.code;
+    if (typeof code === "number") return `Tool exited with code ${code}`;
+  }
+  return "Tool call failed";
+}
+
 export function parseToolArgs(toolName: string, rawArgs: unknown): OmpTrackedToolCall {
   if (toolName === "edit") {
     return parseEditToolArgs(rawArgs);
@@ -289,6 +302,12 @@ export function parseToolArgs(toolName: string, rawArgs: unknown): OmpTrackedToo
 }
 
 export function resolveToolCallName(toolCall: OmpTrackedToolCall, result?: OmpToolResult): string {
+  if (
+    (toolCall.kind === "read" || toolCall.kind === "write") &&
+    toolCall.args.path.startsWith("xd://")
+  ) {
+    return toolCall.args.path.slice("xd://".length).split(/[/?#]/, 1)[0] || toolCall.toolName;
+  }
   if (toolCall.kind === "write" && result && typeof result !== "string") {
     const xdev = XdevExecuteDetailsSchema.safeParse(result.details?.xdev);
     if (xdev.success) {
@@ -316,6 +335,20 @@ export function mapToolDetail(
       };
     }
     case "read":
+      if (toolCall.args.path.startsWith("xd://")) {
+        return {
+          type: "plain_text",
+          label: resolveToolCallName(toolCall),
+          text: extractTextFromToolResult(parsedResult),
+        };
+      }
+      if (/^https?:\/\//.test(toolCall.args.path)) {
+        return {
+          type: "fetch",
+          url: toolCall.args.path,
+          result: extractTextFromToolResult(parsedResult),
+        };
+      }
       return {
         type: "read",
         filePath: toolCall.args.path,
@@ -374,10 +407,13 @@ function mapWriteToolDetail(args: WriteToolInput, result: OmpToolResult): ToolCa
     };
   }
 
-  // A write to `xd://` runs a tool; it is not a file write. It is `unknown` from its first
-  // event so the running and completed rows merge and the result is kept.
+  // A write to `xd://` runs a tool, not a file write. Name the invoked tool while it runs.
   if (args.path.startsWith("xd://")) {
-    return { type: "unknown", input: args, output: result };
+    return {
+      type: "plain_text",
+      label: args.path.slice("xd://".length).split(/[/?#]/, 1)[0],
+      text: extractTextFromToolResult(result),
+    };
   }
 
   return {
