@@ -568,6 +568,18 @@ class CloseRecordingTestAgentSession extends TestAgentSession {
   }
 }
 
+class EvictableTestAgentSession extends CloseRecordingTestAgentSession {
+  readonly idleBackendEvictionEligible = true;
+  override readonly capabilities = {
+    ...TEST_CAPABILITIES,
+    supportsSessionPersistence: true,
+  };
+
+  async canEvictIdleBackend(): Promise<boolean> {
+    return true;
+  }
+}
+
 class SteeringTestSession extends TestAgentSession {
   interruptCount = 0;
   startCount = 0;
@@ -2578,6 +2590,601 @@ test("failed reload retains the closed agent for a later resume", async () => {
     await manager.closeAgent(created.id);
   } finally {
     await storage.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("evicts an idle Codex backend and resumes the same agent later", async () => {
+  vi.useFakeTimers();
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-idle-eviction-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  class PersistentClient extends TestAgentClient {
+    readonly sessions: EvictableTestAgentSession[] = [];
+    resumeCount = 0;
+
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      const session = new EvictableTestAgentSession(config);
+      this.sessions.push(session);
+      return session;
+    }
+
+    override async resumeSession(
+      handle: AgentPersistenceHandle,
+      config?: Partial<AgentSessionConfig>,
+    ): Promise<AgentSession> {
+      this.resumeCount += 1;
+      const session = new EvictableTestAgentSession({
+        provider: "codex",
+        cwd: config?.cwd ?? workdir,
+      });
+      session.describePersistence = () => handle;
+      this.sessions.push(session);
+      return session;
+    }
+  }
+  const client = new PersistentClient();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    codexIdleBackendTimeoutMs: 10_000,
+    logger,
+  });
+
+  try {
+    const created = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    await manager.appendTimelineItem(created.id, {
+      type: "assistant_message",
+      text: "Earlier work",
+    });
+
+    await vi.advanceTimersByTimeAsync(10_000);
+    await manager.waitForAgentClose(created.id);
+
+    expect(client.sessions[0]?.closed).toBe(true);
+    expect(manager.getAgent(created.id)).toBeNull();
+    expect(await storage.get(created.id)).toMatchObject({
+      id: created.id,
+      lastStatus: "closed",
+      persistence: created.persistence,
+    });
+
+    const resumed = await ensureAgentLoaded(created.id, {
+      agentManager: manager,
+      agentStorage: storage,
+      logger,
+    });
+    expect(resumed.id).toBe(created.id);
+    expect(resumed.persistence).toEqual(created.persistence);
+    expect(client.resumeCount).toBe(1);
+    expect(manager.getTimeline(created.id)).toContainEqual({
+      type: "assistant_message",
+      text: "Earlier work",
+    });
+    await manager.closeAgent(created.id);
+  } finally {
+    manager.prepareForShutdown();
+    vi.useRealTimers();
+    await storage.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("keeps a Codex backend with provider background work until a later idle probe", async () => {
+  vi.useFakeTimers();
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-idle-background-work-"));
+  class BackgroundWorkSession extends EvictableTestAgentSession {
+    backgroundWorkRunning = true;
+    probeCount = 0;
+
+    override async canEvictIdleBackend(): Promise<boolean> {
+      this.probeCount += 1;
+      return !this.backgroundWorkRunning;
+    }
+  }
+  const client = new (class extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return new BackgroundWorkSession(config);
+    }
+  })();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    codexIdleBackendTimeoutMs: 10_000,
+    logger,
+  });
+
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    const session = manager.getAgent(agent.id)?.session as BackgroundWorkSession;
+    expect(session).toBeInstanceOf(BackgroundWorkSession);
+
+    await vi.advanceTimersByTimeAsync(10_000);
+    await manager.waitForAgentClose(agent.id);
+    expect(session.probeCount).toBe(1);
+    expect(session.closed).toBe(false);
+
+    session.backgroundWorkRunning = false;
+    await vi.advanceTimersByTimeAsync(10_000);
+    await manager.waitForAgentClose(agent.id);
+    expect(session.probeCount).toBe(2);
+    expect(session.closed).toBe(true);
+  } finally {
+    manager.prepareForShutdown();
+    vi.useRealTimers();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("keeps a Codex backend when its background-work probe fails", async () => {
+  vi.useFakeTimers();
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-idle-probe-error-"));
+  class FailingProbeSession extends EvictableTestAgentSession {
+    probeFails = true;
+
+    override async canEvictIdleBackend(): Promise<boolean> {
+      if (this.probeFails) throw new Error("Codex background terminal query failed");
+      return true;
+    }
+  }
+  const client = new (class extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return new FailingProbeSession(config);
+    }
+  })();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    codexIdleBackendTimeoutMs: 10_000,
+    logger,
+  });
+
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    const session = manager.getAgent(agent.id)?.session as FailingProbeSession;
+    expect(session).toBeInstanceOf(FailingProbeSession);
+
+    await vi.advanceTimersByTimeAsync(10_000);
+    await manager.waitForAgentClose(agent.id);
+    expect(session.closed).toBe(false);
+    expect(manager.getAgent(agent.id)?.lifecycle).toBe("idle");
+
+    session.probeFails = false;
+    await vi.advanceTimersByTimeAsync(10_000);
+    await manager.waitForAgentClose(agent.id);
+    expect(session.closed).toBe(true);
+  } finally {
+    manager.prepareForShutdown();
+    vi.useRealTimers();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("does not evict a Codex backend when a turn starts during the background-work probe", async () => {
+  vi.useFakeTimers();
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-idle-probe-race-"));
+  class PausedProbeSession extends EvictableTestAgentSession {
+    readonly probeStarted = deferred<void>();
+    readonly probeResult = deferred<boolean>();
+
+    override async canEvictIdleBackend(): Promise<boolean> {
+      this.probeStarted.resolve();
+      return this.probeResult.promise;
+    }
+
+    override async startTurn(): Promise<{ turnId: string }> {
+      return { turnId: "new-turn" };
+    }
+  }
+  const client = new (class extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return new PausedProbeSession(config);
+    }
+  })();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    codexIdleBackendTimeoutMs: 10_000,
+    logger,
+  });
+
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    const session = manager.getAgent(agent.id)?.session as PausedProbeSession;
+    await vi.advanceTimersByTimeAsync(10_000);
+    await session.probeStarted.promise;
+
+    const stream = manager.streamAgent(agent.id, "New work");
+    expect((await stream.next()).value).toMatchObject({ type: "turn_started" });
+    session.probeResult.resolve(true);
+    await manager.waitForAgentClose(agent.id);
+    expect(session.closed).toBe(false);
+    expect(manager.getAgent(agent.id)?.lifecycle).toBe("running");
+
+    session.pushEvent({ type: "turn_completed", provider: "codex", turnId: "new-turn" });
+    await drainAsyncGenerator(stream);
+    await manager.closeAgent(agent.id);
+  } finally {
+    manager.prepareForShutdown();
+    vi.useRealTimers();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("explicitly closing a Codex agent still closes it during a skipped idle eviction", async () => {
+  vi.useFakeTimers();
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-idle-explicit-close-"));
+  class PausedProbeSession extends EvictableTestAgentSession {
+    readonly probeStarted = deferred<void>();
+    readonly probeResult = deferred<boolean>();
+
+    override async canEvictIdleBackend(): Promise<boolean> {
+      this.probeStarted.resolve();
+      return this.probeResult.promise;
+    }
+  }
+  const client = new (class extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return new PausedProbeSession(config);
+    }
+  })();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    codexIdleBackendTimeoutMs: 10_000,
+    logger,
+  });
+
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    const session = manager.getAgent(agent.id)?.session as PausedProbeSession;
+    await vi.advanceTimersByTimeAsync(10_000);
+    await session.probeStarted.promise;
+
+    const explicitClose = manager.closeAgent(agent.id);
+    session.probeResult.resolve(false);
+    await explicitClose;
+    expect(session.closed).toBe(true);
+    expect(manager.getAgent(agent.id)).toBeNull();
+  } finally {
+    manager.prepareForShutdown();
+    vi.useRealTimers();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("keeps an idle Codex backend resident when eviction is disabled", async () => {
+  vi.useFakeTimers();
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-idle-eviction-disabled-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  let session: EvictableTestAgentSession | null = null;
+  const client = new (class extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      session = new EvictableTestAgentSession(config);
+      return session;
+    }
+  })();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    codexIdleBackendTimeoutMs: 0,
+    logger,
+  });
+
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    await vi.advanceTimersByTimeAsync(900_000);
+
+    expect(session?.closed).toBe(false);
+    expect(manager.getAgent(agent.id)?.lifecycle).toBe("idle");
+    await manager.closeAgent(agent.id);
+  } finally {
+    manager.prepareForShutdown();
+    vi.useRealTimers();
+    await storage.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("keeps an active Codex backend until its turn becomes idle", async () => {
+  vi.useFakeTimers();
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-active-eviction-"));
+  class HeldSession extends EvictableTestAgentSession {
+    override async startTurn(): Promise<{ turnId: string }> {
+      return { turnId: "held-turn" };
+    }
+  }
+  let session: HeldSession | null = null;
+  const client = new (class extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      session = new HeldSession(config);
+      return session;
+    }
+  })();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    codexIdleBackendTimeoutMs: 10_000,
+    logger,
+  });
+
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    const stream = manager.streamAgent(agent.id, "Work");
+    expect((await stream.next()).value).toMatchObject({ type: "turn_started" });
+
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(manager.getAgent(agent.id)?.lifecycle).toBe("running");
+    expect(session?.closed).toBe(false);
+
+    session?.pushEvent({ type: "turn_completed", provider: "codex", turnId: "held-turn" });
+    await drainAsyncGenerator(stream);
+    expect(manager.getAgent(agent.id)?.lifecycle).toBe("idle");
+
+    await vi.advanceTimersByTimeAsync(10_000);
+    await manager.waitForAgentClose(agent.id);
+    expect(session?.closed).toBe(true);
+    expect(manager.getAgent(agent.id)).toBeNull();
+  } finally {
+    manager.prepareForShutdown();
+    vi.useRealTimers();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("opening an idle agent resets its backend eviction timeout", async () => {
+  vi.useFakeTimers();
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-idle-access-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  let session: EvictableTestAgentSession | null = null;
+  const client = new (class extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      session = new EvictableTestAgentSession(config);
+      return session;
+    }
+  })();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    codexIdleBackendTimeoutMs: 10_000,
+    logger,
+  });
+
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    await vi.advanceTimersByTimeAsync(9_000);
+    await ensureAgentLoaded(agent.id, { agentManager: manager, agentStorage: storage, logger });
+
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(session?.closed).toBe(false);
+    expect(manager.getAgent(agent.id)?.lifecycle).toBe("idle");
+
+    await vi.advanceTimersByTimeAsync(9_000);
+    await manager.waitForAgentClose(agent.id);
+    expect(session?.closed).toBe(true);
+  } finally {
+    manager.prepareForShutdown();
+    vi.useRealTimers();
+    await storage.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("does not evict a Codex backend while an out-of-band command is running", async () => {
+  vi.useFakeTimers();
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-idle-command-"));
+  const releaseCommand = deferred<void>();
+  class CommandSession extends EvictableTestAgentSession {
+    override tryHandleOutOfBand(): { run(): Promise<void> } {
+      return { run: () => releaseCommand.promise };
+    }
+  }
+  let session: CommandSession | null = null;
+  const client = new (class extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      session = new CommandSession(config);
+      return session;
+    }
+  })();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    codexIdleBackendTimeoutMs: 10_000,
+    logger,
+  });
+
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    expect(manager.tryRunOutOfBand(agent.id, "/goal pause")).toBe(true);
+
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(session?.closed).toBe(false);
+
+    releaseCommand.resolve();
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(10_000);
+    await manager.waitForAgentClose(agent.id);
+    expect(session?.closed).toBe(true);
+  } finally {
+    releaseCommand.resolve();
+    manager.prepareForShutdown();
+    vi.useRealTimers();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("rearms Codex idle eviction after a provider subagent completes", async () => {
+  vi.useFakeTimers();
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-idle-subagent-"));
+  class HeldSession extends EvictableTestAgentSession {
+    override async startTurn(): Promise<{ turnId: string }> {
+      return { turnId: "held-turn" };
+    }
+  }
+  let session: HeldSession | null = null;
+  const client = new (class extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      session = new HeldSession(config);
+      return session;
+    }
+  })();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    codexIdleBackendTimeoutMs: 10_000,
+    logger,
+  });
+
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    const stream = manager.streamAgent(agent.id, "Work with a subagent");
+    expect((await stream.next()).value).toMatchObject({ type: "turn_started" });
+    session?.pushEvent({
+      type: "provider_subagent",
+      provider: "codex",
+      event: { type: "upsert", id: "child", status: "running" },
+    });
+    session?.pushEvent({
+      type: "provider_subagent",
+      provider: "codex",
+      event: { type: "upsert", id: "other-child", status: "running" },
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(manager.listProviderSubagents(agent.id)).toEqual([
+      expect.objectContaining({ id: "child", status: "running" }),
+      expect.objectContaining({ id: "other-child", status: "running" }),
+    ]);
+    session?.pushEvent({ type: "turn_completed", provider: "codex", turnId: "held-turn" });
+    await drainAsyncGenerator(stream);
+    expect(manager.getAgent(agent.id)?.lifecycle).toBe("idle");
+
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(session?.closed).toBe(false);
+
+    session?.pushEvent({
+      type: "provider_subagent",
+      provider: "codex",
+      event: { type: "upsert", id: "child", status: "completed" },
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(manager.listProviderSubagents(agent.id)).toEqual([
+      expect.objectContaining({ id: "child", status: "completed" }),
+      expect.objectContaining({ id: "other-child", status: "running" }),
+    ]);
+
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(session?.closed).toBe(false);
+
+    session?.pushEvent({
+      type: "provider_subagent",
+      provider: "codex",
+      event: { type: "upsert", id: "other-child", status: "completed" },
+    });
+    await vi.advanceTimersByTimeAsync(0);
+
+    await vi.advanceTimersByTimeAsync(10_000);
+    await manager.waitForAgentClose(agent.id);
+    expect(session?.closed).toBe(true);
+    expect(manager.getAgent(agent.id)).toBeNull();
+  } finally {
+    manager.prepareForShutdown();
+    vi.useRealTimers();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("failed idle eviction retains its provider session and retries later", async () => {
+  vi.useFakeTimers();
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-idle-close-retry-"));
+  class RetryCloseSession extends EvictableTestAgentSession {
+    closeCount = 0;
+
+    override async close(): Promise<void> {
+      this.closeCount += 1;
+      if (this.closeCount === 1) throw new Error("writer still open");
+      await super.close();
+    }
+  }
+  let session: RetryCloseSession | null = null;
+  const client = new (class extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      session = new RetryCloseSession(config);
+      return session;
+    }
+  })();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    codexIdleBackendTimeoutMs: 10_000,
+    logger,
+  });
+
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+
+    await vi.advanceTimersByTimeAsync(10_000);
+    await manager.waitForAgentClose(agent.id);
+    expect(session?.closeCount).toBe(1);
+    expect(session?.closed).toBe(false);
+    expect(manager.getAgent(agent.id)?.session).toBe(session);
+
+    await vi.advanceTimersByTimeAsync(10_000);
+    await manager.waitForAgentClose(agent.id);
+    expect(session?.closeCount).toBe(2);
+    expect(session?.closed).toBe(true);
+    expect(manager.getAgent(agent.id)).toBeNull();
+  } finally {
+    manager.prepareForShutdown();
+    vi.useRealTimers();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("does not evict a Codex session without a durable thread", async () => {
+  vi.useFakeTimers();
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-idle-no-handle-"));
+  class NoHandleSession extends EvictableTestAgentSession {
+    override describePersistence(): null {
+      return null;
+    }
+  }
+  let session: NoHandleSession | null = null;
+  const client = new (class extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      session = new NoHandleSession(config);
+      return session;
+    }
+  })();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    codexIdleBackendTimeoutMs: 10_000,
+    logger,
+  });
+
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(session?.closed).toBe(false);
+    expect(manager.getAgent(agent.id)?.lifecycle).toBe("idle");
+    await manager.closeAgent(agent.id);
+  } finally {
+    manager.prepareForShutdown();
+    vi.useRealTimers();
     rmSync(workdir, { recursive: true, force: true });
   }
 });

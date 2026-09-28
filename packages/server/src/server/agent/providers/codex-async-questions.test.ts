@@ -28,12 +28,12 @@ async function setup(metadata?: Record<string, unknown>, rejectSteer = false) {
     },
     "thread/read": () => ({ thread: { id: "thread-1", turns: [] } }),
   });
-  const session = new CodexAppServerAgentSession(
-    { provider: "codex", cwd: tmpdir(), model: "gpt-5.4", modeId: "full-access" },
-    metadata ? { sessionId: "thread-1", metadata } : null,
-    createTestLogger(),
-    async () => appServer.child,
-  );
+  const session = new CodexAppServerAgentSession({
+    config: { provider: "codex", cwd: tmpdir(), model: "gpt-5.4", modeId: "full-access" },
+    resumeHandle: metadata ? { sessionId: "thread-1", metadata } : null,
+    logger: createTestLogger(),
+    spawnAppServer: async () => appServer.child,
+  });
   const events: AgentStreamEvent[] = [];
   session.subscribe((event) => events.push(event));
   await session.startTurn("Help me choose a color while you inspect the project.");
@@ -108,12 +108,12 @@ async function setupRewind(fail = false) {
         }
       : {}),
   });
-  const session = new CodexAppServerAgentSession(
-    { provider: "codex", cwd: tmpdir(), model: "gpt-5.4", modeId: "full-access" },
-    { sessionId: "thread-1", metadata: { asyncQuestions: records } },
-    createTestLogger(),
-    async () => appServer.child,
-  );
+  const session = new CodexAppServerAgentSession({
+    config: { provider: "codex", cwd: tmpdir(), model: "gpt-5.4", modeId: "full-access" },
+    resumeHandle: { sessionId: "thread-1", metadata: { asyncQuestions: records } },
+    logger: createTestLogger(),
+    spawnAppServer: async () => appServer.child,
+  });
   const events: AgentStreamEvent[] = [];
   session.subscribe((event) => events.push(event));
   await session.connect();
