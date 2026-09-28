@@ -1,6 +1,10 @@
 import type { AgentStreamEvent, AgentTimelineItem, ToolCallDetail } from "../../agent-sdk-types.js";
 import type { OmpAgentMessage, OmpImageContent, OmpTextContent } from "./rpc-types.js";
-import { shouldDisplayOmpCustomMessage } from "./custom-message.js";
+import {
+  ompCustomMessageId,
+  ompSkillPromptUserText,
+  shouldDisplayOmpCustomMessage,
+} from "./custom-message.js";
 import {
   extractTextFromToolResult,
   mapToolDetail,
@@ -58,6 +62,7 @@ export class OmpHistoryMapper {
   private readonly pendingToolCalls = new Map<string, OmpTrackedToolCall>();
   private userIndex = 0;
   private assistantIndex = 0;
+  private customIndex = 0;
 
   constructor(
     private readonly provider: string,
@@ -126,15 +131,34 @@ export class OmpHistoryMapper {
     if (mappedEvent) {
       return [mappedEvent];
     }
-    return text
-      ? [
-          {
-            type: "timeline",
-            provider: this.provider,
-            item: { type: "assistant_message", text },
-          },
-        ]
-      : [];
+    if (!text) {
+      return [];
+    }
+    const messageId = ompCustomMessageId(message, () => {
+      this.customIndex += 1;
+      return this.customIndex;
+    });
+    const skillPrompt = ompSkillPromptUserText(message);
+    return [
+      ...(skillPrompt
+        ? [
+            {
+              type: "timeline" as const,
+              provider: this.provider,
+              item: {
+                type: "user_message" as const,
+                text: skillPrompt,
+                messageId: `${messageId}-user`,
+              },
+            },
+          ]
+        : []),
+      {
+        type: "timeline",
+        provider: this.provider,
+        item: { type: "assistant_message", text, messageId },
+      },
+    ];
   }
 
   private mapAssistantMessage(
