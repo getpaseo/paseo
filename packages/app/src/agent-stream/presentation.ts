@@ -112,8 +112,10 @@ export function createStreamPresentation() {
       const index = prefix.length + offset;
       let blockText = text;
       if (offset === textBlocks.length - 1) {
-        const trailingNewlines = /\n+$/.exec(item.text)?.[0] ?? "";
-        blockText += trailingNewlines;
+        // The split drops trailing blank lines, including a line break followed only
+        // by the next line's indent. Keep them so the next append continues that line.
+        const trailingBlankLines = /\n\s*$/.exec(item.text)?.[0] ?? "";
+        blockText += trailingBlankLines;
       }
       const existing = previous?.[index];
       const id = `${item.id}:block:${index}`;
