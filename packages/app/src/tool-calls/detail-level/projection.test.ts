@@ -64,7 +64,30 @@ function project(input: {
   });
 }
 
+function thought(id: string): StreamItem {
+  return {
+    kind: "thought",
+    id,
+    text: `thinking ${id}`,
+    timestamp: new Date("2026-01-01T00:00:30.000Z"),
+    status: "ready",
+  } as StreamItem;
+}
+
 describe("tool call detail-level projection", () => {
+  it("folds reasoning between tool calls into one summary row and keeps it before a reply", () => {
+    const shell = (id: string) => toolCall(id, { type: "shell", command: `echo ${id}` });
+    const result = project({
+      level: "overview",
+      tail: [thought("t1"), shell("1"), thought("t2"), shell("2"), thought("t3"), assistant("a1")],
+    });
+    expect(result.tail.map((item) => `${item.kind}:${item.id}`)).toEqual([
+      "tool_call:1",
+      "thought:t3",
+      "assistant_message:a1",
+    ]);
+  });
+
   it.each(["detailed", "overview"] as const)(
     "keeps pending approval tools out of %s presentation without removing their canonical position",
     (level) => {

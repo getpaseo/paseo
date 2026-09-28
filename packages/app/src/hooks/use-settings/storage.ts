@@ -93,6 +93,8 @@ export interface AppSettings {
   sidebarNavItems: SidebarNavPreference[];
   autoExpandReasoning: boolean;
   toolCallDetailLevel: ToolCallDetailLevel;
+  /** Bumped when the default tool call layout changes, so old defaults move with it. */
+  toolCallLayoutRevision: number;
   chatOutlineEnabled: boolean;
   vimKeybindings: boolean;
   /** Desktop-only preferences for implicit opens into the ordinary side pane. */
@@ -119,6 +121,8 @@ export const DEFAULT_OPEN_IN_SIDE_PANE_PREFERENCES: OpenInSidePanePreferences = 
   diffFiles: false,
   subagents: false,
 };
+
+const TOOL_CALL_LAYOUT_REVISION = 2;
 
 export interface Settings extends AppSettings {
   manageBuiltInDaemon: boolean;
@@ -150,7 +154,8 @@ export const DEFAULT_CLIENT_SETTINGS: AppSettings = {
   sidebarChecksDisplay: DEFAULT_SIDEBAR_CHECKS_DISPLAY,
   sidebarNavItems: [],
   autoExpandReasoning: false,
-  toolCallDetailLevel: "detailed",
+  toolCallDetailLevel: "overview",
+  toolCallLayoutRevision: TOOL_CALL_LAYOUT_REVISION,
   chatOutlineEnabled: true,
   vimKeybindings: false,
   openInSidePane: DEFAULT_OPEN_IN_SIDE_PANE_PREFERENCES,
@@ -251,7 +256,8 @@ const StoredAppSettingsSchema = z
       .enum(["overview", "detailed"])
       .or(z.literal("concise").transform(() => "overview" as const))
       .optional()
-      .catch("detailed"),
+      .catch("overview"),
+    toolCallLayoutRevision: z.number().optional().catch(undefined),
     // COMPAT(compactToolCalls): migrated in v0.1.105, remove after 2027-01-12.
     compactToolCalls: z.boolean().optional().catch(undefined),
     chatOutlineEnabled: z.boolean().catch(true),
@@ -287,6 +293,10 @@ const StoredAppSettingsSchema = z
   })
   .transform((stored) => {
     const { legacyPullRequestsInSidePane, ...openInSidePane } = stored.openInSidePane;
+    // Revision 2 made the summary the default; "detailed" saved before it was the old
+    // default rather than a choice. The next save records the revision, so a later
+    // switch back to "detailed" sticks.
+    const isOldToolCallLayout = (stored.toolCallLayoutRevision ?? 0) < TOOL_CALL_LAYOUT_REVISION;
     const needsWrite =
       (stored.uiBaseFontSize === undefined && stored.uiFontSize !== undefined) ||
       stored.contentFontSize === undefined;
@@ -300,8 +310,9 @@ const StoredAppSettingsSchema = z
       (isChecksHiddenByLegacyRowItem(stored.sidebarRowItems)
         ? "none"
         : DEFAULT_SIDEBAR_CHECKS_DISPLAY);
-    const toolCallDetailLevel =
-      stored.toolCallDetailLevel ?? (stored.compactToolCalls ? "overview" : "detailed");
+    const toolCallDetailLevel = isOldToolCallLayout
+      ? "overview"
+      : (stored.toolCallDetailLevel ?? "overview");
     return {
       ...stored,
       openInSidePane,
@@ -317,6 +328,7 @@ const StoredAppSettingsSchema = z
           (stored.sidebarRowItems.scripts === false ? false : DEFAULT_SIDEBAR_ROW_ITEMS.services),
       },
       toolCallDetailLevel,
+      toolCallLayoutRevision: TOOL_CALL_LAYOUT_REVISION,
       needsWrite,
     };
   })

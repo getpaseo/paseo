@@ -85,7 +85,7 @@ function buildCanonicalDetailDisplay(input: ToolCallDisplayInput): DetailDisplay
     case "shell":
       return {
         displayName: "Shell",
-        summary: input.detail.command,
+        summary: input.detail.description ?? input.detail.command,
       };
     case "read":
       return buildFilePathDisplay("Read", input.detail.filePath, input.cwd);

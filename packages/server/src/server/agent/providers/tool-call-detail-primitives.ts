@@ -102,6 +102,9 @@ export const ToolShellInputSchema = z
     return {
       command,
       cwd: nonEmptyString(value.cwd) ?? nonEmptyString(value.directory),
+      // Claude's Bash states in a few words what the command is for.
+      description:
+        typeof value.description === "string" ? nonEmptyString(value.description) : undefined,
     };
   });
 
@@ -819,6 +822,7 @@ export function toShellToolDetail(
     type: "shell",
     command,
     ...(input?.cwd ? { cwd: input.cwd } : {}),
+    ...(input?.description ? { description: input.description } : {}),
     ...(output?.output ? { output: output.output } : {}),
     ...(output?.exitCode !== undefined ? { exitCode: output.exitCode } : {}),
   };

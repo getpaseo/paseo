@@ -76,6 +76,20 @@ export function isGroupableToolCall(item: StreamItem): item is ToolCallItem {
   );
 }
 
+/**
+ * Reasoning between tool calls is folded away with them, so one summary row stands for
+ * the whole stretch of work. Reasoning that leads straight into a reply stays visible.
+ */
+function isFoldedThought(items: readonly StreamItem[], index: number): boolean {
+  if (items[index]?.kind !== "thought") return false;
+  for (let next = index + 1; next < items.length; next += 1) {
+    const item = items[next];
+    if (item?.kind === "thought") continue;
+    return item !== undefined && isGroupableToolCall(item);
+  }
+  return false;
+}
+
 function createRun(calls: readonly ToolCallItem[], isSealed: boolean): ToolCallRun {
   const first = calls[0];
   const latest = calls.at(-1);
@@ -121,11 +135,12 @@ export function prepareGroupedHistory<TGroup>(input: {
   const groups = new Map<string, TGroup>();
   let pending: ToolCallItem[] = [];
 
-  for (const item of input.tail) {
+  for (const [index, item] of input.tail.entries()) {
     if (isGroupableToolCall(item)) {
       pending.push(item);
       continue;
     }
+    if (isFoldedThought(input.tail, index)) continue;
     appendRun({
       calls: pending,
       isSealed: true,
@@ -163,6 +178,7 @@ export function groupLiveToolCalls<TGroup>(input: {
   let pending = [...input.history.pendingCalls];
   let hostPlacement: "history" | "head" | null = pending.length > 0 ? "history" : null;
   let pendingIncludesHead = false;
+  let foldedThought = false;
 
   const flush = (isSealed: boolean) => {
     if (pending.length === 0) {
@@ -180,13 +196,17 @@ export function groupLiveToolCalls<TGroup>(input: {
     pendingIncludesHead = false;
   };
 
-  for (const item of input.head) {
+  for (const [index, item] of input.head.entries()) {
     if (isGroupableToolCall(item)) {
       if (pending.length === 0) {
         hostPlacement = "head";
       }
       pending.push(item);
       pendingIncludesHead = true;
+      continue;
+    }
+    if (isFoldedThought(input.head, index)) {
+      foldedThought = true;
       continue;
     }
     flush(true);
@@ -203,7 +223,7 @@ export function groupLiveToolCalls<TGroup>(input: {
   if (liveGroups.size === 0) {
     return {
       tail: input.history.tail,
-      head: input.head,
+      head: foldedThought ? head : input.head,
       groupsByHostId: input.history.groupsByHostId,
       historyGroupUpdatesByHostId: EMPTY_GROUPS,
     };

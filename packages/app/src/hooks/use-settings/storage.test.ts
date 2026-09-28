@@ -686,7 +686,7 @@ describe("appearance settings", () => {
     expect(result.contentFontSize).toBe(DEFAULT_UI_BASE_FONT_SIZE);
     expect(result.codeFontSize).toBe(DEFAULT_CODE_FONT_SIZE);
     expect(result.syntaxTheme).toBe("one");
-    expect(result.toolCallDetailLevel).toBe("detailed");
+    expect(result.toolCallDetailLevel).toBe("overview");
   });
 
   it("migrates the enabled compact tool call preference to overview", async () => {
@@ -706,7 +706,26 @@ describe("appearance settings", () => {
       }),
     });
 
-    expect((await loadAppSettingsFromStorage(deps)).toolCallDetailLevel).toBe("detailed");
+    expect((await loadAppSettingsFromStorage(deps)).toolCallDetailLevel).toBe("overview");
+  });
+
+  it("moves the old detailed default to the summary once and keeps a later choice", async () => {
+    const before = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({ toolCallDetailLevel: "detailed" }),
+      }),
+    });
+    expect((await loadAppSettingsFromStorage(before)).toolCallDetailLevel).toBe("overview");
+
+    const chosen = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({
+          toolCallDetailLevel: "detailed",
+          toolCallLayoutRevision: 2,
+        }),
+      }),
+    });
+    expect((await loadAppSettingsFromStorage(chosen)).toolCallDetailLevel).toBe("detailed");
   });
 
   it("migrates a switched-off checks row item to the hidden checks display", async () => {
