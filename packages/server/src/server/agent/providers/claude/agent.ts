@@ -4,6 +4,9 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import { promises } from "node:fs";
 import path from "node:path";
+import { createInterface } from "node:readline";
+import { LRUCache } from "lru-cache";
+import pLimit from "p-limit";
 import {
   type AgentDefinition,
   type CanUseTool,
@@ -1506,6 +1509,18 @@ export class ClaudeAgentClient implements AgentClient {
   private readonly resolveBinary: () => Promise<string>;
   private readonly resolveVersion: (signal?: AbortSignal) => Promise<string>;
   private readonly rewindSdk: ClaudeRewindSdk;
+  // Share the limit across overlapping picker requests, not just within each listing.
+  private readonly importDescriptorLimit = pLimit(4);
+  private readonly importDescriptorReads = new Map<
+    string,
+    Promise<ImportableProviderSession | null>
+  >();
+  private readonly importDescriptorCache = new LRUCache<string, ImportableProviderSession>({
+    max: 500,
+    maxSize: 8 * 1024 * 1024,
+    sizeCalculation: (descriptor, key) =>
+      128 + 2 * (JSON.stringify(descriptor).length + key.length),
+  });
 
   constructor(options: ClaudeAgentClientOptions) {
     this.defaults = options.defaults;
@@ -1636,11 +1651,38 @@ export class ClaudeAgentClient implements AgentClient {
       rootIsProjectDir: Boolean(options?.cwd),
     });
     const parsed = await Promise.all(
-      candidates.map((candidate) => parseClaudeSessionDescriptor(candidate.path, candidate.mtime)),
+      candidates.map((candidate) => this.readImportDescriptor(candidate)),
     );
     return parsed
       .filter((session): session is ImportableProviderSession => session !== null)
       .slice(0, limit);
+  }
+
+  private async readImportDescriptor(
+    candidate: ClaudeSessionCandidate,
+  ): Promise<ImportableProviderSession | null> {
+    const cached = this.importDescriptorCache.get(candidate.cacheKey);
+    if (cached) return structuredClone(cached);
+
+    let pending = this.importDescriptorReads.get(candidate.cacheKey);
+    if (!pending) {
+      pending = this.importDescriptorLimit(async () => {
+        const descriptor = await parseClaudeSessionDescriptor(candidate.path, candidate.mtime);
+        if (descriptor) {
+          const current = await fsPromises.stat(candidate.path).catch(() => null);
+          if (current && claudeSessionCacheKey(candidate.path, current) === candidate.cacheKey) {
+            // Copy the small descriptor so preview slices cannot retain a large transcript line.
+            this.importDescriptorCache.set(candidate.cacheKey, structuredClone(descriptor));
+          }
+        }
+        return descriptor;
+      }).finally(() => {
+        this.importDescriptorReads.delete(candidate.cacheKey);
+      });
+      this.importDescriptorReads.set(candidate.cacheKey, pending);
+    }
+    const descriptor = await pending;
+    return descriptor ? structuredClone(descriptor) : null;
   }
 
   async importSession(input: ImportProviderSessionInput, context: ImportProviderSessionContext) {
@@ -6166,6 +6208,11 @@ function createAsyncMessageInput<T>(): AsyncMessageInput<T> {
 interface ClaudeSessionCandidate {
   path: string;
   mtime: Date;
+  cacheKey: string;
+}
+
+function claudeSessionCacheKey(filePath: string, stats: fs.Stats): string {
+  return `${filePath}\0${stats.dev}:${stats.ino}:${stats.size}:${stats.mtimeMs}:${stats.ctimeMs}`;
 }
 
 async function pathExists(target: string): Promise<boolean> {
@@ -6211,7 +6258,12 @@ async function collectRecentClaudeSessions(
     fileEntries.map(async (fullPath) => {
       try {
         const fileStats = await fsPromises.stat(fullPath);
-        return { path: fullPath, mtime: fileStats.mtime };
+        if (!fileStats.isFile()) return null;
+        return {
+          path: fullPath,
+          mtime: fileStats.mtime,
+          cacheKey: claudeSessionCacheKey(fullPath, fileStats),
+        };
       } catch {
         return null;
       }
@@ -6292,13 +6344,6 @@ async function parseClaudeSessionDescriptor(
   filePath: string,
   mtime: Date,
 ): Promise<ImportableProviderSession | null> {
-  let content: string;
-  try {
-    content = await fsPromises.readFile(filePath, "utf8");
-  } catch {
-    return null;
-  }
-
   const acc: ClaudeSessionDescriptorAccumulator = {
     sessionId: null,
     cwd: null,
@@ -6309,15 +6354,24 @@ async function parseClaudeSessionDescriptor(
     lastPromptPreview: null,
   };
 
-  for (const line of content.split(/\r?\n/)) {
-    if (!line || !shouldParseClaudeSessionDescriptorLine(line, acc)) continue;
-    let entry: unknown;
-    try {
-      entry = JSON.parse(line);
-    } catch {
-      continue;
+  const stream = fs.createReadStream(filePath, { encoding: "utf8" });
+  const lines = createInterface({ input: stream, crlfDelay: Infinity });
+  try {
+    for await (const line of lines) {
+      if (!line || !shouldParseClaudeSessionDescriptorLine(line, acc)) continue;
+      let entry: unknown;
+      try {
+        entry = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      applyClaudeSessionEntryToAccumulator(entry, acc);
     }
-    applyClaudeSessionEntryToAccumulator(entry, acc);
+  } catch {
+    return null;
+  } finally {
+    lines.close();
+    stream.destroy();
   }
 
   const { sessionId, cwd } = acc;
