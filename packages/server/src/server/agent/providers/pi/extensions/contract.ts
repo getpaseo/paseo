@@ -28,6 +28,8 @@ export interface PiExtensionToolMapping {
 
 export interface PiExtensionCustomMapping {
   subagents: ProviderSubagentInputEvent[];
+  /** Timeline items the custom message carries directly, such as mid-run progress. */
+  timeline?: AgentTimelineItem[];
   childSessions?: Array<{ id: string; file: string }>;
 }
 
@@ -51,6 +53,14 @@ export interface PiExtensionSession {
   mapCustomMessage?(
     message: Extract<PiAgentMessage, { role: "custom" }>,
   ): PiExtensionCustomMapping | undefined;
+  /**
+   * Live refresh, called while a child this session reported is still running.
+   *
+   * For plugins whose child state lives in a file of their own rather than in a tool result. The
+   * returned mapping goes through the same path as `mapToolCall`, so it can report status, hand over
+   * a child session file, or both.
+   */
+  poll?(): PiExtensionToolMapping | undefined;
   onToolStart?(call: PiExtensionToolCall, provider: string): AgentPermissionRequest | undefined;
   onToolEnd?(call: PiExtensionToolCall): void;
   mapDialog?(dialog: PiExtensionDialog, provider: string): PiExtensionDialogMapping | undefined;

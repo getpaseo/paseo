@@ -6,6 +6,7 @@ import type {
 } from "../../../agent-sdk-types.js";
 import type { PiAgentMessage } from "../rpc-types.js";
 import { mapPiChildSession } from "./child-session.js";
+import { PiChildSessionFollower, type PiChildSessionScheduler } from "./child-session-follower.js";
 import type {
   PiExtension,
   PiExtensionCustomMapping,
@@ -25,6 +26,21 @@ export type PiExtensionEventOutput = PiExtensionOutput<
   PiExtensionToolMapping | PiExtensionCustomMapping
 >;
 
+/**
+ * Live child-session following.
+ *
+ * Omitted on the replay path, where a child file is complete by definition and reading it once is
+ * both correct and cheaper.
+ */
+export interface PiExtensionFollowOptions {
+  onEvents(events: AgentStreamEvent[]): void;
+  scheduler?: PiChildSessionScheduler;
+  intervalMs?: number;
+  maxFollowedFiles?: number;
+  maxBytesPerRead?: number;
+  maxBytesPerChild?: number;
+}
+
 interface Session {
   id: string;
   adapter: PiExtensionSession;
@@ -32,6 +48,7 @@ interface Session {
 
 export class PiExtensionHost {
   private readonly sessions: Session[] = [];
+  private readonly follower: PiChildSessionFollower | null;
   private remainingHydrationBytes: number;
 
   constructor(
@@ -39,12 +56,24 @@ export class PiExtensionHost {
     private readonly logger?: Pick<Logger, "warn">,
     hydrationByteBudget = Number.POSITIVE_INFINITY,
     private readonly readChildSession: typeof mapPiChildSession = mapPiChildSession,
+    follow?: PiExtensionFollowOptions,
   ) {
     this.remainingHydrationBytes = hydrationByteBudget;
     for (const extension of extensions) {
       const adapter = this.safe(extension.id, "createSession", () => extension.createSession());
       if (adapter) this.sessions.push({ id: extension.id, adapter });
     }
+    this.follower = follow
+      ? new PiChildSessionFollower({
+          ...follow,
+          onTick: () => this.pollChildren(follow.onEvents),
+          hasPoll: (extensionId) =>
+            this.sessions.some(
+              (session) => session.id === extensionId && session.adapter.poll !== undefined,
+            ),
+          onWarn: (message, details) => this.logger?.warn(details, message),
+        })
+      : null;
   }
 
   private safe<T>(id: string, operation: string, call: () => T): T | undefined {
@@ -80,6 +109,11 @@ export class PiExtensionHost {
     return undefined;
   }
 
+  /** Stops following child sessions and cancels any scheduled read. */
+  close(): void {
+    this.follower?.close();
+  }
+
   private prepare<T extends PiExtensionToolMapping | PiExtensionCustomMapping>(
     id: string,
     mapping: T,
@@ -92,7 +126,19 @@ export class PiExtensionHost {
         (event): AgentStreamEvent => ({ type: "provider_subagent", provider: "pi", event }),
       ),
     ];
-    const hydration = Promise.all(
+    if (this.follower) {
+      // The follower owns the reads and emits through `onEvents`, so nothing is hydrated here.
+      this.follower.accept(id, mapping);
+      return { ...mapping, events, hydration: Promise.resolve([]) };
+    }
+    return { ...mapping, events, hydration: this.hydrateChildSessions(id, mapping) };
+  }
+
+  private hydrateChildSessions<T extends PiExtensionToolMapping | PiExtensionCustomMapping>(
+    id: string,
+    mapping: T,
+  ): Promise<AgentStreamEvent[]> {
+    return Promise.all(
       (mapping.childSessions ?? []).map(async ({ id: childId, file }) => {
         const bytes = Math.min(this.remainingHydrationBytes, 2 * 1024 * 1024);
         if (bytes <= 0) return [];
@@ -110,7 +156,22 @@ export class PiExtensionHost {
         );
         return [];
       });
-    return { ...mapping, events, hydration };
+  }
+
+  /**
+   * Asks every adapter that publishes live child state to refresh, and emits what it produced.
+   *
+   * The follower drives this because only it knows that a child is still running and worth asking
+   * about.
+   */
+  private pollChildren(emit: (events: AgentStreamEvent[]) => void): void {
+    for (const { id, adapter } of this.sessions) {
+      if (!adapter.poll) continue;
+      const mapping = this.safe(id, "poll", () => adapter.poll?.());
+      if (!mapping) continue;
+      const prepared = this.safe(id, "prepare", () => this.prepare(id, mapping));
+      if (prepared?.events.length) emit(prepared.events);
+    }
   }
 
   onToolStart(call: PiExtensionToolCall, provider = "pi"): AgentPermissionRequest | undefined {

@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 import { fileURLToPath } from "node:url";
 import { createPiExtensionHost } from "../index.js";
 import { readSubagentFixture, verifySubagentFixture } from "../subagent-fixture-test.js";
+import { parseToolResult } from "../../tool-call-mapper.js";
 
 describe("@tintinweb/pi-subagents adapter", () => {
   test("maps captured foreground lifecycle live and on replay", async () => {
@@ -43,5 +44,28 @@ describe("@tintinweb/pi-subagents adapter", () => {
         result: { details: { agentId: "other", status: "completed" } },
       }),
     ).toBeUndefined();
+  });
+
+  test("hands a running background child's transcript over from the spawn text", () => {
+    const file = "/tmp/pi-subagents-50/tasks/98cdb309-045e-45d.output";
+    const output = createPiExtensionHost().mapToolCall({
+      callId: "spawn-1",
+      toolName: "Agent",
+      args: { subagent_type: "general-purpose", prompt: "Inspect" },
+      status: "completed",
+      result: parseToolResult({
+        content: [
+          {
+            type: "text",
+            text: `Agent started in background.\nAgent ID: 98cdb309\nType: Agent\nDescription: list files\nOutput file: ${file}\n\nYou will be notified when this agent completes.`,
+          },
+        ],
+        details: { agentId: "98cdb309", status: "background" },
+      }),
+    });
+    expect(output?.subagents).toEqual([
+      expect.objectContaining({ id: "spawn-1", status: "running" }),
+    ]);
+    expect(output?.childSessions).toEqual([{ id: "spawn-1", file }]);
   });
 });

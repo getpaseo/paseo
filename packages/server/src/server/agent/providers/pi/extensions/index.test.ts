@@ -1,9 +1,20 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
+import { appendFileSync } from "node:fs";
 import { createPiExtensionHost } from "./index.js";
 import { PiHistoryMapper } from "../history-mapper.js";
 import { parseToolArgs, parseToolResult } from "../tool-call-mapper.js";
 import type { PiExtension } from "./contract.js";
 import { PiExtensionHost } from "./host.js";
+import type { AgentStreamEvent } from "../../../agent-sdk-types.js";
+import {
+  ManualChildSessionScheduler,
+  childEntry,
+  createChildSessionFile,
+  streamTexts,
+} from "./child-session-fixture.js";
+
+const T1 = "2026-01-01T00:00:01.000Z";
+const T2 = "2026-01-01T00:00:02.000Z";
 
 const throwingAdapter: PiExtension = {
   id: "throwing-test-adapter",
@@ -199,5 +210,54 @@ describe("Pi extension host", () => {
         : null,
     ).toEqual(live?.detail);
     expect(parseToolArgs("subagent", args).toolName).toBe("subagent");
+  });
+
+  test("follows a child session file while the child runs", async () => {
+    const file = createChildSessionFile(childEntry("user", "first", T1));
+    const events: AgentStreamEvent[] = [];
+    const scheduler = new ManualChildSessionScheduler();
+    let polls = 0;
+    const host = new PiExtensionHost(
+      [
+        {
+          id: "child",
+          createSession: () => ({
+            mapToolCall: () => ({
+              subagents: [{ type: "upsert" as const, id: "child-1", status: "running" as const }],
+              childSessions: [{ id: "child-1", file }],
+            }),
+            poll: () => {
+              polls += 1;
+              return undefined;
+            },
+          }),
+        },
+      ],
+      undefined,
+      undefined,
+      undefined,
+      { onEvents: (batch) => events.push(...batch), scheduler, intervalMs: 1 },
+    );
+    const output = host.mapToolCall({
+      callId: "x",
+      toolName: "other",
+      args: {},
+      status: "running",
+      result: null,
+    });
+    // Following replaces the one-shot read, so nothing is hydrated up front.
+    expect(await output?.hydration).toEqual([]);
+    await vi.waitFor(() => expect(streamTexts(events)).toEqual(["first"]));
+
+    appendFileSync(file, childEntry("assistant", "second", T2));
+    scheduler.runScheduled();
+    await vi.waitFor(() => expect(streamTexts(events)).toEqual(["first", "second"]));
+    expect(polls).toBeGreaterThan(0);
+
+    host.close();
+    appendFileSync(file, childEntry("assistant", "after close", T2));
+    scheduler.runScheduled();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(streamTexts(events)).toEqual(["first", "second"]);
   });
 });

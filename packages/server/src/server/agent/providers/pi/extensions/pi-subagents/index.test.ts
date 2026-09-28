@@ -1,6 +1,11 @@
 import { describe, expect, test } from "vitest";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createPiExtensionHost } from "../index.js";
+import { piSubagents } from "./index.js";
+import { childEntry, createChildSessionFile } from "../child-session-fixture.js";
 import {
   parseToolArgs,
   parseToolResult,
@@ -111,7 +116,7 @@ describe("pi-subagents adapter", () => {
     expect(await mapPiChildSession("child", "/does-not-exist/pi-child.jsonl")).toEqual([]);
   });
 
-  test("does not emit child timeline after session close", async () => {
+  test("stops emitting child timeline after session close", async () => {
     const raw = readSubagentFixture(new URL("./fixtures/foreground.json", import.meta.url));
     const completion = raw.events.find(
       (event) => event.type === "tool_execution_end" && event.toolName === "subagent",
@@ -137,9 +142,58 @@ describe("pi-subagents adapter", () => {
     expect(
       events.some((event) => event.type === "provider_subagent" && event.event.type === "upsert"),
     ).toBe(true);
-    expect(
-      events.some((event) => event.type === "provider_subagent" && event.event.type === "timeline"),
-    ).toBe(false);
+
+    // A followed file keeps producing rows while the child runs; the invariant is that the follow
+    // does not outlive the session that started it.
+    const settled = events.length;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(events.length).toBe(settled);
+  });
+
+  test("reports a detached run's live state and transcript from its run directory", () => {
+    const directory = mkdtempSync(join(tmpdir(), "paseo-pi-async-"));
+    const child = createChildSessionFile(childEntry("user", "hi", "2026-01-01T00:00:01.000Z"));
+    const statusFile = join(directory, "status.json");
+    const writeStatus = (state: string, stepStatus: string): void => {
+      writeFileSync(
+        statusFile,
+        JSON.stringify({
+          state,
+          steps: [{ index: 0, agent: "scout", status: stepStatus, sessionFile: child }],
+        }),
+      );
+    };
+    writeStatus("running", "running");
+
+    const session = piSubagents.createSession();
+    session.mapToolCall?.({
+      callId: "spawn-1",
+      toolName: "subagent",
+      args: { agent: "scout", task: "Inspect", async: true },
+      status: "completed",
+      result: parseToolResult({
+        content: [{ type: "text", text: "Async: scout [run-1]\n" }],
+        details: {
+          mode: "single",
+          runId: "run-1",
+          asyncId: "run-1",
+          asyncDir: directory,
+          results: [],
+        },
+      }),
+    });
+
+    expect(session.poll?.()).toEqual({
+      subagents: [{ type: "upsert", id: "spawn-1", status: "running" }],
+      childSessions: [{ id: "spawn-1", file: child }],
+    });
+
+    writeStatus("complete", "complete");
+    expect(session.poll?.()?.subagents).toEqual([
+      { type: "upsert", id: "spawn-1", status: "completed" },
+    ]);
+    // A settled run has nothing left to poll for.
+    expect(session.poll?.()).toBeUndefined();
   });
 
   test("a failed spawn without result rows finishes its descriptor", () => {

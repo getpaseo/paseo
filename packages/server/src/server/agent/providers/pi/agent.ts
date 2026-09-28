@@ -1220,7 +1220,14 @@ export class PiRpcAgentSession implements AgentSession {
     this.cleanup = options.cleanup;
     this.extensionTimeoutMs = options.extensionTimeoutMs ?? DEFAULT_PI_EXTENSION_RESULT_TIMEOUT_MS;
     this.logger = options.logger;
-    this.extensionHost = createPiExtensionHost(this.logger);
+    this.extensionHost = createPiExtensionHost(this.logger, undefined, undefined, {
+      // Followed child sessions arrive asynchronously, long after the tool result that named them,
+      // so they bypass the turn-scoped hydration path and go straight to subscribers.
+      onEvents: (events) => {
+        if (this.closed) return;
+        for (const event of events) this.emit(event);
+      },
+    });
     this.usageEnv = options.usageEnv;
     this.usagePoller = new PiUsagePoller({
       scheduler: options.usagePollScheduler,
@@ -1577,6 +1584,7 @@ export class PiRpcAgentSession implements AgentSession {
     }
     this.closed = true;
     this.closeController.abort();
+    this.extensionHost.close();
     this.usagePoller.close();
     try {
       await this.runtimeSession.close();

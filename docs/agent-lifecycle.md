@@ -183,7 +183,7 @@ The rows combine two kinds of children:
 parentAgentId === thisAgent.id  AND  !archivedAt
 ```
 
-- **Provider subagents** are child executions owned by Claude, Codex, or OpenCode. They are not inserted into `AgentManager` as managed agents. Providers emit a separate descriptor and timeline stream through `agent.provider_subagents.*`; the client keeps that state outside the normal agent store and merges only the presentation rows into the track. A descriptor's optional `parentSubagentId` identifies its direct provider-subagent parent; an absent value identifies a direct child of the managed agent.
+- **Provider subagents** are child executions owned by Claude, Codex, OpenCode, OMP, or a Pi extension. They are not inserted into `AgentManager` as managed agents. Providers emit a separate descriptor and timeline stream through `agent.provider_subagents.*`; the client keeps that state outside the normal agent store and merges only the presentation rows into the track. A descriptor's optional `parentSubagentId` identifies its direct provider-subagent parent; an absent value identifies a direct child of the managed agent.
 
 Clicking either kind opens a workspace tab. A Paseo subagent tab is a normal interactive agent pane. A provider subagent tab is a read-only timeline pane with no composer, archive, detach, rewind, or fork actions. It shows its own direct children in a subagents track. Both panes use `AgentStreamView`, so message, reasoning, tool-call, and layout rendering stay identical.
 
@@ -204,6 +204,18 @@ Claude Code announces subagent lifecycle on the SDK stream (`task_started` / `ta
 - **Nested ownership comes from the launching sidechain, not `spawn_depth` alone.** A sidechain's Agent or Bash tool call records the direct owner of that `tool_use_id`; the following `task_started` inherits it. This routes a grandchild descriptor and child-owned background notifications without relying on labels or flattening them into the managed parent.
 - **On replay, `<session>/subagents/` holds every descendant beside the root.** Resolve the tree one proven generation at a time: the root transcript admits direct children, then each admitted sidechain transcript admits its children by `toolUseId`. `spawnDepth` orders candidates but does not establish ownership. Unresolved sidecars remain excluded as ambient or unrelated work.
 - **Replay `totalTokens` is a context-size reading, not cumulative spend.** Claude Code finalizes a subagent by summing the _last_ assistant message's usage block and shipping that as `usage.total_tokens`. Summing per-entry usage instead multiplies the cached prefix by the turn count and reports a number several times larger than the live path.
+
+### Pi provider subagents: followed files
+
+Paseo is a client of Pi's RPC stream, not the runtime. A Pi child is visible only through the tool result that spawned it and any custom message the plugin sends, so a plugin that returns nothing until the child finishes is invisible until it finishes, and no Paseo-side change can reach a transcript path the plugin never publishes.
+
+The Pi extension contract therefore splits discovery from reading. An adapter's job is to name a child's session file in `childSessions`, once, as soon as the plugin's payloads mention it — including while the child is still running. `PiChildSessionFollower` owns everything after that: it tails the append-only JSONL by byte offset while the child's last known descriptor status is running, reads to the end when that status turns terminal, then stops. The offset and an unterminated trailing line survive between reads, so a chunk that ends mid-line is completed by the next one rather than dropped or reparsed.
+
+- **Never gate a handoff on a non-running status.** That gate is what made every Pi child pane blank until the child finished, and re-adding it anywhere restores the blank pane.
+- **A status-less upsert is presentation, not lifecycle.** Following must not end on one, or a plugin that re-renders a child mid-run would freeze its pane.
+- **`poll()` is for plugins whose live child state is a file, not a tool result.** The host calls it while a child runs, then drains the tails; an adapter that returns nothing leaves the follow to the file alone.
+- **Replay reads each file once.** A replayed file is complete, so `mapPiChildSession` stays a one-shot read and the live path is the only one that follows.
+- **The path source is per-plugin and unenforceable.** gotgenes and tintinweb name it in the background spawn result text, nicobailon puts a run directory in `details.asyncDir` whose `status.json` names each step's session file, and gotgenes reports it again from `get_subagent_result` for a running child. Foreground gotgenes and tintinweb runs publish no path at any point, so their panes stay summary-only.
 
 Archived Paseo subagents disappear from the track, by design. To remove one from the track without closing its tab, use the **archive button** on the row — it opens a confirm dialog and archives the subagent on confirm. Provider-owned rows have no individual Paseo lifecycle controls.
 

@@ -3,6 +3,44 @@ import { fileURLToPath } from "node:url";
 import { createPiExtensionHost } from "../index.js";
 import { readSubagentFixture, verifySubagentFixture } from "../subagent-fixture-test.js";
 import { streamPiHistory } from "../../history-mapper.js";
+import { parseToolResult } from "../../tool-call-mapper.js";
+
+const CHILD_FILE = "/tmp/paseo-gotgenes-child.jsonl";
+
+/** Spawns a background child the way the plugin's result text and details do. */
+function spawnBackground(host: ReturnType<typeof createPiExtensionHost>, file?: string): void {
+  host.mapToolCall({
+    callId: "spawn-1",
+    toolName: "subagent",
+    args: { subagent_type: "general-purpose", prompt: "Inspect" },
+    status: "completed",
+    result: parseToolResult({
+      content: [
+        {
+          type: "text",
+          text: `Agent started in background.\nAgent ID: abc\n${file ? `\nOutput file: ${file}\n` : ""}\nYou will be notified when this agent completes.`,
+        },
+      ],
+      details: { agentId: "abc", status: "background" },
+    }),
+  });
+}
+
+function collectRunningChildResult(
+  host: ReturnType<typeof createPiExtensionHost>,
+  transcriptPath = CHILD_FILE,
+) {
+  return host.mapToolCall({
+    callId: "follow-1",
+    toolName: "get_subagent_result",
+    args: { agent_id: "abc" },
+    status: "completed",
+    result: parseToolResult({
+      content: [{ type: "text", text: "Agent: abc | Status: running" }],
+      details: { agentId: "abc", status: "running", transcriptPath },
+    }),
+  });
+}
 
 describe("@gotgenes/pi-subagents adapter", () => {
   test("maps captured foreground lifecycle live and on replay", async () => {
@@ -82,5 +120,61 @@ describe("@gotgenes/pi-subagents adapter", () => {
         result: null,
       }),
     ).toBeUndefined();
+  });
+
+  test("hands a running background child's transcript over from the spawn text", () => {
+    const host = createPiExtensionHost();
+    const output = host.mapToolCall({
+      callId: "spawn-1",
+      toolName: "subagent",
+      args: { subagent_type: "general-purpose", prompt: "Inspect" },
+      status: "completed",
+      result: parseToolResult({
+        content: [
+          {
+            type: "text",
+            text: `Agent started in background.\nAgent ID: abc\n\nOutput file: ${CHILD_FILE}\n`,
+          },
+        ],
+        details: { agentId: "abc", status: "background" },
+      }),
+    });
+    expect(output?.childSessions).toEqual([{ id: "spawn-1", file: CHILD_FILE }]);
+  });
+
+  test("hands a running child's transcript over from get_subagent_result", () => {
+    const host = createPiExtensionHost();
+    spawnBackground(host);
+    const output = collectRunningChildResult(host);
+    expect(output?.subagents).toEqual([
+      expect.objectContaining({ id: "spawn-1", status: "running" }),
+    ]);
+    expect(output?.childSessions).toEqual([{ id: "spawn-1", file: CHILD_FILE }]);
+  });
+
+  test("hands the same transcript over once", () => {
+    const host = createPiExtensionHost();
+    spawnBackground(host);
+    collectRunningChildResult(host, CHILD_FILE);
+    expect(collectRunningChildResult(host)?.childSessions).toEqual([]);
+  });
+
+  test("reports mid-run progress as a notification item", () => {
+    const host = createPiExtensionHost();
+    spawnBackground(host);
+    const output = host.mapCustomMessage({
+      role: "custom",
+      customType: "subagent-update",
+      content: "<subagent-update>Reading the workspace</subagent-update>",
+      details: { id: "abc", description: "Inspect", message: "Reading the workspace" },
+    });
+    expect(output?.timeline).toEqual([
+      { type: "notification", level: "info", message: "Reading the workspace" },
+    ]);
+    expect(output?.events).toContainEqual({
+      type: "timeline",
+      provider: "pi",
+      item: { type: "notification", level: "info", message: "Reading the workspace" },
+    });
   });
 });

@@ -26,6 +26,13 @@ const Notification = z
     outputFile: z.string().trim().min(1).optional(),
   })
   .passthrough();
+
+/**
+ * A background run names its transcript in the spawn result text. The spawn result `details` carry
+ * display metadata only, so this text is the only place the path appears before the child ends.
+ */
+const OUTPUT_FILE_PATTERN = /^Output file: (.+)$/m;
+
 const status = (value: string): "running" | "completed" | "failed" | "canceled" => {
   if (value === "completed") return "completed";
   if (value === "error") return "failed";
@@ -33,11 +40,29 @@ const status = (value: string): "running" | "completed" | "failed" | "canceled" 
   return "running";
 };
 
+function spawnOutputFile(call: PiExtensionToolCall): string | undefined {
+  return extractTextFromToolResult(call.result)?.match(OUTPUT_FILE_PATTERN)?.[1]?.trim();
+}
+
 export const tintinwebPiSubagents: PiExtension = {
   id: "@tintinweb/pi-subagents",
   createSession: () => {
     const callsByAgent = new Map<string, string>();
     const readSessions = new Set<string>();
+    /**
+     * Hands a transcript file over once, as soon as it is named.
+     *
+     * The `.output` transcript is flushed to disk on each child turn end, so a pane fed from it grows
+     * a turn at a time rather than a token at a time.
+     */
+    const takeChildSession = (
+      id: string,
+      file: string | undefined,
+    ): Array<{ id: string; file: string }> => {
+      if (!file || readSessions.has(file)) return [];
+      readSessions.add(file);
+      return [{ id, file }];
+    };
     const mapSpawn = (call: PiExtensionToolCall) => {
       const args = SpawnArgs.safeParse(call.args);
       if (!args.success) return undefined;
@@ -52,6 +77,7 @@ export const tintinwebPiSubagents: PiExtension = {
         description,
         log: extractTextFromToolResult(call.result)?.trim() ?? "",
       };
+      const childSessions = takeChildSession(call.callId, spawnOutputFile(call));
       if (call.status === "running")
         return {
           detail,
@@ -65,6 +91,7 @@ export const tintinwebPiSubagents: PiExtension = {
               status: "running" as const,
             },
           ],
+          childSessions,
         };
       if (!details.success)
         return call.status === "failed"
@@ -86,6 +113,7 @@ export const tintinwebPiSubagents: PiExtension = {
             status: status(details.data.status),
           },
         ],
+        childSessions,
       };
     };
     const mapFollowup = (call: PiExtensionToolCall) => {
@@ -124,12 +152,6 @@ export const tintinwebPiSubagents: PiExtension = {
         if (!details.success) return undefined;
         const id = callsByAgent.get(details.data.id);
         if (!id) return undefined;
-        const file = details.data.outputFile;
-        const childSessions =
-          file && status(details.data.status) !== "running" && !readSessions.has(file)
-            ? [{ id, file }]
-            : [];
-        if (childSessions.length && file) readSessions.add(file);
         return {
           subagents: [
             {
@@ -139,7 +161,7 @@ export const tintinwebPiSubagents: PiExtension = {
               status: status(details.data.status),
             },
           ],
-          childSessions,
+          childSessions: takeChildSession(id, details.data.outputFile),
         };
       },
     };
