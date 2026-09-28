@@ -28,6 +28,7 @@ const INBOUND_PERMISSION = {
   "browser.remote.execute.request": "workspace.write",
   "browser.screencast.subscribe.request": "workspace.write",
   "browser.activity.control.request": "workspace.write",
+  "browser.mirror.apply.request": "workspace.write",
   "subscription.release.request": null,
   "session.events.set_subscription.request": ["workspace.read", "daemon.read", "hub.execute"],
   "agent.timeline.set_subscription.request": ["workspace.read", "hub.execute"],

@@ -182,7 +182,10 @@ import type {
   BrowserAutomationExecuteResponse,
   BrowserAutomationResponsePayload,
 } from "@getpaseo/protocol/browser-automation/rpc-schemas";
-import type { BrowserActivityControlRequest } from "@getpaseo/protocol/browser-activity/rpc-schemas";
+import type {
+  BrowserActivityControlRequest,
+  BrowserMirrorAction,
+} from "@getpaseo/protocol/browser-activity/rpc-schemas";
 
 export type BrowserScreencastEvent =
   | { type: "frame"; width: number; height: number; jpeg: Uint8Array }
@@ -2333,6 +2336,16 @@ export class DaemonClient {
       message: { type: "browser.activity.control.request", ...input },
       responseType: "browser.activity.control.response",
     });
+  }
+
+  /** Fire-and-forget: the result comes back to other apps as a browser.mirror event. */
+  applyBrowserMirrorAction(input: {
+    workspaceId: string;
+    browserId: string;
+    action: BrowserMirrorAction;
+    origin: string;
+  }): void {
+    this.sendSessionMessage({ type: "browser.mirror.apply.request", ...input });
   }
 
   observeEvents(

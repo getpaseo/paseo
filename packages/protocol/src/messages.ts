@@ -102,6 +102,7 @@ import {
   BrowserActivityControlRequestSchema,
   BrowserActivityControlResponseSchema,
   BrowserActivityMessageSchema,
+  BrowserMirrorApplyRequestSchema,
   BrowserHandoffMessageSchema,
   BrowserMirrorMessageSchema,
 } from "./browser-activity/rpc-schemas.js";
@@ -3553,6 +3554,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   BrowserImportListSourcesRequestSchema,
   BrowserImportCookiesRequestSchema,
   BrowserActivityControlRequestSchema,
+  BrowserMirrorApplyRequestSchema,
   SubscribeTerminalRequestSchema,
   UnsubscribeTerminalRequestSchema,
   TerminalInputSchema,

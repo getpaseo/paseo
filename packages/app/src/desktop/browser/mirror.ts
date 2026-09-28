@@ -129,3 +129,130 @@ export function replayMirrorAction(action: Exclude<BrowserMirrorAction, { kind: 
 export function mirrorReplaySource(action: Exclude<BrowserMirrorAction, { kind: "navigate" }>) {
   return `() => (${replayMirrorAction.toString()})(${JSON.stringify(action)})`;
 }
+
+/** This app's name in mirror events, so it can skip the echo of its own steps. */
+export const MIRROR_ORIGIN = `app-${Math.random().toString(36).slice(2, 12)}`;
+export const MIRROR_CAPTURE_MARK = "__paseo_mirror__";
+
+type LocalCaptureListener = (action: BrowserMirrorAction) => void;
+const captureListeners = new Map<string, Set<LocalCaptureListener>>();
+
+/** A person's step in a local tab, as reported by the capture script in its page. */
+export function publishLocalMirrorCapture(browserId: string, message: string): void {
+  if (!message.startsWith(MIRROR_CAPTURE_MARK)) return;
+  let action: BrowserMirrorAction;
+  try {
+    action = JSON.parse(message.slice(MIRROR_CAPTURE_MARK.length)) as BrowserMirrorAction;
+  } catch {
+    return;
+  }
+  for (const listener of captureListeners.get(browserId) ?? []) listener(action);
+}
+
+export function subscribeLocalMirrorCapture(
+  browserId: string,
+  listener: LocalCaptureListener,
+): () => void {
+  const set = captureListeners.get(browserId) ?? new Set<LocalCaptureListener>();
+  set.add(listener);
+  captureListeners.set(browserId, set);
+  return () => {
+    set.delete(listener);
+    if (set.size === 0) captureListeners.delete(browserId);
+  };
+}
+
+/**
+ * Injected into every local tab. Reports the person's own clicks, typing, choices, Enter
+ * and wheel scrolls as DOM-level steps on the console, which the app reads. Replayed
+ * steps are untrusted events, so they are never reported back.
+ */
+export const MIRROR_CAPTURE_SOURCE = String.raw`(() => {
+  if (window.__paseoMirrorCapture) return;
+  window.__paseoMirrorCapture = true;
+  const log = console.debug.bind(console);
+  const send = (action) => { try { log("${MIRROR_CAPTURE_MARK}" + JSON.stringify(action)); } catch (_) {} };
+  const esc = (value) => (window.CSS && CSS.escape ? CSS.escape(value) : value);
+  const selectorFor = (el) => {
+    if (el.id) return "#" + esc(el.id);
+    const parts = [];
+    let cur = el;
+    for (let depth = 0; cur && cur.nodeType === 1 && depth < 12; depth += 1) {
+      const tag = cur.tagName.toLowerCase();
+      const parent = cur.parentElement;
+      if (!parent || tag === "html" || tag === "body") { parts.unshift(tag); break; }
+      let nth = 1;
+      for (let sib = cur.previousElementSibling; sib; sib = sib.previousElementSibling) {
+        if (sib.tagName === cur.tagName) nth += 1;
+      }
+      parts.unshift(tag + ":nth-of-type(" + nth + ")");
+      if (parent.id) { parts.unshift("#" + esc(parent.id)); break; }
+      cur = parent;
+    }
+    return parts.join(" > ");
+  };
+  const ROLES = { A: "link", BUTTON: "button", SELECT: "combobox", TEXTAREA: "textbox", SUMMARY: "button" };
+  const roleOf = (el) => {
+    const explicit = el.getAttribute("role");
+    if (explicit) return explicit;
+    if (el.tagName !== "INPUT") return ROLES[el.tagName];
+    if (["button", "submit", "reset"].indexOf(el.type) >= 0) return "button";
+    if (el.type === "checkbox" || el.type === "radio") return el.type;
+    return "textbox";
+  };
+  const nameOf = (el) => {
+    const typed = el.tagName === "INPUT" || el.tagName === "TEXTAREA";
+    const raw = el.getAttribute("aria-label") || (typed ? el.getAttribute("placeholder") : el.innerText) || "";
+    const name = String(raw).trim().slice(0, 120);
+    return name || undefined;
+  };
+  const targetOf = (el) => {
+    const target = { selector: selectorFor(el) };
+    const role = roleOf(el);
+    const name = nameOf(el);
+    if (role) target.role = role;
+    if (name) target.name = name;
+    return target;
+  };
+  const INTERACTIVE = "a,button,input,textarea,select,summary,label,[role=button],[role=link],[role=tab],[role=menuitem],[role=checkbox],[onclick]";
+  const isField = (el) => el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable);
+  const pending = new Map();
+  const flush = (el) => {
+    clearTimeout(pending.get(el));
+    pending.delete(el);
+    send({ kind: "fill", target: targetOf(el), value: el.isContentEditable ? el.innerText : el.value });
+  };
+  document.addEventListener("click", (event) => {
+    if (!event.isTrusted || !(event.target instanceof Element)) return;
+    const el = event.target.closest(INTERACTIVE) || event.target;
+    send(Object.assign({ kind: "click", target: targetOf(el) }, event.detail === 2 ? { doubleClick: true } : {}));
+  }, true);
+  document.addEventListener("input", (event) => {
+    const el = event.target;
+    if (!event.isTrusted || !isField(el)) return;
+    clearTimeout(pending.get(el));
+    pending.set(el, setTimeout(() => flush(el), 250));
+  }, true);
+  document.addEventListener("change", (event) => {
+    const el = event.target;
+    if (event.isTrusted && el && el.tagName === "SELECT") send({ kind: "select", target: targetOf(el), value: el.value });
+  }, true);
+  document.addEventListener("keydown", (event) => {
+    if (!event.isTrusted || ["Enter", "Escape", "Tab"].indexOf(event.key) < 0) return;
+    const el = event.target;
+    if (pending.has(el)) flush(el);
+    const onElement = el instanceof Element && el !== document.body && el !== document.documentElement;
+    send(Object.assign({ kind: "keypress", key: event.key }, onElement ? { target: targetOf(el) } : {}));
+  }, true);
+  let wheelX = 0, wheelY = 0, wheelTimer = null;
+  window.addEventListener("wheel", (event) => {
+    if (!event.isTrusted) return;
+    wheelX += event.deltaX;
+    wheelY += event.deltaY;
+    if (wheelTimer) return;
+    wheelTimer = setTimeout(() => {
+      send({ kind: "scroll", deltaX: Math.round(wheelX), deltaY: Math.round(wheelY) });
+      wheelX = 0; wheelY = 0; wheelTimer = null;
+    }, 120);
+  }, { capture: true, passive: true });
+})();`;

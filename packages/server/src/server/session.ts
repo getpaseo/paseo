@@ -2347,6 +2347,9 @@ export class Session {
       });
       return Promise.resolve();
     }
+    if (msg.type === "browser.mirror.apply.request") {
+      return this.verifyHost?.applyMirrorAction(msg) ?? Promise.resolve();
+    }
     if (msg.type === "browser.host.register.request") return this.registerBrowserHost(msg);
     if (msg.type === "browser.automation.execute.response") {
       if (source)

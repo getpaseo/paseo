@@ -137,6 +137,18 @@ export const BrowserMirrorEventSchema = z.object({
   browserId: z.string(),
   action: BrowserMirrorActionSchema,
   at: z.number(),
+  /** The app that did it, which then skips its own echo; absent for the daemon's own actions. */
+  origin: z.string().optional(),
+});
+
+// A person's action in an app's local copy of a daemon tab, applied to the daemon's page
+// and passed on to every other app.
+export const BrowserMirrorApplyRequestSchema = z.object({
+  type: z.literal("browser.mirror.apply.request"),
+  workspaceId: z.string().min(1),
+  browserId: z.string().min(1),
+  action: BrowserMirrorActionSchema,
+  origin: z.string().min(1),
 });
 
 export const BrowserMirrorMessageSchema = z.object({

@@ -718,6 +718,64 @@ describe.skipIf(!BROWSER_AVAILABLE)("DaemonPlaywrightHost mirror", { timeout: 60
 });
 
 describe.skipIf(!BROWSER_AVAILABLE)(
+  "DaemonPlaywrightHost applying app steps",
+  { timeout: 60_000 },
+  () => {
+    it("repeats a person's login from an app and passes it on without the password", async () => {
+      const paseoHome = mkdtempSync(join(tmpdir(), "paseo-verify-apply-test-"));
+      const app = await startVerifyFixtureApp();
+      const host = new DaemonPlaywrightHost({ paseoHome, logger: pino({ enabled: false }) });
+      const events: BrowserMirrorEvent[] = [];
+      try {
+        const created = await host.executeLocal({
+          workspaceId: WORKSPACE_ID,
+          command: { command: "new_tab", args: { url: `${app.url}/login` } },
+        });
+        const browserId =
+          created.ok && created.result.command === "new_tab" ? created.result.browserId : "";
+        host.onMirror = (event) => events.push(event);
+        const apply = (action: BrowserMirrorEvent["action"]) =>
+          host.applyMirrorAction({
+            workspaceId: WORKSPACE_ID,
+            browserId,
+            action,
+            origin: "mac-app",
+          });
+        await apply({ kind: "fill", target: { selector: "#email" }, value: FIXTURE_USERNAME });
+        await apply({ kind: "fill", target: { selector: "#password" }, value: FIXTURE_PASSWORD });
+        await apply({
+          kind: "click",
+          target: { selector: "#gone", role: "button", name: "Sign in" },
+        });
+        const waited = await host.executeLocal({
+          workspaceId: WORKSPACE_ID,
+          command: {
+            command: "wait",
+            args: { browserId, text: "Current Report", timeoutMs: 10_000 },
+          },
+        });
+        expect(waited.ok).toBe(true);
+        const fromApp = events
+          .filter((event) => event.origin === "mac-app")
+          .map((event) => event.action);
+        expect(fromApp.map((action) => action.kind)).toEqual(["fill", "fill", "click"]);
+        expect(fromApp[0]).toMatchObject({ value: FIXTURE_USERNAME });
+        expect(fromApp[1]).not.toHaveProperty("value");
+        expect(JSON.stringify(events)).not.toContain(FIXTURE_PASSWORD);
+        // The daemon's own navigation carries no origin, so the app that clicked follows it too.
+        expect(events.some((event) => !event.origin && event.action.kind === "navigate")).toBe(
+          true,
+        );
+      } finally {
+        await host.close();
+        await app.close();
+        rmSync(paseoHome, { recursive: true, force: true });
+      }
+    });
+  },
+);
+
+describe.skipIf(!BROWSER_AVAILABLE)(
   "DaemonPlaywrightHost across a daemon restart",
   { timeout: 60_000 },
   () => {

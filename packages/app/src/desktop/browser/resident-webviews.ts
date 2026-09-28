@@ -1,3 +1,4 @@
+import { MIRROR_CAPTURE_SOURCE, publishLocalMirrorCapture } from "@/desktop/browser/mirror";
 import {
   getDesktopHost,
   type DesktopAttachedBrowserRegistration,
@@ -19,6 +20,7 @@ const residentWebviewSizesByBrowserId = new Map<string, { width: number; height:
 interface BrowserWebviewElement extends HTMLElement {
   src: string;
   getWebContentsId(): number;
+  executeJavaScript(code: string): Promise<unknown>;
 }
 
 interface BrowserWebviewIdentity {
@@ -312,6 +314,18 @@ export function prepareBrowserWebview(
     (webview as BrowserWebviewElement).src = input.initialUrl;
   }
   registerBrowserWhenAttached(webview as BrowserWebviewElement, input, browser);
+  captureMirrorSteps(webview as BrowserWebviewElement, input.browserId);
+}
+
+/** Every page load gets the capture script; its reports arrive as console messages. */
+function captureMirrorSteps(webview: BrowserWebviewElement, browserId: string): void {
+  webview.addEventListener("dom-ready", () => {
+    void webview.executeJavaScript(MIRROR_CAPTURE_SOURCE).catch(() => undefined);
+  });
+  webview.addEventListener("console-message", (event) => {
+    const message = (event as Event & { message?: unknown }).message;
+    if (typeof message === "string") publishLocalMirrorCapture(browserId, message);
+  });
 }
 
 export function ensureResidentBrowserWebview(input: {

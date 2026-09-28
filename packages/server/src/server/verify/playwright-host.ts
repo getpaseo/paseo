@@ -491,13 +491,33 @@ export class DaemonPlaywrightHost {
     return this.dispatchTabCommand(input);
   }
 
-  private emitMirror(tab: DaemonBrowserTab, action: BrowserMirrorAction): void {
+  private emitMirror(tab: DaemonBrowserTab, action: BrowserMirrorAction, origin?: string): void {
     this.onMirror?.({
       workspaceId: tab.workspaceId,
       browserId: tab.browserId,
       action,
       at: Date.now(),
+      ...(origin ? { origin } : {}),
     });
+  }
+
+  /**
+   * A person's step in an app's local copy of a daemon tab: repeated on the daemon's page,
+   * so agents see what the person did, and passed on to the other apps. A target this page
+   * lacks is skipped, like on the apps.
+   */
+  public async applyMirrorAction(input: {
+    workspaceId: string;
+    browserId: string;
+    action: BrowserMirrorAction;
+    origin: string;
+  }): Promise<void> {
+    await this.restoreWorkspaceTabs(input.workspaceId);
+    const tab = this.tabs.get(input.browserId);
+    if (!tab || tab.page.isClosed() || tab.workspaceId !== input.workspaceId) return;
+    this.emitMirror(tab, await withoutSecret(tab, input.action), input.origin);
+    await performMirrorAction(tab.page, input.action).catch(() => undefined);
+    invalidateSnapshot(tab);
   }
 
   private async dispatchTabCommand(input: {
@@ -1268,6 +1288,59 @@ async function waitForPaint(page: Page): Promise<void> {
 
 function ok(requestId: string, result: CommandResult): BrowserToolsResponsePayload {
   return { requestId, ok: true, result };
+}
+
+const MIRROR_ACTION_TIMEOUT_MS = 3_000;
+
+/** A password typed in one app reaches the daemon's page but no other app. */
+async function withoutSecret(
+  tab: DaemonBrowserTab,
+  action: BrowserMirrorAction,
+): Promise<BrowserMirrorAction> {
+  if (action.kind !== "fill" && action.kind !== "type") return action;
+  if (!(await isPasswordField(tab, action.target ?? null))) return action;
+  if (action.kind === "fill") return { kind: "fill", target: action.target };
+  return { kind: "type", ...(action.target ? { target: action.target } : {}) };
+}
+
+function mirrorLocator(page: Page, target: BrowserMirrorTarget) {
+  const bySelector = page.locator(target.selector).first();
+  if (!target.role || !target.name) return bySelector;
+  const byRole = page
+    .getByRole(target.role as Parameters<Page["getByRole"]>[0], { name: target.name, exact: true })
+    .first();
+  return bySelector.or(byRole).first();
+}
+
+async function performMirrorAction(page: Page, action: BrowserMirrorAction): Promise<void> {
+  const timeout = MIRROR_ACTION_TIMEOUT_MS;
+  const target = "target" in action && action.target ? mirrorLocator(page, action.target) : null;
+  switch (action.kind) {
+    case "navigate":
+      if (page.url() !== action.url) await page.goto(action.url, { waitUntil: "domcontentloaded" });
+      return;
+    case "click":
+      await (action.doubleClick ? target?.dblclick({ timeout }) : target?.click({ timeout }));
+      return;
+    case "fill":
+      if (action.value !== undefined) await target?.fill(action.value, { timeout });
+      return;
+    case "select":
+      await target?.selectOption(action.value, { timeout });
+      return;
+    case "type":
+      if (action.text === undefined) return;
+      await (target
+        ? target.pressSequentially(action.text, { timeout })
+        : page.keyboard.type(action.text));
+      return;
+    case "keypress":
+      await (target ? target.press(action.key, { timeout }) : page.keyboard.press(action.key));
+      return;
+    case "scroll":
+      await page.mouse.wheel(action.deltaX, action.deltaY);
+      return;
+  }
 }
 
 function mirrorTarget(tab: DaemonBrowserTab, ref: string | undefined): BrowserMirrorTarget | null {
