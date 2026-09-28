@@ -697,6 +697,33 @@ describe("OMP agent client and session", () => {
     });
   });
 
+  test("uses the exit message when a failed shell has no output", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    omp.emit({
+      type: "tool_execution_start",
+      toolCallId: "empty-shell",
+      toolName: "bash",
+      args: { command: "false" },
+    });
+    omp.emit({
+      type: "tool_execution_end",
+      toolCallId: "empty-shell",
+      toolName: "bash",
+      result: {
+        content: [
+          {
+            type: "text",
+            text: "(no output)\n\nWall time: 0.02 seconds\n\nCommand exited with code 1",
+          },
+        ],
+        isError: true,
+      },
+      isError: true,
+    });
+    expect(omp.timeline().at(-1)).toMatchObject({ error: "Command exited with code 1" });
+  });
+
   test("renders live skill expansion as only the invocation", async () => {
     const omp = new OmpHarness();
     await omp.start();

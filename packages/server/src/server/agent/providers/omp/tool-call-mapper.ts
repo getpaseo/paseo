@@ -37,8 +37,7 @@ function mapOmpExtendedToolDetail(
   result: OmpToolResult,
 ): ToolCallDetail | null {
   if (toolCall.toolName === "wait") {
-    const text = extractTextFromToolResult(result)?.trim();
-    return { type: "plain_text", label: text?.split("\n", 1)[0] ?? "Waiting for tasks", text };
+    return mapOmpWaitDetail(result);
   }
   if (toolCall.toolName === "web_search") {
     const args = isRecord(toolCall.args) ? toolCall.args : {};
@@ -65,6 +64,20 @@ function mapOmpExtendedToolDetail(
     return { type: "plain_text", label: "Thinking" };
   }
   return mapOmpOpaqueToolDetail(toolCall, result);
+}
+
+function mapOmpWaitDetail(result: OmpToolResult): ToolCallDetail {
+  const text = extractTextFromToolResult(result)?.trim();
+  const jobs = resultDetails(result)?.jobs;
+  const firstJob = Array.isArray(jobs) ? jobs.find(isRecord) : undefined;
+  const jobType = firstString(firstJob?.type);
+  const jobStatus = firstString(firstJob?.status);
+  const jobLabel = firstString(firstJob?.label, firstJob?.id);
+  const label =
+    jobType && jobStatus && jobLabel
+      ? `${jobType} ${jobStatus}: ${jobLabel}`
+      : (text?.split("\n", 1)[0] ?? "Waiting for background work");
+  return { type: "plain_text", label, text };
 }
 
 function mapOmpAskDetail(rawArgs: unknown, result: OmpToolResult): ToolCallDetail {

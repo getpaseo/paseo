@@ -271,7 +271,10 @@ export function extractTextFromToolResult(result: OmpToolResult): string | undef
 }
 
 export function toolFailureMessage(result: OmpToolResult): string {
-  const firstLine = extractTextFromToolResult(result)
+  const output = extractTextFromToolResult(result);
+  const exitMessage = output?.match(/(?:Command|Process) exited with code \d+/i)?.[0];
+  if (exitMessage) return exitMessage;
+  const firstLine = output
     ?.split("\n")
     .find((line) => line.trim())
     ?.trim();

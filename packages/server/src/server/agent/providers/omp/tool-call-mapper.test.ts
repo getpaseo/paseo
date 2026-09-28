@@ -138,6 +138,37 @@ describe("OMP tool call mapper", () => {
     ).toMatchObject({ type: "plain_text", label: "Waiting for Docs to finish" });
   });
 
+  test("connects a steered background bash call with its wait result", () => {
+    const command = "sleep 2; echo finished";
+    expect(
+      mapOmpToolDetail(
+        parseToolArgs("bash", { command }),
+        parseToolResult({
+          content: [
+            {
+              type: "text",
+              text: "Backgrounded early to handle an incoming message; the command keeps running.\nJob: bg_1",
+            },
+          ],
+        }),
+      ),
+    ).toMatchObject({ type: "shell", command });
+    const resultText =
+      "## Completed (1)\n\n### bg_1 [bash] — completed\nLabel: sleep 2; echo finished\nDelivery: not auto-delivered; recovered by this snapshot.\n```\nfinished\n```";
+    expect(
+      mapOmpToolDetail(
+        parseToolArgs("wait", {}),
+        parseToolResult({
+          content: [{ type: "text", text: resultText }],
+          details: {
+            op: "wait",
+            jobs: [{ id: "bg_1", type: "bash", status: "completed", label: command }],
+          },
+        }),
+      ),
+    ).toEqual({ type: "plain_text", label: `bash completed: ${command}`, text: resultText });
+  });
+
   test("maps web search and URL reads to search and fetch", () => {
     expect(mapOmpToolDetail(parseToolArgs("web_search", { query: "Paseo" }), null)).toMatchObject({
       type: "search",
