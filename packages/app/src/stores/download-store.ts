@@ -316,6 +316,20 @@ function triggerBrowserDownload(url: string, fileName: string) {
   link.remove();
 }
 
+/** Hands text to the native share sheet as a file, for text too large for the clipboard. */
+export async function shareTextFile(input: {
+  text: string;
+  fileName: string;
+  mimeType: string;
+}): Promise<void> {
+  const file = resolveDownloadTargetFile(input.fileName);
+  file.write(input.text);
+  await Sharing.shareAsync(file.uri, {
+    mimeType: input.mimeType,
+    dialogTitle: i18n.t("downloads.shareFileNamed", { fileName: input.fileName }),
+  });
+}
+
 function resolveDownloadTargetFile(fileName: string): FSFile {
   const directory = Paths.cache ?? Paths.document;
   if (!directory) {

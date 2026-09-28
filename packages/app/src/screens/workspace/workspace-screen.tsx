@@ -196,6 +196,7 @@ import {
 import { findAdjacentPane } from "@/utils/split-navigation";
 import { supportsDesktopPaneSplits, useIsCompactFormFactor } from "@/constants/layout";
 import { getIsElectron, isNative, isWeb } from "@/constants/platform";
+import { shareTextFile } from "@/stores/download-store";
 import { useHostFeature } from "@/runtime/host-features";
 import type { SurfaceBackdrop } from "@/styles/surface-backdrop";
 import { buildHostRootRoute, buildSettingsHostRoute } from "@/utils/host-routes";
@@ -221,6 +222,8 @@ const EMPTY_UI_TABS: WorkspaceTab[] = [];
 const EMPTY_WORKSPACE_SCRIPTS: WorkspaceDescriptor["scripts"] = [];
 const EMPTY_PINNED_AGENT_IDS = new Set<string>();
 const EMPTY_SET = new Set<string>();
+// Android parcels clipboard text as UTF-16 through a ~1 MB binder buffer.
+const NATIVE_CLIPBOARD_MAX_CHARS = 200_000;
 
 function getWorkspaceScripts(
   workspaceDescriptor: WorkspaceDescriptor | null | undefined,
@@ -2855,6 +2858,7 @@ function WorkspaceScreenContent({
 
       // A full export pages through the whole history, so it is not instant.
       toast.show(t("workspace.tabs.toasts.copyingChat"), { durationMs: null });
+      let shared = false;
       try {
         const result = await copyAgentTranscript({
           agentId,
@@ -2863,11 +2867,25 @@ function WorkspaceScreenContent({
           format,
           fetchPage: (options) => client.fetchAgentTimeline(agentId, options),
           writeToClipboard: async (text) => {
+            // Android's clipboard rejects anything near 1 MB, so long chats go out as a file.
+            if (isNative && text.length > NATIVE_CLIPBOARD_MAX_CHARS) {
+              shared = true;
+              await shareTextFile({
+                text,
+                fileName: `${agent?.title?.trim() || agentId}.${format === "json" ? "json" : "md"}`,
+                mimeType: format === "json" ? "application/json" : "text/markdown",
+              });
+              return;
+            }
             await Clipboard.setStringAsync(text);
           },
         });
         if (result.status === "empty") {
           toast.error(t("workspace.tabs.toasts.chatCopyEmpty"));
+          return;
+        }
+        if (shared) {
+          toast.show(t("downloads.shareFile"));
           return;
         }
         toast.copied(
