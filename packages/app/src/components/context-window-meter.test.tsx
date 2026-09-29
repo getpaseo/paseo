@@ -50,12 +50,9 @@ vi.mock("react-i18next", () => ({
     t: (key: string, values?: Record<string, string | number>) => {
       const messages: Record<string, string> = {
         "contextWindow.accessibility": "Context window {{percentage}}% used",
-        "contextWindow.accessibilitySnapshot":
-          "Context window {{percentage}}% used, last turn snapshot",
-        "contextWindow.lastTurnSnapshot": "Last turn",
         "contextWindow.loading": "Context window loading",
         "contextWindow.sessionCost": "Session cost {{cost}}",
-        "contextWindow.summary": "{{used}} / {{max}}",
+        "contextWindow.snapshot": "Usage snapshot",
         "contextWindow.title": "Context window",
         "contextWindow.tokens": "{{used}} / {{max}} tokens",
         "contextWindow.unknown": "Context unknown",
@@ -131,7 +128,6 @@ describe("ContextWindowMeter", () => {
         <ContextWindowMeter
           maxTokens={380_000}
           usedTokens={81_000}
-          showSnapshotCue
           serverId="server-1"
           provider="codex"
         />,
@@ -139,11 +135,11 @@ describe("ContextWindowMeter", () => {
     );
 
     expect(container.querySelector('[data-testid="context-window-meter-summary"]')?.textContent).toBe(
-      "81k / 380k",
+      "81k / 380k tokens",
     );
     expect(
       container.querySelector('[data-testid="context-window-meter-snapshot-cue"]')?.textContent,
-    ).toBe("Last turn");
+    ).toBe("Usage snapshot");
     expect(container.querySelector('[role="tooltip"]')).toBeNull();
   });
 
@@ -165,6 +161,16 @@ describe("ContextWindowMeter", () => {
     expect(refreshProviderUsage).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps active retained values qualified as a snapshot", () => {
+    act(() =>
+      root.render(<ContextWindowMeter maxTokens={380_000} usedTokens={81_000} pending />),
+    );
+
+    expect(
+      container.querySelector('[data-testid="context-window-meter-snapshot-cue"]')?.textContent,
+    ).toBe("Usage snapshot");
+  });
+
   it("shows loading and unknown states without fabricating a percentage", () => {
     act(() => root.render(<ContextWindowMeter maxTokens={null} usedTokens={null} pending />));
     expect(container.querySelector('[data-testid="context-window-meter-loading"]')).not.toBeNull();
@@ -179,10 +185,10 @@ describe("ContextWindowMeter", () => {
 
   it("replaces the selected session summary instead of retaining the prior values", () => {
     act(() => root.render(<ContextWindowMeter maxTokens={380_000} usedTokens={81_000} />));
-    expect(container.textContent).toContain("81k / 380k");
+    expect(container.textContent).toContain("81k / 380k tokens");
 
     act(() => root.render(<ContextWindowMeter maxTokens={128_000} usedTokens={2_000} />));
-    expect(container.textContent).toContain("2k / 128k");
-    expect(container.textContent).not.toContain("81k / 380k");
+    expect(container.textContent).toContain("2k / 128k tokens");
+    expect(container.textContent).not.toContain("81k / 380k tokens");
   });
 });

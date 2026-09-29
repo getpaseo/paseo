@@ -12,8 +12,6 @@ interface ContextWindowMeterProps {
   showPercentage?: boolean;
   /** Reserve the meter footprint and show a loading ring while usage is pending. */
   pending?: boolean;
-  /** Marks retained idle-session usage whose protocol payload has no observation timestamp. */
-  showSnapshotCue?: boolean;
   /** Optional glyph envelope for icon-toolbar alignment. */
   glyphSize?: number;
 }
@@ -98,7 +96,6 @@ export function ContextWindowMeter({
   totalCostUsd,
   showPercentage = false,
   pending = false,
-  showSnapshotCue = false,
   glyphSize,
 }: ContextWindowMeterProps) {
   const { theme } = useUnistyles();
@@ -161,12 +158,12 @@ export function ContextWindowMeter({
           style={containerStyle}
           testID="context-window-meter"
           accessibilityRole="image"
-          accessibilityLabel={t(
-            showSnapshotCue
-              ? "contextWindow.accessibilitySnapshot"
-              : "contextWindow.accessibility",
-            { percentage: roundedPercentage },
-          )}
+          accessibilityLabel={`${t("contextWindow.accessibility", {
+            percentage: roundedPercentage,
+          })}, ${t("contextWindow.tokens", {
+            used: formatTokenCount(usedTokens),
+            max: formatTokenCount(maxTokens),
+          })}, ${t("contextWindow.snapshot")}`}
         >
           <Svg
             width={svgSize}
@@ -201,17 +198,15 @@ export function ContextWindowMeter({
             <Text style={styles.percentageLabel}>{`${roundedPercentage}%`}</Text>
           ) : (
             <Text style={styles.tokenSummary} testID="context-window-meter-summary">
-              {t("contextWindow.summary", {
+              {t("contextWindow.tokens", {
                 used: formatTokenCount(usedTokens),
                 max: formatTokenCount(maxTokens),
               })}
             </Text>
           )}
-          {showSnapshotCue ? (
-            <Text style={styles.snapshotCue} testID="context-window-meter-snapshot-cue">
-              {t("contextWindow.lastTurnSnapshot")}
-            </Text>
-          ) : null}
+          <Text style={styles.snapshotCue} testID="context-window-meter-snapshot-cue">
+            {t("contextWindow.snapshot")}
+          </Text>
         </Pressable>
       </TooltipTrigger>
       <TooltipContent side="top" align="center" offset={8}>

@@ -1969,15 +1969,13 @@ export const fr: TranslationResources = {
   contextWindow: {
     title: "Fenêtre contextuelle",
     used: "{{percentage}}% utilisé",
-    tokens: "Jetons{{used}}/{{max}}",
-    summary: "{{used}} / {{max}}",
-    lastTurnSnapshot: "Dernier tour",
+    tokens: "{{used}} / {{max}} jetons",
+    snapshot: "Relevé d’usage",
     loading: "Chargement du contexte",
     unknown: "Contexte inconnu",
     unknownAccessibility: "Utilisation de la fenêtre contextuelle inconnue",
     sessionCost: "Coût de la séance{{cost}}",
     accessibility: "Fenêtre contextuelle{{percentage}}% utilisé",
-    accessibilitySnapshot: "Fenêtre contextuelle utilisée à {{percentage}}%, aperçu du dernier tour",
   },
   review: {
     comment: {

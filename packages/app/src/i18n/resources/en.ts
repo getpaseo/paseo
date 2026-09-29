@@ -1942,14 +1942,12 @@ export const en = {
     title: "Context window",
     used: "{{percentage}}% used",
     tokens: "{{used}} / {{max}} tokens",
-    summary: "{{used}} / {{max}}",
-    lastTurnSnapshot: "Last turn",
+    snapshot: "Usage snapshot",
     loading: "Context window loading",
     unknown: "Context unknown",
     unknownAccessibility: "Context window usage unknown",
     sessionCost: "Session cost {{cost}}",
     accessibility: "Context window {{percentage}}% used",
-    accessibilitySnapshot: "Context window {{percentage}}% used, last turn snapshot",
   },
   review: {
     comment: {

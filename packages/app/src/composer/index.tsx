@@ -285,7 +285,6 @@ function renderContextWindowMeter(
   totalCostUsd: number | null,
   showPercentage: boolean,
   pending: boolean,
-  showSnapshotCue: boolean,
   glyphSize: number,
 ): ReactElement | null {
   return (
@@ -295,7 +294,6 @@ function renderContextWindowMeter(
       totalCostUsd={totalCostUsd}
       showPercentage={showPercentage}
       pending={pending}
-      showSnapshotCue={showSnapshotCue}
       glyphSize={glyphSize}
     />
   );
@@ -2080,7 +2078,6 @@ function ComposerContentImpl({
         agentState.totalCostUsd,
         false,
         contextWindowPending,
-        !contextWindowPending,
         contextWindowMeterGlyphSize,
       ),
     [

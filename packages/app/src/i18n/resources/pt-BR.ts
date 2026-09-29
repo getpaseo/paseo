@@ -1950,14 +1950,12 @@ export const ptBR: TranslationResources = {
     title: "Janela de contexto",
     used: "{{percentage}}% usado",
     tokens: "{{used}} / {{max}} tokens",
-    summary: "{{used}} / {{max}}",
-    lastTurnSnapshot: "Último turno",
+    snapshot: "Registro de uso",
     loading: "Carregando contexto",
     unknown: "Contexto desconhecido",
     unknownAccessibility: "Uso da janela de contexto desconhecido",
     sessionCost: "Custo da sessão {{cost}}",
     accessibility: "Janela de contexto {{percentage}}% usada",
-    accessibilitySnapshot: "Janela de contexto {{percentage}}% usada, retrato do último turno",
   },
   review: {
     comment: {
