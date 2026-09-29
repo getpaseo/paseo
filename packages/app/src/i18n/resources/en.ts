@@ -1276,7 +1276,7 @@ export const en = {
       discord: "Discord",
       github: "Create GitHub issue",
       whatsNew: "What's new",
-      appName: "Paseo",
+      appName: "PandaOS",
     },
     sections: {
       sessions: "History",
@@ -1692,7 +1692,7 @@ export const en = {
     },
   },
   onboarding: {
-    title: "Welcome to Paseo",
+    title: "Welcome to PandaOS",
     subtitle: "Connect your computer to get started",
     actions: {
       settings: "Settings",

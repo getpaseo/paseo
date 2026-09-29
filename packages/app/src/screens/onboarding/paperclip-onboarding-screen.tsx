@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { ScrollView, Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
@@ -39,23 +39,31 @@ export function PaperclipOnboardingScreen({
   onComplete?: (data: { useCase: UseCase; teamShape: TeamShape; teamName?: string }) => void;
 }) {
   const { t } = useTranslation();
-  const { completeOnboarding } = usePaperclipOnboarding();
+  const { config, completeOnboarding, isConnected, isLoading } = usePaperclipOnboarding();
   const [useCase, setUseCase] = useState<UseCase>("personal");
   const [teamShape, setTeamShape] = useState<TeamShape>("solo");
   const [teamName, setTeamName] = useState("");
-  const [isLoading, setIsLoading] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+
+  useEffect(() => {
+    const saved = config?.paperclip;
+    if (!saved) return;
+    if (saved.useCase) setUseCase(saved.useCase);
+    if (saved.teamShape) setTeamShape(saved.teamShape);
+    if (saved.teamName !== undefined) setTeamName(saved.teamName);
+  }, [config?.paperclip]);
 
   const handleComplete = useCallback(async () => {
-    setIsLoading(true);
+    setIsSaving(true);
     try {
       await completeOnboarding({ useCase, teamShape, teamName });
       onComplete?.({ useCase, teamShape, teamName: teamName.trim() || undefined });
     } finally {
-      setIsLoading(false);
+      setIsSaving(false);
     }
   }, [completeOnboarding, onComplete, teamName, teamShape, useCase]);
 
-  const isValid = true;
+  const isValid = isConnected && !isLoading && !isSaving;
 
   return (
     <ScrollView contentContainerStyle={styles.screen}>
@@ -97,19 +105,14 @@ export function PaperclipOnboardingScreen({
             hint={t("paperclip.onboarding.teamName.hint")}
             initialValue={teamName}
             placeholder={t("paperclip.onboarding.teamName.placeholder")}
-            disabled={isLoading}
+            disabled={isSaving}
             onChangeText={setTeamName}
           />
         </View>
 
         <View style={styles.action}>
-          <Button
-            variant="default"
-            size="md"
-            disabled={!isValid || isLoading}
-            onPress={handleComplete}
-          >
-            {isLoading ? t("paperclip.onboarding.saving") : t("paperclip.onboarding.continue")}
+          <Button variant="default" size="md" disabled={!isValid} onPress={handleComplete}>
+            {isSaving ? t("paperclip.onboarding.saving") : t("paperclip.onboarding.continue")}
           </Button>
         </View>
       </View>

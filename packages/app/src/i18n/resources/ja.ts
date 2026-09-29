@@ -1285,7 +1285,7 @@ export const ja: TranslationResources = {
       discord: "Discord",
       github: "GitHub Issueを作成",
       whatsNew: "新着情報",
-      appName: "Paseo",
+      appName: "PandaOS",
     },
     sections: {
       sessions: "履歴",
@@ -1687,7 +1687,7 @@ export const ja: TranslationResources = {
     },
   },
   onboarding: {
-    title: "Paseoへようこそ",
+    title: "PandaOSへようこそ",
     subtitle: "始めるにはコンピューターに接続してください",
     actions: {
       settings: "設定",

@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { z } from "zod";
+import { isSafeSystemOneEndpoint } from "@getpaseo/protocol/messages";
 
 import {
   AgentProviderRuntimeSettingsMapSchema,
@@ -257,7 +258,14 @@ export const PersistedConfigSchema = z
             enabled: z.boolean().optional(),
             model: z.string().trim().min(1).optional(),
             // COMPAT(systemOneEndpoint): added in v0.9, keep optional while older daemons are supported.
-            endpoint: z.string().trim().url().optional(),
+            endpoint: z
+              .string()
+              .trim()
+              .url()
+              .refine(isSafeSystemOneEndpoint, {
+                message: "System One endpoint must use HTTP(S) without embedded credentials",
+              })
+              .optional(),
             minimumConfidence: z.number().min(0).max(1).optional(),
             excludedPaths: z.array(z.string().trim().min(1)).optional(),
             // Log Jev's prediction of every agent's next step against what it really did.

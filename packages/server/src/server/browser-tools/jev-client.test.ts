@@ -58,6 +58,14 @@ describe("parseChoiceAnswer", () => {
 });
 
 describe("TypeSafeSystemOneClient", () => {
+  it.each([
+    "javascript:alert(1)",
+    "file:///etc/passwd",
+    "https://user:secret@example.com/systemone",
+  ])("rejects unsafe endpoint %s before making a request", (endpoint) => {
+    expect(() => new TypeSafeSystemOneClient({ endpoint })).toThrow("HTTP(S)");
+  });
+
   it("sends the System One contract without exposing the key in errors", async () => {
     let authorization = "";
     let endpoint = "";

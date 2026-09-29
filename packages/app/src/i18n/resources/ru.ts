@@ -1288,7 +1288,7 @@ export const ru: TranslationResources = {
       discord: "Discord",
       github: "Создать issue на GitHub",
       whatsNew: "Что нового",
-      appName: "Paseo",
+      appName: "PandaOS",
     },
     sections: {
       sessions: "История",
@@ -1698,7 +1698,7 @@ export const ru: TranslationResources = {
     },
   },
   onboarding: {
-    title: "Добро пожаловать в Paseo",
+    title: "Добро пожаловать в PandaOS",
     subtitle: "Подключите компьютер, чтобы начать",
     actions: {
       settings: "Настройки",

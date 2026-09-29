@@ -84,7 +84,7 @@ export function resolveWorkspaceRouteState(input: {
       return {
         kind: "recoveryUnavailable",
         hostName: input.hostName,
-        message: "Update Paseo to recover this workspace.",
+        message: "Update PandaOS to recover this workspace.",
       };
     case "inspectionFailed":
       return {

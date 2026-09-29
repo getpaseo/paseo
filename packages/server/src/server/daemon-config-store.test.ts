@@ -172,6 +172,33 @@ describe("DaemonConfigStore", () => {
     expect(JSON.stringify(persisted)).not.toContain("write-only-key");
   });
 
+  test("patch persists Paperclip onboarding data", () => {
+    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
+    tempDirs.push(paseoHome);
+    const store = new DaemonConfigStore(paseoHome, {
+      mcp: { injectIntoAgents: false },
+      browserTools: { enabled: false },
+      providers: {},
+      metadataGeneration: { providers: [] },
+    });
+
+    store.patch({
+      paperclip: {
+        onboardingCompleted: true,
+        useCase: "team",
+        teamShape: "small",
+        teamName: "Panda Team",
+      },
+    });
+
+    expect(loadPersistedConfig(paseoHome).daemon?.paperclip).toEqual({
+      onboardingCompleted: true,
+      useCase: "team",
+      teamShape: "small",
+      teamName: "Panda Team",
+    });
+  });
+
   test("patch round-trips agent profiles through the strictly-parsed persisted config", () => {
     const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
     tempDirs.push(paseoHome);

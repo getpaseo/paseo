@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
+import { isSafeSystemOneEndpoint } from "@getpaseo/protocol/messages";
 
 export const DEFAULT_TYPESAFE_API_ENDPOINT = "https://api.typesafe.ai/v1/systemone";
 const DEFAULT_TYPESAFE_MODEL = "jev-latest";
@@ -77,6 +78,9 @@ export class TypeSafeSystemOneClient implements TypeSafeDecisionSource {
   private readonly options: TypeSafeSystemOneClientOptions;
 
   public constructor(options: TypeSafeSystemOneClientOptions = {}) {
+    if (options.endpoint !== undefined && !isSafeSystemOneEndpoint(options.endpoint)) {
+      throw new Error("System One endpoint must use HTTP(S) without embedded credentials");
+    }
     this.options = options;
   }
 

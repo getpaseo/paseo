@@ -1304,7 +1304,7 @@ export const es: TranslationResources = {
       discord: "Discord",
       github: "Crear incidencia en GitHub",
       whatsNew: "Novedades",
-      appName: "Paseo",
+      appName: "PandaOS",
     },
     sections: {
       sessions: "Historial",
@@ -1713,7 +1713,7 @@ export const es: TranslationResources = {
     },
   },
   onboarding: {
-    title: "Bienvenido aPaseo",
+    title: "Bienvenido a PandaOS",
     subtitle: "Conecte su computadora para comenzar",
     actions: {
       settings: "Ajustes",

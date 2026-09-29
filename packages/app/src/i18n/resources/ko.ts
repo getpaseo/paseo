@@ -1274,7 +1274,7 @@ export const ko: TranslationResources = {
       discord: "Discord",
       github: "GitHub 이슈 만들기",
       whatsNew: "새로운 소식",
-      appName: "Paseo",
+      appName: "PandaOS",
     },
     sections: {
       sessions: "기록",
@@ -1676,7 +1676,7 @@ export const ko: TranslationResources = {
     },
   },
   onboarding: {
-    title: "Paseo에 오신 것을 환영합니다",
+    title: "PandaOS에 오신 것을 환영합니다",
     subtitle: "시작하려면 컴퓨터를 연결하세요",
     actions: {
       settings: "설정",

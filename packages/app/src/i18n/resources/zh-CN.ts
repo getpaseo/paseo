@@ -1259,7 +1259,7 @@ export const zhCN: TranslationResources = {
       discord: "Discord",
       github: "创建 GitHub Issue",
       whatsNew: "新功能",
-      appName: "Paseo",
+      appName: "PandaOS",
     },
     sections: {
       sessions: "历史",
@@ -1649,7 +1649,7 @@ export const zhCN: TranslationResources = {
     },
   },
   onboarding: {
-    title: "欢迎使用 Paseo",
+    title: "欢迎使用 PandaOS",
     subtitle: "连接你的电脑即可开始",
     actions: {
       settings: "设置",

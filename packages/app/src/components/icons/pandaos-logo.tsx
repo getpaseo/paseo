@@ -24,15 +24,15 @@ export function PandaOSLogo({ size = 64, color }: PandaOSLogoProps) {
       {/* Right ear */}
       <Circle cx="44" cy="12" r="5" fill={fillColor} />
       {/* Left eye patch */}
-      <Circle cx="26" cy="26" r="4" fill={fillColor} opacity="0.3" />
+      <Circle cx="26" cy="26" r="4" fill="#ffffff" />
       {/* Right eye patch */}
-      <Circle cx="38" cy="26" r="4" fill={fillColor} opacity="0.3" />
+      <Circle cx="38" cy="26" r="4" fill="#ffffff" />
       {/* Left eye */}
-      <Circle cx="26" cy="26" r="2" fill={fillColor} />
+      <Circle cx="26" cy="26" r="2" fill="#000000" />
       {/* Right eye */}
-      <Circle cx="38" cy="26" r="2" fill={fillColor} />
+      <Circle cx="38" cy="26" r="2" fill="#000000" />
       {/* Snout */}
-      <Circle cx="32" cy="35" r="3" fill={fillColor} />
+      <Circle cx="32" cy="35" r="3" fill="#000000" />
       {/* Body */}
       <Path d="M 20 44 Q 20 52 32 52 Q 44 52 44 44 Z" fill={fillColor} />
     </Svg>

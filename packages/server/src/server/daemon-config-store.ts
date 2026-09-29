@@ -710,6 +710,9 @@ function mergeMutableDaemonPatch(
   if (patch.systemOne !== undefined) {
     next.systemOne = { ...next.systemOne, ...patch.systemOne };
   }
+  if (patch.paperclip !== undefined) {
+    next.paperclip = { ...next.paperclip, ...patch.paperclip };
+  }
   if (patch.autoArchiveAfterMerge !== undefined) {
     next.autoArchiveAfterMerge = patch.autoArchiveAfterMerge;
   }

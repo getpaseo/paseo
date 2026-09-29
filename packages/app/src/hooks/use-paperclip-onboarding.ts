@@ -1,6 +1,6 @@
-import { useCallback, useMemo } from "react";
+import { useCallback, useMemo, useSyncExternalStore } from "react";
 import { useDaemonConfig } from "@/hooks/use-daemon-config";
-import { useHosts, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
+import { getHostRuntimeStore, isHostRuntimeConnected, useHosts } from "@/runtime/host-runtime";
 
 export interface OnboardingData {
   useCase: "personal" | "team" | "enterprise";
@@ -13,9 +13,16 @@ export function serializeOnboardingData(data: OnboardingData): string {
 }
 
 export function usePaperclipOnboarding() {
-  const defaultServerId = useHosts()[0]?.serverId ?? null;
-  const isConnected = useHostRuntimeIsConnected(defaultServerId ?? "");
-  const { config, patchConfig } = useDaemonConfig(defaultServerId);
+  const hosts = useHosts();
+  const runtime = getHostRuntimeStore();
+  const defaultServerId = useSyncExternalStore(
+    (onStoreChange) => runtime.subscribeAll(onStoreChange),
+    () =>
+      hosts.find((host) => isHostRuntimeConnected(runtime.getSnapshot(host.serverId)))?.serverId ??
+      null,
+    () => null,
+  );
+  const { config, isLoading: isConfigLoading, patchConfig } = useDaemonConfig(defaultServerId);
 
   const onboardingConfig = useMemo(() => config?.paperclip, [config?.paperclip]);
 
@@ -26,7 +33,7 @@ export function usePaperclipOnboarding() {
 
   const completeOnboarding = useCallback(
     async (data: OnboardingData) => {
-      if (!isConnected) {
+      if (defaultServerId === null) {
         throw new Error("Host not connected");
       }
       await patchConfig({
@@ -36,13 +43,14 @@ export function usePaperclipOnboarding() {
         },
       });
     },
-    [isConnected, patchConfig],
+    [defaultServerId, patchConfig],
   );
 
   return {
     hasCompletedOnboarding,
     completeOnboarding,
-    isLoading: false,
-    isConnected,
+    config,
+    isLoading: isConfigLoading,
+    isConnected: defaultServerId !== null,
   };
 }

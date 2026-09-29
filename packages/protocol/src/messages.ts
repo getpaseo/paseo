@@ -195,12 +195,28 @@ const MutableBrowserToolsConfigSchema = z
     enabled: z.boolean().default(false),
   })
   .passthrough();
+
+export function isSafeSystemOneEndpoint(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return (
+      (url.protocol === "https:" || url.protocol === "http:") && !url.username && !url.password
+    );
+  } catch {
+    return false;
+  }
+}
+
+const SafeSystemOneEndpointSchema = z.string().trim().url().refine(isSafeSystemOneEndpoint, {
+  message: "System One endpoint must use HTTP(S) without embedded credentials",
+});
+
 const MutableSystemOneConfigSchema = z
   .object({
     enabled: z.boolean().default(false),
     model: z.string().trim().min(1).default("jev-latest"),
     // COMPAT(systemOneEndpoint): added in v0.9, keep optional while older daemons are supported.
-    endpoint: z.string().trim().url().default("https://api.typesafe.ai/v1/systemone"),
+    endpoint: SafeSystemOneEndpointSchema.default("https://api.typesafe.ai/v1/systemone"),
     minimumConfidence: z.number().min(0).max(1).default(0.5),
     configured: z.boolean().default(false),
     credentialSource: z.enum(["paseo", "environment", "env-file"]).nullable().default(null),
@@ -210,7 +226,7 @@ const MutableSystemOnePatchSchema = z
   .object({
     enabled: z.boolean().optional(),
     model: z.string().trim().min(1).optional(),
-    endpoint: z.string().trim().url().optional(),
+    endpoint: SafeSystemOneEndpointSchema.optional(),
     minimumConfidence: z.number().min(0).max(1).optional(),
   })
   .strict();

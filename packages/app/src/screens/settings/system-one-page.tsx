@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Text, View } from "react-native";
+import { useRouter, type Href } from "expo-router";
 import { useMutation } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import {
@@ -15,6 +16,7 @@ import { StatusBadge } from "@/components/ui/status-badge";
 import { useDaemonConfig } from "@/hooks/use-daemon-config";
 import { useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { settingsStyles } from "@/styles/settings";
+import { Button } from "@/components/ui/button";
 
 const CONFIDENCE_OPTIONS = [
   { value: "0.35", label: "35%" },
@@ -48,6 +50,8 @@ function resolveCredentialLabel(
 // oxlint-disable-next-line complexity
 export function HostSystemOnePage({ serverId }: { serverId: string }) {
   const { t } = useTranslation();
+  const router = useRouter();
+  const openPaperclip = useCallback(() => router.push("/paperclip" as Href), [router]);
   const isConnected = useHostRuntimeIsConnected(serverId);
   const { config, patchConfig } = useDaemonConfig(serverId);
   const systemOne = config?.systemOne;
@@ -123,6 +127,9 @@ export function HostSystemOnePage({ serverId }: { serverId: string }) {
 
   return (
     <View>
+      <Button variant="ghost" size="sm" onPress={openPaperclip}>
+        {t("onboarding.actions.paperclip")}
+      </Button>
       <SettingsSection title={t("settings.systemOne.title")} info={t("settings.systemOne.info")}>
         <SettingsCard testID="host-system-one-settings">
           <SettingsSwitch
