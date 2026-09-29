@@ -1,4 +1,4 @@
-import { X } from "lucide-react-native";
+import { X } from "@/components/icons/ui-icons";
 import { useCallback, useMemo, type ReactNode } from "react";
 import { Pressable, Text, View, type PressableStateCallbackType } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";

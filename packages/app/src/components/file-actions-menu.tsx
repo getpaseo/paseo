@@ -16,7 +16,7 @@ import {
   Trash2,
   Undo2,
   type LucideIcon,
-} from "lucide-react-native";
+} from "@/components/icons/ui-icons";
 import { useTranslation } from "react-i18next";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
 import {

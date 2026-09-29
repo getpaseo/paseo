@@ -2,7 +2,7 @@ import { useCallback } from "react";
 import { Text, View } from "react-native";
 import { useTranslation } from "react-i18next";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import { Globe } from "lucide-react-native";
+import { Globe } from "@/components/icons/ui-icons";
 import type { BrowserHandoff } from "@getpaseo/protocol/browser-activity/rpc-schemas";
 import { Button } from "@/components/ui/button";
 import { StatusBadge, type StatusBadgeVariant } from "@/components/ui/status-badge";

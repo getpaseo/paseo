@@ -107,6 +107,11 @@ export default defineConfig({
       ".json",
     ],
     alias: [
+      // The UI icon module renders Phosphor SVGs; tests keep using the inert icon stub.
+      {
+        find: /^@\/components\/icons\/ui-icons$/,
+        replacement: path.resolve(__dirname, "test-stubs/lucide-react-native.ts"),
+      },
       {
         find: /^@getpaseo\/relay\/e2ee$/,
         replacement: path.resolve(__dirname, "../relay/src/e2ee.ts"),

@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
-import { Pencil, Plus, Trash2 } from "lucide-react-native";
+import { Pencil, Plus, Trash2 } from "@/components/icons/ui-icons";
 import {
   Pressable,
   type PressableStateCallbackType,

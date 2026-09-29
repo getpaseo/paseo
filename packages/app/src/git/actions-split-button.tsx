@@ -2,7 +2,7 @@ import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { useCallback, useMemo } from "react";
 import { View, Text, Pressable, type PressableStateCallbackType } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import { ChevronDown, GitBranch, MoreVertical } from "lucide-react-native";
+import { ChevronDown, GitBranch, MoreVertical } from "@/components/icons/ui-icons";
 import { useTranslation } from "react-i18next";
 import {
   DropdownMenu,

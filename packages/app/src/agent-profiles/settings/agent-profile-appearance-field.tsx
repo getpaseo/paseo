@@ -3,7 +3,7 @@ import { Pressable, View, type PressableStateCallbackType } from "react-native";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import { Check, ChevronDown } from "lucide-react-native";
+import { Check, ChevronDown } from "@/components/icons/ui-icons";
 import { Combobox, type ComboboxOption } from "@/components/ui/combobox";
 import {
   createControlGeometry,

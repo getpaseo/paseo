@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useState, type ReactElement } from "react";
 import { Alert, Text, View } from "react-native";
 import { useTranslation } from "react-i18next";
-import { Plus } from "lucide-react-native";
+import { Plus } from "@/components/icons/ui-icons";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import type { AgentProfile } from "@getpaseo/protocol/messages";
 import { Button } from "@/components/ui/button";

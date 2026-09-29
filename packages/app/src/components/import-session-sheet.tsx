@@ -7,7 +7,7 @@ import type {
   FetchRecentProviderSessionEntry,
 } from "@getpaseo/client/internal/daemon-client";
 import type { AgentProvider } from "@getpaseo/protocol/agent-types";
-import { ChevronDown, Inbox, Layers, RotateCw } from "lucide-react-native";
+import { ChevronDown, Inbox, Layers, RotateCw } from "@/components/icons/ui-icons";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { AdaptiveModalSheet, type SheetHeader } from "@/components/adaptive-modal-sheet";
 import { Button } from "@/components/ui/button";

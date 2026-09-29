@@ -7,7 +7,7 @@ import {
   GitMerge,
   RefreshCcw,
   Upload,
-} from "lucide-react-native";
+} from "@/components/icons/ui-icons";
 import type { Theme } from "@/styles/theme";
 
 const ThemedGitCommitHorizontal = withUnistyles(GitCommitHorizontal);

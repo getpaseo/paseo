@@ -3,7 +3,7 @@ import { type ReactElement, useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { Pressable, Text, View, type PressableStateCallbackType } from "react-native";
 import { useMutation } from "@tanstack/react-query";
-import { Check, ChevronDown } from "lucide-react-native";
+import { Check, ChevronDown } from "@/components/icons/ui-icons";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { EditorTargetIcon } from "@/components/icons/editor-target-icon";
 import {

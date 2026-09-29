@@ -7,7 +7,7 @@ import {
   type ReactElement,
 } from "react";
 import { Pressable, Text, View, type PressableStateCallbackType } from "react-native";
-import { Pencil } from "lucide-react-native";
+import { Pencil } from "@/components/icons/ui-icons";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import {
   workspaceLabelKey,

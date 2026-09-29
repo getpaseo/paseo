@@ -11,7 +11,7 @@ import {
   Pencil,
   RotateCw,
   X,
-} from "lucide-react-native";
+} from "@/components/icons/ui-icons";
 import {
   DropdownMenu,
   DropdownMenuContent,

@@ -187,7 +187,7 @@ vi.mock("@/components/ui/tooltip", () => ({
   ),
 }));
 
-vi.mock("lucide-react-native", () => {
+vi.mock("@/components/icons/ui-icons", () => {
   const createIcon = (name: string) => (props: Record<string, unknown>) =>
     React.createElement("span", {
       "data-icon": name,

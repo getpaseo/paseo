@@ -1,4 +1,4 @@
-import { Bot } from "lucide-react-native";
+import { Bot } from "@/components/icons/ui-icons";
 import { SvgXml } from "react-native-svg";
 import { describe, expect, it } from "vitest";
 import { replaceProviderSnapshotIcons } from "./provider-icon-name";

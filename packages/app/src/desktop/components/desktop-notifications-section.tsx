@@ -2,7 +2,7 @@ import { useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { Text, View } from "react-native";
 import { withUnistyles } from "react-native-unistyles";
-import { RotateCw } from "lucide-react-native";
+import { RotateCw } from "@/components/icons/ui-icons";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";

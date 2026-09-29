@@ -1,6 +1,6 @@
 import { Text, View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import { Server } from "lucide-react-native";
+import { Server } from "@/components/icons/ui-icons";
 import { HOST_COLORS, type HostBadgeModel, type HostColor } from "@/hosts/appearance";
 import { identityForeground } from "@/styles/identity-colors";
 import type { Theme } from "@/styles/theme";

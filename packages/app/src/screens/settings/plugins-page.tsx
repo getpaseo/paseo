@@ -6,7 +6,7 @@ import { Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { useMutation } from "@tanstack/react-query";
 import type { PluginListItem, PluginLogEntry } from "@getpaseo/protocol/messages";
-import { MoreHorizontal, Trash2 } from "lucide-react-native";
+import { MoreHorizontal, Trash2 } from "@/components/icons/ui-icons";
 import { AdaptiveModalSheet, type SheetHeader } from "@/components/adaptive-modal-sheet";
 import { SettingsCard, SettingsRow } from "@/components/settings";
 import { Alert } from "@/components/ui/alert";

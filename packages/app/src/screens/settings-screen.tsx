@@ -42,7 +42,7 @@ import {
   Blocks,
   PanelsTopLeft,
   ChevronRight,
-} from "lucide-react-native";
+} from "@/components/icons/ui-icons";
 import { DropdownTrigger } from "@/components/ui/dropdown-trigger";
 import { ComboboxTrigger } from "@/components/ui/combobox-trigger";
 import { SidebarHeaderRow } from "@/components/sidebar/sidebar-header-row";

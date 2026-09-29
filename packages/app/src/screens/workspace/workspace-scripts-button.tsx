@@ -12,7 +12,7 @@ import {
   RotateCw,
   Square,
   SquareTerminal,
-} from "lucide-react-native";
+} from "@/components/icons/ui-icons";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import type { WorkspaceDescriptor } from "@/stores/session-store";

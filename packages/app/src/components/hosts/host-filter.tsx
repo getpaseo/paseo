@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useRef, useState, type ReactElement } from "react";
 import { Pressable, Text, View, type PressableStateCallbackType } from "react-native";
-import { ChevronDown, Server } from "lucide-react-native";
+import { ChevronDown, Server } from "@/components/icons/ui-icons";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import type { HostProfile } from "@/types/host-connection";
 import type { Theme } from "@/styles/theme";

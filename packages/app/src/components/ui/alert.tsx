@@ -1,4 +1,10 @@
-import { AlertTriangle, CheckCircle2, Info, XCircle, type LucideIcon } from "lucide-react-native";
+import {
+  AlertTriangle,
+  CheckCircle2,
+  Info,
+  XCircle,
+  type LucideIcon,
+} from "@/components/icons/ui-icons";
 import { type ReactNode, useMemo } from "react";
 import { Text, View } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";

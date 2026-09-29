@@ -94,7 +94,7 @@ vi.mock("react-native-unistyles", () => ({
   useUnistyles: () => ({ theme, rt: { breakpoint: "md" } }),
 }));
 
-vi.mock("lucide-react-native", () => {
+vi.mock("@/components/icons/ui-icons", () => {
   const icon = (name: string) => () => React.createElement("span", { "data-icon": name });
   return {
     ChevronRight: icon("ChevronRight"),

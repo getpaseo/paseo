@@ -9,7 +9,7 @@ import {
   type TextStyle,
   type ViewStyle,
 } from "react-native";
-import { ChevronDown } from "lucide-react-native";
+import { ChevronDown } from "@/components/icons/ui-icons";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { extraMutedIconColorMapping } from "@/components/ui/icon-button-chrome";
 

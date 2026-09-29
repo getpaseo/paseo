@@ -16,7 +16,7 @@ import {
   type TextInputKeyPressEventData,
   type TextInputProps,
 } from "react-native";
-import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, X } from "lucide-react-native";
+import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, X } from "@/components/icons/ui-icons";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";

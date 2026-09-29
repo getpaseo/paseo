@@ -1,7 +1,7 @@
 import { View, Text, StyleSheet as RNStyleSheet } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import Animated, { useAnimatedStyle, withTiming } from "react-native-reanimated";
-import { Upload } from "lucide-react-native";
+import { Upload } from "@/components/icons/ui-icons";
 import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import type { Theme } from "@/styles/theme";

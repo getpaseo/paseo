@@ -1,7 +1,7 @@
 import type { ReactElement, ReactNode } from "react";
 import { View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import { ChevronDown } from "lucide-react-native";
+import { ChevronDown } from "@/components/icons/ui-icons";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
 import { DropdownMenuTrigger, type DropdownMenuTriggerProps } from "@/components/ui/dropdown-menu";
 

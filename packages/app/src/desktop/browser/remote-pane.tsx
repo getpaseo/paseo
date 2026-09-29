@@ -19,10 +19,10 @@ import {
   type PointerEvent as RNPointerEvent,
   type TextInputKeyPressEventData,
 } from "react-native";
-import { ArrowLeft, ArrowRight, Globe, RotateCw } from "lucide-react-native";
+import { ArrowLeft, ArrowRight, Globe, RotateCw } from "@/components/icons/ui-icons";
 import { useTranslation } from "react-i18next";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import { ExternalLink, Keyboard } from "lucide-react-native";
+import { ExternalLink, Keyboard } from "@/components/icons/ui-icons";
 import { AdaptiveTextInput } from "@/components/adaptive-text-input";
 import {
   PaneContentToolbar,

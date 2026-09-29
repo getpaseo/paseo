@@ -10,7 +10,7 @@ import {
   RotateCw,
   SquareTerminal,
   Trash2,
-} from "lucide-react-native";
+} from "@/components/icons/ui-icons";
 import type { TFunction } from "i18next";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";

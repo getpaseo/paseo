@@ -8,7 +8,7 @@ import {
   getCheckPresentationTone,
   type CheckPresentationTone,
 } from "@/git/check-presentation.view";
-import { ChevronDown, ChevronRight } from "lucide-react-native";
+import { ChevronDown, ChevronRight } from "@/components/icons/ui-icons";
 import type { Theme } from "@/styles/theme";
 
 const ThemedChevronDown = withUnistyles(ChevronDown);

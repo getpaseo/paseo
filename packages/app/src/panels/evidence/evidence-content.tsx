@@ -8,7 +8,7 @@ import {
   FileText,
   MessageSquare,
   RefreshCw,
-} from "lucide-react-native";
+} from "@/components/icons/ui-icons";
 import { useTranslation } from "react-i18next";
 import type {
   EvidenceArtifactSummary,

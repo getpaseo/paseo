@@ -1,6 +1,6 @@
 import type { ReactElement } from "react";
 import { withUnistyles } from "react-native-unistyles";
-import { SquareDot, SquareMinus, SquarePlus } from "lucide-react-native";
+import { SquareDot, SquareMinus, SquarePlus } from "@/components/icons/ui-icons";
 import { useTranslation } from "react-i18next";
 import type { Theme } from "@/styles/theme";
 

@@ -1,6 +1,6 @@
 import React from "react";
 import { Pressable, View } from "react-native";
-import { Scan, ZoomIn, ZoomOut } from "lucide-react-native";
+import { Scan, ZoomIn, ZoomOut } from "@/components/icons/ui-icons";
 import { useTranslation } from "react-i18next";
 import { StyleSheet } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";

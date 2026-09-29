@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState } from "react";
 import { Pressable, View, type TextStyle, type ViewStyle } from "react-native";
-import { Code, Maximize2, Workflow } from "lucide-react-native";
+import { Code, Maximize2, Workflow } from "@/components/icons/ui-icons";
 import { useTranslation } from "react-i18next";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { HighlightedCodeBlock } from "@/components/highlighted-code-block";

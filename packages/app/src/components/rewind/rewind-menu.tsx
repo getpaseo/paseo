@@ -1,7 +1,7 @@
 import { memo, useCallback, useMemo, useState, type ReactElement } from "react";
 import { useTranslation } from "react-i18next";
 import { Text, View } from "react-native";
-import { FileText, Layers, MessageSquare, Undo2 } from "lucide-react-native";
+import { FileText, Layers, MessageSquare, Undo2 } from "@/components/icons/ui-icons";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import {
   DropdownMenu,

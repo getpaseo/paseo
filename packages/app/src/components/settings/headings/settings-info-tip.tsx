@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { Pressable, Text } from "react-native";
 import { useTranslation } from "react-i18next";
-import { Info } from "lucide-react-native";
+import { Info } from "@/components/icons/ui-icons";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { ICON_SIZE, type Theme } from "@/styles/theme";

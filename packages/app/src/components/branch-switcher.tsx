@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useRef } from "react";
 import { Text, View } from "react-native";
 import { useQueryClient } from "@tanstack/react-query";
-import { GitBranch } from "lucide-react-native";
+import { GitBranch } from "@/components/icons/ui-icons";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import type { Theme } from "@/styles/theme";

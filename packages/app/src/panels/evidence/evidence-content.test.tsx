@@ -43,7 +43,7 @@ vi.mock("react-i18next", () => ({
   useTranslation: () => ({ t: (key: string) => key }),
 }));
 
-vi.mock("lucide-react-native", () => {
+vi.mock("@/components/icons/ui-icons", () => {
   const createIcon = (name: string) => () => React.createElement("span", { "data-icon": name });
   return {
     Camera: createIcon("Camera"),

@@ -6,7 +6,7 @@
  * a generic pull-request glyph.
  */
 import { withUnistyles } from "react-native-unistyles";
-import { GitPullRequest } from "lucide-react-native";
+import { GitPullRequest } from "@/components/icons/ui-icons";
 import {
   type ForgeBrandColor,
   type ForgeIconColorMapping,

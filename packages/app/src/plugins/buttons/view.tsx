@@ -9,7 +9,7 @@ import type { PluginTheme } from "@getpaseo/plugin";
 import { useCallback, useMemo, useSyncExternalStore, type ReactNode } from "react";
 import { Platform, Pressable, Text, View, useWindowDimensions } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import { AlertCircle, ChevronDown, MoreHorizontal } from "lucide-react-native";
+import { AlertCircle, ChevronDown, MoreHorizontal } from "@/components/icons/ui-icons";
 import { useTranslation } from "react-i18next";
 import {
   MenuRoot,

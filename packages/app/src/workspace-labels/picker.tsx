@@ -9,7 +9,7 @@ import {
 import { View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
-import { Plus } from "lucide-react-native";
+import { Plus } from "@/components/icons/ui-icons";
 import {
   normalizeWorkspaceLabelName,
   WORKSPACE_LABEL_COLORS,

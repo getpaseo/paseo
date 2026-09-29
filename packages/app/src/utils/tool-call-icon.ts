@@ -9,7 +9,7 @@ import {
   Sparkles,
   SquareTerminal,
   Wrench,
-} from "lucide-react-native";
+} from "@/components/icons/ui-icons";
 import type { ToolCallDetail } from "@getpaseo/protocol/agent-types";
 import { PaseoLogo } from "@/components/icons/paseo-logo";
 import { resolveToolCallIconName, type ToolCallIcon } from "./tool-call-icon-name";

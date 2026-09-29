@@ -1,4 +1,4 @@
-import { Plus, RefreshCw } from "lucide-react-native";
+import { Plus, RefreshCw } from "@/components/icons/ui-icons";
 import { useCallback, useMemo, useState } from "react";
 import { Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";

@@ -35,7 +35,7 @@ import { SettingsSection } from "@/components/settings/headings/settings-section
 import { useProviderSettingsStore } from "@/stores/provider-settings-store";
 import { confirmDialog } from "@/utils/confirm-dialog";
 import { filterSelectableModels } from "@/provider-selection/model-catalog";
-import { ChevronRight, MoreHorizontal, Trash2 } from "lucide-react-native";
+import { ChevronRight, MoreHorizontal, Trash2 } from "@/components/icons/ui-icons";
 
 type ProviderDefinition = ReturnType<typeof buildProviderDefinitions>[number];
 type ProviderEntry = NonNullable<ReturnType<typeof useProvidersSnapshot>["entries"]>[number];

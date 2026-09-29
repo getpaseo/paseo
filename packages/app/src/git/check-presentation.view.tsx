@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { withUnistyles } from "react-native-unistyles";
-import { CircleCheck, CircleDot, CircleSlash, CircleX } from "lucide-react-native";
+import { CircleCheck, CircleDot, CircleSlash, CircleX } from "@/components/icons/ui-icons";
 import { ManualStatusIcon } from "@/components/icons/manual-status-icon";
 import type { Theme } from "@/styles/theme";
 import type { CheckPresentation } from "./check-presentation";

@@ -2,7 +2,7 @@ import { useCallback, useMemo, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import { useTranslation } from "react-i18next";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import { Import as ImportIcon } from "lucide-react-native";
+import { Import as ImportIcon } from "@/components/icons/ui-icons";
 import { composerPillStyles } from "@/composer/pill-styles";
 import type { Theme } from "@/styles/theme";
 

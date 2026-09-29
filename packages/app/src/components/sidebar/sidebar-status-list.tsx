@@ -40,7 +40,7 @@ import {
   CircleCheck,
   CircleDot,
   CircleX,
-} from "lucide-react-native";
+} from "@/components/icons/ui-icons";
 import { useToast } from "@/contexts/toast-context";
 import { WorkspaceRenameModal } from "@/components/workspace-rename-modal";
 import { useWorkspaceClipboardActions } from "@/hooks/use-workspace-clipboard-actions";

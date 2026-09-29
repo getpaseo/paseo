@@ -1,4 +1,4 @@
-import { Folder, SquareTerminal } from "lucide-react-native";
+import { Folder, SquareTerminal } from "@/components/icons/ui-icons";
 import { useMemo } from "react";
 import { Image } from "react-native";
 

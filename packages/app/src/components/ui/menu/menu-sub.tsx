@@ -8,7 +8,7 @@ import {
 } from "react";
 import { Text, View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import { ChevronRight } from "lucide-react-native";
+import { ChevronRight } from "@/components/icons/ui-icons";
 import type { Theme } from "@/styles/theme";
 import { useMenuContext, useMenuDepth } from "./menu-context";
 import { isSubPageOpen } from "./menu-navigation";

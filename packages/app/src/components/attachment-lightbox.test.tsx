@@ -80,7 +80,7 @@ vi.mock("react-native-gesture-handler", () => ({
     React.createElement("div", { "data-testid": "gesture-handler-root" }, children),
 }));
 
-vi.mock("lucide-react-native", () => {
+vi.mock("@/components/icons/ui-icons", () => {
   const createIcon = (name: string) => (props: Record<string, unknown>) =>
     React.createElement("span", { ...props, "data-icon": name });
   return {

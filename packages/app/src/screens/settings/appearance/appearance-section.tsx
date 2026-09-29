@@ -3,7 +3,7 @@ import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 import { Pressable, Text, View, type PressableStateCallbackType } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import { ChevronDown, Monitor, Moon, Sun } from "lucide-react-native";
+import { ChevronDown, Monitor, Moon, Sun } from "@/components/icons/ui-icons";
 import {
   SYNTAX_THEME_OPTIONS,
   type SyntaxThemeId,

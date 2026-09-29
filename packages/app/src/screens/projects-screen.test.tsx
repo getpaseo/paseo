@@ -83,8 +83,8 @@ vi.mock("react-native", async (importOriginal) => {
   };
 });
 
-vi.mock("lucide-react-native", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("lucide-react-native")>();
+vi.mock("@/components/icons/ui-icons", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/components/icons/ui-icons")>();
   const icon = (name: string) => {
     const Icon = () => React.createElement("span", { "data-icon": name });
     Icon.displayName = name;

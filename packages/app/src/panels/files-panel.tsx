@@ -1,5 +1,5 @@
 import { Text, View } from "react-native";
-import { Files } from "lucide-react-native";
+import { Files } from "@/components/icons/ui-icons";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useCallback } from "react";
 import { useTranslation } from "react-i18next";

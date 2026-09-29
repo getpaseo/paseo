@@ -20,7 +20,7 @@ import {
 } from "@gorhom/bottom-sheet";
 import Animated, { useAnimatedStyle } from "react-native-reanimated";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
-import { ArrowLeft, Search, X } from "lucide-react-native";
+import { ArrowLeft, Search, X } from "@/components/icons/ui-icons";
 import {
   IsolatedBottomSheetModal,
   type ContextBridge,

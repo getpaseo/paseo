@@ -39,7 +39,7 @@ import {
   Image as ImageIcon,
   ClipboardPaste,
   Paperclip,
-} from "lucide-react-native";
+} from "@/components/icons/ui-icons";
 import * as Clipboard from "expo-clipboard";
 import { FOOTER_HEIGHT, MAX_CONTENT_WIDTH } from "@/constants/layout";
 import {

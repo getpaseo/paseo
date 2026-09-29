@@ -1,4 +1,4 @@
-import { Settings } from "lucide-react-native";
+import { Settings } from "@/components/icons/ui-icons";
 import { describe, expect, it } from "vitest";
 import { Icon } from "./icons";
 

@@ -2,7 +2,7 @@ import { useCallback, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import { FolderTree } from "lucide-react-native";
+import { FolderTree } from "@/components/icons/ui-icons";
 import {
   AdaptiveModalSheet,
   SHEET_HEADER_CLOSE_PADDING_SCALE,

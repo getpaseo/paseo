@@ -3,7 +3,14 @@ import { useTranslation } from "react-i18next";
 import { Pressable, Text, View, ScrollView } from "react-native";
 import { useRouter, type Href } from "expo-router";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import { QrCode, Link2, ClipboardPaste, Settings, Terminal, Paperclip } from "lucide-react-native";
+import {
+  QrCode,
+  Link2,
+  ClipboardPaste,
+  Settings,
+  Terminal,
+  Paperclip,
+} from "@/components/icons/ui-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { HostProfile } from "@/types/host-connection";
 import { getHostRuntimeStore, isHostRuntimeConnected, useHosts } from "@/runtime/host-runtime";

@@ -1,6 +1,6 @@
 import { useCallback, type ReactNode } from "react";
 import { Pressable, Text } from "react-native";
-import { ArrowUpRight } from "lucide-react-native";
+import { ArrowUpRight } from "@/components/icons/ui-icons";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { Theme } from "@/styles/theme";

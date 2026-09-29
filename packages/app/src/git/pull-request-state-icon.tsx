@@ -1,4 +1,4 @@
-import { GitMerge, GitPullRequest, GitPullRequestClosed } from "lucide-react-native";
+import { GitMerge, GitPullRequest, GitPullRequestClosed } from "@/components/icons/ui-icons";
 import { StyleSheet, View } from "react-native";
 import { withUnistyles } from "react-native-unistyles";
 import type { Theme } from "@/styles/theme";

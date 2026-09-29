@@ -2,7 +2,7 @@ import { useCallback, useMemo, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import { useTranslation } from "react-i18next";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import { ChevronRight, X } from "lucide-react-native";
+import { ChevronRight, X } from "@/components/icons/ui-icons";
 import type {
   BrowserActivityControlRequest,
   BrowserActivityEvent,

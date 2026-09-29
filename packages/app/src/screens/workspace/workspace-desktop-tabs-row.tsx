@@ -25,7 +25,7 @@ import {
   Minimize,
   Plus,
   X,
-} from "lucide-react-native";
+} from "@/components/icons/ui-icons";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import Animated from "react-native-reanimated";
 import { useTranslation } from "react-i18next";

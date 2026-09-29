@@ -23,7 +23,7 @@ import {
   SquarePen,
   SquareTerminal,
   X,
-} from "lucide-react-native";
+} from "@/components/icons/ui-icons";
 import { getIsElectron } from "@/constants/platform";
 import { supportsDesktopPaneSplits, useIsCompactFormFactor } from "@/constants/layout";
 import { GIT_ACTION_ICONS } from "@/git/action-icons";

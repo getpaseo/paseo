@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef } from "react";
 import type { BrowserAutomationCommand } from "@getpaseo/protocol/browser-automation/rpc-schemas";
 import type { BrowserMirrorAction } from "@getpaseo/protocol/browser-activity/rpc-schemas";
 import { Image } from "react-native";
-import { Globe } from "lucide-react-native";
+import { Globe } from "@/components/icons/ui-icons";
 import invariant from "tiny-invariant";
 import { getIsElectron } from "@/constants/platform";
 import { RemoteBrowserPane } from "@/desktop/browser/remote-pane";

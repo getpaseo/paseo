@@ -3,7 +3,7 @@ import { ScrollView, Text, View } from "react-native";
 import * as Clipboard from "expo-clipboard";
 import { useTranslation } from "react-i18next";
 import { openExternalUrl } from "@/utils/open-external-url";
-import { BookOpen, Copy, RotateCw, TriangleAlert } from "lucide-react-native";
+import { BookOpen, Copy, RotateCw, TriangleAlert } from "@/components/icons/ui-icons";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { PandaOSLogo } from "@/components/icons/pandaos-logo";
 import { PandaSalto } from "@/components/panda-loader";

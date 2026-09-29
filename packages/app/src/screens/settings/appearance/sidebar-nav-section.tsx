@@ -10,7 +10,7 @@ import {
   Plus,
   Search,
   type LucideIcon,
-} from "lucide-react-native";
+} from "@/components/icons/ui-icons";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { Button } from "@/components/ui/button";
 import { Shortcut } from "@/components/ui/shortcut";

@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import { Pressable } from "react-native";
 import { router } from "expo-router";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import { ArrowLeft } from "lucide-react-native";
+import { ArrowLeft } from "@/components/icons/ui-icons";
 import { ScreenHeader } from "./screen-header";
 import { ScreenTitle } from "./screen-title";
 

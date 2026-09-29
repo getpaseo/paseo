@@ -15,7 +15,7 @@ import type { Theme } from "@/styles/theme";
 import { useTranslation } from "react-i18next";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { isWeb } from "@/constants/platform";
-import { AlertTriangle, CheckCircle2, Info } from "lucide-react-native";
+import { AlertTriangle, CheckCircle2, Info } from "@/components/icons/ui-icons";
 import { getOverlayRoot, OVERLAY_Z } from "@/lib/overlay-root";
 import {
   HEADER_INNER_HEIGHT,

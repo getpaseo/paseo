@@ -13,7 +13,7 @@ import {
   PinOff,
   Tag,
   UserRound,
-} from "lucide-react-native";
+} from "@/components/icons/ui-icons";
 import { isWeb } from "@/constants/platform";
 import { getForgePresentation, normalizeForge } from "@/git/forge";
 import type { SidebarWorkspaceEntry } from "@/hooks/use-sidebar-workspaces-list";

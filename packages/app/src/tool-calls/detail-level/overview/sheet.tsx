@@ -5,7 +5,7 @@ import {
   BottomSheetScrollView,
   type BottomSheetScrollViewMethods,
 } from "@gorhom/bottom-sheet";
-import { Wrench, X } from "lucide-react-native";
+import { Wrench, X } from "@/components/icons/ui-icons";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import { useIsolatedBottomSheetVisibility } from "@/components/ui/isolated-bottom-sheet-modal";

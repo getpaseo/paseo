@@ -1,7 +1,7 @@
 import React, { memo, useCallback, useMemo, useRef, type ReactNode } from "react";
 import { ScrollView } from "react-native";
 import { useTranslation } from "react-i18next";
-import { Wrench } from "lucide-react-native";
+import { Wrench } from "@/components/icons/ui-icons";
 import { StyleSheet } from "react-native-unistyles";
 import { ExpandableBadge } from "@/components/message";
 import { useIsCompactFormFactor } from "@/constants/layout";

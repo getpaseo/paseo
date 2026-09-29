@@ -11,7 +11,7 @@ import { type ASTNode } from "react-native-markdown-display";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import { MarkdownRenderer } from "@/components/markdown/renderer";
-import { ChevronRight } from "lucide-react-native";
+import { ChevronRight } from "@/components/icons/ui-icons";
 import { isWeb } from "@/constants/platform";
 import type { Theme } from "@/styles/theme";
 import { getMarkdownListMarker } from "@/utils/markdown-list";

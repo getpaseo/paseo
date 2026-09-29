@@ -7,7 +7,7 @@ import {
   type PressableStateCallbackType,
   type TargetedEvent,
 } from "react-native";
-import { ChevronDown } from "lucide-react-native";
+import { ChevronDown } from "@/components/icons/ui-icons";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { Combobox, ComboboxItem, type ComboboxOption } from "@/components/ui/combobox";
 import {

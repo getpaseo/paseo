@@ -14,7 +14,7 @@ import {
   MessageSquarePlus,
   MoreHorizontal,
   RotateCw,
-} from "lucide-react-native";
+} from "@/components/icons/ui-icons";
 import type { PressableStateCallbackType } from "react-native";
 import { useTranslation } from "react-i18next";
 import { openExternalUrl } from "@/utils/open-external-url";

@@ -27,7 +27,7 @@ import {
   Plus,
   Search,
   Settings,
-} from "lucide-react-native";
+} from "@/components/icons/ui-icons";
 import type { AgentProvider } from "@getpaseo/protocol/agent-types";
 import {
   AgentProfileGlyph,

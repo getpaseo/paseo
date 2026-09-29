@@ -5,7 +5,7 @@ import type {
 } from "@getpaseo/plugin/client";
 import type { PluginTheme } from "@getpaseo/plugin";
 import { PluginClientStateProvider } from "@getpaseo/plugin/client/host";
-import { CircleAlert } from "lucide-react-native";
+import { CircleAlert } from "@/components/icons/ui-icons";
 import { useMemo } from "react";
 import { Platform, Text, View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";

@@ -1,4 +1,4 @@
-import { Camera } from "lucide-react-native";
+import { Camera } from "@/components/icons/ui-icons";
 import { withUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import invariant from "tiny-invariant";

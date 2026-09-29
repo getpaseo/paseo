@@ -9,7 +9,7 @@ import {
   Plus,
   ScanSearch,
   X,
-} from "lucide-react-native";
+} from "@/components/icons/ui-icons";
 import { openExternalUrl } from "@/utils/open-external-url";
 import { PullRequestStateIcon } from "@/git/pull-request-state-icon";
 import {

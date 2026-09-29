@@ -13,7 +13,7 @@ import { useTranslation } from "react-i18next";
 import { Pressable, Text, View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { BottomSheetBackdrop, BottomSheetScrollView } from "@gorhom/bottom-sheet";
-import { ChevronLeft } from "lucide-react-native";
+import { ChevronLeft } from "@/components/icons/ui-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
   IsolatedBottomSheetModal,

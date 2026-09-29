@@ -1,6 +1,6 @@
 import { View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import { ChevronRight } from "lucide-react-native";
+import { ChevronRight } from "@/components/icons/ui-icons";
 import { SPACING, type Theme } from "@/styles/theme";
 
 // Shared presentation primitives for the app's directory trees. Both the Files

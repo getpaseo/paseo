@@ -42,7 +42,7 @@ import {
   Scissors,
   MicVocal,
   FileSymlink,
-} from "lucide-react-native";
+} from "@/components/icons/ui-icons";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
 import { useIsCompactFormFactor } from "@/constants/layout";

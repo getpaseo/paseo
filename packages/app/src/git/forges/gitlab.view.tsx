@@ -1,7 +1,7 @@
 import React, { useCallback, useMemo, type ReactNode } from "react";
 import { Pressable, Text, View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import { CircleCheck, ExternalLink } from "lucide-react-native";
+import { CircleCheck, ExternalLink } from "@/components/icons/ui-icons";
 import { useTranslation } from "react-i18next";
 import type { CheckoutPipelineJob, CheckoutPipelineStage } from "@getpaseo/protocol/messages";
 import { GitLabIcon } from "@/components/icons/gitlab-icon";

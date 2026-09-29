@@ -25,7 +25,7 @@ import {
   Settings2,
   Tag,
   Type,
-} from "lucide-react-native";
+} from "@/components/icons/ui-icons";
 import {
   MenuItem,
   MenuRoot,

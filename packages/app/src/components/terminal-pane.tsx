@@ -7,7 +7,10 @@ import * as Clipboard from "expo-clipboard";
 import { Pressable, Text, View, type PressableStateCallbackType } from "react-native";
 import Animated, { runOnJS, useAnimatedReaction } from "react-native-reanimated";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import { Keyboard as KeyboardIcon, KeyboardOff as KeyboardOffIcon } from "lucide-react-native";
+import {
+  Keyboard as KeyboardIcon,
+  KeyboardOff as KeyboardOffIcon,
+} from "@/components/icons/ui-icons";
 import type { TerminalKeyInput } from "@getpaseo/protocol/terminal-key-input";
 import type { TerminalState } from "@getpaseo/protocol/messages";
 import {

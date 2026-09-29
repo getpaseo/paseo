@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import { Pressable, Text, View } from "react-native";
 import { SvgXml } from "react-native-svg";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import { ExternalLink, PackagePlus, Search } from "lucide-react-native";
+import { ExternalLink, PackagePlus, Search } from "@/components/icons/ui-icons";
 import { Button } from "@/components/ui/button";
 import { isWeb } from "@/constants/platform";
 import {

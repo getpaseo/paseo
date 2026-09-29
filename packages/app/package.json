@@ -107,6 +107,7 @@
     "markdown-it": "^10.0.0",
     "mermaid": "^11.16.0",
     "mnemonic-id": "^3.2.7",
+    "phosphor-react-native": "^3.0.6",
     "qrcode": "^1.5.4",
     "react": "19.1.0",
     "react-dom": "19.1.0",

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { GitPullRequest } from "lucide-react-native";
+import { GitPullRequest } from "@/components/icons/ui-icons";
 import { getForgeBrandColorMapping, getForgeIconComponent } from "./forge-icon";
 import { CLIENT_FORGE_VIEW_MODULES } from "./forges/view";
 

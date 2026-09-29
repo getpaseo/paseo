@@ -1,4 +1,4 @@
-import { Bot, PackagePlus } from "lucide-react-native";
+import { Bot, PackagePlus } from "@/components/icons/ui-icons";
 import { createElement, type ComponentType } from "react";
 import { SvgXml } from "react-native-svg";
 import { ClaudeIcon } from "@/components/icons/claude-icon";

@@ -1,5 +1,5 @@
 import { useTranslation } from "react-i18next";
-import { FolderTree } from "lucide-react-native";
+import { FolderTree } from "@/components/icons/ui-icons";
 import { withUnistyles } from "react-native-unistyles";
 import { paneContentToolbarIconSize, ToolbarButton } from "@/components/ui/pane-content-toolbar";
 import { extraMutedIconColorMapping } from "@/components/ui/icon-button-chrome";

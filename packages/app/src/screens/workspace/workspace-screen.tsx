@@ -23,7 +23,7 @@ import * as Clipboard from "expo-clipboard";
 import { copyAgentTranscript } from "@/agent-transcript/copy";
 import type { TranscriptFormat } from "@/agent-transcript/serialize";
 import { useTranslation } from "react-i18next";
-import { ChevronDown } from "lucide-react-native";
+import { ChevronDown } from "@/components/icons/ui-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import type { Theme } from "@/styles/theme";

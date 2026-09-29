@@ -3,7 +3,7 @@ import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 import { Pressable, Text, View, type PressableStateCallbackType } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import { ChevronDown, Pencil } from "lucide-react-native";
+import { ChevronDown, Pencil } from "@/components/icons/ui-icons";
 import {
   DropdownMenu,
   DropdownMenuContent,

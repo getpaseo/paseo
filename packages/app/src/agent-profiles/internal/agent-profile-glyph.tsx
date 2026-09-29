@@ -30,7 +30,7 @@ import {
   Terminal,
   TestTube,
   Wrench,
-} from "lucide-react-native";
+} from "@/components/icons/ui-icons";
 import { identityForeground } from "@/styles/identity-colors";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
 import {

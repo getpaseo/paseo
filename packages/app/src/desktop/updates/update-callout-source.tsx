@@ -1,4 +1,4 @@
-import { Gift } from "lucide-react-native";
+import { Gift } from "@/components/icons/ui-icons";
 import { type ReactNode, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { useUnistyles } from "react-native-unistyles";

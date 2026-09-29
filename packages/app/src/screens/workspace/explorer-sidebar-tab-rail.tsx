@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState, type ComponentType, type ReactNode } from "react";
 import { Text, View } from "react-native";
-import { ArrowLeftToLine, Plus, X } from "lucide-react-native";
+import { ArrowLeftToLine, Plus, X } from "@/components/icons/ui-icons";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import Animated from "react-native-reanimated";

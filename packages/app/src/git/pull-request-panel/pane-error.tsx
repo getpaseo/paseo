@@ -1,6 +1,6 @@
 import { Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
-import { RotateCw } from "lucide-react-native";
+import { RotateCw } from "@/components/icons/ui-icons";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 

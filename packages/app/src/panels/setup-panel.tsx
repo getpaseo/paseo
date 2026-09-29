@@ -2,7 +2,12 @@ import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { CheckCircle2, ChevronRight, CircleAlert, SquareTerminal } from "lucide-react-native";
+import {
+  CheckCircle2,
+  ChevronRight,
+  CircleAlert,
+  SquareTerminal,
+} from "@/components/icons/ui-icons";
 import { useTranslation } from "react-i18next";
 import { Pressable, type PressableStateCallbackType, ScrollView, Text, View } from "react-native";
 import invariant from "tiny-invariant";

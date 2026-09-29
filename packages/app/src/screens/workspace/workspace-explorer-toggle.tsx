@@ -1,4 +1,4 @@
-import { PanelRight } from "lucide-react-native";
+import { PanelRight } from "@/components/icons/ui-icons";
 import { type StyleProp, type ViewStyle } from "react-native";
 import { withUnistyles } from "react-native-unistyles";
 import { HeaderToggleButton } from "@/components/headers/header-toggle-button";

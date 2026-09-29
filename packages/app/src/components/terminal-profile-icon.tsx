@@ -1,5 +1,5 @@
 import type { ReactElement } from "react";
-import { SquareTerminal } from "lucide-react-native";
+import { SquareTerminal } from "@/components/icons/ui-icons";
 import { withUnistyles } from "react-native-unistyles";
 import { getProviderIcon } from "@/components/provider-icons";
 import type { Theme } from "@/styles/theme";

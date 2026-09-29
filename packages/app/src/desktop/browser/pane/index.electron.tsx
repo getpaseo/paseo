@@ -29,7 +29,7 @@ import {
   Wrench,
   X,
   type LucideIcon,
-} from "lucide-react-native";
+} from "@/components/icons/ui-icons";
 import { StyleSheet, useUnistyles, withUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import * as Clipboard from "expo-clipboard";

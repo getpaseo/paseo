@@ -1,6 +1,6 @@
 import { useTranslation } from "react-i18next";
 import { Text, View } from "react-native";
-import { FileWarning } from "lucide-react-native";
+import { FileWarning } from "@/components/icons/ui-icons";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
 

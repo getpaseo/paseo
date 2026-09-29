@@ -1,4 +1,4 @@
-import { Circle, CircleCheck, CircleDot } from "lucide-react-native";
+import { Circle, CircleCheck, CircleDot } from "@/components/icons/ui-icons";
 import { memo } from "react";
 import { Text, View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";

@@ -1,6 +1,6 @@
 import { memo, useCallback, useMemo } from "react";
 import { Pressable, Text, View, type PressableStateCallbackType } from "react-native";
-import { ExternalLink, Gift } from "lucide-react-native";
+import { ExternalLink, Gift } from "@/components/icons/ui-icons";
 import { useTranslation } from "react-i18next";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 

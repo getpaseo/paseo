@@ -1,4 +1,4 @@
-import { Gauge } from "lucide-react-native";
+import { Gauge } from "@/components/icons/ui-icons";
 import { withUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import invariant from "tiny-invariant";
