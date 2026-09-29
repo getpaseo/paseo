@@ -1132,6 +1132,42 @@ describe("Codex app-server provider", () => {
     });
   });
 
+  test("starts a session without a model on the project's Codex model and effort", async () => {
+    const cwd = "/workspace/project";
+    const appServer = createFakeCodexAppServer({
+      "config/read": (params) => ({
+        config:
+          (params as { cwd?: unknown }).cwd === cwd
+            ? { model: "project-model", model_reasoning_effort: "high" }
+            : { model: "global-model", model_reasoning_effort: "low" },
+      }),
+      getUserSavedConfig: () => ({
+        config: { model: "global-model", modelReasoningEffort: "low" },
+      }),
+    });
+    const session = new CodexAppServerAgentSession(
+      createConfig({ cwd, model: undefined }),
+      null,
+      createTestLogger(),
+      async () => appServer.child,
+    );
+
+    try {
+      await session.startTurn("use project defaults");
+
+      await expect(appServer.waitForRequest("thread/start")).resolves.toMatchObject({
+        model: "project-model",
+      });
+      await expect(appServer.waitForTurnStart()).resolves.toMatchObject({
+        model: "project-model",
+        effort: "high",
+      });
+      appServer.assertNoErrors();
+    } finally {
+      await session.close();
+    }
+  });
+
   test("preserves cwd-resolved Codex writable roots under an explicit workflow mode", async () => {
     const appServer = createFakeCodexAppServer({
       "config/read": () => ({

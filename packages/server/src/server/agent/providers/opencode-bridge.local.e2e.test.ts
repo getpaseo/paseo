@@ -355,7 +355,8 @@ test.each([
       await resumed?.close();
       await original?.close();
       await client.shutdown();
-      await rm(root, { recursive: true, force: true });
+      // OpenCode can still hold its ripgrep download open on Windows right after shutdown.
+      await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
     }
   },
   240_000,

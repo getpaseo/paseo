@@ -3151,10 +3151,32 @@ const CodexNotificationSchema = z.union([
     ),
 ]);
 
+// config/read resolves the effective layered config, including a trusted project's
+// .codex/config.toml when given its cwd; getUserSavedConfig predates it.
 async function readCodexConfiguredDefaults(
   client: CodexAppServerClient,
   logger: Logger,
+  cwd: string | null,
 ): Promise<CodexConfiguredDefaults> {
+  let configReadDefaults: CodexConfiguredDefaults = {};
+  try {
+    const response = toObjectRecord(await client.request("config/read", { cwd }));
+    const config = toObjectRecord(response?.config);
+    const modelValue = typeof config?.model === "string" ? config.model : undefined;
+    const thinkingOptionValue =
+      typeof config?.model_reasoning_effort === "string" ? config.model_reasoning_effort : null;
+    configReadDefaults = {
+      model: normalizeCodexModelId(modelValue),
+      thinkingOptionId: normalizeCodexThinkingOptionId(thinkingOptionValue),
+    };
+  } catch (error) {
+    logger.debug({ error }, "Failed to read Codex config defaults");
+  }
+
+  if (configReadDefaults.model && configReadDefaults.thinkingOptionId) {
+    return configReadDefaults;
+  }
+
   let savedConfigDefaults: CodexConfiguredDefaults = {};
   try {
     const response = toObjectRecord(await client.request("getUserSavedConfig", {}));
@@ -3170,26 +3192,7 @@ async function readCodexConfiguredDefaults(
     logger.debug({ error }, "Failed to read Codex saved config defaults");
   }
 
-  if (savedConfigDefaults.model && savedConfigDefaults.thinkingOptionId) {
-    return savedConfigDefaults;
-  }
-
-  let configReadDefaults: CodexConfiguredDefaults = {};
-  try {
-    const response = toObjectRecord(await client.request("config/read", {}));
-    const config = toObjectRecord(response?.config);
-    const modelValue = typeof config?.model === "string" ? config.model : undefined;
-    const thinkingOptionValue =
-      typeof config?.model_reasoning_effort === "string" ? config.model_reasoning_effort : null;
-    configReadDefaults = {
-      model: normalizeCodexModelId(modelValue),
-      thinkingOptionId: normalizeCodexThinkingOptionId(thinkingOptionValue),
-    };
-  } catch (error) {
-    logger.debug({ error }, "Failed to read Codex config defaults");
-  }
-
-  return mergeCodexConfiguredDefaults(savedConfigDefaults, configReadDefaults);
+  return mergeCodexConfiguredDefaults(configReadDefaults, savedConfigDefaults);
 }
 
 interface CodexSkillPromptBlock {
@@ -5195,7 +5198,11 @@ export class CodexAppServerAgentSession implements AgentSession {
     let model = this.config.model;
     let thinkingOptionId = normalizeCodexThinkingOptionId(this.config.thinkingOptionId);
     if (!model || !thinkingOptionId) {
-      configuredDefaults = await readCodexConfiguredDefaults(this.client, this.logger);
+      configuredDefaults = await readCodexConfiguredDefaults(
+        this.client,
+        this.logger,
+        this.config.cwd ?? null,
+      );
     }
     if (!model) {
       model = configuredDefaults.model;
@@ -7407,7 +7414,7 @@ export class CodexAppServerAgentClient implements AgentClient {
       const parsedResponse = CodexModelListResponseSchema.safeParse(rawResponse);
       const models = parsedResponse.success ? (parsedResponse.data.data ?? []) : [];
       const configuredDefaults = await runProviderRefreshActivity(context, "config/read", () =>
-        readCodexConfiguredDefaults(client!, this.logger),
+        readCodexConfiguredDefaults(client!, this.logger, null),
       );
       const configuredDefaultModelId = configuredDefaults.model;
       const configuredDefaultThinkingOptionId = configuredDefaults.thinkingOptionId;
