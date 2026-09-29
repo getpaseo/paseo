@@ -16,6 +16,7 @@ import {
 import { withUnistyles } from "react-native-unistyles";
 import { useRetainedPanelActive } from "@/components/retained-panel";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
+import { resolveContentMaxWidth, useAppSettings } from "@/hooks/use-settings";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import type { Theme } from "@/styles/theme";
 import { WEB_SCROLLBAR_SIZE_PX } from "@/styles/web-scrollbar";
@@ -362,6 +363,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
   const resumedUnchangedLayoutRef = useRef(false);
   const pendingResumeGeometryCheckRef = useRef(false);
   const shouldUseVirtualizer = segments.historyVirtualized.length > 0;
+  const contentMaxWidth = resolveContentMaxWidth(useAppSettings().settings);
   const {
     renderHistoryVirtualizedRow,
     renderHistoryMountedRow,
@@ -403,7 +405,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     getItemKey: (index: number) => segments.historyVirtualized[index]?.id ?? index,
     estimateSize: (index: number) => {
       const row = segments.historyVirtualized[index];
-      return row ? estimateStreamItemHeight(row) : 120;
+      return row ? estimateStreamItemHeight(row, contentMaxWidth) : 120;
     },
     measureElement: measureVirtualElement,
     rangeExtractor,
