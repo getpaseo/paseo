@@ -4734,7 +4734,10 @@ export class AgentManager {
         history: this.timelineStore.getItems(agent.id),
         candidate,
       });
-      const result = await agent.session.startTurn(retryPlan.prompt, activePrompt.options);
+      const result = await agent.session.startTurn(
+        this.applyPendingHandoff(agent.id, retryPlan.prompt),
+        activePrompt.options,
+      );
       const providerTurnId = result.turnId;
       const turnIds = this.fallbackTurnIds.get(agent.id) ?? new Map<string, string>();
       turnIds.set(providerTurnId, logicalTurnId);
@@ -4781,6 +4784,14 @@ export class AgentManager {
       return;
     }
 
+    await this.applyCrossProviderFallbackCandidate(agent, profile, model);
+  }
+
+  private async applyCrossProviderFallbackCandidate(
+    agent: ActiveManagedAgent,
+    profile: AgentProfile,
+    model: string | undefined,
+  ): Promise<void> {
     this.requireEnabledProvider(profile.provider);
     const client = await this.requireAvailableClient({ provider: profile.provider });
     const { storedConfig, launchConfig, paseoToolPolicy } = await this.prepareSessionConfig(
@@ -4804,27 +4815,50 @@ export class AgentManager {
     );
     const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
     const previousSession = agent.session;
-    if (agent.unsubscribeSession) {
-      agent.unsubscribeSession();
-      agent.unsubscribeSession = null;
-    }
+    const previousUnsubscribe = agent.unsubscribeSession;
+    const persistedRecord = await this.registry?.get(agent.id);
+    const handoffNote = buildAgentHandoffNote({
+      title: persistedRecord?.title ?? agent.config.title ?? null,
+      cwd: agent.cwd,
+      previous: { provider: agent.provider, model: agent.config.model ?? null },
+      next: { provider: profile.provider, model: model ?? null },
+      timeline: this.timelineStore.getItems(agent.id),
+      interrupted: true,
+    });
+    let session: AgentSession | undefined;
     try {
-      await previousSession.close();
+      session = await client.createSession(providerLaunchConfig, launchContext);
+      await this.requireExternalMcpSupport(session, storedConfig);
+
+      previousUnsubscribe?.();
+      agent.unsubscribeSession = null;
+      try {
+        await previousSession.close();
+      } catch (error) {
+        this.logger.warn(
+          { err: error, agentId: agent.id },
+          "Failed to close quota-limited session",
+        );
+      }
+
+      this.pendingHandoffs.set(agent.id, handoffNote);
+
+      this.paseoToolPolicies.set(agent.id, paseoToolPolicy);
+      agent.provider = profile.provider;
+      agent.session = session;
+      agent.config = storedConfig;
+      agent.capabilities = session.capabilities;
+      agent.persistence = attachPersistenceCwd(session.describePersistence(), storedConfig.cwd);
+      agent.runtimeInfo = undefined;
+      agent.currentModeId = profile.modeId ?? null;
+      agent.availableModes = [];
+      this.subscribeToSession(agent);
     } catch (error) {
-      this.logger.warn({ err: error, agentId: agent.id }, "Failed to close quota-limited session");
+      if (session && session !== agent.session) {
+        await this.closeUnregisteredSession(session);
+      }
+      throw error;
     }
-    const session = await client.createSession(providerLaunchConfig, launchContext);
-    await this.requireExternalMcpSupport(session, storedConfig);
-    this.paseoToolPolicies.set(agent.id, paseoToolPolicy);
-    agent.provider = profile.provider;
-    agent.session = session;
-    agent.config = storedConfig;
-    agent.capabilities = session.capabilities;
-    agent.persistence = attachPersistenceCwd(session.describePersistence(), storedConfig.cwd);
-    agent.runtimeInfo = undefined;
-    agent.currentModeId = profile.modeId ?? null;
-    agent.availableModes = [];
-    this.subscribeToSession(agent);
   }
 
   private onStreamTurnCanceled(params: {

@@ -1583,6 +1583,95 @@ test("retries a quota-limited foreground turn with the next configured profile",
   );
 });
 
+test("preserves the handoff context and old session during a cross-provider fallback", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-cross-provider-quota-fallback-"));
+  let oldSessionClosed = false;
+  let fallbackCreatedBeforeClose = false;
+  const fallbackPrompts: AgentPromptInput[] = [];
+
+  const initialSession = new (class extends TestAgentSession {
+    override async startTurn(): Promise<{ turnId: string }> {
+      const turnId = "codex-quota-turn";
+      setTimeout(() => {
+        this.pushEvent({ type: "turn_started", provider: this.provider, turnId });
+        this.pushEvent({
+          type: "turn_failed",
+          provider: this.provider,
+          turnId,
+          error: "provider quota exceeded",
+          code: "rate_limit_exceeded",
+        });
+      }, 0);
+      return { turnId };
+    }
+
+    override async close(): Promise<void> {
+      oldSessionClosed = true;
+    }
+  })({ provider: "codex", cwd: workdir, model: "codex-opus" });
+
+  class FallbackSession extends TestAgentSession {
+    override readonly provider = "claude" as const;
+
+    override async startTurn(prompt: AgentPromptInput): Promise<{ turnId: string }> {
+      fallbackPrompts.push(prompt);
+      const turnId = "claude-fallback-turn";
+      setTimeout(() => {
+        this.pushEvent({ type: "turn_started", provider: this.provider, turnId });
+        this.pushEvent({
+          type: "timeline",
+          provider: this.provider,
+          turnId,
+          item: { type: "assistant_message", text: "continued" },
+        });
+        this.pushEvent({ type: "turn_completed", provider: this.provider, turnId });
+      }, 0);
+      return { turnId };
+    }
+  }
+
+  class FallbackClient extends TestAgentClient {
+    override readonly provider = "claude" as const;
+
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      fallbackCreatedBeforeClose = !oldSessionClosed;
+      return new FallbackSession(config);
+    }
+  }
+
+  const manager = new AgentManager({
+    clients: {
+      codex: new (class extends TestAgentClient {
+        override async createSession(): Promise<AgentSession> {
+          return initialSession;
+        }
+      })(),
+      claude: new FallbackClient(),
+    },
+    getAgentProfiles: () => [
+      { id: "codex-profile", name: "Codex", provider: "codex", model: "codex-opus" },
+      { id: "claude-profile", name: "Claude", provider: "claude", model: "claude-sonnet" },
+    ],
+    logger,
+  });
+
+  const agent = await manager.createAgent(
+    { provider: "codex", cwd: workdir, model: "codex-opus", title: "Continue the quota test" },
+    undefined,
+    { workspaceId: undefined },
+  );
+  const result = await manager.runAgent(agent.id, "Keep the original prompt");
+
+  expect(result.finalText).toBe("continued");
+  expect(fallbackCreatedBeforeClose).toBe(true);
+  expect(oldSessionClosed).toBe(true);
+  expect(fallbackPrompts).toHaveLength(1);
+  expect(fallbackPrompts[0]).toEqual(
+    expect.stringContaining("Everything below is what carried over."),
+  );
+  expect(fallbackPrompts[0]).toEqual(expect.stringContaining("Keep the original prompt"));
+});
+
 test("does not register a session that finishes starting after shutdown begins", async () => {
   const client = new HeldAgentCreationClient();
   const manager = new AgentManager({
