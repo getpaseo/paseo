@@ -2,7 +2,7 @@
 // Draws the PandaOS panda from ellipses, samples it on a 32x32 grid and writes the frames the app
 // plays (packages/app/src/components/panda-frames.ts). Pass --preview <file.png> to also write a sheet.
 import { deflateSync, crc32 } from "node:zlib";
-import { writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
@@ -32,48 +32,84 @@ function ell(x, y, cx, cy, rx, ry, rot = 0) {
 const whiteShade = (hit) => (hit.u * 0.55 + hit.v * 0.8 > 0.42 ? "s" : "w");
 const blackShade = (hit) => (hit.u * -0.6 + hit.v * -0.8 > 0.45 ? "h" : "k");
 
-function scene(x, y, pose) {
-  const { eyesOpen, mouth, bamboo } = pose;
-  const armT = pose.armT ?? 0;
-  let hit;
-  // face details
-  for (const side of [-1, 1]) {
+const SIDES = [-1, 1];
+
+function eyes(x, y, eyesOpen) {
+  for (const side of SIDES) {
     const ex = 16 + side * 4.7;
-    if (eyesOpen) {
-      if (ell(x, y, ex + side * 0.15, 14.6, 0.95, 1.05)) return "k";
-      if (ell(x, y, ex - side * 0.2, 13.9, 1.65, 1.95)) return "w";
-    } else if (ell(x, y, ex, 14.4, 1.75, 0.5)) return "w";
+    if (!eyesOpen) {
+      if (ell(x, y, ex, 14.4, 1.75, 0.5)) return "w";
+      continue;
+    }
+    if (ell(x, y, ex + side * 0.15, 14.6, 0.95, 1.05)) return "k";
+    if (ell(x, y, ex - side * 0.2, 13.9, 1.65, 1.95)) return "w";
   }
+  return null;
+}
+
+function mouthAndNose(x, y, mouth) {
   if (ell(x, y, 16, 17.7, 1.9, 1.25)) return "k";
-  if (mouth) {
-    if (ell(x, y, 16, 20.3, 1.5, 1.3)) return "m";
-    if (ell(x, y, 16, 20.3, 2.2, 1.9)) return "k";
-  } else if (ell(x, y, 16, 20.2, 1.9, 0.55)) return "k";
-  for (const side of [-1, 1]) if (ell(x, y, 16 + side * 9.5, 18.6, 1.9, 1.2)) return "p";
-  for (const side of [-1, 1]) {
+  if (!mouth) return ell(x, y, 16, 20.2, 1.9, 0.55) ? "k" : null;
+  if (ell(x, y, 16, 20.3, 1.5, 1.3)) return "m";
+  return ell(x, y, 16, 20.3, 2.2, 1.9) ? "k" : null;
+}
+
+function face(x, y, pose) {
+  const detail = eyes(x, y, pose.eyesOpen) ?? mouthAndNose(x, y, pose.mouth);
+  if (detail) return detail;
+  for (const side of SIDES) if (ell(x, y, 16 + side * 9.5, 18.6, 1.9, 1.2)) return "p";
+  for (const side of SIDES) {
     if (ell(x, y, 16 + side * 5.6, 14.4, 3.6, 4.7, -side * 0.55)) return "k";
   }
-  // paw + bamboo in front of the head when raised
-  const pawY = 25.8 - armT * 5.3;
-  if (bamboo && !pose.headOnly) {
-    const top = 21 - armT * 6.5;
-    if (x >= 22.6 && x <= 25.2 && y >= top && y <= 30.5)
-      return Math.floor((y - top) / 4.2) % 3 === 2 ? "G" : "g";
-  }
-  if (!pose.headOnly && (hit = ell(x, y, 24.0, pawY, 2.5, 2.6))) return blackShade(hit);
-  // head
-  if ((hit = ell(x, y, 16, 14, 12.2, 9.6))) return whiteShade(hit);
-  // ears
-  for (const side of [-1, 1])
-    if ((hit = ell(x, y, 16 + side * 9.7, 5.4, 3.7, 3.7))) return blackShade(hit);
-  if (pose.headOnly) return null;
-  // arms, body, feet
-  if ((hit = ell(x, y, 7.6, 24.6, 2.6, 4.4, 0.32))) return blackShade(hit);
-  if (!bamboo && (hit = ell(x, y, 24.4, 24.6, 2.6, 4.4, -0.32))) return blackShade(hit);
-  if ((hit = ell(x, y, 16, 25, 8.4, 6.6))) return whiteShade(hit);
-  for (const side of [-1, 1])
-    if ((hit = ell(x, y, 16 + side * 4.7, 29.6, 3.6, 2.3))) return blackShade(hit);
   return null;
+}
+
+/** The paw and bamboo sit in front of the head while raised. */
+function pawAndBamboo(x, y, pose) {
+  const armT = pose.armT ?? 0;
+  if (pose.bamboo) {
+    const top = 21 - armT * 6.5;
+    if (x >= 22.6 && x <= 25.2 && y >= top && y <= 30.5) {
+      return Math.floor((y - top) / 4.2) % 3 === 2 ? "G" : "g";
+    }
+  }
+  const hit = ell(x, y, 24.0, 25.8 - armT * 5.3, 2.5, 2.6);
+  return hit ? blackShade(hit) : null;
+}
+
+function headAndEars(x, y) {
+  let hit = ell(x, y, 16, 14, 12.2, 9.6);
+  if (hit) return whiteShade(hit);
+  for (const side of SIDES) {
+    hit = ell(x, y, 16 + side * 9.7, 5.4, 3.7, 3.7);
+    if (hit) return blackShade(hit);
+  }
+  return null;
+}
+
+function bodyAndLimbs(x, y, bamboo) {
+  let hit = ell(x, y, 7.6, 24.6, 2.6, 4.4, 0.32);
+  if (hit) return blackShade(hit);
+  hit = !bamboo ? ell(x, y, 24.4, 24.6, 2.6, 4.4, -0.32) : null;
+  if (hit) return blackShade(hit);
+  hit = ell(x, y, 16, 25, 8.4, 6.6);
+  if (hit) return whiteShade(hit);
+  for (const side of SIDES) {
+    hit = ell(x, y, 16 + side * 4.7, 29.6, 3.6, 2.3);
+    if (hit) return blackShade(hit);
+  }
+  return null;
+}
+
+/** Layers front to back; the first one that covers the point wins. */
+function scene(x, y, pose) {
+  const front = face(x, y, pose);
+  if (front) return front;
+  const paw = pose.headOnly ? null : pawAndBamboo(x, y, pose);
+  if (paw) return paw;
+  const head = headAndEars(x, y);
+  if (head || pose.headOnly) return head;
+  return bodyAndLimbs(x, y, pose.bamboo);
 }
 
 function renderFrame(pose) {
@@ -142,7 +178,7 @@ function cropped(rows) {
 const LOGO = cropped(renderFrame(LOGO_POSE));
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const out = path.join(here, "../packages/app/src/components/panda-frames.ts");
+const framesFile = path.join(here, "../packages/app/src/components/panda-frames.ts");
 const body = `// Generated by scripts/generate-panda-sprite.mjs, do not edit by hand.
 export const PANDA_GRID = ${N};
 
@@ -157,7 +193,7 @@ export const PANDA_LOGO: readonly string[] = ${JSON.stringify(LOGO, null, 2)};
 /** The whole panda standing still; the loading screen turns it into a somersault. */
 export const PANDA_STAND: readonly string[] = ${JSON.stringify(frames.stand, null, 2)};
 `;
-if (!process.argv.includes("--no-write")) writeFileSync(out, body);
+if (!process.argv.includes("--no-write")) writeFileSync(framesFile, body);
 
 const previewIdx = process.argv.indexOf("--preview");
 if (previewIdx > 0) {
@@ -316,17 +352,15 @@ if (iconsIdx > 0) {
     out(`packages/desktop/assets/${name}.png`, icon(size, { bg: rounded, fill: 0.7 }));
   // macOS iconset for `iconutil -c icns`
   const set = path.join(root, "packages/desktop/assets/icon.iconset");
-  import("node:fs").then(({ mkdirSync }) => {
-    mkdirSync(set, { recursive: true });
-    for (const s of [16, 32, 128, 256, 512]) {
-      writeFileSync(path.join(set, `icon_${s}x${s}.png`), icon(s, { bg: rounded, fill: 0.64 }));
-      writeFileSync(
-        path.join(set, `icon_${s}x${s}@2x.png`),
-        icon(s * 2, { bg: rounded, fill: 0.64 }),
-      );
-    }
-    console.log("wrote packages/desktop/assets/icon.iconset");
-  });
+  mkdirSync(set, { recursive: true });
+  for (const s of [16, 32, 128, 256, 512]) {
+    writeFileSync(path.join(set, `icon_${s}x${s}.png`), icon(s, { bg: rounded, fill: 0.64 }));
+    writeFileSync(
+      path.join(set, `icon_${s}x${s}@2x.png`),
+      icon(s * 2, { bg: rounded, fill: 0.64 }),
+    );
+  }
+  console.log("wrote packages/desktop/assets/icon.iconset");
   // Windows .ico with PNG payloads
   const sizes = [16, 32, 48, 64, 128, 256];
   const pngs = sizes.map((s) => icon(s, { bg: rounded, fill: 0.8 }));
