@@ -13,6 +13,21 @@ const resolvePackageEntry = (packageName: string) => {
 };
 
 export default defineConfig({
+  plugins: [
+    {
+      name: "reanimated-web-style-compiler",
+      enforce: "pre",
+      async resolveId(source, importer) {
+        if (source === "./webUtils" && importer?.includes("/ReanimatedModule/js-reanimated/")) {
+          return this.resolve(
+            "react-native-reanimated/lib/module/ReanimatedModule/js-reanimated/webUtils.web.js",
+            importer,
+            { skipSelf: true },
+          );
+        }
+      },
+    },
+  ],
   test: {
     environment: "node",
     exclude: [...configDefaults.exclude, "e2e/**"],
@@ -74,6 +89,9 @@ export default defineConfig({
     // Bundle the CJS dependencies of the excluded gesture-handler package for the browser.
     include: [
       "react/jsx-runtime",
+      // This leaf uses require() to load the real RN Web style compiler. Bundle
+      // it so Reanimated entering animations can reveal menus in the browser.
+      "react-native-reanimated/lib/module/ReanimatedModule/js-reanimated/webUtils.web.js",
       "react-native-gesture-handler > hoist-non-react-statics",
       "react-native-gesture-handler > invariant",
     ],

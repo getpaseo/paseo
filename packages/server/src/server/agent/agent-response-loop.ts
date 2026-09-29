@@ -70,6 +70,7 @@ export interface StructuredAgentResponseOptions<T> {
 }
 
 export interface StructuredAgentGenerationOptions<T> {
+  signal?: AbortSignal;
   manager: AgentManager;
   agentConfig: AgentSessionConfig;
   agentId?: string;
@@ -81,6 +82,7 @@ export interface StructuredAgentGenerationOptions<T> {
 }
 
 export interface StructuredAgentGenerationWithFallbackOptions<T> {
+  signal?: AbortSignal;
   manager: AgentManager;
   cwd: string;
   prompt: string;
@@ -356,13 +358,21 @@ export async function generateStructuredAgentResponse<T>(
 ): Promise<T> {
   const { manager, agentConfig, agentId, persistSession, prompt, schema, maxRetries, schemaName } =
     options;
+  options.signal?.throwIfAborted();
   const agent = await manager.createAgent(agentConfig, agentId, {
     persistSession,
     workspaceId: undefined,
   });
+  const cancel = () => {
+    void manager.cancelAgentRun(agent.id).catch(() => undefined);
+  };
+  options.signal?.addEventListener("abort", cancel, { once: true });
   try {
+    options.signal?.throwIfAborted();
     const caller: AgentCaller = async (nextPrompt) => {
+      options.signal?.throwIfAborted();
       const result = await manager.runAgent(agent.id, nextPrompt);
+      options.signal?.throwIfAborted();
       if (typeof result.finalText === "string" && result.finalText.length > 0) {
         return result.finalText;
       }
@@ -378,6 +388,7 @@ export async function generateStructuredAgentResponse<T>(
       schemaName,
     });
   } finally {
+    options.signal?.removeEventListener("abort", cancel);
     try {
       await manager.closeAgent(agent.id);
     } catch {
@@ -422,6 +433,7 @@ export async function generateStructuredAgentResponseWithFallback<T>(
   const attempts: StructuredGenerationAttempt[] = [];
 
   for (const candidate of providers) {
+    options.signal?.throwIfAborted();
     const availabilityEntry = await manager.getProviderAvailability(candidate.provider);
     if (!availabilityEntry.available) {
       const reason = availabilityEntry.error ?? "unavailable";
@@ -441,6 +453,7 @@ export async function generateStructuredAgentResponseWithFallback<T>(
     try {
       const result = await runStructured({
         manager,
+        signal: options.signal,
         prompt,
         schema,
         maxRetries,
@@ -467,6 +480,7 @@ export async function generateStructuredAgentResponseWithFallback<T>(
       }
       return result;
     } catch (error) {
+      options.signal?.throwIfAborted();
       attempts.push({
         provider: candidate.provider,
         model: candidate.model ?? null,

@@ -44,6 +44,7 @@ export interface StructuredTextGeneration {
 }
 
 export interface StructuredTextGenerationRequest<T> {
+  signal?: AbortSignal;
   cwd: string;
   prompt: string;
   schema: z.ZodType<T>;
@@ -182,7 +183,7 @@ export function createAgentStructuredTextGeneration(deps: {
   ) => ResolveStructuredGenerationProvidersOptions["currentSelection"];
 }): StructuredTextGeneration {
   return {
-    async generate({ cwd, prompt, schema, schemaName, agentTitle }) {
+    async generate({ cwd, prompt, schema, schemaName, agentTitle, signal }) {
       const providers = await resolveStructuredGenerationProviders({
         cwd,
         providerSnapshotManager: deps.providerSnapshotManager,
@@ -191,6 +192,7 @@ export function createAgentStructuredTextGeneration(deps: {
       });
       return generateStructuredAgentResponseWithFallback({
         manager: deps.agentManager,
+        signal,
         cwd,
         prompt,
         schema,

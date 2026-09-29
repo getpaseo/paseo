@@ -85,6 +85,9 @@ export interface PluginClientOpenPanelOptions extends PluginOpenPanelOptions {
 }
 
 export interface PluginClientContext extends PluginCommandCapabilities {
+  addResponseAction(
+    contribution: import("./response-actions.js").PluginResponseActionContribution,
+  ): PluginCleanup;
   addSettingsScreen(contribution: PluginSettingsScreenContribution): PluginCleanup;
   addSurface(id: string, Component: ComponentType<PluginSurfaceProps>): PluginCleanup;
   addSidebarItem(contribution: PluginSidebarContribution): PluginCleanup;

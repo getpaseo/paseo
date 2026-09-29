@@ -1,3 +1,4 @@
+import { PluginResponseActions } from "@/plugins/response-actions";
 import React, { memo, useCallback, useMemo, type ReactNode } from "react";
 import { View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
@@ -42,6 +43,7 @@ export type AssistantTurnForkHandler = (input: {
 export type InFlightTurnForkHandler = (target: AssistantForkTarget) => Promise<void> | void;
 
 export const TurnFooter = memo(function TurnFooter({
+  responseTarget,
   isRunning,
   inFlightTurnStartedAt,
   host,
@@ -53,6 +55,7 @@ export const TurnFooter = memo(function TurnFooter({
   isRunning: boolean;
   inFlightTurnStartedAt: Date | null;
   host: TurnFooterHost | null;
+  responseTarget?: { serverId: string; agentId: string };
   strategy: TurnContentStrategy;
   supportsTimelineCursor: boolean;
   onForkAssistantTurn?: AssistantTurnForkHandler;
@@ -73,6 +76,7 @@ export const TurnFooter = memo(function TurnFooter({
   }
   return (
     <CompletedTurnFooterRow
+      responseTarget={responseTarget}
       strategy={strategy}
       items={host.items}
       timing={host.timing}
@@ -84,6 +88,7 @@ export const TurnFooter = memo(function TurnFooter({
 });
 
 export const CompletedTurnFooterRow = memo(function CompletedTurnFooterRow({
+  responseTarget,
   strategy,
   items,
   timing,
@@ -91,6 +96,7 @@ export const CompletedTurnFooterRow = memo(function CompletedTurnFooterRow({
   supportsTimelineCursor,
   onForkAssistantTurn,
 }: {
+  responseTarget?: { serverId: string; agentId: string };
   strategy: TurnContentStrategy;
   items: StreamItem[];
   timing?: TurnTiming;
@@ -101,6 +107,7 @@ export const CompletedTurnFooterRow = memo(function CompletedTurnFooterRow({
   return (
     <TurnFooterRow>
       <CompletedTurnFooter
+        responseTarget={responseTarget}
         strategy={strategy}
         items={items}
         timing={timing}
@@ -157,6 +164,7 @@ function RunningTurnFooter({
 }
 
 function CompletedTurnFooter({
+  responseTarget,
   strategy,
   items,
   timing,
@@ -164,6 +172,7 @@ function CompletedTurnFooter({
   supportsTimelineCursor,
   onForkAssistantTurn,
 }: {
+  responseTarget?: { serverId: string; agentId: string };
   strategy: TurnContentStrategy;
   items: StreamItem[];
   timing?: TurnTiming;
@@ -194,9 +203,22 @@ function CompletedTurnFooter({
     },
     [boundary, onForkAssistantTurn],
   );
+  const responseId = items[startIndex]?.id;
+  const actions = useMemo(
+    () =>
+      responseTarget && responseId ? (
+        <PluginResponseActions
+          {...responseTarget}
+          responseId={responseId}
+          getContent={getContent}
+        />
+      ) : undefined,
+    [responseTarget, responseId, getContent],
+  );
   return (
     <View style={stylesheet.turnFooterSlot}>
       <AssistantTurnFooter
+        actions={actions}
         getContent={getContent}
         completedAt={timing?.completedAt}
         durationMs={timing?.durationMs}

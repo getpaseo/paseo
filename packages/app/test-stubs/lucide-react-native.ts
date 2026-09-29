@@ -111,3 +111,6 @@ export const Upload = StubIcon;
 export const Wrench = StubIcon;
 export const X = StubIcon;
 export const XCircle = StubIcon;
+
+export const Volume2 = StubIcon;
+export const ListCollapse = StubIcon;

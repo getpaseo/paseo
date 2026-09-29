@@ -152,6 +152,7 @@ function renderPendingPermissionsNode(input: {
 }
 
 function renderStreamItemWithTurnFooter(input: {
+  responseTarget?: { serverId: string; agentId: string };
   content: ReactNode;
   layoutItem: StreamLayoutItem;
   strategy: TurnContentStrategy;
@@ -165,6 +166,7 @@ function renderStreamItemWithTurnFooter(input: {
   const footerHost = input.layoutItem.completedFooter;
   const footer = footerHost ? (
     <CompletedTurnFooterRow
+      responseTarget={input.responseTarget}
       strategy={input.strategy}
       items={footerHost.items}
       timing={footerHost.timing}
@@ -374,6 +376,10 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
 
     // Get serverId (fallback to agent's serverId if not provided)
     const resolvedServerId = serverId ?? context.serverId ?? "";
+    const responseTarget = useMemo(
+      () => (resolvedServerId ? { serverId: resolvedServerId, agentId } : undefined),
+      [resolvedServerId, agentId],
+    );
     const transformTimelineItem = useInstalledTimelineTransform(resolvedServerId);
 
     const client = useSessionStore((state) => state.sessions[resolvedServerId]?.client ?? null);
@@ -914,6 +920,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       (layoutItem: StreamLayoutItem) => {
         const content = renderStreamItemContent(layoutItem);
         return renderStreamItemWithTurnFooter({
+          responseTarget,
           content,
           layoutItem,
           strategy: streamRenderStrategy,
@@ -922,6 +929,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         });
       },
       [
+        responseTarget,
         handleForkAssistantTurn,
         readOnly,
         renderStreamItemContent,
@@ -947,6 +955,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       () =>
         isTurnActive || bottomTurnFooterHost ? (
           <TurnFooter
+            responseTarget={responseTarget}
             isRunning={isTurnActive}
             inFlightTurnStartedAt={baseRenderModel.turnTiming.runningStartedAt}
             host={bottomTurnFooterHost}
@@ -957,6 +966,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
           />
         ) : null,
       [
+        responseTarget,
         handleForkAssistantTurn,
         handleForkInFlightTurn,
         readOnly,

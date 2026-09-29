@@ -1,3 +1,4 @@
+import { useSpeech } from "./speech";
 import type { createPluginHosts } from "./hosts";
 import { openExternalUrl } from "@/utils/open-external-url";
 import * as pluginUiRuntime from "./react-native/ui";
@@ -99,6 +100,7 @@ export function runPluginClientBundle(
     themes: [],
     timelineTransformers: [],
     timelineRenderers: [],
+    responseActions: [],
   };
   const surfaceIds = new Set<string>();
   const settingsScreenIds = new Set<string>();
@@ -110,6 +112,7 @@ export function runPluginClientBundle(
   const themeIds = new Set<string>();
   const timelineTransformerIds = new Set<string>();
   const timelineRendererIds = new Set<string>();
+  const responseActionIds = new Set<string>();
   const removals = new Set<PluginCleanup>();
   let setupComplete = false;
   let stopped = false;
@@ -150,6 +153,19 @@ export function runPluginClientBundle(
   }
   const pluginContext: PluginClientContext = {
     ...runtime,
+    addResponseAction(contribution) {
+      if (stopped) throw new Error("Plugin has stopped");
+      const actionId = requireId(contribution.id, "response action id");
+      if (responseActionIds.has(actionId))
+        throw new Error(`Duplicate response action: ${actionId}`);
+      if (!contribution.title.trim() || typeof contribution.items !== "function")
+        throw new Error(`Invalid response action: ${actionId}`);
+      resolvePluginIcon(contribution.icon);
+      responseActionIds.add(actionId);
+      return register(collector.responseActions!, { ...contribution, id: actionId }, () =>
+        responseActionIds.delete(actionId),
+      );
+    },
     addSettingsScreen(contribution) {
       const screenId = requireId(contribution.id, "settings screen id");
       if (settingsScreenIds.has(screenId))
@@ -380,6 +396,7 @@ export function runPluginClientBundle(
       return {
         ...pluginClientRuntime,
         useSettings,
+        useSpeech,
         openExternalUrl,
         getPaseoClient: (serverId: string) => runtime.hosts.getPaseoClient(serverId),
         useHosts: () =>
@@ -455,5 +472,6 @@ export function runPluginClientBundle(
     themes: collector.themes,
     timelineTransformers: collector.timelineTransformers,
     timelineRenderers: collector.timelineRenderers,
+    responseActions: collector.responseActions,
   };
 }
