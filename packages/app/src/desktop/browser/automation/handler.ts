@@ -15,6 +15,7 @@ import {
 import { collectAllTabs, useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
 import { DEFAULT_BROWSER_URL } from "@/desktop/browser/store/state";
+import { mountBrowserOwnerCleanup } from "@/desktop/browser/owner-cleanup";
 
 type BrowserAutomationExecuteRequest = Extract<
   SessionOutboundMessage,
@@ -78,6 +79,7 @@ export function mountBrowserAutomationDaemonClientHandler(
     hostKind: "desktop app",
     supportedCommands: [...BROWSER_AUTOMATION_COMMAND_NAMES],
   });
+  const stopOwnerCleanup = options?.serverId ? mountBrowserOwnerCleanup(options.serverId) : null;
   const unmount = mountBrowserAutomationHandler({
     client: {
       on: (_type, handler) =>
@@ -93,6 +95,7 @@ export function mountBrowserAutomationDaemonClientHandler(
     ...(options?.serverId ? { serverId: options.serverId } : {}),
   });
   return () => {
+    stopOwnerCleanup?.();
     unmount();
     void observation
       .release()
@@ -368,7 +371,10 @@ async function openBrowserTabForRequest(params: {
   }
 
   const url = command.args.url ?? DEFAULT_BROWSER_URL;
-  const { browserId, url: normalizedUrl } = createWorkspaceBrowser({ initialUrl: url });
+  const { browserId, url: normalizedUrl } = createWorkspaceBrowser({
+    initialUrl: url,
+    ...(request.agentId ? { ownerAgentId: request.agentId } : {}),
+  });
   const workspaceKey = buildWorkspaceTabPersistenceKey({ serverId, workspaceId });
   if (!workspaceKey) {
     return browserAutomationFailure({
