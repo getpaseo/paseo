@@ -6,6 +6,7 @@ import { OmpHistoryMapper, type OmpCapturedUserMessageEntry } from "./message-hi
 import type { OmpAgentMessage } from "./rpc-types.js";
 import type { OmpRuntimeSession } from "./runtime.js";
 import { OMP_HISTORY_MAPPER_HOOKS } from "./history-hooks.js";
+import type { OmpBridgedToolIdentity } from "./mcp-bridge.js";
 import { formatOmpSubagentTitle } from "./subagent-title.js";
 import { mapOmpTodoPhases } from "./todo-mapper.js";
 import { OmpTodoPhaseSchema } from "./rpc-types.js";
@@ -65,6 +66,7 @@ export async function* streamOmpHistory(input: {
   sessionFile?: string;
   runtimeSession?: OmpRuntimeSession;
   provider: AgentProvider;
+  bridgedTools?: ReadonlyMap<string, OmpBridgedToolIdentity>;
   visitedSessionFiles?: Set<string>;
 }): AsyncGenerator<AgentStreamEvent> {
   if (!input.sessionFile) {
@@ -99,7 +101,12 @@ export async function* streamOmpHistory(input: {
       userEntries.push({ id: entry.id, text: textOf(mapped.content) });
     }
   }
-  const mapper = new OmpHistoryMapper(input.provider, userEntries, OMP_HISTORY_MAPPER_HOOKS);
+  const mapper = new OmpHistoryMapper(
+    input.provider,
+    userEntries,
+    OMP_HISTORY_MAPPER_HOOKS,
+    input.bridgedTools,
+  );
   for (let index = 0; index < messages.length; index += 1) {
     const timestamp = normalizeProviderReplayTimestamp(messageEntries[index]?.timestamp);
     for (const event of mapper.mapMessages([messages[index]!])) {

@@ -1,4 +1,5 @@
 import type { ToolCallDetail } from "../../agent-sdk-types.js";
+import type { OmpBridgedToolIdentity } from "./mcp-bridge.js";
 import {
   extractTextFromToolResult,
   mapToolDetail as mapOmpCoreToolDetail,
@@ -12,9 +13,13 @@ export function mapOmpToolDetail(
   result: OmpToolResult,
   context?: {
     toolCallId: string;
+    bridgedTool?: OmpBridgedToolIdentity;
     mapSubagentDetail?: (baseDetail: ToolCallDetail) => ToolCallDetail;
   },
 ): ToolCallDetail | null {
+  if (context?.bridgedTool) {
+    return { type: "unknown", input: toolCall.args, output: result };
+  }
   if (toolCall.toolName === "todo") {
     return null;
   }
