@@ -6,9 +6,15 @@ import net from "node:net";
 import path from "node:path";
 import { spawn, type ChildProcess } from "node:child_process";
 import { Buffer } from "node:buffer";
+import { createHash, randomBytes } from "node:crypto";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
 
 import { generateLocalPairingOffer } from "../pairing-offer.js";
 import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
+import { DaemonClient } from "../test-utils/daemon-client.js";
+import type { FileDownloadProgress } from "@getpaseo/client/internal/daemon-client";
+import { FILE_EXPLORER_STREAM_CHUNK_BYTES } from "../file-explorer/service.js";
 import { createClientChannel, type Transport } from "@getpaseo/relay/e2ee";
 import {
   deriveSharedKey,
@@ -164,6 +170,19 @@ async function waitForRelayWebSocketReady(port: number, timeout = 60000): Promis
     await new Promise((r) => setTimeout(r, 250));
   }
   throw new Error(`Relay WebSocket endpoint not ready on port ${port} within ${timeout}ms`);
+}
+
+function sha256(bytes: Uint8Array): string {
+  return createHash("sha256").update(bytes).digest("hex");
+}
+
+function expectedReceivedByteSteps(totalBytes: number): number[] {
+  const steps = [0];
+  for (let received = 0; received < totalBytes; ) {
+    received = Math.min(received + FILE_EXPLORER_STREAM_CHUNK_BYTES, totalBytes);
+    steps.push(received);
+  }
+  return steps;
 }
 
 async function waitForCapturedLog(
@@ -781,6 +800,76 @@ async function waitForCapturedLog(
     } finally {
       await daemon.close();
       await stopRelay();
+    }
+  }, 90000);
+
+  test("downloads a workspace file over the E2EE relay session byte-for-byte", async () => {
+    process.env.PASEO_PRIMARY_LAN_IP = "192.168.1.12";
+
+    const { logger, lines } = createCapturingLogger();
+    await startRelay({ useLocalRelay: true });
+
+    const daemon = await createTestPaseoDaemon({
+      listen: "127.0.0.1",
+      logger,
+      relayEnabled: true,
+      relayEndpoint: `127.0.0.1:${relayPort}`,
+    });
+    const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "paseo-relay-download-"));
+    const fileName = "보고서 데이터.bin";
+    const source = randomBytes(4 * FILE_EXPLORER_STREAM_CHUNK_BYTES + 123);
+    await writeFile(path.join(workspaceDir, fileName), source);
+
+    const offerUrl = await getPairingOfferUrl({
+      paseoHome: daemon.paseoHome,
+      relayEnabled: daemon.config.relayEnabled,
+      relayEndpoint: daemon.config.relayEndpoint,
+      relayPublicEndpoint: daemon.config.relayPublicEndpoint,
+      appBaseUrl: daemon.config.appBaseUrl,
+    });
+    const { serverId, daemonPublicKeyB64 } = decodeOfferFromFragmentUrl(offerUrl);
+    const client = new DaemonClient({
+      url: buildRelayWebSocketUrl({
+        endpoint: `127.0.0.1:${relayPort}`,
+        useTls: false,
+        serverId,
+        role: "client",
+      }),
+      clientType: "cli",
+      connectTimeoutMs: 30_000,
+      e2ee: { enabled: true, daemonPublicKeyB64 },
+      reconnect: { enabled: false },
+    });
+
+    try {
+      await client.connect();
+      const progress: FileDownloadProgress[] = [];
+      const result = await client.downloadFile(workspaceDir, fileName, {
+        // Exactly the file size: the daemon's size check must let it through.
+        maxBytes: source.byteLength,
+        onProgress: (update) => progress.push(update),
+      });
+
+      expect(result.size).toBe(source.byteLength);
+      expect(result.bytes.byteLength).toBe(source.byteLength);
+      expect(sha256(result.bytes)).toBe(sha256(source));
+      expect(progress.map((update) => update.receivedBytes)).toEqual(
+        expectedReceivedByteSteps(source.byteLength),
+      );
+      expect(progress.at(-1)).toEqual({
+        receivedBytes: source.byteLength,
+        totalBytes: source.byteLength,
+      });
+    } catch (err) {
+      const tail = lines.slice(-50).join("");
+      // eslint-disable-next-line no-console
+      console.error("daemon logs (tail):\n", tail);
+      throw err;
+    } finally {
+      await client.close();
+      await daemon.close();
+      await stopRelay();
+      await rm(workspaceDir, { recursive: true, force: true });
     }
   }, 90000);
 });

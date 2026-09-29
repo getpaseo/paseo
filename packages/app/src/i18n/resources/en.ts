@@ -1819,6 +1819,9 @@ export const en = {
     failed: "Failed to download file.",
     shareFile: "Share file",
     shareFileNamed: "Share {{fileName}}",
+    tooLarge: "File is too large to download over this connection (limit {{limit}}).",
+    incomplete: "Download was incomplete. Try again.",
+    contentUnavailable: "File content is unavailable for download.",
   },
   menu: {
     backdrop: "Menu backdrop",
