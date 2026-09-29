@@ -572,6 +572,7 @@ export const es: TranslationResources = {
       },
     },
     browser: {
+      passwords: en.workspace.browser.passwords,
       copied: "Copiado desde el navegador",
       unavailable: {
         title: "El navegador es solo para escritorio",

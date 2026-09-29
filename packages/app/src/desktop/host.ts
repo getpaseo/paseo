@@ -142,6 +142,27 @@ export interface DesktopBrowserNewTabRequestEvent {
   url: string;
 }
 
+export interface DesktopBrowserSavePasswordRequestEvent {
+  browserId: string;
+  requestId: string;
+  origin: string;
+  username: string;
+  update: boolean;
+}
+
+export type DesktopSavePasswordAction = "save" | "never" | "dismiss";
+
+export interface DesktopSavedLogin {
+  origin: string;
+  username: string;
+}
+
+export interface DesktopSavedPasswordList {
+  /** False when the OS offers no secure storage; passwords are then never saved. */
+  available: boolean;
+  logins: DesktopSavedLogin[];
+}
+
 export interface DesktopAttachedBrowserRegistration {
   browserId: string;
   workspaceId: string;
@@ -175,6 +196,13 @@ export interface DesktopBrowserBridge {
   ) => Promise<string | null>;
   /** Copy element text and/or an image to the system clipboard from main. */
   copyElement?: (payload: { text?: string; imageDataUrl?: string }) => Promise<boolean>;
+  /** Resolves false when the request expired or the password could not be stored. */
+  respondToPasswordSave?: (input: {
+    requestId: string;
+    action: DesktopSavePasswordAction;
+  }) => Promise<boolean>;
+  listSavedPasswords?: () => Promise<DesktopSavedPasswordList>;
+  removeSavedPassword?: (input: DesktopSavedLogin) => Promise<void>;
 }
 
 export interface DesktopInvokeBridge {

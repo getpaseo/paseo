@@ -571,6 +571,7 @@ export const ptBR: TranslationResources = {
       },
     },
     browser: {
+      passwords: en.workspace.browser.passwords,
       copied: "Copiado do navegador",
       unavailable: {
         title: "O navegador é exclusivo do desktop",

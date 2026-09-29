@@ -571,6 +571,7 @@ export const ru: TranslationResources = {
       },
     },
     browser: {
+      passwords: en.workspace.browser.passwords,
       copied: "Скопировано из браузера",
       unavailable: {
         title: "Встроенный браузер доступен только в настольном приложении",

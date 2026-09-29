@@ -566,6 +566,7 @@ export const zhCN: TranslationResources = {
       },
     },
     browser: {
+      passwords: en.workspace.browser.passwords,
       copied: "已从浏览器复制",
       unavailable: {
         title: "浏览器仅桌面端可用",

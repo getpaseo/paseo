@@ -566,6 +566,7 @@ export const ar: TranslationResources = {
       },
     },
     browser: {
+      passwords: en.workspace.browser.passwords,
       copied: "تم النسخ من المتصفح",
       unavailable: {
         title: "المتصفح مخصص لسطح المكتب فقط",

@@ -572,6 +572,7 @@ export const ja: TranslationResources = {
       },
     },
     browser: {
+      passwords: en.workspace.browser.passwords,
       copied: "ブラウザからコピーしました",
       unavailable: {
         title: "ブラウザはデスクトップ専用です",

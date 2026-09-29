@@ -79,6 +79,7 @@ import {
   type ElementSelectorOutcome,
 } from "./element-selector.electron";
 import { DEFAULT_BROWSER_URL } from "@/desktop/browser/store/state";
+import { BrowserPasswordSaveBar } from "./password-save-bar";
 
 type ElectronWebview = HTMLElement & {
   canGoBack?: () => boolean;
@@ -1546,6 +1547,7 @@ export function BrowserPane({
           </ToolbarButton>
         </View>
       </View>
+      <BrowserPasswordSaveBar browserId={browserId} url={browser?.url ?? null} />
       {browser?.lastError ? (
         <View style={styles.errorRow}>
           <Text numberOfLines={1} style={errorTextStyle}>

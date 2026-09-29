@@ -572,6 +572,7 @@ export const fr: TranslationResources = {
       },
     },
     browser: {
+      passwords: en.workspace.browser.passwords,
       copied: "Copié depuis le navigateur",
       unavailable: {
         title: "Le navigateur est réservé au bureau",

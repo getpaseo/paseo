@@ -567,6 +567,7 @@ export const ko: TranslationResources = {
       },
     },
     browser: {
+      passwords: en.workspace.browser.passwords,
       copied: "브라우저에서 복사됨",
       unavailable: {
         title: "브라우저는 데스크톱 전용입니다",

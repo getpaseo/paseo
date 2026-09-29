@@ -563,6 +563,15 @@ export const en = {
       },
     },
     browser: {
+      passwords: {
+        savePrompt: "Save password for {{username}} on {{origin}}?",
+        savePromptNoUsername: "Save password for {{origin}}?",
+        updatePrompt: "Update password for {{username}}?",
+        save: "Save",
+        never: "Never for this site",
+        notNow: "Not now",
+        saveFailed: "Unable to save the password",
+      },
       copied: "Copied from the browser",
       unavailable: {
         title: "Browser is desktop-only",
@@ -2341,6 +2350,20 @@ export const en = {
         saveLabel: "Current start page",
         unset: "Not set (Google)",
         save: "Save",
+      },
+      passwords: {
+        title: "Saved passwords",
+        info: "Logins the PandaOS browser saved on this device. Passwords are encrypted with the system keychain.",
+        loading: "Loading...",
+        empty: "No saved passwords",
+        unavailable:
+          "Saving passwords needs the system keychain, which is not available on this device",
+        noUsername: "No username",
+        delete: "Delete",
+        deleting: "Deleting...",
+        deleteFailed: "Unable to delete the password",
+        confirmTitle: "Delete saved password?",
+        confirmMessage: "{{username}} on {{origin}}",
       },
       import: {
         title: "Import from browser",
