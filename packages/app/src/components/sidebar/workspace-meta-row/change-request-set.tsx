@@ -28,6 +28,7 @@ const ThemedScanSearch = withUnistyles(ScanSearch);
 const ThemedX = withUnistyles(X);
 
 const mutedMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
+const PR_ICON_SIZE = 16;
 
 /**
  * The collapsed stand-in for a workspace's change requests: with several, how many there are
@@ -65,6 +66,8 @@ export function ChangeRequestSetItem({
   );
 
   const Chevron = expanded ? ThemedChevronDown : ThemedChevronRight;
+  // Everything merged is the finished state, and the line should read as done at a glance.
+  const allMerged = summary.total > 0 && summary.mergedCount === summary.total;
   const accessibilityState = useMemo(() => ({ expanded }), [expanded]);
 
   return (
@@ -79,7 +82,11 @@ export function ChangeRequestSetItem({
       testID="workspace-change-request-set"
     >
       <Chevron size={12} uniProps={mutedMapping} />
-      <ThemedGitPullRequest size={12} uniProps={mutedMapping} />
+      {allMerged ? (
+        <PullRequestStateIcon state="merged" size={PR_ICON_SIZE} />
+      ) : (
+        <ThemedGitPullRequest size={PR_ICON_SIZE} uniProps={mutedMapping} />
+      )}
       {summary.total === 0 ? null : (
         <Text style={styles.countText} numberOfLines={1}>
           {soleNumber === null
@@ -87,6 +94,14 @@ export function ChangeRequestSetItem({
             : soleNumber}
         </Text>
       )}
+      {allMerged ? (
+        <>
+          <Text style={styles.separator}>·</Text>
+          <Text style={styles.mergedText} numberOfLines={1}>
+            {t("workspace.git.pr.states.merged")}
+          </Text>
+        </>
+      ) : null}
       {summary.health === "unknown" ? null : (
         <>
           <Text style={styles.separator}>·</Text>
@@ -314,7 +329,7 @@ function ChangeRequestSetRow({
       style={listRowStyle}
       testID={`workspace-change-request-${pullRequest.number}`}
     >
-      <PullRequestStateIcon state={pullRequest.state} size={12} />
+      <PullRequestStateIcon state={pullRequest.state} size={PR_ICON_SIZE} />
       <Text
         style={pullRequest.origin === "current" ? styles.numberTextCurrent : styles.numberText}
         numberOfLines={1}
@@ -482,6 +497,12 @@ const styles = StyleSheet.create((theme) => ({
   listRowPressed: {
     opacity: 0.82,
     backgroundColor: theme.colors.surface2,
+  },
+  mergedText: {
+    color: theme.colors.statusMerged,
+    fontSize: theme.fontSize.sm,
+    lineHeight: 16,
+    flexShrink: 0,
   },
   numberText: {
     color: theme.colors.foregroundMuted,

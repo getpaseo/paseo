@@ -17,6 +17,7 @@ export type RelatedPullRequestsHealth = "failing" | "running" | "passing" | "unk
 export interface RelatedPullRequestsSummary {
   total: number;
   openCount: number;
+  mergedCount: number;
   health: RelatedPullRequestsHealth;
   /**
    * Open entries per check state. The collapsed row says how many are red, not that one is:
@@ -49,7 +50,13 @@ export function summarizeRelatedPullRequests(
   } else if (checkCounts.passing > 0) {
     health = "passing";
   }
-  return { total: pullRequests.length, openCount: open.length, health, checkCounts };
+  return {
+    total: pullRequests.length,
+    openCount: open.length,
+    mergedCount: pullRequests.filter((pr) => pr.state === "merged").length,
+    health,
+    checkCounts,
+  };
 }
 
 /** How many entries the collapsed row's health word stands for. */

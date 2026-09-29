@@ -3972,6 +3972,28 @@ describe("ForgeService", () => {
     });
   });
 
+  it("reads a pull request by its bare number, merged ones included", async () => {
+    const merged = JSON.stringify({
+      number: 1347,
+      title: "Merged one",
+      url: "https://github.com/acme/repo/pull/1347",
+      state: "MERGED",
+      baseRefName: "main",
+      headRefName: "feature",
+      labels: [],
+    });
+    const runner = createRunner([merged]);
+    const service = createGitHubService({
+      runner: runner.runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+    });
+
+    const items = await service.listPullRequests({ cwd: "/repo", query: "#1347", limit: 10 });
+
+    expect(items.map((item) => [item.number, item.state])).toEqual([[1347, "MERGED"]]);
+    expect(runner.calls[0]?.args.slice(0, 3)).toEqual(["pr", "view", "1347"]);
+  });
+
   it("returns cached results for identical calls within the TTL", async () => {
     const runner = createRunner([pullRequestJson("First result")]);
     const service = createGitHubService({
@@ -4234,7 +4256,10 @@ describe("ForgeService", () => {
   });
 
   it("treats a GitHub issue or PR URL as a search for that number", async () => {
-    const runner = createRunner([issueJson("Issue title"), searchPullRequestJson("PR title")]);
+    const runner = createRunner([
+      issueJson("Issue title"),
+      JSON.stringify(JSON.parse(searchPullRequestJson("PR title"))[0]),
+    ]);
     const service = createGitHubService({
       runner: runner.runner,
       resolveGhPath: async () => "/usr/bin/gh",
@@ -4260,13 +4285,10 @@ describe("ForgeService", () => {
       ],
       [
         "pr",
-        "list",
-        "--search",
+        "view",
         "793",
         "--json",
         "number,title,url,state,body,labels,baseRefName,headRefName,updatedAt",
-        "--limit",
-        "5",
       ],
     ]);
   });
@@ -4311,7 +4333,10 @@ describe("ForgeService", () => {
   });
 
   it("treats a GitHub Enterprise issue/PR URL as a search for that number", async () => {
-    const runner = createRunner([issueJson("Issue title"), searchPullRequestJson("PR title")]);
+    const runner = createRunner([
+      issueJson("Issue title"),
+      JSON.stringify(JSON.parse(searchPullRequestJson("PR title"))[0]),
+    ]);
     const service = createGitHubService({
       runner: runner.runner,
       resolveGhPath: async () => "/usr/bin/gh",
@@ -4338,13 +4363,10 @@ describe("ForgeService", () => {
       ],
       [
         "pr",
-        "list",
-        "--search",
+        "view",
         "793",
         "--json",
         "number,title,url,state,body,labels,baseRefName,headRefName,updatedAt",
-        "--limit",
-        "5",
       ],
     ]);
   });

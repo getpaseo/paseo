@@ -2073,6 +2073,19 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
         args: { query: input.query ?? "", limit: input.limit ?? 20 },
         readOptions: input,
         load: async () => {
+          const fields = "number,title,url,state,body,labels,baseRefName,headRefName,updatedAt";
+          // Full-text search misses most pull requests by their own number, and `gh pr list` only
+          // lists open ones, so a bare number is read directly, merged or not.
+          const number = /^#?(\d{1,7})$/.exec((input.query ?? "").trim())?.[1];
+          if (number) {
+            const view = await runGhJson(
+              ["pr", "view", number, "--json", fields],
+              { cwd: input.cwd },
+              GitHubPullRequestSummarySchema,
+              "{}",
+            ).catch(() => null);
+            if (view) return [toPullRequestSummary(view)];
+          }
           const items = await runGhJson(
             [
               "pr",
@@ -2080,7 +2093,7 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
               "--search",
               input.query ?? "",
               "--json",
-              "number,title,url,state,body,labels,baseRefName,headRefName,updatedAt",
+              fields,
               "--limit",
               String(input.limit ?? 20),
             ],

@@ -1,4 +1,5 @@
 import { GitMerge, GitPullRequest, GitPullRequestClosed } from "lucide-react-native";
+import { StyleSheet, View } from "react-native";
 import { withUnistyles } from "react-native-unistyles";
 import type { Theme } from "@/styles/theme";
 import type { PrHint } from "@/git/pr-hint";
@@ -28,5 +29,12 @@ export function PullRequestStateIcon({
   strokeWidth?: number;
 }) {
   const { Icon, color } = PRESENTATION[state];
-  return <Icon size={size} strokeWidth={strokeWidth} uniProps={color} />;
+  // A long title beside it in a row must not squeeze the glyph down to a dot.
+  return (
+    <View style={styles.slot}>
+      <Icon size={size} strokeWidth={strokeWidth} uniProps={color} />
+    </View>
+  );
 }
+
+const styles = StyleSheet.create({ slot: { flexShrink: 0 } });

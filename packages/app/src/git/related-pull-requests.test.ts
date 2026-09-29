@@ -28,6 +28,7 @@ describe("summarizeRelatedPullRequests", () => {
     expect(summary).toEqual({
       total: 3,
       openCount: 3,
+      mergedCount: 0,
       health: "failing",
       checkCounts: { failing: 1, running: 0, passing: 2 },
     });
@@ -64,6 +65,7 @@ describe("summarizeRelatedPullRequests", () => {
     expect(summarizeRelatedPullRequests([])).toEqual({
       total: 0,
       openCount: 0,
+      mergedCount: 0,
       health: "unknown",
       checkCounts: { failing: 0, running: 0, passing: 0 },
     });

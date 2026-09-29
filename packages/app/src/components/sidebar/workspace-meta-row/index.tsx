@@ -41,6 +41,8 @@ export {
  * owns the size because it is the one item that also appears off this line.
  */
 const META_ICON_SIZE = HOST_BADGE_ICON_SIZE;
+// The change request is what tells a finished workspace from one still in review.
+const PR_ICON_SIZE = 16;
 
 const ThemedExternalLink = withUnistyles(ExternalLink);
 const ThemedFolder = withUnistyles(Folder);
@@ -330,9 +332,9 @@ function PullRequestItem({ hint }: { hint: PrHint }) {
       style={pressableItemStyle}
     >
       {isHovered ? (
-        <ThemedExternalLink size={META_ICON_SIZE} uniProps={foregroundMapping} />
+        <ThemedExternalLink size={PR_ICON_SIZE} uniProps={foregroundMapping} />
       ) : (
-        <PullRequestStateIcon state={hint.state} size={META_ICON_SIZE} />
+        <PullRequestStateIcon state={hint.state} size={PR_ICON_SIZE} />
       )}
       <Text style={isHovered ? styles.prTextHovered : styles.prText} numberOfLines={1}>
         {hint.number}
