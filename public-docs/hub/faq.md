@@ -1,6 +1,6 @@
 ---
 title: Hub FAQ
-description: Common questions about projects, connections, configuration, and daemons in Paseo Hub.
+description: Common questions about projects, connections, configuration, and daemons in PandaOS Hub.
 nav: FAQ
 order: 78
 category: Hub
