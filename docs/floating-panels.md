@@ -182,6 +182,13 @@ layout. Preserve the translated dock's history scroll range with a far-end
 content inset on the inverted stream list. Update that inset only when keyboard
 motion settles; never drive it per frame.
 
+Native tooltips use a Modal rather than a Portal. Their anchor may still move
+when the Modal dismisses the underlying IME, so refresh `measureInWindow` when
+the Modal shows, the trigger lays out, the keyboard settles, or the window
+changes. Treat every measurement as asynchronous: only the newest open
+lifecycle request may update the position, and invalidate pending requests on
+close. These are discrete lifecycle events, never a timer or measurement loop.
+
 The translated dock's height is not the composer's available height. Bound the
 composer against the stationary space below the header inside
 `composer/dock`, including its controls and attachments. Reserve the

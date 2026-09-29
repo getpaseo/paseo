@@ -15,6 +15,7 @@ import {
 import { createPortal } from "react-dom";
 import {
   Dimensions,
+  Keyboard,
   Platform,
   Modal,
   Pressable,
@@ -28,7 +29,7 @@ import { FadeIn, FadeOut } from "react-native-reanimated";
 import { StyleSheet } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { FloatingSurface } from "@/components/ui/floating";
-import { isWeb } from "@/constants/platform";
+import { isNative, isWeb } from "@/constants/platform";
 import { getOverlayRoot, OVERLAY_Z } from "@/lib/overlay-root";
 
 type Side = "top" | "bottom" | "left" | "right";
@@ -48,6 +49,8 @@ interface TooltipContextValue {
   enabled: boolean;
   openOnPress: boolean;
   delayDuration: number;
+  onTriggerLayout: () => void;
+  triggerLayoutVersion: number;
 }
 
 const TooltipContext = createContext<TooltipContextValue | null>(null);
@@ -126,6 +129,47 @@ function measureElement(element: View): Promise<Rect> {
       resolve({ x, y, width, height });
     });
   });
+}
+
+/**
+ * A native Modal can change the anchor's window position as it opens and as the
+ * keyboard settles. Keep each event-driven request, but accept only the newest
+ * result so an older asynchronous native measurement cannot move a reopened
+ * tooltip back to a stale position.
+ */
+export function createTooltipAnchorMeasurement({
+  measure,
+  statusBarHeight,
+  onRect,
+}: {
+  measure: () => Promise<Rect | null>;
+  statusBarHeight: number;
+  onRect: (rect: Rect) => void;
+}): {
+  refresh: () => void;
+  dispose: () => void;
+} {
+  let active = true;
+  let generation = 0;
+
+  const refresh = () => {
+    if (!active) return;
+    const requestGeneration = ++generation;
+    void measure().then((rect) => {
+      if (active && rect && requestGeneration === generation) {
+        onRect({ ...rect, y: rect.y + statusBarHeight });
+      }
+      return undefined;
+    });
+  };
+
+  return {
+    refresh,
+    dispose: () => {
+      active = false;
+      generation += 1;
+    },
+  };
 }
 
 function resolveActualSide(args: {
@@ -246,6 +290,11 @@ export function Tooltip({
     defaultOpen,
     onOpenChange,
   });
+  const [triggerLayoutVersion, setTriggerLayoutVersion] = useState(0);
+
+  const onTriggerLayout = useCallback(() => {
+    if (isNative && isOpen) setTriggerLayoutVersion((version) => version + 1);
+  }, [isOpen]);
 
   const isCompact = useIsCompactFormFactor();
   const enabled = isCompact ? enabledOnMobile : enabledOnDesktop;
@@ -258,8 +307,10 @@ export function Tooltip({
       enabled,
       openOnPress: isCompact,
       delayDuration,
+      onTriggerLayout,
+      triggerLayoutVersion,
     }),
-    [isOpen, setIsOpen, enabled, isCompact, delayDuration],
+    [isOpen, setIsOpen, enabled, isCompact, delayDuration, onTriggerLayout, triggerLayoutVersion],
   );
 
   return <TooltipContext.Provider value={value}>{children}</TooltipContext.Provider>;
@@ -273,6 +324,7 @@ export function TooltipTrigger({
   onFocus,
   onBlur,
   onPress,
+  onLayout,
   asChild = false,
   triggerRefProp = "ref",
   ...props
@@ -307,6 +359,14 @@ export function TooltipTrigger({
     clearOpenTimer();
     ctx.setOpen(false);
   }, [clearOpenTimer, ctx]);
+
+  const handleLayout = useCallback(
+    (event: unknown) => {
+      if (isCallable(onLayout)) onLayout(event);
+      ctx.onTriggerLayout();
+    },
+    [ctx, onLayout],
+  );
 
   useEffect(() => {
     return () => {
@@ -373,6 +433,7 @@ export function TooltipTrigger({
     onFocus: handleFocus,
     onBlur: handleBlur,
     onPress: handlePress,
+    onLayout: handleLayout,
     ...(isWeb
       ? ({
           // RN Web's hover handling can vary across environments; pointer events are the most reliable.
@@ -403,6 +464,7 @@ export function TooltipTrigger({
       onFocus: composeEventHandlers(Reflect.get(rawProps, "onFocus"), handleFocus),
       onBlur: composeEventHandlers(Reflect.get(rawProps, "onBlur"), handleBlur),
       onPress: composeEventHandlers(Reflect.get(rawProps, "onPress"), handlePress),
+      onLayout: composeEventHandlers(Reflect.get(rawProps, "onLayout"), handleLayout),
       onPointerEnter: composeEventHandlers(Reflect.get(rawProps, "onPointerEnter"), handleHoverIn),
       onPointerLeave: composeEventHandlers(Reflect.get(rawProps, "onPointerLeave"), handleHoverOut),
       onMouseEnter: composeEventHandlers(Reflect.get(rawProps, "onMouseEnter"), handleHoverIn),
@@ -449,9 +511,11 @@ export function TooltipContent({
   const [triggerRect, setTriggerRect] = useState<Rect | null>(null);
   const [contentSize, setContentSize] = useState<{ width: number; height: number } | null>(null);
   const [position, setPosition] = useState<{ x: number; y: number } | null>(null);
+  const refreshMeasurementRef = useRef<() => void>(() => {});
 
   useEffect(() => {
     if (!ctx.open || !ctx.enabled || !ctx.triggerRef.current) {
+      refreshMeasurementRef.current = () => {};
       setTriggerRect(null);
       setContentSize(null);
       setPosition(null);
@@ -459,17 +523,37 @@ export function TooltipContent({
     }
 
     const statusBarHeight = Platform.OS === "android" ? (StatusBar.currentHeight ?? 0) : 0;
-    let cancelled = false;
-
-    void measureElement(ctx.triggerRef.current).then((rect) => {
-      if (!cancelled) setTriggerRect({ ...rect, y: rect.y + statusBarHeight });
-      return undefined;
+    const measurement = createTooltipAnchorMeasurement({
+      statusBarHeight,
+      onRect: setTriggerRect,
+      measure: () => {
+        const trigger = ctx.triggerRef.current;
+        if (!trigger) return Promise.resolve(null);
+        return measureElement(trigger);
+      },
     });
+    refreshMeasurementRef.current = measurement.refresh;
+    measurement.refresh();
+
+    const dimensionSubscription = isNative
+      ? Dimensions.addEventListener("change", measurement.refresh)
+      : null;
+    const keyboardSubscriptions = isNative
+      ? [
+          Keyboard.addListener("keyboardDidShow", measurement.refresh),
+          Keyboard.addListener("keyboardDidHide", measurement.refresh),
+        ]
+      : [];
 
     return () => {
-      cancelled = true;
+      measurement.dispose();
+      if (refreshMeasurementRef.current === measurement.refresh) {
+        refreshMeasurementRef.current = () => {};
+      }
+      dimensionSubscription?.remove();
+      for (const subscription of keyboardSubscriptions) subscription.remove();
     };
-  }, [ctx.enabled, ctx.open, ctx.triggerRef]);
+  }, [ctx.enabled, ctx.open, ctx.triggerLayoutVersion, ctx.triggerRef]);
 
   useEffect(() => {
     if (!triggerRect || !contentSize) return;
@@ -508,6 +592,7 @@ export function TooltipContent({
   const contentStyle = useMemo(() => [styles.content, style], [style]);
 
   const handleDismiss = useCallback(() => ctx.setOpen(false), [ctx]);
+  const handleModalShow = useCallback(() => refreshMeasurementRef.current(), []);
 
   if (!ctx.open || !ctx.enabled) return null;
 
@@ -541,6 +626,7 @@ export function TooltipContent({
       animationType="none"
       statusBarTranslucent={Platform.OS === "android"}
       onRequestClose={handleDismiss}
+      onShow={handleModalShow}
     >
       <Pressable style={styles.overlay} onPress={handleDismiss}>
         <FloatingSurface
