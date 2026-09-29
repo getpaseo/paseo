@@ -9,6 +9,7 @@ import {
   stopDaemonInstance,
   readDaemonInstance,
   isSameDaemonInstance,
+  readLocalCredentialForTarget,
   type DaemonInstance,
 } from "@getpaseo/server/daemon-control";
 import {
@@ -399,6 +400,11 @@ export function createDaemonCommandHandlers(): Record<string, DesktopCommandHand
       runningUnderARM64Translation: isRunningUnderARM64Translation(),
     }),
     desktop_daemon_status: () => resolveDesktopDaemonStatus(),
+    desktop_local_credential: async (args) => {
+      const instance = await readDaemonInstance(getPaseoHome());
+      if (!instance?.desktopManaged || typeof args?.listen !== "string") return null;
+      return readLocalCredentialForTarget(getPaseoHome(), args.listen);
+    },
     start_desktop_daemon: () => startDaemon(),
     stop_desktop_daemon: (args) =>
       stopDesktopDaemon(

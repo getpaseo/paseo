@@ -9,7 +9,7 @@ export {
   savePersistedConfig,
   type PersistedConfig,
 } from "./persisted-config.js";
-export { hashDaemonPassword, isBearerTokenValid } from "./auth.js";
+export { hashDaemonPassword, isBearerTokenValidAsync } from "./auth.js";
 export { generateLocalPairingOffer, type LocalPairingOffer } from "./pairing-offer.js";
 export {
   ConnectionOfferSchema,

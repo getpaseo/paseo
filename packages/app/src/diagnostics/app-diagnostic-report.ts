@@ -125,11 +125,11 @@ export function redactAppDiagnosticReport(report: string, hosts: HostProfile[]):
 function collectSensitiveHostValues(hosts: HostProfile[]): string[] {
   const values = new Set<string>();
   for (const host of hosts) {
+    if (host.password) values.add(host.password);
     for (const connection of host.connections) {
       values.add(connection.id);
       if (connection.type === "directTcp") {
         values.add(connection.endpoint);
-        if (connection.password) values.add(connection.password);
       } else if (connection.type === "relay") {
         values.add(connection.relayEndpoint);
         values.add(connection.daemonPublicKeyB64);

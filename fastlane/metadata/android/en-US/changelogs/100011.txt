@@ -1,0 +1,10 @@
+Added
+- Added Claude Sonnet 5.5 for Claude Code 2.1.284 and newer
+
+Fixed
+- Fixed OpenCode chats failing with "Variant unavailable" after switching to a model without the selected thinking level
+- Fixed rewinding a Codex chat dropping its custom provider and Paseo tools
+- Fixed streamed replies joining lines of code blocks and Mermaid diagrams until the chat reloads
+- Fixed a subagent opened from a split pane opening in a different pane
+
+Full notes: https://paseo.sh/changelog
