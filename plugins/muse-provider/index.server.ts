@@ -1,7 +1,7 @@
 import type { PluginServerContext } from "@getpaseo/plugin/server";
 import { createMuseProvider } from "./server/provider.js";
 
-import { settingsSchema } from "./server/settings.js";
+import { museSettings } from "./shared/settings.js";
 import { Usage } from "./server/usage.js";
 
 export default function contribute(
@@ -10,12 +10,7 @@ export default function contribute(
     "registerProvider" | "registerSettings" | "registerUsageSource"
   >,
 ) {
-  const settings = server.registerSettings({
-    id: "muse",
-    scope: "host",
-    version: 1,
-    schema: settingsSchema,
-  });
+  const settings = server.registerSettings(museSettings);
   const usage = new Usage();
   server.registerUsageSource(usage.registration());
   server.registerProvider(createMuseProvider(settings, usage));

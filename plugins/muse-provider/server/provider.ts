@@ -9,7 +9,8 @@ import {
   type ProviderStatus,
 } from "@getpaseo/plugin/server/provider";
 import type { PluginSettings } from "@getpaseo/plugin/server";
-import { serveArgs, settingsSchema } from "./settings.js";
+import { serveArgs } from "./settings.js";
+import { settingsSchema } from "../shared/settings.js";
 import { Usage } from "./usage.js";
 import { execFile } from "node:child_process";
 import { Catalog, launchKey } from "./catalog.js";

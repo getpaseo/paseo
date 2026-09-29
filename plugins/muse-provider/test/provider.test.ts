@@ -13,7 +13,7 @@ import {
   type ProviderLaunch,
   type ProviderInput,
 } from "@getpaseo/plugin/server/provider";
-import { settingsSchema } from "../server/settings.js";
+import { settingsSchema } from "../shared/settings.js";
 import type { UsageSourceRegistration } from "@getpaseo/plugin/server";
 import contribute from "../index.server.js";
 

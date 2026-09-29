@@ -10,6 +10,25 @@ import { BuiltinPluginLoader } from "../plugins/builtin/index.js";
 import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
 import { DaemonClient } from "../test-utils/daemon-client.js";
 
+test("Muse publishes its client settings bundle while installed plugins are disabled", async () => {
+  const daemon = await createTestPaseoDaemon({
+    builtinPlugins: new BuiltinPluginLoader(undefined, ["muse-provider"]),
+  });
+  const client = new DaemonClient({
+    url: `ws://127.0.0.1:${daemon.port}/ws`,
+    appVersion: "0.10.0",
+  });
+  try {
+    await client.connect();
+    const muse = (await client.getPluginCatalog()).find((plugin) => plugin.id === "muse-provider");
+    expect(muse?.clientBundle).toBeTypeOf("string");
+    expect(muse?.clientBundle).not.toBe("");
+  } finally {
+    await client.close();
+    await daemon.close();
+  }
+});
+
 test("Muse creates an agent, streams a text reply, and executes a real tool", async (context) => {
   if (!(await isCommandAvailable("muse"))) {
     context.skip();
