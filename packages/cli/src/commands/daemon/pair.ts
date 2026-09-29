@@ -107,7 +107,7 @@ async function resolveDaemonPairingOffer(
   try {
     const serverInfo = client.getLastServerInfoMessage();
     if (serverInfo?.features?.daemonStatusRpc !== true) {
-      throw new Error("Update the Paseo daemon before pairing from this command.");
+      throw new Error("Update the PandaOS daemon before pairing from this command.");
     }
 
     let offer = await client.getDaemonPairingOffer({
@@ -115,7 +115,7 @@ async function resolveDaemonPairingOffer(
     });
     if (!offer.relayEnabled && enableRelay) {
       if (serverInfo.features.relayConfig !== true) {
-        throw new Error("Update the Paseo daemon before enabling relay from this command.");
+        throw new Error("Update the PandaOS daemon before enabling relay from this command.");
       }
       await client.patchDaemonConfig({ relay: { enabled: true } });
       try {
@@ -138,7 +138,9 @@ async function resolveDaemonPairingOffer(
 }
 
 export async function confirmRelayPairing(): Promise<boolean> {
-  log.message("Your connection is end-to-end encrypted. Paseo cannot read your code or messages.");
+  log.message(
+    "Your connection is end-to-end encrypted. PandaOS cannot read your code or messages.",
+  );
   log.message(`Learn how it works: ${RELAY_DOCS_URL}`);
   const answer = await confirm({
     message: "Enable relay to pair a device?",
