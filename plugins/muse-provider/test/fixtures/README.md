@@ -11,7 +11,7 @@ Each line is `{ "dir": "out" | "in", "msg": <JSON-RPC message> }`.
 `out` means client to host; `in` means host to client. IDs, timestamps, cursors,
 revisions, deltas, and event order are retained. Replay consumers should treat IDs
 and cursors as opaque and compare behavior rather than wall-clock values.
-The skill catalog retains only the test project's `phase0` row; unrelated personal,
+The skill catalogs retain only the test selectors `phase0` and `muse-parity-*`; unrelated personal,
 bundled, and installed-plugin skill rows were removed. No credentials are included.
 
 A throwaway driver launched `muse serve` with isolated `XDG_CONFIG_HOME` and
@@ -50,3 +50,29 @@ advertised `verification_echo` with an empty-object input schema, and returned
 `MCP_PHASE0_OK` as text. The host registered `mcp__verification__verification_echo`,
 but the model route attempted the unqualified `verification_echo`; the marker
 was never delivered. Keep this distinction when testing MCP support.
+
+Phase 3 captures use the same build and isolated custom route. Sandbox and network
+remain at their defaults. `phase3-user-skill` omits workspace trust;
+`phase3-project-skill` enables it. Native subagent captures enable
+`MUSE_EXPERIMENTAL_SDK_ENABLED=on`; the default workflow capture reads the session
+from a daemon run that omitted the flag. Its workflow child IDs are internal
+activity IDs, not MSP `childSessionId` values.
+
+| File                             | Recorded behavior                                                                                                                    |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `phase3-controls.ndjson`         | Two todo entries, a single-choice question, an answer and matching settlement, retained view paging, empty subscription usage.       |
+| `phase3-cancel.ndjson`           | Question cancellation and matching cancelled settlement.                                                                             |
+| `phase3-child-read.ndjson`       | Read and page an actual native child session, returning its assistant marker.                                                        |
+| `phase3-default-workflow.ndjson` | Read and page the default daemon run: workflow revisions 1–7, child activity, and `MUSE_PARITY_CHILD_OK`; no `childSessionId`.       |
+| `phase3-user-skill.ndjson`       | User-scoped skill catalog and structured invocation, returning `MUSE_PARITY_USER_OK` with trust off.                                 |
+| `phase3-project-skill.ndjson`    | Project-scoped skill catalog and invocation, returning `MUSE_PARITY_PROJECT_OK` with trust on.                                       |
+| `phase3-compact.ndjson`          | Resume a completed session; manual compaction rejects with `compaction_unavailable`.                                                 |
+| `phase3-compact-history.ndjson`  | Resume three completed turns; catalog context limit is null and compaction still rejects.                                            |
+| `phase3-compact-limit.ndjson`    | Same session and route with only a configured context limit; compaction is admitted and completes, reducing 22,192 tokens to 21,322. |
+
+The subprocess fixture host also generates schema-based variants for dedicated
+subagent items, explicit child-session linkage, nonempty subscription windows,
+`skill/changed`, deny choices, lost events, watchdog silence, and late admission.
+These variants test protocol behavior; they are not claimed as real-host captures.
+The workflow replay triggers a generated gap to page the recorded default run.
+Disk edits in a live host did not emit `skill/changed` during a 15-second probe.
