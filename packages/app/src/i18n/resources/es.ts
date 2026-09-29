@@ -725,6 +725,9 @@ export const es: TranslationResources = {
         pullRequest: "Solicitud de extracción",
         terminalProfilesMenu: "Terminal profiles",
         recentlyClosed: "Cerradas recientemente",
+        allTabs: "Todas las pestañas ({{count}})",
+        searchTabs: "Buscar pestañas",
+        noMatchingTabs: "Ninguna pestaña coincide",
         editTerminalProfiles: "Edit profiles",
       },
       explorerSidebar: {

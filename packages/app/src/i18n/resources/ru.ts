@@ -725,6 +725,9 @@ export const ru: TranslationResources = {
         pullRequest: "PR",
         terminalProfilesMenu: "Профили терминала",
         recentlyClosed: "Недавно закрытые",
+        allTabs: "Все вкладки ({{count}})",
+        searchTabs: "Поиск вкладок",
+        noMatchingTabs: "Нет подходящих вкладок",
         editTerminalProfiles: "Изменить профили",
       },
       explorerSidebar: {

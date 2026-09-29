@@ -20,6 +20,7 @@ import {
   Columns2,
   Rows2,
   Ellipsis,
+  ListFilter,
   Maximize,
   Minimize,
   Plus,
@@ -41,6 +42,7 @@ import {
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
+import { Combobox, ComboboxItem, type ComboboxProps } from "@/components/ui/combobox";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
@@ -124,6 +126,7 @@ const ThemedCopyX = withUnistyles(CopyX);
 const ThemedPencil = withUnistyles(Pencil);
 const ThemedPlus = withUnistyles(Plus);
 const ThemedColumns2 = withUnistyles(Columns2);
+const ThemedListFilter = withUnistyles(ListFilter);
 const ThemedRows2 = withUnistyles(Rows2);
 const ThemedEllipsis = withUnistyles(Ellipsis);
 const ThemedMaximize = withUnistyles(Maximize);
@@ -253,7 +256,110 @@ function WorkspaceNewTabButton({
   return placement === "inline" ? <View style={styles.inlineAddButton}>{menu}</View> : menu;
 }
 
+function tabTestIdentity(tab: WorkspaceTabDescriptor): string {
+  return tab.target.kind === "new_tab" ? tab.tabId : buildDeterministicWorkspaceTabId(tab.target);
+}
+
+type ScrollableNodeRef = React.RefObject<{ getScrollableNode?: () => unknown } | null>;
+
+/**
+ * A mouse wheel only scrolls vertically, which a one-line tab row ignores, so it is turned into
+ * horizontal travel; and the active tab is brought into view whenever it changes.
+ */
+function useWebTabsScrollBehavior(input: {
+  scrollRef: ScrollableNodeRef;
+  overflowing: boolean;
+  activeTabTestIdentity: string | null;
+}) {
+  const { scrollRef, overflowing, activeTabTestIdentity } = input;
+  useEffect(() => {
+    if (!isWeb || !overflowing) return undefined;
+    const node = scrollRef.current?.getScrollableNode?.() as HTMLElement | undefined;
+    if (!node) return undefined;
+    const handleWheel = (event: WheelEvent) => {
+      if (Math.abs(event.deltaY) <= Math.abs(event.deltaX)) return;
+      if (node.scrollWidth <= node.clientWidth) return;
+      node.scrollLeft += event.deltaY;
+      event.preventDefault();
+    };
+    node.addEventListener("wheel", handleWheel, { passive: false });
+    return () => node.removeEventListener("wheel", handleWheel);
+  }, [overflowing, scrollRef]);
+  useEffect(() => {
+    if (!isWeb || !overflowing || !activeTabTestIdentity) return;
+    const node = scrollRef.current?.getScrollableNode?.() as HTMLElement | undefined;
+    const tab = node?.querySelector(`[data-testid="workspace-tab-${activeTabTestIdentity}"]`);
+    tab?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }, [activeTabTestIdentity, overflowing, scrollRef]);
+}
+
+interface AllTabsEntry {
+  tabId: string;
+  label: string;
+  isActive: boolean;
+}
+
+/** Every tab of the pane in one searchable list, for rows too long to scan by scrolling. */
+function WorkspaceAllTabsMenu({
+  entries,
+  onSelect,
+}: {
+  entries: AllTabsEntry[];
+  onSelect: (tabId: string) => void;
+}) {
+  const { t } = useTranslation();
+  const anchorRef = useRef<View>(null);
+  const [open, setOpen] = useState(false);
+  const handleOpen = useCallback(() => setOpen(true), []);
+  const options = useMemo(
+    () => entries.map((entry) => ({ id: entry.tabId, label: entry.label })),
+    [entries],
+  );
+  const activeId = entries.find((entry) => entry.isActive)?.tabId ?? "";
+  const renderOption = useCallback<NonNullable<ComboboxProps["renderOption"]>>(
+    ({ option, selected, active, onPress }) => (
+      <ComboboxItem
+        label={option.label}
+        selected={selected}
+        active={active}
+        onPress={onPress}
+        testID={`workspace-all-tabs-option-${option.id}`}
+      />
+    ),
+    [],
+  );
+  return (
+    <View ref={anchorRef} collapsable={false}>
+      <ToolbarButton
+        label={t("workspace.tabs.actions.allTabs", { count: entries.length })}
+        testID="workspace-all-tabs-button"
+        onPress={handleOpen}
+      >
+        <ThemedListFilter size={14} uniProps={extraMutedColorMapping} />
+      </ToolbarButton>
+      <Combobox
+        options={options}
+        value={activeId}
+        onSelect={onSelect}
+        searchable
+        searchPlaceholder={t("workspace.tabs.actions.searchTabs")}
+        emptyText={t("workspace.tabs.actions.noMatchingTabs")}
+        title={t("workspace.tabs.actions.allTabs", { count: entries.length })}
+        open={open}
+        onOpenChange={setOpen}
+        anchorRef={anchorRef}
+        desktopPlacement="bottom-start"
+        desktopPreventInitialFlash
+        desktopMinWidth={300}
+        renderOption={renderOption}
+      />
+    </View>
+  );
+}
+
 function WorkspacePaneToolbarActions({
+  allTabs,
+  onSelectTab,
   showNewTabButton,
   showSplitActions,
   showMaximizeAction,
@@ -265,6 +371,8 @@ function WorkspacePaneToolbarActions({
   onSplitDown,
   onTogglePaneMaximized,
 }: {
+  allTabs: AllTabsEntry[] | null;
+  onSelectTab: (tabId: string) => void;
   showNewTabButton: boolean;
   showSplitActions: boolean;
   showMaximizeAction: boolean;
@@ -297,10 +405,11 @@ function WorkspacePaneToolbarActions({
     [splitDownKeys],
   );
   const maximizeActionVisible = showMaximizeAction && Boolean(onTogglePaneMaximized);
-  if (!showNewTabButton && !splitActionsVisible && !maximizeActionVisible) return null;
+  if (!allTabs && !showNewTabButton && !splitActionsVisible && !maximizeActionVisible) return null;
 
   return (
     <ToolbarControls style={styles.paneSplitActions}>
+      {allTabs ? <WorkspaceAllTabsMenu entries={allTabs} onSelect={onSelectTab} /> : null}
       {showNewTabButton ? (
         <WorkspaceNewTabButton
           placement="toolbar"
@@ -826,8 +935,7 @@ function TabChip({
   );
 
   const tabAccessibilityState = useMemo(() => ({ selected: isActive }), [isActive]);
-  const testIdentity =
-    tab.target.kind === "new_tab" ? tab.tabId : buildDeterministicWorkspaceTabId(tab.target);
+  const testIdentity = tabTestIdentity(tab);
   const tabLabelSkeletonStyle = styles.tabLabelSkeleton;
   const tabLabelStyle = useMemo(
     () => [styles.tabLabel, isHighlighted && styles.tabLabelActive],
@@ -1321,6 +1429,23 @@ function ResolvedWorkspaceDesktopTabsRow({
     ],
   );
 
+  const allTabs = useMemo<AllTabsEntry[]>(() => {
+    const labelByKey = new Map(tabLabels.map(({ key, label }) => [key, label]));
+    return tabs.map((item) => ({
+      tabId: item.tab.tabId,
+      label: labelByKey.get(item.tab.key) ?? item.tab.tabId,
+      isActive: item.isActive,
+    }));
+  }, [tabLabels, tabs]);
+  const tabsScrollRef = useRef<Animated.ScrollView>(null);
+  const activeTab = tabs.find((item) => item.isActive)?.tab ?? null;
+  const activeTabTestIdentity = activeTab ? tabTestIdentity(activeTab) : null;
+  useWebTabsScrollBehavior({
+    scrollRef: tabsScrollRef,
+    overflowing: layout.requiresHorizontalScrollFallback,
+    activeTabTestIdentity,
+  });
+
   const tabsScrollStyle = useMemo(
     () => [
       styles.tabsScroll,
@@ -1359,6 +1484,7 @@ function ResolvedWorkspaceDesktopTabsRow({
       />
       <View style={styles.tabsScrollContainer}>
         <Animated.ScrollView
+          ref={tabsScrollRef}
           horizontal
           scrollEnabled={layout.requiresHorizontalScrollFallback}
           testID="workspace-tabs-scroll"
@@ -1399,6 +1525,8 @@ function ResolvedWorkspaceDesktopTabsRow({
         />
       </View>
       <WorkspacePaneToolbarActions
+        allTabs={layout.requiresHorizontalScrollFallback ? allTabs : null}
+        onSelectTab={onNavigateTab}
         showNewTabButton={layout.requiresHorizontalScrollFallback}
         showSplitActions={showPaneSplitActions}
         showMaximizeAction={showPaneMaximizeAction}

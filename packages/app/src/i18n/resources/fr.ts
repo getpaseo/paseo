@@ -725,6 +725,9 @@ export const fr: TranslationResources = {
         pullRequest: "Demande de fusion",
         terminalProfilesMenu: "Terminal profiles",
         recentlyClosed: "Fermés récemment",
+        allTabs: "Tous les onglets ({{count}})",
+        searchTabs: "Rechercher des onglets",
+        noMatchingTabs: "Aucun onglet correspondant",
         editTerminalProfiles: "Edit profiles",
       },
       explorerSidebar: {

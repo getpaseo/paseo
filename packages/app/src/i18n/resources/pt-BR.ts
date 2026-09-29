@@ -723,6 +723,9 @@ export const ptBR: TranslationResources = {
         pullRequest: "Pull request",
         terminalProfilesMenu: "Perfis de terminal",
         recentlyClosed: "Fechadas recentemente",
+        allTabs: "Todas as abas ({{count}})",
+        searchTabs: "Buscar abas",
+        noMatchingTabs: "Nenhuma aba corresponde",
         editTerminalProfiles: "Editar perfis",
       },
       explorerSidebar: {

@@ -718,6 +718,9 @@ export const ar: TranslationResources = {
         pullRequest: "طلب السحب",
         terminalProfilesMenu: "Terminal profiles",
         recentlyClosed: "أُغلقت مؤخرًا",
+        allTabs: "كل علامات التبويب ({{count}})",
+        searchTabs: "ابحث في علامات التبويب",
+        noMatchingTabs: "لا توجد علامات تبويب مطابقة",
         editTerminalProfiles: "Edit profiles",
       },
       explorerSidebar: {

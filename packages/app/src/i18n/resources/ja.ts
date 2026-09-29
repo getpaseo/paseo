@@ -725,6 +725,9 @@ export const ja: TranslationResources = {
         pullRequest: "プルリクエスト",
         terminalProfilesMenu: "ターミナルプロファイル",
         recentlyClosed: "最近閉じたタブ",
+        allTabs: "すべてのタブ ({{count}})",
+        searchTabs: "タブを検索",
+        noMatchingTabs: "一致するタブはありません",
         editTerminalProfiles: "プロファイルを編集",
       },
       explorerSidebar: {

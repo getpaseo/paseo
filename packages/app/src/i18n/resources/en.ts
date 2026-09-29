@@ -715,6 +715,9 @@ export const en = {
         pullRequest: "Pull request",
         terminalProfilesMenu: "Terminal profiles",
         recentlyClosed: "Recently closed",
+        allTabs: "All tabs ({{count}})",
+        searchTabs: "Search tabs",
+        noMatchingTabs: "No matching tabs",
         editTerminalProfiles: "Edit profiles",
       },
       explorerSidebar: {
