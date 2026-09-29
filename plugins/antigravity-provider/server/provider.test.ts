@@ -291,7 +291,10 @@ it.each(["HANG", "TOOL_HANG"])(
       "--conversation",
       "e5cf1e2d-c715-4328-8e67-4a85c8dc3cda",
     ]);
-    expect(records.filter((entry) => entry.signal)).toEqual([{ signal: "SIGINT" }]);
+    // Windows taskkill terminates the tree without invoking the CLI's signal handlers.
+    expect(records.filter((entry) => entry.signal)).toEqual(
+      process.platform === "win32" ? [] : [{ signal: "SIGINT" }],
+    );
     const canceled = h.events.filter(
       (event) => event.type === "session.turn" && event.state === "canceled",
     );
@@ -299,7 +302,7 @@ it.each(["HANG", "TOOL_HANG"])(
   },
 );
 
-it("escalates an unresponsive interrupt and still respawns the conversation", async () => {
+it("stops an unresponsive driver and still respawns the conversation", async () => {
   const h = await harness({ AGY_TEST_IGNORE_SIGNALS: "yes" });
   await h.open();
   const message = await h.prompt("HANG");
@@ -308,10 +311,9 @@ it("escalates an unresponsive interrupt and still respawns the conversation", as
   );
   await h.request({ type: "session.interrupt", requestId: "interrupt-timeout", sessionId: "s" });
   expect(await h.completed(message)).toMatchObject({ state: "canceled" });
-  expect((await h.records()).filter((entry) => entry.signal)).toEqual([
-    { signal: "SIGINT" },
-    { signal: "SIGTERM" },
-  ]);
+  expect((await h.records()).filter((entry) => entry.signal)).toEqual(
+    process.platform === "win32" ? [] : [{ signal: "SIGINT" }, { signal: "SIGTERM" }],
+  );
   await h.completed(await h.prompt("HELLO"));
 });
 
