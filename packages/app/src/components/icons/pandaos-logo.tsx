@@ -1,40 +1,26 @@
-import { StyleSheet } from "react-native-unistyles";
-import Svg, { Circle, Path } from "react-native-svg";
+import { useMemo } from "react";
+import Svg, { Rect } from "react-native-svg";
+import { PANDA_LOGO } from "@/components/panda-frames";
+import { buildPandaRuns } from "@/components/panda-sprite";
 
-interface PandaOSLogoProps {
-  size?: number;
-  color?: string;
-}
+const COLUMNS = PANDA_LOGO[0]!.length;
+const ROWS = PANDA_LOGO.length;
 
-const styles = StyleSheet.create((theme) => ({
-  svg: {
-    color: theme.colors.foreground,
-  },
-}));
-
-export function PandaOSLogo({ size = 64, color }: PandaOSLogoProps) {
-  const fillColor = color ?? styles.svg.color;
-
+/** The PandaOS mark: the pixel panda's head, in its own colours on any background. */
+export function PandaOSLogo({ size = 64 }: { size?: number }) {
+  const runs = useMemo(() => buildPandaRuns(PANDA_LOGO), []);
   return (
-    <Svg width={size} height={size} viewBox="0 0 64 64" fill="none">
-      {/* Head */}
-      <Circle cx="32" cy="28" r="16" fill={fillColor} />
-      {/* Left ear */}
-      <Circle cx="20" cy="12" r="5" fill={fillColor} />
-      {/* Right ear */}
-      <Circle cx="44" cy="12" r="5" fill={fillColor} />
-      {/* Left eye patch */}
-      <Circle cx="26" cy="26" r="4" fill="#ffffff" />
-      {/* Right eye patch */}
-      <Circle cx="38" cy="26" r="4" fill="#ffffff" />
-      {/* Left eye */}
-      <Circle cx="26" cy="26" r="2" fill="#000000" />
-      {/* Right eye */}
-      <Circle cx="38" cy="26" r="2" fill="#000000" />
-      {/* Snout */}
-      <Circle cx="32" cy="35" r="3" fill="#000000" />
-      {/* Body */}
-      <Path d="M 20 44 Q 20 52 32 52 Q 44 52 44 44 Z" fill={fillColor} />
+    <Svg width={(size * COLUMNS) / ROWS} height={size} viewBox={`0 0 ${COLUMNS} ${ROWS}`}>
+      {runs.map((run) => (
+        <Rect
+          key={`${run.x}-${run.y}`}
+          x={run.x}
+          y={run.y}
+          width={run.width}
+          height={1}
+          fill={run.fill}
+        />
+      ))}
     </Svg>
   );
 }

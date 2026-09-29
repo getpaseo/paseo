@@ -290,6 +290,34 @@ export const PANDA_WORK_FRAMES: readonly (readonly string[])[] = [
   ],
 ];
 
+/** The head alone, cropped: the app logo and every icon. */
+export const PANDA_LOGO: readonly string[] = [
+  "..ooooo..............ooooo..",
+  ".ohhhkko............ohhhhko.",
+  "ohhhkkko....oooo....ohhkkkko",
+  "ohhkkkkkoooowwwwoooohhkkkkko",
+  "okkkkkkkwwwwwwwwwwwwhkkkkkko",
+  "okkkkkwwwwwwwwwwwwwwwwkkkkko",
+  "okkkkwwwwwwwwwwwwwwwwwwkkkko",
+  ".okkwwwwwwwwwwwwwwwwwwwwkko.",
+  "..owwwwwwwwwwwwwwwwwwwwwwo..",
+  "..owwwwkkkkwwwwwwkkkkwwwwo..",
+  ".owwwwkkkkkkwwwwkkkkkkwwwwo.",
+  ".owwwkkkwwwkwwwwkwwwkkkwwwo.",
+  ".owwwkkkwwwkwwwwkwwwkkkwsso.",
+  ".owwwkkkkkwkwwwwkwkkkkkssso.",
+  ".owwkkkkkkkkwwwwkkkkkkkksso.",
+  ".owwwkkkkkkwwkkwwkkkkkkssso.",
+  "..owpkkkkkwwkkkkwskkkkkpso..",
+  "..opppkkkwwwwkksssskkkpppo..",
+  "..opppwwwwwwwssssssssspppo..",
+  "...oowwwwwwskkkksssssssoo...",
+  ".....owwwssssssssssssso.....",
+  "......oossssssssssssoo......",
+  "........oooossssoooo........",
+  "............oooo............",
+];
+
 /** One somersault hop for the loading screen; 12 frames. */
 export const PANDA_SALTO_FRAMES: readonly (readonly string[])[] = [
   [
