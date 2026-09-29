@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="packages/website/public/logo.svg" width="64" height="64" alt="Paseo logo">
+  <img src="packages/website/public/logo.svg" width="64" height="64" alt="PandaOS logo">
 </p>
 
-<h1 align="center">Paseo · marushan49 fork</h1>
+<h1 align="center">PandaOS</h1>
 
 <p align="center">
   <a href="https://github.com/marushan49/paseo/releases">
@@ -15,9 +15,9 @@
 
 <p align="center">One interface for Claude Code, Codex, Copilot, OpenCode, and Pi agents, with a testing engine and Jev decisions built in.</p>
 
-This is a fork of [getpaseo/paseo](https://github.com/getpaseo/paseo). It tracks upstream releases (currently 0.9.1) and adds features that make agents cheaper to run and faster to verify. Everything upstream does still works the same way; the additions below are on top.
+PandaOS is a fork of [Paseo](https://github.com/getpaseo/paseo). The repository, the `paseo` CLI and the `@getpaseo/*` packages keep their upstream names so merging upstream stays cheap. It tracks upstream releases (currently 0.9.1) and adds features that make agents cheaper to run and faster to verify. Everything upstream does still works the same way; the additions below are on top.
 
-## What this fork adds
+## What PandaOS adds
 
 | Area                      | What you get                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -35,10 +35,10 @@ This is a fork of [getpaseo/paseo](https://github.com/getpaseo/paseo). It tracks
 
 Download the Linux `.deb` or macOS `.dmg` from the [fork releases](https://github.com/marushan49/paseo/releases). The app updates itself from this fork's releases, not from upstream.
 
-On macOS the fork is ad-hoc signed. After copying `Paseo.app` into `/Applications`, run:
+On macOS PandaOS is ad-hoc signed. After copying `PandaOS.app` into `/Applications`, run:
 
 ```bash
-xattr -cr /Applications/Paseo.app
+xattr -cr /Applications/PandaOS.app
 ```
 
 ### Android
@@ -120,7 +120,7 @@ See the [SDK quickstart](https://paseo.sh/docs/sdk/quickstart), [recipes](https:
 
 ## Skills
 
-Skills teach your agent to use Paseo to orchestrate other agents.
+Skills teach your agent to use PandaOS to orchestrate other agents.
 
 ```bash
 npx skills add marushan49/paseo
@@ -136,7 +136,7 @@ Then use them in any agent conversation:
 
 Quick monorepo package map:
 
-- `packages/server`: Paseo daemon (agent process orchestration, WebSocket API, MCP server)
+- `packages/server`: PandaOS daemon (agent process orchestration, WebSocket API, MCP server)
 - `packages/app`: Expo client (iOS, Android, web)
 - `packages/cli`: `paseo` CLI for daemon and agent workflows
 - `packages/desktop`: Electron desktop app
@@ -164,7 +164,7 @@ npm run typecheck
 
 ## Sponsors
 
-Paseo is built by one person and funded by the people who use it. Support the work on [GitHub Sponsors](https://github.com/sponsors/boudra). Companies can [sponsor Paseo](https://paseo.sh/sponsor#spot) monthly and have their logo shown here and on the paseo.sh homepage.
+Upstream Paseo is built by one person and funded by the people who use it. Support the work on [GitHub Sponsors](https://github.com/sponsors/boudra). Companies can [sponsor Paseo](https://paseo.sh/sponsor#spot) monthly and have their logo shown here and on the paseo.sh homepage.
 
 <!-- Sponsor logos go here, in the same order as packages/website/src/data/sponsors.ts -->
 
