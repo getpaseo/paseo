@@ -1013,6 +1013,7 @@ export async function createPaseoDaemon(
     pluginLifecycle: pluginRuntime,
     clients: initialAgentManagerState.clients,
     providerDefinitions: initialAgentManagerState.providerDefinitions,
+    getAgentProfiles: () => daemonConfigStore.get().agentProfiles,
     registry: agentStorage,
     appendSystemPrompt: config.appendSystemPrompt,
     resourcePolicy: config.resourcePolicy,

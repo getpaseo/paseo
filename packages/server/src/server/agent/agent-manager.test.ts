@@ -19,6 +19,7 @@ import { InMemoryAgentTimelineStore } from "./agent-timeline-store.js";
 import { toAgentPayload } from "./agent-projections.js";
 import { projectTimelineRows } from "./timeline-projection.js";
 import { getOpenAgentTabLabel, PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
+import type { AgentProfile } from "@getpaseo/protocol/agent-profile";
 import { formatSystemNotificationPrompt, startAgentRun } from "./agent-prompt.js";
 import { buildResourcePolicyPrompt } from "../resource-policy.js";
 import { StaleProviderSessionError } from "./stale-provider-session-error.js";
@@ -1767,6 +1768,164 @@ function fakeCodexEmitting(args: FakeCodexEmitterArgs): AgentClient {
 }
 
 const logger = createTestLogger();
+
+test("retries a quota-limited foreground turn with the next configured profile", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-quota-fallback-"));
+  const prompts: AgentPromptInput[] = [];
+  let model: string | null = "codex-opus";
+  let starts = 0;
+  const session = new (class extends TestAgentSession {
+    override async startTurn(prompt: AgentPromptInput): Promise<{ turnId: string }> {
+      prompts.push(prompt);
+      const turnId = `quota-turn-${++starts}`;
+      setTimeout(() => {
+        this.pushEvent({ type: "turn_started", provider: this.provider, turnId });
+        if (starts === 1) {
+          this.pushEvent({
+            type: "turn_failed",
+            provider: this.provider,
+            turnId,
+            error: "provider quota exceeded",
+            code: "rate_limit_exceeded",
+          });
+          return;
+        }
+        this.pushEvent({
+          type: "timeline",
+          provider: this.provider,
+          turnId,
+          item: { type: "assistant_message", text: "continued" },
+        });
+        this.pushEvent({ type: "turn_completed", provider: this.provider, turnId });
+      }, 0);
+      return { turnId };
+    }
+
+    override async setModel(nextModel: string | null): Promise<void> {
+      model = nextModel;
+    }
+  })({ provider: "codex", cwd: workdir, model });
+  const client = new (class extends TestAgentClient {
+    override async createSession(): Promise<AgentSession> {
+      return session;
+    }
+  })();
+  const profiles: AgentProfile[] = [
+    { id: "codex-opus-profile", name: "Opus", provider: "codex", model: "codex-opus" },
+    { id: "codex-sol-profile", name: "Sol", provider: "codex", model: "codex-sol" },
+  ];
+  const manager = new AgentManager({
+    clients: { codex: client },
+    getAgentProfiles: () => profiles,
+    logger,
+  });
+  const agent = await manager.createAgent({ provider: "codex", cwd: workdir, model }, undefined, {
+    workspaceId: undefined,
+  });
+  const result = await manager.runAgent(agent.id, "Keep the original prompt");
+  const timeline = manager.fetchTimeline(agent.id, { projection: "canonical" });
+
+  expect(starts).toBe(2);
+  expect(prompts).toEqual(["Keep the original prompt", "Keep the original prompt"]);
+  expect(model).toBe("codex-sol");
+  expect(result.finalText).toBe("continued");
+  expect(timeline.rows.map((entry) => entry.item)).toContainEqual(
+    expect.objectContaining({
+      type: "notification",
+      level: "warning",
+      message: expect.stringContaining("codex-sol"),
+    }),
+  );
+});
+
+test("preserves the handoff context and old session during a cross-provider fallback", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-cross-provider-quota-fallback-"));
+  let oldSessionClosed = false;
+  let fallbackCreatedBeforeClose = false;
+  const fallbackPrompts: AgentPromptInput[] = [];
+
+  const initialSession = new (class extends TestAgentSession {
+    override async startTurn(): Promise<{ turnId: string }> {
+      const turnId = "codex-quota-turn";
+      setTimeout(() => {
+        this.pushEvent({ type: "turn_started", provider: this.provider, turnId });
+        this.pushEvent({
+          type: "turn_failed",
+          provider: this.provider,
+          turnId,
+          error: "provider quota exceeded",
+          code: "rate_limit_exceeded",
+        });
+      }, 0);
+      return { turnId };
+    }
+
+    override async close(): Promise<void> {
+      oldSessionClosed = true;
+    }
+  })({ provider: "codex", cwd: workdir, model: "codex-opus" });
+
+  class FallbackSession extends TestAgentSession {
+    override readonly provider = "claude" as const;
+
+    override async startTurn(prompt: AgentPromptInput): Promise<{ turnId: string }> {
+      fallbackPrompts.push(prompt);
+      const turnId = "claude-fallback-turn";
+      setTimeout(() => {
+        this.pushEvent({ type: "turn_started", provider: this.provider, turnId });
+        this.pushEvent({
+          type: "timeline",
+          provider: this.provider,
+          turnId,
+          item: { type: "assistant_message", text: "continued" },
+        });
+        this.pushEvent({ type: "turn_completed", provider: this.provider, turnId });
+      }, 0);
+      return { turnId };
+    }
+  }
+
+  class FallbackClient extends TestAgentClient {
+    override readonly provider = "claude" as const;
+
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      fallbackCreatedBeforeClose = !oldSessionClosed;
+      return new FallbackSession(config);
+    }
+  }
+
+  const manager = new AgentManager({
+    clients: {
+      codex: new (class extends TestAgentClient {
+        override async createSession(): Promise<AgentSession> {
+          return initialSession;
+        }
+      })(),
+      claude: new FallbackClient(),
+    },
+    getAgentProfiles: () => [
+      { id: "codex-profile", name: "Codex", provider: "codex", model: "codex-opus" },
+      { id: "claude-profile", name: "Claude", provider: "claude", model: "claude-sonnet" },
+    ],
+    logger,
+  });
+
+  const agent = await manager.createAgent(
+    { provider: "codex", cwd: workdir, model: "codex-opus", title: "Continue the quota test" },
+    undefined,
+    { workspaceId: undefined },
+  );
+  const result = await manager.runAgent(agent.id, "Keep the original prompt");
+
+  expect(result.finalText).toBe("continued");
+  expect(fallbackCreatedBeforeClose).toBe(true);
+  expect(oldSessionClosed).toBe(true);
+  expect(fallbackPrompts).toHaveLength(1);
+  expect(fallbackPrompts[0]).toEqual(
+    expect.stringContaining("Everything below is what carried over."),
+  );
+  expect(fallbackPrompts[0]).toEqual(expect.stringContaining("Keep the original prompt"));
+});
 
 test("does not register a session that finishes starting after shutdown begins", async () => {
   const client = new HeldAgentCreationClient();
