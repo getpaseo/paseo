@@ -18,8 +18,8 @@ import { pageMeta } from "~/meta";
 export const Route = createFileRoute("/hub")({
   head: () =>
     pageMeta(
-      "Paseo Hub - GitHub, Slack, and Discord triggers",
-      "Run Paseo Hub yourself and start agents on your own machines from GitHub, Slack, and Discord.",
+      "PandaOS Hub - GitHub, Slack, and Discord triggers",
+      "Run PandaOS Hub yourself and start agents on your own machines from GitHub, Slack, and Discord.",
       "/hub",
     ),
   loader: async () => {
@@ -40,7 +40,7 @@ function Hub() {
   const { hosted } = Route.useLoaderData();
   return (
     <SiteShell width="default">
-      <h1 className="text-3xl font-medium tracking-tight mb-4">Paseo Hub</h1>
+      <h1 className="text-3xl font-medium tracking-tight mb-4">PandaOS Hub</h1>
       <p className="text-lg text-white/70 leading-relaxed max-w-2xl">
         An optional service that sits above your daemons and gives them extra capabilities.
       </p>
@@ -462,7 +462,7 @@ function Shape() {
 
           <Connector label="direct connection or relay" />
 
-          <DiagramRow label="Paseo apps">
+          <DiagramRow label="PandaOS apps">
             {DIAGRAM_CLIENTS.map((client) => (
               <DiagramCard key={client} name={client} />
             ))}
