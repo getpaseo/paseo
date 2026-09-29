@@ -283,6 +283,39 @@ describe.skipIf(!BROWSER_AVAILABLE)("DaemonPlaywrightHost", { timeout: 20_000 },
     }
   }, 15_000);
 
+  it("keeps a login made in one workspace for every other workspace", async () => {
+    const setCookie = await host?.executeLocal({
+      workspaceId: "wks_login_a",
+      command: { command: "new_tab", args: { url: `${app?.url}/login` } },
+    });
+    const tabA = setCookie?.ok ? setCookie.result.browserId : "";
+    await host?.executeLocal({
+      workspaceId: "wks_login_a",
+      command: {
+        command: "evaluate",
+        args: {
+          browserId: tabA,
+          function: "() => { document.cookie = 'session=signed-in; max-age=3600'; }",
+        },
+      },
+    });
+    const other = await host?.executeLocal({
+      workspaceId: "wks_login_b",
+      command: { command: "new_tab", args: { url: `${app?.url}/login` } },
+    });
+    const tabB = other?.ok ? other.result.browserId : "";
+    const cookie = await host?.executeLocal({
+      workspaceId: "wks_login_b",
+      command: {
+        command: "evaluate",
+        args: { browserId: tabB, function: "() => document.cookie" },
+      },
+    });
+    expect(
+      cookie?.ok && cookie.result.command === "evaluate" ? cookie.result.resultJson : "",
+    ).toContain("session=signed-in");
+  });
+
   it("exposes a sign-in popup in its workspace and preserves its opener", async () => {
     const openerId = await openTab(`${app?.url}/interaction`, "popup-login");
     const before = await executeTabCommand({ command: "list_tabs", args: {} }, "popup-login");

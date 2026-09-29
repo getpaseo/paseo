@@ -1,5 +1,5 @@
 import { randomBytes, randomUUID } from "node:crypto";
-import { mkdirSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { Logger } from "pino";
@@ -51,6 +51,36 @@ const MAX_ERROR_MESSAGE_LENGTH = 500;
 const DEFAULT_VERIFY_VIEWPORT = { width: 1280, height: 720 };
 const IMPORTED_COOKIES_FILE = "imported-cookies.json";
 const IMPORTED_COOKIES_MARKER = ".paseo-imported-cookies-version";
+const SHARED_PROFILE_DIR = "shared";
+// Caches and Chrome's single-instance locks stay behind when a profile is carried over.
+const PROFILE_SEED_SKIP =
+  /^(Singleton|Cache$|Code Cache$|GPUCache$|DawnCache$|GrShaderCache$|ShaderCache$)/;
+
+/**
+ * Before the shared profile existed every workspace had its own. The first shared launch
+ * starts from the most recently used of those, so the logins made there carry over.
+ */
+export function seedSharedProfile(input: {
+  profilesRoot: string;
+  userDataDir: string;
+  profile: string;
+}) {
+  if (existsSync(input.userDataDir) || !existsSync(input.profilesRoot)) return;
+  let newest: { dir: string; mtimeMs: number } | null = null;
+  for (const entry of readdirSync(input.profilesRoot, { withFileTypes: true })) {
+    if (!entry.isDirectory() || entry.name === SHARED_PROFILE_DIR) continue;
+    const dir = path.join(input.profilesRoot, entry.name, input.profile);
+    const cookies = path.join(dir, "Default", "Cookies");
+    if (!existsSync(cookies)) continue;
+    const mtimeMs = statSync(cookies).mtimeMs;
+    if (!newest || mtimeMs > newest.mtimeMs) newest = { dir, mtimeMs };
+  }
+  if (!newest) return;
+  cpSync(newest.dir, input.userDataDir, {
+    recursive: true,
+    filter: (source) => !PROFILE_SEED_SKIP.test(path.basename(source)),
+  });
+}
 const SAVED_TABS_FILE = "open-tabs.json";
 const SAVE_TABS_DELAY_MS = 300;
 // A page closing this long after its browser died was lost, not closed by the user.
@@ -1194,7 +1224,9 @@ export class DaemonPlaywrightHost {
     workspaceId: string;
     profile: string;
   }): Promise<BrowserContext> {
-    const key = `${input.workspaceId}::${input.profile}`;
+    // One Chrome profile for every workspace: a login made once holds everywhere, and new
+    // workspaces (Paperclip opens one per feature) do not start signed out.
+    const key = input.profile;
     const existing = this.contexts.get(key);
     if (existing) {
       return existing;
@@ -1205,17 +1237,37 @@ export class DaemonPlaywrightHost {
     const userDataDir = path.join(
       this.paseoHome,
       "browser-profiles",
-      sanitizeProfileSegment(input.workspaceId),
+      SHARED_PROFILE_DIR,
       sanitizeProfileSegment(input.profile),
     );
+    seedSharedProfile({
+      profilesRoot: path.join(this.paseoHome, "browser-profiles"),
+      userDataDir,
+      profile: sanitizeProfileSegment(input.profile),
+    });
     mkdirSync(userDataDir, { recursive: true, mode: 0o700 });
     const context = await this.launchPersistentContext(userDataDir);
     await context.addInitScript(REMEMBER_PAGE_COPIES_SCRIPT);
     this.contexts.set(key, context);
     this.contextProfileDirs.set(context, userDataDir);
-    // OAuth providers can open a popup; it must remain visible and controllable
-    // through the same workspace's remote tabs.
-    context.on("page", (page) => this.registerPage({ ...input, context, page }));
+    // OAuth providers can open a popup; it belongs to the workspace of the tab that opened it.
+    // Pages the host opens itself are registered by their caller with the right workspace.
+    context.on("page", (page) => {
+      void page.opener().then((opener) => {
+        const openerTab = opener
+          ? [...this.tabs.values()].find((tab) => tab.page === opener)
+          : null;
+        if (openerTab) {
+          this.registerPage({
+            workspaceId: openerTab.workspaceId,
+            profile: input.profile,
+            context,
+            page,
+          });
+        }
+        return undefined;
+      });
+    });
     context.on("close", () => {
       this.contextProfileDirs.delete(context);
       this.closeBrowsers.delete(context);
