@@ -5,8 +5,7 @@ import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { refreshProviderUsage, theme } = vi.hoisted(() => ({
-  refreshProviderUsage: vi.fn(() => Promise.resolve()),
+const { theme } = vi.hoisted(() => ({
   theme: {
     spacing: { 1: 4, 1.5: 6 },
     borderRadius: { full: 999 },
@@ -71,20 +70,18 @@ vi.mock("@/components/ui/tooltip", async () => {
   const ReactModule = await import("react");
   const TooltipContext = ReactModule.createContext(false);
   return {
-    Tooltip: ({
-      children,
-      open,
-      onOpenChange,
-    }: React.PropsWithChildren<{ open: boolean; onOpenChange: (open: boolean) => void }>) =>
-      ReactModule.createElement(
+    Tooltip: ({ children }: React.PropsWithChildren) => {
+      const [open, setOpen] = ReactModule.useState(false);
+      return ReactModule.createElement(
         TooltipContext.Provider,
         { value: open },
         ReactModule.createElement(
           "div",
-          { onMouseEnter: () => onOpenChange(true), onMouseLeave: () => onOpenChange(false) },
+          { onMouseEnter: () => setOpen(true), onMouseLeave: () => setOpen(false) },
           children,
         ),
-      ),
+      );
+    },
     TooltipTrigger: ({ children }: React.PropsWithChildren) => children,
     TooltipContent: ({ children }: React.PropsWithChildren) =>
       ReactModule.useContext(TooltipContext)
@@ -92,14 +89,6 @@ vi.mock("@/components/ui/tooltip", async () => {
         : null,
   };
 });
-
-vi.mock("@/provider-usage/use-provider-usage", () => ({
-  useProviderUsage: () => ({ view: { kind: "idle" }, refresh: refreshProviderUsage }),
-}));
-
-vi.mock("@/provider-usage/tooltip-section", () => ({
-  ProviderUsageTooltipSection: () => React.createElement("div", null, "Provider usage"),
-}));
 
 vi.stubGlobal("React", React);
 vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
@@ -114,7 +103,6 @@ describe("ContextWindowMeter", () => {
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
-    refreshProviderUsage.mockClear();
   });
 
   afterEach(() => {
@@ -123,16 +111,7 @@ describe("ContextWindowMeter", () => {
   });
 
   it("keeps the validated used/max pair and idle snapshot cue visible without hover", () => {
-    act(() =>
-      root.render(
-        <ContextWindowMeter
-          maxTokens={380_000}
-          usedTokens={81_000}
-          serverId="server-1"
-          provider="codex"
-        />,
-      ),
-    );
+    act(() => root.render(<ContextWindowMeter maxTokens={380_000} usedTokens={81_000} />));
 
     expect(
       container.querySelector('[data-testid="context-window-meter-summary"]')?.textContent,
@@ -144,11 +123,7 @@ describe("ContextWindowMeter", () => {
   });
 
   it("opens the existing detail tooltip on hover", async () => {
-    act(() =>
-      root.render(
-        <ContextWindowMeter maxTokens={380_000} usedTokens={81_000} serverId="server-1" />,
-      ),
-    );
+    act(() => root.render(<ContextWindowMeter maxTokens={380_000} usedTokens={81_000} />));
 
     await act(async () => {
       container.firstElementChild?.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
@@ -156,7 +131,6 @@ describe("ContextWindowMeter", () => {
 
     expect(container.querySelector('[role="tooltip"]')?.textContent).toContain("21% used");
     expect(container.querySelector('[role="tooltip"]')?.textContent).toContain("81k / 380k tokens");
-    expect(refreshProviderUsage).toHaveBeenCalledTimes(1);
   });
 
   it("keeps active retained values qualified as a snapshot", () => {
