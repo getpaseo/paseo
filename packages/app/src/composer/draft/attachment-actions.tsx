@@ -6,7 +6,6 @@ import type { UserComposerAttachment } from "@/attachments/types";
 import { ComposerDraftActionPill } from "@/composer/draft/action-pill";
 import { ComposerImportPill } from "@/composer/draft/import-pill";
 import { COMPOSER_PILL_CLEARANCE } from "@/composer/pill-styles";
-import { MAX_CONTENT_WIDTH } from "@/constants/layout";
 import { usePluginAttachmentPicker } from "@/plugins";
 import { useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 
@@ -74,7 +73,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   content: {
     width: "100%",
-    maxWidth: MAX_CONTENT_WIDTH,
+    maxWidth: theme.contentMaxWidth,
     flexDirection: "row",
     flexWrap: "wrap",
     gap: theme.spacing[2],

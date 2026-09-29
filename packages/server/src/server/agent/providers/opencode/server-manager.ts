@@ -2,6 +2,7 @@ import type { ChildProcess } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { stat } from "node:fs/promises";
 import net from "node:net";
+import { createRequire } from "node:module";
 import path from "node:path";
 import type { Logger } from "pino";
 
@@ -622,25 +623,23 @@ async function resolveOpenCodeBinary(): Promise<string> {
   }
 
   if (process.platform === "win32" && path.extname(found).toLowerCase() === ".cmd") {
-    // Global npm: <prefix>/opencode.cmd → <prefix>/node_modules/opencode-ai/bin/opencode.exe
-    const globalCandidate = path.join(
-      path.dirname(found),
-      "node_modules",
-      "opencode-ai",
-      "bin",
-      "opencode.exe",
-    );
-    if (await pathExists(globalCandidate)) return globalCandidate;
+    const packageDirectories = [
+      path.join(path.dirname(found), "node_modules", "opencode-ai"),
+      path.join(path.dirname(found), "..", "opencode-ai"),
+    ];
+    for (const packageDirectory of packageDirectories) {
+      const bundledBinary = path.join(packageDirectory, "bin", "opencode.exe");
+      if (await pathExists(bundledBinary)) return bundledBinary;
 
-    // Local/pnpm: <project>/node_modules/.bin/opencode.cmd → <project>/node_modules/opencode-ai/bin/opencode.exe
-    const localCandidate = path.join(
-      path.dirname(found),
-      "..",
-      "opencode-ai",
-      "bin",
-      "opencode.exe",
-    );
-    if (await pathExists(localCandidate)) return localCandidate;
+      // Newer npm releases keep the executable in a platform dependency.
+      // Resolve from the CLI package so nested installs and pnpm both work.
+      try {
+        const require = createRequire(path.join(packageDirectory, "package.json"));
+        return require.resolve(`opencode-windows-${process.arch}/bin/opencode.exe`);
+      } catch {
+        // Try the other npm layout before retaining the original command.
+      }
+    }
 
     console.warn(
       "[opencode-server] Found opencode.cmd but could not resolve the real opencode.exe. " +

@@ -304,6 +304,37 @@ external `href` or `xlink:href` references are rejected. Fragment references suc
 allowed. Paseo reads and sanitizes the file when the plugin starts; the string is never an inline
 SVG or URL.
 
+### Usage sources
+
+**Requires Paseo 0.9.3 or newer.** Server plugins register a usage source with `server.registerUsageSource()` and import types and helpers from `@getpaseo/plugin/server/usage`.
+
+```ts
+import { z } from "zod";
+import type { PluginServerContext } from "@getpaseo/plugin/server";
+
+const input = z.object({ account: z.string() });
+
+export default function contribute(server: PluginServerContext) {
+  server.registerUsageSource({
+    id: "example-usage",
+    label: "Example",
+    icon: "icon.svg",
+    input,
+    discover: async () => [{ account: "default" }],
+    identify: async (value) => {
+      const { account } = input.parse(value);
+      return { key: account };
+    },
+    fetch: async () => ({ status: "available", windows: [] }),
+  });
+  return () => {};
+}
+```
+
+`discover()` supplies configured inputs; return `[]` when no account is configured. The daemon also passes each live agent's `session.usage_reference` input to `identify()`. That method returns a stable account key and optional display label without fetching usage, or `null` when there are no credentials. The daemon combines the source ID and key as `<sourceId>:<accountKey>`. The key must be 1–128 characters from `[A-Za-z0-9._-]`, remain stable across token rotation and input routes, and identify the account or organization whose quota is metered. Never use a credential or raw email as the key; use `hashAccountKey(value)` when the only stable identity is sensitive.
+
+`usage.list_reports` discovers reports when called without IDs, or reads only the requested known IDs. It caches each report for five minutes and `forceRefresh` refreshes only the returned IDs. Each entry carries `id`, `account.label`, and `fetchedAt`; `fetch()` returns a `UsageReport` with `status` (`available`, `unavailable`, or `error`), optional `planLabel`, and generic `windows`, `balances`, and `details`. Set `headline: true` on a window to show it first. The icon is a path to a self-contained SVG under the plugin directory and follows the provider icon restrictions above.
+
 ## Entry point and cleanup
 
 Each present entry default-exports one contribution function and returns cleanup. Client entries

@@ -3,6 +3,7 @@ const ANSI_PATTERN = new RegExp(`${String.fromCharCode(0x1b)}\\[[0-9;]*m`, "g");
 interface PairingInstructions {
   url: string;
   qr: string | null;
+  connectionUri?: string | null;
   columns?: number;
 }
 
@@ -32,6 +33,23 @@ function formatQr(qr: string | null, columns: number | undefined): string {
   return qr;
 }
 
-export function formatPairingInstructions({ url, qr, columns }: PairingInstructions): string {
-  return `\nScan to pair:\n${formatQr(qr, columns)}\n\nPairing link:\n${url}\n\nTreat this pairing link like a password. Anyone with it can access this daemon.\n`;
+function redactConnectionUri(uri: string): string {
+  try {
+    const parsed = new URL(uri);
+    if (parsed.searchParams.has("password")) {
+      parsed.searchParams.set("password", "[redacted]");
+    }
+    return parsed.toString();
+  } catch {
+    return "Invalid connection URI";
+  }
+}
+
+export function formatPairingInstructions({
+  url,
+  qr,
+  columns,
+  connectionUri,
+}: PairingInstructions): string {
+  return `\nScan to pair:\n${formatQr(qr, columns)}\n\nPairing link:\n${url}${connectionUri ? `\n\nConnection URI:\n${redactConnectionUri(connectionUri)}` : ""}\n\nTreat this pairing link like a password. Anyone with it can access this daemon.\n`;
 }
