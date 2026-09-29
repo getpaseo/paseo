@@ -6,12 +6,15 @@ import type {
   CommandError,
   AnyCommandResult,
 } from "../../output/index.js";
-import type { AgentMode } from "@getpaseo/protocol/agent-types";
+import type { AgentMode, AgentProviderNotice } from "@getpaseo/protocol/agent-types";
+import type { AgentSnapshotPayload } from "@getpaseo/protocol/messages";
 
 /** Result for setting mode */
 export interface SetModeResult {
   agentId: string;
   mode: string;
+  noticeType: AgentProviderNotice["type"] | null;
+  notice: string | null;
 }
 
 /** Schema for mode list output */
@@ -30,8 +33,28 @@ export const setModeSchema: OutputSchema<SetModeResult> = {
   columns: [
     { header: "AGENT ID", field: "agentId", width: 12 },
     { header: "MODE", field: "mode", width: 20 },
+    { header: "NOTICE", field: "notice" },
   ],
 };
+
+/**
+ * The mode a session reports is the mode it runs: a provider that refuses the
+ * switch (its permission mode is fixed at launch) keeps the mode it started with
+ * and answers with a notice, and the row has to carry that notice instead of the
+ * requested mode.
+ */
+export function toSetModeResult(
+  agent: Pick<AgentSnapshotPayload, "id" | "runtimeInfo">,
+  requestedMode: string,
+  notice: AgentProviderNotice | null,
+): SetModeResult {
+  return {
+    agentId: agent.id.slice(0, 7),
+    mode: agent.runtimeInfo?.modeId ?? requestedMode,
+    noticeType: notice?.type ?? null,
+    notice: notice?.message ?? null,
+  };
+}
 
 export interface AgentModeOptions extends CommandOptions {
   list?: boolean;
@@ -99,14 +122,16 @@ export async function runModeCommand(
     }
 
     // Set the agent mode
-    await client.setAgentMode(resolvedId, normalizedMode);
+    const notice = await client.setAgentMode(resolvedId, normalizedMode);
+
+    const updatedResult = await client.fetchAgent({ agentId: resolvedId });
+    if (!updatedResult) {
+      throw new Error(`Agent not found after mode change: ${resolvedId}`);
+    }
 
     return {
       type: "single",
-      data: {
-        agentId: resolvedId.slice(0, 7),
-        mode: normalizedMode,
-      },
+      data: toSetModeResult(updatedResult.agent, normalizedMode, notice),
       schema: setModeSchema,
     };
   } catch (err) {

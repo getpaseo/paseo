@@ -24,6 +24,7 @@ export const ACP_PROVIDER_ICON_NAMES = [
   "deepagents",
   "dimcode",
   "dirac",
+  "dsh",
   "factory-droid",
   "fast-agent",
   "gemini",
