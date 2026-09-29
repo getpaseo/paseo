@@ -251,24 +251,15 @@ export function selectWorkspaceOrderByScope(state: SidebarOrderSnapshot): Record
 export function composeWorkspaceStructure(input: {
   projects: WorkspaceStructureProject[];
   projectOrder: readonly string[];
-  workspaceOrderByScope: Record<string, readonly string[]>;
 }): WorkspaceStructure {
   if (input.projects.length === 0) {
     return EMPTY_WORKSPACE_STRUCTURE;
   }
 
   const orderedProjects = applyStoredOrdering({
-    items: input.projects.map((project) => {
-      const workspaceOrder = input.workspaceOrderByScope[project.viewKey] ?? EMPTY_WORKSPACE_KEYS;
-      return {
-        ...project,
-        workspaceKeys: applyStoredOrdering({
-          items: project.workspaceKeys,
-          storedOrder: workspaceOrder,
-          getKey: (workspaceKey) => workspaceKey,
-        }),
-      };
-    }),
+    // Workspaces inside a project keep the newest-activity order the structure built;
+    // only projects follow the order the person arranged.
+    items: input.projects,
     storedOrder: input.projectOrder,
     getKey: (project) => project.viewKey,
   });

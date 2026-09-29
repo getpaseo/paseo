@@ -38,6 +38,25 @@ function workspace(id: string, projectId: string, root: string): WorkspaceDescri
 }
 
 describe("buildWorkspaceStructureProjects", () => {
+  test("lists a project's workspaces newest activity first", () => {
+    const at = (minutes: number) => new Date(Date.UTC(2026, 8, 29, 12, minutes));
+    const result = buildWorkspaceStructureProjects({
+      sessions: [
+        {
+          serverId: "host-a",
+          projects: [project({ id: "prj_a", key: null, root: "/a/app" })],
+          workspaces: [
+            { ...workspace("ws-old", "prj_a", "/a/app"), statusEnteredAt: at(1) },
+            { ...workspace("ws-never", "prj_a", "/a/app"), statusEnteredAt: null },
+            { ...workspace("ws-new", "prj_a", "/a/app"), statusEnteredAt: at(30) },
+          ],
+        },
+      ],
+    });
+
+    expect(result[0]?.workspaceKeys).toEqual(["host-a:ws-new", "host-a:ws-old", "host-a:ws-never"]);
+  });
+
   test("groups the same project key across hosts and keeps host-local ids", () => {
     const key = "remote:github.com/acme/app";
     const result = buildWorkspaceStructureProjects({

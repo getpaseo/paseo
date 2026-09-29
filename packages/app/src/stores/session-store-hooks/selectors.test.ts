@@ -14,7 +14,6 @@ import {
   selectWorkspaceDirectory,
   selectWorkspaceFields,
   selectWorkspaceKeys,
-  selectWorkspaceOrderByScope,
   selectWorkspaceStatusesForBadges,
   selectWorkspaceStructureProjects,
   workspaceEqualityFns,
@@ -364,7 +363,6 @@ describe("workspace structure composition", () => {
     return composeWorkspaceStructure({
       projects: selectWorkspaceStructureProjects(useSessionStore.getState(), [serverId]),
       projectOrder: selectProjectOrder(sidebar),
-      workspaceOrderByScope: selectWorkspaceOrderByScope(sidebar),
     });
   }
 

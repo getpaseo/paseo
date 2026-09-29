@@ -38,7 +38,12 @@ interface ProjectDraft {
   projectKind: WorkspaceDescriptor["projectKind"];
   iconWorkingDir: string;
   hosts: Map<string, WorkspaceStructureHostPlacement>;
-  workspaces: Array<{ workspaceId: string; workspaceName: string; workspaceKey: string }>;
+  workspaces: Array<{
+    workspaceId: string;
+    workspaceName: string;
+    workspaceKey: string;
+    activityAt: number;
+  }>;
 }
 
 /** The single app boundary that turns host-local projects into grouped display projects. */
@@ -87,6 +92,7 @@ export function buildWorkspaceStructureProjects(input: {
         workspaceId: workspace.id,
         workspaceName: workspace.name,
         workspaceKey: `${session.serverId}:${workspace.id}`,
+        activityAt: workspace.statusEnteredAt?.getTime() ?? 0,
       });
     }
   }
@@ -196,14 +202,18 @@ function getOrCreate<K, V>(map: Map<K, V>, key: K, create: () => V): V {
   return value;
 }
 
+// Newest activity first, so a session that just did something, or was just unpinned, sits
+// where its last activity puts it instead of where it happened to be dragged once.
 function compareWorkspaceStructureItems(
-  left: { workspaceId: string; workspaceName: string },
-  right: { workspaceId: string; workspaceName: string },
+  left: { workspaceId: string; workspaceName: string; activityAt: number },
+  right: { workspaceId: string; workspaceName: string; activityAt: number },
 ): number {
   return (
+    right.activityAt - left.activityAt ||
     left.workspaceName.localeCompare(right.workspaceName, undefined, {
       numeric: true,
       sensitivity: "base",
-    }) || left.workspaceId.localeCompare(right.workspaceId, undefined, { sensitivity: "base" })
+    }) ||
+    left.workspaceId.localeCompare(right.workspaceId, undefined, { sensitivity: "base" })
   );
 }
