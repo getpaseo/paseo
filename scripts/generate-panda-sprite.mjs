@@ -33,7 +33,8 @@ const whiteShade = (hit) => (hit.u * 0.55 + hit.v * 0.8 > 0.42 ? "s" : "w");
 const blackShade = (hit) => (hit.u * -0.6 + hit.v * -0.8 > 0.45 ? "h" : "k");
 
 function scene(x, y, pose) {
-  const { eyesOpen, mouth, armUp, bamboo } = pose;
+  const { eyesOpen, mouth, bamboo } = pose;
+  const armT = pose.armT ?? 0;
   let hit;
   // face details
   for (const side of [-1, 1]) {
@@ -53,9 +54,9 @@ function scene(x, y, pose) {
     if (ell(x, y, 16 + side * 5.6, 14.4, 3.6, 4.7, -side * 0.55)) return "k";
   }
   // paw + bamboo in front of the head when raised
-  const pawY = armUp ? 20.5 : 25.8;
+  const pawY = 25.8 - armT * 5.3;
   if (bamboo && !pose.headOnly) {
-    const top = armUp ? 14.5 : 21;
+    const top = 21 - armT * 6.5;
     if (x >= 22.6 && x <= 25.2 && y >= top && y <= 30.5)
       return Math.floor((y - top) / 4.2) % 3 === 2 ? "G" : "g";
   }
@@ -68,8 +69,7 @@ function scene(x, y, pose) {
   if (pose.headOnly) return null;
   // arms, body, feet
   if ((hit = ell(x, y, 7.6, 24.6, 2.6, 4.4, 0.32))) return blackShade(hit);
-  if (!bamboo || !armUp)
-    if ((hit = ell(x, y, 24.4, 24.6, 2.6, 4.4, -0.32)) && !bamboo) return blackShade(hit);
+  if (!bamboo && (hit = ell(x, y, 24.4, 24.6, 2.6, 4.4, -0.32))) return blackShade(hit);
   if ((hit = ell(x, y, 16, 25, 8.4, 6.6))) return whiteShade(hit);
   for (const side of [-1, 1])
     if ((hit = ell(x, y, 16 + side * 4.7, 29.6, 3.6, 2.3))) return blackShade(hit);
@@ -108,39 +108,23 @@ function renderFrame(pose) {
   return grid.map((row) => row.join(""));
 }
 
-const WORK = [
-  { eyesOpen: true, mouth: false, armUp: false, bamboo: true, dots: 0 },
-  { eyesOpen: true, mouth: true, armUp: true, bamboo: true, dots: 1, oy: 0 },
-  { eyesOpen: true, mouth: false, armUp: true, bamboo: true, dots: 2, oy: 0.6 },
-  { eyesOpen: true, mouth: true, armUp: true, bamboo: true, dots: 3 },
-  { eyesOpen: false, mouth: false, armUp: false, bamboo: true, dots: 3 },
-  { eyesOpen: true, mouth: true, armUp: true, bamboo: true, dots: 2, oy: 0.6 },
-  { eyesOpen: true, mouth: false, armUp: true, bamboo: true, dots: 1 },
-  { eyesOpen: true, mouth: false, armUp: false, bamboo: true, dots: 0, oy: 0.6 },
-].map((pose) => ({ ...pose, dots: pose.dots }));
-const SALTO = Array.from({ length: 12 }, (_, i) => {
-  const t = i / 12;
-  const hop = Math.sin(t * Math.PI);
-  const land = i === 0 || i === 11;
-  return {
-    eyesOpen: !(i > 2 && i < 9),
-    mouth: i > 3 && i < 9,
-    armUp: false,
-    bamboo: false,
-    dots: 0,
-    angle: t * Math.PI * 2,
-    oy: -hop * 3.2 + (land ? 0.8 : 0),
-    sx: land ? 1.08 : 1,
-    sy: land ? 0.94 : 1,
-  };
-});
+const ARM = [0, 0.3, 0.7, 1, 1, 1, 1, 1, 1, 0.7, 0.3, 0, 0, 0, 0, 0];
+const WORK = ARM.map((armT, i) => ({
+  eyesOpen: i !== 13,
+  mouth: armT === 1 && i % 2 === 0,
+  armT,
+  bamboo: true,
+  dots: [0, 0, 1, 1, 2, 2, 3, 3, 3, 3, 2, 2, 1, 1, 0, 0][i],
+  oy: 0,
+}));
+const STAND = { eyesOpen: true, mouth: false, armT: 0, bamboo: false, dots: 0 };
 
-const frames = { work: WORK.map(renderFrame), salto: SALTO.map(renderFrame) };
+const frames = { work: WORK.map(renderFrame), stand: renderFrame(STAND) };
 
 const LOGO_POSE = {
   eyesOpen: true,
   mouth: false,
-  armUp: false,
+  armT: 0,
   bamboo: false,
   dots: 0,
   headOnly: true,
@@ -170,15 +154,15 @@ export const PANDA_WORK_FRAMES: readonly (readonly string[])[] = ${JSON.stringif
 /** The head alone, cropped: the app logo and every icon. */
 export const PANDA_LOGO: readonly string[] = ${JSON.stringify(LOGO, null, 2)};
 
-/** One somersault hop for the loading screen; ${SALTO.length} frames. */
-export const PANDA_SALTO_FRAMES: readonly (readonly string[])[] = ${JSON.stringify(frames.salto, null, 2)};
+/** The whole panda standing still; the loading screen turns it into a somersault. */
+export const PANDA_STAND: readonly string[] = ${JSON.stringify(frames.stand, null, 2)};
 `;
 if (!process.argv.includes("--no-write")) writeFileSync(out, body);
 
 const previewIdx = process.argv.indexOf("--preview");
 if (previewIdx > 0) {
   const scale = 8;
-  const all = [...frames.work, ...frames.salto];
+  const all = [...frames.work, frames.stand];
   const cols = 10,
     rows = Math.ceil(all.length / cols);
   const W = cols * (N + 2) * scale,

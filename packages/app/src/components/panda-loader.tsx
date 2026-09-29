@@ -1,14 +1,25 @@
 import { memo, useEffect, useMemo, useState } from "react";
-import { useReducedMotion } from "react-native-reanimated";
+import Animated, {
+  Easing,
+  cancelAnimation,
+  interpolate,
+  useAnimatedStyle,
+  useReducedMotion,
+  useSharedValue,
+  withDelay,
+  withRepeat,
+  withSequence,
+  withTiming,
+} from "react-native-reanimated";
 import Svg, { Rect } from "react-native-svg";
 import { useRetainedPanelActive } from "@/components/retained-panel";
-import { PANDA_SALTO_FRAMES, PANDA_WORK_FRAMES } from "@/components/panda-frames";
+import { PANDA_STAND, PANDA_WORK_FRAMES } from "@/components/panda-frames";
 import { PANDA_GRID, buildPandaRuns } from "@/components/panda-sprite";
 
-const WORK_FRAME_MS = 280;
-const SALTO_FRAME_MS = 70;
-// The somersault rests on the first frame so the loop reads as hop, pause, hop.
-const SALTO_PAUSE_FRAMES = 8;
+// 16 frames of small steps, about 7 per second.
+const WORK_FRAME_MS = 140;
+const SALTO_MS = 950;
+const SALTO_REST_MS = 900;
 
 function useFrameIndex(frameCount: number, intervalMs: number, animate: boolean): number {
   const [index, setIndex] = useState(0);
@@ -60,11 +71,44 @@ export const PandaLoader = memo(function PandaLoader({ pixel = 1 }: { pixel?: nu
   return <PandaFrameSvg frame={PANDA_WORK_FRAMES[index]!} pixel={pixel} label="PandaOS arbeitet" />;
 });
 
-/** Loading screen mascot: a somersault, a short rest, again. */
+/**
+ * Loading screen mascot: one somersault, a short rest, again. The finished drawing turns on the
+ * compositor instead of being re-rasterised per frame, so its edges never flicker.
+ */
 export const PandaSalto = memo(function PandaSalto({ pixel = 4 }: { pixel?: number }) {
   const reducedMotion = useReducedMotion();
-  const total = PANDA_SALTO_FRAMES.length + SALTO_PAUSE_FRAMES;
-  const step = useFrameIndex(total, SALTO_FRAME_MS, !reducedMotion);
-  const frame = PANDA_SALTO_FRAMES[step < PANDA_SALTO_FRAMES.length ? step : 0]!;
-  return <PandaFrameSvg frame={frame} pixel={pixel} label="PandaOS lädt" />;
+  const progress = useSharedValue(0);
+
+  useEffect(() => {
+    if (reducedMotion) return;
+    progress.value = withRepeat(
+      withSequence(
+        withTiming(1, { duration: SALTO_MS, easing: Easing.inOut(Easing.cubic) }),
+        withDelay(SALTO_REST_MS, withTiming(0, { duration: 0 })),
+      ),
+      -1,
+      false,
+    );
+    return () => cancelAnimation(progress);
+  }, [progress, reducedMotion]);
+
+  const style = useAnimatedStyle(() => {
+    const p = progress.value;
+    const hop = -Math.sin(p * Math.PI) * PANDA_GRID * pixel * 0.28;
+    const squash = interpolate(p, [0, 0.12, 0.88, 1], [1, 0.92, 0.92, 1]);
+    return {
+      transform: [
+        { translateY: hop },
+        { rotate: `${p * 360}deg` },
+        { scaleY: squash },
+        { scaleX: 2 - squash },
+      ],
+    };
+  });
+
+  return (
+    <Animated.View style={style}>
+      <PandaFrameSvg frame={PANDA_STAND} pixel={pixel} label="PandaOS lädt" />
+    </Animated.View>
+  );
 });

@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { PANDA_GRID, PANDA_PALETTE, PANDA_SALTO_FRAMES, PANDA_WORK_FRAMES } from "./panda-frames";
+import { PANDA_GRID, PANDA_PALETTE, PANDA_STAND, PANDA_WORK_FRAMES } from "./panda-frames";
 import { buildPandaRuns } from "./panda-sprite";
 
-const ALL_FRAMES = [...PANDA_WORK_FRAMES, ...PANDA_SALTO_FRAMES];
+const ALL_FRAMES = [...PANDA_WORK_FRAMES, PANDA_STAND];
 
 describe("panda frames", () => {
   it("are square grids that only use palette colours", () => {
@@ -15,12 +15,18 @@ describe("panda frames", () => {
     }
   });
 
-  it("differ from frame to frame, so the panda moves", () => {
-    const distinct = new Set(PANDA_WORK_FRAMES.map((frame) => frame.join("")));
-    expect(distinct.size).toBeGreaterThanOrEqual(6);
-    expect(new Set(PANDA_SALTO_FRAMES.map((frame) => frame.join(""))).size).toBe(
-      PANDA_SALTO_FRAMES.length,
-    );
+  it("change in small steps, so the loop reads as one movement", () => {
+    const changed = (a: readonly string[], b: readonly string[]) =>
+      a
+        .join("")
+        .split("")
+        .filter((cell, i) => cell !== b.join("")[i]).length;
+    const frames = PANDA_WORK_FRAMES;
+    for (let i = 0; i < frames.length; i += 1) {
+      const next = frames[(i + 1) % frames.length]!;
+      expect(changed(frames[i]!, next)).toBeLessThan(120);
+    }
+    expect(new Set(frames.map((frame) => frame.join(""))).size).toBeGreaterThanOrEqual(10);
   });
 });
 
