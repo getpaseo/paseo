@@ -11,26 +11,31 @@ import { AntigravityError } from "./wire.js";
 const modes: readonly ProviderMode[] = [
   {
     id: "default",
+    icon: "Shield",
+    colorTier: "moderate",
     label: "Default",
     description: "Workspace reads and edits are allowed; shell commands are denied.",
-    isUnattended: true,
   },
   {
     id: "accept-edits",
+    icon: "ShieldPlus",
+    colorTier: "moderate",
     label: "Accept edits",
     description:
       "Native accept-edits mode. Workspace edits are allowed; shell commands are denied.",
-    isUnattended: true,
   },
   {
     id: "plan",
+    icon: "ShieldEllipsis",
+    colorTier: "planning",
     label: "Plan",
     description:
       "Native plan mode permits workspace edits. Shell commands are denied; this is not read-only.",
-    isUnattended: true,
   },
   {
     id: "full-access",
+    icon: "ShieldOff",
+    colorTier: "dangerous",
     label: "Full access",
     description: "Skip native permission checks, including for shell commands.",
     isUnattended: true,

@@ -39,11 +39,20 @@ if (process.env.AGY_TEST_STARTUP === "stderr") {
 const resumeIndex = args.indexOf("--conversation");
 const conversationId =
   resumeIndex >= 0 ? args[resumeIndex + 1] : fixture("text-turn")[0].conversation_id;
+let denialResults = 0;
 function emit(frame) {
   const converted = structuredClone(frame);
   if (converted.conversation_id !== undefined) converted.conversation_id = conversationId;
   if (converted.step_update) converted.step_update.conversation_id = conversationId;
-  if (converted.result) converted.result.conversation_id = conversationId;
+  if (converted.result) {
+    converted.result.conversation_id = conversationId;
+    if (process.env.AGY_TEST_DENIAL_COUNTS && converted.result.denied_actions?.length) {
+      converted.result.denied_actions = Array.from(
+        { length: Number(process.env.AGY_TEST_DENIAL_COUNTS.split(",")[denialResults++]) },
+        () => converted.result.denied_actions[0],
+      );
+    }
+  }
   process.stdout.write(JSON.stringify(converted) + "\n");
 }
 const init = fixture("text-turn")[0];
@@ -59,6 +68,7 @@ lines.on("line", (line) => {
   let name = "text-turn";
   if (text.includes("Attached image: ")) name = "image-file-external";
   if (text.includes("TOOLS")) name = "tools-default";
+  if (text.includes("DENIAL_REPLAY")) name = "denial-replay";
   if (text.includes("SUBAGENT")) name = "subagent";
   if (text.includes("MULTI")) name = "multi-turn-reasoning";
   if (text.includes("RESUME")) name = "resume";

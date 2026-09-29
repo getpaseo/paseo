@@ -49,6 +49,7 @@ export class Session {
   private conversationId: string | null;
   private firstMessage: boolean;
   private readonly promptFiles = new PromptFiles();
+  private readonly reportedDenials = new Map<string, number>();
 
   constructor(private readonly options: SessionOptions) {
     this.config = options.config;
@@ -190,6 +191,7 @@ export class Session {
       this.state = { type: "dormant" };
     }
     if (this.state.type !== "dormant") return;
+    this.reportedDenials.clear();
     const driver = startDriver({
       launch: this.options.launch,
       config: this.config,
@@ -229,17 +231,16 @@ export class Session {
     }
     if (frame.event !== "result") return;
     const result = frame.result;
-    if (result.denied_actions.length > 0) {
-      const denied = result.denied_actions.map((action) => action.display_name).join(", ");
+    const denied = takeNewDenials(result.denied_actions, this.reportedDenials);
+    if (denied.length > 0) {
       this.emit({
         type: "session.notice",
         sessionId: this.options.id,
         notice: {
           id: `${turn.id}:denied`,
           severity: "warning",
-          title: `Antigravity denied: ${denied}`,
-          description:
-            "Choose Full access and send another prompt to allow shell commands. Default, Accept edits and Plan deny shell commands.",
+          title: denialNoticeTitle(denied),
+          description: "Switch to Full access to allow shell commands.",
         },
       });
     }
@@ -355,4 +356,27 @@ export class Session {
   private emit(event: ProviderEvent): void {
     this.options.emit(event);
   }
+}
+
+// Native results contain every denial since this driver started, including repeated actions.
+function takeNewDenials(
+  actions: Extract<Frame, { event: "result" }>["result"]["denied_actions"],
+  reported: Map<string, number>,
+) {
+  const counts = new Map<string, number>();
+  const fresh = actions.filter((action) => {
+    const key = JSON.stringify([action.action, action.display_name]);
+    const count = (counts.get(key) ?? 0) + 1;
+    counts.set(key, count);
+    return count > (reported.get(key) ?? 0);
+  });
+  for (const [key, count] of counts) reported.set(key, Math.max(count, reported.get(key) ?? 0));
+  return fresh;
+}
+
+function denialNoticeTitle(
+  actions: Extract<Frame, { event: "result" }>["result"]["denied_actions"],
+): string {
+  if (actions.length > 1) return `${actions.length} actions denied`;
+  return actions[0].action === "command" ? "Shell command denied" : "Action denied";
 }

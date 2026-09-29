@@ -224,9 +224,57 @@ it("maps tools and emits one denial notice for a SUCCESS result", async () => {
   expect(notices).toHaveLength(1);
   expect(notices[0]).toMatchObject({
     notice: {
-      title: "Antigravity denied: RunCommand",
-      description: expect.stringContaining("Choose Full access"),
+      title: "Shell command denied",
+      description: "Switch to Full access to allow shell commands.",
     },
+  });
+});
+
+it("reports only new process denials across replayed turns and resets after respawn", async () => {
+  const h = await harness();
+  await h.open();
+  await h.completed(await h.prompt("DENIAL_REPLAY"));
+  expect(h.events.filter((event) => event.type === "session.notice")).toHaveLength(1);
+  const followupStart = h.events.length;
+  await h.completed(await h.prompt("DENIAL_REPLAY"));
+  const followup = h.events.slice(followupStart);
+  expect(followup.some((event) => event.type === "session.notice")).toBe(false);
+  expect(followup).toContainEqual(
+    expect.objectContaining({
+      type: "timeline.item",
+      item: expect.objectContaining({ type: "assistant_message", text: "FOLLOWUP_OK\n" }),
+    }),
+  );
+  await h.request({
+    type: "session.configure",
+    sessionId: "s",
+    requestId: "mode",
+    changes: { mode: "plan" },
+  });
+  await h.completed(await h.prompt("DENIAL_REPLAY"));
+  expect(h.events.filter((event) => event.type === "session.notice")).toHaveLength(2);
+  expect(
+    (await h.records()).filter((entry) => entry.args?.includes("--input-format")),
+  ).toHaveLength(2);
+});
+
+it("counts repeated native action denials without exposing tool identifiers", async () => {
+  const h = await harness({ AGY_TEST_DENIAL_COUNTS: "2,2,3" });
+  await h.open();
+  await h.completed(await h.prompt("DENIAL_REPLAY"));
+  await h.completed(await h.prompt("DENIAL_REPLAY"));
+  const notices = h.events.filter((event) => event.type === "session.notice");
+  expect(notices).toHaveLength(1);
+  expect(notices[0]).toMatchObject({
+    notice: {
+      title: "2 actions denied",
+      description: "Switch to Full access to allow shell commands.",
+    },
+  });
+  await h.completed(await h.prompt("DENIAL_REPLAY"));
+  expect(h.events.filter((event) => event.type === "session.notice")).toHaveLength(2);
+  expect(h.events.findLast((event) => event.type === "session.notice")).toMatchObject({
+    notice: { title: "Shell command denied" },
   });
 });
 
@@ -486,6 +534,19 @@ describe("discovery", () => {
       "accept-edits",
       "plan",
       "full-access",
+    ]);
+    expect(
+      event.catalog.modes.map(({ id, icon, colorTier, isUnattended }) => ({
+        id,
+        icon,
+        colorTier,
+        isUnattended,
+      })),
+    ).toEqual([
+      { id: "default", icon: "Shield", colorTier: "moderate", isUnattended: undefined },
+      { id: "accept-edits", icon: "ShieldPlus", colorTier: "moderate", isUnattended: undefined },
+      { id: "plan", icon: "ShieldEllipsis", colorTier: "planning", isUnattended: undefined },
+      { id: "full-access", icon: "ShieldOff", colorTier: "dangerous", isUnattended: true },
     ]);
   });
   it("reports missing, old, unauthenticated and available launches", async () => {

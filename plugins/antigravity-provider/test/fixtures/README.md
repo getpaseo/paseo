@@ -1,5 +1,9 @@
 # agy 1.2.13 stream-json captures
 
+`denial-replay.stdout.ndjson` replays two turns from one real 1.2.13 process: a denied shell
+command, then a text-only answer whose result retains the first denial. The replay clock is
+synthetic; frames retain the native cumulative denial payload.
+
 Captured on Linux x86_64 on 2026-09-29. These are observations from the supplied binary, not guarantees for the Google sign-in route. No product code or capture drivers are included.
 
 Each row names a capture prefix. Its `.stdin.ndjson`, `.stdout.ndjson`, `.stderr.ndjson`, and `.capture.ndjson` companions keep the streams separate; empty streams are empty files. Every line wraps the exact decoded JSON frame or text line in `{t_ms, stream, data}`. `t_ms` is milliseconds since construction immediately before spawn. Capture annotations record launch arguments, configuration, signals, EOF, timeouts, and exit code; they are not CLI output. Line references refer to the indicated file, starting at 1.
