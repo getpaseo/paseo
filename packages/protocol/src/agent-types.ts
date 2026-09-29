@@ -125,6 +125,8 @@ export interface ProviderSnapshotEntry {
   label?: string;
   description?: string;
   iconSvg?: string;
+  /** The base provider a custom entry extends; lets clients reuse its icon. */
+  derivedFrom?: string;
   defaultModeId?: string | null;
 }
 

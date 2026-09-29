@@ -1486,12 +1486,12 @@ describe("ProviderSnapshotManager applyMutableProviderConfig", () => {
       expect(manager.hasProvider("zai-claude")).toBe(true);
       expect(state.providerDefinitions["zai-claude"]).toMatchObject({ enabled: true });
       expect(manager.listRegisteredProviderIds()).toContain("zai-claude");
-      expect(
-        manager
-          .getSnapshot()
-          .records.map(({ entry }) => entry)
-          .find((entry) => entry.provider === "zai-claude")?.source,
-      ).toBe("custom");
+      const zaiEntry = manager
+        .getSnapshot()
+        .records.map(({ entry }) => entry)
+        .find((entry) => entry.provider === "zai-claude");
+      expect(zaiEntry?.source).toBe("custom");
+      expect(zaiEntry?.derivedFrom).toBe("claude");
     } finally {
       manager.destroy();
     }

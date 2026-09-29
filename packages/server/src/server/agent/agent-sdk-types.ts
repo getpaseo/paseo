@@ -135,6 +135,7 @@ export interface ProviderSnapshotEntry {
   label?: string;
   description?: string;
   iconSvg?: string;
+  derivedFrom?: string;
   defaultModeId?: string | null;
 }
 

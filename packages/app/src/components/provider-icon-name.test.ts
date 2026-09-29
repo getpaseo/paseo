@@ -34,6 +34,36 @@ describe("resolveProviderIconName", () => {
     expect(resolveProviderIconName("snapshot-provider", "server-1")).toEqual({ kind: "svg", svg });
   });
 
+  it("resolves a custom provider through the provider it extends", () => {
+    replaceProviderSnapshotIcons("server-3", [
+      { provider: "claude-work", derivedFrom: "claude" },
+      { provider: "codex-local", derivedFrom: "codex" },
+      { provider: "gemini-fast", derivedFrom: "gemini" },
+      { provider: "nested", derivedFrom: "claude-work" },
+      { provider: "loop-a", derivedFrom: "loop-b" },
+      { provider: "loop-b", derivedFrom: "loop-a" },
+    ]);
+
+    expect(resolveProviderIconName("claude-work", "server-3")).toEqual({
+      kind: "builtin",
+      id: "claude",
+    });
+    expect(resolveProviderIconName("codex-local", "server-3")).toEqual({
+      kind: "builtin",
+      id: "codex",
+    });
+    expect(resolveProviderIconName("gemini-fast", "server-3")).toEqual({
+      kind: "catalog",
+      id: "gemini",
+    });
+    expect(resolveProviderIconName("nested", "server-3")).toEqual({
+      kind: "builtin",
+      id: "claude",
+    });
+    expect(resolveProviderIconName("loop-a", "server-3")).toEqual({ kind: "bot" });
+    expect(resolveProviderIconName("claude-work")).toEqual({ kind: "bot" });
+  });
+
   it("replaces each host snapshot without leaking icons across hosts", () => {
     const secondSvg = "<svg id='second' />";
     replaceProviderSnapshotIcons("server-1", [

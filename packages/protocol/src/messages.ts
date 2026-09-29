@@ -337,6 +337,7 @@ export const ProviderSnapshotEntrySchema = z.object({
   label: z.string().optional(),
   description: z.string().optional(),
   iconSvg: z.string().optional(),
+  derivedFrom: z.string().optional(),
   defaultModeId: z.string().nullable().optional(),
 });
 
