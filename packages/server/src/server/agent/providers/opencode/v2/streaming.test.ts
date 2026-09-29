@@ -80,6 +80,69 @@ describe("OpenCode v2 token streaming", () => {
     }
   });
 
+  test("reports the latest step's context usage against the model's context limit", async () => {
+    const harness = new V2Harness();
+    harness.info.model = { providerID: "test", id: "model" };
+    harness.info.tokens = { input: 900, output: 90, reasoning: 0, cache: { read: 0, write: 0 } };
+    harness.info.cost = 0.5;
+    harness.api.model.list = async () => ({
+      location: harness.info.location,
+      data: [
+        {
+          id: "model",
+          modelID: "model",
+          providerID: "test",
+          name: "Model",
+          capabilities: { tools: true, input: ["text"], output: ["text"] },
+          variants: [],
+          time: { released: 1 },
+          cost: [],
+          status: "active",
+          enabled: true,
+          limit: { context: 200000, output: 10000 },
+        },
+      ],
+    });
+    const client = new OpenCodeV2AgentClient({
+      logger: createTestLogger(),
+      runtime: harness.runtime,
+    });
+    const session = await client.createSession({ provider: "opencode", cwd: "/tmp/project" });
+    const usage: unknown[] = [];
+    session.subscribe((event) => {
+      if (event.type === "usage_updated") usage.push(event.usage);
+    });
+    const stepEnded = (id: string, input: number) =>
+      harness.push({
+        id,
+        created: 2,
+        type: "session.step.ended",
+        durable: { aggregateID: "session", seq: 1, version: 1 },
+        data: {
+          sessionID: "session",
+          assistantMessageID: "answer",
+          finish: "tool-calls",
+          cost: 0.1,
+          tokens: { input, output: 10, reasoning: 5, cache: { read: 1000, write: 20 } },
+        },
+      });
+    try {
+      stepEnded("step-1", 100);
+      stepEnded("step-2", 300);
+      await expect.poll(() => usage.length).toBe(2);
+      expect(usage[1]).toEqual({
+        inputTokens: 900,
+        outputTokens: 90,
+        cachedInputTokens: 0,
+        totalCostUsd: 0.5,
+        contextWindowUsedTokens: 1335,
+        contextWindowMaxTokens: 200000,
+      });
+    } finally {
+      await session.close();
+    }
+  });
+
   test("deduplicates snapshots before and after deltas using per-type ordinals", () => {
     const timeline = new V2Timeline();
     const text = { assistantMessageID: "answer", type: "text", ordinal: 0 } as const;

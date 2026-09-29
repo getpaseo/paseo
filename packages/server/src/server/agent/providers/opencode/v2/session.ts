@@ -3,7 +3,7 @@ import { SessionTurns } from "./turns.js";
 import { V2Timeline } from "./timeline.js";
 import { waitForLocationReady, awaitPaseoPlugin } from "./readiness.js";
 
-import type { SessionInfo, SessionMessageInfo } from "@opencode/client";
+import type { SessionInfo, SessionMessageInfo, TokenUsageInfo } from "@opencode/client";
 
 import { setTimeout as delay } from "node:timers/promises";
 import type { Logger } from "pino";
@@ -28,7 +28,7 @@ import { composeSystemPromptParts } from "../../../system-prompt.js";
 import { raceProviderRefreshAbort } from "../../../provider-refresh-deadline.js";
 
 import { type V2Connection } from "./runtime.js";
-import { modelRef, modesFromV2 } from "./mapping.js";
+import { contextWindowUsedTokensFromV2, modelRef, modesFromV2, usageFromV2 } from "./mapping.js";
 
 import { V2_CAPABILITIES } from "./capabilities.js";
 import { features } from "./configuration.js";
@@ -56,6 +56,7 @@ export class OpenCodeV2Session implements AgentSession {
   private closed = false;
   private history: SessionMessageInfo[] = [];
   private modes: AgentMode[] = [];
+  private contextWindow: { model: string; maxTokens: number | undefined } | null = null;
   constructor(
     private connection: V2Connection,
     private info: SessionInfo,
@@ -303,6 +304,10 @@ export class OpenCodeV2Session implements AgentSession {
     };
     await this.client.session.switchModel({ sessionID: this.id, model: nextModel });
     this.info.model = nextModel;
+    this.contextWindow = {
+      model: `${selected.providerID}/${selected.id}`,
+      maxTokens: target.limit.context,
+    };
     this.config.model = model ?? undefined;
     this.config.thinkingOptionId = variant;
     this.emit({
@@ -464,9 +469,42 @@ export class OpenCodeV2Session implements AgentSession {
       if (streamed) this.emitTimeline(streamed);
       return;
     }
+    if (event.type === "session.step.ended") {
+      void this.emitStepUsage(event.data.tokens).catch((error: unknown) =>
+        this.logger.warn(
+          { error: toDiagnosticErrorMessage(error) },
+          "OpenCode context usage update failed",
+        ),
+      );
+    }
     this.permissions.observe(event);
     this.turns.observe(event);
     this.scheduleReconcile();
+  }
+  private async emitStepUsage(tokens: TokenUsageInfo) {
+    const contextWindowMaxTokens = await this.contextWindowMaxTokens();
+    this.emit({
+      type: "usage_updated",
+      provider: "opencode",
+      usage: {
+        ...usageFromV2(this.info),
+        contextWindowUsedTokens: contextWindowUsedTokensFromV2(tokens),
+        ...(contextWindowMaxTokens !== undefined ? { contextWindowMaxTokens } : {}),
+      },
+    });
+  }
+  private async contextWindowMaxTokens() {
+    const model = this.info.model;
+    if (!model) return undefined;
+    const key = `${model.providerID}/${model.id}`;
+    if (this.contextWindow?.model !== key) {
+      const catalog = await this.client.model.list({ location: { directory: this.config.cwd } });
+      const entry = catalog.data.find(
+        (item) => item.providerID === model.providerID && item.id === model.id,
+      );
+      this.contextWindow = { model: key, maxTokens: entry?.limit.context };
+    }
+    return this.contextWindow.maxTokens;
   }
   private async consume(ready: () => void, fail: (error: unknown) => void) {
     const signal = AbortSignal.any([this.abort.signal, this.streamAbort.signal]);

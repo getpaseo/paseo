@@ -1,4 +1,4 @@
-import type { AgentInfo, ModelInfo, ModelRef, SessionInfo } from "@opencode/client";
+import type { AgentInfo, ModelInfo, ModelRef, SessionInfo, TokenUsageInfo } from "@opencode/client";
 import type { AgentMode, AgentModelDefinition, AgentUsage } from "../../../agent-sdk-types.js";
 
 export function modelRef(id: string, variant?: string | null): ModelRef {
@@ -44,4 +44,9 @@ export function usageFromV2(session: SessionInfo): AgentUsage {
     cachedInputTokens: session.tokens.cache.read,
     totalCostUsd: session.cost,
   };
+}
+
+// A step's tokens describe one model call, so its total is the context the model just saw.
+export function contextWindowUsedTokensFromV2(tokens: TokenUsageInfo): number {
+  return tokens.input + tokens.output + tokens.reasoning + tokens.cache.read + tokens.cache.write;
 }
