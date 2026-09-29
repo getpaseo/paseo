@@ -400,7 +400,8 @@ A same-ID config entry without `extends` overrides the plugin's `enabled`, `comm
 description, and model configuration through the normal provider registry. `enabled: false` disables
 selection and discovery. An entry with `extends` defines the user's own provider, shadows the plugin,
 and logs a warning. Overrides validate before plugins load; an override for an absent plugin stays
-inactive and logs a warning naming the unmatched ID on each registry build.
+inactive and logs a warning naming the unmatched ID after built-in and configured plugin startup
+settles (including disabled plugins), then on each installed registry generation.
 Use IDs matching `/^[a-z][a-z0-9-]*$/` for configurable providers. Dots and underscores
 remain valid for plugin registration but cannot be used as config provider IDs.
 

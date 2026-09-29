@@ -3576,7 +3576,69 @@ describe("plugin provider overrides and launch", () => {
     }
   });
 
-  test("warns for unknown overrides after plugin registration without warning for known providers", async () => {
+  test("does not warn for a plugin override during startup before provider registration settles", async () => {
+    const { registration } = provider();
+    const warnings: string[] = [];
+    const logger = pino(
+      { level: "warn" },
+      {
+        write(line: string) {
+          warnings.push(line);
+        },
+      },
+    );
+    const manager = new ProviderSnapshotManager({
+      logger,
+      providerOverrides: {
+        [registration.id]: { command: [process.execPath], env: { PLUGIN_LOGIN: "yes" } },
+      },
+    });
+    try {
+      expect(warnings).toEqual([]);
+      manager.replacePluginProviders([]);
+      expect(warnings).toEqual([]);
+      manager.replacePluginProviders([registration]);
+      manager.settlePluginProviders();
+      expect(warnings).toEqual([]);
+      expect(await manager.getProvider({ provider: registration.id, wait: true })).toMatchObject({
+        status: "ready",
+      });
+    } finally {
+      await manager.shutdown();
+      manager.destroy();
+    }
+  });
+
+  test("warns for unknown overrides when plugin startup settles without registered plugins", async () => {
+    const warnings: string[] = [];
+    const logger = pino(
+      { level: "warn" },
+      {
+        write(line: string) {
+          warnings.push(line);
+        },
+      },
+    );
+    const manager = new ProviderSnapshotManager({
+      logger,
+      providerOverrides: { "typo-provider": { enabled: false } },
+    });
+    try {
+      expect(warnings).toEqual([]);
+      manager.settlePluginProviders();
+      manager.settlePluginProviders();
+      expect(warnings).toHaveLength(1);
+      expect(JSON.parse(warnings[0]!)).toMatchObject({
+        provider: "typo-provider",
+        msg: "Provider override matches no registered provider",
+      });
+    } finally {
+      await manager.shutdown();
+      manager.destroy();
+    }
+  });
+
+  test("warns once for unknown overrides after plugin startup settles without warning for known providers", async () => {
     const { registration } = provider();
     const warnings: string[] = [];
     const logger = pino(
@@ -3596,8 +3658,11 @@ describe("plugin provider overrides and launch", () => {
       },
     });
     try {
-      warnings.length = 0;
+      expect(warnings).toEqual([]);
       manager.replacePluginProviders([registration]);
+      expect(warnings).toEqual([]);
+      manager.settlePluginProviders();
+      manager.settlePluginProviders();
       const unknown = warnings.map((line) => JSON.parse(line) as { provider: string; msg: string });
       expect(unknown).toEqual([
         expect.objectContaining({
