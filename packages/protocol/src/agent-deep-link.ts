@@ -36,7 +36,7 @@ export function parseAgentDeepLink(input: string): AgentDeepLinkTarget | null {
   }
 
   if (
-    // COMPAT(pandaosAgentDeepLink): added in v0.9.1, remove after all branded desktop links use paseo.
+    // COMPAT(pandaosAgentDeepLink): added in v0.9.1, remove after 2027-03-31 once branded desktop links use paseo.
     (url.protocol !== "paseo:" && url.protocol !== "pandaos:") ||
     url.hostname !== "h" ||
     url.username ||
