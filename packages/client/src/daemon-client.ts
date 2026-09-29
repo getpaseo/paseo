@@ -426,12 +426,20 @@ export interface DaemonClientTrace {
 
 export interface SendMessageOptions {
   messageId?: string;
-  /** What happens when the agent is mid-turn. The daemon interrupts the turn when omitted. */
+  /**
+   * What happens when the agent is mid-turn. The daemon interrupts the turn when omitted.
+   * "queue" needs server_info.features.agentPromptQueue.
+   */
   activeTurnBehavior?: ActiveTurnBehavior;
   /** Only meaningful with activeTurnBehavior "steer". Defaults to "replace" server-side. */
   steerFallback?: SteerFallback;
   images?: Array<{ data: string; mimeType: string }>;
   attachments?: SendAgentMessageRequest["attachments"];
+}
+
+export interface SendAgentMessageResult {
+  /** True when the daemon holds the message until the agent's running turn ends. */
+  queued: boolean;
 }
 
 export interface AgentAttentionRequiredNotification {
@@ -3442,7 +3450,7 @@ export class DaemonClient {
     agentId: string,
     text: string,
     options?: SendMessageOptions,
-  ): Promise<void> {
+  ): Promise<SendAgentMessageResult> {
     const requestId = this.createRequestId();
     const messageId = options?.messageId ?? crypto.randomUUID();
     const message = SessionInboundMessageSchema.parse({
@@ -3473,6 +3481,7 @@ export class DaemonClient {
     if (!payload.accepted) {
       throw new Error(payload.error ?? "sendAgentMessage rejected");
     }
+    return { queued: payload.queued === true };
   }
 
   async sendMessage(agentId: string, text: string, options?: SendMessageOptions): Promise<void> {
