@@ -1,38 +1,58 @@
-import { RefreshCw } from "lucide-react-native";
-import { useMemo } from "react";
+import { Plus, RefreshCw } from "lucide-react-native";
+import { useCallback, useMemo, useState } from "react";
 import { Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { settingsStyles } from "@/styles/settings";
 import { SettingsSection } from "@/components/settings/headings/settings-section";
-import { providerUsageCopy } from "./copy";
+import { AddAccountSheet } from "./add-account-sheet";
+import { addAccountCopy, providerUsageCopy } from "./copy";
 import { ProviderUsageList } from "./list";
 import type { ProviderUsageView } from "./types";
 
 export function ProviderUsageSettingsSection({
+  serverId,
   view,
   onRefresh,
 }: {
+  serverId: string;
   view: ProviderUsageView;
   onRefresh: () => void;
 }) {
   const busy = view.kind === "loading" || (view.kind === "ready" && view.isRefreshing);
+  const [adding, setAdding] = useState(false);
+  const handleOpenAdd = useCallback(() => setAdding(true), []);
+  const handleCloseAdd = useCallback(() => {
+    setAdding(false);
+    onRefresh();
+  }, [onRefresh]);
 
   const refreshButton = useMemo(
     () => (
-      <Button
-        variant="ghost"
-        size="sm"
-        leftIcon={RefreshCw}
-        loading={busy}
-        onPress={onRefresh}
-        accessibilityLabel={providerUsageCopy.refresh}
-      >
-        {busy ? providerUsageCopy.refreshing : providerUsageCopy.refresh}
-      </Button>
+      <View style={styles.trailing}>
+        <Button
+          variant="ghost"
+          size="sm"
+          leftIcon={Plus}
+          onPress={handleOpenAdd}
+          testID="provider-usage-add-account"
+        >
+          {addAccountCopy.add}
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          leftIcon={RefreshCw}
+          loading={busy}
+          onPress={onRefresh}
+          accessibilityLabel={providerUsageCopy.refresh}
+        >
+          {busy ? providerUsageCopy.refreshing : providerUsageCopy.refresh}
+        </Button>
+      </View>
     ),
-    [busy, onRefresh],
+    [busy, handleOpenAdd, onRefresh],
   );
 
   return (
@@ -42,6 +62,7 @@ export function ProviderUsageSettingsSection({
       trailing={refreshButton}
     >
       <ProviderUsageBody view={view} onRefresh={onRefresh} />
+      <AddAccountSheet serverId={serverId} visible={adding} onClose={handleCloseAdd} />
     </SettingsSection>
   );
 }
@@ -83,6 +104,7 @@ function ProviderUsageBody({
 }
 
 const styles = StyleSheet.create((theme) => ({
+  trailing: { flexDirection: "row", gap: theme.spacing[1] },
   emptyCard: {
     padding: theme.spacing[4],
     alignItems: "center",

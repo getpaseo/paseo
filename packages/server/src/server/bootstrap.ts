@@ -202,6 +202,7 @@ import type {
   AgentProviderRuntimeSettingsMap,
   ProviderOverride,
 } from "./agent/provider-launch-config.js";
+import type { ProviderOverrides } from "@getpaseo/protocol/provider-config";
 import { loadPersistedConfig, type PersistedConfig } from "./persisted-config.js";
 import { createServiceProxySubsystem, type ServiceProxySubsystem } from "./service-proxy.js";
 import { releaseWorkspaceServicePortPlan } from "./workspace-service-port-registry.js";
@@ -1261,7 +1262,21 @@ export async function createPaseoDaemon(
     );
   };
 
-  const providerUsageService = new ProviderUsageService({ logger });
+  const providerUsageService = new ProviderUsageService({
+    logger,
+    listProfiles: () =>
+      // The persisted type narrows providers to runtime settings; the parsed file carries the
+      // full profile override (extends, label, enabled).
+      Object.entries(
+        (loadPersistedConfig(config.paseoHome).agents?.providers ?? {}) as ProviderOverrides,
+      ).map(([id, provider]) => ({
+        id,
+        extends: provider?.extends ?? null,
+        label: provider?.label ?? null,
+        enabled: provider?.enabled !== false,
+        env: provider?.env ?? {},
+      })),
+  });
   const getProviderUsageForRouting = () => providerUsageService.listUsage().catch(() => null);
   const createRouter = createSystemOneCreateRouter({
     paseoHome: config.paseoHome,
@@ -1884,6 +1899,7 @@ export async function createPaseoDaemon(
               workspaceLabelService,
               resourcePolicyRuntime,
               browserActivity,
+              providerUsageService,
             );
             pluginRuntime.bindPaseoSessionHost(wsServer);
             await pluginRuntime.start();

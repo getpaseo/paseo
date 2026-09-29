@@ -16,3 +16,18 @@ export const providerUsageCopy = {
   retry: "Try again",
   tooltipLoading: "Loading plan usage…",
 } as const;
+
+export const addAccountCopy = {
+  add: "Add account",
+  title: "Add an account",
+  name: "Name",
+  namePlaceholder: "e.g. Plus (private)",
+  folder: "Login folder on the host",
+  taken: "An account with this name already exists.",
+  failed: "Could not add the account.",
+  cancel: "Cancel",
+  save: "Add",
+  created: "Account added.",
+  loginHint: "Sign in to it once on the host, then its usage shows up here:",
+  done: "Done",
+} as const;

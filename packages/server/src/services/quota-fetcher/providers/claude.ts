@@ -81,6 +81,9 @@ interface ClaudeCredentialRecord {
 }
 
 interface ClaudeQuotaProviderOptions {
+  /** A provider profile (claude-work, …) reports under its own id and label. */
+  providerId?: string;
+  displayName?: string;
   logger: Logger;
   claudeHome?: string;
   claudeKeychainReader?: () => Promise<unknown | null>;
@@ -338,8 +341,8 @@ export async function readClaudeKeychainCredentials(
 }
 
 export class ClaudeQuotaProvider implements ProviderUsageFetcher {
-  readonly providerId = "claude";
-  readonly displayName = "Claude";
+  readonly providerId: string;
+  readonly displayName: string;
 
   private readonly logger: Logger;
   private readonly claudeHome: string;
@@ -348,6 +351,8 @@ export class ClaudeQuotaProvider implements ProviderUsageFetcher {
   private readonly fetchApi: ProviderApiFetch;
 
   constructor(options: ClaudeQuotaProviderOptions) {
+    this.providerId = options.providerId ?? "claude";
+    this.displayName = options.displayName ?? "Claude";
     this.logger = options.logger.child({ module: "claude-quota-provider" });
     this.claudeHome =
       options.claudeHome || process.env["CLAUDE_HOME"] || join(homedir(), ".claude");

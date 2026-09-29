@@ -378,6 +378,14 @@ function resolveCapabilityReason(params: {
   return state.message;
 }
 
+// The daemon's instance knows the account profiles; tests construct the server without one.
+function resolveProviderUsageService(
+  service: ProviderUsageService | undefined,
+  logger: pino.Logger,
+): ProviderUsageService {
+  return service ?? new ProviderUsageService({ logger });
+}
+
 function resolveVerifyDependencies(
   host: DaemonPlaywrightHost | null | undefined,
   evidence: EvidenceStore | null | undefined,
@@ -675,6 +683,7 @@ export class VoiceAssistantWebSocketServer {
     workspaceLabelService?: WorkspaceLabelService,
     resourcePolicyRuntime?: Pick<ResourcePolicyRuntime, "checkStatusRead">,
     browserActivity?: BrowserActivityHub,
+    providerUsageService?: ProviderUsageService,
   ) {
     this.logger = logger.child({ module: "websocket-server" });
     this.workspaceSetupRuntime = workspaceSetupRuntime;
@@ -776,9 +785,7 @@ export class VoiceAssistantWebSocketServer {
       });
     });
 
-    this.providerUsageService = new ProviderUsageService({
-      logger: this.logger,
-    });
+    this.providerUsageService = resolveProviderUsageService(providerUsageService, this.logger);
 
     this.wss = this.createWebSocketServer(server, wsConfig, auth);
     this.startRuntimeMetricsInterval();

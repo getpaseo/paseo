@@ -6582,6 +6582,8 @@ export const ProviderUsageDetailSchema = z.object({
 
 export const ProviderUsageSchema = z.object({
   providerId: z.string(),
+  /** The built-in provider an account profile extends, for its icon. */
+  baseProviderId: z.string().optional(),
   displayName: z.string(),
   status: ProviderUsageStatusSchema,
   planLabel: z.string().nullable(),
