@@ -7,6 +7,7 @@ import {
   type ReactNode,
   type Ref,
 } from "react";
+import { selectionTint } from "@/styles/with-alpha";
 import { useTranslation } from "react-i18next";
 import {
   View,
@@ -1154,7 +1155,13 @@ const styles = StyleSheet.create((theme) => ({
     zIndex: 3,
     ...theme.shadow.md,
   },
+  // Where you are must read at a glance, distinct from hover: accent fill plus a left bar.
   sidebarRowSelected: {
-    backgroundColor: theme.colors.surfaceSidebarSelected,
+    backgroundColor: selectionTint({
+      accent: theme.colors.accent,
+      surface: theme.colors.surfaceSidebar,
+      isWeb: platformIsWeb,
+    }),
+    boxShadow: `inset 3px 0 0 ${theme.colors.accent}`,
   },
 }));

@@ -1,4 +1,5 @@
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
+import { selectionTint } from "@/styles/with-alpha";
 import {
   View,
   Text,
@@ -943,8 +944,8 @@ function ProjectHeaderRow({
     ({ pressed }: PressableStateCallbackType) => [
       styles.projectRow,
       isDragging && styles.projectRowDragging,
-      selected && styles.sidebarRowSelected,
       isHovered && styles.projectRowHovered,
+      selected && styles.sidebarRowSelected,
       pressed && styles.projectRowPressed,
     ],
     [isDragging, selected, isHovered],
@@ -1120,6 +1121,19 @@ function WorkspaceRowInner({
     setIsPressed(false);
     interaction.handlePressOut();
   }, [interaction]);
+
+  // The open workspace scrolls into view, so a long sidebar never hides where you are.
+  useEffect(() => {
+    if (!platformIsWeb || !selected) return undefined;
+    // On first load the sidebar keeps laying out after the row mounts; scroll once it settled.
+    const timer = setTimeout(() => {
+      const row = document.querySelector(
+        `[data-testid="sidebar-workspace-row-${window.CSS.escape(workspace.workspaceKey)}"]`,
+      );
+      row?.scrollIntoView({ block: "nearest" });
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [selected, workspace.workspaceKey]);
 
   const accessibilityState = useMemo(() => ({ selected }), [selected]);
 
@@ -1659,12 +1673,19 @@ function ProjectBlock({
   supportsPinningByServerId: ReadonlyMap<string, boolean>;
   onToggleWorkspacePin: ToggleSidebarWorkspacePin;
 }) {
+  const isActiveWorkspace = useCallback(
+    (workspace: { serverId: string; workspaceId: string }) =>
+      selectionEnabled &&
+      workspace.serverId === activeWorkspaceSelection?.serverId &&
+      workspace.workspaceId === activeWorkspaceSelection.workspaceId,
+    [activeWorkspaceSelection, selectionEnabled],
+  );
   const {
     visibleItems: visibleWorkspaces,
     expanded: workspacesExpanded,
     canToggle: canToggleWorkspaces,
     toggleExpanded: toggleWorkspacesExpanded,
-  } = useLimitedSidebarGroup(project.workspaces);
+  } = useLimitedSidebarGroup(project.workspaces, isActiveWorkspace);
   const rowModel = useMemo(
     () =>
       buildSidebarProjectRowModel({
@@ -1872,7 +1893,8 @@ function ProjectBlock({
         displayName={displayName}
         iconDataUri={iconDataUri}
         statusBucket={aggregateStatusBucket}
-        selected={false}
+        // A collapsed project holding the open session stands in for it.
+        selected={collapsed && project.workspaces.some(isActiveWorkspace)}
         chevron={rowModel.chevron}
         onPress={handleToggleCollapsed}
         worktreeTarget={
@@ -2820,8 +2842,14 @@ const styles = StyleSheet.create((theme) => ({
     zIndex: 3,
     ...theme.shadow.md,
   },
+  // Where you are must read at a glance, distinct from hover: accent fill plus a left bar.
   sidebarRowSelected: {
-    backgroundColor: theme.colors.surfaceSidebarSelected,
+    backgroundColor: selectionTint({
+      accent: theme.colors.accent,
+      surface: theme.colors.surfaceSidebar,
+      isWeb: platformIsWeb,
+    }),
+    boxShadow: `inset 3px 0 0 ${theme.colors.accent}`,
   },
   workspaceRowContainer: {
     position: "relative",

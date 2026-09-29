@@ -1,6 +1,8 @@
 import { memo, useCallback, useMemo, useState, type Ref } from "react";
+import { selectionTint } from "@/styles/with-alpha";
 import { useTranslation } from "react-i18next";
 import { View, Text, type GestureResponderEvent } from "react-native";
+import { isWeb } from "@/constants/platform";
 import { StyleSheet } from "react-native-unistyles";
 import type { HostBadgeModel } from "@/hosts/appearance";
 import type { SidebarWorkspaceEntry } from "@/hooks/use-sidebar-workspaces-list";
@@ -546,8 +548,14 @@ const styles = StyleSheet.create((theme) => ({
     zIndex: 3,
     ...theme.shadow.md,
   },
+  // Where you are must read at a glance, distinct from hover: accent fill plus a left bar.
   sidebarRowSelected: {
-    backgroundColor: theme.colors.surfaceSidebarSelected,
+    backgroundColor: selectionTint({
+      accent: theme.colors.accent,
+      surface: theme.colors.surfaceSidebar,
+      isWeb,
+    }),
+    boxShadow: `inset 3px 0 0 ${theme.colors.accent}`,
   },
   workspaceCreatingText: {
     color: theme.colors.foregroundMuted,
