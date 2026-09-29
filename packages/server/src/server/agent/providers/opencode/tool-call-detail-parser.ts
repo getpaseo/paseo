@@ -312,6 +312,10 @@ const OpencodeKnownToolDetailSchema = z.union([
     z.unknown(),
     (input) => toEditToolDetail(input, null),
   ),
+  // OpenCode v2 reports apply_patch as `patch`.
+  toolDetailBranchByToolName("patch", OpencodeApplyPatchTextInputSchema, z.unknown(), (input) =>
+    toEditToolDetail(input, null),
+  ),
   toolDetailBranchByToolName(
     "apply_diff",
     OpencodeEditInputSchema,
