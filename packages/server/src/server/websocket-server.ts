@@ -1763,6 +1763,8 @@ export class VoiceAssistantWebSocketServer {
         pluginSettings: true,
         pluginTimelineItems: true,
         verifyRecipes: true,
+        // COMPAT(agentHistory): added in v0.9.1, remove gate after 2027-03-29.
+        agentHistory: true,
         ...(this.verifyHost ? { browserCookieImport: true, browserScreencast: true } : {}),
         ...(this.browserActivity
           ? { browserActivity: true, browserHandoff: true, browserMirror: true }

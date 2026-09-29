@@ -2115,6 +2115,53 @@ export const AgentDetachResponseMessageSchema = z.object({
   payload: AgentActionResponsePayloadSchema,
 });
 
+export const AgentHistoryListRequestMessageSchema = z.object({
+  type: z.literal("agent.history.list.request"),
+  /** ISO timestamp; only agents active at or after it. */
+  since: z.string().optional(),
+  limit: z.number().int().positive().max(2000).optional(),
+  includeInternal: z.boolean().optional(),
+  requestId: z.string(),
+});
+
+export const AgentHistoryUsageSchema = z.object({
+  turns: z.number(),
+  inputTokens: z.number(),
+  cachedInputTokens: z.number(),
+  outputTokens: z.number(),
+  totalCostUsd: z.number(),
+});
+
+export const AgentHistoryEntrySchema = z.object({
+  agentId: z.string(),
+  state: z.enum(["active", "archived", "deleted"]),
+  title: z.string().nullable(),
+  /** `paseo.origin` label: user, user:cli, agent:<id>, schedule:<id>, systemd:<unit>, process:<name>, internal, or an integration's value. */
+  origin: z.string().nullable(),
+  parentAgentId: z.string().nullable(),
+  provider: z.string(),
+  model: z.string().nullable(),
+  cwd: z.string(),
+  workspaceId: z.string().nullable(),
+  internal: z.boolean(),
+  createdAt: z.string(),
+  lastActivityAt: z.string().nullable(),
+  archivedAt: z.string().nullable(),
+  deletedAt: z.string().nullable(),
+  summary: z.string().nullable(),
+  usage: AgentHistoryUsageSchema.nullable(),
+  labels: z.record(z.string(), z.string()),
+});
+
+export const AgentHistoryListResponseMessageSchema = z.object({
+  type: z.literal("agent.history.list.response"),
+  payload: z.object({
+    requestId: z.string(),
+    entries: z.array(AgentHistoryEntrySchema),
+    error: z.string().nullable().optional(),
+  }),
+});
+
 export const AgentWorkspaceMoveRequestMessageSchema = z.object({
   type: z.literal("agent.workspace.move.request"),
   agentId: z.string(),
@@ -3468,6 +3515,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   SetAgentFeatureRequestMessageSchema,
   AgentConfigApplyRequestMessageSchema,
   AgentDetachRequestMessageSchema,
+  AgentHistoryListRequestMessageSchema,
   AgentWorkspaceMoveRequestMessageSchema,
   AgentRewindRequestMessageSchema,
   AgentPermissionResponseMessageSchema,
@@ -3827,6 +3875,8 @@ export const ServerInfoStatusPayloadSchema = z
         browserMirror: z.boolean().optional(),
         // COMPAT(browserScreencast): added in v0.9.1, remove gate after 2027-03-27.
         browserScreencast: z.boolean().optional(),
+        // COMPAT(agentHistory): added in v0.9.1, remove gate after 2027-03-29.
+        agentHistory: z.boolean().optional(),
         // COMPAT(skillManagement): added in v0.4.0, remove gate after 2027-08-16.
         skillManagement: z.boolean().optional(),
         // COMPAT(terminalRestoreModes): added in v0.1.81, remove gate after 2026-11-23.
@@ -7139,6 +7189,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   SetAgentFeatureResponseMessageSchema,
   AgentConfigApplyResponseMessageSchema,
   AgentDetachResponseMessageSchema,
+  AgentHistoryListResponseMessageSchema,
   AgentWorkspaceMoveResponseMessageSchema,
   AgentRewindResponseMessageSchema,
   UpdateAgentResponseMessageSchema,
@@ -7362,6 +7413,8 @@ export type SetAgentThinkingResponseMessage = z.infer<typeof SetAgentThinkingRes
 export type SetAgentFeatureResponseMessage = z.infer<typeof SetAgentFeatureResponseMessageSchema>;
 export type AgentConfigApplyResponseMessage = z.infer<typeof AgentConfigApplyResponseMessageSchema>;
 export type AgentDetachResponseMessage = z.infer<typeof AgentDetachResponseMessageSchema>;
+export type AgentHistoryListResponseMessage = z.infer<typeof AgentHistoryListResponseMessageSchema>;
+export type AgentHistoryEntry = z.infer<typeof AgentHistoryEntrySchema>;
 export type AgentRewindResponseMessage = z.infer<typeof AgentRewindResponseMessageSchema>;
 export type UpdateAgentResponseMessage = z.infer<typeof UpdateAgentResponseMessageSchema>;
 export type ProjectRenameResponse = z.infer<typeof ProjectRenameResponseSchema>;
@@ -7543,6 +7596,7 @@ export type SetAgentThinkingRequestMessage = z.infer<typeof SetAgentThinkingRequ
 export type SetAgentFeatureRequestMessage = z.infer<typeof SetAgentFeatureRequestMessageSchema>;
 export type AgentConfigApplyRequestMessage = z.infer<typeof AgentConfigApplyRequestMessageSchema>;
 export type AgentDetachRequestMessage = z.infer<typeof AgentDetachRequestMessageSchema>;
+export type AgentHistoryListRequestMessage = z.infer<typeof AgentHistoryListRequestMessageSchema>;
 export type AgentPermissionResponseMessage = z.infer<typeof AgentPermissionResponseMessageSchema>;
 export type CheckoutStatusRequest = z.infer<typeof CheckoutStatusRequestSchema>;
 export type CheckoutStatusResponse = z.infer<typeof CheckoutStatusResponseSchema>;

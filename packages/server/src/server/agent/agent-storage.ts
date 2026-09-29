@@ -75,6 +75,17 @@ const STORED_AGENT_SCHEMA = z.object({
   internal: z.boolean().optional(),
   archivedAt: z.string().nullable().optional(),
   owner: AgentOwnerSchema.optional(),
+  // Summed over the agent's whole life, across daemon restarts; see agent-usage-totals.ts.
+  usageTotals: z
+    .object({
+      turns: z.number(),
+      inputTokens: z.number(),
+      cachedInputTokens: z.number(),
+      outputTokens: z.number(),
+      totalCostUsd: z.number(),
+      lastReportedCostUsd: z.number().optional(),
+    })
+    .optional(),
 });
 
 export type SerializableAgentConfig = Pick<
@@ -93,6 +104,28 @@ export type StoredAgentRecord = z.infer<typeof STORED_AGENT_SCHEMA>;
 export function parseStoredAgentRecord(value: unknown): StoredAgentRecord {
   return STORED_AGENT_SCHEMA.parse(value);
 }
+
+const TOMBSTONE_SCHEMA = z.object({
+  id: z.string(),
+  provider: z.string(),
+  model: z.string().nullable().optional(),
+  cwd: z.string(),
+  workspaceId: z.string().optional(),
+  title: z.string().nullable().optional(),
+  labels: z.record(z.string(), z.string()).default({}),
+  internal: z.boolean().optional(),
+  createdAt: z.string(),
+  lastActivityAt: z.string().optional(),
+  archivedAt: z.string().nullable().optional(),
+  deletedAt: z.string(),
+  summary: z.string().nullable().optional(),
+  usageTotals: STORED_AGENT_SCHEMA.shape.usageTotals,
+});
+
+/** What survives a deleted agent, so its history and cost stay visible after the record is gone. */
+export type AgentTombstone = z.infer<typeof TOMBSTONE_SCHEMA>;
+
+const TOMBSTONE_SUMMARY_LIMIT = 500;
 
 export class AgentStorage {
   private cache: Map<string, StoredAgentRecord> = new Map();
@@ -204,6 +237,57 @@ export class AgentStorage {
     this.cache.set(agentId, record);
     this.indexOwner(record);
     this.pathById.set(agentId, nextPath);
+  }
+
+  private get tombstoneDir(): string {
+    return path.join(path.dirname(this.baseDir), "agent-tombstones");
+  }
+
+  async writeTombstone(agentId: string, summary: string | null): Promise<void> {
+    await this.load();
+    const record = this.cache.get(agentId);
+    if (!record) return;
+    const tombstone: AgentTombstone = {
+      id: record.id,
+      provider: record.provider,
+      model: record.runtimeInfo?.model ?? record.config?.model ?? null,
+      cwd: record.cwd,
+      workspaceId: record.workspaceId,
+      title: record.title,
+      labels: record.labels,
+      internal: record.internal,
+      createdAt: record.createdAt,
+      lastActivityAt: record.lastActivityAt ?? record.updatedAt,
+      archivedAt: record.archivedAt,
+      deletedAt: new Date().toISOString(),
+      summary: summary ? summary.trim().slice(0, TOMBSTONE_SUMMARY_LIMIT) : null,
+      usageTotals: record.usageTotals,
+    };
+    await fs.mkdir(this.tombstoneDir, { recursive: true });
+    await writeJsonFileAtomic(path.join(this.tombstoneDir, `${agentId}.json`), tombstone);
+  }
+
+  async listTombstones(): Promise<AgentTombstone[]> {
+    let names: string[];
+    try {
+      names = await fs.readdir(this.tombstoneDir);
+    } catch {
+      return [];
+    }
+    const tombstones = await Promise.all(
+      names
+        .filter((name) => name.endsWith(".json"))
+        .map(async (name) => {
+          try {
+            const raw = JSON.parse(await fs.readFile(path.join(this.tombstoneDir, name), "utf8"));
+            return TOMBSTONE_SCHEMA.parse(raw);
+          } catch (error) {
+            this.logger.warn({ err: error, name }, "Skipping unreadable agent tombstone");
+            return null;
+          }
+        }),
+    );
+    return tombstones.filter((entry): entry is AgentTombstone => entry !== null);
   }
 
   beginDelete(agentId: string): void {

@@ -61,6 +61,7 @@ import {
   type WorkspaceSetupSnapshot,
   type WorkspaceDescriptorPayload,
 } from "./messages.js";
+import { buildAgentHistory } from "./agent/agent-history.js";
 import type {
   TerminalManager,
   TerminalWorkspaceContributionChangedEvent,
@@ -2729,6 +2730,8 @@ export class Session {
     switch (msg.type) {
       case "agent.detach.request":
         return this.handleDetachAgentRequest(msg.agentId, msg.requestId);
+      case "agent.history.list.request":
+        return this.handleAgentHistoryListRequest(msg);
       case "agent.workspace.move.request":
         return this.handleMoveAgentWorkspaceRequest(msg);
       default:
@@ -3467,6 +3470,55 @@ export class Session {
     }
   }
 
+  // Not a status read: the economy resource policy limits fetch_agents, and this list must stay usable.
+  private async handleAgentHistoryListRequest(
+    msg: Extract<SessionInboundMessage, { type: "agent.history.list.request" }>,
+  ): Promise<void> {
+    try {
+      const [records, tombstones] = await Promise.all([
+        this.agentStorage.list(),
+        typeof this.agentStorage.listTombstones === "function"
+          ? this.agentStorage.listTombstones()
+          : Promise.resolve([]),
+      ]);
+      const liveUsage = new Map(
+        this.agentManager.listAgents().map((agent) => [agent.id, agent.usageTotals] as const),
+      );
+      const entries = buildAgentHistory({
+        records,
+        tombstones,
+        liveUsage,
+        since: msg.since,
+        limit: msg.limit,
+        includeInternal: msg.includeInternal,
+      });
+      this.emit({
+        type: "agent.history.list.response",
+        payload: { requestId: msg.requestId, entries, error: null },
+      });
+    } catch (error) {
+      this.sessionLogger.error({ err: error }, "Failed to list agent history");
+      this.emit({
+        type: "agent.history.list.response",
+        payload: {
+          requestId: msg.requestId,
+          entries: [],
+          error: error instanceof Error ? error.message : String(error),
+        },
+      });
+    }
+  }
+
+  /** Keeps a deleted agent's title, origin and cost findable; a failure never blocks the delete. */
+  private async recordAgentTombstone(agentId: string, summary: string | null): Promise<void> {
+    if (typeof this.agentStorage.writeTombstone !== "function") return;
+    try {
+      await this.agentStorage.writeTombstone(agentId, summary);
+    } catch (error) {
+      this.sessionLogger.warn({ err: error, agentId }, "Failed to record agent tombstone");
+    }
+  }
+
   private async handleDeleteAgentRequest(agentId: string, requestId: string): Promise<void> {
     this.sessionLogger.info({ agentId }, `Deleting agent ${agentId} from registry`);
 
@@ -3474,6 +3526,11 @@ export class Session {
       this.agentManager.getAgent(agentId)?.workspaceId ??
       (await this.agentStorage.get(agentId))?.workspaceId ??
       null;
+
+    // Read while the agent still has its timeline; closing drops it.
+    const tombstoneSummary = await this.agentManager
+      .getLastAssistantMessage(agentId)
+      .catch(() => null);
 
     // File-backed storage still needs an early delete fence before closeAgent().
     beginAgentDeleteIfSupported(this.agentStorage, agentId);
@@ -3492,6 +3549,7 @@ export class Session {
     await this.agentManager.flush();
 
     try {
+      await this.recordAgentTombstone(agentId, tombstoneSummary);
       await this.agentStorage.remove(agentId);
       await this.agentManager.deleteAgentState(agentId);
     } catch (error) {

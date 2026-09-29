@@ -18,6 +18,7 @@ import {
   isDelegatedAgent,
   isOpenAgentTabLabel,
   PARENT_AGENT_ID_LABEL,
+  withOriginLabel,
 } from "@getpaseo/protocol/agent-labels";
 import type { Logger } from "pino";
 import type { ProviderOptions, ToolPolicy } from "@getpaseo/protocol/agent-types";
@@ -97,6 +98,7 @@ import {
   type ProviderSubagentStoreEvent,
 } from "./provider-subagents/store.js";
 import { withTimeout } from "../../utils/promise-timeout.js";
+import { addTurnUsage, type AgentUsageTotals } from "./agent-usage-totals.js";
 import { extractAttention } from "../persistence-hooks.js";
 
 const RELOAD_SESSION_CLOSE_TIMEOUT_MS = 3_000;
@@ -321,6 +323,8 @@ export interface CreateAgentOptions {
   // undefined is an explicit decision: the agent never appears in the sidebar.
   workspaceId: string | undefined;
   owner?: AgentOwner;
+  /** Totals already recorded for this agent id, when it is recreated from its stored record. */
+  usageTotals?: AgentUsageTotals;
 }
 
 export interface AgentManagerOptions {
@@ -445,6 +449,7 @@ interface ManagedAgentBase {
   activeTurnId: string | null;
   activeTurnStartedAt: Date | null;
   lastUsage?: AgentUsage;
+  usageTotals?: AgentUsageTotals;
   lastError?: string;
   attention: AttentionState;
   foregroundTurnWaiters: Set<ForegroundTurnWaiter>;
@@ -1378,7 +1383,8 @@ export class AgentManager {
     const session = await client.createSession(providerLaunchConfig, launchContext, createOptions);
     await this.requireExternalMcpSupport(session, storedConfig);
     const agent = await this.registerSession(session, storedConfig, resolvedAgentId, {
-      labels: options.labels,
+      labels: withOriginLabel(options.labels, { internal: config.internal }),
+      usageTotals: options.usageTotals,
       initialTitle: options.initialTitle,
       workspaceId: options.workspaceId,
       owner: options.owner,
@@ -1414,6 +1420,7 @@ export class AgentManager {
       workspaceId?: string;
       owner?: AgentOwner;
       attention?: AttentionState;
+      usageTotals?: AgentUsageTotals;
     },
     resumeOptions?: AgentResumeSessionOptions,
   ): Promise<ManagedAgent> {
@@ -1446,6 +1453,7 @@ export class AgentManager {
       workspaceId?: string;
       owner?: AgentOwner;
       attention?: AttentionState;
+      usageTotals?: AgentUsageTotals;
     },
     resumeOptions?: AgentResumeSessionOptions,
   ): Promise<ManagedAgent> {
@@ -1695,6 +1703,7 @@ export class AgentManager {
         lastUserMessageAt: existing.lastUserMessageAt,
         historyPrimed: rehydrateFromDisk ? false : preservedHistoryPrimed,
         lastUsage: preservedLastUsage,
+        usageTotals: existing.usageTotals,
         lastError: preservedLastError,
         attention: preservedAttention,
         restoring: true,
@@ -1867,6 +1876,7 @@ export class AgentManager {
         // history of its own to replay into it.
         historyPrimed: true,
         lastUsage: preservedLastUsage,
+        usageTotals: existing.usageTotals,
         lastError: preservedLastError,
         attention: preservedAttention,
       });
@@ -2224,6 +2234,7 @@ export class AgentManager {
         historyPrimed: true,
         lastUserMessageAt: record.lastUserMessageAt ? new Date(record.lastUserMessageAt) : null,
         lastUsage: undefined,
+        usageTotals: record.usageTotals,
         lastError: record.lastError ?? undefined,
         attention,
         internal: record.internal,
@@ -3783,6 +3794,7 @@ export class AgentManager {
       persistence?: AgentPersistenceHandle;
       historyPrimed?: boolean;
       lastUsage?: AgentUsage;
+      usageTotals?: AgentUsageTotals;
       lastError?: string;
       attention?: AttentionState;
       /**
@@ -3946,6 +3958,7 @@ export class AgentManager {
           labels?: Record<string, string>;
           historyPrimed?: boolean;
           lastUsage?: AgentUsage;
+          usageTotals?: AgentUsageTotals;
           lastError?: string;
           attention?: AttentionState;
           persistence?: AgentPersistenceHandle;
@@ -3987,6 +4000,7 @@ export class AgentManager {
       historyPrimed: options?.historyPrimed ?? durableTimelineHasRows,
       lastUserMessageAt: options?.lastUserMessageAt ?? null,
       lastUsage: options?.lastUsage,
+      usageTotals: options?.usageTotals,
       lastError: options?.lastError,
       attention: resolveInitialAttention(options?.attention),
       internal: config.internal ?? false,
@@ -4772,6 +4786,7 @@ export class AgentManager {
     if (terminalDisposition === "stale") return;
     if (event.usage) {
       agent.lastUsage = { ...agent.lastUsage, ...event.usage };
+      agent.usageTotals = addTurnUsage(agent.usageTotals, event.usage);
     }
     // If no usage on turn_completed, keep lastUsage as-is so context window
     // data accumulated during streaming isn't lost when the provider omits

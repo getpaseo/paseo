@@ -15,6 +15,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { lookup } from "mime-types";
 import { parseDuration } from "../../utils/duration.js";
+import { withRunOrigin } from "../../utils/run-origin.js";
 import { collectMultiple } from "../../utils/command-options.js";
 import { resolveProviderAndModel } from "../../utils/provider-model.js";
 import { buildWorkspaceSource } from "../workspace/create.js";
@@ -605,7 +606,7 @@ export async function runRunCommand(
 
     const images = loadRunImages(options.image);
 
-    const labels = parseRunLabels(options.label);
+    const labels = withRunOrigin(parseRunLabels(options.label));
     const env = parseRunEnv(options.env);
     const requestEnv = Object.keys(env).length > 0 ? env : undefined;
 

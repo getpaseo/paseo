@@ -99,6 +99,8 @@ The provider still owns the underlying runtime. Paseo keeps an agent record so t
 
 Archive is a **soft delete**: the agent record stays on disk with `archivedAt` set, the runtime is closed, and the agent disappears from active lists. Archive is **global** — it lives on the server and propagates to every connected client.
 
+Delete removes the record but first writes a tombstone to `agent-tombstones/`, so `agent.history.list` still reports the agent with its origin, usage and last answer. That list returns active, archived and deleted agents in one call and does not count as a status read under the economy resource policy.
+
 Archive sets `archivedAt`, invokes the provider's native archive hook, and cascades to managed
 children.
 

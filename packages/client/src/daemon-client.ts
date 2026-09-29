@@ -35,6 +35,7 @@ import {
 import { validateWSOutboundMessage } from "@getpaseo/protocol/validation/ws-outbound";
 import type {
   AgentStreamEventPayload,
+  AgentHistoryEntry,
   AgentSnapshotPayload,
   ProjectPlacementPayload,
   AgentPermissionResolvedMessage,
@@ -3091,6 +3092,26 @@ export class DaemonClient {
     if (!payload.accepted) {
       throw new Error(payload.error ?? "detachAgent rejected");
     }
+  }
+
+  /**
+   * Active, archived and deleted agents with origin and cumulative usage. Requires
+   * server_info.features.agentHistory; not counted against the economy status-read limit.
+   */
+  async listAgentHistory(
+    options: { since?: string; limit?: number; includeInternal?: boolean } = {},
+  ): Promise<AgentHistoryEntry[]> {
+    const payload =
+      await this.sendNamespacedCorrelatedSessionRequest<"agent.history.list.response">({
+        message: {
+          type: "agent.history.list.request",
+          ...options,
+        },
+      });
+    if (payload.error) {
+      throw new Error(payload.error);
+    }
+    return payload.entries;
   }
 
   async moveAgentToWorkspace(agentId: string, workspaceId: string): Promise<void> {

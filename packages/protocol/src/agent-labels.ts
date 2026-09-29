@@ -29,3 +29,26 @@ export function hasOpenAgentTab(labels: Record<string, unknown> | null | undefin
     ([label, value]) => isOpenAgentTabLabel(label) && value === "true",
   );
 }
+
+// Who started a session: "user", "user:cli", "agent:<id>", "schedule:<id>", "internal",
+// "systemd:<unit>", "process:<name>" or an integration's own value such as "paperclip:<agent>".
+export const ORIGIN_LABEL = "paseo.origin";
+
+/** Labels with `paseo.origin` filled in from what the daemon knows, unless a caller already set it. */
+export function withOriginLabel(
+  labels: Record<string, string> | undefined,
+  options: { internal?: boolean },
+): Record<string, string> {
+  const current = labels ?? {};
+  if (current[ORIGIN_LABEL]?.trim()) return current;
+  return { ...current, [ORIGIN_LABEL]: deriveOrigin(current, options) };
+}
+
+function deriveOrigin(labels: Record<string, string>, options: { internal?: boolean }): string {
+  if (options.internal) return "internal";
+  const scheduleId = labels["paseo.schedule-id"];
+  if (scheduleId) return `schedule:${scheduleId}`;
+  const parentAgentId = getParentAgentIdFromLabels(labels);
+  if (parentAgentId) return `agent:${parentAgentId}`;
+  return "user";
+}

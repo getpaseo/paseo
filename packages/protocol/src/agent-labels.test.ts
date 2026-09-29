@@ -37,3 +37,19 @@ describe("agent label policy", () => {
     expect(isOpenAgentTabLabel("custom.open-agent-tab.client-a")).toBe(false);
   });
 });
+
+describe("withOriginLabel", () => {
+  test("derives the origin from what started the session", async () => {
+    const { withOriginLabel } = await import("./agent-labels.js");
+    expect(withOriginLabel(undefined, {})["paseo.origin"]).toBe("user");
+    expect(withOriginLabel({}, { internal: true })["paseo.origin"]).toBe("internal");
+    expect(withOriginLabel({ "paseo.schedule-id": "s1" }, {})["paseo.origin"]).toBe("schedule:s1");
+    expect(withOriginLabel({ "paseo.parent-agent-id": "a1" }, {})["paseo.origin"]).toBe("agent:a1");
+  });
+
+  test("keeps an origin the caller set", async () => {
+    const { withOriginLabel } = await import("./agent-labels.js");
+    const labels = { "paseo.origin": "systemd:g4-watch.service", "paseo.parent-agent-id": "a1" };
+    expect(withOriginLabel(labels, {})).toBe(labels);
+  });
+});
