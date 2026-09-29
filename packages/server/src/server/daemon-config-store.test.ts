@@ -47,6 +47,7 @@ function reloadableSystemOne(systemOne: NonNullable<PersistedConfig["daemon"]>["
   return {
     enabled: systemOne?.enabled ?? false,
     model: systemOne?.model ?? "jev-latest",
+    endpoint: systemOne?.endpoint ?? "https://api.typesafe.ai/v1/systemone",
     minimumConfidence: systemOne?.minimumConfidence ?? 0.5,
     configured: false,
     credentialSource: null,
@@ -142,6 +143,7 @@ describe("DaemonConfigStore", () => {
       systemOne: {
         enabled: false,
         model: "jev-latest",
+        endpoint: "https://api.typesafe.ai/v1/systemone",
         minimumConfidence: 0.5,
         configured: false,
         credentialSource: null,
@@ -151,7 +153,12 @@ describe("DaemonConfigStore", () => {
     });
 
     store.patch({
-      systemOne: { enabled: true, model: "jev-1.12", minimumConfidence: 0.7 },
+      systemOne: {
+        enabled: true,
+        model: "jev-1.12",
+        endpoint: "https://api.typesafe.ai/v1/systemone",
+        minimumConfidence: 0.7,
+      },
       systemOneApiKey: "write-only-key",
     });
 
@@ -159,6 +166,7 @@ describe("DaemonConfigStore", () => {
     expect(persisted.daemon?.systemOne).toEqual({
       enabled: true,
       model: "jev-1.12",
+      endpoint: "https://api.typesafe.ai/v1/systemone",
       minimumConfidence: 0.7,
     });
     expect(JSON.stringify(persisted)).not.toContain("write-only-key");

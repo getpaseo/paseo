@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 
-const TYPESAFE_API_URL = "https://api.typesafe.ai/v1/systemone";
+export const DEFAULT_TYPESAFE_API_ENDPOINT = "https://api.typesafe.ai/v1/systemone";
 const DEFAULT_TYPESAFE_MODEL = "jev-latest";
 const DEFAULT_TIMEOUT_MS = 15_000;
 
@@ -54,6 +54,7 @@ interface TypeSafeSystemOneClientOptions {
   apiKey?: string;
   envFile?: string;
   model?: string;
+  endpoint?: string;
   timeoutMs?: number;
   fetchImpl?: typeof fetch;
 }
@@ -89,18 +90,21 @@ export class TypeSafeSystemOneClient implements TypeSafeDecisionSource {
     const startedAt = performance.now();
 
     try {
-      const response = await (this.options.fetchImpl ?? fetch)(TYPESAFE_API_URL, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          "Content-Type": "application/json",
+      const response = await (this.options.fetchImpl ?? fetch)(
+        this.options.endpoint ?? DEFAULT_TYPESAFE_API_ENDPOINT,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            model: this.options.model ?? process.env.TYPESAFE_MODEL ?? DEFAULT_TYPESAFE_MODEL,
+            ...request,
+          }),
+          signal: controller.signal,
         },
-        body: JSON.stringify({
-          model: this.options.model ?? process.env.TYPESAFE_MODEL ?? DEFAULT_TYPESAFE_MODEL,
-          ...request,
-        }),
-        signal: controller.signal,
-      });
+      );
 
       if (!response.ok) {
         throw new TypeSafeHttpError(response.status);

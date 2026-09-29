@@ -2941,6 +2941,7 @@ export class Session {
         configPatch.systemOne?.model ??
           this.daemonConfigStore.get().systemOne?.model ??
           "jev-latest",
+        configPatch.systemOne?.endpoint ?? this.daemonConfigStore.get().systemOne?.endpoint,
       ))
     ) {
       this.emit({

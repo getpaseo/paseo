@@ -42,7 +42,14 @@ describe("isSystemOneExcluded", () => {
     const source = createConfiguredSystemOneDecisionSource(
       home,
       {
-        get: () => ({ systemOne: { enabled: true, model: "jev-latest", minimumConfidence: 0.5 } }),
+        get: () => ({
+          systemOne: {
+            enabled: true,
+            model: "jev-latest",
+            endpoint: "https://api.typesafe.ai/v1/systemone",
+            minimumConfidence: 0.5,
+          },
+        }),
       } as unknown as Pick<DaemonConfigStore, "get">,
       () => "/work/company/app",
     );

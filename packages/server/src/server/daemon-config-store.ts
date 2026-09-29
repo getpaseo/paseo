@@ -21,8 +21,12 @@ interface SupportedMutableConfigPatch {
   mcp?: { injectIntoAgents?: boolean };
   browserTools?: { enabled?: boolean };
   systemOne?: Partial<
-    Pick<NonNullable<MutableDaemonConfig["systemOne"]>, "enabled" | "model" | "minimumConfidence">
+    Pick<
+      NonNullable<MutableDaemonConfig["systemOne"]>,
+      "enabled" | "model" | "endpoint" | "minimumConfidence"
+    >
   >;
+  paperclip?: Partial<NonNullable<MutableDaemonConfig["paperclip"]>>;
   providers?: MutableDaemonConfig["providers"];
   removeProviders?: string[];
   metadataGeneration?: MutableDaemonConfig["metadataGeneration"];
@@ -188,7 +192,9 @@ const RELOADABLE_PATHS = [
   "daemon.browserTools.enabled",
   "daemon.systemOne.enabled",
   "daemon.systemOne.model",
+  "daemon.systemOne.endpoint",
   "daemon.systemOne.minimumConfidence",
+  "daemon.paperclip",
   "daemon.hostnames",
   "daemon.cors.allowedOrigins",
   "daemon.trustedProxies",
@@ -216,7 +222,9 @@ const PERSISTED_TO_MUTABLE_PATH = new Map<string, string>([
   ["daemon.browserTools.enabled", "browserTools.enabled"],
   ["daemon.systemOne.enabled", "systemOne.enabled"],
   ["daemon.systemOne.model", "systemOne.model"],
+  ["daemon.systemOne.endpoint", "systemOne.endpoint"],
   ["daemon.systemOne.minimumConfidence", "systemOne.minimumConfidence"],
+  ["daemon.paperclip", "paperclip"],
   ["daemon.hostnames", "hostnames"],
   ["daemon.cors.allowedOrigins", "cors.allowedOrigins"],
   ["daemon.trustedProxies", "trustedProxies"],
@@ -272,6 +280,8 @@ function compactOwnedPaths(paths: readonly string[], owners: readonly string[]):
   return Array.from(compacted).sort();
 }
 
+// One flat patch keeps the daemon's mutable surface explicit for reload persistence.
+// oxlint-disable-next-line complexity
 function pickSupportedPatchFields(patch: MutableDaemonConfigPatch): SupportedMutableConfigPatch {
   return {
     ...(patch.relay?.enabled !== undefined ? { relay: { enabled: patch.relay.enabled } } : {}),
@@ -282,6 +292,7 @@ function pickSupportedPatchFields(patch: MutableDaemonConfigPatch): SupportedMut
       ? { browserTools: { enabled: patch.browserTools.enabled } }
       : {}),
     ...(patch.systemOne !== undefined ? { systemOne: patch.systemOne } : {}),
+    ...(patch.paperclip !== undefined ? { paperclip: patch.paperclip } : {}),
     ...(patch.providers !== undefined ? { providers: patch.providers } : {}),
     ...(patch.removeProviders !== undefined ? { removeProviders: patch.removeProviders } : {}),
     ...(patch.metadataGeneration?.providers !== undefined
@@ -390,6 +401,7 @@ export class DaemonConfigStore {
       systemOne: {
         enabled: this.current.systemOne?.enabled ?? false,
         model: this.current.systemOne?.model ?? "jev-latest",
+        endpoint: this.current.systemOne?.endpoint ?? "https://api.typesafe.ai/v1/systemone",
         minimumConfidence: this.current.systemOne?.minimumConfidence ?? 0.5,
         ...status,
       },

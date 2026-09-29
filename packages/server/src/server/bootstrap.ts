@@ -418,6 +418,7 @@ export interface PaseoDaemonConfig {
   systemOne?: {
     enabled: boolean;
     model: string;
+    endpoint?: string;
     minimumConfidence: number;
   };
   git?: {
@@ -610,6 +611,7 @@ function createInitialSystemOneConfig(
   return {
     enabled: config?.enabled ?? false,
     model: config?.model ?? "jev-latest",
+    endpoint: config?.endpoint ?? "https://api.typesafe.ai/v1/systemone",
     minimumConfidence: config?.minimumConfidence ?? 0.5,
     ...credential,
   };

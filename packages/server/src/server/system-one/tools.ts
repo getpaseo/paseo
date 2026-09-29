@@ -139,6 +139,7 @@ export function createConfiguredSystemOneDecisionSource(
           return await new TypeSafeSystemOneClient({
             apiKey: credential.apiKey,
             model: config.model,
+            endpoint: config.endpoint,
           }).decide(request);
         } catch (error) {
           // A stale saved key must not hide a working key from the environment or env file.
@@ -154,9 +155,13 @@ export function createConfiguredSystemOneDecisionSource(
 }
 
 /** Returns false only when TypeSafe explicitly rejects the key; network trouble is not a verdict. */
-export async function isTypeSafeApiKeyAccepted(apiKey: string, model: string): Promise<boolean> {
+export async function isTypeSafeApiKeyAccepted(
+  apiKey: string,
+  model: string,
+  endpoint?: string,
+): Promise<boolean> {
   try {
-    await new TypeSafeSystemOneClient({ apiKey, model, timeoutMs: 10_000 }).decide({
+    await new TypeSafeSystemOneClient({ apiKey, model, endpoint, timeoutMs: 10_000 }).decide({
       state: { check: "paseo-key-validation" },
       questions: {
         valid: { type: "choice", criteria: { yes: "This is a key check", no: "Anything else" } },

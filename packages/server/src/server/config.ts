@@ -26,6 +26,7 @@ import type { RequestedSpeechProviders } from "./speech/speech-types.js";
 import { mergeHostnames, parseHostnamesEnv, type HostnamesConfig } from "./hostnames.js";
 import { resolveGitProcessPolicy } from "../utils/git-process-scheduler.js";
 import type { ResourcePolicy } from "@getpaseo/protocol/messages";
+import { DEFAULT_TYPESAFE_API_ENDPOINT } from "./browser-tools/jev-client.js";
 
 export {
   loadPersistedConfig,
@@ -526,6 +527,7 @@ function resolveSystemOneConfig(persisted: ReturnType<typeof loadPersistedConfig
   return {
     enabled: persisted.daemon?.systemOne?.enabled ?? false,
     model: persisted.daemon?.systemOne?.model ?? "jev-latest",
+    endpoint: persisted.daemon?.systemOne?.endpoint ?? DEFAULT_TYPESAFE_API_ENDPOINT,
     minimumConfidence: persisted.daemon?.systemOne?.minimumConfidence ?? 0.5,
   };
 }
