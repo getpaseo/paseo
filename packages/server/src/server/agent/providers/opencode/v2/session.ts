@@ -35,6 +35,7 @@ import { features } from "./configuration.js";
 import { commands } from "./commands.js";
 import { messages } from "./history.js";
 import { SessionPermissions } from "./permissions.js";
+import { SessionUsage } from "./usage.js";
 
 export class OpenCodeV2Session implements AgentSession {
   readonly provider = "opencode";
@@ -45,6 +46,7 @@ export class OpenCodeV2Session implements AgentSession {
   private readonly permissions: SessionPermissions;
   private readonly turns: SessionTurns;
   private readonly children: SessionChildren;
+  private readonly usage: SessionUsage;
   private stream: Promise<void> | null = null;
   private streamAbort = new AbortController();
   private exited = false;
@@ -100,6 +102,17 @@ export class OpenCodeV2Session implements AgentSession {
         for (const request of this.permissions.list())
           await this.permissions.respondToPermission(request.id, { behavior: "deny" });
       },
+    });
+    this.usage = new SessionUsage({
+      client: () => this.client,
+      cwd: config.cwd,
+      info: () => this.info,
+      emit: (event) => this.emit(event),
+      reportError: (error) =>
+        this.logger.warn(
+          { error: toDiagnosticErrorMessage(error) },
+          "OpenCode context usage update failed",
+        ),
     });
   }
   get id() {
@@ -465,6 +478,7 @@ export class OpenCodeV2Session implements AgentSession {
       return;
     }
     this.permissions.observe(event);
+    this.usage.observe(event);
     this.turns.observe(event);
     this.scheduleReconcile();
   }
