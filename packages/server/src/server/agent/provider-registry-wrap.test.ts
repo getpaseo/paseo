@@ -18,7 +18,9 @@ type OptionalAgentSessionMethodName = {
 }[keyof AgentSession];
 
 const OPTIONAL_AGENT_SESSION_METHOD_NAMES = [
+  "steerActiveTurn",
   "listCommands",
+  "listMcpServers",
   "setModel",
   "setThinkingOption",
   "setFeature",
@@ -122,9 +124,19 @@ class FakeSession implements AgentSession {
     this.recordedCalls.push("close");
   }
 
+  async steerActiveTurn() {
+    this.recordedCalls.push("steerActiveTurn");
+    return { status: "accepted" as const };
+  }
+
   async listCommands() {
     this.recordedCalls.push("listCommands");
     return [];
+  }
+
+  async listMcpServers() {
+    this.recordedCalls.push("listMcpServers");
+    return null;
   }
 
   async setModel() {
@@ -172,7 +184,9 @@ describe("wrapSessionProvider", () => {
     const session = new FakeSession();
     const wrapped = wrapSessionProvider("custom-claude", session);
 
+    const steer = await wrapped.steerActiveTurn?.("note", { expectedTurnId: "turn-1" });
     await wrapped.listCommands?.();
+    await wrapped.listMcpServers?.();
     await wrapped.setModel?.("sonnet");
     await wrapped.setThinkingOption?.("high");
     await wrapped.setFeature?.("feature-1", true);
@@ -182,8 +196,11 @@ describe("wrapSessionProvider", () => {
     const handler = wrapped.tryHandleOutOfBand?.("/compact");
     await handler?.run({ emit: () => {} });
 
+    expect(steer).toEqual({ status: "accepted" });
     expect(session.recordedCalls).toEqual([
+      "steerActiveTurn",
       "listCommands",
+      "listMcpServers",
       "setModel",
       "setThinkingOption",
       "setFeature",
@@ -193,5 +210,12 @@ describe("wrapSessionProvider", () => {
       "tryHandleOutOfBand",
       "tryHandleOutOfBand.run",
     ]);
+  });
+
+  test("keeps the imported timeline of the inner session", () => {
+    const session = new FakeSession();
+    const timeline = [{ type: "user_message", text: "hi" }] as never;
+    Object.assign(session, { initialTimeline: timeline });
+    expect(wrapSessionProvider("custom-claude", session).initialTimeline).toBe(timeline);
   });
 });
