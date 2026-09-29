@@ -1,4 +1,4 @@
-import type { SessionMessageInfo } from "@opencode/client";
+import type { ModelInfo, SessionMessageInfo } from "@opencode/client";
 import { describe, expect, test } from "vitest";
 
 import { createTestLogger } from "../../../../../test-utils/test-logger.js";
@@ -7,6 +7,223 @@ import { OpenCodeV2AgentClient } from "./agent.js";
 import { V2Harness } from "../test-utils/v2-harness.js";
 
 describe("OpenCode v2 session lifecycle", () => {
+  test.each([
+    { variants: ["medium", "custom"], selected: "medium", expected: "medium" },
+    { variants: ["custom"], selected: "custom", expected: "custom" },
+    { variants: ["high"], selected: "medium", expected: undefined },
+    { variants: [], selected: "medium", expected: undefined },
+    { variants: ["medium"], selected: "default", expected: undefined },
+  ])(
+    "model switches retain only supported variants: $selected / $variants",
+    async ({ variants, selected, expected }) => {
+      const harness = new V2Harness();
+      const target: ModelInfo = {
+        id: "target",
+        modelID: "target",
+        providerID: "test",
+        name: "Target",
+        capabilities: { tools: true, input: ["text"], output: ["text"] },
+        variants: variants.map((id) => ({ id })),
+        time: { released: 1 },
+        cost: [],
+        status: "active",
+        enabled: true,
+        limit: { context: 200000, output: 10000 },
+      };
+      harness.info.model = { providerID: "test", id: "source", variant: selected };
+      harness.api.model.list = async () => ({ location: harness.info.location, data: [target] });
+      harness.api.session.switchModel = async ({ model }) => {
+        harness.info.model = model;
+      };
+      const client = new OpenCodeV2AgentClient({
+        logger: createTestLogger(),
+        runtime: harness.runtime,
+      });
+      const session = await client.createSession({
+        provider: "opencode",
+        cwd: "/tmp/project",
+        model: "test/source",
+        thinkingOptionId: selected,
+      });
+      const events: AgentStreamEvent[] = [];
+      session.subscribe((event) => events.push(event));
+      try {
+        await session.setModel!("test/target");
+        expect(await session.getRuntimeInfo()).toMatchObject({
+          model: "test/target",
+          thinkingOptionId: expected ?? null,
+        });
+        expect(session.describePersistence().metadata?.thinkingOptionId).toBe(expected);
+        expect(events).toContainEqual({
+          type: "thinking_option_changed",
+          provider: "opencode",
+          thinkingOptionId: expected ?? null,
+        });
+        await expect(session.setModel!("test/missing")).rejects.toThrow(
+          "OpenCode model unavailable",
+        );
+        harness.api.session.switchModel = async () => {
+          throw new Error("Switch failed");
+        };
+        await expect(session.setModel!("test/target")).rejects.toThrow("Switch failed");
+        expect(session.describePersistence().metadata?.thinkingOptionId).toBe(expected);
+        expect(harness.info.model).toEqual({
+          providerID: "test",
+          id: "target",
+          ...(expected ? { variant: expected } : {}),
+        });
+        harness.api.session.switchModel = async ({ model }) => {
+          harness.info.model = model;
+        };
+        harness.api.model.default = async () => ({ location: harness.info.location, data: target });
+        await session.setThinkingOption!("unsupported");
+        await session.setModel!(null);
+        expect((await session.getRuntimeInfo()).thinkingOptionId).toBeNull();
+        harness.api.model.list = async () => {
+          throw new Error("Catalog unavailable");
+        };
+        await expect(session.setModel!("test/source")).rejects.toThrow("Catalog unavailable");
+        expect((await session.getRuntimeInfo()).model).toBe("test/target");
+      } finally {
+        await session.close();
+      }
+    },
+  );
+
+  test("restores each same-directory agent environment on reconnect and resume", async () => {
+    const first = new V2Harness();
+    const second = new V2Harness();
+    first.info.id = "session-first";
+    second.info.id = "session-second";
+    const environments = new Map<string, Record<string, string>>();
+    const bind = async (input: { sessionID: string; variables: Record<string, string> }) => {
+      environments.set(input.sessionID, { ...input.variables });
+    };
+    first.api.session.environment = bind;
+    second.api.session.environment = bind;
+    const clients = [first, second].map(
+      (harness) =>
+        new OpenCodeV2AgentClient({
+          logger: createTestLogger(),
+          runtime: harness.runtime,
+          settings: {
+            env: {
+              PASEO_ENV_TEST: "configured",
+              PASEO_AGENT_ID: "configured",
+              ELECTRON_RUN_AS_NODE: "1",
+              PASEO_SUPERVISED: "1",
+              CLAUDECODE: "1",
+            },
+          },
+        }),
+    );
+    const config = { provider: "opencode" as const, cwd: "/tmp/project" };
+    const launches = ["first", "second"].map((id) => ({
+      env: { PASEO_AGENT_ID: id, PASEO_AGENT_CWD: config.cwd },
+    }));
+    const assertEnvironment = (index: number) => {
+      const env = environments.get([first, second][index].info.id);
+      expect(env?.PATH).toBe(process.env.PATH);
+      expect(env).toMatchObject({ ...launches[index].env, PASEO_ENV_TEST: "configured" });
+      expect(env?.USER).toBe(process.env.USER);
+      for (const key of [
+        "ELECTRON_RUN_AS_NODE",
+        "PASEO_SUPERVISED",
+        "CLAUDECODE",
+        "ESBUILD_BINARY_PATH",
+        "PASEO_NODE_ENV",
+      ]) {
+        expect(env).not.toHaveProperty(key);
+      }
+    };
+    const sessions = await Promise.all(
+      clients.map((client, i) => client.createSession(config, launches[i])),
+    );
+    try {
+      assertEnvironment(0);
+      assertEnvironment(1);
+      environments.clear();
+      first.push({ id: "reconnected-first", created: 2, type: "server.connected", data: {} });
+      second.push({ id: "reconnected-second", created: 2, type: "server.connected", data: {} });
+      await expect.poll(() => environments.size).toBe(2);
+      assertEnvironment(0);
+      assertEnvironment(1);
+    } finally {
+      await Promise.all(sessions.map((session) => session.close()));
+    }
+    environments.clear();
+    const resumed = await Promise.all(
+      clients.map((client, i) =>
+        client.resumeSession(sessions[i].describePersistence(), undefined, launches[i]),
+      ),
+    );
+    try {
+      assertEnvironment(0);
+      assertEnvironment(1);
+      expect(first.prompts).toEqual([]);
+      expect(second.prompts).toEqual([]);
+    } finally {
+      await Promise.all(resumed.map((session) => session.close()));
+    }
+  });
+
+  test("reconnects after a helper exits and restores session configuration on the next turn", async () => {
+    const first = new V2Harness();
+    const second = new V2Harness();
+    let exit!: (error: Error) => void;
+    const exited = new Promise<Error>((resolve) => {
+      exit = resolve;
+    });
+    let acquisitions = 0;
+    const client = new OpenCodeV2AgentClient({
+      logger: createTestLogger(),
+      runtime: {
+        acquire: async () => {
+          acquisitions += 1;
+          return acquisitions === 1 ? { ...first.connection, exited } : second.connection;
+        },
+        shutdown: async () => undefined,
+      },
+    });
+    first.wait = () => new Promise<void>(() => undefined);
+    second.prompt = async (input) => {
+      second.history.push({
+        id: "answer",
+        type: "assistant",
+        agent: "build",
+        model: { providerID: "test", id: "model" },
+        time: { created: 2 },
+        content: [{ type: "text", text: "recovered" }],
+      });
+      second.prompts.push(input.text);
+    };
+    const session = await client.createSession(
+      {
+        provider: "opencode",
+        cwd: "/tmp/project",
+        mcpServers: { tools: { type: "stdio", command: "tools" } },
+      },
+      { env: { TOKEN: "test" } },
+    );
+    const running = session.run("before exit");
+    await expect.poll(() => first.prompts).toEqual(["before exit"]);
+    exit(new Error("helper exited"));
+    await expect(running).rejects.toThrow("helper exited");
+    expect(acquisitions).toBe(1);
+    try {
+      expect((await session.run("after exit")).finalText).toBe("recovered");
+      expect(second.prompts).toEqual(["after exit"]);
+      expect(second.mcpAdds).toEqual(["tools"]);
+      expect(second.environments).toMatchObject([
+        { sessionID: "session", variables: { TOKEN: "test", PATH: process.env.PATH } },
+      ]);
+      expect(second.environments).toEqual(first.environments);
+      expect(first.releases).toBe(1);
+    } finally {
+      await session.close();
+    }
+    await expect(session.startTurn("after close")).rejects.toThrow("OpenCode session is closed");
+  });
   test("fails initialization when the event stream ends before connecting", async () => {
     const harness = new V2Harness();
     harness.api.event.subscribe = async function* () {};
@@ -330,7 +547,7 @@ describe("OpenCode v2 session lifecycle", () => {
     );
     try {
       expect(acquires).toEqual([{}]);
-      expect(harness.environments).toEqual([
+      expect(harness.environments).toMatchObject([
         {
           sessionID: "session",
           variables: { PASEO_AGENT_ID: "agent", PASEO_AGENT_CWD: "/tmp/project" },

@@ -260,6 +260,8 @@ interface CodexAppServerAgentDeps {
     extends: string;
   };
   customCodexConfig?: CodexCustomProviderConfig | null;
+  // The CODEX_HOME the session's app-server runs with; prompts and skills are read from it.
+  codexHome?: string;
   _createCodexClient?: (
     child: ChildProcessWithoutNullStreams,
     logger: Logger,
@@ -545,8 +547,8 @@ async function checkCodexLaunchAvailable(launch: ResolvedProviderLaunch) {
   });
 }
 
-function resolveCodexHomeDir(): string {
-  return process.env.CODEX_HOME ?? path.join(os.homedir(), ".codex");
+function resolveCodexHomeDir(env: NodeJS.ProcessEnv): string {
+  return env.CODEX_HOME ?? path.join(os.homedir(), ".codex");
 }
 
 function decodeEscapedChar(next: string): string {
@@ -656,8 +658,7 @@ function parseFrontMatter(markdown: string): {
   return { frontMatter, body };
 }
 
-async function listCodexCustomPrompts(): Promise<AgentSlashCommand[]> {
-  const codexHome = resolveCodexHomeDir();
+async function listCodexCustomPrompts(codexHome: string): Promise<AgentSlashCommand[]> {
   const promptsDir = path.join(codexHome, "prompts");
   let entries: Dirent[];
   try {
@@ -699,6 +700,7 @@ async function listCodexCustomPrompts(): Promise<AgentSlashCommand[]> {
 
 export async function listCodexSkills(
   cwd: string,
+  codexHome: string,
   workspaceGitService?: Pick<WorkspaceGitService, "resolveRepoRoot">,
 ): Promise<AgentSlashCommand[]> {
   const candidates: string[] = [];
@@ -712,7 +714,7 @@ export async function listCodexSkills(
     candidates.push(path.join(repoRoot, ".codex", "skills"));
   }
 
-  candidates.push(path.join(resolveCodexHomeDir(), "skills"));
+  candidates.push(path.join(codexHome, "skills"));
 
   const candidateReads = await Promise.all(
     candidates.map(async (dir) => {
@@ -3354,6 +3356,7 @@ export class CodexAppServerAgentSession implements AgentSession {
   private readonly logger: Logger;
   private readonly config: AgentSessionConfig;
   private readonly asyncQuestions: CodexAsyncQuestions;
+  private readonly codexHome: string;
   private currentMode: string;
   private hasWorkflowModeOverride: boolean;
   private readonly providerOptions: CodexProviderOptions;
@@ -3453,6 +3456,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     private readonly autoReviewEnabled: boolean = false,
     private readonly agentId?: string,
     private readonly initialResumePurpose: "interactive" | "history" = "interactive",
+    private readonly usageEnv: NodeJS.ProcessEnv = process.env,
   ) {
     this.logger = logger.child({
       module: "agent",
@@ -3467,6 +3471,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     this.providerOptions = CodexProviderOptionsSchema.parse(config.providerOptions ?? {});
     this.config = config;
     this.asyncQuestions = new CodexAsyncQuestions(resumeHandle?.metadata?.asyncQuestions);
+    this.codexHome = deps.codexHome ?? resolveCodexHomeDir(process.env);
     this.config.thinkingOptionId = normalizeCodexThinkingOptionId(this.config.thinkingOptionId);
     if (this.config.featureValues?.fast_mode && codexModelSupportsFastMode(this.config.model)) {
       this.serviceTier = "fast";
@@ -3479,6 +3484,17 @@ export class CodexAppServerAgentSession implements AgentSession {
       this.currentThreadId = this.resumeHandle.sessionId;
       this.historyPending = true;
     }
+  }
+
+  async getUsageReference() {
+    if (this.usageEnv.OPENAI_BASE_URL) return null;
+    return {
+      source: "codex",
+      input: {
+        codexHome:
+          this.usageEnv.CODEX_HOME || path.join(this.usageEnv.HOME || os.homedir(), ".codex"),
+      },
+    };
   }
 
   get id(): string | null {
@@ -4037,8 +4053,7 @@ export class CodexAppServerAgentSession implements AgentSession {
   ): Promise<CodexPromptInput> {
     if (commandName.startsWith("prompts:")) {
       const promptName = commandName.slice("prompts:".length);
-      const codexHome = resolveCodexHomeDir();
-      const promptPath = path.join(codexHome, "prompts", `${promptName}.md`);
+      const promptPath = path.join(this.codexHome, "prompts", `${promptName}.md`);
       const raw = await fs.readFile(promptPath, "utf8");
       const parsed = parseFrontMatter(raw);
       return expandCodexCustomPrompt(parsed.body, args);
@@ -4834,6 +4849,7 @@ export class CodexAppServerAgentSession implements AgentSession {
       cwd: this.config.cwd ?? null,
       model: this.config.model ?? null,
       serviceTier: this.serviceTier,
+      config: this.buildCodexInnerConfig(),
       userMessageTurns: this.codexUserMessageTurns(),
       setThreadId: async (threadId) => {
         this.currentThreadId = threadId;
@@ -4941,7 +4957,7 @@ export class CodexAppServerAgentSession implements AgentSession {
   }
 
   async listCommands(): Promise<AgentSlashCommand[]> {
-    const prompts = await listCodexCustomPrompts();
+    const prompts = await listCodexCustomPrompts(this.codexHome);
     if (this.connectionState === "disconnected") {
       await this.connect();
     } else {
@@ -4955,7 +4971,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     }));
     const fallbackSkills =
       this.cachedSkills === null
-        ? await listCodexSkills(this.config.cwd, this.deps.workspaceGitService)
+        ? await listCodexSkills(this.config.cwd, this.codexHome, this.deps.workspaceGitService)
         : [];
     const builtin: AgentSlashCommand[] = [
       {
@@ -7024,9 +7040,10 @@ export class CodexAppServerAgentClient implements AgentClient {
     private readonly deps: CodexAppServerAgentDeps = {},
   ) {}
 
-  private sessionDeps(): CodexAppServerAgentDeps {
+  private sessionDeps(launchEnv: Record<string, string> | undefined): CodexAppServerAgentDeps {
     return {
       ...this.deps,
+      codexHome: resolveCodexHomeDir(buildCodexAppServerEnv(this.runtimeSettings, launchEnv)),
       customCodexConfig: this.customProviderConfig(),
     };
   }
@@ -7138,11 +7155,13 @@ export class CodexAppServerAgentClient implements AgentClient {
       this.logger,
       () =>
         this.spawnAppServer(launchContext?.env, { goalsEnabled, agentId: launchContext?.agentId }),
-      this.sessionDeps(),
+      this.sessionDeps(launchContext?.env),
       options?.persistSession === false,
       goalsEnabled,
       autoReviewEnabled,
       launchContext?.agentId,
+      "interactive",
+      buildCodexAppServerEnv(this.runtimeSettings, launchContext?.env),
     );
     await session.connect();
     return session;
@@ -7169,12 +7188,13 @@ export class CodexAppServerAgentClient implements AgentClient {
       this.logger,
       () =>
         this.spawnAppServer(launchContext?.env, { goalsEnabled, agentId: launchContext?.agentId }),
-      this.sessionDeps(),
+      this.sessionDeps(launchContext?.env),
       false,
       goalsEnabled,
       autoReviewEnabled,
       launchContext?.agentId,
       options?.purpose ?? "interactive",
+      buildCodexAppServerEnv(this.runtimeSettings, launchContext?.env),
     );
     await session.connect();
     return session;

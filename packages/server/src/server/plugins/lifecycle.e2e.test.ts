@@ -423,6 +423,55 @@ test("a clean daemon shutdown leaves a completed plugin-provider agent without a
   expect(persisted?.attentionReason ?? null).not.toBe("error");
 }, 60_000);
 
+test("reloading a plugin leaves a completed plugin-provider agent without an error", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "plugin-provider-reload-"));
+  onTestFinished(() => rm(root, { recursive: true, force: true }));
+  const pluginDirectory = await createProviderPlugin(root);
+  const workspace = path.join(root, "workspace");
+  await mkdir(workspace, { recursive: true });
+
+  const daemon = await createTestPaseoDaemon({
+    paseoHomeRoot: path.join(root, "daemon"),
+    staticDir: path.join(root, "static"),
+    pluginsEnabled: true,
+    plugins: {
+      "shutdown-provider-plugin": { source: "directory", path: pluginDirectory, enabled: true },
+    },
+  });
+  const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws`, appVersion: "0.9.1" });
+  onTestFinished(async () => {
+    await client.close();
+    await daemon.close();
+  });
+  await client.connect();
+  await client.fetchAgents({ subscribe: {} });
+
+  const agent = await client.createAgent({
+    provider: PROVIDER_ID,
+    model: "shutdown-model",
+    cwd: workspace,
+    title: "Reload provider agent",
+  });
+  await client.sendMessage(agent.id, "hello");
+  expect((await client.waitForFinish(agent.id, 30_000)).status).toBe("idle");
+
+  const reloaded = await client.reloadPlugin("shutdown-provider-plugin");
+  expect(reloaded.status).toBe("running");
+
+  const afterReload = await daemon.daemon.agentStorage.get(agent.id);
+  expect(afterReload?.lastError ?? null).toBeNull();
+  expect(afterReload?.attentionReason ?? null).not.toBe("error");
+  const timeline = await client.fetchAgentTimeline(agent.id, {
+    direction: "tail",
+    limit: 0,
+    projection: "canonical",
+  });
+  expect(JSON.stringify(timeline.entries)).not.toContain("Provider connection closed");
+
+  await client.sendMessage(agent.id, "after reload");
+  expect((await client.waitForFinish(agent.id, 30_000)).status).toBe("idle");
+}, 60_000);
+
 test("a provider that never acknowledges session.close does not hold the daemon open", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "plugin-provider-stuck-close-"));
   onTestFinished(() => rm(root, { recursive: true, force: true }));

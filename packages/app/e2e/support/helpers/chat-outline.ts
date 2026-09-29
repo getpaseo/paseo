@@ -3,6 +3,7 @@ import { openSettings } from "./app";
 import { openSettingsSection } from "./settings";
 import { runWorkspaceActionFromCommandCenter } from "./command-center-workspace-actions";
 import { seedMockAgentWorkspace, type MockAgentWorkspace } from "./mock-agent";
+import { loadSessionMessageReaders } from "./new-workspace";
 
 export async function withStreamingMarkdownOutline(
   run: (agent: MockAgentWorkspace) => Promise<void>,
@@ -228,4 +229,23 @@ async function requireBoundingBox(
     throw new Error("Expected the chat outline element to have a layout box");
   }
   return box;
+}
+
+export async function observePromptIndexRequests(page: Page) {
+  const frames = await loadSessionMessageReaders();
+  const agentIds: string[] = [];
+  page.on("websocket", (socket) => {
+    socket.on("framesent", ({ payload }) => {
+      const request = frames.client(payload);
+      if (request?.type === "agent.timeline.list_prompts.request") {
+        agentIds.push(request.agentId);
+      }
+    });
+  });
+  return {
+    async waitForRequestFor(agentId: string) {
+      await expect.poll(() => agentIds).toContain(agentId);
+    },
+    requestedAgentIds: () => [...new Set(agentIds)],
+  };
 }

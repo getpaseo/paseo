@@ -1553,6 +1553,8 @@ export const ptBR: TranslationResources = {
     noFiles: "Nenhum arquivo ou diretório encontrado",
     noCommands: "Nenhum comando encontrado",
     failedToLoad: "Falha ao carregar",
+    chooseProjectForCommands: "Escolha um projeto para ver os comandos",
+    chooseModelForCommands: "Selecione um modelo para ver os comandos",
   },
   loadOlderHistory: {
     failed: "Não foi possível carregar o histórico mais antigo",

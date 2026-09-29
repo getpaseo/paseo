@@ -285,6 +285,19 @@ export interface DaemonServerInfo {
   features?: ServerInfoStatusPayload["features"];
 }
 
+export function toDaemonServerInfo(serverInfo: ServerInfoStatusPayload): DaemonServerInfo {
+  return {
+    serverId: serverInfo.serverId,
+    hostname: serverInfo.hostname ?? null,
+    version: serverInfo.version ?? null,
+    ...(serverInfo.desktopManaged !== undefined
+      ? { desktopManaged: serverInfo.desktopManaged }
+      : {}),
+    ...(serverInfo.capabilities ? { capabilities: serverInfo.capabilities } : {}),
+    ...(serverInfo.features ? { features: serverInfo.features } : {}),
+  };
+}
+
 export interface AgentTimelineCursorState {
   epoch: string;
   startSeq: number;

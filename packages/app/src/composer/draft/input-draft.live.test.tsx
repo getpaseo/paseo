@@ -198,12 +198,15 @@ describe("useAgentInputDraft live contract", () => {
     });
 
     expect(getLatest().composerState?.agentControls.selectedProvider).toBe("codex");
-    expect(getLatest().composerState?.commandDraftConfig).toEqual({
-      provider: "codex",
-      cwd: "/repo",
-      modeId: "auto",
-      model: "gpt-5.4",
-      thinkingOptionId: "high",
+    expect(getLatest().composerState?.commandDraft).toEqual({
+      status: "ready",
+      config: {
+        provider: "codex",
+        cwd: "/repo",
+        modeId: "auto",
+        model: "gpt-5.4",
+        thinkingOptionId: "high",
+      },
     });
 
     const hydratedTextReplacement = getLatest().textReplacement;

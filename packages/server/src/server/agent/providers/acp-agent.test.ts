@@ -222,6 +222,13 @@ function createSessionWithConfig(
   );
 }
 
+test("ACP usage reference uses the provider ID", async () => {
+  for (const provider of ["copilot", "cursor", "kimi", "custom-source"]) {
+    const session = createSessionWithConfig({ provider });
+    expect(await session.getUsageReference()).toEqual({ source: provider, input: {} });
+  }
+});
+
 function createKiroSession(
   options: { waitForInitialCommands?: boolean; initialCommandsWaitTimeoutMs?: number } = {},
   logger: ReturnType<typeof createTestLogger> = createTestLogger(),

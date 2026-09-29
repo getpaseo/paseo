@@ -160,7 +160,7 @@ test("PR routing declares stable behavior ownership", () => {
     ],
     quality: ["**/*.{cjs,js,json,jsx,mjs,ts,tsx}", "packages/expo-two-way-audio/**"],
     hub: ["packages/cli/src/commands/hub/**", "packages/server/src/server/hub/**"],
-    server: ["packages/server/**", "packages/app/e2e/support/fixtures/recording.*"],
+    server: ["plugins/**", "packages/server/**", "packages/app/e2e/support/fixtures/recording.*"],
     desktop: [
       "packages/desktop/**",
       "packages/app/src/desktop/**",

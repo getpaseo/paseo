@@ -13,7 +13,7 @@ export class SessionPermissions {
   private readonly permissionOwners = new Map<string, string>();
   private readonly forms = new Map<string, FormInfo>();
   constructor(
-    private readonly client: V2Api,
+    private readonly getClient: () => V2Api,
     private readonly id: string,
     private readonly config: AgentSessionConfig,
     private readonly emit: (event: AgentStreamEvent) => void,
@@ -37,7 +37,7 @@ export class SessionPermissions {
     const form = this.forms.get(requestId);
     if (form) {
       if (response.behavior === "deny")
-        await this.client.session.form.cancel({ sessionID: form.sessionID, formID: form.id });
+        await this.getClient().session.form.cancel({ sessionID: form.sessionID, formID: form.id });
       else {
         const raw = response.updatedInput?.answers;
         const answer: Record<string, FormValue> = {};
@@ -49,7 +49,7 @@ export class SessionPermissions {
           const normalized = formAnswer(field, value);
           if (normalized !== undefined) answer[field.key] = normalized;
         }
-        await this.client.session.form.reply({
+        await this.getClient().session.form.reply({
           sessionID: form.sessionID,
           formID: form.id,
           answer,
@@ -57,7 +57,7 @@ export class SessionPermissions {
       }
       this.forms.delete(requestId);
     } else {
-      await this.client.permission.reply({
+      await this.getClient().permission.reply({
         sessionID: this.permissionOwners.get(requestId) ?? this.id,
         requestID: requestId,
         decision: permissionReply(response),
@@ -67,8 +67,8 @@ export class SessionPermissions {
   }
   async reconcile(sessionID: string) {
     const [permissions, forms] = await Promise.all([
-      this.client.permission.list({ sessionID }),
-      this.client.session.form.list({ sessionID }),
+      this.getClient().permission.list({ sessionID }),
+      this.getClient().session.form.list({ sessionID }),
     ]);
     for (const request of permissions) {
       if (this.pending.has(request.id)) continue;

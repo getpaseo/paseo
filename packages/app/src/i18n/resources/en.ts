@@ -1547,6 +1547,8 @@ export const en = {
     noFiles: "No files or directories found",
     noCommands: "No commands found",
     failedToLoad: "Failed to load",
+    chooseProjectForCommands: "Choose a project to see commands",
+    chooseModelForCommands: "Select a model to see commands",
   },
   loadOlderHistory: {
     failed: "Couldn't load older history",
