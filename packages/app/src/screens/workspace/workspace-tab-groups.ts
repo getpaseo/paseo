@@ -25,6 +25,26 @@ export interface TabGrouping {
 }
 
 export const TAB_GROUP_COLOR_COUNT = 6;
+const ISSUE_KEY = /\b[A-Z][A-Z0-9]+-\d+\b/;
+
+/**
+ * A Paperclip feature groups all its agents (Boss, Dev, Review, Test); any other agent groups
+ * only itself and the tabs it opened.
+ */
+export function agentTabGroup(
+  agentId: string,
+  labels: Record<string, string> | null | undefined,
+  title: string,
+): { key: string; label: string } {
+  const feature = labels?.["paperclip.feature"] ?? labels?.["paperclip.issue"];
+  if (!feature) return { key: `agent:${agentId}`, label: title };
+  const key = labels?.["paperclip.feature.key"] ?? ISSUE_KEY.exec(title)?.[0];
+  const featureTitle = labels?.["paperclip.feature.title"];
+  return {
+    key: `paperclip:${feature}`,
+    label: [key, featureTitle].filter(Boolean).join(" · ") || "Paperclip",
+  };
+}
 function colorIndexOf(groupKey: string): number {
   let hash = 0;
   for (const char of groupKey) hash = (hash * 31 + char.charCodeAt(0)) | 0;

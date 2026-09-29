@@ -44,7 +44,11 @@ import {
 } from "@/components/ui/context-menu";
 import { useStoreWithEqualityFn } from "zustand/traditional";
 import { useTabGroupCollapseStore } from "@/stores/tab-group-collapse-store";
-import { groupWorkspaceTabs, type TabGroupInfo } from "@/screens/workspace/workspace-tab-groups";
+import {
+  agentTabGroup,
+  groupWorkspaceTabs,
+  type TabGroupInfo,
+} from "@/screens/workspace/workspace-tab-groups";
 import { Combobox, ComboboxItem, type ComboboxProps } from "@/components/ui/combobox";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -579,6 +583,13 @@ function ownerAgentIdOf(
   if (target.kind === "agent") return target.agentId;
   if (target.kind === "browser") return browserOwners[target.browserId];
   return undefined;
+}
+
+function sameLabels(
+  left: Record<string, Record<string, string>>,
+  right: Record<string, Record<string, string>>,
+): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
 }
 
 function sameOwners(left: Record<string, string>, right: Record<string, string>): boolean {
@@ -1124,24 +1135,40 @@ export function WorkspaceDesktopTabsRow(props: WorkspaceDesktopTabsRowProps) {
     },
     sameOwners,
   );
+  const ownerLabels = useStoreWithEqualityFn(
+    useSessionStore,
+    (state) => {
+      const agents = state.sessions[props.normalizedServerId]?.agents;
+      const labels: Record<string, Record<string, string>> = {};
+      for (const item of props.tabs) {
+        const agentId = ownerAgentIdOf(item.tab.target, browserOwners);
+        const agent = agentId ? agents?.get(agentId) : undefined;
+        if (agent) labels[agent.id] = agent.labels;
+      }
+      return labels;
+    },
+    sameLabels,
+  );
   const grouping = useMemo(
     () =>
       groupWorkspaceTabs({
         tabs: props.tabs.map((item) => {
           const target = item.tab.target;
           const ownerAgentId = ownerAgentIdOf(target, browserOwners);
+          const title = presentations.get(item.tab.key)?.label ?? "";
+          const group = ownerAgentId
+            ? agentTabGroup(ownerAgentId, ownerLabels[ownerAgentId], title)
+            : null;
           return {
             key: item.tab.key,
             isActive: item.isActive,
-            groupKey: ownerAgentId ? `agent:${ownerAgentId}` : null,
-            ...(target.kind === "agent"
-              ? { groupLabel: presentations.get(item.tab.key)?.label ?? "" }
-              : {}),
+            groupKey: group?.key ?? null,
+            ...(target.kind === "agent" && group ? { groupLabel: group.label } : {}),
           };
         }),
         collapsedGroups: new Set(collapsedGroups),
       }),
-    [browserOwners, collapsedGroups, presentations, props.tabs],
+    [browserOwners, collapsedGroups, ownerLabels, presentations, props.tabs],
   );
   const resolvedTabs = useMemo(() => {
     const itemByKey = new Map(props.tabs.map((item) => [item.tab.key, item]));
