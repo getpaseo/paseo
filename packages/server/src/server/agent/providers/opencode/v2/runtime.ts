@@ -14,7 +14,7 @@ import {
 } from "../../../provider-launch-config.js";
 import type { ManagedProcessRegistry } from "../../../../managed-processes/managed-processes.js";
 import { resolveOpenCodeHomeDir } from "../paths.js";
-import { OpenCodeHttpError } from "../http-error.js";
+import { createOpenCodeTransport } from "./transport.js";
 import { raceProviderRefreshAbort } from "../../../provider-refresh-deadline.js";
 
 export interface V2Connection {
@@ -166,6 +166,9 @@ export class V2Runtime {
       }),
     });
     const processAbort = new AbortController();
+    // OpenCode's `session.wait` long-poll withholds headers until the loop is idle, so its
+    // transport must not carry undici's default header deadline. See transport.ts.
+    const transport = createOpenCodeTransport({ processAbort: processAbort.signal });
     const exited = new Promise<Error>((resolve) =>
       process.once("exit", (code) => {
         const error = new Error(`OpenCode helper server exited (${code})`);
@@ -191,6 +194,7 @@ export class V2Runtime {
     const stop = () => {
       stopped ??= (async () => {
         await terminateWithTreeKill(process, { gracefulTimeoutMs: 5_000, forceTimeoutMs: 1_000 });
+        await transport.dispose().catch(() => undefined);
         const entry = await record;
         if (entry) await managedProcesses?.remove(entry.id);
       })();
@@ -231,18 +235,7 @@ export class V2Runtime {
         headers: {
           Authorization: `Basic ${Buffer.from(`opencode:${password}`).toString("base64")}`,
         },
-        fetch: async (request, init) => {
-          const signal = init?.signal
-            ? AbortSignal.any([init.signal, processAbort.signal])
-            : processAbort.signal;
-          const response = await fetch(request, { ...init, signal });
-          const html = response.headers.get("content-type")?.includes("text/html") ?? false;
-          if (!response.ok || html) {
-            const requestUrl = request instanceof Request ? request.url : String(request);
-            throw new OpenCodeHttpError(new URL(requestUrl).pathname, response.status, html);
-          }
-          return response;
-        },
+        fetch: transport.fetch,
       });
       await client.server.info({ signal: AbortSignal.timeout(Math.max(1, deadline - Date.now())) });
       const generation: Generation = { client, users: 0, stop, exited };
