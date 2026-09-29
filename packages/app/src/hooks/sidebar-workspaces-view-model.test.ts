@@ -479,6 +479,67 @@ describe("shared sidebar workspace model", () => {
 
     expect(entries.get("srv:clone-a")?.projectViewKey).toBe(projectKey);
   });
+
+  it("drops the diff of workspaces that share one directory, since it is not theirs", () => {
+    const model = buildSidebarWorkspacePlacementModel({
+      projects: [
+        project({ projectKey: "prj_a", workspaceKeys: ["srv:one", "srv:two", "srv:own"] }),
+      ],
+    });
+    const diffStat = { additions: 48, deletions: 13 };
+    const shared = { workspaceDirectory: "/repo/prj_a/checkout", diffStat };
+    const entries = buildSidebarWorkspaceEntries({
+      placements: model.workspaces,
+      sessions: [
+        {
+          serverId: "srv",
+          workspaceAgentActivity: new Map(),
+          workspaces: new Map([
+            [
+              "one",
+              {
+                ...workspace({
+                  id: "one",
+                  name: "a",
+                  projectId: "prj_a",
+                  projectDisplayName: "app",
+                }),
+                ...shared,
+              },
+            ],
+            [
+              "two",
+              {
+                ...workspace({
+                  id: "two",
+                  name: "b",
+                  projectId: "prj_a",
+                  projectDisplayName: "app",
+                }),
+                ...shared,
+              },
+            ],
+            [
+              "own",
+              {
+                ...workspace({
+                  id: "own",
+                  name: "c",
+                  projectId: "prj_a",
+                  projectDisplayName: "app",
+                }),
+                diffStat,
+              },
+            ],
+          ]),
+        },
+      ],
+    });
+
+    expect(entries.get("srv:one")?.diffStat).toBeNull();
+    expect(entries.get("srv:two")?.diffStat).toBeNull();
+    expect(entries.get("srv:own")?.diffStat).toEqual(diffStat);
+  });
 });
 
 describe("shouldShowSidebarHostLabels", () => {

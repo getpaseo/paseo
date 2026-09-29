@@ -152,6 +152,8 @@ export function createSidebarWorkspaceEntry(input: {
   projectViewKey?: string;
   pendingCreateAttempts?: Record<string, PendingCreateAttempt>;
   workspaceAgentActivity?: ReadonlyMap<string, WorkspaceAgentActivity>;
+  /** Another workspace works in the same directory, so the directory's diff is not this one's. */
+  sharesDirectory?: boolean;
 }): SidebarWorkspaceEntry {
   const projectViewKey = input.projectViewKey ?? input.workspace.projectId;
   const effectiveStatus = deriveEffectiveWorkspaceStatus(input);
@@ -175,7 +177,7 @@ export function createSidebarWorkspaceEntry(input: {
     statusBucket: effectiveStatus.status,
     statusEnteredAt: effectiveStatus.enteredAt,
     archivingAt: input.workspace.archivingAt,
-    diffStat: input.workspace.diffStat,
+    diffStat: input.sharesDirectory ? null : input.workspace.diffStat,
     prHint: selectPrHintFromStatus(
       input.workspace.githubRuntime?.pullRequest,
       input.workspace.forge,
@@ -378,6 +380,14 @@ export function buildSidebarWorkspaceEntries(input: {
 
   const sessionByServerId = new Map(input.sessions.map((session) => [session.serverId, session]));
   const entries = new Map<string, SidebarWorkspaceEntry>();
+  const directoryCounts = new Map<string, number>();
+  for (const session of input.sessions) {
+    for (const workspace of session.workspaces.values()) {
+      if (!workspace.workspaceDirectory) continue;
+      const key = `${session.serverId}:${workspace.workspaceDirectory}`;
+      directoryCounts.set(key, (directoryCounts.get(key) ?? 0) + 1);
+    }
+  }
 
   for (const placement of input.placements) {
     const session = sessionByServerId.get(placement.serverId);
@@ -395,6 +405,8 @@ export function buildSidebarWorkspaceEntries(input: {
       projectViewKey: placement.projectViewKey,
       pendingCreateAttempts: input.pendingCreateAttempts,
       workspaceAgentActivity: session.workspaceAgentActivity,
+      sharesDirectory:
+        (directoryCounts.get(`${placement.serverId}:${workspace.workspaceDirectory}`) ?? 0) > 1,
     });
     const previousEntry = input.previousEntries?.get(placement.workspaceKey);
     entries.set(

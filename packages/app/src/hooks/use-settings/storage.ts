@@ -95,6 +95,8 @@ export interface AppSettings {
   toolCallDetailLevel: ToolCallDetailLevel;
   /** Bumped when the default tool call layout changes, so old defaults move with it. */
   toolCallLayoutRevision: number;
+  /** Bumped when the default sidebar trailing slot changes, so old defaults move with it. */
+  sidebarTrailingRevision: number;
   chatOutlineEnabled: boolean;
   vimKeybindings: boolean;
   /** Desktop-only preferences for implicit opens into the ordinary side pane. */
@@ -123,6 +125,7 @@ export const DEFAULT_OPEN_IN_SIDE_PANE_PREFERENCES: OpenInSidePanePreferences = 
 };
 
 const TOOL_CALL_LAYOUT_REVISION = 2;
+const SIDEBAR_TRAILING_REVISION = 1;
 
 export interface Settings extends AppSettings {
   manageBuiltInDaemon: boolean;
@@ -149,13 +152,14 @@ export const DEFAULT_CLIENT_SETTINGS: AppSettings = {
   browserStreamQuality: "smooth",
   browserScrollSpeed: "1",
   workspaceTitleSource: "title",
-  sidebarWorkspaceTrailing: "diff",
+  sidebarWorkspaceTrailing: "timestamp",
   sidebarRowItems: DEFAULT_SIDEBAR_ROW_ITEMS,
   sidebarChecksDisplay: DEFAULT_SIDEBAR_CHECKS_DISPLAY,
   sidebarNavItems: [],
   autoExpandReasoning: false,
   toolCallDetailLevel: "overview",
   toolCallLayoutRevision: TOOL_CALL_LAYOUT_REVISION,
+  sidebarTrailingRevision: SIDEBAR_TRAILING_REVISION,
   chatOutlineEnabled: true,
   vimKeybindings: false,
   openInSidePane: DEFAULT_OPEN_IN_SIDE_PANE_PREFERENCES,
@@ -244,7 +248,7 @@ const StoredAppSettingsSchema = z
     browserStreamQuality: z.enum(["smooth", "sharp", "saver"]).catch("smooth"),
     browserScrollSpeed: z.enum(["0.5", "1", "1.5", "2", "3"]).catch("1"),
     workspaceTitleSource: z.enum(["title", "branch"]).catch("title"),
-    sidebarWorkspaceTrailing: z.enum(["diff", "timestamp", "none"]).catch("diff"),
+    sidebarWorkspaceTrailing: z.enum(["diff", "timestamp", "none"]).catch("timestamp"),
     sidebarRowItems: SidebarRowItemsSchema,
     sidebarChecksDisplay: z
       .enum(["iconAndText", "icon", "none"])
@@ -258,6 +262,7 @@ const StoredAppSettingsSchema = z
       .optional()
       .catch("overview"),
     toolCallLayoutRevision: z.number().optional().catch(undefined),
+    sidebarTrailingRevision: z.number().optional().catch(undefined),
     // COMPAT(compactToolCalls): migrated in v0.1.105, remove after 2027-01-12.
     compactToolCalls: z.boolean().optional().catch(undefined),
     chatOutlineEnabled: z.boolean().catch(true),
@@ -329,6 +334,14 @@ const StoredAppSettingsSchema = z
       },
       toolCallDetailLevel,
       toolCallLayoutRevision: TOOL_CALL_LAYOUT_REVISION,
+      // Revision 1 made "last active" the default; a "diff" saved before it was the old
+      // default rather than a choice.
+      sidebarWorkspaceTrailing:
+        (stored.sidebarTrailingRevision ?? 0) < SIDEBAR_TRAILING_REVISION &&
+        stored.sidebarWorkspaceTrailing === "diff"
+          ? "timestamp"
+          : stored.sidebarWorkspaceTrailing,
+      sidebarTrailingRevision: SIDEBAR_TRAILING_REVISION,
       needsWrite,
     };
   })

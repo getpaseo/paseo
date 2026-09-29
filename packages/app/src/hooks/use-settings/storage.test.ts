@@ -728,6 +728,25 @@ describe("appearance settings", () => {
     expect((await loadAppSettingsFromStorage(chosen)).toolCallDetailLevel).toBe("detailed");
   });
 
+  it("moves the old diff default to last-active once and keeps a later choice", async () => {
+    const before = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({ sidebarWorkspaceTrailing: "diff" }),
+      }),
+    });
+    expect((await loadAppSettingsFromStorage(before)).sidebarWorkspaceTrailing).toBe("timestamp");
+
+    const chosen = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({
+          sidebarWorkspaceTrailing: "diff",
+          sidebarTrailingRevision: 1,
+        }),
+      }),
+    });
+    expect((await loadAppSettingsFromStorage(chosen)).sidebarWorkspaceTrailing).toBe("diff");
+  });
+
   it("migrates a switched-off checks row item to the hidden checks display", async () => {
     const deps = makeDeps({
       storage: createInMemoryKeyValueStorage({
