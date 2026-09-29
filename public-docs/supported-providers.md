@@ -19,6 +19,7 @@ Work out of the box once the underlying CLI is installed and authenticated.
 - [OpenCode](https://opencode.ai/). Open-source coding assistant with multi-provider model support.
 - [Pi](https://pi.dev). Minimal terminal-based coding agent with multi-provider LLM support.
 - [Antigravity](#antigravity). Uses your installed `agy` CLI through a built-in provider plugin.
+- [Muse Code](/docs/muse-code). Meta's terminal coding agent, bundled as a provider plugin.
 
 ### Antigravity
 

@@ -88,12 +88,23 @@ never deletes it. The global `pluginsEnabled` switch remains available.
 
 ## Built-in plugins
 
-Built-in plugins live in `plugins/<id>/` and ship with the daemon. Add a directory and one ID to
-`builtinPlugins` in `packages/server/src/server/plugins/builtin/index.ts`. The workspace, build
-copy, and CI checks cover every listed directory; unlisted directories do not load. Built-ins run
-in process, ignore `pluginsEnabled`, and do not appear in `config.json` or the installed plugin
-list. Their client bundles appear in the plugin catalog. Editing one in development requires a
-daemon restart. Directory, Git, and npm installs cannot use a built-in ID.
+Built-in plugins ship from `plugins/<id>/`, with `paseo-plugin.json`, `index.server.ts`,
+`server/`, and optional client entry and icon. Add the plugin ID to `builtinPlugins` in
+`packages/server/src/server/plugins/builtin/index.ts`; the workspace, build copy, and CI
+checks cover that registry. Unlisted directories do not load.
+
+Built-ins run in process and remain active independently of `pluginsEnabled`. They are
+absent from the installed plugin list and source configuration; their client bundles
+appear in the plugin catalog. Editing one in development requires a daemon restart.
+Directory, Git, and npm installs cannot use a built-in ID.
+
+Provider plugins use separate installation and provider IDs. `muse-provider` registers the
+selectable `muse` provider (Muse Code) and a usage source. Its `status({ launch })` reports
+availability and a diagnostic after the daemon resolves the executable. Configure command,
+environment, or enablement overrides under `agents.providers.muse`. Omit `extends` to keep
+the bundled integration; an entry with `extends` shadows it with a custom provider. See
+[provider contributions](#contribute-a-provider) for the contract and
+[Muse Code](../public-docs/muse-code.md) for setup, settings, and version limitations.
 
 ## Install a Git source
 
