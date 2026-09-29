@@ -21,6 +21,7 @@ import {
 import type { Logger } from "pino";
 import type { ProviderOptions, ToolPolicy } from "@getpaseo/protocol/agent-types";
 import type { ProviderPaseoToolsPolicy } from "@getpaseo/protocol/provider-config";
+import type { AgentProfile } from "@getpaseo/protocol/agent-profile";
 import { z } from "zod";
 import type { TerminalManager } from "../../terminal/terminal-manager.js";
 
@@ -96,6 +97,13 @@ import {
 } from "./provider-subagents/store.js";
 import { withTimeout } from "../../utils/promise-timeout.js";
 import { extractAttention } from "../persistence-hooks.js";
+import {
+  createInTurnRetryPlan,
+  inTurnFallbackExhaustedVisibility,
+  inTurnFallbackVisibility,
+  isQuotaOrRateLimitError,
+  selectNextInTurnFallback,
+} from "../system-one/in-turn-fallback.js";
 
 const RELOAD_SESSION_CLOSE_TIMEOUT_MS = 3_000;
 const INTERRUPT_SESSION_TIMEOUT_MS = 2_000;
@@ -301,6 +309,7 @@ export interface AgentManagerOptions {
   pluginLifecycle?: PluginLifecycle;
   clients?: ProviderClientMap;
   providerDefinitions?: ProviderEnabledMap;
+  getAgentProfiles?: () => readonly AgentProfile[] | undefined;
   idFactory?: () => string;
   registry?: AgentStorage;
   onAgentAttention?: AgentAttentionCallback;
@@ -712,6 +721,7 @@ export class AgentManager {
   private readonly clients = new Map<AgentProvider, AgentClient>();
   private readonly providerEnabled = new Map<AgentProvider, boolean>();
   private readonly providerDefinitions = new Map<AgentProvider, ProviderEnabledFlag>();
+  private readonly getAgentProfiles: () => readonly AgentProfile[];
   private readonly agents = new Map<string, LiveManagedAgent>();
   private readonly timelineStore = new InMemoryAgentTimelineStore();
   // A switched-to provider session starts empty. Its briefing waits here until
@@ -751,6 +761,12 @@ export class AgentManager {
   private logger: Logger;
   private readonly rescueTimeouts: Required<AgentManagerRescueTimeouts>;
   private readonly beforeSteerUnavailableFallback?: AgentManagerOptions["beforeSteerUnavailableFallback"];
+  private readonly activeForegroundPrompts = new Map<
+    string,
+    { prompt: AgentPromptInput; options?: AgentRunOptions }
+  >();
+  private readonly fallbackAttemptedProfiles = new Map<string, Set<string>>();
+  private readonly fallbackTurnIds = new Map<string, Map<string, string>>();
   private readonly resolveWorkspaceForgeConfigDir?: AgentManagerOptions["resolveWorkspaceForgeConfigDir"];
   private acceptingAgentRegistrations = true;
 
@@ -775,6 +791,7 @@ export class AgentManager {
         options.rescueTimeouts?.interruptSessionMs ?? INTERRUPT_SESSION_TIMEOUT_MS,
     };
     this.beforeSteerUnavailableFallback = options.beforeSteerUnavailableFallback;
+    this.getAgentProfiles = () => options.getAgentProfiles?.() ?? [];
     this.resolveWorkspaceForgeConfigDir = options.resolveWorkspaceForgeConfigDir;
     this.agentStreamCoalescer = new AgentStreamCoalescer({
       windowMs: options.agentStreamCoalesceWindowMs ?? AGENT_STREAM_COALESCE_DEFAULT_WINDOW_MS,
@@ -2665,6 +2682,8 @@ export class AgentManager {
     const agent = existingAgent;
     const isReplacement = agent.pendingReplacement;
     agent.lastError = undefined;
+    this.activeForegroundPrompts.set(agentId, { prompt, options });
+    this.fallbackAttemptedProfiles.set(agentId, new Set());
 
     const pendingRun = this.runs.createPendingRun(agentId);
 
@@ -2764,6 +2783,9 @@ export class AgentManager {
 
   private finalizeForegroundTurn(agent: ActiveManagedAgent, turnId?: string): void {
     const mutableAgent = agent;
+    this.activeForegroundPrompts.delete(agent.id);
+    this.fallbackAttemptedProfiles.delete(agent.id);
+    this.fallbackTurnIds.delete(agent.id);
     if (turnId) {
       this.runs.rememberFinalizedTurn(mutableAgent, turnId);
     }
@@ -3884,7 +3906,14 @@ export class AgentManager {
     }
     const agentId = agent.id;
     const unsubscribe = agent.session.subscribe((event: AgentStreamEvent) => {
-      this.enqueueSessionEvent(agentId, event);
+      const providerTurnId = getAgentStreamEventTurnId(event);
+      const logicalTurnId = providerTurnId
+        ? this.fallbackTurnIds.get(agentId)?.get(providerTurnId)
+        : undefined;
+      this.enqueueSessionEvent(
+        agentId,
+        logicalTurnId && "turnId" in event ? { ...event, turnId: logicalTurnId } : event,
+      );
     });
     agent.unsubscribeSession = unsubscribe;
   }
@@ -4327,7 +4356,7 @@ export class AgentManager {
     }
 
     if (!options?.fromHistory) {
-      if (isTurnTerminalEvent(event)) {
+      if (isTurnTerminalEvent(event) && flags.shouldNotifyWaiters) {
         this.runs.settleTerminalRun(agent.id, eventTurnId);
         if (isForegroundEvent) {
           this.finalizeForegroundTurn(agent, eventTurnId);
@@ -4474,6 +4503,7 @@ export class AgentManager {
           isForegroundEvent,
           terminalDisposition,
           options,
+          flags,
         });
       case "turn_canceled":
         this.onStreamTurnCanceled({
@@ -4605,8 +4635,10 @@ export class AgentManager {
     isForegroundEvent: boolean;
     terminalDisposition: ActiveTurnTerminalDisposition;
     options: { fromHistory?: boolean } | undefined;
+    flags: StreamEventFlags;
   }): Promise<void> {
-    const { agent, event, eventTurnId, isForegroundEvent, terminalDisposition, options } = params;
+    const { agent, event, eventTurnId, isForegroundEvent, terminalDisposition, options, flags } =
+      params;
     this.logger.warn(
       {
         agentId: agent.id,
@@ -4623,6 +4655,22 @@ export class AgentManager {
       "handleStreamEvent: turn_failed",
     );
     if (terminalDisposition === "stale") return;
+    if (
+      isForegroundEvent &&
+      !options?.fromHistory &&
+      isQuotaOrRateLimitError({
+        code: event.code,
+        diagnostic: event.diagnostic,
+        message: event.error,
+      })
+    ) {
+      const retried = await this.retryQuotaLimitedForegroundTurn(agent, eventTurnId);
+      if (retried) {
+        flags.shouldDispatchEvent = false;
+        flags.shouldNotifyWaiters = false;
+        return;
+      }
+    }
     if (!isForegroundEvent && !agent.activeForegroundTurnId) {
       agent.lifecycle = "error";
     }
@@ -4637,6 +4685,146 @@ export class AgentManager {
     if (!isForegroundEvent && !agent.activeForegroundTurnId) {
       this.emitState(agent);
     }
+  }
+
+  private async retryQuotaLimitedForegroundTurn(
+    agent: ActiveManagedAgent,
+    logicalTurnId: string | undefined,
+  ): Promise<boolean> {
+    const activePrompt = this.activeForegroundPrompts.get(agent.id);
+    const profiles = this.getAgentProfiles();
+    if (!activePrompt || profiles.length === 0 || !logicalTurnId) {
+      if (profiles.length === 0) {
+        await this.appendTimelineItem(agent.id, inTurnFallbackExhaustedVisibility());
+      }
+      return false;
+    }
+
+    const attempted = this.fallbackAttemptedProfiles.get(agent.id) ?? new Set<string>();
+    const currentProfileId = profiles.find(
+      (profile) =>
+        profile.provider === agent.provider &&
+        (profile.model === undefined || profile.model === agent.config.model),
+    )?.id;
+    const candidate = selectNextInTurnFallback({
+      currentProfileId,
+      currentProvider: agent.provider,
+      currentModel: agent.config.model,
+      profiles,
+      attemptedProfileIds: Array.from(attempted),
+    });
+    if (!candidate) {
+      await this.appendTimelineItem(agent.id, inTurnFallbackExhaustedVisibility());
+      return false;
+    }
+    attempted.add(candidate.profile.id);
+    this.fallbackAttemptedProfiles.set(agent.id, attempted);
+
+    for (const item of inTurnFallbackVisibility(
+      { provider: agent.provider, model: agent.config.model },
+      candidate,
+    )) {
+      await this.appendTimelineItem(agent.id, item);
+    }
+
+    try {
+      await this.applyFallbackCandidate(agent, candidate.profile, candidate.model);
+      const retryPlan = createInTurnRetryPlan({
+        prompt: activePrompt.prompt,
+        history: this.timelineStore.getItems(agent.id),
+        candidate,
+      });
+      const result = await agent.session.startTurn(retryPlan.prompt, activePrompt.options);
+      const providerTurnId = result.turnId;
+      const turnIds = this.fallbackTurnIds.get(agent.id) ?? new Map<string, string>();
+      turnIds.set(providerTurnId, logicalTurnId);
+      this.fallbackTurnIds.set(agent.id, turnIds);
+      agent.activeTurnId = logicalTurnId;
+      agent.activeTurnStartedAt = new Date();
+      agent.lastError = undefined;
+      agent.lifecycle = "running";
+      this.emitState(agent);
+      return true;
+    } catch (error) {
+      this.logger.warn(
+        { err: error, agentId: agent.id, provider: candidate.profile.provider },
+        "Failed to retry quota-limited turn with fallback profile",
+      );
+      return false;
+    }
+  }
+
+  private async applyFallbackCandidate(
+    agent: ActiveManagedAgent,
+    profile: AgentProfile,
+    model: string | undefined,
+  ): Promise<void> {
+    if (profile.provider === agent.provider) {
+      if (agent.session.setModel && model !== agent.config.model) {
+        await agent.session.setModel(model ?? null);
+      }
+      if (profile.modeId && agent.session.setMode && profile.modeId !== agent.config.modeId) {
+        await agent.session.setMode(profile.modeId);
+      }
+      agent.config.model = model;
+      agent.config.modeId = profile.modeId;
+      agent.config.thinkingOptionId = profile.thinkingOptionId;
+      agent.config.featureValues = profile.featureValues;
+      if (agent.runtimeInfo) {
+        agent.runtimeInfo = {
+          ...agent.runtimeInfo,
+          model: model ?? null,
+          modeId: profile.modeId ?? null,
+          thinkingOptionId: profile.thinkingOptionId ?? null,
+        };
+      }
+      return;
+    }
+
+    this.requireEnabledProvider(profile.provider);
+    const client = await this.requireAvailableClient({ provider: profile.provider });
+    const { storedConfig, launchConfig, paseoToolPolicy } = await this.prepareSessionConfig(
+      {
+        ...agent.config,
+        provider: profile.provider,
+        model,
+        modeId: profile.modeId,
+        thinkingOptionId: profile.thinkingOptionId,
+        featureValues: profile.featureValues,
+      },
+      agent.id,
+    );
+    const launchContext = await this.buildLaunchContext(
+      agent.id,
+      client,
+      storedConfig.cwd,
+      paseoToolPolicy,
+      undefined,
+      { reason: "create", purpose: "interactive", workspaceId: agent.workspaceId ?? null },
+    );
+    const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
+    const previousSession = agent.session;
+    if (agent.unsubscribeSession) {
+      agent.unsubscribeSession();
+      agent.unsubscribeSession = null;
+    }
+    try {
+      await previousSession.close();
+    } catch (error) {
+      this.logger.warn({ err: error, agentId: agent.id }, "Failed to close quota-limited session");
+    }
+    const session = await client.createSession(providerLaunchConfig, launchContext);
+    await this.requireExternalMcpSupport(session, storedConfig);
+    this.paseoToolPolicies.set(agent.id, paseoToolPolicy);
+    agent.provider = profile.provider;
+    agent.session = session;
+    agent.config = storedConfig;
+    agent.capabilities = session.capabilities;
+    agent.persistence = attachPersistenceCwd(session.describePersistence(), storedConfig.cwd);
+    agent.runtimeInfo = undefined;
+    agent.currentModeId = profile.modeId ?? null;
+    agent.availableModes = [];
+    this.subscribeToSession(agent);
   }
 
   private onStreamTurnCanceled(params: {

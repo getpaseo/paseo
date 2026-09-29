@@ -19,6 +19,7 @@ import { InMemoryAgentTimelineStore } from "./agent-timeline-store.js";
 import { toAgentPayload } from "./agent-projections.js";
 import { projectTimelineRows } from "./timeline-projection.js";
 import { getOpenAgentTabLabel, PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
+import type { AgentProfile } from "@getpaseo/protocol/agent-profile";
 import { formatSystemNotificationPrompt, startAgentRun } from "./agent-prompt.js";
 import { buildResourcePolicyPrompt } from "../resource-policy.js";
 import { StaleProviderSessionError } from "./stale-provider-session-error.js";
@@ -1512,6 +1513,75 @@ function fakeCodexEmitting(args: FakeCodexEmitterArgs): AgentClient {
 }
 
 const logger = createTestLogger();
+
+test("retries a quota-limited foreground turn with the next configured profile", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-quota-fallback-"));
+  const prompts: AgentPromptInput[] = [];
+  let model: string | null = "codex-opus";
+  let starts = 0;
+  const session = new (class extends TestAgentSession {
+    override async startTurn(prompt: AgentPromptInput): Promise<{ turnId: string }> {
+      prompts.push(prompt);
+      const turnId = `quota-turn-${++starts}`;
+      setTimeout(() => {
+        this.pushEvent({ type: "turn_started", provider: this.provider, turnId });
+        if (starts === 1) {
+          this.pushEvent({
+            type: "turn_failed",
+            provider: this.provider,
+            turnId,
+            error: "provider quota exceeded",
+            code: "rate_limit_exceeded",
+          });
+          return;
+        }
+        this.pushEvent({
+          type: "timeline",
+          provider: this.provider,
+          turnId,
+          item: { type: "assistant_message", text: "continued" },
+        });
+        this.pushEvent({ type: "turn_completed", provider: this.provider, turnId });
+      }, 0);
+      return { turnId };
+    }
+
+    override async setModel(nextModel: string | null): Promise<void> {
+      model = nextModel;
+    }
+  })({ provider: "codex", cwd: workdir, model });
+  const client = new (class extends TestAgentClient {
+    override async createSession(): Promise<AgentSession> {
+      return session;
+    }
+  })();
+  const profiles: AgentProfile[] = [
+    { id: "codex-opus-profile", name: "Opus", provider: "codex", model: "codex-opus" },
+    { id: "codex-sol-profile", name: "Sol", provider: "codex", model: "codex-sol" },
+  ];
+  const manager = new AgentManager({
+    clients: { codex: client },
+    getAgentProfiles: () => profiles,
+    logger,
+  });
+  const agent = await manager.createAgent({ provider: "codex", cwd: workdir, model }, undefined, {
+    workspaceId: undefined,
+  });
+  const result = await manager.runAgent(agent.id, "Keep the original prompt");
+  const timeline = manager.fetchTimeline(agent.id, { projection: "canonical" });
+
+  expect(starts).toBe(2);
+  expect(prompts).toEqual(["Keep the original prompt", "Keep the original prompt"]);
+  expect(model).toBe("codex-sol");
+  expect(result.finalText).toBe("continued");
+  expect(timeline.rows.map((entry) => entry.item)).toContainEqual(
+    expect.objectContaining({
+      type: "notification",
+      level: "warning",
+      message: expect.stringContaining("codex-sol"),
+    }),
+  );
+});
 
 test("does not register a session that finishes starting after shutdown begins", async () => {
   const client = new HeldAgentCreationClient();
