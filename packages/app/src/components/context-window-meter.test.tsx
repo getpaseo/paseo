@@ -29,7 +29,7 @@ vi.mock("react-native", () => ({
   Text: ({ children, testID, ...props }: React.PropsWithChildren<Record<string, unknown>>) =>
     React.createElement("span", { ...props, "data-testid": testID }, children),
   Pressable: ({ children, testID, ...props }: React.PropsWithChildren<Record<string, unknown>>) =>
-    React.createElement("button", { ...props, "data-testid": testID }, children),
+    React.createElement("button", { ...props, type: "button", "data-testid": testID }, children),
 }));
 
 vi.mock("react-native-svg", () => ({
@@ -134,9 +134,9 @@ describe("ContextWindowMeter", () => {
       ),
     );
 
-    expect(container.querySelector('[data-testid="context-window-meter-summary"]')?.textContent).toBe(
-      "81k / 380k tokens",
-    );
+    expect(
+      container.querySelector('[data-testid="context-window-meter-summary"]')?.textContent,
+    ).toBe("81k / 380k tokens");
     expect(
       container.querySelector('[data-testid="context-window-meter-snapshot-cue"]')?.textContent,
     ).toBe("Usage snapshot");
@@ -155,16 +155,12 @@ describe("ContextWindowMeter", () => {
     });
 
     expect(container.querySelector('[role="tooltip"]')?.textContent).toContain("21% used");
-    expect(container.querySelector('[role="tooltip"]')?.textContent).toContain(
-      "81k / 380k tokens",
-    );
+    expect(container.querySelector('[role="tooltip"]')?.textContent).toContain("81k / 380k tokens");
     expect(refreshProviderUsage).toHaveBeenCalledTimes(1);
   });
 
   it("keeps active retained values qualified as a snapshot", () => {
-    act(() =>
-      root.render(<ContextWindowMeter maxTokens={380_000} usedTokens={81_000} pending />),
-    );
+    act(() => root.render(<ContextWindowMeter maxTokens={380_000} usedTokens={81_000} pending />));
 
     expect(
       container.querySelector('[data-testid="context-window-meter-snapshot-cue"]')?.textContent,
@@ -177,9 +173,9 @@ describe("ContextWindowMeter", () => {
     expect(container.textContent).not.toContain("%");
 
     act(() => root.render(<ContextWindowMeter maxTokens={Number.NaN} usedTokens={47_000} />));
-    expect(container.querySelector('[data-testid="context-window-meter-unknown"]')?.textContent).toBe(
-      "Context unknown",
-    );
+    expect(
+      container.querySelector('[data-testid="context-window-meter-unknown"]')?.textContent,
+    ).toBe("Context unknown");
     expect(container.textContent).not.toContain("%");
   });
 
