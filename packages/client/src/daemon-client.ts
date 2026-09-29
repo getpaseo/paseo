@@ -425,6 +425,7 @@ export interface DaemonClientTrace {
 
 export interface SendMessageOptions {
   messageId?: string;
+  /** What happens when the agent is mid-turn. The daemon interrupts the turn when omitted. */
   activeTurnBehavior?: ActiveTurnBehavior;
   images?: Array<{ data: string; mimeType: string }>;
   attachments?: SendAgentMessageRequest["attachments"];
