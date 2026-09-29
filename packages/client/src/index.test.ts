@@ -899,6 +899,25 @@ test("agent handles delegate create, send, timeline refetch, archive, and local 
   );
   await expect(appendPromise).resolves.toEqual({ seq: 8, epoch: "epoch-sdk" });
 
+  const cancelPromise = agent.cancel();
+  const cancelRequest = parseSentSessionMessage(ws.sent.at(-1));
+  expect(cancelRequest).toMatchObject({
+    type: "cancel_agent_request",
+    agentId: "agent_sdk",
+  });
+  ws.message(
+    sessionMessage({
+      type: "cancel_agent_response",
+      payload: {
+        requestId: cancelRequest.requestId,
+        agentId: "agent_sdk",
+        agent: null,
+        error: null,
+      },
+    }),
+  );
+  await expect(cancelPromise).resolves.toBeUndefined();
+
   const archivePromise = agent.archive();
   const archiveRequest = parseSentSessionMessage(ws.sent.at(-1));
   expect(archiveRequest).toMatchObject({

@@ -28,6 +28,11 @@ export interface PluginSettings<Schema extends ZodType> {
 }
 
 export interface PluginServerContext extends PluginLifecycleRegistration {
+  /**
+   * Daemon API owned by the plugin subprocess, for server contributions that act on
+   * their own initiative (for example a message bridge) rather than inside a handler.
+   */
+  paseo: PaseoApi;
   registerSettings<Schema extends ZodType>(
     definition: import("../settings.js").SettingsDefinition<Schema>,
   ): PluginSettings<Schema>;
