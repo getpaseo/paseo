@@ -145,6 +145,16 @@ describe("daemon-manager commands", () => {
     expect(mocks.runExternalCliJsonCommand).not.toHaveBeenCalled();
   });
 
+  it("reports an errored daemon when the local daemon state cannot be read", async () => {
+    mkdirSync(mocks.paseoHome);
+    writeFileSync(path.join(mocks.paseoHome, "paseo.pid"), "garbage");
+
+    const status = await createDaemonCommandHandlers().desktop_daemon_status();
+
+    expect(status).toMatchObject({ serverId: "", status: "errored", pid: null });
+    expect(status.error).toBeTruthy();
+  });
+
   it("returns a local credential only for its live managed daemon listen", async () => {
     mkdirSync(mocks.paseoHome);
     const token = "a".repeat(43);
