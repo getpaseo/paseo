@@ -1,3 +1,4 @@
+import { startCodexAppServer } from "./codex/startup.js";
 import {
   getAgentStreamEventTurnId,
   type AgentPermissionAction,
@@ -3145,7 +3146,7 @@ const CodexNotificationSchema = z.union([
 ]);
 
 async function readCodexConfiguredDefaults(
-  client: CodexAppServerClient,
+  client: Pick<CodexAppServerClient, "request">,
   logger: Logger,
 ): Promise<CodexConfiguredDefaults> {
   let savedConfigDefaults: CodexConfiguredDefaults = {};
@@ -3587,23 +3588,31 @@ export class CodexAppServerAgentSession implements AgentSession {
       this.connectionState = "history-ready";
       return;
     }
-    const child = await this.spawnAppServer();
-    const client = new CodexAppServerClient(child, this.logger, () => this.traceContext());
+    const client = await startCodexAppServer({
+      stateDirectory: this.codexHome,
+      createClient: async () => {
+        if (this.closed) throw this.createClosedError();
+        const transport = new CodexAppServerClient(await this.spawnAppServer(), this.logger, () =>
+          this.traceContext(),
+        );
+        transport.setUnexpectedTerminationHandler((error) =>
+          this.handleUnexpectedTermination(error),
+        );
+        transport.setNotificationHandler((method, params) =>
+          this.handleNotification(method, params),
+        );
+        this.registerRequestHandlers(transport);
+        return transport;
+      },
+      initializeParams: buildCodexAppServerInitializeParams(),
+    });
     if (this.closed) {
       await client.dispose();
       throw this.createClosedError();
     }
     this.client = client;
-    client.setUnexpectedTerminationHandler((error) => {
-      this.handleUnexpectedTermination(error);
-    });
-    client.setNotificationHandler((method, params) => this.handleNotification(method, params));
-    this.registerRequestHandlers();
 
     try {
-      await client.request("initialize", buildCodexAppServerInitializeParams());
-      client.notify("initialized", {});
-
       await this.loadResolvedWorkspaceWrite();
       await this.loadCollaborationModes();
       await this.loadSkills();
@@ -3723,19 +3732,7 @@ export class CodexAppServerAgentSession implements AgentSession {
   private async loadSkills(): Promise<void> {
     if (!this.client) return;
     try {
-      const response = toObjectRecord(
-        await this.client.request("skills/list", {
-          cwds: [this.config.cwd],
-        }),
-      );
-      const entries = Array.isArray(response?.data) ? response.data : [];
-      const allSkills: unknown[] = [];
-      for (const entry of entries) {
-        const entryRecord = toObjectRecord(entry);
-        const list = Array.isArray(entryRecord?.skills) ? entryRecord.skills : [];
-        allSkills.push(...list);
-      }
-      this.cachedSkills = enabledCodexSkills(allSkills);
+      this.cachedSkills = await readCodexSkills(this.client, this.config.cwd);
     } catch (error) {
       this.logger.trace(
         {
@@ -3892,33 +3889,35 @@ export class CodexAppServerAgentSession implements AgentSession {
     return buildCodexPlanImplementationPrompt(planText);
   }
 
-  private registerRequestHandlers(): void {
-    if (!this.client) return;
-
-    this.client.setRequestHandler("item/commandExecution/requestApproval", (params) =>
+  private registerRequestHandlers(client: CodexAppServerClient): void {
+    client.setRequestHandler("item/commandExecution/requestApproval", (params) =>
       this.handleCommandApprovalRequest(params),
     );
-    this.client.setRequestHandler("item/fileChange/requestApproval", (params) =>
+    client.setRequestHandler("item/fileChange/requestApproval", (params) =>
       this.handleFileChangeApprovalRequest(params),
     );
-    this.client.setRequestHandler("item/tool/requestUserInput", (params) =>
+    client.setRequestHandler("item/tool/requestUserInput", (params) =>
       this.handleToolApprovalRequest(params),
     );
-    this.client.setRequestHandler("mcpServer/elicitation/request", (params, requestId) =>
+    client.setRequestHandler("mcpServer/elicitation/request", (params, requestId) =>
       this.handleMcpElicitationRequest(params, requestId),
     );
     // Keep the legacy method name for older Codex builds.
-    this.client.setRequestHandler("tool/requestUserInput", (params) =>
+    client.setRequestHandler("tool/requestUserInput", (params) =>
       this.handleToolApprovalRequest(params),
     );
   }
 
   private async readArchivedHistory(): Promise<void> {
-    const child = await this.spawnAppServer();
-    const client = new CodexAppServerClient(child, this.logger, () => this.traceContext());
+    const client = await startCodexAppServer({
+      stateDirectory: this.codexHome,
+      createClient: async () =>
+        new CodexAppServerClient(await this.spawnAppServer(), this.logger, () =>
+          this.traceContext(),
+        ),
+      initializeParams: buildCodexAppServerInitializeParams(),
+    });
     try {
-      await client.request("initialize", buildCodexAppServerInitializeParams());
-      client.notify("initialized", {});
       await this.loadPersistedHistory(client);
     } finally {
       await client.dispose();
@@ -5008,35 +5007,14 @@ export class CodexAppServerAgentSession implements AgentSession {
     } else {
       await this.loadSkills();
     }
-    const appServerSkills = (this.cachedSkills ?? []).map((skill) => ({
-      name: skill.name,
-      description: skill.description,
-      argumentHint: "",
-      kind: "skill" as const,
-    }));
-    const fallbackSkills =
-      this.cachedSkills === null
-        ? await listCodexSkills(this.config.cwd, this.codexHome, this.deps.workspaceGitService)
-        : [];
-    const builtin: AgentSlashCommand[] = [
-      {
-        name: "compact",
-        description: "Summarize conversation to prevent hitting the context limit",
-        argumentHint: "",
-        kind: "command",
-      },
-    ];
-    if (this.goalsEnabled) {
-      builtin.push({
-        name: "goal",
-        description: "Set, pause, resume, or clear the agent's goal",
-        argumentHint: "[<objective>|pause|resume|clear]",
-        kind: "command",
-      });
-    }
-    return [...builtin, ...appServerSkills, ...fallbackSkills, ...prompts].sort((a, b) =>
-      a.name.localeCompare(b.name),
-    );
+    return buildCodexCommands({
+      skills: this.cachedSkills,
+      prompts,
+      cwd: this.config.cwd,
+      codexHome: this.codexHome,
+      workspaceGitService: this.deps.workspaceGitService,
+      goalsEnabled: this.goalsEnabled,
+    });
   }
 
   tryHandleOutOfBand(
@@ -7080,6 +7058,59 @@ export class CodexAppServerAgentSession implements AgentSession {
   }
 }
 
+async function readCodexSkills(client: CodexAppServerClientLike, cwd: string) {
+  const response = toObjectRecord(await client.request("skills/list", { cwds: [cwd] }));
+  const entries = Array.isArray(response?.data) ? response.data : [];
+  const allSkills: unknown[] = [];
+  for (const entry of entries) {
+    const entryRecord = toObjectRecord(entry);
+    const list = Array.isArray(entryRecord?.skills) ? entryRecord.skills : [];
+    allSkills.push(...list);
+  }
+  return enabledCodexSkills(allSkills);
+}
+
+interface CodexCommandInput {
+  codexHome: string;
+  skills: ReturnType<typeof enabledCodexSkills> | null;
+  prompts: AgentSlashCommand[];
+  cwd: string;
+  workspaceGitService: CodexAppServerAgentDeps["workspaceGitService"];
+  goalsEnabled: boolean;
+}
+
+async function buildCodexCommands(input: CodexCommandInput): Promise<AgentSlashCommand[]> {
+  const appServerSkills = (input.skills ?? []).map((skill) => ({
+    name: skill.name,
+    description: skill.description,
+    argumentHint: "",
+    kind: "skill" as const,
+  }));
+  const fallbackSkills =
+    input.skills === null
+      ? await listCodexSkills(input.cwd, input.codexHome, input.workspaceGitService)
+      : [];
+  const builtin: AgentSlashCommand[] = [
+    {
+      name: "compact",
+      description: "Summarize conversation to prevent hitting the context limit",
+      argumentHint: "",
+      kind: "command",
+    },
+  ];
+  if (input.goalsEnabled) {
+    builtin.push({
+      name: "goal",
+      description: "Set, pause, resume, or clear the agent's goal",
+      argumentHint: "[<objective>|pause|resume|clear]",
+      kind: "command",
+    });
+  }
+  return [...builtin, ...appServerSkills, ...fallbackSkills, ...input.prompts].sort((a, b) =>
+    a.name.localeCompare(b.name),
+  );
+}
+
 export class CodexAppServerAgentClient implements AgentClient {
   readonly provider = CODEX_PROVIDER;
   readonly capabilities = CODEX_APP_SERVER_CAPABILITIES;
@@ -7092,12 +7123,31 @@ export class CodexAppServerAgentClient implements AgentClient {
     private readonly deps: CodexAppServerAgentDeps = {},
   ) {}
 
-  private sessionDeps(launchEnv: Record<string, string> | undefined): CodexAppServerAgentDeps {
+  private sessionDeps(launchEnv?: Record<string, string>): CodexAppServerAgentDeps {
     return {
       ...this.deps,
-      codexHome: resolveCodexHomeDir(buildCodexAppServerEnv(this.runtimeSettings, launchEnv)),
+      codexHome: this.stateDirectory(launchEnv),
       customCodexConfig: this.customProviderConfig(),
     };
+  }
+
+  private stateDirectory(launchEnv?: Record<string, string>): string {
+    return resolveCodexHomeDir(buildCodexAppServerEnv(this.runtimeSettings, launchEnv));
+  }
+
+  private startAppServer(context?: ProviderRefreshContext): Promise<CodexAppServerClientLike> {
+    return startCodexAppServer({
+      stateDirectory: this.stateDirectory(),
+      createClient: async () => {
+        const child = await this.spawnAppServer();
+        return (
+          this.deps._createCodexClient?.(child, this.logger, () => ({})) ??
+          new CodexAppServerClient(child, this.logger)
+        );
+      },
+      initializeParams: buildCodexAppServerInitializeParams(),
+      context,
+    });
   }
 
   private customProviderConfig(): CodexCustomProviderConfig | null {
@@ -7255,15 +7305,9 @@ export class CodexAppServerAgentClient implements AgentClient {
   async listImportableSessions(
     options?: ListImportableSessionsOptions,
   ): Promise<ImportableProviderSession[]> {
-    const child = await this.spawnAppServer();
-    const client =
-      this.deps._createCodexClient?.(child, this.logger, () => ({})) ??
-      new CodexAppServerClient(child, this.logger);
+    const client = await this.startAppServer();
 
     try {
-      await client.request("initialize", buildCodexAppServerInitializeParams());
-      client.notify("initialized", {});
-
       const limit = options?.limit ?? 20;
       const scanLimit = Math.min(options?.scanLimit ?? limit, 500);
       // thread/list returns the cheap `cwd` field. Fetch a wider window when
@@ -7337,6 +7381,43 @@ export class CodexAppServerAgentClient implements AgentClient {
     };
   }
 
+  async listCommands(
+    config: AgentSessionConfig,
+    context?: ProviderRefreshContext,
+  ): Promise<AgentSlashCommand[]> {
+    const goalsEnabled = await this.resolveGoalsEnabled();
+    const client = await this.startAppServer(context);
+    let closing: Promise<void> | undefined;
+    const close = () => (closing ??= client.dispose());
+    const unregister = context?.registerAbortCleanup(close);
+    try {
+      let skills: ReturnType<typeof enabledCodexSkills> | null;
+      try {
+        skills = await runProviderRefreshActivity(context, "skills/list", () =>
+          readCodexSkills(client, config.cwd),
+        );
+      } catch (error) {
+        if (context?.signal.aborted) throw context.signal.reason;
+        this.logger.trace({ err: error }, "Codex skills discovery failed; reading checkout skills");
+        skills = null;
+      }
+      return await buildCodexCommands({
+        skills,
+        prompts: await listCodexCustomPrompts(this.stateDirectory()),
+        codexHome: this.stateDirectory(),
+        cwd: config.cwd,
+        workspaceGitService: this.deps.workspaceGitService,
+        goalsEnabled,
+      });
+    } finally {
+      try {
+        await close();
+      } finally {
+        unregister?.();
+      }
+    }
+  }
+
   async resolveDefaultModeId(input: ResolveAgentDefaultModeInput): Promise<string> {
     return (await this.resolveAutoReviewEnabled(input.signal))
       ? "auto-review"
@@ -7347,35 +7428,18 @@ export class CodexAppServerAgentClient implements AgentClient {
     context?: ProviderRefreshContext,
   ): Promise<AgentModelDefinition[]> {
     // Codex model/list is global to the app server in this flow; cwd/force are intentionally ignored.
-    let client: CodexAppServerClient | undefined;
+    const client = await this.startAppServer(context);
     let disposePromise: Promise<void> | undefined;
-    const dispose = () => {
-      if (!client) return Promise.resolve();
-      disposePromise ??= client.dispose();
-      return disposePromise;
-    };
-    const handleAbort = () => void dispose().catch(() => undefined);
-    context?.signal.addEventListener("abort", handleAbort, { once: true });
-
+    const dispose = () => (disposePromise ??= client.dispose());
+    const unregisterAbortCleanup = context?.registerAbortCleanup(dispose);
     try {
-      await runProviderRefreshActivity(context, "app-server.start", async () => {
-        const child = await this.spawnAppServer();
-        client = new CodexAppServerClient(child, this.logger);
-        if (context?.signal.aborted) await dispose();
-      });
-      if (!client) throw new Error("Codex app-server did not start");
-      await runProviderRefreshActivity(context, "initialize", () =>
-        client!.request("initialize", buildCodexAppServerInitializeParams()),
-      );
-      client.notify("initialized", {});
-
       const rawResponse = await runProviderRefreshActivity(context, "model/list", () =>
-        client!.request("model/list", {}),
+        client.request("model/list", {}),
       );
       const parsedResponse = CodexModelListResponseSchema.safeParse(rawResponse);
       const models = parsedResponse.success ? (parsedResponse.data.data ?? []) : [];
       const configuredDefaults = await runProviderRefreshActivity(context, "config/read", () =>
-        readCodexConfiguredDefaults(client!, this.logger),
+        readCodexConfiguredDefaults(client, this.logger),
       );
       const configuredDefaultModelId = configuredDefaults.model;
       const configuredDefaultThinkingOptionId = configuredDefaults.thinkingOptionId;
@@ -7391,8 +7455,11 @@ export class CodexAppServerAgentClient implements AgentClient {
         }),
       );
     } finally {
-      context?.signal.removeEventListener("abort", handleAbort);
-      await dispose();
+      try {
+        await dispose();
+      } finally {
+        unregisterAbortCleanup?.();
+      }
     }
   }
 
@@ -7411,12 +7478,9 @@ export class CodexAppServerAgentClient implements AgentClient {
     const threadId = handle.nativeHandle ?? handle.sessionId;
     if (!threadId) return;
 
-    const child = await this.spawnAppServer();
-    const client = new CodexAppServerClient(child, this.logger);
+    const client = await this.startAppServer();
 
     try {
-      await client.request("initialize", buildCodexAppServerInitializeParams());
-      client.notify("initialized", {});
       if (state === "archive") {
         await client.request("thread/archive", { threadId });
         return;

@@ -9,6 +9,7 @@ import { PassThrough } from "node:stream";
 import { fileURLToPath } from "node:url";
 
 import type {
+  AgentClient,
   AgentLaunchContext,
   AgentSession,
   AgentSessionConfig,
@@ -81,6 +82,8 @@ describe("Codex executable discovery", () => {
     ]);
   });
 });
+
+import { runProviderRefreshWithDeadline } from "../provider-refresh-deadline.js";
 
 import { CodexAppServerClient } from "./codex/app-server-transport.js";
 import {
@@ -657,6 +660,8 @@ process.stdin.on("data", (chunk) => {
 
 async function withCustomCodexProviderHome<T>(
   run: (input: {
+    client: AgentClient;
+    cwd: string;
     session: AgentSession;
     readCaptured: () => CapturedFakeCodexRecord[];
   }) => Promise<T>,
@@ -728,7 +733,8 @@ process.stdin.on("data", (chunk) => {
       },
     },
   });
-  const session = await registry["profile-codex"].createClient(createTestLogger()).createSession({
+  const client = registry["profile-codex"].createClient(createTestLogger());
+  const session = await client.createSession({
     provider: "profile-codex",
     cwd: tempDir,
     modeId: "auto",
@@ -736,6 +742,8 @@ process.stdin.on("data", (chunk) => {
 
   try {
     return await run({
+      client,
+      cwd: tempDir,
       session,
       readCaptured: () =>
         readFileSync(capturedRequestsPath, "utf8")
@@ -1296,6 +1304,99 @@ describe("Codex app-server provider", () => {
     const startCall = requests.find((req) => req.method === "thread/start");
     expect(startCall).toBeDefined();
     expect((startCall!.params as Record<string, unknown>).ephemeral).toBeUndefined();
+  });
+
+  test("discovers draft skills without model lookup or conversation creation", async () => {
+    const appServer = createFakeCodexAppServer({
+      "skills/list": (params) => {
+        expect(params).toEqual({ cwds: ["/workspace/project"] });
+        return {
+          data: [
+            {
+              skills: [
+                {
+                  name: "project-review",
+                  path: "/workspace/project/SKILL.md",
+                  description: "Review this project",
+                  enabled: true,
+                },
+              ],
+            },
+          ],
+        };
+      },
+      "model/list": () => {
+        throw new Error("Command discovery must not load models");
+      },
+      "thread/start": () => {
+        throw new Error("Command discovery must not create a conversation");
+      },
+    });
+    const provider = createProviderWithFakeAppServer(appServer);
+    const createSessionSpy = vi.spyOn(provider, "createSession");
+    const kill = vi.spyOn(appServer.child, "kill");
+    const commands = await provider.listCommands({ provider: "codex", cwd: "/workspace/project" });
+    expect(commands).toContainEqual({
+      name: "project-review",
+      description: "Review this project",
+      argumentHint: "",
+      kind: "skill",
+    });
+    expect(commands).toContainEqual({
+      name: "compact",
+      description: "Summarize conversation to prevent hitting the context limit",
+      argumentHint: "",
+      kind: "command",
+    });
+    expect(createSessionSpy).not.toHaveBeenCalled();
+    expect(kill).toHaveBeenCalledWith("SIGTERM");
+    appServer.assertNoErrors();
+  });
+
+  test("waits for catalog disposal when the deadline fires during cleanup", async () => {
+    vi.useFakeTimers();
+    const appServer = createFakeCodexAppServer();
+    const provider = createProviderWithFakeAppServer(appServer);
+    let disposalStarted!: () => void;
+    const disposing = new Promise<void>((resolve) => {
+      disposalStarted = resolve;
+    });
+    vi.spyOn(appServer.child, "kill").mockImplementation(() => {
+      disposalStarted();
+      return true;
+    });
+    let settled = false;
+    const refresh = runProviderRefreshWithDeadline({
+      label: "Codex",
+      timeoutMs: 100,
+      operation: (context) => provider.fetchCatalog({ scope: "global", force: false }, context),
+    });
+    const rejected = expect(refresh).rejects.toThrow("Timed out refreshing Codex after 100ms");
+    void refresh.then(
+      () => {
+        settled = true;
+        return undefined;
+      },
+      () => {
+        settled = true;
+        return undefined;
+      },
+    );
+    try {
+      await disposing;
+      await vi.advanceTimersByTimeAsync(100);
+      expect(settled).toBe(false);
+      appServer.child.exitCode = 0;
+      appServer.child.emit("exit", 0, null);
+      await rejected;
+      expect(settled).toBe(true);
+      appServer.assertNoErrors();
+    } finally {
+      appServer.child.exitCode = 0;
+      appServer.child.emit("exit", 0, null);
+      await Promise.allSettled([refresh, rejected]);
+      vi.useRealTimers();
+    }
   });
 
   test("disposes an unresponsive app-server child with SIGKILL", async () => {
@@ -2581,6 +2682,17 @@ describe("Codex app-server provider", () => {
     await expect(listPromptCommandsFromCustomCodexHome()).resolves.toEqual([
       "prompts:probe-profile",
     ]);
+  });
+
+  test("draft discovery reads prompts from the custom provider home", async () => {
+    const commands = await withCustomCodexProviderHome(async ({ client, cwd }) =>
+      client.listCommands!({ provider: "profile-codex", cwd }),
+    );
+    expect(
+      commands
+        .filter((command) => command.name.startsWith("prompts:"))
+        .map((command) => command.name),
+    ).toEqual(["prompts:probe-profile"]);
   });
 
   test("runs a custom prompt from the CODEX_HOME a custom provider runs Codex with", async () => {

@@ -441,7 +441,10 @@ export function useAgentAutocomplete(input: UseAgentAutocompleteInput): AgentAut
   const { commands, isError, error } = commandsQuery;
   const isCommandsLoading = canListCommands && commandsQuery.isLoading;
 
-  const isVisible = canShowAutocomplete && !(mode === "command" && isCommandsLoading);
+  // Listing commands spawns a provider runtime, which takes a second or two on a
+  // cold config. Stay visible so the menu shows its loading and error rows instead
+  // of making "/" look like it did nothing.
+  const isVisible = canShowAutocomplete;
 
   const fileSuggestionsQuery = useQuery({
     queryKey: [

@@ -487,6 +487,7 @@ function wrapClientProvider(
 ): AgentClient {
   const listImportableSessions = inner.listImportableSessions?.bind(inner);
   const importSession = inner.importSession?.bind(inner);
+  const listCommands = inner.listCommands?.bind(inner);
   const listFeatures = inner.listFeatures?.bind(inner);
   const archiveNativeSession = inner.archiveNativeSession?.bind(inner);
   const unarchiveNativeSession = inner.unarchiveNativeSession?.bind(inner);
@@ -544,6 +545,10 @@ function wrapClientProvider(
     resolveCreateConfig: inner.resolveCreateConfig?.bind(inner),
     resolveConfiguredModel: inner.resolveConfiguredModel?.bind(inner),
     isCreateConfigUnattended: inner.isCreateConfigUnattended?.bind(inner),
+    listCommands: listCommands
+      ? async (config, context) =>
+          await listCommands({ ...config, provider: inner.provider }, context)
+      : undefined,
     listFeatures: listFeatures
       ? async (config) => await listFeatures({ ...config, provider: inner.provider })
       : undefined,

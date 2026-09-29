@@ -15,6 +15,7 @@ import {
   resolveClaudeCodeVersion,
   toClaudeSdkMcpConfig,
 } from "./agent.js";
+import type { ClaudeQueryInput } from "./query.js";
 import { claudeProjectDirSync } from "./project-dir.js";
 import { streamSession } from "../test-utils/session-stream-adapter.js";
 import type {
@@ -2270,8 +2271,8 @@ describe("ClaudeAgentSession context window usage", () => {
     expect(persistedQueryFactory.mock.calls[0]?.[0].options.persistSession).toBe(true);
   });
 
-  test("classifies Claude root-only commands separately from inline skills", async () => {
-    const queryFactory = vi.fn(({ prompt }: { prompt: AsyncIterable<unknown> }) => {
+  test("session and model-less draft discovery return the same classified commands", async () => {
+    const queryFactory = vi.fn(({ prompt }: ClaudeQueryInput) => {
       void prompt;
       return {
         next: async () => ({ done: true, value: undefined }),
@@ -2351,6 +2352,30 @@ describe("ClaudeAgentSession context window usage", () => {
         kind: "command",
       },
     ]);
+    const createSession = vi.spyOn(client, "createSession");
+    expect(await client.listCommands({ provider: "claude", cwd: process.cwd() })).toEqual(commands);
+    expect(createSession).not.toHaveBeenCalled();
+    expect(queryFactory.mock.calls.at(-1)?.[0].options).toMatchObject({
+      persistSession: false,
+      model: undefined,
+    });
+  });
+
+  test("closes Claude command discovery when supportedCommands fails", async () => {
+    const queryFactory = createQueryFactoryForTurns([]);
+    const query = queryFactory({ prompt: (async function* () {})() });
+    query.supportedCommands.mockRejectedValue(new Error("discovery failed"));
+    const factory = () => query;
+    const discovery = new ClaudeAgentClient({
+      logger,
+      queryFactory: factory,
+      resolveBinary: async () => "/test/claude",
+    });
+    await expect(
+      discovery.listCommands({ provider: "claude", cwd: process.cwd() }),
+    ).rejects.toThrow("discovery failed");
+    expect(query.close).toHaveBeenCalledOnce();
+    expect(query.return).toHaveBeenCalledOnce();
   });
 
   test("deletes the persisted session jsonl on close when persistSession=false", async () => {

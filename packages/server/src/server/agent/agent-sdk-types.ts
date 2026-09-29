@@ -733,6 +733,8 @@ export interface ProviderRefreshContext {
   readonly signal: AbortSignal;
   /** Track an upstream operation so timeout errors identify the work still pending. */
   runActivity<T>(name: string, operation: () => Promise<T>): Promise<T>;
+  /** Wait for abort-triggered resource cleanup before settling discovery. */
+  registerAbortCleanup(cleanup: () => Promise<void>): () => void;
 }
 
 export interface ProviderCatalog {
@@ -782,7 +784,11 @@ export interface AgentClient {
   resolveDefaultModeId?(input: ResolveAgentDefaultModeInput): Promise<string | undefined>;
   resolveCreateConfig?(input: ResolveAgentCreateConfigInput): ResolveAgentCreateConfigResult;
   isCreateConfigUnattended?(input: AgentCreateConfigUnattendedInput): boolean;
-  listCommands?(config: AgentSessionConfig): Promise<AgentSlashCommand[]>;
+  /** Discover commands without creating a conversation or requiring a selected model. */
+  listCommands?(
+    config: AgentSessionConfig,
+    context?: ProviderRefreshContext,
+  ): Promise<AgentSlashCommand[]>;
   listFeatures?(config: AgentSessionConfig): Promise<AgentFeature[]>;
   listImportableSessions?(
     options?: ListImportableSessionsOptions,

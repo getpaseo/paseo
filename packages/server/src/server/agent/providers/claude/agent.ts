@@ -1495,6 +1495,26 @@ export function readEventIdentifiers(message: SDKMessage): EventIdentifiers {
   };
 }
 
+function mapClaudeCommands(
+  commands: Awaited<ReturnType<Query["supportedCommands"]>>,
+): AgentSlashCommand[] {
+  const commandMap = new Map<string, AgentSlashCommand>();
+  for (const cmd of commands) {
+    if (!commandMap.has(cmd.name)) {
+      commandMap.set(cmd.name, {
+        name: cmd.name,
+        description: cmd.description,
+        argumentHint: cmd.argumentHint,
+        kind: classifyClaudeSlashCommand(cmd.name),
+      });
+    }
+  }
+  if (!commandMap.has(REWIND_COMMAND_NAME)) {
+    commandMap.set(REWIND_COMMAND_NAME, REWIND_COMMAND);
+  }
+  return Array.from(commandMap.values()).sort((a, b) => a.name.localeCompare(b.name));
+}
+
 export class ClaudeAgentClient implements AgentClient {
   readonly provider = "claude" as const;
   readonly capabilities = CLAUDE_CAPABILITIES;
@@ -1610,6 +1630,81 @@ export class ClaudeAgentClient implements AgentClient {
       runtimeSettings: this.runtimeSettings,
       overlays: [launchEnv],
     });
+  }
+
+  async listCommands(
+    config: AgentSessionConfig,
+    context?: ProviderRefreshContext,
+  ): Promise<AgentSlashCommand[]> {
+    const validated = this.assertConfig(config);
+    const executable = await runProviderRefreshActivity(context, "executable", this.resolveBinary);
+    const input = createAsyncMessageInput<SDKUserMessage>();
+    let child: ChildProcess | undefined;
+    let query: Query | undefined;
+    let closing: Promise<void> | undefined;
+    const close = () => {
+      closing ??= (async () => {
+        input.end();
+        try {
+          query?.close();
+          await withTimeout(
+            Promise.resolve(query?.return?.()),
+            3_000,
+            "Claude command discovery cleanup timed out",
+          );
+        } finally {
+          if (child)
+            await terminateWithTreeKill(child, { gracefulTimeoutMs: 2_000, forceTimeoutMs: 2_000 });
+        }
+      })();
+      return closing;
+    };
+    const unregister = context?.registerAbortCleanup(close);
+    try {
+      query = claudeQuery(
+        {
+          prompt: input.iterable,
+          options: {
+            ...validated.providerOptions,
+            cwd: validated.cwd,
+            model: validated.model,
+            agents: this.defaults?.agents,
+            settingSources: CLAUDE_SETTING_SOURCES,
+            pathToClaudeCodeExecutable: executable,
+            persistSession: false,
+            env: this.buildProviderEnv(),
+            mcpServers: Object.fromEntries(
+              Object.entries(validated.mcpServers ?? {}).map(([name, server]) => [
+                name,
+                toClaudeSdkMcpConfig(server),
+              ]),
+            ),
+            canUseTool: async () => ({
+              behavior: "deny",
+              message: "Command discovery does not execute tools",
+            }),
+          },
+        },
+        {
+          runtimeSettings: this.runtimeSettings,
+          queryFactory: this.queryFactory,
+          onChildProcess: (process) => {
+            child = process;
+          },
+        },
+      );
+      const activeQuery = query;
+      const commands = await runProviderRefreshActivity(context, "supportedCommands", () =>
+        activeQuery.supportedCommands(),
+      );
+      return mapClaudeCommands(commands);
+    } finally {
+      try {
+        await close();
+      } finally {
+        unregister?.();
+      }
+    }
   }
 
   async listFeatures(config: AgentSessionConfig): Promise<AgentFeature[]> {
@@ -2757,21 +2852,7 @@ class ClaudeAgentSession implements AgentSession {
   async listCommands(): Promise<AgentSlashCommand[]> {
     const q = await this.ensureQuery();
     const commands = await q.supportedCommands();
-    const commandMap = new Map<string, AgentSlashCommand>();
-    for (const cmd of commands) {
-      if (!commandMap.has(cmd.name)) {
-        commandMap.set(cmd.name, {
-          name: cmd.name,
-          description: cmd.description,
-          argumentHint: cmd.argumentHint,
-          kind: classifyClaudeSlashCommand(cmd.name),
-        });
-      }
-    }
-    if (!commandMap.has(REWIND_COMMAND_NAME)) {
-      commandMap.set(REWIND_COMMAND_NAME, REWIND_COMMAND);
-    }
-    return Array.from(commandMap.values()).sort((a, b) => a.name.localeCompare(b.name));
+    return mapClaudeCommands(commands);
   }
 
   async revertConversation(input: { messageId: string }): Promise<void> {
