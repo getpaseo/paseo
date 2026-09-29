@@ -13,6 +13,7 @@ import type {
 } from "@getpaseo/plugin/server/provider";
 import { startDriver, selection, type Driver } from "./process.js";
 import { validateSelection } from "./catalog.js";
+import { PromptFiles } from "./prompt.js";
 import { toolItem } from "./timeline.js";
 import { AntigravityError, diagnostic, type Frame, type Step } from "./wire.js";
 
@@ -47,6 +48,7 @@ export class Session {
   private config: ProviderSessionConfig;
   private conversationId: string | null;
   private firstMessage: boolean;
+  private readonly promptFiles = new PromptFiles();
 
   constructor(private readonly options: SessionOptions) {
     this.config = options.config;
@@ -80,7 +82,7 @@ export class Session {
         "Antigravity already has an active turn; wait for it to finish",
         "TURN_ACTIVE",
       );
-    const text = promptText(prompt);
+    const { text, nativeText } = await this.promptFiles.encode(prompt);
     await this.ensureDriver();
     if (this.state.type !== "idle") throw new AntigravityError("Antigravity session is not ready");
     const driver = this.state.driver;
@@ -110,12 +112,12 @@ export class Session {
       clientMessageId: prompt.clientMessageId,
       text,
     });
-    const nativeText =
+    const driverText =
       this.firstMessage && this.config.systemPrompt
-        ? `${this.config.systemPrompt}\n\n${text}`
-        : text;
+        ? `${this.config.systemPrompt}\n\n${nativeText}`
+        : nativeText;
     try {
-      await driver.prompt(nativeText);
+      await driver.prompt(driverText);
       this.firstMessage = false;
     } catch (error) {
       if (!(error instanceof Error)) throw error;
@@ -159,7 +161,11 @@ export class Session {
   async close(): Promise<void> {
     const state = this.state;
     this.state = { type: "closed" };
-    if (state.type !== "dormant" && state.type !== "closed") await state.driver.stop("close");
+    try {
+      if (state.type !== "dormant" && state.type !== "closed") await state.driver.stop("close");
+    } finally {
+      await this.promptFiles.close();
+    }
     if (state.type === "running") {
       this.finishTools(state.turn, "canceled");
       this.emit({
@@ -349,19 +355,4 @@ export class Session {
   private emit(event: ProviderEvent): void {
     this.options.emit(event);
   }
-}
-
-function promptText(prompt: ProviderPrompt): string {
-  if (
-    prompt.input.type !== "message" ||
-    prompt.delivery === "steer" ||
-    prompt.outputSchema !== undefined
-  )
-    throw new AntigravityError("Antigravity supports text messages only");
-  const text: string[] = [];
-  for (const part of prompt.input.content) {
-    if (part.type !== "text") throw new AntigravityError("Antigravity supports text content only");
-    text.push(part.text);
-  }
-  return text.join("\n");
 }

@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -7,6 +7,7 @@ import {
   PROVIDER_CAPABILITIES,
   ProviderEventSchema,
   type ProviderConnection,
+  type ProviderContent,
   type ProviderEvent,
   type ProviderInput,
   type ProviderLaunch,
@@ -82,15 +83,15 @@ async function harness(env: Record<string, string> = {}) {
       },
     });
   }
-  async function prompt(text: string) {
+  async function message(content: ProviderContent[], sessionId = "s") {
     const clientMessageId = `prompt-${events.length}`;
     await connection.send({
       type: "session.prompt",
-      sessionId: "s",
+      sessionId,
       prompt: {
         clientMessageId,
         delivery: "auto",
-        input: { type: "message", content: [{ type: "text", text }] },
+        input: { type: "message", content },
       },
     });
     await wait(
@@ -98,6 +99,9 @@ async function harness(env: Record<string, string> = {}) {
         event.type === "session.prompt_result" && event.clientMessageId === clientMessageId,
     );
     return clientMessageId;
+  }
+  function prompt(text: string) {
+    return message([{ type: "text", text }]);
   }
   async function completed(clientMessageId: string) {
     const result = events.find(
@@ -133,6 +137,7 @@ async function harness(env: Record<string, string> = {}) {
     request,
     open,
     prompt,
+    message,
     completed,
     records,
     persistence,
@@ -143,6 +148,7 @@ it("streams complete text snapshots, prefixes the system prompt only once and pr
   const h = await harness();
   expect(h.connection.capabilities).toEqual([
     "prompt.message",
+    "prompt.image",
     "session.configure",
     "session.persistence",
   ]);
@@ -549,4 +555,88 @@ describe("process signal plans", () => {
       });
     },
   );
+});
+
+describe("image prompts", () => {
+  it.each(["session", "connection"])(
+    "encodes mixed content as private session files and cleans up on %s close",
+    async (close) => {
+      const h = await harness();
+      await h.open();
+      const png = await readFile(
+        new URL("../test/fixtures/image-file-external.png", import.meta.url),
+      );
+      const jpeg = Buffer.from("image file bytes");
+      await h.completed(
+        await h.message([
+          { type: "text", text: "Describe these images." },
+          { type: "image", data: png.toString("base64"), mimeType: "image/png" },
+          { type: "text", text: "Compare them." },
+          { type: "image", data: jpeg.toString("base64"), mimeType: "image/jpeg" },
+        ]),
+      );
+      const sent = (await h.records()).find((entry) => entry.input).input.message.content;
+      const lines = sent.split("\n");
+      const pngPath = lines[3].slice("Attached image: ".length);
+      const jpegPath = lines[5].slice("Attached image: ".length);
+      expect(sent).toBe(
+        `SYSTEM PREFIX\n\nDescribe these images.\nAttached image: ${pngPath}\nCompare them.\nAttached image: ${jpegPath}`,
+      );
+      expect(path.isAbsolute(pngPath)).toBe(true);
+      expect(path.extname(pngPath)).toBe(".png");
+      expect(path.extname(jpegPath)).toBe(".jpg");
+      expect(path.dirname(pngPath)).toBe(path.dirname(jpegPath));
+      expect(path.dirname(pngPath)).not.toBe(h.cwd);
+      expect(await readFile(pngPath)).toEqual(png);
+      expect(await readFile(jpegPath)).toEqual(jpeg);
+      if (process.platform !== "win32") {
+        expect((await stat(path.dirname(pngPath))).mode & 0o777).toBe(0o700);
+        expect((await stat(pngPath)).mode & 0o777).toBe(0o600);
+        expect((await stat(jpegPath)).mode & 0o777).toBe(0o600);
+      }
+      const args = (await h.records()).find((entry) => entry.args?.includes("--input-format")).args;
+      expect(args.filter((arg: string) => arg === "--add-dir")).toHaveLength(1);
+      if (close === "connection") await h.connection.close();
+      else await h.request({ type: "session.close", requestId: "close-images", sessionId: "s" });
+      await expect(stat(path.dirname(pngPath))).rejects.toMatchObject({ code: "ENOENT" });
+    },
+  );
+
+  it("keeps image-only prompts in distinct session directories until each session closes", async () => {
+    const h = await harness();
+    await h.open();
+    await h.open(undefined, "other");
+    const content: ProviderContent[] = [
+      { type: "image", data: "aW1hZ2U=", mimeType: "image/webp" },
+    ];
+    await h.completed(await h.message(content));
+    await h.completed(await h.message(content));
+    await h.completed(await h.message(content, "other"));
+    const paths = (await h.records())
+      .filter((entry) => entry.input)
+      .map((entry) => entry.input.message.content.split("Attached image: ")[1]);
+    expect(new Set(paths).size).toBe(3);
+    expect(path.dirname(paths[0])).toBe(path.dirname(paths[1]));
+    expect(path.dirname(paths[0])).not.toBe(path.dirname(paths[2]));
+    expect(paths.every((file: string) => path.extname(file) === ".webp")).toBe(true);
+    await h.request({ type: "session.close", requestId: "close-first", sessionId: "s" });
+    await expect(stat(path.dirname(paths[0]))).rejects.toMatchObject({ code: "ENOENT" });
+    expect(await readFile(paths[2], "utf8")).toBe("image");
+    await h.connection.close();
+    await expect(stat(path.dirname(paths[2]))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("rejects a non-image MIME type before writing to native stdin", async () => {
+    const h = await harness();
+    await h.open();
+    const id = await h.message([{ type: "image", data: "dGV4dA==", mimeType: "text/plain" }]);
+    expect(
+      h.events.find(
+        (event) => event.type === "session.prompt_result" && event.clientMessageId === id,
+      ),
+    ).toMatchObject({
+      result: { type: "failed", error: { message: expect.stringContaining("image MIME type") } },
+    });
+    expect((await h.records()).filter((entry) => entry.input)).toHaveLength(0);
+  });
 });

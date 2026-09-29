@@ -57,6 +57,7 @@ lines.on("line", (line) => {
   record({ input });
   const text = input.message.content;
   let name = "text-turn";
+  if (text.includes("Attached image: ")) name = "image-file-external";
   if (text.includes("TOOLS")) name = "tools-default";
   if (text.includes("SUBAGENT")) name = "subagent";
   if (text.includes("MULTI")) name = "multi-turn-reasoning";

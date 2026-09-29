@@ -13,7 +13,12 @@ import { getCatalog, getStatus } from "./internal/catalog.js";
 import { Session } from "./internal/session.js";
 import { AntigravityError } from "./internal/wire.js";
 
-const capabilities = ["prompt.message", "session.configure", "session.persistence"] as const;
+const capabilities = [
+  "prompt.message",
+  "prompt.image",
+  "session.configure",
+  "session.persistence",
+] as const;
 
 export function createAntigravityProvider(): ProviderRegistration {
   return {
