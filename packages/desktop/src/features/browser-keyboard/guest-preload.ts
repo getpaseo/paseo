@@ -185,6 +185,12 @@ function readCredentials(scope: Element): GuestCredentials | null {
   return { username: username?.value.trim() ?? "", password: password.value };
 }
 
+// isTrusted alone is not a gesture: script-called focus() and button.click() dispatch trusted
+// focus and submit events. Transient user activation only exists after real input.
+function hasUserGesture(event: Event): boolean {
+  return event.isTrusted && navigator.userActivation.isActive;
+}
+
 function reportCredentials(scope: Element | null): void {
   const credentials = scope ? readCredentials(scope) : null;
   if (!credentials) {
@@ -201,13 +207,13 @@ function reportCredentials(scope: Element | null): void {
 }
 
 function handleLoginSubmit(event: SubmitEvent): void {
-  if (event.isTrusted && event.target instanceof HTMLFormElement) {
+  if (hasUserGesture(event) && event.target instanceof HTMLFormElement) {
     reportCredentials(findLoginScope(event.target));
   }
 }
 
 function handleLoginClick(event: MouseEvent): void {
-  if (!event.isTrusted || !(event.target instanceof Element)) {
+  if (!hasUserGesture(event) || !(event.target instanceof Element)) {
     return;
   }
   const button = event.target.closest("button, input[type=submit]");
@@ -220,7 +226,7 @@ function handleLoginClick(event: MouseEvent): void {
 }
 
 function handleLoginEnter(event: KeyboardEvent): void {
-  if (event.isTrusted && event.key === "Enter" && isPasswordInput(event.target)) {
+  if (hasUserGesture(event) && event.key === "Enter" && isPasswordInput(event.target)) {
     reportCredentials(findLoginScope(event.target));
   }
 }
@@ -257,7 +263,7 @@ async function fillLogin(scope: Element): Promise<void> {
 }
 
 function handleLoginFocus(event: Event): void {
-  if (!event.isTrusted || !(event.target instanceof HTMLInputElement)) {
+  if (!hasUserGesture(event) || !(event.target instanceof HTMLInputElement)) {
     return;
   }
   const scope = findLoginScope(event.target);
