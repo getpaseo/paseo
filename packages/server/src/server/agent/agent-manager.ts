@@ -75,6 +75,7 @@ import {
   AGENT_STREAM_COALESCE_DEFAULT_WINDOW_MS,
   AgentStreamCoalescer,
 } from "./agent-stream-coalescer.js";
+import { endsWithQuestionToUser } from "./awaiting-reply.js";
 import { limitAgentTimelineItemContent } from "./agent-timeline-content.js";
 import {
   AgentRunState,
@@ -452,6 +453,8 @@ interface ManagedAgentBase {
   usageTotals?: AgentUsageTotals;
   lastError?: string;
   attention: AttentionState;
+  /** The last turn asked the person something; stays until they send the next message. */
+  awaitingReply?: boolean;
   foregroundTurnWaiters: Set<ForegroundTurnWaiter>;
   finalizedForegroundTurnIds: Set<string>;
   unsubscribeSession: (() => void) | null;
@@ -4758,6 +4761,7 @@ export class AgentManager {
     this.recordAndDispatchTimelineItem(agent.id, event.item, event.provider, event.turnId);
     if (event.item.type === "user_message") {
       agent.lastUserMessageAt = new Date();
+      agent.awaitingReply = false;
       this.emitState(agent);
     }
     flags.shouldDispatchEvent = false;
@@ -5012,6 +5016,7 @@ export class AgentManager {
     }
     this.touchUpdatedAt(agent);
     agent.lastUserMessageAt = new Date();
+    agent.awaitingReply = false;
     const item: AgentTimelineItem = {
       type: "user_message",
       text: submittedPromptText(prompt),
@@ -5160,6 +5165,10 @@ export class AgentManager {
     // Skip attention tracking for internal agents
     if (agent.internal) {
       return;
+    }
+
+    if (previousStatus === "running" && currentStatus === "idle") {
+      agent.awaitingReply = endsWithQuestionToUser(this.timelineStore.getItems(agent.id));
     }
 
     // Skip if already requires attention

@@ -151,6 +151,10 @@ export function toAgentPayload(
     payload.lastError = agent.lastError;
   }
 
+  if (agent.awaitingReply) {
+    payload.awaitingReply = true;
+  }
+
   // Handle attention state
   payload.requiresAttention = agent.attention.requiresAttention;
   if (agent.attention.requiresAttention) {

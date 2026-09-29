@@ -17,6 +17,14 @@ describe("deriveAgentStateBucket", () => {
     ).toBe("needs_input");
   });
 
+  it("keeps a turn that asked the person in needs_input until they reply, even once read", () => {
+    expect(
+      deriveAgentStateBucket({ status: "idle", awaitingReply: true, requiresAttention: false }),
+    ).toBe("needs_input");
+    expect(deriveAgentStateBucket({ status: "running", awaitingReply: true })).toBe("running");
+    expect(deriveAgentStateBucket({ status: "idle", awaitingReply: false })).toBe("done");
+  });
+
   it("keeps legacy permission attention in needs_input", () => {
     expect(
       deriveAgentStateBucket({

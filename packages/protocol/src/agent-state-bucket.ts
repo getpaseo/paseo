@@ -9,6 +9,8 @@ export interface AgentStateBucketInput {
   pendingPermissionCount?: number;
   requiresAttention?: boolean;
   attentionReason?: AgentAttentionReason;
+  /** The last turn asked the person something they have not answered yet. */
+  awaitingReply?: boolean;
 }
 
 const WORKSPACE_STATE_BUCKET_PRIORITY = {
@@ -28,6 +30,10 @@ export function deriveAgentStateBucket(input: AgentStateBucketInput): WorkspaceS
   }
   if (input.status === "running") {
     return "running";
+  }
+  // Reading the answer does not answer it: this stays until the person replies.
+  if (input.awaitingReply) {
+    return "needs_input";
   }
   if (input.requiresAttention) {
     return "attention";

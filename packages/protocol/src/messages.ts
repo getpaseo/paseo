@@ -890,6 +890,8 @@ export const AgentSnapshotPayloadSchema = z.object({
   title: z.string().nullable(),
   labels: z.record(z.string(), z.string()).default({}),
   requiresAttention: z.boolean().optional(),
+  /** The last turn ended asking the person something; cleared by their next message. */
+  awaitingReply: z.boolean().optional(),
   attentionReason: z.enum(["finished", "error", "permission"]).nullable().optional(),
   attentionTimestamp: z.string().nullable().optional(),
   archivedAt: z.string().nullable().optional(),
