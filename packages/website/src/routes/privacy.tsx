@@ -18,8 +18,8 @@ function Privacy() {
       <p>
         Paseo is local-first. Installing or using the open-source software does not send us your
         code, prompts, files, terminal output, or agent conversations. This policy explains the
-        separate data boundaries for local Paseo, the optional official relay, the hosted Paseo Hub,
-        and paseo.sh.
+        separate data boundaries for local Paseo, the optional official relay, the hosted PandaOS
+        Hub, and paseo.sh.
       </p>
 
       <section>
@@ -67,7 +67,7 @@ function Privacy() {
       </section>
 
       <section>
-        <h2>Paseo Hub</h2>
+        <h2>PandaOS Hub</h2>
         <p>When you create or use a hosted Hub account, we process:</p>
         <ul>
           <li>Your name, email, account credentials, sessions, IP address, and user agent</li>

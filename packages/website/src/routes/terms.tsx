@@ -30,7 +30,7 @@ function Terms() {
         <h2>Paseo&apos;s open-source software</h2>
         <p>
           Paseo is open-source software licensed under the Apache License 2.0. You can install,
-          modify, and self-host it under that license without purchasing Paseo Hub or using the
+          modify, and self-host it under that license without purchasing PandaOS Hub or using the
           official relay.
         </p>
         <p>
@@ -53,7 +53,7 @@ function Terms() {
       </section>
 
       <section>
-        <h2>Paseo Hub</h2>
+        <h2>PandaOS Hub</h2>
         <p>
           Hub lets you connect daemons, configure workflows, receive events from connected services,
           and instruct agents running on your infrastructure. Hub does not provide AI inference.

@@ -252,7 +252,7 @@ export function addHubDeployCommand(
         .command("deploy")
         .description("Deploy .paseo organization triggers or a legacy project bundle")
         .option("-p, --project <slug>", "Deploy a legacy bundle to this project slug")
-        .option("--hub <origin>", "Paseo Hub origin")
+        .option("--hub <origin>", "PandaOS Hub origin")
         .option("--api-key <secret>", "Organization API key")
         .option("--dry-run", "Validate without installing or activating"),
     ),
