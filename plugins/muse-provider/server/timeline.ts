@@ -176,6 +176,8 @@ export class Timeline {
     private readonly clientMessage: (commandId: string) => string | undefined = () => undefined,
   ) {}
   async fold(item: WireItem): Promise<boolean> {
+    // Reminder children are Muse housekeeping, not agent work or navigable subagents.
+    if (item.kind === "reminderChild") return false;
     const previous = this.items.get(item.itemId);
     if (previous && previous.revision >= item.revision) return false;
     let patch;

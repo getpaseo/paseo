@@ -394,21 +394,39 @@ test("image turn sends a native image and the subsequent text turn succeeds", as
   });
   expect(turns[1].params.input).toEqual([{ type: "text", text: "hello" }]);
 });
-test("unknown reminder items render generically using fallbackText", async () => {
-  const h = await harness();
-  await h.open();
-  await h.prompt();
-  await h.wait((event) => event.type === "session.turn" && event.state === "completed");
-  expect(h.events).toContainEqual(
-    expect.objectContaining({
-      type: "timeline.item",
-      item: expect.objectContaining({
-        name: "reminderChild",
-        detail: { type: "plain_text", label: "reminderChild", text: "Reminder child session" },
-      }),
-    }),
-  );
-});
+for (const source of ["live", "history", "backfill"]) {
+  test(`reminder housekeeping emits no timeline items or child sessions from ${source}`, async () => {
+    const scenario = source === "history" ? "resume-without-cursor" : "text-reasoning";
+    const frames = (
+      await readFile(new URL(`./fixtures/${scenario}.ndjson`, import.meta.url), "utf8")
+    )
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    const reminderIds = new Set<string>(
+      frames
+        .flatMap(({ msg }) =>
+          msg.params?.item ? [msg.params.item] : (msg.result?.history?.items ?? []),
+        )
+        .filter((item) => item?.kind === "reminderChild")
+        .map((item) => item.itemId),
+    );
+    expect(reminderIds.size).toBeGreaterThan(0);
+    const h = await harness(scenario, source === "backfill" ? { MUSE_TEST_GAP: "1" } : {});
+    await h.open(
+      source === "history" ? { version: 1, data: { sessionId: "saved-session" } } : undefined,
+    );
+    await h.prompt();
+    await h.wait((event) => event.type === "session.turn" && event.state === "completed");
+    expect(
+      h.events.filter((event) => event.type === "timeline.item" && reminderIds.has(event.item.id)),
+    ).toEqual([]);
+    expect(
+      h.events.filter((event) => event.type === "session.opened").map((event) => event.sessionId),
+    ).toEqual(["paseo-session"]);
+    expect((await h.recorded()).filter((frame) => frame.method === "session/read")).toEqual([]);
+  });
+}
 for (const [scenario, code, guidance] of [
   ["auto-review-unavailable", "defaultProfileUnavailable", "permissions.default_profile"],
   ["unsafe-path", "unsafePath", path.join("/test-data", "muse")],
