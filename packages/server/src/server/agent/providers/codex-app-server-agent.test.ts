@@ -660,6 +660,7 @@ async function withCustomCodexProviderHome<T>(
     session: AgentSession;
     readCaptured: () => CapturedFakeCodexRecord[];
   }) => Promise<T>,
+  providerPrompts: Record<string, string> = {},
 ): Promise<T> {
   const tempDir = await mkdtemp(path.join(tmpdir(), "codex-provider-home-"));
   const daemonCodexHome = path.join(tempDir, "daemon-codex-home");
@@ -676,6 +677,9 @@ async function withCustomCodexProviderHome<T>(
     path.join(providerCodexHome, "prompts", "probe-profile.md"),
     "---\ndescription: Provider home prompt\n---\nfrom the provider home\n",
   );
+  for (const [name, content] of Object.entries(providerPrompts)) {
+    writeFileSync(path.join(providerCodexHome, "prompts", `${name}.md`), content);
+  }
   writeFileSync(
     fakeAppServerPath,
     `
@@ -753,11 +757,21 @@ async function listPromptCommandsFromCustomCodexHome(): Promise<string[]> {
   });
 }
 
-async function runPromptFromCustomCodexHome(prompt: string): Promise<CapturedFakeCodexRecord[]> {
+async function runPromptFromCustomCodexHome(
+  prompt: string,
+  providerPrompts: Record<string, string> = {},
+): Promise<CapturedFakeCodexRecord[]> {
   return withCustomCodexProviderHome(async ({ session, readCaptured }) => {
     await session.startTurn(prompt);
     return readCaptured();
-  });
+  }, providerPrompts);
+}
+
+async function expandCustomPrompt(template: string, args: string): Promise<string> {
+  const records = await runPromptFromCustomCodexHome(`/prompts:template ${args}`, { template });
+  const turnStart = records.find((record) => record.method === "turn/start");
+  const params = turnStart?.params as { input: Array<{ text: string }> };
+  return params.input[0].text;
 }
 
 function capturedThreadStartConfig(records: CapturedFakeCodexRecord[]): unknown {
@@ -2482,6 +2496,29 @@ describe("Codex app-server provider", () => {
     );
     const turnStart = records.find((record) => record.method === "turn/start");
     expect(JSON.stringify(turnStart?.params)).toContain("from the provider home");
+  });
+
+  test("inserts custom prompt arguments literally", async () => {
+    await expect(
+      expandCustomPrompt("Implement this exact request: $ARGUMENTS", "Preserve $1 unchanged"),
+    ).resolves.toBe("Implement this exact request: Preserve $1 unchanged");
+    await expect(
+      expandCustomPrompt("Treat this as literal replacement text: $VALUE.", 'VALUE="$&"'),
+    ).resolves.toBe("Treat this as literal replacement text: $&.");
+    await expect(expandCustomPrompt("$1 then $2", '"$2" two')).resolves.toBe("$2 then two");
+    await expect(expandCustomPrompt("$A and $B", 'A="$B" B=b')).resolves.toBe("$B and b");
+    await expect(
+      expandCustomPrompt("$ARGUMENTS", "keep __CODEX_DOLLAR_PLACEHOLDER__ as typed"),
+    ).resolves.toBe("keep __CODEX_DOLLAR_PLACEHOLDER__ as typed");
+  });
+
+  test("expands custom prompt placeholders and escapes", async () => {
+    await expect(
+      expandCustomPrompt("$1/$2 $NAME costs $$5, all: $ARGUMENTS, $MISSING", "one NAME=n two"),
+    ).resolves.toBe("one/two n costs $5, all: one NAME=n two, $MISSING");
+    await expect(
+      expandCustomPrompt("$$ARGUMENTS $$1 $$NAME $9|$NAME_SUFFIX", "first NAME=value"),
+    ).resolves.toBe("$ARGUMENTS $1 $NAME |$NAME_SUFFIX");
   });
 
   test("deduplicates Codex skill slash commands returned from multiple skill roots", async () => {
