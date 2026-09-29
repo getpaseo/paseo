@@ -51,7 +51,7 @@ function productionEnvironment(): HubCommandEnvironment {
 
 export function createHubCommand(overrides: Partial<HubCommandEnvironment> = {}): Command {
   const environment = { ...productionEnvironment(), ...overrides };
-  const hub = addHubResolutionHelp(new Command("hub").description("Manage Paseo Hub"));
+  const hub = addHubResolutionHelp(new Command("hub").description("Manage PandaOS Hub"));
 
   addHubLoginCommand(hub, {
     env: environment.env,
