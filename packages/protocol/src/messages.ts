@@ -1193,7 +1193,14 @@ const ImageAttachmentSchema = z.object({
   mimeType: z.string(), // e.g., "image/jpeg", "image/png"
 });
 
-export const ActiveTurnBehaviorSchema = z.enum(["interrupt", "steer"]);
+/**
+ * What a send does when the agent is mid-turn. "interrupt" cancels the turn, "steer"
+ * joins it, and "queue" holds the prompt in the daemon and starts it as the next turn
+ * once the running turn ends.
+ */
+// COMPAT(agentPromptQueue): "queue" added in v0.10.2. Old daemons reject it, so
+// callers gate it on server_info.features.agentPromptQueue.
+export const ActiveTurnBehaviorSchema = z.enum(["interrupt", "steer", "queue"]);
 export type ActiveTurnBehavior = z.infer<typeof ActiveTurnBehaviorSchema>;
 
 /**
@@ -3719,6 +3726,8 @@ export const ServerInfoStatusPayloadSchema = z
         agentProfiles: z.boolean().optional(),
         // COMPAT(agentConfigApply): added in v0.3.2, remove gate after 2027-02-11.
         agentConfigApply: z.boolean().optional(),
+        // COMPAT(agentPromptQueue): added in v0.10.2, remove gate after 2027-03-30.
+        agentPromptQueue: z.boolean().optional(),
       })
       .optional(),
   })
@@ -4934,6 +4943,8 @@ export const SendAgentMessageResponseMessageSchema = z.object({
     agentId: z.string(),
     accepted: z.boolean(),
     error: z.string().nullable(),
+    /** True when the daemon held the prompt until the running turn ends. */
+    queued: z.boolean().optional(),
   }),
 });
 
