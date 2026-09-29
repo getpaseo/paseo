@@ -2009,6 +2009,8 @@ export const ptBR: TranslationResources = {
       emptyDescription: "Crie um pull request para este checkout para ver os detalhes aqui.",
     },
     insights: {
+      label: "Métricas",
+      subtitle: "Como o agente está trabalhando",
       noAgent: "Abra uma aba de agente para ver como ele está trabalhando.",
       duration: "Duração",
       toolCalls: "Chamadas de ferramentas",

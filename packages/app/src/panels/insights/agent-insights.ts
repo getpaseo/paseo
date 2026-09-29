@@ -31,8 +31,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-// The MCP result arrives either as the structured object, wrapped in structuredContent,
-// or only as the JSON text of its first content block.
+// The MCP result arrives as the structured object, wrapped in structuredContent or in
+// the provider's own `output` (Claude), or only as the JSON text of its first content block.
 function findJevResult(output: unknown): Record<string, unknown> | null {
   if (typeof output === "string") {
     try {
@@ -44,6 +44,7 @@ function findJevResult(output: unknown): Record<string, unknown> | null {
   if (!isRecord(output)) return null;
   if (isRecord(output.answers)) return output;
   if (isRecord(output.structuredContent)) return findJevResult(output.structuredContent);
+  if (isRecord(output.output)) return findJevResult(output.output);
   if (Array.isArray(output.content)) {
     const text = output.content.find((block) => isRecord(block) && block.type === "text");
     return isRecord(text) ? findJevResult(text.text) : null;

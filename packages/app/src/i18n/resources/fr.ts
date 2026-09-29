@@ -2029,6 +2029,8 @@ export const fr: TranslationResources = {
         "Créez une demande de fusion pour cette copie de travail afin d’afficher ses détails ici.",
     },
     insights: {
+      label: "Aperçu",
+      subtitle: "Comment l’agent travaille",
       noAgent: "Ouvrez un onglet d’agent pour voir comment il travaille.",
       duration: "Durée",
       toolCalls: "Appels d’outils",

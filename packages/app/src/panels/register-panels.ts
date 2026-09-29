@@ -7,6 +7,7 @@ import {
 } from "@/panels/diff-panel";
 import { draftPanelRegistration } from "@/panels/draft-panel";
 import { evidencePanelRegistration } from "@/panels/evidence-panel";
+import { insightsPanelRegistration } from "@/panels/insights-panel";
 import { filePanelRegistration } from "@/panels/file-panel";
 import { filesPanelRegistration } from "@/panels/files-panel";
 import { registerPanel } from "@/panels/panel-registry";
@@ -25,6 +26,7 @@ export function ensurePanelsRegistered(): void {
   }
   registerPanel(draftPanelRegistration);
   registerPanel(evidencePanelRegistration);
+  registerPanel(insightsPanelRegistration);
   registerPanel(newTabPanelRegistration);
   registerPanel(agentPanelRegistration);
   registerPanel(providerSubagentPanelRegistration);

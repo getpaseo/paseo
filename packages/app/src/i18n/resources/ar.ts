@@ -1975,6 +1975,8 @@ export const ar: TranslationResources = {
       emptyDescription: "أنشئ طلب سحب لنسخة العمل هذه لعرض تفاصيله هنا.",
     },
     insights: {
+      label: "الرؤى",
+      subtitle: "كيف يعمل الوكيل",
       noAgent: "افتح علامة تبويب وكيل لترى كيف يعمل.",
       duration: "المدة",
       toolCalls: "استدعاءات الأدوات",

@@ -63,6 +63,11 @@ const manifests = {
     supportedHosts: ["main", "explorer"],
     resourceKey: () => "evidence",
   },
+  insights: {
+    kind: "insights",
+    supportedHosts: ["main", "explorer"],
+    resourceKey: () => "insights",
+  },
   file: {
     kind: "file",
     supportedHosts: ["main", "explorer"],

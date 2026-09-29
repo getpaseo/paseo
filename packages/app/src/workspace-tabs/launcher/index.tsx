@@ -128,6 +128,7 @@ const BUILT_IN_SELECTIONS = {
   browser: { kind: "browser" },
   pullRequest: { kind: "target", target: { kind: "pull_request" } },
   evidence: { kind: "target", target: { kind: "evidence" } },
+  insights: { kind: "target", target: { kind: "insights" } },
 } satisfies Record<BuiltInLaunchItemId, NewTabSelection>;
 
 function getLaunchPresentation(kind: WorkspaceTabTarget["kind"]): PanelPresentation {
@@ -184,6 +185,7 @@ export function useWorkspaceTabLaunchCatalog(input: {
     const filesPresentation = getLaunchPresentation("files");
     const pullRequestPresentation = getLaunchPresentation("pull_request");
     const evidencePresentation = getLaunchPresentation("evidence");
+    const insightsPresentation = getLaunchPresentation("insights");
     const builtIns: Record<BuiltInLaunchItemId, WorkspaceTabLaunchItem & { hidden?: boolean }> = {
       agent: {
         id: "agent",
@@ -265,6 +267,15 @@ export function useWorkspaceTabLaunchCatalog(input: {
         panelKind: "evidence",
         toggleTarget: BUILT_IN_SELECTIONS.evidence.target,
         launch: launchSelection(BUILT_IN_SELECTIONS.evidence),
+      },
+      insights: {
+        id: "insights",
+        label: insightsPresentation.label(t),
+        Icon: insightsPresentation.icon,
+        disabled: false,
+        panelKind: "insights",
+        toggleTarget: BUILT_IN_SELECTIONS.insights.target,
+        launch: launchSelection(BUILT_IN_SELECTIONS.insights),
       },
     };
     const tabItems = getBuiltInLaunchOrder(purpose).flatMap((id) => {

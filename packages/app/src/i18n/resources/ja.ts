@@ -1999,6 +1999,8 @@ export const ja: TranslationResources = {
         "このチェックアウトのプルリクエストを作成すると、ここに詳細が表示されます。",
     },
     insights: {
+      label: "インサイト",
+      subtitle: "エージェントの作業状況",
       noAgent: "エージェントのタブを開くと、作業状況を確認できます。",
       duration: "経過時間",
       toolCalls: "ツール呼び出し",

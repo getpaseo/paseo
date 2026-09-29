@@ -70,6 +70,27 @@ describe("computeAgentInsights", () => {
     ]);
   });
 
+  it("reads the result Claude nests in its own output field", () => {
+    const items = [
+      toolCall("j1", 0, "mcp__paseo__system_one_decide", {
+        type: "unknown",
+        input: {},
+        output: {
+          output: {
+            answers: { next: { type: "choice", choice: "inspect", confidence: 0.71 } },
+            model: "jev-1.13.0",
+            latencyMs: 497,
+          },
+        },
+      }),
+    ];
+    const insights = computeAgentInsights(items);
+    expect(insights.jevDecisions.map((d) => [d.question, d.choice, d.confidence])).toEqual([
+      ["next", "inspect", 0.71],
+    ]);
+    expect(insights.jevLatencyMs).toBe(497);
+  });
+
   it("is empty for an empty timeline", () => {
     expect(computeAgentInsights([])).toMatchObject({ toolCalls: 0, jevDecisions: [], spanMs: 0 });
   });

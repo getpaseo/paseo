@@ -1954,6 +1954,8 @@ export const zhCN: TranslationResources = {
       emptyDescription: "为此检出创建拉取请求后，可在此处查看其详情。",
     },
     insights: {
+      label: "洞察",
+      subtitle: "代理的工作情况",
       noAgent: "打开一个代理标签页即可查看它的工作情况。",
       duration: "时长",
       toolCalls: "工具调用",

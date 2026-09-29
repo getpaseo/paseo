@@ -1985,6 +1985,8 @@ export const ko: TranslationResources = {
       emptyDescription: "이 체크아웃에 풀 리퀘스트를 만들면 세부 정보가 여기에 표시됩니다.",
     },
     insights: {
+      label: "인사이트",
+      subtitle: "에이전트 작업 상황",
       noAgent: "에이전트 탭을 열면 작업 상황을 볼 수 있습니다.",
       duration: "소요 시간",
       toolCalls: "도구 호출",

@@ -2011,6 +2011,8 @@ export const ru: TranslationResources = {
       emptyDescription: "Создайте PR для этой рабочей копии, чтобы увидеть здесь сведения о нём.",
     },
     insights: {
+      label: "Аналитика",
+      subtitle: "Как работает агент",
       noAgent: "Откройте вкладку агента, чтобы увидеть, как он работает.",
       duration: "Длительность",
       toolCalls: "Вызовы инструментов",

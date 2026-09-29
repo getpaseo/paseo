@@ -7,7 +7,7 @@ import {
 } from "@/stores/workspace-layout-store";
 import type { WorkspaceTabTarget } from "@/workspace-tabs/model";
 
-export type ExplorerSidebarView = "changes" | "files" | "pr" | "evidence";
+export type ExplorerSidebarView = "changes" | "files" | "pr" | "evidence" | "insights";
 export type ExplorerSidebarPresentation = "overlay" | "dock" | "pane";
 
 const VIEW_TARGETS: Record<ExplorerSidebarView, WorkspaceTabTarget> = {
@@ -15,6 +15,7 @@ const VIEW_TARGETS: Record<ExplorerSidebarView, WorkspaceTabTarget> = {
   files: { kind: "files" },
   pr: { kind: "pull_request" },
   evidence: { kind: "evidence" },
+  insights: { kind: "insights" },
 };
 
 export interface ExplorerSidebarQuery {

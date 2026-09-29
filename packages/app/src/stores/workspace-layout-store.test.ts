@@ -31,6 +31,7 @@ import {
   findPaneById,
   findPaneContainingTab,
   FOCUSED_PANE_PLACEMENT,
+  getFocusedAgentId,
   getFocusedBrowserId,
   getTreeDepth,
   insertSplit,
@@ -347,6 +348,43 @@ describe("workspace-layout-store helpers", () => {
 
     expect(getFocusedBrowserId({ root, focusedPaneId: "left" })).toBe("browser-a-id");
     expect(getFocusedBrowserId({ root, focusedPaneId: "right" })).toBe("browser-b-id");
+  });
+
+  it("finds the agent in view even when a side pane like Insights holds focus", () => {
+    const root: SplitNode = {
+      kind: "group",
+      group: {
+        id: "root",
+        direction: "horizontal",
+        sizes: [0.5, 0.5],
+        children: [
+          createPane({
+            id: "left",
+            tabIds: ["agent-a"],
+            targetsByTabId: { "agent-a": { kind: "agent", agentId: "agent-a" } },
+          }),
+          createPane({
+            id: "right",
+            tabIds: ["insights"],
+            targetsByTabId: { insights: { kind: "insights" } },
+          }),
+        ],
+      },
+    };
+
+    expect(getFocusedAgentId({ root, focusedPaneId: "right" })).toBe("agent-a");
+    expect(getFocusedAgentId({ root, focusedPaneId: "left" })).toBe("agent-a");
+    expect(getFocusedAgentId(null)).toBeNull();
+    const samePane = createPane({
+      id: "main",
+      tabIds: ["agent-a", "insights"],
+      focusedTabId: "insights",
+      targetsByTabId: {
+        "agent-a": { kind: "agent", agentId: "agent-a" },
+        insights: { kind: "insights" },
+      },
+    });
+    expect(getFocusedAgentId({ root: samePane, focusedPaneId: "main" })).toBe("agent-a");
   });
 
   it("returns null when the focused pane active tab is not a browser", () => {

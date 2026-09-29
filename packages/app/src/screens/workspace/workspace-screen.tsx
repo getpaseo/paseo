@@ -325,6 +325,7 @@ function getFallbackTabOptionLabel(
     files: string;
     pullRequest: string;
     evidence: string;
+    insights: string;
   },
 ): string {
   if (tab.target.kind === "new_tab") {
@@ -357,6 +358,9 @@ function getFallbackTabOptionLabel(
   if (tab.target.kind === "evidence") {
     return labels.evidence;
   }
+  if (tab.target.kind === "insights") {
+    return labels.insights;
+  }
   if (tab.target.kind === "commit_diff") {
     return tab.target.sha.slice(0, 7);
   }
@@ -380,6 +384,8 @@ function getFallbackTabOptionDescription(
     pullRequest: string;
     evidence: string;
     evidenceDescription: string;
+    insights: string;
+    insightsDescription: string;
   },
 ): string {
   if (tab.target.kind === "new_tab") {
@@ -417,6 +423,9 @@ function getFallbackTabOptionDescription(
   }
   if (tab.target.kind === "evidence") {
     return labels.evidenceDescription;
+  }
+  if (tab.target.kind === "insights") {
+    return labels.insightsDescription;
   }
   if (tab.target.kind === "plugin") {
     return tab.target.panelId;
@@ -627,6 +636,7 @@ function MobileWorkspaceTabOption({
       files: t("panels.files.label"),
       pullRequest: t("panels.pullRequest.label"),
       evidence: t("panels.evidence.label"),
+      insights: t("panels.insights.label"),
     }),
     [t],
   );
@@ -2465,6 +2475,8 @@ function WorkspaceScreenContent({
       pullRequest: t("panels.pullRequest.label"),
       evidence: t("panels.evidence.label"),
       evidenceDescription: t("panels.evidence.subtitle"),
+      insights: t("panels.insights.label"),
+      insightsDescription: t("panels.insights.subtitle"),
     }),
     [t],
   );

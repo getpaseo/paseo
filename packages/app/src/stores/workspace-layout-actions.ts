@@ -1236,18 +1236,28 @@ export function getFocusedBrowserId(layout: WorkspaceLayout | null | undefined):
   return focusedTab?.target.kind === "browser" ? focusedTab.target.browserId : null;
 }
 
+/**
+ * The agent the person is looking at: the front tab of the focused pane, or else of any
+ * visible pane, else the newest agent tab. Insights takes focus itself but describes this agent.
+ */
 export function getFocusedAgentId(layout: WorkspaceLayout | null | undefined): string | null {
   if (!layout) {
     return null;
   }
+  const tabsById = new Map(collectAllTabs(layout.root).map((tab) => [tab.tabId, tab]));
   const focusedPane = findPaneById(layout.root, layout.focusedPaneId);
-  if (!focusedPane?.focusedTabId || focusedPane.hidden === true) {
-    return null;
+  const panes = [focusedPane, ...collectAllPanes(layout.root)];
+  for (const pane of panes) {
+    if (!pane?.focusedTabId || pane.hidden === true) continue;
+    const target = tabsById.get(pane.focusedTabId)?.target;
+    if (target?.kind === "agent") return target.agentId;
   }
-  const focusedTab = collectAllTabs(layout.root).find(
-    (tab) => tab.tabId === focusedPane.focusedTabId,
+  // Insights opened in the agent's own pane sits in front of it; the agent is still the subject.
+  const agentTabs = (focusedPane?.tabIds ?? []).flatMap((tabId) => tabsById.get(tabId) ?? []);
+  const fallback = [...agentTabs, ...tabsById.values()].findLast(
+    (tab) => tab.target.kind === "agent",
   );
-  return focusedTab?.target.kind === "agent" ? focusedTab.target.agentId : null;
+  return fallback?.target.kind === "agent" ? fallback.target.agentId : null;
 }
 
 export function createDefaultLayout(): WorkspaceLayout {

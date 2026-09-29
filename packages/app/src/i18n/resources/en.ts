@@ -2001,6 +2001,8 @@ export const en = {
       emptyDescription: "Create a pull request for this checkout to see its details here.",
     },
     insights: {
+      label: "Insights",
+      subtitle: "How the agent is working",
       noAgent: "Open an agent tab to see how it is working.",
       duration: "Duration",
       toolCalls: "Tool calls",

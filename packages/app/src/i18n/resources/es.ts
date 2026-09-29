@@ -2024,6 +2024,8 @@ export const es: TranslationResources = {
       emptyDescription: "Crea una solicitud para este checkout y consulta aquí sus detalles.",
     },
     insights: {
+      label: "Métricas",
+      subtitle: "Cómo trabaja el agente",
       noAgent: "Abre una pestaña de agente para ver cómo está trabajando.",
       duration: "Duración",
       toolCalls: "Llamadas a herramientas",

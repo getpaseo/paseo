@@ -59,6 +59,7 @@ function normalizeSimpleWorkspaceTabTarget(value: WorkspaceTabTarget): Workspace
     case "files":
     case "pull_request":
     case "evidence":
+    case "insights":
       return { kind: value.kind };
     case "setup": {
       const workspaceId = trimNonEmpty(value.workspaceId);
@@ -224,7 +225,8 @@ export function buildDeterministicWorkspaceTabId(target: WorkspaceTabTarget): st
     target.kind === "changes_tree" ||
     target.kind === "files" ||
     target.kind === "pull_request" ||
-    target.kind === "evidence"
+    target.kind === "evidence" ||
+    target.kind === "insights"
   ) {
     return target.kind;
   }
