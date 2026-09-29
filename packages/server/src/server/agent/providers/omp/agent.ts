@@ -81,6 +81,7 @@ import { materializeProviderImage } from "../provider-image-output.js";
 import { OmpCliRuntime } from "./cli-runtime.js";
 import { listOmpImportableSessions, readOmpImportSessionConfig } from "./session-descriptor.js";
 import type { OmpRuntime, OmpRuntimeSession, OmpStartSessionInput } from "./runtime.js";
+import { OmpMcpBridge, attachOmpMcpBridge, closeOmpMcpBridge } from "./mcp-bridge.js";
 import type {
   OmpAgentSessionEvent,
   OmpAgentMessage,
@@ -126,7 +127,7 @@ const OMP_CORE_CAPABILITIES: AgentCapabilityFlags = {
   supportsSessionPersistence: true,
   supportsSessionListing: true,
   supportsDynamicModes: true,
-  supportsMcpServers: false,
+  supportsMcpServers: true,
   supportsReasoningStream: true,
   supportsToolInvocations: true,
   supportsRewindConversation: true,
@@ -457,7 +458,7 @@ function readNativeMessageId(
 function withOmpCapabilities(): AgentCapabilityFlags {
   return {
     ...OMP_CORE_CAPABILITIES,
-    supportsMcpServers: false,
+    supportsMcpServers: true,
     supportsNativePaseoTools: true,
   };
 }
@@ -1016,6 +1017,7 @@ export class OmpAgentSession implements AgentSession {
         this.attachRuntime(next);
         this.subagentIndex.clear(old);
         clearOmpHostToolState(old);
+        await closeOmpMcpBridge(old);
         await old.close().catch(() => undefined);
         if (state.sessionId !== previousSessionId) {
           this.emit({
@@ -1025,6 +1027,7 @@ export class OmpAgentSession implements AgentSession {
           });
         }
       } catch (error) {
+        await closeOmpMcpBridge(next);
         await next.close().catch(() => undefined);
         throw error;
       }
@@ -1116,6 +1119,7 @@ export class OmpAgentSession implements AgentSession {
     try {
       await this.runtimeSession.close();
     } finally {
+      await closeOmpMcpBridge(this.runtimeSession);
       this.clearOmpSessionState();
     }
   }
@@ -1728,6 +1732,7 @@ export class OmpAgentSession implements AgentSession {
 
   private handleProcessExit(error: string): void {
     this.runtimeDead = true;
+    void closeOmpMcpBridge(this.runtimeSession);
     this.usagePoller.stopTurn();
     if (!this.activeTurnId) {
       this.terminalizeActiveWork();
@@ -2220,10 +2225,19 @@ export class OmpAgentClient implements AgentClient {
   private async configureNativePaseoTools(
     runtimeSession: OmpRuntimeSession,
     catalog: PaseoToolCatalog | undefined,
+    config: AgentSessionConfig,
   ): Promise<void> {
-    if (!catalog) {
+    if (!catalog && !config.mcpServers) {
       return;
     }
+    const bridge = await OmpMcpBridge.connect(
+      config.mcpServers,
+      config.cwd,
+      this.logger,
+      catalog?.tools.keys(),
+      Boolean(catalog),
+    );
+    attachOmpMcpBridge(runtimeSession, bridge);
     await setOmpHostTools(runtimeSession, catalog);
   }
 
@@ -2257,7 +2271,7 @@ export class OmpAgentClient implements AgentClient {
     };
     const runtimeSession = await this.runtime.startSession(startInput);
     try {
-      await this.configureNativePaseoTools(runtimeSession, launchContext?.paseoTools);
+      await this.configureNativePaseoTools(runtimeSession, launchContext?.paseoTools, config);
       const initialState = await this.restoreFastMode(
         runtimeSession,
         config,
@@ -2279,6 +2293,7 @@ export class OmpAgentClient implements AgentClient {
         usageEnv: { ...process.env, ...this.runtimeSettings?.env, ...launchContext?.env },
       });
     } catch (error) {
+      await closeOmpMcpBridge(runtimeSession);
       await runtimeSession.close().catch(() => undefined);
       throw error;
     }
@@ -2311,7 +2326,11 @@ export class OmpAgentClient implements AgentClient {
     });
     const runtimeSession = await this.runtime.startSession(startInput);
     try {
-      await this.configureNativePaseoTools(runtimeSession, launchContext?.paseoTools);
+      await this.configureNativePaseoTools(
+        runtimeSession,
+        launchContext?.paseoTools,
+        resumeConfig.config,
+      );
       const initialState = await this.restoreFastMode(
         runtimeSession,
         resumeConfig.config,
@@ -2334,6 +2353,7 @@ export class OmpAgentClient implements AgentClient {
         live: false,
       });
     } catch (error) {
+      await closeOmpMcpBridge(runtimeSession);
       await runtimeSession.close().catch(() => undefined);
       throw error;
     }
@@ -2355,11 +2375,12 @@ export class OmpAgentClient implements AgentClient {
         ...(!startInput.noSession && sessionFile ? { session: sessionFile } : {}),
       });
       try {
-        await this.configureNativePaseoTools(next, launchContext?.paseoTools);
+        await this.configureNativePaseoTools(next, launchContext?.paseoTools, config);
         const state = await next.getState();
         await this.restoreFastMode(next, config, state);
         return next;
       } catch (error) {
+        await closeOmpMcpBridge(next);
         await next.close().catch(() => undefined);
         throw error;
       }

@@ -323,6 +323,7 @@ export function parseToolArgs(toolName: string, rawArgs: unknown): OmpTrackedToo
 }
 
 export function resolveToolCallName(toolCall: OmpTrackedToolCall, result?: OmpToolResult): string {
+  if (mcpToolLabel(toolCall.toolName)) return "MCP";
   if (
     (toolCall.kind === "read" || toolCall.kind === "write") &&
     toolCall.args.path.startsWith("xd://")
@@ -337,6 +338,11 @@ export function resolveToolCallName(toolCall: OmpTrackedToolCall, result?: OmpTo
   }
 
   return toolCall.toolName;
+}
+
+export function mcpToolLabel(name: string): string | null {
+  const match = /^mcp_(.+)__(.+)_(?:\d+_)?[a-f0-9]{12}$/.exec(name);
+  return match ? `${match[1]} / ${match[2]}` : null;
 }
 
 export function mapToolDetail(

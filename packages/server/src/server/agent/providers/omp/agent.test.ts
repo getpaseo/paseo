@@ -259,7 +259,7 @@ describe("OMP agent client and session", () => {
       [expect.objectContaining({ name: "create_agent" })],
     ]);
     expect(omp.capabilities()).toMatchObject({
-      supportsMcpServers: false,
+      supportsMcpServers: true,
       supportsNativePaseoTools: true,
     });
   });

@@ -2,6 +2,7 @@ import type { ToolCallDetail } from "../../agent-sdk-types.js";
 import {
   extractTextFromToolResult,
   mapToolDetail as mapOmpCoreToolDetail,
+  mcpToolLabel,
   resolveToolCallName,
   type OmpToolResult,
   type OmpTrackedToolCall,
@@ -15,6 +16,20 @@ export function mapOmpToolDetail(
     mapSubagentDetail?: (baseDetail: ToolCallDetail) => ToolCallDetail;
   },
 ): ToolCallDetail | null {
+  if (toolCall.toolName.startsWith("mcp_")) {
+    const label = mcpToolLabel(toolCall.toolName) ?? toolCall.toolName;
+    const output = extractTextFromToolResult(result);
+    return {
+      type: "plain_text",
+      label,
+      text: [
+        `Input: ${JSON.stringify(toolCall.args)}`,
+        output === undefined ? undefined : `Result: ${output}`,
+      ]
+        .filter(Boolean)
+        .join("\n"),
+    };
+  }
   if (toolCall.toolName === "todo") {
     return null;
   }
