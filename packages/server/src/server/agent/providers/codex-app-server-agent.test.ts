@@ -2373,6 +2373,71 @@ describe("Codex app-server provider", () => {
     });
   });
 
+  test("keeps an output field named properties as a field", () => {
+    const input = {
+      type: "object",
+      properties: { properties: { type: "string" } },
+      required: ["properties"],
+      additionalProperties: false,
+    };
+
+    expect(normalizeCodexOutputSchema(input)).toEqual(input);
+  });
+
+  test("normalizes schemas under keywords and leaves literal values alone", () => {
+    const literal = { type: "object", properties: { type: "string" } };
+    const input = {
+      type: "object",
+      properties: {
+        result: { $ref: "#/$defs/result" },
+        choice: { anyOf: [{ type: "object", properties: { id: { type: "string" } } }] },
+      },
+      $defs: {
+        properties: { type: "string" },
+        result: {
+          type: "object",
+          properties: { value: { type: "string" } },
+          default: literal,
+          examples: [literal],
+          enum: [literal],
+          const: literal,
+        },
+      },
+    };
+
+    expect(normalizeCodexOutputSchema(input)).toEqual({
+      type: "object",
+      properties: {
+        result: { $ref: "#/$defs/result" },
+        choice: {
+          anyOf: [
+            {
+              type: "object",
+              properties: { id: { type: "string" } },
+              required: ["id"],
+              additionalProperties: false,
+            },
+          ],
+        },
+      },
+      required: ["result", "choice"],
+      additionalProperties: false,
+      $defs: {
+        properties: { type: "string" },
+        result: {
+          type: "object",
+          properties: { value: { type: "string" } },
+          default: literal,
+          examples: [literal],
+          enum: [literal],
+          const: literal,
+          required: ["value"],
+          additionalProperties: false,
+        },
+      },
+    });
+  });
+
   test("passes a normalized output schema to turn/start", async () => {
     const session = createSession();
     const request = vi.fn(async (method: string) => {
