@@ -267,7 +267,9 @@ export function createPluginWorker(options: {
           send({ type: "settings.changed", settingsId }),
         )
       : null;
+    if (!paseo) throw new Error("Plugin Paseo API is unavailable");
     const contributedCleanup = contribute({
+      paseo,
       handle: (contract, handler) =>
         register(contract, (input, context) => handler(contract.input.parse(input), context)),
       registerProvider,

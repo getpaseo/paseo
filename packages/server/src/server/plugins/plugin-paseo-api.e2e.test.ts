@@ -141,6 +141,79 @@ export default function contribute(server: PluginServerContext) {
   }
 }, 60_000);
 
+test("plugin server context exposes the Paseo API outside handler execution", async () => {
+  const pluginDirectory = await mkdtemp(path.join(tmpdir(), "paseo-api-context-plugin-"));
+  const workspaceDirectory = await mkdtemp(path.join(tmpdir(), "paseo-api-context-workspace-"));
+  roots.push(pluginDirectory, workspaceDirectory);
+  await writeFile(
+    path.join(pluginDirectory, "paseo-plugin.json"),
+    JSON.stringify({
+      id: "paseo-api-context",
+      requirements: { paseo: `>=${resolveDaemonVersion(import.meta.url)}` },
+    }),
+  );
+  await writeFile(
+    path.join(pluginDirectory, "index.server.ts"),
+    `import { defineRpc } from "@getpaseo/plugin";
+import { type PluginServerContext } from "@getpaseo/plugin/server";
+import { z } from "zod";
+
+const bootstrapped = defineRpc({
+  name: "bootstrapped",
+  input: z.object({}),
+  output: z.object({ workspaceId: z.string(), agentId: z.string() }),
+});
+
+// Calls server.paseo directly during setup(), not inside a handler/hook callback,
+// proving PluginServerContext carries the daemon API on its own.
+export default function contribute(server: PluginServerContext) {
+  const bootstrap = server.paseo.workspaces
+    .create({ source: { kind: "directory", path: ${JSON.stringify(workspaceDirectory)} }, title: "Bootstrapped by setup()" })
+    .then(async (workspace) => {
+      const agent = await workspace.agents.create({
+        config: { provider: "pi/test" },
+        prompt: "Created from contribute() before any handler ran",
+      });
+      return { workspaceId: workspace.id, agentId: agent.id };
+    });
+  server.handle(bootstrapped, () => bootstrap);
+  return () => undefined;
+}`,
+  );
+
+  const daemon = await createTestPaseoDaemon({
+    agentClients: { ...createTestAgentClients(), pi: createTestAgentClient("pi") },
+  });
+  const client = new DaemonClient({
+    url: `ws://127.0.0.1:${daemon.port}/ws`,
+    appVersion: "0.4.0",
+  });
+
+  try {
+    await client.connect();
+    await client.patchDaemonConfig({ pluginsEnabled: true });
+    await expect(client.installDirectoryPlugin(pluginDirectory)).resolves.toMatchObject({
+      id: "paseo-api-context",
+      status: "running",
+    });
+
+    const bootstrapResult = await client.invokePluginRpc("paseo-api-context", "bootstrapped", {});
+    expect(bootstrapResult).toEqual({
+      workspaceId: expect.stringMatching(/^wks_/),
+      agentId: expect.stringMatching(/^[0-9a-f-]{36}$/),
+    });
+
+    const workspaces = await client.fetchWorkspaces();
+    expect(workspaces.entries.map((workspace) => workspace.id)).toContain(
+      Reflect.get(bootstrapResult as object, "workspaceId"),
+    );
+    await client.removePlugin("paseo-api-context");
+  } finally {
+    await client.close().catch(() => undefined);
+    await daemon.close();
+  }
+}, 60_000);
+
 test("daemon config reload enables and disables configured plugins without restarting", async () => {
   const pluginDirectory = await mkdtemp(path.join(tmpdir(), "paseo-reload-plugin-"));
   const paseoHomeRoot = await mkdtemp(path.join(tmpdir(), "paseo-reload-home-"));
