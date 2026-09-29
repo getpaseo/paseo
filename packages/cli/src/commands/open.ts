@@ -7,7 +7,9 @@ import { buildAgentDeepLink, type AgentDeepLinkTarget } from "@getpaseo/protocol
 function findDesktopApp(): string | null {
   if (process.platform === "darwin") {
     const candidates = [
+      "/Applications/PandaOS.app",
       "/Applications/Paseo.app",
+      path.join(homedir(), "Applications", "PandaOS.app"),
       path.join(homedir(), "Applications", "Paseo.app"),
     ];
 
@@ -22,8 +24,11 @@ function findDesktopApp(): string | null {
 
   if (process.platform === "linux") {
     const candidates = [
+      "/usr/bin/PandaOS",
       "/usr/bin/Paseo",
+      "/opt/PandaOS/PandaOS",
       "/opt/Paseo/Paseo",
+      path.join(homedir(), "Applications", "PandaOS.AppImage"),
       path.join(homedir(), "Applications", "Paseo.AppImage"),
     ];
 
@@ -42,7 +47,7 @@ function findDesktopApp(): string | null {
       return null;
     }
 
-    const candidate = path.join(localAppData, "Programs", "Paseo", "Paseo.exe");
+    const candidate = path.join(localAppData, "Programs", "PandaOS", "PandaOS.exe");
     return existsSync(candidate) ? candidate : null;
   }
 
@@ -70,14 +75,12 @@ function spawnDetached(command: string, args: string[]): void {
 
 function launchDesktop(args: string[]): void {
   if (process.env.PASEO_DESKTOP_CLI === "1") {
-    throw new Error("Cannot open Paseo Desktop while running in desktop CLI passthrough mode.");
+    throw new Error("Cannot open PandaOS Desktop while running in desktop CLI passthrough mode.");
   }
 
   const desktopApp = findDesktopApp();
   if (!desktopApp) {
-    throw new Error(
-      "Paseo desktop app not found. Install it from https://github.com/getpaseo/paseo/releases",
-    );
+    throw new Error("PandaOS desktop app not found. Install it from the PandaOS release page.");
   }
 
   if (process.platform === "darwin") {

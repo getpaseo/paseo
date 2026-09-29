@@ -10,8 +10,8 @@ export const Route = createFileRoute("/docs/$")({
     const slug = params._splat ?? "";
     const path = `/docs/${slug}`;
     const doc = getDoc(slug);
-    if (!doc) return pageMeta("Not Found - Paseo Docs", "Doc not found.", path);
-    return pageMeta(`${doc.frontmatter.title} - Paseo Docs`, doc.frontmatter.description, path);
+    if (!doc) return pageMeta("Not Found - PandaOS Docs", "Doc not found.", path);
+    return pageMeta(`${doc.frontmatter.title} - PandaOS Docs`, doc.frontmatter.description, path);
   },
   component: DocsPage,
 });

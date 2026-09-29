@@ -65,7 +65,7 @@ const SystemOneInputSchema = z
     if (JSON.stringify(input).length > 64_000) {
       context.addIssue({
         code: "custom",
-        message: "System One input exceeds Paseo's 64 KB decision-state limit",
+        message: "System One input exceeds PandaOS's 64 KB decision-state limit",
       });
     }
     const sensitivePath = findSensitiveFieldPath(input);
@@ -124,7 +124,7 @@ export function createConfiguredSystemOneDecisionSource(
       }
       const config = daemonConfigStore.get().systemOne;
       if (!config) {
-        throw new Error("System One is unavailable on this host. Update the Paseo daemon.");
+        throw new Error("System One is unavailable on this host. Update the PandaOS daemon.");
       }
       if (!config.enabled) {
         throw new Error("System One is disabled. Enable it in Paseo Settings → System One.");

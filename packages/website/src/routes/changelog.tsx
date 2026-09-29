@@ -14,8 +14,8 @@ const patchMarkdownComponents: Components = { h3: "h4" };
 export const Route = createFileRoute("/changelog")({
   head: () =>
     pageMeta(
-      "Changelog - Paseo",
-      "Product updates, bug fixes, and improvements shipped in each Paseo release. Track new agent providers, mobile features, and daemon changes over time.",
+      "Changelog - PandaOS",
+      "Product updates, bug fixes, and improvements shipped in each PandaOS release. Track new agent providers, mobile features, and daemon changes over time.",
       "/changelog",
     ),
   component: Changelog,
@@ -36,7 +36,7 @@ function HeadingAnchor({ version }: { version: string }) {
     <a
       href={`#${releaseAnchor(version)}`}
       className="changelog-heading-anchor"
-      aria-label={`Link to Paseo ${version}`}
+      aria-label={`Link to PandaOS ${version}`}
     >
       <span aria-hidden="true">#</span>
     </a>

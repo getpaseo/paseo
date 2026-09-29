@@ -8,8 +8,8 @@ export const Route = createFileRoute("/blog/$")({
     const slug = params._splat ?? "";
     const path = `/blog/${slug}`;
     const post = getPost(slug);
-    if (!post) return pageMeta("Not Found - Paseo", "Post not found.", path);
-    return pageMeta(`${post.frontmatter.title} - Paseo`, post.frontmatter.description, path);
+    if (!post) return pageMeta("Not Found - PandaOS", "Post not found.", path);
+    return pageMeta(`${post.frontmatter.title} - PandaOS`, post.frontmatter.description, path);
   },
   component: BlogPost,
 });

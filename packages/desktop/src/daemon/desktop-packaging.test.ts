@@ -129,7 +129,8 @@ describe("desktop packaging", () => {
   it("registers Paseo agent links with the operating system", () => {
     const config = readFileSync(join(packageRoot, "electron-builder.yml"), "utf8");
 
-    expect(config).toContain("name: Paseo agent link");
+    expect(config).toContain("name: PandaOS agent link");
+    expect(config).toContain("- pandaos");
     expect(config).toContain("- paseo");
   });
 

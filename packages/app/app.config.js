@@ -67,8 +67,8 @@ function resolveSecretFile(params) {
 
 const variants = {
   production: {
-    name: "Paseo",
-    packageId: "sh.paseo",
+    name: "PandaOS",
+    packageId: "dev.pandaos",
     googleServicesFile: resolveSecretFile({
       envKey: "GOOGLE_SERVICES_FILE_PROD",
       fallbackRelativePath: "./.secrets/google-services.prod.json",
@@ -79,8 +79,8 @@ const variants = {
     }),
   },
   development: {
-    name: "Paseo Debug",
-    packageId: "sh.paseo.debug",
+    name: "PandaOS Debug",
+    packageId: "dev.pandaos.debug",
     googleServicesFile: resolveSecretFile({
       envKey: "GOOGLE_SERVICES_FILE_DEBUG",
       fallbackRelativePath: "./.secrets/google-services.debug.json",
@@ -101,8 +101,8 @@ export default {
     slug: "voice-mobile",
     version: nativeReleaseVersion.appVersion,
     orientation: "portrait",
-    icon: "./assets/images/icon.png",
-    scheme: "paseo",
+    icon: "./assets/images/pandaos-app-icon.png",
+    scheme: "pandaos",
     userInterfaceStyle: "automatic",
     newArchEnabled: true,
     ios: {
@@ -134,7 +134,7 @@ export default {
     },
     web: {
       output: "single",
-      favicon: "./assets/images/favicon.png",
+      favicon: "./assets/images/pandaos-app-icon.png",
     },
     autolinking: {
       searchPaths: ["../../node_modules", "./node_modules"],
@@ -193,6 +193,6 @@ export default {
         projectId: "0e7f65ce-0367-46c8-a238-2b65963d235a",
       },
     },
-    owner: "getpaseo",
+    owner: "pandaos",
   },
 };

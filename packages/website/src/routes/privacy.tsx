@@ -1,12 +1,12 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { LegalPage, PaseoLegalIdentity } from "~/components/legal-page";
+import { LegalPage, PandaOSLegalIdentity } from "~/components/legal-page";
 import { pageMeta } from "~/meta";
 
 export const Route = createFileRoute("/privacy")({
   head: () =>
     pageMeta(
-      "Privacy Policy - Paseo",
-      "What stays on your machines, what the encrypted relay can see, and what Paseo Hub stores.",
+      "Privacy Policy - PandaOS",
+      "What stays on your machines, what the encrypted relay can see, and what PandaOS Hub stores.",
       "/privacy",
     ),
   component: Privacy,
@@ -24,7 +24,7 @@ function Privacy() {
 
       <section>
         <h2>Who is responsible</h2>
-        <PaseoLegalIdentity />
+        <PandaOSLegalIdentity />
         <p>
           Mohamed Boudra Ziani is the data controller for personal data processed through the
           official Paseo website, relay, and hosted Hub. Independently self-hosted daemons, Hubs,

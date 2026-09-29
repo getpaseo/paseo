@@ -7,7 +7,7 @@ import type { AgentSnapshotPayload } from "@getpaseo/protocol/messages";
 
 export function addImportOptions(cmd: Command): Command {
   return cmd
-    .description("Import an existing provider session as a Paseo agent")
+    .description("Import an existing provider session as a PandaOS agent")
     .argument("<id>", "Provider session/thread ID to import")
     .requiredOption("--provider <provider>", "Agent provider id")
     .option("--cwd <path>", "Working directory for providers that require it")

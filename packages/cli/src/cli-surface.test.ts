@@ -2,6 +2,12 @@ import { describe, expect, it } from "vitest";
 import { createCli } from "./cli.js";
 
 describe("canonical CLI surface", () => {
+  it("uses PandaOS as the displayed CLI name", () => {
+    const cli = createCli();
+    expect(cli.name()).toBe("pandaos");
+    expect(cli.description()).toContain("PandaOS");
+  });
+
   it("offers daemon host selection as a global option", () => {
     expect(createCli().helpInformation()).toContain("--host <host>");
   });

@@ -1,8 +1,9 @@
 {
   "name": "@getpaseo/cli",
   "version": "0.9.1",
-  "description": "Paseo CLI - control your AI coding agents from the command line",
+  "description": "PandaOS CLI - control your AI coding agents from the command line",
   "bin": {
+    "pandaos": "bin/paseo",
     "paseo": "bin/paseo"
   },
   "files": [

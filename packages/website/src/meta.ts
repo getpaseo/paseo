@@ -1,4 +1,4 @@
-const SITE_ORIGIN = "https://paseo.sh";
+const SITE_ORIGIN = "https://pandaos.dev";
 
 export function pageMeta(title: string, description: string, path: string) {
   const url = `${SITE_ORIGIN}${path}`;

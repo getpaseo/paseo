@@ -21,10 +21,10 @@ export function LegalPage({ title, lastUpdated, children }: LegalPageProps) {
   );
 }
 
-export function PaseoLegalIdentity() {
+export function PandaOSLegalIdentity() {
   return (
     <address className="not-italic">
-      <strong className="font-medium text-white">Mohamed Boudra Ziani</strong>, operating as Paseo
+      <strong className="font-medium text-white">Mohamed Boudra Ziani</strong>, operating as PandaOS
       <br />
       NIF/VAT ID: ES26617095T
       <br />

@@ -1,12 +1,12 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { LegalPage, PaseoLegalIdentity } from "~/components/legal-page";
+import { LegalPage, PandaOSLegalIdentity } from "~/components/legal-page";
 import { pageMeta } from "~/meta";
 
 export const Route = createFileRoute("/terms")({
   head: () =>
     pageMeta(
-      "Terms of Service - Paseo",
-      "Terms for the official Paseo Relay and hosted Paseo Hub services.",
+      "Terms of Service - PandaOS",
+      "Terms for the official PandaOS Relay and hosted PandaOS Hub services.",
       "/terms",
     ),
   component: Terms,
@@ -23,7 +23,7 @@ function Terms() {
 
       <section>
         <h2>Who provides the services</h2>
-        <PaseoLegalIdentity />
+        <PandaOSLegalIdentity />
       </section>
 
       <section>

@@ -8521,7 +8521,7 @@ export class Session {
                     timestamp: new Date().toISOString(),
                     item: {
                       type: "assistant_message",
-                      text: "Please upgrade the Paseo app to view this subagent conversation.",
+                      text: "Please upgrade the PandaOS app to view this subagent conversation.",
                     },
                   },
                 ],
@@ -8960,7 +8960,7 @@ export class Session {
       ...snapshot,
       status: "failed" as const,
       error:
-        "Workspace setup is blocked pending approval of code from a fork pull request. Update Paseo to review and run setup.",
+        "Workspace setup is blocked pending approval of code from a fork pull request. Update PandaOS to review and run setup.",
     };
     return message.type === "workspace_setup_progress"
       ? { ...message, payload: { ...message.payload, ...legacySnapshot } }

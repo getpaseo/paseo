@@ -2,8 +2,8 @@
   "name": "@getpaseo/desktop",
   "version": "0.9.1",
   "private": true,
-  "description": "Paseo desktop app (Electron wrapper)",
-  "homepage": "https://paseo.sh",
+  "description": "PandaOS desktop app (Electron wrapper)",
+  "homepage": "https://pandaos.dev",
   "license": "Apache-2.0",
   "author": {
     "name": "Mohamed Boudra",
@@ -46,5 +46,5 @@
     "vitest": "^4.1.6",
     "wait-on": "8.0.5"
   },
-  "desktopName": "Paseo.desktop"
+  "desktopName": "PandaOS.desktop"
 }
