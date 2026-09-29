@@ -101,20 +101,11 @@ import {
 import { AgentBackgroundWorkStore, type AgentBackgroundWorkItem } from "./background-work/index.js";
 import { withTimeout } from "../../utils/promise-timeout.js";
 import { extractAttention } from "../persistence-hooks.js";
+import {
+  DEFAULT_PROVIDER_REFRESH_TIMEOUT_MS,
+  runProviderRefreshWithDeadline,
+} from "./provider-refresh-deadline.js";
 import { ProviderIntrospectionQueue } from "./provider-introspection-queue.js";
-
-/**
- * Listing draft commands spawns a short-lived provider runtime, which costs a
- * second or two. Composers re-ask on every model, mode, and thinking-option
- * change, so a short cache keeps those switches from feeling broken.
- */
-const DRAFT_COMMAND_CACHE_TTL_MS = 60_000;
-const DRAFT_COMMAND_CACHE_MAX_ENTRIES = 64;
-
-interface DraftCommandCacheEntry {
-  commands: AgentSlashCommand[];
-  storedAt: number;
-}
 
 const RELOAD_SESSION_CLOSE_TIMEOUT_MS = 3_000;
 const INTERRUPT_SESSION_TIMEOUT_MS = 2_000;
@@ -835,12 +826,6 @@ export interface RetiredInternalAgent {
   lastMessage: string | null;
 }
 
-function resolveProviderIntrospectionQueue(
-  queue: ProviderIntrospectionQueue | undefined,
-): ProviderIntrospectionQueue {
-  return queue ?? new ProviderIntrospectionQueue();
-}
-
 export class AgentManager {
   private readonly pluginLifecycle: PluginLifecycle | undefined;
   private readonly retiredInternalAgents = new Map<
@@ -851,7 +836,6 @@ export class AgentManager {
   private readonly providerIntrospectionQueue: ProviderIntrospectionQueue;
   private readonly inFlightDraftCommands = new Map<string, Promise<AgentSlashCommand[]>>();
   private readonly inFlightDraftFeatures = new Map<string, Promise<AgentFeature[]>>();
-  private readonly draftCommandCache = new Map<string, DraftCommandCacheEntry>();
   private readonly providerEnabled = new Map<AgentProvider, boolean>();
   private readonly providerDefinitions = new Map<AgentProvider, ProviderEnabledFlag>();
   private readonly agents = new Map<string, LiveManagedAgent>();
@@ -902,16 +886,15 @@ export class AgentManager {
     this.pluginLifecycle = options.pluginLifecycle;
     this.pluginAgentTools = options.pluginAgentTools;
     this.timelineStore = options.timelineStore ?? new InMemoryAgentTimelineStore();
-    this.providerIntrospectionQueue = resolveProviderIntrospectionQueue(
-      options.providerIntrospectionQueue,
-    );
+    this.providerIntrospectionQueue =
+      options.providerIntrospectionQueue ?? new ProviderIntrospectionQueue();
     this.idFactory = options.idFactory ?? (() => randomUUID());
-    this.registry = options?.registry;
-    this.durableTimelineStore = options?.durableTimelineStore;
-    this.onAgentAttention = options?.onAgentAttention;
-    this.onWorkspaceStateMayHaveChanged = options?.onWorkspaceStateMayHaveChanged;
-    this.mcpBaseUrl = options?.mcpBaseUrl ?? null;
-    this.mcpAuthToken = options?.mcpAuthToken ?? null;
+    this.registry = options.registry;
+    this.durableTimelineStore = options.durableTimelineStore;
+    this.onAgentAttention = options.onAgentAttention;
+    this.onWorkspaceStateMayHaveChanged = options.onWorkspaceStateMayHaveChanged;
+    this.mcpBaseUrl = options.mcpBaseUrl ?? null;
+    this.mcpAuthToken = options.mcpAuthToken ?? null;
     this.configurePaseoTools(options);
     this.resolvePaseoToolPolicy = options.resolvePaseoToolPolicy ?? (() => undefined);
     this.appendSystemPrompt = options.appendSystemPrompt ?? "";
@@ -1311,66 +1294,47 @@ export class AgentManager {
   }
 
   async listDraftCommands(config: AgentSessionConfig): Promise<AgentSlashCommand[]> {
-    const requestedConfig = await this.normalizeConfig(config, { resolveDefaultModel: false });
-    const client = this.requireClient(requestedConfig.provider);
-    // Cached under the requested config as well as the resolved one: filling in a
-    // default model costs a catalog fetch, which for some providers is its own
-    // process spawn.
-    const requestedKey = this.buildDraftRequestKey(requestedConfig);
-    const cachedForRequest = this.readCachedDraftCommands(requestedKey);
-    if (cachedForRequest) {
-      return cachedForRequest;
-    }
-    const normalizedConfig = await this.resolveDraftModel(requestedConfig);
-    if (!normalizedConfig.model) {
-      throw new Error(
-        `Provider '${normalizedConfig.provider}' has no models available, so its commands cannot be listed.`,
-      );
-    }
-    const requestKey = this.buildDraftRequestKey(normalizedConfig);
-    const cached = this.readCachedDraftCommands(requestKey);
-    if (cached) {
-      this.writeCachedDraftCommands(requestedKey, cached);
-      return cached;
-    }
+    const requestKey = this.buildDraftRequestKey(config);
     return await this.runDraftRequest(this.inFlightDraftCommands, requestKey, async () => {
+      const requestedConfig = await this.normalizeConfig(config, { resolveDefaultModel: false });
+      const client = this.requireClient(requestedConfig.provider);
       const available = await client.isAvailable();
       if (!available) {
         throw new Error(
-          `Provider '${normalizedConfig.provider}' is not available. Please ensure the CLI is installed.`,
+          `Provider '${requestedConfig.provider}' is not available. Please ensure the CLI is installed.`,
         );
       }
 
-      const commands = await this.providerIntrospectionQueue.run(
-        normalizedConfig.provider,
-        async () => {
-          if (client.listCommands) {
-            return await client.listCommands(normalizedConfig);
-          }
+      return await this.providerIntrospectionQueue.run(requestedConfig.provider, async () => {
+        if (client.listCommands) {
+          return await client.listCommands(requestedConfig);
+        }
 
-          const session = await client.createSession(normalizedConfig);
-          try {
-            if (!session.listCommands) {
-              throw new Error(
-                `Provider '${normalizedConfig.provider}' does not support listing commands`,
-              );
-            }
-            return await session.listCommands();
-          } finally {
-            try {
-              await session.close();
-            } catch (error) {
-              this.logger.warn(
-                { err: error, provider: normalizedConfig.provider },
-                "Failed to close draft command listing session",
-              );
-            }
+        const normalizedConfig = await this.resolveDraftModel(requestedConfig);
+        if (!normalizedConfig.model) {
+          throw new Error(
+            `Provider '${normalizedConfig.provider}' has no models available, so its commands cannot be listed.`,
+          );
+        }
+        const session = await client.createSession(normalizedConfig);
+        try {
+          if (!session.listCommands) {
+            throw new Error(
+              `Provider '${normalizedConfig.provider}' does not support listing commands`,
+            );
           }
-        },
-      );
-      this.writeCachedDraftCommands(requestKey, commands);
-      this.writeCachedDraftCommands(requestedKey, commands);
-      return commands;
+          return await session.listCommands();
+        } finally {
+          try {
+            await session.close();
+          } catch (error) {
+            this.logger.warn(
+              { err: error, provider: normalizedConfig.provider },
+              "Failed to close draft command listing session",
+            );
+          }
+        }
+      });
     });
   }
 
@@ -1415,43 +1379,19 @@ export class AgentManager {
     return JSON.stringify(config);
   }
 
-  /**
-   * Draft surfaces send whatever model the composer has resolved, which is empty
-   * while the provider snapshot is still loading or has failed. Falling back to
-   * the provider default keeps a pre-chat composer from silently listing nothing.
-   * The catalog fetch goes through the introspection queue because it can spawn
-   * a provider runtime.
-   */
   private async resolveDraftModel(config: AgentSessionConfig): Promise<AgentSessionConfig> {
     if (config.model) {
       return config;
     }
-    const model = await this.providerIntrospectionQueue.run(config.provider, () =>
-      this.resolveDefaultModelId(config),
-    );
+    const client = this.requireClient(config.provider);
+    const catalog = await runProviderRefreshWithDeadline({
+      label: config.provider,
+      timeoutMs: DEFAULT_PROVIDER_REFRESH_TIMEOUT_MS,
+      operation: (context) =>
+        client.fetchCatalog({ scope: "workspace", cwd: config.cwd, force: false }, context),
+    });
+    const model = (catalog.models.find((entry) => entry.isDefault) ?? catalog.models[0])?.id;
     return model ? { ...config, model } : config;
-  }
-
-  private readCachedDraftCommands(key: string): AgentSlashCommand[] | null {
-    const entry = this.draftCommandCache.get(key);
-    if (!entry) {
-      return null;
-    }
-    if (Date.now() - entry.storedAt > DRAFT_COMMAND_CACHE_TTL_MS) {
-      this.draftCommandCache.delete(key);
-      return null;
-    }
-    return entry.commands;
-  }
-
-  private writeCachedDraftCommands(key: string, commands: AgentSlashCommand[]): void {
-    if (this.draftCommandCache.size >= DRAFT_COMMAND_CACHE_MAX_ENTRIES) {
-      const oldest = this.draftCommandCache.keys().next();
-      if (!oldest.done) {
-        this.draftCommandCache.delete(oldest.value);
-      }
-    }
-    this.draftCommandCache.set(key, { commands, storedAt: Date.now() });
   }
 
   private runDraftRequest<T>(

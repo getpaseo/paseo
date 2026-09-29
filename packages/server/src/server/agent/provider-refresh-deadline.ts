@@ -6,6 +6,7 @@ interface RunProviderRefreshOptions<T> {
   operation: (context: ProviderRefreshContext) => Promise<T>;
 }
 
+export const DEFAULT_PROVIDER_REFRESH_TIMEOUT_MS = 120_000;
 export const PROVIDER_REFRESH_ABORT_CLEANUP_TIMEOUT_MS = 5_000;
 
 async function waitForAbortCleanups(cleanups: Array<() => Promise<void>>): Promise<void> {

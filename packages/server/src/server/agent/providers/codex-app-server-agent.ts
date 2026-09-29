@@ -7845,8 +7845,11 @@ export class CodexAppServerAgentClient implements AgentClient {
         }),
       );
     } finally {
-      unregisterAbortCleanup?.();
-      await dispose();
+      try {
+        await dispose();
+      } finally {
+        unregisterAbortCleanup?.();
+      }
     }
   }
 

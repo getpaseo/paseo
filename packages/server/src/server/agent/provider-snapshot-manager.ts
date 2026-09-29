@@ -21,6 +21,7 @@ import {
   type ProviderSnapshotEntry,
 } from "./agent-sdk-types.js";
 import {
+  DEFAULT_PROVIDER_REFRESH_TIMEOUT_MS,
   raceProviderRefreshAbort,
   runProviderRefreshWithDeadline,
 } from "./provider-refresh-deadline.js";
@@ -53,7 +54,6 @@ import type { ProviderRegistration } from "@getpaseo/plugin/server/provider";
 import { PluginAgentClientRegistry } from "./plugin-provider.js";
 import { ProviderIntrospectionQueue } from "./provider-introspection-queue.js";
 
-const DEFAULT_REFRESH_TIMEOUT_MS = 120_000;
 const MAX_REFRESH_TIMEOUT_MS = 2_147_483_647;
 const DEFAULT_DIAGNOSTIC_TIMEOUT_MS = 120_000;
 const PROVIDER_REFRESH_DEADLINE_ENV = "PASEO_PROVIDER_REFRESH_TIMEOUT_MS";
@@ -73,7 +73,7 @@ function providerRefreshDeadline(configured: number | undefined): number {
   if (explicit !== undefined) return explicit;
   return (
     validRefreshDeadline(Number(process.env[PROVIDER_REFRESH_DEADLINE_ENV])) ??
-    DEFAULT_REFRESH_TIMEOUT_MS
+    DEFAULT_PROVIDER_REFRESH_TIMEOUT_MS
   );
 }
 

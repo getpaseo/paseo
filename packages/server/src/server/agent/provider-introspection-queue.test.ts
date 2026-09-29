@@ -14,6 +14,7 @@ import type {
 } from "./agent-sdk-types.js";
 import { AgentManager } from "./agent-manager.js";
 import { ProviderIntrospectionQueue } from "./provider-introspection-queue.js";
+import { DEFAULT_PROVIDER_REFRESH_TIMEOUT_MS } from "./provider-refresh-deadline.js";
 import { ProviderSnapshotManager } from "./provider-snapshot-manager.js";
 
 interface Deferred<T> {
@@ -117,12 +118,13 @@ class ObservedProviderIntrospectionQueue extends ProviderIntrospectionQueue {
   override run<T>(
     provider: AgentSessionConfig["provider"],
     operation: () => Promise<T>,
+    mode: "exclusive" | "shared" = "exclusive",
   ): Promise<T> {
     this.runCalls += 1;
     if (this.runCalls === 2) {
       this.secondRunStarted.resolve();
     }
-    return super.run(provider, operation);
+    return super.run(provider, operation, mode);
   }
 
   waitForSecondRun(): Promise<void> {
@@ -392,78 +394,113 @@ test("does not serialize real agent creation behind draft introspection", async 
   await manager.closeAgent(created.id);
 });
 
-test("falls back to the provider default model when the draft config has none", async () => {
-  const sessionModels: Array<string | undefined> = [];
+test("refreshes draft commands after the checkout's skills change", async () => {
+  let name = "old-branch-skill";
+  const client = createClient({
+    async createSession(config) {
+      return {
+        ...createSession(config),
+        async listCommands() {
+          return [{ name, description: "", argumentHint: "" }];
+        },
+      };
+    },
+  });
+  const manager = new AgentManager({ clients: { codex: client }, logger: createTestLogger() });
+  const config = { provider: "codex", cwd: process.cwd(), model: "gpt-5.4" };
+
+  expect(await manager.listDraftCommands(config)).toEqual([
+    { name: "old-branch-skill", description: "", argumentHint: "" },
+  ]);
+  name = "new-branch-skill";
+  expect(await manager.listDraftCommands(config)).toEqual([
+    { name: "new-branch-skill", description: "", argumentHint: "" },
+  ]);
+});
+
+test("shares model discovery and command listing for concurrent model-less drafts", async () => {
+  const catalogStarted = deferred<void>();
+  const catalogAllowed = deferred<void>();
+  let catalogCalls = 0;
+  let sessionCalls = 0;
+  const commands = [{ name: "review", description: "", argumentHint: "" }];
   const client = createClient({
     async fetchCatalog() {
-      return {
-        models: [
-          { provider: "codex", id: "gpt-5.4", label: "GPT-5.4" },
-          { provider: "codex", id: "gpt-5.6-codex", label: "GPT-5.6 Codex", isDefault: true },
-        ] as AgentModelDefinition[],
-        modes: [] as AgentMode[],
-      };
+      catalogCalls++;
+      catalogStarted.resolve();
+      await catalogAllowed.promise;
+      return { models: [{ provider: "codex", id: "default-model", label: "Model" }], modes: [] };
     },
     async createSession(config) {
-      sessionModels.push(config.model);
+      sessionCalls++;
       return {
         ...createSession(config),
         async listCommands() {
-          return [{ name: "review", description: "Review changes", argumentHint: "" }];
+          return commands;
         },
       };
     },
   });
   const manager = new AgentManager({ clients: { codex: client }, logger: createTestLogger() });
-
-  const commands = await manager.listDraftCommands({
-    provider: "codex",
-    cwd: process.cwd(),
-    modeId: "default",
-  });
-
-  expect(commands.map((command) => command.name)).toEqual(["review"]);
-  expect(sessionModels).toEqual(["gpt-5.6-codex"]);
+  const config = { provider: "codex", cwd: process.cwd() };
+  const requests = Array.from({ length: 4 }, () => manager.listDraftCommands(config));
+  await catalogStarted.promise;
+  catalogAllowed.resolve();
+  expect(await Promise.all(requests)).toEqual([commands, commands, commands, commands]);
+  expect({ catalogCalls, sessionCalls }).toEqual({ catalogCalls: 1, sessionCalls: 1 });
 });
 
-test("reports an error instead of an empty list when no model can be resolved", async () => {
+test("lists commands directly without requiring a model catalog", async () => {
+  const commands = [{ name: "review", description: "", argumentHint: "" }];
   const client = createClient({
-    async createSession(config) {
-      return createSession(config);
+    async fetchCatalog() {
+      throw new Error("catalog unavailable");
+    },
+    async listCommands() {
+      return commands;
     },
   });
   const manager = new AgentManager({ clients: { codex: client }, logger: createTestLogger() });
-
   await expect(
-    manager.listDraftCommands({ provider: "codex", cwd: process.cwd(), modeId: "default" }),
-  ).rejects.toThrow("has no models available");
+    manager.listDraftCommands({ provider: "codex", cwd: process.cwd() }),
+  ).resolves.toEqual(commands);
 });
 
-test("serves repeat draft command requests from cache without respawning the provider", async () => {
-  let createCalls = 0;
+test("a stuck draft model probe times out and permits a later retry", async () => {
+  vi.useFakeTimers();
+  const started = deferred<void>();
+  let calls = 0;
+  const commands = [{ name: "review", description: "", argumentHint: "" }];
   const client = createClient({
+    async fetchCatalog() {
+      calls++;
+      if (calls === 1) {
+        started.resolve();
+        return await new Promise<never>(() => {});
+      }
+      return { models: [{ provider: "codex", id: "model", label: "Model" }], modes: [] };
+    },
     async createSession(config) {
-      createCalls += 1;
       return {
         ...createSession(config),
         async listCommands() {
-          return [{ name: "review", description: "Review changes", argumentHint: "" }];
+          return commands;
         },
       };
     },
   });
   const manager = new AgentManager({ clients: { codex: client }, logger: createTestLogger() });
-  const config = {
-    provider: "codex",
-    cwd: process.cwd(),
-    model: "gpt-5.4",
-    modeId: "default",
-  } as const;
-
-  const first = await manager.listDraftCommands(config);
-  const second = await manager.listDraftCommands(config);
-
-  expect(first.map((command) => command.name)).toEqual(["review"]);
-  expect(second.map((command) => command.name)).toEqual(["review"]);
-  expect(createCalls).toBe(1);
+  const config = { provider: "codex", cwd: process.cwd() };
+  try {
+    const rejected = expect(manager.listDraftCommands(config)).rejects.toThrow(
+      "Timed out refreshing codex",
+    );
+    await started.promise;
+    await vi.advanceTimersByTimeAsync(DEFAULT_PROVIDER_REFRESH_TIMEOUT_MS);
+    await rejected;
+    await expect(manager.listDraftCommands(config)).resolves.toEqual(commands);
+    expect(calls).toBe(2);
+  } finally {
+    vi.useRealTimers();
+  }
 });
