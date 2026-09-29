@@ -1,15 +1,15 @@
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
+import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
 import { useSessionStore } from "@/stores/session-store";
 
 export interface MoveWorkspaceSessionsResult {
   moved: number;
-  archivedSource: boolean;
 }
 
 /**
- * Moves every open session of one workspace into another, like dragging it across. The
- * emptied workspace is archived when that only hides it; a Paseo worktree is kept, since
- * archiving would delete its directory and whatever is uncommitted there.
+ * Moves every open session of one workspace into another, like dragging it across, and
+ * shows them there. The source is never archived here: the app's session list can be
+ * incomplete, and archiving a workspace archives whatever it still holds.
  */
 export async function moveWorkspaceSessions(input: {
   serverId: string;
@@ -26,15 +26,16 @@ export async function moveWorkspaceSessions(input: {
   for (const agentId of agentIds) {
     await client.moveAgentToWorkspace(agentId, targetWorkspaceId);
   }
-  const source = [...(session?.workspaces.values() ?? [])].find(
-    (workspace) => workspace.id === sourceWorkspaceId,
-  );
-  const archivable = source && source.workspaceKind !== "worktree";
-  if (archivable) await client.archiveWorkspace(sourceWorkspaceId);
-  return { moved: agentIds.length, archivedSource: Boolean(archivable) };
+  const [first] = agentIds;
+  navigateToWorkspace({
+    serverId,
+    workspaceId: targetWorkspaceId,
+    ...(first ? { target: { kind: "agent", agentId: first } } : {}),
+  });
+  return { moved: agentIds.length };
 }
 
-/** One session, dragged from its tab onto another workspace. */
+/** One session, dragged from its tab onto another workspace, opened where it landed. */
 export async function moveSessionToWorkspace(input: {
   serverId: string;
   agentId: string;
@@ -43,4 +44,9 @@ export async function moveSessionToWorkspace(input: {
   const client = getHostRuntimeStore().getClient(input.serverId);
   if (!client) throw new Error("The host is not connected");
   await client.moveAgentToWorkspace(input.agentId, input.targetWorkspaceId);
+  navigateToWorkspace({
+    serverId: input.serverId,
+    workspaceId: input.targetWorkspaceId,
+    target: { kind: "agent", agentId: input.agentId },
+  });
 }
