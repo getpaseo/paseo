@@ -699,6 +699,8 @@ export const fr: TranslationResources = {
         closeLeft: "Près de la gauche",
         closeRight: "Près de la droite",
         closeOthers: "Fermer les autres onglets",
+        collapseGroup: "Réduire le groupe {{group}}",
+        expandGroup: "Développer le groupe {{group}}",
         moveToMain: "Déplacer vers le panneau principal",
         reloadAgent: "Agent de rechargement",
         moveToWorkspace: "Move to workspace",

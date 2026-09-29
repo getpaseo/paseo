@@ -699,6 +699,8 @@ export const ja: TranslationResources = {
         closeLeft: "左のタブを閉じる",
         closeRight: "右のタブを閉じる",
         closeOthers: "他のタブを閉じる",
+        collapseGroup: "グループ {{group}} を折りたたむ",
+        expandGroup: "グループ {{group}} を展開",
         moveToMain: "メインパネルへ移動",
         reloadAgent: "エージェントを再読み込み",
         moveToWorkspace: "Move to workspace",

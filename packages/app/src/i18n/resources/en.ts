@@ -690,6 +690,8 @@ export const en = {
         closeLeft: "Close to the left",
         closeRight: "Close to the right",
         closeOthers: "Close other tabs",
+        collapseGroup: "Collapse group {{group}}",
+        expandGroup: "Expand group {{group}}",
         moveToMain: "Move to main panel",
         reloadAgent: "Reload agent",
         moveToWorkspace: "Move to workspace",

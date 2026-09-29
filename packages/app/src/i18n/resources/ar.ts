@@ -693,6 +693,8 @@ export const ar: TranslationResources = {
         closeLeft: "بالقرب من اليسار",
         closeRight: "قريب من اليمين",
         closeOthers: "أغلق علامات التبويب الأخرى",
+        collapseGroup: "طي المجموعة {{group}}",
+        expandGroup: "توسيع المجموعة {{group}}",
         moveToMain: "Move to main panel",
         reloadAgent: "إعادة تحميل الوكيل",
         moveToWorkspace: "Move to workspace",

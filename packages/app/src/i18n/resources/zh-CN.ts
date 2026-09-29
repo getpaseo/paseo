@@ -693,6 +693,8 @@ export const zhCN: TranslationResources = {
         closeLeft: "关闭左侧标签",
         closeRight: "关闭右侧标签",
         closeOthers: "关闭其他标签",
+        collapseGroup: "折叠分组 {{group}}",
+        expandGroup: "展开分组 {{group}}",
         moveToMain: "移至主面板",
         reloadAgent: "重新加载 Agent",
         moveToWorkspace: "Move to workspace",

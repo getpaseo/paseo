@@ -700,6 +700,8 @@ export const ru: TranslationResources = {
         closeLeft: "Закрыть вкладки слева",
         closeRight: "Закрыть вкладки справа",
         closeOthers: "Закрыть другие вкладки",
+        collapseGroup: "Свернуть группу {{group}}",
+        expandGroup: "Развернуть группу {{group}}",
         moveToMain: "Переместить на основную панель",
         reloadAgent: "Перезагрузить агента",
         moveToWorkspace: "Move to workspace",

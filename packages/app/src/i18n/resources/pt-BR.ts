@@ -698,6 +698,8 @@ export const ptBR: TranslationResources = {
         closeLeft: "Fechar à esquerda",
         closeRight: "Fechar à direita",
         closeOthers: "Fechar outras abas",
+        collapseGroup: "Recolher o grupo {{group}}",
+        expandGroup: "Expandir o grupo {{group}}",
         moveToMain: "Mover para o painel principal",
         reloadAgent: "Recarregar agente",
         moveToWorkspace: "Move to workspace",

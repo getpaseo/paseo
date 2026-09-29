@@ -699,6 +699,8 @@ export const es: TranslationResources = {
         closeLeft: "Cerrar pestañas a la izquierda",
         closeRight: "Cerrar pestañas a la derecha",
         closeOthers: "Cerrar otras pestañas",
+        collapseGroup: "Contraer el grupo {{group}}",
+        expandGroup: "Expandir el grupo {{group}}",
         moveToMain: "Mover al panel principal",
         reloadAgent: "Recargar agente",
         moveToWorkspace: "Move to workspace",

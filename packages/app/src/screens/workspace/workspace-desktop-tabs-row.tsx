@@ -42,6 +42,9 @@ import {
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
+import { useStoreWithEqualityFn } from "zustand/traditional";
+import { useTabGroupCollapseStore } from "@/stores/tab-group-collapse-store";
+import { groupWorkspaceTabs, type TabGroupInfo } from "@/screens/workspace/workspace-tab-groups";
 import { Combobox, ComboboxItem, type ComboboxProps } from "@/components/ui/combobox";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -561,6 +564,18 @@ export interface WorkspaceDesktopTabRowItem {
 
 interface ResolvedWorkspaceDesktopTabRowItem extends WorkspaceDesktopTabRowItem {
   presentation: WorkspaceTabPresentation;
+  group?: TabGroupInfo & { scopeKey: string };
+}
+
+// Chrome-like group colors; any six distinct hues read well on both themes.
+const TAB_GROUP_COLORS = ["#1a73e8", "#d93025", "#e37400", "#188038", "#a142f4", "#007b83"];
+const EMPTY_COLLAPSED: string[] = [];
+
+function sameLabels(
+  left: Record<string, Record<string, string>>,
+  right: Record<string, Record<string, string>>,
+): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
 }
 
 interface WorkspaceTabLabel {
@@ -1086,18 +1101,85 @@ export function WorkspaceDesktopTabsRow(props: WorkspaceDesktopTabsRowProps) {
       return next;
     });
   }, [currentTabKeys]);
-  const resolvedTabs = useMemo(
+  const scopeKey = `${props.normalizedServerId}:${props.normalizedWorkspaceId}`;
+  const collapsedGroups =
+    useTabGroupCollapseStore((state) => state.collapsed[scopeKey]) ?? EMPTY_COLLAPSED;
+  const agentLabels = useStoreWithEqualityFn(
+    useSessionStore,
+    (state) => {
+      const agents = state.sessions[props.normalizedServerId]?.agents;
+      const labels: Record<string, Record<string, string>> = {};
+      for (const item of props.tabs) {
+        if (item.tab.target.kind !== "agent") continue;
+        const agent = agents?.get(item.tab.target.agentId);
+        if (agent) labels[agent.id] = agent.labels;
+      }
+      return labels;
+    },
+    sameLabels,
+  );
+  const grouping = useMemo(
     () =>
-      props.tabs.flatMap((item) => {
-        const presentation = presentations.get(item.tab.key);
-        return presentation ? [{ ...item, presentation }] : [];
+      groupWorkspaceTabs({
+        tabs: props.tabs.map((item) => ({
+          key: item.tab.key,
+          title: presentations.get(item.tab.key)?.label ?? "",
+          isActive: item.isActive,
+          labels:
+            item.tab.target.kind === "agent"
+              ? (agentLabels[item.tab.target.agentId] ?? null)
+              : null,
+        })),
+        collapsedGroups: new Set(collapsedGroups),
       }),
-    [presentations, props.tabs],
+    [agentLabels, collapsedGroups, presentations, props.tabs],
+  );
+  const resolvedTabs = useMemo(() => {
+    const itemByKey = new Map(props.tabs.map((item) => [item.tab.key, item]));
+    return grouping.visibleKeys.flatMap((key) => {
+      const item = itemByKey.get(key);
+      const presentation = item ? presentations.get(key) : undefined;
+      if (!item || !presentation) return [];
+      const info = grouping.infoByKey.get(key);
+      if (!info) return [{ ...item, presentation }];
+      const label =
+        info.hiddenCount > 0 ? `${presentation.label} +${info.hiddenCount}` : presentation.label;
+      return [{ ...item, presentation: { ...presentation, label }, group: { ...info, scopeKey } }];
+    });
+  }, [grouping, presentations, props.tabs, scopeKey]);
+  const { onReorderTabs } = props;
+  // A drag only sees the visible tabs; the ones folded into a collapsed group follow their tab.
+  const handleReorderTabs = useCallback(
+    (nextTabs: WorkspaceTabDescriptor[]) => {
+      const byKey = new Map(props.tabs.map((item) => [item.tab.key, item.tab]));
+      const expanded: WorkspaceTabDescriptor[] = [];
+      for (const tab of nextTabs) {
+        expanded.push(tab);
+        const info = grouping.infoByKey.get(tab.key);
+        if (!info || info.hiddenCount === 0) continue;
+        for (const key of grouping.orderedKeys) {
+          const member = byKey.get(key);
+          if (
+            key !== tab.key &&
+            member &&
+            grouping.infoByKey.get(key)?.groupKey === info.groupKey
+          ) {
+            expanded.push(member);
+          }
+        }
+      }
+      onReorderTabs(expanded);
+    },
+    [grouping, onReorderTabs, props.tabs],
   );
 
   return (
     <>
-      <ResolvedWorkspaceDesktopTabsRow {...props} tabs={resolvedTabs} />
+      <ResolvedWorkspaceDesktopTabsRow
+        {...props}
+        tabs={resolvedTabs}
+        onReorderTabs={handleReorderTabs}
+      />
       {props.tabs.map(({ tab }) => (
         <WorkspaceDesktopTabPresentationSlot
           key={`${tab.key}:${tab.kind}`}
@@ -1638,6 +1720,29 @@ function ResolvedDesktopTabChip({
     ],
   );
 
+  const group = item.group;
+  const resolvedTabWithGroup = useMemo(() => {
+    if (!group) return resolvedTab;
+    const toggleEntry: WorkspaceTabMenuEntry = {
+      kind: "item",
+      key: "toggle-group",
+      label: t(
+        group.collapsed ? "workspace.tabs.menu.expandGroup" : "workspace.tabs.menu.collapseGroup",
+        { group: group.label },
+      ),
+      testID: `workspace-tab-toggle-group-${item.tab.tabId}`,
+      onSelect: () => useTabGroupCollapseStore.getState().toggle(group.scopeKey, group.groupKey),
+    };
+    return {
+      ...resolvedTab,
+      menuEntries: [
+        toggleEntry,
+        { kind: "separator" as const, key: "group-separator" },
+        ...resolvedTab.menuEntries,
+      ],
+    };
+  }, [group, item.tab.tabId, resolvedTab, t]);
+
   const rawTooltipLabel =
     presentation.titleState === "loading" ? t("common.states.loading") : presentation.tooltip;
   const accessibilityLabel =
@@ -1668,7 +1773,7 @@ function ResolvedDesktopTabChip({
         presentation={presentation}
         tooltipLabel={tooltipLabel}
         accessibilityLabel={accessibilityLabel}
-        resolvedTab={resolvedTab}
+        resolvedTab={resolvedTabWithGroup}
         setHoveredCloseTabKey={setHoveredCloseTabKey}
         onNavigateTab={onNavigateTab}
         onCloseTab={onCloseTab}
@@ -1676,6 +1781,13 @@ function ResolvedDesktopTabChip({
       />
       {showDropIndicatorAfter ? (
         <View style={[styles.tabDropIndicator, styles.tabDropIndicatorAfter]} />
+      ) : null}
+      {group ? (
+        <View
+          pointerEvents="none"
+          testID={`workspace-tab-group-bar-${group.colorIndex}`}
+          style={[styles.tabGroupBar, { backgroundColor: TAB_GROUP_COLORS[group.colorIndex] }]}
+        />
       ) : null}
     </View>
   );
@@ -1752,6 +1864,14 @@ const styles = StyleSheet.create((theme) => ({
   },
   tabHoverFrame: {
     position: "relative",
+  },
+  tabGroupBar: {
+    position: "absolute",
+    left: 4,
+    right: 4,
+    bottom: 1,
+    height: 2,
+    borderRadius: 1,
   },
   tabSlot: {
     position: "relative",
