@@ -8463,7 +8463,7 @@ interface CloneRepositoryInput {
   cloneUrl: string;
 }
 
-function normalizeCloneRepository(input: {
+export function normalizeCloneRepository(input: {
   repo: string;
   cloneProtocol?: "https" | "ssh";
 }): CloneRepositoryInput {
@@ -8482,26 +8482,48 @@ function normalizeCloneRepository(input: {
     return { name, displayName: remote.path, cloneUrl: trimmed };
   }
 
-  const [owner, rawName, ...extra] = trimmed.split("/");
-  if (!owner || !rawName || extra.length > 0) {
+  return normalizeCloneShorthand(trimmed, input.cloneProtocol);
+}
+
+/**
+ * Resolve "owner/repo" and "host/owner/repo" shorthand into a clone URL.
+ *
+ * A leading segment containing a dot is read as a hostname, so a self-hosted forge can
+ * be cloned without spelling out a full remote URL. Bare "owner/repo" keeps meaning
+ * GitHub, which is what the CLI documents; two segments are never host-qualified,
+ * because that leaves nowhere for the repository name.
+ */
+function normalizeCloneShorthand(
+  repo: string,
+  cloneProtocol?: "https" | "ssh",
+): CloneRepositoryInput {
+  const [first, ...rest] = repo.split("/");
+  const hostQualified = rest.length >= 2 && first !== undefined && first.includes(".");
+  if (!first || rest.length === 0 || (!hostQualified && rest.length > 1)) {
     throw new Error("Repository must use owner/repo format or a git remote URL");
   }
+
+  const host = hostQualified ? first : "github.com";
+  const path = hostQualified ? rest : [first, ...rest];
+  const rawName = path.at(-1) ?? "";
   const name = rawName.endsWith(".git") ? rawName.slice(0, -4) : rawName;
-  if (!isValidGitHubRepoSegment(owner) || !isValidGitHubRepoSegment(name)) {
+  const owners = path.slice(0, -1);
+  if (!name || ![...owners, name].every(isValidGitHubRepoSegment)) {
     throw new Error("Repository contains invalid characters");
   }
-  if (!input.cloneProtocol) {
+  if (!cloneProtocol) {
     throw new Error("Clone protocol is required for owner/repo repository names");
   }
+
+  const repoPath = `${owners.join("/")}/${name}`;
   const cloneUrl =
-    input.cloneProtocol === "ssh"
-      ? `git@github.com:${owner}/${name}.git`
-      : `https://github.com/${owner}/${name}.git`;
-  return {
-    name,
-    displayName: `${owner}/${name}`,
-    cloneUrl,
-  };
+    cloneProtocol === "ssh" ? `git@${host}:${repoPath}.git` : `https://${host}/${repoPath}.git`;
+  // Reject a hostname the remote parser would not accept, so shorthand and full URLs
+  // agree on what a valid host is instead of drifting apart.
+  if (!parseGitRemoteLocation(cloneUrl)) {
+    throw new Error("Repository host is invalid");
+  }
+  return { name, displayName: hostQualified ? `${host}/${repoPath}` : repoPath, cloneUrl };
 }
 
 function isValidGitHubRepoSegment(value: string): boolean {
