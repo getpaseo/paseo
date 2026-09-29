@@ -89,6 +89,7 @@ import {
   useHorizontalScrollBoundary,
 } from "@/components/ui/horizontal-scroll-boundary";
 import { useSessionStore } from "@/stores/session-store";
+import { useBrowserStore } from "@/desktop/browser/store";
 
 const DROPDOWN_WIDTH = 220;
 const DEFAULT_INLINE_ADD_BUTTON_RESERVED_WIDTH = 36;
@@ -571,10 +572,16 @@ interface ResolvedWorkspaceDesktopTabRowItem extends WorkspaceDesktopTabRowItem 
 const TAB_GROUP_COLORS = ["#1a73e8", "#d93025", "#e37400", "#188038", "#a142f4", "#007b83"];
 const EMPTY_COLLAPSED: string[] = [];
 
-function sameLabels(
-  left: Record<string, Record<string, string>>,
-  right: Record<string, Record<string, string>>,
-): boolean {
+function ownerAgentIdOf(
+  target: WorkspaceTabDescriptor["target"],
+  browserOwners: Record<string, string>,
+): string | undefined {
+  if (target.kind === "agent") return target.agentId;
+  if (target.kind === "browser") return browserOwners[target.browserId];
+  return undefined;
+}
+
+function sameOwners(left: Record<string, string>, right: Record<string, string>): boolean {
   return JSON.stringify(left) === JSON.stringify(right);
 }
 
@@ -1104,35 +1111,37 @@ export function WorkspaceDesktopTabsRow(props: WorkspaceDesktopTabsRowProps) {
   const scopeKey = `${props.normalizedServerId}:${props.normalizedWorkspaceId}`;
   const collapsedGroups =
     useTabGroupCollapseStore((state) => state.collapsed[scopeKey]) ?? EMPTY_COLLAPSED;
-  const agentLabels = useStoreWithEqualityFn(
-    useSessionStore,
+  const browserOwners = useStoreWithEqualityFn(
+    useBrowserStore,
     (state) => {
-      const agents = state.sessions[props.normalizedServerId]?.agents;
-      const labels: Record<string, Record<string, string>> = {};
+      const owners: Record<string, string> = {};
       for (const item of props.tabs) {
-        if (item.tab.target.kind !== "agent") continue;
-        const agent = agents?.get(item.tab.target.agentId);
-        if (agent) labels[agent.id] = agent.labels;
+        if (item.tab.target.kind !== "browser") continue;
+        const owner = state.browsersById[item.tab.target.browserId]?.ownerAgentId;
+        if (owner) owners[item.tab.target.browserId] = owner;
       }
-      return labels;
+      return owners;
     },
-    sameLabels,
+    sameOwners,
   );
   const grouping = useMemo(
     () =>
       groupWorkspaceTabs({
-        tabs: props.tabs.map((item) => ({
-          key: item.tab.key,
-          title: presentations.get(item.tab.key)?.label ?? "",
-          isActive: item.isActive,
-          labels:
-            item.tab.target.kind === "agent"
-              ? (agentLabels[item.tab.target.agentId] ?? null)
-              : null,
-        })),
+        tabs: props.tabs.map((item) => {
+          const target = item.tab.target;
+          const ownerAgentId = ownerAgentIdOf(target, browserOwners);
+          return {
+            key: item.tab.key,
+            isActive: item.isActive,
+            groupKey: ownerAgentId ? `agent:${ownerAgentId}` : null,
+            ...(target.kind === "agent"
+              ? { groupLabel: presentations.get(item.tab.key)?.label ?? "" }
+              : {}),
+          };
+        }),
         collapsedGroups: new Set(collapsedGroups),
       }),
-    [agentLabels, collapsedGroups, presentations, props.tabs],
+    [browserOwners, collapsedGroups, presentations, props.tabs],
   );
   const resolvedTabs = useMemo(() => {
     const itemByKey = new Map(props.tabs.map((item) => [item.tab.key, item]));

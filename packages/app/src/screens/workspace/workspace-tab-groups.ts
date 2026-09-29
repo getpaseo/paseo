@@ -1,8 +1,10 @@
 export interface TabGroupInput {
   key: string;
-  title: string;
   isActive: boolean;
-  labels: Record<string, string> | null;
+  /** Tabs sharing a groupKey sit together; null leaves the tab out of every group. */
+  groupKey: string | null;
+  /** Name for the group chip, set by the tab that heads the group (the agent). */
+  groupLabel?: string;
 }
 
 export interface TabGroupInfo {
@@ -23,20 +25,6 @@ export interface TabGrouping {
 }
 
 export const TAB_GROUP_COLOR_COUNT = 6;
-const ISSUE_KEY = /\b[A-Z][A-Z0-9]+-\d+\b/;
-
-function groupKeyOf(labels: Record<string, string> | null): string | null {
-  if (!labels) return null;
-  const feature = labels["paperclip.feature"] ?? labels["paperclip.issue"];
-  return feature ? `paperclip:${feature}` : null;
-}
-
-function groupLabelOf(member: TabGroupInput): string {
-  const key = member.labels?.["paperclip.feature.key"] ?? ISSUE_KEY.exec(member.title)?.[0];
-  const title = member.labels?.["paperclip.feature.title"];
-  return [key, title].filter(Boolean).join(" · ") || "Paperclip";
-}
-
 function colorIndexOf(groupKey: string): number {
   let hash = 0;
   for (const char of groupKey) hash = (hash * 31 + char.charCodeAt(0)) | 0;
@@ -44,8 +32,9 @@ function colorIndexOf(groupKey: string): number {
 }
 
 /**
- * Paperclip tabs of one feature sit together, groups in the order of their first tab and every
- * other tab after them. A collapsed group shows one tab, the active one when it is in there.
+ * An agent and the tabs it opened sit together, groups in the order of their first tab and every
+ * other tab after them. A lone tab is not a group. A collapsed group shows one tab, the active
+ * one when it is in there.
  */
 export function groupWorkspaceTabs(input: {
   tabs: readonly TabGroupInput[];
@@ -53,9 +42,13 @@ export function groupWorkspaceTabs(input: {
 }): TabGrouping {
   const members = new Map<string, TabGroupInput[]>();
   const ungrouped: string[] = [];
+  const sizeByKey = new Map<string, number>();
   for (const tab of input.tabs) {
-    const groupKey = groupKeyOf(tab.labels);
-    if (!groupKey) {
+    if (tab.groupKey) sizeByKey.set(tab.groupKey, (sizeByKey.get(tab.groupKey) ?? 0) + 1);
+  }
+  for (const tab of input.tabs) {
+    const groupKey = tab.groupKey;
+    if (!groupKey || (sizeByKey.get(groupKey) ?? 0) < 2) {
       ungrouped.push(tab.key);
       continue;
     }
@@ -74,7 +67,7 @@ export function groupWorkspaceTabs(input: {
   for (const [groupKey, group] of members) {
     const collapsed = input.collapsedGroups.has(groupKey);
     const representative = group.find((tab) => tab.isActive) ?? group[0]!;
-    const label = groupLabelOf(group[0]!);
+    const label = group.find((tab) => tab.groupLabel)?.groupLabel ?? "";
     const colorIndex = colorIndexOf(groupKey);
     for (const tab of group) {
       orderedKeys.push(tab.key);
