@@ -376,6 +376,12 @@ export function deriveOpencodeToolDetail(
     output,
   });
   if (parsed.success && parsed.data) {
+    if (parsed.data.type === "edit") {
+      const filediff = metadata?.filediff;
+      const patch = isRecord(filediff) ? nonEmptyString(filediff.patch) : undefined;
+      const unifiedDiff = truncateDiffText(patch ?? nonEmptyString(metadata?.diff));
+      if (unifiedDiff) return { ...parsed.data, unifiedDiff };
+    }
     return parsed.data;
   }
   return {
