@@ -54,14 +54,11 @@ export async function runDeleteCommand(
     let agents = fetchPayload.entries.map((entry) => entry.agent);
     const deletedIds: string[] = [];
 
-    if (options.all) {
-      agents = agents.filter((a) => !a.archivedAt);
-    } else if (options.cwd) {
+    if (!options.all && options.cwd) {
       agents = agents.filter((a) => {
-        if (a.archivedAt) return false;
         return isSameOrDescendantPath(options.cwd!, a.cwd);
       });
-    } else if (id) {
+    } else if (!options.all && id) {
       const fetchResult = await client.fetchAgent({ agentId: id });
       if (!fetchResult) {
         const error: CommandError = {
