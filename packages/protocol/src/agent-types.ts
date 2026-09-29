@@ -145,6 +145,8 @@ export interface AgentFeatureSelect {
   description?: string;
   tooltip?: string;
   icon?: string;
+  /** Desktop toolbar presentation; omitted means labeled. Mobile selectors stay labeled. */
+  desktopTrigger?: "icon" | "label";
   value: string | null;
   options: AgentSelectOption[];
 }
