@@ -70,6 +70,11 @@ type ProviderSubagentListClient = Pick<DaemonClient, "listProviderSubagents">;
 
 const pendingListRequests = new WeakMap<ProviderSubagentListClient, Map<string, Promise<void>>>();
 
+// Bounds heal fetches when the daemon genuinely has no descriptor (provider bug, deleted
+// child). The common case heals on the first fetch, so this only paces the pathological one.
+const MISSING_SUBAGENT_REFRESH_COOLDOWN_MS = 5_000;
+const missingRefreshAttempts = new WeakMap<ProviderSubagentListClient, Map<string, number>>();
+
 export function refreshProviderSubagents(
   client: ProviderSubagentListClient,
   serverId: string,
@@ -95,6 +100,56 @@ export function refreshProviderSubagents(
     });
   clientRequests.set(requestKey, request);
   return request;
+}
+
+/**
+ * Re-fetches the parent list when a timeline update arrives for a subagent the store has no
+ * descriptor for. Without this the pill never appears: timeline updates cannot create
+ * descriptors, and providers do not re-emit upserts for an unchanged running child. Returns the
+ * in-flight fetch, or null when the descriptor is present or a recent attempt is cooling down.
+ * Never rejects; a heal must not throw into the feed loop.
+ */
+export function refreshMissingProviderSubagent(
+  client: ProviderSubagentListClient,
+  serverId: string,
+  parentAgentId: string,
+  subagentId: string,
+): Promise<void> | null {
+  if (
+    useProviderSubagentStore
+      .getState()
+      .descriptors.has(providerSubagentKey(serverId, parentAgentId, subagentId))
+  ) {
+    return null;
+  }
+  const now = Date.now();
+  const parentKey = parentPrefix(serverId, parentAgentId);
+  let attempts = missingRefreshAttempts.get(client);
+  if (!attempts) {
+    attempts = new Map();
+    missingRefreshAttempts.set(client, attempts);
+  }
+  if (now - (attempts.get(parentKey) ?? 0) < MISSING_SUBAGENT_REFRESH_COOLDOWN_MS) {
+    return null;
+  }
+  attempts.set(parentKey, now);
+  return refreshProviderSubagents(client, serverId, parentAgentId).catch(() => undefined);
+}
+
+export function handleProviderSubagentUpdate(
+  client: ProviderSubagentListClient,
+  serverId: string,
+  payload: Extract<SessionOutboundMessage, { type: "agent.provider_subagents.update" }>["payload"],
+): void {
+  useProviderSubagentStore.getState().applyUpdate(serverId, payload);
+  if (payload.kind === "timeline") {
+    void refreshMissingProviderSubagent(
+      client,
+      serverId,
+      payload.parentAgentId,
+      payload.subagentId,
+    );
+  }
 }
 
 function parentPrefix(serverId: string, parentAgentId: string): string {
