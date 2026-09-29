@@ -1102,6 +1102,7 @@ export const ja: TranslationResources = {
       trigger: "表示設定",
       heading: "表示",
       grouping: {
+        hostProject: "ホスト → プロジェクト",
         label: "グループ化",
         project: "プロジェクト",
         status: "ステータス",

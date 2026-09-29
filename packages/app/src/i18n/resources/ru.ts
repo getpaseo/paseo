@@ -1106,6 +1106,7 @@ export const ru: TranslationResources = {
       trigger: "Настройки отображения",
       heading: "Отображение",
       grouping: {
+        hostProject: "Хост → Проект",
         label: "Группировка",
         project: "Проект",
         status: "Статус",

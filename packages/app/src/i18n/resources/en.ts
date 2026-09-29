@@ -1097,6 +1097,7 @@ export const en = {
       trigger: "Display preferences",
       heading: "Display",
       grouping: {
+        hostProject: "Host → Project",
         label: "Grouping",
         project: "Project",
         status: "Status",

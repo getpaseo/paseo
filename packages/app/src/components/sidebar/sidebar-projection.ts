@@ -19,10 +19,12 @@ import {
   type SidebarShortcutSection,
 } from "@/utils/sidebar-shortcuts";
 import { statusWorkspaceGroups, type SidebarWorkspaceGroup } from "./sidebar-labels";
+import { buildSidebarHostGroups, type SidebarHostGroup } from "./sidebar-host-groups";
 
 export interface SidebarProjection {
   pinnedGroups: PinnedSidebarGroups;
   workspaceGroups: SidebarWorkspaceGroup[];
+  hostGroups: SidebarHostGroup[];
   /**
    * The project icons this projection needs fetched, keyed by `projectViewKey` — one per project,
    * whatever the mode groups by. It sits here rather than beside `useProjectIcons` in the list
@@ -45,6 +47,11 @@ export interface SidebarProjectionInput {
   pinnedCollapsed: boolean;
   collapsedProjectKeys: ReadonlySet<string>;
   collapsedWorkspaceGroupKeys: ReadonlySet<string>;
+  hostOrder?: readonly string[];
+  projectOrder?: string[];
+  workspaceOrderByProject?: Readonly<Record<string, string[]>>;
+  /** Cached structural branches, independent of workspace status and collapse changes. */
+  hostGroups?: SidebarHostGroup[];
 }
 
 export function buildSidebarProjection(input: SidebarProjectionInput): SidebarProjection {
@@ -61,6 +68,16 @@ export function buildSidebarProjection(input: SidebarProjectionInput): SidebarPr
   // two cannot disagree and a new grouping mode is a compile error here rather than a silent
   // fall-through to the project rows.
   const workspaceGroups = buildWorkspaceGroups(input, unpinnedWorkspaces);
+  const hostGroups =
+    input.groupMode === "host-project"
+      ? (input.hostGroups ??
+        buildSidebarHostGroups({
+          projects: pinnedGroups.unpinnedProjects,
+          hostOrder: input.hostOrder,
+          projectOrder: input.projectOrder,
+          workspaceOrderByProject: input.workspaceOrderByProject,
+        }))
+      : [];
 
   const sections: SidebarShortcutSection[] = [];
   if (!input.pinnedCollapsed) {
@@ -73,6 +90,16 @@ export function buildSidebarProjection(input: SidebarProjectionInput): SidebarPr
         collapsed: input.collapsedProjectKeys.has(project.viewKey),
       })),
     );
+  } else if (input.groupMode === "host-project") {
+    for (const host of hostGroups) {
+      if (input.collapsedWorkspaceGroupKeys.has(host.key)) continue;
+      sections.push(
+        ...host.projects.map((project) => ({
+          workspaces: project.workspaces,
+          collapsed: input.collapsedProjectKeys.has(project.sectionKey),
+        })),
+      );
+    }
   } else {
     sections.push(
       ...workspaceGroups.map((group) => ({
@@ -85,18 +112,27 @@ export function buildSidebarProjection(input: SidebarProjectionInput): SidebarPr
   return {
     pinnedGroups,
     workspaceGroups,
-    projectIconTargets: resolveSidebarProjectIconTargets(input.projects),
+    hostGroups,
+    projectIconTargets: [
+      ...resolveSidebarProjectIconTargets(input.projects),
+      ...resolveSidebarProjectIconTargets(
+        hostGroups.flatMap((host) =>
+          host.projects.map((project) => ({ ...project, viewKey: project.sectionKey })),
+        ),
+      ),
+    ],
     shortcutModel: buildSidebarShortcutSections({ sections }),
   };
 }
 
-/** Project mode keeps its project headers and groups nothing; status mode groups the rows. */
+/** Project and host-project modes keep project headers; status mode groups workspace rows. */
 function buildWorkspaceGroups(
   input: SidebarProjectionInput,
   unpinnedWorkspaces: SidebarWorkspaceEntry[],
 ): SidebarWorkspaceGroup[] {
   switch (input.groupMode) {
     case "project":
+    case "host-project":
       return [];
     case "status":
       return statusWorkspaceGroups(
