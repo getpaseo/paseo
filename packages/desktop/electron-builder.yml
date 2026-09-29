@@ -35,7 +35,7 @@ extraResources:
 publish:
   provider: github
   owner: marushan49
-  repo: paseo
+  repo: pandaos
 mac:
   artifactName: "PandaOS-${version}-${arch}.${ext}"
   minimumSystemVersion: "13.0.0"

@@ -5,8 +5,8 @@
 <h1 align="center">PandaOS</h1>
 
 <p align="center">
-  <a href="https://github.com/marushan49/paseo/releases">
-    <img src="https://img.shields.io/github/v/release/marushan49/paseo?include_prereleases&style=flat&logo=github" alt="Fork release">
+  <a href="https://github.com/marushan49/pandaos/releases">
+    <img src="https://img.shields.io/github/v/release/marushan49/pandaos?include_prereleases&style=flat&logo=github" alt="Fork release">
   </a>
   <a href="https://github.com/getpaseo/paseo">
     <img src="https://img.shields.io/badge/upstream-getpaseo%2Fpaseo-555?logo=github" alt="Upstream">
@@ -33,7 +33,7 @@ PandaOS is a fork of [Paseo](https://github.com/getpaseo/paseo). The repository,
 
 ### Desktop app
 
-Download the Linux `.deb` or macOS `.dmg` from the [fork releases](https://github.com/marushan49/paseo/releases). The app updates itself from this fork's releases, not from upstream.
+Download the Linux `.deb` or macOS `.dmg` from the [fork releases](https://github.com/marushan49/pandaos/releases). The app updates itself from this fork's releases, not from upstream.
 
 On macOS PandaOS is ad-hoc signed. After copying `PandaOS.app` into `/Applications`, run:
 
@@ -45,15 +45,15 @@ xattr -cr /Applications/PandaOS.app
 
 Install the rolling build of `main`:
 
-https://github.com/marushan49/paseo/releases/download/android-latest/paseo-android-latest.apk
+https://github.com/marushan49/pandaos/releases/download/android-latest/paseo-android-latest.apk
 
 ### Daemon from source
 
 The fork does not publish npm packages; `npm install -g @getpaseo/cli` installs upstream Paseo. Run the daemon from a checkout instead:
 
 ```bash
-git clone https://github.com/marushan49/paseo.git
-cd paseo
+git clone https://github.com/marushan49/pandaos.git
+cd pandaos
 npm ci
 npm run build:server
 packages/cli/bin/paseo daemon run
@@ -123,7 +123,7 @@ See the [SDK quickstart](https://paseo.sh/docs/sdk/quickstart), [recipes](https:
 Skills teach your agent to use PandaOS to orchestrate other agents.
 
 ```bash
-npx skills add marushan49/paseo
+npx skills add marushan49/pandaos
 ```
 
 Then use them in any agent conversation:

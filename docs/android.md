@@ -216,7 +216,7 @@ The fork's APK job runs on the dedicated `paseo-android` runner on the Zotac. It
 
 `android-v*` tags also trigger only the GitHub APK workflow — useful when you want to ship an APK without going through stores. The GitHub APK workflow supports `workflow_dispatch` with an existing `tag` input so you can rebuild without cutting a new tag.
 
-Pushes to `main` that touch the app or its JS dependencies rebuild the rolling prerelease `android-latest`, whose download link never changes: `https://github.com/marushan49/paseo/releases/download/android-latest/paseo-android-latest.apk`. A newer push cancels a running rolling build.
+Pushes to `main` that touch the app or its JS dependencies rebuild the rolling prerelease `android-latest`, whose download link never changes: `https://github.com/marushan49/pandaos/releases/download/android-latest/paseo-android-latest.apk`. A newer push cancels a running rolling build.
 
 ### Useful commands
 
