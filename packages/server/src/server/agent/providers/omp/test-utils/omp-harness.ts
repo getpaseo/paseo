@@ -19,7 +19,7 @@ import {
   type OmpProviderIdleScheduler,
 } from "../agent.js";
 import type { OmpUsagePollScheduler } from "../usage-poller.js";
-import type { OmpAgentMessage, OmpRpcSlashCommand } from "../rpc-types.js";
+import type { OmpAgentMessage, OmpRpcSlashCommand, OmpRuntimeEvent } from "../rpc-types.js";
 import { FakeOmp } from "./fake-omp.js";
 
 const CWD = "/tmp/paseo-omp-agent-test";
@@ -93,10 +93,11 @@ export class OmpHarness {
   async start(
     config: Partial<AgentSessionConfig> = {},
     paseoTools?: PaseoToolCatalog,
+    env?: Record<string, string>,
   ): Promise<void> {
     const session = await this.client.createSession(
       { provider: "omp", cwd: CWD, ...config },
-      paseoTools ? { paseoTools } : undefined,
+      paseoTools || env ? { paseoTools, env } : undefined,
     );
     if (!(session instanceof OmpAgentSession)) {
       throw new Error("OMP client returned a non-OMP session");
@@ -422,6 +423,10 @@ export class OmpHarness {
     this.omp.latestSession().requestToolApproval(input);
   }
 
+  emit(event: OmpRuntimeEvent): void {
+    this.omp.latestSession().emit(event);
+  }
+
   pendingPermissions() {
     return this.requireSession().getPendingPermissions();
   }
@@ -476,6 +481,10 @@ export class OmpHarness {
 
   runtime() {
     return this.omp.latestSession();
+  }
+
+  async getUsageReference() {
+    return this.requireSession().getUsageReference();
   }
 
   runningToolCallIds(): string[] {

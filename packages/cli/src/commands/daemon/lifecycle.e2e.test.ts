@@ -136,8 +136,8 @@ test("managed two-home restart retains its supervisor and never routes ordinary 
     const beforeA = await f.liveStatus(a);
     const beforeB = await f.liveStatus(b, poisoned);
     if (process.platform !== "win32") {
-      for (const home of [a, b, path.join(f.root, ".paseo")])
-        expect((await stat(home)).mode & 0o777).toBe(0o700);
+      for (const home of [a, b]) expect((await stat(home)).mode & 0o777).toBe(0o700);
+      expect(existsSync(path.join(f.root, ".paseo"))).toBe(false);
     }
 
     const repoB = path.join(f.root, "project-b");
@@ -197,7 +197,7 @@ test("removed flags and ambiguous targets fail before side effects; observation 
   }
 }, 30_000);
 
-test("status reports the server id of a password-protected daemon to a caller without the password", async () => {
+test("local status uses the credential and reports the server id of a password-protected daemon", async () => {
   const f = await fixture();
   const home = f.homes[0]!;
   try {
@@ -209,7 +209,7 @@ test("status reports the server id of a password-protected daemon to a caller wi
     await f.ok(["start", "--home", home, "--timeout", "30"]);
     const authenticated = await f.liveStatus(home, { PASEO_PASSWORD: "secret" });
     expect(await f.ok(["daemon", "status", "--home", home])).toMatchObject({
-      connectedDaemon: "auth_required",
+      connectedDaemon: "reachable",
       serverId: authenticated.serverId,
     });
   } finally {

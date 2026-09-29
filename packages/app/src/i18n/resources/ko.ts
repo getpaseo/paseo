@@ -1532,6 +1532,8 @@ export const ko: TranslationResources = {
     noFiles: "파일 또는 디렉터리를 찾을 수 없습니다",
     noCommands: "명령을 찾을 수 없습니다",
     failedToLoad: "불러오지 못했습니다",
+    chooseProjectForCommands: "명령을 보려면 프로젝트를 선택하세요",
+    chooseModelForCommands: "명령을 보려면 모델을 선택하세요",
   },
   loadOlderHistory: {
     failed: "이전 기록을 불러올 수 없습니다",
@@ -1623,6 +1625,10 @@ export const ko: TranslationResources = {
     },
   },
   pairing: {
+    hostPassword: {
+      title: "{{host}}의 비밀번호",
+      label: "호스트 비밀번호",
+    },
     connectionMethods: {
       title: "연결 추가",
       direct: {
@@ -1959,8 +1965,11 @@ export const ko: TranslationResources = {
     groupInfo: "{{title}} 정보",
     sections: {
       general: "일반",
+      chat: "채팅",
       appearance: "모양",
-      layout: en.settings.sections.layout,
+      sidebar: "사이드바",
+      terminal: "터미널",
+      browser: "브라우저",
       editor: "편집기",
       shortcuts: "단축키",
       integrations: "통합",
@@ -2019,6 +2028,7 @@ export const ko: TranslationResources = {
     },
     general: {
       title: "일반",
+      sending: "전송",
       browserData: {
         title: "브라우저 데이터",
         siteData: "쿠키 및 사이트 데이터",
@@ -2047,8 +2057,6 @@ export const ko: TranslationResources = {
         },
       },
       serviceUrls: {
-        label: "서비스 URL",
-        description: "실행 중인 스크립트의 URL을 열 위치",
         options: {
           ask: "물어보기",
           inApp: "Paseo에서",
@@ -2067,7 +2075,6 @@ export const ko: TranslationResources = {
       toolCallDetail: {
         label: "도구 호출 표시",
         description: "타임라인에 도구 호출이 표시되는 방식",
-        accessibilityLabel: "도구 호출 표시 선택({{value}})",
         options: {
           overview: "요약",
           detailed: "전체 세부정보",
@@ -2304,6 +2311,9 @@ export const ko: TranslationResources = {
       },
     },
     host: {
+      password: {
+        guidance: "이 호스트를 제거한 뒤 이 데몬이 요구하는 비밀번호로 다시 추가하세요.",
+      },
       appearance: {
         title: "모양",
         name: {

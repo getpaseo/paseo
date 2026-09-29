@@ -1,0 +1,154 @@
+{
+  "provenance": {
+    "package": "@tintinweb/pi-subagents",
+    "version": "0.19.0",
+    "sourceCommit": "4f572eaa04c09d3dbc16e4a5f13a16b295e84e14",
+    "piVersion": "0.84.4",
+    "captureDate": "2026-09-23"
+  },
+  "events": [
+    {
+      "type": "tool_execution_start",
+      "toolCallId": "call_411074",
+      "toolName": "Agent",
+      "args": {
+        "prompt": "list files in this empty workspace.",
+        "subagent_type": "general-purpose",
+        "run_in_background": true,
+        "description": "list files"
+      }
+    },
+    {
+      "type": "tool_execution_end",
+      "toolCallId": "call_411074",
+      "toolName": "Agent",
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Agent started in background.\nAgent ID: 98cdb309-045e-45d\nType: Agent\nDescription: list files\nOutput file: /tmp/pi-subagents-1000/tmp-paseo-pi-extension-phase3-workspace/01a0d018-fd1c-7ee8-bafa-16831f748cf1/tasks/98cdb309-045e-45d.output\n\nYou will be notified when this agent completes.\nUse get_subagent_result to retrieve full results, or steer_subagent to send it messages.\nDo not duplicate this agent's work."
+          }
+        ],
+        "details": {
+          "displayName": "Agent",
+          "description": "list files",
+          "subagentType": "general-purpose",
+          "modelName": "google: gemini 3.6 flash",
+          "tags": ["twin", "background"],
+          "toolUses": 0,
+          "tokens": "",
+          "durationMs": 0,
+          "status": "background",
+          "agentId": "98cdb309-045e-45d"
+        }
+      },
+      "isError": false
+    },
+    {
+      "type": "message_end",
+      "message": {
+        "role": "custom",
+        "customType": "subagent-notification",
+        "content": "<task-notification>\n<task-id>98cdb309-045e-45d</task-id>\n<tool-use-id>call_411074</tool-use-id>\n<output-file>/tmp/pi-subagents-1000/tmp-paseo-pi-extension-phase3-workspace/01a0d018-fd1c-7ee8-bafa-16831f748cf1/tasks/98cdb309-045e-45d.output</output-file>\n<status>Done</status>\n<summary>Agent \"list files\" completed</summary>\n<result>The workspace directory `/tmp/paseo-pi-extension-phase3/workspace` is empty.</result>\n<usage><total_tokens>18642</total_tokens><tool_uses>1</tool_uses><context_percent>1</context_percent><duration_ms>5292</duration_ms></usage>\n</task-notification>\nFull transcript available at: /tmp/pi-subagents-1000/tmp-paseo-pi-extension-phase3-workspace/01a0d018-fd1c-7ee8-bafa-16831f748cf1/tasks/98cdb309-045e-45d.output",
+        "display": true,
+        "details": {
+          "id": "98cdb309-045e-45d",
+          "description": "list files",
+          "status": "completed",
+          "toolUses": 1,
+          "turnCount": 0,
+          "totalTokens": 18642,
+          "totalCost": 0.015582600000000002,
+          "durationMs": 5292,
+          "outputFile": "/tmp/pi-subagents-1000/tmp-paseo-pi-extension-phase3-workspace/01a0d018-fd1c-7ee8-bafa-16831f748cf1/tasks/98cdb309-045e-45d.output",
+          "resultPreview": "The workspace directory `/tmp/paseo-pi-extension-phase3/workspace` is empty."
+        },
+        "timestamp": 1790197702084
+      }
+    }
+  ],
+  "messages": [
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "toolCall",
+          "id": "call_411074",
+          "name": "Agent",
+          "arguments": {
+            "prompt": "list files in this empty workspace.",
+            "subagent_type": "general-purpose",
+            "run_in_background": true,
+            "description": "list files"
+          }
+        }
+      ],
+      "api": "openai-completions",
+      "provider": "openrouter",
+      "model": "google/gemini-3.6-flash",
+      "usage": {
+        "input": 13438,
+        "output": 125,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "reasoning": 79,
+        "totalTokens": 13563,
+        "cost": {
+          "input": 0.0100785,
+          "output": 0.00046875000000000004,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "total": 0.010547250000000001
+        }
+      },
+      "stopReason": "toolUse",
+      "timestamp": 1790197694776,
+      "responseId": "gen-1790197694-XL8DSeExpZQLQE8377rX",
+      "rawStopReason": "tool_calls"
+    },
+    {
+      "role": "toolResult",
+      "toolCallId": "call_411074",
+      "toolName": "Agent",
+      "content": [
+        {
+          "type": "text",
+          "text": "Agent started in background.\nAgent ID: 98cdb309-045e-45d\nType: Agent\nDescription: list files\nOutput file: /tmp/pi-subagents-1000/tmp-paseo-pi-extension-phase3-workspace/01a0d018-fd1c-7ee8-bafa-16831f748cf1/tasks/98cdb309-045e-45d.output\n\nYou will be notified when this agent completes.\nUse get_subagent_result to retrieve full results, or steer_subagent to send it messages.\nDo not duplicate this agent's work."
+        }
+      ],
+      "details": {
+        "displayName": "Agent",
+        "description": "list files",
+        "subagentType": "general-purpose",
+        "modelName": "google: gemini 3.6 flash",
+        "tags": ["twin", "background"],
+        "toolUses": 0,
+        "tokens": "",
+        "durationMs": 0,
+        "status": "background",
+        "agentId": "98cdb309-045e-45d"
+      },
+      "isError": false,
+      "timestamp": 1790197696594
+    },
+    {
+      "role": "custom",
+      "customType": "subagent-notification",
+      "content": "<task-notification>\n<task-id>98cdb309-045e-45d</task-id>\n<tool-use-id>call_411074</tool-use-id>\n<output-file>/tmp/pi-subagents-1000/tmp-paseo-pi-extension-phase3-workspace/01a0d018-fd1c-7ee8-bafa-16831f748cf1/tasks/98cdb309-045e-45d.output</output-file>\n<status>Done</status>\n<summary>Agent \"list files\" completed</summary>\n<result>The workspace directory `/tmp/paseo-pi-extension-phase3/workspace` is empty.</result>\n<usage><total_tokens>18642</total_tokens><tool_uses>1</tool_uses><context_percent>1</context_percent><duration_ms>5292</duration_ms></usage>\n</task-notification>\nFull transcript available at: /tmp/pi-subagents-1000/tmp-paseo-pi-extension-phase3-workspace/01a0d018-fd1c-7ee8-bafa-16831f748cf1/tasks/98cdb309-045e-45d.output",
+      "display": true,
+      "details": {
+        "id": "98cdb309-045e-45d",
+        "description": "list files",
+        "status": "completed",
+        "toolUses": 1,
+        "turnCount": 0,
+        "totalTokens": 18642,
+        "totalCost": 0.015582600000000002,
+        "durationMs": 5292,
+        "outputFile": "/tmp/pi-subagents-1000/tmp-paseo-pi-extension-phase3-workspace/01a0d018-fd1c-7ee8-bafa-16831f748cf1/tasks/98cdb309-045e-45d.output",
+        "resultPreview": "The workspace directory `/tmp/paseo-pi-extension-phase3/workspace` is empty."
+      },
+      "timestamp": 1790197702084
+    }
+  ]
+}

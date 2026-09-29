@@ -36,14 +36,14 @@ const CATALOG_ICON_SVGS = new Map(
 const catalogIconComponents = new Map<string, ProviderIconComponent>();
 const snapshotIconComponents = new Map<string, { svg: string; component: ProviderIconComponent }>();
 
+/** Renders a sanitized SVG string from a host catalog, tinted through `currentColor`. */
+export function SvgIcon({ svg, size, color }: ProviderIconProps & { svg: string }) {
+  return createElement(SvgXml, { xml: svg, width: size, height: size, color });
+}
+
 function createSvgIcon(provider: string, iconSvg: string): ProviderIconComponent {
   const SvgProviderIcon: ProviderIconComponent = ({ size, color }) =>
-    createElement(SvgXml, {
-      xml: iconSvg,
-      width: size,
-      height: size,
-      color,
-    });
+    SvgIcon({ svg: iconSvg, size, color });
   SvgProviderIcon.displayName = `SvgProviderIcon(${provider})`;
   return SvgProviderIcon;
 }

@@ -660,11 +660,21 @@ export interface AgentPermissionResult {
   followUpPrompt?: AgentPromptInput;
 }
 
+export interface UsageReference {
+  source: string;
+  input: JsonValue;
+}
+
 export interface AgentSession {
   readonly provider: AgentProvider;
   readonly id: string | null;
   readonly capabilities: AgentCapabilityFlags;
   readonly features?: AgentFeature[];
+  /** New provider-owned rows to commit on registration. streamHistory must also
+   * replay them at their original timestamps; restored sessions omit old rows. */
+  readonly initialTimeline?: ImportedTimelineEntry[];
+  /** Resolved at fetch time because model and credentials may change during a session. */
+  getUsageReference?(): Promise<UsageReference | null>;
   run(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<AgentRunResult>;
   startTurn(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<{ turnId: string }>;
   steerActiveTurn?(prompt: AgentPromptInput, options: SteerActiveTurnOptions): Promise<SteerResult>;

@@ -108,6 +108,7 @@ import {
   mapOmpRpcUiPermissionRequest,
 } from "./rpc-ui-permission-mapper.js";
 import { DEFAULT_OMP_THINKING_LEVEL, mapOmpModel } from "./map-omp-model.js";
+import { resolveOmpUsageReference } from "./usage-reference.js";
 
 const OMP_PROVIDER = "omp";
 const QUESTION_RESPONSE_HEADER = "Response";
@@ -186,6 +187,7 @@ interface OmpAgentSessionOptions {
   noTurnScheduler?: OmpNoTurnScheduler;
   usagePollScheduler?: OmpUsagePollScheduler;
   paseoTools?: PaseoToolCatalog;
+  usageEnv?: NodeJS.ProcessEnv;
   /**
    * When false (resumed sessions), replayed session events are dropped until
    * the first prompt or agent_start so history is not re-emitted as live
@@ -568,6 +570,24 @@ function getInputQuestionTitle(title: string | undefined, placeholder: string | 
   return "Optional response";
 }
 
+interface OmpSelectOption {
+  label: string;
+  description?: string;
+}
+
+function readSelectOptions(options: unknown, optionDetails: unknown): OmpSelectOption[] {
+  const labels = readStringArray(options);
+  const details = Array.isArray(optionDetails) ? optionDetails : [];
+  return labels.map((label, index) => {
+    const detail = details[index];
+    const description =
+      isRecord(detail) && typeof detail.description === "string" && detail.description.trim() !== ""
+        ? detail.description
+        : undefined;
+    return description === undefined ? { label } : { label, description };
+  });
+}
+
 function readStringArray(value: unknown): string[] {
   return Array.isArray(value)
     ? value.filter((item): item is string => typeof item === "string")
@@ -586,7 +606,7 @@ function mapExtensionUiRequestToPermission(
   const label = options.label ?? "OMP";
   switch (event.method) {
     case "select": {
-      const selectOptions = readStringArray(event.options);
+      const selectOptions = readSelectOptions(event.options, event.optionDetails);
       if (options.combineOptionalComment) {
         return buildCombinedAskUserQuestionPermission(event, {
           provider,
@@ -633,7 +653,7 @@ function mapExtensionUiRequestToPermission(
         question: [optionalString(event.title), optionalString(event.message)]
           .filter(Boolean)
           .join("\n\n"),
-        options: ["Yes", "No"],
+        options: [{ label: "Yes" }, { label: "No" }],
         multiSelect: false,
       });
     default:
@@ -678,7 +698,7 @@ function buildExtensionUiQuestionPermission(
     provider: AgentProvider;
     label: string;
     question: string;
-    options: string[];
+    options: OmpSelectOption[];
     multiSelect: boolean;
     placeholder?: string;
     allowEmpty?: boolean;
@@ -696,7 +716,10 @@ function buildExtensionUiQuestionPermission(
         {
           question: input.question,
           header: QUESTION_RESPONSE_HEADER,
-          options: input.options.map((label) => ({ label })),
+          options: input.options.map((option) => ({
+            label: option.label,
+            ...(option.description === undefined ? {} : { description: option.description }),
+          })),
           multiSelect: input.multiSelect,
           ...(input.placeholder ? { placeholder: input.placeholder } : {}),
           ...(input.allowEmpty ? { allowEmpty: true } : {}),
@@ -717,11 +740,13 @@ function buildCombinedAskUserQuestionPermission(
     provider: AgentProvider;
     label: string;
     question: string;
-    options: string[];
+    options: OmpSelectOption[];
     allowFreeform: boolean;
   },
 ): AgentPermissionRequest {
-  const visibleOptions = input.options.filter((option) => !isOmpAskUserFreeformOption(option));
+  const visibleOptions = input.options.filter(
+    (option) => !isOmpAskUserFreeformOption(option.label),
+  );
   const allowOther = input.allowFreeform || visibleOptions.length !== input.options.length;
   return {
     id: event.id,
@@ -734,7 +759,10 @@ function buildCombinedAskUserQuestionPermission(
         {
           question: input.question,
           header: QUESTION_RESPONSE_HEADER,
-          options: visibleOptions.map((label) => ({ label })),
+          options: visibleOptions.map((option) => ({
+            label: option.label,
+            ...(option.description === undefined ? {} : { description: option.description }),
+          })),
           multiSelect: false,
           ...(allowOther ? { allowOther: true } : {}),
         },
@@ -753,7 +781,7 @@ function buildCombinedAskUserQuestionPermission(
       answerHeader: QUESTION_RESPONSE_HEADER,
       commentHeader: QUESTION_COMMENT_HEADER,
       combinedAskUser: COMBINED_ASK_USER_METADATA,
-      selectOptions: visibleOptions,
+      selectOptions: visibleOptions.map((option) => option.label),
       ...(allowOther ? { freeformSentinel: OMP_ASK_USER_FREEFORM_SENTINEL } : {}),
     },
   };
@@ -890,6 +918,7 @@ export class OmpAgentSession implements AgentSession {
     this.currentModeId = options.currentModeId ?? null;
     this.logger = options.logger;
     this.paseoTools = options.paseoTools;
+    this.usageEnv = options.usageEnv ?? process.env;
     this.live = options.live ?? true;
     this.providerIdleScheduler = options.providerIdleScheduler ?? createOmpProviderIdleScheduler();
     this.noTurnScheduler = options.noTurnScheduler ?? createOmpNoTurnScheduler();
@@ -938,6 +967,12 @@ export class OmpAgentSession implements AgentSession {
   private readonly config: AgentSessionConfig;
   private readonly logger: Logger;
   private readonly paseoTools?: PaseoToolCatalog;
+  private readonly usageEnv: NodeJS.ProcessEnv;
+
+  async getUsageReference() {
+    const state = await this.runtimeSession.getState();
+    return resolveOmpUsageReference(state.sessionId, state.model?.provider ?? "", this.usageEnv);
+  }
 
   get id(): string | null {
     return this.state.sessionId;
@@ -2278,6 +2313,7 @@ export class OmpAgentClient implements AgentClient {
         noTurnScheduler: this.noTurnScheduler,
         usagePollScheduler: this.usagePollScheduler,
         paseoTools: launchContext?.paseoTools,
+        usageEnv: { ...process.env, ...this.runtimeSettings?.env, ...launchContext?.env },
       });
     } catch (error) {
       await runtimeSession.close().catch(() => undefined);
@@ -2320,6 +2356,7 @@ export class OmpAgentClient implements AgentClient {
         noTurnScheduler: this.noTurnScheduler,
         usagePollScheduler: this.usagePollScheduler,
         paseoTools: launchContext?.paseoTools,
+        usageEnv: { ...process.env, ...this.runtimeSettings?.env, ...launchContext?.env },
         live: false,
       });
     } catch (error) {
