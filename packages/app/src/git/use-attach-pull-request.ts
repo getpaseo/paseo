@@ -168,3 +168,36 @@ export async function submitAttachPullRequests(input: {
   }
   return attached;
 }
+
+/**
+ * Attached pull requests keep the facts they had when attached, so one merged since still reads
+ * open. This rereads the open ones and records every one whose state moved; it answers how many
+ * did. A lookup that fails leaves that entry as it was.
+ */
+export async function refreshAttachedPullRequests(input: {
+  client: ForgeSearchClient;
+  cwd: string;
+  workspaceKey: string;
+  pullRequests: readonly RelatedPullRequest[];
+}): Promise<number> {
+  const stale = input.pullRequests.filter(
+    (pullRequest) => pullRequest.origin === "manual" && pullRequest.state === "open",
+  );
+  const fresh = await Promise.all(
+    stale.map((pullRequest) =>
+      resolvePullRequestForAttach({
+        client: input.client,
+        cwd: input.cwd,
+        number: pullRequest.number,
+      }).catch(() => null),
+    ),
+  );
+  let changed = 0;
+  for (const facts of fresh) {
+    if (facts && facts.state !== "open") {
+      pullRequestCurationStore.attach(input.workspaceKey, facts);
+      changed += 1;
+    }
+  }
+  return changed;
+}

@@ -4,6 +4,7 @@ import type { ForgeSearchClient } from "./use-forge-search-query";
 import {
   AttachPullRequestNotFoundError,
   parseAttachPullRequestNumbers,
+  refreshAttachedPullRequests,
   resolvePullRequestForAttach,
   submitAttachPullRequests,
 } from "./use-attach-pull-request";
@@ -213,5 +214,36 @@ describe("submitAttachPullRequests round trips", () => {
     });
     expect(attached.map((entry) => entry.number)).toEqual([21, 22, 23, 24]);
     expect(peak).toBeGreaterThan(1);
+  });
+});
+
+describe("refreshAttachedPullRequests", () => {
+  it("records an attached pull request merged since it was attached", async () => {
+    const client: ForgeSearchClient = {
+      searchForge: vi.fn(async (options: { query: string }) => ({
+        items:
+          options.query === "1335 is:merged" ? [searchItem(1335, "change_request", "MERGED")] : [],
+        authState: "authenticated",
+        error: null,
+        requestId: "test",
+      })),
+    };
+    const attached = (number: number, origin: "manual" | "branch") => ({
+      number,
+      url: `https://github.com/o/r/pull/${number}`,
+      state: "open" as const,
+      origin,
+    });
+    const changed = await refreshAttachedPullRequests({
+      client,
+      cwd: "/repo",
+      workspaceKey: "srv:ws-refresh",
+      pullRequests: [attached(1335, "manual"), attached(1400, "branch")],
+    });
+    expect(changed).toBe(1);
+    expect(pullRequestCurationStore.getFacts("srv:ws-refresh")).toEqual([
+      expect.objectContaining({ number: 1335, state: "merged" }),
+    ]);
+    pullRequestCurationStore.clear("srv:ws-refresh");
   });
 });

@@ -7,10 +7,14 @@ import {
   usePullRequestCuration,
 } from "@/git/pull-request-curation-store";
 import { applyPullRequestCuration } from "@/git/pull-request-curation";
+import { refreshAttachedPullRequests } from "@/git/use-attach-pull-request";
 import type { RelatedPullRequest } from "@/git/related-pull-requests";
 import { useHostRuntimeClient } from "@/runtime/host-runtime";
 import { useWorkspace } from "@/stores/session-store-hooks";
 import { ChangeRequestSetList } from "./change-request-set";
+
+const ATTACHED_REFRESH_INTERVAL_MS = 5 * 60_000;
+const attachedRefreshedAt = new Map<string, number>();
 
 /**
  * The expanded set with its two ways of growing wired up, and with what the user decides about
@@ -83,6 +87,29 @@ export function ManagedChangeRequestSetList({
         // own log, and nothing here is worth interrupting the sidebar for.
       });
   }, [client, workspaceId, workspaceKey]);
+
+  // Opening the set rereads attached pull requests that still read open, so a merge shows here
+  // and, once stored, on every other client too.
+  const cwd = workspace?.workspaceDirectory ?? null;
+  const openAttached = pullRequests
+    .filter((pullRequest) => pullRequest.origin === "manual" && pullRequest.state === "open")
+    .map((pullRequest) => pullRequest.number)
+    .join(",");
+  useEffect(() => {
+    if (!client || !cwd || !openAttached) return;
+    const now = Date.now();
+    if (now - (attachedRefreshedAt.get(workspaceKey) ?? 0) < ATTACHED_REFRESH_INTERVAL_MS) return;
+    attachedRefreshedAt.set(workspaceKey, now);
+    void refreshAttachedPullRequests({
+      client: { searchForge: (options) => client.searchForge(options) },
+      cwd,
+      workspaceKey,
+      pullRequests,
+    }).then((changed) => {
+      if (changed > 0) persistCuration();
+      return undefined;
+    });
+  }, [client, cwd, openAttached, persistCuration, pullRequests, workspaceKey]);
 
   const handleRemove = useCallback(
     (number: number) => {
