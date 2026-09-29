@@ -139,5 +139,10 @@ contextBridge.exposeInMainWorld("paseoDesktop", {
     ) => ipcRenderer.invoke("paseo:browser:capture-element", browserId, rect),
     copyElement: (payload: { text?: string; imageDataUrl?: string }) =>
       ipcRenderer.invoke("paseo:browser:copy-element", payload),
+    respondToPasswordSave: (input: { requestId: string; action: "save" | "never" | "dismiss" }) =>
+      ipcRenderer.invoke("paseo:browser:passwords:respond", input),
+    listSavedPasswords: () => ipcRenderer.invoke("paseo:browser:passwords:list"),
+    removeSavedPassword: (input: { origin: string; username: string }) =>
+      ipcRenderer.invoke("paseo:browser:passwords:remove", input),
   },
 });

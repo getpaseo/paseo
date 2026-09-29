@@ -10,6 +10,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { existsSync } from "node:fs";
 import { execFileSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import {
   app,
   autoUpdater as electronAutoUpdater,
@@ -21,6 +22,7 @@ import {
   nativeImage,
   net,
   protocol,
+  safeStorage,
   screen,
   session,
   shell,
@@ -100,6 +102,11 @@ import {
 } from "./daemon/quit-lifecycle.js";
 import { runDesktopStartup } from "./desktop-startup.js";
 import { registerBrowserAutomationIpc } from "./features/browser-automation/ipc.js";
+import {
+  BrowserPasswords,
+  registerBrowserPasswordsIpc,
+} from "./features/browser-passwords/index.js";
+import { PasswordVault } from "./features/browser-passwords/vault.js";
 import { BrowserKeyboard } from "./features/browser-keyboard/index.js";
 import { installAppUpdateOnQuit } from "./features/auto-updater.js";
 import {
@@ -564,6 +571,36 @@ ipcMain.handle("paseo:browser:capture-element", (event, browserId: unknown, rect
 
 ipcMain.handle("paseo:browser:copy-element", (_event, payload: unknown) =>
   browserCapture.copy(payload),
+);
+
+registerBrowserPasswordsIpc(
+  ipcMain,
+  new BrowserPasswords({
+    vault: new PasswordVault({
+      filePath: path.join(app.getPath("userData"), "browser-passwords.json"),
+      crypto: {
+        // Linux without a keyring falls back to a hard-coded key ("basic_text"); treat that as no
+        // encryption so passwords are never stored effectively in plaintext.
+        isAvailable: () =>
+          safeStorage.isEncryptionAvailable() &&
+          (process.platform !== "linux" ||
+            !["basic_text", "unknown"].includes(safeStorage.getSelectedStorageBackend())),
+        encrypt: (plainText) => safeStorage.encryptString(plainText),
+        decrypt: (cipherText) => safeStorage.decryptString(cipherText),
+      },
+    }),
+    registry: getPaseoBrowserWebviewRegistry(),
+    isHostSender: (sender) => {
+      const contents = webContents.fromId(sender.id);
+      return (
+        contents !== undefined &&
+        contents.getType() === "window" &&
+        contents.session !== getPaseoBrowserProfileSession(session)
+      );
+    },
+    randomId: randomUUID,
+    now: Date.now,
+  }),
 );
 
 protocol.registerSchemesAsPrivileged(

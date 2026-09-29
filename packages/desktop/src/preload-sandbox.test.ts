@@ -12,7 +12,9 @@ import { PASEO_BROWSER_PROFILE_PARTITION } from "./features/browser-profile.js";
 // undefined. That regression (0.1.108, #2103) is what this test guards against.
 const SANDBOX_ALLOWLIST = new Set(["electron"]);
 
-const preloadPath = join(dirname(fileURLToPath(import.meta.url)), "preload.ts");
+const srcDir = dirname(fileURLToPath(import.meta.url));
+const preloadPath = join(srcDir, "preload.ts");
+const guestPreloadPath = join(srcDir, "features", "browser-keyboard", "guest-preload.ts");
 
 // Collect every module specifier that survives to emitted JavaScript as a runtime load.
 // Type-only imports/exports are erased by tsc and are therefore ignored.
@@ -79,8 +81,11 @@ function runtimeModuleSpecifiers(source: string): string[] {
 }
 
 describe("preload sandbox safety", () => {
-  it("only loads Electron's sandbox allowlist at runtime", () => {
-    const source = readFileSync(preloadPath, "utf8");
+  it.each([
+    ["preload.ts", preloadPath],
+    ["guest-preload.ts", guestPreloadPath],
+  ])("%s only loads Electron's sandbox allowlist at runtime", (_name, path) => {
+    const source = readFileSync(path, "utf8");
     const disallowed = runtimeModuleSpecifiers(source).filter(
       (specifier) => !SANDBOX_ALLOWLIST.has(specifier),
     );
