@@ -254,7 +254,7 @@ describe("sendOsNotification", () => {
     const { sendOsNotification } = await loadModuleForPlatform("web");
 
     const sent = await sendOsNotification({
-      title: "Paseo notification test",
+      title: "PandaOS notification test",
       body: "If you can see this, desktop notifications work.",
     });
 
@@ -275,14 +275,14 @@ describe("sendOsNotification", () => {
     });
 
     const sent = await sendOsNotification({
-      title: "Paseo notification test",
+      title: "PandaOS notification test",
       body: "If you can see this, desktop notifications work.",
       data: { serverId: "srv-1" },
     });
 
     expect(sent).toBe(true);
     expect(sendNotification).toHaveBeenCalledWith({
-      title: "Paseo notification test",
+      title: "PandaOS notification test",
       body: "If you can see this, desktop notifications work.",
       data: { serverId: "srv-1" },
     });

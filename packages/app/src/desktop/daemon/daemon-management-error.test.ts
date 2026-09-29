@@ -14,7 +14,7 @@ describe("getDaemonManagementErrorPresentation", () => {
 
     expect(presentation).toEqual({
       message:
-        "Built-in daemon started, but Paseo could not save the localhost connection. Toggle daemon management off and on again, or add localhost manually.",
+        "Built-in daemon started, but PandaOS could not save the localhost connection. Toggle daemon management off and on again, or add localhost manually.",
       refreshStatus: true,
     });
   });
@@ -23,7 +23,7 @@ describe("getDaemonManagementErrorPresentation", () => {
     const presentation = getDaemonManagementErrorPresentation(new Error("stop failed"), true);
 
     expect(presentation).toEqual({
-      message: "Built-in daemon management was paused, but Paseo could not stop the daemon.",
+      message: "Built-in daemon management was paused, but PandaOS could not stop the daemon.",
       refreshStatus: false,
     });
   });
@@ -35,7 +35,7 @@ describe("getDaemonManagementErrorPresentation", () => {
     );
 
     expect(presentation).toEqual({
-      message: "Built-in daemon management was paused, but Paseo could not stop the daemon.",
+      message: "Built-in daemon management was paused, but PandaOS could not stop the daemon.",
       refreshStatus: false,
     });
   });

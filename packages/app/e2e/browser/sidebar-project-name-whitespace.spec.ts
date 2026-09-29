@@ -55,7 +55,7 @@ async function expectProjectRow(page: Page, projectKey: string): Promise<void> {
 }
 
 async function expectAppShellRendered(page: Page): Promise<void> {
-  await expect(page.getByText("Paseo ran into a problem.")).toHaveCount(0);
+  await expect(page.getByText("PandaOS ran into a problem.")).toHaveCount(0);
 }
 
 // A project view key carries the project's path, so a directory whose name ends

@@ -22,7 +22,7 @@ export function formatAppDiagnosticHeader(input: {
   isDesktopApp: boolean;
   hostCount: number;
 }): string {
-  return formatDiagnosticSection("Paseo app diagnostics", [
+  return formatDiagnosticSection("PandaOS app diagnostics", [
     { label: "Collected at", value: new Date().toISOString() },
     { label: "App version", value: input.appVersion ?? "unknown" },
     { label: "Platform", value: input.platform },
