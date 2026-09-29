@@ -309,6 +309,40 @@ test("agent handles send permission responses for their agent", async () => {
   await client.close();
 });
 
+test("agent send reports whether the daemon queued the message", async () => {
+  const { client, ws } = await connectClient();
+  const agent = client.agents.ref("agent_sdk");
+
+  async function sendAndRespond(queued: boolean | undefined) {
+    const sendPromise = agent.send("next step", { activeTurnBehavior: "queue" });
+    const request = parseSentSessionMessage(ws.sent.at(-1));
+    expect(request).toMatchObject({
+      type: "send_agent_message_request",
+      agentId: "agent_sdk",
+      activeTurnBehavior: "queue",
+    });
+    ws.message(
+      sessionMessage({
+        type: "send_agent_message_response",
+        payload: {
+          requestId: request.requestId,
+          agentId: "agent_sdk",
+          accepted: true,
+          error: null,
+          ...(queued === undefined ? {} : { queued }),
+        },
+      }),
+    );
+    return sendPromise;
+  }
+
+  await expect(sendAndRespond(true)).resolves.toEqual({ queued: true });
+  await expect(sendAndRespond(false)).resolves.toEqual({ queued: false });
+  await expect(sendAndRespond(undefined)).resolves.toEqual({ queued: false });
+
+  await client.close();
+});
+
 test("project actions list registered projects through the existing RPC", async () => {
   const { client, ws } = await connectClient();
 

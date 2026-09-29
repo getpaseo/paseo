@@ -60,6 +60,8 @@ if (first.status === "idle") {
 
 Use `send()` for fire-and-forget delivery. Use `run()` when the caller needs the outcome of that turn.
 
+`send()` resolves with `{ queued }`. With `activeTurnBehavior: "queue"`, `queued` is `true` when the agent is busy and the daemon holds the prompt until the running turn ends. Otherwise it is `false`.
+
 ## Find agents by label
 
 Set `labels` at creation, then filter on them. The daemon does the matching:
