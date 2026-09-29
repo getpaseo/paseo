@@ -98,9 +98,9 @@ export const CLAUDE_MODEL_MANIFEST = [
     label: "Sonnet 5.5",
     description: "Sonnet 5.5 · Best for everyday tasks",
     minimumClaudeCodeVersion: "2.1.284",
+    defaultThinkingOptionId: "medium",
     contextWindowMaxTokens: 1_000_000,
     effortLevels: CLAUDE_EFFORT_LEVELS.xhigh,
-    supportsThinkingDisabled: true,
   },
   {
     id: "claude-sonnet-5",

@@ -120,6 +120,9 @@ describe("getClaudeModels", () => {
     expect(getClaudeModels("2.1.280").find((model) => model.isDefault)?.id).toBe("claude-opus-5-5");
     expect(getClaudeModels("2.1.283").map((model) => model.id)).not.toContain("claude-sonnet-5-5");
     expect(getClaudeModels("2.1.284").map((model) => model.id)).toContain("claude-sonnet-5-5");
+    const sonnet55 = getClaudeModels("2.1.284").find((model) => model.id === "claude-sonnet-5-5");
+    expect(sonnet55?.defaultThinkingOptionId).toBe("medium");
+    expect(sonnet55?.thinkingOptions?.map((option) => option.id)).not.toContain("off");
   });
 
   it("derives thinking options from model effort capabilities", () => {
