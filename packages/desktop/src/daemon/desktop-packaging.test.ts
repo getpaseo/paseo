@@ -134,6 +134,13 @@ describe("desktop packaging", () => {
     expect(config).toContain("- paseo");
   });
 
+  it("keeps the packaged renderer origin on paseo://app", () => {
+    const main = readFileSync(join(packageRoot, "src", "main.ts"), "utf8");
+
+    expect(main).toContain('const APP_SCHEME = "paseo"');
+    expect(main).toContain("loadURL(`${APP_SCHEME}://app");
+  });
+
   // electron-builder packs production dependencies declared in package.json into
   // app.asar. Runtime code in runtime-paths.ts and bin/paseo dynamically resolves
   // these workspace packages by string, so static analysis (TypeScript, Knip) cannot

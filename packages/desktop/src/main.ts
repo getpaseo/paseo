@@ -110,8 +110,9 @@ import {
 import { AgentNavigationInbox, parseAgentDeepLinkFromArgv } from "./agent-navigation.js";
 
 const DEV_SERVER_URL = process.env.EXPO_DEV_URL ?? "http://localhost:8081";
-// Keep the old scheme registered so existing deep links continue to open the app.
-const APP_SCHEME = "pandaos";
+// Keep the renderer origin stable; the branded scheme remains an additive alias.
+const APP_SCHEME = "paseo";
+const APP_SCHEME_ALIASES = [APP_SCHEME, "pandaos"] as const;
 const PASEO_DEBUG = process.env.PASEO_DEBUG === "1";
 const DISABLE_SINGLE_INSTANCE_LOCK = process.env.PASEO_DISABLE_SINGLE_INSTANCE_LOCK === "1";
 const APP_NAME = process.env.PASEO_TEST_APP_NAME?.trim() || "PandaOS";
@@ -565,12 +566,12 @@ ipcMain.handle("paseo:browser:copy-element", (_event, payload: unknown) =>
   browserCapture.copy(payload),
 );
 
-protocol.registerSchemesAsPrivileged([
-  {
-    scheme: APP_SCHEME,
+protocol.registerSchemesAsPrivileged(
+  APP_SCHEME_ALIASES.map((scheme) => ({
+    scheme,
     privileges: { standard: true, secure: true, supportFetchAPI: true },
-  },
-]);
+  })),
+);
 
 // ---------------------------------------------------------------------------
 // Window creation
@@ -938,7 +939,7 @@ async function bootstrap(): Promise<void> {
   await app.whenReady();
 
   const appDistDir = getAppDistDir();
-  protocol.handle(APP_SCHEME, (request) => {
+  const handleAppProtocol = (request: Request) => {
     const { pathname, search, hash } = new URL(request.url);
     const decodedPath = decodeURIComponent(pathname);
 
@@ -962,7 +963,10 @@ async function bootstrap(): Promise<void> {
     }
 
     return net.fetch(pathToFileURL(filePath).toString());
-  });
+  };
+  for (const scheme of APP_SCHEME_ALIASES) {
+    protocol.handle(scheme, handleAppProtocol);
+  }
 
   await applyAppIcon();
   setupApplicationMenu({

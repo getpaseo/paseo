@@ -68,7 +68,7 @@ function resolveSecretFile(params) {
 const variants = {
   production: {
     name: "PandaOS",
-    packageId: "dev.pandaos",
+    packageId: "sh.paseo",
     googleServicesFile: resolveSecretFile({
       envKey: "GOOGLE_SERVICES_FILE_PROD",
       fallbackRelativePath: "./.secrets/google-services.prod.json",
@@ -80,7 +80,7 @@ const variants = {
   },
   development: {
     name: "PandaOS Debug",
-    packageId: "dev.pandaos.debug",
+    packageId: "sh.paseo.debug",
     googleServicesFile: resolveSecretFile({
       envKey: "GOOGLE_SERVICES_FILE_DEBUG",
       fallbackRelativePath: "./.secrets/google-services.debug.json",
@@ -102,7 +102,7 @@ export default {
     version: nativeReleaseVersion.appVersion,
     orientation: "portrait",
     icon: "./assets/images/pandaos-app-icon.png",
-    scheme: "pandaos",
+    scheme: ["paseo", "pandaos"],
     userInterfaceStyle: "automatic",
     newArchEnabled: true,
     ios: {
@@ -193,6 +193,6 @@ export default {
         projectId: "0e7f65ce-0367-46c8-a238-2b65963d235a",
       },
     },
-    owner: "pandaos",
+    owner: "getpaseo",
   },
 };
