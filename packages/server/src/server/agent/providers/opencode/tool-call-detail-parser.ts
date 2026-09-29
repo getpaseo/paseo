@@ -240,6 +240,20 @@ const OpencodeEditInputSchema = z.union([
 
 const OpencodeEditOutputSchema = z.union([z.string().transform(() => null), ToolEditOutputSchema]);
 
+function opencodeEditMetadataDiff(patch: unknown): string | undefined {
+  const text = nonEmptyString(patch);
+  if (!text) return undefined;
+  const lines = text.replace(/\r\n/g, "\n").split("\n");
+  const hunk = lines.findIndex((line) => line.startsWith("@@ "));
+  if (hunk < 0) return undefined;
+  // Keep unified file headers, as in the v1 edit detail, but not OpenCode's Index preamble.
+  const headers = lines
+    .slice(0, hunk)
+    .filter((line) => line.startsWith("--- ") || line.startsWith("+++ "));
+  const body = lines.slice(hunk).filter((line) => !line.startsWith("\\ No newline at end of file"));
+  return truncateDiffText([...headers, ...body].join("\n").replace(/\n+$/, ""));
+}
+
 const OpencodeKnownToolDetailSchema = z.union([
   toolDetailBranchByToolName(
     "shell",
@@ -376,13 +390,23 @@ export function deriveOpencodeToolDetail(
     output,
   });
   if (parsed.success && parsed.data) {
-    if (parsed.data.type === "edit") {
+    const detail = parsed.data;
+    if (detail.type === "edit") {
+      const files = metadata?.files;
+      let filePatch: unknown;
+      if (Array.isArray(files)) {
+        const matching = files.find((entry) => isRecord(entry) && entry.file === detail.filePath);
+        const selected = matching ?? (files.length === 1 ? files[0] : undefined);
+        filePatch = isRecord(selected) ? selected.patch : undefined;
+      }
       const filediff = metadata?.filediff;
-      const patch = isRecord(filediff) ? nonEmptyString(filediff.patch) : undefined;
-      const unifiedDiff = truncateDiffText(patch ?? nonEmptyString(metadata?.diff));
-      if (unifiedDiff) return { ...parsed.data, unifiedDiff };
+      const unifiedDiff =
+        opencodeEditMetadataDiff(filePatch) ??
+        opencodeEditMetadataDiff(isRecord(filediff) ? filediff.patch : undefined) ??
+        opencodeEditMetadataDiff(metadata?.diff);
+      if (unifiedDiff) return { ...detail, unifiedDiff };
     }
-    return parsed.data;
+    return detail;
   }
   return {
     type: "unknown",
