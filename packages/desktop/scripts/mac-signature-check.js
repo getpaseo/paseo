@@ -1,7 +1,7 @@
 const { execFileSync, spawnSync } = require("node:child_process");
 const path = require("node:path");
 
-const EXECUTABLE_NAME = "Paseo";
+const EXECUTABLE_NAME = "PandaOS";
 const FRAMEWORK_RELATIVE_PATHS = [
   ["Contents", "Frameworks", "Electron Framework.framework", "Versions", "A", "Electron Framework"],
   ["Contents", "Frameworks", "Electron Framework.framework", "Electron Framework"],
@@ -56,12 +56,12 @@ function remediationHint(appPath) {
   return [
     "macOS refused to launch because the app bundle mixes binaries from different",
     'signing identities (DYLD "different Team IDs"). This happens when a new',
-    "Paseo.app is merged over an old one (Finder merge, unzip over /Applications,",
+    "PandaOS.app is merged over an old one (Finder merge, unzip over /Applications,",
     "or an interrupted auto-update) instead of replacing it.",
     `Bundle: ${appPath}`,
-    "Fix on the Mac: trash /Applications/Paseo.app completely (do not merge),",
-    "download the fresh Paseo-<version>-arm64.dmg from the GitHub release, copy it",
-    "into /Applications, then run: xattr -cr /Applications/Paseo.app",
+    "Fix on the Mac: trash /Applications/PandaOS.app completely (do not merge),",
+    "download the fresh PandaOS-<version>-arm64.dmg from the GitHub release, copy it",
+    "into /Applications, then run: xattr -cr /Applications/PandaOS.app",
   ].join("\n");
 }
 

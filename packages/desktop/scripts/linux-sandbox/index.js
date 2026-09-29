@@ -3,7 +3,7 @@ const path = require("node:path");
 
 // Keep one pre-Chromium entrypoint for AppRun, desktop entries, updates, and tarballs.
 exports.installLinuxLauncher = function installLinuxLauncher(appOutDir) {
-  const launcher = path.join(appOutDir, "Paseo");
+  const launcher = path.join(appOutDir, "PandaOS");
   if (!fs.existsSync(`${launcher}.bin`)) {
     fs.renameSync(launcher, `${launcher}.bin`);
   }
