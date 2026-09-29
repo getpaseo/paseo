@@ -104,7 +104,7 @@ export function addHubExportCommand(parent: Command, dependencies: HubExportDepe
         .command("export")
         .description("Export active Hub triggers as one YAML file per trigger")
         .argument("[directory]", "Destination directory", ".paseo/triggers")
-        .option("--hub <origin>", "Paseo Hub origin")
+        .option("--hub <origin>", "PandaOS Hub origin")
         .option("--api-key <secret>", "Organization API key")
         .option("--force", "Replace trigger files with different contents"),
     ),

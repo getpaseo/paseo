@@ -58,11 +58,22 @@ describe("parseChoiceAnswer", () => {
 });
 
 describe("TypeSafeSystemOneClient", () => {
+  it.each([
+    "javascript:alert(1)",
+    "file:///etc/passwd",
+    "https://user:secret@example.com/systemone",
+  ])("rejects unsafe endpoint %s before making a request", (endpoint) => {
+    expect(() => new TypeSafeSystemOneClient({ endpoint })).toThrow("HTTP(S)");
+  });
+
   it("sends the System One contract without exposing the key in errors", async () => {
     let authorization = "";
+    let endpoint = "";
     const client = new TypeSafeSystemOneClient({
       apiKey: "private-key",
+      endpoint: "https://self-hosted.example/systemone",
       fetchImpl: async (_input, init) => {
+        endpoint = String(_input);
         authorization = new Headers(init?.headers).get("Authorization") ?? "";
         return new Response(
           JSON.stringify({
@@ -88,6 +99,7 @@ describe("TypeSafeSystemOneClient", () => {
     });
 
     expect(authorization).toBe("Bearer private-key");
+    expect(endpoint).toBe("https://self-hosted.example/systemone");
     expect(response.model).toBe("jev-latest");
   });
 });

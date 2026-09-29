@@ -50,7 +50,7 @@ export async function runHubConnect(
     ) {
       await daemon.disconnectHub(false).catch(() => undefined);
       throw new Error(
-        "The daemon did not honor the requested Hub access. Update Paseo before connecting it.",
+        "The daemon did not honor the requested Hub access. Update PandaOS before connecting it.",
       );
     }
     return hubStatusResult(response.status);
@@ -62,8 +62,8 @@ export function addHubConnectCommand(parent: Command, dependencies: HubConnectDe
     addHubResolutionHelp(
       parent
         .command("connect")
-        .description("Enroll this daemon with a Paseo Hub")
-        .argument("[origin]", "Paseo Hub origin")
+        .description("Enroll this daemon with a PandaOS Hub")
+        .argument("[origin]", "PandaOS Hub origin")
         .option("--api-key <secret>", "Organization API key")
         .option("--permission <permission...>", "Grant daemon permission during connection"),
     ),

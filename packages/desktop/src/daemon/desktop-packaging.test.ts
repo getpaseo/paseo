@@ -129,8 +129,16 @@ describe("desktop packaging", () => {
   it("registers Paseo agent links with the operating system", () => {
     const config = readFileSync(join(packageRoot, "electron-builder.yml"), "utf8");
 
-    expect(config).toContain("name: Paseo agent link");
+    expect(config).toContain("name: PandaOS agent link");
+    expect(config).toContain("- pandaos");
     expect(config).toContain("- paseo");
+  });
+
+  it("keeps the packaged renderer origin on paseo://app", () => {
+    const main = readFileSync(join(packageRoot, "src", "main.ts"), "utf8");
+
+    expect(main).toContain('const APP_SCHEME = "paseo"');
+    expect(main).toContain("loadURL(`${APP_SCHEME}://app");
   });
 
   // electron-builder packs production dependencies declared in package.json into

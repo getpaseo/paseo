@@ -1,12 +1,12 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { LegalPage, PaseoLegalIdentity } from "~/components/legal-page";
+import { LegalPage, PandaOSLegalIdentity } from "~/components/legal-page";
 import { pageMeta } from "~/meta";
 
 export const Route = createFileRoute("/privacy")({
   head: () =>
     pageMeta(
-      "Privacy Policy - Paseo",
-      "What stays on your machines, what the encrypted relay can see, and what Paseo Hub stores.",
+      "Privacy Policy - PandaOS",
+      "What stays on your machines, what the encrypted relay can see, and what PandaOS Hub stores.",
       "/privacy",
     ),
   component: Privacy,
@@ -18,13 +18,13 @@ function Privacy() {
       <p>
         Paseo is local-first. Installing or using the open-source software does not send us your
         code, prompts, files, terminal output, or agent conversations. This policy explains the
-        separate data boundaries for local Paseo, the optional official relay, the hosted Paseo Hub,
-        and paseo.sh.
+        separate data boundaries for local Paseo, the optional official relay, the hosted PandaOS
+        Hub, and paseo.sh.
       </p>
 
       <section>
         <h2>Who is responsible</h2>
-        <PaseoLegalIdentity />
+        <PandaOSLegalIdentity />
         <p>
           Mohamed Boudra Ziani is the data controller for personal data processed through the
           official Paseo website, relay, and hosted Hub. Independently self-hosted daemons, Hubs,
@@ -67,7 +67,7 @@ function Privacy() {
       </section>
 
       <section>
-        <h2>Paseo Hub</h2>
+        <h2>PandaOS Hub</h2>
         <p>When you create or use a hosted Hub account, we process:</p>
         <ul>
           <li>Your name, email, account credentials, sessions, IP address, and user agent</li>

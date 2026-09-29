@@ -17,7 +17,7 @@ organization. Set the Hub origin in `PASEO_HUB_URL` below, for example
 - [Interactive API reference](https://hub.paseo.sh/api/reference)
 - [OpenAPI 3.1 document](https://hub.paseo.sh/api/openapi.json)
 
-These are the canonical reference endpoints for the hosted Paseo Hub. A self-hosted Hub exposes the same `/api/reference` and `/api/openapi.json` paths on its own origin.
+These are the canonical reference endpoints for the hosted PandaOS Hub. A self-hosted Hub exposes the same `/api/reference` and `/api/openapi.json` paths on its own origin.
 
 ## Authentication
 

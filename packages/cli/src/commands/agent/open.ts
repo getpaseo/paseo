@@ -25,7 +25,7 @@ const openAgentSchema: OutputSchema<OpenAgentResult> = {
 
 export function addOpenOptions(command: Command): Command {
   return command
-    .description("Open an existing agent in Paseo Desktop")
+    .description("Open an existing agent in PandaOS Desktop")
     .argument("<agent-id>", "Existing agent ID")
     .option("--server <server-id>", "Server ID (defaults to the local daemon)");
 }

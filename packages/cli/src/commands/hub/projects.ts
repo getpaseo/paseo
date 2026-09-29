@@ -79,7 +79,7 @@ export function addHubProjectsCommand(
       parent
         .command("projects")
         .description("List projects for the authenticated Hub organization")
-        .option("--hub <origin>", "Paseo Hub origin")
+        .option("--hub <origin>", "PandaOS Hub origin")
         .option("--api-key <secret>", "Organization API key"),
     ),
   ).action(

@@ -65,7 +65,7 @@ export function FounderNote() {
       <p>
         Paseo is self-funded: the work is paid for by sponsorship and by{" "}
         <a href="/hub" className="underline hover:text-white/90">
-          Paseo Hub
+          PandaOS Hub
         </a>
         , an optional hosted service. Your support is what lets me work on Paseo full time.
       </p>
@@ -246,7 +246,7 @@ export function SponsorSection() {
           <p>
             Paseo is self-funded through sponsorship and{" "}
             <a href="/hub" className="underline hover:text-white/90">
-              Paseo Hub
+              PandaOS Hub
             </a>
             , and your support is what lets me work on it full time.
           </p>

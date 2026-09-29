@@ -2,7 +2,7 @@
   "name": "paseo",
   "version": "0.9.1",
   "private": true,
-  "description": "Paseo: voice-controlled development environment for local AI coding agents",
+  "description": "PandaOS: voice-controlled development environment for local AI coding agents",
   "keywords": [
     "development",
     "mcp",
@@ -10,7 +10,7 @@
     "voice",
     "voice-assistant"
   ],
-  "homepage": "https://paseo.sh",
+  "homepage": "https://pandaos.dev",
   "license": "Apache-2.0",
   "author": {
     "name": "Mohamed Boudra",

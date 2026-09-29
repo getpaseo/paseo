@@ -116,7 +116,7 @@ export async function runHubGuidedSetup(
   state: HubGuidedSetupState = {},
 ): Promise<void> {
   requireInteractiveTerminal(environment);
-  intro("Set up Paseo Hub");
+  intro("Set up PandaOS Hub");
 
   const cwd = environment.cwd();
   const activeLogin = environment.credentials.active();
@@ -207,7 +207,7 @@ export async function continueHubGuidedSetup(
   } else if (
     await requiredConfirm(
       environment,
-      "Connect this daemon to Paseo Hub?\n\nConnecting lets Hub identify this daemon and show whether it is online.\nIt does not allow Hub to create workspaces or run agents.",
+      "Connect this daemon to PandaOS Hub?\n\nConnecting lets Hub identify this daemon and show whether it is online.\nIt does not allow Hub to create workspaces or run agents.",
       true,
     )
   ) {

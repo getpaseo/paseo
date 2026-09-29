@@ -498,7 +498,7 @@ function TurnkeySection() {
               title="Teams and triggers"
               description="Share access or start work from GitHub, Slack, and Discord"
               ctaHref="/hub"
-              ctaLabel="Paseo Hub"
+              ctaLabel="PandaOS Hub"
               showIntegrationIcons
             />
           </div>

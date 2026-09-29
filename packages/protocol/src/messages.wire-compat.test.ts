@@ -9,6 +9,8 @@ import {
   WorkspaceSetupSnapshotSchema,
   WorkspaceSetupProgressMessageSchema,
   AgentTimelineEntryPayloadSchema,
+  MutableDaemonConfigSchema,
+  MutableDaemonConfigPatchSchema,
 } from "./messages.js";
 
 test("terminal listings accept older rows and retain new per-terminal directories", () => {
@@ -67,6 +69,21 @@ const LegacyAgentSnapshotPayloadSchema = AgentSnapshotPayloadSchema.extend({
 });
 
 describe("wire schema compatibility", () => {
+  test("optional PandaOS config fields remain compatible with older payloads", () => {
+    expect(
+      MutableDaemonConfigSchema.parse({ mcp: { injectIntoAgents: false } }).paperclip,
+    ).toBeUndefined();
+    expect(MutableDaemonConfigPatchSchema.parse({}).paperclip).toBeUndefined();
+    expect(
+      MutableDaemonConfigPatchSchema.parse({
+        systemOne: { enabled: true },
+        paperclip: { onboardingCompleted: true, teamShape: "small" },
+      }),
+    ).toEqual({
+      systemOne: { enabled: true },
+      paperclip: { onboardingCompleted: true, teamShape: "small" },
+    });
+  });
   test("hello parses with and without the project update capability", () => {
     const legacy = WSHelloMessageSchema.parse({
       type: "hello",

@@ -1295,7 +1295,7 @@ export const ru: TranslationResources = {
       discord: "Discord",
       github: "Создать issue на GitHub",
       whatsNew: "Что нового",
-      appName: "Paseo",
+      appName: "PandaOS",
     },
     sections: {
       sessions: "История",
@@ -1707,10 +1707,29 @@ export const ru: TranslationResources = {
     },
   },
   onboarding: {
-    title: "Добро пожаловать в Paseo",
+    title: "Добро пожаловать в PandaOS",
     subtitle: "Подключите компьютер, чтобы начать",
     actions: {
       settings: "Настройки",
+      paperclip: "Настроить с Paperclip",
+    },
+  },
+  paperclip: {
+    onboarding: {
+      title: "Настройте PandaOS с Paperclip",
+      description: "Расскажите о своей работе, чтобы настроить команду агентов.",
+      useCase: {
+        label: "Для чего вы будете использовать PandaOS?",
+        hint: "Выберите ближайший вариант.",
+      },
+      teamShape: { label: "Каков размер вашей команды?", hint: "Это можно изменить позже." },
+      teamName: {
+        label: "Название команды",
+        hint: "Необязательная метка.",
+        placeholder: "Моя команда",
+      },
+      saving: "Сохранение…",
+      continue: "Сохранить настройки",
     },
   },
   modelSelector: {

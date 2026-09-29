@@ -2,6 +2,7 @@
   "name": "@getpaseo/app",
   "version": "0.9.1",
   "private": true,
+  "description": "PandaOS mobile and web client",
   "main": "index.ts",
   "scripts": {
     "start": "npm run start:expo",
@@ -34,7 +35,7 @@
     "profile:side-pane": "playwright test --config playwright.profile.config.ts side-pane-performance.spec.ts",
     "profile:workspace-switching": "node ./scripts/profile-workspace-switching.mjs",
     "profile:workspace-tabs": "node ./scripts/profile-workspace-tabs.mjs",
-    "deploy:web": "npm run build:web && wrangler pages deploy dist --project-name paseo-app --branch main",
+    "deploy:web": "npm run build:web && wrangler pages deploy dist --project-name pandaos-app --branch main",
     "build:terminal-webview": "node ./scripts/build-terminal-webview-html.mjs",
     "build:mermaid-runtime": "node ./src/components/markdown/fence/mermaid/build-runtime.mjs"
   },

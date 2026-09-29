@@ -2,6 +2,7 @@
   "name": "@getpaseo/website",
   "version": "0.9.1",
   "private": true,
+  "description": "PandaOS website",
   "type": "module",
   "scripts": {
     "dev": "vite",

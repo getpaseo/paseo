@@ -30,7 +30,7 @@ export async function requestHub<T>(input: HubRequest<T>): Promise<T> {
   } catch {
     throw new HubCommandError(
       "HUB_NETWORK_ERROR",
-      `Could not reach Paseo Hub at ${input.origin}. Check the Hub URL and network connection.`,
+      `Could not reach PandaOS Hub at ${input.origin}. Check the Hub URL and network connection.`,
     );
   }
   if (response.status !== input.successStatus) {

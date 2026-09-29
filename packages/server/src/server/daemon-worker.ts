@@ -7,7 +7,7 @@ import { createRootLogger } from "./logger.js";
 import type { DaemonLifecycleIntent } from "./bootstrap.js";
 import { getProcessDiagnostics } from "./process-diagnostics.js";
 
-process.title = "Paseo Daemon";
+process.title = "PandaOS Daemon";
 
 type SupervisorLifecycleMessage =
   | {

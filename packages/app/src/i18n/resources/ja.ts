@@ -1292,7 +1292,7 @@ export const ja: TranslationResources = {
       discord: "Discord",
       github: "GitHub Issueを作成",
       whatsNew: "新着情報",
-      appName: "Paseo",
+      appName: "PandaOS",
     },
     sections: {
       sessions: "履歴",
@@ -1696,10 +1696,22 @@ export const ja: TranslationResources = {
     },
   },
   onboarding: {
-    title: "Paseoへようこそ",
+    title: "PandaOSへようこそ",
     subtitle: "始めるにはコンピューターに接続してください",
     actions: {
       settings: "設定",
+      paperclip: "Paperclipで設定",
+    },
+  },
+  paperclip: {
+    onboarding: {
+      title: "PaperclipでPandaOSを設定",
+      description: "働き方を教えて、エージェントチームを設定します。",
+      useCase: { label: "PandaOSの用途は？", hint: "最も近いものを選択してください。" },
+      teamShape: { label: "チームの規模は？", hint: "後で変更できます。" },
+      teamName: { label: "チーム名", hint: "任意のラベルです。", placeholder: "マイチーム" },
+      saving: "保存中…",
+      continue: "設定を保存",
     },
   },
   modelSelector: {

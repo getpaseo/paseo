@@ -67,7 +67,7 @@ function resolveSecretFile(params) {
 
 const variants = {
   production: {
-    name: "Paseo",
+    name: "PandaOS",
     packageId: "sh.paseo",
     googleServicesFile: resolveSecretFile({
       envKey: "GOOGLE_SERVICES_FILE_PROD",
@@ -79,7 +79,7 @@ const variants = {
     }),
   },
   development: {
-    name: "Paseo Debug",
+    name: "PandaOS Debug",
     packageId: "sh.paseo.debug",
     googleServicesFile: resolveSecretFile({
       envKey: "GOOGLE_SERVICES_FILE_DEBUG",
@@ -101,8 +101,8 @@ export default {
     slug: "voice-mobile",
     version: nativeReleaseVersion.appVersion,
     orientation: "portrait",
-    icon: "./assets/images/icon.png",
-    scheme: "paseo",
+    icon: "./assets/images/pandaos-app-icon.png",
+    scheme: ["paseo", "pandaos"],
     userInterfaceStyle: "automatic",
     newArchEnabled: true,
     ios: {
@@ -134,7 +134,7 @@ export default {
     },
     web: {
       output: "single",
-      favicon: "./assets/images/favicon.png",
+      favicon: "./assets/images/pandaos-app-icon.png",
     },
     autolinking: {
       searchPaths: ["../../node_modules", "./node_modules"],

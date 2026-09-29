@@ -1,16 +1,9 @@
 import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
 import { Pressable, Text, View, ScrollView } from "react-native";
-import { useRouter } from "expo-router";
+import { useRouter, type Href } from "expo-router";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import {
-  QrCode,
-  Link2,
-  ClipboardPaste,
-  ExternalLink,
-  Settings,
-  Terminal,
-} from "lucide-react-native";
+import { QrCode, Link2, ClipboardPaste, Settings, Terminal, Paperclip } from "lucide-react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { HostProfile } from "@/types/host-connection";
 import { getHostRuntimeStore, isHostRuntimeConnected, useHosts } from "@/runtime/host-runtime";
@@ -21,10 +14,9 @@ import { Button } from "@/components/ui/button";
 import { resolveAppVersion } from "@/utils/app-version";
 import { formatVersionWithPrefix } from "@/desktop/updates/desktop-updates";
 import { buildOpenProjectRoute } from "@/utils/host-routes";
-import { PaseoLogo } from "@/components/icons/paseo-logo";
-import { openExternalUrl } from "@/utils/open-external-url";
+import { PandaOSLogo } from "@/components/icons/pandaos-logo";
 import { isFdroidBuild } from "@/constants/build-profile";
-import { isWeb, isNative } from "@/constants/platform";
+import { isWeb } from "@/constants/platform";
 import { isElectronRuntime } from "@/desktop/host";
 
 interface WelcomeAction {
@@ -188,12 +180,11 @@ export function WelcomeScreen({ onHostAdded }: WelcomeScreenProps) {
     router.replace(buildOpenProjectRoute());
   }, [router]);
 
-  const handleOpenPaseoSite = useCallback(() => {
-    void openExternalUrl("https://paseo.sh");
-  }, []);
-
   const handleOpenSettings = useCallback(() => {
     router.push("/settings");
+  }, [router]);
+  const handleOpenPaperclip = useCallback(() => {
+    router.push("/paperclip" as Href);
   }, [router]);
 
   const handleOpenDirect = useCallback(() => setIsDirectOpen(true), []);
@@ -286,16 +277,10 @@ export function WelcomeScreen({ onHostAdded }: WelcomeScreenProps) {
         testID="welcome-screen"
       >
         <View style={styles.content}>
-          <PaseoLogo size={96} />
+          <PandaOSLogo size={96} />
           <View style={styles.copyBlock}>
             <Text style={styles.title}>{t("onboarding.title")}</Text>
             <Text style={styles.subtitle}>{t("onboarding.subtitle")}</Text>
-            {isNative ? (
-              <Pressable style={styles.setupLink} onPress={handleOpenPaseoSite}>
-                <Text style={styles.setupLinkText}>paseo.sh</Text>
-                <ExternalLink size={14} color={theme.colors.accent} />
-              </Pressable>
-            ) : null}
           </View>
 
           <View style={styles.actions}>
@@ -313,6 +298,16 @@ export function WelcomeScreen({ onHostAdded }: WelcomeScreenProps) {
             testID="welcome-open-settings"
           >
             {t("onboarding.actions.settings")}
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            leftIcon={Paperclip}
+            onPress={handleOpenPaperclip}
+            style={styles.settingsButton}
+            testID="welcome-open-paperclip"
+          >
+            {t("onboarding.actions.paperclip")}
           </Button>
         </View>
         <Text style={styles.versionLabel}>{appVersionText}</Text>

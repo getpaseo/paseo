@@ -11,7 +11,7 @@ import { withOutput } from "../../output/index.js";
 import { addJsonOption, addLocalDaemonOptions } from "../../utils/command-options.js";
 
 export function createDaemonCommand(): Command {
-  const daemon = new Command("daemon").description("Manage the Paseo daemon");
+  const daemon = new Command("daemon").description("Manage the PandaOS daemon");
   for (const command of [
     startCommand(),
     daemonRunCommand(),

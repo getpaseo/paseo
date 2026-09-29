@@ -1281,7 +1281,7 @@ export const ko: TranslationResources = {
       discord: "Discord",
       github: "GitHub 이슈 만들기",
       whatsNew: "새로운 소식",
-      appName: "Paseo",
+      appName: "PandaOS",
     },
     sections: {
       sessions: "기록",
@@ -1685,10 +1685,22 @@ export const ko: TranslationResources = {
     },
   },
   onboarding: {
-    title: "Paseo에 오신 것을 환영합니다",
+    title: "PandaOS에 오신 것을 환영합니다",
     subtitle: "시작하려면 컴퓨터를 연결하세요",
     actions: {
       settings: "설정",
+      paperclip: "Paperclip으로 설정",
+    },
+  },
+  paperclip: {
+    onboarding: {
+      title: "Paperclip으로 PandaOS 설정",
+      description: "작업 방식을 알려주시면 에이전트 팀을 맞춰 드립니다.",
+      useCase: { label: "PandaOS를 어떻게 사용하나요?", hint: "가장 가까운 항목을 선택하세요." },
+      teamShape: { label: "팀 규모는 어떻게 되나요?", hint: "나중에 변경할 수 있습니다." },
+      teamName: { label: "팀 이름", hint: "선택 사항입니다.", placeholder: "내 팀" },
+      saving: "저장 중…",
+      continue: "설정 저장",
     },
   },
   modelSelector: {

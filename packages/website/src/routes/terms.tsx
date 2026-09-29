@@ -1,12 +1,12 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { LegalPage, PaseoLegalIdentity } from "~/components/legal-page";
+import { LegalPage, PandaOSLegalIdentity } from "~/components/legal-page";
 import { pageMeta } from "~/meta";
 
 export const Route = createFileRoute("/terms")({
   head: () =>
     pageMeta(
-      "Terms of Service - Paseo",
-      "Terms for the official Paseo Relay and hosted Paseo Hub services.",
+      "Terms of Service - PandaOS",
+      "Terms for the official PandaOS Relay and hosted PandaOS Hub services.",
       "/terms",
     ),
   component: Terms,
@@ -23,14 +23,14 @@ function Terms() {
 
       <section>
         <h2>Who provides the services</h2>
-        <PaseoLegalIdentity />
+        <PandaOSLegalIdentity />
       </section>
 
       <section>
         <h2>Paseo&apos;s open-source software</h2>
         <p>
           Paseo is open-source software licensed under the Apache License 2.0. You can install,
-          modify, and self-host it under that license without purchasing Paseo Hub or using the
+          modify, and self-host it under that license without purchasing PandaOS Hub or using the
           official relay.
         </p>
         <p>
@@ -53,7 +53,7 @@ function Terms() {
       </section>
 
       <section>
-        <h2>Paseo Hub</h2>
+        <h2>PandaOS Hub</h2>
         <p>
           Hub lets you connect daemons, configure workflows, receive events from connected services,
           and instruct agents running on your infrastructure. Hub does not provide AI inference.

@@ -1311,7 +1311,7 @@ export const fr: TranslationResources = {
       discord: "Discord",
       github: "Créer un ticket GitHub",
       whatsNew: "Nouveautés",
-      appName: "Paseo",
+      appName: "PandaOS",
     },
     sections: {
       sessions: "Historique",
@@ -1726,10 +1726,11 @@ export const fr: TranslationResources = {
     },
   },
   onboarding: {
-    title: "Bienvenue surPaseo",
+    title: "Bienvenue sur PandaOS",
     subtitle: "Connectez votre ordinateur pour commencer",
     actions: {
       settings: "Paramètres",
+      paperclip: "Configurer avec Paperclip",
     },
   },
   modelSelector: {
@@ -3004,4 +3005,5 @@ export const fr: TranslationResources = {
       },
     },
   },
+  paperclip: en.paperclip,
 };

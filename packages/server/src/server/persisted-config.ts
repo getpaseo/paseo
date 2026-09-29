@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { z } from "zod";
+import { isSafeSystemOneEndpoint } from "@getpaseo/protocol/messages";
 
 import {
   AgentProviderRuntimeSettingsMapSchema,
@@ -256,6 +257,15 @@ export const PersistedConfigSchema = z
           .object({
             enabled: z.boolean().optional(),
             model: z.string().trim().min(1).optional(),
+            // COMPAT(systemOneEndpoint): added in v0.9, keep optional while older daemons are supported.
+            endpoint: z
+              .string()
+              .trim()
+              .url()
+              .refine(isSafeSystemOneEndpoint, {
+                message: "System One endpoint must use HTTP(S) without embedded credentials",
+              })
+              .optional(),
             minimumConfidence: z.number().min(0).max(1).optional(),
             excludedPaths: z.array(z.string().trim().min(1)).optional(),
             // Log Jev's prediction of every agent's next step against what it really did.
@@ -274,6 +284,16 @@ export const PersistedConfigSchema = z
               .optional(),
           })
           .strict()
+          .optional(),
+        // COMPAT(paperclip): added for PandaOS onboarding, keep optional while older daemons are supported.
+        paperclip: z
+          .object({
+            onboardingCompleted: z.boolean().optional(),
+            useCase: z.enum(["personal", "team", "enterprise"]).optional(),
+            teamShape: z.enum(["solo", "small", "medium", "large"]).optional(),
+            teamName: z.string().trim().optional(),
+          })
+          .passthrough()
           .optional(),
         git: z
           .object({

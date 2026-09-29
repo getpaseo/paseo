@@ -16,6 +16,13 @@ describe("agent deep links", () => {
     expect(parseAgentDeepLink(link)).toEqual(target);
   });
 
+  it("accepts the branded scheme without changing the canonical link", () => {
+    expect(parseAgentDeepLink("pandaos://h/server/agent/agent-1")).toEqual({
+      serverId: "server",
+      agentId: "agent-1",
+    });
+  });
+
   it("rejects links outside the exact agent route", () => {
     expect(parseAgentDeepLink("https://h/server/agent/agent-1")).toBeNull();
     expect(parseAgentDeepLink("paseo://app/h/server/agent/agent-1")).toBeNull();

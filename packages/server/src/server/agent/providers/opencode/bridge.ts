@@ -149,7 +149,7 @@ export class OpenCodeBridge {
       if (request.method === "GET" && contextMatch) {
         const binding = this.sessions.get(decodeURIComponent(contextMatch[1]));
         if (!binding) {
-          sendJson(response, 404, { error: "OpenCode session is not bound to a Paseo agent" });
+          sendJson(response, 404, { error: "OpenCode session is not bound to a PandaOS agent" });
           return;
         }
         sendJson(response, 200, { env: binding.env });
@@ -202,11 +202,11 @@ export class OpenCodeBridge {
   }): Promise<void> {
     const binding = this.sessions.get(input.sessionId);
     if (!binding) {
-      sendJson(input.response, 404, { error: "OpenCode session is not bound to a Paseo agent" });
+      sendJson(input.response, 404, { error: "OpenCode session is not bound to a PandaOS agent" });
       return;
     }
     if (!binding.tools) {
-      sendJson(input.response, 403, { error: "Paseo tools are disabled for this session" });
+      sendJson(input.response, 403, { error: "PandaOS tools are disabled for this session" });
       return;
     }
     const body = await readJsonBody(input.request);

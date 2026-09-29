@@ -1283,7 +1283,7 @@ export const en = {
       discord: "Discord",
       github: "Create GitHub issue",
       whatsNew: "What's new",
-      appName: "Paseo",
+      appName: "PandaOS",
     },
     sections: {
       sessions: "History",
@@ -1701,10 +1701,26 @@ export const en = {
     },
   },
   onboarding: {
-    title: "Welcome to Paseo",
+    title: "Welcome to PandaOS",
     subtitle: "Connect your computer to get started",
     actions: {
       settings: "Settings",
+      paperclip: "Set up with Paperclip",
+    },
+  },
+  paperclip: {
+    onboarding: {
+      title: "Set up PandaOS with Paperclip",
+      description: "Tell us how you work so your agent team starts with the right shape.",
+      useCase: { label: "What will you use PandaOS for?", hint: "Choose the closest fit." },
+      teamShape: { label: "What team shape do you need?", hint: "You can change this later." },
+      teamName: {
+        label: "Team name",
+        hint: "Optional label for this setup.",
+        placeholder: "My agent team",
+      },
+      saving: "Saving…",
+      continue: "Save setup",
     },
   },
   modelSelector: {
@@ -2259,6 +2275,12 @@ export const en = {
         label: "Model",
         hint: "Use jev-latest to follow TypeSafe's current recommended Jev release, or pin a model name.",
       },
+      endpoint: {
+        label: "Jev endpoint",
+        hint: "Use the hosted TypeSafe endpoint by default, or connect a compatible self-hosted endpoint.",
+        customLabel: "Custom endpoint URL",
+        customHint: "The URL must accept the System One request contract and return Jev answers.",
+      },
       confidence: {
         label: "Minimum confidence",
         hint: "Below this threshold, browser goals stop before mutating and agents should gather evidence or use slower reasoning.",
@@ -2280,7 +2302,7 @@ export const en = {
           "Independent Choice, Score, and Noul questions share one structured state and one API round trip.",
         boundary: "Code stays in control",
         boundaryHint:
-          "Jev returns probabilities and confidence. Paseo or the coding agent still verifies facts, executes tools, and escalates uncertain decisions.",
+          "Jev returns probabilities and confidence. PandaOS or the coding agent still verifies facts, executes tools, and escalates uncertain decisions.",
       },
     },
     browser: {
