@@ -734,6 +734,7 @@ export const ja: TranslationResources = {
         changes: "変更",
         files: "ファイル",
         evidence: "証拠",
+        insights: "インサイト",
       },
       toasts: {
         copyFailed: "コピーに失敗しました",
@@ -1996,6 +1997,23 @@ export const ja: TranslationResources = {
       emptyTitle: "プルリクエストはまだありません",
       emptyDescription:
         "このチェックアウトのプルリクエストを作成すると、ここに詳細が表示されます。",
+    },
+    insights: {
+      noAgent: "エージェントのタブを開くと、作業状況を確認できます。",
+      duration: "経過時間",
+      toolCalls: "ツール呼び出し",
+      failed: "{{count}} 件失敗",
+      tests: "テスト実行",
+      compactions: "コンパクション",
+      turns: "ターン",
+      jevDecisions: "Jev の判断",
+      jevTime: "Jev の時間",
+      context: "コンテキスト",
+      cost: "コスト",
+      toolKinds: "種類別ツール呼び出し",
+      decisionStream: "判断の履歴",
+      noDecisions: "Jev の判断はまだありません。",
+      route: "ルーティング",
     },
     evidence: {
       label: "証拠",

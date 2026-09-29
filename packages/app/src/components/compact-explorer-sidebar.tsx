@@ -24,6 +24,7 @@ import {
 } from "@/constants/layout";
 import { ChangesSurface } from "@/git/diff-pane";
 import { changesStateSchema, defaultChangesState, type ChangesState } from "@/panels/changes/state";
+import { InsightsContent } from "@/panels/insights/insights-content";
 import { EvidenceContent } from "@/panels/evidence/evidence-content";
 import { FileExplorerPane } from "./file-explorer-pane";
 import { useKeyboardShiftStyle } from "@/keyboard/shift";
@@ -354,7 +355,7 @@ function ExplorerSidebarContent({
   const prTabLabel = formatPrTabLabel(prPane.prNumber);
   const availableTabs = useMemo<ExplorerTab[]>(() => {
     const tabs: ExplorerTab[] = isGit ? ["changes", "files"] : ["files"];
-    tabs.push("evidence");
+    tabs.push("evidence", "insights");
     if (isGit && showPrTab) tabs.push("pr");
     return tabs;
   }, [isGit, showPrTab]);
@@ -392,6 +393,13 @@ function ExplorerSidebarContent({
             label={t("workspace.tabs.explorerSidebar.evidence")}
             onTabPress={onTabPress}
             testID="explorer-tab-evidence"
+          />
+          <ExplorerTabButton
+            tab="insights"
+            active={resolvedTab === "insights"}
+            label={t("workspace.tabs.explorerSidebar.insights")}
+            onTabPress={onTabPress}
+            testID="explorer-tab-insights"
           />
           {isGit && showPrTab && (
             <ExplorerTabButton
@@ -452,6 +460,11 @@ function ExplorerSidebarContent({
         {mountedTabIds.has("evidence") && workspaceId ? (
           <RetainedPanel active={resolvedTab === "evidence"}>
             <EvidenceContent serverId={serverId} workspaceId={workspaceId} />
+          </RetainedPanel>
+        ) : null}
+        {mountedTabIds.has("insights") && workspaceId ? (
+          <RetainedPanel active={resolvedTab === "insights"}>
+            <InsightsContent serverId={serverId} workspaceId={workspaceId} />
           </RetainedPanel>
         ) : null}
         {mountedTabIds.has("pr") ? (

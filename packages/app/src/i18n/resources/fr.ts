@@ -734,6 +734,7 @@ export const fr: TranslationResources = {
         changes: "Changements",
         files: "Fichiers",
         evidence: "Preuves",
+        insights: "Aperçu",
       },
       toasts: {
         copyFailed: "Échec de la copie",
@@ -2026,6 +2027,23 @@ export const fr: TranslationResources = {
       emptyTitle: "Aucune demande de fusion pour le moment",
       emptyDescription:
         "Créez une demande de fusion pour cette copie de travail afin d’afficher ses détails ici.",
+    },
+    insights: {
+      noAgent: "Ouvrez un onglet d’agent pour voir comment il travaille.",
+      duration: "Durée",
+      toolCalls: "Appels d’outils",
+      failed: "{{count}} en échec",
+      tests: "Exécutions de tests",
+      compactions: "Compactages",
+      turns: "Tours",
+      jevDecisions: "Décisions de Jev",
+      jevTime: "Temps de Jev",
+      context: "Contexte",
+      cost: "Coût",
+      toolKinds: "Appels d’outils par type",
+      decisionStream: "Flux de décisions",
+      noDecisions: "Aucune décision de Jev pour l’instant.",
+      route: "routage",
     },
     evidence: {
       label: "Preuves",
