@@ -411,7 +411,7 @@ test("unknown reminder items render generically using fallbackText", async () =>
 });
 for (const [scenario, code, guidance] of [
   ["auto-review-unavailable", "defaultProfileUnavailable", "permissions.default_profile"],
-  ["unsafe-path", "unsafePath", "/test-data/muse"],
+  ["unsafe-path", "unsafePath", path.join("/test-data", "muse")],
 ]) {
   test(`${scenario} is a typed actionable construction error`, async () => {
     const h = await harness(scenario, { XDG_DATA_HOME: "/test-data" });
