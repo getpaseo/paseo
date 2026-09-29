@@ -1330,6 +1330,8 @@ export const ru: TranslationResources = {
         hostDisconnected: "Хост не подключён",
         removeFailed: "Не удалось удалить некоторые рабочие пространства.",
         sessionsMoved: "Перемещено сессий: {{count}}",
+        sessionMovedTo: "{{session}} → {{workspace}}",
+        sessionsMovedTo: "Сессии: {{count}} → {{workspace}}",
         moveSessionsFailed: "Не удалось переместить сессии",
         moveAcrossHosts: "Сессии перемещаются только между рабочими пространствами одного хоста",
         updateHostToRemove: "Обновите хост, чтобы удалять проекты.",

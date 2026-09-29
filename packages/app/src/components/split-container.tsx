@@ -35,8 +35,14 @@ import Animated, {
 } from "react-native-reanimated";
 import { useTranslation } from "react-i18next";
 import { useToast } from "@/contexts/toast-context";
-import { dragEndPoint, findWorkspaceDropTarget } from "@/workspace-move/drop-target";
-import { moveSessionToWorkspace } from "@/workspace-move/move-sessions";
+import {
+  clearWorkspaceDropHighlight,
+  dragEndPoint,
+  findWorkspaceDropTarget,
+  flashLandedWorkspace,
+  highlightWorkspaceDropTarget,
+} from "@/workspace-move/drop-target";
+import { describeMove, moveSessionToWorkspace } from "@/workspace-move/move-sessions";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { ResizeHandle } from "@/components/resize-handle";
 import {
@@ -503,13 +509,18 @@ export function SplitContainer({
   }, []);
 
   const handleDragCancel = useCallback(() => {
+    clearWorkspaceDropHighlight();
     setActiveDragTabId(null);
     setDropPreview(null);
     setTabDropPreview(null);
   }, []);
 
   const updateDropPreview = useCallback(
-    (event: Pick<DragMoveEvent, "active" | "over"> | Pick<DragOverEvent, "active" | "over">) => {
+    (
+      event:
+        | Pick<DragMoveEvent, "active" | "over" | "activatorEvent" | "delta">
+        | Pick<DragOverEvent, "active" | "over">,
+    ) => {
       const activeData = asWorkspaceTabDragData(event.active.data.current);
       const overData = asDragOverData(event.over?.data.current);
 
@@ -527,6 +538,18 @@ export function SplitContainer({
       }
 
       const activeTab = uiTabs.find((tab) => tab.tabId === activeData.tabId) ?? null;
+      if ("delta" in event) {
+        highlightWorkspaceDropTarget({
+          point: dragEndPoint(event.activatorEvent, event.delta),
+          ownListId: null,
+          draggedNode: null,
+          // Only a session tab can move, and not to the workspace it is already in or another host.
+          isValid: (target) =>
+            activeTab?.target.kind === "agent" &&
+            target.serverId === normalizedServerId &&
+            target.workspaceId !== normalizedWorkspaceId,
+        });
+      }
       const destinationPaneId =
         overData?.kind === "workspace-tab" || overData?.kind === "split-pane-drop"
           ? overData.paneId
@@ -562,7 +585,7 @@ export function SplitContainer({
 
       setDropPreview(computePaneOverDropPreview({ overData, rects }));
     },
-    [normalizedServerId, panesById, explorerSidebarPaneId, uiTabs],
+    [normalizedServerId, normalizedWorkspaceId, panesById, explorerSidebarPaneId, uiTabs],
   );
 
   const applyTabDropEnd = useCallback(
@@ -645,6 +668,11 @@ export function SplitContainer({
         return true;
       }
       const agentId = tab.target.agentId;
+      const names = describeMove({
+        serverId: normalizedServerId,
+        agentId,
+        targetWorkspaceId: target.workspaceId,
+      });
       void moveSessionToWorkspace({
         serverId: normalizedServerId,
         agentId,
@@ -652,7 +680,8 @@ export function SplitContainer({
       })
         .then(() => {
           useWorkspaceLayoutStore.getState().closeTab(workspaceKey, tabId);
-          return toast.show(t("sidebar.project.toasts.sessionsMoved", { count: 1 }));
+          flashLandedWorkspace(target);
+          return toast.show(t("sidebar.project.toasts.sessionMovedTo", names));
         })
         .catch(() => toast.error(t("sidebar.project.toasts.moveSessionsFailed")));
       return true;
@@ -662,6 +691,7 @@ export function SplitContainer({
 
   const handleDragEnd = useCallback(
     (event: DragEndEvent) => {
+      clearWorkspaceDropHighlight();
       const activeData = asWorkspaceTabDragData(event.active.data.current);
       const overData = asDragOverData(event.over?.data.current);
 

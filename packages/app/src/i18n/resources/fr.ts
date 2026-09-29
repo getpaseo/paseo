@@ -1346,6 +1346,8 @@ export const fr: TranslationResources = {
         hostDisconnected: "Hostn'est pas connecté",
         removeFailed: "Échec de la suppression de certains espaces de travail",
         sessionsMoved: "{{count}} sessions déplacées",
+        sessionMovedTo: "{{session}} → {{workspace}}",
+        sessionsMovedTo: "{{count}} sessions → {{workspace}}",
         moveSessionsFailed: "Impossible de déplacer les sessions",
         moveAcrossHosts: "Les sessions ne se déplacent qu’entre espaces de travail du même hôte",
         updateHostToRemove: "Mettez à jour le host pour supprimer des projets.",

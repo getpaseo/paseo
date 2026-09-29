@@ -50,3 +50,20 @@ export async function moveSessionToWorkspace(input: {
     target: { kind: "agent", agentId: input.agentId },
   });
 }
+
+/** What a toast calls a session and a workspace, falling back to their ids. */
+export function describeMove(input: {
+  serverId: string;
+  agentId: string | null;
+  targetWorkspaceId: string;
+}): { session: string; workspace: string } {
+  const session = useSessionStore.getState().sessions[input.serverId];
+  const agent = input.agentId ? session?.agents.get(input.agentId) : undefined;
+  const workspace = [...(session?.workspaces.values() ?? [])].find(
+    (candidate) => candidate.id === input.targetWorkspaceId,
+  );
+  return {
+    session: agent?.title ?? input.agentId?.slice(0, 8) ?? "",
+    workspace: workspace?.title ?? workspace?.name ?? input.targetWorkspaceId,
+  };
+}

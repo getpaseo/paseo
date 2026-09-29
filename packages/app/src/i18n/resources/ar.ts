@@ -1309,6 +1309,8 @@ export const ar: TranslationResources = {
         hostDisconnected: "Host غير متصل",
         removeFailed: "فشل في إزالة بعض مساحات العمل",
         sessionsMoved: "تم نقل {{count}} جلسات",
+        sessionMovedTo: "{{session}} ← {{workspace}}",
+        sessionsMovedTo: "{{count}} جلسات ← {{workspace}}",
         moveSessionsFailed: "تعذر نقل الجلسات",
         moveAcrossHosts: "تنتقل الجلسات فقط بين مساحات العمل على نفس المضيف",
         updateHostToRemove: "قم بتحديث Host لإزالة المشاريع.",

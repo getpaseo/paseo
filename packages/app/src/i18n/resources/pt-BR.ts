@@ -1336,6 +1336,8 @@ export const ptBR: TranslationResources = {
         hostDisconnected: "Host não está conectado",
         removeFailed: "Falha ao remover alguns workspaces",
         sessionsMoved: "{{count}} sessões movidas",
+        sessionMovedTo: "{{session}} → {{workspace}}",
+        sessionsMovedTo: "{{count}} sessões → {{workspace}}",
         moveSessionsFailed: "Não foi possível mover as sessões",
         moveAcrossHosts: "Sessões só podem ser movidas entre workspaces do mesmo host",
         updateHostToRemove: "Atualize o host para remover projetos.",

@@ -1316,6 +1316,8 @@ export const ko: TranslationResources = {
         hostDisconnected: "호스트가 연결되어 있지 않습니다",
         removeFailed: "일부 워크스페이스를 제거하지 못했습니다",
         sessionsMoved: "세션 {{count}}개를 옮겼습니다",
+        sessionMovedTo: "{{session}} → {{workspace}}",
+        sessionsMovedTo: "세션 {{count}}개 → {{workspace}}",
         moveSessionsFailed: "세션을 옮기지 못했습니다",
         moveAcrossHosts: "세션은 같은 호스트의 워크스페이스 사이에서만 옮길 수 있습니다",
         updateHostToRemove: "프로젝트를 제거하려면 호스트를 업데이트하세요.",

@@ -1299,6 +1299,8 @@ export const zhCN: TranslationResources = {
         hostDisconnected: "Host 未连接",
         removeFailed: "部分 workspace 移除失败",
         sessionsMoved: "已移动 {{count}} 个会话",
+        sessionMovedTo: "{{session}} → {{workspace}}",
+        sessionsMovedTo: "{{count}} 个会话 → {{workspace}}",
         moveSessionsFailed: "无法移动会话",
         moveAcrossHosts: "会话只能在同一主机的 workspace 之间移动",
         updateHostToRemove: "更新 host 以移除 projects。",

@@ -7,6 +7,7 @@ import {
   MouseSensor,
   TouchSensor,
   type DragEndEvent,
+  type DragMoveEvent,
   type Modifier,
   useSensor,
   useSensors,
@@ -20,7 +21,12 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import type { DraggableListProps, DraggableRenderItemInfo } from "./draggable-list.types";
 import { getDragActivationConstraints, useDragReorderState } from "./drag-reorder";
-import { dragEndPoint, findWorkspaceDropTarget } from "@/workspace-move/drop-target";
+import {
+  clearWorkspaceDropHighlight,
+  dragEndPoint,
+  findWorkspaceDropTarget,
+  highlightWorkspaceDropTarget,
+} from "@/workspace-move/drop-target";
 
 export type { DraggableListProps, DraggableRenderItemInfo };
 
@@ -214,16 +220,36 @@ export function DraggableList<T>({
     onDragEnd,
     onDragBegin,
   });
+  const draggedNodeFor = useCallback(
+    (activeKey: string) =>
+      document.querySelector(`[data-sortable-id="${window.CSS.escape(activeKey)}"]`),
+    [],
+  );
+  const handleDragMove = useCallback(
+    (event: DragMoveEvent) => {
+      if (!onDropOnWorkspace) return;
+      highlightWorkspaceDropTarget({
+        point: dragEndPoint(event.activatorEvent, event.delta),
+        ownListId: dropListId ?? null,
+        draggedNode: draggedNodeFor(String(event.active.id)),
+        isValid: () => true,
+      });
+    },
+    [draggedNodeFor, dropListId, onDropOnWorkspace],
+  );
+  const handleDragCancel = useCallback(() => {
+    clearWorkspaceDropHighlight();
+    handlers.onDragCancel();
+  }, [handlers]);
   const handleDragEnd = useCallback(
     (event: DragEndEvent) => {
+      clearWorkspaceDropHighlight();
       if (onDropOnWorkspace) {
         const activeKey = String(event.active.id);
         const target = findWorkspaceDropTarget({
           point: dragEndPoint(event.activatorEvent, event.delta),
           ownListId: dropListId ?? null,
-          draggedNode: document.querySelector(
-            `[data-sortable-id="${window.CSS.escape(activeKey)}"]`,
-          ),
+          draggedNode: draggedNodeFor(activeKey),
         });
         const item = items.find((candidate, index) => keyExtractor(candidate, index) === activeKey);
         if (target && item !== undefined && onDropOnWorkspace(item, target)) {
@@ -233,7 +259,7 @@ export function DraggableList<T>({
       }
       handlers.onDragEnd(event);
     },
-    [dropListId, handlers, items, keyExtractor, onDropOnWorkspace],
+    [draggedNodeFor, dropListId, handlers, items, keyExtractor, onDropOnWorkspace],
   );
   const activationConstraints = getDragActivationConstraints(useDragHandle, DRAG_ACTIVATION_CONFIG);
 
@@ -280,7 +306,8 @@ export function DraggableList<T>({
             collisionDetection={closestCenter}
             modifiers={DND_MODIFIERS}
             onDragStart={handlers.onDragStart}
-            onDragCancel={handlers.onDragCancel}
+            onDragMove={handleDragMove}
+            onDragCancel={handleDragCancel}
             onDragEnd={handleDragEnd}
           >
             <SortableContext items={ids} strategy={verticalListSortingStrategy}>
@@ -311,7 +338,8 @@ export function DraggableList<T>({
             collisionDetection={closestCenter}
             modifiers={DND_MODIFIERS}
             onDragStart={handlers.onDragStart}
-            onDragCancel={handlers.onDragCancel}
+            onDragMove={handleDragMove}
+            onDragCancel={handleDragCancel}
             onDragEnd={handleDragEnd}
           >
             <SortableContext items={ids} strategy={verticalListSortingStrategy}>

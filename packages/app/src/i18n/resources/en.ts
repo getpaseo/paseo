@@ -1318,6 +1318,8 @@ export const en = {
         hostDisconnected: "Host is not connected",
         removeFailed: "Failed to remove some workspaces",
         sessionsMoved: "Moved {{count}} sessions",
+        sessionMovedTo: "{{session}} → {{workspace}}",
+        sessionsMovedTo: "{{count}} sessions → {{workspace}}",
         moveSessionsFailed: "Could not move the sessions",
         moveAcrossHosts: "Sessions only move between workspaces on the same host",
         updateHostToRemove: "Update the host to remove projects.",

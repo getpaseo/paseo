@@ -1327,6 +1327,8 @@ export const ja: TranslationResources = {
         hostDisconnected: "ホストが接続されていません",
         removeFailed: "一部のワークスペースの削除に失敗しました",
         sessionsMoved: "{{count}} 件のセッションを移動しました",
+        sessionMovedTo: "{{session}} → {{workspace}}",
+        sessionsMovedTo: "{{count}} 件のセッション → {{workspace}}",
         moveSessionsFailed: "セッションを移動できませんでした",
         moveAcrossHosts: "セッションは同じホストのワークスペース間でのみ移動できます",
         updateHostToRemove: "プロジェクトを削除するにはホストを更新してください。",

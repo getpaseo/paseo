@@ -84,8 +84,12 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { ProjectLeadingVisual } from "@/components/sidebar/project-leading-visual";
 import { useToast } from "@/contexts/toast-context";
-import { encodeWorkspaceDropTarget, type WorkspaceDropTarget } from "@/workspace-move/drop-target";
-import { moveWorkspaceSessions } from "@/workspace-move/move-sessions";
+import {
+  encodeWorkspaceDropTarget,
+  flashLandedWorkspace,
+  type WorkspaceDropTarget,
+} from "@/workspace-move/drop-target";
+import { describeMove, moveWorkspaceSessions } from "@/workspace-move/move-sessions";
 import { getForgePresentation, normalizeForge } from "@/git/forge";
 import { toWorktreeArchiveRisk } from "@/git/worktree-archive-warning";
 import { hasVisibleOrderChanged, mergeWithRemainder } from "@/utils/sidebar-reorder";
@@ -1578,14 +1582,25 @@ function useWorkspaceSessionsDrop(
         toast.error(t("sidebar.project.toasts.moveAcrossHosts"));
         return true;
       }
+      const names = describeMove({
+        serverId: item.serverId,
+        agentId: null,
+        targetWorkspaceId: target.workspaceId,
+      });
       void moveWorkspaceSessions({
         serverId: item.serverId,
         sourceWorkspaceId: item.workspaceId,
         targetWorkspaceId: target.workspaceId,
       })
-        .then((result) =>
-          toast.show(t("sidebar.project.toasts.sessionsMoved", { count: result.moved })),
-        )
+        .then((result) => {
+          flashLandedWorkspace(target);
+          return toast.show(
+            t("sidebar.project.toasts.sessionsMovedTo", {
+              count: result.moved,
+              workspace: names.workspace,
+            }),
+          );
+        })
         .catch(() => toast.error(t("sidebar.project.toasts.moveSessionsFailed")));
       return true;
     },
