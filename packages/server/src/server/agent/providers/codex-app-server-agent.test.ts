@@ -1965,6 +1965,66 @@ describe("Codex app-server provider", () => {
     await session.close();
   });
 
+  test("rewinds a legacy conversation with a bounded fork on Codex without thread/rollback", async () => {
+    const appServer = createFakeCodexAppServer({
+      initialize: () => ({ userAgent: "paseo/0.159.0 (Ubuntu 26.4.0; x86_64) (paseo; 0)" }),
+      "thread/read": () => ({
+        thread: { id: "thread-1", historyMode: "legacy", turns: [] },
+      }),
+      "thread/rollback": () => ({
+        __jsonRpcError: {
+          code: -32600,
+          message: "Invalid request: unknown variant `thread/rollback`",
+        },
+      }),
+    });
+    const session = new CodexAppServerAgentSession(
+      createConfig({ cwd: "/workspace/project" }),
+      null,
+      createTestLogger(),
+      async () => appServer.child,
+    );
+
+    await session.startTurn("remember first");
+    emitCodexUserMessage(appServer, {
+      id: "codex-first",
+      text: "remember first",
+      turnId: "turn-first",
+    });
+    appServer.completeTurn();
+    await session.startTurn("remember second");
+    emitCodexUserMessage(appServer, {
+      id: "codex-second",
+      text: "remember second",
+      turnId: "turn-second",
+    });
+    appServer.completeTurn();
+
+    await session.revertConversation({ messageId: "codex-second" });
+
+    const forkRequests = appServer
+      .requests()
+      .filter((request) => request.method === "thread/fork")
+      .map((request) => request.params);
+    expect(forkRequests).toEqual([
+      {
+        threadId: "thread-1",
+        beforeTurnId: "turn-second",
+        cwd: "/workspace/project",
+        model: "gpt-5.4",
+        serviceTier: null,
+        excludeTurns: false,
+        persistExtendedHistory: true,
+      },
+    ]);
+    expect(appServer.recordedRollbacks).toEqual([]);
+    await expect(session.getRuntimeInfo()).resolves.toMatchObject({
+      sessionId: "forked-thread",
+    });
+    appServer.assertNoErrors();
+    await session.close();
+  });
+
   test("rewinds a paginated conversation through the public session capability", async () => {
     const appServer = createFakeCodexAppServer({
       "thread/read": () => ({
