@@ -671,6 +671,7 @@ export const ko: TranslationResources = {
         workspaceSetup: "워크스페이스 설정",
         terminal: "터미널",
         browser: "브라우저",
+        blankBrowser: "빈 브라우저 탭",
         agent: "에이전트",
         workspace: "워크스페이스",
       },

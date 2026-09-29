@@ -677,6 +677,7 @@ export const ru: TranslationResources = {
         workspaceSetup: "Настройка рабочего пространства",
         terminal: "Терминал",
         browser: "Браузер",
+        blankBrowser: "Пустая вкладка браузера",
         agent: "Агент",
         workspace: "Рабочее пространство",
       },

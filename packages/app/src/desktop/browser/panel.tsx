@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import { useEffect, useMemo, useRef } from "react";
 import type { BrowserAutomationCommand } from "@getpaseo/protocol/browser-automation/rpc-schemas";
 import type { BrowserMirrorAction } from "@getpaseo/protocol/browser-activity/rpc-schemas";
@@ -33,7 +34,16 @@ import { useHostRuntimeClient } from "@/runtime/host-runtime";
 import { getDesktopHost } from "@/desktop/host";
 import { useWorkspaceDirectory } from "@/stores/session-store-hooks";
 
-function getBrowserLabel(input: { title: string; url: string }): string {
+// A tab that never loaded a page shows Chrome's "about:blank", which reads as an error.
+function isBlankPage(url: string, title: string): boolean {
+  const blank = (value: string) => value === "" || value === "about:blank";
+  return blank(url.trim()) && blank(title.trim());
+}
+
+function getBrowserLabel(input: { title: string; url: string; blankLabel: string }): string {
+  if (isBlankPage(input.url, input.title)) {
+    return input.blankLabel;
+  }
   const title = input.title.trim();
   if (title) {
     return title;
@@ -82,7 +92,12 @@ function useBrowserPanelDescriptor(
   const runBucket = browserActivityStatusBucket(activity) ?? loadingBucket;
   const url = browser?.url ?? DEFAULT_BROWSER_URL;
   const icon = createBrowserTabIcon(browser?.faviconUrl ?? null);
-  const label = getBrowserLabel({ title: browser?.title ?? "", url });
+  const { t } = useTranslation();
+  const label = getBrowserLabel({
+    title: browser?.title ?? "",
+    url,
+    blankLabel: t("workspace.tabs.fallback.blankBrowser"),
+  });
 
   return {
     label,

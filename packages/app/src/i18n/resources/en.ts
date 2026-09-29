@@ -667,6 +667,7 @@ export const en = {
         workspaceSetup: "Workspace setup",
         terminal: "Terminal",
         browser: "Browser",
+        blankBrowser: "Empty browser tab",
         agent: "Agent",
         workspace: "Workspace",
       },

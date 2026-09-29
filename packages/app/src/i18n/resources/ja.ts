@@ -676,6 +676,7 @@ export const ja: TranslationResources = {
         workspaceSetup: "ワークスペースセットアップ",
         terminal: "ターミナル",
         browser: "ブラウザ",
+        blankBrowser: "空のブラウザタブ",
         agent: "エージェント",
         workspace: "ワークスペース",
       },

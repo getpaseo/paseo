@@ -1,3 +1,4 @@
+import { useFinishedAgentTabsToFront } from "@/screens/workspace/use-finished-agent-tabs-to-front";
 import { syncRemoteBrowserTabs } from "@/desktop/browser/remote-tab-sync";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import type { JsonValue } from "@getpaseo/protocol/agent-types";
@@ -1660,6 +1661,7 @@ function WorkspaceScreenContent({
       }),
     [normalizedServerId, normalizedWorkspaceId],
   );
+  useFinishedAgentTabsToFront({ serverId: normalizedServerId, workspaceKey: persistenceKey });
   const openTab = useWorkspaceLayoutStore((state) => state.openTab);
   const canOpenRemoteBrowserTabs = useHostFeature(normalizedServerId, "remoteBrowser");
   useEffect(() => {

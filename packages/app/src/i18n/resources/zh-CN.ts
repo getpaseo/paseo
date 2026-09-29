@@ -670,6 +670,7 @@ export const zhCN: TranslationResources = {
         workspaceSetup: "Workspace setup",
         terminal: "Terminal",
         browser: "浏览器",
+        blankBrowser: "空白浏览器标签页",
         agent: "Agent",
         workspace: "Workspace",
       },

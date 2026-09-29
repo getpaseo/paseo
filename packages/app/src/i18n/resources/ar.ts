@@ -670,6 +670,7 @@ export const ar: TranslationResources = {
         workspaceSetup: "إعداد Workspace",
         terminal: "Terminal",
         browser: "المتصفح",
+        blankBrowser: "علامة تبويب متصفح فارغة",
         agent: "Agent",
         workspace: "Workspace",
       },

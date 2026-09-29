@@ -675,6 +675,7 @@ export const ptBR: TranslationResources = {
         workspaceSetup: "Configuração do workspace",
         terminal: "Terminal",
         browser: "Navegador",
+        blankBrowser: "Aba de navegador vazia",
         agent: "Agente",
         workspace: "Workspace",
       },

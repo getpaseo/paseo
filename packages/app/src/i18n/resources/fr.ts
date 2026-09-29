@@ -676,6 +676,7 @@ export const fr: TranslationResources = {
         workspaceSetup: "ConfigurationWorkspace",
         terminal: "Terminal",
         browser: "Navigateur",
+        blankBrowser: "Onglet de navigateur vide",
         agent: "Agent",
         workspace: "Workspace",
       },
