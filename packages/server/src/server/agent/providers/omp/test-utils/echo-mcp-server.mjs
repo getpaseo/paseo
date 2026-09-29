@@ -10,6 +10,20 @@ server.registerTool(
   "echo_secret",
   { description: "Returns the fixture word", inputSchema: { word: z.string() } },
   async ({ word }, extra) => {
+    if (word === "ENV") {
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({
+              runtime: process.env.OMP_MCP_RUNTIME_ENV,
+              agent: process.env.PASEO_AGENT_ID,
+              precedence: process.env.OMP_MCP_PRECEDENCE,
+            }),
+          },
+        ],
+      };
+    }
     if (word === "WAIT") {
       if (process.env.OMP_MCP_WAIT_FILE) writeFileSync(process.env.OMP_MCP_WAIT_FILE, "waiting");
       return await new Promise((resolve) => {

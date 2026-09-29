@@ -1,5 +1,6 @@
 import type { AgentStreamEvent, AgentTimelineItem, ToolCallDetail } from "../../agent-sdk-types.js";
 import type { OmpAgentMessage, OmpImageContent, OmpTextContent } from "./rpc-types.js";
+import type { OmpBridgedToolIdentity } from "./mcp-bridge.js";
 import {
   ompCustomMessageId,
   ompSkillPromptUserText,
@@ -31,7 +32,7 @@ export interface OmpHistoryMapperHooks {
   mapToolDetail?: (
     toolCall: OmpTrackedToolCall,
     result: OmpToolResult,
-    context: { toolCallId: string },
+    context: { toolCallId: string; bridgedTool?: OmpBridgedToolIdentity },
   ) => ToolCallDetail | null;
 }
 
@@ -69,6 +70,7 @@ export class OmpHistoryMapper {
     private readonly provider: string,
     private readonly userEntries: readonly OmpCapturedUserMessageEntry[] = [],
     private readonly hooks: OmpHistoryMapperHooks = {},
+    private readonly bridgedTools: ReadonlyMap<string, OmpBridgedToolIdentity> = new Map(),
   ) {}
 
   mapMessages(messages: readonly OmpAgentMessage[]): AgentStreamEvent[] {
@@ -195,7 +197,7 @@ export class OmpHistoryMapper {
           item: {
             type: "tool_call",
             callId: this.resolveToolCallId(content.id, tracked),
-            name: tracked.toolName,
+            name: this.toolName(tracked, null),
             status: "running",
             detail,
             error: null,
@@ -222,7 +224,7 @@ export class OmpHistoryMapper {
       provider: this.provider,
       item: toToolResultTimelineItem({
         callId: this.resolveToolCallId(message.toolCallId, tracked),
-        name: resolveToolCallName(tracked, result),
+        name: this.toolName(tracked, result),
         isError: isOmpToolFailure(tracked, result, Boolean(message.isError)),
         detail,
         errorText: toolFailureMessage(result),
@@ -263,7 +265,17 @@ export class OmpHistoryMapper {
     result: OmpToolResult,
   ): ToolCallDetail | null {
     const hook = this.hooks.mapToolDetail;
-    return hook ? hook(toolCall, result, { toolCallId }) : mapToolDetail(toolCall, result);
+    return hook
+      ? hook(toolCall, result, {
+          toolCallId,
+          bridgedTool: this.bridgedTools.get(toolCall.toolName),
+        })
+      : mapToolDetail(toolCall, result);
+  }
+
+  private toolName(toolCall: OmpTrackedToolCall, result: OmpToolResult): string {
+    const bridged = this.bridgedTools.get(toolCall.toolName);
+    return bridged ? `${bridged.server} / ${bridged.tool}` : resolveToolCallName(toolCall, result);
   }
 }
 

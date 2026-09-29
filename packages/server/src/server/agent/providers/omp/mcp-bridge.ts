@@ -7,13 +7,20 @@ import { CallToolResultSchema } from "@modelcontextprotocol/sdk/types.js";
 import type { Logger } from "pino";
 import type { McpServerConfig } from "../../agent-sdk-types.js";
 import type { PaseoToolResult } from "../../tools/types.js";
-import type { OmpRuntimeSession } from "./runtime.js";
 import type { OmpRpcHostToolDefinition } from "./rpc-types.js";
 
 interface BridgedTool {
   client: Client;
+  server: string;
   tool: string;
 }
+
+export interface OmpBridgedToolIdentity {
+  server: string;
+  tool: string;
+}
+
+const SERVER_TIMEOUT_MS = 10_000;
 
 export class OmpMcpBridge {
   readonly definitions: OmpRpcHostToolDefinition[] = [];
@@ -25,48 +32,52 @@ export class OmpMcpBridge {
     servers: Record<string, McpServerConfig> | undefined,
     cwd: string,
     logger: Logger,
-    reservedNames: Iterable<string> = [],
-    skipPaseoEndpoint = false,
+    env: NodeJS.ProcessEnv,
   ): Promise<OmpMcpBridge> {
     const bridge = new OmpMcpBridge();
-    const usedNames = new Set(reservedNames);
-    for (const [serverName, config] of Object.entries(servers ?? {})) {
-      // AgentManager removes its injected endpoint when native Paseo tools are present.
-      // Also cover direct provider callers that pass the runtime endpoint themselves.
-      if (skipPaseoEndpoint && isPaseoEndpoint(config)) continue;
-      const client = new Client({ name: "paseo-omp-mcp", version: "1.0.0" });
-      try {
-        const transport = makeTransport(config, cwd);
-        await client.connect(transport);
-        const listed = await client.listTools();
-        bridge.clients.push(client);
-        for (const tool of listed.tools) {
-          const baseName = bridgeName(serverName, tool.name);
-          let name = baseName;
-          for (let suffix = 2; usedNames.has(name); suffix += 1) {
-            const ending = `_${suffix}`;
-            name = `${baseName.slice(0, -13).slice(0, 64 - ending.length - 13)}${ending}${baseName.slice(-13)}`;
-          }
-          usedNames.add(name);
-          bridge.tools.set(name, { client, tool: tool.name });
-          bridge.definitions.push({
-            name,
-            label: `${serverName} / ${tool.name}`,
-            description: tool.description || `${tool.name} from ${serverName}`,
-            loadMode: "essential",
-            parameters: tool.inputSchema,
-          });
+    const connections = await Promise.all(
+      Object.entries(servers ?? {}).map(async ([serverName, config]) => {
+        const client = new Client({ name: "paseo-omp-mcp", version: "1.0.0" });
+        try {
+          const transport = makeTransport(config, cwd, env);
+          await client.connect(transport, { timeout: SERVER_TIMEOUT_MS });
+          const listed = await client.listTools(undefined, { timeout: SERVER_TIMEOUT_MS });
+          return { serverName, client, tools: listed.tools };
+        } catch (error) {
+          logger.warn({ err: error, server: serverName }, "OMP MCP server unavailable");
+          await client.close().catch(() => undefined);
+          return null;
         }
-      } catch (error) {
-        logger.warn({ err: error, server: serverName }, "OMP MCP server unavailable");
-        await client.close().catch(() => undefined);
+      }),
+    );
+    for (const connection of connections) {
+      if (!connection) continue;
+      const { serverName, client, tools } = connection;
+      bridge.clients.push(client);
+      for (const tool of tools) {
+        const name = bridgeName(serverName, tool.name);
+        bridge.tools.set(name, { client, server: serverName, tool: tool.name });
+        bridge.definitions.push({
+          name,
+          label: `${serverName} / ${tool.name}`,
+          description: tool.description || `${tool.name} from ${serverName}`,
+          loadMode: "essential",
+          parameters: tool.inputSchema,
+        });
       }
     }
     return bridge;
   }
 
-  has(name: string): boolean {
-    return this.tools.has(name);
+  tool(name: string): OmpBridgedToolIdentity | undefined {
+    const entry = this.tools.get(name);
+    return entry ? { server: entry.server, tool: entry.tool } : undefined;
+  }
+
+  toolIdentities(): Map<string, OmpBridgedToolIdentity> {
+    return new Map(
+      [...this.tools].map(([name, entry]) => [name, { server: entry.server, tool: entry.tool }]),
+    );
   }
 
   async execute(
@@ -97,29 +108,13 @@ export class OmpMcpBridge {
   }
 }
 
-const bridges = new WeakMap<OmpRuntimeSession, OmpMcpBridge>();
-
-export function attachOmpMcpBridge(runtime: OmpRuntimeSession, bridge: OmpMcpBridge): void {
-  bridges.set(runtime, bridge);
-}
-
-export function getOmpMcpBridge(runtime: OmpRuntimeSession): OmpMcpBridge | undefined {
-  return bridges.get(runtime);
-}
-
-export async function closeOmpMcpBridge(runtime: OmpRuntimeSession): Promise<void> {
-  const bridge = bridges.get(runtime);
-  bridges.delete(runtime);
-  await bridge?.close();
-}
-
-function makeTransport(config: McpServerConfig, cwd: string) {
+function makeTransport(config: McpServerConfig, cwd: string, env: NodeJS.ProcessEnv) {
   if (config.type === "stdio") {
     return new StdioClientTransport({
       command: config.command,
       args: config.args,
       cwd,
-      env: { ...process.env, ...config.env } as Record<string, string>,
+      env: { ...env, ...config.env } as Record<string, string>,
       stderr: "ignore",
     });
   }
@@ -135,15 +130,6 @@ function makeTransport(config: McpServerConfig, cwd: string) {
         fetch(url, { ...init, headers: { ...init?.headers, ...config.headers } }),
     },
   });
-}
-
-function isPaseoEndpoint(config: McpServerConfig): boolean {
-  if (config.type === "stdio") return false;
-  try {
-    return new URL(config.url).pathname === "/mcp/agents";
-  } catch {
-    return false;
-  }
 }
 
 function bridgeName(server: string, tool: string): string {

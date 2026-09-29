@@ -1,11 +1,10 @@
 import { fileURLToPath } from "node:url";
-import { mkdir, mkdtemp, readFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test, vi } from "vitest";
 import { OmpHarness } from "./test-utils/omp-harness.js";
 import type { PaseoToolCatalog } from "../../tools/types.js";
-import { waitForOmpHostToolsIdle } from "./host-tools.js";
 
 const fixture = fileURLToPath(new URL("./test-utils/echo-mcp-server.mjs", import.meta.url));
 const healthy = { type: "stdio" as const, command: process.execPath, args: [fixture] };
@@ -58,13 +57,30 @@ describe("OMP MCP host tools", () => {
       });
       expect(omp.timeline().at(-1)).toMatchObject({
         type: "tool_call",
-        name: "MCP",
+        name: "local / echo_secret",
         status: "completed",
         detail: {
-          type: "plain_text",
-          label: "local / echo_secret",
-          text: 'Input: {"word":"hello"}\nResult: MANGO:hello',
+          type: "unknown",
+          input: { word: "hello" },
+          output: { content: [{ type: "text", text: "MANGO:hello" }] },
         },
+      });
+      runtime.emit({
+        type: "tool_execution_start",
+        toolCallId: "native-1",
+        toolName: "mcp__native_echo_secret",
+        args: { word: "native" },
+      });
+      runtime.emit({
+        type: "tool_execution_end",
+        toolCallId: "native-1",
+        toolName: "mcp__native_echo_secret",
+        result: { content: [{ type: "text", text: "native result" }] },
+      });
+      expect(omp.timeline().at(-1)).toMatchObject({
+        type: "tool_call",
+        name: "mcp__native_echo_secret",
+        detail: { type: "unknown", input: { word: "native" } },
       });
     } finally {
       await omp.close();
@@ -101,6 +117,134 @@ describe("OMP MCP host tools", () => {
     }
   });
 
+  test("starts with a healthy server when another never answers initialize", async () => {
+    await mkdir("/tmp/paseo-omp-agent-test", { recursive: true });
+    const omp = new OmpHarness();
+    const started = Date.now();
+    await omp.start({
+      mcpServers: {
+        silent: {
+          type: "stdio",
+          command: process.execPath,
+          args: ["-e", "process.stdin.resume();setInterval(()=>{},1<<30)"],
+        },
+        local: healthy,
+      },
+    });
+    try {
+      expect(Date.now() - started).toBeLessThan(15_000);
+      expect(
+        omp
+          .registeredHostTools()
+          .at(-1)
+          ?.map((tool) => tool.name),
+      ).toEqual([expect.stringMatching(/^mcp_local__echo_secret/)]);
+    } finally {
+      await omp.close();
+    }
+  }, 80_000);
+
+  test("passes runtime and launch env to stdio, then applies server env", async () => {
+    await mkdir("/tmp/paseo-omp-agent-test", { recursive: true });
+    const omp = new OmpHarness({
+      runtimeEnv: { OMP_MCP_RUNTIME_ENV: "runtime", OMP_MCP_PRECEDENCE: "runtime" },
+    });
+    await omp.start(
+      {
+        mcpServers: {
+          local: { ...healthy, env: { OMP_MCP_PRECEDENCE: "server" } },
+        },
+      },
+      undefined,
+      { PASEO_AGENT_ID: "agent-123", OMP_MCP_PRECEDENCE: "launch" },
+    );
+    try {
+      const runtime = omp.runtime();
+      const result = runtime.nextHostToolResult();
+      runtime.emit({
+        type: "host_tool_call",
+        id: "env-call",
+        toolCallId: "env-tool",
+        toolName: omp.registeredHostTools()[0]![0]!.name,
+        arguments: { word: "ENV" },
+      });
+      expect(await result).toMatchObject({
+        result: {
+          content: [
+            {
+              type: "text",
+              text: '{"runtime":"runtime","agent":"agent-123","precedence":"server"}',
+            },
+          ],
+        },
+      });
+    } finally {
+      await omp.close();
+    }
+  });
+
+  test("replays the bridge label and Codex-style detail after archive", async () => {
+    await mkdir("/tmp/paseo-omp-agent-test", { recursive: true });
+    const omp = new OmpHarness();
+    await omp.start({ mcpServers: { local: healthy } });
+    try {
+      const exposedName = omp.registeredHostTools()[0]![0]!.name;
+      const persisted = omp.persistence();
+      expect(persisted?.metadata?.bridgedTools).toEqual([
+        [exposedName, { server: "local", tool: "echo_secret" }],
+      ]);
+      const directory = await mkdtemp(join(tmpdir(), "omp-mcp-history-"));
+      const sessionFile = join(directory, "session.jsonl");
+      await writeFile(
+        sessionFile,
+        [
+          { type: "session", id: "root", parentId: null },
+          {
+            type: "message",
+            id: "call",
+            parentId: "root",
+            message: {
+              role: "assistant",
+              content: [
+                {
+                  type: "toolCall",
+                  id: "tool-1",
+                  name: exposedName,
+                  arguments: { word: "REVIEW" },
+                },
+              ],
+            },
+          },
+          {
+            type: "message",
+            id: "result",
+            parentId: "call",
+            message: {
+              role: "toolResult",
+              toolCallId: "tool-1",
+              toolName: exposedName,
+              content: [{ type: "text", text: "MANGO:REVIEW" }],
+            },
+          },
+        ]
+          .map((entry) => JSON.stringify(entry))
+          .join("\n"),
+      );
+      const events = await omp.replayHistory({ ...persisted!, nativeHandle: sessionFile });
+      expect(events.findLast((event) => event.type === "timeline")?.item).toMatchObject({
+        type: "tool_call",
+        name: "local / echo_secret",
+        detail: {
+          type: "unknown",
+          input: { word: "REVIEW" },
+          output: { content: [{ type: "text", text: "MANGO:REVIEW" }] },
+        },
+      });
+    } finally {
+      await omp.close();
+    }
+  });
+
   test("registers Paseo and MCP tools in the same replacement set", async () => {
     await mkdir("/tmp/paseo-omp-agent-test", { recursive: true });
     const paseoTools: PaseoToolCatalog = {
@@ -121,42 +265,6 @@ describe("OMP MCP host tools", () => {
     await omp.start({ mcpServers: { local: healthy } }, paseoTools);
     try {
       expect(omp.registeredHostTools()).toHaveLength(1);
-      expect(omp.registeredHostTools()[0]?.map((tool) => tool.name)).toEqual([
-        "create_agent",
-        expect.stringMatching(/^mcp_local__echo_secret_/),
-      ]);
-    } finally {
-      await omp.close();
-    }
-  });
-
-  test("does not duplicate the injected Paseo MCP endpoint", async () => {
-    await mkdir("/tmp/paseo-omp-agent-test", { recursive: true });
-    const paseoTools: PaseoToolCatalog = {
-      tools: new Map([
-        [
-          "create_agent",
-          {
-            name: "create_agent",
-            description: "Create an agent",
-            handler: async () => ({ content: [] }),
-          },
-        ],
-      ]),
-      getTool: () => undefined,
-      executeTool: async () => ({ content: [] }),
-    };
-    const omp = new OmpHarness();
-    await omp.start(
-      {
-        mcpServers: {
-          paseo: { type: "http", url: "http://127.0.0.1:1/mcp/agents" },
-          local: healthy,
-        },
-      },
-      paseoTools,
-    );
-    try {
       expect(omp.registeredHostTools()[0]?.map((tool) => tool.name)).toEqual([
         "create_agent",
         expect.stringMatching(/^mcp_local__echo_secret_/),
@@ -224,7 +332,6 @@ describe("OMP MCP host tools", () => {
       await vi.waitFor(async () => expect(await readFile(waitFile, "utf8")).toBe("waiting"));
       runtime.emit({ type: "host_tool_cancel", id: "cancel-1", targetId: "wait-call" });
       await vi.waitFor(async () => expect(await readFile(cancelFile, "utf8")).toBe("cancelled"));
-      await waitForOmpHostToolsIdle(runtime);
       expect(runtime.hostToolResults).toEqual([]);
     } finally {
       await omp.close();

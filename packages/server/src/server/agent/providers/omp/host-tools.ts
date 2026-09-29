@@ -6,7 +6,7 @@ import {
 } from "../../tools/paseo-tool-serialization.js";
 import type { PaseoToolCatalog, PaseoToolResult } from "../../tools/types.js";
 import type { OmpRuntimeSession } from "./runtime.js";
-import { getOmpMcpBridge } from "./mcp-bridge.js";
+import type { OmpMcpBridge } from "./mcp-bridge.js";
 import {
   OmpRpcHostToolCallRequestSchema,
   OmpRpcHostToolCancelRequestSchema,
@@ -26,10 +26,9 @@ interface PendingOmpHostToolCall {
 interface OmpHostToolRouterInput {
   runtimeSession: OmpRuntimeSession;
   catalog?: PaseoToolCatalog;
+  bridge?: OmpMcpBridge;
   logger: Logger;
 }
-
-const routersByRuntimeSession = new WeakMap<OmpRuntimeSession, OmpHostToolRouter>();
 
 export function serializeOmpHostTools(catalog: PaseoToolCatalog): OmpRpcHostToolDefinition[] {
   return [...catalog.tools.values()].map((tool) => {
@@ -46,23 +45,11 @@ export function serializeOmpHostTools(catalog: PaseoToolCatalog): OmpRpcHostTool
   });
 }
 
-export async function setOmpHostTools(
-  runtimeSession: OmpRuntimeSession,
-  catalog?: PaseoToolCatalog,
-): Promise<string[]> {
-  return await runtimeSession.setHostTools([
-    ...(catalog ? serializeOmpHostTools(catalog) : []),
-    ...(getOmpMcpBridge(runtimeSession)?.definitions ?? []),
-  ]);
-}
-
 export function handleOmpHostToolRuntimeEvent(
   event: unknown,
-  input: {
-    runtimeSession: OmpRuntimeSession;
-    paseoTools?: PaseoToolCatalog;
-    logger: Logger;
-  },
+  router: OmpHostToolRouter | undefined,
+  runtimeSession: OmpRuntimeSession,
+  logger: Logger,
 ): boolean {
   if (!isRecord(event) || typeof event.type !== "string" || !isOmpHostToolEventType(event.type)) {
     return false;
@@ -70,9 +57,8 @@ export function handleOmpHostToolRuntimeEvent(
 
   const call = OmpRpcHostToolCallRequestSchema.safeParse(event);
   if (call.success) {
-    const router = getRouter(input);
     if (!router) {
-      sendMissingCatalogResult(input.runtimeSession, call.data);
+      sendMissingCatalogResult(runtimeSession, call.data);
       return true;
     }
     router.handleCall(call.data);
@@ -81,52 +67,22 @@ export function handleOmpHostToolRuntimeEvent(
 
   const cancel = OmpRpcHostToolCancelRequestSchema.safeParse(event);
   if (cancel.success) {
-    getRouter(input)?.handleCancel(cancel.data.targetId);
+    router?.handleCancel(cancel.data.targetId);
     return true;
   }
 
   const update = OmpRpcHostToolUpdateSchema.safeParse(event);
   if (update.success) {
-    input.logger.debug({ id: update.data.id }, "Ignoring unexpected inbound OMP host tool update");
+    logger.debug({ id: update.data.id }, "Ignoring unexpected inbound OMP host tool update");
     return true;
   }
 
-  input.logger.debug({ event }, "Dropped malformed OMP host tool frame");
+  logger.debug({ event }, "Dropped malformed OMP host tool frame");
   return true;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-export function clearOmpHostToolState(runtimeSession: OmpRuntimeSession): void {
-  routersByRuntimeSession.get(runtimeSession)?.clear();
-  routersByRuntimeSession.delete(runtimeSession);
-}
-
-export async function waitForOmpHostToolsIdle(runtimeSession: OmpRuntimeSession): Promise<void> {
-  await routersByRuntimeSession.get(runtimeSession)?.waitForIdle();
-}
-
-function getRouter(input: {
-  runtimeSession: OmpRuntimeSession;
-  paseoTools?: PaseoToolCatalog;
-  logger: Logger;
-}): OmpHostToolRouter | null {
-  if (!input.paseoTools && !getOmpMcpBridge(input.runtimeSession)) {
-    return null;
-  }
-  const existing = routersByRuntimeSession.get(input.runtimeSession);
-  if (existing) {
-    return existing;
-  }
-  const router = new OmpHostToolRouter({
-    runtimeSession: input.runtimeSession,
-    catalog: input.paseoTools,
-    logger: input.logger,
-  });
-  routersByRuntimeSession.set(input.runtimeSession, router);
-  return router;
 }
 
 function sendMissingCatalogResult(
@@ -145,9 +101,10 @@ function isOmpHostToolEventType(type: string): boolean {
   return type === "host_tool_call" || type === "host_tool_cancel" || type === "host_tool_update";
 }
 
-class OmpHostToolRouter {
+export class OmpHostToolRouter {
   private readonly runtimeSession: OmpRuntimeSession;
   private readonly catalog?: PaseoToolCatalog;
+  readonly bridge?: OmpMcpBridge;
   private readonly logger: Logger;
   private readonly pendingCalls = new Map<string, PendingOmpHostToolCall>();
   private readonly idleWaiters = new Set<() => void>();
@@ -155,7 +112,15 @@ class OmpHostToolRouter {
   constructor(input: OmpHostToolRouterInput) {
     this.runtimeSession = input.runtimeSession;
     this.catalog = input.catalog;
+    this.bridge = input.bridge;
     this.logger = input.logger;
+  }
+
+  async register(): Promise<string[]> {
+    return await this.runtimeSession.setHostTools([
+      ...(this.catalog ? serializeOmpHostTools(this.catalog) : []),
+      ...(this.bridge?.definitions ?? []),
+    ]);
   }
 
   handleCall(request: OmpRpcHostToolCallRequest): void {
@@ -187,6 +152,11 @@ class OmpHostToolRouter {
     this.resolveIdleWaiters();
   }
 
+  async close(): Promise<void> {
+    this.clear();
+    await this.bridge?.close();
+  }
+
   waitForIdle(): Promise<void> {
     if (this.pendingCalls.size === 0) return Promise.resolve();
     return new Promise((resolve) => this.idleWaiters.add(resolve));
@@ -197,9 +167,8 @@ class OmpHostToolRouter {
     entry: PendingOmpHostToolCall,
   ): Promise<void> {
     try {
-      const bridge = getOmpMcpBridge(this.runtimeSession);
-      const result = bridge?.has(request.toolName)
-        ? await bridge.execute(request.toolName, request.arguments, entry.controller.signal)
+      const result = this.bridge?.tool(request.toolName)
+        ? await this.bridge.execute(request.toolName, request.arguments, entry.controller.signal)
         : ((await this.catalog?.executeTool(request.toolName, request.arguments, {
             signal: entry.controller.signal,
             sendUpdate: (update) => {

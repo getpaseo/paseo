@@ -1,8 +1,9 @@
 import type { ToolCallDetail } from "../../agent-sdk-types.js";
+import { deriveCodexToolDetail } from "../codex/tool-call-detail-parser.js";
+import type { OmpBridgedToolIdentity } from "./mcp-bridge.js";
 import {
   extractTextFromToolResult,
   mapToolDetail as mapOmpCoreToolDetail,
-  mcpToolLabel,
   resolveToolCallName,
   type OmpToolResult,
   type OmpTrackedToolCall,
@@ -13,22 +14,16 @@ export function mapOmpToolDetail(
   result: OmpToolResult,
   context?: {
     toolCallId: string;
+    bridgedTool?: OmpBridgedToolIdentity;
     mapSubagentDetail?: (baseDetail: ToolCallDetail) => ToolCallDetail;
   },
 ): ToolCallDetail | null {
-  if (toolCall.toolName.startsWith("mcp_")) {
-    const label = mcpToolLabel(toolCall.toolName) ?? toolCall.toolName;
-    const output = extractTextFromToolResult(result);
-    return {
-      type: "plain_text",
-      label,
-      text: [
-        `Input: ${JSON.stringify(toolCall.args)}`,
-        output === undefined ? undefined : `Result: ${output}`,
-      ]
-        .filter(Boolean)
-        .join("\n"),
-    };
+  if (context?.bridgedTool) {
+    return deriveCodexToolDetail({
+      name: `${context.bridgedTool.server}.${context.bridgedTool.tool}`,
+      input: toolCall.args,
+      output: result,
+    });
   }
   if (toolCall.toolName === "todo") {
     return null;

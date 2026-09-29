@@ -72,10 +72,12 @@ export class OmpHarness {
       noTurnScheduler?: OmpNoTurnScheduler;
       usagePollScheduler?: OmpUsagePollScheduler;
       providerIdleDeadlineMs?: number;
+      runtimeEnv?: Record<string, string>;
     } = {},
   ) {
     this.client = new OmpAgentClient({
       logger: pino({ level: "silent" }),
+      runtimeSettings: { env: options.runtimeEnv },
       runtime: this.omp,
       providerIdleScheduler: options.providerIdleScheduler,
       noTurnScheduler: options.noTurnScheduler,
@@ -151,6 +153,20 @@ export class OmpHarness {
 
   capabilities() {
     return this.client.capabilities;
+  }
+
+  persistence() {
+    return this.requireSession().describePersistence();
+  }
+
+  async replayHistory(handle: AgentPersistenceHandle): Promise<AgentStreamEvent[]> {
+    const session = await this.client.resumeSession(handle, undefined, undefined, {
+      purpose: "history",
+    });
+    const events: AgentStreamEvent[] = [];
+    for await (const event of session.streamHistory()) events.push(event);
+    await session.close();
+    return events;
   }
 
   async runPrompt(

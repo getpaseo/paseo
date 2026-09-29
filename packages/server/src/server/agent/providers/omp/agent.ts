@@ -81,7 +81,7 @@ import { materializeProviderImage } from "../provider-image-output.js";
 import { OmpCliRuntime } from "./cli-runtime.js";
 import { listOmpImportableSessions, readOmpImportSessionConfig } from "./session-descriptor.js";
 import type { OmpRuntime, OmpRuntimeSession, OmpStartSessionInput } from "./runtime.js";
-import { OmpMcpBridge, attachOmpMcpBridge, closeOmpMcpBridge } from "./mcp-bridge.js";
+import { OmpMcpBridge, type OmpBridgedToolIdentity } from "./mcp-bridge.js";
 import type {
   OmpAgentSessionEvent,
   OmpAgentMessage,
@@ -105,11 +105,7 @@ import { readOmpHistoryTodoState, streamOmpHistory } from "./history.js";
 import { mapOmpTodoReminderEvent, mapOmpTodoState, mapOmpTodoToolResult } from "./todo-mapper.js";
 import { mapOmpRuntimeEventToTimelineItem } from "./event-mapper.js";
 import { mapOmpAdvisorMessageToToolCall } from "./advisor-message.js";
-import {
-  clearOmpHostToolState,
-  handleOmpHostToolRuntimeEvent,
-  setOmpHostTools,
-} from "./host-tools.js";
+import { handleOmpHostToolRuntimeEvent, OmpHostToolRouter } from "./host-tools.js";
 import { OmpSubagentIndex } from "./subagent-index.js";
 import { OmpQuestionUi } from "./question-ui.js";
 import { mapOmpToolDetail } from "./tool-call-mapper.js";
@@ -179,6 +175,7 @@ interface OmpPersistenceMetadata {
   thinkingOptionId?: string;
   modeId?: string;
   systemPrompt?: string;
+  bridgedTools: Map<string, OmpBridgedToolIdentity>;
 }
 
 interface StartTurnResult {
@@ -187,7 +184,14 @@ interface StartTurnResult {
 
 interface OmpAgentSessionOptions {
   runtimeSession: OmpRuntimeSession;
-  restartRuntime: (sessionFile: string | null, modeId: string) => Promise<OmpRuntimeSession>;
+  hostTools?: OmpHostToolRouter;
+  restartRuntime: (
+    sessionFile: string | null,
+    modeId: string,
+  ) => Promise<{
+    runtimeSession: OmpRuntimeSession;
+    hostTools?: OmpHostToolRouter;
+  }>;
   config: AgentSessionConfig;
   initialState: OmpSessionState;
   currentModeId?: string | null;
@@ -197,7 +201,6 @@ interface OmpAgentSessionOptions {
   noTurnScheduler?: OmpNoTurnScheduler;
   usagePollScheduler?: OmpUsagePollScheduler;
   providerIdleDeadlineMs?: number;
-  paseoTools?: PaseoToolCatalog;
   usageEnv?: NodeJS.ProcessEnv;
   /**
    * When false (resumed sessions), replayed session events are dropped until
@@ -384,9 +387,20 @@ function parseModelReference(modelId: string | null): OmpModelReference | null {
 
 function parsePersistenceMetadata(metadata: AgentMetadata | undefined): OmpPersistenceMetadata {
   if (!metadata) {
-    return {};
+    return { bridgedTools: new Map() };
+  }
+  const bridgedTools = new Map<string, OmpBridgedToolIdentity>();
+  if (Array.isArray(metadata.bridgedTools)) {
+    for (const entry of metadata.bridgedTools) {
+      if (!Array.isArray(entry) || entry.length !== 2 || typeof entry[0] !== "string") continue;
+      const identity = entry[1];
+      if (!identity || typeof identity !== "object" || Array.isArray(identity)) continue;
+      if (typeof identity.server !== "string" || typeof identity.tool !== "string") continue;
+      bridgedTools.set(entry[0], { server: identity.server, tool: identity.tool });
+    }
   }
   return {
+    bridgedTools,
     ...(typeof metadata.cwd === "string" ? { cwd: metadata.cwd } : {}),
     ...(typeof metadata.model === "string" ? { model: metadata.model } : {}),
     ...(typeof metadata.thinkingOptionId === "string"
@@ -600,6 +614,7 @@ class OmpHistorySession implements AgentSession {
     private readonly config: OmpResumeConfig,
     private readonly sessionFile: string,
     provider: AgentProvider,
+    private readonly bridgedTools: ReadonlyMap<string, OmpBridgedToolIdentity>,
   ) {
     this.provider = provider;
   }
@@ -621,7 +636,11 @@ class OmpHistorySession implements AgentSession {
   }
 
   async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
-    yield* streamOmpHistory({ sessionFile: this.sessionFile, provider: this.provider });
+    yield* streamOmpHistory({
+      sessionFile: this.sessionFile,
+      provider: this.provider,
+      bridgedTools: this.bridgedTools,
+    });
     const todo = await readOmpHistoryTodoState(this.sessionFile);
     if (todo) yield { type: "timeline", provider: this.provider, item: todo };
   }
@@ -710,12 +729,12 @@ export class OmpAgentSession implements AgentSession {
 
   constructor(options: OmpAgentSessionOptions) {
     this.runtimeSession = options.runtimeSession;
+    this.hostTools = options.hostTools;
     this.restartRuntime = options.restartRuntime;
     this.config = options.config;
     this.state = options.initialState;
     this.currentModeId = options.currentModeId ?? null;
     this.logger = options.logger;
-    this.paseoTools = options.paseoTools;
     this.usageEnv = options.usageEnv ?? process.env;
     this.live = options.live ?? true;
     this.providerIdleScheduler = options.providerIdleScheduler ?? createOmpProviderIdleScheduler();
@@ -762,10 +781,10 @@ export class OmpAgentSession implements AgentSession {
   }
 
   private runtimeSession: OmpRuntimeSession;
+  private hostTools?: OmpHostToolRouter;
   private readonly restartRuntime: OmpAgentSessionOptions["restartRuntime"];
   private readonly config: AgentSessionConfig;
   private readonly logger: Logger;
-  private readonly paseoTools?: PaseoToolCatalog;
   private readonly usageEnv: NodeJS.ProcessEnv;
 
   async getUsageReference() {
@@ -948,6 +967,7 @@ export class OmpAgentSession implements AgentSession {
       sessionFile: this.state.sessionFile,
       runtimeSession: this.runtimeSession,
       provider: this.provider,
+      bridgedTools: this.hostTools?.bridge?.toolIdentities(),
     });
     for (const item of mapOmpTodoState(this.state)) {
       yield {
@@ -999,25 +1019,27 @@ export class OmpAgentSession implements AgentSession {
     if (this.replacingRuntime) return this.replacingRuntime;
     const replace = async () => {
       const old = this.runtimeSession;
+      const oldHostTools = this.hostTools;
       const previousSessionId = this.state.sessionId;
-      const next = await this.restartRuntime(
+      const restarted = await this.restartRuntime(
         this.config.internal ? null : (this.state.sessionFile ?? null),
         modeId,
       );
+      const next = restarted.runtimeSession;
       try {
         if (this.closed) throw new Error("OMP session is closed");
         const state = await next.getState();
         if (this.closed) throw new Error("OMP session is closed");
         this.unsubscribeRuntime?.();
         this.runtimeSession = next;
+        this.hostTools = restarted.hostTools;
         this.state = state;
         this.currentModeId = modeId;
         this.config.modeId = modeId;
         this.runtimeDead = false;
         this.attachRuntime(next);
         this.subagentIndex.clear(old);
-        clearOmpHostToolState(old);
-        await closeOmpMcpBridge(old);
+        await oldHostTools?.close();
         await old.close().catch(() => undefined);
         if (state.sessionId !== previousSessionId) {
           this.emit({
@@ -1027,7 +1049,7 @@ export class OmpAgentSession implements AgentSession {
           });
         }
       } catch (error) {
-        await closeOmpMcpBridge(next);
+        await restarted.hostTools?.close();
         await next.close().catch(() => undefined);
         throw error;
       }
@@ -1073,6 +1095,9 @@ export class OmpAgentSession implements AgentSession {
       nativeHandle: this.state.sessionFile,
       metadata: {
         cwd: this.config.cwd,
+        ...(this.hostTools?.bridge
+          ? { bridgedTools: [...this.hostTools.bridge.toolIdentities()] }
+          : {}),
         ...(this.config.model ? { model: this.config.model } : {}),
         ...(this.config.thinkingOptionId ? { thinkingOptionId: this.config.thinkingOptionId } : {}),
         ...(this.currentModeId ? { modeId: this.currentModeId } : {}),
@@ -1119,7 +1144,7 @@ export class OmpAgentSession implements AgentSession {
     try {
       await this.runtimeSession.close();
     } finally {
-      await closeOmpMcpBridge(this.runtimeSession);
+      await this.hostTools?.close();
       this.clearOmpSessionState();
     }
   }
@@ -1130,7 +1155,7 @@ export class OmpAgentSession implements AgentSession {
   }
 
   private clearOmpTurnState(): void {
-    clearOmpHostToolState(this.runtimeSession);
+    this.hostTools?.clear();
     this.subagentCardTracker.clear();
   }
 
@@ -1578,13 +1603,7 @@ export class OmpAgentSession implements AgentSession {
         );
       return true;
     }
-    if (
-      handleOmpHostToolRuntimeEvent(event, {
-        runtimeSession: this.runtimeSession,
-        paseoTools: this.paseoTools,
-        logger: this.logger,
-      })
-    ) {
+    if (handleOmpHostToolRuntimeEvent(event, this.hostTools, this.runtimeSession, this.logger)) {
       return true;
     }
     if (event.type === "subagent_lifecycle") {
@@ -1732,7 +1751,7 @@ export class OmpAgentSession implements AgentSession {
 
   private handleProcessExit(error: string): void {
     this.runtimeDead = true;
-    void closeOmpMcpBridge(this.runtimeSession);
+    void this.hostTools?.close();
     this.usagePoller.stopTurn();
     if (!this.activeTurnId) {
       this.terminalizeActiveWork();
@@ -2072,10 +2091,13 @@ export class OmpAgentSession implements AgentSession {
     if (!detail) {
       return false;
     }
+    const bridgedTool = this.hostTools?.bridge?.tool(toolCall.toolName);
     const baseItem = {
       type: "tool_call" as const,
       callId: toolCallId,
-      name: resolveToolCallName(toolCall, result),
+      name: bridgedTool
+        ? `${bridgedTool.server} / ${bridgedTool.tool}`
+        : resolveToolCallName(toolCall, result),
       detail,
     };
     const item =
@@ -2096,6 +2118,7 @@ export class OmpAgentSession implements AgentSession {
   ): ToolCallDetail | null {
     return mapOmpToolDetail(toolCall, result, {
       toolCallId,
+      bridgedTool: this.hostTools?.bridge?.tool(toolCall.toolName),
       mapSubagentDetail: (detail) =>
         this.subagentCardTracker.detailFor(toolCallId, detail) ?? detail,
     });
@@ -2226,19 +2249,24 @@ export class OmpAgentClient implements AgentClient {
     runtimeSession: OmpRuntimeSession,
     catalog: PaseoToolCatalog | undefined,
     config: AgentSessionConfig,
-  ): Promise<void> {
+    launchEnv?: NodeJS.ProcessEnv,
+  ): Promise<OmpHostToolRouter | undefined> {
     if (!catalog && !config.mcpServers) {
       return;
     }
-    const bridge = await OmpMcpBridge.connect(
-      config.mcpServers,
-      config.cwd,
-      this.logger,
-      catalog?.tools.keys(),
-      Boolean(catalog),
-    );
-    attachOmpMcpBridge(runtimeSession, bridge);
-    await setOmpHostTools(runtimeSession, catalog);
+    const bridge = await OmpMcpBridge.connect(config.mcpServers, config.cwd, this.logger, {
+      ...process.env,
+      ...this.runtimeSettings?.env,
+      ...launchEnv,
+    });
+    const router = new OmpHostToolRouter({ runtimeSession, catalog, bridge, logger: this.logger });
+    try {
+      await router.register();
+      return router;
+    } catch (error) {
+      await router.close();
+      throw error;
+    }
   }
 
   private async restoreFastMode(
@@ -2270,8 +2298,14 @@ export class OmpAgentClient implements AgentClient {
       env: launchContext?.env,
     };
     const runtimeSession = await this.runtime.startSession(startInput);
+    let hostTools: OmpHostToolRouter | undefined;
     try {
-      await this.configureNativePaseoTools(runtimeSession, launchContext?.paseoTools, config);
+      hostTools = await this.configureNativePaseoTools(
+        runtimeSession,
+        launchContext?.paseoTools,
+        config,
+        startInput.env,
+      );
       const initialState = await this.restoreFastMode(
         runtimeSession,
         config,
@@ -2279,6 +2313,7 @@ export class OmpAgentClient implements AgentClient {
       );
       return new OmpAgentSession({
         runtimeSession,
+        hostTools,
         restartRuntime: this.buildRestartRuntime(startInput, config, launchContext),
         config,
         initialState,
@@ -2289,11 +2324,10 @@ export class OmpAgentClient implements AgentClient {
         noTurnScheduler: this.noTurnScheduler,
         usagePollScheduler: this.usagePollScheduler,
         providerIdleDeadlineMs: this.providerIdleDeadlineMs,
-        paseoTools: launchContext?.paseoTools,
         usageEnv: { ...process.env, ...this.runtimeSettings?.env, ...launchContext?.env },
       });
     } catch (error) {
-      await closeOmpMcpBridge(runtimeSession);
+      await hostTools?.close();
       await runtimeSession.close().catch(() => undefined);
       throw error;
     }
@@ -2314,7 +2348,13 @@ export class OmpAgentClient implements AgentClient {
     const resumeConfig = buildResumeConfig(persistenceMetadata, overrides, this.provider);
 
     if (options?.purpose === "history") {
-      return new OmpHistorySession(handle, resumeConfig, sessionFile, this.provider);
+      return new OmpHistorySession(
+        handle,
+        resumeConfig,
+        sessionFile,
+        this.provider,
+        persistenceMetadata.bridgedTools,
+      );
     }
 
     const launchMode = this.resolveLaunchMode(resumeConfig.modeId);
@@ -2325,11 +2365,13 @@ export class OmpAgentClient implements AgentClient {
       launchMode,
     });
     const runtimeSession = await this.runtime.startSession(startInput);
+    let hostTools: OmpHostToolRouter | undefined;
     try {
-      await this.configureNativePaseoTools(
+      hostTools = await this.configureNativePaseoTools(
         runtimeSession,
         launchContext?.paseoTools,
         resumeConfig.config,
+        startInput.env,
       );
       const initialState = await this.restoreFastMode(
         runtimeSession,
@@ -2338,6 +2380,7 @@ export class OmpAgentClient implements AgentClient {
       );
       return new OmpAgentSession({
         runtimeSession,
+        hostTools,
         restartRuntime: this.buildRestartRuntime(startInput, resumeConfig.config, launchContext),
         config: resumeConfig.config,
         initialState,
@@ -2348,12 +2391,11 @@ export class OmpAgentClient implements AgentClient {
         noTurnScheduler: this.noTurnScheduler,
         usagePollScheduler: this.usagePollScheduler,
         providerIdleDeadlineMs: this.providerIdleDeadlineMs,
-        paseoTools: launchContext?.paseoTools,
         usageEnv: { ...process.env, ...this.runtimeSettings?.env, ...launchContext?.env },
         live: false,
       });
     } catch (error) {
-      await closeOmpMcpBridge(runtimeSession);
+      await hostTools?.close();
       await runtimeSession.close().catch(() => undefined);
       throw error;
     }
@@ -2374,13 +2416,19 @@ export class OmpAgentClient implements AgentClient {
         extraArgs: launchMode.extraArgs,
         ...(!startInput.noSession && sessionFile ? { session: sessionFile } : {}),
       });
+      let hostTools: OmpHostToolRouter | undefined;
       try {
-        await this.configureNativePaseoTools(next, launchContext?.paseoTools, config);
+        hostTools = await this.configureNativePaseoTools(
+          next,
+          launchContext?.paseoTools,
+          config,
+          startInput.env,
+        );
         const state = await next.getState();
         await this.restoreFastMode(next, config, state);
-        return next;
+        return { runtimeSession: next, hostTools };
       } catch (error) {
-        await closeOmpMcpBridge(next);
+        await hostTools?.close();
         await next.close().catch(() => undefined);
         throw error;
       }
