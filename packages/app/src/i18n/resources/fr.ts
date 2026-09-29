@@ -1721,6 +1721,7 @@ export const fr: TranslationResources = {
     subtitle: "Connectez votre ordinateur pour commencer",
     actions: {
       settings: "Paramètres",
+      paperclip: "Configurer avec Paperclip",
     },
   },
   modelSelector: {
@@ -2956,4 +2957,5 @@ export const fr: TranslationResources = {
       },
     },
   },
+  paperclip: en.paperclip,
 };

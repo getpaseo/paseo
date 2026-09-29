@@ -1653,6 +1653,18 @@ export const zhCN: TranslationResources = {
     subtitle: "连接你的电脑即可开始",
     actions: {
       settings: "设置",
+      paperclip: "使用 Paperclip 设置",
+    },
+  },
+  paperclip: {
+    onboarding: {
+      title: "使用 Paperclip 设置 PandaOS",
+      description: "告诉我们你的工作方式，为代理团队选择合适的配置。",
+      useCase: { label: "你将如何使用 PandaOS？", hint: "选择最接近的选项。" },
+      teamShape: { label: "你的团队规模如何？", hint: "之后可以更改。" },
+      teamName: { label: "团队名称", hint: "可选标签。", placeholder: "我的团队" },
+      saving: "保存中…",
+      continue: "保存设置",
     },
   },
   modelSelector: {

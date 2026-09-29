@@ -1702,6 +1702,18 @@ export const ptBR: TranslationResources = {
     subtitle: "Conecte seu computador para começar",
     actions: {
       settings: "Configurações",
+      paperclip: "Configurar com Paperclip",
+    },
+  },
+  paperclip: {
+    onboarding: {
+      title: "Configure o PandaOS com o Paperclip",
+      description: "Conte como você trabalha para preparar sua equipe de agentes.",
+      useCase: { label: "Para que você usará o PandaOS?", hint: "Escolha a opção mais próxima." },
+      teamShape: { label: "Qual é o tamanho da sua equipe?", hint: "Você pode alterar depois." },
+      teamName: { label: "Nome da equipe", hint: "Rótulo opcional.", placeholder: "Minha equipe" },
+      saving: "Salvando…",
+      continue: "Salvar configuração",
     },
   },
   modelSelector: {

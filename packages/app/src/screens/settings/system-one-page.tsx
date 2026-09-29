@@ -22,7 +22,30 @@ const CONFIDENCE_OPTIONS = [
   { value: "0.7", label: "70%" },
   { value: "0.85", label: "85%" },
 ];
+const DEFAULT_ENDPOINT = "https://api.typesafe.ai/v1/systemone";
+const ENDPOINT_OPTIONS = [
+  { value: DEFAULT_ENDPOINT, label: "Jev (TypeSafe)" },
+  { value: "custom", label: "Custom / self-hosted" },
+];
 
+function resolveCredentialLabel(
+  source: string | null | undefined,
+  t: (key: string) => string,
+): string {
+  switch (source) {
+    case "paseo":
+      return t("settings.systemOne.credentials.sources.paseo");
+    case "environment":
+      return t("settings.systemOne.credentials.sources.environment");
+    case "env-file":
+      return t("settings.systemOne.credentials.sources.envFile");
+    default:
+      return t("settings.systemOne.credentials.notConfigured");
+  }
+}
+
+// The host settings page intentionally keeps all System One controls together.
+// oxlint-disable-next-line complexity
 export function HostSystemOnePage({ serverId }: { serverId: string }) {
   const { t } = useTranslation();
   const isConnected = useHostRuntimeIsConnected(serverId);
@@ -30,6 +53,10 @@ export function HostSystemOnePage({ serverId }: { serverId: string }) {
   const systemOne = config?.systemOne;
   const [apiKey, setApiKey] = useState("");
   const [model, setModel] = useState(systemOne?.model ?? "jev-latest");
+  const [endpoint, setEndpoint] = useState(systemOne?.endpoint ?? DEFAULT_ENDPOINT);
+  const [customEndpoint, setCustomEndpoint] = useState(
+    systemOne?.endpoint && systemOne.endpoint !== DEFAULT_ENDPOINT ? systemOne.endpoint : "",
+  );
   const [minimumConfidence, setMinimumConfidence] = useState(
     String(systemOne?.minimumConfidence ?? 0.5),
   );
@@ -44,6 +71,10 @@ export function HostSystemOnePage({ serverId }: { serverId: string }) {
   useEffect(() => {
     if (!systemOne) return;
     setModel(systemOne.model);
+    setEndpoint(systemOne.endpoint ?? DEFAULT_ENDPOINT);
+    if (systemOne.endpoint && systemOne.endpoint !== DEFAULT_ENDPOINT) {
+      setCustomEndpoint(systemOne.endpoint);
+    }
     setMinimumConfidence(String(systemOne.minimumConfidence));
   }, [systemOne]);
 
@@ -52,30 +83,23 @@ export function HostSystemOnePage({ serverId }: { serverId: string }) {
       {
         systemOne: {
           model: model.trim() || "jev-latest",
+          endpoint: endpoint === "custom" ? customEndpoint.trim() : endpoint,
           minimumConfidence: Number(minimumConfidence),
         },
         ...(apiKey.trim() ? { systemOneApiKey: apiKey.trim() } : {}),
       },
       { onSuccess: () => setApiKey("") },
     );
-  }, [apiKey, minimumConfidence, model, mutation]);
+  }, [apiKey, customEndpoint, endpoint, minimumConfidence, model, mutation]);
   const clearPaseoKey = useCallback(() => mutation.mutate({ systemOneApiKey: null }), [mutation]);
   const toggleEnabled = useCallback(
     (enabled: boolean) => mutation.mutate({ systemOne: { enabled } }),
     [mutation],
   );
-  const credentialLabel = useMemo(() => {
-    switch (systemOne?.credentialSource) {
-      case "paseo":
-        return t("settings.systemOne.credentials.sources.paseo");
-      case "environment":
-        return t("settings.systemOne.credentials.sources.environment");
-      case "env-file":
-        return t("settings.systemOne.credentials.sources.envFile");
-      default:
-        return t("settings.systemOne.credentials.notConfigured");
-    }
-  }, [systemOne?.credentialSource, t]);
+  const credentialLabel = useMemo(
+    () => resolveCredentialLabel(systemOne?.credentialSource, t),
+    [systemOne?.credentialSource, t],
+  );
 
   if (!isConnected) {
     return (
@@ -134,6 +158,24 @@ export function HostSystemOnePage({ serverId }: { serverId: string }) {
             disabled={mutation.isPending}
             onChangeText={setModel}
           />
+          <SettingsSelect
+            label={t("settings.systemOne.endpoint.label")}
+            hint={t("settings.systemOne.endpoint.hint")}
+            value={endpoint === DEFAULT_ENDPOINT ? DEFAULT_ENDPOINT : "custom"}
+            options={ENDPOINT_OPTIONS}
+            disabled={mutation.isPending}
+            onValueChange={setEndpoint}
+          />
+          {endpoint === "custom" ? (
+            <SettingsInput
+              label={t("settings.systemOne.endpoint.customLabel")}
+              hint={t("settings.systemOne.endpoint.customHint")}
+              initialValue={customEndpoint}
+              placeholder="https://your-host.example/v1/systemone"
+              disabled={mutation.isPending}
+              onChangeText={setCustomEndpoint}
+            />
+          ) : null}
           <SettingsSelect
             label={t("settings.systemOne.confidence.label")}
             hint={t("settings.systemOne.confidence.hint")}

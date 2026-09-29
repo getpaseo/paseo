@@ -1717,6 +1717,7 @@ export const es: TranslationResources = {
     subtitle: "Conecte su computadora para comenzar",
     actions: {
       settings: "Ajustes",
+      paperclip: "Configurar con Paperclip",
     },
   },
   modelSelector: {
@@ -2944,6 +2945,27 @@ export const es: TranslationResources = {
         saving: "Guardando...",
         cancel: "Cancelar",
       },
+    },
+  },
+  paperclip: {
+    onboarding: {
+      title: "Welcome to PandaOS",
+      description: "Let's set up your Paperclip workspace in a few quick steps.",
+      useCase: {
+        label: "What's your primary use case?",
+        hint: "This helps us optimize your experience.",
+      },
+      teamShape: {
+        label: "How large is your team?",
+        hint: "We'll configure agent profiles and collaboration features accordingly.",
+      },
+      teamName: {
+        label: "Team name (optional)",
+        hint: "Give your team a memorable name.",
+        placeholder: "My Team",
+      },
+      continue: "Continue",
+      saving: "Saving…",
     },
   },
 };

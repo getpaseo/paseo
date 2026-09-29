@@ -199,6 +199,8 @@ const MutableSystemOneConfigSchema = z
   .object({
     enabled: z.boolean().default(false),
     model: z.string().trim().min(1).default("jev-latest"),
+    // COMPAT(systemOneEndpoint): added in v0.9, keep optional while older daemons are supported.
+    endpoint: z.string().trim().url().default("https://api.typesafe.ai/v1/systemone"),
     minimumConfidence: z.number().min(0).max(1).default(0.5),
     configured: z.boolean().default(false),
     credentialSource: z.enum(["paseo", "environment", "env-file"]).nullable().default(null),
@@ -208,6 +210,7 @@ const MutableSystemOnePatchSchema = z
   .object({
     enabled: z.boolean().optional(),
     model: z.string().trim().min(1).optional(),
+    endpoint: z.string().trim().url().optional(),
     minimumConfidence: z.number().min(0).max(1).optional(),
   })
   .strict();
@@ -247,6 +250,16 @@ export const MutableDaemonConfigSchema = z
     browserTools: MutableBrowserToolsConfigSchema.default({ enabled: false }),
     // COMPAT(systemOne): added in v0.9, keep optional while older daemons are supported.
     systemOne: MutableSystemOneConfigSchema.optional(),
+    // COMPAT(paperclip): added for PandaOS onboarding, keep optional while older daemons are supported.
+    paperclip: z
+      .object({
+        onboardingCompleted: z.boolean().default(false),
+        useCase: z.enum(["personal", "team", "enterprise"]).optional(),
+        teamShape: z.enum(["solo", "small", "medium", "large"]).optional(),
+        teamName: z.string().trim().optional(),
+      })
+      .passthrough()
+      .optional(),
     providers: z.record(z.string(), MutableDaemonProviderConfigSchema).default({}),
     metadataGeneration: MutableMetadataGenerationConfigSchema.default({ providers: [] }),
     autoArchiveAfterMerge: z.boolean().default(false),
@@ -270,6 +283,16 @@ export const MutableDaemonConfigPatchSchema = z
     browserTools: MutableBrowserToolsConfigSchema.partial().optional(),
     systemOne: MutableSystemOnePatchSchema.optional(),
     systemOneApiKey: z.string().trim().min(1).nullable().optional(),
+    paperclip: z
+      .object({
+        onboardingCompleted: z.boolean().optional(),
+        useCase: z.enum(["personal", "team", "enterprise"]).optional(),
+        teamShape: z.enum(["solo", "small", "medium", "large"]).optional(),
+        teamName: z.string().trim().optional(),
+      })
+      .partial()
+      .passthrough()
+      .optional(),
     providers: z
       .record(z.string(), MutableDaemonProviderConfigSchema.partial().passthrough())
       .optional(),

@@ -1670,6 +1670,7 @@ export const ar: TranslationResources = {
     subtitle: "قم بتوصيل جهاز الكمبيوتر الخاص بك للبدء",
     actions: {
       settings: "إعدادات",
+      paperclip: "الإعداد باستخدام Paperclip",
     },
   },
   modelSelector: {
@@ -2880,4 +2881,5 @@ export const ar: TranslationResources = {
       },
     },
   },
+  paperclip: en.paperclip,
 };
