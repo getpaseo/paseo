@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import { AgentManager } from "./agent-manager.js";
 import { sendPromptToAgent } from "./agent-prompt.js";
+import { archiveAgentCommand } from "./lifecycle-command.js";
 import { AgentStorage } from "./agent-storage.js";
 import type {
   AgentClient,
@@ -306,5 +307,22 @@ describe("queued messages", () => {
       expect(scenario.agentManager.getAgent(scenario.agentId)?.lifecycle).toBe("idle"),
     );
     expect(resumed.prompts).toEqual(["third"]);
+  });
+
+  it("are dropped, not started, when archiving interrupts the running turn", async () => {
+    const scenario = await createQueueScenario();
+    await scenario.send("first");
+    await vi.waitFor(() =>
+      expect(scenario.agentManager.getAgent(scenario.agentId)?.lifecycle).toBe("running"),
+    );
+    await scenario.send("second");
+
+    await archiveAgentCommand(
+      { agentManager: scenario.agentManager, agentStorage: scenario.storage, logger },
+      scenario.agentId,
+    );
+
+    expect(scenario.session.interrupts).toBe(1);
+    expect(scenario.session.prompts).toEqual(["first"]);
   });
 });

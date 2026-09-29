@@ -2736,6 +2736,11 @@ export class AgentManager {
     return true;
   }
 
+  /** Drop every message the daemon holds for this agent. */
+  clearQueuedMessages(agentId: string): void {
+    this.queuedMessages.delete(agentId);
+  }
+
   private hasQueuedMessages(agentId: string): boolean {
     return (this.queuedMessages.get(agentId)?.length ?? 0) > 0;
   }
