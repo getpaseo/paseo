@@ -13,7 +13,7 @@ import { extname, resolve } from "node:path";
 /** Result type for agent send command */
 export interface AgentSendResult {
   agentId: string;
-  status: "sent" | "completed" | "timeout" | "permission" | "error";
+  status: "sent" | "queued" | "completed" | "timeout" | "permission" | "error";
   message: string;
 }
 
@@ -30,6 +30,7 @@ export const agentSendSchema: OutputSchema<AgentSendResult> = {
 export interface AgentSendOptions extends CommandOptions {
   wait?: boolean;
   steer?: boolean;
+  queue?: boolean;
   image?: string[];
   prompt?: string;
   promptFile?: string;
@@ -46,6 +47,10 @@ export function addSendOptions(cmd: Command): Command {
     .option(
       "--steer",
       "Deliver the message into the agent's running turn instead of cancelling it. Fails if the agent is mid-turn and its provider cannot steer.",
+    )
+    .option(
+      "--queue",
+      "Hold the message until the agent's running turn ends, then run it as the next turn. Starts right away when the agent is idle.",
     )
     .option("--no-wait", "Return immediately without waiting for completion");
 }
@@ -183,6 +188,14 @@ export async function runSendCommand(
     throw error;
   }
 
+  if (options.steer && options.queue) {
+    const error: CommandError = {
+      code: "CONFLICTING_SEND_BEHAVIOR",
+      message: "Use either --steer or --queue, not both",
+    };
+    throw error;
+  }
+
   const promptInput = await resolvePromptInput({
     promptArgument: prompt,
     promptOption: options.prompt,
@@ -191,18 +204,29 @@ export async function runSendCommand(
 
   const client = await connectToDaemon({ target: options.daemonTarget });
 
+  // COMPAT(agentPromptQueue): added in v0.10.2, remove gate after 2027-03-30.
+  if (options.queue && client.getLastServerInfoMessage()?.features?.agentPromptQueue !== true) {
+    await client.close().catch(() => {});
+    const error: CommandError = {
+      code: "DAEMON_UPDATE_REQUIRED",
+      message: "Update the host to use --queue.",
+    };
+    throw error;
+  }
+
   try {
     // Read image files if provided
     const images =
       options.image && options.image.length > 0 ? await readImageFiles(options.image) : undefined;
 
     // Send the message
-    await client.sendAgentMessage(agentIdArg, promptInput, {
+    const { queued } = await client.sendAgentMessage(agentIdArg, promptInput, {
       images,
       // --steer means steer: never let it turn into a cancel-and-restart.
       ...(options.steer
         ? { activeTurnBehavior: "steer" as const, steerFallback: "reject" as const }
         : {}),
+      ...(options.queue ? { activeTurnBehavior: "queue" as const } : {}),
     });
 
     // If --no-wait, return immediately
@@ -211,11 +235,17 @@ export async function runSendCommand(
 
       return {
         type: "single",
-        data: {
-          agentId: agentIdArg,
-          status: "sent",
-          message: "Message sent, not waiting for completion",
-        },
+        data: queued
+          ? {
+              agentId: agentIdArg,
+              status: "queued",
+              message: "Message queued; it runs when the current turn ends",
+            }
+          : {
+              agentId: agentIdArg,
+              status: "sent",
+              message: "Message sent, not waiting for completion",
+            },
         schema: agentSendSchema,
       };
     }
