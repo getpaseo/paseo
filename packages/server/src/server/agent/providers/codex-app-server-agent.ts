@@ -786,25 +786,21 @@ function expandCodexCustomPrompt(template: string, args: string | undefined): st
     positional.push(token);
   }
 
-  const dollarPlaceholder = "__CODEX_DOLLAR_PLACEHOLDER__";
-  let out = template.split("$$").join(dollarPlaceholder);
+  // Match every placeholder in one pass, so inserted argument text is never expanded again.
+  const namedPlaceholders = Object.keys(named)
+    .sort((a, b) => b.length - a.length)
+    .map((key) => `${escapeRegExp(key)}\\b`);
+  const placeholder = new RegExp(
+    `\\$(${["\\$", "ARGUMENTS", "[1-9]", ...namedPlaceholders].join("|")})`,
+    "g",
+  );
 
-  out = out.split("$ARGUMENTS").join(trimmedArgs);
-
-  for (let i = 1; i <= 9; i += 1) {
-    const value = positional[i - 1] ?? "";
-    out = out.split(`$${i}`).join(value);
-  }
-
-  const namedKeys = Object.keys(named).sort((a, b) => b.length - a.length);
-  for (const key of namedKeys) {
-    const value = named[key] ?? "";
-    const re = new RegExp(`\\$${escapeRegExp(key)}\\b`, "g");
-    out = out.replace(re, value);
-  }
-
-  out = out.split(dollarPlaceholder).join("$");
-  return out;
+  return template.replace(placeholder, (match, name: string) => {
+    if (name === "$") return "$";
+    if (name === "ARGUMENTS") return trimmedArgs;
+    if (/^[1-9]$/.test(name)) return positional[Number(name) - 1] ?? "";
+    return named[name] ?? match;
+  });
 }
 
 interface CodexMcpServerConfig {
