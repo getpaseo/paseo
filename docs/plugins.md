@@ -381,9 +381,37 @@ export default function contribute(server: PluginServerContext) {
 }
 ```
 
+Declare `command: ["agent", "serve"]` when your provider launches an executable. The daemon applies
+`agents.providers.<id>.command` and `env`, resolves the executable against the effective PATH, and
+removes parent-session and daemon-control environment variables. `connect({ launch })` receives
+`{ command, args, env }`: an executable path, effective arguments, and the complete sanitized
+environment. Spawn with those values; do not merge the plugin process's environment back in.
+The launch travels as data through the same provider protocol for built-in and subprocess plugins.
+Without a declared command, existing providers keep their connection behavior and receive no launch.
+
+Implement optional `status({ launch })` to check credentials, versions, or other prerequisites using
+that effective launch. Return `{ available: true }` or
+`{ available: false, diagnostic: "Run agent login" }`. The daemon checks executable availability
+before calling status; it exposes your diagnostic through the normal provider diagnostic command.
+A command-backed provider without status is available when its executable resolves. Providers with
+neither command nor status retain connection-based availability.
+
+A same-ID config entry without `extends` overrides the plugin's `enabled`, `command`, `env`, label,
+description, and model configuration through the normal provider registry. `enabled: false` disables
+selection and discovery. An entry with `extends` defines the user's own provider, shadows the plugin,
+and logs a warning. Overrides validate before plugins load; an override for an absent plugin stays
+inactive and logs a warning naming the unmatched ID on each registry build.
+Use IDs matching `/^[a-z][a-z0-9-]*$/` for configurable providers. Dots and underscores
+remain valid for plugin registration but cannot be used as config provider IDs.
+
+Provider config changes rebuild the affected registry entry and invalidate its catalogue; the next
+connection receives the new launch without restarting the daemon. Running sessions keep their
+current launch until refreshed, as native providers do.
+
 Implement optional `ProviderRegistration.getCatalogCacheKey(options)` to share equivalent catalogue
 probes. The callback runs in the plugin process before discovery and receives the actual global or
-workspace target. Return a key covering effective configuration and execution environment, or
+workspace target plus the resolved `launch` when a command is declared. Return a key covering
+effective configuration and execution environment, or
 `undefined` for target-specific caching. Ignore `force` when choosing identity. Existing providers
 need no change. See [catalogue ownership](providers.md#provider-snapshot-refresh-contract).
 
@@ -394,12 +422,15 @@ Provider settings are toggle/select data that Paseo renders in the composer. Kee
 the opaque `providerOptions` config object.
 
 Agent refresh closes the current provider session and opens it again with current configuration and
-persistence. Providers re-read credentials, environment, global configuration, and MCP servers on
-`session.open`; there is no provider reload input.
+persistence. Re-read credentials and provider-owned configuration on `session.open`; consume the
+daemon launch from `connect` and the per-session env and MCP servers from `session.open`. There is
+no provider reload input.
 
 For an ACP command, register `runAcpProvider({ id, label, command })` from
 `@getpaseo/plugin/server/acp`. Its transformer hooks cover narrow vendor differences; do not translate the
-whole provider event stream. The direct and ACP examples live in `plugin-examples/provider-direct`
+whole provider event stream. The shim uses the resolved launch for every probe and session, overlaying
+only the supplied per-session env for sessions. The direct and ACP examples live in
+`plugin-examples/provider-direct`
 and `plugin-examples/provider-acp-transformer`.
 
 Provider-emitted plugin timeline items use the same renderer registration as transformed and

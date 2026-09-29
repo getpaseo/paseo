@@ -105,7 +105,16 @@ export interface ProviderDefinition extends AgentProviderDefinition {
   ) => Promise<ProviderCatalog>;
 }
 
+/** Provider metadata and an unconfigured factory; the registry owns override application. */
+export interface RegisteredProviderDefinition extends AgentProviderDefinition {
+  iconSvg?: string;
+  optionsSchema: z.ZodType<ProviderOptions>;
+  supportsExactMcpPreapproval: boolean;
+  createClient: (logger: Logger, runtimeSettings?: ProviderRuntimeSettings) => AgentClient;
+}
+
 export interface BuildProviderRegistryOptions {
+  pluginProviders?: Record<string, RegisteredProviderDefinition>;
   runtimeSettings?: AgentProviderRuntimeSettingsMap;
   providerOverrides?: Record<string, ProviderOverride>;
   workspaceGitService?: Pick<WorkspaceGitService, "resolveRepoRoot">;
@@ -492,8 +501,11 @@ function wrapClientProvider(
 
   return {
     provider,
-    capabilities: inner.capabilities,
-    createSession: async (config, launchContext) =>
+    get capabilities() {
+      return inner.capabilities;
+    },
+    shutdown: inner.shutdown?.bind(inner),
+    createSession: async (config, launchContext, options) =>
       wrapSessionProvider(
         provider,
         await inner.createSession(
@@ -502,6 +514,7 @@ function wrapClientProvider(
             provider: inner.provider,
           },
           launchContext,
+          options,
         ),
       ),
     resumeSession: async (handle, overrides, launchContext, options) =>
@@ -713,6 +726,31 @@ function createResolvedProviderClient(
   );
 }
 
+interface RegisteredProvider {
+  definition: AgentProviderDefinition;
+  createClient: ProviderClientFactory;
+  contract: ProviderContract;
+  runtimeSettings?: ProviderRuntimeSettings;
+  override?: ProviderOverride;
+}
+
+function resolveRegisteredProvider(input: RegisteredProvider): ResolvedProvider {
+  const { definition, override, contract } = input;
+  const runtimeSettings = mergeRuntimeSettings(input.runtimeSettings, toRuntimeSettings(override));
+  return {
+    definition: applyOverrideToDefinition(definition, override),
+    runtimeSettings,
+    profileModels: override?.models ?? [],
+    additionalModels: override?.additionalModels ?? [],
+    profileModelsAreAdditive: false,
+    enabled: override?.enabled ?? definition.enabledByDefault ?? true,
+    derivedFromProviderId: null,
+    providerParams: override?.params,
+    createBaseClient: (logger) => input.createClient(logger, runtimeSettings),
+    contract,
+  };
+}
+
 function buildResolvedBuiltinProviders(
   providerOverrides: Record<string, ProviderOverride>,
   runtimeSettings: AgentProviderRuntimeSettingsMap | undefined,
@@ -731,30 +769,23 @@ function buildResolvedBuiltinProviders(
   for (const definition of definitions) {
     const override = providerOverrides[definition.id];
     const factory = getProviderClientFactory(definition.id);
-    const mergedRuntimeSettings = mergeRuntimeSettings(
-      runtimeSettings?.[definition.id],
-      toRuntimeSettings(override),
+    resolvedProviders.set(
+      definition.id,
+      resolveRegisteredProvider({
+        definition,
+        override,
+        runtimeSettings: runtimeSettings?.[definition.id],
+        createClient: (logger, settings) =>
+          factory(logger, settings, {
+            workspaceGitService: options.workspaceGitService,
+            managedProcesses: options.managedProcesses,
+            ompRuntime: options.ompRuntime,
+            openCodeBridge: options.openCodeBridge,
+            providerParams: override?.params,
+          }),
+        contract: PROVIDER_CONTRACTS[definition.id] ?? UNSUPPORTED_PROVIDER_CONTRACT,
+      }),
     );
-
-    resolvedProviders.set(definition.id, {
-      definition: applyOverrideToDefinition(definition, override),
-      runtimeSettings: mergedRuntimeSettings,
-      profileModels: override?.models ?? [],
-      additionalModels: override?.additionalModels ?? [],
-      profileModelsAreAdditive: false,
-      enabled: override?.enabled ?? definition.enabledByDefault ?? true,
-      derivedFromProviderId: null,
-      providerParams: override?.params,
-      createBaseClient: (logger) =>
-        factory(logger, mergedRuntimeSettings, {
-          workspaceGitService: options.workspaceGitService,
-          managedProcesses: options.managedProcesses,
-          ompRuntime: options.ompRuntime,
-          openCodeBridge: options.openCodeBridge,
-          providerParams: override?.params,
-        }),
-      contract: PROVIDER_CONTRACTS[definition.id] ?? UNSUPPORTED_PROVIDER_CONTRACT,
-    });
   }
 
   return resolvedProviders;
@@ -771,7 +802,8 @@ function addDerivedProviders(
     }
 
     if (!override.extends) {
-      throw new Error(`Custom provider '${providerId}' requires an extends value`);
+      // Plugin overrides can precede registration (including disabled or removed plugins).
+      continue;
     }
 
     if (override.extends === "acp") {
@@ -872,6 +904,22 @@ function addDerivedProviders(
   }
 }
 
+function warnUnknownProviderOverrides({
+  logger,
+  providerOverrides,
+  resolvedProviders,
+}: {
+  logger: Logger;
+  providerOverrides: Record<string, ProviderOverride>;
+  resolvedProviders: Map<string, ResolvedProvider>;
+}): void {
+  for (const [provider, override] of Object.entries(providerOverrides)) {
+    if (!override.extends && !resolvedProviders.has(provider)) {
+      logger.warn({ provider }, "Provider override matches no registered provider");
+    }
+  }
+}
+
 export function buildProviderRegistry(
   logger: Logger,
   options?: BuildProviderRegistryOptions,
@@ -889,10 +937,35 @@ export function buildProviderRegistry(
     },
     options?.isDev === true,
   );
+  for (const [provider, definition] of Object.entries(options?.pluginProviders ?? {})) {
+    if (resolvedProviders.has(provider)) {
+      throw new Error(`Plugin provider '${provider}' conflicts with a built-in provider`);
+    }
+    const override = providerOverrides[provider];
+    if (override?.extends) {
+      logger.warn({ provider }, "Plugin provider shadowed by configured provider");
+      continue;
+    }
+    resolvedProviders.set(
+      provider,
+      resolveRegisteredProvider({
+        definition,
+        override,
+        runtimeSettings: runtimeSettings?.[provider],
+        createClient: definition.createClient,
+        contract: {
+          optionsSchema: definition.optionsSchema,
+          supportsExactMcpPreapproval: definition.supportsExactMcpPreapproval,
+        },
+      }),
+    );
+  }
   addDerivedProviders(resolvedProviders, providerOverrides, {
     managedProcesses: options?.managedProcesses,
     openCodeBridge: options?.openCodeBridge,
   });
+
+  warnUnknownProviderOverrides({ logger, providerOverrides, resolvedProviders });
 
   return Object.fromEntries(
     [...resolvedProviders.entries()].map(([provider, resolved]) => [

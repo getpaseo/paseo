@@ -14,6 +14,7 @@ import {
   ProviderEventSchema,
   type ProviderConnection,
   type ProviderRegistration,
+  ProviderStatusSchema,
 } from "@getpaseo/plugin/server/provider";
 import { createPaseoApi, type PaseoApi } from "@getpaseo/client";
 import { DaemonClient } from "@getpaseo/client/internal/daemon-client";
@@ -123,6 +124,14 @@ export function createPluginWorker(options: {
     ) {
       throw new Error(`Invalid catalogue key callback for plugin provider ${id}`);
     }
+    if (provider.status !== undefined && typeof provider.status !== "function")
+      throw new Error(`Invalid status callback for plugin provider ${id}`);
+    if (
+      provider.command !== undefined &&
+      (provider.command.length === 0 ||
+        provider.command.some((part) => typeof part !== "string" || !part.trim()))
+    )
+      throw new Error(`Invalid command for plugin provider ${id}`);
     if (providers.has(id)) throw new Error(`Duplicate plugin provider ID: ${id}`);
     providers.set(id, { ...provider, id });
   }
@@ -150,6 +159,8 @@ export function createPluginWorker(options: {
       description: provider.description,
       iconPath: provider.icon,
       hasCatalogCacheKey: provider.getCatalogCacheKey !== undefined,
+      hasStatus: provider.status !== undefined,
+      command: provider.command,
     };
   }
 
@@ -351,6 +362,7 @@ export function createPluginWorker(options: {
 
   function rejectWhileStopping(message: PluginProcessRequest): void {
     if (
+      message.type === "provider.status" ||
       message.type === "provider.catalog_key" ||
       message.type === "usage.identify" ||
       message.type === "usage.fetch" ||
@@ -414,6 +426,18 @@ export function createPluginWorker(options: {
     }
     if (stopping) {
       rejectWhileStopping(message);
+      return;
+    }
+    if (message.type === "provider.status") {
+      void (async () => {
+        const provider = providers.get(message.providerId);
+        if (!provider || !provider.status)
+          throw new Error(`Provider has no status capability: ${message.providerId}`);
+        const output = ProviderStatusSchema.parse(await provider.status(message.request));
+        send({ type: "result", requestId: message.requestId, output });
+      })().catch((error) =>
+        send({ type: "error", requestId: message.requestId, error: describeError(error) }),
+      );
       return;
     }
     if (message.type === "provider.catalog_key") {

@@ -28,6 +28,9 @@ export type ProviderCapability = (typeof PROVIDER_CAPABILITIES)[number];
 export interface ProviderRegistration {
   /** Equal keys share discovery within this provider. Include effective configuration and execution environment. */
   getCatalogCacheKey?(options: ProviderCatalogOptions): Promise<string | undefined>;
+  /** Default executable and arguments; the daemon resolves overrides before status/connect. */
+  command?: readonly [string, ...string[]];
+  status?(request: ProviderStatusRequest): Promise<ProviderStatus>;
   id: string;
   label: string;
   description?: string;
@@ -37,10 +40,34 @@ export interface ProviderRegistration {
 }
 
 export type ProviderCatalogOptions =
-  | { scope: "global"; force?: boolean }
-  | { scope: "workspace"; cwd: string; force?: boolean };
+  | { scope: "global"; force?: boolean; launch?: ProviderLaunch }
+  | { scope: "workspace"; cwd: string; force?: boolean; launch?: ProviderLaunch };
+
+export const ProviderLaunchSchema = z
+  .object({
+    /** Resolved executable path. */
+    command: z.string().min(1),
+    args: z.array(z.string()),
+    /** Complete daemon-owned environment, including overrides and parent-session stripping. */
+    env: z.record(z.string(), z.string()),
+  })
+  .strip();
+
+export type ProviderLaunch = z.infer<typeof ProviderLaunchSchema>;
+
+export interface ProviderStatusRequest {
+  launch?: ProviderLaunch;
+}
+
+export const ProviderStatusSchema = z.discriminatedUnion("available", [
+  z.object({ available: z.literal(true), diagnostic: z.string().optional() }).strip(),
+  z.object({ available: z.literal(false), diagnostic: z.string().min(1) }).strip(),
+]);
+
+export type ProviderStatus = z.infer<typeof ProviderStatusSchema>;
 
 export interface ProviderConnectRequest {
+  launch?: ProviderLaunch;
   versions: readonly number[];
   capabilities: readonly string[];
 }
