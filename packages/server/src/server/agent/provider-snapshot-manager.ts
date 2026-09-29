@@ -373,9 +373,9 @@ export class ProviderSnapshotManager {
         applyOptions: definition.applyOptions,
         applyToolPolicy: definition.applyToolPolicy,
       };
-      if (definition.enabled) {
-        clients[provider] = this.ensureClient(provider, definition, providerClients);
-      }
+      // Disabling a provider only stops new sessions; its existing sessions still need
+      // the client to load, or they vanish from the app.
+      clients[provider] = this.ensureClient(provider, definition, providerClients);
     }
     for (const [provider, client] of Object.entries(this.extraClients)) {
       if (client) {

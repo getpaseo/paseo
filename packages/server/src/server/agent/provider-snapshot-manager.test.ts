@@ -1525,7 +1525,7 @@ describe("ProviderSnapshotManager applyMutableProviderConfig", () => {
     }
   });
 
-  test("drops disabled built-in providers from clients while preserving providerDefinitions", () => {
+  test("keeps clients for disabled providers so their existing sessions still load", () => {
     const manager = new ProviderSnapshotManager({
       logger: createTestLogger(),
       providerOverrides: {
@@ -1539,13 +1539,13 @@ describe("ProviderSnapshotManager applyMutableProviderConfig", () => {
     try {
       const before = manager.getAgentManagerProviderState();
       expect(before.providerDefinitions.copilot).toMatchObject({ enabled: false });
-      expect(before.clients.copilot).toBeUndefined();
+      expect(before.clients.copilot).toBeDefined();
 
       const state = manager.applyMutableProviderConfig({ codex: { enabled: false } });
       expect(state.providerDefinitions.codex).toMatchObject({ enabled: false });
-      expect(state.clients.codex).toBeUndefined();
+      expect(state.clients.codex).toBeDefined();
       expect(state.providerDefinitions.copilot).toMatchObject({ enabled: false });
-      expect(state.clients.copilot).toBeUndefined();
+      expect(state.clients.copilot).toBeDefined();
     } finally {
       manager.destroy();
     }

@@ -2821,6 +2821,30 @@ test("listProviderAvailability uses registered client keys, including custom pro
   ]);
 });
 
+test("a disabled provider keeps its client for existing sessions but is not offered", async () => {
+  const client: AgentClient = {
+    provider: "zai",
+    capabilities: TEST_CAPABILITIES,
+    async isAvailable() {
+      return true;
+    },
+    async createSession() {
+      throw new Error("not implemented");
+    },
+    async resumeSession() {
+      throw new Error("not implemented");
+    },
+  };
+  const manager = new AgentManager({ clients: { zai: client }, logger });
+  manager.updateProviderRegistry({
+    providerDefinitions: { zai: { enabled: false } },
+    clients: { zai: client },
+  });
+
+  expect(manager.getRegisteredProviderIds()).toContain("zai");
+  await expect(manager.listProviderAvailability()).resolves.toEqual([]);
+});
+
 test("createAgent passes daemon launch env through the provider launch context", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
   const storagePath = join(workdir, "agents");
