@@ -100,10 +100,11 @@ export class SessionPermissions {
         title: form.title,
         input: {
           questions: form.fields.map((field) => ({
-            header: field.key,
-            question: field.title ?? field.key,
+            header: field.title ?? field.key,
+            question: field.description ?? field.title ?? field.key,
             options: "options" in field ? field.options : undefined,
             multiple: field.type === "multiselect",
+            allowOther: "custom" in field && field.custom === true,
           })),
         },
       };
