@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import {
   negotiateProviderCapabilities,
   requireProviderCapabilities,
+  type ProviderCatalog,
   type ProviderConnection,
   type ProviderEvent,
   type ProviderInput,
@@ -53,12 +54,18 @@ function createConnection(
 ): ProviderConnection {
   const sessions = new Map<string, Session>();
   const listeners = new Set<(event: ProviderEvent) => void>();
+  let discovered: ProviderCatalog | null = null;
   let closed = false;
   let pending = Promise.resolve();
 
   function emit(event: ProviderEvent): void {
     if (closed) return;
     for (const listener of listeners) listener(event);
+  }
+  function catalog(): ProviderCatalog {
+    if (discovered === null)
+      throw new AntigravityError("Antigravity catalog has not been discovered");
+    return discovered;
   }
   function session(id: string): Session {
     const found = sessions.get(id);
@@ -68,20 +75,22 @@ function createConnection(
   async function dispatch(input: ProviderInput): Promise<void> {
     switch (input.type) {
       case "catalog":
+        discovered = await getCatalog(launch, input.cwd);
         emit({
           type: "catalog",
           requestId: input.requestId,
-          catalog: await getCatalog(launch, input.cwd),
+          catalog: catalog(),
         });
         return;
       case "session.open": {
         if (sessions.has(input.sessionId))
           throw new AntigravityError(`Session already exists: ${input.sessionId}`);
+        if (discovered === null) discovered = await getCatalog(launch, input.config.cwd);
         const opened = new Session({
           id: input.sessionId,
           config: input.config,
           persistence: input.persistence,
-          catalog: await getCatalog(launch, input.config.cwd),
+          catalog,
           launch,
           emit,
         });

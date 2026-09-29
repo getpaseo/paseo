@@ -11,20 +11,20 @@ import { AntigravityError } from "./wire.js";
 const modes: readonly ProviderMode[] = [
   {
     id: "default",
-    label: "Default (shell denied)",
+    label: "Default",
     description: "Workspace reads and edits are allowed; shell commands are denied.",
     isUnattended: true,
   },
   {
     id: "accept-edits",
-    label: "Accept edits (shell denied)",
+    label: "Accept edits",
     description:
       "Native accept-edits mode. Workspace edits are allowed; shell commands are denied.",
     isUnattended: true,
   },
   {
     id: "plan",
-    label: "Plan (shell denied)",
+    label: "Plan",
     description:
       "Native plan mode permits workspace edits. Shell commands are denied; this is not read-only.",
     isUnattended: true,
@@ -58,14 +58,14 @@ export async function getStatus(launch: ProviderLaunch): Promise<ProviderStatus>
     if (!match)
       return {
         available: false,
-        diagnostic: "Could not read the Antigravity version. Update `agy` to 1.2.13 or later.",
+        diagnostic: "Could not read the Antigravity version. Update `agy` to 1.1.15 or later.",
       };
     const [, major, minor, patch] = match.map(Number);
-    const supported = major > 1 || (major === 1 && (minor > 2 || (minor === 2 && patch >= 13)));
+    const supported = major > 1 || (major === 1 && (minor > 1 || (minor === 1 && patch >= 15)));
     if (!supported)
       return {
         available: false,
-        diagnostic: `Antigravity ${version} is unsupported. Update \`agy\` to 1.2.13 or later.`,
+        diagnostic: `Antigravity ${version} is unsupported. Update \`agy\` to 1.1.15 or later.`,
       };
     await getCatalog(launch);
     return { available: true };

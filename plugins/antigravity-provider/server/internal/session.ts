@@ -37,7 +37,7 @@ interface SessionOptions {
   id: string;
   config: ProviderSessionConfig;
   launch: ProviderLaunch;
-  catalog: ProviderCatalog;
+  catalog(): ProviderCatalog;
   persistence?: ProviderPersistence;
   emit(event: ProviderEvent): void;
 }
@@ -54,7 +54,7 @@ export class Session {
       ? persistenceSchema.parse(options.persistence).data.conversationId
       : null;
     this.firstMessage = this.conversationId === null;
-    validateSelection(this.config, options.catalog);
+    validateSelection(this.config, options.catalog());
   }
 
   async open(requestId: string, capabilities: readonly string[]): Promise<void> {
@@ -136,7 +136,7 @@ export class Session {
     };
     if (changes.settings && Object.keys(changes.settings).length > 0)
       throw new AntigravityError("Antigravity has no configurable settings");
-    validateSelection(config, this.options.catalog);
+    validateSelection(config, this.options.catalog());
     this.config = config;
     this.publishConfig();
   }
@@ -336,8 +336,8 @@ export class Session {
       config: {
         model: this.config.model,
         mode: this.config.mode || "default",
-        models: this.options.catalog.models,
-        modes: this.options.catalog.modes,
+        models: this.options.catalog().models,
+        modes: this.options.catalog().modes,
         thinkingOptions: [],
         settings: [],
       },

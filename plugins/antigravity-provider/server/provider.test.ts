@@ -12,6 +12,7 @@ import {
   type ProviderLaunch,
   type ProviderPersistence,
 } from "@getpaseo/plugin/server/provider";
+import { signalPlan } from "./internal/signals.js";
 import { createAntigravityProvider } from "./provider.js";
 
 const temporary: string[] = [];
@@ -64,11 +65,11 @@ async function harness(env: Record<string, string> = {}) {
             event.type === "catalog"),
       );
   }
-  async function open(restored?: ProviderPersistence) {
+  async function open(restored?: ProviderPersistence, sessionId = "s") {
     await request({
       type: "session.open",
       requestId: `open-${events.length}`,
-      sessionId: "s",
+      sessionId,
       persistence: restored,
       history: "replay",
       config: {
@@ -427,6 +428,29 @@ it("rejects mid-turn steering and reports a busy message without queueing a seco
 });
 
 describe("discovery", () => {
+  it("reuses one discovered catalog for two opens and configure, and refreshes explicit catalog requests", async () => {
+    const h = await harness();
+    await h.open();
+    await h.open(undefined, "second");
+    await h.request({
+      type: "session.configure",
+      requestId: "configure-cached",
+      sessionId: "second",
+      changes: { model: "gemini-3.8-flash-low" },
+    });
+    expect(
+      (await h.records()).filter((entry) => entry.args && entry.args.includes("models")),
+    ).toHaveLength(1);
+    await h.request({ type: "catalog", requestId: "refresh" });
+    expect(
+      (await h.records()).filter((entry) => entry.args && entry.args.includes("models")),
+    ).toHaveLength(2);
+  });
+  it.each(["1.1.15", "1.2.12", "1.2.13"])("accepts driver-capable version %s", async (version) => {
+    const h = await harness({ AGY_TEST_VERSION: version });
+    expect(await provider.status?.({ launch: h.launch })).toEqual({ available: true });
+  });
+
   it("parses tab-separated catalog and exposes native permission choices without thinking options", async () => {
     const h = await harness();
     await h.request({ type: "catalog", requestId: "catalog" });
@@ -443,6 +467,12 @@ describe("discovery", () => {
     });
     if (event.type !== "catalog") throw new Error("Missing catalog");
     expect(event.catalog.models).toHaveLength(11);
+    expect(event.catalog.modes.map((mode) => mode.label)).toEqual([
+      "Default",
+      "Accept edits",
+      "Plan",
+      "Full access",
+    ]);
     expect(event.catalog.modes.map((mode) => mode.id)).toEqual([
       "default",
       "accept-edits",
@@ -461,10 +491,10 @@ describe("discovery", () => {
         launch: { ...missing.launch, command: path.join(missing.cwd, "missing-agy") },
       }),
     ).toMatchObject({ available: false, diagnostic: expect.stringContaining("ENOENT") });
-    const old = await harness({ AGY_TEST_VERSION: "1.2.12" });
+    const old = await harness({ AGY_TEST_VERSION: "1.1.14" });
     expect(await provider.status?.({ launch: old.launch })).toMatchObject({
       available: false,
-      diagnostic: expect.stringContaining("1.2.13"),
+      diagnostic: expect.stringContaining("1.1.15"),
     });
     const unauthenticated = await harness({ AGY_TEST_AUTH: "missing" });
     expect(await provider.status?.({ launch: unauthenticated.launch })).toEqual({
@@ -499,4 +529,24 @@ describe("discovery", () => {
       }),
     ).not.toBe(key);
   });
+});
+
+describe("process signal plans", () => {
+  it.each(["SIGINT", "SIGTERM", "SIGKILL"] as const)("kills the Windows tree for %s", (signal) => {
+    expect(signalPlan({ platform: "win32", pid: 123, signal })).toEqual({
+      type: "tree",
+      command: "taskkill",
+      args: ["/PID", "123", "/T", "/F"],
+    });
+  });
+  it.each(["SIGINT", "SIGTERM", "SIGKILL"] as const)(
+    "preserves POSIX group signal %s",
+    (signal) => {
+      expect(signalPlan({ platform: "linux", pid: 123, signal })).toEqual({
+        type: "group",
+        pid: -123,
+        signal,
+      });
+    },
+  );
 });

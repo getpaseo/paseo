@@ -1,4 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { signalProcess } from "./signals.js";
 import { createInterface } from "node:readline";
 import type { ProviderLaunch, ProviderSessionConfig } from "@getpaseo/plugin/server/provider";
 import {
@@ -56,6 +57,7 @@ export function startDriver(options: DriverOptions): Driver {
     stdio: "pipe",
   });
   const lines = createInterface({ input: child.stdout });
+  let cleanup = Promise.resolve();
   let stderr = "";
   let state: "starting" | "ready" | "stopping" | "exited" = "starting";
   let resolveReady: (init: Init) => void;
@@ -117,13 +119,15 @@ export function startDriver(options: DriverOptions): Driver {
     options.onFrame(decoded);
   });
 
-  function fail(error: AntigravityError): void {
+  function fail(failure: AntigravityError): void {
     clearTimeout(startupDeadline);
-    if (state === "starting") rejectReady(error);
-    if (state === "ready") options.onExit(error);
+    if (state === "starting") rejectReady(failure);
+    if (state === "ready") options.onExit(failure);
     if (state === "exited" || state === "stopping") return;
     state = "stopping";
-    signalGroup(child, "SIGKILL");
+    cleanup = Promise.resolve(signalGroup(child, "SIGKILL"));
+    // The stop operation awaits cleanup and owns reporting its failure.
+    void cleanup.catch(() => undefined);
   }
 
   return {
@@ -140,10 +144,18 @@ export function startDriver(options: DriverOptions): Driver {
       });
     },
     async stop(reason) {
+      if (process.platform === "win32") await cleanup;
       if (state === "exited") return;
       if (state === "starting") rejectReady(new AntigravityError("Antigravity startup canceled"));
       clearTimeout(startupDeadline);
       state = "stopping";
+      if (process.platform === "win32") {
+        // Node signal emulation kills only the leader; taskkill must see the live tree.
+        cleanup = Promise.resolve(signalGroup(child, "SIGKILL"));
+        await cleanup;
+        await exited;
+        return;
+      }
       if (reason === "close") child.stdin.end();
       else signalGroup(child, "SIGINT");
       const terminate = setTimeout(() => signalGroup(child, "SIGTERM"), 1000);
@@ -157,14 +169,12 @@ export function startDriver(options: DriverOptions): Driver {
   };
 }
 
-function signalGroup(child: ChildProcessWithoutNullStreams, signal: NodeJS.Signals): void {
+function signalGroup(
+  child: ChildProcessWithoutNullStreams,
+  signal: NodeJS.Signals,
+): void | Promise<void> {
   if (!child.pid) return;
-  try {
-    if (process.platform === "win32") child.kill(signal);
-    else process.kill(-child.pid, signal);
-  } catch (error) {
-    if (!(error instanceof Error && "code" in error && error.code === "ESRCH")) throw error;
-  }
+  return signalProcess({ platform: process.platform, pid: child.pid, signal });
 }
 
 interface ProbeOptions {
@@ -183,8 +193,11 @@ export function probe(options: ProbeOptions): Promise<string> {
     let stdout = "";
     let stderr = "";
     const deadline = setTimeout(() => {
-      signalGroup(child, "SIGKILL");
-      reject(new AntigravityError("Antigravity discovery timed out", "PROBE_TIMEOUT"));
+      const termination = Promise.resolve(signalGroup(child, "SIGKILL"));
+      void termination.then(() => {
+        reject(new AntigravityError("Antigravity discovery timed out", "PROBE_TIMEOUT"));
+        return undefined;
+      }, reject);
     }, 10_000);
     child.stdout.on("data", (chunk: Buffer) => {
       stdout += chunk.toString();
