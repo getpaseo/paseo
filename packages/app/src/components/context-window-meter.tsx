@@ -12,6 +12,8 @@ interface ContextWindowMeterProps {
   showPercentage?: boolean;
   /** Reserve the meter footprint and show a loading ring while usage is pending. */
   pending?: boolean;
+  /** Marks retained idle-session usage whose protocol payload has no observation timestamp. */
+  showSnapshotCue?: boolean;
   /** Optional glyph envelope for icon-toolbar alignment. */
   glyphSize?: number;
 }
@@ -96,6 +98,7 @@ export function ContextWindowMeter({
   totalCostUsd,
   showPercentage = false,
   pending = false,
+  showSnapshotCue = false,
   glyphSize,
 }: ContextWindowMeterProps) {
   const { theme } = useUnistyles();
@@ -104,15 +107,18 @@ export function ContextWindowMeter({
     maxTokens !== null && usedTokens !== null ? getUsagePercentage(maxTokens, usedTokens) : null;
   const geometry = getMeterGeometry(showPercentage, glyphSize);
 
-  // No usage yet: reserve the footprint with a track-only ring while a session is
-  // active so the real ring fades in without shifting siblings. Render nothing when
-  // no usage is expected.
+  // AgentUsage has no observation timestamp. Missing values stay explicitly loading
+  // or unknown; never derive freshness from the agent's unrelated updatedAt field.
   if (percentage === null || maxTokens === null || usedTokens === null) {
-    if (!pending) {
-      return null;
-    }
     return (
-      <View style={geometry.containerStyle}>
+      <View
+        style={styles.unavailableContainer}
+        testID="context-window-meter"
+        accessibilityRole="text"
+        accessibilityLabel={t(
+          pending ? "contextWindow.loading" : "contextWindow.unknownAccessibility",
+        )}
+      >
         <Svg
           width={geometry.svgSize}
           height={geometry.svgSize}
@@ -129,7 +135,13 @@ export function ContextWindowMeter({
             strokeWidth={geometry.strokeWidth}
           />
         </Svg>
-        {showPercentage ? <View style={styles.skeletonLabel} /> : null}
+        {pending ? (
+          <View style={styles.skeletonLabel} testID="context-window-meter-loading" />
+        ) : (
+          <Text style={styles.unknownLabel} testID="context-window-meter-unknown">
+            {showPercentage ? "—" : t("contextWindow.unknown")}
+          </Text>
+        )}
       </View>
     );
   }
@@ -149,9 +161,12 @@ export function ContextWindowMeter({
           style={containerStyle}
           testID="context-window-meter"
           accessibilityRole="image"
-          accessibilityLabel={t("contextWindow.accessibility", {
-            percentage: roundedPercentage,
-          })}
+          accessibilityLabel={t(
+            showSnapshotCue
+              ? "contextWindow.accessibilitySnapshot"
+              : "contextWindow.accessibility",
+            { percentage: roundedPercentage },
+          )}
         >
           <Svg
             width={svgSize}
@@ -184,6 +199,18 @@ export function ContextWindowMeter({
           </Svg>
           {showPercentage ? (
             <Text style={styles.percentageLabel}>{`${roundedPercentage}%`}</Text>
+          ) : (
+            <Text style={styles.tokenSummary} testID="context-window-meter-summary">
+              {t("contextWindow.summary", {
+                used: formatTokenCount(usedTokens),
+                max: formatTokenCount(maxTokens),
+              })}
+            </Text>
+          )}
+          {showSnapshotCue ? (
+            <Text style={styles.snapshotCue} testID="context-window-meter-snapshot-cue">
+              {t("contextWindow.lastTurnSnapshot")}
+            </Text>
           ) : null}
         </Pressable>
       </TooltipTrigger>
@@ -212,11 +239,13 @@ export function ContextWindowMeter({
 
 const styles = StyleSheet.create((theme) => ({
   container: {
-    width: 28,
     height: 28,
+    flexDirection: "row",
     borderRadius: theme.borderRadius.full,
     alignItems: "center",
     justifyContent: "center",
+    gap: theme.spacing[1],
+    paddingHorizontal: theme.spacing[1],
   },
   containerWithLabel: {
     height: 28,
@@ -229,6 +258,30 @@ const styles = StyleSheet.create((theme) => ({
   percentageLabel: {
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.base,
+    fontWeight: theme.fontWeight.normal,
+  },
+  tokenSummary: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
+    fontWeight: theme.fontWeight.normal,
+    fontVariant: ["tabular-nums"],
+  },
+  snapshotCue: {
+    color: theme.colors.foregroundExtraMuted,
+    fontSize: theme.fontSize.xs,
+    fontWeight: theme.fontWeight.normal,
+  },
+  unavailableContainer: {
+    height: 28,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: theme.spacing[1],
+    paddingHorizontal: theme.spacing[1],
+  },
+  unknownLabel: {
+    color: theme.colors.foregroundExtraMuted,
+    fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.normal,
   },
   skeletonLabel: {

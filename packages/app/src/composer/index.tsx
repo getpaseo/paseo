@@ -285,12 +285,9 @@ function renderContextWindowMeter(
   totalCostUsd: number | null,
   showPercentage: boolean,
   pending: boolean,
+  showSnapshotCue: boolean,
   glyphSize: number,
 ): ReactElement | null {
-  const hasData = contextWindowMaxTokens !== null && contextWindowUsedTokens !== null;
-  if (!hasData && !pending) {
-    return null;
-  }
   return (
     <ContextWindowMeter
       maxTokens={contextWindowMaxTokens}
@@ -298,6 +295,7 @@ function renderContextWindowMeter(
       totalCostUsd={totalCostUsd}
       showPercentage={showPercentage}
       pending={pending}
+      showSnapshotCue={showSnapshotCue}
       glyphSize={glyphSize}
     />
   );
@@ -2082,6 +2080,7 @@ function ComposerContentImpl({
         agentState.totalCostUsd,
         false,
         contextWindowPending,
+        !contextWindowPending,
         contextWindowMeterGlyphSize,
       ),
     [
@@ -2566,7 +2565,6 @@ const styles = StyleSheet.create((theme: Theme) => ({
     gap: theme.spacing[1],
   },
   contextWindowMeterSlot: {
-    width: 28,
     height: 28,
     flexShrink: 0,
     alignItems: "center",

@@ -1917,8 +1917,14 @@ export const ar: TranslationResources = {
     title: "نافذة السياق",
     used: "تم استخدام{{percentage}}%",
     tokens: "رموز{{used}}/{{max}}",
+    summary: "{{used}} / {{max}}",
+    lastTurnSnapshot: "الدور الأخير",
+    loading: "جارٍ تحميل السياق",
+    unknown: "السياق غير معروف",
+    unknownAccessibility: "استخدام نافذة السياق غير معروف",
     sessionCost: "تكلفة الجلسة{{cost}}",
     accessibility: "تم استخدام نافذة السياق{{percentage}}%",
+    accessibilitySnapshot: "تم استخدام {{percentage}}% من نافذة السياق، لقطة للدور الأخير",
   },
   review: {
     comment: {

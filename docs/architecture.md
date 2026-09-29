@@ -284,6 +284,9 @@ Agent snapshots optionally carry the daemon-owned active turn identity, and turn
 optionally carry the same `turnId`. New clients use these fields when present and normalize an old daemon's
 status once at the directory boundary rather than maintaining a second activity model.
 
+`AgentSnapshot.lastUsage` has no observation timestamp. Present retained idle values as a last-turn
+snapshot. Do not use `AgentSnapshot.updatedAt` as usage freshness; it also changes for unrelated agent state.
+
 - Terminal subscribe/input/capture commands
 - Voice/dictation streaming events (`dictation_stream_*`, `assistant_chunk`, `audio_output`, `transcription_result`)
 - Request/response pairs for fetch, list, create, etc., correlated by `requestId`; failures use `rpc_error`

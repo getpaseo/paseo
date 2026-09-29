@@ -1937,8 +1937,14 @@ export const ja: TranslationResources = {
     title: "コンテキストウィンドウ",
     used: "{{percentage}}%使用",
     tokens: "{{used}} / {{max}}トークン",
+    summary: "{{used}} / {{max}}",
+    lastTurnSnapshot: "前のターン",
+    loading: "コンテキストを読み込み中",
+    unknown: "コンテキスト不明",
+    unknownAccessibility: "コンテキストウィンドウ使用量は不明",
     sessionCost: "セッションコスト: {{cost}}",
     accessibility: "コンテキストウィンドウ{{percentage}}%使用",
+    accessibilitySnapshot: "コンテキストウィンドウ{{percentage}}%使用、前のターンのスナップショット",
   },
   review: {
     comment: {
