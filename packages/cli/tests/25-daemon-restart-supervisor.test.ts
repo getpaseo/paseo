@@ -228,6 +228,44 @@ import('node:fs').then(({appendFileSync}) => {
     `restart should run daemon cleanup before replacing the worker, logs:\n${capturedSupervisorLogs}`,
   );
   console.log("✓ app-style restart keeps daemon healthy and restarts worker\n");
+
+  console.log("Test 3: --wait-idle restart still swaps the worker when nothing is running");
+  const restartIdle = await client!.restartServer("settings_update", undefined, {
+    waitIdle: true,
+    idleTimeoutMs: 10_000,
+  });
+  assert.strictEqual(
+    restartIdle.status,
+    "restart_requested",
+    "--wait-idle restart should be acknowledged",
+  );
+  const workerPidBeforeIdleRestart = statusAfterRestart.pid;
+  const idleDeadline = Date.now() + 20000;
+  let statusAfterIdleRestart = statusAfterRestart;
+  await waitFor(
+    async () => {
+      try {
+        const observed = await client!.getDaemonStatus({
+          timeout: Math.max(1, idleDeadline - Date.now()),
+        });
+        if (observed.pid === workerPidBeforeIdleRestart || !isProcessRunning(observed.pid))
+          return false;
+        statusAfterIdleRestart = observed;
+        return true;
+      } catch (error) {
+        if (error instanceof DaemonConnectionError) return false;
+        throw error;
+      }
+    },
+    20000,
+    "worker pid did not change after --wait-idle restart",
+  );
+  assert.notStrictEqual(
+    statusAfterIdleRestart.pid,
+    workerPidBeforeIdleRestart,
+    "--wait-idle restart should still replace the worker",
+  );
+  console.log("✓ --wait-idle restart swaps the worker when no turns are running\n");
 } finally {
   await client?.close();
   if (supervisorProcess?.pid && isProcessRunning(supervisorProcess.pid)) {

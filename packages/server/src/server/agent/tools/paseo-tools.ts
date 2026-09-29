@@ -1928,14 +1928,17 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
         return true;
       }
 
-      const { disposition } = await sendPromptToAgent({
-        agentManager,
-        agentStorage,
-        agentId,
-        prompt,
-        sessionMode,
-        logger: childLogger,
-      });
+      const { disposition } = await agentManager.runPromptAdmission((admissionTicket) =>
+        sendPromptToAgent({
+          agentManager,
+          agentStorage,
+          agentId,
+          prompt,
+          sessionMode,
+          admissionTicket,
+          logger: childLogger,
+        }),
+      );
 
       // If not running in background, wait for completion
       if (!background) {

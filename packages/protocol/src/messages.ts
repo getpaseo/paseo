@@ -1821,6 +1821,15 @@ export const RestartServerRequestMessageSchema = z.object({
   type: z.literal("restart_server_request"),
   reason: z.string().optional(),
   requestId: z.string(),
+  /**
+   * Wait for every agent to settle before swapping the worker. When false or
+   * absent the restart is immediate (today's behaviour).
+   */
+  waitIdle: z.boolean().optional(),
+  /** Drain deadline in milliseconds. Defaults to 30 minutes server-side. */
+  idleTimeoutMs: z.number().int().nonnegative().optional(),
+  /** On drain timeout, proceed with the restart instead of failing. */
+  force: z.boolean().optional(),
 });
 
 export const ShutdownServerRequestMessageSchema = z.object({
@@ -3791,6 +3800,31 @@ export const RestartRequestedStatusPayloadSchema = z.object({
   requestId: z.string(),
 });
 
+/**
+ * Progress while a `--wait-idle` restart drains running agents.
+ * `phase: "timed_out"` means the drain deadline elapsed and, without `force`,
+ * the restart was abandoned. `phase: "already_draining"` means another drain
+ * already owns the restart, so this request did not start one.
+ */
+export const RestartDrainingAgentSchema = z.object({
+  agentId: z.string(),
+  title: z.string().nullable().optional(),
+  lifecycle: z.string(),
+  /** True while the agent is blocked on a human permission/question answer. */
+  waitingForPermission: z.boolean(),
+});
+
+export const RestartDrainingStatusPayloadSchema = z.object({
+  status: z.literal("restart_draining"),
+  requestId: z.string(),
+  phase: z.enum(["draining", "timed_out", "already_draining"]),
+  runningAgents: z.array(z.string()),
+  agents: z.array(RestartDrainingAgentSchema).optional(),
+  pendingAdmissions: z.number().int().nonnegative().optional(),
+  idleTimeoutMs: z.number().int().nonnegative().optional(),
+  forced: z.boolean().optional(),
+});
+
 export const ShutdownRequestedStatusPayloadSchema = z.object({
   status: z.literal("shutdown_requested"),
   clientId: z.string(),
@@ -3822,6 +3856,7 @@ export const KnownStatusPayloadSchema = z.discriminatedUnion("status", [
   AgentRefreshedStatusPayloadSchema,
   ShutdownRequestedStatusPayloadSchema,
   RestartRequestedStatusPayloadSchema,
+  RestartDrainingStatusPayloadSchema,
   DaemonConfigChangedStatusPayloadSchema,
   PluginCatalogChangedStatusPayloadSchema,
   PluginSettingsChangedStatusPayloadSchema,
@@ -4924,6 +4959,13 @@ export const SendAgentMessageResponseMessageSchema = z.object({
     agentId: z.string(),
     accepted: z.boolean(),
     error: z.string().nullable(),
+    /** Stable machine code (e.g. "host_restarting") for retryable rejections. */
+    errorCode: z.string().optional(),
+    /**
+     * Epoch ms when the draining host expects to swap workers. Present with
+     * `errorCode: "host_restarting"` so clients can retry until then.
+     */
+    drainDeadlineAt: z.number().int().nonnegative().optional(),
   }),
 });
 

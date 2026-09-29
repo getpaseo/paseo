@@ -91,6 +91,8 @@ import {
 } from "./provider-subagents/store.js";
 import { withTimeout } from "../../utils/promise-timeout.js";
 import { extractAttention } from "../persistence-hooks.js";
+import { setTimeout as delay } from "node:timers/promises";
+import { HostRestartingError } from "./host-restarting-error.js";
 
 const RELOAD_SESSION_CLOSE_TIMEOUT_MS = 3_000;
 const INTERRUPT_SESSION_TIMEOUT_MS = 2_000;
@@ -492,6 +494,26 @@ export interface AgentMetricsSnapshot {
   };
 }
 
+/**
+ * One agent that keeps the daemon busy during a drain. Reported to operators so
+ * `paseo daemon restart --wait-idle` can show what it is waiting on.
+ */
+export interface DrainingAgentSummary {
+  agentId: string;
+  title: string | null;
+  provider: AgentProvider;
+  lifecycle: ManagedAgent["lifecycle"];
+  activeTurnId: string | null;
+  /** True while the agent is blocked on a human permission/question answer. */
+  waitingForPermission: boolean;
+}
+
+export interface DrainProgress {
+  agents: DrainingAgentSummary[];
+  /** Prompt submissions that passed the admission check but have not started a run yet. */
+  pendingAdmissions: number;
+}
+
 type ActiveManagedAgent =
   | ManagedAgentInitializing
   | ManagedAgentIdle
@@ -756,6 +778,13 @@ export class AgentManager {
   private readonly rescueTimeouts: Required<AgentManagerRescueTimeouts>;
   private readonly beforeSteerUnavailableFallback?: AgentManagerOptions["beforeSteerUnavailableFallback"];
   private acceptingAgentRegistrations = true;
+  private draining = false;
+  private drainController: AbortController | null = null;
+  private drainOwnerToken: symbol | null = null;
+  private drainDeadlineAt: number | null = null;
+  private restartIntentEmitted = false;
+  private restartIntentCount = 0;
+  private readonly admissionTickets = new Set<symbol>();
 
   constructor(options: AgentManagerOptions) {
     this.pluginLifecycle = options.pluginLifecycle;
@@ -852,6 +881,204 @@ export class AgentManager {
 
   prepareForShutdown(): void {
     this.acceptingAgentRegistrations = false;
+  }
+
+  /**
+   * Enter drain mode: stop admitting new prompt/turn work so in-flight runs can
+   * settle, then let a restart swap the worker. Returns a token identifying this
+   * drain when it starts one, or null when a drain is already active. Only the
+   * owning token (or a global, tokenless call) may end that drain.
+   */
+  beginDraining(idleTimeoutMs?: number): symbol | null {
+    if (this.draining) {
+      return null;
+    }
+    this.draining = true;
+    this.drainController = new AbortController();
+    this.drainOwnerToken = Symbol("drain-owner");
+    this.drainDeadlineAt = typeof idleTimeoutMs === "number" ? Date.now() + idleTimeoutMs : null;
+    this.logger.info(
+      {
+        inFlight: this.listInFlightAgents().map((agent) => agent.agentId),
+        drainDeadlineAt: this.drainDeadlineAt,
+      },
+      "Agent manager entered draining state",
+    );
+    return this.drainOwnerToken;
+  }
+
+  /**
+   * Leave drain mode. Safe to call when not draining. A caller that owns a
+   * drain passes its token so it can never end a newer drain started after it
+   * was superseded; a tokenless call (an explicit force/plain restart) ends
+   * whichever drain is active.
+   */
+  endDraining(owner?: symbol): void {
+    if (!this.draining) {
+      return;
+    }
+    if (owner !== undefined && this.drainOwnerToken !== owner) {
+      return;
+    }
+    this.draining = false;
+    this.drainDeadlineAt = null;
+    this.drainOwnerToken = null;
+    this.drainController?.abort();
+    this.drainController = null;
+    this.logger.info("Agent manager left draining state");
+  }
+
+  /** Epoch ms the active drain expects to swap, or null when not draining. */
+  getDrainDeadlineAt(): number | null {
+    return this.drainDeadlineAt;
+  }
+
+  isDraining(): boolean {
+    return this.draining;
+  }
+
+  /**
+   * A restart intent has already been emitted; no request may emit another
+   * before the worker is replaced.
+   */
+  hasEmittedRestartIntent(): boolean {
+    return this.restartIntentEmitted;
+  }
+
+  markRestartIntentEmitted(): void {
+    this.restartIntentEmitted = true;
+    this.restartIntentCount += 1;
+  }
+
+  /** Number of restart intents emitted in this process (test/observability). */
+  getRestartIntentCount(): number {
+    return this.restartIntentCount;
+  }
+
+  /**
+   * Allow a forced restart to emit again after a prior intent never produced a
+   * swap (for example, a stuck-but-draining worker).
+   */
+  resetRestartIntentEmitted(): void {
+    this.restartIntentEmitted = false;
+  }
+
+  /**
+   * Admit a prompt at a non-session entry point. Rejects synchronously when the
+   * daemon is already draining; otherwise takes a ticket so a drain that starts
+   * during the async admission waits for it instead of racing a pending
+   * receipt. Callers must not await between the check and `beginAdmission`;
+   * this helper guarantees that.
+   */
+  async runPromptAdmission<T>(run: (ticket: symbol) => Promise<T>): Promise<T> {
+    this.assertAcceptingPrompts();
+    const ticket = this.beginAdmission();
+    try {
+      return await run(ticket);
+    } finally {
+      this.endAdmission(ticket);
+    }
+  }
+
+  /**
+   * Reserve a prompt-admission slot synchronously after the drain check. The
+   * slot is counted as drain work until released, and exempts the in-flight
+   * prompt from the admission guard so a drain that starts mid-admission waits
+   * for it instead of racing it into an ambiguous receipt.
+   */
+  beginAdmission(): symbol {
+    const ticket = Symbol("prompt-admission");
+    this.admissionTickets.add(ticket);
+    return ticket;
+  }
+
+  endAdmission(ticket: symbol): void {
+    this.admissionTickets.delete(ticket);
+  }
+
+  /** Agents that still hold work: running/initializing lifecycles or tracked runs. */
+  listInFlightAgents(): DrainingAgentSummary[] {
+    const summaries: DrainingAgentSummary[] = [];
+    for (const agent of this.agents.values()) {
+      if (!this.isAgentBusyForDrain(agent)) {
+        continue;
+      }
+      summaries.push({
+        agentId: agent.id,
+        title: agent.config.title ?? null,
+        provider: agent.provider,
+        lifecycle: agent.lifecycle,
+        activeTurnId: agent.activeTurnId ?? agent.activeForegroundTurnId ?? null,
+        waitingForPermission: agent.pendingPermissions.size > 0,
+      });
+    }
+    return summaries;
+  }
+
+  describeDrainProgress(): DrainProgress {
+    return {
+      agents: this.listInFlightAgents(),
+      pendingAdmissions: this.admissionTickets.size,
+    };
+  }
+
+  private isAgentBusyForDrain(agent: LiveManagedAgent): boolean {
+    return (
+      agent.lifecycle === "running" ||
+      agent.lifecycle === "initializing" ||
+      Boolean(agent.activeForegroundTurnId) ||
+      this.runs.hasRun(agent.id)
+    );
+  }
+
+  /**
+   * Poll until no agent holds work and no prompt admission is in progress.
+   * Polling (rather than a global settle promise) is deliberate: runs are
+   * settled through several paths (foreground, autonomous, replacement), and a
+   * restart only needs a monotonic quiet-point guarantee once admission is
+   * frozen. The manager's drain signal aborts the wait when another request
+   * force-restarts or the drain is cleared.
+   */
+  async waitForAllIdle(options: {
+    timeoutMs: number;
+    pollIntervalMs?: number;
+    onProgress?: (progress: DrainProgress) => void;
+    signal?: AbortSignal;
+  }): Promise<
+    { ok: true } | { ok: false; agents: DrainingAgentSummary[]; pendingAdmissions: number }
+  > {
+    const pollIntervalMs = options.pollIntervalMs ?? 250;
+    const deadline = Date.now() + options.timeoutMs;
+    const drainSignal = this.drainController?.signal;
+
+    for (;;) {
+      if (options.signal?.aborted || drainSignal?.aborted) {
+        throw new Error("drain_canceled");
+      }
+      const agents = this.listInFlightAgents();
+      const pendingAdmissions = this.admissionTickets.size;
+      if (agents.length === 0 && pendingAdmissions === 0) {
+        return { ok: true };
+      }
+      options.onProgress?.({ agents, pendingAdmissions });
+
+      const remainingMs = deadline - Date.now();
+      if (remainingMs <= 0) {
+        return { ok: false, agents, pendingAdmissions };
+      }
+      await delay(Math.min(pollIntervalMs, remainingMs));
+    }
+  }
+
+  /** Guard for every prompt entrypoint; see `startAgentRun`. */
+  assertAcceptingPrompts(ticket?: symbol): void {
+    if (!this.draining) {
+      return;
+    }
+    if (ticket && this.admissionTickets.has(ticket)) {
+      return;
+    }
+    throw new HostRestartingError();
   }
 
   setPaseoToolsEnabled(enabled: boolean): void {
