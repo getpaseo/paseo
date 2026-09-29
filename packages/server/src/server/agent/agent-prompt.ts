@@ -22,6 +22,7 @@ export type AgentRunController = Pick<
   | "hasInFlightRun"
   | "replaceAgentRun"
   | "steerOrReplaceActiveTurn"
+  | "queueMessageIfRunning"
   | "streamAgent"
 > & {
   reloadAgentSession(agentId: string): Promise<unknown>;
@@ -43,7 +44,7 @@ export interface StartAgentRunOptions {
   steerFallback?: SteerFallback;
 }
 
-export type PromptDispatchDisposition = "out_of_band" | "steered" | "turn_started";
+export type PromptDispatchDisposition = "out_of_band" | "steered" | "turn_started" | "queued";
 
 export const STEER_UNAVAILABLE_MESSAGE =
   'target is mid-turn and its provider cannot steer; wait for it to finish or resend with activeTurnBehavior "interrupt"';
@@ -114,7 +115,12 @@ async function startOrReplaceRun(
   iterator: AsyncGenerator<import("./agent-sdk-types.js").AgentStreamEvent>;
   replaced: boolean;
 }> {
-  const replaced = Boolean(options?.replaceRunning && agentManager.hasInFlightRun(agentId));
+  // A queue request never cancels a running turn, even when it lost the race to one.
+  const replaced = Boolean(
+    options?.replaceRunning &&
+    options.activeTurnBehavior !== "queue" &&
+    agentManager.hasInFlightRun(agentId),
+  );
   const iterator = replaced
     ? await agentManager.replaceAgentRun(agentId, prompt, options?.runOptions)
     : agentManager.streamAgent(agentId, prompt, options?.runOptions);
@@ -175,7 +181,18 @@ async function startAgentRunInner(
   options?: StartAgentRunOptions,
 ): Promise<{ disposition: PromptDispatchDisposition }> {
   const snapshot = agentManager.getAgent(agentId);
-  const steered = await steerOrReplaceActiveRun(agentManager, agentId, prompt, options);
+  if (
+    options?.activeTurnBehavior === "queue" &&
+    agentManager.queueMessageIfRunning(agentId, prompt, options.runOptions)
+  ) {
+    return { disposition: "queued" };
+  }
+  // Nothing may await between the queue check and the turn start below, or a turn that
+  // starts in between would make this send fail instead of queueing.
+  const steered =
+    options?.activeTurnBehavior === "queue"
+      ? null
+      : await steerOrReplaceActiveRun(agentManager, agentId, prompt, options);
   if (steered?.disposition === "steered") {
     return steered;
   }
