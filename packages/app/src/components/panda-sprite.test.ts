@@ -1,33 +1,36 @@
 import { describe, expect, it } from "vitest";
-import { PANDA_COLUMNS, PANDA_FRAMES, PANDA_VIEW_ROWS, buildPandaRuns } from "./panda-sprite";
+import { PANDA_GRID, PANDA_PALETTE, PANDA_SALTO_FRAMES, PANDA_WORK_FRAMES } from "./panda-frames";
+import { buildPandaRuns } from "./panda-sprite";
 
-describe("buildPandaRuns", () => {
-  it("draws every frame inside the sprite box, bob included", () => {
-    for (const frame of PANDA_FRAMES) {
-      for (const run of buildPandaRuns(frame)) {
-        expect(run.x).toBeGreaterThanOrEqual(0);
-        expect(run.x + run.width).toBeLessThanOrEqual(PANDA_COLUMNS);
-        expect(run.y).toBeLessThan(PANDA_VIEW_ROWS);
+const ALL_FRAMES = [...PANDA_WORK_FRAMES, ...PANDA_SALTO_FRAMES];
+
+describe("panda frames", () => {
+  it("are square grids that only use palette colours", () => {
+    for (const frame of ALL_FRAMES) {
+      expect(frame).toHaveLength(PANDA_GRID);
+      for (const row of frame) {
+        expect(row).toHaveLength(PANDA_GRID);
+        for (const cell of row) expect(cell === "." || cell in PANDA_PALETTE).toBe(true);
       }
     }
   });
 
-  it("closes the eyes by painting the pupils black", () => {
-    const base = PANDA_FRAMES[0]!;
-    const whites = (eyesOpen: boolean) =>
-      buildPandaRuns({ ...base, eyesOpen }).filter((run) => run.fill === "#f5f5f5").length;
-    expect(whites(true)).toBeGreaterThan(whites(false));
+  it("differ from frame to frame, so the panda moves", () => {
+    const distinct = new Set(PANDA_WORK_FRAMES.map((frame) => frame.join("")));
+    expect(distinct.size).toBeGreaterThanOrEqual(6);
+    expect(new Set(PANDA_SALTO_FRAMES.map((frame) => frame.join(""))).size).toBe(
+      PANDA_SALTO_FRAMES.length,
+    );
   });
+});
 
-  it("fills the thought bubble one dot per step and raises the bamboo", () => {
-    const base = PANDA_FRAMES[0]!;
-    const dots = (thoughts: number) =>
-      buildPandaRuns({ ...base, thoughts })
-        .filter((run) => run.y === 1 && run.fill === "#8f8f99" && run.x >= 15)
-        .reduce((sum, run) => sum + run.width, 0);
-    expect([0, 1, 2, 3].map(dots)).toEqual([0, 1, 2, 3]);
-    const bamboo = (bambooUp: boolean) =>
-      buildPandaRuns({ ...base, bambooUp }).filter((run) => run.fill === "#6fbf5b").length;
-    expect(bamboo(true)).toBeGreaterThan(bamboo(false));
+describe("buildPandaRuns", () => {
+  it("merges same-colour neighbours and keeps every run inside the grid", () => {
+    const frame = PANDA_WORK_FRAMES[0]!;
+    const runs = buildPandaRuns(frame);
+    const painted = frame.join("").replaceAll(".", "").length;
+    expect(runs.reduce((sum, run) => sum + run.width, 0)).toBe(painted);
+    expect(runs.length).toBeLessThan(painted);
+    for (const run of runs) expect(run.x + run.width).toBeLessThanOrEqual(PANDA_GRID);
   });
 });
