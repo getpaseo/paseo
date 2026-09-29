@@ -346,10 +346,7 @@ function OpenScheduleFormSheet({
           modeId: state.selectedMode || null,
           thinkingOptionId: state.selectedThinkingOptionId || null,
           cwd,
-          ...(state.submitArchiveOnFinish !== undefined
-            ? { archiveOnFinish: state.submitArchiveOnFinish }
-            : {}),
-          ...(state.submitIsolation !== undefined ? { isolation: state.submitIsolation } : {}),
+          ...runLifecycleOptions(state),
         },
         maxRuns,
       });
@@ -368,10 +365,7 @@ function OpenScheduleFormSheet({
           model: state.selectedModel || undefined,
           modeId: state.selectedMode || undefined,
           thinkingOptionId: state.selectedThinkingOptionId || undefined,
-          ...(state.submitArchiveOnFinish !== undefined
-            ? { archiveOnFinish: state.submitArchiveOnFinish }
-            : {}),
-          ...(state.submitIsolation !== undefined ? { isolation: state.submitIsolation } : {}),
+          ...runLifecycleOptions(state),
           title: state.name.trim() || undefined,
         },
       },
@@ -798,6 +792,17 @@ function ScheduleTargetFields({
         <ScheduleIsolationField model={model} state={state} size={controlSize} />
       ) : null}
 
+      {state.disclosure.showReuseSessionField ? (
+        <Field label="Reuse the same session">
+          <Switch
+            value={state.reuseSession}
+            onValueChange={model.setReuseSession}
+            accessibilityLabel="Reuse the same session"
+            testID="schedule-reuse-session-switch"
+          />
+        </Field>
+      ) : null}
+
       {state.disclosure.showArchiveOnFinishField ? (
         <Field label="Archive on finish">
           <Switch
@@ -810,6 +815,20 @@ function ScheduleTargetFields({
       ) : null}
     </>
   );
+}
+
+function runLifecycleOptions(state: ScheduleFormState): {
+  archiveOnFinish?: boolean;
+  reuseSession?: boolean;
+  isolation?: "local" | "worktree";
+} {
+  return {
+    ...(state.submitArchiveOnFinish !== undefined
+      ? { archiveOnFinish: state.submitArchiveOnFinish }
+      : {}),
+    ...(state.submitReuseSession !== undefined ? { reuseSession: state.submitReuseSession } : {}),
+    ...(state.submitIsolation !== undefined ? { isolation: state.submitIsolation } : {}),
+  };
 }
 
 function ScheduleIsolationField({

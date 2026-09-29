@@ -113,6 +113,9 @@ function applyNewAgentConfig(
   if (patch.archiveOnFinish !== undefined) {
     config.archiveOnFinish = patch.archiveOnFinish;
   }
+  if (patch.reuseSession !== undefined) {
+    config.reuseSession = patch.reuseSession;
+  }
   if (patch.isolation !== undefined) {
     config.isolation = patch.isolation;
   }
@@ -131,6 +134,11 @@ function normalizeMaxRuns(value: number | null | undefined): number | null {
 
 function countCompletedRuns(schedule: StoredSchedule): number {
   return schedule.runs.filter((run) => run.status !== "running").length;
+}
+
+// A reused session keeps its agent and workspace, whatever archiveOnFinish says.
+function archivesOnFinish(config: { archiveOnFinish?: boolean; reuseSession?: boolean }): boolean {
+  return !config.reuseSession && (config.archiveOnFinish ?? true);
 }
 
 function shouldArchiveScheduleRunWorkspace(input: {
@@ -685,7 +693,7 @@ export class ScheduleService {
           ) &&
           shouldArchiveScheduleRunWorkspace({
             agentId: runningRun.agentId,
-            archiveOnFinish: updated.target.config.archiveOnFinish,
+            archiveOnFinish: archivesOnFinish(updated.target.config),
           })
         ) {
           interruptedWorkspaces.push({
@@ -1027,6 +1035,16 @@ export class ScheduleService {
       throw new Error(`Schedule ${schedule.id} target changed during execution`);
     }
     await this.assertNewAgentCwdDirectory(config.cwd);
+    const session = config.reuseSession ? await this.findReusableRunAgent(schedule) : null;
+    if (session) {
+      await this.recordRunWorkspace({
+        scheduleId: schedule.id,
+        runId,
+        workspaceId: session.workspaceId,
+        agentId: session.agentId,
+      });
+      return this.runScheduledPrompt(session.agentId, schedule.prompt);
+    }
     let workspace: PersistedWorkspaceRecord | null = null;
     let agentId: string | null = null;
     const reusedWorkspace = await this.findReusableRunWorkspace(schedule, config);
@@ -1070,34 +1088,13 @@ export class ScheduleService {
       if (created.initialPromptError) {
         throw created.initialPromptError;
       }
-      const result = await this.agentManager.runAgent(agent.id, schedule.prompt);
-      const waitResult = await this.agentManager.waitForAgentEvent(agent.id, {
-        waitForActive: true,
-      });
-      if (result.canceled) {
-        throw new Error(`Scheduled agent ${agent.id} was canceled`);
-      }
-      if (waitResult.permission) {
-        throw new Error(`Scheduled agent ${agent.id} is waiting for permission`);
-      }
-      if (waitResult.status === "error") {
-        throw new Error(waitResult.lastMessage ?? `Scheduled agent ${agent.id} failed`);
-      }
-      const timelineText = curateAgentActivity(result.timeline);
-      return {
-        agentId: agent.id,
-        output: buildRunOutput({
-          output: waitResult.lastMessage ?? null,
-          timelineText,
-          finalText: result.finalText,
-        }),
-      };
+      return await this.runScheduledPrompt(agent.id, schedule.prompt);
     } finally {
       if (
         workspace &&
         shouldArchiveScheduleRunWorkspace({
           agentId,
-          archiveOnFinish: config.archiveOnFinish,
+          archiveOnFinish: archivesOnFinish(config),
           reused: reusedWorkspace !== null,
         })
       ) {
@@ -1111,13 +1108,65 @@ export class ScheduleService {
     }
   }
 
+  private async runScheduledPrompt(
+    agentId: string,
+    prompt: string,
+  ): Promise<ScheduleExecutionResult> {
+    const result = await this.agentManager.runAgent(agentId, prompt);
+    const waitResult = await this.agentManager.waitForAgentEvent(agentId, {
+      waitForActive: true,
+    });
+    if (result.canceled) {
+      throw new Error(`Scheduled agent ${agentId} was canceled`);
+    }
+    if (waitResult.permission) {
+      throw new Error(`Scheduled agent ${agentId} is waiting for permission`);
+    }
+    if (waitResult.status === "error") {
+      throw new Error(waitResult.lastMessage ?? `Scheduled agent ${agentId} failed`);
+    }
+    return {
+      agentId,
+      output: buildRunOutput({
+        output: waitResult.lastMessage ?? null,
+        timelineText: curateAgentActivity(result.timeline),
+        finalText: result.finalText,
+      }),
+    };
+  }
+
+  // The session the previous run left, while it still exists. A run still going there fails
+  // this one instead of stacking a second prompt behind it.
+  private async findReusableRunAgent(
+    schedule: StoredSchedule,
+  ): Promise<{ agentId: string; workspaceId: string } | null> {
+    const previous = schedule.runs.findLast((run) => run.agentId && run.status !== "running");
+    if (!previous?.agentId) {
+      return null;
+    }
+    const record = await this.agentStorage.get(previous.agentId);
+    const workspaceId = record?.workspaceId ?? previous.workspaceId;
+    if (!record || record.archivedAt || !workspaceId) {
+      return null;
+    }
+    const agent = await ensureAgentLoaded(record.id, {
+      agentManager: this.agentManager,
+      agentStorage: this.agentStorage,
+      logger: this.logger,
+    });
+    if (this.agentManager.hasInFlightRun(agent.id)) {
+      throw new Error(`Agent ${agent.id} is still busy with the previous run; this run is skipped`);
+    }
+    return { agentId: agent.id, workspaceId };
+  }
+
   // A kept schedule is one workspace with a tab per run, not a new sidebar entry
   // every morning. Runs that archive on finish still get a throwaway workspace.
   private async findReusableRunWorkspace(
     schedule: StoredSchedule,
     config: Extract<ScheduleTarget, { type: "new-agent" }>["config"],
   ): Promise<PersistedWorkspaceRecord | null> {
-    if ((config.isolation ?? "local") !== "local" || (config.archiveOnFinish ?? true)) {
+    if ((config.isolation ?? "local") !== "local" || archivesOnFinish(config)) {
       return null;
     }
     const previous = schedule.runs.findLast((run) => run.workspaceId && run.status !== "running");

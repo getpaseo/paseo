@@ -811,6 +811,7 @@ export interface CreateScheduleOptions {
           model?: string;
           thinkingOptionId?: string;
           archiveOnFinish?: boolean;
+          reuseSession?: boolean;
           isolation?: "local" | "worktree";
           title?: string | null;
           providerOptions?: AgentSessionConfig["providerOptions"];
@@ -833,6 +834,7 @@ export interface UpdateScheduleNewAgentConfig {
   modeId?: string | null;
   thinkingOptionId?: string | null;
   archiveOnFinish?: boolean;
+  reuseSession?: boolean;
   isolation?: "local" | "worktree";
   cwd?: string;
 }

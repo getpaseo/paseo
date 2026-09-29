@@ -356,6 +356,7 @@ describe("schedule form model", () => {
       showModeField: false,
       showIsolationField: false,
       showArchiveOnFinishField: false,
+      showReuseSessionField: false,
     });
 
     form.setProject(buildProjectOptionId("host-a", "project-a"), { label: "Project A" });
@@ -366,8 +367,11 @@ describe("schedule form model", () => {
       showThinkingField: false,
       showModeField: false,
       showIsolationField: true,
-      showArchiveOnFinishField: true,
+      showArchiveOnFinishField: false,
+      showReuseSessionField: true,
     });
+
+    form.setReuseSession(false);
 
     form.applyProviderSnapshot("host-a", providerSnapshot(HOST_B_MODELS));
     form.setModel("mock", "model-b");
@@ -379,6 +383,7 @@ describe("schedule form model", () => {
       showModeField: true,
       showIsolationField: true,
       showArchiveOnFinishField: true,
+      showReuseSessionField: true,
     });
   });
 
@@ -396,6 +401,7 @@ describe("schedule form model", () => {
     });
 
     nonGit.setProject(nonGitTarget.optionId, { label: "Plain Project" });
+    nonGit.setReuseSession(false);
 
     expect(nonGit.getState().disclosure).toMatchObject({
       showIsolationField: false,

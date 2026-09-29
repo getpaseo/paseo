@@ -147,6 +147,7 @@ export function parseScheduleCreateInput(options: {
   provider?: string;
   mode?: string;
   thinking?: string;
+  reuseSession?: boolean;
   cwd?: string;
   host?: string;
   daemonTarget: import("../../utils/daemon-target.js").DaemonTarget;
@@ -191,7 +192,10 @@ export function parseScheduleCreateInput(options: {
     } satisfies CommandError;
   }
   const hasExplicitNewAgentOption =
-    options.provider !== undefined || options.mode !== undefined || options.thinking !== undefined;
+    options.provider !== undefined ||
+    options.mode !== undefined ||
+    options.thinking !== undefined ||
+    options.reuseSession !== undefined;
   const createNewAgentTarget = (): ScheduleTarget => {
     const resolvedProviderModel = resolveProviderAndModel({
       provider: options.provider,
@@ -204,6 +208,7 @@ export function parseScheduleCreateInput(options: {
         ...(resolvedProviderModel.model ? { model: resolvedProviderModel.model } : {}),
         ...(modeId ? { modeId } : {}),
         ...(thinkingOptionId ? { thinkingOptionId } : {}),
+        ...(options.reuseSession !== undefined ? { reuseSession: options.reuseSession } : {}),
       },
     };
   };
@@ -249,6 +254,7 @@ export interface ScheduleUpdateOptionsInput {
   model?: string;
   mode?: string;
   cwd?: string;
+  reuseSession?: boolean;
   maxRuns?: string;
   expiresIn?: string;
   clearMaxRuns?: boolean;
@@ -436,6 +442,9 @@ function buildNewAgentConfigPatch(
       } satisfies CommandError;
     }
     patch.cwd = trimmed;
+  }
+  if (options.reuseSession !== undefined) {
+    patch.reuseSession = options.reuseSession;
   }
   return Object.keys(patch).length > 0 ? patch : undefined;
 }

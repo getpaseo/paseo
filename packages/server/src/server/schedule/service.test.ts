@@ -675,6 +675,59 @@ describe("ScheduleService", () => {
     expect(thirdAgent?.workspaceId).not.toBe(firstAgent?.workspaceId);
   });
 
+  test("reuseSession prompts the previous run's agent until it is archived", async () => {
+    const {
+      workspaceRegistry,
+      createDirectoryWorkspace: createScheduleDirectoryWorkspace,
+      createArchiveWorkspace,
+    } = await createRegistryBackedScheduleWorkspaceDeps(tempDir);
+    const manager = new AgentManager({
+      logger: createTestLogger(),
+      clients: createTestAgentClients(),
+      registry: agentStorage,
+    });
+    const service = createScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: manager,
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      createDirectoryWorkspace: createScheduleDirectoryWorkspace,
+      archiveWorkspace: createArchiveWorkspace({ agentManager: manager, agentStorage }),
+      getWorkspace: (workspaceId) => workspaceRegistry.get(workspaceId),
+      now: () => now,
+    });
+
+    const created = await service.create({
+      prompt: "write into the same session",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: {
+        type: "new-agent",
+        config: { provider: "claude", model: "test-model", cwd: tempDir, reuseSession: true },
+      },
+      maxRuns: 3,
+    });
+
+    await service.tick();
+    now = new Date("2026-01-01T00:01:00.000Z");
+    await service.tick();
+
+    let inspected = await service.inspect(created.id);
+    expect(inspected.runs.map((run) => run.status)).toEqual(["succeeded", "succeeded"]);
+    const anchorId = inspected.runs[0]!.agentId!;
+    expect(inspected.runs[1]!.agentId).toBe(anchorId);
+    expect((await agentStorage.get(anchorId))?.archivedAt ?? null).toBeNull();
+
+    await manager.archiveAgent(anchorId);
+    now = new Date("2026-01-01T00:02:00.000Z");
+    await service.tick();
+
+    inspected = await service.inspect(created.id);
+    expect(inspected.runs).toHaveLength(3);
+    expect(inspected.runs[2]!.status).toBe("succeeded");
+    expect(inspected.runs[2]!.agentId).not.toBe(anchorId);
+  });
+
   test("archiveOnFinish=true archives the run workspace through workspace archive", async () => {
     const {
       workspaceRegistry,

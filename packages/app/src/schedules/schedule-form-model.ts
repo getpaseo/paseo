@@ -63,6 +63,7 @@ export interface ScheduleDisclosureState {
   showModeField: boolean;
   showIsolationField: boolean;
   showArchiveOnFinishField: boolean;
+  showReuseSessionField: boolean;
 }
 
 export interface ScheduleProviderSnapshotRequest {
@@ -106,9 +107,11 @@ export interface ScheduleFormState {
   modeOptions: AgentMode[];
   availableThinkingOptions: NonNullable<AgentModelDefinition["thinkingOptions"]>;
   archiveOnFinish: boolean;
+  reuseSession: boolean;
   isolation: "local" | "worktree";
   effectiveIsolation: "local" | "worktree";
   submitArchiveOnFinish: boolean | undefined;
+  submitReuseSession: boolean | undefined;
   submitIsolation: "local" | "worktree" | undefined;
   canUseWorktreeIsolation: boolean;
   providerResolutionByServerId: Record<string, ProviderResolutionStatus>;
@@ -137,6 +140,7 @@ export interface ScheduleFormModel {
   setCadence: (value: ScheduleCadence) => void;
   setIsolation: (value: "local" | "worktree") => void;
   setArchiveOnFinish: (value: boolean) => void;
+  setReuseSession: (value: boolean) => void;
   setSubmitError: (value: string | null) => void;
 }
 
@@ -518,6 +522,7 @@ function resolveDisclosure(state: ScheduleFormState): ScheduleDisclosureState {
       showModeField: false,
       showIsolationField: false,
       showArchiveOnFinishField: false,
+      showReuseSessionField: false,
     };
   }
 
@@ -533,12 +538,15 @@ function resolveDisclosure(state: ScheduleFormState): ScheduleDisclosureState {
       showModelField && hasSelectedModel && state.availableThinkingOptions.length > 0,
     showModeField: showModelField && hasSelectedProvider && state.modeOptions.length > 0,
     showIsolationField: hasProject && state.canUseWorktreeIsolation,
+    // A reused session is never archived, so the archive switch only matters without it.
     showArchiveOnFinishField:
       hasProject &&
+      !state.reuseSession &&
       selectedHostSupportsWorkspaceMultiplicity({
         hosts: state.hosts,
         selectedServerId: state.selectedServerId,
       }),
+    showReuseSessionField: hasProject,
   };
 }
 
@@ -623,10 +631,19 @@ function updateDerivedState(input: {
     submitArchiveOnFinish: canSubmitWorkspaceLifecycleOptions
       ? input.state.archiveOnFinish
       : undefined,
+    submitReuseSession: input.state.targetKind === "agent" ? undefined : input.state.reuseSession,
     submitIsolation: canSubmitWorkspaceLifecycleOptions ? effectiveIsolation : undefined,
   };
   const disclosure = resolveDisclosure(nextState);
   return { ...nextState, disclosure, canSubmit: resolveCanSubmit({ ...nextState, disclosure }) };
+}
+
+// New schedules keep writing into one session; existing ones keep what they were saved with.
+function resolveInitialReuseSession(
+  mode: ScheduleFormSnapshot["mode"],
+  config: ReturnType<typeof newAgentConfig>,
+): boolean {
+  return mode === "edit" ? (config?.reuseSession ?? false) : true;
 }
 
 function buildInitialState(snapshot: ScheduleFormSnapshot): ScheduleFormState {
@@ -680,9 +697,11 @@ function buildInitialState(snapshot: ScheduleFormSnapshot): ScheduleFormState {
     modeOptions: [],
     availableThinkingOptions: [],
     archiveOnFinish: config?.archiveOnFinish ?? true,
+    reuseSession: resolveInitialReuseSession(snapshot.mode, config),
     isolation: resolveInitialIsolation({ config, preferences: snapshot.defaults.preferences }),
     effectiveIsolation: "local",
     submitArchiveOnFinish: undefined,
+    submitReuseSession: undefined,
     submitIsolation: undefined,
     canUseWorktreeIsolation: false,
     providerResolutionByServerId: buildInitialProviderResolution(providerSnapshotRequest),
@@ -694,6 +713,7 @@ function buildInitialState(snapshot: ScheduleFormSnapshot): ScheduleFormState {
       showModeField: false,
       showIsolationField: false,
       showArchiveOnFinishField: false,
+      showReuseSessionField: false,
     },
     canSubmit: false,
     submitError: null,
@@ -1120,6 +1140,9 @@ export function openScheduleForm(snapshot: ScheduleFormSnapshot): ScheduleFormMo
     },
     setArchiveOnFinish(value) {
       publish({ ...state, archiveOnFinish: value });
+    },
+    setReuseSession(value) {
+      publish({ ...state, reuseSession: value });
     },
     setSubmitError(value) {
       publish({ ...state, submitError: value });
