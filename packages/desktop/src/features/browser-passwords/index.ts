@@ -70,6 +70,7 @@ export interface BrowserPasswordsDeps {
   isHostSender(sender: PasswordSender): boolean;
   randomId(): string;
   now(): number;
+  warn(event: string, details: unknown): void;
 }
 
 export interface BrowserPasswordsIpc {
@@ -141,6 +142,10 @@ export class BrowserPasswords {
       update,
     };
     guest.host.send(SAVE_PASSWORD_REQUEST_EVENT, request);
+  }
+
+  public warn(event: string, details: unknown): void {
+    this.deps.warn(event, details);
   }
 
   public lookup(sender: PasswordGuestSender, senderFrame: PasswordFrame | null): SavedCredential[] {
@@ -226,7 +231,13 @@ export function registerBrowserPasswordsIpc(
   passwords: BrowserPasswords,
 ): void {
   ipc.on(CREDENTIALS_SUBMITTED_CHANNEL, (event, payload) => {
-    passwords.credentialsSubmitted(event.sender, event.senderFrame, payload);
+    // Nothing awaits an ipcMain.on listener: a corrupt vault file or a locked keyring (decrypt
+    // throws) would surface as a main-process error dialog on every login.
+    try {
+      passwords.credentialsSubmitted(event.sender, event.senderFrame, payload);
+    } catch (error) {
+      passwords.warn("credentials-submitted.failed", { error });
+    }
   });
   ipc.handle(CREDENTIALS_LOOKUP_CHANNEL, (event) =>
     passwords.lookup(event.sender, event.senderFrame),

@@ -600,6 +600,7 @@ registerBrowserPasswordsIpc(
     },
     randomId: randomUUID,
     now: Date.now,
+    warn: (event, details) => log.warn(`[browser-passwords] ${event}`, details),
   }),
 );
 

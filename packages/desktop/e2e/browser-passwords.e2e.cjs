@@ -124,6 +124,7 @@ ipcRenderer.on("paseo:event:browser-save-password-request", (_event, payload) =>
       isHostSender: (sender) => sender.id === hostId,
       randomId: () => `request-${Date.now()}`,
       now: Date.now,
+      warn: (event, details) => console.warn(event, details),
     }),
   );
   const hostEvents = [];

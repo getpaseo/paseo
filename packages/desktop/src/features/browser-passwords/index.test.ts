@@ -1,12 +1,15 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { PaseoBrowserWebviewRegistry } from "../browser-webviews/registry";
 import {
   BrowserPasswords,
+  type BrowserPasswordsIpc,
   type PasswordFrame,
   type PasswordGuestSender,
+  CREDENTIALS_SUBMITTED_CHANNEL,
+  registerBrowserPasswordsIpc,
   SAVE_PASSWORD_REQUEST_EVENT,
 } from "./index";
 import { type PasswordCrypto, PasswordVault } from "./vault";
@@ -81,6 +84,7 @@ describe("BrowserPasswords", () => {
       isHostSender: (sender) => sender.id === HOST_ID,
       randomId: () => `request-${++nextId}`,
       now: () => clock,
+      warn: () => {},
     });
     mainFrame = frame("https://example.com/login?next=/home");
     guest = {
@@ -237,5 +241,36 @@ describe("BrowserPasswords", () => {
 
     passwords.remove({ id: HOST_ID }, { origin: "https://example.com", username: "ada" });
     expect(vault.list()).toEqual([]);
+  });
+
+  it("logs instead of throwing when the vault cannot be read on submit", () => {
+    writeFileSync(join(dir, "browser-passwords.json"), "{corrupt");
+    const warnings: string[] = [];
+    const listeners = new Map<string, Parameters<BrowserPasswordsIpc["on"]>[1]>();
+    const failing = new BrowserPasswords({
+      vault: new PasswordVault({
+        filePath: join(dir, "browser-passwords.json"),
+        crypto: createCrypto(crypto),
+      }),
+      registry,
+      isHostSender: () => true,
+      randomId: () => "request",
+      now: () => clock,
+      warn: (event) => warnings.push(event),
+    });
+    registerBrowserPasswordsIpc(
+      {
+        on: (channel, listener) => listeners.set(channel, listener),
+        handle: () => {},
+      },
+      failing,
+    );
+
+    listeners.get(CREDENTIALS_SUBMITTED_CHANNEL)?.(
+      { sender: guest, senderFrame: mainFrame },
+      { username: "ada", password: PASSWORD },
+    );
+    expect(warnings).toEqual(["credentials-submitted.failed"]);
+    expect(sent).toEqual([]);
   });
 });
