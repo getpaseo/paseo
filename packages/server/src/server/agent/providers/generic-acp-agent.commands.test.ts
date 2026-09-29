@@ -13,9 +13,7 @@ describe("GenericACPAgentClient slash commands", () => {
       const client = new GenericACPAgentClient({
         logger: createTestLogger(),
         command,
-        // Long enough that the update always lands inside the wait, however slowly
-        // the fake agent is scheduled.
-        initialCommandsWaitTimeoutMs: 60_000,
+        initialCommandsWaitTimeoutMs: 1_500,
       });
       const session = await client.createSession({ provider: "acp", cwd });
       try {
@@ -83,20 +81,26 @@ rl.on("line", (line) => {
   }
 
   if (message.method === "session/new") {
-    write({ id: message.id, result: { sessionId: "session-1" } });
     if (mode === "commands-after-session-new") {
-      setTimeout(() => {
-        write({
-          method: "session/update",
-          params: {
-            sessionId: "session-1",
-            update: {
-              sessionUpdate: "available_commands_update",
-              availableCommands: [{ name: "review", description: "Review the diff" }],
+      process.stdout.write(
+        [
+          { id: message.id, result: { sessionId: "session-1" } },
+          {
+            method: "session/update",
+            params: {
+              sessionId: "session-1",
+              update: {
+                sessionUpdate: "available_commands_update",
+                availableCommands: [{ name: "review", description: "Review the diff" }],
+              },
             },
           },
-        });
-      }, 0);
+        ]
+          .map((entry) => JSON.stringify({ jsonrpc: "2.0", ...entry }) + "\\n")
+          .join(""),
+      );
+    } else {
+      write({ id: message.id, result: { sessionId: "session-1" } });
     }
     return;
   }

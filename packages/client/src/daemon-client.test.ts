@@ -6906,6 +6906,70 @@ test("creation reconnect observation uses connection-owned subscriptions and rel
   expect(phases).toEqual(["accepted", "failed"]);
 });
 
+test("uploadFile started while connecting waits for the connection and uploads", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "upload-while-connecting",
+    logger: createMockLogger(),
+    reconnect: { enabled: false },
+    suppressSendErrors: true,
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+  const connection = client.connect();
+  expect(client.getConnectionState().status).toBe("connecting");
+
+  const upload = client.uploadFile({
+    fileName: "notes.txt",
+    mimeType: "text/plain",
+    bytes: new TextEncoder().encode("hello world"),
+    modifiedAt: "2026-05-02T00:00:00.000Z",
+    requestId: "req-upload-connecting",
+    chunkSize: 5,
+  });
+  void upload.catch(() => undefined);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  mock.triggerOpen();
+  await connection;
+
+  await vi.waitFor(() => {
+    const frames = mock.sent
+      .filter((frame) => typeof frame !== "string")
+      .map(assertUint8Array)
+      .map(decodeFileTransferFrame);
+    expect(frames.map((frame) => frame.opcode)).toEqual([
+      FileTransferOpcode.FileBegin,
+      FileTransferOpcode.FileChunk,
+      FileTransferOpcode.FileChunk,
+      FileTransferOpcode.FileChunk,
+      FileTransferOpcode.FileEnd,
+    ]);
+  });
+  const requestIndex = mock.sent.findIndex(
+    (frame) =>
+      typeof frame === "string" && parseSentFrame(frame).requestId === "req-upload-connecting",
+  );
+  expect(parseSentFrame(mock.sent[requestIndex])).toMatchObject({ type: "file.upload.request" });
+  expect(requestIndex).toBeLessThan(mock.sent.findIndex((frame) => typeof frame !== "string"));
+
+  const file = {
+    type: "uploaded_file" as const,
+    id: "upload_req-upload-connecting",
+    fileName: "notes.txt",
+    mimeType: "text/plain",
+    size: 11,
+    path: "/tmp/paseo-uploads/upload_req-upload-connecting/notes.txt",
+  };
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "file.upload.response",
+      payload: { requestId: "req-upload-connecting", file, error: null },
+    }),
+  );
+  await expect(upload).resolves.toEqual({ requestId: "req-upload-connecting", file, error: null });
+});
+
 test("uploadFile stops sending chunks when the connection closes between sends", async () => {
   const mock = createMockTransport();
   const client = new DaemonClient({

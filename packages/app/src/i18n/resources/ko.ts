@@ -1532,6 +1532,8 @@ export const ko: TranslationResources = {
     noFiles: "파일 또는 디렉터리를 찾을 수 없습니다",
     noCommands: "명령을 찾을 수 없습니다",
     failedToLoad: "불러오지 못했습니다",
+    chooseProjectForCommands: "명령을 보려면 프로젝트를 선택하세요",
+    chooseModelForCommands: "명령을 보려면 모델을 선택하세요",
   },
   loadOlderHistory: {
     failed: "이전 기록을 불러올 수 없습니다",
@@ -2199,6 +2201,14 @@ export const ko: TranslationResources = {
         codeSize: "코드 크기",
         codeSizeHint: "코드, diff 및 터미널 출력에 사용됩니다",
         codeSizeAccessibility: "코드 글꼴 크기",
+      },
+      layout: {
+        title: "레이아웃",
+        contentWidth: "콘텐츠 너비",
+        contentWidthHint: "와이드 화면에서 채팅과 Markdown 파일의 최대 너비",
+        contentWidthAccessibility: "콘텐츠 너비(픽셀)",
+        reset: "재설정",
+        resetAccessibility: "콘텐츠 너비를 기본값으로 재설정",
       },
       syntax: {
         title: "구문",

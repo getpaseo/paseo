@@ -1505,6 +1505,8 @@ export const zhCN: TranslationResources = {
     noFiles: "没有找到文件或目录",
     noCommands: "没有找到 commands",
     failedToLoad: "加载失败",
+    chooseProjectForCommands: "选择项目以查看命令",
+    chooseModelForCommands: "选择模型以查看命令",
   },
   loadOlderHistory: {
     failed: "无法加载更早历史",
@@ -2163,6 +2165,14 @@ export const zhCN: TranslationResources = {
         codeSize: "代码字号",
         codeSizeHint: "用于代码、差异和终端输出",
         codeSizeAccessibility: "代码字号",
+      },
+      layout: {
+        title: "布局",
+        contentWidth: "内容宽度",
+        contentWidthHint: "宽屏上聊天和 Markdown 文件的最大宽度",
+        contentWidthAccessibility: "内容宽度（像素）",
+        reset: "重置",
+        resetAccessibility: "将内容宽度重置为默认值",
       },
       syntax: {
         title: "语法",

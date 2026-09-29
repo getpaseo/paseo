@@ -1,5 +1,10 @@
 import { describe, expect, test } from "vitest";
 import { setImmediate as waitForImmediate } from "node:timers/promises";
+import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
+import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
+import { createRequire } from "node:module";
+import { tmpdir } from "node:os";
+import path, { join } from "node:path";
 
 import type { AgentStreamEvent } from "../../agent-sdk-types.js";
 import type { PaseoToolCatalog } from "../../tools/types.js";
@@ -9,6 +14,9 @@ import type { OmpUsagePollScheduler } from "./usage-poller.js";
 import { resolveOmpProviderParams } from "./provider-config.js";
 import { OmpRuntimeEventSchema } from "./rpc-types.js";
 import { OmpHarness } from "./test-utils/omp-harness.js";
+import { OmpAgentClient } from "./agent.js";
+import { FakeOmp } from "./test-utils/fake-omp.js";
+import { createTestLogger } from "../../../../test-utils/test-logger.js";
 
 const TURN_LIFECYCLE_EVENTS = new Set<AgentStreamEvent["type"]>([
   "turn_started",
@@ -42,6 +50,26 @@ test("OMP ready timeout defaults to 20 seconds and RPC timeout overrides both", 
     readyTimeoutMs: 90_000,
     rpcTimeoutMs: 90_000,
   });
+});
+
+test("OMP import uses the runtime's custom agent directory without a configured sessionDir", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "paseo-omp-import-dir-"));
+  const agentDir = path.join(root, "agent");
+  const sessionFile = path.join(agentDir, "sessions", "project", "session.jsonl");
+  await mkdir(path.dirname(sessionFile), { recursive: true });
+  await writeFile(
+    sessionFile,
+    JSON.stringify({ type: "session", id: "custom-dir", cwd: root, timestamp: "2026-09-28" }),
+  );
+  const client = new OmpAgentClient({
+    logger: createTestLogger(),
+    runtime: new FakeOmp(),
+    runtimeSettings: { env: { PI_CODING_AGENT_DIR: agentDir } },
+  });
+
+  expect(await client.listImportableSessions({ cwd: root })).toEqual([
+    expect.objectContaining({ providerHandleId: sessionFile }),
+  ]);
 });
 class ManualIdleScheduler implements OmpProviderIdleScheduler {
   private readonly retries: Array<() => void> = [];
@@ -144,6 +172,79 @@ function createToolCatalog(): PaseoToolCatalog {
 }
 
 describe("OMP agent client and session", () => {
+  test("usage reference reads current get_state provider and account on each call", async () => {
+    const home = mkdtempSync(join(tmpdir(), "paseo-omp-reference-"));
+    const agentDir = join(home, "agent");
+    mkdirSync(agentDir);
+    // Upstream: packages/ai/src/auth/sqlite-credential-store.ts:576-581,711-724.
+    const { DatabaseSync } = createRequire(import.meta.url)("node:sqlite") as {
+      DatabaseSync: new (path: string) => {
+        exec(sql: string): void;
+        prepare(sql: string): { run(...args: unknown[]): void };
+        close(): void;
+      };
+    };
+    const db = new DatabaseSync(join(agentDir, "agent.db"));
+    db.exec(`
+      CREATE TABLE cache (key TEXT PRIMARY KEY, value TEXT NOT NULL, expires_at INTEGER NOT NULL);
+      CREATE INDEX idx_cache_expires ON cache(expires_at);
+      CREATE TABLE auth_credentials (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        provider TEXT NOT NULL,
+        credential_type TEXT NOT NULL,
+        data TEXT NOT NULL,
+        disabled_cause TEXT DEFAULT NULL,
+        identity_key TEXT DEFAULT NULL,
+        created_at INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER)),
+        updated_at INTEGER NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER))
+      );
+    `);
+    const insert = db.prepare(
+      "INSERT INTO auth_credentials (provider, credential_type, data) VALUES (?, 'oauth', ?)",
+    );
+    insert.run(
+      "openai-codex",
+      JSON.stringify({
+        access: "codex-fixture",
+        accountId: "codex-account",
+        expires: Date.now() + 60_000,
+      }),
+    );
+    insert.run(
+      "anthropic",
+      JSON.stringify({
+        access: "claude-fixture",
+        accountId: "claude-account",
+        expires: Date.now() + 60_000,
+      }),
+    );
+    db.close();
+    try {
+      const omp = new OmpHarness();
+      await omp.start({}, undefined, {
+        OMP_PROFILE: "",
+        PI_CODING_AGENT_DIR: agentDir,
+        XDG_DATA_HOME: "",
+      });
+      const runtime = omp.runtime();
+      runtime.state = { ...runtime.state, model: { provider: "openai-codex", id: "codex-model" } };
+      const requestsBefore = runtime.getStateRequestCount;
+      expect(await omp.getUsageReference()).toEqual({
+        source: "codex",
+        input: { accessToken: "codex-fixture", accountId: "codex-account" },
+      });
+      expect(runtime.getStateRequestCount).toBe(requestsBefore + 1);
+      runtime.state = { ...runtime.state, model: { provider: "anthropic", id: "claude-model" } };
+      expect(await omp.getUsageReference()).toEqual({
+        source: "claude",
+        input: { accessToken: "claude-fixture" },
+      });
+      expect(runtime.getStateRequestCount).toBe(requestsBefore + 2);
+      await omp.close();
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
   test("owns launch configuration and registers native host tools", async () => {
     const omp = new OmpHarness();
     await omp.start({ modeId: "ask" }, createToolCatalog());
@@ -158,7 +259,7 @@ describe("OMP agent client and session", () => {
       [expect.objectContaining({ name: "create_agent" })],
     ]);
     expect(omp.capabilities()).toMatchObject({
-      supportsMcpServers: false,
+      supportsMcpServers: true,
       supportsNativePaseoTools: true,
     });
   });
@@ -168,6 +269,26 @@ describe("OMP agent client and session", () => {
     await omp.start({ thinkingOptionId: "max" });
 
     expect(omp.launchConfiguration().argv).toEqual(expect.arrayContaining(["--thinking", "max"]));
+  });
+
+  test("launches with auto thinking when auto is selected", async () => {
+    const omp = new OmpHarness();
+    await omp.start({ thinkingOptionId: "auto" });
+
+    expect(omp.launchConfiguration().argv).toEqual(expect.arrayContaining(["--thinking", "auto"]));
+  });
+
+  test("keeps auto thinking when resuming a session", async () => {
+    const omp = new OmpHarness();
+    await omp.resume(
+      {
+        user: { id: "user-auto", text: "continue" },
+        assistant: { id: "assistant-auto", text: "ready" },
+      },
+      { thinkingOptionId: "auto" },
+    );
+
+    expect(omp.launchConfiguration().argv).toEqual(expect.arrayContaining(["--thinking", "auto"]));
   });
 
   test("launches with write approval mode", async () => {
@@ -366,6 +487,182 @@ describe("OMP agent client and session", () => {
     await expect(completion).resolves.toMatchObject({ finalText: "first done" });
   });
 
+  test("fails a turn when the provider idle gate passes its deadline", async () => {
+    const scheduler = new ManualIdleScheduler();
+    const omp = new OmpHarness({ providerIdleScheduler: scheduler, providerIdleDeadlineMs: 1 });
+    await omp.start();
+    const { completion } = await omp.startPromptUntilProviderIdle("first", "first done", {
+      isStreaming: true,
+      isCompacting: false,
+    });
+    await scheduler.waitForWaits(1);
+    omp.runtime().emit({
+      type: "tool_execution_start",
+      toolCallId: "tool-at-deadline",
+      toolName: "bash",
+      args: { command: "sleep 30" },
+    });
+    expect(omp.runningToolCallIds()).toEqual(["tool-at-deadline"]);
+    await new Promise((resolve) => setTimeout(resolve, 2));
+    scheduler.retry();
+    await expect(completion).rejects.toThrow(/provider idle/i);
+    expect(omp.runningToolCallIds()).toEqual([]);
+  });
+
+  test("steers a running turn and correlates a template-expanded echo exactly once", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    const session = omp.requireSession();
+    const { turnId } = await session.startTurn("first", { clientMessageId: "client-first" });
+    const runtime = omp.runtime();
+    runtime.beginTurn();
+    runtime.acceptPrompt("first", "native-first");
+    await expect(
+      session.steerActiveTurn?.("expand template", {
+        expectedTurnId: turnId,
+        clientMessageId: "client-steer",
+      }),
+    ).resolves.toEqual({ status: "accepted" });
+    runtime.acceptPrompt("expanded prompt", "native-steer");
+    runtime.acceptPrompt("expanded prompt", "native-steer");
+    expect(omp.timeline().filter((item) => item.type === "user_message")).toEqual([
+      expect.objectContaining({ messageId: "native-first", clientMessageId: "client-first" }),
+      expect.objectContaining({ messageId: "native-steer", clientMessageId: "client-steer" }),
+    ]);
+  });
+
+  test("reports a rejected steer as unavailable", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    const session = omp.requireSession();
+    const { turnId } = await session.startTurn("first");
+    omp.runtime().steerError = new Error("extension command cannot be steered");
+    await expect(
+      session.steerActiveTurn?.("extension input", { expectedTurnId: turnId }),
+    ).resolves.toEqual({ status: "unavailable" });
+  });
+
+  test("propagates an OMP steer transport timeout", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    const session = omp.requireSession();
+    const { turnId } = await session.startTurn("first");
+    const timeout = new Error(
+      "OMP RPC request timed out phase=steer elapsedMs=60000 timeoutMs=60000",
+    );
+    omp.runtime().steerError = timeout;
+    await expect(session.steerActiveTurn?.("second", { expectedTurnId: turnId })).rejects.toBe(
+      timeout,
+    );
+  });
+
+  test("shows OMP's fallback model without persisting it as the selected model", async () => {
+    const omp = new OmpHarness();
+    await omp.start({ model: "openrouter/google/gemini-3.8-flash" });
+    const runtime = omp.runtime();
+    runtime.state = {
+      ...runtime.state,
+      model: { provider: "openrouter", id: "google/gemini-3.8-flash" },
+    };
+    runtime.emit({
+      type: "retry_fallback_applied",
+      from: "openrouter/google/gemini-3.8-flash",
+      to: "openrouter/other/model",
+      role: "primary",
+    });
+    runtime.state = { ...runtime.state, model: { provider: "openrouter", id: "other/model" } };
+    runtime.state = { ...runtime.state, fastModeEnabled: true, fastModeActive: false };
+    runtime.emit({ type: "model_changed" });
+    await waitForImmediate();
+    expect(omp.eventTypes()).toContain("model_changed");
+    expect((await omp.requireSession().getRuntimeInfo()).model).toBe("openrouter/other/model");
+    expect(omp.requireSession().describePersistence()?.metadata?.model).toBe(
+      "openrouter/google/gemini-3.8-flash",
+    );
+    expect(omp.requireSession().features).toEqual([
+      expect.objectContaining({
+        value: true,
+        description: expect.stringMatching(/does not apply/i),
+      }),
+    ]);
+  });
+
+  test("Fast stays selected when OMP says it is inactive for the current model", async () => {
+    const omp = new OmpHarness();
+    await omp.start({ model: "openrouter/google/gemini-3.8-flash" });
+    const session = omp.requireSession();
+    omp.runtime().fastModeResult = { enabled: true, active: false };
+    await session.setFeature?.("fast_mode", true);
+    expect(omp.runtime().setFastModeRequests).toEqual([true]);
+    expect(session.features).toEqual([
+      expect.objectContaining({
+        id: "fast_mode",
+        value: true,
+        description: expect.stringMatching(/does not apply to this model/i),
+        tooltip: expect.stringMatching(/does not apply to this model/i),
+      }),
+    ]);
+  });
+
+  test("shows Fast only when OMP reports its state fields", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    const session = omp.requireSession();
+    const {
+      fastModeEnabled: _enabled,
+      fastModeActive: _active,
+      ...olderState
+    } = omp.runtime().state;
+    omp.runtime().state = olderState;
+    await session.getRuntimeInfo();
+    expect(session.features).toEqual([]);
+    await expect(session.setFeature?.("fast_mode", true)).rejects.toThrow(/unavailable/i);
+    omp.runtime().state = { ...olderState, fastModeEnabled: false, fastModeActive: false };
+    await session.getRuntimeInfo();
+    expect(session.features).toHaveLength(1);
+  });
+
+  test("switching model refreshes whether Fast applies", async () => {
+    const omp = new OmpHarness();
+    await omp.start({ model: "openrouter/google/gemini-3.8-flash" });
+    const session = omp.requireSession();
+    omp.runtime().fastModeResult = { enabled: true, active: true };
+    await session.setFeature?.("fast_mode", true);
+    expect(session.features).toEqual([expect.objectContaining({ value: true })]);
+
+    omp.runtime().setModelResult = { provider: "openrouter", id: "other/model" };
+    omp.runtime().queueStateReports([
+      {
+        ...omp.runtime().state,
+        model: omp.runtime().setModelResult,
+        fastModeEnabled: true,
+        fastModeActive: false,
+      },
+    ]);
+    await session.setModel?.("openrouter/other/model");
+    expect(session.features).toEqual([
+      expect.objectContaining({
+        value: true,
+        description: expect.stringMatching(/does not apply/i),
+      }),
+    ]);
+  });
+
+  test("restores Fast from the initial OMP state on create and resume", async () => {
+    const created = new OmpHarness();
+    await created.start({ featureValues: { fast_mode: true } });
+    expect(created.runtime().setFastModeRequests).toEqual([true]);
+    expect(created.runtime().getStateRequestCount).toBe(1);
+
+    const resumed = new OmpHarness();
+    await resumed.resume(
+      { user: { id: "user-1", text: "hello" }, assistant: { id: "assistant-1", text: "hi" } },
+      { featureValues: { fast_mode: true } },
+    );
+    expect(resumed.runtime().setFastModeRequests).toEqual([true]);
+    expect(resumed.runtime().getStateRequestCount).toBe(1);
+  });
+
   test("does not complete on OMP's extension-notice agent_end", async () => {
     const omp = new OmpHarness();
     await omp.start();
@@ -438,11 +735,160 @@ describe("OMP agent client and session", () => {
         message: "Background job DocsSmokeTwo completed",
       },
     ]);
-    // Non-notice custom messages still fall through as assistant messages.
-    expect(omp.timeline().filter((item) => item.type === "assistant_message")).toMatchObject([
-      { text: "done" },
-      { text: "plain custom status text" },
+    // Non-notice custom messages still fall through as assistant messages with
+    // their own id so the stream coalescer never glues them onto the open reply.
+    expect(omp.timeline().filter((item) => item.type === "assistant_message")).toEqual([
+      { type: "assistant_message", text: "done", messageId: "omp-assistant-1" },
+      { type: "assistant_message", text: "plain custom status text", messageId: "omp-custom-1" },
     ]);
+  });
+
+  test("shows a concise error for a failed tool while keeping shell output", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    omp.emit({
+      type: "tool_execution_start",
+      toolCallId: "failed-shell",
+      toolName: "bash",
+      args: { command: "false" },
+    });
+    omp.emit({
+      type: "tool_execution_end",
+      toolCallId: "failed-shell",
+      toolName: "bash",
+      result: {
+        content: [{ type: "text", text: "Command exited with code 1" }],
+        details: {},
+        isError: true,
+        exitCode: 1,
+      },
+      isError: true,
+    });
+    expect(omp.timeline().at(-1)).toMatchObject({
+      type: "tool_call",
+      status: "failed",
+      error: "Command exited with code 1",
+      detail: { type: "shell", command: "false", exitCode: 1 },
+    });
+  });
+
+  test("uses the exit message when a failed shell has no output", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    omp.emit({
+      type: "tool_execution_start",
+      toolCallId: "empty-shell",
+      toolName: "bash",
+      args: { command: "false" },
+    });
+    omp.emit({
+      type: "tool_execution_end",
+      toolCallId: "empty-shell",
+      toolName: "bash",
+      result: {
+        content: [
+          {
+            type: "text",
+            text: "(no output)\n\nWall time: 0.02 seconds\n\nCommand exited with code 1",
+          },
+        ],
+        isError: true,
+      },
+      isError: true,
+    });
+    expect(omp.timeline().at(-1)).toMatchObject({ error: "Command exited with code 1" });
+  });
+
+  test("does not duplicate the typed invocation for a live skill expansion", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    await omp.runPromptWithCustomMessage(
+      "hello",
+      {
+        role: "custom",
+        content: "[IMPORTANT] Full skill body",
+        customType: "skill-prompt",
+        attribution: "user",
+        details: { name: "commit" },
+        display: true,
+        id: "skill-1",
+      },
+      "done",
+    );
+    expect(omp.timeline().filter((item) => item.type === "user_message")).toEqual([
+      { type: "user_message", text: "hello", messageId: "user-1" },
+    ]);
+    expect(omp.timeline()).not.toContainEqual(
+      expect.objectContaining({ text: "[IMPORTANT] Full skill body" }),
+    );
+  });
+
+  test.each([
+    { kind: "initial", priorPrompt: false },
+    { kind: "follow-up", priorPrompt: true },
+  ])("correlates a $kind skill invocation without a user echo", async ({ priorPrompt }) => {
+    const omp = new OmpHarness();
+    await omp.start();
+    if (priorPrompt) {
+      await omp.runPrompt("Reply OK", "OK");
+    }
+
+    const typed = "/skill:tldr Summarize: hi.";
+    const runtime = omp.runtime();
+    const promptStarted = runtime.nextPrompt();
+    const run = omp.requireSession().run(typed, { clientMessageId: "client-skill" });
+    await promptStarted;
+    runtime.beginTurn();
+    runtime.emit({
+      type: "message_end",
+      message: {
+        role: "custom",
+        content: "[IMPORTANT] Full skill body",
+        customType: "skill-prompt",
+        attribution: "user",
+        details: { name: "tldr", args: "Summarize: hi." },
+        display: true,
+        id: "skill-1",
+      },
+    });
+    runtime.streamAssistantText("done");
+    runtime.finishTurn();
+    await run;
+
+    expect(omp.timeline().filter((item) => item.type === "user_message")).toEqual([
+      ...(priorPrompt ? [{ type: "user_message", text: "Reply OK", messageId: "user-1" }] : []),
+      { type: "user_message", text: typed, clientMessageId: "client-skill" },
+    ]);
+  });
+
+  test("marks an OMP web search details error as failed even without isError", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    omp.emit({
+      type: "tool_execution_start",
+      toolCallId: "search-failed",
+      toolName: "web_search",
+      args: { query: "Paseo" },
+    });
+    omp.emit({
+      type: "tool_execution_end",
+      toolCallId: "search-failed",
+      toolName: "web_search",
+      result: {
+        content: [{ type: "text", text: "Error: All web search providers failed" }],
+        details: {
+          response: { provider: "mojeek", sources: [] },
+          error: "All web search providers failed",
+        },
+      },
+      isError: false,
+    });
+    expect(omp.timeline().at(-1)).toMatchObject({
+      type: "tool_call",
+      status: "failed",
+      error: "All web search providers failed",
+      detail: { type: "search", query: "Paseo" },
+    });
   });
 
   test("does not complete a queued model turn from OMP's local-only hint", async () => {
@@ -461,6 +907,28 @@ describe("OMP agent client and session", () => {
 
     await expect(omp.runPromptWithoutTurn("/model")).resolves.toMatchObject({ finalText: "" });
     expect(omp.completedTurnCount()).toBe(1);
+  });
+
+  test("completes a no-turn notify with one notification and no assistant text", async () => {
+    const scheduler = new ManualNoTurnScheduler();
+    const omp = new OmpHarness({ noTurnScheduler: scheduler });
+    await omp.start();
+    const prompt = await omp.startPromptWithFalseLocalOnlyResult("/autoresearch off");
+    omp.emit({
+      type: "extension_ui_request",
+      id: "local-notify",
+      method: "notify",
+      message: "Autoresearch mode disabled",
+      notifyType: "info",
+    });
+
+    scheduler.settle();
+    await expect(prompt.completion).resolves.toMatchObject({ finalText: "" });
+    expect(omp.completedTurnCount()).toBe(1);
+    expect(omp.timeline().filter((item) => item.type === "notification")).toEqual([
+      { type: "notification", level: "info", message: "Autoresearch mode disabled" },
+    ]);
+    expect(omp.timeline().filter((item) => item.type === "assistant_message")).toEqual([]);
   });
 
   test("waits for a delayed queued model turn after OMP's local-only result", async () => {
@@ -582,6 +1050,33 @@ describe("OMP agent client and session", () => {
     ]);
   });
 
+  test("shows OMP notifications during a turn and while idle with their levels", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    await omp.startTurn("work");
+    omp.runtime().beginTurn();
+    omp.emit({
+      type: "extension_ui_request",
+      id: "n1",
+      method: "notify",
+      message: "Working",
+      notifyType: "warning",
+    });
+    omp.runtime().finishTurn();
+    omp.emit({
+      type: "extension_ui_request",
+      id: "n2",
+      method: "notify",
+      message: "Done",
+      notifyType: "info",
+    });
+    expect(omp.timeline().filter((item) => item.type === "notification")).toEqual([
+      { type: "notification", level: "warning", message: "Working" },
+      { type: "notification", level: "info", message: "Done" },
+    ]);
+    expect(omp.timeline().filter((item) => item.type === "assistant_message")).toEqual([]);
+  });
+
   test("maps legacy select options without descriptions and preserves ordinary responses", async () => {
     const omp = new OmpHarness();
     await omp.start();
@@ -647,41 +1142,6 @@ describe("OMP agent client and session", () => {
     ]);
   });
 
-  test("preserves combined selection descriptions and freeform sentinel behavior", async () => {
-    const omp = new OmpHarness();
-    await omp.start();
-    omp.emit({
-      type: "tool_execution_start",
-      toolCallId: "ask-user-1",
-      toolName: "ask_user",
-      args: { allowComment: true, allowFreeform: true, allowMultiple: false },
-    });
-    omp.emit({
-      type: "extension_ui_request",
-      id: "select-combined",
-      method: "select",
-      title: "Choose",
-      options: ["First", "✏️ Type custom response..."],
-      optionDetails: [{ description: "First detail" }, { description: "ignored" }],
-    });
-
-    const combinedInput = omp.pendingPermissions()[0]?.input;
-    expect(combinedInput?.questions?.[0]?.options).toStrictEqual([
-      { label: "First", description: "First detail" },
-    ]);
-    expect(combinedInput).toMatchObject({
-      questions: [{ allowOther: true }, { header: "Comment" }],
-    });
-    await omp.respondToPermission("select-combined", {
-      behavior: "allow",
-      updatedInput: { answers: { Response: "custom", Comment: "note" } },
-    });
-    expect(omp.extensionUiResponses()).toContainEqual({
-      id: "select-combined",
-      response: { value: "✏️ Type custom response..." },
-    });
-  });
-
   test("exposes OMP modes and commands through the domain session", async () => {
     const omp = new OmpHarness();
     omp.queueCommands([{ name: "review", description: "Review changes", source: "skill" }]);
@@ -698,10 +1158,99 @@ describe("OMP agent client and session", () => {
         expect.objectContaining({ name: "review", kind: "skill" }),
       ]),
     );
+    await expect(omp.setMode("ask")).resolves.toBeUndefined();
+    await expect(omp.currentMode()).resolves.toBe("ask");
+    expect(omp.runtimeLaunches()[1]?.argv).toContain("--approval-mode");
+    expect(omp.runtimeLaunches()[1]?.argv).toContain("always-ask");
+  });
+
+  test("restarts the same conversation after an idle process exit", async () => {
+    const omp = new OmpHarness();
+    await omp.start({ modeId: "full" });
+    const previousId = omp.runtime().state.sessionId;
+    omp.processExit("OMP RPC process exited with code null and signal SIGKILL\nBun crashed");
+    expect(omp.turnFailures()).toEqual([
+      "OMP RPC process exited with code null and signal SIGKILL\nBun crashed",
+    ]);
+
+    await omp.startTurn("remember the conversation");
+    expect(omp.runtimeLaunches()).toHaveLength(2);
+    expect(omp.runtimeLaunches()[1]?.session).toBe("/tmp/omp-session");
+    expect(omp.runtime().state.sessionId).toBe(previousId);
+    expect(omp.threadStartedSessionIds()).toEqual([]);
+    expect(omp.runtime().prompts).toEqual([
+      { message: "remember the conversation", imageCount: 0 },
+    ]);
+  });
+
+  test("reports a mid-turn process exit and resumes on the following prompt", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    await omp.requireStartTurn("sleep 30");
+    omp.runtime().beginTurn();
+    omp.processExit("OMP RPC process exited with code 137 and signal null\nOOM");
+    expect(omp.turnFailures()).toEqual([
+      "OMP RPC process exited with code 137 and signal null\nOOM",
+    ]);
+    await omp.startTurn("continue");
+    expect(omp.runtimeLaunches()).toHaveLength(2);
+    expect(omp.runtime().prompts).toEqual([{ message: "continue", imageCount: 0 }]);
+  });
+
+  test("reports an immediate relaunch failure without retrying in a loop", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    omp.processExit("OMP RPC process exited with code null and signal SIGKILL");
+    omp.failNextStart(new Error("Bun failed during startup"));
+    await omp.startTurn("continue");
+    expect(omp.turnFailures()).toEqual([
+      "OMP RPC process exited with code null and signal SIGKILL",
+      "Bun failed during startup",
+    ]);
+    expect(omp.runtimeLaunches()).toHaveLength(1);
+  });
+
+  test("closes a replacement process if the session closes during relaunch", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    omp.processExit("OMP RPC process exited with code 1 and signal null");
+    const turn = omp.startTurnDetached("continue");
+    await omp.close();
+    await turn;
+    await waitForImmediate();
+    expect(omp.runtimeSessions().every((session) => session.closed)).toBe(true);
+  });
+
+  test("announces a fresh native session when an internal agent recovers", async () => {
+    const omp = new OmpHarness();
+    await omp.start({ internal: true });
+    const previousId = omp.runtime().state.sessionId;
+    omp.processExit("OMP RPC process exited with code 1 and signal null");
+    await omp.startTurn("continue");
+    expect(omp.runtimeLaunches()[1]?.argv).toContain("--no-session");
+    expect(omp.runtime().state.sessionId).not.toBe(previousId);
+    expect(omp.threadStartedSessionIds()).toEqual([omp.runtime().state.sessionId]);
+  });
+
+  test("leaves the current approval mode in place when relaunch fails", async () => {
+    const omp = new OmpHarness();
+    await omp.start({ modeId: "full" });
+    omp.failNextStart(new Error("OMP launch failed"));
+    await expect(omp.setMode("ask")).rejects.toThrow("OMP launch failed");
+    expect(await omp.currentMode()).toBe("full");
+    expect(omp.runtimeLaunches()).toHaveLength(1);
+  });
+
+  test("rejects a running approval-mode change until the turn ends", async () => {
+    const omp = new OmpHarness();
+    await omp.start({ modeId: "full" });
+    await omp.requireStartTurn("work");
     await expect(omp.setMode("ask")).resolves.toEqual({
       type: "warning",
-      message: "Start a new OMP session to change approval mode",
+      message: "Change approval mode once the current turn ends",
     });
+    expect(omp.runtimeLaunches()).toHaveLength(1);
+    expect(await omp.currentMode()).toBe("full");
   });
 
   test("rewinds natively, interrupts, and shuts down", async () => {

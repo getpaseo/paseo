@@ -1551,6 +1551,8 @@ export const ru: TranslationResources = {
     noFiles: "Файлы и каталоги не найдены",
     noCommands: "Команды не найдены",
     failedToLoad: "Не удалось загрузить",
+    chooseProjectForCommands: "Выберите проект, чтобы увидеть команды",
+    chooseModelForCommands: "Выберите модель, чтобы увидеть команды",
   },
   loadOlderHistory: {
     failed: "Не удалось загрузить старую историю.",
@@ -2228,6 +2230,14 @@ export const ru: TranslationResources = {
         codeSize: "Размер кода",
         codeSizeHint: "Используется для кода, диффов и вывода терминала",
         codeSizeAccessibility: "Размер шрифта кода",
+      },
+      layout: {
+        title: "Макет",
+        contentWidth: "Ширина содержимого",
+        contentWidthHint: "Максимальная ширина чата и файлов Markdown на широких экранах",
+        contentWidthAccessibility: "Ширина содержимого в пикселях",
+        reset: "Сбросить",
+        resetAccessibility: "Сбросить ширину содержимого",
       },
       syntax: {
         title: "Синтаксис",

@@ -1,0 +1,308 @@
+import { RefreshCw } from "lucide-react-native";
+import { useMemo } from "react";
+import { Text, View, type StyleProp, type TextStyle } from "react-native";
+import { StyleSheet, withUnistyles } from "react-native-unistyles";
+import {
+  iconButtonChromeGlyphSize,
+  mutedIconColorMapping,
+  smallIconButtonChromeFrameSize,
+} from "@/components/ui/icon-button-chrome";
+import { LoadingSpinner } from "@/components/ui/loading-spinner";
+import { ToolbarButton } from "@/components/ui/pane-content-toolbar";
+import { StatusBadge } from "@/components/ui/status-badge";
+import { useIsCompactFormFactor } from "@/constants/layout";
+import { isNative } from "@/constants/platform";
+import { useCompactTimeAgo } from "@/hooks/use-time-ago";
+import { UsageBalanceBar } from "./balance-bar";
+import { usageCopy } from "./copy";
+import { formatUsageFreshness, type UsageRefresh } from "./model";
+import { useReportRefresh } from "./queries";
+import { UsageSourceIcon } from "./source-icon";
+import type { UsageReport, UsageReportEntry } from "./types";
+import { UsageWindowBar } from "./window-bar";
+
+function statusText(report: UsageReport): string | null {
+  if (report.status === "available") return null;
+  return report.status === "error" ? "Error" : "Unavailable";
+}
+
+const ThemedRefreshIcon = withUnistyles(RefreshCw);
+const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
+
+export function UsageCard({
+  serverId,
+  entry,
+  compact = false,
+}: {
+  serverId: string;
+  entry: UsageReportEntry;
+  compact?: boolean;
+}) {
+  const isCompact = useIsCompactFormFactor();
+  const { refresh, refreshState } = useReportRefresh(serverId, entry.id);
+  // Where there is no hover the freshness is printed on the card; elsewhere the Refresh tooltip.
+  const showsFreshnessInline = isNative || isCompact;
+  const usage = entry.report;
+  const status = statusText(usage);
+  const footer = entry.account.label ?? null;
+  const balances = usage.balances ?? [];
+  const details = usage.details ?? [];
+
+  const containerStyle = useMemo(
+    () => [styles.container, compact ? styles.containerCompact : styles.containerPadded],
+    [compact],
+  );
+  const dotStyle = useMemo(
+    () => [
+      styles.statusDot,
+      usage.status === "available" && styles.statusDotAvailable,
+      usage.status === "error" && styles.statusDotError,
+    ],
+    [usage.status],
+  );
+
+  return (
+    <View style={containerStyle}>
+      <View style={styles.header}>
+        <UsageSourceIcon svg={entry.icon ?? null} size={14} />
+        <Text style={styles.name} numberOfLines={1}>
+          {entry.sourceLabel}
+        </Text>
+        {usage.planLabel ? <StatusBadge label={usage.planLabel} variant="muted" /> : null}
+        <View style={styles.headerSpacer} />
+        {status ? (
+          <View style={styles.statusRow}>
+            <View style={dotStyle} />
+            <Text style={styles.statusLabel}>{status}</Text>
+          </View>
+        ) : null}
+        <UsageRefreshButton
+          sourceLabel={entry.sourceLabel}
+          fetchedAt={entry.fetchedAt}
+          refreshState={refreshState}
+          onRefresh={refresh}
+          compact={isCompact}
+        />
+      </View>
+
+      {usage.error ? (
+        <Text style={styles.error} numberOfLines={3}>
+          {usage.error}
+        </Text>
+      ) : null}
+
+      {usage.windows.length > 0 || balances.length > 0 ? (
+        <View style={styles.bars}>
+          {usage.windows.map((window) => (
+            <UsageWindowBar key={window.id} window={window} />
+          ))}
+          {balances.map((balance) => (
+            <UsageBalanceBar key={balance.id} balance={balance} />
+          ))}
+        </View>
+      ) : null}
+
+      {details.length > 0 ? (
+        <View style={styles.details}>
+          {details.map((detail) => (
+            <View key={detail.id} style={styles.detailRow}>
+              <Text style={styles.detailLabel} numberOfLines={1}>
+                {detail.label}
+              </Text>
+              <Text style={styles.detailValue} numberOfLines={1}>
+                {detail.value}
+              </Text>
+            </View>
+          ))}
+        </View>
+      ) : null}
+
+      {footer || showsFreshnessInline ? (
+        <View style={styles.footerRow}>
+          <Text style={styles.footer} numberOfLines={1}>
+            {footer}
+          </Text>
+          {showsFreshnessInline ? (
+            <UsageFreshness
+              fetchedAt={entry.fetchedAt}
+              style={styles.freshness}
+              testID="usage-freshness"
+            />
+          ) : null}
+        </View>
+      ) : null}
+
+      {refreshState === "failed" ? (
+        <Text style={styles.error} testID="usage-refresh-error">
+          {usageCopy.refreshFailed}
+        </Text>
+      ) : null}
+    </View>
+  );
+}
+
+/** Refreshes this one report. Its tooltip says when the report on screen was fetched. */
+function UsageRefreshButton({
+  sourceLabel,
+  fetchedAt,
+  refreshState,
+  onRefresh,
+  compact,
+}: {
+  sourceLabel: string;
+  fetchedAt: string;
+  refreshState: UsageRefresh;
+  onRefresh: () => void;
+  compact: boolean;
+}) {
+  const isPending = refreshState === "pending";
+  const iconSize = iconButtonChromeGlyphSize("small", compact);
+  const freshness = useMemo(
+    () => (
+      <UsageFreshness
+        fetchedAt={fetchedAt}
+        style={styles.tooltipText}
+        testID="usage-freshness-tooltip"
+      />
+    ),
+    [fetchedAt],
+  );
+  return (
+    <ToolbarButton
+      label={`${usageCopy.refresh} ${sourceLabel}`}
+      tooltip={freshness}
+      tooltipSide="top"
+      compact={compact}
+      disabled={isPending}
+      onPress={onRefresh}
+      style={compact ? styles.refreshButtonCompact : styles.refreshButton}
+      testID="usage-refresh"
+    >
+      {isPending ? (
+        <ThemedLoadingSpinner size={iconSize} uniProps={mutedIconColorMapping} />
+      ) : (
+        <ThemedRefreshIcon size={iconSize} uniProps={mutedIconColorMapping} />
+      )}
+    </ToolbarButton>
+  );
+}
+
+/** Its own component so the relative-time clock re-renders one `<Text>`, not the card. */
+function UsageFreshness({
+  fetchedAt,
+  style,
+  testID,
+}: {
+  fetchedAt: string;
+  style: StyleProp<TextStyle>;
+  testID: string;
+}) {
+  const elapsed = useCompactTimeAgo(new Date(fetchedAt));
+  return (
+    <Text style={style} numberOfLines={1} testID={testID}>
+      {formatUsageFreshness(elapsed)}
+    </Text>
+  );
+}
+
+// The Refresh glyph lands on the card's right rail and the header keeps its text height;
+// the button's larger hitbox overhangs both instead of pushing them.
+function iconHitboxOverhang(compact: boolean) {
+  const overhang =
+    (smallIconButtonChromeFrameSize(compact) - iconButtonChromeGlyphSize("small", compact)) / 2;
+  return { marginRight: -overhang, marginVertical: -overhang };
+}
+
+const styles = StyleSheet.create((theme) => ({
+  container: {
+    gap: theme.spacing[3],
+  },
+  containerPadded: {
+    gap: theme.spacing[4],
+    paddingVertical: theme.spacing[4],
+    paddingHorizontal: theme.spacing[4],
+  },
+  containerCompact: {
+    gap: theme.spacing[3],
+  },
+  header: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+  },
+  name: {
+    flexShrink: 1,
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.base,
+  },
+  headerSpacer: {
+    flex: 1,
+  },
+  statusRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[1.5],
+  },
+  statusDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: theme.colors.foregroundMuted,
+  },
+  statusDotAvailable: {
+    backgroundColor: theme.colors.statusSuccess,
+  },
+  statusDotError: {
+    backgroundColor: theme.colors.statusDanger,
+  },
+  statusLabel: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
+  },
+  bars: {
+    gap: theme.spacing[3],
+  },
+  details: {
+    gap: theme.spacing[1],
+  },
+  detailRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    gap: theme.spacing[2],
+  },
+  detailLabel: {
+    flexShrink: 1,
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
+  },
+  detailValue: {
+    color: theme.colors.foreground,
+    fontSize: theme.fontSize.sm,
+  },
+  error: {
+    color: theme.colors.palette.red[300],
+    fontSize: theme.fontSize.sm,
+    lineHeight: theme.fontSize.sm * 1.4,
+  },
+  footerRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+  },
+  footer: {
+    flex: 1,
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
+  },
+  freshness: {
+    flexShrink: 0,
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
+  },
+  tooltipText: {
+    color: theme.colors.popoverForeground,
+    fontSize: theme.fontSize.sm,
+  },
+  refreshButton: iconHitboxOverhang(false),
+  refreshButtonCompact: iconHitboxOverhang(true),
+}));

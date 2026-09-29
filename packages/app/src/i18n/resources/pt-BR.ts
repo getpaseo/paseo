@@ -1553,6 +1553,8 @@ export const ptBR: TranslationResources = {
     noFiles: "Nenhum arquivo ou diretório encontrado",
     noCommands: "Nenhum comando encontrado",
     failedToLoad: "Falha ao carregar",
+    chooseProjectForCommands: "Escolha um projeto para ver os comandos",
+    chooseModelForCommands: "Selecione um modelo para ver os comandos",
   },
   loadOlderHistory: {
     failed: "Não foi possível carregar o histórico mais antigo",
@@ -2223,6 +2225,14 @@ export const ptBR: TranslationResources = {
         codeSize: "Tamanho do código",
         codeSizeHint: "Usado em código, diffs e saída do terminal",
         codeSizeAccessibility: "Tamanho da fonte de código",
+      },
+      layout: {
+        title: "Layout",
+        contentWidth: "Largura do conteúdo",
+        contentWidthHint: "Largura máxima do chat e dos arquivos Markdown em telas largas",
+        contentWidthAccessibility: "Largura do conteúdo em pixels",
+        reset: "Redefinir",
+        resetAccessibility: "Redefinir a largura do conteúdo",
       },
       syntax: {
         title: "Sintaxe",

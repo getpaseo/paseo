@@ -6,7 +6,6 @@ import { z } from "zod";
 
 import type { ProviderRuntimeSettings } from "../../provider-launch-config.js";
 
-const OMP_SESSION_DIR = "~/.omp/agent/sessions";
 const DEFAULT_OMP_MODE_ID = "full";
 const DEFAULT_OMP_READY_TIMEOUT_MS = 20_000;
 const DEFAULT_OMP_RPC_TIMEOUT_MS = 60_000;
@@ -25,7 +24,7 @@ export const OmpProviderParamsSchema = z
   .strict();
 
 export interface OmpRuntimeProviderParams {
-  sessionDir: string;
+  sessionDir?: string;
   readyTimeoutMs: number;
   rpcTimeoutMs: number;
 }
@@ -137,7 +136,7 @@ export function resolveOmpProviderParams(providerParams: unknown): {
   const configuredRpcTimeoutMs = params.rpcTimeoutMs;
   return {
     runtimeProviderParams: {
-      sessionDir: params.sessionDir ?? OMP_SESSION_DIR,
+      sessionDir: params.sessionDir,
       readyTimeoutMs: configuredRpcTimeoutMs ?? DEFAULT_OMP_READY_TIMEOUT_MS,
       rpcTimeoutMs: configuredRpcTimeoutMs ?? DEFAULT_OMP_RPC_TIMEOUT_MS,
     },
