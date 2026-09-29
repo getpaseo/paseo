@@ -1,3 +1,4 @@
+import { OpenCodeRuntimeClient } from "./opencode/runtime-client.js";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -5,11 +6,18 @@ import path from "node:path";
 import { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
 import { expect, test } from "vitest";
 
+import { execCommand } from "../../../utils/spawn.js";
 import { createTestLogger } from "../../../test-utils/test-logger.js";
 import type { PaseoToolCatalog } from "../tools/types.js";
 import { OpenCodeAgentClient } from "./opencode-agent.js";
+import { OpenCodeV2AgentClient } from "./opencode/v2/agent.js";
 import { OpenCodeBridge } from "./opencode/bridge.js";
 import { OpenCodeServerManager } from "./opencode/server-manager.js";
+import {
+  drainPersistedTimeline,
+  readAssistantText,
+  requireSessionId,
+} from "./opencode/test-utils/v2-local-e2e-helpers.js";
 
 test("real OpenCode server persists provider permissions across creation and resume", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "paseo-opencode-permissions-"));
@@ -86,7 +94,12 @@ test("real OpenCode server shares one process while shell.env stays session-scop
       mkdir(secondCwd, { recursive: true }),
     ]);
     first = await client.createSession(
-      { provider: "opencode", cwd: firstCwd, model: "opencode/big-pickle", modeId: "build" },
+      {
+        provider: "opencode",
+        cwd: firstCwd,
+        model: process.env.OPENCODE_TEST_MODEL ?? "opencode/big-pickle",
+        modeId: "build",
+      },
       {
         agentId: "real-agent-one",
         env: { PASEO_AGENT_ID: "real-agent-one", PASEO_AGENT_CWD: firstCwd },
@@ -127,6 +140,22 @@ test("real OpenCode server shares one process while shell.env stays session-scop
     expect(JSON.stringify(secondShell.data)).toContain(`real-agent-two|${secondCwd}`);
     expect(inspection.server.url).toMatch(/^http:\/\/127\.0\.0\.1:/);
 
+    // Keep the prompt assertions independent of asynchronous events from the direct shell API.
+    await first.close();
+    first = await client.createSession(
+      {
+        provider: "opencode",
+        cwd: firstCwd,
+        model: process.env.OPENCODE_TEST_MODEL ?? "opencode/big-pickle",
+        modeId: "build",
+      },
+      {
+        agentId: "real-agent-one",
+        env: { PASEO_AGENT_ID: "real-agent-one", PASEO_AGENT_CWD: firstCwd },
+        paseoTools: firstTools,
+      },
+      { persistSession: false },
+    );
     const agentResult = await first.run(
       [
         "Use the bash tool to run: env | grep -E '^(PASEO_AGENT_ID|PASEO_AGENT_CWD)='",
@@ -170,11 +199,6 @@ test("real OpenCode server shares one process while shell.env stays session-scop
   }
 }, 240_000);
 
-function requireSessionId(session: { id: string | null }): string {
-  if (!session.id) throw new Error("OpenCode session has no id");
-  return session.id;
-}
-
 function createCallerCatalog(callerAgentId: string): PaseoToolCatalog {
   const tool = {
     name: "report_caller_agent_id",
@@ -197,8 +221,142 @@ function createCallerCatalog(callerAgentId: string): PaseoToolCatalog {
   };
 }
 
-function readAssistantText(timeline: ReadonlyArray<{ type: string; text?: string }>): string {
-  return timeline
-    .flatMap((item) => (item.type === "assistant_message" ? [item.text ?? ""] : []))
-    .join("");
-}
+test("v2 native tool bridge preserves caller identity", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "paseo-opencode-v2-"));
+  const logger = createTestLogger();
+  const bridge = new OpenCodeBridge({ paseoHome: root, logger });
+  const catalog = createCallerCatalog("paseo-v2-caller");
+  bridge.setManifestCatalog(catalog);
+  await bridge.start();
+  const client = new OpenCodeV2AgentClient({ logger, bridge });
+  let session: Awaited<ReturnType<typeof client.createSession>> | undefined;
+  try {
+    session = await client.createSession(
+      {
+        provider: "opencode",
+        cwd: root,
+        model: process.env.OPENCODE_TEST_MODEL ?? "openai/gpt-6-astra",
+        featureValues: { auto_accept: true },
+      },
+      { agentId: "paseo-v2-caller", paseoTools: catalog, env: { PASEO_TEST_SCOPE: "V2_ENV_OK" } },
+      { persistSession: false },
+    );
+    const result = await session.run(
+      "Call the paseo_report_caller_agent_id tool once, then reply with its exact result. Do not use any other tools.",
+    );
+    expect(readAssistantText(result.timeline)).toContain("paseo-v2-caller");
+    const environment = await session.run(
+      "Use the shell tool to run printf '%s' \"$PASEO_TEST_SCOPE\", then reply with its output.",
+    );
+    expect(environment.finalText).toContain("V2_ENV_OK");
+    expect(result.timeline).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "tool_call",
+          name: "paseo_report_caller_agent_id",
+          status: "completed",
+        }),
+      ]),
+    );
+  } finally {
+    await session?.interrupt();
+    await session?.close();
+    await client.shutdown();
+    await bridge.close();
+    await rm(root, { recursive: true, force: true });
+  }
+}, 120_000);
+
+test.each([
+  {
+    major: 1,
+    package: "opencode-ai@1.14.46",
+    windowsPackage: "opencode-windows",
+    expectedTimeline: [],
+    expectedInitialTimeline: undefined,
+    expectedNotices: undefined,
+  },
+  {
+    major: 2,
+    package: "@opencode/cli@2.0.10",
+    windowsPackage: "@opencode/cli-windows",
+    expectedTimeline: [
+      { type: "notification", level: "info", message: "This chat uses OpenCode v2." },
+    ],
+    expectedInitialTimeline: [
+      expect.objectContaining({
+        item: { type: "notification", level: "info", message: "This chat uses OpenCode v2." },
+      }),
+    ],
+    expectedNotices: [expect.objectContaining({ major: 2 })],
+  },
+])(
+  "versioned runtime v$major discovers models and preserves a native session handle",
+  async ({
+    package: cliPackage,
+    windowsPackage,
+    expectedTimeline,
+    expectedInitialTimeline,
+    expectedNotices,
+  }) => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "paseo-opencode-versioned-"));
+    const client = new OpenCodeRuntimeClient(createTestLogger(), {
+      command: {
+        mode: "replace",
+        argv: [
+          process.platform === "win32"
+            ? path.join(
+                root,
+                "node_modules",
+                `${windowsPackage}-${process.arch}`,
+                "bin",
+                "opencode.exe",
+              )
+            : path.join(root, "node_modules", ".bin", "opencode"),
+        ],
+      },
+      env: {
+        XDG_CONFIG_HOME: path.join(root, "config"),
+        XDG_DATA_HOME: path.join(root, "data"),
+        XDG_CACHE_HOME: path.join(root, "cache"),
+        XDG_STATE_HOME: path.join(root, "state"),
+      },
+    });
+    let original: Awaited<ReturnType<typeof client.createSession>> | undefined;
+    let resumed: Awaited<ReturnType<typeof client.resumeSession>> | undefined;
+    try {
+      await execCommand(
+        "npm",
+        ["install", "--prefix", root, "--no-audit", "--no-fund", cliPackage],
+        {
+          cwd: root,
+          timeout: 180_000,
+        },
+      );
+      const catalog = await client.fetchCatalog({ scope: "workspace", cwd: root, force: true });
+      expect(catalog.models.length).toBeGreaterThan(0);
+      expect(catalog.modes.map((mode) => mode.id)).toContain("build");
+      original = await client.createSession(
+        { provider: "opencode", cwd: root, modeId: "build" },
+        undefined,
+        { persistSession: false },
+      );
+      const handle = await original.describePersistence();
+      expect(original.initialTimeline).toEqual(expectedInitialTimeline);
+      expect(handle.metadata?.openCodeRuntimeNotices).toEqual(expectedNotices);
+      resumed = await client.resumeSession(handle, { cwd: root });
+      expect((await resumed.describePersistence()).nativeHandle).toBe(handle.nativeHandle);
+      expect(
+        (await drainPersistedTimeline(resumed)).map((event) =>
+          event.type === "timeline" ? event.item : event,
+        ),
+      ).toEqual(expectedTimeline);
+    } finally {
+      await resumed?.close();
+      await original?.close();
+      await client.shutdown();
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+  240_000,
+);

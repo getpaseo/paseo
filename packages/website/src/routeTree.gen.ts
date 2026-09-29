@@ -63,6 +63,7 @@ import { Route as BlogIndexRouteImport } from "./routes/blog/index";
 import { Route as DocsSplatRouteImport } from "./routes/docs/$";
 import { Route as BlogSplatRouteImport } from "./routes/blog/$";
 import { Route as AlternativesSupersetRouteImport } from "./routes/alternatives/superset";
+import { Route as AlternativesOrcaRouteImport } from "./routes/alternatives/orca";
 import { Route as AlternativesOpencodeDesktopRouteImport } from "./routes/alternatives/opencode-desktop";
 import { Route as AlternativesOpenchamberRouteImport } from "./routes/alternatives/openchamber";
 import { Route as AlternativesHappyCoderRouteImport } from "./routes/alternatives/happy-coder";
@@ -340,6 +341,11 @@ const AlternativesSupersetRoute = AlternativesSupersetRouteImport.update({
   path: "/alternatives/superset",
   getParentRoute: () => rootRouteImport,
 } as any);
+const AlternativesOrcaRoute = AlternativesOrcaRouteImport.update({
+  id: "/alternatives/orca",
+  path: "/alternatives/orca",
+  getParentRoute: () => rootRouteImport,
+} as any);
 const AlternativesOpencodeDesktopRoute =
   AlternativesOpencodeDesktopRouteImport.update({
     id: "/alternatives/opencode-desktop",
@@ -429,6 +435,7 @@ export interface FileRoutesByFullPath {
   "/alternatives/happy-coder": typeof AlternativesHappyCoderRoute;
   "/alternatives/openchamber": typeof AlternativesOpenchamberRoute;
   "/alternatives/opencode-desktop": typeof AlternativesOpencodeDesktopRoute;
+  "/alternatives/orca": typeof AlternativesOrcaRoute;
   "/alternatives/superset": typeof AlternativesSupersetRoute;
   "/blog/$": typeof BlogSplatRoute;
   "/docs/$": typeof DocsSplatRoute;
@@ -489,6 +496,7 @@ export interface FileRoutesByTo {
   "/alternatives/happy-coder": typeof AlternativesHappyCoderRoute;
   "/alternatives/openchamber": typeof AlternativesOpenchamberRoute;
   "/alternatives/opencode-desktop": typeof AlternativesOpencodeDesktopRoute;
+  "/alternatives/orca": typeof AlternativesOrcaRoute;
   "/alternatives/superset": typeof AlternativesSupersetRoute;
   "/blog/$": typeof BlogSplatRoute;
   "/docs/$": typeof DocsSplatRoute;
@@ -552,6 +560,7 @@ export interface FileRoutesById {
   "/alternatives/happy-coder": typeof AlternativesHappyCoderRoute;
   "/alternatives/openchamber": typeof AlternativesOpenchamberRoute;
   "/alternatives/opencode-desktop": typeof AlternativesOpencodeDesktopRoute;
+  "/alternatives/orca": typeof AlternativesOrcaRoute;
   "/alternatives/superset": typeof AlternativesSupersetRoute;
   "/blog/$": typeof BlogSplatRoute;
   "/docs/$": typeof DocsSplatRoute;
@@ -616,6 +625,7 @@ export interface FileRouteTypes {
     | "/alternatives/happy-coder"
     | "/alternatives/openchamber"
     | "/alternatives/opencode-desktop"
+    | "/alternatives/orca"
     | "/alternatives/superset"
     | "/blog/$"
     | "/docs/$"
@@ -676,6 +686,7 @@ export interface FileRouteTypes {
     | "/alternatives/happy-coder"
     | "/alternatives/openchamber"
     | "/alternatives/opencode-desktop"
+    | "/alternatives/orca"
     | "/alternatives/superset"
     | "/blog/$"
     | "/docs/$"
@@ -738,6 +749,7 @@ export interface FileRouteTypes {
     | "/alternatives/happy-coder"
     | "/alternatives/openchamber"
     | "/alternatives/opencode-desktop"
+    | "/alternatives/orca"
     | "/alternatives/superset"
     | "/blog/$"
     | "/docs/$"
@@ -801,6 +813,7 @@ export interface RootRouteChildren {
   AlternativesHappyCoderRoute: typeof AlternativesHappyCoderRoute;
   AlternativesOpenchamberRoute: typeof AlternativesOpenchamberRoute;
   AlternativesOpencodeDesktopRoute: typeof AlternativesOpencodeDesktopRoute;
+  AlternativesOrcaRoute: typeof AlternativesOrcaRoute;
   AlternativesSupersetRoute: typeof AlternativesSupersetRoute;
 }
 
@@ -1184,6 +1197,13 @@ declare module "@tanstack/react-router" {
       preLoaderRoute: typeof AlternativesSupersetRouteImport;
       parentRoute: typeof rootRouteImport;
     };
+    "/alternatives/orca": {
+      id: "/alternatives/orca";
+      path: "/alternatives/orca";
+      fullPath: "/alternatives/orca";
+      preLoaderRoute: typeof AlternativesOrcaRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
     "/alternatives/opencode-desktop": {
       id: "/alternatives/opencode-desktop";
       path: "/alternatives/opencode-desktop";
@@ -1309,6 +1329,7 @@ const rootRouteChildren: RootRouteChildren = {
   AlternativesHappyCoderRoute: AlternativesHappyCoderRoute,
   AlternativesOpenchamberRoute: AlternativesOpenchamberRoute,
   AlternativesOpencodeDesktopRoute: AlternativesOpencodeDesktopRoute,
+  AlternativesOrcaRoute: AlternativesOrcaRoute,
   AlternativesSupersetRoute: AlternativesSupersetRoute,
 };
 export const routeTree = rootRouteImport

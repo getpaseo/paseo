@@ -17,6 +17,12 @@ import { runGitCommand } from "../../utils/run-git-command.js";
 const roots: string[] = [];
 type TestPluginRuntime = NonNullable<ConstructorParameters<typeof PluginService>[3]["runtime"]>;
 
+const emptyUsageRuntime = {
+  getUsageSourceRegistrations: () => [],
+  fetchUsage: async () => undefined,
+  discoverUsage: async () => [],
+} satisfies Pick<TestPluginRuntime, "getUsageSourceRegistrations" | "fetchUsage" | "discoverUsage">;
+
 async function createPlugin(id: string, source: string): Promise<string> {
   const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-service-"));
   roots.push(directory);
@@ -104,6 +110,7 @@ function createPausedRuntime() {
   });
   const running = new Set<string>();
   const runtime: TestPluginRuntime = {
+    ...emptyUsageRuntime,
     catalog: () => [...running].map((id) => ({ id, clientBundle: "bundle" })),
     invoke: async () => undefined,
     getLogs: () => [],
@@ -136,6 +143,7 @@ function createPluginSelectivePausedRuntime(pausedPluginId: string) {
   const starts: string[] = [];
   const running = new Set<string>();
   const runtime: TestPluginRuntime = {
+    ...emptyUsageRuntime,
     catalog: () => [...running].map((id) => ({ id, clientBundle: "bundle" })),
     invoke: async () => undefined,
     getLogs: () => [],
@@ -235,6 +243,7 @@ describe("PluginService", () => {
     ];
     const cleared: string[] = [];
     const runtime: TestPluginRuntime = {
+      ...emptyUsageRuntime,
       catalog: () => [],
       invoke: async () => undefined,
       getLogs: () => entries,
@@ -620,6 +629,7 @@ export default function contribute(server: PluginServerContext) {
     const events: string[] = [];
     const running = new Set<string>();
     const runtime: TestPluginRuntime = {
+      ...emptyUsageRuntime,
       catalog: () => [...running].map((id) => ({ id, clientBundle: "bundle" })),
       invoke: async () => undefined,
       getLogs: () => [],
@@ -703,6 +713,7 @@ export default function contribute(server: PluginServerContext) {
     const starts: string[] = [];
     let failNextStart = true;
     const runtime: TestPluginRuntime = {
+      ...emptyUsageRuntime,
       catalog: () => [...running].map((id) => ({ id, clientBundle: "bundle" })),
       invoke: async () => undefined,
       getLogs: () => [],
@@ -766,6 +777,7 @@ export default function contribute(server: PluginServerContext) {
       const running = new Set<string>();
       let starts = 0;
       const runtime: TestPluginRuntime = {
+        ...emptyUsageRuntime,
         catalog: () => [...running].map((id) => ({ id, clientBundle: "bundle" })),
         invoke: async () => undefined,
         getLogs: () => [],

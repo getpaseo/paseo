@@ -8,7 +8,7 @@ import { streamOmpCoreHistory, type OmpCapturedUserMessageEntry } from "./messag
 import type { OmpAgentMessage } from "./rpc-types.js";
 import { FakeOmp } from "./test-utils/fake-omp.js";
 import { OMP_HISTORY_MAPPER_HOOKS } from "./history-hooks.js";
-import { streamOmpHistory } from "./history.js";
+import { readOmpHistoryTodoState, streamOmpHistory } from "./history.js";
 
 async function collectHistory(
   messages: OmpAgentMessage[],
@@ -27,6 +27,117 @@ async function collectHistory(
 }
 
 describe("OMP history mapper", () => {
+  test("replays a web search details error as failed when OMP sets isError false", async () => {
+    const events = await collectHistory([
+      {
+        role: "assistant",
+        content: [
+          { type: "toolCall", id: "web-1", name: "web_search", arguments: { query: "Paseo" } },
+        ],
+      },
+      {
+        role: "toolResult",
+        toolCallId: "web-1",
+        toolName: "web_search",
+        content: [{ type: "text", text: "Error: All web search providers failed" }],
+        details: {
+          error: "All web search providers failed",
+          response: { provider: "none", sources: [] },
+        },
+        isError: false,
+      },
+    ]);
+    expect(events.at(-1)?.item).toMatchObject({
+      type: "tool_call",
+      status: "failed",
+      error: "All web search providers failed",
+    });
+  });
+
+  test("restores blocked and abandoned todo state from a session file", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "omp-todo-state-history-"));
+    const sessionFile = join(dir, "session.jsonl");
+    writeFileSync(
+      sessionFile,
+      [
+        { type: "session", id: "root" },
+        {
+          type: "message",
+          id: "todos",
+          parentId: "root",
+          message: {
+            role: "toolResult",
+            toolName: "todo",
+            details: {
+              phases: [
+                {
+                  name: "Tasks",
+                  tasks: [
+                    { content: "Wait for approval", status: "blocked", blocker: "review" },
+                    { content: "Old route", status: "abandoned" },
+                  ],
+                },
+              ],
+            },
+          },
+        },
+      ]
+        .map((entry) => JSON.stringify(entry))
+        .join("\n"),
+    );
+    expect(await readOmpHistoryTodoState(sessionFile)).toEqual({
+      type: "todo",
+      items: [{ text: "Wait for approval (blocked: review)", status: "pending", completed: false }],
+    });
+  });
+
+  test("hides persisted developer reminders and shows other developer messages", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "omp-developer-history-"));
+    const sessionFile = join(dir, "session.jsonl");
+    writeFileSync(
+      sessionFile,
+      [
+        { type: "session", id: "root" },
+        {
+          type: "message",
+          id: "reminder",
+          parentId: "root",
+          message: {
+            role: "developer",
+            attribution: "agent",
+            content: [
+              {
+                type: "text",
+                text: "<system-reminder>\nContinue unfinished tasks\n</system-reminder>",
+              },
+            ],
+          },
+        },
+        {
+          type: "message",
+          id: "other",
+          parentId: "reminder",
+          message: {
+            role: "developer",
+            content: [{ type: "text", text: "External instruction" }],
+          },
+        },
+      ]
+        .map((entry) => JSON.stringify(entry))
+        .join("\n"),
+    );
+    const events: AgentStreamEvent[] = [];
+    for await (const event of streamOmpHistory({ sessionFile, provider: "omp" }))
+      events.push(event);
+    expect(events.map((event) => event.item)).toEqual([
+      {
+        type: "assistant_message",
+        text: "[developer] External instruction",
+        messageId: "omp-custom-1",
+      },
+    ]);
+  });
+
   test("coalesces replayed subagent poll calls by target set", async () => {
     const events = await collectHistory([
       {
@@ -223,12 +334,20 @@ describe("OMP history mapper", () => {
       {
         type: "timeline",
         provider: "omp",
-        item: { type: "assistant_message", text: "visible explicit custom" },
+        item: {
+          type: "assistant_message",
+          text: "visible explicit custom",
+          messageId: "omp-custom-1",
+        },
       },
       {
         type: "timeline",
         provider: "omp",
-        item: { type: "assistant_message", text: "visible legacy custom" },
+        item: {
+          type: "assistant_message",
+          text: "visible legacy custom",
+          messageId: "omp-custom-2",
+        },
       },
       {
         type: "timeline",
@@ -366,6 +485,17 @@ describe("OMP history mapper", () => {
         },
       },
     });
+    // The running row must share the completed row's detail type, or the timeline merge keeps
+    // the running detail and drops the result.
+    expect(
+      events.flatMap((event) =>
+        event.type === "timeline" &&
+        event.item.type === "tool_call" &&
+        event.item.callId === "xd-write-call"
+          ? [event.item.detail.type]
+          : [],
+      ),
+    ).toEqual(["plain_text", "unknown"]);
   });
 
   test("maps only the active JSONL chain with native user ids and visible unknown roles", async () => {
@@ -447,8 +577,12 @@ describe("OMP history mapper", () => {
     }
     expect(events.map((event) => event.item)).toEqual([
       { type: "user_message", text: "active branch", messageId: "user-active" },
-      { type: "assistant_message", text: "[future_control] Unsupported history record" },
-      { type: "assistant_message", text: "[developer] developer note" },
+      {
+        type: "assistant_message",
+        text: "[future_control] Unsupported history record",
+        messageId: "omp-custom-1",
+      },
+      { type: "assistant_message", text: "[developer] developer note", messageId: "omp-custom-2" },
     ]);
 
     const omp = new FakeOmp();
@@ -470,6 +604,163 @@ describe("OMP history mapper", () => {
         type: "assistant_message",
         text: "old answer",
         messageId: "omp-history-assistant-1",
+      },
+    ]);
+  });
+
+  test("maps omp 18.1 custom_message entries like live custom messages", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "omp-custom-message-history-"));
+    const sessionFile = join(dir, "session.jsonl");
+    const skillPrompt =
+      '[IMPORTANT: User invoked the "commit" skill; follow its instructions. Full skill below.]\n\n# Commit';
+    const ircMessage = "<irc>\n<from>worker-1</from>\n<message>ready for review</message>\n</irc>";
+    writeFileSync(
+      sessionFile,
+      [
+        { type: "session", id: "root", parentId: null },
+        {
+          type: "message",
+          id: "answer-1",
+          parentId: "root",
+          message: {
+            role: "assistant",
+            content: [{ type: "text", text: "Done." }],
+            responseId: "resp-1",
+          },
+        },
+        {
+          type: "custom_message",
+          customType: "skill-prompt",
+          content: skillPrompt,
+          display: true,
+          details: {
+            name: "commit",
+            path: "/home/me/.agents/skills/commit/SKILL.md",
+            lineCount: 12,
+          },
+          attribution: "user",
+          id: "skill-1",
+          parentId: "answer-1",
+          timestamp: "2026-09-13T13:11:35.811Z",
+        },
+        {
+          type: "custom_message",
+          customType: "irc:incoming",
+          content: ircMessage,
+          display: true,
+          details: { from: "worker-1", message: "ready for review" },
+          attribution: "user",
+          id: "irc-1",
+          parentId: "skill-1",
+          timestamp: "2026-09-13T13:11:36.811Z",
+        },
+        {
+          type: "custom_message",
+          customType: "hidden-reminder",
+          content: "must stay hidden",
+          display: false,
+          attribution: "user",
+          id: "hidden-1",
+          parentId: "irc-1",
+          timestamp: "2026-09-13T13:11:37.811Z",
+        },
+        {
+          type: "custom_message",
+          customType: "legacy-no-display",
+          content: "visible without display flag",
+          attribution: "user",
+          id: "legacy-1",
+          parentId: "hidden-1",
+          timestamp: "2026-09-13T13:11:38.811Z",
+        },
+      ]
+        .map((entry) => JSON.stringify(entry))
+        .join("\n"),
+    );
+
+    const events: AgentStreamEvent[] = [];
+    for await (const event of streamOmpHistory({ sessionFile, provider: "omp" })) {
+      events.push(event);
+    }
+    expect(events.map((event) => event.item)).toEqual([
+      { type: "assistant_message", text: "Done.", messageId: "resp-1" },
+      { type: "user_message", text: "/skill:commit", messageId: "omp-custom-skill-1-user" },
+      { type: "assistant_message", text: ircMessage, messageId: "omp-custom-irc-1" },
+      {
+        type: "assistant_message",
+        text: "visible without display flag",
+        messageId: "omp-custom-legacy-1",
+      },
+    ]);
+  });
+
+  test("synthesises the typed /skill bubble only for user-attributed skill prompts", async () => {
+    await expect(
+      collectHistory([
+        {
+          role: "custom",
+          content: '[IMPORTANT: User invoked the "improve" skill; follow its instructions.]',
+          customType: "skill-prompt",
+          display: true,
+          details: {
+            name: "improve",
+            path: "/home/me/.agents/skills/improve/SKILL.md",
+            lineCount: 9,
+            args: "tests",
+          },
+          attribution: "user",
+          id: "skill-args",
+        },
+        {
+          role: "custom",
+          content: '[IMPORTANT: Agent invoked the "improve" skill.]',
+          customType: "skill-prompt",
+          display: true,
+          details: {
+            name: "improve",
+            path: "/home/me/.agents/skills/improve/SKILL.md",
+            lineCount: 9,
+          },
+          attribution: "agent",
+          id: "skill-agent",
+        },
+        {
+          role: "custom",
+          content: "<irc>\n<from>worker-1</from>\n<message>hi</message>\n</irc>",
+          customType: "irc:incoming",
+          display: true,
+          details: { from: "worker-1", message: "hi" },
+          attribution: "user",
+          id: "irc-user",
+        },
+      ]),
+    ).resolves.toEqual([
+      {
+        type: "timeline",
+        provider: "omp",
+        item: {
+          type: "user_message",
+          text: "/skill:improve tests",
+          messageId: "omp-custom-skill-args-user",
+        },
+      },
+      {
+        type: "timeline",
+        provider: "omp",
+        item: {
+          type: "assistant_message",
+          text: '[IMPORTANT: Agent invoked the "improve" skill.]',
+          messageId: "omp-custom-skill-agent",
+        },
+      },
+      {
+        type: "timeline",
+        provider: "omp",
+        item: {
+          type: "assistant_message",
+          text: "<irc>\n<from>worker-1</from>\n<message>hi</message>\n</irc>",
+          messageId: "omp-custom-irc-user",
+        },
       },
     ]);
   });

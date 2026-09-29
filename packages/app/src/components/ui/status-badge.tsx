@@ -11,6 +11,15 @@ interface StatusBadgeProps {
 }
 
 export function StatusBadge({ label, variant = "muted", leading }: StatusBadgeProps) {
+  const pillStyle = useMemo(
+    () => [
+      styles.pill,
+      variant === "success" && styles.pillSuccess,
+      variant === "warning" && styles.pillWarning,
+      variant === "error" && styles.pillError,
+    ],
+    [variant],
+  );
   const textStyle = useMemo(
     () => [
       styles.pillText,
@@ -22,7 +31,7 @@ export function StatusBadge({ label, variant = "muted", leading }: StatusBadgePr
   );
 
   return (
-    <View style={styles.pill}>
+    <View style={pillStyle}>
       {leading}
       <Text style={textStyle}>{label}</Text>
     </View>
@@ -40,6 +49,18 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: theme.colors.surface3,
     paddingHorizontal: theme.spacing[2],
     paddingVertical: 3,
+  },
+  pillSuccess: {
+    backgroundColor: theme.colors.statusSuccessTint,
+    borderColor: "transparent",
+  },
+  pillWarning: {
+    backgroundColor: theme.colors.statusWarningTint,
+    borderColor: "transparent",
+  },
+  pillError: {
+    backgroundColor: theme.colors.statusDangerTint,
+    borderColor: "transparent",
   },
   pillText: {
     fontSize: theme.fontSize.sm,
