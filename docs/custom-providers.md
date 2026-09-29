@@ -345,6 +345,14 @@ Override the command used to launch any provider with the `command` field. This 
 }
 ```
 
+The daemon reads Claude history outside the wrapper process, so it cannot see a
+`CLAUDE_CONFIG_DIR` the wrapper sets for itself. When a session runs, Paseo records the transcript
+path Claude reports and resumes that session's history from it. Sessions without a recorded path,
+and the import list, take `CLAUDE_CONFIG_DIR` from the provider's `env`, then from the daemon's
+environment, then fall back to `~/.claude`. Set the provider's `env.CLAUDE_CONFIG_DIR` to the
+wrapper's config directory to cover them. Rewind reads only the daemon's `CLAUDE_CONFIG_DIR` or
+`~/.claude`.
+
 ### Custom binary on a derived provider
 
 ```json
