@@ -141,6 +141,34 @@ export default {
     },
     plugins: [
       "expo-router",
+      [
+        "expo-font",
+        {
+          android: {
+            fonts: [
+              {
+                fontFamily: "InstrumentSans",
+                fontDefinitions: [
+                  { path: "./assets/fonts/InstrumentSans-400.ttf", weight: 400 },
+                  { path: "./assets/fonts/InstrumentSans-500.ttf", weight: 500 },
+                  { path: "./assets/fonts/InstrumentSans-600.ttf", weight: 600 },
+                ],
+              },
+              {
+                fontFamily: "InstrumentSerif",
+                fontDefinitions: [{ path: "./assets/fonts/InstrumentSerif-400.ttf", weight: 400 }],
+              },
+              {
+                fontFamily: "JetBrainsMono",
+                fontDefinitions: [
+                  { path: "./assets/fonts/JetBrainsMono-400.ttf", weight: 400 },
+                  { path: "./assets/fonts/JetBrainsMono-500.ttf", weight: 500 },
+                ],
+              },
+            ],
+          },
+        },
+      ],
       withPasteInput,
       withAndroidScroll,
       [withAndroidAsyncStorageSize, 64],
@@ -151,9 +179,9 @@ export default {
           image: "./assets/images/splash-icon.png",
           imageWidth: 200,
           resizeMode: "contain",
-          backgroundColor: "#ffffff",
+          backgroundColor: "#f0eee6",
           dark: {
-            backgroundColor: "#000000",
+            backgroundColor: "#121110",
           },
         },
       ],

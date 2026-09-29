@@ -256,7 +256,7 @@ export function buildLightSemanticColors(tint: LightThemeConfig) {
     surfaceSidebarHover: tint.surface1,
     surfaceSidebarSelected: tint.border,
     surfaceWorkspace: tint.surface0,
-    interactionHighlight: "rgba(15, 17, 21, 0.05)",
+    interactionHighlight: "rgba(21, 20, 15, 0.05)",
 
     foreground: tint.foreground,
     foregroundMuted: tint.foregroundMuted,
@@ -305,29 +305,30 @@ export function buildLightSemanticColors(tint: LightThemeConfig) {
   };
 }
 
-// Bright surfaces with bluish neutrals and a calm blue accent.
+// Tinte auf Papier: warm rice-paper neutrals and ink as the accent. Colour is kept for
+// meaning (status, diff, merged), so nothing decorative competes with it.
 const lightSemanticColors = buildLightSemanticColors({
-  surface0: "#ffffff",
-  surface1: "#f9fafb",
-  surface2: "#f1f3f5",
-  surface3: "#e1e5ee",
-  surface4: "#cfd3d6",
-  surfaceDiffEmpty: "#f5f6f7",
-  surfaceSidebar: "#f5f6f7",
-  foreground: "#0f1115",
-  foregroundMuted: "#61666b",
-  foregroundExtraMuted: "#979da6",
-  border: "#e9ecf2",
-  borderAccent: "#f1f3f5",
-  accent: "#4176e6",
-  accentBright: "#5686fe",
-  accentForeground: "#ffffff",
-  primary: "#0f1115",
-  primaryForeground: "#ffffff",
-  destructive: "#d0453a",
-  terminalBlack: "#0f1115",
-  terminalBrightBlack: "#43454a",
-  ring: "#4176e6",
+  surface0: "#f7f6f1",
+  surface1: "#f0eee6",
+  surface2: "#e7e4da",
+  surface3: "#d8d4c8",
+  surface4: "#b9b4a6",
+  surfaceDiffEmpty: "#efece3",
+  surfaceSidebar: "#f0eee6",
+  foreground: "#15140f",
+  foregroundMuted: "#6a665c",
+  foregroundExtraMuted: "#96917f",
+  border: "#dedacd",
+  borderAccent: "#e7e4da",
+  accent: "#15140f",
+  accentBright: "#3a3830",
+  accentForeground: "#f7f6f1",
+  primary: "#15140f",
+  primaryForeground: "#f7f6f1",
+  destructive: "#b8322a",
+  terminalBlack: "#15140f",
+  terminalBrightBlack: "#4a473f",
+  ring: "#15140f",
 });
 
 // ---------------------------------------------------------------------------
@@ -441,25 +442,27 @@ export function buildDarkSemanticColors(tint: DarkThemeConfig) {
 // Dark tint definitions
 // ---------------------------------------------------------------------------
 
+// Tinte auf Papier, dark: ink-black ground with paper-coloured type; the accent is the paper.
 const paseoDarkColors = buildDarkSemanticColors({
-  surface0: "#151517",
-  surface1: "#1b1b1c",
-  surface2: "#232324",
-  surface3: "#353638",
-  surface4: "#43454a",
-  surfaceDiffEmpty: "#1f1f21",
-  surfaceSidebar: "#101012",
-  foreground: "#f5f6f7",
-  foregroundMuted: "#adb2b8",
-  foregroundExtraMuted: "#81858c",
-  border: "#2c2c2e",
-  borderAccent: "#353638",
-  accent: "#4176e6",
-  accentBright: "#7aaaff",
-  destructive: "#e0584c",
-  terminalBlack: "#101012",
-  terminalBrightBlack: "#43454a",
-  ring: "#5686fe",
+  surface0: "#121110",
+  surface1: "#181714",
+  surface2: "#1f1e1a",
+  surface3: "#2e2c27",
+  surface4: "#4a473f",
+  surfaceDiffEmpty: "#1a1916",
+  surfaceSidebar: "#0e0d0c",
+  foreground: "#ece7dc",
+  foregroundMuted: "#a39d90",
+  foregroundExtraMuted: "#7a7569",
+  border: "#2a2824",
+  borderAccent: "#2e2c27",
+  accent: "#ece7dc",
+  accentBright: "#f7f3ea",
+  accentForeground: "#121110",
+  destructive: "#e5675a",
+  terminalBlack: "#0e0d0c",
+  terminalBrightBlack: "#4a473f",
+  ring: "#ece7dc",
 });
 
 const forestDarkColors = buildDarkSemanticColors({
@@ -637,21 +640,24 @@ export const OPACITY = {
 // are the fallback an empty user-supplied family resolves to at apply time.
 export const DEFAULT_UI_FONT_STACK: string = Platform.select({
   ios: "system-ui",
+  android: "InstrumentSans",
   default: "normal",
-  web: "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif",
+  web: "'Instrument Sans', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif",
 });
 
 export const DEFAULT_MONO_FONT_STACK: string = Platform.select({
   ios: "ui-monospace",
+  android: "JetBrainsMono",
   default: "monospace",
-  web: "SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace",
+  web: "'JetBrains Mono', SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace",
 });
 
-// Display serif for hub titles (Claude-style). System serif only, no bundled font.
+// Display serif for titles: the Leitstand head, session names, settings headings.
 export const DEFAULT_DISPLAY_FONT_STACK: string = Platform.select({
   ios: "Georgia",
+  android: "InstrumentSerif",
   default: "serif",
-  web: "Georgia, 'Times New Roman', serif",
+  web: "'Instrument Serif', Georgia, 'Times New Roman', serif",
 });
 
 // `fontSize`, `fontFamily`, and `lineHeight` are deliberately widened to plain
@@ -794,14 +800,14 @@ export const THEME_OPTIONS = [
     group: "primary",
     unistylesName: "light",
     theme: lightTheme,
-    swatch: "#ffffff",
+    swatch: "#f0eee6",
   },
   {
     name: "dark",
     group: "primary",
     unistylesName: "dark",
     theme: darkTheme,
-    swatch: "#4176e6",
+    swatch: "#15140f",
   },
   { name: "auto", group: "primary" },
   {

@@ -84,13 +84,13 @@ describe("Sidebar interaction surfaces", () => {
 describe("Built-in light theme", () => {
   it("preserves its authored aliases and terminal contrast through the semantic builder", () => {
     expect(lightTheme.colors).toMatchObject({
-      primary: "#0f1115",
-      primaryForeground: "#ffffff",
-      destructiveForeground: "#ffffff",
+      primary: "#15140f",
+      primaryForeground: "#f7f6f1",
+      destructiveForeground: "#f7f6f1",
       successForeground: "#ffffff",
       terminal: {
-        black: "#0f1115",
-        brightBlack: "#43454a",
+        black: "#15140f",
+        brightBlack: "#4a473f",
       },
     });
   });

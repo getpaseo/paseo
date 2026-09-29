@@ -16,6 +16,9 @@ import {
 } from "@/plugins/themes";
 import { PLUGIN_THEME_NAMES, PLUGIN_THEME_PREFERENCE, THEME_TO_UNISTYLES } from "@/styles/theme";
 import { applyAppearance } from "./apply";
+import { registerBundledFonts } from "./bundled-fonts";
+
+registerBundledFonts();
 
 interface ContributedThemes {
   options: PluginThemeOption[];
