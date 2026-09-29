@@ -1,6 +1,22 @@
 # Adding a New Provider to Paseo
 
-This guide walks through adding a new agent provider end-to-end. There are two integration patterns, and this doc covers both.
+Add new providers through the plugin SDK. The core adapter patterns below describe the existing
+server integrations.
+
+## Plugin providers
+
+Keep a bundled provider in `plugins/<id>/` and register it through
+`@getpaseo/plugin/server/provider`. Antigravity follows this pattern. Built-in loading and SDK
+import rules belong to [plugins.md](plugins.md#built-in-plugins); the
+[public provider guide](../public-docs/plugins/providers.md) covers the provider contract.
+
+The plugin owns the CLI transport, session state, catalog, and capabilities. The daemon owns
+executable resolution and applies `agents.providers.<provider-id>.command` and `env` before
+connecting. Register the provider's icon with the plugin rather than adding it to the app's
+provider icon map. You do not need a core manifest entry or provider factory.
+
+For Antigravity installation, modes, and limitations, see
+[Supported providers](../public-docs/supported-providers.md#antigravity).
 
 ## Provider-native session options
 
@@ -46,7 +62,7 @@ Each provider definition owns its option schema and exact MCP preapproval mappin
 must fail closed for Hub unattended execution until it can approve one exact injected MCP server
 and tool identity without approving native tools.
 
-## Two Integration Patterns
+## Core adapter patterns
 
 ### ACP (Agent Client Protocol) -- recommended
 

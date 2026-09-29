@@ -95,6 +95,10 @@ in process, ignore `pluginsEnabled`, and do not appear in `config.json` or the i
 list. Their client bundles appear in the plugin catalog. Editing one in development requires a
 daemon restart. Directory, Git, and npm installs cannot use a built-in ID.
 
+Built-in provider plugins use `agents.providers.<provider-id>` for command and environment
+overrides, like core providers. They require no separate plugin installation. See
+[provider integration](providers.md#plugin-providers).
+
 ## Install a Git source
 
 GitHub repositories use an `owner/repository` shorthand. Other hosts use a Git URL. An existing
