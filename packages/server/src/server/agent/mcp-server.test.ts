@@ -4040,6 +4040,66 @@ describe("send_agent_prompt MCP tool", () => {
       await removeAgentStateDir(agentManager, storage, workdir);
     }
   });
+  it("queues an agent-scoped prompt behind the target's running turn", async () => {
+    const workdir = await mkdtemp(join(tmpdir(), "mcp-send-queue-"));
+    const storage = new AgentStorage(join(workdir, "agents"), logger);
+    const parentClient = new HeldTurnAgentClient("claude", false);
+    const childClient = new HeldTurnAgentClient("codex", true);
+    const agentManager = new AgentManager({
+      clients: { claude: parentClient, codex: childClient },
+      registry: storage,
+      logger,
+    });
+
+    try {
+      const parent = await agentManager.createAgent(
+        { provider: "claude", cwd: existingCwd },
+        undefined,
+        { workspaceId: "wks_parent" },
+      );
+      const server = await createAgentMcpServer({
+        agentManager,
+        agentStorage: storage,
+        callerAgentId: parent.id,
+        providerSnapshotManager: createOpenCodeManager().manager,
+        logger,
+      });
+      const created = await invokeToolWithParsedInput(registeredTool(server, "create_agent"), {
+        relationship: { kind: "subagent" },
+        workspace: { kind: "current" },
+        title: "Busy Child",
+        provider: "codex/gpt-5.4",
+        initialPrompt: "Run a long command",
+      });
+      const childId = z.object({ agentId: z.string() }).parse(created.structuredContent).agentId;
+      await vi.waitFor(() => expect(agentManager.getAgent(childId)?.lifecycle).toBe("running"));
+
+      const sent = await invokeToolWithParsedInput(registeredTool(server, "send_agent_prompt"), {
+        agentId: childId,
+        prompt: "Then write the summary",
+        activeTurnBehavior: "queue",
+        notifyOnFinish: false,
+      });
+
+      expect(sent.structuredContent).toMatchObject({
+        success: true,
+        status: "running",
+        steered: false,
+        queued: true,
+      });
+      const childSession = childClient.sessions[0]!;
+      expect(childSession.prompts).toEqual(["Run a long command"]);
+
+      childSession.finishTurn();
+
+      await vi.waitFor(() =>
+        expect(childSession.prompts).toEqual(["Run a long command", "Then write the summary"]),
+      );
+    } finally {
+      await removeAgentStateDir(agentManager, storage, workdir);
+    }
+  });
+
   it("notifies the caller once when it prompts a created child that is still running", async () => {
     const workdir = await mkdtemp(join(tmpdir(), "mcp-send-running-child-"));
     const storage = new AgentStorage(join(workdir, "agents"), logger);

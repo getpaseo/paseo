@@ -1133,7 +1133,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     activeTurnBehavior: ActiveTurnBehaviorSchema.optional()
       .default("steer")
       .describe(
-        'How to handle a turn the target agent is already running. "steer" (default) delivers the prompt into the running turn without cancelling it. "interrupt" cancels the active turn and its subagents first.',
+        'How to handle a turn the target agent is already running. "steer" (default) delivers the prompt into the running turn without cancelling it. "interrupt" cancels the active turn and its subagents first. "queue" holds the prompt until the running turn ends, then runs it as the next turn.',
       ),
     background: z
       .boolean()
@@ -1155,7 +1155,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     activeTurnBehavior: ActiveTurnBehaviorSchema.optional()
       .default("interrupt")
       .describe(
-        'How to handle a turn the target agent is already running. "interrupt" (default) cancels the active turn and its subagents first. "steer" delivers the prompt into the running turn without cancelling it.',
+        'How to handle a turn the target agent is already running. "interrupt" (default) cancels the active turn and its subagents first. "steer" delivers the prompt into the running turn without cancelling it. "queue" holds the prompt until the running turn ends, then runs it as the next turn.',
       ),
     background: z
       .boolean()
@@ -1908,12 +1908,13 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     {
       title: "Send agent prompt",
       description:
-        'Send a task to a running agent. Agent-scoped callers run in background by default; top-level callers wait by default. activeTurnBehavior decides what happens when the target is mid-turn: "steer" delivers the prompt into the running turn without cancelling it, "interrupt" cancels the active turn and its subagents first. Agent-scoped callers default to "steer", top-level callers to "interrupt". A "steer" request never falls back to cancelling: if the target is mid-turn and its provider cannot steer, the call fails with success false and the running turn is left alone. The steered field reports whether the prompt joined a running turn (true) or started a new one (false).',
+        'Send a task to a running agent. Agent-scoped callers run in background by default; top-level callers wait by default. activeTurnBehavior decides what happens when the target is mid-turn: "steer" delivers the prompt into the running turn without cancelling it, "interrupt" cancels the active turn and its subagents first, "queue" holds the prompt in the daemon until the running turn ends and then runs it as the next turn. Agent-scoped callers default to "steer", top-level callers to "interrupt". A "steer" request never falls back to cancelling: if the target is mid-turn and its provider cannot steer, the call fails with success false and the running turn is left alone. The steered field reports whether the prompt joined a running turn (true) or started a new one (false). The queued field reports whether the prompt waits for the running turn to end.',
       inputSchema: sendAgentPromptInputSchema,
       outputSchema: {
         success: z.boolean(),
         status: AgentStatusEnum,
         steered: z.boolean().optional(),
+        queued: z.boolean().optional(),
         error: z.string().optional(),
         lastMessage: z.string().nullable().optional(),
         permission: AgentPermissionRequestPayloadSchema.nullable().optional(),
@@ -1973,6 +1974,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
         };
       }
       const steered = dispatch.disposition === "steered";
+      const queued = dispatch.disposition === "queued";
 
       // If not running in background, wait for completion
       if (!background) {
@@ -1990,6 +1992,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
           success: true,
           status: result.status,
           steered,
+          queued,
           lastMessage: result.lastMessage,
           permission: sanitizePermissionRequest(result.permission),
           ...(notifying ? { guidance: PROMPTED_AGENT_NOTIFICATION_GUIDANCE } : {}),
@@ -2015,6 +2018,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
         success: true,
         status: currentSnapshot?.lifecycle ?? "idle",
         steered,
+        queued,
         lastMessage: null,
         permission: null,
         ...(notifying ? { guidance: PROMPTED_AGENT_NOTIFICATION_GUIDANCE } : {}),
