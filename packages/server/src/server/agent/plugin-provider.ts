@@ -51,6 +51,7 @@ import type {
   ProviderRefreshContext,
   SteerActiveTurnOptions,
   SteerResult,
+  UsageReference,
 } from "./agent-sdk-types.js";
 import {
   isDefaultAgentCreateConfigUnattended,
@@ -92,6 +93,9 @@ function deferred<Value>(): Deferred<Value> {
     resolve = onResolve;
     reject = onReject;
   });
+  // Provider events can reject before send() settles and the caller awaits this promise.
+  // Observe that interval without replacing the rejecting promise returned to the caller.
+  void promise.catch(() => undefined);
   return { promise, resolve, reject };
 }
 
@@ -100,6 +104,20 @@ function providerError(error: ProviderError): Error {
     code: error.code,
     diagnostic: error.diagnostic,
   });
+}
+
+function isProviderRequestReply(
+  event: ProviderEvent,
+): event is Extract<
+  ProviderEvent,
+  { type: "request.completed" | "catalog" | "sessions" | "usage_reference" }
+> {
+  return (
+    event.type === "request.completed" ||
+    event.type === "catalog" ||
+    event.type === "sessions" ||
+    event.type === "usage_reference"
+  );
 }
 
 class ProviderRuntime {
@@ -353,11 +371,7 @@ class ProviderRuntime {
       this.failRequest(event);
       return;
     }
-    if (
-      event.type === "request.completed" ||
-      event.type === "catalog" ||
-      event.type === "sessions"
-    ) {
+    if (isProviderRequestReply(event)) {
       this.finishRequest(event);
       return;
     }
@@ -512,7 +526,10 @@ class ProviderRuntime {
   }
 
   private finishRequest(
-    event: Extract<ProviderEvent, { type: "request.completed" | "catalog" | "sessions" }>,
+    event: Extract<
+      ProviderEvent,
+      { type: "request.completed" | "catalog" | "sessions" | "usage_reference" }
+    >,
   ): void {
     const request = this.requests.get(event.requestId);
     if (!request) return;
@@ -530,6 +547,7 @@ class ProviderRuntimeSession {
     string,
     Deferred<Extract<ProviderEvent, { type: "session.prompt_result" }>>
   >();
+  private readonly activeTurnIds = new Set<string>();
   private terminal = false;
   config: ProviderConfigState = { models: [], modes: [], thinkingOptions: [], settings: [] };
   commands: Array<{ name: string; description: string; argumentHint?: string }> = [];
@@ -549,6 +567,17 @@ class ProviderRuntimeSession {
 
   get negotiatedCapabilities(): readonly string[] {
     return this.capabilities;
+  }
+
+  async getUsageReference(): Promise<UsageReference | null> {
+    if (!this.capabilities.includes("session.usage_reference")) return null;
+    const event = await this.runtime.complete({
+      type: "session.usage_reference",
+      requestId: randomUUID(),
+      sessionId: this.providerSessionId,
+    });
+    if (event.type !== "usage_reference") throw new Error("Invalid usage reference response");
+    return event.reference;
   }
 
   onEvent(listener: (event: ProviderEvent) => void): () => void {
@@ -674,6 +703,7 @@ class ProviderRuntimeSession {
       return;
     }
     if (event.type === "session.prompt_result") {
+      if (event.result.type === "turn") this.activeTurnIds.add(event.result.turnId);
       this.prompts.get(event.clientMessageId)?.resolve(event);
       return;
     }
@@ -692,14 +722,16 @@ class ProviderRuntimeSession {
   }
 
   connectionClosed(error = new Error("Provider connection closed")): void {
-    if (!this.terminal) {
-      this.terminal = true;
+    // Closing fails only an interrupted turn. An idle session goes stale, and its next prompt
+    // reopens it from persistence.
+    if (!this.terminal && this.activeTurnIds.size > 0) {
       this.publish({
         type: "session.runtime_failed",
         sessionId: this.id,
         error: { message: error.message },
       });
     }
+    this.terminal = true;
     this.rejectPending(error);
   }
 
@@ -723,6 +755,10 @@ class ProviderRuntimeSession {
   }
 
   private publish(event: ProviderEvent): void {
+    if (event.type === "session.turn") {
+      if (event.state === "started") this.activeTurnIds.add(event.turnId);
+      else this.activeTurnIds.delete(event.turnId);
+    }
     if (event.type === "session.config") this.config = event.config;
     if (event.type === "session.commands") this.commands = [...event.commands];
     if (event.type === "session.persistence" && this.restoration === "core") {
@@ -1058,6 +1094,10 @@ class PluginAgentSession implements AgentSession {
 
   get capabilities(): AgentCapabilityFlags {
     return agentCapabilities(this.bridge.negotiatedCapabilities);
+  }
+
+  getUsageReference(): Promise<UsageReference | null> {
+    return this.bridge.getUsageReference();
   }
 
   get features(): AgentFeature[] {

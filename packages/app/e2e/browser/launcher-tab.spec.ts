@@ -250,6 +250,52 @@ test.describe("Tab creation", () => {
     await expect(page).toHaveURL(/\/settings\/hosts\/[^/]+\/terminals$/);
   });
 
+  test("Cursor CLI profile uses the Cursor icon in New tab and host settings", async ({ page }) => {
+    const guessed: TerminalProfile = {
+      id: "e2e-cursor-guessed",
+      name: "Cursor guessed",
+      command: "cursor-agent",
+      args: ["{{{prompt}}}"],
+    };
+    const explicit: TerminalProfile = {
+      ...guessed,
+      id: "e2e-cursor-explicit",
+      name: "Cursor explicit",
+      icon: "cursor",
+    };
+    const profileSeed = await seedTerminalProfiles([guessed, explicit]);
+
+    try {
+      await gotoWorkspace(page, workspace.workspaceId);
+      await page.getByTestId("workspace-new-tab-button").filter({ visible: true }).click();
+
+      const menu = page.getByTestId("workspace-new-tab-menu").filter({ visible: true });
+      const menuIconPath = (name: string) =>
+        menu
+          .getByRole("menuitem", { name })
+          .evaluate((element) => element.querySelector("svg path")?.getAttribute("d") ?? null);
+      const guessedMenuPath = await menuIconPath(guessed.name);
+      const explicitMenuPath = await menuIconPath(explicit.name);
+
+      await menu.getByTestId("workspace-new-tab-menu-edit-terminal-profiles").click();
+      await expect(page).toHaveURL(/\/settings\/hosts\/[^/]+\/terminals$/);
+
+      const settingsIconPath = (id: string) =>
+        page
+          .getByTestId(`terminal-profile-row-${id}`)
+          .evaluate((element) => element.querySelector("svg path")?.getAttribute("d") ?? null);
+      const guessedSettingsPath = await settingsIconPath(guessed.id);
+      const explicitSettingsPath = await settingsIconPath(explicit.id);
+
+      expect(explicitMenuPath).not.toBeNull();
+      expect(explicitSettingsPath).not.toBeNull();
+      expect.soft(guessedMenuPath, "New tab Cursor profile icon").toBe(explicitMenuPath);
+      expect.soft(guessedSettingsPath, "Settings Cursor profile icon").toBe(explicitSettingsPath);
+    } finally {
+      await profileSeed.restore();
+    }
+  });
+
   test("tab bar shows action buttons per pane", async ({ page }) => {
     await gotoWorkspace(page, workspace.workspaceId);
     await assertSingleNewTabButton(page);

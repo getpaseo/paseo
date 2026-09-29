@@ -16,6 +16,7 @@ import {
   resolveWorkingDiffComparison,
   selectWorkingDiffComparison,
 } from "@/git/working-diff-comparison";
+import { draftAgentCommandsQueryKey } from "@/hooks/agent-commands-query";
 import {
   applyCheckoutStatusUpdateFromEvent,
   ensureCheckoutStatus,
@@ -195,6 +196,51 @@ describe("applyCheckoutStatusUpdateFromEvent", () => {
     expect(
       queryClient.getQueryState(checkoutCommitsQueryKey(serverId, "/repo2"))?.isInvalidated,
     ).toBe(false);
+  });
+
+  it("drops the checkout's cached draft slash commands when its branch changes", () => {
+    const queryClient = createQueryClient();
+    queryClient.setQueryData(
+      checkoutStatusQueryKey(serverId, cwd),
+      checkoutStatus({ currentBranch: "chore/build-paseo" }),
+    );
+    const thisCheckout = draftAgentCommandsQueryKey({
+      serverId,
+      draftConfig: { provider: "claude", cwd, model: "haiku" },
+    });
+    const otherCheckout = draftAgentCommandsQueryKey({
+      serverId,
+      draftConfig: { provider: "claude", cwd: "/repo2", model: "haiku" },
+    });
+    queryClient.setQueryData(thisCheckout, [{ name: "build-paseo" }]);
+    queryClient.setQueryData(otherCheckout, [{ name: "build-paseo" }]);
+
+    applyCheckoutStatusUpdateFromEvent({
+      queryClient,
+      serverId,
+      message: checkoutStatusUpdate(checkoutStatus({ currentBranch: "main" })),
+    });
+
+    expect(queryClient.getQueryData(thisCheckout)).toBeUndefined();
+    expect(queryClient.getQueryData(otherCheckout)).toEqual([{ name: "build-paseo" }]);
+  });
+
+  it("keeps the checkout's draft slash commands when a push leaves its branch unchanged", () => {
+    const queryClient = createQueryClient();
+    queryClient.setQueryData(checkoutStatusQueryKey(serverId, cwd), checkoutStatus());
+    const thisCheckout = draftAgentCommandsQueryKey({
+      serverId,
+      draftConfig: { provider: "claude", cwd, model: "haiku" },
+    });
+    queryClient.setQueryData(thisCheckout, [{ name: "build-paseo" }]);
+
+    applyCheckoutStatusUpdateFromEvent({
+      queryClient,
+      serverId,
+      message: checkoutStatusUpdate(checkoutStatus({ isDirty: true })),
+    });
+
+    expect(queryClient.getQueryData(thisCheckout)).toEqual([{ name: "build-paseo" }]);
   });
 
   it("writes the PR status cache when prStatus is present, and skips it otherwise", () => {

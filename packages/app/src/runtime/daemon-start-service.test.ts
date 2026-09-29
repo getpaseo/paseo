@@ -325,6 +325,15 @@ describe("upsertDesktopDaemonConnection", () => {
     expect(fake.upserts).toEqual([]);
   });
 
+  it("keeps an already registered host without waiting for a listen address", async () => {
+    const fake = createFakeStore([makeRelayOnlyHost("srv_desktop")]);
+
+    const result = await upsertDesktopDaemonConnection(fake.store, makeStatus({ listen: null }));
+
+    expect(result).toEqual({ ok: true });
+    expect(fake.upserts).toEqual([]);
+  });
+
   it("rejects a missing listen address without upserting", async () => {
     const fake = createFakeStore();
 

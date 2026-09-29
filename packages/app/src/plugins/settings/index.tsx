@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { Platform, Text, View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { router } from "expo-router";
+import { ArrowLeft } from "lucide-react-native";
 import type { PluginHostProps } from "@getpaseo/plugin/client";
 import { Button } from "@/components/ui/button";
 import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
@@ -127,7 +128,30 @@ function SettingsContent({
 }
 const ThemedSettingsContent = withUnistyles(SettingsContent);
 const themeMapping = (theme: Theme) => ({ theme: toPluginTheme(theme) });
-export function PluginSettingsContent(props: SettingsIdentity) {
-  return <ThemedSettingsContent {...props} uniProps={themeMapping} />;
+export function PluginSettingsContent({
+  onBackToPlugins,
+  showBackToPlugins,
+  ...identity
+}: SettingsIdentity & { onBackToPlugins: () => void; showBackToPlugins: boolean }) {
+  const { t } = useTranslation();
+  return (
+    <View>
+      {showBackToPlugins ? (
+        <Button
+          onPress={onBackToPlugins}
+          variant="ghost"
+          size="sm"
+          leftIcon={ArrowLeft}
+          style={styles.backButton}
+        >
+          {t("settings.plugins.screens.backToPlugins")}
+        </Button>
+      ) : null}
+      <ThemedSettingsContent {...identity} uniProps={themeMapping} />
+    </View>
+  );
 }
-const styles = StyleSheet.create((theme) => ({ message: { color: theme.colors.foregroundMuted } }));
+const styles = StyleSheet.create((theme) => ({
+  message: { color: theme.colors.foregroundMuted },
+  backButton: { alignSelf: "flex-start", paddingHorizontal: 0, marginBottom: theme.spacing[4] },
+}));

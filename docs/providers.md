@@ -8,7 +8,8 @@ This guide walks through adding a new agent provider end-to-end. There are two i
 names and nesting are the provider's native contract; options are not portable between providers.
 Paseo validates the object with the selected provider's strict schema before constructing a session.
 Unknown keys fail with their `providerOptions.*` path. Paseo-owned controls such as cwd, model,
-prompt, environment, session identity, MCP transport, callbacks, and hooks cannot be passed here.
+prompt, environment, session identity, MCP transport, callbacks, and hooks are not accepted as
+top-level provider options.
 
 This Paseo version accepts these keys:
 
@@ -19,10 +20,18 @@ This Paseo version accepts these keys:
   `allow_local_binding`, `allow_upstream_proxy`, `dangerously_allow_all_unix_sockets`,
   `dangerously_allow_non_loopback_proxy`, `domains`, and `unix_sockets`. See the
   [Codex configuration reference](https://developers.openai.com/codex/config-reference).
-- **Claude:** `allowedTools`, `disallowedTools`, `additionalDirectories`, `sandbox`, and `settings`.
-  The accepted sandbox fields cover enablement, fail-if-unavailable behavior, excluded and
-  unsandboxed commands, filesystem read/write rules, network domain/socket/local-binding rules,
-  weaker nested sandboxing, ignored violations, and the ripgrep command. `settings` accepts native
+- **Claude:** `allowedTools`, `disallowedTools`, `additionalDirectories`, `extraArgs`, `sandbox`, and
+  `settings`. `providerOptions.extraArgs` passes the SDK's documented
+  [`Options.extraArgs`](https://platform.claude.com/docs/en/agent-sdk/typescript#options) map
+  unchanged: keys omit the leading `--`, string values supply an argument value, and `null`
+  supplies a boolean flag. For example, `providerOptions: { extraArgs: { chrome: null } }`
+  passes `--chrome`, and `providerOptions: { extraArgs: { model: "x" } }` passes `--model x`.
+  Set it in session configuration or a plugin's `server.before("agent.create", ...)` hook; see
+  [plugin configuration hooks](../public-docs/plugins/reference.md#change-configuration-and-inject-an-mcp-server). Values are literal;
+  shell expressions such as `$(command)` are not evaluated. The accepted sandbox
+  fields cover enablement, fail-if-unavailable behavior, excluded and unsandboxed commands,
+  filesystem read/write rules, network domain/socket/local-binding rules, weaker nested
+  sandboxing, ignored violations, and the ripgrep command. `settings` accepts native
   `permissions.{allow,ask,deny}` and sandbox settings. See the
   [Claude Agent SDK TypeScript reference](https://platform.claude.com/docs/en/agent-sdk/typescript)
   and [Claude settings reference](https://code.claude.com/docs/en/settings).
@@ -60,7 +69,7 @@ model; it does not override the model list returned by a resolver.
 
 Implement the `AgentClient` and `AgentSession` interfaces from `agent-sdk-types.ts` yourself. This gives full control but requires you to handle process management, streaming, permissions, and session persistence from scratch.
 
-Existing direct providers: `claude` (in `providers/claude/agent.ts`), `codex` (`codex-app-server-agent.ts`), `opencode` (`opencode-agent.ts`), `pi` (`providers/pi/agent.ts`), and `omp` (`providers/omp/agent.ts`). The dev-only `mock` provider (`mock-load-test-agent.ts`) is also direct.
+Existing direct providers: `claude` (in `providers/claude/agent.ts`), `codex` (`codex-app-server-agent.ts`), `opencode` (`opencode/runtime-client.ts`), `pi` (`providers/pi/agent.ts`), and `omp` (`providers/omp/agent.ts`). The dev-only `mock` provider (`mock-load-test-agent.ts`) is also direct.
 
 Claude first-party model metadata lives in `packages/server/src/server/agent/providers/claude/model-manifest.ts`. When adding or updating a Claude model, update that manifest only; the model picker thinking options and Claude-specific feature gates are derived from the manifest. Do not add model-specific Claude capability lists in feature code.
 
@@ -69,6 +78,8 @@ Paseo tools are not implemented as MCP tools internally. They live in a shared t
 A provider that can register runtime tools directly should set `supportsNativePaseoTools: true` and consume the already-filtered `launchContext.paseoTools` in `createSession`/`resumeSession`. When native tools are present, `AgentManager` strips the internal Paseo MCP server from the provider launch config so the provider does not receive the same tools twice. Providers that only know MCP should keep `supportsMcpServers: true` and let the daemon inject `/mcp/agents`; the MCP server builds the same policy-filtered catalog for that caller. Filtering is enforced at catalog registration in both paths. Browser tools remain subject to the daemon browser-tools setting and browser-host availability.
 
 Pi is a process-backed provider. Paseo requires the user to have the `pi` binary installed and talks to it through `pi --mode rpc`; the server package does not embed Pi's SDK/runtime packages.
+
+Pi extension adapters live under `packages/server/src/server/agent/providers/pi/extensions/<extension>/`. Each adapter turns Pi RPC facts into Paseo tool, timeline, subagent, or question mappings through the [extension contract](../packages/server/src/server/agent/providers/pi/extensions/contract.ts). To add one, create its directory, add one entry to `extensions/registry.ts`, and test it with fixtures captured from the real extension in Pi that record package, version, source commit, Pi version, and capture date. `agent.ts`, `history-mapper.ts`, and `tool-call-mapper.ts` never name an extension.
 
 Paseo's per-agent and daemon-wide system prompts are appended by its generated Pi integration extension. Paseo deliberately does not pass `--append-system-prompt`, because that flag replaces Pi's automatic `APPEND_SYSTEM.md` discovery instead of composing with it.
 
@@ -86,9 +97,15 @@ OMP supports native Paseo host tools. The adapter registers the full caller-scop
 
 Pi RPC extension UI dialog requests (`select`, `input`, `editor`, `confirm`) are bridged into Paseo question permissions and answered with `extension_ui_response`. Pi extensions such as `ask_user` may chain dialogs: for example, a `select` can be followed by an optional-comment `input`. When an `ask_user` tool call declares `allowComment: true`, Paseo presents the selection and optional comment as one question permission, answers Pi's initial `select` immediately, then auto-answers the follow-up optional `input` with the comment the user already supplied (or an empty string). Preserve placeholders and optional/skip semantics for standalone optional inputs so the app can still distinguish "skip this optional input" from "cancel the whole dialog." Fire-and-forget extension UI requests such as notifications are intentionally ignored by the provider adapter unless Paseo grows first-class UI for them.
 
-OpenCode 1 keeps MCP and process environment outside the session boundary. Paseo shares one OpenCode server for ordinary agents and installs a daemon-owned plugin through `OPENCODE_CONFIG_CONTENT`. The plugin reads the exact agent environment and caller-scoped Paseo tool catalog from the daemon's private loopback bridge for each OpenCode session. Bridge context lives only in daemon memory and is removed when the Paseo session closes. The content-addressed plugin artifact contains no session data or secrets.
+OpenCode adapters target v1.14.46 and v2.0.10. V2 rejects binaries older than the tested 2.0.10 SDK at runtime selection. Runtime selection uses the configured command and environment. A recognized version is cached until provider configuration reload; a failed, timed-out, or unrecognized probe retains the v1 path and retries detection on the next operation. Load v2 code and materialize its plugin only after positive v2 selection; v1 sessions remain undecorated. Keep upstream SDK types inside the version-specific adapter. OpenCode owns storage migration; a missing native session must fail resume rather than create a replacement. V2 has no native archive/unarchive operation: archiving affects Paseo only. V1 retains native archiving.
 
-An agent with custom environment variables or user-configured MCP servers gets a dedicated OpenCode server. Keep that isolation until OpenCode exposes those values as session-owned configuration. Configure custom MCP with `mcp.add`; do not follow it with `mcp.connect`, which only toggles config-backed servers.
+Use OpenCode v2 execution events to trigger turn completion, with active-state and durable-log reconciliation after admission, reconnect, and while a turn remains active. Do not use `session.wait`: a healthy turn exceeding Node's HTTP headers deadline produces a transport error while OpenCode keeps working. The live event feed has no replay, and shutdown interruption preserves the previous idle outcome, so the session snapshot alone cannot recover missed execution events. Quiet streams are healthy: v2 heartbeats are SSE comments, not application events.
+
+V2.0.4 also removed the activation endpoint that gated a cold location, and a cold location registers its config-derived commands, skills, and providers asynchronously. Wait until `plugin.list` returns a populated inventory before reading the catalog or commands; an empty inventory means the location is still warming. Fail when the readiness deadline expires, including when an inventory request stalls.
+
+Paseo installs its OpenCode tool bridge through `OPENCODE_CONFIG_CONTENT`. V1 accepts a plugin file; v2 silently skips configured files and requires a package directory with a server entry point. Both versions use the daemon's private loopback bridge for caller-scoped tools. Bridge context lives only in daemon memory and is removed when the Paseo session closes. The content-addressed plugin artifacts contain no session data or secrets. V2 also needs this plugin when native Paseo tools are disabled: its prompt API has no structured-output format, so the plugin supplies a schema-validated final-answer tool.
+
+An agent with custom environment variables or user-configured MCP servers gets a dedicated OpenCode server. V2 supports session environment, but its MCP configuration remains location-scoped, so separate servers still prevent one agent from changing another agent's MCP setup. Configure custom MCP with `mcp.add`; do not follow it with `mcp.connect`, which only toggles config-backed servers.
 
 OpenCode owns user message IDs. Do not pass Paseo-generated IDs to OpenCode prompt APIs; let OpenCode create `msg*` IDs and record the user timeline item from the `message.updated` event.
 
@@ -180,26 +197,17 @@ promise for completion: equal results, including equal discovery timestamps, emi
 
 ---
 
-## Provider Usage Fetchers
+## Usage sources
 
-Provider plan usage is fetch-on-demand, not a daemon push subscription. The app calls `provider.usage.list.request` through React Query when the usage tooltip or Host Usage settings screen is shown, and the daemon returns the normalized `ProviderUsage` list directly.
+Usage is fetched on demand from plugin usage sources. Each source registers through `server.registerUsageSource()` with an input schema, `fetch(input)`, and optional `discover()`. The daemon discovers configured accounts, validates inputs in the plugin runtime, caches each source/input result for five minutes, and returns `usage.list_reports.response`. A source report has an account key, availability status, plan label, windows, balances, and details. Mark the window the app should show first with `headline: true`.
 
-To add plan usage for a provider, add `packages/server/src/services/quota-fetcher/providers/<provider>.ts` and register it in `packages/server/src/services/quota-fetcher/manifest.ts`. The provider file exports only its fetcher class; provider auth, endpoint constants, API schemas, and normalization helpers stay private in that file. A fetcher owns provider auth/API parsing and returns the generic shape:
+Create a built-in source under `plugins/<name>-usage-source/` with the same manifest, entry, `server/`, `shared/`, and `icon.svg` layout as an external plugin. Add its ID to `builtinPlugins` in `packages/server/src/server/plugins/builtin/index.ts`. Keep credential discovery, API parsing, and normalization inside the source; use helpers from `@getpaseo/plugin/server/usage`. The wire shape remains source agnostic. See [plugin usage sources](plugins.md#usage-sources).
 
-- `providerId`, `displayName`, `status`, and optional `planLabel`
-- any number of `windows` such as Session, Weekly, or Biweekly
-- optional `balances` for credits, USD, requests, or tokens
-- optional `details` for provider-specific rows
+`provider.usage.list` remains a compatibility RPC for older apps. It maps discovered reports to `ProviderUsage`. New clients use `usage.list_reports` after checking `server_info.features.usageSources`.
 
-Keep the protocol shape provider-agnostic. Do not add provider-specific renderers for new limit windows; labels and generic bars should carry the UI. API responses should be parsed and normalized with Zod inside the fetcher, while the protocol boundary stays strict so old/new client compatibility is explicit.
+### Credentials are read only
 
-Kimi Code usage follows the CLI-managed credential file at `KIMI_CODE_HOME` or `~/.kimi-code/credentials/kimi-code.json`; do not probe the legacy `~/.kimi` path as the primary source for current Kimi Code installs.
-
-Cursor usage reads the desktop `state.vscdb` token first, then `cursor-agent`'s `~/.config/cursor/auth.json`. Headless hosts only have the CLI file.
-
-### Usage fetchers are read-only on credentials
-
-A fetcher reads the provider's credential file and never writes it. On a 401 or 403 it returns `unavailable` and leaves refresh to the provider's own CLI: redeeming a refresh token in the fetcher invalidates the CLI's copy (refresh tokens are single-use), and rewriting the file through the fetcher's Zod schema drops any field the schema does not model, corrupting the file for the CLI.
+A source reads provider credentials without writing them. On 401 or 403 it returns `unavailable` and leaves refresh to the provider CLI. Redeeming a refresh token here would invalidate the CLI's copy; rewriting a parsed credential file could drop fields the source does not model.
 
 ---
 

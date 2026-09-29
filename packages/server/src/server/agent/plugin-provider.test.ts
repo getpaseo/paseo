@@ -4,9 +4,10 @@ import type {
   ProviderInput,
   ProviderRegistration,
 } from "@getpaseo/plugin/server/provider";
+import { setImmediate as nextTurn } from "node:timers/promises";
 import { describe, expect, test } from "vitest";
 import { createTestLogger } from "../../test-utils/test-logger.js";
-import type { AgentStreamEvent } from "./agent-sdk-types.js";
+import type { AgentClient, AgentStreamEvent } from "./agent-sdk-types.js";
 import { PluginAgentClientRegistry } from "./plugin-provider.js";
 import {
   isStaleProviderSessionError,
@@ -25,6 +26,7 @@ interface ProviderHarnessOptions {
   capabilities?: ProviderConnection["capabilities"];
   completeTurn?: boolean;
   openChildren?: (rootSessionId: string, emit: (event: ProviderEvent) => void) => void;
+  handleInput?: (input: ProviderInput, emit: (event: ProviderEvent) => void) => Promise<boolean>;
 }
 
 function createProviderHarness(options: ProviderHarnessOptions = {}) {
@@ -43,6 +45,7 @@ function createProviderHarness(options: ProviderHarnessOptions = {}) {
     capabilities,
     async send(input) {
       inputs.push(input);
+      if (await options.handleInput?.(input, emit)) return;
       if (input.type === "catalog") {
         emit({
           type: "catalog",
@@ -278,6 +281,59 @@ function expectNestedChildren(events: AgentStreamEvent[]) {
 }
 
 describe("PluginAgentClientRegistry", () => {
+  test.each([false, true])(
+    "contains a failed session open while send is pending: %s",
+    async (pendingSend) => {
+      let listener: ((event: ProviderEvent) => void) | undefined;
+      const unhandled: unknown[] = [];
+      const observeUnhandled = (reason: unknown) => unhandled.push(reason);
+      const registry = new PluginAgentClientRegistry(createTestLogger());
+      registry.replace([
+        {
+          id: "failing-provider",
+          label: "Failing provider",
+          async connect() {
+            return {
+              version: 1,
+              capabilities: ["session.persistence"],
+              async send(input) {
+                if (input.type !== "session.open") return;
+                listener?.({
+                  type: "request.failed",
+                  requestId: input.requestId,
+                  error: { message: "OMP persistent session registration is in progress" },
+                });
+                // Keep acceptance pending across a Node event-loop turn, as IPC can do.
+                if (pendingSend) await nextTurn();
+              },
+              onEvent(nextListener) {
+                listener = nextListener;
+                return () => {
+                  listener = undefined;
+                };
+              },
+              async close() {},
+            };
+          },
+        },
+      ]);
+      process.on("unhandledRejection", observeUnhandled);
+      try {
+        await expect(
+          registry.clients()["failing-provider"]!.createSession({
+            provider: "failing-provider",
+            cwd: "/workspace",
+          }),
+        ).rejects.toThrow("OMP persistent session registration is in progress");
+        await nextTurn();
+        expect(unhandled).toEqual([]);
+      } finally {
+        await registry.shutdown();
+        process.off("unhandledRejection", observeUnhandled);
+      }
+    },
+  );
+
   test("preserves nested provider child ownership during opening", async () => {
     const harness = createProviderHarness({ openChildren: openNestedChildren });
     const registry = new PluginAgentClientRegistry(createTestLogger());
@@ -340,6 +396,24 @@ describe("PluginAgentClientRegistry", () => {
     await registry.shutdown();
   });
 
+  test("returns no usage reference when a plugin provider lacks the capability", async () => {
+    const harness = createProviderHarness();
+    const registry = new PluginAgentClientRegistry(createTestLogger());
+    registry.replace([harness.registration]);
+    const client = registry.clients()[harness.registration.id]!;
+    const session = await client.createSession({
+      provider: harness.registration.id,
+      cwd: "/workspace",
+    });
+    try {
+      expect(await session.getUsageReference?.()).toBeNull();
+      expect(harness.inputs.some((input) => input.type === "session.usage_reference")).toBe(false);
+    } finally {
+      await session.close();
+      registry.replace([]);
+    }
+  });
+
   test("terminalizes an active turn exactly once when its plugin provider is removed", async () => {
     const harness = createProviderHarness({ completeTurn: false });
     const registry = new PluginAgentClientRegistry(createTestLogger());
@@ -373,6 +447,63 @@ describe("PluginAgentClientRegistry", () => {
 
     registry.replace([]);
     expect(eventsOfType(events, "turn_failed")).toHaveLength(1);
+  });
+
+  test("leaves a completed session without a failure when its plugin provider is removed", async () => {
+    const harness = createProviderHarness();
+    const registry = new PluginAgentClientRegistry(createTestLogger());
+    registry.replace([harness.registration]);
+    const session = await registry.clients()[harness.registration.id]!.createSession({
+      provider: harness.registration.id,
+      cwd: "/workspace",
+    });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    await session.run("hello", { clientMessageId: "completed-message" });
+    expect(eventsOfType(events, "turn_completed")).toHaveLength(1);
+
+    registry.replace([]);
+    await harness.waitForClose();
+
+    expect(eventsOfType(events, "turn_failed")).toEqual([]);
+    await expect(
+      session.startTurn("after reload", { clientMessageId: "after-reload" }),
+    ).rejects.toBeInstanceOf(StaleProviderSessionError);
+  });
+
+  test("fails an accepted turn that has not started when its plugin provider is removed", async () => {
+    const harness = createProviderHarness({
+      handleInput: async (input, emit) => {
+        if (input.type !== "session.prompt") return false;
+        emit({
+          type: "session.prompt_result",
+          sessionId: input.sessionId,
+          clientMessageId: input.prompt.clientMessageId,
+          result: { type: "turn", turnId: "accepted-turn" },
+        });
+        return true;
+      },
+    });
+    const registry = new PluginAgentClientRegistry(createTestLogger());
+    registry.replace([harness.registration]);
+    const session = await registry.clients()[harness.registration.id]!.createSession({
+      provider: harness.registration.id,
+      cwd: "/workspace",
+    });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    await expect(
+      session.startTurn("hello", { clientMessageId: "accepted-message" }),
+    ).resolves.toEqual({ turnId: "accepted-turn" });
+
+    registry.replace([]);
+    await harness.waitForClose();
+
+    expect(eventsOfType(events, "turn_failed")).toEqual([
+      expect.objectContaining({ error: "Provider connection closed" }),
+    ]);
   });
 
   test("closes a stale session after its plugin provider is replaced", async () => {
@@ -539,4 +670,168 @@ describe("PluginAgentClientRegistry", () => {
     await expect.poll(harness.closeCount).toBe(1);
     expect(harness.inputs.map((input) => input.type)).toContain("session.close");
   });
+});
+
+type RequestKind = "session.open" | "catalog" | "session.configure" | "session.prompt";
+
+async function requestFromClient(client: AgentClient, kind: RequestKind): Promise<unknown> {
+  if (kind === "catalog") return client.fetchCatalog({ scope: "global" });
+  const session = await client.createSession({ provider: client.provider, cwd: "/workspace" });
+  if (kind === "session.open") return session;
+  if (kind === "session.configure") return session.setMode("build");
+  return session.startTurn("hello", { clientMessageId: "pending-message" });
+}
+
+async function withObservedProvider(
+  options: ProviderHarnessOptions,
+  run: (client: AgentClient, registry: PluginAgentClientRegistry) => Promise<void>,
+): Promise<void> {
+  const harness = createProviderHarness(options);
+  const registry = new PluginAgentClientRegistry(createTestLogger());
+  const unhandled: unknown[] = [];
+  const observe = (reason: unknown) => unhandled.push(reason);
+  process.on("unhandledRejection", observe);
+  registry.replace([harness.registration]);
+  try {
+    await run(registry.clients()[harness.registration.id]!, registry);
+    await registry.shutdown();
+    await nextTurn();
+    expect(unhandled).toEqual([]);
+  } finally {
+    await registry.shutdown();
+    process.off("unhandledRejection", observe);
+  }
+}
+
+describe("pending provider responses", () => {
+  test.each<RequestKind>(["session.open", "catalog", "session.configure", "session.prompt"])(
+    "preserves the send error for %s",
+    async (kind) => {
+      const failure = new Error("Provider send failed");
+      await withObservedProvider(
+        {
+          async handleInput(input) {
+            if (input.type === kind) throw failure;
+            return false;
+          },
+        },
+        async (client) => {
+          await expect(requestFromClient(client, kind)).rejects.toBe(failure);
+        },
+      );
+    },
+  );
+
+  test.each([
+    [
+      "catalog",
+      expect.objectContaining({
+        models: [expect.objectContaining({ id: "plugin-model", isDefault: true })],
+        defaultModeId: "build",
+      }),
+    ],
+    ["session.configure", undefined],
+  ] as const)(
+    "contains an early request.failed for %s and permits a successful retry",
+    async (kind, result) => {
+      let failed = false;
+      await withObservedProvider(
+        {
+          async handleInput(input, emit) {
+            if (input.type !== kind || !("requestId" in input) || failed) return false;
+            failed = true;
+            emit({
+              type: "request.failed",
+              requestId: input.requestId,
+              error: { message: "Provider request failed", code: "busy", diagnostic: "retry" },
+            });
+            await nextTurn();
+            return true;
+          },
+        },
+        async (client) => {
+          await expect(requestFromClient(client, kind)).rejects.toMatchObject({
+            message: "Provider request failed",
+            code: "busy",
+            diagnostic: "retry",
+          });
+          await expect(requestFromClient(client, kind)).resolves.toEqual(result);
+        },
+      );
+    },
+  );
+
+  test.each([
+    ["session.open", "Provider session closed"],
+    ["session.configure", "Provider session closed"],
+    ["session.prompt", StaleProviderSessionError],
+  ] as const)("contains session closure while accepting %s", async (kind, error) => {
+    await withObservedProvider(
+      {
+        async handleInput(input, emit) {
+          if (input.type !== kind || !("sessionId" in input)) return false;
+          emit({
+            type: "session.closed",
+            sessionId: input.sessionId,
+            error: { message: "Provider session closed" },
+          });
+          await nextTurn();
+          return true;
+        },
+      },
+      async (client) => {
+        await expect(requestFromClient(client, kind)).rejects.toThrow(error);
+      },
+    );
+  });
+
+  test.each([
+    ["session.open", "Provider connection closed"],
+    ["catalog", "Provider closed"],
+    ["session.configure", "Provider closed"],
+    ["session.prompt", StaleProviderSessionError],
+  ] as const)("contains connection shutdown while accepting %s", async (kind, error) => {
+    let disconnect!: () => Promise<void>;
+    await withObservedProvider(
+      {
+        async handleInput(input) {
+          if (input.type !== kind) return false;
+          await disconnect();
+          await nextTurn();
+          return true;
+        },
+      },
+      async (client, registry) => {
+        disconnect = () => registry.shutdown();
+        await expect(requestFromClient(client, kind)).rejects.toThrow(error);
+      },
+    );
+  });
+
+  test.each([true, false])(
+    "preserves cancellation with acceptance pending: %s",
+    async (pending) => {
+      const controller = new AbortController();
+      const reason = new Error("Catalog refresh cancelled");
+      await withObservedProvider(
+        {
+          async handleInput(input) {
+            if (input.type !== "catalog") return false;
+            if (pending) {
+              controller.abort(reason);
+              await nextTurn();
+            } else {
+              setImmediate(() => controller.abort(reason));
+            }
+            return true;
+          },
+        },
+        async (client) => {
+          await expect(
+            client.fetchCatalog({ scope: "global" }, { signal: controller.signal }),
+          ).rejects.toBe(reason);
+        },
+      );
+    },
+  );
 });

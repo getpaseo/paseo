@@ -854,6 +854,142 @@ test("passes password as HTTP bearer header and WebSocket subprotocol", async ()
   });
 });
 
+test("keeps relay upgrade credentials out of the socket request", async () => {
+  const mock = createMockTransport();
+  const requests: Array<{ url: string; headers?: Record<string, string>; protocols?: string[] }> =
+    [];
+  const client = new DaemonClient({
+    url: "ws://relay.test/ws?role=client&serverId=srv_test&v=2",
+    clientId: "clsk_relay_auth_test",
+    password: "shared-secret",
+    authHeader: "Bearer shared-secret",
+    e2ee: { enabled: true, daemonPublicKeyB64: "daemon-public-key" },
+    reconnect: { enabled: false },
+    transportFactory: (request) => {
+      requests.push(request);
+      return mock.transport;
+    },
+  });
+  clients.push(client);
+  void client.connect();
+  await vi.waitFor(() => expect(requests).toHaveLength(1));
+  expect(requests[0]).toEqual({ url: "ws://relay.test/ws?role=client&serverId=srv_test&v=2" });
+});
+
+test("refuses relay password auth without an encrypted hello", async () => {
+  const requests: unknown[] = [];
+  const client = new DaemonClient({
+    url: "ws://relay.test/ws?role=client&serverId=srv_test&v=2",
+    clientId: "clsk_unencrypted_relay_test",
+    password: "shared-secret",
+    connectTimeoutMs: 50,
+    reconnect: { enabled: false },
+    transportFactory: (request) => {
+      requests.push(request);
+      return createMockTransport().transport;
+    },
+  });
+  clients.push(client);
+  await expect(client.connect()).rejects.toThrow("Relay credentials require E2EE");
+  expect(requests).toEqual([]);
+});
+
+test("stops reconnecting after a password rejection on an established connection", async () => {
+  const socket = createMockTransport();
+  let attempts = 0;
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_reconnect_auth_test",
+    password: "old-secret",
+    reconnect: { enabled: true, baseDelayMs: 1, maxDelayMs: 1 },
+    transportFactory: () => {
+      attempts += 1;
+      return socket.transport;
+    },
+  });
+  clients.push(client);
+  const connected = client.connect();
+  socket.triggerOpen();
+  await connected;
+  socket.triggerMessage(JSON.stringify({ type: "hello.rejected", reason: "incorrect_password" }));
+  socket.triggerClose({ code: 4003, reason: "Incorrect password" });
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  expect(client.authFailureReason).toBe("incorrect_password");
+  expect(attempts).toBe(1);
+});
+
+test("sends a password containing spaces in hello without an invalid WebSocket subprotocol", async () => {
+  const mock = createMockTransport();
+  const transportFactory = vi.fn(() => mock.transport);
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_unit_test",
+    password: "two words",
+    logger: createMockLogger(),
+    reconnect: { enabled: false },
+    transportFactory,
+  });
+  clients.push(client);
+  const connected = client.connect();
+  mock.triggerOpen({ preserveSent: true });
+  await connected;
+  expect(transportFactory).toHaveBeenCalledWith({
+    url: "ws://test",
+    headers: {},
+  });
+  expect(JSON.parse(assertStr(mock.sent[0]))).toMatchObject({
+    type: "hello",
+    auth: { kind: "password", password: "two words" },
+  });
+});
+
+test("uses a local credential over a saved password when the desktop bridge provides one", async () => {
+  const mock = createMockTransport();
+  const transportFactory = vi.fn(() => mock.transport);
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "desktop-managed",
+    password: "stale-password",
+    localCredential: async () => "current-local-token",
+    reconnect: { enabled: false },
+    transportFactory,
+  });
+  clients.push(client);
+  const connected = client.connect();
+  await vi.waitFor(() => expect(transportFactory).toHaveBeenCalled());
+  mock.triggerOpen({ preserveSent: true });
+  await connected;
+  expect(transportFactory).toHaveBeenCalledWith({ url: "ws://test", headers: {} });
+  expect(JSON.parse(assertStr(mock.sent[0]))).toMatchObject({
+    type: "hello",
+    auth: { kind: "localCredential", token: "current-local-token" },
+  });
+});
+
+test("uses the saved host password when the desktop bridge has no credential for the target", async () => {
+  const mock = createMockTransport();
+  const transportFactory = vi.fn(() => mock.transport);
+  const localCredential = vi.fn(async () => undefined);
+  const client = new DaemonClient({
+    url: "ws://remote-host",
+    clientId: "remote-saved-host",
+    password: "saved-password",
+    localCredential,
+    reconnect: { enabled: false },
+    transportFactory,
+  });
+  clients.push(client);
+  const connected = client.connect();
+  await vi.waitFor(() => expect(transportFactory).toHaveBeenCalled());
+  mock.triggerOpen({ preserveSent: true });
+  await connected;
+  expect(localCredential).toHaveBeenCalledOnce();
+  expect(JSON.parse(assertStr(mock.sent[0]))).toMatchObject({
+    type: "hello",
+    auth: { kind: "password", password: "saved-password" },
+  });
+});
+
 test("advertises client capabilities in hello", async () => {
   const logger = createMockLogger();
   const mock = createMockTransport();
@@ -901,6 +1037,7 @@ test("advertises client capabilities in hello", async () => {
       timeline_notifications: true,
       plugin_timeline_items: true,
       workspace_setup_blocked: true,
+      hello_rejection: true,
       browser_host: {
         supportedCommands: ["list_tabs"],
         hostKind: "desktop app",
@@ -6768,6 +6905,70 @@ test("creation reconnect observation uses connection-owned subscriptions and rel
     }),
   );
   expect(phases).toEqual(["accepted", "failed"]);
+});
+
+test("uploadFile started while connecting waits for the connection and uploads", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "upload-while-connecting",
+    logger: createMockLogger(),
+    reconnect: { enabled: false },
+    suppressSendErrors: true,
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+  const connection = client.connect();
+  expect(client.getConnectionState().status).toBe("connecting");
+
+  const upload = client.uploadFile({
+    fileName: "notes.txt",
+    mimeType: "text/plain",
+    bytes: new TextEncoder().encode("hello world"),
+    modifiedAt: "2026-05-02T00:00:00.000Z",
+    requestId: "req-upload-connecting",
+    chunkSize: 5,
+  });
+  void upload.catch(() => undefined);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  mock.triggerOpen();
+  await connection;
+
+  await vi.waitFor(() => {
+    const frames = mock.sent
+      .filter((frame) => typeof frame !== "string")
+      .map(assertUint8Array)
+      .map(decodeFileTransferFrame);
+    expect(frames.map((frame) => frame.opcode)).toEqual([
+      FileTransferOpcode.FileBegin,
+      FileTransferOpcode.FileChunk,
+      FileTransferOpcode.FileChunk,
+      FileTransferOpcode.FileChunk,
+      FileTransferOpcode.FileEnd,
+    ]);
+  });
+  const requestIndex = mock.sent.findIndex(
+    (frame) =>
+      typeof frame === "string" && parseSentFrame(frame).requestId === "req-upload-connecting",
+  );
+  expect(parseSentFrame(mock.sent[requestIndex])).toMatchObject({ type: "file.upload.request" });
+  expect(requestIndex).toBeLessThan(mock.sent.findIndex((frame) => typeof frame !== "string"));
+
+  const file = {
+    type: "uploaded_file" as const,
+    id: "upload_req-upload-connecting",
+    fileName: "notes.txt",
+    mimeType: "text/plain",
+    size: 11,
+    path: "/tmp/paseo-uploads/upload_req-upload-connecting/notes.txt",
+  };
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "file.upload.response",
+      payload: { requestId: "req-upload-connecting", file, error: null },
+    }),
+  );
+  await expect(upload).resolves.toEqual({ requestId: "req-upload-connecting", file, error: null });
 });
 
 test("uploadFile stops sending chunks when the connection closes between sends", async () => {

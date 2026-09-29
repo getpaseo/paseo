@@ -195,7 +195,7 @@ npm run typecheck
 
 ## Sponsors
 
-Paseo is built by one person and funded by the people who use it. Support the work on [GitHub Sponsors](https://github.com/sponsors/boudra), or [sponsor a spot](https://buy.stripe.com/8x24gBczR7LNaokcve2sM00) for $500 a month to put your company's logo here and on the [paseo.sh homepage](https://paseo.sh/sponsor#spot).
+Paseo is built by one person and funded by the people who use it. Support the work on [GitHub Sponsors](https://github.com/sponsors/boudra). Companies can [sponsor Paseo](https://paseo.sh/sponsor#spot) monthly and have their logo shown here and on the paseo.sh homepage.
 
 <!-- Sponsor logos go here, in the same order as packages/website/src/data/sponsors.ts -->
 

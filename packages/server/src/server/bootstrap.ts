@@ -210,6 +210,7 @@ import {
   isAgentMcpRequestAuthorized,
   type DaemonAuthConfig,
 } from "./auth.js";
+import { deleteLocalCredential, writeLocalCredential } from "./local-credential.js";
 import { createWebUiMiddleware } from "./web-ui.js";
 import { WorkspaceAutoName } from "./workspace-auto-name.js";
 import { PromptSuggestionService } from "./agent/prompt-suggestions/service.js";
@@ -236,6 +237,7 @@ import {
 } from "./hub/relationship-remote.js";
 import { DaemonExecutions } from "./hub/daemon-executions.js";
 import { PluginService } from "./plugins/index.js";
+import { BuiltinPluginLoader } from "./plugins/builtin/index.js";
 import { ManagedPluginSources } from "./plugins/managed-source.js";
 
 const MCP_DEBUG_BATCH_LIMIT = 10;
@@ -472,9 +474,11 @@ export interface PaseoDaemon {
   start(): Promise<void>;
   stop(): Promise<void>;
   getListenTarget(): ListenTarget | null;
+  getServerId(): string;
 }
 
 export interface PaseoDaemonDependencies {
+  builtinPlugins?: BuiltinPluginLoader;
   hubRelationshipRemote?: HubRelationshipRemote;
   hubRelationshipClock?: HubRelationshipClock;
   hubRelationshipRetryPolicy?: HubRelationshipRetryPolicy;
@@ -483,6 +487,10 @@ export interface PaseoDaemonDependencies {
     daemonStatusRpc?: boolean;
     relayConfig?: boolean;
   };
+}
+
+function resolveBuiltinPluginLoader(dependencies: PaseoDaemonDependencies): BuiltinPluginLoader {
+  return dependencies.builtinPlugins ?? new BuiltinPluginLoader();
 }
 
 function createBootstrapManagedProcessRegistry(
@@ -616,6 +624,7 @@ export async function createPaseoDaemon(
   const browserToolsBroker = new BrowserToolsBroker({});
   const pluginRuntime = new PluginService(logger, daemonConfigStore, daemonVersion, {
     managedSources: new ManagedPluginSources(config.paseoHome),
+    builtinPlugins: resolveBuiltinPluginLoader(dependencies),
     settingsDirectory: path.join(config.paseoHome, "plugin-settings"),
   });
 
@@ -770,8 +779,10 @@ export async function createPaseoDaemon(
   // remain protected.
   mountWebUi(app, config, logger);
 
+  let localCredential: string | null = null;
+  const daemonAuth = { ...config.auth, localCredential: () => localCredential };
   app.use(
-    createRequireBearerMiddleware(config.auth, (context) => {
+    createRequireBearerMiddleware(daemonAuth, (context) => {
       logger.warn(context, "Rejected HTTP request with invalid daemon password");
     }),
   );
@@ -1598,6 +1609,7 @@ export async function createPaseoDaemon(
   const start = async () => {
     let mainStarted = false;
     try {
+      localCredential = await writeLocalCredential(config.paseoHome);
       if (serviceProxyListenTarget) {
         const boundServiceProxyTarget = await serviceProxy.startStandalone({
           listenTarget: serviceProxyListenTarget,
@@ -1691,7 +1703,7 @@ export async function createPaseoDaemon(
                 startPaused: true,
               },
               workspaceAutoName,
-              config.auth,
+              daemonAuth,
               speechService,
               terminalManager,
               {
@@ -1788,6 +1800,8 @@ export async function createPaseoDaemon(
       speechService.start();
       scriptHealthMonitor.start();
     } catch (error) {
+      localCredential = null;
+      await deleteLocalCredential(config.paseoHome);
       unsubscribePluginProviders();
       await pluginRuntime.stopAllPlugins().catch(() => undefined);
       await serviceProxy.stopStandalone().catch(() => undefined);
@@ -1801,6 +1815,8 @@ export async function createPaseoDaemon(
   };
 
   const stop = async () => {
+    localCredential = null;
+    await deleteLocalCredential(config.paseoHome);
     promptSuggestions.stop();
     // Stop tracking plugin provider registrations before anything tears plugins
     // down, so plugin shutdown cannot withdraw a provider from under an agent
@@ -1855,6 +1871,7 @@ export async function createPaseoDaemon(
     start,
     stop,
     getListenTarget: () => boundListenTarget,
+    getServerId: () => serverId,
   };
 }
 

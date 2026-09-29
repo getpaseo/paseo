@@ -1509,6 +1509,8 @@ export const zhCN: TranslationResources = {
     noFiles: "没有找到文件或目录",
     noCommands: "没有找到 commands",
     failedToLoad: "加载失败",
+    chooseProjectForCommands: "选择项目以查看命令",
+    chooseModelForCommands: "选择模型以查看命令",
   },
   loadOlderHistory: {
     failed: "无法加载更早历史",
@@ -1600,6 +1602,10 @@ export const zhCN: TranslationResources = {
     },
   },
   pairing: {
+    hostPassword: {
+      title: "{{host}} 的密码",
+      label: "主机密码",
+    },
     connectionMethods: {
       title: "添加连接",
       direct: {
@@ -1932,8 +1938,11 @@ export const zhCN: TranslationResources = {
     groupInfo: "关于 {{title}}",
     sections: {
       general: "通用",
+      chat: "聊天",
       appearance: "外观",
-      layout: en.settings.sections.layout,
+      sidebar: "侧边栏",
+      terminal: "终端",
+      browser: "浏览器",
       editor: "编辑器",
       shortcuts: "快捷键",
       integrations: "集成",
@@ -1994,6 +2003,7 @@ export const zhCN: TranslationResources = {
     },
     general: {
       title: "通用",
+      sending: "发送",
       browserData: {
         title: "浏览器数据",
         siteData: "Cookie 和网站数据",
@@ -2019,8 +2029,6 @@ export const zhCN: TranslationResources = {
         },
       },
       serviceUrls: {
-        label: "服务 URL",
-        description: "运行脚本中的 URL 打开位置",
         options: {
           ask: "询问",
           inApp: "在 Paseo 中",
@@ -2039,7 +2047,6 @@ export const zhCN: TranslationResources = {
       toolCallDetail: {
         label: "工具调用显示",
         description: "工具调用在时间线中的显示方式",
-        accessibilityLabel: "选择工具调用显示方式（{{value}}）",
         options: {
           overview: "摘要",
           detailed: "完整详情",
@@ -2166,6 +2173,14 @@ export const zhCN: TranslationResources = {
         codeSizeHint: "用于代码、差异和终端输出",
         codeSizeAccessibility: "代码字号",
       },
+      layout: {
+        title: "布局",
+        contentWidth: "内容宽度",
+        contentWidthHint: "宽屏上聊天和 Markdown 文件的最大宽度",
+        contentWidthAccessibility: "内容宽度（像素）",
+        reset: "重置",
+        resetAccessibility: "将内容宽度重置为默认值",
+      },
       syntax: {
         title: "语法",
         highlightTheme: "高亮主题",
@@ -2275,6 +2290,9 @@ export const zhCN: TranslationResources = {
       },
     },
     host: {
+      password: {
+        guidance: "移除此主机，然后使用此守护进程要求的密码重新添加。",
+      },
       appearance: {
         title: "外观",
         name: {

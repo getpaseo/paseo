@@ -22,7 +22,7 @@ import {
   resolveScheduleTitle,
   scheduleProductName,
 } from "@/utils/schedule-format";
-import { formatTimeAgo } from "@/utils/time";
+import { useTimeAgo } from "@/hooks/use-time-ago";
 import type { ScheduleSummary } from "@getpaseo/protocol/schedule/types";
 
 // Themed lucide wrappers — module-scope so only the icon re-renders on theme
@@ -96,16 +96,19 @@ function stateBadge(state: ScheduleDerivedState): {
 // Meta reads left-to-right as identity → history → future: how often, when it
 // was created, when it last ran, and (only while it can still run) when it runs
 // next. Status lives on the badge, never repeated here.
-function buildMeta(
-  schedule: ScheduleSummary,
-  state: ScheduleDerivedState,
-  serverName: string | undefined,
-  singleHost: boolean,
-): string {
+function buildMeta(input: {
+  schedule: ScheduleSummary;
+  state: ScheduleDerivedState;
+  createdAgo: string;
+  lastRunAgo: string;
+  serverName: string | undefined;
+  singleHost: boolean;
+}): string {
+  const { schedule, state, serverName, singleHost } = input;
   const parts = [
     formatCadence(schedule.cadence),
-    `Created ${formatTimeAgo(new Date(schedule.createdAt))}`,
-    schedule.lastRunAt ? `Last run ${formatTimeAgo(new Date(schedule.lastRunAt))}` : "Never run",
+    `Created ${input.createdAgo}`,
+    schedule.lastRunAt ? `Last run ${input.lastRunAgo}` : "Never run",
   ];
   if (state === "active") {
     const next = formatNextRun(schedule.nextRunAt);
@@ -117,6 +120,27 @@ function buildMeta(
     parts.unshift(serverName);
   }
   return parts.join(" · ");
+}
+
+function ScheduleMeta({
+  schedule,
+  state,
+  serverName,
+  singleHost,
+}: {
+  schedule: ScheduleSummary;
+  state: ScheduleDerivedState;
+  serverName: string | undefined;
+  singleHost: boolean;
+}) {
+  const createdAgo = useTimeAgo(new Date(schedule.createdAt));
+  const lastRunAgo = useTimeAgo(schedule.lastRunAt ? new Date(schedule.lastRunAt) : null);
+  const meta = buildMeta({ schedule, state, createdAgo, lastRunAgo, serverName, singleHost });
+  return (
+    <Text style={settingsStyles.rowHint} numberOfLines={1}>
+      {meta}
+    </Text>
+  );
 }
 
 /** Small provider glyph. Reads the icon color off a StyleSheet object so the
@@ -168,7 +192,6 @@ export function ScheduleRow({
   const title = resolveScheduleTitle(schedule);
   const productName = scheduleProductName(schedule);
   const badge = stateBadge(state);
-  const meta = buildMeta(schedule, state, serverName, singleHost ?? false);
   const canRun = schedule.target.type === "new-agent" && (state === "active" || state === "paused");
 
   const rowStyle = useCallback(
@@ -206,9 +229,12 @@ export function ScheduleRow({
             <Text style={styles.target} numberOfLines={1}>
               {targetLabel}
             </Text>
-            <Text style={settingsStyles.rowHint} numberOfLines={1}>
-              {meta}
-            </Text>
+            <ScheduleMeta
+              schedule={schedule}
+              state={state}
+              serverName={serverName}
+              singleHost={singleHost ?? false}
+            />
           </View>
         </View>
 

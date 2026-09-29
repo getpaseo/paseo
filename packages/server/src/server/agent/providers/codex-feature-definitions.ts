@@ -4,6 +4,8 @@ import type { AgentFeature, AgentFeatureToggle } from "../agent-sdk-types.js";
 // https://developers.openai.com/codex/speed and https://developers.openai.com/codex/models.
 const CODEX_FAST_MODE_SUPPORTED_MODELS = new Set([
   "gpt-6-astra",
+  "gpt-6-sol",
+  "gpt-6-luna",
   "gpt-5.6",
   "gpt-5.6-sol",
   "gpt-5.6-terra",

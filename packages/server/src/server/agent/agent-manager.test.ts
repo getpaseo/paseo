@@ -692,6 +692,137 @@ test("uses an injected timeline store without making it a production requirement
   }
 });
 
+test("refreshing an agent replaces the injected timeline store instead of appending a second copy", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-timeline-rehydrate-"));
+  const store = new RecordingTimelineStore();
+  class HistorySession extends TestAgentSession {
+    override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+      yield {
+        type: "timeline",
+        provider: "codex",
+        item: { type: "user_message", text: "continue" },
+      };
+      yield {
+        type: "timeline",
+        provider: "codex",
+        item: { type: "assistant_message", text: "done" },
+      };
+    }
+  }
+  class HistoryClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return new HistorySession(config);
+    }
+
+    override async resumeSession(
+      _handle: AgentPersistenceHandle,
+      config?: Partial<AgentSessionConfig>,
+    ): Promise<AgentSession> {
+      return new HistorySession({ provider: "codex", cwd: config?.cwd ?? workdir });
+    }
+  }
+  const manager = new AgentManager({
+    clients: { codex: new HistoryClient() },
+    durableTimelineStore: store,
+    logger,
+  });
+  let agentId: string | null = null;
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    agentId = agent.id;
+
+    // What session.handleRefreshAgentRequest does for a loaded agent, twice over.
+    for (let refresh = 0; refresh < 2; refresh += 1) {
+      await manager.reloadAgentSession(agent.id, undefined, { rehydrateFromDisk: true });
+      await manager.hydrateTimelineFromProvider(agent.id, { broadcast: true });
+      await manager.flush();
+    }
+
+    const rows = await manager.getTimelineRows(agent.id);
+    expect(rows.map((row) => row.item)).toEqual([
+      { type: "user_message", text: "continue" },
+      { type: "assistant_message", text: "done" },
+    ]);
+  } finally {
+    if (agentId) await manager.closeAgent(agentId).catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("a failed history replay leaves the committed timeline intact", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-timeline-replay-fail-"));
+  const store = new RecordingTimelineStore();
+  let failReplay = false;
+  class FlakyHistorySession extends TestAgentSession {
+    override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+      yield {
+        type: "timeline",
+        provider: "codex",
+        item: { type: "user_message", text: "continue" },
+      };
+      if (failReplay) {
+        throw new Error("history stream closed");
+      }
+      yield {
+        type: "timeline",
+        provider: "codex",
+        item: { type: "assistant_message", text: "done" },
+      };
+    }
+  }
+  class FlakyHistoryClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return new FlakyHistorySession(config);
+    }
+
+    override async resumeSession(
+      _handle: AgentPersistenceHandle,
+      config?: Partial<AgentSessionConfig>,
+    ): Promise<AgentSession> {
+      return new FlakyHistorySession({ provider: "codex", cwd: config?.cwd ?? workdir });
+    }
+  }
+  const manager = new AgentManager({
+    clients: { codex: new FlakyHistoryClient() },
+    durableTimelineStore: store,
+    logger,
+  });
+  let agentId: string | null = null;
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    agentId = agent.id;
+    await manager.reloadAgentSession(agent.id, undefined, { rehydrateFromDisk: true });
+    await manager.hydrateTimelineFromProvider(agent.id, { broadcast: true });
+    await manager.flush();
+    const committed = await manager.getTimelineRows(agent.id);
+
+    failReplay = true;
+    await manager.reloadAgentSession(agent.id, undefined, { rehydrateFromDisk: true });
+    await expect(
+      manager.hydrateTimelineFromProvider(agent.id, { broadcast: true }),
+    ).rejects.toThrow("history stream closed");
+    await manager.flush();
+
+    expect(await manager.getTimelineRows(agent.id)).toEqual(committed);
+
+    // A retry once the provider recovers replaces that history rather than stacking on it.
+    failReplay = false;
+    await manager.hydrateTimelineFromProvider(agent.id, { broadcast: true });
+    await manager.flush();
+    expect((await manager.getTimelineRows(agent.id)).map((row) => row.item)).toEqual([
+      { type: "user_message", text: "continue" },
+      { type: "assistant_message", text: "done" },
+    ]);
+  } finally {
+    if (agentId) await manager.closeAgent(agentId).catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("retries provider history hydration after a stream failure", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-history-retry-"));
   let attempts = 0;
@@ -4718,6 +4849,53 @@ test("persists live mode, model, and thinking changes without an external snapsh
   expect(persisted?.config?.thinkingOptionId).toBe("high");
   expect(persisted?.runtimeInfo?.modeId).toBe("build");
   expect(persisted?.runtimeInfo?.model).toBe("gpt-5.4");
+});
+
+test("model changes persist the resolved thinking and fresh provider handle before another turn", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-model-selection-"));
+  class ModelSession extends TestAgentSession {
+    selection = { model: "source", thinkingOptionId: "medium" as string | undefined };
+    async setModel(model: string | null) {
+      this.selection = { model: model ?? "default", thinkingOptionId: undefined };
+      this.pushEvent({
+        type: "thinking_option_changed",
+        provider: "codex",
+        thinkingOptionId: null,
+      });
+    }
+    describePersistence() {
+      return { provider: "codex" as const, sessionId: this.id, metadata: { ...this.selection } };
+    }
+  }
+  class ModelClient extends TestAgentClient {
+    async createSession(config: AgentSessionConfig) {
+      return new ModelSession(config);
+    }
+  }
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const manager = new AgentManager({
+    clients: { codex: new ModelClient() },
+    registry: storage,
+    logger,
+  });
+  try {
+    const agent = await manager.createAgent(
+      { provider: "codex", cwd: workdir, model: "source", thinkingOptionId: "medium" },
+      undefined,
+      { workspaceId: undefined },
+    );
+    await manager.setAgentModel(agent.id, "target");
+    await manager.flush();
+    const stored = await storage.get(agent.id);
+    expect(stored?.config?.model).toBe("target");
+    expect(stored?.config?.thinkingOptionId).toBeUndefined();
+    expect(stored?.persistence?.metadata?.model).toBe("target");
+    expect(stored?.persistence?.metadata?.thinkingOptionId).toBeUndefined();
+  } finally {
+    for (const agent of manager.listAgents()) await manager.closeAgent(agent.id);
+    await manager.flush();
+    rmSync(workdir, { recursive: true, force: true });
+  }
 });
 
 test("later explicit config mutations win over events emitted by earlier mutations", async () => {
@@ -11111,5 +11289,131 @@ test("concurrent native restores run once before resuming the same agent", async
     if (agentId) await manager.closeAgent(agentId);
     await storage.flush();
     rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("commits startup notices once on create and after restored history", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-startup-notice-"));
+  const notice: AgentTimelineItem = { type: "notification", level: "info", message: "Runtime v2" };
+  const history: AgentTimelineItem = { type: "assistant_message", text: "Existing conversation" };
+  const toolOutput: AgentTimelineItem = {
+    type: "tool_call",
+    callId: "startup-output",
+    name: "shell",
+    status: "completed",
+    error: null,
+    detail: {
+      type: "shell",
+      command: "print output",
+      output: "x".repeat(1024 * 1024),
+      exitCode: 0,
+    },
+  };
+  const limitedToolOutput: AgentTimelineItem = {
+    ...toolOutput,
+    detail: { type: "shell", command: "print output", output: "x".repeat(64 * 1024), exitCode: 0 },
+  };
+  class NotifyingSession extends TestAgentSession {
+    readonly initialTimeline = [{ item: notice, timestamp: "2026-09-22T00:00:00.000Z" }];
+    override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+      yield {
+        type: "timeline",
+        provider: "codex",
+        item: history,
+        timestamp: "2026-09-21T00:00:00.000Z",
+      };
+      yield {
+        type: "timeline",
+        provider: "codex",
+        item: toolOutput,
+        timestamp: "2026-09-21T01:00:00.000Z",
+      };
+      yield { type: "timeline", provider: "codex", ...this.initialTimeline[0] };
+    }
+  }
+  const client = new (class extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig) {
+      return new NotifyingSession(config);
+    }
+    override async resumeSession() {
+      return new NotifyingSession({ provider: "codex", cwd: workdir });
+    }
+  })();
+  const store = new RecordingTimelineStore();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    durableTimelineStore: store,
+    logger,
+  });
+  const ids: string[] = [];
+  try {
+    const created = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {});
+    ids.push(created.id);
+    expect((await manager.getTimelineRows(created.id)).map((row) => row.item)).toEqual([notice]);
+    const resumed = await manager.resumeAgentFromPersistence({
+      provider: "codex",
+      sessionId: "existing",
+      metadata: { cwd: workdir },
+    });
+    ids.push(resumed.id);
+    await manager.hydrateTimelineFromProvider(resumed.id);
+    expect((await manager.getTimelineRows(resumed.id)).map((row) => row.item)).toEqual([
+      history,
+      limitedToolOutput,
+      notice,
+    ]);
+    await manager.hydrateTimelineFromProvider(resumed.id, { force: true });
+    expect((await manager.getTimelineRows(resumed.id)).map((row) => row.item)).toEqual([
+      history,
+      limitedToolOutput,
+      notice,
+    ]);
+    await manager.flush();
+    expect(store.writes.flat()).toContainEqual(expect.objectContaining({ item: notice }));
+  } finally {
+    for (const id of ids) await manager.closeAgent(id);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("failed startup history closes the session without registering an agent", async () => {
+  let closed = false;
+  class FailingHistorySession extends TestAgentSession {
+    readonly initialTimeline = [
+      {
+        item: { type: "notification", level: "info", message: "Runtime v2" } as const,
+        timestamp: "2026-09-22T00:00:00.000Z",
+      },
+    ];
+    override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+      yield {
+        type: "timeline",
+        provider: "codex",
+        item: { type: "assistant_message", text: "Partial history" },
+      };
+      throw new Error("History unavailable");
+    }
+    override async close() {
+      closed = true;
+      await super.close();
+    }
+  }
+  const client = new (class extends TestAgentClient {
+    override async resumeSession() {
+      return new FailingHistorySession({ provider: "codex", cwd: tmpdir() });
+    }
+  })();
+  const manager = new AgentManager({ clients: { codex: client }, logger });
+  try {
+    await expect(
+      manager.resumeAgentFromPersistence({
+        provider: "codex",
+        sessionId: "failed-history",
+        metadata: { cwd: tmpdir() },
+      }),
+    ).rejects.toThrow("History unavailable");
+    expect({ agents: manager.listAgents(), closed }).toEqual({ agents: [], closed: true });
+  } finally {
+    for (const agent of manager.listAgents()) await manager.closeAgent(agent.id);
   }
 });

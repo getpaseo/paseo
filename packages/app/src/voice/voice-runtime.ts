@@ -11,6 +11,13 @@ import {
 const PCM_MIME_TYPE = "audio/pcm;rate=16000;bits=16";
 const KEEP_AWAKE_TAG = "paseo:voice";
 const THINKING_TONE_REPEAT_GAP_MS = 350;
+/**
+ * A reply is spoken as one TTS segment per sentence, and the daemon starts the next segment
+ * only once the current one has finished playing, so a reply in progress is punctuated by short
+ * silences. The cue is for a wait the user cannot otherwise explain, so it starts only once the
+ * silence has outlasted those gaps.
+ */
+const THINKING_TONE_MIN_SILENCE_MS = 1500;
 const DISPLAY_VOLUME_PUBLISH_INTERVAL_MS = 120;
 const DISPLAY_VOLUME_CHANGE_EPSILON = 0.02;
 const DISPLAY_VOLUME_ATTACK = 0.35;
@@ -492,7 +499,7 @@ export function createVoiceRuntime(deps: VoiceRuntimeDeps): VoiceRuntime {
         });
     };
 
-    playNext();
+    cue.timeout = setTimeout(playNext, THINKING_TONE_MIN_SILENCE_MS);
   }
 
   const uploader: ContinuousVoiceUploader = {

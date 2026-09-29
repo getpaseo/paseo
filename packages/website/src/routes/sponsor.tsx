@@ -7,7 +7,7 @@ export const Route = createFileRoute("/sponsor")({
   head: () =>
     pageMeta(
       "Sponsor Paseo",
-      "Paseo is built by one person with no investors. Sponsor the work on GitHub Sponsors, Open Collective or Buy Me a Coffee, or put your company's logo on the homepage.",
+      "Paseo is built by one person with no investors. Sponsor the work on GitHub Sponsors, Open Collective or Buy Me a Coffee, or sponsor it as a company.",
       "/sponsor",
     ),
   component: Sponsor,

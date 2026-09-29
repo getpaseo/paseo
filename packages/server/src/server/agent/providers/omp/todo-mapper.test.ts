@@ -103,4 +103,41 @@ describe("OMP todo mapper", () => {
       mapOmpTodoToolResult({ details: { phases: [{ name: "Bad", tasks: [{}] }] } }),
     ).toBeNull();
   });
+
+  test("keeps blocked work visible and excludes abandoned work from active todos", () => {
+    const phases = [
+      {
+        name: "Tasks",
+        tasks: [
+          { content: "Wait for access", status: "blocked", blocker: "approval" },
+          { content: "Old approach", status: "abandoned" },
+        ],
+      },
+    ];
+    const expected = {
+      type: "todo",
+      items: [{ text: "Wait for access (blocked: approval)", status: "pending", completed: false }],
+    };
+    expect(mapOmpTodoToolResult(parseToolResult({ content: [], details: { phases } }))).toEqual(
+      expected,
+    );
+    expect(
+      mapOmpTodoState({
+        isStreaming: false,
+        isCompacting: false,
+        sessionId: "s",
+        todoPhases: phases,
+      }),
+    ).toEqual([expected]);
+    expect(
+      mapOmpTodoToolResult(
+        parseToolResult({
+          content: [],
+          details: {
+            phases: [{ name: "Tasks", tasks: [{ content: "Old approach", status: "abandoned" }] }],
+          },
+        }),
+      ),
+    ).toEqual({ type: "todo", items: [] });
+  });
 });
