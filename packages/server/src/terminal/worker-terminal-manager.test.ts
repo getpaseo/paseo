@@ -970,3 +970,139 @@ it("removes a killed worker terminal from terminalExit without duplicate snapsho
     },
   ]);
 });
+
+it("does not resurrect a terminal that exited before its create response was handled", async () => {
+  const worker = new FakeTerminalWorker();
+  manager = createWorkerTerminalManager({
+    requestTimeoutMs: 50,
+    forkWorker: () => worker,
+  });
+
+  const snapshots: Array<{ cwd: string; terminalIds: string[] }> = [];
+  manager.subscribeTerminalsChanged((event) => {
+    snapshots.push({ cwd: event.cwd, terminalIds: event.terminals.map((terminal) => terminal.id) });
+  });
+
+  const created = manager.createTerminal({
+    id: "terminal-a",
+    cwd: "/workspace",
+    workspaceId: "ws-test",
+  });
+  const request = worker.sentMessages.find((message) => message.type === "createTerminal");
+  if (!request) {
+    throw new Error("createTerminal request not sent");
+  }
+
+  // The worker delivers all three messages in one tick, so the awaiting
+  // createTerminal continuation resumes only after the exit was processed.
+  const terminal = {
+    id: "terminal-a",
+    name: "Shell",
+    cwd: "/workspace",
+    workspaceId: "ws-test",
+    activity: null,
+  };
+  const state = createTerminalState();
+  const exitInfo = { exitCode: 0, signal: null, lastOutputLines: [] };
+  worker.emitWorkerMessage({ type: "terminalCreated", terminal, state });
+  worker.emitWorkerMessage({
+    type: "response",
+    requestId: request.requestId,
+    ok: true,
+    result: { terminal, state },
+  });
+  worker.emitWorkerMessage({ type: "terminalExit", terminalId: "terminal-a", info: exitInfo });
+
+  const session = await created;
+
+  expect(manager.getTerminal("terminal-a")).toBeUndefined();
+  expect(await manager.getTerminals("/workspace")).toEqual([]);
+  expect(session.getExitInfo()).toEqual(exitInfo);
+  expect(snapshots).toEqual([
+    { cwd: "/workspace", terminalIds: ["terminal-a"] },
+    { cwd: "/workspace", terminalIds: [] },
+  ]);
+});
+
+it("replays the exit to a listener attached after a create that lost the race", async () => {
+  const worker = new FakeTerminalWorker();
+  manager = createWorkerTerminalManager({
+    requestTimeoutMs: 50,
+    forkWorker: () => worker,
+  });
+
+  const created = manager.createTerminal({
+    id: "terminal-a",
+    cwd: "/workspace",
+    workspaceId: "ws-test",
+  });
+  const request = worker.sentMessages.find((message) => message.type === "createTerminal");
+  if (!request) {
+    throw new Error("createTerminal request not sent");
+  }
+
+  const terminal = {
+    id: "terminal-a",
+    name: "Shell",
+    cwd: "/workspace",
+    workspaceId: "ws-test",
+    activity: null,
+  };
+  const state = createTerminalState();
+  const exitInfo = { exitCode: 0, signal: null, lastOutputLines: [] };
+  worker.emitWorkerMessage({ type: "terminalCreated", terminal, state });
+  worker.emitWorkerMessage({
+    type: "response",
+    requestId: request.requestId,
+    ok: true,
+    result: { terminal, state },
+  });
+  worker.emitWorkerMessage({ type: "terminalExit", terminalId: "terminal-a", info: exitInfo });
+
+  const session = await created;
+
+  // The session controller subscribes only after createTerminal resolves; that
+  // subscription is what turns into a terminal_exit for the client.
+  const observedExits: Array<{ exitCode: number | null }> = [];
+  session.onExit((info) => {
+    observedExits.push({ exitCode: info.exitCode });
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  expect(observedExits).toEqual([{ exitCode: 0 }]);
+});
+
+it("rejects createTerminal and registers nothing when the worker cannot start the command", async () => {
+  const worker = new FakeTerminalWorker();
+  manager = createWorkerTerminalManager({
+    requestTimeoutMs: 50,
+    forkWorker: () => worker,
+  });
+
+  const snapshots: Array<{ cwd: string; terminalIds: string[] }> = [];
+  manager.subscribeTerminalsChanged((event) => {
+    snapshots.push({ cwd: event.cwd, terminalIds: event.terminals.map((terminal) => terminal.id) });
+  });
+
+  const created = manager.createTerminal({
+    id: "terminal-a",
+    cwd: "/workspace",
+    workspaceId: "ws-test",
+    command: "paseo-qa-absent-codex",
+  });
+  const request = worker.sentMessages.find((message) => message.type === "createTerminal");
+  if (!request) {
+    throw new Error("createTerminal request not sent");
+  }
+  worker.emitWorkerMessage({
+    type: "response",
+    requestId: request.requestId,
+    ok: false,
+    error: "paseo-qa-absent-codex: command not found",
+  });
+
+  await expect(created).rejects.toThrow("paseo-qa-absent-codex: command not found");
+  expect(manager.getTerminal("terminal-a")).toBeUndefined();
+  expect(await manager.getTerminals("/workspace")).toEqual([]);
+  expect(snapshots).toEqual([]);
+});
