@@ -1,6 +1,7 @@
 import { type Command } from "commander";
 import { collectMultiple } from "../../utils/command-options.js";
 import { connectToDaemon } from "../../utils/client.js";
+import { requireNotifyOnFinishCaller, resolveRunCallerAgentId } from "./run.js";
 import type {
   CommandOptions,
   SingleResult,
@@ -32,6 +33,7 @@ export interface AgentSendOptions extends CommandOptions {
   image?: string[];
   prompt?: string;
   promptFile?: string;
+  notifyOnFinish?: boolean;
 }
 
 export function addSendOptions(cmd: Command): Command {
@@ -42,7 +44,11 @@ export function addSendOptions(cmd: Command): Command {
     .option("--prompt <text>", "Provide the message inline as a flag")
     .option("--prompt-file <path>", "Read the message from a UTF-8 text file")
     .option("--image <path>", "Attach image(s) to the message", collectMultiple, [])
-    .option("--no-wait", "Return immediately without waiting for completion");
+    .option("--no-wait", "Return immediately without waiting for completion")
+    .option(
+      "--notify-on-finish",
+      "Wake the calling agent when this turn finishes, errors, or needs permission (agent-scoped, with --no-wait)",
+    );
 }
 
 /**
@@ -178,6 +184,14 @@ export async function runSendCommand(
     throw error;
   }
 
+  if (options.notifyOnFinish && options.wait !== false) {
+    throw {
+      code: "INVALID_OPTIONS",
+      message: "--notify-on-finish requires --no-wait",
+      details: "A waiting send already reports the result to the caller",
+    } satisfies CommandError;
+  }
+
   const promptInput = await resolvePromptInput({
     promptArgument: prompt,
     promptOption: options.prompt,
@@ -191,8 +205,15 @@ export async function runSendCommand(
     const images =
       options.image && options.image.length > 0 ? await readImageFiles(options.image) : undefined;
 
+    const callerAgentId = options.notifyOnFinish
+      ? requireNotifyOnFinishCaller(client, await resolveRunCallerAgentId(client))
+      : undefined;
+
     // Send the message
-    await client.sendAgentMessage(agentIdArg, promptInput, { images });
+    await client.sendAgentMessage(agentIdArg, promptInput, {
+      images,
+      ...(callerAgentId ? { callerAgentId, notifyOnFinish: true } : {}),
+    });
 
     // If --no-wait, return immediately
     if (options.wait === false) {

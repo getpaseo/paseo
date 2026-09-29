@@ -69,6 +69,10 @@ export interface CreateAgentFromSessionInput {
   labels: Record<string, string>;
   env?: Record<string, string>;
   provisionalTitle: string | null;
+  // The caller already owns the child through the parent label the session
+  // intent stamps; these arm the same finish notification as MCP creation.
+  callerAgentId?: string;
+  notifyOnFinish?: boolean;
   firstAgentContext: FirstAgentContext;
   buildSessionConfig: (
     config: AgentSessionConfig,
@@ -206,7 +210,7 @@ export async function createAgentCommand(
     initialPromptError = sendResult.error ?? null;
   }
 
-  if (input.kind === "mcp" && input.notifyOnFinish && input.callerAgentId && initialPromptStarted) {
+  if (input.notifyOnFinish && input.callerAgentId && initialPromptStarted) {
     setupFinishNotification({
       agentManager: dependencies.agentManager,
       agentStorage: dependencies.agentStorage,
