@@ -439,7 +439,9 @@ export const zhCN: TranslationResources = {
       recovery: {
         archivedTitle: "Workspace 已归档",
         restoreDescription:
-          "{{workspaceName}} 已归档，其 worktree 已移除。恢复分支 {{branch}} 以重新打开。",
+          "恢复 {{workspaceName}} 以返回其中的代理。worktree 将使用分支 {{branch}}。",
+        restoreWithoutBranchDescription:
+          "恢复 {{workspaceName}} 以返回其中的代理。新分支将从保存的基准分支或仓库默认分支创建。",
         unarchiveDescription: "{{workspaceName}} 已归档。取消归档以重新打开。",
         restoreAction: "恢复",
         unarchiveAction: "取消归档",

@@ -444,7 +444,9 @@ export const es: TranslationResources = {
       recovery: {
         archivedTitle: "Espacio de trabajo archivado",
         restoreDescription:
-          "{{workspaceName}} se archivó y se eliminó su worktree. Restaura la rama {{branch}} para volver a abrirlo.",
+          "Restaura {{workspaceName}} para volver a sus agentes. Su worktree usará la rama {{branch}}.",
+        restoreWithoutBranchDescription:
+          "Restaura {{workspaceName}} para volver a sus agentes. Se creará una rama nueva desde la base guardada o la rama predeterminada del repositorio.",
         unarchiveDescription:
           "{{workspaceName}} está archivado. Desarchívalo para volver a abrirlo.",
         restoreAction: "Restaurar",

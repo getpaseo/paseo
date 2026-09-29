@@ -439,7 +439,9 @@ export const ar: TranslationResources = {
       recovery: {
         archivedTitle: "مساحة العمل مؤرشفة",
         restoreDescription:
-          "تمت أرشفة {{workspaceName}} وإزالة شجرة العمل الخاصة بها. استعد الفرع {{branch}} لفتحها مجددًا.",
+          "استعد {{workspaceName}} للعودة إلى وكلائها. ستستخدم شجرة العمل الفرع {{branch}}.",
+        restoreWithoutBranchDescription:
+          "استعد {{workspaceName}} للعودة إلى وكلائها. سيبدأ فرع جديد من الفرع الأساسي المحفوظ أو الفرع الافتراضي للمستودع.",
         unarchiveDescription: "{{workspaceName}} مؤرشفة. ألغِ أرشفتها لفتحها مجددًا.",
         restoreAction: "استعادة",
         unarchiveAction: "إلغاء الأرشفة",
