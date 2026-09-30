@@ -59,9 +59,16 @@ import type { GitActions } from "@/git/policy";
 import { BranchSwitcher } from "@/components/branch-switcher";
 import { useGitActions } from "@/git/use-actions";
 import { GIT_ACTION_ICONS } from "@/git/action-icons";
-import { buildForgeSignInCommand, getForgePresentation, type Forge } from "@/git/forge";
+import { createPluginNavigation } from "@/plugins/navigation";
+import { getForgePresentation, type Forge } from "@/git/forge";
+import {
+  buildForgeSetupGuidance,
+  computeForgeSetupAction,
+  type ForgeSetupAction,
+  type ForgeSetupGuidance,
+} from "@/git/forge-setup";
+import { type ClientForgeHostSnapshot, useClientForgeHost } from "@/git/client-forge-registry";
 import { parseGitRemoteLocation } from "@getpaseo/protocol/git-remote";
-import type { ForgeAuthState } from "@getpaseo/protocol/messages";
 import { useCheckoutGitActionsStore } from "@/git/actions-store";
 import { useToast } from "@/contexts/toast-context";
 import { useSessionStore } from "@/stores/session-store";
@@ -452,6 +459,7 @@ function buildChangesToolbarMode(input: {
 }
 
 interface ChangesPullRequestLinkModel extends Pick<PrHint, "forge" | "number" | "state" | "url"> {
+  clientForgeHost: ClientForgeHostSnapshot;
   onOpen: () => void;
 }
 
@@ -482,6 +490,7 @@ interface ChangesHeaderProps {
 
 interface BuildChangesHeaderModelInput {
   branchName: string | null;
+  clientForgeHost: ClientForgeHostSnapshot;
   committedDescription?: string;
   compact: boolean;
   cwd: string;
@@ -507,7 +516,11 @@ function buildChangesHeaderModel(input: BuildChangesHeaderModelInput): {
       cwd: input.cwd,
       gitActions: input.compact ? input.gitActions : null,
       pullRequest: input.pullRequest
-        ? { ...input.pullRequest, onOpen: input.onOpenPullRequest }
+        ? {
+            ...input.pullRequest,
+            clientForgeHost: input.clientForgeHost,
+            onOpen: input.onOpenPullRequest,
+          }
         : null,
       serverId: input.serverId,
       workspaceId: input.workspaceId,
@@ -653,7 +666,7 @@ function ChangesRepositoryToolbar({
 
 function ChangesPullRequestLink({ model }: { model: ChangesPullRequestLinkModel }) {
   const { t } = useTranslation();
-  const presentation = getForgePresentation(model.forge);
+  const presentation = getForgePresentation(model.forge, model.clientForgeHost);
   const label = `${presentation.numberPrefix}${model.number}`;
   return (
     <Tooltip delayDuration={300} enabledOnDesktop enabledOnMobile={false}>
@@ -691,7 +704,7 @@ function ChangesPullRequestExternalLink({
   model: ChangesPullRequestLinkModel;
 }) {
   const { t } = useTranslation();
-  const presentation = getForgePresentation(model.forge);
+  const presentation = getForgePresentation(model.forge, model.clientForgeHost);
   const label = t("workspace.git.pr.actions.openOn", { brand: presentation.brandLabel });
   const handlePress = useCallback(() => {
     void openExternalUrl(model.url);
@@ -1179,63 +1192,71 @@ function computePrErrorMessage(
   return prPayloadError?.message ?? null;
 }
 
-// The precise setup step a workspace needs before its forge features work, or
-// null when nothing is actionable (authenticated, or no forge remote at all).
-type ForgeSetupAction = "install_cli" | "sign_in" | null;
-
-// Drive the onboarding callout from the forge's auth state so the message names
-// the exact next step (install the CLI vs sign in) for whichever forge backs the
-// workspace — GitHub included. GitLab additionally requires the host to advertise
-// GitLab support, matching the rest of the GitLab UI.
-function computeForgeSetupAction(input: {
-  forge: Forge;
-  forgeProvidersSupported: boolean;
-  authState: ForgeAuthState | undefined;
-}): ForgeSetupAction {
-  // A daemon without pluggable forge support can't operate any non-GitHub forge,
-  // so don't offer a setup action for one it can't drive.
-  if (input.forge !== "github" && !input.forgeProvidersSupported) {
-    return null;
-  }
-  switch (input.authState) {
-    case "cli_missing":
-      return "install_cli";
-    case "unauthenticated":
-      return "sign_in";
-    case "authenticated":
-    case "no_remote":
-    case "error":
-      return null;
-    default:
-      return null;
-  }
-}
-
 function parseForgeHost(url: string | null | undefined): string | null {
   return url ? (parseGitRemoteLocation(url)?.host ?? null) : null;
 }
 
-function buildForgeSetupMessage(input: {
+// The setup callout names the next step for the workspace's forge; a plugin forge can also point
+// at its own settings screen.
+function useForgeSetupGuidance(input: {
   action: ForgeSetupAction;
   forge: Forge;
-  host: string | null;
+  remoteUrl: string | null | undefined;
+  clientForgeHost: ClientForgeHostSnapshot;
+  serverId: string;
+  workspaceId: string | null | undefined;
   t: TFunction;
-}): string | null {
-  if (!input.action) {
+}): { guidance: ForgeSetupGuidance | null; openSetup: () => void } {
+  const { action, forge, remoteUrl, clientForgeHost, serverId, workspaceId, t } = input;
+  const guidance = useMemo(
+    () =>
+      buildForgeSetupGuidance({
+        action,
+        forge,
+        host: parseForgeHost(remoteUrl),
+        clientForgeHost,
+        t,
+      }),
+    [action, clientForgeHost, forge, remoteUrl, t],
+  );
+  const setupTarget = guidance?.setup ?? null;
+  const openSetup = useCallback(() => {
+    if (!setupTarget) return;
+    createPluginNavigation({ serverId, workspaceId: workspaceId ?? null }).openSettings(
+      setupTarget.pluginId,
+      setupTarget.screenId,
+    );
+  }, [setupTarget, serverId, workspaceId]);
+  return { guidance, openSetup };
+}
+
+function ForgeSetupCallout({
+  guidance,
+  onOpenSetup,
+}: {
+  guidance: ForgeSetupGuidance | null;
+  onOpenSetup: () => void;
+}) {
+  if (!guidance) {
     return null;
   }
-  const { brandLabel, signInCli } = getForgePresentation(input.forge);
-  // A forge with no known CLI (an unknown/third-party forge rendered neutrally)
-  // has no install/sign-in command to interpolate — show neutral guidance
-  // rather than the GitLab-specific callout or a null command.
-  if (signInCli === null) {
-    return input.t("workspace.git.forgeSetup.generic", { brand: brandLabel });
+  if (!guidance.setup) {
+    return (
+      <View style={styles.forgeSetupCallout} testID="forge-setup-callout">
+        <Text style={styles.forgeSetupCalloutText}>{guidance.message}</Text>
+      </View>
+    );
   }
-  if (input.action === "install_cli") {
-    return input.t("workspace.git.forgeSetup.installCli", { cli: signInCli, brand: brandLabel });
-  }
-  const command = buildForgeSignInCommand(input.forge, input.host);
-  return input.t("workspace.git.forgeSetup.signIn", { command, brand: brandLabel });
+  return (
+    <Pressable
+      style={styles.forgeSetupCallout}
+      testID="forge-setup-callout"
+      accessibilityRole="button"
+      onPress={onOpenSetup}
+    >
+      <Text style={styles.forgeSetupCalloutActionText}>{guidance.message}</Text>
+    </Pressable>
+  );
 }
 
 function buildToggleButtonStyle(
@@ -1453,6 +1474,7 @@ export function ChangesSurface({
   const { settings: appSettings } = useAppSettings();
   const { preferences, updatePreferences } = useChangesPreferences();
   const { t } = useTranslation();
+  const clientForgeHost = useClientForgeHost(serverId);
   const isMobile = useIsCompactFormFactor();
   const canUseSplitLayout = isWeb && !isMobile;
   const instanceState = changesState ?? defaultChangesState;
@@ -1581,16 +1603,15 @@ export function ChangesSurface({
     forgeProvidersSupported,
     authState,
   });
-  const forgeSetupMessage = useMemo(
-    () =>
-      buildForgeSetupMessage({
-        action: forgeSetupAction,
-        forge,
-        host: parseForgeHost(status?.remoteUrl),
-        t,
-      }),
-    [forgeSetupAction, forge, status?.remoteUrl, t],
-  );
+  const { guidance: forgeSetupGuidance, openSetup: handleOpenForgeSetup } = useForgeSetupGuidance({
+    action: forgeSetupAction,
+    forge,
+    remoteUrl: status?.remoteUrl,
+    clientForgeHost,
+    serverId,
+    workspaceId,
+    t,
+  });
   const handleToggleDesktopTree = useCallback(() => {
     updateState({ ...instanceState, treeVisible: !desktopTreeVisible });
   }, [desktopTreeVisible, instanceState, updateState]);
@@ -1870,6 +1891,7 @@ export function ChangesSurface({
     () =>
       buildChangesHeaderModel({
         branchName: currentBranchName,
+        clientForgeHost,
         committedDescription: committedDiffDescription,
         compact: isMobile,
         cwd,
@@ -1886,6 +1908,7 @@ export function ChangesSurface({
       }),
     [
       committedDiffDescription,
+      clientForgeHost,
       currentBranchName,
       cwd,
       diffMode,
@@ -1919,11 +1942,7 @@ export function ChangesSurface({
         />
       ) : null}
 
-      {forgeSetupMessage ? (
-        <View style={styles.forgeSetupCallout} testID="forge-setup-callout">
-          <Text style={styles.forgeSetupCalloutText}>{forgeSetupMessage}</Text>
-        </View>
-      ) : null}
+      <ForgeSetupCallout guidance={forgeSetupGuidance} onOpenSetup={handleOpenForgeSetup} />
 
       {prErrorMessage ? <Text style={styles.actionErrorText}>{prErrorMessage}</Text> : null}
 
@@ -1991,6 +2010,10 @@ const styles = StyleSheet.create((theme) => ({
     borderColor: theme.colors.border,
     borderRadius: theme.borderRadius.md,
     backgroundColor: theme.colors.surface1,
+  },
+  forgeSetupCalloutActionText: {
+    fontSize: theme.fontSize.sm,
+    color: theme.colors.accent,
   },
   forgeSetupCalloutText: {
     fontSize: theme.fontSize.sm,

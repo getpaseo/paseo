@@ -1259,6 +1259,77 @@ describe.skipIf(isPlatform("win32"))("worktree-core POSIX-only", () => {
       expect(remotePrHead).toBe(localHead);
     });
 
+    test.each([
+      {
+        originTransport: "HTTPS",
+        preferredPushUrl: "https://forge.example.com/org/contributor/repo.git",
+      },
+      {
+        originTransport: "SSH",
+        preferredPushUrl: "git@forge.example.com:org/contributor/repo.git",
+      },
+    ])(
+      "configures an Acme $originTransport cross-repository checkout with the matching push transport",
+      async ({ preferredPushUrl }) => {
+        const { tempDir, repoDir, headRemoteDir, paseoHome } = createForkGitHubPrRemoteRepo();
+        cleanupPaths.push(tempDir);
+        execFileSync("git", ["config", `url.file://${headRemoteDir}.insteadOf`, preferredPushUrl], {
+          cwd: repoDir,
+          stdio: "pipe",
+        });
+        const acme: ForgeService = {
+          ...createGitHubServiceStub(),
+          defaultCheckoutRefs: undefined,
+          buildPrLocalBranchName: undefined,
+          supportsCrossRepoCheckoutWithoutRefs: false,
+          getPullRequestCheckoutTarget: async ({ number }) => ({
+            number,
+            baseRefName: "main",
+            headRefName: "main",
+            checkoutRefs: [
+              {
+                remoteUrl: preferredPushUrl,
+                remoteRef: "refs/heads/main",
+              },
+            ],
+            headOwnerLogin: "org/contributor/repo",
+            preferredPushUrl,
+            headRepositorySshUrl: "git@forge.example.com:org/contributor/repo.git",
+            headRepositoryUrl: "https://forge.example.com/org/contributor/repo.git",
+            isCrossRepository: true,
+          }),
+        };
+
+        const result = await createCoreWorktree(
+          {
+            cwd: repoDir,
+            worktreeSlug: "acme-cross-repo",
+            action: "checkout",
+            checkoutSource: { kind: "change_request", forge: "acme", number: 526 },
+            paseoHome,
+            runSetup: false,
+          },
+          createCoreDeps({ forge: { forge: "acme", service: acme } }),
+        );
+
+        expect(result.intent).toMatchObject({
+          kind: "checkout-change-request",
+          forge: "acme",
+          changeRequestNumber: 526,
+          pushRemoteUrl: preferredPushUrl,
+        });
+        expect(getGitConfigValue(result.worktree.worktreePath, "remote.paseo-pr-526.url")).toBe(
+          preferredPushUrl,
+        );
+        expect(
+          getGitConfigValue(
+            result.worktree.worktreePath,
+            `branch.${result.worktree.branchName}.pushRemote`,
+          ),
+        ).toBe("paseo-pr-526");
+      },
+    );
+
     test("pushes a fork PR when the contributor branch cannot be fetched at checkout", async () => {
       const { tempDir, repoDir, headRemoteDir, paseoHome } = createForkGitHubPrRemoteRepo();
       cleanupPaths.push(tempDir);

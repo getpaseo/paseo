@@ -42,7 +42,11 @@ const bundle = `(function(require) {
   const React = require("react");
   return { default: function(plugin) {
     function Card(props) {
-      return React.createElement("span", null, props.item.data.label);
+      return React.createElement(
+        "span",
+        { "data-open-agent": typeof props.navigation?.openAgent },
+        props.item.data.label,
+      );
     }
     plugin.addTimelineRenderer({
       kind: "test-report",
@@ -134,6 +138,8 @@ describe("PluginTimelineItemView", () => {
       ),
     );
     expect(container.textContent).toContain("Four tests passed");
+    // Timeline items navigate, so a renderer can link back to the agent or workspace it reports on.
+    expect(container.querySelector("span")?.getAttribute("data-open-agent")).toBe("function");
   });
 
   it("contains renderer crashes to one timeline item", async () => {

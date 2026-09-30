@@ -22,6 +22,7 @@ import {
   type ProviderSelectionState,
 } from "@/provider-selection/provider-selection";
 import { useDraftStore } from "@/stores/draft-store";
+import { keepsEmptiedDraftBound } from "@/stores/draft-store/state";
 import { AfterPaintPublication } from "@/composer/after-paint-publication";
 import { useShallow } from "zustand/shallow";
 import type { ComposerTextSource } from "@/composer/text-source";
@@ -140,7 +141,7 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
       const store = useDraftStore.getState();
       const current = store.getDraftInput(draftKey) ?? { text: "", attachments: [] };
       const next = update(current);
-      if (!hasDraftContent(next)) {
+      if (!hasDraftContent(next) && !keepsEmptiedDraftBound(store.drafts[draftKey])) {
         store.clearDraftInput({ draftKey, lifecycle: "abandoned" });
         return;
       }

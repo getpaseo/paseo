@@ -11,7 +11,14 @@ export type {
   PluginTimelineTransformResult,
   PluginCleanup,
 } from "./contracts.js";
-export { defineSettings, settingsRpc, type SettingsDefinition } from "./settings.js";
+export {
+  defineSettings,
+  settingsRpc,
+  type DeepReadonly,
+  type PluginSettingsDecision,
+  type PluginSettingsErrorCode,
+  type SettingsDefinition,
+} from "./settings.js";
 export {
   defineAttachmentSource,
   PluginAttachmentItemSchema,
@@ -20,3 +27,24 @@ export {
   type PluginAttachmentSearchPayload,
 } from "./attachments.js";
 export { defineRpc, type PluginRpcContract, type RpcInput, type RpcOutput } from "./rpc.js";
+export {
+  defineForgeClientProvider,
+  defineForgeFacts,
+  GITHUB_LINE_ANCHOR,
+  GITLAB_LINE_ANCHOR,
+  renderForgeLineAnchor,
+  type PluginForgeClientProviderContribution,
+  type PluginForgeClientView,
+  type PluginForgeDefinition,
+  type PluginForgeFactsRegistration,
+  type PluginForgeFactsContribution,
+  type PluginForgeLineAnchor,
+  type PluginForgeMergeCapability,
+  type PluginForgeMergeMethod,
+  type PluginForgeReferencePath,
+  type PluginForgeSetupSurface,
+  type PluginForgeSignInCommand,
+  type PluginForgeSpecificEnvelope,
+  type PluginForgeSvgPathIcon,
+  type PluginForgeUrlGrammar,
+} from "./forge.js";

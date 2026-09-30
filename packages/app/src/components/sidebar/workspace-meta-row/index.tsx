@@ -20,6 +20,7 @@ import { CheckIndicator } from "./check-indicator";
 import type { CheckSummary, CheckSummaryState } from "./check-summary";
 import { selectMetaRowItems, type MetaRowItem } from "./meta-items";
 import { workspaceServiceLabelKey, type WorkspaceServiceSummary } from "./service-summary";
+import { useClientForgeHost } from "@/git/client-forge-registry";
 
 export {
   selectWorkspaceServiceSummary,
@@ -61,6 +62,7 @@ const dangerMapping = (theme: Theme) => ({ color: theme.colors.statusDanger });
  * read first, and it stays the same height as the rest of the line.
  */
 export function WorkspaceMetaRow({
+  serverId,
   currentBranch,
   projectName,
   hostBadge,
@@ -68,6 +70,7 @@ export function WorkspaceMetaRow({
   serviceSummary,
   labels = EMPTY_LABELS,
 }: {
+  serverId?: string;
   currentBranch: string | null;
   projectName: string | null;
   hostBadge: HostBadgeModel | null;
@@ -94,7 +97,12 @@ export function WorkspaceMetaRow({
       {items.map((item, index) => (
         <Fragment key={item.kind}>
           {index > 0 ? <Text style={styles.separator}>·</Text> : null}
-          <MetaItemNode item={item} hostBadge={hostBadge} leading={index === 0} />
+          <MetaItemNode
+            item={item}
+            hostBadge={hostBadge}
+            leading={index === 0}
+            serverId={serverId}
+          />
         </Fragment>
       ))}
     </View>
@@ -105,11 +113,13 @@ function MetaItemNode({
   item,
   hostBadge,
   leading,
+  serverId,
 }: {
   item: MetaRowItem;
   hostBadge: HostBadgeModel | null;
   /** First on the line, so this item's ink sets the rail the title above it already uses. */
   leading: boolean;
+  serverId?: string;
 }): ReactNode {
   if (item.kind === "branch") {
     return <IdentityItem kind="branch" name={item.name} />;
@@ -121,7 +131,7 @@ function MetaItemNode({
     return hostBadge ? <HostBadge badge={hostBadge} /> : null;
   }
   if (item.kind === "changeRequest") {
-    return <PullRequestItem hint={item.hint} />;
+    return <PullRequestItem hint={item.hint} serverId={serverId} />;
   }
   if (item.kind === "checks") {
     return <ChecksItem summary={item.summary} label={item.label} />;
@@ -185,10 +195,11 @@ function LabelsItem({
  * inside it, so there is no second hover state machine to fight. Both icons are the same
  * size, so the swap can't move the target out from under the cursor.
  */
-function PullRequestItem({ hint }: { hint: PrHint }) {
+function PullRequestItem({ hint, serverId }: { hint: PrHint; serverId?: string }) {
   const { t } = useTranslation();
   const [isHovered, setIsHovered] = useState(false);
-  const presentation = getForgePresentation(normalizeForge(hint.forge));
+  const clientForgeHost = useClientForgeHost(serverId ?? "");
+  const presentation = getForgePresentation(normalizeForge(hint.forge), clientForgeHost);
 
   const handlePress = useCallback(
     (event: GestureResponderEvent) => {

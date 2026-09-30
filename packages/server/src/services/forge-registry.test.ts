@@ -1,7 +1,12 @@
 import { FORGE_IDS } from "@getpaseo/protocol/forge-manifest";
 import { describe, expect, it, vi } from "vitest";
 
-import { createForgeService, defaultForgeRegistry, ForgeRegistry } from "./forge-registry.js";
+import {
+  createDefaultForgeRegistry,
+  createForgeService,
+  defaultForgeRegistry,
+  ForgeRegistry,
+} from "./forge-registry.js";
 import { createGitHubService } from "./github-service.js";
 
 describe("forge registry", () => {
@@ -52,6 +57,40 @@ describe("forge registry", () => {
     expect(defaultForgeRegistry.has("bitbucket")).toBe(false);
   });
 
+  it("creates isolated built-in registries for independent daemon instances", () => {
+    const first = createDefaultForgeRegistry();
+    const second = createDefaultForgeRegistry();
+    const unregister = first.register("bitbucket", {
+      createService: createGitHubService,
+      matchesHost: (host) => host === "bitbucket.org",
+    });
+
+    try {
+      expect(first.has("bitbucket")).toBe(true);
+      expect(second.has("bitbucket")).toBe(false);
+      expect(second.has("github")).toBe(true);
+    } finally {
+      unregister();
+    }
+  });
+
+  it("publishes registration lifecycle changes with a monotonically increasing revision", () => {
+    const registry = new ForgeRegistry();
+    const changes: Array<{ forge: string; registered: boolean; revision: number }> = [];
+    const unsubscribe = registry.subscribe((change) => changes.push(change));
+    const unregister = registry.register("bitbucket", {
+      createService: createGitHubService,
+    });
+
+    unregister();
+    unsubscribe();
+
+    expect(changes).toEqual([
+      { forge: "bitbucket", registered: true, revision: 1 },
+      { forge: "bitbucket", registered: false, revision: 2 },
+    ]);
+  });
+
   it("lets adapters own heuristic and asynchronous host detection", async () => {
     const registry = new ForgeRegistry([
       [
@@ -65,6 +104,10 @@ describe("forge registry", () => {
     ]);
 
     expect(registry.matchHost("bitbucket.org")).toBe("bitbucket");
+    expect(registry.classifyHost("bitbucket.org")).toEqual({
+      kind: "unique",
+      forge: "bitbucket",
+    });
     await expect(registry.probeHost("git.acme.internal")).resolves.toBe("bitbucket");
   });
 
@@ -121,6 +164,10 @@ describe("forge registry", () => {
       ]);
 
       expect(registry.matchHost("git.acme.internal")).toBeNull();
+      expect(registry.classifyHost("git.acme.internal")).toEqual({
+        kind: "ambiguous",
+        forges: ["first", "second"],
+      });
       await expect(registry.probeHost("git.acme.internal")).resolves.toBeNull();
       expect(warn).toHaveBeenCalledWith(
         expect.stringMatching(/Multiple forge adapters matched host/),

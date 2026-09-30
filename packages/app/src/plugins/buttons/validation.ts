@@ -44,9 +44,16 @@ function validateBehavior(
       if (typeof behavior.onPress !== "function")
         throw new Error("Plugin button action needs onPress");
       return { ...behavior };
-    case "popover":
+    case "popover": {
       if (!isComponent(behavior.Content)) throw new Error("Plugin button popover needs Content");
+      const { width } = behavior;
+      const isPositiveWidth = typeof width === "number" && Number.isFinite(width) && width > 0;
+      if (width !== undefined && !isPositiveWidth)
+        throw new Error("Plugin button popover width must be a positive number");
+      if (behavior.sheetTitle !== undefined && behavior.sheetTitle !== false)
+        throw new Error("Plugin button popover sheetTitle can only be false");
       return { ...behavior };
+    }
     case "menu": {
       const ids = new Set<string>();
       return {

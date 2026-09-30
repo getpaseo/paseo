@@ -10,7 +10,10 @@ import { type PluginCommandCenterItemContribution } from "@getpaseo/plugin/clien
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import type { InstalledPlugin } from "../types";
-import { buildPluginCommandCenterContributions } from "./contributions";
+import {
+  buildPluginCommandCenterContributions,
+  buildPluginCommandShortcuts,
+} from "./contributions";
 
 const workspace: PluginWorkspaceSnapshot = {
   id: "workspace-1",
@@ -96,6 +99,7 @@ function plugin(onAgentSelect: AgentCommandItem["onSelect"]): InstalledPlugin {
         title: "Agent review",
         icon: "Scan",
         context: "agent",
+        shortcut: "Mod+Shift+Y",
         onSelect: onAgentSelect,
       },
     ],
@@ -104,6 +108,7 @@ function plugin(onAgentSelect: AgentCommandItem["onSelect"]): InstalledPlugin {
     themes: [],
     timelineTransformers: [],
     timelineRenderers: [],
+    forgeClientProviders: [],
   };
 }
 
@@ -217,6 +222,80 @@ describe("plugin Command Center contributions", () => {
     expect(rpcValue).toBe(5);
     expect(receivedPaseo).toBe(runtime.paseo);
     expect(opened).toEqual(["review/surface/main", "review/agent/details/agent-1/explorer"]);
+  });
+
+  it("binds a declared shortcut only while the command is contributed", () => {
+    let ran = 0;
+    const installed = plugin(() => {
+      ran += 1;
+    });
+    const common = {
+      plugins: [installed],
+      runtime: createRuntime,
+      state: stateSource(),
+      navigation: {
+        openSettings() {},
+        openSurface() {},
+        openWorkspacePanel() {},
+        openAgentPanel() {},
+      },
+      reportError() {},
+    };
+
+    const withAgent = buildPluginCommandCenterContributions({
+      ...common,
+      workspaceId: workspace.id,
+      agentId: agent.id,
+    });
+    const shortcuts = buildPluginCommandShortcuts({
+      plugins: [installed],
+      contributions: withAgent,
+      resolveShortcutCombo: (_bindingId, declared) => declared,
+    });
+
+    expect(shortcuts).toMatchObject([
+      { id: "plugin:review:agent", commandId: "review:agent", combo: "Mod+Shift+Y" },
+    ]);
+    void shortcuts[0].run();
+    expect(ran).toBe(1);
+
+    const withoutAgent = buildPluginCommandCenterContributions({
+      ...common,
+      workspaceId: workspace.id,
+      agentId: null,
+    });
+    expect(
+      buildPluginCommandShortcuts({ plugins: [installed], contributions: withoutAgent }),
+    ).toEqual([]);
+  });
+
+  it("shows the keys the user actually has bound", () => {
+    const installed = plugin(() => undefined);
+    const common = {
+      plugins: [installed],
+      runtime: createRuntime,
+      state: stateSource(),
+      workspaceId: workspace.id,
+      agentId: agent.id,
+      navigation: {
+        openSettings() {},
+        openSurface() {},
+        openWorkspacePanel() {},
+        openAgentPanel() {},
+      },
+      reportError() {},
+    };
+    const presentationOf = (source: Parameters<typeof buildPluginCommandCenterContributions>[0]) =>
+      buildPluginCommandCenterContributions(source).find((item) => item.id === "review:agent")
+        ?.presentation;
+
+    expect(presentationOf(common)).toMatchObject({ shortcutKeys: [["mod", "shift", "Y"]] });
+    expect(presentationOf({ ...common, resolveShortcutCombo: () => "Ctrl+Alt+Y" })).toMatchObject({
+      shortcutKeys: [["ctrl", "alt", "Y"]],
+    });
+    expect(presentationOf({ ...common, resolveShortcutCombo: () => null })).not.toHaveProperty(
+      "shortcutKeys",
+    );
   });
 
   it("removes every contribution when its installation disappears", () => {

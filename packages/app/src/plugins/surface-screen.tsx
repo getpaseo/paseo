@@ -3,7 +3,7 @@ import type { PluginSurfaceProps } from "@getpaseo/plugin/client";
 import type { PluginTheme } from "@getpaseo/plugin";
 import { ChevronDown, X } from "lucide-react-native";
 import { useCallback, useMemo, useRef, useState, type ComponentType } from "react";
-import { Platform, Pressable, Text, View } from "react-native";
+import { Pressable, Text, View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { HeaderIconBadge } from "@/components/headers/header-icon-badge";
 import { HeaderToggleButton } from "@/components/headers/header-toggle-button";
@@ -28,6 +28,7 @@ import {
   resolvePluginSurfaceContribution,
   type PluginSurfaceContributionIdentity,
 } from "./surface-contribution";
+import { usePluginLayout } from "./layout";
 
 const EMPTY_SHORTCUT_KEYS: ShortcutKey[] = [];
 const mutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
@@ -68,7 +69,7 @@ function SurfaceRenderer({
   host: PluginSurfaceProps["host"];
   theme: PluginTheme;
 }) {
-  const navigation = usePluginHostNavigation(host.id);
+  const navigation = usePluginHostNavigation(host.id, plugin.id);
   return (
     <PluginRuntimeBoundary plugin={plugin} client={client}>
       <Surface theme={theme} host={host} layout={layout} navigation={navigation} />
@@ -77,12 +78,6 @@ function SurfaceRenderer({
 }
 
 const ThemedSurfaceRenderer = withUnistyles(SurfaceRenderer);
-
-function resolvePlatform(): PluginSurfaceProps["layout"]["platform"] {
-  if (Platform.OS === "ios") return "ios";
-  if (Platform.OS === "android") return "android";
-  return "web";
-}
 
 function PluginHostSwitcher({
   serverId,
@@ -179,7 +174,7 @@ export function PluginSurfaceScreen() {
     if (router.canGoBack()) router.back();
     else router.replace(`/h/${encodeURIComponent(serverId)}`);
   }, [serverId]);
-  const layout = useMemo(() => ({ compact, platform: resolvePlatform() }), [compact]);
+  const layout = usePluginLayout(compact);
   const host = useMemo(() => ({ id: serverId, label: hostLabel }), [hostLabel, serverId]);
   const headerLeft = useMemo(
     () => (

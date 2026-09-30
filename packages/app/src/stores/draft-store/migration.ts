@@ -8,6 +8,7 @@ import {
   normalizeComposerAttachment,
   UserComposerAttachmentSchema,
   type CanonicalDraftInput,
+  type AgentLaunchDraftMetadata,
   type DraftLifecycleState,
   type DraftRecord,
   type DraftStoreState,
@@ -89,11 +90,13 @@ const DraftLifecycleSchema = z.enum(["active", "abandoned", "sent"]);
 const NestedDraftRecordSchema = z.strictObject({
   input: RawDraftInputSchema,
   lifecycle: DraftLifecycleSchema.optional(),
+  agentLaunch: z.unknown().optional(),
   updatedAt: z.number().optional(),
   version: z.number().int().positive().optional(),
 });
 const FlatDraftRecordSchema = RawDraftInputSchema.extend({
   lifecycle: DraftLifecycleSchema.optional(),
+  agentLaunch: z.unknown().optional(),
   updatedAt: z.number().optional(),
   version: z.number().int().positive().optional(),
 });
@@ -183,12 +186,33 @@ async function buildMigratedDraftRecord(
   ports: { migrateLegacyImages: MigrateLegacyImages },
   nowMs: number,
 ): Promise<DraftRecord> {
+  const metadata = parseAgentLaunchMetadata(parsed.agentLaunch);
   return {
     input: await migrateDraftInput({ rawInput: extractRawInput(parsed) }, ports),
     lifecycle: resolvePersistedLifecycle(parsed.lifecycle),
+    ...(metadata ? { agentLaunch: metadata } : {}),
     updatedAt: parsed.updatedAt ?? nowMs,
     version: parsed.version ?? 1,
   };
+}
+
+const AgentLaunchDraftMetadataSchema: z.ZodType<AgentLaunchDraftMetadata> = z.strictObject({
+  draftId: z.string(),
+  serverId: z.string(),
+  pluginId: z.string(),
+  projectId: z.string(),
+  launchId: z.string(),
+  documentIncarnationId: z.string(),
+  journalKey: z.string(),
+  requestFingerprint: z.string(),
+  labels: z.record(z.string(), z.string()),
+  clientMessageId: z.string(),
+  submissionState: z.enum(["editable", "outcome_unknown_readonly"]),
+});
+
+function parseAgentLaunchMetadata(value: unknown): AgentLaunchDraftMetadata | undefined {
+  const parsed = AgentLaunchDraftMetadataSchema.safeParse(value);
+  return parsed.success ? parsed.data : undefined;
 }
 
 function migrateNewWorkspaceDraftKeys(

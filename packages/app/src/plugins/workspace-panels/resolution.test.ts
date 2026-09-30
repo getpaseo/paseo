@@ -30,6 +30,7 @@ function installed(): InstalledPlugin {
     themes: [],
     timelineTransformers: [],
     timelineRenderers: [],
+    forgeClientProviders: [],
   };
 }
 
