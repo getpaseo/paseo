@@ -19,7 +19,12 @@ import {
   type HostConnection,
   type HostProfile,
 } from "@/types/host-connection";
-import { defaultHostAppearance, type HostBadgeDisplay, type HostColor } from "@/hosts/appearance";
+import {
+  defaultHostAppearance,
+  type HostBadgeDisplay,
+  type HostColor,
+  type HostIcon,
+} from "@/hosts/appearance";
 import {
   buildDaemonWebSocketUrl,
   buildRelayWebSocketUrl,
@@ -2114,6 +2119,13 @@ export class HostRuntimeStore {
     }));
   }
 
+  async setHostIcon(serverId: string, icon: HostIcon): Promise<void> {
+    await this.updateHostAppearance(serverId, (host) => ({
+      ...host,
+      appearance: { ...host.appearance, icon },
+    }));
+  }
+
   private updateHostAppearance(
     serverId: string,
     apply: (host: HostProfile) => HostProfile,
@@ -2850,6 +2862,7 @@ export interface HostMutations {
   renameHost: (serverId: string, label: string) => Promise<void>;
   setHostColor: (serverId: string, color: HostColor) => Promise<void>;
   setHostBadgeDisplay: (serverId: string, badgeDisplay: HostBadgeDisplay) => Promise<void>;
+  setHostIcon: (serverId: string, icon: HostIcon) => Promise<void>;
   removeHost: (serverId: string) => Promise<void>;
   removeConnection: (serverId: string, connectionId: string) => Promise<void>;
 }
@@ -2866,6 +2879,7 @@ export function useHostMutations(): HostMutations {
       setHostColor: (serverId, color) => store.setHostColor(serverId, color),
       setHostBadgeDisplay: (serverId, badgeDisplay) =>
         store.setHostBadgeDisplay(serverId, badgeDisplay),
+      setHostIcon: (serverId, icon) => store.setHostIcon(serverId, icon),
       removeHost: (serverId) => store.removeHost(serverId),
       removeConnection: (serverId, connectionId) => store.removeConnection(serverId, connectionId),
     }),

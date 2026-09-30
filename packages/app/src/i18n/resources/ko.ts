@@ -2367,6 +2367,21 @@ export const ko: TranslationResources = {
             blue: "파란색",
           },
         },
+        icon: {
+          label: "아이콘",
+          accessibilityLabel: "아이콘, {{value}}",
+          options: {
+            server: "서버",
+            cloud: "클라우드 VM",
+            desktop: "데스크톱",
+            laptop: "노트북",
+            workstation: "워크스테이션",
+            board: "싱글 보드 PC",
+            container: "컨테이너",
+            home: "홈 서버",
+            office: "사무실",
+          },
+        },
         badge: {
           label: "사이드바 배지",
           accessibilityLabel: "사이드바 배지, {{value}}",

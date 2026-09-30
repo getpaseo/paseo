@@ -2357,6 +2357,21 @@ export const ar: TranslationResources = {
             blue: "أزرق",
           },
         },
+        icon: {
+          label: "الأيقونة",
+          accessibilityLabel: "الأيقونة، {{value}}",
+          options: {
+            server: "خادم",
+            cloud: "جهاز افتراضي سحابي",
+            desktop: "حاسوب مكتبي",
+            laptop: "حاسوب محمول",
+            workstation: "محطة عمل",
+            board: "لوحة مفردة",
+            container: "حاوية",
+            home: "خادم منزلي",
+            office: "مكتب",
+          },
+        },
         badge: {
           label: "شارة الشريط الجانبي",
           accessibilityLabel: "شارة الشريط الجانبي، {{value}}",
