@@ -55,6 +55,7 @@ import { useProjectIcons } from "@/projects/icons";
 import {
   OverlayLayerProvider,
   useGlobalWebOverlayLayer,
+  useNativeOverlayKeys,
   useWebOverlayRegistration,
 } from "@/lib/overlay-root";
 import { useHosts } from "@/runtime/host-runtime";
@@ -763,6 +764,11 @@ function SectionRow({ row }: { row: Extract<CommandCenterListRow, { kind: "secti
   );
 }
 
+// Escape arrives without asking; it is registered for `agent.interrupt` anyway.
+// Backspace stays off deliberately — the palette pops its scope with it on web,
+// but a registered command would stop the search field deleting text.
+const COMMAND_CENTER_NATIVE_KEYS = ["ArrowUp", "ArrowDown", "Enter"] as const;
+
 export function CommandCenter() {
   const { t } = useTranslation();
   const isCompact = useIsCompactFormFactor();
@@ -891,6 +897,12 @@ export function CommandCenter() {
     active: isWeb && state.open && !showBottomSheet,
     layer: modalLayer,
     onKeyDown: handleWebOverlayKeyDown,
+  });
+  useNativeOverlayKeys({
+    active: state.open,
+    layer: modalLayer,
+    keys: COMMAND_CENTER_NATIVE_KEYS,
+    onKey: state.key,
   });
 
   if (showBottomSheet) {

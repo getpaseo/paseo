@@ -66,6 +66,7 @@ import {
   getOverlayRoot,
   OverlayLayerProvider,
   useOverlayLayer,
+  useNativeOverlayKeys,
   useWebOverlayRegistration,
 } from "@/lib/overlay-root";
 import { buildDesktopFrameStyle } from "./combobox-frame-style";
@@ -526,7 +527,6 @@ type DesktopKey = "ArrowDown" | "ArrowUp" | "Enter" | "Escape";
 
 interface DesktopKeyHandlerInput {
   isOpen: boolean;
-  isMobile: boolean;
   orderedVisibleOptions: ComboboxOption[];
   activeIndex: number;
   setActiveIndex: React.Dispatch<React.SetStateAction<number>>;
@@ -874,8 +874,9 @@ function dispatchDesktopKey(
   event?: KeyboardEvent,
 ): boolean {
   if (!input.isOpen) return false;
-  if (!IS_WEB && input.isMobile) return false;
-
+  // A native mobile bail used to live here because native had no key source, so
+  // nothing could call this. It has one now, and the sheet highlights an active
+  // row like the popover does, so a hardware keyboard drives both.
   if (key === "ArrowDown" || key === "ArrowUp") {
     event?.preventDefault();
     handleDesktopArrowKey(input, key);
@@ -1186,6 +1187,8 @@ function DesktopComboboxOptionsBody(props: {
     </>
   );
 }
+
+const COMBOBOX_NATIVE_KEYS = ["ArrowUp", "ArrowDown", "Enter"] as const;
 
 function DesktopComboboxBody(props: DesktopBodyProps): ReactElement | null {
   const active = useRetainedPanelActive();
@@ -1535,7 +1538,6 @@ export function Combobox({
       return dispatchDesktopKey(
         {
           isOpen,
-          isMobile,
           orderedVisibleOptions,
           activeIndex,
           setActiveIndex,
@@ -1546,7 +1548,7 @@ export function Combobox({
         event,
       );
     },
-    [activeIndex, handleClose, handleSelect, isMobile, isOpen, orderedVisibleOptions],
+    [activeIndex, handleClose, handleSelect, isOpen, orderedVisibleOptions],
   );
 
   useDismissKeyboardOnOpen(isOpen, isMobile);
@@ -1582,6 +1584,21 @@ export function Combobox({
     () => [styles.desktopScrollContent, styles.desktopScrollContentAboveSearch],
     [],
   );
+
+  // Registered here rather than in either body: both render an active-row
+  // highlight, and the sheet is what a compact layout shows. Everything
+  // `dispatchDesktopKey` needs is React state — the DOM event is only ever used
+  // to `preventDefault` — so the whole set crosses to native.
+  const handleNativeOverlayKey = useCallback(
+    (key: string) => (isDesktopKey(key) ? handleDesktopKey(key) : false),
+    [handleDesktopKey],
+  );
+  useNativeOverlayKeys({
+    active: isOpen,
+    layer: floatingLayer,
+    keys: COMBOBOX_NATIVE_KEYS,
+    onKey: handleNativeOverlayKey,
+  });
 
   const effectiveSearchPlaceholder = searchPlaceholder ?? resolvedPlaceholder;
   const hasChildren = Boolean(children);
