@@ -2033,6 +2033,47 @@ describe("Codex app-server provider", () => {
     await session.close();
   });
 
+  test("forks before an image in earlier Codex history when a later text turn gets 400", async () => {
+    const appServer = createFakeCodexAppServer({
+      "thread/read": () => ({
+        thread: {
+          id: "thread-1",
+          turns: [
+            {
+              id: "earlier-image-turn",
+              items: [{ type: "imageView", id: "view-1", path: "/tmp/image.png" }],
+            },
+            {
+              id: "failed-text-turn",
+              items: [{ type: "userMessage", id: "text-1", content: [{ type: "text", text: "continue" }] }],
+            },
+          ],
+        },
+      }),
+    });
+    const session = new CodexAppServerAgentSession(
+      createConfig(),
+      null,
+      createTestLogger(),
+      async () => appServer.child,
+    );
+    await session.startTurn("continue");
+    appServer.startsTurn({ threadId: "thread-1", turnId: "failed-text-turn" });
+    appServer.completeTurn({
+      status: "failed",
+      error: { message: "400 invalid_request_error: image input is not supported" },
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+
+    await session.startTurn("try text again");
+    expect(appServer.requests().filter((request) => request.method === "thread/fork"))
+      .toMatchObject([{ params: { beforeTurnId: "earlier-image-turn" } }]);
+    expect(appServer.requests().filter((request) => request.method === "turn/start").at(-1))
+      .toMatchObject({ params: { threadId: "forked-thread" } });
+    appServer.assertNoErrors();
+    await session.close();
+  });
+
   test("rewinds a legacy conversation with a bounded fork on Codex without thread/rollback", async () => {
     const appServer = createFakeCodexAppServer({
       initialize: () => ({ userAgent: "paseo/0.159.0 (Ubuntu 26.4.0; x86_64) (paseo; 0)" }),

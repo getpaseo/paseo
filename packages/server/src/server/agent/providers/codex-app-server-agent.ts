@@ -2081,6 +2081,41 @@ async function requestCodexThreadHistory(
   return CodexThreadReadResponseSchema.parse(response);
 }
 
+function isCodexImageBearingItem(item: unknown): boolean {
+  const record = toObjectRecord(item);
+  if (!record) return false;
+  const type = normalizeCodexThreadItemType(
+    typeof record.type === "string" ? record.type : undefined,
+  );
+  if (type === "imageView") return true;
+  if (type === "mcpToolCall") return splitCodexMcpToolResultImages(record.result).images.length > 0;
+  if (type !== "userMessage" || !Array.isArray(record.content)) return false;
+  return record.content.some((block) => {
+    const content = toObjectRecord(block);
+    return content &&
+      (content.type === "localImage" ||
+        content.type === "image" ||
+        content.type === "image_url" ||
+        content.type === "input_image");
+  });
+}
+
+function findCodexImageTurnBeforeFailure(
+  history: CodexThreadReadResponse,
+  failedTurnId: string,
+): string | null {
+  const turns = history.thread.turns;
+  const failedIndex = turns.findIndex((turn) => turn.id === failedTurnId);
+  const lastIndex = failedIndex < 0 ? turns.length - 1 : failedIndex;
+  for (let index = lastIndex; index >= 0; index -= 1) {
+    const turn = turns[index];
+    if (typeof turn.id === "string" && turn.items.some(isCodexImageBearingItem)) {
+      return turn.id;
+    }
+  }
+  return null;
+}
+
 async function loadCodexThreadHistoryTimeline(params: {
   threadId: string;
   cwd: string | null;
@@ -4430,9 +4465,14 @@ export class CodexAppServerAgentSession implements AgentSession {
     // Keep the failed turn and its original error in Paseo's timeline.
     try {
       const config = this.buildCodexInnerConfig();
+      const history = await requestCodexThreadHistory(
+        (threadId) => readCodexThread(this.client!, threadId),
+        failed.threadId,
+      );
+      const beforeTurnId = findCodexImageTurnBeforeFailure(history, failed.turnId) ?? failed.turnId;
       const forked = await this.client.forkThread({
         threadId: failed.threadId,
-        beforeTurnId: failed.turnId,
+        beforeTurnId,
         cwd: this.config.cwd ?? null,
         model: this.config.model ?? null,
         serviceTier: this.serviceTier,
