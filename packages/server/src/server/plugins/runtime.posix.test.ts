@@ -2030,3 +2030,29 @@ export default function contribute(plugin: any) {
     }
   });
 });
+
+it("rejects a usage source without discovery at registration", async () => {
+  const directory = await createPlugin(
+    "missing-discovery",
+    `
+export default function contribute(server) {
+  server.registerUsageSource({
+    id: "missing-discovery",
+    label: "Missing discovery",
+    input: { parseAsync: async (value) => value },
+    identify: async () => ({ key: "account" }),
+    fetch: async () => ({ status: "available", windows: [] }),
+  });
+  return () => {};
+}
+`,
+  );
+  const runtime = createTestRuntime();
+  try {
+    await expect(runtime.startPlugin("missing-discovery", directory)).rejects.toThrow(
+      "Invalid usage source: missing-discovery",
+    );
+  } finally {
+    await runtime.stopAll();
+  }
+});

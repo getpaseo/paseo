@@ -206,6 +206,12 @@ export async function createCreationScenario(page: Page) {
         )
         .toBe(count);
     },
+    async agentIds() {
+      await requests.settled();
+      return (await project.client.fetchAgents()).entries
+        .filter(({ agent }) => agent.workspaceId === workspaceId)
+        .map(({ agent }) => agent.id);
+    },
     async expectAgentTitle(title: string) {
       await expect
         .poll(

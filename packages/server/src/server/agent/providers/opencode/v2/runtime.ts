@@ -131,6 +131,14 @@ export class V2Runtime {
     const pending = this.start(env);
     this.starts.add(pending);
     void pending.then(
+      (generation) =>
+        generation.exited.then(() => {
+          if (this.current === pending) this.current = null;
+          return undefined;
+        }),
+      () => undefined,
+    );
+    void pending.then(
       () => this.starts.delete(pending),
       () => this.starts.delete(pending),
     );

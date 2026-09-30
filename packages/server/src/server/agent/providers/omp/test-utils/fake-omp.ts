@@ -54,6 +54,9 @@ export class FakeOmp implements OmpRuntime {
   private readonly sessions: FakeOmpSession[] = [];
   private readonly command: [string, ...string[]];
   private readonly queuedCommands: OmpRpcSlashCommand[][] = [];
+  private nextStartError: Error | null = null;
+  private nextSessionId = 0;
+  private readonly sessionIdsByFile = new Map<string, string>();
   private readonly queuedSubagentSubscriptionErrors = new Map<
     FakeOmpSubagentSubscriptionLevel,
     Error
@@ -64,12 +67,19 @@ export class FakeOmp implements OmpRuntime {
   }
 
   async startSession(input: OmpStartSessionInput): Promise<FakeOmpSession> {
+    const startError = this.nextStartError;
+    this.nextStartError = null;
+    if (startError) throw startError;
     const launch = buildOmpLaunch({
       command: this.command,
       session: input,
     });
     this.recordedLaunches.push(launch);
-    const session = new FakeOmpSession(launch);
+    const sessionId =
+      (launch.session ? this.sessionIdsByFile.get(launch.session) : undefined) ??
+      `omp-session-${++this.nextSessionId}`;
+    const session = new FakeOmpSession(launch, sessionId);
+    if (!launch.noSession) this.sessionIdsByFile.set(session.state.sessionFile, sessionId);
     session.commands = this.queuedCommands.shift() ?? [];
     for (const [level, error] of this.queuedSubagentSubscriptionErrors) {
       session.subagentSubscriptionErrors.set(level, error);
@@ -83,6 +93,10 @@ export class FakeOmp implements OmpRuntime {
     this.queuedCommands.push(commands);
   }
 
+  failNextStart(error: Error): void {
+    this.nextStartError = error;
+  }
+
   failNextSubagentSubscription(level: FakeOmpSubagentSubscriptionLevel, error: Error): void {
     this.queuedSubagentSubscriptionErrors.set(level, error);
   }
@@ -94,9 +108,15 @@ export class FakeOmp implements OmpRuntime {
     }
     return session;
   }
+
+  allSessions(): FakeOmpSession[] {
+    return [...this.sessions];
+  }
 }
 
 export class FakeOmpSession implements OmpRuntimeSession {
+  fastModeResult = { enabled: false, active: false };
+  readonly setFastModeRequests: boolean[] = [];
   readonly prompts: Array<{ message: string; imageCount: number }> = [];
   readonly compactRequests: Array<{ customInstructions?: string }> = [];
   readonly setAutoCompactionRequests: boolean[] = [];
@@ -106,6 +126,7 @@ export class FakeOmpSession implements OmpRuntimeSession {
   readonly setThinkingLevelRequests: OmpThinkingLevel[] = [];
   readonly handoffRequests: Array<{ customInstructions?: string }> = [];
   readonly steerRequests: Array<{ message: string; imageCount: number }> = [];
+  steerError: Error | null = null;
   readonly followUpRequests: Array<{ message: string; imageCount: number }> = [];
   readonly hostToolSetRequests: OmpRpcHostToolDefinition[][] = [];
   readonly hostToolResults: OmpRpcHostToolResult[] = [];
@@ -152,15 +173,17 @@ export class FakeOmpSession implements OmpRuntimeSession {
   private activeHeldPrompt: { promise: Promise<void>; reject: (error: Error) => void } | null =
     null;
 
-  constructor(launch: OmpRuntimeLaunch) {
+  constructor(launch: OmpRuntimeLaunch, sessionId = "omp-session-1") {
     this.state = {
       model: null,
       thinkingLevel: "medium",
       isStreaming: false,
       isCompacting: false,
       autoCompactionEnabled: true,
+      fastModeEnabled: false,
+      fastModeActive: false,
       sessionFile: launch.session ?? "/tmp/omp-session",
-      sessionId: "omp-session-1",
+      sessionId,
       messageCount: 0,
       queuedMessageCount: 0,
     };
@@ -269,6 +292,16 @@ export class FakeOmpSession implements OmpRuntimeSession {
     return this.state;
   }
 
+  async setFastMode(enabled: boolean): Promise<{ enabled: boolean; active: boolean }> {
+    this.setFastModeRequests.push(enabled);
+    this.state = {
+      ...this.state,
+      fastModeEnabled: this.fastModeResult.enabled,
+      fastModeActive: this.fastModeResult.active,
+    };
+    return this.fastModeResult;
+  }
+
   /** Holds every state request until the returned function releases them. */
   holdStateRequests(): () => void {
     const held: Array<() => void> = [];
@@ -350,8 +383,12 @@ export class FakeOmpSession implements OmpRuntimeSession {
     return this.branchMessages;
   }
 
-  steer(message: string, images?: Array<{ type: "image"; data: string; mimeType: string }>): void {
+  async steer(
+    message: string,
+    images?: Array<{ type: "image"; data: string; mimeType: string }>,
+  ): Promise<void> {
     this.steerRequests.push({ message, imageCount: images?.length ?? 0 });
+    if (this.steerError) throw this.steerError;
   }
 
   followUp(

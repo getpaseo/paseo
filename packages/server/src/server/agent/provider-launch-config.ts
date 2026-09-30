@@ -3,7 +3,11 @@ import {
   executableExists,
   findExecutable,
 } from "../../executable-resolution/executable-resolution.js";
-import { createExternalProcessEnv, type ProcessEnvRecord } from "../paseo-env.js";
+import {
+  createExternalProcessEnv,
+  type ProcessEnvRecord,
+  type ExternalProcessEnv,
+} from "../paseo-env.js";
 export {
   AgentProviderRuntimeSettingsMapSchema,
   ProviderCommandSchema,
@@ -242,7 +246,7 @@ export function createProviderEnvSpec(options: ProviderEnvOptions = {}): Provide
   };
 }
 
-export function createProviderEnv(options: ProviderEnvOptions = {}): NodeJS.ProcessEnv {
+export function createProviderEnv(options: ProviderEnvOptions = {}): ExternalProcessEnv {
   const spec = createProviderEnvSpec(options);
   return createExternalProcessEnv(spec.baseEnv ?? process.env, spec.envOverlay);
 }

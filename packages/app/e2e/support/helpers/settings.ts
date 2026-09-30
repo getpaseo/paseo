@@ -74,7 +74,7 @@ export async function openSettingsHostSection(
 }
 
 export async function expectSettingsHeader(page: Page, title: string): Promise<void> {
-  await expect(page.getByTestId("settings-detail-header-title")).toHaveText(title);
+  await expect(page.getByTestId("page-title")).toHaveText(title);
 }
 
 export async function openAddHostFlow(page: Page): Promise<void> {
