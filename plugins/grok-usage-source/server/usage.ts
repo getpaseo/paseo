@@ -144,7 +144,6 @@ export async function fetchUsage(
   const resp = GrokUsageResponseSchema.parse(await res.json());
   const balance = grokMonthlyCreditBalance(resp);
   const window = grokUsageWindow(resp);
-  if (window) window.headline = true;
 
   return {
     status: "available",

@@ -19,7 +19,6 @@ export interface PluginUsageSourceMetadata {
   id: string;
   label: string;
   icon?: string;
-  discover: boolean;
 }
 
 export type PluginProcessRequest =
@@ -108,7 +107,6 @@ const usageSourceMetadataSchema = z
     id: z.string().min(1),
     label: z.string().min(1),
     icon: z.string().optional(),
-    discover: z.boolean(),
   })
   .strict();
 const providerConnectRequestSchema = z

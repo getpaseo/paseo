@@ -1173,6 +1173,9 @@ export const ptBR: TranslationResources = {
       settings: "Configurações",
       closeSidebar: "Fechar barra lateral",
     },
+    footer: {
+      usage: "Uso",
+    },
     help: {
       trigger: "Ajuda e suporte",
       sectionHelp: "Ajuda",
@@ -2203,8 +2206,15 @@ export const ptBR: TranslationResources = {
         description: "Mostrar uma estrutura para navegar entre prompts",
       },
       sidebar: {
-        title: "Barra lateral",
-        description: "Escolha quais itens aparecem no topo da barra lateral e em que ordem",
+        header: {
+          title: "Cabeçalho",
+          description: "Escolha quais itens aparecem no topo da barra lateral e em que ordem",
+        },
+        footer: {
+          title: "Rodapé",
+          description:
+            "Escolha quais linhas aparecem na parte inferior da barra lateral e em que ordem. Adicionar projeto e a linha de ícones sempre aparecem",
+        },
         moveUp: "Mover para cima",
         moveDown: "Mover para baixo",
       },

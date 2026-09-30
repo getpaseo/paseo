@@ -1,6 +1,7 @@
 import { formatCompactTimeAgoAsProse } from "@/utils/time";
 import { usageCopy } from "./copy";
-import type { UsageReport, UsageReportEntry, UsageView, UsageWindow } from "./types";
+import type { UsageDisplayAs } from "./preferences";
+import type { UsageReportEntry, UsageView, UsageWindow } from "./types";
 
 export function usedPercent(window: UsageWindow): number | null {
   if (window.usedPct != null) return window.usedPct;
@@ -8,34 +9,26 @@ export function usedPercent(window: UsageWindow): number | null {
   return null;
 }
 
-/** The window the source marked as its headline. Sources own that choice; there is no fallback. */
-export function headlineWindow(report: UsageReport): UsageWindow | null {
-  return report.windows.find((window) => window.headline === true) ?? null;
+/** The percent a window shows under the user's used/remaining preference. */
+export function displayPercent(window: UsageWindow, displayAs: UsageDisplayAs): number | null {
+  if (displayAs === "used") return usedPercent(window);
+  if (window.remainingPct != null) return window.remainingPct;
+  const used = usedPercent(window);
+  return used == null ? null : 100 - used;
 }
 
-export interface UsagePill {
-  icon: string | null;
-  sourceLabel: string;
-  /** Headline percent, else the plan label, else nothing beside the icon. */
-  text: string | null;
-}
-
-export function resolveUsagePill(input: {
-  supportsUsage: boolean;
-  entry: UsageReportEntry | null | undefined;
-}): UsagePill | null {
-  const { supportsUsage, entry } = input;
-  if (!supportsUsage || !entry) return null;
-  const window = headlineWindow(entry.report);
-  const percent = window ? usedPercent(window) : null;
-  return {
-    icon: entry.icon ?? null,
-    sourceLabel: entry.sourceLabel,
-    text:
-      percent != null
-        ? `${Math.round(Math.max(0, Math.min(100, percent)))}%`
-        : (entry.report.planLabel ?? null),
-  };
+/**
+ * A window row's accessible label: what pinning it pins, then what the row shows. The row is a
+ * checkbox, so its checked state says whether it is pinned: "Pin Claude Session, 31% · resets in
+ * 2h", checked.
+ */
+export function usageWindowRowLabel(input: {
+  pinLabel: string;
+  value: string;
+  trailing: string | null | undefined;
+}): string {
+  const summary = input.trailing ? `${input.value} · ${input.trailing}` : input.value;
+  return `${input.pinLabel}, ${summary}`;
 }
 
 /** When a report was fetched, from its compact relative time: "Updated 3m ago". */
@@ -75,13 +68,16 @@ export interface UsageQueryState {
 }
 
 export function resolveUsageView(input: {
+  hostLabel: string;
   isConnected: boolean;
   supportsUsage: boolean;
   query: UsageQueryState | undefined;
 }): UsageView {
-  const { isConnected, supportsUsage, query } = input;
-  if (!isConnected) return { kind: "unavailable", message: usageCopy.hostUnavailable };
-  if (!supportsUsage) return { kind: "unavailable", message: usageCopy.hostUpgradeRequired };
+  const { hostLabel, isConnected, supportsUsage, query } = input;
+  if (!isConnected) return { kind: "unavailable", message: usageCopy.hostUnavailable(hostLabel) };
+  if (!supportsUsage) {
+    return { kind: "unavailable", message: usageCopy.hostUpgradeRequired(hostLabel) };
+  }
   if (query?.data) {
     return { kind: "ready", reports: query.data, isRefreshing: query.isFetching };
   }
@@ -101,26 +97,34 @@ export interface UsageHost {
   supportsUsage: boolean;
 }
 
-export interface UsageHostGroup {
-  serverId: string;
-  label: string;
-  view: UsageView;
+/**
+ * The host usage shows by default, on the sidebar row and the Usage screen: the active workspace's
+ * host if it reports usage, else the first host that does.
+ */
+export function resolveUsageHostId(
+  activeServerId: string | null,
+  hosts: readonly UsageHost[],
+): string | null {
+  const reporting = hosts.filter((host) => host.isConnected && host.supportsUsage);
+  const active = reporting.find((host) => host.serverId === activeServerId);
+  return (active ?? reporting[0])?.serverId ?? null;
 }
 
-/** One group per connected host, in host order. */
-export function groupUsageByHost(
-  hosts: readonly UsageHost[],
-  queries: ReadonlyMap<string, UsageQueryState>,
-): UsageHostGroup[] {
-  return hosts
-    .filter((host) => host.isConnected)
-    .map((host) => ({
-      serverId: host.serverId,
-      label: host.label,
-      view: resolveUsageView({
-        isConnected: true,
-        supportsUsage: host.supportsUsage,
-        query: queries.get(host.serverId),
-      }),
-    }));
+/**
+ * The host the Usage screen shows: the user's pick while it stays connected, else the default
+ * host. With no host reporting usage, the first connected host, so the screen says to update it.
+ */
+export function resolveUsageScreenHostId(input: {
+  selectedServerId: string | null;
+  activeServerId: string | null;
+  hosts: readonly UsageHost[];
+}): string | null {
+  const connected = input.hosts.filter((host) => host.isConnected);
+  const selected = connected.find((host) => host.serverId === input.selectedServerId);
+  return (
+    selected?.serverId ??
+    resolveUsageHostId(input.activeServerId, input.hosts) ??
+    connected[0]?.serverId ??
+    null
+  );
 }

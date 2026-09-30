@@ -98,25 +98,20 @@ function fixtureFetch(expectedToken: string): typeof fetch {
   }) as unknown as typeof fetch;
 }
 
-describe("Claude usage input forms", () => {
-  it("reads only the selected configDir file", async () => {
+describe("Claude default credential lookup", () => {
+  it("reads the configured Claude home file", async () => {
     const dir = mkdtempSync(join(tmpdir(), "claude-usage-input-"));
     try {
       writeFileSync(
         join(dir, ".credentials.json"),
         JSON.stringify({ claudeAiOauth: { accessToken: "fixture-file" } }),
       );
-      expect((await fetchUsage({ configDir: dir }, fixtureFetch("fixture-file"))).status).toBe(
+      expect((await fetchUsage({}, fixtureFetch("fixture-file"), { claudeHome: dir })).status).toBe(
         "available",
       );
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
-  });
-  it("uses an accessToken without reading a file", async () => {
-    expect(
-      (await fetchUsage({ accessToken: "fixture-direct" }, fixtureFetch("fixture-direct"))).status,
-    ).toBe("available");
   });
   it("default discovery reads the credential file", async () => {
     const dir = mkdtempSync(join(tmpdir(), "claude-usage-default-"));
@@ -131,11 +126,13 @@ describe("Claude usage input forms", () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
-  it("stays unavailable when non-default configDir has no credentials", async () => {
+  it("stays unavailable when the configured home has no credentials", async () => {
     const dir = mkdtempSync(join(tmpdir(), "claude-empty-config-"));
     try {
       const fetchApi = vi.fn() as unknown as typeof fetch;
-      expect((await fetchUsage({ configDir: dir }, fetchApi)).status).toBe("unavailable");
+      expect((await fetchUsage({}, fetchApi, { claudeHome: dir, platform: "linux" })).status).toBe(
+        "unavailable",
+      );
       expect(fetchApi).not.toHaveBeenCalled();
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -151,12 +148,14 @@ describe("Claude Keychain token usage", () => {
       }),
     );
     const credentials = await readClaudeKeychainCredentials(run, "fixture-account");
-    const token = (credentials as { claudeAiOauth: { accessToken: string } }).claudeAiOauth
-      .accessToken;
     const fetchApi = vi.fn(
       async () => new Response(null, { status: 401 }),
     ) as unknown as typeof fetch;
-    const report = await fetchUsage({ accessToken: token }, fetchApi);
+    const report = await fetchUsage({}, fetchApi, {
+      platform: "darwin",
+      claudeHome: "/nonexistent-paseo-test-home",
+      readKeychainCredentials: async () => credentials,
+    });
     expect(report.status).toBe("unavailable");
     expect(fetchApi).toHaveBeenCalledTimes(1);
     expect(run).toHaveBeenCalledTimes(1);

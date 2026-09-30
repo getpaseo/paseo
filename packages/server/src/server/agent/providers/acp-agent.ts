@@ -1633,10 +1633,6 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   readonly provider: string;
   readonly capabilities: AgentCapabilityFlags;
 
-  async getUsageReference() {
-    return { source: this.provider, input: {} };
-  }
-
   private readonly logger: Logger;
   private readonly runtimeSettings?: ProviderRuntimeSettings;
   private readonly defaultCommand: [string, ...string[]];

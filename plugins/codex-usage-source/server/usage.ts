@@ -33,17 +33,13 @@ const responseSchema = z.object({
 });
 
 export async function readAuth(
-  input: CodexUsageInput,
+  _input: CodexUsageInput,
 ): Promise<{ token: string; accountId?: string; idToken?: string } | null> {
-  if ("accessToken" in input) return { token: input.accessToken, accountId: input.accountId };
-  const candidates =
-    "codexHome" in input
-      ? [join(input.codexHome, "auth.json")]
-      : [
-          ...(process.env["CODEX_HOME"] ? [join(process.env["CODEX_HOME"], "auth.json")] : []),
-          join(homedir(), ".config", "codex", "auth.json"),
-          join(homedir(), ".codex", "auth.json"),
-        ];
+  const candidates = [
+    ...(process.env["CODEX_HOME"] ? [join(process.env["CODEX_HOME"], "auth.json")] : []),
+    join(homedir(), ".config", "codex", "auth.json"),
+    join(homedir(), ".codex", "auth.json"),
+  ];
   for (const path of candidates) {
     try {
       const auth = authSchema.parse(JSON.parse(await readFile(path, "utf8")));
@@ -64,7 +60,6 @@ function usageWindow(
   id: string,
   label: string,
   value: z.infer<typeof windowSchema> | null | undefined,
-  headline = false,
 ): UsageWindow | null {
   if (!value) return null;
   const usedPct = value.used_percent ?? 0;
@@ -74,7 +69,6 @@ function usageWindow(
     utilizationPct: usedPct,
     resetsAt: value.reset_at != null ? new Date(value.reset_at * 1000).toISOString() : null,
     tone: toneFromUsedPct(usedPct),
-    headline,
   });
 }
 
@@ -101,7 +95,7 @@ export async function fetchUsage(
   if (text.trim().startsWith("<")) return { status: "unavailable", windows: [] };
   const usage = responseSchema.parse(JSON.parse(text));
   const windows = [
-    usageWindow("session", "Session", usage.rate_limit?.primary_window, true),
+    usageWindow("session", "Session", usage.rate_limit?.primary_window),
     usageWindow("weekly", "Weekly", usage.rate_limit?.secondary_window),
     usageWindow("code_review", "Code review", usage.code_review_rate_limit?.primary_window),
   ].filter((window): window is UsageWindow => window !== null);

@@ -133,6 +133,7 @@ export function createPluginWorker(options: {
       !/^[a-z][a-z0-9._-]*$/.test(id) ||
       !source.label.trim() ||
       typeof source.fetch !== "function" ||
+      typeof source.discover !== "function" ||
       !source.input ||
       typeof source.input.parseAsync !== "function"
     ) {
@@ -289,7 +290,6 @@ export function createPluginWorker(options: {
           icon: source.icon
             ? await readPluginProviderIcon(message.pluginDirectory, source.icon)
             : undefined,
-          discover: !!source.discover,
         })),
     );
     send({
@@ -336,8 +336,7 @@ export function createPluginWorker(options: {
     void (async () => {
       const source = usageSources.get(message.sourceId);
       if (!source) throw new Error(`Unknown usage source: ${message.sourceId}`);
-      if (message.type === "usage.discover")
-        return jsonTransportValue(source.discover ? await source.discover() : []);
+      if (message.type === "usage.discover") return jsonTransportValue(await source.discover());
       const input = await source.input.parseAsync(message.input);
       return jsonTransportValue(
         message.type === "usage.identify"

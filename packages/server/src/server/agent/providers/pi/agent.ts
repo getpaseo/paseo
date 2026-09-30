@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { readFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve as resolvePath } from "node:path";
 import type { Logger } from "pino";
@@ -247,7 +246,6 @@ interface PiRpcAgentSessionOptions {
   extensionTimeoutMs?: number;
   logger: Logger;
   usagePollScheduler?: PiUsagePollScheduler;
-  usageEnv?: Record<string, string>;
 }
 
 interface PiResumeConfig {
@@ -533,27 +531,6 @@ function resolvePiAgentDir(env: Record<string, string> | undefined): string {
   }
   return resolvePath(configured);
 }
-
-const piCodexUsageAuthSchema = z
-  .object({
-    "openai-codex": z
-      .object({
-        type: z.literal("oauth"),
-        access: z.string().min(1),
-        accountId: z.string().optional(),
-      })
-      .passthrough()
-      .optional(),
-  })
-  .passthrough();
-const piClaudeUsageAuthSchema = z
-  .object({
-    anthropic: z
-      .object({ type: z.literal("oauth"), access: z.string().min(1) })
-      .passthrough()
-      .optional(),
-  })
-  .passthrough();
 
 function readPiGlobalMcpConfig(env: Record<string, string> | undefined): Record<string, unknown> {
   const globalConfigPath = join(resolvePiAgentDir(env), "mcp.json");
@@ -1150,35 +1127,6 @@ export class PiRpcAgentSession implements AgentSession {
   readonly provider: AgentProvider;
   readonly capabilities: AgentCapabilityFlags;
 
-  async getUsageReference() {
-    await this.refreshState();
-    const provider = this.state.model?.provider;
-    let source: string | null = null;
-    if (provider === "openai-codex") source = "codex";
-    if (provider === "anthropic") source = "claude";
-    if (!source || !provider) return null;
-    try {
-      const auth: unknown = JSON.parse(
-        await readFile(join(resolvePiAgentDir(this.usageEnv), "auth.json"), "utf8"),
-      );
-      if (provider === "openai-codex") {
-        const credential = piCodexUsageAuthSchema.parse(auth)["openai-codex"];
-        if (!credential) return null;
-        return {
-          source,
-          input: {
-            accessToken: credential.access,
-            ...(credential.accountId ? { accountId: credential.accountId } : {}),
-          },
-        };
-      }
-      const credential = piClaudeUsageAuthSchema.parse(auth).anthropic;
-      return credential ? { source, input: { accessToken: credential.access } } : null;
-    } catch {
-      return null;
-    }
-  }
-
   private readonly subscribers = new Set<(event: AgentStreamEvent) => void>();
   private readonly activeToolCalls = new Map<string, PiTrackedToolCall>();
   private readonly pendingExtensionUiRequests = new Map<string, AgentPermissionRequest>();
@@ -1206,7 +1154,6 @@ export class PiRpcAgentSession implements AgentSession {
   private readonly currentModeId: string | null;
   private readonly logger: Logger;
   private readonly usagePoller: PiUsagePoller;
-  private readonly usageEnv?: Record<string, string>;
   private closed = false;
   private readonly closeController = new AbortController();
   private readonly pendingExtensionHydrations = new Set<Promise<void>>();
@@ -1229,7 +1176,6 @@ export class PiRpcAgentSession implements AgentSession {
     this.extensionHost.follow((event) => {
       if (!this.closeController.signal.aborted) this.emit(event);
     });
-    this.usageEnv = options.usageEnv;
     this.usagePoller = new PiUsagePoller({
       scheduler: options.usagePollScheduler,
       readStats: () => this.runtimeSession.getSessionStats(),
@@ -2529,7 +2475,6 @@ export class PiRpcAgentClient implements AgentClient {
         extensionTimeoutMs: this.providerParams.extensionTimeoutMs,
         logger: this.logger,
         usagePollScheduler: this.usagePollScheduler,
-        usageEnv: mcpEnv,
       });
     } catch (error) {
       await runtimeSession.close().catch(() => undefined);
@@ -2593,7 +2538,6 @@ export class PiRpcAgentClient implements AgentClient {
         extensionTimeoutMs: this.providerParams.extensionTimeoutMs,
         logger: this.logger,
         usagePollScheduler: this.usagePollScheduler,
-        usageEnv: mcpEnv,
       });
     } catch (error) {
       await runtimeSession.close().catch(() => undefined);

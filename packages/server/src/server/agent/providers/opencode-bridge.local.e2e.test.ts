@@ -355,7 +355,8 @@ test.each([
       await resumed?.close();
       await original?.close();
       await client.shutdown();
-      await rm(root, { recursive: true, force: true });
+      // Windows can retain a transient executable lock after provider shutdown.
+      await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     }
   },
   240_000,

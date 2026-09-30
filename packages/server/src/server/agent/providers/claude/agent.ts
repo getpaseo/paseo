@@ -3,7 +3,6 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import { promises } from "node:fs";
 import path from "node:path";
-import { homedir } from "node:os";
 import {
   type AgentDefinition,
   type CanUseTool,
@@ -2042,15 +2041,6 @@ class ClaudeAgentSession implements AgentSession {
   readonly provider = "claude" as const;
   readonly capabilities = CLAUDE_CAPABILITIES;
 
-  async getUsageReference() {
-    const env = this.buildSdkEnv();
-    if (env.ANTHROPIC_BASE_URL || env.ANTHROPIC_API_KEY || env.ANTHROPIC_AUTH_TOKEN) return null;
-    return {
-      source: "claude",
-      input: { configDir: env.CLAUDE_CONFIG_DIR || path.join(env.HOME || homedir(), ".claude") },
-    };
-  }
-
   private readonly config: ClaudeAgentConfig;
   private readonly launchEnv?: Record<string, string>;
   private readonly agentId?: string;
@@ -3363,13 +3353,17 @@ class ClaudeAgentSession implements AgentSession {
     input: { ultracode: boolean },
   ): Pick<ClaudeOptions, "settings"> | Record<string, never> {
     const fastMode = this.resolveFastModeSetting();
-    if (fastMode === null && !input.ultracode) {
+    // Internal agents do daemon work such as naming a branch, so the user's and
+    // project's hooks must not run for them.
+    const disableAllHooks = this.config.internal === true;
+    if (fastMode === null && !input.ultracode && !disableAllHooks) {
       return {};
     }
     return {
       settings: mergeClaudeSettings(providerOptions.settings, {
         ...(fastMode === null ? {} : { fastMode }),
         ...(input.ultracode ? { ultracode: true } : {}),
+        ...(disableAllHooks ? { disableAllHooks: true } : {}),
       }),
     };
   }
