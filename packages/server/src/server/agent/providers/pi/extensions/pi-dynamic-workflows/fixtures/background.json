@@ -1,0 +1,107 @@
+{
+  "provenance": {
+    "package": "pi-dynamic-workflows",
+    "version": "3.13.0",
+    "sourceCommit": "a2d5f84604d9df6aa6b4a08f2f0cad0419618b80",
+    "sourcePullRequest": "https://github.com/QuintinShaw/pi-dynamic-workflows/pull/239",
+    "piVersion": "0.87.1",
+    "pluginSdkVersion": "0.85.1",
+    "captureDate": "2026-09-28",
+    "capture": "Real Pi CLI through PiCliRuntime, PiRpcAgentClient, and ProviderSubagentStore; two real CW/qwen3.8-27b children.",
+    "normalization": "Only cwd and child sessionFile paths are replaced; RPC envelopes and payload values are preserved."
+  },
+  "events": [
+    {
+      "type": "entry_appended",
+      "entry": {
+        "type": "custom",
+        "customType": "pi-dynamic-workflows:progress",
+        "data": {
+          "version": 1,
+          "runId": "qa-paseo-progress-muld5ujs-u6j0om",
+          "name": "qa_paseo_progress",
+          "status": "running",
+          "cwd": "/workspace/pi-dynamic-workflows",
+          "currentPhase": "Verification",
+          "agentCount": 2,
+          "runningCount": 2,
+          "doneCount": 0,
+          "errorCount": 0,
+          "agentIds": [1, 2],
+          "agents": [
+            {
+              "id": 1,
+              "label": "QA alpha",
+              "status": "running",
+              "phase": "Verification",
+              "model": "CW/qwen3.8-27b",
+              "promptPreview": "Reply exactly QA_ALPHA with no explanation. Do not call tools."
+            },
+            {
+              "id": 2,
+              "label": "QA beta",
+              "status": "running",
+              "phase": "Verification",
+              "model": "CW/qwen3.8-27b",
+              "promptPreview": "Reply exactly QA_BETA with no explanation. Do not call tools."
+            }
+          ]
+        },
+        "id": "6a4a3c7e",
+        "parentId": "07a6a6b2",
+        "timestamp": "2026-09-28T14:49:37.772Z"
+      }
+    },
+    {
+      "type": "entry_appended",
+      "entry": {
+        "type": "custom",
+        "customType": "pi-dynamic-workflows:progress",
+        "data": {
+          "version": 1,
+          "runId": "qa-paseo-progress-muld5ujs-u6j0om",
+          "name": "qa_paseo_progress",
+          "status": "completed",
+          "cwd": "/workspace/pi-dynamic-workflows",
+          "currentPhase": "Verification",
+          "agentCount": 2,
+          "runningCount": 0,
+          "doneCount": 2,
+          "errorCount": 0,
+          "tokens": 1908,
+          "cost": 0,
+          "durationMs": 864,
+          "resultPreview": "Structured result",
+          "agentIds": [1, 2],
+          "agents": [
+            {
+              "id": 1,
+              "label": "QA alpha",
+              "status": "done",
+              "phase": "Verification",
+              "model": "CW/qwen3.8-27b:off",
+              "tokens": 953,
+              "promptPreview": "Reply exactly QA_ALPHA with no explanation. Do not call tools.",
+              "resultPreview": "QA_ALPHA",
+              "sessionFile": "/fixtures/pi-dynamic-workflows/child-1.jsonl"
+            },
+            {
+              "id": 2,
+              "label": "QA beta",
+              "status": "done",
+              "phase": "Verification",
+              "model": "CW/qwen3.8-27b:off",
+              "tokens": 955,
+              "promptPreview": "Reply exactly QA_BETA with no explanation. Do not call tools.",
+              "resultPreview": "QA_BETA",
+              "sessionFile": "/fixtures/pi-dynamic-workflows/child-2.jsonl"
+            }
+          ]
+        },
+        "id": "7f2cc0ab",
+        "parentId": "6a4a3c7e",
+        "timestamp": "2026-09-28T14:49:38.637Z"
+      }
+    }
+  ]
+}

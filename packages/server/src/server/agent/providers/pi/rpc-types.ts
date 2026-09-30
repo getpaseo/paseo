@@ -1,3 +1,14 @@
+import { z } from "zod";
+
+export const PiCustomEntrySchema = z.object({
+  type: z.literal("custom"),
+  id: z.string(),
+  customType: z.string(),
+  timestamp: z.string(),
+  data: z.unknown().optional(),
+});
+export type PiCustomEntry = z.infer<typeof PiCustomEntrySchema>;
+
 export type PiThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 
 export interface PiImageContent {

@@ -4,7 +4,7 @@ import type {
   AgentPermissionResponse,
   AgentStreamEvent,
 } from "../../../agent-sdk-types.js";
-import type { PiAgentMessage } from "../rpc-types.js";
+import type { PiAgentMessage, PiCustomEntry } from "../rpc-types.js";
 import { mapPiChildSession } from "./child-session.js";
 import type {
   PiExtension,
@@ -78,6 +78,23 @@ export class PiExtensionHost {
       }
     }
     return undefined;
+  }
+
+  mapCustomEntry(entry: PiCustomEntry): PiExtensionOutput<PiExtensionCustomMapping> | undefined {
+    for (const { id, adapter } of this.sessions) {
+      const mapping = this.safe(id, "mapCustomEntry", () => adapter.mapCustomEntry?.(entry));
+      if (mapping) {
+        const prepared = this.safe(id, "prepare", () => this.prepare(id, mapping));
+        if (prepared) return prepared;
+      }
+    }
+    return undefined;
+  }
+
+  resetCustomEntries(): void {
+    for (const { id, adapter } of this.sessions) {
+      this.safe(id, "resetCustomEntries", () => adapter.resetCustomEntries?.());
+    }
   }
 
   private prepare<T extends PiExtensionToolMapping | PiExtensionCustomMapping>(
