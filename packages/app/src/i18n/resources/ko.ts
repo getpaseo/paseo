@@ -1239,12 +1239,12 @@ export const ko: TranslationResources = {
   },
   sidebar: {
     leitstand: {
-      open: "Leitstand 열기",
-      toggle: "Leitstand 전환",
+      open: "대시보드 열기",
+      toggle: "대시보드 전환",
     },
     inbox: {
-      more_one: "Leitstand에 {{count}}개 더",
-      more_other: "Leitstand에 {{count}}개 더",
+      more_one: "대시보드에 {{count}}개 더",
+      more_other: "대시보드에 {{count}}개 더",
     },
     workspaces: {
       title: "워크스페이스",
@@ -3051,7 +3051,7 @@ export const ko: TranslationResources = {
     },
   },
   leitstand: {
-    title: "Leitstand",
+    title: "대시보드",
     metrics: {
       running_one: "실행 중인 에이전트 {{count}}",
       running_other: "실행 중인 에이전트 {{count}}",

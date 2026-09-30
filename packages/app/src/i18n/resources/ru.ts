@@ -1249,12 +1249,12 @@ export const ru: TranslationResources = {
   },
   sidebar: {
     leitstand: {
-      open: "Открыть Leitstand",
-      toggle: "Показать/скрыть Leitstand",
+      open: "Открыть панель",
+      toggle: "Показать/скрыть панель",
     },
     inbox: {
-      more_one: "Ещё {{count}} в Leitstand",
-      more_other: "Ещё {{count}} в Leitstand",
+      more_one: "Ещё {{count}} на панели",
+      more_other: "Ещё {{count}} на панели",
     },
     workspaces: {
       title: "Рабочие пространства",
@@ -3100,7 +3100,7 @@ export const ru: TranslationResources = {
     },
   },
   leitstand: {
-    title: "Leitstand",
+    title: "Панель",
     metrics: {
       running_one: "Работает агентов: {{count}}",
       running_other: "Работает агентов: {{count}}",

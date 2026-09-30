@@ -1246,12 +1246,12 @@ export const en = {
   },
   sidebar: {
     leitstand: {
-      open: "Open Leitstand",
-      toggle: "Toggle Leitstand",
+      open: "Open dashboard",
+      toggle: "Toggle dashboard",
     },
     inbox: {
-      more_one: "{{count}} more on the Leitstand",
-      more_other: "{{count}} more on the Leitstand",
+      more_one: "{{count}} more on the dashboard",
+      more_other: "{{count}} more on the dashboard",
     },
     workspaces: {
       title: "Workspaces",
@@ -3295,7 +3295,7 @@ export const en = {
     },
   },
   leitstand: {
-    title: "Leitstand",
+    title: "Dashboard",
     metrics: {
       running_one: "{{count}} agent running",
       running_other: "{{count}} agents running",

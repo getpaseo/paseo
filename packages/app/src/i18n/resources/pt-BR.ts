@@ -1259,12 +1259,12 @@ export const ptBR: TranslationResources = {
   },
   sidebar: {
     leitstand: {
-      open: "Abrir Leitstand",
-      toggle: "Alternar Leitstand",
+      open: "Abrir painel",
+      toggle: "Alternar painel",
     },
     inbox: {
-      more_one: "Mais {{count}} no Leitstand",
-      more_other: "Mais {{count}} no Leitstand",
+      more_one: "Mais {{count}} no painel",
+      more_other: "Mais {{count}} no painel",
     },
     workspaces: {
       title: "Workspaces",
@@ -3085,7 +3085,7 @@ export const ptBR: TranslationResources = {
     },
   },
   leitstand: {
-    title: "Leitstand",
+    title: "Painel",
     metrics: {
       running_one: "{{count}} agente em execução",
       running_other: "{{count}} agentes em execução",

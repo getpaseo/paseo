@@ -437,9 +437,13 @@ export function buildOpenProjectRoute() {
   return "/open-project" as const;
 }
 
-/** The Leitstand lives at /open-project; the host-scoped path only redirects there. */
+export function buildDashboardRoute() {
+  return "/dashboard" as const;
+}
+
+/** The dashboard has its own route so it opens only when asked for, never at startup. */
 export function isLeitstandPathname(pathname: string): boolean {
-  return pathname === "/open-project" || /^\/h\/[^/]+\/open-project\/?$/.test(pathname);
+  return pathname === "/dashboard";
 }
 
 interface NewWorkspaceRouteOptions {

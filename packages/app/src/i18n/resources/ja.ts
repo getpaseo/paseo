@@ -1246,12 +1246,12 @@ export const ja: TranslationResources = {
   },
   sidebar: {
     leitstand: {
-      open: "Leitstand を開く",
-      toggle: "Leitstand の切り替え",
+      open: "ダッシュボードを開く",
+      toggle: "ダッシュボードの切り替え",
     },
     inbox: {
-      more_one: "Leitstand にあと {{count}} 件",
-      more_other: "Leitstand にあと {{count}} 件",
+      more_one: "ダッシュボードにあと {{count}} 件",
+      more_other: "ダッシュボードにあと {{count}} 件",
     },
     workspaces: {
       title: "ワークスペース",
@@ -3067,7 +3067,7 @@ export const ja: TranslationResources = {
     },
   },
   leitstand: {
-    title: "Leitstand",
+    title: "ダッシュボード",
     metrics: {
       running_one: "稼働中のエージェント {{count}}",
       running_other: "稼働中のエージェント {{count}}",

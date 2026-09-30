@@ -18,8 +18,8 @@ function question(id: string): InboxItem {
 
 describe("isLeitstandPathname", () => {
   test("marks the Leitstand route and its host-scoped alias", () => {
-    expect(isLeitstandPathname("/open-project")).toBe(true);
-    expect(isLeitstandPathname("/h/local/open-project")).toBe(true);
+    expect(isLeitstandPathname("/dashboard")).toBe(true);
+    expect(isLeitstandPathname("/open-project")).toBe(false);
   });
 
   test("leaves workspaces, settings and the other sidebar routes alone", () => {
@@ -27,7 +27,7 @@ describe("isLeitstandPathname", () => {
     expect(isLeitstandPathname("/sessions")).toBe(false);
     expect(isLeitstandPathname("/settings/appearance")).toBe(false);
     expect(isLeitstandPathname("/h/local/workspace/ws-1")).toBe(false);
-    expect(isLeitstandPathname("/h/local/open-project/extra")).toBe(false);
+    expect(isLeitstandPathname("/dashboard/extra")).toBe(false);
   });
 });
 

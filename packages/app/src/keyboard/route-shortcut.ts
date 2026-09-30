@@ -1,7 +1,7 @@
 import type { KeyboardShortcutPayload, MessageInputKeyboardActionKind } from "@/keyboard/actions";
 import type { KeyboardActionDefinition } from "@/keyboard/keyboard-action-dispatcher";
 import {
-  buildOpenProjectRoute,
+  buildDashboardRoute,
   buildSettingsRoute,
   isLeitstandPathname,
   parseHostWorkspaceRouteFromPathname,
@@ -179,7 +179,7 @@ function routeSettingsToggle(ctx: ShortcutRoutingContext): ShortcutAction {
 // Mirrors the settings toggle: away from the Leitstand it opens, on it it returns to your session.
 function routeLeitstandToggle(ctx: ShortcutRoutingContext): ShortcutAction {
   if (!isLeitstandPathname(ctx.pathname)) {
-    return { kind: "router-push", route: buildOpenProjectRoute() };
+    return { kind: "router-push", route: buildDashboardRoute() };
   }
   if (!ctx.isMobile) {
     return { kind: "navigate-last-workspace" };

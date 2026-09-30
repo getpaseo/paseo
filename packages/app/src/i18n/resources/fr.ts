@@ -1268,12 +1268,12 @@ export const fr: TranslationResources = {
   },
   sidebar: {
     leitstand: {
-      open: "Ouvrir le Leitstand",
-      toggle: "Afficher/masquer le Leitstand",
+      open: "Ouvrir le tableau de bord",
+      toggle: "Afficher/masquer le tableau de bord",
     },
     inbox: {
-      more_one: "{{count}} de plus dans le Leitstand",
-      more_other: "{{count}} de plus dans le Leitstand",
+      more_one: "{{count}} de plus dans le tableau de bord",
+      more_other: "{{count}} de plus dans le tableau de bord",
     },
     workspaces: {
       title: "Espaces de travail",
@@ -3103,7 +3103,7 @@ export const fr: TranslationResources = {
   },
   paperclip: en.paperclip,
   leitstand: {
-    title: "Leitstand",
+    title: "Tableau de bord",
     metrics: {
       running_one: "{{count}} agent actif",
       running_other: "{{count}} agents actifs",

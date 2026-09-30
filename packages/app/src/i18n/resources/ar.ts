@@ -1229,12 +1229,12 @@ export const ar: TranslationResources = {
   },
   sidebar: {
     leitstand: {
-      open: "فتح Leitstand",
-      toggle: "إظهار/إخفاء Leitstand",
+      open: "فتح لوحة التحكم",
+      toggle: "إظهار/إخفاء لوحة التحكم",
     },
     inbox: {
-      more_one: "{{count}} أخرى في Leitstand",
-      more_other: "{{count}} أخرى في Leitstand",
+      more_one: "{{count}} أخرى في لوحة التحكم",
+      more_other: "{{count}} أخرى في لوحة التحكم",
     },
     workspaces: {
       title: "مساحات العمل",
@@ -3024,7 +3024,7 @@ export const ar: TranslationResources = {
   },
   paperclip: en.paperclip,
   leitstand: {
-    title: "Leitstand",
+    title: "لوحة التحكم",
     metrics: {
       running_one: "الوكلاء العاملون: {{count}}",
       running_other: "الوكلاء العاملون: {{count}}",

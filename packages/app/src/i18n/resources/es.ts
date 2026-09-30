@@ -1269,12 +1269,12 @@ export const es: TranslationResources = {
   },
   sidebar: {
     leitstand: {
-      open: "Abrir Leitstand",
-      toggle: "Mostrar/ocultar Leitstand",
+      open: "Abrir panel",
+      toggle: "Mostrar/ocultar panel",
     },
     inbox: {
-      more_one: "{{count}} más en el Leitstand",
-      more_other: "{{count}} más en el Leitstand",
+      more_one: "{{count}} más en el panel",
+      more_other: "{{count}} más en el panel",
     },
     workspaces: {
       title: "Espacios de trabajo",
@@ -3115,7 +3115,7 @@ export const es: TranslationResources = {
     },
   },
   leitstand: {
-    title: "Leitstand",
+    title: "Panel",
     metrics: {
       running_one: "{{count}} agente en marcha",
       running_other: "{{count}} agentes en marcha",

@@ -23,11 +23,7 @@ import {
   useSnoozableInbox,
 } from "@/leitstand/use-leitstand";
 import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
-import {
-  buildOpenProjectRoute,
-  buildSchedulesRoute,
-  isLeitstandPathname,
-} from "@/utils/host-routes";
+import { buildDashboardRoute, buildSchedulesRoute, isLeitstandPathname } from "@/utils/host-routes";
 import type { WorkspaceTabTarget } from "@/workspace-tabs/model";
 import { projectSidebarInbox, type SidebarInboxProjection } from "./sidebar-leiste-model";
 import { DISPLAY_FONT_DATASET, MONO_FONT_DATASET } from "@/styles/font-dataset";
@@ -61,7 +57,7 @@ export function SidebarLeisteHeader({
 
   const openLeitstand = useCallback(() => {
     onBeforeNavigate?.();
-    router.push(buildOpenProjectRoute());
+    router.push(buildDashboardRoute());
   }, [onBeforeNavigate]);
 
   // A stable element, so a live inbox update does not re-render the nav rows.

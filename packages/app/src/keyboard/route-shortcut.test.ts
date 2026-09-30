@@ -357,17 +357,17 @@ describe("routeKeyboardShortcut — settings.toggle", () => {
 });
 
 describe("routeKeyboardShortcut — leitstand.toggle", () => {
-  it("opens the Leitstand from a workspace", () => {
+  it("opens the dashboard from a workspace", () => {
     expect(
       routeKeyboardShortcut({ action: "leitstand.toggle", payload: null }, makeCtx()),
-    ).toEqual<ShortcutAction>({ kind: "router-push", route: "/open-project" });
+    ).toEqual<ShortcutAction>({ kind: "router-push", route: "/dashboard" });
   });
 
-  it("returns to the last workspace from the Leitstand on desktop", () => {
+  it("returns to the last workspace from the dashboard on desktop", () => {
     expect(
       routeKeyboardShortcut(
         { action: "leitstand.toggle", payload: null },
-        makeCtx({ pathname: "/open-project", isMobile: false }),
+        makeCtx({ pathname: "/dashboard", isMobile: false }),
       ),
     ).toEqual<ShortcutAction>({ kind: "navigate-last-workspace" });
   });
@@ -376,7 +376,7 @@ describe("routeKeyboardShortcut — leitstand.toggle", () => {
     expect(
       routeKeyboardShortcut(
         { action: "leitstand.toggle", payload: null },
-        makeCtx({ pathname: "/open-project", isMobile: true }),
+        makeCtx({ pathname: "/dashboard", isMobile: true }),
       ),
     ).toEqual<ShortcutAction>({ kind: "router-back" });
   });

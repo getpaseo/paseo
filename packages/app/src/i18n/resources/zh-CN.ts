@@ -1221,12 +1221,12 @@ export const zhCN: TranslationResources = {
   },
   sidebar: {
     leitstand: {
-      open: "打开 Leitstand",
-      toggle: "切换 Leitstand",
+      open: "打开仪表板",
+      toggle: "切换仪表板",
     },
     inbox: {
-      more_one: "Leitstand 中还有 {{count}} 项",
-      more_other: "Leitstand 中还有 {{count}} 项",
+      more_one: "仪表板中还有 {{count}} 项",
+      more_other: "仪表板中还有 {{count}} 项",
     },
     workspaces: {
       title: "工作区",
@@ -2999,7 +2999,7 @@ export const zhCN: TranslationResources = {
     },
   },
   leitstand: {
-    title: "Leitstand",
+    title: "仪表板",
     metrics: {
       running_one: "运行中的代理 {{count}}",
       running_other: "运行中的代理 {{count}}",
