@@ -19,3 +19,10 @@ Third-party components keep their own licenses:
 - Electron and Chromium: see LICENSE.electron.txt and LICENSES.chromium.html in
   the application folder.
 - npm dependencies: the license file shipped inside each package.
+
+Team runtime
+------------
+Parts of packages/server/src/server/team/ (board phase model, revisioned work items, run
+bindings, decision outbox, deterministic health findings) are adapted from Mastra
+(https://github.com/mastra-ai/mastra, mastracode/factory), Copyright (c) 2025 Kepler Software,
+Inc., licensed under the Apache License 2.0. Modified for PandaOS.

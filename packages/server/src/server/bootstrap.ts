@@ -1,3 +1,5 @@
+import { TeamService } from "./team/service.js";
+import { PackRegistry } from "./team/pack.js";
 import { describeHookWorkspace } from "./plugins/lifecycle/index.js";
 import { isShadowModeEnabled } from "./system-one/scope.js";
 import { ShadowPredictor } from "./system-one/shadow-predictor.js";
@@ -1476,6 +1478,15 @@ export async function createPaseoDaemon(
     readAllowScheduledAutomation: () => daemonConfigStore.get().allowScheduledAutomation,
   });
   await scheduleService.start();
+  const teamService = new TeamService({
+    storageRoot: config.paseoHome,
+    logger,
+    agentManager,
+    agentStorage,
+    createAgent,
+    packs: new PackRegistry(),
+  });
+  await teamService.start();
   daemonConfigStore.onFieldChange("resourcePolicy", (value) => {
     if (value === "economy" || value === "balanced" || value === "deep") {
       agentManager.setResourcePolicy(value);
@@ -1533,6 +1544,7 @@ export async function createPaseoDaemon(
       terminalManager,
       getDaemonTcpPort: () => (boundListenTarget?.type === "tcp" ? boundListenTarget.port : null),
       scheduleService,
+      teamService,
       providerSnapshotManager,
       daemonConfigStore,
       resourcePolicyRuntime,

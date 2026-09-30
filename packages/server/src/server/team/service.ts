@@ -1,0 +1,854 @@
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
+import type { Logger } from "pino";
+import { PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
+import type { AgentManager } from "../agent/agent-manager.js";
+import type { AgentStorage } from "../agent/agent-storage.js";
+import { sendPromptToAgent } from "../agent/agent-prompt.js";
+import type { BoundCreateAgentCommand } from "../agent/create-agent/create.js";
+import {
+  RUNTIME,
+  ReportRejectedError,
+  activeBinding,
+  addDecision,
+  applyReport,
+  blockForBoss,
+  boardOf,
+  createTeamState,
+  enterPhase,
+  isWorking,
+  newId,
+  planItems,
+  schedule,
+} from "./engine.js";
+import { type PackRegistry, type Role, type WorkflowPack } from "./pack.js";
+import { type TeamEventDraft, TeamStore } from "./store.js";
+import {
+  TEAM_DECISION_LABEL,
+  TEAM_ITEM_LABEL,
+  TEAM_LABEL,
+  TEAM_ROLE_LABEL,
+  type Binding,
+  type Decision,
+  type PlannedItem,
+  type Team,
+  type TeamEvent,
+  type TeamReportPayload,
+  type TeamState,
+  type WorkItem,
+} from "./types.js";
+
+const DISPATCH_INTERVAL_MS = 2_000;
+const HEALTH_INTERVAL_MS = 60_000;
+const LEASE_MS = 5 * 60_000;
+const MAX_ATTEMPTS = 5;
+const NO_PROGRESS_MS = 45 * 60_000;
+
+type TeamAgentManager = Pick<
+  AgentManager,
+  "subscribe" | "getAgent" | "hasInFlightRun" | "archiveAgent"
+> &
+  Parameters<typeof sendPromptToAgent>[0]["agentManager"];
+
+export interface TeamServiceOptions {
+  /** The daemon's storage root; teams live under `<root>/teams`. */
+  storageRoot: string;
+  logger: Logger;
+  agentManager: TeamAgentManager;
+  agentStorage: AgentStorage;
+  createAgent: BoundCreateAgentCommand;
+  packs: PackRegistry;
+  now?: () => Date;
+  /** Tests drive dispatch and health themselves. */
+  timers?: boolean;
+  sendPrompt?: typeof sendPromptToAgent;
+}
+
+export interface TeamCallerBinding {
+  teamId: string;
+  binding: Binding;
+}
+
+export class TeamService {
+  readonly store: TeamStore;
+  private readonly logger: Logger;
+  private dispatchTimer: NodeJS.Timeout | null = null;
+  private healthTimer: NodeJS.Timeout | null = null;
+  private unsubscribe: (() => void) | null = null;
+  private dispatchRun: Promise<void> | null = null;
+  private dispatchAgain = false;
+  private readonly now: () => Date;
+
+  constructor(private readonly options: TeamServiceOptions) {
+    this.store = new TeamStore(join(options.storageRoot, "teams"));
+    this.logger = options.logger.child({ module: "team" });
+    this.now = options.now ?? (() => new Date());
+  }
+
+  // ---------------------------------------------------------------- lifecycle
+
+  async start(): Promise<void> {
+    for (const teamId of await this.store.listIds()) {
+      try {
+        await this.recoverTeam(teamId);
+      } catch (error) {
+        this.logger.error({ err: error, teamId }, "Team recovery failed");
+      }
+    }
+    this.unsubscribe = this.options.agentManager.subscribe(
+      (event) => {
+        if (event.type !== "agent_state") return;
+        const teamId = event.agent.labels?.[TEAM_LABEL];
+        if (!teamId || event.agent.labels?.[TEAM_ROLE_LABEL] === undefined) return;
+        if (event.agent.lifecycle === "idle" || event.agent.lifecycle === "error") {
+          void this.onTurnEnded(teamId, event.agent.id, event.agent.lifecycle === "error").catch(
+            (error) => this.logger.warn({ err: error, teamId }, "Team turn-end handling failed"),
+          );
+        }
+      },
+      { replayState: false },
+    );
+    if (this.options.timers === false) return;
+    this.dispatchTimer = setInterval(() => void this.dispatchAll(), DISPATCH_INTERVAL_MS);
+    this.healthTimer = setInterval(() => void this.healthAll(), HEALTH_INTERVAL_MS);
+    void this.dispatchAll();
+  }
+
+  stop(): void {
+    if (this.dispatchTimer) clearInterval(this.dispatchTimer);
+    if (this.healthTimer) clearInterval(this.healthTimer);
+    this.unsubscribe?.();
+  }
+
+  private pack(team: Team): WorkflowPack {
+    const pack = this.options.packs.get(team.packId);
+    if (!pack) throw new Error(`Workflow pack ${team.packId} is not installed`);
+    return pack;
+  }
+
+  /**
+   * Restart path. Every outstanding wait is recorded as an active binding, so after a restart
+   * each one is re-derived from the agent's persisted state instead of an in-memory closure.
+   */
+  private async recoverTeam(teamId: string): Promise<void> {
+    const state = await this.store.get(teamId);
+    if (!state || state.team.status === "done" || state.team.status === "canceled") return;
+    const pack = this.options.packs.get(state.team.packId);
+    if (!pack || pack.version !== state.team.packVersion) {
+      const canMigrate = pack?.migrate && state.team.packVersion < pack.version;
+      if (!canMigrate) {
+        await this.store.commit(teamId, (draft) => {
+          draft.team.status = "paused";
+          draft.team.pausedReason = `pack-version-mismatch: team uses ${state.team.packId}@${state.team.packVersion}, installed ${pack ? pack.version : "none"}`;
+          return {
+            events: [{ type: "team.paused", actor: RUNTIME, text: draft.team.pausedReason }],
+            result: null,
+          };
+        });
+        return;
+      }
+      await this.store.commit(teamId, (draft) => {
+        const from = draft.team.packVersion;
+        for (const [id, item] of Object.entries(draft.items)) {
+          draft.items[id] = { ...pack.migrate!(item.packVersion, item), packVersion: pack.version };
+        }
+        draft.team.packVersion = pack.version;
+        return {
+          events: [
+            {
+              type: "team.migrated",
+              actor: RUNTIME,
+              text: `Pack ${pack.id} migrated ${from} → ${pack.version}`,
+            },
+          ],
+          result: null,
+        };
+      });
+    }
+
+    await this.store.commit(teamId, async (draft) => {
+      const events: TeamEventDraft[] = [];
+      for (const decision of Object.values(draft.decisions)) {
+        if (decision.status === "leased") {
+          decision.status = "retry";
+          decision.leaseExpiresAt = undefined;
+        }
+      }
+      for (const binding of Object.values(draft.bindings)) {
+        if (binding.status !== "active" || binding.turn === "reported") continue;
+        if (binding.turn === "idle") continue;
+        const record = await this.options.agentStorage.get(binding.agentId);
+        const item = draft.items[binding.workItemId];
+        if (!record || record.archivedAt || !item) {
+          binding.status = "revoked";
+          binding.revokedAt = this.now().toISOString();
+          if (item && isWorking(this.pack(draft.team), item)) {
+            addDecision(
+              draft,
+              item,
+              "start-role",
+              { role: binding.role, revision: item.revision },
+              `restart:${item.id}:${item.revision}:${binding.id}`,
+            );
+          }
+          events.push({
+            type: "recovery.reseat",
+            actor: RUNTIME,
+            workItemId: binding.workItemId,
+            text: `${binding.role} session is gone; starting a new one`,
+          });
+          continue;
+        }
+        // The daemon restart ended the turn without a committed report: resume the same session.
+        if (item) {
+          addDecision(
+            draft,
+            item,
+            "message-role",
+            { bindingId: binding.id, resume: true },
+            `resume:${binding.id}:${draft.commit}`,
+          );
+          events.push({
+            type: "recovery.resume",
+            actor: RUNTIME,
+            workItemId: item.id,
+            text: `Daemon restarted; resuming the ${binding.role} session for ${item.title}`,
+          });
+        }
+      }
+      return { events, result: null };
+    });
+  }
+
+  // ---------------------------------------------------------------- boss API
+
+  async startTeam(params: {
+    bossAgentId: string;
+    title: string;
+    objective: string;
+    cwd?: string;
+    packId?: string;
+  }): Promise<TeamState> {
+    const boss = await this.options.agentStorage.get(params.bossAgentId);
+    if (!boss) throw new Error(`Boss agent ${params.bossAgentId} not found`);
+    if (boss.labels?.[TEAM_ROLE_LABEL]) throw new Error("Team members cannot start teams");
+    const cwd = params.cwd ?? boss.cwd;
+    const profile = await readProjectProfile(cwd);
+    const pack = this.options.packs.get(params.packId ?? profile.workflowPack ?? "software-basic");
+    if (!pack)
+      throw new Error(`Workflow pack ${params.packId ?? profile.workflowPack} is not installed`);
+    const defaultProfile = {
+      provider: boss.provider,
+      model: boss.runtimeInfo?.model ?? boss.config?.model ?? undefined,
+    };
+    const roleProfiles: Team["roleProfiles"] = {};
+    for (const role of Object.keys(pack.roles)) {
+      roleProfiles[role] = profile.roles?.[role] ?? defaultProfile;
+    }
+    const { state, events } = createTeamState({
+      pack,
+      title: params.title,
+      objective: params.objective,
+      cwd,
+      bossAgentId: params.bossAgentId,
+      roleProfiles,
+    });
+    await this.store.create(state, events);
+    await this.store.commit(state.team.id, (draft) => {
+      const out: TeamEventDraft[] = [];
+      schedule(draft, pack, out);
+      return { events: out, result: null };
+    });
+    void this.dispatchAll();
+    return (await this.store.get(state.team.id))!;
+  }
+
+  async status(teamId: string): Promise<{ state: TeamState; events: TeamEvent[] }> {
+    const state = await this.store.get(teamId);
+    if (!state) throw new Error(`Team ${teamId} not found`);
+    return { state, events: await this.store.events(teamId) };
+  }
+
+  async listForBoss(bossAgentId: string): Promise<TeamState[]> {
+    const out: TeamState[] = [];
+    for (const id of await this.store.listIds()) {
+      const state = await this.store.get(id);
+      if (state && state.team.bossAgentId === bossAgentId) out.push(state);
+    }
+    return out;
+  }
+
+  async message(teamId: string, text: string, actorId: string): Promise<void> {
+    await this.store.commit(teamId, (draft) => {
+      const events: TeamEventDraft[] = [
+        { type: "human.message", actor: { type: "boss", id: actorId }, text },
+      ];
+      // Items waiting for the boss go back into the flow with the boss's answer attached.
+      for (const item of Object.values(draft.items)) {
+        if (item.phase === "blocked") {
+          item.reports.push({ role: "boss", phase: "blocked", outcome: "answer", summary: text });
+          item.returns = 0;
+          const pack = this.pack(draft.team);
+          const lastWorking = item.phaseHistory.findLast(
+            (h) => boardOf(pack, item).phases[h.phase]?.kind === "working",
+          );
+          if (lastWorking) {
+            enterPhase(
+              draft,
+              pack,
+              item,
+              lastWorking.phase,
+              { type: "boss", id: actorId },
+              events,
+              "boss answered",
+            );
+          }
+        }
+      }
+      return { events, result: null };
+    });
+    void this.dispatchAll();
+  }
+
+  async setStatus(
+    teamId: string,
+    status: "active" | "paused" | "canceled",
+    actorId: string,
+  ): Promise<void> {
+    await this.store.commit(teamId, (draft) => {
+      draft.team.status = status;
+      if (status === "active") draft.team.pausedReason = undefined;
+      const events: TeamEventDraft[] = [
+        { type: `team.${status}`, actor: { type: "boss", id: actorId }, text: `Team ${status}` },
+      ];
+      if (status === "active") schedule(draft, this.pack(draft.team), events);
+      return { events, result: null };
+    });
+    void this.dispatchAll();
+  }
+
+  // ---------------------------------------------------------------- worker API
+
+  async resolveCaller(agentId: string): Promise<TeamCallerBinding | null> {
+    const record = await this.options.agentStorage.get(agentId);
+    const teamId = record?.labels?.[TEAM_LABEL];
+    if (!teamId || !record?.labels?.[TEAM_ROLE_LABEL]) return null;
+    const state = await this.store.get(teamId);
+    const binding = state
+      ? Object.values(state.bindings).find((b) => b.agentId === agentId && b.status === "active")
+      : undefined;
+    return binding ? { teamId, binding } : null;
+  }
+
+  async report(agentId: string, payload: TeamReportPayload): Promise<string> {
+    const caller = await this.resolveCaller(agentId);
+    if (!caller) throw new ReportRejectedError("This session is not seated in a team");
+    try {
+      const result = await this.store.commit(caller.teamId, (draft) => {
+        const binding = draft.bindings[caller.binding.id]!;
+        const events: TeamEventDraft[] = [];
+        const item = applyReport(draft, this.pack(draft.team), binding, payload, events);
+        return {
+          events,
+          result: `Report accepted. ${item.title} is now in ${item.phase}. Stop here.`,
+        };
+      });
+      void this.dispatchAll();
+      return result;
+    } catch (error) {
+      if (error instanceof ReportRejectedError) {
+        await this.store.commit(caller.teamId, () => ({
+          events: [
+            {
+              type: "report.rejected",
+              actor: { type: "role", id: caller.binding.role },
+              workItemId: caller.binding.workItemId,
+              text: error.message,
+            },
+          ],
+          result: null,
+        }));
+      }
+      throw error;
+    }
+  }
+
+  async plan(agentId: string, items: PlannedItem[]): Promise<string> {
+    const caller = await this.resolveCaller(agentId);
+    if (!caller) throw new ReportRejectedError("This session is not seated in a team");
+    return this.store.commit(caller.teamId, (draft) => {
+      const events: TeamEventDraft[] = [];
+      const created = planItems(
+        draft,
+        this.pack(draft.team),
+        draft.bindings[caller.binding.id]!,
+        items,
+        events,
+      );
+      return {
+        events,
+        result: `Recorded ${created.length} items. Now call team_report with outcome "planned".`,
+      };
+    });
+  }
+
+  // ---------------------------------------------------------------- turn ends
+
+  async onTurnEnded(teamId: string, agentId: string, errored: boolean): Promise<void> {
+    if (this.options.agentManager.hasInFlightRun(agentId)) return;
+    await this.store.commit(teamId, (draft) => {
+      const events: TeamEventDraft[] = [];
+      const binding = Object.values(draft.bindings).find(
+        (b) => b.agentId === agentId && b.status === "active",
+      );
+      if (!binding || binding.turn !== "running") return { events, result: null };
+      const item = draft.items[binding.workItemId];
+      if (!item) return { events, result: null };
+      binding.lastEventAt = this.now().toISOString();
+      if (binding.nudges < 1) {
+        binding.nudges += 1;
+        binding.turn = "idle";
+        addDecision(
+          draft,
+          item,
+          "message-role",
+          { bindingId: binding.id, nudge: true, errored },
+          `nudge:${binding.id}:${item.revision}:${binding.nudges}`,
+        );
+        events.push({
+          type: "health.report-missing",
+          actor: RUNTIME,
+          workItemId: item.id,
+          text: `${binding.role} ended ${errored ? "with an error" : "its turn"} without a report; asking once more`,
+        });
+      } else {
+        binding.turn = "idle";
+        blockForBoss(
+          draft,
+          this.pack(draft.team),
+          item,
+          `${binding.role} stopped twice without a report`,
+          events,
+        );
+      }
+      return { events, result: null };
+    });
+    void this.dispatchAll();
+  }
+
+  // ---------------------------------------------------------------- dispatcher
+
+  /** Runs every due decision; a call during a run schedules one more pass and awaits it. */
+  dispatchAll(): Promise<void> {
+    if (this.dispatchRun) {
+      this.dispatchAgain = true;
+      return this.dispatchRun;
+    }
+    this.dispatchRun = (async () => {
+      do {
+        this.dispatchAgain = false;
+        await this.dispatchOnce();
+      } while (this.dispatchAgain);
+    })().finally(() => {
+      this.dispatchRun = null;
+    });
+    return this.dispatchRun;
+  }
+
+  private async dispatchOnce(): Promise<void> {
+    try {
+      for (const teamId of await this.store.listIds()) {
+        const state = await this.store.get(teamId);
+        if (!state || state.team.status !== "active") continue;
+        const now = this.now().getTime();
+        const due = Object.values(state.decisions).filter(
+          (d) =>
+            (d.status === "pending" || d.status === "retry") && Date.parse(d.availableAt) <= now,
+        );
+        for (const decision of due) {
+          await this.runDecision(teamId, decision.id);
+        }
+      }
+    } catch (error) {
+      this.logger.error({ err: error }, "Team dispatch failed");
+    }
+  }
+
+  private async runDecision(teamId: string, decisionId: string): Promise<void> {
+    const leased = await this.store.commit(teamId, (draft) => {
+      const d = draft.decisions[decisionId];
+      if (!d || (d.status !== "pending" && d.status !== "retry"))
+        return { events: [], result: null };
+      const item = draft.items[d.workItemId];
+      if (!item || item.phase !== d.phase) {
+        d.status = "superseded";
+        return { events: [], result: null };
+      }
+      d.status = "leased";
+      d.attempts += 1;
+      d.leaseExpiresAt = new Date(this.now().getTime() + LEASE_MS).toISOString();
+      return {
+        events: [],
+        result: { decision: structuredClone(d), state: structuredClone(draft) },
+      };
+    });
+    if (!leased) return;
+
+    try {
+      const outcome = await this.execute(leased.state, leased.decision);
+      await this.store.commit(teamId, (draft) => {
+        const d = draft.decisions[decisionId]!;
+        d.status = "succeeded";
+        d.leaseExpiresAt = undefined;
+        const events = outcome(draft);
+        return { events, result: null };
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.warn({ err: error, teamId, decisionId }, "Team decision failed");
+      await this.store.commit(teamId, (draft) => {
+        const d = draft.decisions[decisionId]!;
+        d.lastError = message;
+        d.leaseExpiresAt = undefined;
+        const events: TeamEventDraft[] = [];
+        if (d.attempts >= MAX_ATTEMPTS) {
+          d.status = "failed";
+          const item = draft.items[d.workItemId];
+          if (item)
+            blockForBoss(
+              draft,
+              this.pack(draft.team),
+              item,
+              `${d.kind} failed: ${message}`,
+              events,
+            );
+        } else {
+          d.status = "retry";
+          d.availableAt = new Date(
+            this.now().getTime() + Math.min(60_000, 1000 * 2 ** d.attempts),
+          ).toISOString();
+        }
+        return { events, result: null };
+      });
+    }
+  }
+
+  /** Runs the side effect, then returns the state change to commit with the decision's success. */
+  private async execute(
+    state: TeamState,
+    decision: Decision,
+  ): Promise<(draft: TeamState) => TeamEventDraft[]> {
+    const pack = this.pack(state.team);
+    const item = state.items[decision.workItemId]!;
+    switch (decision.kind) {
+      case "start-role":
+        return this.startRole(state, pack, item, decision);
+      case "message-role": {
+        const binding = state.bindings[decision.payload.bindingId as string];
+        if (!binding || binding.status !== "active") return () => [];
+        const role = pack.roles[binding.role]!;
+        let text = await this.workPacket(state, pack, item, role);
+        if (decision.payload.nudge) {
+          text =
+            "You ended your turn without calling `team_report`. Finish your part if needed, then call `team_report` with one of the allowed outcomes.";
+        } else if (decision.payload.resume) {
+          text = `The PandaOS daemon restarted while you were working. Continue where you left off.\n\n${text}`;
+        }
+        await (this.options.sendPrompt ?? sendPromptToAgent)({
+          agentManager: this.options.agentManager,
+          agentStorage: this.options.agentStorage,
+          agentId: binding.agentId,
+          prompt: text,
+          unarchive: true,
+          logger: this.logger,
+        });
+        return (draft) => {
+          const b = draft.bindings[binding.id];
+          if (b) {
+            b.turn = "running";
+            b.lastEventAt = this.now().toISOString();
+          }
+          return decision.payload.nudge || decision.payload.resume
+            ? []
+            : [
+                {
+                  type: "role.resumed",
+                  actor: { type: "role", id: binding.role },
+                  workItemId: item.id,
+                  text: `${role.title} picks up ${item.title} again`,
+                },
+              ];
+        };
+      }
+      case "notify-human": {
+        const text = String(decision.payload.text ?? "");
+        await (this.options.sendPrompt ?? sendPromptToAgent)({
+          agentManager: this.options.agentManager,
+          agentStorage: this.options.agentStorage,
+          agentId: state.team.bossAgentId,
+          prompt: `<system-notification from="team ${state.team.id}">\n${text}\n\nTell the user in plain language. If they answer, pass it on with team_message.\n</system-notification>`,
+          activeTurnBehavior: "steer",
+          unarchive: true,
+          logger: this.logger,
+        });
+        return () => [{ type: "boss.notified", actor: RUNTIME, workItemId: item.id, text }];
+      }
+      case "invoke-pack-action": {
+        const action = pack.actions?.[String(decision.payload.action)];
+        if (!action)
+          throw new Error(`Pack ${pack.id} has no action ${String(decision.payload.action)}`);
+        const input = action.input.parse(decision.payload.input);
+        const output = await action.run(input);
+        return () => [
+          {
+            type: "pack.action",
+            actor: RUNTIME,
+            workItemId: item.id,
+            text: `${pack.id}.${String(decision.payload.action)} done`,
+            data: output,
+          },
+        ];
+      }
+    }
+  }
+
+  private async startRole(
+    state: TeamState,
+    pack: WorkflowPack,
+    item: WorkItem,
+    decision: Decision,
+  ): Promise<(draft: TeamState) => TeamEventDraft[]> {
+    const roleId = String(decision.payload.role);
+    const role = pack.roles[roleId];
+    if (!role) throw new Error(`Pack ${pack.id} has no role ${roleId}`);
+    const profile = state.team.roleProfiles[roleId];
+    if (!profile) throw new Error(`No harness bound for role ${roleId}`);
+
+    // Idempotent across crashes: an agent created for this decision before the commit landed is reused.
+    const existing = (await this.options.agentStorage.list()).find(
+      (r) => r.labels?.[TEAM_DECISION_LABEL] === decision.id && !r.archivedAt,
+    );
+    let agentId = existing?.id;
+    if (!agentId) {
+      const prompt = await this.workPacket(state, pack, item, role);
+      const key = String(item.pack.key ?? item.id)
+        .replace(/[^A-Za-z0-9-]/g, "-")
+        .toLowerCase();
+      const cwd =
+        role.workspace === "item-worktree" ? await this.itemWorktree(state, item) : state.team.cwd;
+      const created = await this.options.createAgent({
+        kind: "mcp",
+        provider: profile.model ? `${profile.provider}/${profile.model}` : profile.provider,
+        title: `${role.title} · ${item.title}`,
+        cwd,
+        initialPrompt: prompt,
+        thinking: profile.thinking,
+        mode: profile.mode,
+        labels: {
+          [TEAM_LABEL]: state.team.id,
+          [TEAM_ROLE_LABEL]: roleId,
+          [TEAM_ITEM_LABEL]: item.id,
+          [TEAM_DECISION_LABEL]: decision.id,
+          [PARENT_AGENT_ID_LABEL]: state.team.bossAgentId,
+        },
+        ...(role.workspace === "own-worktree"
+          ? {
+              worktree: {
+                worktreeName: `team-${state.team.id.slice(-6)}-${key}`,
+                branchName: `team/${state.team.id.slice(-6)}/${key}`,
+              },
+            }
+          : {}),
+        unattended: true,
+        promptFailure: "throw",
+        background: true,
+        notifyOnFinish: false,
+      });
+      agentId = created.snapshot.id;
+    }
+    const finalAgentId = agentId;
+    return (draft) => {
+      const target = draft.items[item.id];
+      if (!target) return [];
+      const now = this.now().toISOString();
+      const binding: Binding = {
+        id: newId("seat"),
+        workItemId: item.id,
+        role: roleId,
+        phase: target.phase,
+        revisionAtStart: target.revision,
+        decisionId: decision.id,
+        agentId: finalAgentId,
+        profile: profile.model ? `${profile.provider}/${profile.model}` : profile.provider,
+        status: "active",
+        turn: "running",
+        nudges: 0,
+        lastEventAt: now,
+        createdAt: now,
+      };
+      const previous = activeBinding(draft, target, roleId);
+      if (previous) {
+        previous.status = "revoked";
+        previous.revokedAt = now;
+      }
+      draft.bindings[binding.id] = binding;
+      target.bindings[roleId] = binding.id;
+      return [
+        {
+          type: "role.started",
+          actor: { type: "role", id: roleId },
+          workItemId: item.id,
+          text: `${role.title} takes ${item.title} (${binding.profile})`,
+          data: { agentId: finalAgentId, bindingId: binding.id },
+        },
+      ];
+    };
+  }
+
+  private async itemWorktree(state: TeamState, item: WorkItem): Promise<string> {
+    const dev = activeBinding(state, item, "developer");
+    const record = dev ? await this.options.agentStorage.get(dev.agentId) : null;
+    return record?.cwd ?? state.team.cwd;
+  }
+
+  /** Everything a worker needs in one bounded prompt; previous roles are summarized, not replayed. */
+  private async workPacket(
+    state: TeamState,
+    pack: WorkflowPack,
+    item: WorkItem,
+    role: Role,
+  ): Promise<string> {
+    const phase = boardOf(pack, item).phases[item.phase]!;
+    const outcomes = Object.keys(phase.outcomes ?? {}).join(", ");
+    const lines: string[] = [
+      `# ${role.title}: ${item.title}`,
+      "",
+      role.instructions,
+      "",
+      `## Team goal`,
+      state.team.objective,
+    ];
+    if (item.board === "item") {
+      lines.push("", "## This work item", item.objective);
+      lines.push(
+        "",
+        "## Acceptance criteria",
+        ...item.acceptanceCriteria.map((c) => `- [${c.id}] ${c.text}`),
+      );
+      const deps = item.dependsOn
+        .map((d) => state.items[d.id])
+        .filter((d): d is WorkItem => Boolean(d))
+        .map((d) => `- ${d.title}: ${d.reports.at(-1)?.summary ?? d.phase}`);
+      if (deps.length) lines.push("", "## Finished dependencies", ...deps);
+    }
+    if (item.reports.length) {
+      lines.push(
+        "",
+        "## History of this item",
+        ...item.reports.map((r) => `- ${r.role} (${r.phase}) → ${r.outcome}: ${r.summary}`),
+      );
+    }
+    if (item.artifacts.length) {
+      lines.push(
+        "",
+        "## Artifacts",
+        ...item.artifacts.map((a) => `- ${a.kind}: ${a.ref}${a.note ? ` (${a.note})` : ""}`),
+      );
+    }
+    if (role.skills.length) lines.push("", `## Skills to use`, role.skills.join(", "));
+    lines.push(
+      "",
+      "## Rules",
+      `- Allowed outcomes for team_report: ${outcomes}.`,
+      role.canEdit ? "- You may change code in this workspace." : "- Do not change any files.",
+      "- You cannot start other agents. Everything you hand on goes through team_report.",
+    );
+    return lines.join("\n");
+  }
+
+  // ---------------------------------------------------------------- health
+
+  /** Deterministic findings only; anything that needs judgement goes to the boss. */
+  async healthAll(): Promise<void> {
+    for (const teamId of await this.store.listIds()) {
+      const state = await this.store.get(teamId);
+      if (!state || state.team.status !== "active") continue;
+      const now = this.now().getTime();
+      await this.store.commit(teamId, (draft) => {
+        const events: TeamEventDraft[] = [];
+        const pack = this.pack(draft.team);
+        for (const d of Object.values(draft.decisions)) {
+          if (d.status === "leased" && d.leaseExpiresAt && Date.parse(d.leaseExpiresAt) < now) {
+            d.status = "retry";
+            d.leaseExpiresAt = undefined;
+            events.push({
+              type: "health.decision-stuck",
+              actor: RUNTIME,
+              workItemId: d.workItemId,
+              text: `Retrying ${d.kind}`,
+            });
+          }
+        }
+        for (const item of Object.values(draft.items)) {
+          const phase = boardOf(pack, item).phases[item.phase]!;
+          if (phase.kind !== "working" || !phase.role) continue;
+          const binding = activeBinding(draft, item, phase.role);
+          const inFlight = Object.values(draft.decisions).some(
+            (d) =>
+              d.workItemId === item.id &&
+              ["pending", "leased", "retry", "proposed"].includes(d.status),
+          );
+          if (!binding && !inFlight) {
+            addDecision(
+              draft,
+              item,
+              "start-role",
+              { role: phase.role, revision: item.revision },
+              `seat-missing:${item.id}:${item.revision}`,
+            );
+            events.push({
+              type: "health.seat-missing",
+              actor: RUNTIME,
+              workItemId: item.id,
+              text: `No ${phase.role} on ${item.title}; starting one`,
+            });
+          }
+          if (
+            binding &&
+            binding.turn === "running" &&
+            now - Date.parse(binding.lastEventAt) > NO_PROGRESS_MS
+          ) {
+            const agent = this.options.agentManager.getAgent(binding.agentId);
+            const lastActivity = agent?.updatedAt ? new Date(agent.updatedAt).getTime() : 0;
+            if (now - lastActivity > NO_PROGRESS_MS) {
+              binding.lastEventAt = new Date(now).toISOString();
+              addDecision(
+                draft,
+                item,
+                "notify-human",
+                {
+                  text: `${item.title}: the ${binding.role} has shown no progress for 45 minutes.`,
+                },
+                `no-progress:${binding.id}:${Math.floor(now / NO_PROGRESS_MS)}`,
+              );
+            }
+          }
+        }
+        schedule(draft, pack, events);
+        return { events, result: null };
+      });
+    }
+    void this.dispatchAll();
+  }
+}
+
+export async function readProjectProfile(cwd: string): Promise<{
+  workflowPack?: string;
+  roles?: Team["roleProfiles"];
+}> {
+  try {
+    return JSON.parse(await readFile(join(cwd, ".pandaos", "project.json"), "utf8"));
+  } catch {
+    return {};
+  }
+}
