@@ -105,6 +105,8 @@ export interface MenuSurfaceProps {
   pages?: readonly MenuPageDefinition[];
   /** Title shown on the sheet's root page. Sheets always have a header; popovers never do. */
   sheetTitle?: string;
+  /** Controls on the right of the sheet's root title. */
+  sheetTrailing?: ReactNode;
   side?: Placement;
   align?: Alignment;
   offset?: number;
@@ -339,6 +341,7 @@ function MenuSheetSurface({
   children,
   pages = [],
   sheetTitle,
+  sheetTrailing,
   testID,
   keyboardFocusScope,
 }: MenuSurfaceProps): ReactElement | null {
@@ -428,7 +431,9 @@ function MenuSheetSurface({
           </>
         ) : (
           <>
-            {sheetTitle ? <MenuSheetHeader title={sheetTitle} onBack={null} /> : null}
+            {sheetTitle ? (
+              <MenuSheetHeader title={sheetTitle} onBack={null} trailing={sheetTrailing} />
+            ) : null}
             <MenuPage depth={0}>{children}</MenuPage>
           </>
         )}
@@ -440,9 +445,11 @@ function MenuSheetSurface({
 function MenuSheetHeader({
   title,
   onBack,
+  trailing = null,
 }: {
   title: string;
   onBack: (() => void) | null;
+  trailing?: ReactNode;
 }): ReactElement {
   const { t } = useTranslation();
   return (
@@ -462,6 +469,7 @@ function MenuSheetHeader({
       <Text style={styles.sheetTitle} numberOfLines={1}>
         {title}
       </Text>
+      {trailing ? <View style={styles.sheetTrailing}>{trailing}</View> : null}
     </View>
   );
 }
@@ -474,6 +482,11 @@ const styles = StyleSheet.create((theme) => ({
     paddingHorizontal: theme.spacing[3],
     paddingTop: theme.spacing[1],
     paddingBottom: theme.spacing[3],
+  },
+  sheetTrailing: {
+    flex: 1,
+    flexDirection: "row",
+    justifyContent: "flex-end",
   },
   sheetBackButton: {
     width: 24,

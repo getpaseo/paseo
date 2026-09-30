@@ -1,6 +1,6 @@
 import { router, usePathname } from "expo-router";
 import { CalendarClock, History, Plus, Search } from "lucide-react-native";
-import { memo, useCallback, useMemo, useState, type ComponentType } from "react";
+import { memo, useCallback, useMemo, useRef, useState, type ComponentType } from "react";
 import { useTranslation } from "react-i18next";
 import {
   ScrollView,
@@ -14,7 +14,7 @@ import { SidebarHeaderRow } from "@/components/sidebar/sidebar-header-row";
 import { SidebarNavResizeHandle } from "@/components/sidebar/sidebar-nav-resize-handle";
 import { SidebarSectionHeader } from "@/components/sidebar/sidebar-section-header";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
-import { PluginSidebarItemRow } from "@/plugins/sidebar-items";
+import { PluginSidebarItem } from "@/plugins/sidebar-items";
 import { canCreateWorktreeForProjectKind } from "@/projects/host-projects";
 import { useHostFeature } from "@/runtime/host-features";
 import {
@@ -54,17 +54,15 @@ interface SidebarNavRowsProps extends SidebarNavRowProps {
  */
 export function SidebarNavRows({ style, onBeforeNavigate }: SidebarNavRowsProps) {
   const { t } = useTranslation();
-  const { items } = useSidebarNavItems();
+  const { items } = useSidebarNavItems("header");
   const visibleItems = useMemo(() => items.filter((item) => item.visible), [items]);
   const collapsed = useSidebarViewStore((state) => state.navCollapsed);
   const toggleCollapsed = useSidebarViewStore((state) => state.toggleNavCollapsed);
   const storedHeight = usePanelStore((state) => state.sidebarNavHeight);
   const setStoredHeight = usePanelStore((state) => state.setSidebarNavHeight);
   const { height: viewportHeight } = useWindowDimensions();
-  // The drag previews at 60Hz; only the released height reaches the store.
+  const groupRef = useRef<View | null>(null);
   const [draggedHeight, setDraggedHeight] = useState<number | null>(null);
-  // Until the owner drags it, the group is still only as tall as its rows, capped at
-  // its share of the window. A dragged height is a height, not a ceiling.
   const requestedHeight = draggedHeight ?? storedHeight;
   const height = resolveSidebarNavGroupHeight({ requestedHeight, viewportHeight });
   const [measuredHeight, setMeasuredHeight] = useState<number | null>(null);
@@ -90,7 +88,7 @@ export function SidebarNavRows({ style, onBeforeNavigate }: SidebarNavRowsProps)
   if (visibleItems.length === 0) return null;
 
   return (
-    <View style={style} testID="sidebar-nav-group">
+    <View ref={groupRef} collapsable={false} style={style} testID="sidebar-nav-group">
       <SidebarSectionHeader
         title={t("sidebar.nav.title")}
         collapsed={collapsed}
@@ -115,9 +113,11 @@ export function SidebarNavRows({ style, onBeforeNavigate }: SidebarNavRowsProps)
           {visibleItems.map((item) => {
             if (item.kind === "plugin") {
               return (
-                <PluginSidebarItemRow
+                <PluginSidebarItem
                   key={item.key}
                   group={item.group}
+                  section="header"
+                  fallbackAnchorRef={groupRef}
                   onBeforeNavigate={onBeforeNavigate}
                 />
               );

@@ -36,7 +36,8 @@ The daemon stores directory sources under the root `plugins` object:
 }
 ```
 
-The plugin system is disabled unless `pluginsEnabled` is `true`. Changing that root field is
+Installed plugins are disabled unless `pluginsEnabled` is `true`. Built-in plugins remain active.
+Changing that root field is
 runtime-safe: run `paseo reload` after editing `config.json`. Enabling starts every configured,
 enabled plugin; disabling tears them all down without restarting the daemon. Plugin source entries
 remain lifecycle-owned and do not reload from manual config edits.
@@ -84,6 +85,15 @@ Source changes are explicit. Run `paseo plugin reload <id>` to stop and fully te
 plugin before compiling and starting from disk. A failed reload stays failed; Paseo does not restore
 the old code. Use `enable`, `disable`, and `remove` to manage one plugin. Removing a directory source
 never deletes it. The global `pluginsEnabled` switch remains available.
+
+## Built-in plugins
+
+Built-in plugins live in `plugins/<id>/` and ship with the daemon. Add a directory and one ID to
+`builtinPlugins` in `packages/server/src/server/plugins/builtin/index.ts`. The workspace, build
+copy, and CI checks cover every listed directory; unlisted directories do not load. Built-ins run
+in process, ignore `pluginsEnabled`, and do not appear in `config.json` or the installed plugin
+list. Their client bundles appear in the plugin catalog. Editing one in development requires a
+daemon restart. Directory, Git, and npm installs cannot use a built-in ID.
 
 ## Install a Git source
 
@@ -249,12 +259,23 @@ export default function contribute(server: PluginServerContext) {
 
 ```tsx
 // index.client.tsx
-import type { PluginClientContext } from "@getpaseo/plugin/client";
+import type { PluginClientContext, PluginSidebarItemProps } from "@getpaseo/plugin/client";
+import { SidebarRow } from "@getpaseo/plugin/client/ui";
 import { Greeting } from "./client/greeting";
 
+function GreetingItem({ currentScreen, openScreen }: PluginSidebarItemProps) {
+  return (
+    <SidebarRow
+      icon="MessageCircle"
+      active={currentScreen?.screenId === "main"}
+      onPress={() => openScreen({ screenId: "main" })}
+    />
+  );
+}
+
 export default function contribute(client: PluginClientContext) {
-  client.addSurface("main", Greeting);
-  client.addSidebarItem({ id: "main", title: "Greeting", icon: "MessageCircle", surface: "main" });
+  client.addScreen({ id: "main", title: "Greeting", Component: Greeting });
+  client.addSidebarHeaderItem({ id: "main", title: "Greeting", Component: GreetingItem });
   return () => {};
 }
 ```
@@ -267,15 +288,33 @@ errors are logged and do not interrupt host teardown.
 
 Paseo owns the route, screen header, Lucide icon validation, close action, theme DTO, layout facts,
 and render error boundary. The contributed component owns the complete body below the header.
+The plugin owns the header's text through the screen's `title` (`resolvePluginScreenTitle` in
+`plugins/surface-contribution.ts`). A legacy `addSidebarItem` route (`/sidebar/<id>`) shows the
+item's title and icon instead, as before screens had titles; the `addSurface` alias titles its
+screen with the id. A `/sidebar/<id>` route with no legacy item of that id opens the screen with
+that id, so links saved before a plugin migrated keep working.
+
+Screen params ride in the screen route's query string (`plugins/routes.ts`), not in app state, so
+reload, history, links, and the host switcher keep them without a store. Expo Router merges the
+route's segments (`serverId`, `pluginId`, ...) into the same search params as the query, so param
+keys are stored under a `param.` prefix; plugins never see it and may use any key.
+`openScreen` validates its input once (`parsePluginOpenScreenInput`); code past it trusts the
+params.
 
 RPC contracts validate inputs and outputs in both the app and plugin subprocess. `useRpc` returns a
 typed async function. Use the host-provided `@tanstack/react-query` for request state and caching;
 Paseo gives each plugin installation its own query client.
 
 `usePaseo()` and the handler's `{ paseo }` context expose the same `PaseoApi`: projects,
-workspaces, agents, terminals, providers, and daemon config. They do not expose connection lifecycle. A surface borrows the
-selected host's existing connection; switching the screen's host changes both `usePaseo()` and
-`useRpc()` to that host. An offline selected host fails there and never falls through to another
+workspaces, agents, terminals, providers, and daemon config. They do not expose connection lifecycle.
+
+`usePaseo()` is the plugin's one client: `InstalledPlugin.paseo`, created with the installation in
+`packages/app/src/plugins/registry.ts` over the host's existing connection and passed to setup as
+`client.paseo`. Authors release their subscriptions in their own cleanup, and teardown (disable,
+reload, removal, host removal) disposes the client, which ends the rest; nothing is created or
+disposed per mounted surface. See the
+[public example](../public-docs/plugins/reference.md#use-the-paseo-sdk). Switching the screen's host
+changes both `usePaseo()` and `useRpc()` to that host's installation. An offline selected host fails there and never falls through to another
 installation. A server handler owns an IPC-backed daemon session for the life of its subprocess.
 Use plugin RPC for plugin-specific backend behavior that is not a normal Paseo operation.
 
@@ -311,7 +350,7 @@ existing agent-context instances, but it cannot create an agent panel without an
 Command Center callbacks use the selected host's existing `PaseoApi` for normal Paseo operations.
 They use typed plugin RPC only for plugin-specific backend work. Surface and panel navigation
 belongs to the app; plugins do not receive Expo Router or workspace-layout store access.
-See the public [navigation fields](../public-docs/plugins/reference.md#surfaces-and-sidebar-items)
+See the public [navigation fields](../public-docs/plugins/reference.md#screens-and-sidebar-items)
 and [external links and workspace browsers](../public-docs/plugins/reference.md#external-links-and-workspace-browsers)
 for the author-facing contract.
 
@@ -375,6 +414,47 @@ self-contained: scripts, styles, `foreignObject`, event-handler attributes, Java
 external `href` or `xlink:href` references are rejected. Fragment references such as `#mark` are
 allowed. Paseo reads and sanitizes the file when the plugin starts; the string is never an inline
 SVG or URL.
+
+## Usage sources
+
+Register a usage source from `index.server.ts` with `server.registerUsageSource()`. Import `UsageSourceRegistration` and normalization helpers from `@getpaseo/plugin/server/usage`. `input` is a Zod schema checked inside the plugin process before `fetch(input)` runs. `discover()` returns the inputs for accounts found on the host; an empty list omits the source from host usage. `fetch()` returns a report with a stable `account.key` so the daemon can deduplicate accounts and cache by source and input. A failed input or fetch becomes an error report for that source. `icon` uses the same sanitized SVG file rules as provider icons.
+
+The daemon calls discovery for `usage.list_reports`; the client gates this RPC on `server_info.features.usageSources`. The old `provider.usage.list` RPC maps discovered reports for older clients. See the [public usage source reference](../public-docs/plugins/reference.md#usage-sources) for the author contract and minimum version.
+
+## Contribute sidebar items
+
+Sidebar header and footer items are plugin components, not descriptors. The
+[public reference](../public-docs/plugins/reference.md#sidebar-items) owns the author API. The host
+lives in `packages/app/src/plugins/sidebar-items/`; `packages/app/src/sidebar-nav/model.ts` resolves
+one section's order from built-ins, plugin groups, and the section's preference
+(`sidebarNavItems` or `sidebarFooterItems`).
+
+- The item's `Component` renders directly in the section, with no wrapper, so a fragment or array
+  of rows lays out like separate items while Settings keeps one entry for the block. Footer items
+  are rows between Add project and the footer's icon row. The icon row (Hosts, Import session,
+  Help and support, Settings) is fixed app code, not a contribution slot, so the kit has no icon
+  button.
+- `openPopover` opens through the same `PluginPopoverSurface` as header buttons
+  (`plugins/popover.tsx`). Any press inside a `SidebarRow`, including its `trailing` content, moves
+  the menu anchor to that row: a capture-phase `onStartShouldSetResponderCapture` runs before the
+  pressed child claims the touch on native and web, and returns false. Keyboard activation skips
+  the responder system, so the row's own press anchors too. Until a press, the first mounted row
+  holds the anchor. An item that renders no kit component
+  anchors to its section container.
+- `SidebarSeparator` reuses the app's separator and cancels the footer's horizontal padding, so
+  the line runs edge to edge in both sections.
+- `SidebarRow.trailing` sits in a second `Pressable` beside the row's button, since web cannot nest
+  buttons. Its `onPress` is the row's, so a press on non-interactive trailing content presses the
+  row; a button inside it wins its own press because only the innermost pressable responds.
+- A new-API item renders from the current route's host, else the host remembered under
+  `pluginScreensHostKey(pluginId)`, which the screen's host switcher and the item's `openScreen`
+  set. One key per plugin: switching host on any of its screens moves all its items.
+- `addSurface`, `openSurface`, and `addSidebarItem` are undocumented aliases, tagged
+  `COMPAT(pluginSidebarAliases)`. `addSidebarItem` is recorded only in `legacySidebarItems` and
+  groups as a `legacy` sidebar group, which the app draws as its own row: its registered icon, in
+  the sidebar and in Settings > Sidebar, opening `/plugin/<id>/sidebar/<item>` on the host it
+  remembers under its own key. It shares header ids and the `plugin:<pluginId>:<id>` settings key
+  with new-API items.
 
 ## Contribute buttons
 
@@ -445,7 +525,7 @@ be rendered intact. The daemon advertises this RPC through
 
 `addSlashCommand` registers an agent- or workspace-context command in the composer. The
 callback runs in the app, receives the trimmed text after the command name as `args`, and receives
-the same `paseo`, `rpc`, `openSurface`, workspace, agent, and `openPanel` capabilities as the matching
+the same `paseo`, `rpc`, `openScreen`, workspace, agent, and `openPanel` capabilities as the matching
 Command Center callback.
 
 ```ts

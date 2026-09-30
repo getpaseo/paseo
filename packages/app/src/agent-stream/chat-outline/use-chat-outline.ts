@@ -77,8 +77,10 @@ export function useChatOutline({
 
   useEffect(() => setIndex(null), [agentId, enabled, serverId, timelineEpoch]);
 
+  // Only a timeline the daemon has served can be indexed. A draft's optimistic stream has no
+  // epoch, and its id names no agent the daemon knows.
   useEffect(() => {
-    if (!isWeb || !enabled) {
+    if (!isWeb || !enabled || timelineEpoch === null) {
       setIndex(null);
       return;
     }

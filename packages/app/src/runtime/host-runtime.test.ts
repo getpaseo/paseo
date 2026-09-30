@@ -158,15 +158,26 @@ class FakeDaemonClient {
   }
 
   public ownedSubscriptions = true;
+  private daemonVersion: string | null = "0.8.0";
 
   getLastServerInfoMessage(): ReturnType<DaemonClient["getLastServerInfoMessage"]> {
+    if (this.daemonVersion === null) return null;
     return {
       status: "server_info",
       serverId: "srv_test",
       hostname: "test",
-      version: "0.8.0",
+      version: this.daemonVersion,
       features: { ownedSubscriptions: this.ownedSubscriptions },
     };
+  }
+
+  // Like the real client, the server info is cleared while disconnected and replaced by the
+  // restarted daemon's handshake before the client reports connected again.
+  daemonRestartsAs(version: string): void {
+    this.daemonVersion = null;
+    this.setConnectionState({ status: "disconnected", reason: "Connection lost" });
+    this.daemonVersion = version;
+    this.setConnectionState({ status: "connected" });
   }
 
   subscribeConnectionStatus(listener: (status: ConnectionState) => void): () => void {
@@ -2129,6 +2140,37 @@ describe("HostRuntimeStore", () => {
     expect(useSessionStore.getState().sessions[host.serverId]).toBeUndefined();
   });
 
+  it("shows the restarted daemon's version after the same client reconnects", async () => {
+    const host = makeHost({
+      serverId: "srv_restarted",
+      connections: [{ id: "direct:lan:6767", type: "directTcp", endpoint: "lan:6767" }],
+    });
+    const fakeClient = new FakeDaemonClient();
+    fakeClient.setConnectionState({ status: "connected" });
+    const store = new HostRuntimeStore({
+      deps: {
+        createClient: () => fakeClient as unknown as DaemonClient,
+        connectToDaemon: async ({ host: hostProfile }) => ({
+          client: fakeClient as unknown as DaemonClient,
+          serverId: hostProfile.serverId,
+          hostname: hostProfile.label ?? null,
+        }),
+        getClientId: async () => "cid_test_runtime",
+      },
+    });
+
+    store.syncHosts([host]);
+    await waitForHostOnline(store, host.serverId);
+    expect(useSessionStore.getState().sessions[host.serverId]?.serverInfo?.version).toBe("0.8.0");
+
+    fakeClient.daemonRestartsAs("0.9.1");
+
+    expect(store.getSnapshot(host.serverId)?.client).toBe(fakeClient);
+    expect(useSessionStore.getState().sessions[host.serverId]?.serverInfo?.version).toBe("0.9.1");
+
+    store.syncHosts([]);
+  });
+
   it("drains snapshot and buffered running transitions exactly once", async () => {
     const host = makeHost({
       serverId: "srv_legacy_transitions",
@@ -3975,6 +4017,38 @@ describe("HostRuntimeStore initial connection hint bootstrap", () => {
     expect(store.getSnapshot("srv_deep")?.connectionStatus).toBe("error");
     store.syncHosts([]);
   });
+  it("stops connecting to a host removed while its first probe is pending", async () => {
+    useHostRuntimeClock();
+    const firstProbe = createDeferred<void>();
+    let connectCalls = 0;
+    const store = new HostRuntimeStore({
+      storage: createMemoryHostRuntimeStorage(),
+      deps: {
+        createClient: () => new FakeDaemonClient() as unknown as DaemonClient,
+        connectToDaemon: async ({ host }) => {
+          connectCalls += 1;
+          if (connectCalls === 1) await firstProbe.promise;
+          return {
+            client: makeConnectedProbeClient(5) as unknown as DaemonClient,
+            serverId: host.serverId,
+            hostname: host.label ?? null,
+          };
+        },
+        getClientId: async () => "cid_test_removed_host",
+      },
+    });
+    await store.upsertDirectConnection({ serverId: "srv_removed", endpoint: "lan:6767" });
+    await vi.waitFor(() => expect(connectCalls).toBe(1));
+
+    await store.removeHost("srv_removed");
+    firstProbe.resolve();
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    expect(connectCalls).toBe(1);
+    expect(store.getSnapshot("srv_removed")).toBeNull();
+    expect(useSessionStore.getState().sessions["srv_removed"]).toBeUndefined();
+  });
+
   it("saves and reconnects a rejected saved host after changing its password", async () => {
     const store = new HostRuntimeStore({
       storage: createMemoryHostRuntimeStorage(),
