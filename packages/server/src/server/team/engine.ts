@@ -362,6 +362,22 @@ export function planItems(
   return created;
 }
 
+/** Takes over a report's artifacts and criteria; the runtime owns the branch artifact. */
+function mergeReportEvidence(item: WorkItem, payload: TeamReportPayload): void {
+  for (const artifact of payload.artifacts ?? []) {
+    const known = item.artifacts.some((a) => a.kind === artifact.kind && a.ref === artifact.ref);
+    // The runtime owns the branch artifact; a worker's own branch claim would duplicate it.
+    if (!known && artifact.kind !== "branch") item.artifacts.push(artifact);
+  }
+  for (const c of payload.criteria ?? []) {
+    const criterion = item.acceptanceCriteria.find((a) => a.id === c.id);
+    if (criterion) {
+      criterion.met = c.met;
+      criterion.evidence = c.evidence;
+    }
+  }
+}
+
 /**
  * Accepts a worker report in one commit: envelope checks, artifacts and criteria, binding state,
  * event, and the transition with its follow-up decisions.
@@ -393,14 +409,7 @@ export function applyReport(
     );
   }
   const actor: Actor = { type: "role", id: binding.role };
-  item.artifacts.push(...(payload.artifacts ?? []));
-  for (const c of payload.criteria ?? []) {
-    const criterion = item.acceptanceCriteria.find((a) => a.id === c.id);
-    if (criterion) {
-      criterion.met = c.met;
-      criterion.evidence = c.evidence;
-    }
-  }
+  mergeReportEvidence(item, payload);
   item.reports.push({
     role: binding.role,
     phase: item.phase,

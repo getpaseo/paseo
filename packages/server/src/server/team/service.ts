@@ -334,7 +334,10 @@ export class TeamService {
         // A seat that stopped without a report gets the answer and another turn.
         const phase = boardOf(this.pack(draft.team), item).phases[item.phase];
         const seat = phase?.role ? activeBinding(draft, item, phase.role) : null;
-        if (seat && seat.turn === "idle") {
+        // A seat that stopped, or reported that it needs the boss, gets the answer and a turn.
+        const waiting =
+          seat && (seat.turn === "idle" || (seat.turn === "reported" && seat.phase === item.phase));
+        if (seat && waiting) {
           seat.turn = "starting";
           seat.nudges = 0;
           addDecision(
@@ -384,10 +387,23 @@ export class TeamService {
   async report(agentId: string, payload: TeamReportPayload): Promise<string> {
     const caller = await this.resolveCaller(agentId);
     if (!caller) throw new ReportRejectedError("This session is not seated in a team");
+    // PandaOS renames a worktree branch after the first prompt, so the branch is read when the
+    // developer hands over, not when the seat starts.
+    const team = await this.store.get(caller.teamId);
+    const role = team ? this.pack(team.team).roles[caller.binding.role] : undefined;
+    const branch =
+      role?.workspace === "own-worktree"
+        ? await currentBranch((await this.options.agentStorage.get(agentId))?.cwd ?? "")
+        : undefined;
     try {
       const result = await this.store.commit(caller.teamId, (draft) => {
         const binding = draft.bindings[caller.binding.id]!;
         const events: TeamEventDraft[] = [];
+        const target = draft.items[binding.workItemId];
+        if (branch && target && binding.phase === target.phase) {
+          target.artifacts = target.artifacts.filter((a) => a.kind !== "branch");
+          target.artifacts.push({ kind: "branch", ref: branch });
+        }
         const item = applyReport(draft, this.pack(draft.team), binding, payload, events);
         return {
           events,
@@ -793,23 +809,10 @@ export class TeamService {
       agentId = created.snapshot.id;
     }
     const finalAgentId = agentId;
-    // The worktree service picks the branch name itself, so read what it actually checked out.
-    const branch =
-      role.workspace === "own-worktree"
-        ? await currentBranch((await this.options.agentStorage.get(agentId))?.cwd ?? "")
-        : undefined;
     return (draft) => {
       const binding = draft.bindings[bindingId];
       if (!binding) return [];
       binding.agentId = finalAgentId;
-      const target = draft.items[item.id];
-      if (
-        branch &&
-        target &&
-        !target.artifacts.some((a) => a.kind === "branch" && a.ref === branch)
-      ) {
-        target.artifacts.push({ kind: "branch", ref: branch });
-      }
       // The worker may already have reported inside its first turn.
       if (binding.turn === "starting") binding.turn = "running";
       return [

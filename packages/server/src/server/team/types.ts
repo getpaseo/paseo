@@ -158,7 +158,12 @@ export const TeamReportPayloadSchema = z.object({
   criteria: z
     .array(z.object({ id: z.string(), met: z.boolean(), evidence: z.string() }))
     .optional(),
-  needs: z.object({ kind: z.enum(["human", "research", "split"]), text: z.string() }).optional(),
+  needs: z
+    .object({ kind: z.enum(["human", "research", "split"]), text: z.string() })
+    .optional()
+    .describe(
+      "Only when you could not finish your part and someone must decide or add something. Leave it out when your part is done.",
+    ),
 });
 export type TeamReportPayload = z.infer<typeof TeamReportPayloadSchema>;
 
