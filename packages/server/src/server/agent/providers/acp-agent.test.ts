@@ -920,9 +920,9 @@ describe("ACPAgentSession Zed parity", () => {
   test.each([
     {
       name: "GPT reasoning level",
+      defaultModel: "claude-haiku-4-5",
       targetModel: "gpt-5.4-mini",
       thinkingOptionId: "high",
-      currentThinkingOptionId: "high",
       initialConfigOptions: [
         {
           ...selectConfigOption("thought_level", ["low", "high"], "high"),
@@ -940,33 +940,35 @@ describe("ACPAgentSession Zed parity", () => {
         configId: "reasoning",
         value: "high",
       },
+      expectedThinkingOptionId: "low",
     },
     {
       name: "Claude thinking toggle",
+      defaultModel: "gpt-5.4-mini",
       targetModel: "claude-haiku-4-5",
       thinkingOptionId: "true",
-      currentThinkingOptionId: "low",
       initialConfigOptions: [selectConfigOption("thought_level", ["low", "high"], "low")],
       targetConfigOptions: [booleanConfigOption("thinking", "thought_level", false)],
       expectedRequest: {
         sessionId: "session-1",
         configId: "thinking",
-        type: "boolean",
+        type: "boolean" as const,
         value: true,
       },
+      expectedThinkingOptionId: "false",
     },
   ])(
     "refreshes target-model config before applying $name",
     async ({
+      defaultModel,
       targetModel,
       thinkingOptionId,
-      currentThinkingOptionId,
       initialConfigOptions,
       targetConfigOptions,
       expectedRequest,
+      expectedThinkingOptionId,
     }) => {
-      const defaultModel = targetModel === "gpt-5.4-mini" ? "claude-haiku-4-5" : "gpt-5.4-mini";
-      const modelConfigOptionsResolver = vi.fn(async () => targetConfigOptions);
+      const configWrites: SetSessionConfigOptionRequest[] = [];
       const session = new ACPAgentSession(
         {
           provider: "cursor",
@@ -979,7 +981,7 @@ describe("ACPAgentSession Zed parity", () => {
           logger: createTestLogger(),
           defaultCommand: ["cursor-agent", "acp"],
           defaultModes: [],
-          modelConfigOptionsResolver,
+          modelConfigOptionsResolver: async () => targetConfigOptions,
           capabilities: {
             supportsStreaming: true,
             supportsSessionPersistence: true,
@@ -990,26 +992,37 @@ describe("ACPAgentSession Zed parity", () => {
           },
         },
       );
-      const setSessionConfigOption = vi.fn(async () => ({
-        configOptions: targetConfigOptions,
-      }));
-      const { internals } = prepareConfiguredOverrideSession(session, {
+      const events: AgentStreamEvent[] = [];
+      const unsubscribe = session.subscribe((event) => events.push(event));
+      prepareConfiguredOverrideSession(session, {
         currentModel: defaultModel,
         availableModels: [
           { modelId: defaultModel, name: defaultModel, description: null },
           { modelId: targetModel, name: targetModel, description: null },
         ],
         configOptions: initialConfigOptions,
-        connection: { setSessionConfigOption },
+        connection: {
+          setSessionConfigOption: async (input) => {
+            configWrites.push(input);
+            return { configOptions: targetConfigOptions };
+          },
+        },
       });
-      internals.thinkingOptionId = currentThinkingOptionId;
 
-      await internals.applyConfiguredOverrides();
+      await session.setModel(targetModel);
+      await session.setThinkingOption(thinkingOptionId);
+      unsubscribe();
 
-      expect(modelConfigOptionsResolver).toHaveBeenCalledWith(
-        expect.objectContaining({ sessionId: "session-1", modelId: targetModel }),
-      );
-      expect(setSessionConfigOption).toHaveBeenCalledWith(expectedRequest);
+      expect(configWrites).toEqual([expectedRequest]);
+      await expect(session.getRuntimeInfo()).resolves.toMatchObject({
+        model: targetModel,
+        thinkingOptionId: expectedThinkingOptionId,
+      });
+      expect(events).toContainEqual({
+        type: "thinking_option_changed",
+        provider: "cursor",
+        thinkingOptionId: expectedThinkingOptionId,
+      });
     },
   );
 
@@ -1244,6 +1257,135 @@ describe("ACPAgentSession Zed parity", () => {
     await expect(session.setThinkingOption("high")).rejects.toThrow(
       "Invalid params: Unknown model config option: thinking",
     );
+  });
+
+  test.each([
+    {
+      name: "the catalog request fails",
+      error: { code: -32603, message: "Internal error", data: { message: "catalog unavailable" } },
+    },
+    {
+      name: "the catalog omits the model",
+      error: new Error("Cursor model catalog does not include model 'claude-haiku-4-5'"),
+    },
+  ])("keeps the switched model when $name", async ({ error }) => {
+    const targetModel = "claude-haiku-4-5";
+    const defaultModel = "gpt-5.4-mini";
+    const configWrites: SetSessionConfigOptionRequest[] = [];
+    const session = new ACPAgentSession(
+      {
+        provider: "cursor",
+        cwd: "/tmp/paseo-acp-test",
+      },
+      {
+        provider: "cursor",
+        logger: createTestLogger(),
+        defaultCommand: ["cursor-agent", "acp"],
+        defaultModes: [],
+        modelConfigOptionsResolver: async () => {
+          throw error;
+        },
+        capabilities: {
+          supportsStreaming: true,
+          supportsSessionPersistence: true,
+          supportsDynamicModes: true,
+          supportsMcpServers: true,
+          supportsReasoningStream: true,
+          supportsToolInvocations: true,
+        },
+      },
+    );
+    const events: AgentStreamEvent[] = [];
+    const unsubscribe = session.subscribe((event) => events.push(event));
+    prepareConfiguredOverrideSession(session, {
+      currentModel: defaultModel,
+      availableModels: [
+        { modelId: defaultModel, name: defaultModel, description: null },
+        { modelId: targetModel, name: targetModel, description: null },
+      ],
+      configOptions: [selectConfigOption("thought_level", ["low", "high"], "high")],
+      connection: {
+        setSessionConfigOption: async (input) => {
+          configWrites.push(input);
+          return { configOptions: [selectConfigOption("thought_level", ["low", "high"], "high")] };
+        },
+      },
+    });
+
+    await session.setModel(targetModel);
+    await expect(session.setThinkingOption("high")).rejects.toThrow(
+      "cursor does not expose ACP thought-level selection",
+    );
+    unsubscribe();
+
+    expect(configWrites).toEqual([]);
+    await expect(session.getRuntimeInfo()).resolves.toMatchObject({ model: targetModel });
+    expect(events).toContainEqual({
+      type: "model_changed",
+      provider: "cursor",
+      runtimeInfo: expect.objectContaining({ model: targetModel }),
+    });
+  });
+
+  test("reports the model-switch error instead of writing the config-option fallback", async () => {
+    const session = createSession();
+    const configWrites: SetSessionConfigOptionRequest[] = [];
+    prepareConfiguredOverrideSession(session, {
+      currentModel: "opus",
+      availableModels: [
+        { modelId: "opus", name: "Opus", description: null },
+        { modelId: "sonnet", name: "Sonnet", description: null },
+      ],
+      configOptions: [selectConfigOption("model", ["opus", "sonnet"], "opus")],
+      connection: {
+        unstable_setSessionModel: async () => {
+          throw {
+            code: -32602,
+            message: "Invalid params",
+            data: { message: "Unknown model" },
+          };
+        },
+        setSessionConfigOption: async (input) => {
+          configWrites.push(input);
+          return { configOptions: [selectConfigOption("model", ["opus", "sonnet"], "sonnet")] };
+        },
+      },
+    });
+
+    await expect(session.setModel("sonnet")).rejects.toThrow("Invalid params: Unknown model");
+    expect(configWrites).toEqual([]);
+    await expect(session.getRuntimeInfo()).resolves.toMatchObject({ model: "opus" });
+  });
+
+  test("uses the model config option when model selection is not implemented", async () => {
+    const session = createSession();
+    const configWrites: SetSessionConfigOptionRequest[] = [];
+    const updated = [selectConfigOption("model", ["sonnet"], "sonnet")];
+    prepareConfiguredOverrideSession(session, {
+      currentModel: "opus",
+      availableModels: [{ modelId: "sonnet", name: "Sonnet", description: null }],
+      configOptions: [selectConfigOption("model", ["sonnet"], "opus")],
+      connection: {
+        unstable_setSessionModel: async () => {
+          throw { code: -32601, message: "Method not found" };
+        },
+        setSessionConfigOption: async (input) => {
+          configWrites.push(input);
+          return { configOptions: updated };
+        },
+      },
+    });
+
+    await session.setModel("sonnet");
+
+    expect(configWrites).toEqual([
+      {
+        sessionId: "session-1",
+        configId: "model-option",
+        value: "sonnet",
+      },
+    ]);
+    await expect(session.getRuntimeInfo()).resolves.toMatchObject({ model: "sonnet" });
   });
 
   test("passes generic ACP permission requests through to the user", async () => {

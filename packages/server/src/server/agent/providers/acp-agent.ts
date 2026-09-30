@@ -144,6 +144,10 @@ function isACPError(value: unknown): value is ACPError {
   return isRecord(value) && typeof value.message === "string" && typeof value.code === "number";
 }
 
+function isUnavailableACPMethodError(error: unknown): boolean {
+  return isACPError(error) && error.code === -32601;
+}
+
 function extractACPErrorDataMessage(data: unknown): string | null {
   if (!isRecord(data)) {
     return null;
@@ -2183,29 +2187,42 @@ export class ACPAgentSession implements AgentSession, ACPClient {
 
       let switchedWithModelApi = false;
       try {
-        await this.runACPRequest(() =>
-          this.connection!.unstable_setSessionModel!({
-            sessionId: this.sessionId!,
-            modelId,
-          }),
-        );
+        await this.connection.unstable_setSessionModel({
+          sessionId: this.sessionId,
+          modelId,
+        });
         switchedWithModelApi = true;
-      } catch {
-        // Fall through to config option path.
+      } catch (error) {
+        if (!isUnavailableACPMethodError(error)) {
+          throw toACPRequestError(error);
+        }
       }
 
       if (switchedWithModelApi) {
         if (this.modelConfigOptionsResolver) {
-          this.configOptions = this.transformConfigOptions(
-            await this.runACPRequest(() =>
-              this.modelConfigOptionsResolver!({
-                connection: this.connection!,
-                sessionId: this.sessionId!,
-                modelId,
-              }),
-            ),
-          );
-          this.thinkingOptionId = deriveCurrentConfigValue(this.configOptions, "thought_level");
+          try {
+            this.configOptions = this.transformConfigOptions(
+              await this.runACPRequest(() =>
+                this.modelConfigOptionsResolver!({
+                  connection: this.connection!,
+                  sessionId: this.sessionId!,
+                  modelId,
+                }),
+              ),
+            );
+            this.thinkingOptionId = deriveCurrentConfigValue(this.configOptions, "thought_level");
+          } catch (error) {
+            this.logger.warn(
+              { err: error, modelId },
+              "Failed to refresh ACP model config options after model switch",
+            );
+            // The provider already switched. Drop the previous model's thought-level
+            // option so a later thinking write cannot reuse its config id.
+            this.configOptions = this.configOptions.filter(
+              (option) => option.category !== "thought_level",
+            );
+            this.thinkingOptionId = this.config.thinkingOptionId ?? null;
+          }
         }
         this.currentModel = modelId;
         this.pushEvent({

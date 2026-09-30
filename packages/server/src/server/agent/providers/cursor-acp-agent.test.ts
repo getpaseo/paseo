@@ -188,29 +188,35 @@ describe("CursorACPAgentClient model discovery", () => {
 
   test("returns the requested model's config options from Cursor's read-only catalog", async () => {
     const targetConfigOptions = [booleanThinkingOption("thinking", false)];
-    const extMethod = vi.fn(async () => ({
-      models: [
-        {
-          value: "gpt-5.4-mini",
-          name: "GPT 5.4 Mini",
-          configOptions: [selectThinkingOption("reasoning", ["low", "high"], "low")],
-        },
-        {
-          value: "claude-haiku-4-5",
-          name: "Claude Haiku 4.5",
-          configOptions: targetConfigOptions,
-        },
-      ],
-    }));
+    const connection = {
+      async extMethod(method: string, params: Record<string, unknown>) {
+        if (method !== "cursor/list_available_models" || Object.keys(params).length !== 0) {
+          throw new Error(`Unsupported catalog request: ${method}`);
+        }
+        return {
+          models: [
+            {
+              value: "gpt-5.4-mini",
+              name: "GPT 5.4 Mini",
+              configOptions: [selectThinkingOption("reasoning", ["low", "high"], "low")],
+            },
+            {
+              value: "claude-haiku-4-5",
+              name: "Claude Haiku 4.5",
+              configOptions: targetConfigOptions,
+            },
+          ],
+        };
+      },
+    };
 
     await expect(
       resolveCursorModelConfigOptions({
-        connection: { extMethod } as SpawnedACPProcess["connection"],
+        connection: connection as SpawnedACPProcess["connection"],
         sessionId: "session-1",
         modelId: "claude-haiku-4-5",
       }),
     ).resolves.toEqual(targetConfigOptions);
-    expect(extMethod).toHaveBeenCalledWith("cursor/list_available_models", {});
   });
 });
 
