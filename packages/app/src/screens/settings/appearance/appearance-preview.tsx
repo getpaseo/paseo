@@ -10,6 +10,7 @@ import { DEFAULT_MONO_FONT_STACK, DEFAULT_DISPLAY_FONT_STACK } from "@/styles/th
 import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 import { tokenizeToLines } from "@/utils/highlight-cache";
 import { CHANGED_LINE_INDICES, PREVIEW_AFTER, PREVIEW_BEFORE } from "./preview-snippet";
+import { DISPLAY_FONT_DATASET, MONO_FONT_DATASET } from "@/styles/font-dataset";
 
 // Snippets are TypeScript; the cache keys grammar selection off the extension.
 const PREVIEW_EXTENSION = "ts";
@@ -174,11 +175,13 @@ export function AppearancePreview({ overrides }: AppearancePreviewProps) {
       dataSet={CODE_SURFACE_DATASET}
       style={styles.card}
     >
-      <Text style={displayStyle}>Code</Text>
+      <Text dataSet={DISPLAY_FONT_DATASET} style={displayStyle}>
+        Code
+      </Text>
       <Text style={contentStyle}>{t("settings.appearance.syntax.previewContent")}</Text>
       {rows.map((row) => (
         <View key={row.key} style={rowStyle(row.type)}>
-          <Text style={codeStyle}>
+          <Text dataSet={MONO_FONT_DATASET} style={codeStyle}>
             <Text style={markerStyle(row.type)}>{row.marker}</Text>
             {row.tokens
               ? row.tokens.map((token) => (

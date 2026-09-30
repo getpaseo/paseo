@@ -29,6 +29,7 @@ import { LeitstandPanda } from "./leitstand-panda";
 import { StatusGlyph, glyphForInboxKind } from "./status-glyph";
 import { AgeText, ProjectTag } from "./tags";
 import type { SnoozableInbox } from "./use-leitstand";
+import { DISPLAY_FONT_DATASET, MONO_FONT_DATASET } from "@/styles/font-dataset";
 
 type TFunction = ReturnType<typeof useTranslation>["t"];
 type ButtonSize = "sm" | "md";
@@ -86,8 +87,10 @@ export function InboxSection({ inbox }: { inbox: SnoozableInbox }) {
   return (
     <View style={styles.inbox} testID="leitstand-inbox">
       <View style={styles.header}>
-        <Text style={styles.title}>{t("leitstand.inbox.title")}</Text>
-        <Text style={styles.count} testID="leitstand-inbox-count">
+        <Text dataSet={DISPLAY_FONT_DATASET} style={styles.title}>
+          {t("leitstand.inbox.title")}
+        </Text>
+        <Text dataSet={MONO_FONT_DATASET} style={styles.count} testID="leitstand-inbox-count">
           {count}
         </Text>
         {inbox.snoozedCount > 0 ? (
@@ -101,7 +104,9 @@ export function InboxSection({ inbox }: { inbox: SnoozableInbox }) {
         <View style={styles.empty} testID="leitstand-inbox-empty">
           <LeitstandPanda mood="sleep" size={64} />
           <View style={styles.emptyText}>
-            <Text style={styles.emptyTitle}>{t("leitstand.inbox.empty")}</Text>
+            <Text dataSet={DISPLAY_FONT_DATASET} style={styles.emptyTitle}>
+              {t("leitstand.inbox.empty")}
+            </Text>
             <Text style={styles.reason}>{t("leitstand.inbox.emptyHint")}</Text>
           </View>
         </View>
@@ -356,7 +361,14 @@ function SnoozeItem({
 }) {
   const { t } = useTranslation();
   const select = useCallback(() => snooze(itemId, option), [itemId, option, snooze]);
-  const trailing = useMemo(() => <Text style={styles.menuTime}>{untilLabel}</Text>, [untilLabel]);
+  const trailing = useMemo(
+    () => (
+      <Text dataSet={MONO_FONT_DATASET} style={styles.menuTime}>
+        {untilLabel}
+      </Text>
+    ),
+    [untilLabel],
+  );
   return (
     <DropdownMenuItem onSelect={select} trailing={trailing} testID={testID}>
       {t(SNOOZE_LABEL_KEY[option])}

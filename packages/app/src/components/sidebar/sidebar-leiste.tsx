@@ -30,6 +30,7 @@ import {
 } from "@/utils/host-routes";
 import type { WorkspaceTabTarget } from "@/workspace-tabs/model";
 import { projectSidebarInbox, type SidebarInboxProjection } from "./sidebar-leiste-model";
+import { DISPLAY_FONT_DATASET, MONO_FONT_DATASET } from "@/styles/font-dataset";
 
 type HoverState = PressableStateCallbackType & { hovered?: boolean };
 
@@ -137,7 +138,11 @@ const SidebarLeitstandButton = memo(function SidebarLeitstandButton({
               <PandaStatus mood={mood} size="small" testID={`sidebar-leitstand-panda-${mood}`} />
             </View>
             <View style={styles.brandText}>
-              <Text style={[styles.brandName, isActive && styles.textSelected]} numberOfLines={1}>
+              <Text
+                dataSet={DISPLAY_FONT_DATASET}
+                style={[styles.brandName, isActive && styles.textSelected]}
+                numberOfLines={1}
+              >
                 PandaOS
               </Text>
               <Text style={[styles.brandSub, isActive && styles.textSelected]} numberOfLines={1}>
@@ -170,7 +175,7 @@ function SidebarInboxSection({
     <View style={styles.inbox} testID="sidebar-inbox">
       <View style={styles.inboxHeader}>
         <Text style={styles.inboxTitle}>{t("leitstand.inbox.title")}</Text>
-        <Text style={styles.inboxCount} testID="sidebar-inbox-count">
+        <Text dataSet={MONO_FONT_DATASET} style={styles.inboxCount} testID="sidebar-inbox-count">
           {count}
         </Text>
       </View>

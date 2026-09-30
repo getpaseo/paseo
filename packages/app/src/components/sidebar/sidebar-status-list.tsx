@@ -78,6 +78,7 @@ import {
 } from "@/components/sidebar/sidebar-workspace-menu";
 import { PinnedSectionHeader } from "@/components/sidebar/pinned-section-header";
 import { SidebarGroupToggleRow } from "@/components/sidebar/sidebar-group-toggle-row";
+import { MONO_FONT_DATASET } from "@/styles/font-dataset";
 import { useLimitedSidebarGroup } from "@/components/sidebar/use-limited-sidebar-group";
 import type { ToggleSidebarWorkspacePin } from "@/hooks/use-sidebar-workspace-pin";
 import { DraggableList, type DraggableRenderItemInfo } from "@/components/draggable-list";
@@ -455,6 +456,7 @@ function StatusGroupHeader({
               {label}
             </Text>
             <Text
+              dataSet={MONO_FONT_DATASET}
               style={styles.statusGroupCount}
               testID={`sidebar-status-group-count-${group.key}`}
             >

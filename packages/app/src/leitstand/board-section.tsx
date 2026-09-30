@@ -23,6 +23,7 @@ import {
 import { StatusGlyph, glyphForBucket } from "./status-glyph";
 import { AgeText, JiraTags, ProjectTag, StackBar } from "./tags";
 import type { LeitstandProject } from "./use-leitstand";
+import { DISPLAY_FONT_DATASET, MONO_FONT_DATASET } from "@/styles/font-dataset";
 
 const COLUMN_LABEL_KEY = {
   running: "leitstand.board.running",
@@ -107,7 +108,9 @@ export function BoardSection({
             {isCompact ? null : (
               <View style={styles.columnHeader}>
                 <Text style={styles.columnLabel}>{t(COLUMN_LABEL_KEY[column])}</Text>
-                <Text style={styles.mono}>{board[column].length}</Text>
+                <Text dataSet={MONO_FONT_DATASET} style={styles.mono}>
+                  {board[column].length}
+                </Text>
               </View>
             )}
             <ColumnCards column={column} board={board} />
@@ -186,7 +189,7 @@ function TopicCard({ entry }: { entry: Extract<LeitstandBoardEntry, { kind: "top
     <View style={styles.card} testID={testID}>
       <View style={styles.cardHead}>
         {first ? <ProjectTag name={first.projectName} /> : null}
-        <Text style={styles.cardTitle} numberOfLines={2}>
+        <Text dataSet={DISPLAY_FONT_DATASET} style={styles.cardTitle} numberOfLines={2}>
           {entry.topic.title}
         </Text>
         <StatusGlyph name={glyphForBucket(entry.bucket)} size={14} />
@@ -246,11 +249,13 @@ function SessionCard({ session }: { session: LeitstandSession }) {
     <Pressable onPress={open} style={cardStyle} accessibilityRole="button" testID={testID}>
       <View style={styles.cardHead}>
         <ProjectTag name={session.projectName} />
-        <Text style={styles.cardTitle} numberOfLines={2}>
+        <Text dataSet={DISPLAY_FONT_DATASET} style={styles.cardTitle} numberOfLines={2}>
           {session.name}
         </Text>
         {session.bucket === "attention" ? (
-          <Text style={styles.mono}>{t("leitstand.board.unread")}</Text>
+          <Text dataSet={MONO_FONT_DATASET} style={styles.mono}>
+            {t("leitstand.board.unread")}
+          </Text>
         ) : null}
         <StatusGlyph name={glyphForBucket(session.bucket)} size={14} />
       </View>
@@ -263,7 +268,7 @@ function SessionCard({ session }: { session: LeitstandSession }) {
         {stack.total > 1 ? (
           <View style={styles.metaItem}>
             <StackBar pullRequests={session.pullRequests} />
-            <Text style={styles.mono}>
+            <Text dataSet={MONO_FONT_DATASET} style={styles.mono}>
               {t("leitstand.board.stack", { merged: stack.merged, total: stack.total })}
             </Text>
           </View>
@@ -284,7 +289,7 @@ function SessionCard({ session }: { session: LeitstandSession }) {
             <AgentChip key={agent.id} agent={agent} />
           ))}
           {session.agents.length > MAX_AGENT_CHIPS ? (
-            <Text style={styles.mono}>
+            <Text dataSet={MONO_FONT_DATASET} style={styles.mono}>
               {t("leitstand.board.moreAgents", { count: session.agents.length - MAX_AGENT_CHIPS })}
             </Text>
           ) : null}
@@ -324,14 +329,16 @@ function ScheduleCard({ entry }: { entry: LeitstandSchedule }) {
     >
       <View style={styles.cardHead}>
         {entry.projectName ? <ProjectTag name={entry.projectName} /> : null}
-        <Text style={styles.cardTitle} numberOfLines={2}>
+        <Text dataSet={DISPLAY_FONT_DATASET} style={styles.cardTitle} numberOfLines={2}>
           {resolveScheduleTitle(schedule)}
         </Text>
         <StatusGlyph name="plan" size={14} />
       </View>
       <View style={styles.meta}>
-        <Text style={styles.mono}>{formatCadence(schedule.cadence)}</Text>
-        <Text style={styles.mono}>
+        <Text dataSet={MONO_FONT_DATASET} style={styles.mono}>
+          {formatCadence(schedule.cadence)}
+        </Text>
+        <Text dataSet={MONO_FONT_DATASET} style={styles.mono}>
           {t("leitstand.board.nextRun", { when: formatNextRun(schedule.nextRunAt) })}
         </Text>
       </View>

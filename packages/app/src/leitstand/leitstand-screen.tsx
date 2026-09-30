@@ -11,6 +11,7 @@ import {
   useSnoozableInbox,
   type LeitstandSessionsState,
 } from "./use-leitstand";
+import { DISPLAY_FONT_DATASET, MONO_FONT_DATASET } from "@/styles/font-dataset";
 
 /** Home once a project exists: who runs, who needs you, then everything by status. */
 export function LeitstandScreen({ state }: { state: LeitstandSessionsState }) {
@@ -28,20 +29,20 @@ export function LeitstandScreen({ state }: { state: LeitstandSessionsState }) {
         <View style={styles.head}>
           <View style={styles.brand} testID={`leitstand-panda-${mood}`}>
             <LeitstandPanda mood={mood} size={32} />
-            <Text style={styles.title} accessibilityRole="header">
+            <Text dataSet={DISPLAY_FONT_DATASET} style={styles.title} accessibilityRole="header">
               {t("leitstand.title")}
             </Text>
           </View>
           <View style={styles.metrics}>
             <View style={styles.metric} testID="leitstand-metric-running">
               <StatusGlyph name="run" />
-              <Text style={styles.metricText}>
+              <Text dataSet={MONO_FONT_DATASET} style={styles.metricText}>
                 {t("leitstand.metrics.running", { count: state.runningAgentCount })}
               </Text>
             </View>
             <View style={styles.metric} testID="leitstand-metric-needs-you">
               <StatusGlyph name="ask" />
-              <Text style={styles.metricText}>
+              <Text dataSet={MONO_FONT_DATASET} style={styles.metricText}>
                 {t("leitstand.metrics.needsYou", { count: inbox.items.length })}
               </Text>
             </View>

@@ -5,10 +5,11 @@ import { useCompactTimeAgo } from "@/hooks/use-compact-time-ago";
 import { buildJiraIssueUrl } from "./jira";
 import { useJiraSite } from "./preferences-store";
 import { projectMonogram, type LeitstandPullRequest } from "./session-model";
+import { MONO_FONT_DATASET } from "@/styles/font-dataset";
 
 export function ProjectTag({ name }: { name: string }) {
   return (
-    <Text style={styles.projectTag} accessibilityLabel={name}>
+    <Text dataSet={MONO_FONT_DATASET} style={styles.projectTag} accessibilityLabel={name}>
       {projectMonogram(name)}
     </Text>
   );
@@ -29,7 +30,12 @@ export function JiraTags({ keys, testID }: { keys: readonly string[]; testID: st
             testID={`${testID}-jira-${key}`}
           />
         ) : (
-          <Text key={key} style={styles.mono} testID={`${testID}-jira-${key}`}>
+          <Text
+            dataSet={MONO_FONT_DATASET}
+            key={key}
+            style={styles.mono}
+            testID={`${testID}-jira-${key}`}
+          >
             {key}
           </Text>
         ),
@@ -56,7 +62,11 @@ export function StackBar({ pullRequests }: { pullRequests: readonly LeitstandPul
 
 export function AgeText({ date }: { date: Date | null }) {
   const label = useCompactTimeAgo(date);
-  return label ? <Text style={styles.mono}>{label}</Text> : null;
+  return label ? (
+    <Text dataSet={MONO_FONT_DATASET} style={styles.mono}>
+      {label}
+    </Text>
+  ) : null;
 }
 
 const styles = StyleSheet.create((theme) => ({

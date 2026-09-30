@@ -1,6 +1,7 @@
 import { useMemo, type ReactNode } from "react";
 import { Text, type StyleProp, type TextStyle } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
+import { DISPLAY_FONT_DATASET } from "@/styles/font-dataset";
 
 interface ScreenTitleProps {
   children: ReactNode;
@@ -26,7 +27,12 @@ export function ScreenTitle({
 }: ScreenTitleProps) {
   const combinedStyle = useMemo(() => [styles.text, hub && styles.hubText, style], [hub, style]);
   return (
-    <Text style={combinedStyle} numberOfLines={numberOfLines} testID={testID}>
+    <Text
+      dataSet={hub ? DISPLAY_FONT_DATASET : undefined}
+      style={combinedStyle}
+      numberOfLines={numberOfLines}
+      testID={testID}
+    >
       {children}
     </Text>
   );
