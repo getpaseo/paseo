@@ -218,6 +218,7 @@ import {
 import { RenderProfile } from "@/utils/render-profiler";
 import { useWorkspaceCheckoutStatus } from "@/screens/workspace/use-workspace-checkout-status";
 import { useHasPullRequest, usePullRequestAutoAdd } from "@/panels/pull-request";
+import { registerWorkspaceUrlOpener } from "@/paperclip/open-in-workspace";
 
 const WORKSPACE_FLOATING_PANEL_PORTAL_HOST_PREFIX = "workspace-floating-panels";
 const EMPTY_UI_TABS: WorkspaceTab[] = [];
@@ -2603,6 +2604,11 @@ function WorkspaceScreenContent({
     workspaceLayout,
     openUrl: handleOpenUrlInBrowserTab,
   });
+
+  useEffect(() => {
+    if (!persistenceKey || !getIsElectron()) return undefined;
+    return registerWorkspaceUrlOpener(handleOpenUrlInBrowserTab);
+  }, [handleOpenUrlInBrowserTab, persistenceKey]);
 
   const handleSelectSwitcherTab = useCallback(
     (key: string) => {

@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import type { OpenFileDisposition } from "@/workspace/file-open";
 import { openExternalUrl } from "@/utils/open-external-url";
+import { openPaperclipIssueInWorkspace } from "@/paperclip/open-in-workspace";
 import type { InlinePathTarget } from "./parse";
 import {
   useAssistantFileLinkResolverContext,
@@ -313,6 +314,7 @@ async function dispatchExternalUrl(input: {
   ) {
     return;
   }
+  if (openPaperclipIssueInWorkspace(input.url)) return;
   await openExternalUrl(input.url);
 }
 

@@ -1,3 +1,12 @@
+import {
+  paperclipIssueUrl,
+  paperclipKeyOfCode,
+  rewritePaperclipHref,
+  splitPaperclipKeys,
+  type PaperclipLinkConfig,
+  type PaperclipTextSegment,
+} from "@/paperclip/links";
+import { usePaperclipLinks } from "@/paperclip/use-paperclip-links";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { TaskListRow } from "@/components/task-list-row";
 import {
@@ -1539,6 +1548,7 @@ export const AssistantMessage = memo(function AssistantMessage({
   );
 
   const fileLinkActions = useAssistantFileLinkActions();
+  const paperclip = usePaperclipLinks(serverId);
   const handleMarkdownLinkPress = useStableEvent((url: string) => {
     fileLinkActions.open({ href: url }, "preferred");
     // react-native-markdown-display opens the link itself when this returns true.
@@ -1653,18 +1663,46 @@ export const AssistantMessage = memo(function AssistantMessage({
       text: (
         node: ASTNode,
         _children: ReactNode[],
-        _parent: ASTNode[],
+        parent: ASTNode[],
         styles: MarkdownStyles,
         inheritedStyles: TextStyle = {},
-      ) => (
-        <MarkdownInheritedText
-          key={node.key}
-          inheritedStyles={inheritedStyles}
-          textStyle={styles.text}
-        >
-          {node.content}
-        </MarkdownInheritedText>
-      ),
+      ) => {
+        const segments =
+          paperclip && !nodeHasParentType(parent, "link")
+            ? splitPaperclipKeys(node.content ?? "", paperclip.prefixes)
+            : null;
+        if (segments && segments.some((segment) => segment.kind === "issue")) {
+          return (
+            <MarkdownInheritedText
+              key={node.key}
+              inheritedStyles={inheritedStyles}
+              textStyle={styles.text}
+            >
+              {withTextOffsets(segments).map(({ segment, offset }) =>
+                segment.kind === "issue" ? (
+                  <PaperclipIssueLink
+                    key={`${node.key}:${offset}`}
+                    href={paperclipIssueUrl(paperclip!, segment.key)}
+                    issueKey={segment.key}
+                    style={styles.link}
+                  />
+                ) : (
+                  segment.text
+                ),
+              )}
+            </MarkdownInheritedText>
+          );
+        }
+        return (
+          <MarkdownInheritedText
+            key={node.key}
+            inheritedStyles={inheritedStyles}
+            textStyle={styles.text}
+          >
+            {node.content}
+          </MarkdownInheritedText>
+        );
+      },
       textgroup: (
         node: ASTNode,
         children: ReactNode[],
@@ -1803,6 +1841,20 @@ export const AssistantMessage = memo(function AssistantMessage({
       ) => {
         const content = node.content ?? "";
         const isLinkedInlineCode = nodeHasParentType(parent, "link");
+        const paperclipKey =
+          paperclip && !isLinkedInlineCode ? paperclipKeyOfCode(content, paperclip.prefixes) : null;
+        if (paperclip && paperclipKey) {
+          return (
+            <PaperclipCodeLink
+              key={node.key}
+              href={paperclipIssueUrl(paperclip, paperclipKey)}
+              content={content}
+              inheritedStyles={inheritedStyles}
+              codeInlineStyle={styles.code_inline}
+              linkStyle={styles.link}
+            />
+          );
+        }
         const inlineCodeSource: AssistantFileLinkSource = {
           href: content,
           text: content,
@@ -1940,15 +1992,14 @@ export const AssistantMessage = memo(function AssistantMessage({
           {children}
         </MarkdownParagraphView>
       ),
-      link: (node: ASTNode, children: ReactNode[], _parent: ASTNode[], styles: MarkdownStyles) => (
-        <AssistantMarkdownLink
-          key={node.key}
-          source={getMarkdownLinkSource(node)}
-          style={styles.link}
-        >
-          {colorMarkdownLinkChildren(children, styles.link.color)}
-        </AssistantMarkdownLink>
-      ),
+      link: (node: ASTNode, children: ReactNode[], _parent: ASTNode[], styles: MarkdownStyles) => {
+        const source = withPaperclipHref(getMarkdownLinkSource(node), paperclip);
+        return (
+          <AssistantMarkdownLink key={node.key} source={source} style={styles.link}>
+            {colorMarkdownLinkChildren(children, styles.link.color)}
+          </AssistantMarkdownLink>
+        );
+      },
       image: (
         node: ASTNode,
         _children: ReactNode[],
@@ -1978,7 +2029,16 @@ export const AssistantMessage = memo(function AssistantMessage({
         );
       },
     };
-  }, [client, fileLinkActions, markdownParser, occurrenceKey, phase, serverId, workspaceRoot]);
+  }, [
+    client,
+    fileLinkActions,
+    markdownParser,
+    occurrenceKey,
+    paperclip,
+    phase,
+    serverId,
+    workspaceRoot,
+  ]);
 
   const blocks = useMemo(() => splitMarkdownBlocks(revealedMessage), [revealedMessage]);
   const keyedBlocks = useMemo(
@@ -3251,4 +3311,67 @@ function areToolCallPropsEqual(previous: ToolCallProps, next: ToolCallProps) {
   if (previous.forceInline !== next.forceInline) return false;
   if (previous.maxDetailHeight !== next.maxDetailHeight) return false;
   return true;
+}
+
+/** A link an agent wrote to a Paperclip issue, pointed at the address this client reaches. */
+function withPaperclipHref(
+  source: AssistantFileLinkSource,
+  paperclip: PaperclipLinkConfig | null,
+): AssistantFileLinkSource {
+  const href = paperclip ? rewritePaperclipHref(source.href, paperclip) : null;
+  return href ? { ...source, href } : source;
+}
+
+function withTextOffsets(
+  segments: readonly PaperclipTextSegment[],
+): { segment: PaperclipTextSegment; offset: number }[] {
+  let offset = 0;
+  return segments.map((segment) => {
+    const item = { segment, offset };
+    offset += segment.kind === "issue" ? segment.key.length : segment.text.length;
+    return item;
+  });
+}
+
+function PaperclipIssueLink({
+  href,
+  issueKey,
+  style,
+}: {
+  href: string;
+  issueKey: string;
+  style: StyleProp<TextStyle>;
+}) {
+  const source = useMemo(() => ({ href, text: issueKey }), [href, issueKey]);
+  return (
+    <AssistantMarkdownLink source={source} style={style}>
+      {issueKey}
+    </AssistantMarkdownLink>
+  );
+}
+
+function PaperclipCodeLink({
+  href,
+  content,
+  inheritedStyles,
+  codeInlineStyle,
+  linkStyle,
+}: {
+  href: string;
+  content: string;
+  inheritedStyles: TextStyle;
+  codeInlineStyle: React.ComponentProps<typeof AssistantMarkdownCodeLink>["codeInlineStyle"];
+  linkStyle: React.ComponentProps<typeof AssistantMarkdownCodeLink>["linkStyle"];
+}) {
+  const source = useMemo(() => getInlineCodeAutoLinkSource({ href, content }), [href, content]);
+  return (
+    <AssistantMarkdownCodeLink
+      source={source}
+      inheritedStyles={inheritedStyles}
+      codeInlineStyle={codeInlineStyle}
+      linkStyle={linkStyle}
+    >
+      {content}
+    </AssistantMarkdownCodeLink>
+  );
 }
