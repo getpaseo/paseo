@@ -4,7 +4,7 @@ import { UsageSourceRegistry } from "./index.js";
 function source(input: {
   id: string;
   discover?: () => Promise<unknown[]>;
-  identify?: (value: unknown) => Promise<{ key: string } | null>;
+  identify?: (value: unknown) => Promise<{ key: string; label?: string } | null>;
   fetch?: (value: unknown) => Promise<unknown>;
 }) {
   return {
@@ -173,4 +173,21 @@ test("discovery failures have an ID outside the account namespace", async () => 
   );
   const discovered = await registry.listReports();
   expect(discovered.map((entry) => entry.id)).toEqual(["source:!error"]);
+});
+
+test("legacy listing distinguishes labeled accounts and preserves unlabeled names", async () => {
+  const registry = new UsageSourceRegistry(() => 1000);
+  registry.register(
+    source({
+      id: "claude",
+      discover: async () => [{ account: "work" }, { account: "personal" }, { account: "default" }],
+      identify: async (input) => {
+        const { account } = input as { account: string };
+        return { key: account, label: account === "default" ? undefined : account };
+      },
+    }),
+  );
+  expect(
+    (await registry.listLegacyUsage()).providers.map((provider) => provider.displayName),
+  ).toEqual(["claude (work)", "claude (personal)", "claude"]);
 });

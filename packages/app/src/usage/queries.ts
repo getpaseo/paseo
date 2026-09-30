@@ -1,3 +1,4 @@
+import { supportsUsageReports } from "@getpaseo/client";
 import { useCallback, useMemo } from "react";
 import { useMutation, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { useShallow } from "zustand/shallow";
@@ -50,7 +51,7 @@ async function getReport(
 }
 
 function supportsUsage(session: SessionState | undefined): boolean {
-  return session?.serverInfo?.features?.usageSources === true;
+  return supportsUsageReports(session?.serverInfo?.features);
 }
 
 async function refreshReports(queryClient: QueryClient, serverId: string): Promise<void> {

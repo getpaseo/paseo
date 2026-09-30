@@ -93,7 +93,7 @@ export class UsageSourceRegistry {
     return discovered.flat();
   }
 
-  // COMPAT(providerUsageList): added in v0.9.3, remove after 2027-03-26.
+  // COMPAT(providerUsageList): added in v0.1.98, remove after 2027-03-26.
   async listLegacyUsage(): Promise<{ fetchedAt: string; providers: ProviderUsage[] }> {
     const reports = await this.listReports();
     return {
@@ -105,7 +105,9 @@ export class UsageSourceRegistry {
         : new Date(this.now()).toISOString(),
       providers: reports.map((entry) => ({
         providerId: entry.sourceId,
-        displayName: entry.sourceLabel,
+        displayName: entry.account.label
+          ? `${entry.sourceLabel} (${entry.account.label})`
+          : entry.sourceLabel,
         status: entry.report.status,
         planLabel: entry.report.planLabel ?? null,
         windows: entry.report.windows,
