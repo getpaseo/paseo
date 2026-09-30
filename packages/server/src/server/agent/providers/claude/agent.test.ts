@@ -1067,6 +1067,35 @@ describe("ClaudeAgentSession features", () => {
     await session.close();
   });
 
+  test("disables Claude hooks for internal agents only", async () => {
+    const { queryFactory } = createQueryMock();
+    const client = new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const internalSession = await client.createSession({
+      provider: "claude",
+      cwd: process.cwd(),
+      internal: true,
+    });
+    const userSession = await client.createSession({
+      provider: "claude",
+      cwd: process.cwd(),
+    });
+
+    await internalSession.startTurn("hello");
+    await userSession.startTurn("hello");
+
+    expect(queryFactory.mock.calls[0]?.[0].options.settings).toMatchObject({
+      disableAllHooks: true,
+    });
+    expect(queryFactory.mock.calls[1]?.[0].options.settings).toBeUndefined();
+
+    await internalSession.close();
+    await userSession.close();
+  });
+
   test("turns Claude thinking off without retaining an effort level", async () => {
     const { queryFactory, launches } = createQueryMock();
     const client = new ClaudeAgentClient({
