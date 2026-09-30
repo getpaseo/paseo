@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from "react";
-import { Pressable, Text, View, type PressableStateCallbackType } from "react-native";
+import { Pressable, ScrollView, Text, View, type PressableStateCallbackType } from "react-native";
 import { useTranslation } from "react-i18next";
 import { useRouter } from "expo-router";
 import { StyleSheet } from "react-native-unistyles";
@@ -73,7 +73,12 @@ export function BoardSection({
   return (
     <View style={styles.board} testID="leitstand-board">
       {projects.length > 1 ? (
-        <View style={styles.filters}>
+        // On a phone the chips scroll sideways instead of stacking into half a screen.
+        <ScrollView
+          horizontal={isCompact}
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={isCompact ? styles.filtersScroll : styles.filters}
+        >
           <FilterChip
             label={t("leitstand.board.allProjects")}
             value={null}
@@ -91,7 +96,7 @@ export function BoardSection({
               testID={`leitstand-filter-${project.viewKey}`}
             />
           ))}
-        </View>
+        </ScrollView>
       ) : null}
       {isCompact ? (
         <SegmentedControl
@@ -353,6 +358,10 @@ const styles = StyleSheet.create((theme) => ({
   filters: {
     flexDirection: "row",
     flexWrap: "wrap",
+    gap: theme.spacing[1.5],
+  },
+  filtersScroll: {
+    flexDirection: "row",
     gap: theme.spacing[1.5],
   },
   columns: {
