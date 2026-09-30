@@ -315,6 +315,16 @@ const StoredWorkspaceSchema = z.strictObject({
   labels: z.array(z.string()).optional(),
   // Optional for entries cached before the done marker existed; same reasoning as labels.
   doneAt: z.string().nullable().optional(),
+  // Optional for entries cached before handoff sorting existed; same reasoning as labels.
+  handoff: z
+    .object({
+      agentId: z.string(),
+      kind: z.string(),
+      need: z.string().nullable(),
+      at: z.string(),
+    })
+    .nullable()
+    .optional(),
   // Optional for entries cached before topics existed; same reasoning as labels.
   topic: z
     .strictObject({ id: z.string(), title: z.string(), description: z.string().nullable() })
@@ -693,6 +703,7 @@ function serializeWorkspace(workspace: WorkspaceDescriptor): StoredWorkspace {
     pinnedAt: workspace.pinnedAt ?? null,
     labels: workspace.labels,
     doneAt: workspace.doneAt ?? null,
+    handoff: workspace.handoff ?? null,
     topic: workspace.topic ?? null,
     status: workspace.status,
     statusEnteredAt: workspace.statusEnteredAt?.toISOString() ?? null,
