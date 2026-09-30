@@ -35,6 +35,7 @@ import { features } from "./configuration.js";
 import { commands } from "./commands.js";
 import { messages } from "./history.js";
 import { SessionPermissions } from "./permissions.js";
+import { SessionUsage } from "./usage.js";
 
 export class OpenCodeV2Session implements AgentSession {
   readonly provider = "opencode";
@@ -45,6 +46,7 @@ export class OpenCodeV2Session implements AgentSession {
   private readonly permissions: SessionPermissions;
   private readonly turns: SessionTurns;
   private readonly children: SessionChildren;
+  private readonly usage: SessionUsage;
   private stream: Promise<void> | null = null;
   private streamAbort = new AbortController();
   private exited = false;
@@ -91,10 +93,26 @@ export class OpenCodeV2Session implements AgentSession {
         await this.reconcile();
         return { info: this.info, history: this.history };
       },
+      reportReconciliationError: (error) =>
+        this.logger.warn(
+          { error: toDiagnosticErrorMessage(error) },
+          "OpenCode turn reconciliation failed; retrying",
+        ),
       clearPermissions: async () => {
         for (const request of this.permissions.list())
           await this.permissions.respondToPermission(request.id, { behavior: "deny" });
       },
+    });
+    this.usage = new SessionUsage({
+      client: () => this.client,
+      cwd: config.cwd,
+      info: () => this.info,
+      emit: (event) => this.emit(event),
+      reportError: (error) =>
+        this.logger.warn(
+          { error: toDiagnosticErrorMessage(error) },
+          "OpenCode context usage update failed",
+        ),
     });
   }
   get id() {
@@ -417,8 +435,7 @@ export class OpenCodeV2Session implements AgentSession {
       await this.client.session.environment({ sessionID: this.id, variables: this.launchEnv });
     await this.reconcile();
     await this.children.reconcile(this.id);
-    const active = await this.client.session.active();
-    if (active[this.id]) this.turns.observeActiveTurn();
+    await this.turns.reconcile();
   }
   private scheduleReconcile() {
     if (this.refreshTimer || this.closed) return;
@@ -461,11 +478,9 @@ export class OpenCodeV2Session implements AgentSession {
       return;
     }
     this.permissions.observe(event);
-    if (event.type === "session.execution.failed")
-      this.turns.executionError = event.data.error.message;
+    this.usage.observe(event);
+    this.turns.observe(event);
     this.scheduleReconcile();
-    if (event.type !== "session.execution.started" || this.turns.id) return;
-    this.turns.observeActiveTurn();
   }
   private async consume(ready: () => void, fail: (error: unknown) => void) {
     const signal = AbortSignal.any([this.abort.signal, this.streamAbort.signal]);
@@ -502,6 +517,7 @@ export class OpenCodeV2Session implements AgentSession {
     if (this.closed) return;
     this.closed = true;
     this.abort.abort();
+    this.turns.close();
     this.streamAbort.abort();
     if (this.refreshTimer) clearTimeout(this.refreshTimer);
     await this.stream;

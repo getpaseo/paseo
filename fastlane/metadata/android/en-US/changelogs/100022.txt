@@ -1,0 +1,8 @@
+Fixed
+- Fixed OpenCode v2 turns longer than five minutes failing with UNDERRHEADERS_TIMEOUT
+- Fixed the context meter staying empty during OpenCode v2 turns and disappearing after them
+- Fixed OpenCode v2 question cards showing only the header and offering no typed answer
+- Fixed OpenCode v2 patch edits from GPT models showing as a raw Patch card instead of an edit diff
+- Fixed completed OpenCode v2 edits showing no diff
+
+Full notes: https://paseo.sh/changelog
