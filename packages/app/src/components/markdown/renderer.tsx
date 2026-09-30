@@ -9,8 +9,11 @@ import React, {
 import {
   Image,
   Pressable,
+  ScrollView,
   Text,
   View,
+  type LayoutChangeEvent,
+  type StyleProp,
   type TextProps,
   type TextStyle,
   type ViewStyle,
@@ -673,6 +676,11 @@ export function createSharedMarkdownRules(): RenderRules {
         </View>
       );
     },
+    table: (node: ASTNode, children: ReactNode[], _parent: ASTNode[], styles: MarkdownStyles) => (
+      <MarkdownTable key={node.key} columns={countTableColumns(node)} tableStyle={styles.table}>
+        {children}
+      </MarkdownTable>
+    ),
     th: (node: ASTNode, children: ReactNode[], _parent: ASTNode[], styles: MarkdownStyles) => (
       <MarkdownTableCellText key={node.key}>
         <View style={styles._VIEW_SAFE_th}>{children}</View>
@@ -715,6 +723,50 @@ export function createSharedMarkdownRules(): RenderRules {
       </SharedMarkdownLink>
     ),
   };
+}
+
+// Below this a column breaks words mid-word on a phone; wider tables scroll sideways instead.
+const MIN_TABLE_COLUMN_WIDTH = 150;
+
+export function countTableColumns(table: ASTNode): number {
+  const firstRow = table.children.flatMap((section) => section.children)[0];
+  return Math.max(1, firstRow?.children.length ?? 1);
+}
+
+export function MarkdownTable({
+  columns,
+  tableStyle,
+  dataSet,
+  children,
+}: {
+  columns: number;
+  tableStyle: StyleProp<ViewStyle>;
+  dataSet?: Record<string, string>;
+  children: ReactNode;
+}) {
+  // A horizontal scroller sizes its content to the text, so the table gets an explicit
+  // width: the space available, or more when its columns would otherwise get too narrow.
+  const [available, setAvailable] = useState(0);
+  const handleLayout = useCallback(
+    (event: LayoutChangeEvent) => setAvailable(event.nativeEvent.layout.width),
+    [],
+  );
+  const innerStyle = useMemo(
+    () => [
+      tableStyle,
+      available > 0
+        ? { width: Math.max(available, columns * MIN_TABLE_COLUMN_WIDTH) }
+        : { minWidth: columns * MIN_TABLE_COLUMN_WIDTH },
+    ],
+    [available, columns, tableStyle],
+  );
+  return (
+    <ScrollView horizontal showsHorizontalScrollIndicator onLayout={handleLayout}>
+      <View style={innerStyle} dataSet={dataSet}>
+        {children}
+      </View>
+    </ScrollView>
+  );
 }
 
 const detailsStyles = StyleSheet.create((theme) => ({

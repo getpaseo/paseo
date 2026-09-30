@@ -56,7 +56,12 @@ import Animated, {
 } from "react-native-reanimated";
 import Svg, { Defs, LinearGradient as SvgLinearGradient, Rect, Stop } from "react-native-svg";
 import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
-import { MarkdownRenderer, type MarkdownStyles } from "@/components/markdown/renderer";
+import {
+  MarkdownRenderer,
+  MarkdownTable,
+  countTableColumns,
+  type MarkdownStyles,
+} from "@/components/markdown/renderer";
 import type { TaskActivity, TodoEntry, UserMessageImageAttachment } from "@/types/stream";
 import type { AgentAttachment } from "@getpaseo/protocol/messages";
 import type { ToolCallDetail } from "@getpaseo/protocol/agent-types";
@@ -1621,9 +1626,14 @@ export const AssistantMessage = memo(function AssistantMessage({
         <View key={node.key} style={styles._VIEW_SAFE_hr} dataSet={markdownCopyDataSet.hr} />
       ),
       table: (node: ASTNode, children: ReactNode[], _parent: ASTNode[], styles: MarkdownStyles) => (
-        <View key={node.key} style={styles._VIEW_SAFE_table} dataSet={markdownCopyDataSet.table}>
+        <MarkdownTable
+          key={node.key}
+          columns={countTableColumns(node)}
+          tableStyle={styles._VIEW_SAFE_table}
+          dataSet={markdownCopyDataSet.table}
+        >
           {children}
-        </View>
+        </MarkdownTable>
       ),
       thead: (node: ASTNode, children: ReactNode[], _parent: ASTNode[], styles: MarkdownStyles) => (
         <View key={node.key} style={styles._VIEW_SAFE_thead} dataSet={markdownCopyDataSet.thead}>
