@@ -11,9 +11,11 @@ import { scheduleOnUI } from "react-native-worklets";
 import { useRetainedPanelActive } from "@/components/retained-panel";
 import {
   SYNCED_LOADER_DOT_COUNT,
+  getMsUntilNextSyncedLoaderStep,
   getSyncedLoaderDotOpacity,
   getSyncedLoaderStep,
 } from "@/components/synced-loader-state";
+import { isWeb } from "@/constants/platform";
 
 const GRID_COLUMNS = 2;
 const DOT_KEYS = Array.from({ length: SYNCED_LOADER_DOT_COUNT }, (_, i) => `dot-${i}`);
@@ -32,6 +34,13 @@ function advanceSharedStep(): void {
   const nextStep = getSyncedLoaderStep(Date.now());
   if (sharedStep.value !== nextStep) {
     sharedStep.value = nextStep;
+  }
+  if (isWeb) {
+    // Web runs worklets on the page's main thread, where a per-frame loop wakes the renderer on
+    // every display refresh to publish about 6 changes a second (#4634). Wake at the next step.
+    // Keep this inside the one worklet: two worklets that call each other throw at module load.
+    setTimeout(advanceSharedStep, getMsUntilNextSyncedLoaderStep(Date.now()));
+    return;
   }
   requestAnimationFrame(advanceSharedStep);
 }

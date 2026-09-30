@@ -1,5 +1,9 @@
 import { describe, expect, test } from "vitest";
-import { getSyncedLoaderDotOpacity, getSyncedLoaderStep } from "./synced-loader-state";
+import {
+  getMsUntilNextSyncedLoaderStep,
+  getSyncedLoaderDotOpacity,
+  getSyncedLoaderStep,
+} from "./synced-loader-state";
 
 describe("synced loader state", () => {
   test("advances through six wall-clock-aligned steps every 950 milliseconds", () => {
@@ -27,6 +31,19 @@ describe("synced loader state", () => {
       [0.34, 0.56, 0, 0.78, 0, 1],
       [0, 0.34, 0, 0.56, 1, 0.78],
       [0, 0, 1, 0.34, 0.78, 0.56],
+    ]);
+  });
+});
+
+describe("time until the next synced loader step", () => {
+  test("lands on the first millisecond of the next step", () => {
+    const sampleTimes = [0, 158, 159, 474, 475, 949, 950 * 3 + 800];
+
+    const waits = sampleTimes.map(getMsUntilNextSyncedLoaderStep);
+
+    expect(waits).toEqual([159, 1, 158, 1, 159, 1, 150]);
+    expect(sampleTimes.map((t, i) => getSyncedLoaderStep(t + waits[i]!))).toEqual([
+      1, 1, 2, 3, 4, 0, 0,
     ]);
   });
 });
