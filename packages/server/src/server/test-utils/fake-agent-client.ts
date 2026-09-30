@@ -18,6 +18,7 @@ import type {
   AgentSessionConfig,
   AgentStreamEvent,
   AgentSlashCommand,
+  AgentTimelineItem,
   AgentUsage,
   FetchCatalogOptions,
 } from "../agent/agent-sdk-types.js";
@@ -58,13 +59,28 @@ interface FakeAgentSessionOptions {
   sessionId?: string;
   memoryMarker?: string | null;
   closeSession?: () => Promise<void>;
-  onStartTurn?: (prompt: AgentPromptInput) => void;
+  onStartTurn?: (
+    prompt: AgentPromptInput,
+    options: AgentRunOptions | undefined,
+    sessionId: string,
+  ) => AgentTimelineItem | void;
+  holdTurnFor?: (prompt: string) => Promise<void> | null;
 }
 
 export interface TestAgentClientOptions {
   beforeCreateSession?: () => Promise<void>;
   closeSession?: () => Promise<void>;
-  onStartTurn?: (prompt: AgentPromptInput) => void;
+  onStartTurn?: (
+    prompt: AgentPromptInput,
+    options: AgentRunOptions | undefined,
+    sessionId: string,
+  ) => AgentTimelineItem | void;
+  /**
+   * Test hook: after a turn starts, await the returned promise before emitting
+   * any further events. Return null to let the turn run normally. Used to keep
+   * a turn open while a caller drains or restarts the daemon.
+   */
+  holdTurnFor?: (prompt: string) => Promise<void> | null;
   supportsMcpServers?: boolean;
 }
 
@@ -337,7 +353,8 @@ class FakeAgentSession implements AgentSession {
   private activeForegroundTurnId: string | null = null;
 
   private readonly closeSession: (() => Promise<void>) | undefined;
-  private readonly onStartTurn: ((prompt: AgentPromptInput) => void) | undefined;
+  private readonly onStartTurn: TestAgentClientOptions["onStartTurn"];
+  private readonly holdTurnFor: TestAgentClientOptions["holdTurnFor"];
 
   constructor(options: FakeAgentSessionOptions) {
     this.capabilities = {
@@ -350,6 +367,7 @@ class FakeAgentSession implements AgentSession {
     this.memoryMarker = options.memoryMarker ?? null;
     this.closeSession = options.closeSession;
     this.onStartTurn = options.onStartTurn;
+    this.holdTurnFor = options.holdTurnFor;
     this.historyPath = path.join(
       tmpdir(),
       "paseo-fake-provider-history",
@@ -737,6 +755,11 @@ class FakeAgentSession implements AgentSession {
       };
       await this.appendHistoryEvent(turnStarted);
       this.notifySubscribers(turnStarted);
+
+      const hold = this.holdTurnFor?.(textPrompt) ?? null;
+      if (hold) {
+        await hold;
+      }
 
       if (textPrompt === "Emit a provider child") {
         const child: AgentStreamEvent = {
@@ -1220,6 +1243,7 @@ class FakeAgentClient implements AgentClient {
       supportsMcpServers: this.options.supportsMcpServers,
       closeSession: this.options.closeSession,
       onStartTurn: this.options.onStartTurn,
+      holdTurnFor: this.options.holdTurnFor,
     });
   }
 
@@ -1245,6 +1269,7 @@ class FakeAgentClient implements AgentClient {
       memoryMarker: typeof marker === "string" ? marker : null,
       closeSession: this.options.closeSession,
       onStartTurn: this.options.onStartTurn,
+      holdTurnFor: this.options.holdTurnFor,
     });
   }
 

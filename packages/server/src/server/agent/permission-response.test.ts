@@ -14,6 +14,7 @@ class FakePermissionAgentManager {
   permissionResult: AgentPermissionResult | void;
   hasRunInFlight = false;
   outOfBandHandled = false;
+  draining = false;
   permissionResponses: Array<{
     agentId: string;
     requestId: string;
@@ -22,6 +23,12 @@ class FakePermissionAgentManager {
   streamRuns: Array<{ agentId: string; prompt: AgentPromptInput; options?: AgentRunOptions }> = [];
   replacementRuns: Array<{ agentId: string; prompt: AgentPromptInput; options?: AgentRunOptions }> =
     [];
+
+  assertAcceptingPrompts(): void {
+    if (this.draining) {
+      throw new Error("host_restarting");
+    }
+  }
 
   async respondToPermission(
     agentId: string,
@@ -138,5 +145,21 @@ describe("respondToAgentPermission", () => {
         prompt: "continue after approval",
       },
     ]);
+  });
+
+  test("admits a permission follow-up while the daemon is draining", async () => {
+    const agentManager = new FakePermissionAgentManager();
+    agentManager.draining = true;
+    agentManager.permissionResult = { followUpPrompt: "continue after approval" };
+
+    await respondToAgentPermission({
+      agentManager,
+      agentId: "agent-1",
+      requestId: "permission-1",
+      response: { behavior: "allow" },
+      logger,
+    });
+
+    expect(agentManager.streamRuns).toHaveLength(1);
   });
 });

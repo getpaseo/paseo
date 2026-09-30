@@ -79,6 +79,34 @@ export function parseTimeoutMs(raw: unknown, fallback = 600_000): number {
   return Math.ceil(seconds * 1000);
 }
 
+/**
+ * Parse a duration such as `30s`, `10m`, `2h`, or a bare number of seconds.
+ * Used by `daemon restart --idle-timeout`.
+ */
+export function parseDurationMs(raw: unknown, fallback: number): number {
+  if (raw === undefined || raw === null || raw === "") return fallback;
+  const match = /^(\d+(?:\.\d+)?)\s*(ms|s|m|h)?$/i.exec(String(raw).trim());
+  if (!match) {
+    throw {
+      code: "INVALID_DURATION",
+      message: `Invalid duration ${JSON.stringify(String(raw))}. Use forms like 30s, 10m, or 2h.`,
+    };
+  }
+  const amount = Number(match[1]);
+  const unit = (match[2] ?? "s").toLowerCase();
+  const multipliers: Record<string, number> = {
+    ms: 1,
+    s: 1000,
+    m: 60_000,
+    h: 3_600_000,
+  };
+  const value = Math.ceil(amount * (multipliers[unit] ?? 1000));
+  if (!Number.isFinite(value) || value < 0) {
+    throw { code: "INVALID_DURATION", message: "Duration must be zero or more." };
+  }
+  return value;
+}
+
 const REMOVED_LAUNCH_FLAGS: Record<string, string> = {
   "--port <port>": "daemon.listen",
   "--listen <listen>": "daemon.listen",

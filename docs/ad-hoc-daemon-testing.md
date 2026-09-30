@@ -163,3 +163,7 @@ try {
 ### 7. ACP providers spawn real processes
 
 When testing ACP providers (e.g., Gemini with `extends: "acp"`), the daemon will spawn real processes to probe for models and modes. The binary must be installed and on PATH. Probing can take 5-15 seconds depending on the provider.
+
+### 8. Restart/reconnect testing needs a fixed listen port
+
+A worker restart with a `listen` of `127.0.0.1:0` binds a new OS-assigned port each time, so the supervisor's published endpoint changes and clients cannot reconnect by the old URL. For `daemon restart` / reconnect / host-restart-retry testing, pin the port (for example `127.0.0.1:<free port>`) so the reference and replacement workers share the endpoint. In-process tests that do not actually swap the worker do not need this.
