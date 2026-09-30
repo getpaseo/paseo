@@ -1,4 +1,6 @@
+import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
+import { promisify } from "node:util";
 import { join } from "node:path";
 import type { Logger } from "pino";
 import { PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
@@ -38,6 +40,7 @@ import {
   type WorkItem,
 } from "./types.js";
 
+const execFileAsync = promisify(execFile);
 const DISPATCH_INTERVAL_MS = 2_000;
 const HEALTH_INTERVAL_MS = 60_000;
 const LEASE_MS = 5 * 60_000;
@@ -101,8 +104,13 @@ export class TeamService {
         const teamId = event.agent.labels?.[TEAM_LABEL];
         if (!teamId || event.agent.labels?.[TEAM_ROLE_LABEL] === undefined) return;
         if (event.agent.lifecycle === "idle" || event.agent.lifecycle === "error") {
-          void this.onTurnEnded(teamId, event.agent.id, event.agent.lifecycle === "error").catch(
-            (error) => this.logger.warn({ err: error, teamId }, "Team turn-end handling failed"),
+          void this.onTurnEnded(
+            teamId,
+            event.agent.id,
+            event.agent.lifecycle === "error",
+            event.agent.labels?.[TEAM_DECISION_LABEL],
+          ).catch((error) =>
+            this.logger.warn({ err: error, teamId }, "Team turn-end handling failed"),
           );
         }
       },
@@ -176,7 +184,15 @@ export class TeamService {
       }
       for (const binding of Object.values(draft.bindings)) {
         if (binding.status !== "active" || binding.turn === "reported") continue;
-        if (binding.turn === "idle") continue;
+        if (!binding.agentId) {
+          // Seated, but the crash came before the agent id landed.
+          const found = await this.findAgentForDecision(binding.decisionId);
+          if (!found) continue; // the start-role decision is retried and fills this seat
+          binding.agentId = found;
+          binding.turn = "running";
+        }
+        // "starting" and "idle" seats have a pending decision that the retry covers.
+        if (binding.turn !== "running") continue;
         const record = await this.options.agentStorage.get(binding.agentId);
         const item = draft.items[binding.workItemId];
         if (!record || record.archivedAt || !item) {
@@ -200,7 +216,9 @@ export class TeamService {
           continue;
         }
         // The daemon restart ended the turn without a committed report: resume the same session.
+        // "starting" keeps the idle state of the reloaded session from counting as a turn end.
         if (item) {
+          binding.turn = "starting";
           addDecision(
             draft,
             item,
@@ -250,6 +268,7 @@ export class TeamService {
       title: params.title,
       objective: params.objective,
       cwd,
+      baseBranch: await currentBranch(cwd),
       bossAgentId: params.bossAgentId,
       roleProfiles,
     });
@@ -303,6 +322,21 @@ export class TeamService {
               "boss answered",
             );
           }
+          continue;
+        }
+        // A seat that stopped without a report gets the answer and another turn.
+        const phase = boardOf(this.pack(draft.team), item).phases[item.phase];
+        const seat = phase?.role ? activeBinding(draft, item, phase.role) : null;
+        if (seat && seat.turn === "idle") {
+          seat.turn = "starting";
+          seat.nudges = 0;
+          addDecision(
+            draft,
+            item,
+            "message-role",
+            { bindingId: seat.id, note: text },
+            `answer:${seat.id}:${draft.commit}`,
+          );
         }
       }
       return { events, result: null };
@@ -330,13 +364,13 @@ export class TeamService {
   // ---------------------------------------------------------------- worker API
 
   async resolveCaller(agentId: string): Promise<TeamCallerBinding | null> {
-    const record = await this.options.agentStorage.get(agentId);
-    const teamId = record?.labels?.[TEAM_LABEL];
-    if (!teamId || !record?.labels?.[TEAM_ROLE_LABEL]) return null;
+    const labels =
+      this.options.agentManager.getAgent(agentId)?.labels ??
+      (await this.options.agentStorage.get(agentId))?.labels;
+    const teamId = labels?.[TEAM_LABEL];
+    if (!teamId || !labels?.[TEAM_ROLE_LABEL]) return null;
     const state = await this.store.get(teamId);
-    const binding = state
-      ? Object.values(state.bindings).find((b) => b.agentId === agentId && b.status === "active")
-      : undefined;
+    const binding = state ? findSeat(state, agentId, labels[TEAM_DECISION_LABEL]) : undefined;
     return binding ? { teamId, binding } : null;
   }
 
@@ -394,13 +428,18 @@ export class TeamService {
 
   // ---------------------------------------------------------------- turn ends
 
-  async onTurnEnded(teamId: string, agentId: string, errored: boolean): Promise<void> {
-    if (this.options.agentManager.hasInFlightRun(agentId)) return;
+  async onTurnEnded(
+    teamId: string,
+    agentId: string,
+    errored: boolean,
+    decisionId?: string,
+  ): Promise<void> {
     await this.store.commit(teamId, (draft) => {
       const events: TeamEventDraft[] = [];
-      const binding = Object.values(draft.bindings).find(
-        (b) => b.agentId === agentId && b.status === "active",
-      );
+      // Checked inside the commit: an idle event from reloading a session can queue up behind the
+      // commit that started its next turn.
+      if (this.options.agentManager.hasInFlightRun(agentId)) return { events, result: null };
+      const binding = findSeat(draft, agentId, decisionId);
       if (!binding || binding.turn !== "running") return { events, result: null };
       const item = draft.items[binding.workItemId];
       if (!item) return { events, result: null };
@@ -548,7 +587,9 @@ export class TeamService {
         if (!binding || binding.status !== "active") return () => [];
         const role = pack.roles[binding.role]!;
         let text = await this.workPacket(state, pack, item, role);
-        if (decision.payload.nudge) {
+        if (typeof decision.payload.note === "string") {
+          text = `The boss answered: ${decision.payload.note}\n\n${text}`;
+        } else if (decision.payload.nudge) {
           text =
             "You ended your turn without calling `team_report`. Finish your part if needed, then call `team_report` with one of the allowed outcomes.";
         } else if (decision.payload.resume) {
@@ -623,12 +664,44 @@ export class TeamService {
     if (!role) throw new Error(`Pack ${pack.id} has no role ${roleId}`);
     const profile = state.team.roleProfiles[roleId];
     if (!profile) throw new Error(`No harness bound for role ${roleId}`);
+    const profileName = profile.model ? `${profile.provider}/${profile.model}` : profile.provider;
 
-    // Idempotent across crashes: an agent created for this decision before the commit landed is reused.
-    const existing = (await this.options.agentStorage.list()).find(
-      (r) => r.labels?.[TEAM_DECISION_LABEL] === decision.id && !r.archivedAt,
-    );
-    let agentId = existing?.id;
+    // Seat first, agent second: a report that arrives before the agent id is recorded still
+    // finds its seat through the decision label, and a crash leaves a seat recovery can finish.
+    const bindingId = await this.store.commit(state.team.id, (draft) => {
+      const target = draft.items[item.id];
+      const existing = Object.values(draft.bindings).find(
+        (b) => b.decisionId === decision.id && b.status === "active",
+      );
+      if (existing || !target) return { events: [], result: existing?.id ?? null };
+      const now = this.now().toISOString();
+      const previous = activeBinding(draft, target, roleId);
+      if (previous) {
+        previous.status = "revoked";
+        previous.revokedAt = now;
+      }
+      const binding: Binding = {
+        id: newId("seat"),
+        workItemId: item.id,
+        role: roleId,
+        phase: target.phase,
+        revisionAtStart: target.revision,
+        decisionId: decision.id,
+        agentId: "",
+        profile: profileName,
+        status: "active",
+        turn: "starting",
+        nudges: 0,
+        lastEventAt: now,
+        createdAt: now,
+      };
+      draft.bindings[binding.id] = binding;
+      target.bindings[roleId] = binding.id;
+      return { events: [], result: binding.id };
+    });
+    if (!bindingId) return () => [];
+
+    let agentId = await this.findAgentForDecision(decision.id);
     if (!agentId) {
       const prompt = await this.workPacket(state, pack, item, role);
       const key = String(item.pack.key ?? item.id)
@@ -638,7 +711,7 @@ export class TeamService {
         role.workspace === "item-worktree" ? await this.itemWorktree(state, item) : state.team.cwd;
       const created = await this.options.createAgent({
         kind: "mcp",
-        provider: profile.model ? `${profile.provider}/${profile.model}` : profile.provider,
+        provider: profileName,
         title: `${role.title} · ${item.title}`,
         cwd,
         initialPrompt: prompt,
@@ -656,6 +729,7 @@ export class TeamService {
               worktree: {
                 worktreeName: `team-${state.team.id.slice(-6)}-${key}`,
                 branchName: `team/${state.team.id.slice(-6)}/${key}`,
+                baseBranch: state.team.baseBranch ?? "main",
               },
             }
           : {}),
@@ -667,42 +741,42 @@ export class TeamService {
       agentId = created.snapshot.id;
     }
     const finalAgentId = agentId;
+    // The worktree service picks the branch name itself, so read what it actually checked out.
+    const branch =
+      role.workspace === "own-worktree"
+        ? await currentBranch((await this.options.agentStorage.get(agentId))?.cwd ?? "")
+        : undefined;
     return (draft) => {
+      const binding = draft.bindings[bindingId];
+      if (!binding) return [];
+      binding.agentId = finalAgentId;
       const target = draft.items[item.id];
-      if (!target) return [];
-      const now = this.now().toISOString();
-      const binding: Binding = {
-        id: newId("seat"),
-        workItemId: item.id,
-        role: roleId,
-        phase: target.phase,
-        revisionAtStart: target.revision,
-        decisionId: decision.id,
-        agentId: finalAgentId,
-        profile: profile.model ? `${profile.provider}/${profile.model}` : profile.provider,
-        status: "active",
-        turn: "running",
-        nudges: 0,
-        lastEventAt: now,
-        createdAt: now,
-      };
-      const previous = activeBinding(draft, target, roleId);
-      if (previous) {
-        previous.status = "revoked";
-        previous.revokedAt = now;
+      if (
+        branch &&
+        target &&
+        !target.artifacts.some((a) => a.kind === "branch" && a.ref === branch)
+      ) {
+        target.artifacts.push({ kind: "branch", ref: branch });
       }
-      draft.bindings[binding.id] = binding;
-      target.bindings[roleId] = binding.id;
+      // The worker may already have reported inside its first turn.
+      if (binding.turn === "starting") binding.turn = "running";
       return [
         {
           type: "role.started",
           actor: { type: "role", id: roleId },
           workItemId: item.id,
-          text: `${role.title} takes ${item.title} (${binding.profile})`,
-          data: { agentId: finalAgentId, bindingId: binding.id },
+          text: `${role.title} takes ${item.title} (${profileName})`,
+          data: { agentId: finalAgentId, bindingId },
         },
       ];
     };
+  }
+
+  private async findAgentForDecision(decisionId: string): Promise<string | undefined> {
+    const existing = (await this.options.agentStorage.list()).find(
+      (r) => r.labels?.[TEAM_DECISION_LABEL] === decisionId && !r.archivedAt,
+    );
+    return existing?.id;
   }
 
   private async itemWorktree(state: TeamState, item: WorkItem): Promise<string> {
@@ -839,6 +913,25 @@ export class TeamService {
       });
     }
     void this.dispatchAll();
+  }
+}
+
+/** A seat is found by its agent, or by the decision label before the agent id is recorded. */
+function findSeat(state: TeamState, agentId: string, decisionId?: string): Binding | undefined {
+  return Object.values(state.bindings).find(
+    (b) =>
+      b.status === "active" &&
+      (b.agentId === agentId || (decisionId !== undefined && b.decisionId === decisionId)),
+  );
+}
+
+async function currentBranch(cwd: string): Promise<string | undefined> {
+  try {
+    const { stdout } = await execFileAsync("git", ["-C", cwd, "rev-parse", "--abbrev-ref", "HEAD"]);
+    const branch = stdout.trim();
+    return branch && branch !== "HEAD" ? branch : undefined;
+  } catch {
+    return undefined;
   }
 }
 

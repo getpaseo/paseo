@@ -23,10 +23,11 @@ export function isToolAllowedForTeamRole(role: string | undefined, tool: string)
 export function resolveTeamRole(
   agentManager: { getAgent(id: string): { labels?: Record<string, string> } | null | undefined },
   callerAgentId: string | undefined,
+  callerLabels?: Record<string, string>,
 ): string | undefined {
-  return callerAgentId
-    ? agentManager.getAgent(callerAgentId)?.labels?.[TEAM_ROLE_LABEL]
-    : undefined;
+  if (!callerAgentId) return undefined;
+  const labels = callerLabels ?? agentManager.getAgent(callerAgentId)?.labels;
+  return labels?.[TEAM_ROLE_LABEL];
 }
 
 function text(value: string): PaseoToolResult {

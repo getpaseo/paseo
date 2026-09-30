@@ -129,8 +129,12 @@ describe("TeamService", () => {
     svc.stop();
     svc = makeService(root, host);
     await svc.start();
+    // Reloading the session emits "idle"; that must not count as the worker ending its turn.
+    await svc.onTurnEnded(teamId, devA.id, false);
     await svc.dispatchAll();
     expect(host.created.length).toBe(createdBeforeRestart);
+    const events = (await svc.status(teamId)).events;
+    expect(events.some((e) => e.type === "health.report-missing")).toBe(false);
     expect(host.prompts.at(-1)).toMatchObject({ agentId: devA.id });
     expect(host.prompts.at(-1)!.prompt).toContain("daemon restarted");
 
@@ -232,5 +236,19 @@ describe("TeamService", () => {
     const after = (await upgraded.status(state.team.id)).state;
     expect(after.team.status).toBe("paused");
     expect(after.team.pausedReason).toMatch(/pack-version-mismatch/);
+  });
+});
+
+describe("team tool gate", () => {
+  it("gives seated sessions only their team tools, even before the agent is registered", async () => {
+    const { isToolAllowedForTeamRole, resolveTeamRole } = await import("./tools.js");
+    const unregistered = { getAgent: () => undefined };
+    const role = resolveTeamRole(unregistered, "agent-1", { [TEAM_ROLE_LABEL]: "developer" });
+    expect(role).toBe("developer");
+    expect(isToolAllowedForTeamRole(role, "team_report")).toBe(true);
+    expect(isToolAllowedForTeamRole(role, "create_agent")).toBe(false);
+    expect(isToolAllowedForTeamRole(role, "item_plan")).toBe(false);
+    expect(isToolAllowedForTeamRole("po", "item_plan")).toBe(true);
+    expect(isToolAllowedForTeamRole(undefined, "create_agent")).toBe(true);
   });
 });

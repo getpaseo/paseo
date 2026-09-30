@@ -109,6 +109,8 @@ export const TeamSchema = z.object({
   title: z.string(),
   objective: z.string(),
   cwd: z.string(),
+  /** Branch the team's worktrees start from. */
+  baseBranch: z.string().optional(),
   bossAgentId: z.string(),
   packId: z.string(),
   packVersion: z.number().int(),

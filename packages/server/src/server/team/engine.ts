@@ -86,6 +86,7 @@ export function createTeamState(params: {
   title: string;
   objective: string;
   cwd: string;
+  baseBranch?: string;
   bossAgentId: string;
   roleProfiles: Team["roleProfiles"];
 }): { state: TeamState; events: TeamEventDraft[] } {
@@ -124,6 +125,7 @@ export function createTeamState(params: {
       title: params.title,
       objective: params.objective,
       cwd: params.cwd,
+      baseBranch: params.baseBranch,
       bossAgentId: params.bossAgentId,
       packId: params.pack.id,
       packVersion: params.pack.version,

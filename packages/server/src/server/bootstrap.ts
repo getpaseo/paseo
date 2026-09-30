@@ -1582,6 +1582,7 @@ export async function createPaseoDaemon(
       paseoHome: config.paseoHome,
       worktreesRoot: config.worktreesRoot,
       callerAgentId: runtime.callerAgentId,
+      callerLabels: runtime.callerLabels,
       enableVoiceTools: runtime.enableVoiceTools,
       voiceOnly: runtime.voiceOnly,
       resolveSpeakHandler: (agentId) => wsServer?.resolveVoiceSpeakHandler(agentId) ?? null,

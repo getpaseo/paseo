@@ -159,6 +159,7 @@ export interface PaseoToolHostDependencies {
    * Used for cwd/mode inheritance when agents spawn child agents.
    */
   callerAgentId?: string;
+  callerLabels?: Record<string, string>;
   /**
    * Optional resolver for session-bound speak handlers.
    * Used by hidden voice agents to narrate through daemon-managed TTS.
@@ -629,7 +630,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
   };
 
   const tools = new Map<string, PaseoToolDefinition>();
-  const teamRole = resolveTeamRole(agentManager, callerAgentId);
+  const teamRole = resolveTeamRole(agentManager, callerAgentId, options.callerLabels);
   const registerTool = (
     name: string,
     config: PaseoToolConfig,
