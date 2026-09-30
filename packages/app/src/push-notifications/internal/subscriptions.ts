@@ -8,6 +8,8 @@ import type { RevokePushNotificationsInput, StartPushNotificationsInput } from "
 
 const STORAGE_PREFIX = "@paseo:expo-push-token:";
 const ExpoPushTokenSchema = z.string().trim().min(1);
+// Mirrors the daemon's FCM_TOKEN_PREFIX: tokens with it are sent through FCM, not Expo.
+const FCM_TOKEN_PREFIX = "fcm:";
 
 function storageKey(serverId: string): string {
   return `${STORAGE_PREFIX}${serverId}`;
@@ -41,6 +43,16 @@ async function resolveToken(serverId: string): Promise<string | null> {
       name: "default",
       importance: Notifications.AndroidImportance.DEFAULT,
     });
+  }
+
+  // Android talks to PandaOS's own Firebase project directly; the daemon sends through FCM.
+  if (Platform.OS === "android") {
+    const device = await Notifications.getDevicePushTokenAsync();
+    const token = typeof device.data === "string" ? device.data.trim() : "";
+    if (!token) return cached;
+    const prefixed = `${FCM_TOKEN_PREFIX}${token}`;
+    await AsyncStorage.setItem(key, prefixed);
+    return prefixed;
   }
 
   const projectId = getExpoProjectId();
