@@ -45,6 +45,7 @@ interface PluginRuntimePort {
   discoverUsage: PluginRuntime["discoverUsage"];
   connectProvider: PluginRuntime["connectProvider"];
   getProviderCatalogCacheKey?: PluginRuntime["getProviderCatalogCacheKey"];
+  getProviderStatus?: PluginRuntime["getProviderStatus"];
   validatePlugin?(path: string): Promise<void>;
   startPlugin(pluginId: string, path: string, canPublish: () => boolean): Promise<void>;
   startBuiltinPlugin?(plugin: BuiltinPlugin): Promise<void>;
@@ -602,15 +603,9 @@ export class PluginService {
     pluginDirectory: string,
   ): Promise<void> {
     const metadata = this.runtime.getProviderRegistrations?.(pluginId) ?? [];
-    const configuredIds = new Set(Object.keys(this.configStore.get().providers));
     for (const provider of metadata) {
       if (BUILTIN_PROVIDER_ID_SET.has(provider.id)) {
         throw new Error(`Plugin ${pluginId} cannot register builtin provider ID "${provider.id}"`);
-      }
-      if (configuredIds.has(provider.id)) {
-        throw new Error(
-          `Plugin ${pluginId} cannot register configured provider ID "${provider.id}"`,
-        );
       }
       if (this.providers.has(provider.id)) {
         throw new Error(`Plugin ${pluginId} cannot register provider ID "${provider.id}" twice`);
@@ -622,6 +617,14 @@ export class PluginService {
           id: provider.id,
           label: provider.label,
           description: provider.description,
+          command: provider.command,
+          status: provider.hasStatus
+            ? (request) => {
+                if (!this.runtime.getProviderStatus)
+                  throw new Error("Plugin runtime cannot resolve provider status");
+                return this.runtime.getProviderStatus(pluginId, provider.id, request);
+              }
+            : undefined,
           getCatalogCacheKey: provider.hasCatalogCacheKey
             ? (options) => {
                 if (!this.runtime.getProviderCatalogCacheKey)

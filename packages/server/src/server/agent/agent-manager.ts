@@ -17,7 +17,7 @@ import {
   PARENT_AGENT_ID_LABEL,
 } from "@getpaseo/protocol/agent-labels";
 import type { Logger } from "pino";
-import type { ProviderOptions, ToolPolicy } from "@getpaseo/protocol/agent-types";
+import type { ToolPolicy } from "@getpaseo/protocol/agent-types";
 import type { ProviderPaseoToolsPolicy } from "@getpaseo/protocol/provider-config";
 import { z } from "zod";
 import type { TerminalManager } from "../../terminal/terminal-manager.js";
@@ -292,11 +292,6 @@ interface AgentManagerRescueTimeouts {
 interface ProviderEnabledFlag {
   enabled: boolean;
   derivedFromProviderId?: string | null;
-  validateOptions?: (options: ProviderOptions | undefined) => ProviderOptions | undefined;
-  applyOptions?: (
-    config: AgentSessionConfig,
-    options: ProviderOptions | undefined,
-  ) => AgentSessionConfig;
   applyToolPolicy?: (
     config: AgentSessionConfig,
     toolPolicy: ToolPolicy | undefined,
@@ -5094,22 +5089,15 @@ export class AgentManager {
 
   private applyProviderConfiguration(config: AgentSessionConfig): AgentSessionConfig {
     const definition = this.providerDefinitions.get(config.provider);
-    if (config.providerOptions !== undefined && !definition?.validateOptions) {
-      throw new Error(`Provider '${config.provider}' does not accept providerOptions`);
-    }
-    const validatedOptions = definition?.validateOptions?.(config.providerOptions);
-    const withOptions = definition?.applyOptions
-      ? definition.applyOptions(config, validatedOptions)
-      : config;
-    this.validateToolPolicyServers(withOptions);
-    if (withOptions.toolPolicy && !definition?.applyToolPolicy) {
+    this.validateToolPolicyServers(config);
+    if (config.toolPolicy && !definition?.applyToolPolicy) {
       throw new Error(
         `Provider '${config.provider}' cannot preapprove exact MCP tools for unattended execution`,
       );
     }
     return definition?.applyToolPolicy
-      ? definition.applyToolPolicy(withOptions, withOptions.toolPolicy)
-      : withOptions;
+      ? definition.applyToolPolicy(config, config.toolPolicy)
+      : config;
   }
 
   private validateToolPolicyServers(config: AgentSessionConfig): void {

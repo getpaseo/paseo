@@ -4,8 +4,8 @@ import type { PluginSidebarSection } from "@/plugins/types";
 export type SidebarSection = PluginSidebarSection;
 
 /**
- * Each section's built-in items in their default order. The footer's Add project row and its
- * icon row (Hosts, Import session, Help and support, Settings) are fixed and not items.
+ * Each section's built-in items in their default order. The footer's bottom line
+ * (Add project and the Hosts, Import session, Help and support, Settings icons) is fixed.
  */
 export const BUILTIN_SIDEBAR_ITEM_IDS = {
   header: ["new-workspace", "history", "search", "schedules"],

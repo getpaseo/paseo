@@ -3,8 +3,98 @@ import { fileURLToPath } from "node:url";
 import { createPiExtensionHost } from "../index.js";
 import { readSubagentFixture, verifySubagentFixture } from "../subagent-fixture-test.js";
 import { streamPiHistory } from "../../history-mapper.js";
+import { GOTGENES_CHILD_SESSION_MARKER, gotgenesRuntimeBridge } from "./runtime-bridge.js";
+
+const SERVICE_KEY = Symbol.for("@gotgenes/pi-subagents:service");
+
+function loadRuntimeBridge() {
+  const listeners = new Map<string, (event: unknown, ctx?: unknown) => void>();
+  const pi = {
+    on: (name: string, listener: (event: unknown, ctx?: unknown) => void) =>
+      listeners.set(name, listener),
+    events: {
+      on: (name: string, listener: (event: unknown) => void) => listeners.set(name, listener),
+    },
+  };
+  new Function("pi", gotgenesRuntimeBridge)(pi);
+  return (name: string, event: unknown, ctx?: unknown) => listeners.get(name)?.(event, ctx);
+}
+
+function publishService(agents: Array<{ id: string; outputFile?: string }>): void {
+  (globalThis as Record<symbol, unknown>)[SERVICE_KEY] = { listAgents: () => agents };
+}
 
 describe("@gotgenes/pi-subagents adapter", () => {
+  test("reports a child's file after the child republishes the gotgenes service", async () => {
+    const notifications: string[] = [];
+    const emit = loadRuntimeBridge();
+    const file = "/sessions/parent/tasks/2026-09-30_child-session.jsonl";
+    try {
+      publishService([{ id: "native-1", outputFile: file }]);
+      emit(
+        "session_start",
+        {},
+        { ui: { notify: (message: string) => notifications.push(message) } },
+      );
+      // Pi loads gotgenes again inside the child, and that copy replaces the global service.
+      publishService([]);
+      emit("subagents:child:session-created", { sessionId: "child-session" });
+
+      await expect.poll(() => notifications).toHaveLength(1);
+      const host = createPiExtensionHost();
+      host.mapToolCall({
+        callId: "call-1",
+        toolName: "subagent",
+        args: { subagent_type: "Explore", prompt: "Inspect" },
+        status: "completed",
+        result: { details: { agentId: "native-1", status: "background" } },
+      });
+      expect(host.mapRuntimeNotification(notifications[0]!)?.childSessions).toEqual([
+        { id: "call-1", file },
+      ]);
+    } finally {
+      delete (globalThis as Record<symbol, unknown>)[SERVICE_KEY];
+    }
+  });
+
+  test("accepts a live child path before or after the spawn result", () => {
+    for (const early of [true, false]) {
+      const host = createPiExtensionHost();
+      const marker = `${GOTGENES_CHILD_SESSION_MARKER} ${JSON.stringify({ agentId: "native-1", file: "/tmp/child.jsonl" })}`;
+      if (early) expect(host.mapRuntimeNotification(marker)?.subagents).toEqual([]);
+      const spawn = host.mapToolCall({
+        callId: "call-1",
+        toolName: "subagent",
+        args: { subagent_type: "Explore", prompt: "Inspect" },
+        status: "completed",
+        result: { details: { agentId: "native-1", status: "background" } },
+      });
+      const path = early
+        ? spawn?.childSessions
+        : host.mapRuntimeNotification(marker)?.childSessions;
+      expect(path).toEqual([{ id: "call-1", file: "/tmp/child.jsonl" }]);
+    }
+  });
+
+  test("accepts a running subagent-update without a status field", () => {
+    const host = createPiExtensionHost();
+    host.mapToolCall({
+      callId: "call-1",
+      toolName: "subagent",
+      args: { subagent_type: "Explore", prompt: "Inspect" },
+      status: "completed",
+      result: { details: { agentId: "native-1", status: "background" } },
+    });
+    const update = host.mapCustomMessage({
+      role: "custom",
+      customType: "subagent-update",
+      content: "progress",
+      details: { id: "native-1", description: "Inspect", message: "progress" },
+    });
+    expect(update?.subagents).toEqual([
+      { type: "upsert", id: "call-1", description: "Inspect", status: "running" },
+    ]);
+  });
   test("maps captured foreground lifecycle live and on replay", async () => {
     const events = await verifySubagentFixture(
       readSubagentFixture(new URL("./fixtures/foreground.json", import.meta.url)),

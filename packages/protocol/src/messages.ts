@@ -418,7 +418,7 @@ const McpServerConfigSchema = z.discriminatedUnion("type", [
   McpSseServerConfigSchema,
 ]);
 
-const ProviderOptionsSchema = z.record(z.string(), z.json());
+const ProviderOptionsSchema = z.record(z.string(), z.unknown());
 
 const McpToolRefSchema = z
   .object({

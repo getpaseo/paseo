@@ -1,3 +1,4 @@
+import { validateProviderOptions } from "../provider-options.js";
 import {
   createOpencodeClient,
   type AssistantMessage as OpenCodeAssistantMessage,
@@ -1930,7 +1931,9 @@ export class OpenCodeAgentClient implements AgentClient {
     if (config.provider !== "opencode") {
       throw new Error(`OpenCodeAgentClient received config for provider '${config.provider}'`);
     }
-    const providerOptions = OpenCodeProviderOptionsSchema.parse(config.providerOptions ?? {});
+    const providerOptions =
+      validateProviderOptions("opencode", OpenCodeProviderOptionsSchema, config.providerOptions) ??
+      {};
     return normalizeOpenCodeConfig({ ...config, provider: "opencode", providerOptions });
   }
 

@@ -1,3 +1,4 @@
+import path from "node:path";
 import { expect, type Locator, type Page } from "@playwright/test";
 import { openSettings } from "./app";
 import { clickSettingsBackToWorkspace, openSettingsSection } from "./settings";
@@ -218,13 +219,14 @@ export async function expectFooterItemHidden(page: Page, key: string): Promise<v
 }
 
 const FOOTER_ICON_TEST_IDS = [
+  "sidebar-add-project",
   "sidebar-hosts-trigger",
   "sidebar-import-session",
   "sidebar-help",
   "sidebar-settings",
 ];
 
-/** The fixed icon row: Hosts, Import session, Help and support, Settings, left to right. */
+/** The labeled Add project button on the left, then the four fixed icons on the right. */
 export async function expectFooterIconRow(page: Page): Promise<void> {
   const boxes = await Promise.all(
     FOOTER_ICON_TEST_IDS.map((testID) =>
@@ -232,10 +234,49 @@ export async function expectFooterIconRow(page: Page): Promise<void> {
     ),
   );
   const [first, ...rest] = boxes.map((box) => box!);
+  expect(first.width).toBeGreaterThan(rest[0]!.width);
+  await expect(
+    page
+      .locator('[data-testid="sidebar-add-project"]:visible')
+      .getByText("Add project", { exact: true }),
+  ).toBeVisible();
   let previous = first;
   for (const box of rest) {
-    expect(Math.abs(box.y - first.y)).toBeLessThan(2);
+    expect(Math.abs(box.y + box.height / 2 - first.y - first.height / 2)).toBeLessThan(2);
     expect(box.x).toBeGreaterThan(previous.x);
     previous = box;
   }
+}
+
+export async function expectFooterSeparator(page: Page, shown: boolean): Promise<void> {
+  await expect(page.locator('[data-testid="sidebar-footer"]:visible')).toHaveCSS(
+    "border-top-width",
+    "1px",
+  );
+  await expect(page.locator('[data-testid="sidebar-footer-bottom-line"]:visible')).toHaveCSS(
+    "border-top-width",
+    "0px",
+  );
+  const separator = page.locator('[data-testid="sidebar-footer-separator"]:visible');
+  await expect(separator).toHaveCount(shown ? 1 : 0);
+  expect(
+    await separator.evaluateAll((elements) =>
+      elements.map((element) => getComputedStyle(element).borderBottomWidth),
+    ),
+  ).toEqual(shown ? ["1px"] : []);
+}
+
+export async function hoverFooterAddProject(page: Page): Promise<void> {
+  await page.locator('[data-testid="sidebar-add-project"]:visible').hover();
+  const tooltip = page.getByTestId("sidebar-add-project-tooltip");
+  await expect(tooltip.getByText("Add project", { exact: true })).toBeVisible();
+  await expect(tooltip.getByText("Ctrl+O", { exact: true })).toBeVisible();
+}
+
+export async function footerScreenshot(page: Page, name: string): Promise<void> {
+  const directory = process.env.PASEO_QA_SCREENSHOT_DIR;
+  if (!directory) return;
+  await page.waitForTimeout(600);
+  await page.addStyleTag({ content: ".__expo_fast_refresh { display: none !important; }" });
+  await page.screenshot({ path: path.join(directory, `${name}.png`) });
 }

@@ -1,3 +1,5 @@
+import { legacyUsageIcon } from "./legacy-usage-icons.js";
+import { readFileSync } from "node:fs";
 import { afterEach, expect, expectTypeOf, test, vi } from "vitest";
 import { z } from "zod";
 import {
@@ -6573,6 +6575,22 @@ test("sends provider.usage.list.request and resolves provider.usage.list.respons
   });
 });
 
+test.each(["claude", "codex", "copilot", "cursor", "zai", "grok", "kimi", "minimax"])(
+  "released-host %s icon matches its source plugin",
+  (sourceId) => {
+    const icon = readFileSync(
+      new URL(`../../../plugins/${sourceId}-usage-source/icon.svg`, import.meta.url),
+      "utf8",
+    );
+    expect(legacyUsageIcon(sourceId)).toBe(icon);
+  },
+);
+
+test("unknown released-host sources have no icon", () => {
+  expect(legacyUsageIcon("unknown")).toBeUndefined();
+  expect(legacyUsageIcon("toString")).toBeUndefined();
+});
+
 test("maps released-host usage reports and filters report IDs", async () => {
   const mock = createMockTransport();
   const client = new DaemonClient({
@@ -6608,11 +6626,19 @@ test("maps released-host usage reports and filters report IDs", async () => {
       error: "unavailable",
     },
   ];
+  const extraProviders = ["copilot", "cursor", "zai", "grok", "kimi", "minimax", "unknown"].map(
+    (providerId) => Object.assign({}, providers[0]!, { providerId, displayName: providerId }),
+  );
+  providers.push(...extraProviders);
   const reports = [
     {
       id: "claude",
       sourceId: "claude",
       sourceLabel: "Claude",
+      icon: readFileSync(
+        new URL("../../../plugins/claude-usage-source/icon.svg", import.meta.url),
+        "utf8",
+      ),
       account: {},
       fetchedAt: "2026-09-30T00:00:00.000Z",
       report: {
@@ -6628,6 +6654,10 @@ test("maps released-host usage reports and filters report IDs", async () => {
       id: "codex",
       sourceId: "codex",
       sourceLabel: "Codex",
+      icon: readFileSync(
+        new URL("../../../plugins/codex-usage-source/icon.svg", import.meta.url),
+        "utf8",
+      ),
       account: {},
       fetchedAt: "2026-09-29T00:00:00.000Z",
       report: {
@@ -6640,6 +6670,16 @@ test("maps released-host usage reports and filters report IDs", async () => {
       },
     },
   ];
+  reports.push(
+    ...extraProviders.map((provider) =>
+      Object.assign({}, reports[0]!, {
+        id: provider.providerId,
+        sourceId: provider.providerId,
+        sourceLabel: provider.displayName,
+        icon: legacyUsageIcon(provider.providerId),
+      }),
+    ),
+  );
   for (const reportIds of [undefined, ["codex", "missing"], []]) {
     const result = client.listUsageReports({
       requestId: "legacy-usage",

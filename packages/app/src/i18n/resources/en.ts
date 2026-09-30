@@ -1653,6 +1653,17 @@ export const en = {
       title: "Password for {{host}}",
       label: "Host password",
     },
+    hostConfirmation: {
+      title: "Connect to this host?",
+      description:
+        "This host will be able to run code in this app and reach your other connected hosts. Only connect if you recognize it.",
+      descriptionChanged:
+        "This link changes how you connect to this host. The host will be able to run code in this app and reach your other connected hosts. Only connect if you recognize it.",
+      hostLabel: "Host",
+      fingerprintLabel: "Key fingerprint",
+      relayLabel: "Relay",
+      connect: "Connect",
+    },
     connectionMethods: {
       title: "Add connection",
       direct: {

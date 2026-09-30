@@ -267,6 +267,7 @@ describe("loadAppSettingsFromStorage", () => {
     expect((await loadAppSettingsFromStorage(makeDeps())).usage).toEqual({
       displayAs: "used",
       pinned: [],
+      serverId: null,
     });
 
     const deps = makeDeps({
@@ -278,6 +279,7 @@ describe("loadAppSettingsFromStorage", () => {
               { sourceId: "codex", windowId: "weekly" },
               { sourceId: "claude", windowId: "five-hour" },
             ],
+            serverId: "server",
           },
         }),
       }),
@@ -289,6 +291,7 @@ describe("loadAppSettingsFromStorage", () => {
         { sourceId: "codex", windowId: "weekly" },
         { sourceId: "claude", windowId: "five-hour" },
       ],
+      serverId: "server",
     });
   });
 
@@ -296,7 +299,11 @@ describe("loadAppSettingsFromStorage", () => {
     const deps = makeDeps({
       storage: createInMemoryKeyValueStorage({
         [APP_SETTINGS_KEY]: JSON.stringify({
-          usage: { displayAs: "percent", pinned: [{ sourceId: "claude", windowId: "weekly" }] },
+          usage: {
+            displayAs: "percent",
+            pinned: [{ sourceId: "claude", windowId: "weekly" }],
+            serverId: 42,
+          },
         }),
       }),
     });
@@ -304,6 +311,7 @@ describe("loadAppSettingsFromStorage", () => {
     expect((await loadAppSettingsFromStorage(deps)).usage).toEqual({
       displayAs: "used",
       pinned: [{ sourceId: "claude", windowId: "weekly" }],
+      serverId: null,
     });
   });
 

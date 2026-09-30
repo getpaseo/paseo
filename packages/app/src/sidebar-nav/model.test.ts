@@ -299,6 +299,7 @@ describe("footer section", () => {
       section: "footer",
       pluginGroups: [sync],
       preferences: [
+        { key: "add-project", visible: false },
         { key: "hosts", visible: false },
         { key: "import", visible: false },
         { key: "help", visible: false },

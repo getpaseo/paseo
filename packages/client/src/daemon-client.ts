@@ -1,3 +1,4 @@
+import { legacyUsageIcon } from "./legacy-usage-icons.js";
 import { subscribeTimeline, type TimelineMessage } from "./timeline-subscription/index.js";
 import { ProviderSnapshotUpdates } from "./provider-snapshots/index.js";
 import {
@@ -5281,6 +5282,7 @@ export class DaemonClient {
             id: provider.providerId,
             sourceId: provider.providerId,
             sourceLabel: provider.displayName,
+            icon: legacyUsageIcon(provider.providerId),
             account: {},
             fetchedAt: provider.fetchedAt ?? payload.fetchedAt,
             report: {

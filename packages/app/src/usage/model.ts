@@ -97,34 +97,32 @@ export interface UsageHost {
   supportsUsage: boolean;
 }
 
-/**
- * The host usage shows by default, on the sidebar row and the Usage screen: the active workspace's
- * host if it reports usage, else the first host that does.
- */
-export function resolveUsageHostId(
-  activeServerId: string | null,
-  hosts: readonly UsageHost[],
-): string | null {
-  const reporting = hosts.filter((host) => host.isConnected && host.supportsUsage);
-  const active = reporting.find((host) => host.serverId === activeServerId);
-  return (active ?? reporting[0])?.serverId ?? null;
+/** Where usage looks for its host: the user's saved pick, then the workspace they are in. */
+export interface UsageHostChoice {
+  pickedServerId: string | null;
+  activeServerId: string | null;
+  hosts: readonly UsageHost[];
 }
 
 /**
- * The host the Usage screen shows: the user's pick while it stays connected, else the default
- * host. With no host reporting usage, the first connected host, so the screen says to update it.
+ * The host the sidebar Usage row reads: the picked host, else the active workspace's host, else the
+ * first host. Each only while it is connected and reports usage.
  */
-export function resolveUsageScreenHostId(input: {
-  selectedServerId: string | null;
-  activeServerId: string | null;
-  hosts: readonly UsageHost[];
-}): string | null {
-  const connected = input.hosts.filter((host) => host.isConnected);
-  const selected = connected.find((host) => host.serverId === input.selectedServerId);
+export function resolveUsageHostId(choice: UsageHostChoice): string | null {
+  const reporting = choice.hosts.filter((host) => host.isConnected && host.supportsUsage);
+  const find = (serverId: string | null) => reporting.find((host) => host.serverId === serverId);
   return (
-    selected?.serverId ??
-    resolveUsageHostId(input.activeServerId, input.hosts) ??
-    connected[0]?.serverId ??
-    null
+    (find(choice.pickedServerId) ?? find(choice.activeServerId) ?? reporting[0])?.serverId ?? null
   );
+}
+
+/**
+ * The host the Usage screen shows: the picked host while it is connected, even one that cannot
+ * report usage so the screen says to update it; else the sidebar row's host; else the first
+ * connected host.
+ */
+export function resolveUsageScreenHostId(choice: UsageHostChoice): string | null {
+  const connected = choice.hosts.filter((host) => host.isConnected);
+  const picked = connected.find((host) => host.serverId === choice.pickedServerId);
+  return picked?.serverId ?? resolveUsageHostId(choice) ?? connected[0]?.serverId ?? null;
 }
