@@ -335,7 +335,10 @@ export function planItems(
         },
       ],
       revision: 1,
-      dependsOn: (p.dependsOn ?? []).map((k) => ({ id: idByKey.get(k)!, until: "done" })),
+      dependsOn: (p.dependsOn ?? []).map((k) => ({
+        id: idByKey.get(k)!,
+        until: pack.dependencyPhase ?? "done",
+      })),
       conflictsWith: (p.conflictsWith ?? []).map((k) => idByKey.get(k)!),
       exclusive: p.exclusive,
       acceptanceCriteria: p.acceptanceCriteria.map((text, i) => ({

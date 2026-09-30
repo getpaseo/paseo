@@ -69,6 +69,8 @@ export interface WorkflowPack {
   /** Returned items above this many returns go to the boss instead of another loop. */
   maxReturns: number;
   maxParallel: number;
+  /** Phase a dependency must have reached before a dependent item may start; default "done". */
+  dependencyPhase?: string;
   actions?: Record<string, PackAction>;
   migrate?: (fromVersion: number, item: WorkItem) => WorkItem;
   /** Claims a repository for this pack when its project profile names none. */

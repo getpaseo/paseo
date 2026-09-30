@@ -17,7 +17,20 @@ Pilot evidence, real Codex sessions against an isolated daemon (2026-10-01):
 
 Decisions taken while building:
 
-- The boss decides team vs. single itself by calling `team_start`; a Jev `team-needed` check is not wired yet.
+- `team_start` asks Jev whether the job needs a team; a confident "single" sends the boss back to
+  do it alone unless it passes `force`.
+- Packs declare Jev judgements on working-phase outcomes (`judge`: question, criteria, routes).
+  `software-basic` judges a failed test (code, test, environment, requirement; the last two go to
+  the boss) and requested changes (blocker, major, minor; minor passes). Without Jev, or below the
+  confidence floor, the reported outcome stands.
+- The reviewer runs the `codex-review` skill against an evidence file the runtime writes from the
+  item's goal and criteria.
+- Packs load from `<storage root>/packs/<id>/pack.mjs`; a pack's `matches(cwd)` claims a repository
+  when `.pandaos/project.json` names no pack. The 9elf26 pack lives in `9elf26/9elf26-workflows`
+  (`pandaos/pack.mjs`) and reuses that repository's agent contracts.
+- Seat tools come from the pack role (`pandaos.team.tools` label), not from a fixed role name.
+- `dependencyPhase` says when a dependency counts as met (`done` by default, `ready-for-human` for
+  9elf26 stacks).
 - A seat is written before its agent starts and is found by the `pandaos.team.decision` label, so a
   report that races the agent id still lands and a crash leaves a seat recovery can finish.
 - Tool gating uses the agent's labels at session launch, and the MCP endpoint falls back to the stored
