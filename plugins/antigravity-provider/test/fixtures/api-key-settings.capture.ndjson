@@ -1,2 +1,0 @@
-{"t_ms": 0, "stream": "capture", "data": {"argv": ["<HOME>/.local/opt/agy/1.2.13/agy", "--input-format", "stream-json", "--output-format", "stream-json"], "cwd": "<WORKSPACE>", "home": "<HOME>", "settings": {"modelProvider": "gemini"}, "env": {"GEMINI_API_KEY": "<DUMMY_KEY>", "GOOGLE_GEMINI_BASE_URL": "http://127.0.0.1:<PORT>"}}}
-{"t_ms": 525, "stream": "capture", "data": {"exit_code": 1}}

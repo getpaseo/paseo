@@ -12,7 +12,7 @@ Paseo is an open source application that lets you run AI coding agents on your o
 
 A self-hosted daemon manages agent lifecycle, exposes a WebSocket API, and ships with an MCP server so other agents can talk to it. Native apps for iOS, Android, macOS, Windows, Linux, and the web let you launch sessions, watch them work, review diffs, and ship from anywhere. A Docker-style CLI ("paseo run", "paseo ls", "paseo logs", "paseo wait") gives you scripting access. An end-to-end encrypted relay lets the mobile app reach your daemon over the public internet without exposing it.
 
-Paseo supports every major coding agent: Claude Code, Codex, GitHub Copilot, OpenCode, Antigravity, Muse Code, Cursor, Gemini, Cline, Goose, Amp, Aider, and 30+ others. Each agent runs as its own process; Paseo handles I/O, persistence, git worktree isolation, schedules, and skills.
+Paseo supports every major coding agent: Claude Code, Codex, GitHub Copilot, OpenCode, Muse Code, Cursor, Gemini, Cline, Goose, Amp, Aider, and 30+ others. Each agent runs as its own process; Paseo handles I/O, persistence, git worktree isolation, schedules, and skills.
 
 Distribution: native apps for Mac, Windows, Linux, iOS, and Android; web app; Homebrew; npm. Source: Apache-2.0 at https://github.com/getpaseo/paseo. Marketing site: https://paseo.sh.
 `;

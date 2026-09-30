@@ -1,1 +1,0 @@
-{"t_ms": 287, "stream": "stderr", "data": "error: invalid model selection (--model \"<REDACTED_REFERENCE>\" --effort \"high\"): --effort is not supported for model \"<REDACTED_REFERENCE>\""}

@@ -73,16 +73,6 @@ export const AGENT_PAGES = [
       "Open source mobile and desktop app for the Pi coding agent. Launch sessions on your machine, monitor progress, merge from anywhere. Self-hosted.",
   },
   {
-    slug: "antigravity",
-    name: "Antigravity",
-    title: "Open source app for Antigravity",
-    subtitle:
-      "Run your installed Antigravity CLI on your machine and drive it from your phone or desktop.",
-    metaTitle: "Antigravity Mobile and Desktop App, Open Source",
-    metaDescription:
-      "Run your installed Antigravity CLI through Paseo. Watch agents work and review changes from your phone or desktop. Self-hosted, your code stays on your machine.",
-  },
-  {
     slug: "muse-code",
     name: "Muse Code",
     title: "Open source app for Muse Code",

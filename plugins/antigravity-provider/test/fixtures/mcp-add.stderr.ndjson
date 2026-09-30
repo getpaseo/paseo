@@ -1,1 +1,0 @@
-{"t_ms": 76, "stream": "stderr", "data": "Error: invalid command \"--url\": flags must come before the server name (usage: mcp add [flags] <name> <commandOrUrl> [args...])"}

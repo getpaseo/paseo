@@ -1,3 +1,0 @@
-{"t_ms": 297, "stream": "stdin", "data": {"event": "user", "message": {"role": "user", "content": "Use view_file to read <WORKSPACE>/input.txt. Report its contents. Do not use a shell."}}}
-{"t_ms": 6781, "stream": "stdin", "data": {"event": "user", "message": {"role": "user", "content": "Use write_to_file to create <WORKSPACE>/default.txt with PHASE0_WRITE. Then use replace_file_content to change PHASE0_WRITE to PHASE0_EDIT. No shell. Do not ask me questions."}}}
-{"t_ms": 17022, "stream": "stdin", "data": {"event": "user", "message": {"role": "user", "content": "Use run_command exactly once to run printf PHASE0_SHELL in <WORKSPACE>. Report the output. Do not ask me questions."}}}

@@ -87,12 +87,6 @@ export function SiteFooter({ width = "default" }: SiteFooterProps) {
               OpenCode
             </a>
             <a
-              href="/antigravity"
-              className="block text-muted-foreground hover:text-foreground transition-colors"
-            >
-              Antigravity
-            </a>
-            <a
               href="/muse-code"
               className="block text-muted-foreground hover:text-foreground transition-colors"
             >

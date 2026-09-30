@@ -1,1 +1,0 @@
-{"t_ms": 301, "stream": "stdin", "data": {"event": "user", "message": {"content": "Call the phase0 MCP echo tool with text PHASE0_MCP. If it fails report the exact error. No shell."}}}

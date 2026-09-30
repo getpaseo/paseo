@@ -6,7 +6,7 @@ server integrations.
 ## Plugin providers
 
 Keep a bundled provider in `plugins/<id>/` and register it through
-`@getpaseo/plugin/server/provider`. Antigravity and Muse Code follow this pattern. Built-in loading and SDK
+`@getpaseo/plugin/server/provider`. Muse Code follows this pattern. Built-in loading and SDK
 import rules belong to [plugins.md](plugins.md#built-in-plugins); the
 [public provider guide](../public-docs/plugins/providers.md) covers the provider contract.
 
@@ -15,10 +15,9 @@ executable resolution and applies `agents.providers.<provider-id>.command` and `
 connecting. Register the provider's icon with the plugin rather than adding it to the app's
 provider icon map. You do not need a core manifest entry or provider factory.
 
-| Provider    | Transport                                  | Setup and limitations                                            |
-| ----------- | ------------------------------------------ | ---------------------------------------------------------------- |
-| Antigravity | Installed `agy` CLI                        | [Antigravity](../public-docs/supported-providers.md#antigravity) |
-| Muse Code   | MSP over one `muse serve` host per session | [Muse Code](../public-docs/muse-code.md)                         |
+| Provider  | Transport                                  | Setup and limitations                    |
+| --------- | ------------------------------------------ | ---------------------------------------- |
+| Muse Code | MSP over one `muse serve` host per session | [Muse Code](../public-docs/muse-code.md) |
 
 ## Provider-native session options
 
