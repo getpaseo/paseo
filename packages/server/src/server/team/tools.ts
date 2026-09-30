@@ -1,6 +1,11 @@
 import { z } from "zod";
 import type { PaseoToolConfig, PaseoToolResult } from "../agent/tools/types.js";
-import { PlannedItemSchema, TEAM_ROLE_LABEL, TeamReportPayloadSchema } from "./types.js";
+import {
+  PlannedItemSchema,
+  TEAM_ROLE_LABEL,
+  TEAM_TOOLS_LABEL,
+  TeamReportPayloadSchema,
+} from "./types.js";
 import { TeamNotNeededError, type TeamService } from "./service.js";
 
 type RegisterTool = (
@@ -10,24 +15,31 @@ type RegisterTool = (
   handler: (input: any) => Promise<PaseoToolResult>,
 ) => void;
 
-const ROLE_TOOLS: Record<string, string[]> = { po: ["team_report", "item_plan"] };
+export interface TeamSeatTools {
+  role: string;
+  tools: string[];
+}
 
 /**
- * Tools a seated team member may use. Seated sessions get nothing else from the PandaOS catalog,
- * so no worker can start agents, message other sessions or create schedules.
+ * Tools a seated team member may use: `team_report` plus what its pack role declares. Seated
+ * sessions get nothing else from the PandaOS catalog, so no worker can start agents, message
+ * other sessions or create schedules.
  */
-export function isToolAllowedForTeamRole(role: string | undefined, tool: string): boolean {
-  return role === undefined || (ROLE_TOOLS[role] ?? ["team_report"]).includes(tool);
+export function isToolAllowedForTeamRole(seat: TeamSeatTools | undefined, tool: string): boolean {
+  return seat === undefined || tool === "team_report" || seat.tools.includes(tool);
 }
 
 export function resolveTeamRole(
   agentManager: { getAgent(id: string): { labels?: Record<string, string> } | null | undefined },
   callerAgentId: string | undefined,
   callerLabels?: Record<string, string>,
-): string | undefined {
+): TeamSeatTools | undefined {
   if (!callerAgentId) return undefined;
   const labels = callerLabels ?? agentManager.getAgent(callerAgentId)?.labels;
-  return labels?.[TEAM_ROLE_LABEL];
+  const role = labels?.[TEAM_ROLE_LABEL];
+  if (role === undefined) return undefined;
+  const tools = (labels?.[TEAM_TOOLS_LABEL] ?? "").split(",").filter(Boolean);
+  return { role, tools };
 }
 
 function text(value: string): PaseoToolResult {
@@ -39,7 +51,7 @@ export function registerTeamTools(
   params: {
     teamService: TeamService | null | undefined;
     callerAgentId: string | undefined;
-    teamRole: string | undefined;
+    teamRole: TeamSeatTools | undefined;
   },
 ): void {
   const { teamService, callerAgentId, teamRole } = params;

@@ -243,12 +243,16 @@ describe("team tool gate", () => {
   it("gives seated sessions only their team tools, even before the agent is registered", async () => {
     const { isToolAllowedForTeamRole, resolveTeamRole } = await import("./tools.js");
     const unregistered = { getAgent: () => undefined };
-    const role = resolveTeamRole(unregistered, "agent-1", { [TEAM_ROLE_LABEL]: "developer" });
-    expect(role).toBe("developer");
-    expect(isToolAllowedForTeamRole(role, "team_report")).toBe(true);
-    expect(isToolAllowedForTeamRole(role, "create_agent")).toBe(false);
-    expect(isToolAllowedForTeamRole(role, "item_plan")).toBe(false);
-    expect(isToolAllowedForTeamRole("po", "item_plan")).toBe(true);
+    const dev = resolveTeamRole(unregistered, "agent-1", { [TEAM_ROLE_LABEL]: "developer" });
+    expect(dev?.role).toBe("developer");
+    expect(isToolAllowedForTeamRole(dev, "team_report")).toBe(true);
+    expect(isToolAllowedForTeamRole(dev, "create_agent")).toBe(false);
+    expect(isToolAllowedForTeamRole(dev, "item_plan")).toBe(false);
+    const planner = resolveTeamRole(unregistered, "agent-2", {
+      [TEAM_ROLE_LABEL]: "planner",
+      "pandaos.team.tools": "item_plan",
+    });
+    expect(isToolAllowedForTeamRole(planner, "item_plan")).toBe(true);
     expect(isToolAllowedForTeamRole(undefined, "create_agent")).toBe(true);
   });
 });

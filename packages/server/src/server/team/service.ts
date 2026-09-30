@@ -33,6 +33,7 @@ import {
   TEAM_ITEM_LABEL,
   TEAM_LABEL,
   TEAM_ROLE_LABEL,
+  TEAM_TOOLS_LABEL,
   type Actor,
   type Binding,
   type Decision,
@@ -288,7 +289,7 @@ export class TeamService {
       }
     }
     const profile = await readProjectProfile(cwd);
-    const pack = this.options.packs.get(params.packId ?? profile.workflowPack ?? "software-basic");
+    const pack = await this.options.packs.resolveFor(cwd, params.packId ?? profile.workflowPack);
     if (!pack)
       throw new Error(`Workflow pack ${params.packId ?? profile.workflowPack} is not installed`);
     const defaultProfile = {
@@ -884,6 +885,7 @@ export class TeamService {
           [TEAM_ROLE_LABEL]: roleId,
           [TEAM_ITEM_LABEL]: item.id,
           [TEAM_DECISION_LABEL]: decision.id,
+          [TEAM_TOOLS_LABEL]: role.tools.join(","),
           [PARENT_AGENT_ID_LABEL]: state.team.bossAgentId,
         },
         ...(role.workspace === "own-worktree"

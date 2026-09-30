@@ -4,6 +4,8 @@ export const TEAM_LABEL = "pandaos.team";
 export const TEAM_ROLE_LABEL = "pandaos.team.role";
 export const TEAM_ITEM_LABEL = "pandaos.team.item";
 export const TEAM_DECISION_LABEL = "pandaos.team.decision";
+/** Comma list of the extra team tools a seat may use, from its pack role. */
+export const TEAM_TOOLS_LABEL = "pandaos.team.tools";
 
 // Patterns (revisioned items, board phase kinds, seats, decision outbox, health findings) are
 // adapted from mastra-ai/mastra mastracode/factory, Apache-2.0. Modified for PandaOS.

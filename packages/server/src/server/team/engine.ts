@@ -295,9 +295,11 @@ export function planItems(
   events: TeamEventDraft[],
 ): WorkItem[] {
   const root = state.items[binding.workItemId];
-  if (!root || root.board !== "root" || root.phase !== binding.phase || binding.role !== "po") {
+  const planner = pack.roles[binding.role];
+  const canPlan = Boolean(planner?.tools.includes("item_plan"));
+  if (!root || root.board !== "root" || root.phase !== binding.phase || !canPlan) {
     throw new ReportRejectedError(
-      "item_plan is only available to the PO while the team is planning",
+      "item_plan is only available to the planning role while the team plans",
     );
   }
   if (Object.values(state.items).some((i) => i.parentId === root.id)) {
@@ -326,7 +328,11 @@ export function planItems(
       objective: p.objective,
       phase: pack.boards.item.initialPhase,
       phaseHistory: [
-        { phase: pack.boards.item.initialPhase, enteredAt: now, by: { type: "role", id: "po" } },
+        {
+          phase: pack.boards.item.initialPhase,
+          enteredAt: now,
+          by: { type: "role", id: binding.role },
+        },
       ],
       revision: 1,
       dependsOn: (p.dependsOn ?? []).map((k) => ({ id: idByKey.get(k)!, until: "done" })),
@@ -354,7 +360,7 @@ export function planItems(
   }
   events.push({
     type: "plan.recorded",
-    actor: { type: "role", id: "po" },
+    actor: { type: "role", id: binding.role },
     workItemId: root.id,
     text: `Plan: ${created.map((c) => c.title).join(", ")}`,
     data: { items: created.map((c) => c.id) },

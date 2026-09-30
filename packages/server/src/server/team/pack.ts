@@ -1,3 +1,6 @@
+import { readdir } from "node:fs/promises";
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import type { z } from "zod";
 import type { WorkItem } from "./types.js";
 
@@ -68,6 +71,8 @@ export interface WorkflowPack {
   maxParallel: number;
   actions?: Record<string, PackAction>;
   migrate?: (fromVersion: number, item: WorkItem) => WorkItem;
+  /** Claims a repository for this pack when its project profile names none. */
+  matches?: (cwd: string) => boolean | Promise<boolean>;
 }
 
 function phaseProblems(
@@ -269,5 +274,41 @@ export class PackRegistry {
 
   get(id: string): WorkflowPack | undefined {
     return this.packs.get(id);
+  }
+
+  /** Loads every `<dir>/<pack>/pack.mjs` whose default export is a workflow pack. */
+  async loadFrom(
+    dir: string,
+  ): Promise<{ loaded: string[]; failed: Array<{ path: string; error: string }> }> {
+    const loaded: string[] = [];
+    const failed: Array<{ path: string; error: string }> = [];
+    let entries: string[];
+    try {
+      entries = await readdir(dir);
+    } catch {
+      return { loaded, failed };
+    }
+    for (const entry of entries) {
+      const path = join(dir, entry, "pack.mjs");
+      try {
+        const module = (await import(pathToFileURL(path).href)) as { default?: WorkflowPack };
+        if (!module.default) throw new Error("pack.mjs has no default export");
+        this.register(module.default);
+        loaded.push(module.default.id);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ERR_MODULE_NOT_FOUND") continue;
+        failed.push({ path, error: error instanceof Error ? error.message : String(error) });
+      }
+    }
+    return { loaded, failed };
+  }
+
+  /** The profile's pack, else the first pack that claims the repository, else the default. */
+  async resolveFor(cwd: string, preferred?: string): Promise<WorkflowPack | undefined> {
+    if (preferred) return this.packs.get(preferred);
+    for (const pack of this.packs.values()) {
+      if (pack.matches && (await pack.matches(cwd))) return pack;
+    }
+    return this.packs.get(softwareBasicPack.id);
   }
 }

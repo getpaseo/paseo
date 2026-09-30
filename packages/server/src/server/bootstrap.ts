@@ -1478,13 +1478,18 @@ export async function createPaseoDaemon(
     readAllowScheduledAutomation: () => daemonConfigStore.get().allowScheduledAutomation,
   });
   await scheduleService.start();
+  const teamPacks = new PackRegistry();
+  const loadedPacks = await teamPacks.loadFrom(path.join(config.paseoHome, "packs"));
+  for (const failure of loadedPacks.failed) {
+    logger.warn(failure, "Workflow pack failed to load");
+  }
   const teamService = new TeamService({
     storageRoot: config.paseoHome,
     logger,
     agentManager,
     agentStorage,
     createAgent,
-    packs: new PackRegistry(),
+    packs: teamPacks,
     getUsage: getProviderUsageForRouting,
     listFallbackProviders: () =>
       (daemonConfigStore.get().agentProfiles ?? []).map((profile) => profile.provider),
