@@ -2396,6 +2396,9 @@ export const ptBR: TranslationResources = {
         icon: {
           label: "Ícone",
           accessibilityLabel: "Ícone, {{value}}",
+          detected: "Detectado",
+          updateHost: "Atualize este host para escolher o ícone",
+          connectHost: "Conecte-se a este host para escolher o ícone",
           options: {
             server: "Servidor",
             cloud: "VM na nuvem",

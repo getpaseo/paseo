@@ -2332,6 +2332,9 @@ export const zhCN: TranslationResources = {
         icon: {
           label: "图标",
           accessibilityLabel: "图标，{{value}}",
+          detected: "已检测",
+          updateHost: "更新此主机后即可选择图标",
+          connectHost: "连接此主机后即可选择图标",
           options: {
             server: "服务器",
             cloud: "云虚拟机",

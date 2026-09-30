@@ -2414,6 +2414,9 @@ export const es: TranslationResources = {
         icon: {
           label: "Icono",
           accessibilityLabel: "Icono, {{value}}",
+          detected: "Detectado",
+          updateHost: "Actualiza este host para elegir su icono",
+          connectHost: "Conéctate a este host para elegir su icono",
           options: {
             server: "Servidor",
             cloud: "VM en la nube",

@@ -2401,6 +2401,9 @@ export const ru: TranslationResources = {
         icon: {
           label: "Значок",
           accessibilityLabel: "Значок, {{value}}",
+          detected: "Определено",
+          updateHost: "Обновите этот хост, чтобы выбрать значок",
+          connectHost: "Подключитесь к хосту, чтобы выбрать значок",
           options: {
             server: "Сервер",
             cloud: "Облачная ВМ",

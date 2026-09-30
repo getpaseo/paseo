@@ -137,22 +137,22 @@ describe("normalizeStoredHostProfile", () => {
       ],
     });
 
-    expect(profile?.appearance).toEqual({ color: "none", badgeDisplay: null, icon: "server" });
+    expect(profile?.appearance).toEqual({ color: "none", badgeDisplay: null });
   });
 
   it("loads a stored appearance the user chose", () => {
     const profile = normalizeStoredHostProfile({
       serverId: "srv_new",
-      appearance: { color: "teal", badgeDisplay: "icon", icon: "laptop" },
+      appearance: { color: "teal", badgeDisplay: "icon" },
       connections: [
         { id: "socket:/tmp/paseo.sock", type: "directSocket", path: "/tmp/paseo.sock" },
       ],
     });
 
-    expect(profile?.appearance).toEqual({ color: "teal", badgeDisplay: "icon", icon: "laptop" });
+    expect(profile?.appearance).toEqual({ color: "teal", badgeDisplay: "icon" });
   });
 
-  it("loads a host whose stored icon this build does not know with the default icon", () => {
+  it("still loads a host that a device-local icon build stored an icon on", () => {
     const profile = normalizeStoredHostProfile({
       serverId: "srv_future",
       appearance: { color: "teal", badgeDisplay: "icon", icon: "quantum-computer" },
@@ -161,7 +161,7 @@ describe("normalizeStoredHostProfile", () => {
       ],
     });
 
-    expect(profile?.appearance).toEqual({ color: "teal", badgeDisplay: "icon", icon: "server" });
+    expect(profile?.appearance).toEqual({ color: "teal", badgeDisplay: "icon" });
   });
 
   it("normalizes stored Remote SSH connection parameters", () => {
@@ -224,13 +224,13 @@ describe("upsertHostConnectionInProfiles", () => {
       connection,
     });
 
-    expect(profile.appearance).toEqual({ color: "none", badgeDisplay: null, icon: "server" });
+    expect(profile.appearance).toEqual({ color: "none", badgeDisplay: null });
   });
 
   it("keeps the appearance the user chose when the host reconnects", () => {
     const existing: HostProfile = {
       ...makeHost("srv_known"),
-      appearance: { color: "amber", badgeDisplay: "hidden", icon: "server" },
+      appearance: { color: "amber", badgeDisplay: "hidden" },
       connections: [],
     };
 
@@ -240,7 +240,7 @@ describe("upsertHostConnectionInProfiles", () => {
       connection,
     });
 
-    expect(profile.appearance).toEqual({ color: "amber", badgeDisplay: "hidden", icon: "server" });
+    expect(profile.appearance).toEqual({ color: "amber", badgeDisplay: "hidden" });
   });
 
   it("replaces a direct connection when its settings change", () => {

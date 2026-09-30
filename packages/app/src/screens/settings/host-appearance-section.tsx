@@ -11,17 +11,26 @@ import { WorkspaceMetaRow } from "@/components/sidebar/workspace-meta-row";
 import { useToast } from "@/contexts/toast-context";
 import { SettingsSection } from "@/components/settings/headings/settings-section";
 import {
+  DEFAULT_HOST_ICON,
   HOST_BADGE_DISPLAYS,
   HOST_COLORS,
   HOST_ICONS,
+  detectedHostIcon,
   resolveHostBadgeDisplay,
+  resolveHostIcon,
   type HostBadgeDisplay,
   type HostColor,
   type HostIcon,
 } from "@/hosts/appearance";
+import { useHostFeature } from "@/runtime/host-features";
+import { useSessionStore } from "@/stores/session-store";
 import { THEMED_HOST_ICONS } from "@/hosts/host-icon";
 import { useLocalDaemonServerIdState } from "@/hooks/use-is-local-daemon";
-import { useHostMutations } from "@/runtime/host-runtime";
+import {
+  useHostMutations,
+  useHostRuntimeClient,
+  useHostRuntimeIsConnected,
+} from "@/runtime/host-runtime";
 import { identityColor } from "@/styles/identity-colors";
 import { settingsStyles } from "@/styles/settings";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
@@ -156,10 +165,12 @@ function HostIconGlyph({ icon }: { icon: HostIcon }) {
 function IconMenuItem({
   icon,
   selected,
+  detected,
   onChange,
 }: {
   icon: HostIcon;
   selected: boolean;
+  detected: boolean;
   onChange: (icon: HostIcon) => void;
 }) {
   const { t } = useTranslation();
@@ -170,6 +181,7 @@ function IconMenuItem({
       selected={selected}
       onSelect={handleSelect}
       leading={leading}
+      description={detected ? t("settings.host.appearance.icon.detected") : undefined}
       testID={`host-appearance-icon-option-${icon}`}
     >
       {iconLabel(t, icon)}
@@ -177,17 +189,50 @@ function IconMenuItem({
   );
 }
 
-function IconRow({ icon, onChange }: { icon: HostIcon; onChange: (icon: HostIcon) => void }) {
+/**
+ * The host's icon lives on its daemon, so every device draws the host the same way. Picking the
+ * icon the daemon detected clears the choice, which lets a later, better guess take over.
+ */
+function IconRow({ serverId }: { serverId: string }) {
   const { t } = useTranslation();
+  const toast = useToast();
+  const client = useHostRuntimeClient(serverId);
+  const isConnected = useHostRuntimeIsConnected(serverId);
+  const supportsHostIcon = useHostFeature(serverId, "hostIcon");
+  const info = useSessionStore((state) => state.sessions[serverId]?.serverInfo?.hostIcon);
+  const icon = resolveHostIcon(info);
+  const detected = detectedHostIcon(info);
   const selectedLabel = iconLabel(t, icon);
   const leading = useMemo(() => <HostIconGlyph icon={icon} />, [icon]);
+
+  const handleChange = useCallback(
+    async (next: HostIcon) => {
+      if (!client) return;
+      try {
+        await client.patchDaemonConfig({
+          hostIcon: next === (detected ?? DEFAULT_HOST_ICON) ? null : next,
+        });
+      } catch {
+        toast.error(t("errors.unableToSave"));
+      }
+    },
+    [client, detected, t, toast],
+  );
+
+  const unavailableHint = isConnected
+    ? t("settings.host.appearance.icon.updateHost")
+    : t("settings.host.appearance.icon.connectHost");
   return (
     <View style={[settingsStyles.row, settingsStyles.rowBorder]}>
       <View style={settingsStyles.rowContent}>
         <Text style={settingsStyles.rowTitle}>{t("settings.host.appearance.icon.label")}</Text>
+        {isConnected && supportsHostIcon ? null : (
+          <Text style={settingsStyles.rowHint}>{unavailableHint}</Text>
+        )}
       </View>
       <DropdownMenu>
         <DropdownTrigger
+          disabled={!isConnected || !supportsHostIcon}
           testID="host-appearance-icon"
           accessibilityRole="button"
           accessibilityLabel={t("settings.host.appearance.icon.accessibilityLabel", {
@@ -203,7 +248,8 @@ function IconRow({ icon, onChange }: { icon: HostIcon; onChange: (icon: HostIcon
               key={option}
               icon={option}
               selected={option === icon}
-              onChange={onChange}
+              detected={option === detected}
+              onChange={handleChange}
             />
           ))}
         </DropdownMenuContent>
@@ -282,6 +328,9 @@ function BadgePreview({
   badgeDisplay: HostBadgeDisplay;
 }) {
   const { t } = useTranslation();
+  const icon = useSessionStore((state) =>
+    resolveHostIcon(state.sessions[host.serverId]?.serverInfo?.hostIcon),
+  );
   const hostBadge = useMemo(
     () =>
       badgeDisplay === "hidden"
@@ -290,10 +339,10 @@ function BadgePreview({
             serverId: host.serverId,
             label: host.label,
             color: host.appearance.color,
-            icon: host.appearance.icon,
+            icon,
             showLabel: badgeDisplay === "name",
           },
-    [badgeDisplay, host.serverId, host.label, host.appearance.color, host.appearance.icon],
+    [badgeDisplay, host.serverId, host.label, host.appearance.color, icon],
   );
   // The real sidebar row, so the preview can't drift from what the setting actually does.
   return (
@@ -315,7 +364,7 @@ function BadgePreview({
 export function HostAppearanceSection({ host }: { host: HostProfile }) {
   const { t } = useTranslation();
   const toast = useToast();
-  const { setHostColor, setHostIcon, setHostBadgeDisplay } = useHostMutations();
+  const { setHostColor, setHostBadgeDisplay } = useHostMutations();
   const localDaemon = useLocalDaemonServerIdState();
   const isLocalHost = localDaemon.status === "resolved" && localDaemon.serverId === host.serverId;
   const badgeDisplay = resolveHostBadgeDisplay({
@@ -333,16 +382,6 @@ export function HostAppearanceSection({ host }: { host: HostProfile }) {
       }
     },
     [host.serverId, setHostColor, t, toast],
-  );
-  const handleIconChange = useCallback(
-    async (icon: HostIcon) => {
-      try {
-        await setHostIcon(host.serverId, icon);
-      } catch {
-        toast.error(t("errors.unableToSave"));
-      }
-    },
-    [host.serverId, setHostIcon, t, toast],
   );
   const handleBadgeDisplayChange = useCallback(
     async (next: HostBadgeDisplay) => {
@@ -370,7 +409,7 @@ export function HostAppearanceSection({ host }: { host: HostProfile }) {
           </View>
         </View>
         <ColorRow color={host.appearance.color} onChange={handleColorChange} />
-        <IconRow icon={host.appearance.icon} onChange={handleIconChange} />
+        <IconRow serverId={host.serverId} />
         {badgeDisplay === null ? null : (
           <>
             <BadgeDisplayRow badgeDisplay={badgeDisplay} onChange={handleBadgeDisplayChange} />

@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   type HostAppearanceSource,
   defaultHostAppearance,
+  detectedHostIcon,
   normalizeStoredHostAppearance,
+  resolveHostIcon,
   resolveHostBadgeDisplay,
   selectHostBadges,
 } from "@/hosts/appearance";
@@ -17,7 +19,7 @@ function host(
 
 describe("normalizeStoredHostAppearance", () => {
   it("defaults when the stored registry predates the field or holds junk", () => {
-    const expected = { color: "none", badgeDisplay: null, icon: "server" };
+    const expected = { color: "none", badgeDisplay: null };
     expect(normalizeStoredHostAppearance(undefined)).toEqual(expected);
     expect(normalizeStoredHostAppearance(null)).toEqual(expected);
     expect(normalizeStoredHostAppearance("x")).toEqual(expected);
@@ -30,17 +32,28 @@ describe("normalizeStoredHostAppearance", () => {
     expect(normalizeStoredHostAppearance({ color: "teal", badgeDisplay: "icon" })).toEqual({
       color: "teal",
       badgeDisplay: "icon",
-      icon: "server",
     });
-    expect(
-      normalizeStoredHostAppearance({ color: "teal", badgeDisplay: "icon", icon: "cloud" }),
-    ).toEqual({ color: "teal", badgeDisplay: "icon", icon: "cloud" });
   });
 
-  it("falls back to the default icon for an icon this build does not know", () => {
+  it("ignores an icon a device-local build stored", () => {
     expect(
-      normalizeStoredHostAppearance({ color: "teal", badgeDisplay: null, icon: "toaster" }),
-    ).toEqual({ color: "teal", badgeDisplay: null, icon: "server" });
+      normalizeStoredHostAppearance({ color: "teal", badgeDisplay: null, icon: "cloud" }),
+    ).toEqual({ color: "teal", badgeDisplay: null });
+  });
+});
+
+describe("resolveHostIcon", () => {
+  it("prefers the user's choice, then the daemon's guess, then a server", () => {
+    expect(resolveHostIcon({ selected: "home", detected: "laptop" })).toBe("home");
+    expect(resolveHostIcon({ selected: null, detected: "laptop" })).toBe("laptop");
+    expect(resolveHostIcon({ selected: null, detected: null })).toBe("server");
+    expect(resolveHostIcon(undefined)).toBe("server");
+  });
+
+  it("skips an icon this build does not know", () => {
+    expect(resolveHostIcon({ selected: "toaster", detected: "cloud" })).toBe("cloud");
+    expect(resolveHostIcon({ selected: null, detected: "mainframe" })).toBe("server");
+    expect(detectedHostIcon({ selected: null, detected: "mainframe" })).toBeNull();
   });
 });
 
@@ -60,13 +73,13 @@ describe("resolveHostBadgeDisplay", () => {
   it("prefers an explicit choice over either default", () => {
     expect(
       resolveHostBadgeDisplay({
-        appearance: { color: "none", badgeDisplay: "icon", icon: "server" },
+        appearance: { color: "none", badgeDisplay: "icon" },
         isLocalHost: true,
       }),
     ).toBe("icon");
     expect(
       resolveHostBadgeDisplay({
-        appearance: { color: "none", badgeDisplay: "hidden", icon: "server" },
+        appearance: { color: "none", badgeDisplay: "hidden" },
         isLocalHost: false,
       }),
     ).toBe("hidden");
@@ -82,7 +95,7 @@ describe("resolveHostBadgeDisplay", () => {
     ).toBeNull();
     expect(
       resolveHostBadgeDisplay({
-        appearance: { color: "none", badgeDisplay: "icon", icon: "server" },
+        appearance: { color: "none", badgeDisplay: "icon" },
         isLocalHost: false,
         localHostResolutionPending: true,
       }),
@@ -103,7 +116,7 @@ describe("selectHostBadges", () => {
   it("omits a host the user hid and keeps its sibling", () => {
     const badges = selectHostBadges({
       hosts: [
-        host("alpha", "Alpha", { color: "none", badgeDisplay: "hidden", icon: "server" }),
+        host("alpha", "Alpha", { color: "none", badgeDisplay: "hidden" }),
         host("beta", "Beta"),
       ],
       localServerId: null,
@@ -121,8 +134,9 @@ describe("selectHostBadges", () => {
 
   it("keeps an icon-only host in the map without its label", () => {
     const badges = selectHostBadges({
-      hosts: [host("alpha", "Alpha", { color: "teal", badgeDisplay: "icon", icon: "cloud" })],
+      hosts: [host("alpha", "Alpha", { color: "teal", badgeDisplay: "icon" })],
       localServerId: null,
+      hostIcons: new Map([["alpha", "cloud"]]),
       enabled: true,
     });
     expect(badges.get("alpha")).toEqual({

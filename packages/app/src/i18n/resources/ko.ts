@@ -2370,6 +2370,9 @@ export const ko: TranslationResources = {
         icon: {
           label: "아이콘",
           accessibilityLabel: "아이콘, {{value}}",
+          detected: "감지됨",
+          updateHost: "아이콘을 선택하려면 이 호스트를 업데이트하세요",
+          connectHost: "아이콘을 선택하려면 이 호스트에 연결하세요",
           options: {
             server: "서버",
             cloud: "클라우드 VM",

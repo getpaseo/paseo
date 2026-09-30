@@ -2420,6 +2420,9 @@ export const fr: TranslationResources = {
         icon: {
           label: "Icône",
           accessibilityLabel: "Icône, {{value}}",
+          detected: "Détecté",
+          updateHost: "Mettez à jour cet hôte pour choisir son icône",
+          connectHost: "Connectez-vous à cet hôte pour choisir son icône",
           options: {
             server: "Serveur",
             cloud: "VM cloud",

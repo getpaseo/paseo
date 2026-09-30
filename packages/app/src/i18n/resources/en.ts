@@ -2483,6 +2483,9 @@ export const en = {
         icon: {
           label: "Icon",
           accessibilityLabel: "Icon, {{value}}",
+          detected: "Detected",
+          updateHost: "Update this host to choose its icon",
+          connectHost: "Connect to this host to choose its icon",
           options: {
             server: "Server",
             cloud: "Cloud VM",

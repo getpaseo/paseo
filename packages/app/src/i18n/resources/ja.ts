@@ -2382,6 +2382,9 @@ export const ja: TranslationResources = {
         icon: {
           label: "アイコン",
           accessibilityLabel: "アイコン、{{value}}",
+          detected: "検出",
+          updateHost: "アイコンを選ぶにはこのホストを更新してください",
+          connectHost: "アイコンを選ぶにはこのホストに接続してください",
           options: {
             server: "サーバー",
             cloud: "クラウド VM",

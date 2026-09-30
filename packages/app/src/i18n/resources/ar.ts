@@ -2360,6 +2360,9 @@ export const ar: TranslationResources = {
         icon: {
           label: "الأيقونة",
           accessibilityLabel: "الأيقونة، {{value}}",
+          detected: "مكتشَف",
+          updateHost: "حدِّث هذا المضيف لاختيار أيقونته",
+          connectHost: "اتصل بهذا المضيف لاختيار أيقونته",
           options: {
             server: "خادم",
             cloud: "جهاز افتراضي سحابي",

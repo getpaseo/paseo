@@ -10,7 +10,10 @@ export type HostBadgeDisplay = "name" | "icon" | "hidden";
 
 export const HOST_BADGE_DISPLAYS: readonly HostBadgeDisplay[] = ["name", "icon", "hidden"];
 
-/** The glyph a host draws with, so two machines read apart at a glance. */
+/**
+ * The glyph a host draws with, so two machines read apart at a glance. The daemon owns the
+ * choice, so every device draws a host the same way; see `resolveHostIcon`.
+ */
 export const HOST_ICONS = [
   "server",
   "cloud",
@@ -31,6 +34,26 @@ function isHostIcon(value: unknown): value is HostIcon {
   return typeof value === "string" && (HOST_ICONS as readonly string[]).includes(value);
 }
 
+/** What a daemon reports about its icon: the user's choice and its own hardware guess. */
+export interface HostIconInfo {
+  selected: string | null;
+  detected: string | null;
+}
+
+/** The detected icon, when the daemon guessed one this build can draw. */
+export function detectedHostIcon(info: HostIconInfo | null | undefined): HostIcon | null {
+  return isHostIcon(info?.detected) ? info.detected : null;
+}
+
+/**
+ * The icon a host draws with: the user's choice, then the daemon's guess, then a plain server.
+ * Both values are loose strings on the wire, so an icon this build doesn't know falls through.
+ */
+export function resolveHostIcon(info: HostIconInfo | null | undefined): HostIcon {
+  if (isHostIcon(info?.selected)) return info.selected;
+  return detectedHostIcon(info) ?? DEFAULT_HOST_ICON;
+}
+
 /**
  * Per-device host presentation. `badgeDisplay` is null while the user has not chosen,
  * because the default differs by host (local hides, remote shows) and local-ness is only
@@ -39,32 +62,24 @@ function isHostIcon(value: unknown): value is HostIcon {
 export interface HostAppearance {
   color: HostColor;
   badgeDisplay: HostBadgeDisplay | null;
-  icon: HostIcon;
 }
 
-/**
- * The stored shape. `icon` is optional because registries written before it existed lack it,
- * and a loose string because a newer build may store an icon this build doesn't know — that
- * host falls back to the default glyph instead of failing the strict parse and being dropped.
- */
 export const StoredHostAppearanceSchema = z.strictObject({
   color: z.enum(["none", ...IDENTITY_COLOR_NAMES]),
   badgeDisplay: z.enum(["name", "icon", "hidden"]).nullable(),
+  // COMPAT(deviceHostIcon): builds that kept the host icon on the device stored it here. Accepted
+  // and ignored so the strict parse doesn't drop those hosts; remove after 2027-04-01.
   icon: z.string().optional(),
 });
 
 export type StoredHostAppearance = z.infer<typeof StoredHostAppearanceSchema>;
 
 export function defaultHostAppearance(): HostAppearance {
-  return { color: "none", badgeDisplay: null, icon: DEFAULT_HOST_ICON };
+  return { color: "none", badgeDisplay: null };
 }
 
 export function hostAppearanceFromStored(stored: StoredHostAppearance): HostAppearance {
-  return {
-    color: stored.color,
-    badgeDisplay: stored.badgeDisplay,
-    icon: isHostIcon(stored.icon) ? stored.icon : DEFAULT_HOST_ICON,
-  };
+  return { color: stored.color, badgeDisplay: stored.badgeDisplay };
 }
 
 export function normalizeStoredHostAppearance(value: unknown): HostAppearance {
@@ -105,6 +120,8 @@ export function selectHostBadges(input: {
   hosts: readonly HostAppearanceSource[];
   localServerId: string | null;
   localHostResolutionPending?: boolean;
+  /** Each connected host's icon as its daemon reports it; a host missing here draws a server. */
+  hostIcons?: ReadonlyMap<string, HostIcon>;
   enabled: boolean;
 }): ReadonlyMap<string, HostBadgeModel> {
   const badges = new Map<string, HostBadgeModel>();
@@ -124,7 +141,7 @@ export function selectHostBadges(input: {
       serverId: host.serverId,
       label: host.label.trim() || host.serverId,
       color: host.appearance.color,
-      icon: host.appearance.icon,
+      icon: input.hostIcons?.get(host.serverId) ?? DEFAULT_HOST_ICON,
       showLabel: display === "name",
     });
   }
