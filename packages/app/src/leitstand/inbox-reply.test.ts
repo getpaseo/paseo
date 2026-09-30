@@ -20,7 +20,17 @@ describe("lastAssistantText", () => {
       entry({ type: "assistant_message", text: "Ausgerollt:\n\n- Daemon  läuft" }),
       entry({ type: "user_message", text: "danke" }),
     ]);
-    expect(text).toBe("Ausgerollt: - Daemon läuft");
+    expect(text).toBe("Ausgerollt: Daemon läuft");
+  });
+
+  it("drops Markdown marks, links and code fences", () => {
+    const text = lastAssistantText([
+      entry({
+        type: "assistant_message",
+        text: "## Stand\n- **Linux:** `paseo-live` → [Release](https://x.y)\n```sh\nnpm ci\n```\nfertig",
+      }),
+    ]);
+    expect(text).toBe("Stand Linux: paseo-live → Release fertig");
   });
 
   it("cuts long replies and returns null without assistant text", () => {

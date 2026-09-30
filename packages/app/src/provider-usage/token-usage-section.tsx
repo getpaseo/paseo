@@ -117,7 +117,7 @@ export function TokenUsageSection({ serverId }: { serverId: string }) {
           <SettingsRow
             key={row.provider}
             label={resolveProviderLabel(row.provider, snapshotEntries)}
-            hint={t("settings.tokenUsage.sessions", { count: row.sessions, turns: row.turns })}
+            hint={`${t("settings.tokenUsage.sessions", { count: row.sessions })} · ${t("settings.tokenUsage.turns", { count: row.turns })}`}
           >
             <View style={styles.values}>
               <Text style={styles.number} dataSet={MONO_FONT_DATASET}>

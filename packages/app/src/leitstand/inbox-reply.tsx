@@ -20,11 +20,22 @@ export function lastAssistantText(entries: readonly TimelineEntry[]): string | n
   for (let index = entries.length - 1; index >= 0; index -= 1) {
     const item = entries[index]?.item;
     if (item?.type !== "assistant_message") continue;
-    const text = item.text.replace(/\s+/g, " ").trim();
+    const text = toPlainText(item.text);
     if (text)
       return text.length > PREVIEW_MAX_CHARS ? `${text.slice(0, PREVIEW_MAX_CHARS)}…` : text;
   }
   return null;
+}
+
+/** A preview line reads as prose: Markdown marks and code fences would only be noise here. */
+function toPlainText(markdown: string): string {
+  return markdown
+    .replace(/```[\s\S]*?```/g, " ")
+    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/^\s{0,3}(?:#{1,6}|>|[-*+]|\d+\.)\s+/gm, "")
+    .replace(/(\*\*|__|\*|_|`|~~)/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function useLastAgentReply(serverId: string, agentId: string | null): string | null {
